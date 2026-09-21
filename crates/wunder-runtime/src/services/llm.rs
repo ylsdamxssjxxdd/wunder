@@ -247,6 +247,30 @@ fn resolved_responses_thinking_token_budget(config: &LlmModelConfig) -> Option<u
     )
 }
 
+fn insert_chat_template_kwarg(payload: &mut Value, key: &str, value: Value) {
+    let mut kwargs = payload
+        .get("chat_template_kwargs")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    kwargs.insert(key.to_string(), value);
+    payload["chat_template_kwargs"] = Value::Object(kwargs);
+}
+
+// Self-hosted vLLM forwards reasoning_effort to the model chat template, but
+// vLLM's OpenAI protocol validates the top-level field against OpenAI's
+// vocabulary (none/low/medium/high) before rendering. Model templates with a
+// different vocabulary (hybrid Qwen families accept only xhigh/medium/low)
+// therefore reject valid selections at two different layers. Routing the
+// effort through chat_template_kwargs bypasses protocol validation and hands
+// the value directly to the template.
+fn should_route_reasoning_effort_via_template(config: &LlmModelConfig) -> bool {
+    matches!(
+        normalize_provider(config.provider.as_deref()).as_str(),
+        "vllm" | "vllm_ascend" | "vllm_omni"
+    )
+}
+
 fn apply_disable_thinking_controls(payload: &mut Value, config: &LlmModelConfig) {
     if !disable_thinking_requested(config) {
         return;
@@ -255,13 +279,7 @@ fn apply_disable_thinking_controls(payload: &mut Value, config: &LlmModelConfig)
         payload["enable_thinking"] = Value::Bool(false);
     }
     if should_emit_vllm_chat_template_kwargs(config) {
-        let mut kwargs = payload
-            .get("chat_template_kwargs")
-            .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default();
-        kwargs.insert("enable_thinking".to_string(), Value::Bool(false));
-        payload["chat_template_kwargs"] = Value::Object(kwargs);
+        insert_chat_template_kwarg(payload, "enable_thinking", Value::Bool(false));
     }
 }
 
@@ -1054,7 +1072,17 @@ impl LlmClient {
         if let Some(reasoning_effort) =
             normalize_reasoning_effort(self.config.reasoning_effort.as_deref())
         {
-            payload["reasoning_effort"] = Value::String(reasoning_effort);
+            if reasoning_effort != "none"
+                && should_route_reasoning_effort_via_template(&self.config)
+            {
+                insert_chat_template_kwarg(
+                    &mut payload,
+                    "reasoning_effort",
+                    Value::String(reasoning_effort),
+                );
+            } else {
+                payload["reasoning_effort"] = Value::String(reasoning_effort);
+            }
         }
         apply_disable_thinking_controls(&mut payload, &self.config);
         if stream && include_usage {
@@ -3834,6 +3862,102 @@ mod tests {
         assert_eq!(payload["max_tokens"], 256);
         assert_eq!(payload["thinking_token_budget"], 16_384);
         assert_eq!(payload["thinking_budget_tokens"], 16_384);
+    }
+
+    #[test]
+    fn build_chat_payload_routes_reasoning_effort_via_template_for_local_vllm() {
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("vllm_ascend".to_string()),
+            api_mode: Some("chat_completions".to_string()),
+            base_url: Some("http://127.0.0.1:18000/v1".to_string()),
+            api_key: Some("test-key".to_string()),
+            model: Some("test-model".to_string()),
+            temperature: Some(0.7),
+            timeout_s: Some(15),
+            max_rounds: Some(4),
+            max_context: Some(16_384),
+            max_output: Some(256),
+            thinking_token_budget: None,
+            support_vision: Some(false),
+            support_hearing: Some(false),
+            stream: Some(false),
+            stream_include_usage: Some(false),
+            history_compaction_ratio: None,
+            tool_call_mode: Some("tool_call".to_string()),
+            reasoning_effort: Some("xhigh".to_string()),
+            model_type: Some("llm".to_string()),
+            stop: None,
+            mock_if_unconfigured: None,
+            ..Default::default()
+        };
+        let client = LlmClient::new(Client::new(), config);
+        let payload = client.build_request_payload(
+            &[ChatMessage {
+                role: "user".to_string(),
+                content: Value::String("hello".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            false,
+        );
+        assert_eq!(
+            payload["chat_template_kwargs"]["reasoning_effort"],
+            Value::String("xhigh".to_string())
+        );
+        assert!(payload.get("reasoning_effort").is_none());
+        assert_eq!(payload["max_tokens"], 256);
+    }
+
+    #[test]
+    fn build_chat_payload_keeps_none_reasoning_effort_top_level_for_local_vllm() {
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("vllm".to_string()),
+            api_mode: Some("chat_completions".to_string()),
+            base_url: Some("http://127.0.0.1:18000/v1".to_string()),
+            api_key: Some("test-key".to_string()),
+            model: Some("test-model".to_string()),
+            temperature: Some(0.7),
+            timeout_s: Some(15),
+            max_rounds: Some(4),
+            max_context: Some(16_384),
+            max_output: Some(256),
+            thinking_token_budget: None,
+            support_vision: Some(false),
+            support_hearing: Some(false),
+            stream: Some(false),
+            stream_include_usage: Some(false),
+            history_compaction_ratio: None,
+            tool_call_mode: Some("tool_call".to_string()),
+            reasoning_effort: Some("none".to_string()),
+            model_type: Some("llm".to_string()),
+            stop: None,
+            mock_if_unconfigured: None,
+            ..Default::default()
+        };
+        let client = LlmClient::new(Client::new(), config);
+        let payload = client.build_request_payload(
+            &[ChatMessage {
+                role: "user".to_string(),
+                content: Value::String("hello".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            false,
+        );
+        assert_eq!(
+            payload.get("reasoning_effort"),
+            Some(&Value::String("none".to_string()))
+        );
+        assert_eq!(payload["enable_thinking"], Value::Bool(false));
+        assert_eq!(
+            payload["chat_template_kwargs"]["enable_thinking"],
+            Value::Bool(false)
+        );
+        assert!(payload["chat_template_kwargs"].get("reasoning_effort").is_none());
     }
 
     #[test]
