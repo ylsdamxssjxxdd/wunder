@@ -23,7 +23,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Handle;
@@ -245,7 +245,7 @@ pub struct WorkspaceManager {
     single_root: bool,
     container_roots: RwLock<HashMap<i32, PathBuf>>,
     storage: Arc<dyn StorageBackend>,
-    write_queue: StorageWriteQueue,
+    write_queue: OnceLock<StorageWriteQueue>,
     retention_days: i64,
     retention_interval_s: f64,
     retention_state: Arc<Mutex<RetentionState>>,
@@ -280,14 +280,13 @@ impl WorkspaceManager {
         if let Err(err) = storage.ensure_initialized() {
             warn!("storage initialization failed: {err}");
         }
-        let write_queue = StorageWriteQueue::new(storage.clone());
         let normalized_container_roots = normalize_container_roots(container_roots);
         Self {
             root: PathBuf::from(root),
             single_root,
             container_roots: RwLock::new(normalized_container_roots),
             storage,
-            write_queue,
+            write_queue: OnceLock::new(),
             retention_days,
             retention_interval_s: 3600.0,
             retention_state: Arc::new(Mutex::new(RetentionState::default())),
@@ -1163,7 +1162,7 @@ impl WorkspaceManager {
     }
 
     pub fn append_chat(&self, user_id: &str, payload: &Value) -> Result<()> {
-        self.write_queue.enqueue(StorageWrite::Chat {
+        self.write_queue().enqueue(StorageWrite::Chat {
             user_id: user_id.to_string(),
             payload: payload.clone(),
         })?;
@@ -1177,7 +1176,7 @@ impl WorkspaceManager {
         session_id: &str,
         payload: &Value,
     ) -> Result<()> {
-        self.write_queue.enqueue(StorageWrite::ModelContextAppend {
+        self.write_queue().enqueue(StorageWrite::ModelContextAppend {
             user_id: user_id.to_string(),
             session_id: session_id.to_string(),
             payload: payload.clone(),
@@ -1192,7 +1191,7 @@ impl WorkspaceManager {
         session_id: &str,
         payloads: &[Value],
     ) -> Result<()> {
-        self.write_queue
+        self.write_queue()
             .enqueue(StorageWrite::ModelContextReplace {
                 user_id: user_id.to_string(),
                 session_id: session_id.to_string(),
@@ -1213,7 +1212,7 @@ impl WorkspaceManager {
     }
 
     pub fn append_tool_log(&self, user_id: &str, payload: &Value) -> Result<()> {
-        self.write_queue.enqueue(StorageWrite::ToolLog {
+        self.write_queue().enqueue(StorageWrite::ToolLog {
             user_id: user_id.to_string(),
             payload: payload.clone(),
         })?;
@@ -1222,7 +1221,7 @@ impl WorkspaceManager {
     }
 
     pub fn append_artifact_log(&self, user_id: &str, payload: &Value) -> Result<()> {
-        self.write_queue.enqueue(StorageWrite::ArtifactLog {
+        self.write_queue().enqueue(StorageWrite::ArtifactLog {
             user_id: user_id.to_string(),
             payload: payload.clone(),
         })?;
@@ -1233,14 +1232,20 @@ impl WorkspaceManager {
     pub async fn flush_writes_async(self: &Arc<Self>) -> bool {
         let workspace = Arc::clone(self);
         run_workspace_db("workspace.flush_writes", move || {
-            Ok(workspace.write_queue.flush())
+            Ok(workspace.flush_writes())
         })
         .await
         .unwrap_or(false)
     }
 
     pub fn flush_writes(&self) -> bool {
-        self.write_queue.flush()
+        self.write_queue.get().is_none_or(StorageWriteQueue::flush)
+    }
+
+    fn write_queue(&self) -> &StorageWriteQueue {
+        // File-only sandbox contexts never need a storage writer thread.
+        self.write_queue
+            .get_or_init(|| StorageWriteQueue::new(Arc::clone(&self.storage)))
     }
 
     pub fn load_history(&self, user_id: &str, session_id: &str, limit: i64) -> Result<Vec<Value>> {
@@ -2387,6 +2392,10 @@ fn now_ts() -> f64 {
         .map(|duration| duration.as_secs_f64())
         .unwrap_or(0.0)
 }
+
+#[cfg(test)]
+#[path = "workspace_concurrency_tests.rs"]
+mod concurrency_tests;
 
 #[cfg(test)]
 mod tests {

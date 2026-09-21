@@ -1,3 +1,4 @@
+import { isChatSnapshotCurrent, readChatRealtimeRevision } from './chatSnapshotFreshness';
 import { defineStore } from 'pinia';
 
 import {
@@ -374,6 +375,7 @@ export const chatCacheActions = {
       const request = (async () => {
         let sessionRes = null;
         let eventsPayload = null;
+        const hydrationRevision = readChatRealtimeRevision(ensureRuntime(targetId));
         const knownEventFloor = resolveKnownSessionEventFloor(targetId);
         const detailLimit = resolveSessionDetailMessageLimit(isDesktopModeEnabled());
         chatDebugLog('chat.store.preload', 'fetch-start', {
@@ -423,6 +425,7 @@ export const chatCacheActions = {
           eventsPayload?.command_sessions ?? eventsPayload?.commandSessions
         );
         const runtime = ensureRuntime(targetId);
+        if (!isChatSnapshotCurrent(runtime, eventsPayload, hydrationRevision)) return null;
         applySessionRuntimeSnapshot(runtime, eventsPayload?.runtime);
         const remoteRunning = eventsPayload?.running === true;
         const remoteLastEventId = normalizeStreamEventId(

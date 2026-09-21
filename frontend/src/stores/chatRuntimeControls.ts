@@ -1,4 +1,4 @@
-﻿import { defineStore } from 'pinia';
+import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -133,9 +133,11 @@ export const setSessionLoading = (store, sessionId, value) => {
   } else if (store.loadingBySession[key]) {
     delete store.loadingBySession[key];
   }
-  syncChatRuntimeProjectionStatus(store, key, value ? 'running' : 'completed', {
-    eventType: value ? 'session_runtime' : 'session_idle'
-  });
+  // Transport cleanup is not a server terminal event. A watch or reconnect can
+  // keep delivering work after the original request has closed.
+  if (value && !isThreadRuntimeWaiting(runtime?.threadStatus)) {
+    syncChatRuntimeProjectionStatus(store, key, 'running');
+  }
   if (!runtime) return;
   if (value) {
     runtime.loaded = true;
@@ -157,7 +159,12 @@ export const setSessionLoading = (store, sessionId, value) => {
     }
     return;
   }
-  applyRuntimeDerivedStatus(store, key, runtime);
+  const projectedStatus = store.runtimeProjection?.sessions?.[key]?.runtimeStatus;
+  if (projectedStatus && projectedStatus !== 'not_loaded') {
+    runtime.threadStatus = normalizeThreadRuntimeStatus(projectedStatus);
+  } else {
+    applyRuntimeDerivedStatus(store, key, runtime);
+  }
   const afterRuntime = buildRuntimeDebugSnapshot(runtime);
   const hasResidualControllers = afterRuntime.hasSendController || afterRuntime.hasResumeController;
   if (

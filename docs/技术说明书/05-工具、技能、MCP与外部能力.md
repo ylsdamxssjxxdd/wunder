@@ -208,3 +208,24 @@ MCP 负责把外部资源、外部工具或外部服务纳入统一能力治理�
 ## 13. 补充专题
 
 - [11-工具结果裁剪与观测链路](./11-工具结果裁剪与观测链路.md)
+
+## 14. 沙盒并发排障与验收
+
+冷启动时文件工具会复用一次存储初始化。通过 `sandbox.storage.initialize` 的 blocking 日志与指标观察排队、超时和失败；如数据库暂不可用，初始化失败后退避 1 秒允许恢复。工作区上下文缓存有 128 项上限与 300 秒空闲淘汰，纯文件调用不应持续增加存储写线程或 LSP 清理任务。
+
+文件工具已经具有文件系统根访问范围时，不再为补充编排目录同步查询数据库。
+
+命令流超时覆盖整个响应，收到 `final` 即结束读取，无须等待连接关闭。连接中断返回 `SANDBOX_EXECUTION_INTERRUPTED`，执行结果可能已经产生，调用方应先检查结果，不能自动重复执行。PTC 的返回路径包含每次调用的独立目录，同名脚本不会互相覆盖。
+
+回归命令（均使用 release，最多 8 个编译/测试线程）：
+
+```text
+cargo check --release -p wunder-runtime --features postgres-storage,sqlite-storage -j 8
+cargo test --release -p wunder-runtime --features postgres-storage,sqlite-storage --lib sandbox:: -j 8 -- --test-threads=8
+cargo test --release -p wunder-runtime --features postgres-storage,sqlite-storage --lib ptc_script:: -j 8 -- --test-threads=8
+cargo test --release -p wunder-runtime --features postgres-storage,sqlite-storage --lib workspace::concurrency_tests:: -j 8 -- --test-threads=8
+```
+
+PostgreSQL 并发测试需先将 `WUNDER_TEST_SANDBOX_POSTGRES_DSN` 指向一次性的隔离数据库，再运行上述测试命令并将过滤器改为 `postgres_cold_start_is_shared`、追加 `--ignored`。该测试会初始化完整 schema，不得指向生产数据库。Linux 额外覆盖命令流断线后直接子进程退出；Windows 覆盖输出捕获任务取消。
+
+2026-09-21 验收：Windows/MSVC release 检查通过；Linux/Rust 1.92 release 下沙盒 22 项、PostgreSQL 1 项、PTC 1 项、工作区 14 项，共 38 项定向测试通过。双数据库测试各覆盖 24 个并发工作区，PTC 覆盖 32 个同名脚本并发保存；Linux 实测客户端断线后直接子进程退出。以上为定向回归，未替代生产环境持续压测。

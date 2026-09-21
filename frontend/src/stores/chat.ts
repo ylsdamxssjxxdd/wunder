@@ -1,4 +1,5 @@
-﻿import { defineStore } from 'pinia';
+import { defineStore } from 'pinia';
+import { markRaw } from 'vue';
 
 import {
   archiveSession as archiveSessionApi,
@@ -140,7 +141,7 @@ export const useChatStore = defineStore('chat', {
     sessionsLoadedAt: 0,
     loadingBySession: {},
     sessionGoals: {} as Record<string, SessionGoal>,
-    runtimeProjection: createChatRuntimeProjection() as ChatRuntimeProjection,
+    runtimeProjection: markRaw(createChatRuntimeProjection()) as ChatRuntimeProjection,
     greetingOverride: '',
     draftAgentId: '',
     draftToolOverrides: null,

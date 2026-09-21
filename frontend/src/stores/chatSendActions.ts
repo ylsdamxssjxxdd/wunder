@@ -1,4 +1,4 @@
-﻿import { defineStore } from 'pinia';
+import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -1029,7 +1029,7 @@ export const chatSendActions = {
         }
       } catch (error) {
         const abortReason = String(runtime?.sendAbortReason || '').trim();
-        if (error?.name === 'AbortError' && abortReason === 'local_recovery') {
+        if (error?.name === 'AbortError' && (abortReason !== 'user_stop' || String(runtime?.sendRequestId || '') !== sendRequestId)) {
           recoveredByRealtime = true;
         } else if (error?.name === 'AbortError' || runtime?.stopRequested || chatPageLifecycle.pageUnloading) {
           interruptedByStop = true;
@@ -1170,34 +1170,14 @@ export const chatSendActions = {
           });
         }
         if (canApplyGlobalSendSettlement && !keepStreaming) {
-          applyLocalAssistantTurnTerminalRuntimeEvent(this, {
-            sessionId,
-            terminal: errorSeen
-              ? 'failed'
-              : stopped && !finalSeen
-                ? 'cancelled'
-                : 'completed',
-            content: errorSeen
-              ? t('chat.workflow.requestFailedDetail')
-              : stopped && !finalSeen
-                ? t('chat.workflow.aborted')
-                : '',
-            reason: errorSeen
-              ? 'request_failed'
-              : stopped && !finalSeen
-                ? 'user_stop'
-                : 'stream_finished',
-            requestId: sendRequestId,
-            userTurnId: localUserTurnId,
-            modelTurnId: localModelTurnId,
-            assistantMessageId: `local-assistant:${localModelTurnId}`
-          });
+          // Terminal stream events and explicit request errors already settle
+          // the reducer. Transport cleanup must never synthesize another end.
           settleTerminalAssistantArtifactsBase(sessionMessagesRef, {
             failed: errorSeen || (stopped && !finalSeen)
           });
         }
         if (canApplyGlobalSendSettlement) {
-          setSessionLoading(this, sessionId, keepStreaming);
+          setSessionLoading(this, sessionId, false);
         }
         touchSessionUpdatedAt(this, sessionId, Date.now());
         if (canApplyGlobalSendSettlement) {

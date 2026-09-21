@@ -1,4 +1,5 @@
-﻿import { defineStore } from 'pinia';
+import { readChatRealtimeRevision } from './chatSnapshotFreshness';
+import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -117,7 +118,7 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 
 import { buildWorkflowItem } from './chatDemoPanels';
 import { clearSessionWatcher, setSessionLoading } from './chatRuntimeControls';
-import { buildRuntimeDebugSnapshot, cacheSessionMessages, clearRuntimePendingManualCompaction, clearSessionEventsSnapshot, ensureRuntime, getSessionMessages, markRuntimePendingManualCompaction, notifySessionSnapshot, touchSessionUpdatedAt } from './chatRuntimeState';
+import { buildRuntimeDebugSnapshot, cacheSessionMessages, clearRuntimePendingManualCompaction, clearSessionEventsSnapshot, ensureRuntime, getSessionMessages, markRuntimePendingManualCompaction, notifySessionSnapshot, syncChatRuntimeProjectionStatus, touchSessionUpdatedAt } from './chatRuntimeState';
 import { chatPageLifecycle } from './chatSharedState';
 import { buildMessage } from './chatStats';
 import { abortResumeStream, buildPendingManualCompactionMarkerMessage, finalizeManualCompactionAsCancelled, finalizeManualCompactionAsRequestFailed, findRunningManualCompactionMarkerMessage, isAbortRequestError, startSessionWatcher } from './chatWatcher';
@@ -180,7 +181,9 @@ export const chatCompactionActions = {
         ) {
           startSessionWatcher(this, targetId);
         }
+        const previousStatus = this.sessionRuntimeStatus(targetId);
         setSessionLoading(this, targetId, true);
+        const compactionRevision = readChatRealtimeRevision(runtimeForManual);
         try {
           const requestPayload = {
             ...(payload && typeof payload === 'object' ? payload : {}),
@@ -233,6 +236,10 @@ export const chatCompactionActions = {
             });
           }
           if (!chatPageLifecycle.pageUnloading) {
+            if (readChatRealtimeRevision(runtimeForManual) === compactionRevision) {
+              // A rejected HTTP command never started a server turn.
+              syncChatRuntimeProjectionStatus(this, targetId, previousStatus);
+            }
             setSessionLoading(this, targetId, false);
           }
           throw error;

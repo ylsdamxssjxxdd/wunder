@@ -1,4 +1,6 @@
 import { defineStore } from 'pinia';
+import { markRaw, toRaw } from 'vue';
+import { isChatSnapshotCurrent, readChatRealtimeRevision } from './chatSnapshotFreshness';
 
 import {
   archiveSession as archiveSessionApi,
@@ -213,11 +215,18 @@ const isRuntimeHotForDesktopMemory = (sessionId: string): boolean => {
   );
 };
 
+const desktopMemoryPruneAt = new WeakMap<object, number>();
+
 const pruneDesktopChatMemoryForStore = (
   store: { activeSessionId?: unknown; runtimeProjection?: ChatRuntimeProjection | null } | null = null,
   activeSessionId: unknown = null
 ): void => {
   if (!shouldUseDesktopChatMemoryGuard()) return;
+  if (store) {
+    const now = Date.now();
+    if (now - (desktopMemoryPruneAt.get(store) || 0) < 1000) return;
+    desktopMemoryPruneAt.set(store, now);
+  }
   pruneDesktopChatMemoryCaches({
     activeSessionId: resolveSessionKey(activeSessionId ?? store?.activeSessionId),
     sessionMessages,
@@ -780,7 +789,7 @@ export const readSessionEventsSnapshot = (
   }
   const sessionKey = resolveSessionEventsSnapshotCacheKey(baseSessionKey, options.limit);
   const entry = sessionEventsSnapshotCache.get(sessionKey);
-  if (!entry) return null;
+  if (!entry || !isChatSnapshotCurrent(getRuntime(baseSessionKey), entry.payload)) return null;
   const ttlMs = entry.running ? SESSION_EVENTS_RUNNING_CACHE_TTL_MS : SESSION_EVENTS_CACHE_TTL_MS;
   if (!Number.isFinite(entry.cachedAt) || Date.now() - entry.cachedAt > ttlMs) {
     sessionEventsSnapshotCache.delete(sessionKey);
@@ -835,6 +844,10 @@ export const loadSessionEventsSnapshot = (
   if (inFlight && options.dedupeInFlight !== false) {
     return inFlight;
   }
+  const snapshotRuntime = ensureRuntime(sessionKey);
+  const requestRevision = readChatRealtimeRevision(snapshotRuntime);
+  const snapshotRequestId = Number(snapshotRuntime.snapshotRequestId || 0) + 1;
+  snapshotRuntime.snapshotRequestId = snapshotRequestId;
   const requestApi = Number.isFinite(limit) && limit > 0
     ? getSessionEventsWithParams(sessionKey, { limit }, { signal: options.signal })
     : getSessionEvents(sessionKey, { signal: options.signal });
@@ -842,8 +855,8 @@ export const loadSessionEventsSnapshot = (
     const payload = response?.data?.data;
     const normalizedPayload =
       payload && typeof payload === 'object' && !Array.isArray(payload)
-        ? payload
-        : {};
+        ? { ...payload, __clientRuntimeRevision: requestRevision, __clientSnapshotRequestId: snapshotRequestId }
+        : { __clientRuntimeRevision: requestRevision, __clientSnapshotRequestId: snapshotRequestId };
     const shouldCache = typeof options.shouldCache === 'function'
       ? options.shouldCache()
       : true;
@@ -1349,6 +1362,13 @@ export function applySessionRuntimeEvent(store, sessionId, payload, eventType = 
   if (!targetId) return null;
   const runtime = ensureRuntime(targetId);
   if (!runtime) return null;
+  const projectedStatus = store.runtimeProjection?.sessions?.[targetId]?.runtimeStatus;
+  const payloadStatus = normalizeThreadRuntimeStatus(payload?.thread_status ?? payload?.status);
+  if (projectedStatus && payloadStatus !== normalizeThreadRuntimeStatus(projectedStatus)) {
+    // Rejected or buffered WS events cannot update approval/control side state.
+    runtime.threadStatus = normalizeThreadRuntimeStatus(projectedStatus);
+    return runtime;
+  }
   const applied = applySessionRuntimeSnapshot(runtime, payload);
   if (!applied && eventType === 'thread_closed') {
     runtime.loaded = false;
@@ -1366,9 +1386,10 @@ export function applySessionRuntimeEvent(store, sessionId, payload, eventType = 
     runtime.waitingForUserInput = false;
     runtime.threadStatus = 'not_loaded';
   }
-  syncChatRuntimeProjectionStatus(store, targetId, runtime.threadStatus, {
-    eventType: eventType === 'thread_closed' ? 'session_idle' : 'session_runtime'
-  });
+  // The canonical reducer has already sequenced this event. Never apply a
+  // second unsequenced status event that can bypass replay/deduplication.
+  const canonicalStatus = store.runtimeProjection?.sessions?.[targetId]?.runtimeStatus;
+  if (canonicalStatus) runtime.threadStatus = normalizeThreadRuntimeStatus(canonicalStatus);
   if (
     isTerminalRuntimeStatus(runtime.threadStatus) &&
     !shouldDeferTerminalRuntimeSettlement(store, targetId, runtime, eventType)
@@ -1673,7 +1694,8 @@ export const ensureChatRuntimeProjectionForStore = (store): ChatRuntimeProjectio
   if (!store.runtimeProjection) {
     store.runtimeProjection = createChatRuntimeProjection();
   }
-  return store.runtimeProjection as ChatRuntimeProjection;
+  // The reducer owns mutations; only explicit render clocks enter Vue reactivity.
+  return markRaw(toRaw(store.runtimeProjection)) as ChatRuntimeProjection;
 };
 
 export const resolveProjectionAgentId = (store, sessionId): string => {
@@ -1687,7 +1709,7 @@ export const syncChatRuntimeProjectionFromSnapshot = (
   store,
   sessionId,
   messages = null,
-  options: { immediate?: boolean; loading?: boolean; running?: boolean; authoritative?: boolean } = {}
+  options: { immediate?: boolean; loading?: boolean; running?: boolean; authoritative?: boolean; preserveLive?: boolean } = {}
 ) => {
   const key = resolveSessionKey(sessionId);
   const projection = ensureChatRuntimeProjectionForStore(store);
@@ -1724,6 +1746,7 @@ export const syncChatRuntimeProjectionFromSnapshot = (
     payload: {
       transcript: projectionMessages,
       runtime_status: snapshotRuntimeStatus,
+      preserve_live: options.preserveLive === true,
       authoritative: options.authoritative === true
     },
     authoritative: options.authoritative === true
@@ -2019,6 +2042,8 @@ export const syncChatRuntimeProjectionStatus = (
     runtime_status: status
   });
   if (result.applied) {
+    const runtime = ensureRuntime(key);
+    runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
     markRuntimeProjectionChanged(store, {
       immediate: true,
       reason: 'runtime-status'
@@ -2142,6 +2167,10 @@ export const applyCanonicalStreamRuntimeEvent = (
     immediate: options.phase === 'snapshot',
     reason: `stream:${options.phase || 'ws'}`
   });
+  if (results.some((result) => result.applied)) {
+    const runtime = ensureRuntime(key);
+    runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
+  }
   if (isUsageContextStreamEvent(eventType) && results.some((result) => result.applied)) {
     syncSessionContextTokensFromRuntimeProjection(store, key);
   }
@@ -2228,6 +2257,8 @@ export const applyCanonicalClientMessageSubmittedRuntimeEvent = (
         })
       : null;
   if (result.applied || assistantResult?.applied) {
+    const runtime = ensureRuntime(key);
+    runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
     markRuntimeProjectionChanged(store, {
       immediate: true,
       reason: 'client-submitted'
@@ -2282,6 +2313,8 @@ export const applyLocalChatMessageRuntimeEvent = (
   };
   const result = applyChatRuntimeEvent(projection, event);
   if (result.applied) {
+    const runtime = ensureRuntime(key);
+    runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
     markRuntimeProjectionChanged(store, {
       immediate: true,
       reason: 'local-message'
@@ -2356,6 +2389,8 @@ export const applyLocalAssistantTurnTerminalRuntimeEvent = (
   };
   const result = applyChatRuntimeEvent(projection, event);
   if (result.applied) {
+    const runtime = ensureRuntime(key);
+    runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
     markRuntimeProjectionChanged(store, {
       immediate: true,
       reason: `local-turn-${payload.terminal}`
@@ -2379,6 +2414,7 @@ export const applyCanonicalSessionEventsSnapshot = (
   const snapshotPayload = payload && typeof payload === 'object' && !Array.isArray(payload)
     ? payload as Record<string, unknown>
     : {};
+  if (!isChatSnapshotCurrent(getRuntime(key), snapshotPayload)) return [];
   const includeRuntime = options.includeRuntime !== false;
   const projectionPayload = includeRuntime
     ? snapshotPayload
@@ -2391,10 +2427,15 @@ export const applyCanonicalSessionEventsSnapshot = (
     payload: projectionPayload,
     phase: options.phase
   });
+  const sessionBefore = projection.sessions[key];
+  const runtimeBefore = sessionBefore && !includeRuntime
+    ? { runtimeStatus: sessionBefore.runtimeStatus, busyReason: sessionBefore.busyReason }
+    : null;
   applyChatRuntimeEventsWithInvalidation(store, projection, events, {
     immediate: true,
     reason: 'session-events-snapshot'
   });
+  if (runtimeBefore && projection.sessions[key]) Object.assign(projection.sessions[key], runtimeBefore);
   inspectChatRuntimeShadow(store, key, null, {
     phase: options.phase || 'session-events-snapshot'
   });

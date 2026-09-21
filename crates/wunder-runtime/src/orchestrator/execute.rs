@@ -489,10 +489,10 @@ impl Orchestrator {
                     )
                     .await?;
                 messages = compaction_result.messages;
-                if compaction_result.compaction_id.is_some() {
+                if compaction_result.model_context_replaced {
                     user_context_appended = true;
                 }
-                if compaction_result.compaction_id.is_some() {
+                if compaction_result.model_context_replaced {
                     persisted_context_tokens = 0;
                     self.workspace
                         .save_session_context_tokens_async(&user_id, &session_id, 0)

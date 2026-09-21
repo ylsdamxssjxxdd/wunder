@@ -1,3 +1,4 @@
+import { isTerminalLlmOutputPayload as isTerminalLlmOutput } from '@/utils/chatStreamTerminal';
 import type { ChatRuntimeEvent } from './chatRuntimeTypes';
 
 type CanonicalBuildOptions = {
@@ -431,29 +432,6 @@ const extractFinalContent = (
     payload.thinkContent
   )
 });
-
-const isTerminalLlmOutput = (
-  payload: Record<string, unknown>,
-  data: Record<string, unknown>
-): boolean => {
-  const stopReason = firstText(
-    data.stop_reason,
-    data.stopReason,
-    data.finish_reason,
-    data.finishReason,
-    payload.stop_reason,
-    payload.stopReason,
-    payload.finish_reason,
-    payload.finishReason
-  );
-  return Boolean(
-    stopReason ||
-      data.done === true ||
-      data.final === true ||
-      data.is_final === true ||
-      payload.done === true
-  );
-};
 
 export const buildCanonicalChatRuntimeEvents = (
   options: CanonicalBuildOptions

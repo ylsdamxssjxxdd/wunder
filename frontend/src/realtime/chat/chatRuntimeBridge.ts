@@ -170,7 +170,6 @@ const buildCanonicalSnapshotRuntimeEvents = (
     payload.running === true ? 'running' : payload.running === false ? 'idle' : ''
   );
   if (!runtimeStatus) return [];
-  const lastEventId = firstId(payload.last_event_id, payload.lastEventId);
   return buildCanonicalChatRuntimeEvents({
     sessionId,
     eventType: 'thread_status',
@@ -179,10 +178,12 @@ const buildCanonicalSnapshotRuntimeEvents = (
       status: runtimeStatus,
       thread_status: runtimeStatus
     },
-    eventId: lastEventId ? `snapshot:${lastEventId}:runtime` : null,
+    // Runtime may change without a newly persisted stream event. Its freshness
+    // is checked at the request boundary, not deduplicated by the history cursor.
+    eventId: null,
     phase,
     source: 'snapshot'
-  });
+  }).map((event) => ({ ...event, event_id: '', event_seq: 0, strict: false }));
 };
 
 export const buildCanonicalStreamRuntimeEvents = (

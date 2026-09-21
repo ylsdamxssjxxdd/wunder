@@ -1,4 +1,4 @@
-﻿import { defineStore } from 'pinia';
+import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -337,6 +337,7 @@ export const chatStopResumeActions = {
         markRuntimeResumeStreamStarted(runtime);
         refreshRuntimeStreamLifecycle(runtime);
       }
+      const resumeController = runtime?.resumeController;
       let aborted = false;
       let recoveredByRealtime = false;
       let finalSeen = false;
@@ -799,7 +800,7 @@ export const chatStopResumeActions = {
         }
       } catch (error) {
         const abortReason = String(runtime?.resumeAbortReason || '').trim();
-        if (error?.name === 'AbortError' && abortReason === 'local_recovery') {
+        if (error?.name === 'AbortError' && (abortReason !== 'user_stop' || runtime?.resumeController !== resumeController)) {
           recoveredByRealtime = true;
         } else if (error?.name === 'AbortError') {
           aborted = true;
@@ -851,7 +852,9 @@ export const chatStopResumeActions = {
           }
         }
       } finally {
-        const finishedRequestId = runtime?.resumeRequestId || '';
+        const ownsResumeState = runtime?.resumeController === resumeController;
+        const canSettleResume = ownsResumeState || (!runtime?.resumeController && !runtime?.sendController);
+        const finishedRequestId = resumeRequestId;
         const terminalSeen = finalSeen || errorSeen;
         let keepStreaming = recoveredByRealtime || (!aborted && !terminalSeen);
         if (shouldMutateLegacyResumeMessage) {
@@ -860,8 +863,8 @@ export const chatStopResumeActions = {
             message.stream_incomplete = keepStreaming;
           }
         }
-        if (runtime) {
-          clearRuntimeResumeStreamState(runtime);
+        if (runtime && ownsResumeState) {
+          clearRuntimeResumeStreamState(runtime, { requestId: resumeRequestId });
           runtime.resumeAbortReason = '';
           refreshRuntimeStreamLifecycle(runtime);
           if (!keepStreaming) {
@@ -873,9 +876,9 @@ export const chatStopResumeActions = {
             failed: errorSeen || aborted
           });
         }
-        setSessionLoading(this, sessionId, keepStreaming);
+        if (canSettleResume) setSessionLoading(this, sessionId, false);
         touchSessionUpdatedAt(this, sessionId, Date.now());
-        this.clearPendingApprovals({ requestId: finishedRequestId, sessionId });
+        if (canSettleResume) this.clearPendingApprovals({ requestId: finishedRequestId, sessionId });
         if (shouldMutateLegacyResumeMessage) {
           notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
         }

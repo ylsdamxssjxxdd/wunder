@@ -94,11 +94,6 @@ impl ToolResultPayload {
         }
         if let Some(meta) = &self.meta {
             if let Value::Object(ref mut map) = payload {
-                if let Some(duration_ms) = meta.get("duration_ms").and_then(Value::as_i64) {
-                    if duration_ms > 0 {
-                        map.insert("duration_ms".to_string(), json!(duration_ms));
-                    }
-                }
                 if let Some(code) = meta.get("error_code").and_then(Value::as_str) {
                     let cleaned = code.trim();
                     if !cleaned.is_empty() {
@@ -118,8 +113,13 @@ impl ToolResultPayload {
 
     pub(super) fn to_compact_payload(&self, tool_name: &str) -> Value {
         let mut payload = self.to_observation_payload(tool_name);
+        // Preserve pagination metadata before reducing the envelope.
+        copy_continuation_fields(&mut payload, &self.data);
+        if let Some(meta) = &self.meta {
+            copy_continuation_fields(&mut payload, meta);
+        }
         compact_observation_payload(&mut payload, tool_name);
-        strip_compact_payload_noise(&mut payload, 0);
+        strip_compact_payload_noise(&mut payload, tool_name);
         payload
     }
 
@@ -280,6 +280,18 @@ fn extract_compact_failure_detail(data: &Value) -> Option<String> {
     if let Some(detail) = extract_execute_command_failure_detail(map) {
         return Some(detail);
     }
+    if let Some(detail) = map
+        .get("results")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter()
+                .filter(|row| extract_exit_code(row).is_some_and(|code| code != 0))
+                .filter_map(Value::as_object)
+                .find_map(extract_execute_command_failure_detail)
+        })
+    {
+        return Some(detail);
+    }
     if let Some(message) = map
         .get("detail")
         .or_else(|| map.get("message"))
@@ -332,10 +344,12 @@ fn extract_diagnostic_message(value: &Value) -> Option<String> {
 }
 
 fn extract_execute_command_failure_detail(map: &Map<String, Value>) -> Option<String> {
-    let output = map
-        .get("stderr")
-        .or_else(|| map.get("stdout"))
-        .and_then(Value::as_str)?;
+    let (stream, output) = ["stderr", "stdout"].into_iter().find_map(|key| {
+        map.get(key)
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+            .map(|text| (key, text))
+    })?;
     let lines = output
         .lines()
         .map(str::trim_end)
@@ -372,7 +386,7 @@ fn extract_execute_command_failure_detail(map: &Map<String, Value>) -> Option<St
     } else {
         detail
     };
-    Some(format!("stderr: {detail}"))
+    Some(format!("{stream}: {detail}"))
 }
 
 const OBSERVATION_MAX_CHARS: usize = 20_000;
@@ -385,7 +399,6 @@ const OBSERVATION_TABLE_SAMPLE_ROWS: usize = 4;
 const OBSERVATION_SEARCH_HIT_LIMIT: usize = 10;
 const OBSERVATION_SEARCH_CONTENT_HEAD_CHARS: usize = 180;
 const OBSERVATION_READ_FILE_LIMIT: usize = 8;
-const OBSERVATION_JSONL_ITEM_MAX_DEPTH: usize = 8;
 const READ_OUTPUT_TRUNCATION_PREFIX: &str = "...(truncated read output, omitted ";
 const READ_OUTPUT_TRUNCATION_SUFFIX: &str = " bytes)...";
 pub(super) const TRUNCATION_CONTINUATION_HINT: &str =
@@ -530,13 +543,14 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
     if compact_failure_observation_payload(map) {
         return;
     }
-    let Some(raw_data) = map.get("data").cloned() else {
+    let Some(raw_data) = map.remove("data") else {
         return;
     };
     let continuation_supported = supports_tool_result_continuation(&raw_data, None);
     let mut compacted_data = extract_observation_data(&raw_data);
     compact_tabular_observation_data(&mut compacted_data);
-    compact_dense_arrays_to_jsonl(&mut compacted_data);
+    compact_command_observation_rows(&mut compacted_data, canonical.as_str());
+    copy_continuation_fields(&mut compacted_data, &raw_data);
     if let Some(compacted_map) = compacted_data.as_object_mut() {
         fit_read_file_content_to_observation_budget(compacted_map);
     }
@@ -618,74 +632,55 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
     }
 }
 
-fn compact_dense_arrays_to_jsonl(value: &mut Value) {
-    match value {
-        Value::Object(map) => {
-            let keys = map.keys().cloned().collect::<Vec<_>>();
-            for key in keys {
-                if key.ends_with("_jsonl") || key.ends_with("_count") || key == "truncation_reasons"
-                {
-                    continue;
-                }
-                let lines = map.get(&key).and_then(Value::as_array).map(|items| {
-                    items
-                        .iter()
-                        .map(|item| compact_jsonl_item_for_model(item, key.as_str(), 0))
-                        .map(|item| value_to_jsonl_line(&item))
-                        .collect::<Vec<_>>()
-                });
-                let Some(lines) = lines else {
-                    continue;
-                };
-                map.insert(format!("{key}_count"), json!(lines.len()));
-                map.insert(format!("{key}_jsonl"), Value::String(lines.join("\n")));
-                map.remove(&key);
-            }
-            for nested in map.values_mut() {
-                compact_dense_arrays_to_jsonl(nested);
-            }
+fn compact_command_observation_rows(value: &mut Value, tool_name: &str) {
+    if !matches!(tool_name, "执行命令" | "execute_command") {
+        return;
+    }
+    let Some(rows) = value.get_mut("results").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for row in rows {
+        if let Some(compact) = row
+            .as_object()
+            .and_then(compact_execute_command_result_item)
+        {
+            *row = compact;
         }
-        Value::Array(items) => {
-            for item in items {
-                compact_dense_arrays_to_jsonl(item);
-            }
-        }
-        _ => {}
     }
 }
 
-fn compact_jsonl_item_for_model(value: &Value, parent_key: &str, depth: usize) -> Value {
-    if depth >= OBSERVATION_JSONL_ITEM_MAX_DEPTH {
-        return value.clone();
-    }
-    match value {
-        Value::Object(map) => {
-            if parent_key == "results" {
-                if let Some(compacted) = compact_execute_command_result_item(map) {
-                    return compacted;
-                }
-            }
-            let mut compacted = Map::new();
-            for (key, nested_value) in map {
-                if should_drop_jsonl_observation_key(key) {
-                    continue;
-                }
-                let nested = compact_jsonl_item_for_model(nested_value, key, depth + 1);
-                if is_empty_observation_value(&nested) {
-                    continue;
-                }
-                compacted.insert(key.clone(), nested);
-            }
-            Value::Object(compacted)
+// Keep native JSON arrays: JSONL nested in a JSON string adds escaping and can
+// also destroy null/empty positional values in arbitrary external tool results.
+fn copy_continuation_fields(target: &mut Value, source: &Value) {
+    let Some(target) = target.as_object_mut() else {
+        return;
+    };
+    for key in CONTINUATION_SIGNAL_KEYS.iter().copied().chain([
+        "has_more",
+        "continuation_required",
+        "continuation_hint",
+        "truncated",
+        "pagination",
+    ]) {
+        if let Some(value) = source.get(key) {
+            target
+                .entry(key.to_string())
+                .or_insert_with(|| value.clone());
         }
-        Value::Array(items) => Value::Array(
-            items
-                .iter()
-                .map(|item| compact_jsonl_item_for_model(item, parent_key, depth + 1))
-                .filter(|item| !is_empty_observation_value(item))
-                .collect(),
-        ),
-        _ => value.clone(),
+    }
+    if let Some(meta) = source.get("meta").and_then(Value::as_object) {
+        for key in CONTINUATION_SIGNAL_KEYS.iter().copied().chain([
+            "has_more",
+            "continuation_required",
+            "continuation_hint",
+            "truncated",
+        ]) {
+            if let Some(value) = meta.get(key) {
+                target
+                    .entry(key.to_string())
+                    .or_insert_with(|| value.clone());
+            }
+        }
     }
 }
 
@@ -700,8 +695,18 @@ fn compact_execute_command_result_item(map: &Map<String, Value>) -> Option<Value
         return None;
     }
     let mut compacted = Map::new();
-    if let Some(command) = map.get("command").cloned() {
-        compacted.insert("command".to_string(), command);
+    for key in [
+        "command",
+        "command_session_id",
+        "session_id",
+        "status",
+        "running",
+        "truncated",
+        "next_offset",
+    ] {
+        if let Some(value) = map.get(key) {
+            compacted.insert(key.to_string(), value.clone());
+        }
     }
     if let Some(returncode) = map.get("returncode").cloned() {
         compacted.insert("returncode".to_string(), returncode);
@@ -723,63 +728,7 @@ fn compact_execute_command_result_item(map: &Map<String, Value>) -> Option<Value
     }
 }
 
-fn should_drop_jsonl_observation_key(key: &str) -> bool {
-    if key.ends_with("_session_id") || key.ends_with("_round") {
-        return true;
-    }
-    if key.ends_with("_meta") && key != "error_meta" {
-        return true;
-    }
-    matches!(
-        key,
-        "meta"
-            | "tool_call_id"
-            | "trace_id"
-            | "timestamp"
-            | "log_profile"
-            | "transport_ok"
-            | "business_ok"
-            | "final_ok"
-            | "command_index"
-            | "output_meta"
-            | "elapsed_ms"
-            | "duration_ms"
-            | "latency_ms"
-            | "timing"
-            | "timings"
-            | "stats"
-            | "metrics"
-            | "performance"
-            | "perf"
-    )
-}
-
-fn is_empty_observation_value(value: &Value) -> bool {
-    match value {
-        Value::Null => true,
-        Value::String(text) => text.trim().is_empty(),
-        Value::Array(items) => items.is_empty(),
-        Value::Object(map) => map.is_empty(),
-        _ => false,
-    }
-}
-
-fn value_to_jsonl_line(value: &Value) -> String {
-    match value {
-        Value::Null => "null".to_string(),
-        Value::String(text) => text.to_string(),
-        Value::Bool(flag) => flag.to_string(),
-        Value::Number(num) => num.to_string(),
-        Value::Array(_) | Value::Object(_) => {
-            serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
-        }
-    }
-}
-
-fn strip_compact_payload_noise(value: &mut Value, depth: usize) {
-    if depth > 8 {
-        return;
-    }
+fn strip_compact_payload_noise(value: &mut Value, tool_name: &str) {
     let Value::Object(map) = value else {
         return;
     };
@@ -796,6 +745,15 @@ fn strip_compact_payload_noise(value: &mut Value, depth: usize) {
         "transport_ok",
     ] {
         map.remove(key);
+    }
+    // External payload fields are application data, even when their names look
+    // like runtime metadata. Only known built-in envelopes have removable noise.
+    let canonical = crate::services::tools::resolve_tool_name(tool_name);
+    if !matches!(
+        canonical.as_str(),
+        "读取文件" | "搜索内容" | "列出文件" | "写入文件" | "文本编辑" | "执行命令" | "ptc"
+    ) {
+        return;
     }
     if let Some(data) = map.get_mut("data").and_then(Value::as_object_mut) {
         for key in [
@@ -816,12 +774,6 @@ fn strip_compact_payload_noise(value: &mut Value, depth: usize) {
         ] {
             data.remove(key);
         }
-        for nested in data.values_mut() {
-            strip_compact_payload_noise(nested, depth + 1);
-        }
-    }
-    for nested in map.values_mut() {
-        strip_compact_payload_noise(nested, depth + 1);
     }
 }
 
@@ -861,9 +813,6 @@ fn extract_observation_data(value: &Value) -> Value {
     }
     if let Some(parsed) = parse_json_from_content_text_blocks(value) {
         return parsed;
-    }
-    if let Some(content) = map.get("content").filter(|item| !item.is_null()) {
-        return content.clone();
     }
     value.clone()
 }
@@ -953,6 +902,14 @@ fn compact_search_observation_data(map: &Map<String, Value>) -> Option<Value> {
 }
 
 fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value> {
+    if !map.get("files").is_some_and(Value::is_array)
+        && !map
+            .get("meta")
+            .and_then(|meta| meta.get("files"))
+            .is_some_and(Value::is_array)
+    {
+        return None;
+    }
     let content = map.get("content").and_then(Value::as_str)?;
     let mut compacted = Map::new();
     let (clean_content, read_output_omitted_bytes) = strip_read_output_truncation_notice(content);

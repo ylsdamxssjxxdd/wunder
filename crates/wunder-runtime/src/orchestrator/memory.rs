@@ -22,10 +22,11 @@ impl Orchestrator {
             if overflow <= 0 {
                 break;
             }
+            let tokens_before = estimate_message_tokens(&trimmed[index]);
             let changed = if let Some(obj) = trimmed[index].as_object_mut() {
                 let role = obj.get("role").and_then(Value::as_str).unwrap_or("");
                 let content = obj.get("content").unwrap_or(&Value::Null);
-                if !Self::is_observation_message(role, content) {
+                if role != "tool" && !Self::is_observation_message(role, content) {
                     false
                 } else if let Value::String(text) = content {
                     let current_tokens = approx_token_count(text);
@@ -53,7 +54,7 @@ impl Orchestrator {
                 false
             };
             if changed {
-                overflow = (estimate_messages_tokens(&trimmed) - limit).max(0);
+                overflow -= (tokens_before - estimate_message_tokens(&trimmed[index])).max(0);
             }
         }
         trimmed
@@ -146,6 +147,25 @@ impl Orchestrator {
         let estimated_message_tokens = estimate_messages_tokens(&messages);
         if !should_compact {
             return Ok(CompactionResult::unchanged(messages));
+        }
+        if !force && run_mode == CompactionRunMode::AutoLoop {
+            if let Some(result) = self
+                .try_microcompact_messages(
+                    &messages,
+                    user_id,
+                    session_id,
+                    emitter,
+                    round_info,
+                    persisted_context_tokens,
+                    history_threshold
+                        .unwrap_or(limit)
+                        .min(limit)
+                        .min(compaction_decision.presampling_limit),
+                )
+                .await
+            {
+                return Ok(result);
+            }
         }
         let compaction_id = new_compaction_id(compaction_profile.run_mode);
         let compaction_id_ref = Some(compaction_id.as_str());

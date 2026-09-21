@@ -104,6 +104,33 @@ fn test_build_compaction_summary_config_disables_reasoning_in_payload() {
 }
 
 #[test]
+fn summary_output_budget_is_bounded_and_respects_smaller_limits() {
+    for (configured, expected) in [
+        (None, 2048),
+        (Some(0), 2048),
+        (Some(512), 512),
+        (Some(16384), 2048),
+    ] {
+        let config = llm_config(json!({"max_output": configured}));
+        assert_eq!(
+            build_compaction_summary_config(&config).max_output,
+            Some(expected)
+        );
+        assert_eq!(config.max_output, configured);
+    }
+}
+
+#[test]
+fn summary_preserves_structured_search_evidence() {
+    let content = json!({"tool": "search_content", "ok": true, "data": {
+        "hits": [{"path": "file", "line": 7, "content_head": "value"}]
+    }})
+    .to_string();
+    let summary = summarize_compaction_observation(&json!(content));
+    assert_eq!(summary, "Tool observation (search_content): success\n[{\"content_head\":\"value\",\"line\":7,\"path\":\"file\"}]");
+}
+
+#[test]
 fn test_prepare_compaction_summary_messages_compacts_observation_payload() {
     let preview = "X".repeat(12_000);
     let messages = vec![

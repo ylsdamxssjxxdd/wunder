@@ -903,7 +903,8 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       overscan: ctx.MESSAGE_VIRTUAL_OVERSCAN,
       tailPinCount: ctx.MESSAGE_VIRTUAL_TAIL_PIN_COUNT,
       estimatedHeight: ctx.MESSAGE_VIRTUAL_ESTIMATED_HEIGHT,
-      resolveHeight: ctx.resolveVirtualMessageHeight
+      resolveHeight: ctx.resolveVirtualMessageHeight,
+      layoutVersion: ctx.messageVirtualLayoutVersion.value
   }));
 
   ctx.agentVirtualTopSpacer = computed<MessageVirtualSpacer | null>(() => ctx.agentVirtualWindow.value.enabled &&
@@ -977,7 +978,8 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       overscan: ctx.MESSAGE_VIRTUAL_OVERSCAN,
       tailPinCount: ctx.MESSAGE_VIRTUAL_TAIL_PIN_COUNT,
       estimatedHeight: ctx.MESSAGE_VIRTUAL_ESTIMATED_HEIGHT,
-      resolveHeight: ctx.resolveVirtualMessageHeight
+      resolveHeight: ctx.resolveVirtualMessageHeight,
+      layoutVersion: ctx.messageVirtualLayoutVersion.value
   }));
 
   ctx.worldVirtualTopSpacer = computed<MessageVirtualSpacer | null>(() => ctx.worldVirtualWindow.value.enabled &&

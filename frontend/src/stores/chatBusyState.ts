@@ -2,18 +2,9 @@ import type {
   ChatRuntimeProjection,
   ChatSessionRuntimeStatus
 } from '@/realtime/chat/chatRuntimeTypes';
-import {
-  selectSessionBusy,
-  selectSessionRuntimeStatus
-} from '@/realtime/chat/chatRuntimeSelectors';
+import { selectSessionRuntimeStatus } from '@/realtime/chat/chatRuntimeSelectors';
 import { isChatRuntimeBusyStatus } from '@/realtime/chat/chatRuntimeReducer';
-import {
-  hasActiveBlockingSwarmAfterLatestUser,
-  hasActiveSubagentsAfterLatestUser,
-  isSessionBusyFromSignals,
-  isThreadRuntimeBusy,
-  normalizeThreadRuntimeStatus
-} from '@/utils/chatSessionRuntime';
+import { normalizeThreadRuntimeStatus } from '@/utils/chatSessionRuntime';
 
 type ChatMessageLike = Record<string, unknown>;
 
@@ -39,116 +30,26 @@ type ResolveMergedSessionRuntimeStatusOptions = {
 
 const normalizeSessionId = (value: unknown): string => String(value || '').trim();
 
-const isTerminalThreadRuntimeStatus = (value: unknown): boolean => {
-  const normalized = normalizeThreadRuntimeStatus(value);
-  return normalized !== 'running' && normalized !== 'queued' && !isThreadRuntimeBusy(normalized);
-};
-
-const isExplicitTerminalThreadRuntimeStatus = (value: unknown): boolean => {
-  const normalized = normalizeThreadRuntimeStatus(value);
-  return normalized === 'completed' ||
-    normalized === 'failed' ||
-    normalized === 'cancelled' ||
-    normalized === 'system_error';
-};
-
+// Once a projection exists, it is the sole sequenced source of session status.
+// Controllers and materialized message flags are transport/presentation state.
 export const resolveMergedSessionRuntimeStatus = (
   options: ResolveMergedSessionRuntimeStatusOptions
 ): ChatSessionRuntimeStatus | string => {
   const sessionId = normalizeSessionId(options.sessionId);
   if (!sessionId) return 'not_loaded';
+  const status = selectSessionRuntimeStatus(options.projection, sessionId);
+  if (status !== 'not_loaded') return status;
   const runtimeStatus = normalizeThreadRuntimeStatus(options.runtimeStatus);
-  const messages = Array.isArray(options.messages) ? options.messages : [];
-  const busy = resolveMergedSessionBusy({
-    projection: options.projection,
-    sessionId,
-    loading: options.loading,
-    messages,
-    runtimeStatus: options.runtimeStatus,
-    runtimeKnown: options.runtimeKnown,
-    runtimeHasControllers: options.runtimeHasControllers
-  });
-  const projectionStatus = selectSessionRuntimeStatus(
-    options.projection,
-    sessionId
-  );
-  const hasActiveBlockingSwarm = hasActiveBlockingSwarmAfterLatestUser(messages);
-  if (isThreadRuntimeBusy(runtimeStatus)) {
-    return runtimeStatus;
-  }
-  if (runtimeStatus === 'queued') {
-    return runtimeStatus;
-  }
-  if (
-    options.runtimeKnown === true &&
-    isExplicitTerminalThreadRuntimeStatus(runtimeStatus) &&
-    !hasActiveBlockingSwarm
-  ) {
-    return runtimeStatus;
-  }
-  if (isChatRuntimeBusyStatus(projectionStatus) && busy) {
-    return projectionStatus;
-  }
-  if (busy) {
-    return 'running';
-  }
-  if (
-    options.runtimeKnown === true &&
-    options.runtimeHasControllers !== true &&
-    isTerminalThreadRuntimeStatus(options.runtimeStatus)
-  ) {
-    return runtimeStatus;
-  }
-  if (projectionStatus !== 'not_loaded') {
-    return projectionStatus;
-  }
-  return runtimeStatus;
+  if ((runtimeStatus === 'idle' || runtimeStatus === 'not_loaded') &&
+      (options.loading || options.runtimeHasControllers)) return 'running';
+  if (runtimeStatus !== 'not_loaded') return runtimeStatus;
+  return options.loading || options.runtimeHasControllers ? 'running' : 'not_loaded';
 };
 
 export const resolveMergedSessionBusy = (
   options: ResolveMergedSessionBusyOptions
 ): boolean => {
-  const sessionId = normalizeSessionId(options.sessionId);
-  if (!sessionId) return false;
-  const messages = Array.isArray(options.messages) ? options.messages : [];
-  const projectionBusy = selectSessionBusy(options.projection, sessionId);
-  const busyBySignals = isSessionBusyFromSignals(
-    options.loading,
-    messages,
-    options.runtimeStatus
-  ) || hasActiveBlockingSwarmAfterLatestUser(messages);
-  const hasLoadingFlag = Boolean(options.loading);
-  const hasActiveBlockingSwarm = hasActiveBlockingSwarmAfterLatestUser(messages);
-  const explicitTerminalRuntime =
-    options.runtimeKnown === true &&
-    isExplicitTerminalThreadRuntimeStatus(options.runtimeStatus);
-  if (
-    !hasLoadingFlag &&
-    explicitTerminalRuntime &&
-    !hasActiveSubagentsAfterLatestUser(messages) &&
-    !hasActiveBlockingSwarm
-  ) {
-    return false;
-  }
-  if (options.runtimeHasControllers === true) {
-    return true;
-  }
-  if (!projectionBusy && !busyBySignals) {
-    return false;
-  }
-  const terminalRuntime =
-    options.runtimeKnown === true &&
-    isTerminalThreadRuntimeStatus(options.runtimeStatus);
-  if (
-    !hasLoadingFlag &&
-    terminalRuntime &&
-    !hasActiveSubagentsAfterLatestUser(messages) &&
-    !hasActiveBlockingSwarm
-  ) {
-    // Hydrated snapshots can briefly keep old assistant streaming flags after the
-    // thread has already settled. Do not let stale projection/message flags
-    // revive the composer after the runtime has confirmed an idle thread.
-    return false;
-  }
-  return true;
+  const status = resolveMergedSessionRuntimeStatus(options);
+  // Queued work can still accept another message; running/waiting work exposes stop.
+  return status !== 'queued' && isChatRuntimeBusyStatus(status);
 };

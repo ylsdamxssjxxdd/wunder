@@ -1,10 +1,10 @@
+mod command_stream;
 pub mod server;
 
 use crate::config::Config;
 use crate::i18n;
 use crate::user_tools::UserToolBindings;
 use crate::workspace::WorkspaceManager;
-use futures::StreamExt;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::env;
@@ -59,6 +59,10 @@ fn is_loopback_host(host: &str) -> bool {
 }
 
 fn sandbox_endpoint_candidates(_config: &Config) -> Vec<String> {
+    endpoint_candidates(env::var("WUNDER_SANDBOX_ENDPOINT").ok().as_deref())
+}
+
+fn endpoint_candidates(endpoint: Option<&str>) -> Vec<String> {
     fn push(candidates: &mut Vec<String>, seen: &mut HashSet<String>, raw: &str) {
         let Some(normalized) = normalize_endpoint(raw) else {
             return;
@@ -72,8 +76,8 @@ fn sandbox_endpoint_candidates(_config: &Config) -> Vec<String> {
     let mut candidates = Vec::new();
     let mut seen = HashSet::new();
 
-    if let Ok(value) = env::var("WUNDER_SANDBOX_ENDPOINT") {
-        push(&mut candidates, &mut seen, &value);
+    if let Some(value) = endpoint {
+        push(&mut candidates, &mut seen, value);
     }
     push(&mut candidates, &mut seen, DEFAULT_SANDBOX_ENDPOINT);
 
@@ -389,48 +393,22 @@ pub async fn execute_tool(
 
         let response = match response {
             Ok(resp) => resp,
-            Err(err) => {
+            Err(err) if err.is_connect() => {
                 warn!("sandbox request failed for {endpoint}: {err}");
                 last_error = json!({ "endpoint": endpoint, "detail": err.to_string() });
                 continue;
             }
+            Err(_) => return command_stream_failure("sandbox tool request interrupted"),
         };
 
         let status = response.status();
-        let body = match response.text().await {
-            Ok(value) => value,
-            Err(err) => {
-                warn!("sandbox response read failed for {endpoint}: {err}");
-                last_error = json!({
-                    "endpoint": endpoint,
-                    "status": status.as_u16(),
-                    "error": err.to_string(),
-                });
-                continue;
-            }
-        };
-        let parsed = match serde_json::from_str::<Value>(&body) {
-            Ok(value) => value,
-            Err(err) => {
-                warn!("sandbox response json parse failed for {endpoint}: {err}");
-                last_error = json!({
-                    "endpoint": endpoint,
-                    "status": status.as_u16(),
-                    "error": err.to_string(),
-                    "raw": truncate_text(&body, 2048),
-                });
-                continue;
-            }
-        };
         if !status.is_success() {
-            last_error = json!({
-                "endpoint": endpoint,
-                "status": status.as_u16(),
-                "response": parsed,
-            });
-            continue;
+            return command_stream_failure("sandbox tool request rejected");
         }
-
+        let parsed = match response.json::<Value>().await {
+            Ok(value) => value,
+            Err(_) => return command_stream_failure("sandbox tool response interrupted"),
+        };
         let ok = parsed.get("ok").and_then(Value::as_bool).unwrap_or(false);
         let error = parsed
             .get("error")
@@ -550,103 +528,30 @@ where
 
     for endpoint in &endpoints {
         let url = format!("{endpoint}/sandboxes/execute_command_stream");
-        let response = tokio::time::timeout(
+        let parsed = match command_stream::request(
+            http_client(),
+            &url,
+            &payload,
             Duration::from_secs(timeout_s),
-            http_client().post(&url).json(&payload).send(),
+            &mut on_event,
         )
-        .await;
-        let response = match response {
-            Ok(Ok(resp)) => resp,
-            Ok(Err(err)) => {
-                warn!("sandbox stream request failed for {endpoint}: {err}");
-                last_error = json!({ "endpoint": endpoint, "detail": err.to_string() });
+        .await
+        {
+            Ok(Some(parsed)) => parsed,
+            Ok(None) => {
+                last_error = json!({ "endpoint": endpoint, "detail": "stream route unavailable" });
                 continue;
             }
-            Err(_) => {
-                warn!("sandbox stream request timed out before response headers for {endpoint}");
-                last_error =
-                    json!({ "endpoint": endpoint, "detail": "stream response header timeout" });
-                continue;
+            Err(err) => {
+                warn!("{err}");
+                return Some(command_stream_failure("sandbox command stream interrupted"));
             }
         };
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            last_error = json!({
-                "endpoint": endpoint,
-                "status": status.as_u16(),
-                "raw": truncate_text(&body, 2048),
-            });
-            continue;
-        }
-
-        let mut final_payload: Option<Value> = None;
-        let mut pending = Vec::<u8>::new();
-        let mut stream = response.bytes_stream();
-        while let Some(item) = stream.next().await {
-            let chunk = match item {
-                Ok(chunk) => chunk,
-                Err(err) => {
-                    warn!("sandbox stream chunk read failed for {endpoint}: {err}");
-                    last_error = json!({
-                        "endpoint": endpoint,
-                        "error": err.to_string(),
-                    });
-                    final_payload = None;
-                    break;
-                }
-            };
-            pending.extend_from_slice(&chunk);
-            while let Some(index) = pending.iter().position(|byte| *byte == b'\n') {
-                let line = pending.drain(..=index).collect::<Vec<_>>();
-                let text = String::from_utf8_lossy(&line).trim().to_string();
-                if text.is_empty() {
-                    continue;
-                }
-                let parsed = match serde_json::from_str::<Value>(&text) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        warn!("sandbox stream json parse failed for {endpoint}: {err}");
-                        continue;
-                    }
-                };
-                if parsed.get("type").and_then(Value::as_str) == Some("final") {
-                    final_payload = parsed.get("payload").cloned();
-                } else {
-                    on_event(parsed);
-                }
-            }
-        }
-        if !pending.is_empty() {
-            let text = String::from_utf8_lossy(&pending).trim().to_string();
-            if !text.is_empty() {
-                if let Ok(parsed) = serde_json::from_str::<Value>(&text) {
-                    if parsed.get("type").and_then(Value::as_str) == Some("final") {
-                        final_payload = parsed.get("payload").cloned();
-                    } else {
-                        on_event(parsed);
-                    }
-                }
-            }
-        }
-
-        if let Some(parsed) = final_payload {
-            let ok = parsed.get("ok").and_then(Value::as_bool).unwrap_or(false);
-            let error = parsed
-                .get("error")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let data = parsed.get("data").cloned().unwrap_or_else(|| json!({}));
-            let data =
-                rewrite_sandbox_paths(&public_root, &container_workspace_root, "执行命令", data);
-            return Some(json!({
-                "ok": ok,
-                "data": data,
-                "error": error,
-                "sandbox": true,
-            }));
-        }
+        let ok = parsed.get("ok").and_then(Value::as_bool).unwrap_or(false);
+        let error = parsed.get("error").and_then(Value::as_str).unwrap_or("");
+        let data = parsed.get("data").cloned().unwrap_or_else(|| json!({}));
+        let data = rewrite_sandbox_paths(&public_root, &container_workspace_root, "执行命令", data);
+        return Some(json!({ "ok": ok, "data": data, "error": error, "sandbox": true }));
     }
 
     Some(json!({
@@ -655,6 +560,19 @@ where
         "error": "sandbox stream request failed",
         "sandbox": true,
     }))
+}
+
+fn command_stream_failure(error: &str) -> Value {
+    json!({
+        "ok": false,
+        "data": { "error_meta": {
+            "code": "SANDBOX_EXECUTION_INTERRUPTED",
+            "retryable": false,
+            "outcome_unknown": true,
+        } },
+        "error": error,
+        "sandbox": true,
+    })
 }
 
 fn rewrite_sandbox_paths(
@@ -706,19 +624,6 @@ fn replace_paths_in_value(value: &mut Value, from_root: &str, to_root: &str) {
     }
 }
 
-fn truncate_text(text: &str, max: usize) -> String {
-    if text.len() <= max {
-        return text.to_string();
-    }
-    let mut end = max;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    let mut output = text[..end].to_string();
-    output.push_str("...");
-    output
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -726,20 +631,6 @@ mod tests {
     use crate::workspace::WorkspaceManager;
     use std::sync::Arc;
     use uuid::Uuid;
-
-    fn with_env_var<F: FnOnce() -> R, R>(key: &str, value: Option<&str>, f: F) -> R {
-        let original = env::var(key).ok();
-        match value {
-            Some(value) => env::set_var(key, value),
-            None => env::remove_var(key),
-        }
-        let result = f();
-        match original {
-            Some(value) => env::set_var(key, value),
-            None => env::remove_var(key),
-        }
-        result
-    }
 
     #[test]
     fn test_normalize_endpoint() {
@@ -757,15 +648,15 @@ mod tests {
 
     #[test]
     fn test_sandbox_endpoint_candidates_adds_fallback() {
-        with_env_var("WUNDER_SANDBOX_ENDPOINT", None, || {
-            let config = Config::default();
-
-            let candidates = sandbox_endpoint_candidates(&config);
-            assert!(candidates
-                .iter()
-                .any(|item| item == "http://127.0.0.1:9001"));
-            assert!(candidates.iter().any(|item| item == "http://sandbox:9001"));
-        });
+        assert_eq!(endpoint_candidates(None), vec![DEFAULT_SANDBOX_ENDPOINT]);
+        assert_eq!(
+            endpoint_candidates(Some("http://sandbox:9001")),
+            vec![
+                "http://sandbox:9001",
+                DEFAULT_SANDBOX_ENDPOINT,
+                "http://127.0.0.1:9001"
+            ]
+        );
     }
 
     #[test]

@@ -239,7 +239,7 @@ test('messenger display-derived agent state reads the renderable source instead 
 
   assert.ok(identityState.includes('messageCount: ctx.resolveActiveAgentRenderableMessageRecords().length'));
   assert.ok(identityState.includes('const messages = ctx.resolveActiveAgentRenderableMessageRecords();'));
-  assert.ok(runtimeToolLists.includes('? ctx.resolveActiveAgentRenderableMessageRecords()'));
+  assert.ok(runtimeToolLists.includes('ctx.chatStore.isSessionBusy'));
   assert.ok(panelSummaries.includes('ctx.resolveEffectiveSessionBusy(sessionId, ctx.resolveActiveAgentRenderableMessageRecords())'));
   assert.ok(panelSummaries.includes('const messages = ctx.resolveActiveAgentRenderableMessageRecords();'));
   assert.ok(panelSummaries.includes('() => ctx.resolveActiveAgentRenderableMessageRecords().length'));
@@ -342,6 +342,7 @@ test('streaming message text updates are scoped to the markdown body component',
   const messengerView = readSource('src/views/MessengerView.vue');
   const markdownBody = readSource('src/components/chat/MessageMarkdownBody.vue');
   const runtimeContent = readSource('src/components/chat/messageRuntimeContent.ts');
+  const markdownCache = readSource('src/components/chat/messageMarkdownCache.ts');
   const renderAdapter = readSource('src/realtime/chat/chatRuntimeRenderAdapter.ts');
   const renderableController = readSource('src/views/messenger/controller/messengerControllerRenderableMessages.ts');
   const companionFloatingLayer = readSource('src/components/companions/CompanionFloatingLayer.vue');
@@ -357,7 +358,7 @@ test('streaming message text updates are scoped to the markdown body component',
   assert.ok(!markdownBody.includes('toRaw(chatStore.runtimeProjection)'));
   assert.ok(markdownBody.includes('props.runtimeUserTurnId'));
   assert.ok(markdownBody.includes('props.runtimeModelTurnId'));
-  assert.ok(!markdownBody.includes('runtimeProjectionVersion'));
+  assert.ok(markdownBody.includes('const structureVersion = chatStore.runtimeProjectionVersion;'));
   assert.ok(markdownBody.includes('runtimeContentVersion.value'));
   assert.ok(markdownBody.includes('runtimeProjectionContentVersionByMessage?.[messageId]'));
   assert.ok(markdownBody.includes('const resolveRuntimeProjectedMessage = () => {'));
@@ -371,21 +372,21 @@ test('streaming message text updates are scoped to the markdown body component',
   assert.ok(runtimeContent.includes('rendered message\n// id is authoritative'));
   assert.ok(markdownBody.includes('ref="plainTextRef"'));
   assert.ok(markdownBody.includes('syncPlainTextDom(source);'));
-  assert.ok(markdownBody.includes('LIVE_STREAM_TEXT_POLL_MS'));
-  assert.ok(markdownBody.includes('syncLiveRuntimePlainText'));
+  assert.ok(!markdownBody.includes('LIVE_STREAM_TEXT_POLL_MS'));
+  assert.ok(markdownBody.includes('(textNode as Text).appendData(delta)'));
   assert.ok(markdownBody.includes('if (!isChatDebugEnabled() || !props.streaming'));
   assert.ok(!markdownBody.includes('{{ visiblePlainText }}'));
-  assert.ok(markdownBody.includes('STREAMING_TEXT_PREVIEW_MAX_CHARS'));
+  assert.ok(!markdownBody.includes('STREAMING_TEXT_PREVIEW_MAX_CHARS'));
   assert.ok(markdownBody.includes('props.streaming === true'));
   assert.ok(markdownBody.includes('? isStreamingTextPreview.value'));
   assert.ok(markdownBody.includes('STREAM_TEXT_FLUSH_MIN_MS'));
   assert.ok(markdownBody.includes('const HISTORY_MARKDOWN_INITIAL_CHARS = 24000;'));
-  assert.ok(markdownBody.includes('const MARKDOWN_BODY_CACHE_MAX_BYTES = 12 * 1024 * 1024;'));
-  assert.ok(markdownBody.includes('const writeMarkdownCacheEntry ='));
+  assert.ok(markdownCache.includes('const MARKDOWN_BODY_CACHE_MAX_BYTES = 12 * 1024 * 1024;'));
+  assert.ok(markdownCache.includes('const writeMarkdownCacheEntry ='));
   assert.ok(markdownBody.includes('v-if="isContentTruncated"'));
   assert.ok(markdownBody.includes('getSessionHistoryMessage'));
-  assert.ok(markdownBody.includes('HYDRATED_HISTORY_CONTENT_CACHE_LIMIT = 64'));
-  assert.ok(markdownBody.includes('HYDRATED_HISTORY_CONTENT_CACHE_MAX_BYTES = 8 * 1024 * 1024'));
+  assert.ok(markdownCache.includes('HYDRATED_HISTORY_CONTENT_CACHE_LIMIT = 64'));
+  assert.ok(markdownCache.includes('HYDRATED_HISTORY_CONTENT_CACHE_MAX_BYTES = 8 * 1024 * 1024'));
   assert.ok(markdownBody.includes("emit('history-message-hydrated'"));
   assert.ok(messengerView.includes('item.message.workflowItems_truncated === true'));
   assert.ok(messengerView.includes('item.message.subagents_truncated === true'));
@@ -520,7 +521,7 @@ test('idle session detail hydration keeps the transcript lightweight while workf
   assert.ok(runtimeState.includes('payload.running === true'));
   assert.ok(runtimeState.includes('hasRuntimeControllers(runtime)'));
   assert.ok(sessionOpen.includes('shouldApplySessionEventsSnapshotToProjection(eventsPayload, runtime)'));
-  assert.ok(sessionOpen.includes("events-snapshot-skip-idle-transcript"));
+  assert.ok(sessionOpen.includes('events: [], rounds: []'));
   assert.ok(cacheActions.includes('shouldApplySessionEventsSnapshotToProjection(eventsPayload, runtime)'));
   assert.ok(cacheActions.includes("events-snapshot-skip-idle-transcript"));
   assert.ok(sessionOpen.includes('void this.hydrateSessionWorkflowHistory(targetSessionId, this.messages);'));

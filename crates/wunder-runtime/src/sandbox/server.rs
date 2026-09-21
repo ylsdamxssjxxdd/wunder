@@ -23,13 +23,10 @@ use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::a2a_store::A2aStore;
 use crate::command_utils;
-use crate::config::Config;
 use crate::core::python_runtime;
 use crate::core::tool_args::recover_tool_args_value as recover_tool_args_value_lossy;
 use crate::i18n;
-use crate::lsp::LspManager;
 use crate::services::tools::command_options::{
     apply_time_budget_secs, parse_command_budget, parse_dry_run,
 };
@@ -41,13 +38,13 @@ use crate::services::tools::tool_error::{
     build_execute_command_failure_data, build_execute_command_failure_message, with_error_meta,
     ToolErrorMeta,
 };
-use crate::skills::SkillRegistry;
-use crate::storage;
-use crate::tools::{execute_builtin_tool, ToolContext};
-use crate::workspace::WorkspaceManager;
 use std::fs;
 use std::io::ErrorKind;
 use tracing::warn;
+
+#[path = "file_runtime.rs"]
+mod file_runtime;
+use file_runtime::execute_builtin_file_tool;
 
 const DEFAULT_COMMAND_TIMEOUT_S: f64 = 30.0;
 const PTC_TIMEOUT_S: u64 = 60;
@@ -322,13 +319,34 @@ async fn execute_command_stream(Json(request): Json<SandboxToolRequest>) -> impl
     let (tx, rx) = mpsc::channel::<Result<Bytes, Infallible>>(64);
     tokio::spawn(async move {
         i18n::with_language(language, async move {
-            let response = handle_execute_command_stream(request, tx.clone()).await;
-            let _ = send_stream_json(
-                &tx,
-                json!({
-                    "type": "final",
-                    "payload": response,
-                }),
+            // Dropping the execution future kills its child and aborts pipe readers.
+            let response = tokio::select! {
+                biased;
+                _ = tx.closed() => return,
+                response = timeout(
+                    Duration::from_secs(super::sandbox_timeout_seconds()),
+                    handle_execute_command_stream(request, tx.clone()),
+                ) => match response {
+                    Ok(response) => response,
+                    Err(_) => SandboxToolResponse {
+                        ok: false,
+                        data: json!({ "error_meta": { "code": "SANDBOX_COMMAND_TIMEOUT", "retryable": false } }),
+                        error: "sandbox command stream timed out".to_string(),
+                        debug_events: Vec::new(),
+                    },
+                },
+            };
+            // A stalled consumer must not retain the response task after the
+            // command deadline, even when the bounded channel is already full.
+            let _ = timeout(
+                Duration::from_millis(STREAM_DRAIN_TIMEOUT_MS),
+                send_stream_json(
+                    &tx,
+                    json!({
+                        "type": "final",
+                        "payload": response,
+                    }),
+                ),
             )
             .await;
         })
@@ -1144,204 +1162,6 @@ async fn execute_command_streaming(
     }
 }
 
-async fn execute_builtin_file_tool(
-    request: &SandboxToolRequest,
-    context: &SandboxContext,
-    args: &Value,
-) -> ToolResult {
-    let mut config = Config::default();
-    config.server.mode = "desktop".to_string();
-    config.workspace.root = context.container_root.to_string_lossy().to_string();
-    configure_sandbox_file_tool_storage(&mut config);
-    config.security.allow_paths = vec!["*".to_string()];
-    config.security.deny_globs = Vec::new();
-    config.lsp.enabled = false;
-
-    let workspace_id = context
-        .workspace_root
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(request.user_id.as_str())
-        .to_string();
-    let mut container_roots = HashMap::new();
-    container_roots.insert(0, context.workspace_root.to_string_lossy().to_string());
-    container_roots.insert(1, context.workspace_root.to_string_lossy().to_string());
-    config.workspace.container_roots = container_roots.clone();
-
-    let storage = match sandbox_file_tool_storage(&config) {
-        Ok(storage) => storage,
-        Err(err) => {
-            return ToolResult {
-                ok: false,
-                data: with_error_meta(
-                    json!({ "detail": err }),
-                    ToolErrorMeta::new(
-                        "SANDBOX_STORAGE_INIT_FAILED",
-                        Some("sandbox 文件工具初始化本地存储失败。".to_string()),
-                        true,
-                        Some(200),
-                    ),
-                ),
-                error: "sandbox storage initialization failed".to_string(),
-            };
-        }
-    };
-    let workspace = Arc::new(WorkspaceManager::new(
-        &config.workspace.root,
-        Arc::clone(&storage),
-        config.workspace.retention_days,
-        &config.workspace.container_roots,
-    ));
-    let lsp_manager = LspManager::new(Arc::clone(&workspace));
-    let a2a_store = A2aStore::new();
-    let skills = SkillRegistry::default();
-    let http = reqwest::Client::new();
-    let filesystem_roots = Arc::new(vec![PathBuf::from("/")]);
-    let tool_context = ToolContext {
-        user_id: request.user_id.as_str(),
-        session_id: request.session_id.as_str(),
-        workspace_id: workspace_id.as_str(),
-        agent_id: None,
-        user_round: None,
-        model_round: None,
-        is_admin: false,
-        storage,
-        orchestrator: None,
-        monitor: None,
-        beeroom_realtime: None,
-        workspace,
-        lsp_manager,
-        config: &config,
-        a2a_store: &a2a_store,
-        skills: &skills,
-        gateway: None,
-        user_world: None,
-        cron_wake_signal: None,
-        user_tool_manager: None,
-        user_tool_bindings: None,
-        user_tool_store: None,
-        request_config_overrides: None,
-        allow_roots: Some(Arc::clone(&filesystem_roots)),
-        read_roots: Some(filesystem_roots),
-        command_sessions: None,
-        event_emitter: None,
-        http: &http,
-    };
-
-    let args = normalize_sandbox_file_tool_args(args);
-    match execute_builtin_tool(&tool_context, request.tool.as_str(), &args).await {
-        Ok(result) => ToolResult {
-            ok: result.get("ok").and_then(Value::as_bool).unwrap_or(true),
-            data: result,
-            error: String::new(),
-        },
-        Err(err) => ToolResult {
-            ok: false,
-            data: with_error_meta(
-                json!({ "detail": err.to_string() }),
-                ToolErrorMeta::new(
-                    "SANDBOX_FILE_TOOL_FAILED",
-                    Some("sandbox 文件工具执行失败。".to_string()),
-                    true,
-                    Some(200),
-                ),
-            ),
-            error: err.to_string(),
-        },
-    }
-}
-
-fn sandbox_file_tool_storage(
-    config: &Config,
-) -> std::result::Result<Arc<dyn storage::StorageBackend>, String> {
-    static STORAGE: OnceLock<Arc<dyn storage::StorageBackend>> = OnceLock::new();
-    if let Some(storage) = STORAGE.get() {
-        return Ok(Arc::clone(storage));
-    }
-    let storage = storage::build_storage(&config.storage).map_err(|err| err.to_string())?;
-    storage
-        .ensure_initialized()
-        .map_err(|err| err.to_string())?;
-    if STORAGE.set(Arc::clone(&storage)).is_ok() {
-        Ok(storage)
-    } else {
-        STORAGE
-            .get()
-            .map(Arc::clone)
-            .ok_or_else(|| "sandbox storage cache initialization failed".to_string())
-    }
-}
-
-fn configure_sandbox_file_tool_storage(config: &mut Config) {
-    configure_sandbox_file_tool_storage_from(config, &|name| std::env::var(name).ok());
-}
-
-fn configure_sandbox_file_tool_storage_from(
-    config: &mut Config,
-    env_lookup: &dyn Fn(&str) -> Option<String>,
-) {
-    let backend = env_string_from(env_lookup, "WUNDER_STORAGE_BACKEND")
-        .unwrap_or_else(|| "postgres".to_string());
-    config.storage.backend = backend.clone();
-    if let Some(db_path) = env_string_from(env_lookup, "WUNDER_SQLITE_DB_PATH") {
-        config.storage.db_path = db_path;
-    }
-    if let Some(dsn) = env_string_from(env_lookup, "WUNDER_POSTGRES_DSN") {
-        config.storage.postgres.dsn = dsn;
-    } else if is_postgres_backend(&backend) {
-        config.storage.postgres.dsn =
-            "postgresql://wunder:wunder@wunder-postgres:5432/wunder".to_string();
-    }
-    if let Some(timeout_s) = env_u64_from(env_lookup, "WUNDER_POSTGRES_CONNECT_TIMEOUT_S") {
-        config.storage.postgres.connect_timeout_s = timeout_s;
-    }
-    if let Some(pool_size) = env_usize_from(env_lookup, "WUNDER_POSTGRES_POOL_SIZE") {
-        config.storage.postgres.pool_size = pool_size;
-    }
-}
-
-fn env_string_from(env_lookup: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<String> {
-    env_lookup(name)
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn env_u64_from(env_lookup: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<u64> {
-    env_string_from(env_lookup, name).and_then(|value| value.parse::<u64>().ok())
-}
-
-fn env_usize_from(env_lookup: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<usize> {
-    env_string_from(env_lookup, name).and_then(|value| value.parse::<usize>().ok())
-}
-
-fn is_postgres_backend(backend: &str) -> bool {
-    matches!(
-        backend.trim().to_ascii_lowercase().as_str(),
-        "postgres" | "postgresql" | "pg" | "auto"
-    )
-}
-
-fn normalize_sandbox_file_tool_args(args: &Value) -> Value {
-    let mut output = args.clone();
-    let Value::Object(map) = &mut output else {
-        return output;
-    };
-    for key in ["path", "workdir", "cwd", "root", "base_path"] {
-        if let Some(Value::String(path)) = map.get_mut(key) {
-            *path = normalize_container_visible_path(path);
-        }
-    }
-    if let Some(Value::Array(paths)) = map.get_mut("paths") {
-        for item in paths {
-            if let Value::String(path) = item {
-                *path = normalize_container_visible_path(path);
-            }
-        }
-    }
-    output
-}
-
 async fn execute_ptc(context: &SandboxContext, args: &Value) -> ToolResult {
     let args = recover_tool_args_value(args);
     let filename = args
@@ -1428,28 +1248,22 @@ async fn execute_ptc(context: &SandboxContext, args: &Value) -> ToolResult {
             ),
         };
     }
-    if let Err(err) = tokio::fs::create_dir_all(&ptc_root).await {
-        return ToolResult {
-            ok: false,
-            data: json!({}),
-            error: i18n::t_with_params(
-                "tool.ptc.exec_error",
-                &std::collections::HashMap::from([("detail".to_string(), err.to_string())]),
-            ),
+    let script_path =
+        match crate::services::tools::ptc_script::save_script(&ptc_root, &script_name, content)
+            .await
+        {
+            Ok(path) => path,
+            Err(err) => {
+                return ToolResult {
+                    ok: false,
+                    data: json!({}),
+                    error: i18n::t_with_params(
+                        "tool.ptc.exec_error",
+                        &HashMap::from([("detail".to_string(), err.to_string())]),
+                    ),
+                }
+            }
         };
-    }
-
-    let script_path = ptc_root.join(script_name);
-    if let Err(err) = tokio::fs::write(&script_path, content).await {
-        return ToolResult {
-            ok: false,
-            data: json!({}),
-            error: i18n::t_with_params(
-                "tool.ptc.exec_error",
-                &std::collections::HashMap::from([("detail".to_string(), err.to_string())]),
-            ),
-        };
-    }
 
     let output = run_python_script(&script_path, &workdir_path, PTC_TIMEOUT_S).await;
     let output = match output {
@@ -1690,20 +1504,20 @@ async fn run_command_output(
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let stdout_task = stdout.map(|stream| {
-        tokio::spawn(read_stream_capture(
+        CaptureTask(tokio::spawn(read_stream_capture(
             stream,
             stdout_policy,
             stream_sink.clone(),
             "stdout",
-        ))
+        )))
     });
     let stderr_task = stderr.map(|stream| {
-        tokio::spawn(read_stream_capture(
+        CaptureTask(tokio::spawn(read_stream_capture(
             stream,
             stderr_policy,
             stream_sink.clone(),
             "stderr",
-        ))
+        )))
     });
 
     let mut timed_out = false;
@@ -1736,14 +1550,27 @@ async fn run_command_output(
     })
 }
 
+struct CaptureTask(tokio::task::JoinHandle<Result<CommandOutputCapture, CommandError>>);
+
+impl Drop for CaptureTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 async fn join_capture_task(
-    handle: Option<tokio::task::JoinHandle<Result<CommandOutputCapture, CommandError>>>,
+    handle: Option<CaptureTask>,
     policy: CommandOutputPolicy,
 ) -> Result<CommandOutputCapture, CommandError> {
     let Some(mut handle) = handle else {
         return Ok(CommandOutputCollector::new(policy).finish());
     };
-    match timeout(Duration::from_millis(STREAM_DRAIN_TIMEOUT_MS), &mut handle).await {
+    match timeout(
+        Duration::from_millis(STREAM_DRAIN_TIMEOUT_MS),
+        &mut handle.0,
+    )
+    .await
+    {
         Ok(result) => match result {
             Ok(output) => output,
             Err(err) => Err(CommandError {
@@ -1752,7 +1579,7 @@ async fn join_capture_task(
             }),
         },
         Err(_) => {
-            handle.abort();
+            handle.0.abort();
             Ok(CommandOutputCollector::new(policy).finish())
         }
     }
@@ -1938,6 +1765,10 @@ fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
 }
 
 #[cfg(test)]
+#[path = "server_concurrency_tests.rs"]
+mod concurrency_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -2024,32 +1855,6 @@ mod tests {
         assert_eq!(
             resolve_path(&context, "./workspaces/admin__c__1/report.txt").expect("dot public path"),
             PathBuf::from("/workspaces/admin__c__1/report.txt")
-        );
-    }
-
-    #[test]
-    fn normalize_sandbox_file_tool_args_accepts_public_workspaces_relative_prefix() {
-        let args = normalize_sandbox_file_tool_args(&json!({
-            "path": "workspaces/admin__c__1/a.txt",
-            "workdir": "./workspaces/admin__c__1",
-            "paths": ["workspaces/admin__c__1/b.txt", "notes.txt"]
-        }));
-
-        assert_eq!(args["path"], "/workspaces/admin__c__1/a.txt");
-        assert_eq!(args["workdir"], "/workspaces/admin__c__1");
-        assert_eq!(args["paths"][0], "/workspaces/admin__c__1/b.txt");
-        assert_eq!(args["paths"][1], "notes.txt");
-    }
-
-    #[test]
-    fn sandbox_file_tool_storage_defaults_to_postgres() {
-        let mut config = Config::default();
-        configure_sandbox_file_tool_storage_from(&mut config, &|_| None);
-
-        assert_eq!(config.storage.backend, "postgres");
-        assert_eq!(
-            config.storage.postgres.dsn,
-            "postgresql://wunder:wunder@wunder-postgres:5432/wunder"
         );
     }
 }

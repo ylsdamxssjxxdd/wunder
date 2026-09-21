@@ -87,6 +87,9 @@ export const createMessageViewportRuntime = (
   const observedMessageNodes = new Map<string, HTMLElement>();
   const pendingObservedResizeChanges = new Map<string, { key: string; previous: number | null; next: number }>();
   let olderHistoryLoadInFlight = false;
+  let disposed = false;
+  let bottomScrollPending: Promise<void> | null = null;
+  let bottomScrollForced = false;
 
   const logViewportDebug = (event: string, payload?: unknown) => {
     if (!isChatDebugEnabled()) {
@@ -156,13 +159,13 @@ export const createMessageViewportRuntime = (
       : [];
 
   const measureMessageNode = (
-    node: HTMLElement
+    node: HTMLElement, measuredHeight?: number
   ): { key: string; previous: number | null; next: number } | null => {
     const key = String(node?.dataset?.virtualKey || '').trim();
     if (!key) {
       return null;
     }
-    const offsetHeight = Math.round(node.offsetHeight || 0);
+    const offsetHeight = Math.round(measuredHeight ?? node.offsetHeight ?? 0);
     const height = Math.max(
       1,
       offsetHeight || Math.round(node.getBoundingClientRect().height)
@@ -177,7 +180,11 @@ export const createMessageViewportRuntime = (
     }
     options.messageVirtualHeightCache.set(key, height);
     // Map insertion order doubles as a cheap LRU clock for measured rows.
-    pruneMessageVirtualHeightCache();
+    while (options.messageVirtualHeightCache.size > MESSAGE_VIRTUAL_HEIGHT_CACHE_LIMIT) {
+      const oldest = options.messageVirtualHeightCache.keys().next().value;
+      if (oldest === undefined) break;
+      options.messageVirtualHeightCache.delete(oldest);
+    }
     return {
       key,
       previous: typeof cached === 'number' ? cached : null,
@@ -214,9 +221,11 @@ export const createMessageViewportRuntime = (
     if (!changes.length) {
       return;
     }
+    const following = options.autoStickToBottom.value;
     options.messageVirtualLayoutVersion.value += 1;
     syncMessageVirtualMetrics();
-    updateMessageScrollState();
+    if (following) void scrollMessagesToBottom();
+    else updateMessageScrollState();
     logViewportDebug('row-resize', {
       changeCount: changes.length,
       changes
@@ -254,7 +263,7 @@ export const createMessageViewportRuntime = (
     if (!messageResizeObserver) {
       messageResizeObserver = new ResizeObserver((entries) => {
         const changes = entries
-          .map((entry) => measureMessageNode(entry.target as HTMLElement))
+          .map((entry) => measureMessageNode(entry.target as HTMLElement, entry.borderBoxSize?.[0]?.blockSize))
           .filter((change): change is { key: string; previous: number | null; next: number } => Boolean(change));
         if (!changes.length) {
           return;
@@ -625,20 +634,23 @@ export const createMessageViewportRuntime = (
     scheduleMessageVirtualMeasure();
   };
 
-  const scrollMessagesToBottom = async (force = false) => {
-    await nextTick();
-    const container = options.messageListRef.value;
-    if (!container) return;
-    if (!force && !options.autoStickToBottom.value) {
+  const scrollMessagesToBottom = (force = false): Promise<void> => {
+    bottomScrollForced ||= force;
+    if (bottomScrollPending) return bottomScrollPending;
+    const conversationKey = options.activeConversationKey.value;
+    bottomScrollPending = nextTick().then(() => {
+      const forced = bottomScrollForced;
+      bottomScrollForced = false;
+      const container = options.messageListRef.value;
+      if (disposed || !container || conversationKey !== options.activeConversationKey.value ||
+          (!forced && !options.autoStickToBottom.value)) return;
+      container.scrollTop = container.scrollHeight;
+      syncMessageVirtualMetrics();
       updateMessageScrollState();
-      scheduleMessageVirtualMeasure();
-      return;
-    }
-    container.scrollTop = container.scrollHeight;
-    syncMessageVirtualMetrics();
-    updateMessageScrollState();
-    rememberCurrentScroll();
-    scheduleMessageVirtualMeasure();
+      rememberCurrentScroll();
+      if (typeof ResizeObserver === 'undefined') scheduleMessageVirtualMeasure();
+    }).finally(() => { bottomScrollPending = null; });
+    return bottomScrollPending;
   };
 
   const jumpToMessageBottom = async () => {
@@ -699,6 +711,7 @@ export const createMessageViewportRuntime = (
   };
 
   const dispose = () => {
+    disposed = true;
     if (typeof window !== 'undefined' && messageScrollFrame !== null) {
       window.cancelAnimationFrame(messageScrollFrame);
       messageScrollFrame = null;

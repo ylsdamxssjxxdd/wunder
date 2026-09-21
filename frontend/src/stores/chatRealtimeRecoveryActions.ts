@@ -1,3 +1,4 @@
+import { isChatSnapshotCurrent } from './chatSnapshotFreshness';
 import { chatDebugLog } from '@/utils/chatDebug';
 import {
   hasRunningAssistantMessage,
@@ -109,6 +110,7 @@ export const chatRealtimeRecoveryActions = {
           minLastEventId: localLastEventId,
           limit: detailLimit
         });
+        if (!isChatSnapshotCurrent(getRuntime(targetSessionId), snapshot)) return;
         applyCanonicalSessionEventsSnapshot(this, targetSessionId, snapshot, {
           phase: 'realtime_recovery'
         });

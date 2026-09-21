@@ -174,8 +174,7 @@ fn test_observation_payload_is_compact_for_model_context() {
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    assert!(data.get("items").is_none());
-    assert!(data.get("items_jsonl").is_some());
+    assert_eq!(data.get("items"), Some(&json!(["a", "b"])));
 }
 
 #[test]
@@ -206,7 +205,7 @@ fn test_event_payload_keeps_meta_for_frontend() {
 }
 
 #[test]
-fn test_observation_payload_keeps_duration_for_workflow_display() {
+fn test_observation_payload_omits_duration_but_event_retains_it() {
     let payload = ToolResultPayload {
         ok: true,
         data: json!({"ok": true}),
@@ -220,9 +219,10 @@ fn test_observation_payload_keeps_duration_for_workflow_display() {
     };
 
     let compacted = payload.to_compact_payload("demo_tool");
+    assert!(compacted.get("duration_ms").is_none());
     assert_eq!(
-        compacted.get("duration_ms").and_then(Value::as_i64),
-        Some(1280)
+        payload.to_event_payload("tool")["meta"]["duration_ms"],
+        json!(1280)
     );
 }
 
@@ -411,7 +411,7 @@ fn test_compact_payload_strips_ids_and_budget_noise() {
         map.insert("model_round".to_string(), json!(2));
         map.insert("user_round".to_string(), json!(1));
     }
-    strip_compact_payload_noise(&mut compacted, 0);
+    strip_compact_payload_noise(&mut compacted, "search_content");
 
     let obj = compacted.as_object().cloned().unwrap_or_default();
     assert!(obj.get("tool_call_id").is_none());
@@ -428,8 +428,8 @@ fn test_compact_payload_strips_ids_and_budget_noise() {
     assert!(data.get("budget").is_none());
     assert!(data.get("scope").is_none());
     assert!(data.get("scope_note").is_none());
-    assert!(data.get("hits_jsonl").is_some());
-    assert!(data.get("matches_jsonl").is_some());
+    assert!(data.get("hits").is_some());
+    assert!(data.get("matches").is_some());
 }
 
 #[test]
@@ -775,12 +775,8 @@ fn test_compact_observation_payload_read_file_keeps_patch_usage_hint_from_flat_d
         data.get("patch_usage_hint").and_then(Value::as_str),
         Some("do not copy >>> path or N: prefixes")
     );
-    let files_jsonl = data
-        .get("files_jsonl")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    assert!(files_jsonl.contains("\"path\":\"notes.md\""));
-    assert!(files_jsonl.contains("\"read_lines\":1"));
+    assert_eq!(data["files"][0]["path"], json!("notes.md"));
+    assert_eq!(data["files"][0]["read_lines"], json!(1));
 }
 
 #[test]
@@ -872,17 +868,9 @@ fn test_compact_observation_payload_compacts_search_payload() {
     assert!(data.get("meta").is_none());
     assert!(data.get("scope").is_none());
     assert!(data.get("scope_note").is_none());
-    assert!(data.get("hits").is_none());
-    assert!(data.get("hits_jsonl").and_then(Value::as_str).is_some());
-    assert!(data.get("matches").is_none());
-    assert!(data.get("matches_jsonl").and_then(Value::as_str).is_some());
-    let first_hit = data
-        .get("hits_jsonl")
-        .and_then(Value::as_str)
-        .and_then(|value| value.lines().next())
-        .and_then(|line| serde_json::from_str::<Value>(line).ok())
-        .and_then(|value| value.as_object().cloned())
-        .unwrap_or_default();
+    assert!(data.get("hits").and_then(Value::as_array).is_some());
+    assert!(data.get("matches").and_then(Value::as_array).is_some());
+    let first_hit = data["hits"][0].as_object().cloned().unwrap_or_default();
     assert!(first_hit.get("content").is_none());
     assert!(first_hit
         .get("content_head")
@@ -895,96 +883,26 @@ fn test_compact_observation_payload_compacts_search_payload() {
 }
 
 #[test]
-fn test_compact_dense_arrays_to_jsonl_converts_all_array_keys() {
-    let mut data = json!({
-        "items": ["a", "b"],
-        "summary": {
-            "top_files": ["x.md", "y.md"],
-            "scores": [1, 2, 3]
-        },
-        "empty_list": []
-    });
-
-    compact_dense_arrays_to_jsonl(&mut data);
-
-    let obj = data.as_object().cloned().unwrap_or_default();
-    assert!(obj.get("items").is_none());
-    assert_eq!(obj.get("items_count").and_then(Value::as_u64), Some(2));
-    assert!(obj.get("items_jsonl").and_then(Value::as_str).is_some());
-    assert_eq!(obj.get("empty_list_count").and_then(Value::as_u64), Some(0));
-    assert_eq!(
-        obj.get("empty_list_jsonl").and_then(Value::as_str),
-        Some("")
-    );
-
-    let summary = obj
-        .get("summary")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    assert!(summary.get("top_files").is_none());
-    assert!(summary.get("scores").is_none());
-    assert_eq!(
-        summary.get("top_files_count").and_then(Value::as_u64),
-        Some(2)
-    );
-    assert_eq!(summary.get("scores_count").and_then(Value::as_u64), Some(3));
-    assert!(summary
-        .get("top_files_jsonl")
-        .and_then(Value::as_str)
-        .is_some());
-    assert!(summary
-        .get("scores_jsonl")
-        .and_then(Value::as_str)
-        .is_some());
+fn observation_preserves_array_types_and_semantic_fields() {
+    let data = json!({"scope": "value", "meta": {"value": 1}, "items": [null, "", false, 0, [], {"timestamp": 3, "metrics": [1, 2]}]});
+    let payload = ToolResultPayload::from_value(json!({"ok": true, "data": data}));
+    assert_eq!(payload.to_compact_payload("external")["data"], data);
 }
 
 #[test]
-fn test_compact_dense_arrays_to_jsonl_slims_execute_command_rows() {
-    let mut data = json!({
-        "results": [
-            {
-                "command": "python draw_heart.py",
-                "command_index": 0,
-                "command_session_id": "cmd_123",
-                "returncode": 127,
-                "stdout": "",
-                "stderr": "python: command not found",
-                "output_meta": {
-                    "truncated": false,
-                    "total_bytes": 40
-                }
-            }
-        ]
-    });
-
-    compact_dense_arrays_to_jsonl(&mut data);
-
-    let obj = data.as_object().cloned().unwrap_or_default();
-    assert!(obj.get("results").is_none());
-    assert_eq!(obj.get("results_count").and_then(Value::as_u64), Some(1));
-    let line = obj
-        .get("results_jsonl")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let parsed = serde_json::from_str::<Value>(line).unwrap_or(Value::Null);
-    let parsed_obj = parsed.as_object().cloned().unwrap_or_default();
+fn command_rows_retain_followup_handles() {
+    let mut data = json!({"results": [{
+        "command": "operation", "returncode": 0, "stdout": "", "stderr": "",
+        "command_session_id": "session", "status": "running", "command_index": 0
+    }]});
+    compact_command_observation_rows(&mut data, "执行命令");
     assert_eq!(
-        parsed_obj.get("command").and_then(Value::as_str),
-        Some("python draw_heart.py")
+        data,
+        json!({"results": [{
+            "command": "operation", "returncode": 0,
+            "command_session_id": "session", "status": "running"
+        }]})
     );
-    assert_eq!(
-        parsed_obj.get("returncode").and_then(Value::as_i64),
-        Some(127)
-    );
-    assert_eq!(
-        parsed_obj.get("stderr").and_then(Value::as_str),
-        Some("python: command not found")
-    );
-    assert!(parsed_obj.get("stdout").is_none());
-    assert!(parsed_obj.get("output_meta").is_none());
-    assert!(parsed_obj.get("command_session_id").is_none());
-    assert!(parsed_obj.get("command_index").is_none());
 }
 
 #[test]
@@ -1007,8 +925,7 @@ fn test_compact_observation_payload_samples_large_rows() {
     compact_observation_payload(&mut payload, "extra_mcp@db_query");
 
     let data = payload.get("data").cloned().unwrap_or(Value::Null);
-    assert!(data.get("rows").is_none());
-    assert!(data.get("rows_jsonl").and_then(Value::as_str).is_some());
+    assert!(data.get("rows").and_then(Value::as_array).is_some());
     assert_eq!(
         data.get("rows_sampled").and_then(Value::as_u64),
         Some(OBSERVATION_TABLE_SAMPLE_ROWS as u64)
@@ -1108,7 +1025,7 @@ fn test_compact_observation_payload_write_file_keeps_precise_path() {
     });
 
     compact_observation_payload(&mut payload, "写入文件");
-    strip_compact_payload_noise(&mut payload, 0);
+    strip_compact_payload_noise(&mut payload, "write_file");
 
     let data = payload
         .get("data")
@@ -1177,4 +1094,61 @@ fn test_compact_observation_payload_compacts_apply_patch_files_without_diff_bloc
     );
     assert_eq!(first.get("hunks").and_then(Value::as_u64), Some(1));
     assert!(first.get("diff_blocks").is_none());
+}
+
+#[test]
+fn observation_keeps_content_siblings_and_pagination() {
+    let data = json!({"content": "value", "next_cursor": "cursor", "total": 7, "has_more": true});
+    let payload = ToolResultPayload::from_value(json!({"ok": true, "data": data}));
+    assert_eq!(payload.to_compact_payload("external")["data"], data);
+    let payload = ToolResultPayload::from_value(json!({"ok": true,
+        "data": {"structured_content": {"items": [1]}},
+        "meta": {"next_cursor": "cursor", "has_more": true, "truncated": true}
+    }));
+    let compacted = payload.to_compact_payload("external");
+    assert_eq!(compacted["next_cursor"], json!("cursor"));
+    assert_eq!(compacted["has_more"], json!(true));
+    assert_eq!(compacted["truncated"], json!(true));
+    assert_eq!(compacted["data"], json!({"items": [1]}));
+}
+
+#[test]
+fn observation_failure_uses_stdout_and_failed_batch_row() {
+    for data in [
+        json!({"stderr": "", "stdout": "Error: invalid value", "returncode": 1}),
+        json!({"results": [
+            {"returncode": 0, "stdout": "complete"},
+            {"returncode": 1, "stderr": "", "stdout": "Error: invalid value"}
+        ]}),
+    ] {
+        let payload =
+            ToolResultPayload::from_value(json!({"ok": false, "data": data, "error": "failed"}));
+        assert_eq!(
+            payload.to_compact_payload("execute_command"),
+            json!({
+                "tool": "execute_command", "ok": false, "error": "failed stdout: Error: invalid value"
+            })
+        );
+    }
+}
+
+#[test]
+fn native_arrays_cost_less_than_nested_jsonl_without_losing_values() {
+    let rows = (0..24)
+        .map(|index| json!({"index": index, "value": "value"}))
+        .collect::<Vec<_>>();
+    let native = json!({"items": rows});
+    let legacy = json!({"items_count": rows.len(), "items_jsonl": rows.iter().map(Value::to_string).collect::<Vec<_>>().join("\n")});
+    assert!(approx_token_count(&native.to_string()) < approx_token_count(&legacy.to_string()));
+}
+
+#[test]
+fn scalar_structured_content_keeps_outer_cursor() {
+    let payload = ToolResultPayload::from_value(json!({"ok": true, "data": {
+        "structured_content": "value", "next_cursor": "cursor", "has_more": true
+    }}));
+    let result = payload.to_compact_payload("external");
+    assert_eq!(result["data"], json!("value"));
+    assert_eq!(result["next_cursor"], json!("cursor"));
+    assert_eq!(result["has_more"], json!(true));
 }

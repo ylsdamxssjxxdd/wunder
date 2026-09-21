@@ -1,4 +1,4 @@
-﻿import { defineStore } from 'pinia';
+import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -131,7 +131,7 @@ export const chatApprovalActions = {
       chatPageLifecycle.pageUnloading = false;
       resetChatRuntimeState();
       this.$reset();
-      this.runtimeProjection = createChatRuntimeProjection();
+      // $reset restores the raw projection and its render clocks together.
       this.runtimeProjectionVersion = 0;
     },
     enqueueApprovalRequest(requestId, sessionId, payload) {

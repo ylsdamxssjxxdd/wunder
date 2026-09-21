@@ -445,22 +445,12 @@ export function installMessengerControllerAgentRuntimeSignals(ctx: MessengerCont
       if (override && override.expiresAt <= now) {
           ctx.runtimeStateOverrides.value.delete(key);
       }
-      const sessionAgentMap = ctx.buildSessionAgentMap();
-      const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
-      const activeBlockingSwarm = Array.from(sessionAgentMap.entries()).some(([sessionId, mappedAgentId]) => {
-          if ((ctx.normalizeAgentId(mappedAgentId) || DEFAULT_AGENT_KEY) !== key)
-              return false;
-          const messages = sessionId === activeSessionId
-              ? ctx.resolveActiveAgentRenderableMessageRecords()
-              : ctx.chatStore.getCachedSessionMessages(sessionId);
-          return hasActiveBlockingSwarmAfterLatestUser(messages);
-      });
       return resolveAgentRuntimeStateFromSignals({
           pendingApproval: ctx.pendingApprovalAgentIdSet.value.has(key),
           pendingInquiry: Boolean(inquiryAgentId && inquiryAgentId === key),
           localWaiting: Boolean(ctx.waitingAgentIdSet?.value?.has(key)),
           localStreaming: ctx.streamingAgentIdSet.value.has(key),
-          activeBlockingSwarm,
+          activeBlockingSwarm: false,
           remoteState,
           overrideState: override && override.expiresAt > now ? override.state : null
       });

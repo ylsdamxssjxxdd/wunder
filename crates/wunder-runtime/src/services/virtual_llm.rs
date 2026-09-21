@@ -13,6 +13,11 @@ use std::time::Duration;
 use tokio::time::sleep;
 use uuid::Uuid;
 
+mod replay_cache;
+mod replay_selection;
+#[cfg(test)]
+mod replay_tests;
+
 pub const VIRTUAL_REPLAY_PROVIDER: &str = "virtual_replay";
 const MAX_VIRTUAL_LLM_JSONL_BYTES: u64 = 32 * 1024 * 1024;
 const DEFAULT_TOKEN_DELAY_MS: u64 = 18;
@@ -178,6 +183,7 @@ pub async fn store_uploaded_log(
         let target = logs_root.join(&file);
         fs::write(&target, upload.content.as_bytes())
             .with_context(|| format!("write virtual llm log failed: {}", target.display()))?;
+        replay_cache::invalidate(&target);
         let mut updated = config;
         updated
             .llm
@@ -225,6 +231,7 @@ pub async fn delete_log(config: Config, log_id: String) -> Result<Config> {
         });
         for file in removed_files {
             if let Ok(target) = resolve_log_file(&logs_root, &file) {
+                replay_cache::invalidate(&target);
                 match fs::remove_file(&target) {
                     Ok(()) => {}
                     Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
@@ -269,6 +276,10 @@ pub async fn load_turn_for_round(
     model_round: Option<i64>,
 ) -> Result<VirtualReplayTurn> {
     let target_log_id = resolve_virtual_model_id(model);
+    let explicit_log_id = model
+        .model
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
     let round = user_round.unwrap_or(1).max(1) as usize;
     let model_round = model_round
         .filter(|value| *value > 0)
@@ -282,42 +293,18 @@ pub async fn load_turn_for_round(
             .find(|log| log.enabled && log.id == target_log_id)
             .cloned();
         let Some(log) = log else {
-            return Ok(random_virtual_turn(round, model_round));
+            if !explicit_log_id {
+                return Ok(random_virtual_turn(round, model_round));
+            }
+            return Err(anyhow!("virtual llm replay log is missing or disabled"));
         };
         let logs_root = resolve_logs_root_from_config(&config)?;
         let path = resolve_log_file(&logs_root, &log.file)?;
-        let text = fs::read_to_string(&path)
-            .with_context(|| format!("read virtual llm log failed: {}", path.display()))?;
-        let parsed = parse_virtual_log(&text, &log.id, &log.name)?;
-        if parsed.turns.is_empty() {
-            return Err(anyhow!("virtual llm log contains no replay turns"));
-        }
-        if let Some(model_round) = model_round {
-            let same_user_round = parsed
-                .turns
-                .iter()
-                .filter(|turn| turn.source_round == round)
-                .collect::<Vec<_>>();
-            if let Some(turn) = same_user_round
-                .iter()
-                .find(|turn| turn.source_model_round == Some(model_round))
-            {
-                return Ok((*turn).clone());
-            }
-            if !same_user_round.is_empty() {
-                let index = model_round.saturating_sub(1) % same_user_round.len();
-                return Ok(same_user_round[index].clone());
-            }
-        }
-        if let Some(turn) = parsed.turns.iter().find(|turn| turn.source_round == round) {
-            return Ok(turn.clone());
-        }
-        let index = round.saturating_sub(1) % parsed.turns.len();
-        parsed
-            .turns
-            .get(index)
-            .cloned()
-            .ok_or_else(|| anyhow!("virtual llm replay round not found"))
+        let parsed = replay_cache::load(&path)?;
+        let mut turn = replay_selection::select(&parsed, round, model_round.unwrap_or(1))?.clone();
+        turn.source_log_id = log.id;
+        turn.source_log_name = log.name;
+        Ok(turn)
     })
     .await
 }
@@ -354,16 +341,16 @@ where
     let delay_ms = token_delay_ms
         .unwrap_or(DEFAULT_TOKEN_DELAY_MS)
         .min(MAX_TOKEN_DELAY_MS);
-    let content_tokens = tokenize_for_stream(&turn.content);
-    for token in content_tokens {
-        on_delta(token, String::new()).await?;
+    let reasoning_tokens = tokenize_for_stream(&turn.reasoning);
+    for token in reasoning_tokens {
+        on_delta(String::new(), token).await?;
         if delay_ms > 0 {
             sleep(Duration::from_millis(delay_ms)).await;
         }
     }
-    let reasoning_tokens = tokenize_for_stream(&turn.reasoning);
-    for token in reasoning_tokens {
-        on_delta(String::new(), token).await?;
+    let content_tokens = tokenize_for_stream(&turn.content);
+    for token in content_tokens {
+        on_delta(token, String::new()).await?;
         if delay_ms > 0 {
             sleep(Duration::from_millis(delay_ms)).await;
         }
@@ -387,6 +374,7 @@ pub fn estimate_virtual_usage(input_messages: &[Value], turn: &VirtualReplayTurn
 pub fn build_virtual_request_meta(turn: &VirtualReplayTurn) -> Value {
     json!({
         "virtual_replay": true,
+        "billable": false,
         "source_log_id": turn.source_log_id,
         "source_log_name": turn.source_log_name,
         "source_round": turn.source_round,
@@ -398,7 +386,8 @@ pub fn build_virtual_request_meta(turn: &VirtualReplayTurn) -> Value {
 fn parse_virtual_log(text: &str, log_id: &str, log_name: &str) -> Result<ParsedVirtualLog> {
     let mut wunder_turns = Vec::new();
     let mut simple_turns = Vec::new();
-    let mut pending_simple_user = false;
+    let mut simple_user_round = 0;
+    let mut simple_model_round = 0;
     for (index, line) in text.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() {
@@ -413,36 +402,39 @@ fn parse_virtual_log(text: &str, log_id: &str, log_name: &str) -> Result<ParsedV
         if let Some(role) = value.get("role").and_then(Value::as_str) {
             match role.trim().to_ascii_lowercase().as_str() {
                 "user" => {
-                    pending_simple_user = true;
+                    simple_user_round += 1;
+                    simple_model_round = 0;
                 }
-                "assistant" if pending_simple_user => {
-                    if let Some(content) =
-                        extract_text_field(&value, &["content", "text", "message"])
-                    {
+                "assistant" if simple_user_round > 0 => {
+                    let content = extract_text_field(&value, &["content", "text", "message"])
+                        .unwrap_or_default();
+                    let reasoning = extract_text_field(&value, &["reasoning", "reasoning_content"])
+                        .unwrap_or_default();
+                    let tool_calls = value
+                        .get("tool_calls")
+                        .cloned()
+                        .filter(non_empty_tool_calls);
+                    if !content.is_empty() || !reasoning.is_empty() || tool_calls.is_some() {
+                        simple_model_round += 1;
                         simple_turns.push(VirtualReplayTurn {
                             content,
-                            reasoning: extract_text_field(
-                                &value,
-                                &["reasoning", "reasoning_content"],
-                            )
-                            .unwrap_or_default(),
+                            reasoning,
                             usage: parse_usage(value.get("usage")),
-                            tool_calls: value.get("tool_calls").cloned(),
+                            tool_calls,
                             source_log_id: log_id.to_string(),
                             source_log_name: log_name.to_string(),
-                            source_round: simple_turns.len() + 1,
-                            source_model_round: Some(1),
+                            source_round: simple_user_round,
+                            source_model_round: Some(simple_model_round),
                             format: SIMPLE_REPLAY_FORMAT.to_string(),
                         });
                     }
-                    pending_simple_user = false;
                 }
                 _ => {}
             }
         }
     }
     if !wunder_turns.is_empty() {
-        wunder_turns.sort_by_key(|turn| (turn.source_round, turn.source_model_round.unwrap_or(1)));
+        replay_selection::normalize(&mut wunder_turns)?;
         return Ok(ParsedVirtualLog {
             format: WUNDER_REPLAY_FORMAT.to_string(),
             turns: wunder_turns,

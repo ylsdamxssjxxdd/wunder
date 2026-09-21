@@ -164,6 +164,12 @@ export const normalizeSnapshotMessage = (message) => {
           : String(message.content || ''),
     created_at: message.created_at || ''
   };
+  // Preserve backend identity across reloads instead of reconstructing turns from text.
+  for (const key of ['id', 'message_id', 'user_turn_id', 'model_turn_id', 'client_message_id',
+    'history_id', 'turn_index', 'user_turn_index', 'model_turn_index', 'user_round',
+    'model_round', 'status', 'failed', 'cancelled', 'content_truncated']) {
+    if (message[key] !== undefined) base[key] = message[key];
+  }
   if (normalizeHiddenInternalMessage(message.hiddenInternal)) {
     base.hiddenInternal = true;
   }
@@ -315,6 +321,7 @@ export const buildChatSnapshot = (sessionId, sourceMessages = []) => {
   const messages = buildSnapshotMessages(trimmed);
   if (!messages.length) return null;
   return {
+    version: 2,
     sessionId: normalizedSessionId,
     messages,
     updatedAt: Date.now()
@@ -324,20 +331,10 @@ export const buildChatSnapshot = (sessionId, sourceMessages = []) => {
 export const readChatSnapshot = () => {
   try {
     const keys = resolveChatSnapshotStorageKeys();
-    const raw =
-      localStorage.getItem(keys.primary) ??
-      localStorage.getItem(keys.legacyScoped) ??
-      localStorage.getItem(keys.globalPrimary) ??
-      localStorage.getItem(keys.globalLegacy);
+    const raw = localStorage.getItem(keys.primary);
     if (!raw) return null;
-    if (!localStorage.getItem(keys.primary)) {
-      localStorage.setItem(keys.primary, raw);
-    }
-    if (!localStorage.getItem(keys.legacyScoped)) {
-      localStorage.setItem(keys.legacyScoped, raw);
-    }
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return null;
+    if (!parsed || parsed.version !== 2) return null;
     const sessionId = String(parsed.sessionId || '');
     const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
     if (!sessionId || !messages.length) return null;
@@ -356,7 +353,6 @@ export const writeChatSnapshot = (payload) => {
     const serialized = JSON.stringify(payload);
     const keys = resolveChatSnapshotStorageKeys();
     localStorage.setItem(keys.primary, serialized);
-    localStorage.setItem(keys.legacyScoped, serialized);
   } catch (error) {
     // ignore persistence errors
   }

@@ -26,6 +26,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { useMessageMarkdownCache } from './messageMarkdownCache';
 import { renderMarkdown } from '@/utils/markdown';
 import { t } from '@/i18n';
 import { buildAssistantDisplayContent } from '@/utils/assistantFailureNotice';
@@ -89,27 +90,9 @@ const emit = defineEmits<{
   }): void;
 }>();
 
-type RenderCacheEntry = {
-  source: string;
-  html: string;
-  updatedAt: number;
-  bytes: number;
-};
-
-type HydratedHistoryContent = {
-  content: string;
-  bytes: number;
-};
-
-const MARKDOWN_BODY_CACHE_LIMIT = 240;
-const MARKDOWN_BODY_CACHE_MAX_BYTES = 12 * 1024 * 1024;
-const HYDRATED_HISTORY_CONTENT_CACHE_LIMIT = 64;
-const HYDRATED_HISTORY_CONTENT_CACHE_MAX_BYTES = 8 * 1024 * 1024;
-const streamingMarkdownCache = new Map<string, RenderCacheEntry>();
-const hydratedHistoryContentCache = new Map<string, HydratedHistoryContent>();
-let streamingMarkdownCacheBytes = 0;
-let hydratedHistoryContentCacheBytes = 0;
 const chatStore = useChatStore();
+const { readMarkdownCacheEntry, writeMarkdownCacheEntry, deleteMarkdownCacheEntry,
+  readHydratedHistoryContent, writeHydratedHistoryContent } = useMessageMarkdownCache(chatStore.runtimeProjection);
 
 const visibleHtml = ref('');
 const visiblePlainText = ref('');
@@ -120,29 +103,27 @@ const detailLoading = ref(false);
 let renderTimer: number | null = null;
 let plainTextLayoutTimer: number | null = null;
 let plainTextFlushTimer: number | null = null;
-let livePlainTextPollTimer: number | null = null;
 let plainTextDomSyncPending = false;
 let pendingPlainText = '';
 let pendingPlainTextScheduledAt = 0;
 let lastPlainTextLayoutAt = 0;
 let lastPlainTextFlushAt = 0;
+let disposed = false;
 let historyDetailAbortController: AbortController | null = null;
 const STREAM_RENDER_DEBUG_SLOW_MS = 48;
 const MARKDOWN_RENDER_DEBUG_SLOW_MS = 12;
 const STREAM_TEXT_FLUSH_MIN_MS = 32;
-const LIVE_STREAM_TEXT_POLL_MS = 120;
 const PLAIN_TEXT_LAYOUT_THROTTLE_MIN_MS = 220;
-const STREAMING_TEXT_PREVIEW_MAX_CHARS = 60000;
 const HISTORY_MARKDOWN_INITIAL_CHARS = 24000;
 let lastStreamRenderTraceAt = 0;
 let lastStreamRenderTraceSignature = '';
 let lastPlainTextSource = '';
 
 const runtimeContentVersion = computed(() => {
+  const structureVersion = chatStore.runtimeProjectionVersion;
   const messageIds = resolveRuntimeMessageContentSubscriptionIds({
-    // Keep this lookup reactive at the exact message path. Rendering the
-    // transcript stays isolated, while a final event can still replace the
-    // last streamed preview without requiring a full projection repaint.
+    // Raw projection changes are published through explicit clocks: per-row
+    // clocks drive deltas, while the structural clock resolves replaced ids.
     projection: chatStore.runtimeProjection,
     sessionId: String(props.sessionId || chatStore.activeSessionId || '').trim(),
     runtimeMessageId: props.runtimeMessageId,
@@ -155,7 +136,7 @@ const runtimeContentVersion = computed(() => {
       sum + Number(chatStore.runtimeProjectionContentVersionByMessage?.[messageId] || 0),
     0
   );
-  return messageScopedVersion;
+  return `${structureVersion}:${messageScopedVersion}`;
 });
 
 const resolveRuntimeProjectedMessage = () => {
@@ -198,7 +179,10 @@ const normalizedContent = computed(() => {
     : String(projected?.content ?? props.content ?? '');
   return hydratedContent.value ?? source;
 });
-const normalizedCacheKey = computed(() => String(props.cacheKey || '').trim());
+const normalizedCacheKey = computed(() => [
+  String(props.sessionId || chatStore.activeSessionId || ''), props.workspacePathContext,
+  t('common.expand'), String(props.cacheKey || '').trim()
+].join('::'));
 const isContentTruncated = computed(() =>
   props.streaming !== true &&
   !expandedLongContent.value &&
@@ -219,72 +203,6 @@ const workspacePathResolver = computed(() => {
   return (rawPath: string) => props.resolveWorkspacePath?.(rawPath, context) || '';
 });
 
-const trimStreamingMarkdownCache = () => {
-  while (
-    streamingMarkdownCache.size > MARKDOWN_BODY_CACHE_LIMIT ||
-    streamingMarkdownCacheBytes > MARKDOWN_BODY_CACHE_MAX_BYTES
-  ) {
-    const oldestKey = streamingMarkdownCache.keys().next().value as string | undefined;
-    if (!oldestKey) break;
-    const oldest = streamingMarkdownCache.get(oldestKey);
-    if (oldest) streamingMarkdownCacheBytes -= oldest.bytes;
-    streamingMarkdownCache.delete(oldestKey);
-  }
-};
-
-const deleteMarkdownCacheEntry = (key: string) => {
-  const cached = streamingMarkdownCache.get(key);
-  if (cached) streamingMarkdownCacheBytes -= cached.bytes;
-  streamingMarkdownCache.delete(key);
-};
-
-const readMarkdownCacheEntry = (key: string): RenderCacheEntry | null => {
-  const cached = streamingMarkdownCache.get(key);
-  if (!cached) return null;
-  // Refresh the LRU order without duplicating the stored HTML string.
-  streamingMarkdownCache.delete(key);
-  streamingMarkdownCache.set(key, cached);
-  return cached;
-};
-
-const writeMarkdownCacheEntry = (key: string, source: string, html: string) => {
-  deleteMarkdownCacheEntry(key);
-  streamingMarkdownCache.set(key, {
-    source,
-    html,
-    updatedAt: Date.now(),
-    bytes: source.length * 2 + html.length * 2
-  });
-  streamingMarkdownCacheBytes += source.length * 2 + html.length * 2;
-  trimStreamingMarkdownCache();
-};
-
-const readHydratedHistoryContent = (key: string): string | null => {
-  const cached = hydratedHistoryContentCache.get(key);
-  if (!cached) return null;
-  hydratedHistoryContentCache.delete(key);
-  hydratedHistoryContentCache.set(key, cached);
-  return cached.content;
-};
-
-const writeHydratedHistoryContent = (key: string, content: string) => {
-  const previous = hydratedHistoryContentCache.get(key);
-  if (previous) hydratedHistoryContentCacheBytes -= previous.bytes;
-  const entry = { content, bytes: content.length * 2 };
-  hydratedHistoryContentCache.set(key, entry);
-  hydratedHistoryContentCacheBytes += entry.bytes;
-  while (
-    hydratedHistoryContentCache.size > HYDRATED_HISTORY_CONTENT_CACHE_LIMIT ||
-    hydratedHistoryContentCacheBytes > HYDRATED_HISTORY_CONTENT_CACHE_MAX_BYTES
-  ) {
-    const oldestKey = hydratedHistoryContentCache.keys().next().value as string | undefined;
-    if (!oldestKey) break;
-    const oldest = hydratedHistoryContentCache.get(oldestKey);
-    if (oldest) hydratedHistoryContentCacheBytes -= oldest.bytes;
-    hydratedHistoryContentCache.delete(oldestKey);
-  }
-};
-
 const looksLikeSimplePlainText = (source: string): boolean => {
   if (!source) return false;
   if (source.includes('```') || source.includes('~~~')) return false;
@@ -297,8 +215,7 @@ const looksLikeSimplePlainText = (source: string): boolean => {
 
 const isStreamingTextPreview = computed(() =>
   props.streaming === true &&
-  normalizedContent.value.length > 0 &&
-  normalizedContent.value.length <= STREAMING_TEXT_PREVIEW_MAX_CHARS
+  normalizedContent.value.length > 0
 );
 const usePlainTextRender = computed(() =>
   props.streaming === true
@@ -328,7 +245,9 @@ const syncPlainTextDom = (source: string) => {
     if (el.textContent === lastPlainTextSource && source.startsWith(lastPlainTextSource)) {
       const delta = source.slice(lastPlainTextSource.length);
       if (delta) {
-        el.append(document.createTextNode(delta));
+        const textNode = el.firstChild;
+        if (textNode?.nodeType === Node.TEXT_NODE) (textNode as Text).appendData(delta);
+        else el.textContent = source;
       }
     } else if (el.textContent !== source) {
       el.textContent = source;
@@ -340,6 +259,7 @@ const syncPlainTextDom = (source: string) => {
   plainTextDomSyncPending = true;
   void nextTick(() => {
     plainTextDomSyncPending = false;
+    if (disposed) return;
     const target = plainTextRef.value;
     if (target && target.textContent !== visiblePlainText.value) {
       target.textContent = visiblePlainText.value;
@@ -366,7 +286,7 @@ const flushPendingPlainText = () => {
     const payload = {
       latencyMs,
       contentLength: source.length,
-      cacheKey: normalizedCacheKey.value,
+      cacheKey: props.cacheKey,
       runtimeMessageId: props.runtimeMessageId || ''
     };
     chatDebugLog('chat.stream.perf', 'plain-text-slow-flush', payload);
@@ -400,7 +320,7 @@ const buildRenderedPayload = (
   html = '',
   options: { lightweight?: boolean } = {}
 ): { cacheKey: string; streaming: boolean; contentLength: number; needsHydration?: boolean; lightweight?: boolean } => ({
-  cacheKey: normalizedCacheKey.value,
+  cacheKey: props.cacheKey,
   streaming: props.streaming,
   contentLength: source.length,
   ...(options.lightweight === true ? { lightweight: true } : {}),
@@ -412,7 +332,7 @@ const buildRenderedPayload = (
 const emitPlainTextLayout = (lightweight: boolean) => {
   const source = renderContent.value;
   emit('rendered', {
-    cacheKey: normalizedCacheKey.value,
+    cacheKey: props.cacheKey,
     streaming: props.streaming,
     contentLength: source.length,
     lightweight
@@ -440,45 +360,6 @@ const schedulePlainTextLayout = () => {
     lastPlainTextLayoutAt = Date.now();
     emitPlainTextLayout(props.streaming);
   }, waitMs);
-};
-
-const resolveLiveRuntimeContent = (): string => {
-  const projected = resolveRuntimeProjectedMessage();
-  if (!projected) return normalizedContent.value;
-  if (!props.assistantDisplay) {
-    return String(projected.content || props.content || '');
-  }
-  return buildAssistantDisplayContent({
-    ...((props.message || {}) as MessageRecord),
-    role: projected.role,
-    content: projected.content,
-    reasoning: projected.reasoning,
-    runtime_status: projected.status,
-    stream_incomplete: true
-  }, t);
-};
-
-const syncLiveRuntimePlainText = () => {
-  if (props.streaming !== true || typeof window === 'undefined') return;
-  const source = resolveLiveRuntimeContent();
-  if (!source || source.length > STREAMING_TEXT_PREVIEW_MAX_CHARS) return;
-  if (source === visiblePlainText.value || source === pendingPlainText) return;
-  visibleHtml.value = '';
-  updateVisiblePlainText(source, false);
-  schedulePlainTextLayout();
-  traceStreamingRenderSource(source, true);
-};
-
-const startLivePlainTextPoll = () => {
-  if (livePlainTextPollTimer !== null || typeof window === 'undefined') return;
-  livePlainTextPollTimer = window.setInterval(syncLiveRuntimePlainText, LIVE_STREAM_TEXT_POLL_MS);
-};
-
-const stopLivePlainTextPoll = () => {
-  if (livePlainTextPollTimer !== null && typeof window !== 'undefined') {
-    window.clearInterval(livePlainTextPollTimer);
-  }
-  livePlainTextPollTimer = null;
 };
 
 const renderNow = () => {
@@ -564,7 +445,7 @@ const traceStreamingRenderSource = (source: string, plainStreaming: boolean) => 
   lastStreamRenderTraceAt = now;
   lastStreamRenderTraceSignature = signature;
   chatDebugLog('chat.stream.perf', 'message-body-stream-render', {
-    cacheKey: normalizedCacheKey.value,
+    cacheKey: props.cacheKey,
     runtimeMessageId: runtimeMessage?.id || props.runtimeMessageId || '',
     runtimeUserTurnId: runtimeMessage?.userTurnId || props.runtimeUserTurnId || '',
     runtimeModelTurnId: runtimeMessage?.modelTurnId || props.runtimeModelTurnId || '',
@@ -649,8 +530,10 @@ const expandLongContent = async () => {
   historyDetailAbortController?.abort();
   const controller = new AbortController();
   historyDetailAbortController = controller;
+  const cacheKey = normalizedCacheKey.value;
   try {
     const response = await getSessionHistoryMessage(sessionId, historyId, { signal: controller.signal });
+    if (disposed || controller.signal.aborted || cacheKey !== normalizedCacheKey.value) return;
     const message = response?.data?.data?.message as MessageRecord | undefined;
     if (message && typeof message.content === 'string') {
       hydratedContent.value = message.content;
@@ -669,38 +552,19 @@ const expandLongContent = async () => {
   } finally {
     if (historyDetailAbortController === controller) {
       historyDetailAbortController = null;
-      detailLoading.value = false;
+      if (!disposed) detailLoading.value = false;
     }
   }
 };
 
-watch(
-  () => [
-    props.streaming,
-    props.sessionId,
-    props.runtimeMessageId,
-    props.runtimeUserTurnId,
-    props.runtimeModelTurnId
-  ],
-  () => {
-    if (props.streaming === true) {
-      startLivePlainTextPoll();
-      syncLiveRuntimePlainText();
-      return;
-    }
-    stopLivePlainTextPoll();
-  },
-  { immediate: true }
-);
-
 onBeforeUnmount(() => {
+  disposed = true;
   if (renderTimer !== null && typeof window !== 'undefined') {
     window.clearTimeout(renderTimer);
     renderTimer = null;
   }
   clearPlainTextLayoutTimer();
   clearPlainTextFlushTimer();
-  stopLivePlainTextPoll();
   historyDetailAbortController?.abort();
   historyDetailAbortController = null;
 });

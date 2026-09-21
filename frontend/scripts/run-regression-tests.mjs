@@ -27,6 +27,7 @@ for (const testFile of tests) {
       '--bundle',
       '--platform=node',
       '--format=cjs',
+      '--define:import.meta.env={}',
       '--alias:@=./src',
       `--alias:@/utils/agentAvatarCatalog=${agentAvatarCatalogMock}`,
       `--outfile=${output}`

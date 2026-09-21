@@ -69,6 +69,9 @@ const ACTIVE_PROJECTED_WORKFLOW_STATUSES = new Set([
 
 type MaterializedMessageCacheEntry = {
   sourceRevision: string;
+  source?: ChatRuntimeMessageProjection;
+  structureVersion?: number;
+  includeWorkflow?: boolean;
   materializedMutableRevision: string;
   message: ChatMessageLike;
   lastUsed: number;
@@ -297,6 +300,15 @@ const materializeChatRuntimeMessageWithCache = (
   if (!sessionCache || !message?.id) {
     return materializeChatRuntimeMessage(message, options);
   }
+  const previous = sessionCache.byMessageId.get(message.id);
+  if (previous?.source === message && message.structureVersion !== undefined &&
+      previous.structureVersion === message.structureVersion &&
+      previous.includeWorkflow === options.includeWorkflow &&
+      !options.includeWorkflow && !isRuntimeMessageActive(message.status) &&
+      isMaterializedMessageAligned(previous.message, message)) {
+    previous.lastUsed = ++materializedMessageCacheClock;
+    return previous.message;
+  }
   const sourceRevision = [
     buildProjectionMessageMaterializationRevision(message),
     options.includeWorkflow ? 'workflow' : 'no-workflow'
@@ -328,7 +340,8 @@ const materializeChatRuntimeMessageWithCache = (
     syncMaterializedMessage(cached.message, materialized);
     const lastUsed = ++materializedMessageCacheClock;
     sessionCache.byMessageId.set(message.id, {
-      sourceRevision,
+      sourceRevision, source: message, structureVersion: message.structureVersion,
+      includeWorkflow: options.includeWorkflow,
       materializedMutableRevision: buildMaterializedMutableFieldsRevision(cached.message),
       message: cached.message,
       lastUsed
@@ -338,7 +351,8 @@ const materializeChatRuntimeMessageWithCache = (
   }
   const lastUsed = ++materializedMessageCacheClock;
   sessionCache.byMessageId.set(message.id, {
-    sourceRevision,
+    sourceRevision, source: message, structureVersion: message.structureVersion,
+    includeWorkflow: options.includeWorkflow,
     materializedMutableRevision: buildMaterializedMutableFieldsRevision(materialized),
     message: materialized,
     lastUsed

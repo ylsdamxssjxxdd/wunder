@@ -1,3 +1,4 @@
+import { captureTranscriptTail, restoreTranscriptTail } from './chatTranscriptTail';
 import type {
   ChatRuntimeApplyResult,
   ChatRuntimeBusyReason,
@@ -1462,8 +1463,20 @@ const applySessionSnapshot = (
     : Array.isArray(event.payload.messages)
       ? event.payload.messages as ChatRuntimeRawMessage[]
       : [];
+  if (event.payload.preserve_live === true && messages.length === 0) return;
   if (isCanonicalTranscript(messages)) {
-    const preservedLocalActive = applyCanonicalTranscriptSnapshot(session, messages, snapshotSeq);
+    const runtimeBefore = { runtimeStatus: session.runtimeStatus, busyReason: session.busyReason };
+    const preservedLocalActive = applyCanonicalTranscriptSnapshot(
+      session,
+      messages,
+      snapshotSeq,
+      isSnapshotRuntimeActive(event, messages),
+      event.payload.preserve_live === true
+    );
+    if (event.payload.preserve_live === true) {
+      Object.assign(session, runtimeBefore);
+      return;
+    }
     applySessionRuntime(session, {
       ...event,
       runtimeStatus: normalizeChatRuntimeStatus(event.payload.runtime_status ?? event.payload.status)
@@ -1785,7 +1798,9 @@ const isCanonicalTranscriptMessage = (message: ChatRuntimeRawMessage): boolean =
 const applyCanonicalTranscriptSnapshot = (
   session: ChatRuntimeSessionProjection,
   messages: ChatRuntimeRawMessage[],
-  snapshotSeq: number
+  snapshotSeq: number,
+  running = false,
+  preserveCurrent = false
 ): boolean => {
   const plans = messages
     .filter((raw) => !isSyntheticGreetingRawMessage(raw))
@@ -1793,6 +1808,7 @@ const applyCanonicalTranscriptSnapshot = (
     .filter((plan): plan is LegacyMessagePlan => Boolean(plan))
     .sort((left, right) => left.createdSeq - right.createdSeq || left.index - right.index);
   reconcilePendingLocalUserTurnsWithCanonicalSnapshot(session, plans);
+  const tail = running || preserveCurrent ? captureTranscriptTail(session, messages, preserveCurrent) : [];
   const keepMessageIds = new Set<string>();
   const keepUserTurnIds = new Set<string>();
   const keepModelTurnIds = new Set<string>();
@@ -1871,6 +1887,9 @@ const applyCanonicalTranscriptSnapshot = (
     keepModelTurnIds
   );
 
+  const preservedTail = restoreTranscriptTail(session, tail, keepMessageIds,
+    keepUserTurnIds, keepModelTurnIds, preserveCurrent);
+
   Object.keys(session.messageById).forEach((messageId) => {
     if (!keepMessageIds.has(messageId)) {
       delete session.messageById[messageId];
@@ -1889,7 +1908,8 @@ const applyCanonicalTranscriptSnapshot = (
 
   session.messages = [
     ...plans.map((plan) => plan.id),
-    ...preservedLocal.messageIds
+    ...preservedLocal.messageIds,
+    ...preservedTail
   ].filter((id, index, all) => keepMessageIds.has(id) && all.indexOf(id) === index);
   Object.values(session.userTurnById).forEach((turn) => {
     turn.messageIds = turn.messageIds.filter((messageId) => keepMessageIds.has(messageId));

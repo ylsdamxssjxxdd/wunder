@@ -77,3 +77,11 @@ Long logs, large web pages, batch search results, and compound tool outputs all 
 - [Boundary Handling](/docs/en/concepts/boundary-handling/)
 - [Token Accounts and Occupancy](/docs/en/concepts/quota-and-token-usage/)
 - [Stream Events Reference](/docs/en/reference/stream-events/)
+
+## Local reduction before summarization
+
+When automatic compression is triggered, older file reads, searches, and directory listings can be reduced locally. The latest five tool-result groups, errors, media, and results requiring pagination are protected. Reduced results retain location information, a head/tail preview, and an explicit omission notice so the agent can repeat a read when needed.
+
+If this releases enough space, no summary model call is needed. Otherwise, the existing summary flow runs. Manual compression and overflow recovery still use summarization directly. Summary output is capped at 2048 tokens, respecting smaller configured limits.
+
+Administrators can inspect estimated savings in `progress` events with `stage=microcompaction`. Estimates are diagnostic; actual token consumption comes from the model provider.

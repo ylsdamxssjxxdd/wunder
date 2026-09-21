@@ -6,7 +6,7 @@ read_when:
 source_docs:
   - src/services/tools.rs
   - src/services/tools/catalog.rs
-updated_at: 2026-04-10
+updated_at: 2026-09-21
 ---
 
 # ptc
@@ -18,6 +18,8 @@ updated_at: 2026-04-10
 - return `stdout`, `stderr`, and `returncode`
 
 It is not a generic replacement for shell execution. For ordinary command-line work, prefer [Execute Command](/docs/en/tools/exec/).
+
+Each invocation saves its script under `ptc_temp/<invocation_id>/` so concurrent calls with the same filename cannot overwrite each other. Use the returned `path` to locate the script; `workdir` remains the execution directory.
 
 ## Minimum arguments
 
@@ -35,9 +37,9 @@ It is not a generic replacement for shell execution. For ordinary command-line w
   "ok": true,
   "action": "ptc",
   "state": "completed",
-  "summary": "Executed Python script C:/.../ptc_temp/helper.py.",
+  "summary": "Executed Python script C:/.../ptc_temp/<invocation_id>/helper.py.",
   "data": {
-    "path": "ptc_temp/helper.py",
+    "path": "ptc_temp/<invocation_id>/helper.py",
     "workdir": ".",
     "returncode": 0,
     "stdout": "hello\n",

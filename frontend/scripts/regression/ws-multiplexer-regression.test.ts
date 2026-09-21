@@ -56,6 +56,33 @@ const installWebSocketMock = () => {
   };
 };
 
+test('tool-call model output keeps the socket request open through its final answer', async () => {
+  const restore = installWebSocketMock();
+  try {
+    const { createWsMultiplexer } = await import('../../src/utils/ws');
+    const socket = new FakeWebSocket();
+    const events: string[] = [];
+    const client = createWsMultiplexer(() => socket as unknown as WebSocket, {
+      idleTimeoutMs: 0, pingIntervalMs: 0
+    });
+    let settled = false;
+    const request = client.request({ requestId: 'request-1', closeOnFinal: true,
+      message: { type: 'start' }, onEvent: eventType => events.push(eventType)
+    }).then(() => { settled = true; });
+    socket.open();
+    const emit = (event: string, data: Record<string, unknown>) => socket.emit({
+      type: 'event', request_id: 'request-1', payload: { event, data }
+    });
+    emit('llm_output', { finish_reason: 'tool_calls' });
+    await sleep(0);
+    assert.equal(settled, false);
+    emit('tool_result', { result: 'output' });
+    emit('final', { answer: 'answer' });
+    await request;
+    assert.deepEqual(events, ['llm_output', 'tool_result', 'final']);
+  } finally { restore(); }
+});
+
 test('ws multiplexer resolves queued ack but keeps request-scoped events by default', async () => {
   const restore = installWebSocketMock();
   try {

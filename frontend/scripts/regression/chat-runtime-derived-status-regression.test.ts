@@ -22,7 +22,7 @@ test('runtime derived status keeps running while a watcher owns a running thread
   assert.equal(runtime.loaded, true);
 });
 
-test('runtime derived status can settle to idle when no running controller remains', () => {
+test('runtime derived status preserves running during disconnected transport', () => {
   const runtime = {
     threadStatus: 'running',
     loaded: true,
@@ -37,7 +37,7 @@ test('runtime derived status can settle to idle when no running controller remai
     streamLifecycle: 'idle'
   };
 
-  assert.equal(resolveRuntimeDerivedStatus({ runtime, loading: false }), 'idle');
+  assert.equal(resolveRuntimeDerivedStatus({ runtime, loading: false }), 'running');
 });
 
 test('runtime derived status preserves queued waiting state without controllers', () => {
@@ -112,7 +112,7 @@ test('runtime derived status still treats idle with a live send controller as ru
   assert.equal(resolveRuntimeDerivedStatus({ runtime, loading: false }), 'running');
 });
 
-test('runtime derived status does not keep running for an idle watcher with no active rounds', () => {
+test('runtime derived status preserves running before watcher rounds arrive', () => {
   const runtime = {
     threadStatus: 'running',
     loaded: true,
@@ -127,7 +127,7 @@ test('runtime derived status does not keep running for an idle watcher with no a
     streamLifecycle: 'watching'
   };
 
-  assert.equal(resolveRuntimeDerivedStatus({ runtime, loading: false }), 'idle');
+  assert.equal(resolveRuntimeDerivedStatus({ runtime, loading: false }), 'running');
 });
 
 test('runtime derived status keeps running while watcher owns an active turn before round hydration', () => {

@@ -673,7 +673,10 @@ impl Orchestrator {
             )));
         }
 
-        if !is_admin {
+        let virtual_replay = crate::services::virtual_llm::is_virtual_replay_provider(
+            effective_config.provider.as_deref(),
+        );
+        if !is_admin && !virtual_replay {
             self.ensure_user_token_balance(user_id, emitter, round_info, emit_quota_events)
                 .await?;
         }
@@ -708,9 +711,7 @@ impl Orchestrator {
         });
         let context_cache_probe =
             build_context_cache_probe(&chat_messages.messages, tools, request_payload.as_ref());
-        let virtual_turn = if crate::services::virtual_llm::is_virtual_replay_provider(
-            effective_config.provider.as_deref(),
-        ) {
+        let virtual_turn = if virtual_replay {
             let app_config = self.config_store.get().await;
             Some(
                 crate::services::virtual_llm::load_turn_for_round(
@@ -884,6 +885,8 @@ impl Orchestrator {
                 }
                 emitter.emit("llm_output", output_payload).await;
                 let mut usage_payload = json!({
+                    "virtual_replay": true,
+                    "billable": false,
                     "input_tokens": usage.input,
                     "output_tokens": usage.output,
                     "total_tokens": usage.total,
@@ -897,17 +900,7 @@ impl Orchestrator {
                 }
                 emitter.emit("token_usage", usage_payload).await;
             }
-            if !is_admin {
-                let consumed_tokens = usage.total.min(i64::MAX as u64) as i64;
-                self.consume_user_tokens(
-                    user_id,
-                    consumed_tokens,
-                    emitter,
-                    round_info,
-                    emit_quota_events,
-                )
-                .await?;
-            }
+            // Recorded/estimated usage is diagnostic only; replay never spends user quota.
             return Ok((content, reasoning, usage, tool_calls, round_speed));
         }
         let mut attempt = 0u32;

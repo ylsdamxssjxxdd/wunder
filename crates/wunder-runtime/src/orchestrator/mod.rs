@@ -76,10 +76,13 @@ mod execute_support;
 mod execute_tools;
 mod limiter;
 mod llm;
+#[cfg(all(test, feature = "sqlite-storage"))]
+mod virtual_replay_tests;
 mod memory;
 mod memory_auto_extract;
 mod memory_compaction_window;
 mod memory_messages;
+mod microcompaction;
 mod memory_support;
 mod prompt;
 mod request;

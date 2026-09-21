@@ -1,4 +1,5 @@
-﻿import { defineStore } from 'pinia';
+import { isChatSnapshotCurrent } from './chatSnapshotFreshness';
+import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -250,6 +251,8 @@ export const startSessionWatcher = (store, sessionId) => {
           }
         }
         const payload = response;
+        if (controller.signal.aborted || runtime.watchController !== controller ||
+            !isChatSnapshotCurrent(runtime, payload)) return;
         hydrateSessionCommandSessions(key, payload?.command_sessions ?? payload?.commandSessions);
         applySessionRuntimeSnapshot(runtime, payload?.runtime);
         applyCanonicalSessionEventsSnapshot(store, key, payload, {

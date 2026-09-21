@@ -1,3 +1,4 @@
+import { isChatSnapshotCurrent, readChatRealtimeRevision } from './chatSnapshotFreshness';
 import { defineStore } from 'pinia';
 
 import {
@@ -633,6 +634,7 @@ export const chatSessionOpenLoadActions = {
           targetSessionId,
           previousSessionKey === targetSessionId ? previousForegroundMessages : null
         );
+        const hydrationRevision = readChatRealtimeRevision(ensureRuntime(targetSessionId));
         const cachedSessionMessages = liveSessionMessages;
         const snapshot = previousSessionKey && previousSessionKey !== targetSessionId
           ? null
@@ -747,6 +749,16 @@ export const chatSessionOpenLoadActions = {
         if (isStaleDesktopSessionDetailLoad(this, targetSessionId, preserveWatcher)) {
           return null;
         }
+        if (!isChatSnapshotCurrent(ensureRuntime(targetSessionId), eventsPayload, hydrationRevision)) {
+          // Seed missing history even when WS wins the cold-refresh race, while
+          // preserving the newer projection's content and runtime status.
+          if (Array.isArray(sessionDetail?.transcript) && this.runtimeProjection?.sessions?.[targetSessionId]) {
+            syncChatRuntimeProjectionFromSnapshot(this, targetSessionId, sessionDetail.transcript, {
+              immediate: true, preserveLive: true
+            });
+          }
+          return sessionDetail;
+        }
         const data = sessionRes?.data;
         const detailTranscriptCount = Array.isArray(sessionDetail?.transcript)
           ? sessionDetail.transcript.length
@@ -769,20 +781,6 @@ export const chatSessionOpenLoadActions = {
           eventsPayload?.last_event_id ?? eventsPayload?.lastEventId
         );
         updateRuntimeRemoteLastEventId(runtime, remoteLastEventId);
-        if (shouldApplySessionEventsSnapshotToProjection(eventsPayload, runtime)) {
-          applyCanonicalSessionEventsSnapshot(this, targetSessionId, eventsPayload, {
-            phase: 'detail'
-          });
-        } else {
-          chatDebugLog('chat.store.detail', 'events-snapshot-skip-idle-transcript', {
-            sessionId: targetSessionId,
-            remoteRunning,
-            remoteLastEventId,
-            eventCount: detailEventCount,
-            transcriptCount: detailTranscriptCount,
-            runtime: buildRuntimeDebugSnapshot(runtime)
-          });
-        }
         recoverRuntimeInteractiveControllers(this, targetSessionId, runtime, {
           remoteRunning: eventsPayload?.running,
           remoteLastEventId,
@@ -1080,6 +1078,14 @@ export const chatSessionOpenLoadActions = {
           running: remoteRunning,
           authoritative: !remoteRunning
         });
+        // Establish transcript identity/order before replaying the active tail.
+        // Replaying first lets a later transcript replacement erase streamed rows
+        // while deduplication prevents the same events from rebuilding them.
+        applyCanonicalSessionEventsSnapshot(this, targetSessionId,
+          shouldApplySessionEventsSnapshotToProjection(eventsPayload, runtime)
+            ? eventsPayload
+            : { ...eventsPayload, events: [], rounds: [] },
+          { phase: 'detail' });
         applyMessageWindow(this, targetSessionId, this.messages);
         syncDemoChatCache({ sessionId: targetSessionId, messages: this.messages });
         if (perfEnabled) {

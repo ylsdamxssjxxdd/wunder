@@ -6,7 +6,7 @@ read_when:
 source_docs:
   - src/services/tools.rs
   - src/services/tools/catalog.rs
-updated_at: 2026-04-10
+updated_at: 2026-09-21
 ---
 
 # ptc
@@ -18,6 +18,8 @@ updated_at: 2026-04-10
 - 返回 `stdout/stderr/returncode`
 
 它不是随便执行 shell 的替代品。纯命令行任务还是优先用 [执行命令](/docs/zh-CN/tools/exec/)。
+
+每次调用会在 `ptc_temp/<invocation_id>/` 下保存脚本，避免共享工作区内同名脚本并发覆盖。请使用返回的 `path` 定位脚本；指定的 `workdir` 仍是程序执行目录。
 
 ## 最小参数
 
@@ -35,9 +37,9 @@ updated_at: 2026-04-10
   "ok": true,
   "action": "ptc",
   "state": "completed",
-  "summary": "Executed Python script C:/.../ptc_temp/helper.py.",
+  "summary": "Executed Python script C:/.../ptc_temp/<invocation_id>/helper.py.",
   "data": {
-    "path": "ptc_temp/helper.py",
+    "path": "ptc_temp/<invocation_id>/helper.py",
     "workdir": ".",
     "returncode": 0,
     "stdout": "hello\n",

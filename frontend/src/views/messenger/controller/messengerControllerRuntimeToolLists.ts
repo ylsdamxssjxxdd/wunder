@@ -443,7 +443,7 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
       return result;
   });
 
-  ctx.isSessionBusy = (sessionId: unknown): boolean => Boolean(ctx.chatStore.isSessionBusy?.(sessionId) || ctx.chatStore.isSessionLoading?.(sessionId));
+  ctx.isSessionBusy = (sessionId: unknown): boolean => Boolean(ctx.chatStore.isSessionBusy?.(sessionId));
 
   ctx.TERMINAL_RUNTIME_STATUS_SET = TERMINAL_SESSION_RUNTIME_STATUS_SET;
   ctx.WAITING_RUNTIME_STATUS_SET = WAITING_SESSION_RUNTIME_STATUS_SET;
@@ -459,38 +459,9 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
       return Boolean(loadingBySession[sessionId]);
   };
 
-  ctx.resolveEffectiveSessionBusy = (sessionId: unknown, messagesOverride: unknown[] | null = null): boolean => {
-      const normalizedSessionId = String(sessionId || '').trim();
-      if (!normalizedSessionId)
-          return false;
-      const runtimeStatus = ctx.resolveSessionRuntimeStatus(normalizedSessionId);
-      const loadingBySession = ctx.resolveSessionLoadingFlag(normalizedSessionId);
-      const messages = Array.isArray(messagesOverride)
-          ? messagesOverride
-          : normalizedSessionId === String(ctx.chatStore.activeSessionId || '').trim()
-              ? ctx.resolveActiveAgentRenderableMessageRecords()
-              : ctx.chatStore.getCachedSessionMessages(normalizedSessionId);
-      const busyByStoreGetter = ctx.isSessionBusy(normalizedSessionId);
-      if (runtimeStatus === 'queued') {
-          return false;
-      }
-      if (!loadingBySession &&
-          isTerminalMessengerRuntimeStatus(runtimeStatus) &&
-          !hasActiveSubagentsAfterLatestUser(messages) &&
-          !hasActiveBlockingSwarmAfterLatestUser(messages)) {
-          if (busyByStoreGetter || hasStreamingAssistantMessage(messages)) {
-              chatDebugLog('messenger.busy', 'force-idle-after-terminal-runtime', {
-                  sessionId: normalizedSessionId,
-                  runtimeStatus,
-                  loadingBySession,
-                  busyByStoreGetter,
-                  messageCount: messages.length
-              });
-          }
-          return false;
-      }
-      return busyByStoreGetter;
-  };
+  // Session state is reduced once in the store. Reading toolbar/list status must
+  // not materialize and scan every cached transcript during a render.
+  ctx.resolveEffectiveSessionBusy = (sessionId: unknown): boolean => ctx.isSessionBusy(sessionId);
 
   ctx.activeMessengerSessionBusy = computed(() => {
       const _projectionVersion = ctx.chatStore.runtimeProjectionVersion;
@@ -552,12 +523,6 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
               return;
           const runtimeStatus = ctx.resolveSessionRuntimeStatus(sessionId);
           if (isWaitingMessengerRuntimeStatus(runtimeStatus))
-              return;
-          const messages = sessionId === activeSessionId
-              ? ctx.resolveActiveAgentRenderableMessageRecords()
-              : ctx.chatStore.getCachedSessionMessages(sessionId);
-          if (isTerminalMessengerRuntimeStatus(runtimeStatus) &&
-              !hasActiveBlockingSwarmAfterLatestUser(messages))
               return;
           if (!ctx.resolveEffectiveSessionBusy(sessionId))
               return;

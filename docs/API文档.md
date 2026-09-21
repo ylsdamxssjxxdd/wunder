@@ -1,4 +1,4 @@
-﻿# wunder API 文档
+# wunder API 文档
 
 ## 4. API 设计
 
@@ -23,6 +23,10 @@
 - Docker Compose 下 `wunder-server` / `wunder-sandbox` 默认以 `WUNDER_SERVER_FEATURES=mcp,host-metrics,web-fetch` 编译；`host-metrics` 用于管理员侧系统状态中的 CPU、内存、进程、负载和磁盘采样，`web-fetch` 用于启用内置 `网页抓取` 工具。若自行覆盖 `WUNDER_SERVER_FEATURES`，需要保留这两个 feature，否则 `/wunder/admin/monitor` 的 `system` 主机指标会按轻量降级返回 0，或用户侧智能体工具列表不会显示 `网页抓取`。
 - `wunder-server` 运行时默认使用有界线程预算，避免大核宿主机按 CPU 数量创建多套超大 Tokio 线程池并放大 glibc malloc arena：主运行时默认 `min(可用 CPU, 8)` 个 worker、`16~64` 个 blocking 线程，PostgreSQL fallback runtime 默认 `min(可用 CPU, 2)` 个 worker，session-run runtime 默认 `min(可用 CPU, 4)` 个 worker 与 `16~32` 个 blocking 线程；Linux 容器会优先识别 cgroup CPU 配额。可分别通过 `WUNDER_SERVER_WORKER_THREADS`、`WUNDER_SERVER_MAX_BLOCKING_THREADS`、`WUNDER_POSTGRES_RUNTIME_THREADS`、`WUNDER_SESSION_RUN_WORKER_THREADS`、`WUNDER_SESSION_RUN_MAX_BLOCKING_THREADS` 覆盖。Compose 仅透传这些显式覆盖值，并默认设置 `MALLOC_ARENA_MAX=4` 与 `MALLOC_TRIM_THRESHOLD_=131072`，对应宿主覆盖变量为 `WUNDER_MALLOC_ARENA_MAX`、`WUNDER_MALLOC_TRIM_THRESHOLD_BYTES`；高并发部署应结合压测逐步上调线程预算，不建议直接按宿主逻辑核数配置。
 - 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址；compose 下 `wunder-sandbox` 默认不再启用容器级只读根文件系统，确需恢复 Docker `read_only` 时设置 `WUNDER_SANDBOX_DOCKER_READ_ONLY=true`。
+- 沙盒命令流：`POST /sandboxes/execute_command_stream` 返回 NDJSON（`command_start`、`delta`、`command_exit`、`final`）；`WUNDER_SANDBOX_TIMEOUT_S` 覆盖连接、响应头与响应体读取，执行端也限制整次流的生命周期。客户端断开时取消执行并回收直接子进程与输出读取任务。
+- 沙盒重试：仅连接建立失败或命令流路由明确返回 404/405 时允许候选地址切换/非流式兼容回退；请求可能已执行后的超时、断流、非法响应或服务端错误返回 `data.error_meta.code=SANDBOX_EXECUTION_INTERRUPTED`、`retryable=false`、`outcome_unknown=true`，不自动重放。执行端总超时使用 `SANDBOX_COMMAND_TIMEOUT`。调用方应先核对工作区结果再决定是否重新执行。
+- 沙盒文件工具：存储在受控阻塞池中单次初始化，失败后短暂退避再重试；上下文按容器根、工作区根和工作区标识隔离，最多缓存 128 项，访问时回收空闲超过 300 秒的项。文件工具复用相同运行时实现，不额外启动存储写线程和 LSP 清理任务。
+- `ptc` 的脚本保存路径为 `ptc_temp/<invocation_id>/<filename>`，本地与沙盒一致；每次调用使用独立目录避免同名脚本覆盖，实际路径以返回的 `path` 为准，`workdir` 语义保持不变。
 - 工具清单与提示词注入复用统一的工具规格构建逻辑：`tool_call/freeform_call` 模式会注入工具协议片段，`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
 - 智能体线程首次解析出的 `tool_call_mode` 会随线程冻结，后续轮次不会因模型配置变更在 `function_call/tool_call/freeform_call` 之间静默切换；旧线程若已有冻结 system prompt，会先从该 prompt 推断原工具模式。`function_call` 仍尊重用户显式配置，但在本地 llama.cpp 类服务中，native `tools` 可能由服务端 chat template 注入到非消息前缀位置，调试事件的 `context_cache_probe.tool_transport= native_tools` 会标记这一缓存风险。
 - 当 `tool_call_mode=freeform_call` 且模型走 OpenAI Responses API 时，服务端会把 `apply_patch` 这类语法工具下发为原生 `type=custom` 工具（携带 `format={type:grammar,syntax:lark,definition}`），普通 JSON 工具继续走 `type=function`；工具结果会按 `custom_tool_call_output/function_call_output` 回填历史，避免仅靠 XML 提示词驱动。
@@ -138,7 +142,10 @@
 - 排队活跃态：`watch/resume` 会把同 `session` 下的 `pending/retry/running` 队列任务视为活跃流状态，排队期仍会维持恢复链路与心跳。
 - 会话事件快照：`GET /wunder/chat/sessions/{session_id}/events` 会区分纯排队与真实运行态；纯排队时返回 `queued=true`，并在缺少运行时快照时补充 `runtime.thread_status/status=queued`，但 `running=false`。客户端应使用 `queued`/`runtime.status=queued` 恢复排队气泡，不应把纯排队当作模型轮次已开始。
 - 慢客户端恢复：当 WS 出站队列接近满载时，服务端会发送 `slow_client(reason=queue_full_resume_required)`，调用方应改走 `resume/watch` 补齐，而不是假设增量仍会持续直推。
-- 流式终态事件 `llm_output`：除 `content/reasoning/tool_calls/usage/prefill_duration_s/decode_duration_s` 等既有字段外，流式请求会尽量附带 `stream_timing` 诊断对象；非流式、无可见增量或旧事件回放中该字段可能为 `null` 或缺失，客户端必须兼容。
+- 模型轮次输出事件 `llm_output`：除 `content/reasoning/tool_calls/usage/prefill_duration_s/decode_duration_s` 等既有字段外，流式请求会尽量附带 `stream_timing` 诊断对象；非流式、无可见增量或旧事件回放中该字段可能为 `null` 或缺失，客户端必须兼容。
+- `llm_output` 的 `finish_reason/stop_reason=tool_calls/function_call/tool_use` 或非空 `tool_calls` 只结束模型动作，不结束用户请求；客户端继续接收工具与后续模型事件。连接关闭、本地 AbortError 或 loading 清理不等同于任务终态。
+- `/events` 的 `runtime` 是当前状态快照，其状态可在相同 `last_event_id` 下变化。客户端不得按历史游标对状态快照去重；并发补水应拒绝晚到旧响应覆盖更新的实时状态，先建立 transcript 顺序再恢复活跃尾部。
+
   - `stream_timing.chunk_count`：本次上游流中包含正文或推理增量的分片数。
   - `stream_timing.content_delta_chars` / `stream_timing.reasoning_delta_chars`：正文与推理增量字符数，用于判断最终快照是否来自流式累积。
   - `stream_timing.prefill_ms`：请求发出到首个可见增量的耗时。
@@ -1301,7 +1308,7 @@
   - 说明：当检测到模型连接失败、`503 Loading model`、连接拒绝/重置、请求发送失败或超时等 LLM 不可用错误时，编排层会至少按长退避重试 5 次；若最终仍失败，错误码统一返回 `LLM_UNAVAILABLE`。
   - 说明：若流式响应在没有任何可用内容、推理或 `tool_calls` 的情况下结束，服务端会先自动补拉一次非流式请求；若补拉仍为空，则同样按 `LLM_UNAVAILABLE` 处理并进入重试。
   - 说明：`provider` 支持预置（`virtual_replay/openai_compatible/openai/anthropic/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`）；`openai_compatible` 需显式填写 `base_url`，其余 provider 可省略 `base_url` 自动补齐。
-  - 说明：`provider=virtual_replay` 表示虚拟模型回放，`model` 可填已上传回放日志的 `id`，不需要 `base_url/api_key`；执行时优先按当前用户轮次与模型轮次从 JSONL 中回放 `llm_output`、`tool_calls` 与用量信息。未配置或未启用匹配 JSONL 时，会自动返回轻量随机虚拟回复，便于本地连通性测试。
+  - 说明：`provider=virtual_replay` 表示虚拟模型回放，`model` 可填已上传回放日志的 `id`，不需要 `base_url/api_key`；执行时按当前用户轮次与模型轮次严格匹配 JSONL 中的 `llm_output`、`tool_calls` 与用量信息，轮次缺失或耗尽会返回错误，不会循环复用旧输出。省略 `model` 时才使用轻量随机虚拟回复，便于本地连通性测试；回放用量仅作统计，不扣减用户额度。
   - 说明：`provider=anthropic` 使用 `/v1/messages` 协议，鉴权头为 `x-api-key`（同时兼容 `Authorization: Bearer`）。
   - 说明：`model_type=llm` 表示对话模型，额外支持 `api_mode/temperature/timeout_s/max_rounds/max_context/max_output/thinking_token_budget/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/reasoning_effort/history_compaction_ratio/stop`。
   - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力；配置页只需要连接字段。
@@ -3104,7 +3111,7 @@
   - 前端事件通道（`tool_result` SSE）保留结构化结果用于渲染与工作流关联：`tool/ok/data/tool_call_id`，并保留 `meta` 与失败关键信息（`error/error_code/retryable`）；仍会裁剪 `trace_id/user_round/model_round` 等轮次追踪噪声。
   - 模型 observation 通道走极简压缩：在不破坏可继续执行语义的前提下移除冗余字段并压缩大体积结构。
 - `tool_result` 事件额外提供 `model_observation`（JSONL 文本，单行 JSON），其内容与本轮实际送入模型的 observation 对齐，可直接用于前端排障展示。
-- 为减少模型上下文占用，observation 压缩阶段会将 `data` 下密集数组压缩为 JSONL 字段（如 `hits_jsonl/matches_jsonl/files_jsonl/rows_jsonl`）并附带 `*_count` 计数。
+- 模型 observation 保持紧凑 JSON，`hits/matches/files/rows/items/results` 等数组保留原生类型，不再统一改写成嵌套转义的 `*_jsonl` 字符串；工具自身提供的 JSONL 字段仍保留。传输耗时仅保留在 `tool_result.meta`，分页游标、截断提示、异步命令句柄及外部工具业务字段必须保留。
 - When truncation happens, payload/meta may include `truncation_reasons` (for example `array_items`/`string_chars`/`char_budget`), and multiple reasons can co-exist in the same result to indicate compound truncation.
 
 ## 2026-04-13 增补：beeroom 蜂群元数据编辑
@@ -3351,3 +3358,9 @@
   - `data.round_state`
   - `data.state`
 
+
+### 上下文本地精简事件
+
+自动压缩达到原有供应商实测用量阈值后，可先尝试本地精简旧的读取、搜索和列表结果。成功时发送 `progress`，`stage=microcompaction`、`strategy=old_tool_preview`，包含 `observed_context_tokens`、`estimated_tokens_before/after/saved`、`reduced_messages`、`kept_recent_tool_groups` 及轮次字段。`estimated_*` 仅用于诊断，不计入配额，也不冒充供应商实测用量。
+
+该路径不调用摘要模型，不生成摘要分隔线；模型上下文通过既有统一存储替换并完成写队列同步后继续，聊天记录不改写。后续请求重新由供应商报告真实占用。手动压缩、强制修复及空间不足仍走原有摘要流程。

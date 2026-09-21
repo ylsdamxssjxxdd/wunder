@@ -224,6 +224,7 @@ pub(super) fn new_compaction_id(run_mode: CompactionRunMode) -> String {
 pub(super) struct CompactionResult {
     pub(super) messages: Vec<Value>,
     pub(super) compaction_id: Option<String>,
+    pub(super) model_context_replaced: bool,
 }
 
 impl CompactionResult {
@@ -231,6 +232,7 @@ impl CompactionResult {
         Self {
             messages,
             compaction_id: None,
+            model_context_replaced: false,
         }
     }
 
@@ -238,6 +240,7 @@ impl CompactionResult {
         Self {
             messages,
             compaction_id: Some(compaction_id),
+            model_context_replaced: true,
         }
     }
 }
@@ -1566,6 +1569,9 @@ pub(super) fn extract_compaction_observation_detail(map: &Map<String, Value>) ->
 pub(super) fn extract_compaction_observation_text_candidate(value: &Value) -> Option<String> {
     match value {
         Value::Null => None,
+        Value::Array(items) if !items.iter().any(|item| item.get("type").is_some()) => {
+            (!items.is_empty()).then(|| value.to_string())
+        }
         Value::String(_) | Value::Array(_) => {
             let text = extract_memory_summary_text_value(value);
             let cleaned = text.trim();
@@ -1588,6 +1594,12 @@ pub(super) fn extract_compaction_observation_text_candidate(value: &Value) -> Op
                 "content",
                 "text",
                 "structured_content",
+                "hits",
+                "matches",
+                "files",
+                "items",
+                "rows",
+                "results",
             ] {
                 if let Some(text) = map
                     .get(key)
@@ -1666,6 +1678,14 @@ pub(super) fn merge_compaction_system_message(
 pub(super) fn build_compaction_summary_config(llm_config: &LlmModelConfig) -> LlmModelConfig {
     let mut summary_config = llm_config.clone();
     summary_config.max_rounds = Some(1);
+    // Auxiliary summaries should not inherit a large generation budget.
+    summary_config.max_output = Some(
+        llm_config
+            .max_output
+            .filter(|value| *value > 0)
+            .unwrap_or(2048)
+            .min(2048),
+    );
     // Disable reasoning for compaction summaries to keep the auxiliary request lean.
     summary_config.reasoning_effort = Some(COMPACTION_SUMMARY_REASONING_EFFORT.to_string());
     summary_config

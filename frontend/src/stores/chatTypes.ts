@@ -1,4 +1,4 @@
-﻿import { defineStore } from 'pinia';
+import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -116,6 +116,7 @@ import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
 export type SnapshotAssistantMessage = {
+  [key: string]: unknown;
   role: string;
   content: string;
   created_at: string;

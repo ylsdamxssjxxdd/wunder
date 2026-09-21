@@ -90,13 +90,23 @@ pub struct LspManager {
 
 impl LspManager {
     pub fn new(workspace: Arc<WorkspaceManager>) -> Arc<Self> {
+        Self::build(workspace, true)
+    }
+
+    pub(crate) fn new_disabled(workspace: Arc<WorkspaceManager>) -> Arc<Self> {
+        Self::build(workspace, false)
+    }
+
+    fn build(workspace: Arc<WorkspaceManager>, start_cleanup: bool) -> Arc<Self> {
         let manager = Arc::new(Self {
             workspace,
             clients: DashMap::new(),
             spawn_lock: Arc::new(Mutex::new(())),
             idle_ttl_s: Arc::new(AtomicU64::new(DEFAULT_IDLE_TTL_S)),
         });
-        Self::start_cleanup_task(&manager);
+        if start_cleanup {
+            Self::start_cleanup_task(&manager);
+        }
         manager
     }
 

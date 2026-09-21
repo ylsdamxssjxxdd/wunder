@@ -11,6 +11,7 @@ export type MessageVirtualWindowOptions<T extends MessageVirtualWindowItem> = {
   tailPinCount: number;
   estimatedHeight: number;
   resolveHeight: (key: string) => number;
+  layoutVersion?: number;
 };
 
 export type MessageVirtualWindowResult<T extends MessageVirtualWindowItem> = {
@@ -32,6 +33,11 @@ const normalizeSize = (value: number, fallback: number): number =>
 
 const normalizeHeight = (value: number, fallback: number): number =>
   Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+
+const heightPrefixCache = new WeakMap<object, {
+  version: number; length: number; fallback: number;
+  resolveHeight: (key: string) => number; prefix: number[];
+}>();
 
 const buildHeightPrefix = <T extends MessageVirtualWindowItem>(
   items: T[],
@@ -134,7 +140,17 @@ export const buildMessageVirtualWindow = <T extends MessageVirtualWindowItem>(
   const overscan = clamp(normalizeSize(options.overscan, 6), 0, 64);
   const tailPinCount = clamp(normalizeSize(options.tailPinCount, 8), 0, items.length);
   const tailStart = Math.max(0, items.length - tailPinCount);
-  const heightPrefix = buildHeightPrefix(items, options.resolveHeight, estimatedHeight);
+  const cached = heightPrefixCache.get(items);
+  const version = options.layoutVersion;
+  const heightPrefix = version !== undefined && cached?.version === version &&
+    cached.length === items.length && cached.fallback === estimatedHeight &&
+    cached.resolveHeight === options.resolveHeight
+    ? cached.prefix
+    : buildHeightPrefix(items, options.resolveHeight, estimatedHeight);
+  if (version !== undefined && heightPrefix !== cached?.prefix) {
+    heightPrefixCache.set(items, { version, length: items.length, fallback: estimatedHeight,
+      resolveHeight: options.resolveHeight, prefix: heightPrefix });
+  }
   const totalHeight = heightPrefix[items.length] || 0;
   if (tailStart <= 0) {
     return {

@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-08-02T02:07:19.283913+00:00",
+  "generated_at": "2026-09-21T10:11:12.749157+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -2552,7 +2552,7 @@
       "language": "zh-CN",
       "title": "上下文压缩",
       "summary": "长对话不会因为太长而中断。系统通过智能压缩保留有效信息，让对话持续进行。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-09-21",
       "read_when": [],
       "source_docs": [],
       "tab": "核心",
@@ -2646,6 +2646,11 @@
           "id": "section-17",
           "level": 2,
           "text": "延伸阅读"
+        },
+        {
+          "id": "section-18",
+          "level": 2,
+          "text": "先做本地精简"
         }
       ],
       "prev_slug": "zh-CN/concepts/core-swarm",
@@ -3790,7 +3795,7 @@
       "language": "zh-CN",
       "title": "ptc",
       "summary": "Python 临时脚本执行工具的当前行为与返回结构。",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-09-21",
       "read_when": [
         "用户要用一段完整 Python 脚本完成局部任务"
       ],
@@ -10934,7 +10939,7 @@
       "language": "en",
       "title": "Context Compression",
       "summary": "The Context Compression core explains how Wunder actively manages context size during long sessions, making compression a traceable, observable, and reviewable formal operation.",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-09-21",
       "read_when": [
         "You are handling long sessions or oversized tool outputs",
         "You want to understand why compression cannot be a simple summary"
@@ -11008,6 +11013,11 @@
           "id": "section-12",
           "level": 2,
           "text": "Further Reading"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "Local reduction before summarization"
         }
       ],
       "prev_slug": "en/concepts/core-swarm",
@@ -11997,7 +12007,7 @@
       "language": "en",
       "title": "ptc",
       "summary": "The current behavior and return structure of the temporary Python script execution tool.",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-09-21",
       "read_when": [
         "You need a complete Python snippet to finish a local task"
       ],

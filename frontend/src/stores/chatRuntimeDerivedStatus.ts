@@ -28,11 +28,7 @@ export const shouldPreserveWatchRunningStatus = (
   loading: unknown
 ): boolean => {
   if (!runtime || loading) return false;
-  const hasWatchWork =
-    Number(runtime.watchActiveRoundCount) > 0 || Boolean(String(runtime.activeTurnId || '').trim());
-  return normalizeThreadRuntimeStatus(runtime.threadStatus) === 'running' &&
-    Boolean(runtime.watchController) &&
-    hasWatchWork;
+  return normalizeThreadRuntimeStatus(runtime.threadStatus) === 'running';
 };
 
 const isExplicitTerminalRuntimeStatus = (status: unknown): boolean => {

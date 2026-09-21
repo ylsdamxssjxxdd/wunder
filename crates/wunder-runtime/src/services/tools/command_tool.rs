@@ -1440,14 +1440,12 @@ pub(crate) async fn execute_ptc(context: &ToolContext<'_>, args: &Value) -> Resu
     let ptc_root = context
         .workspace
         .resolve_path(context.workspace_id, LOCAL_PTC_DIR_NAME)?;
-    if let Err(err) = tokio::fs::create_dir_all(&ptc_root).await {
-        return Ok(build_ptc_exec_error(err.to_string()));
-    }
-
-    let script_path = ptc_root.join(script_name);
-    if let Err(err) = tokio::fs::write(&script_path, content).await {
-        return Ok(build_ptc_exec_error(err.to_string()));
-    }
+    let script_path = match super::ptc_script::save_script(&ptc_root, script_name.as_ref(), &content)
+        .await
+    {
+        Ok(path) => path,
+        Err(err) => return Ok(build_ptc_exec_error(err.to_string())),
+    };
 
     let output = match run_ptc_python_script_streaming(
         context,

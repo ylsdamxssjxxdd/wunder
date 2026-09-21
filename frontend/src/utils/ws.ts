@@ -1,3 +1,4 @@
+import { isTerminalLlmOutputPayload } from './chatStreamTerminal';
 import { t } from '@/i18n';
 import { redirectToLoginAfterLogout, resolveLogoutRedirectPath } from '@/utils/authNavigation';
 import { clearAccessTokenIfCurrent } from '@/utils/authTokenStorage';
@@ -126,32 +127,6 @@ const isTerminalEventType = (
   }
   if (normalized !== 'llm_output') return false;
   return isTerminalLlmOutputPayload(eventPayload || {});
-};
-
-const isTerminalLlmOutputPayload = (eventPayload: Record<string, unknown>): boolean => {
-  const data = asPayloadRecord(eventPayload.data);
-  const stopReason = String(
-    data.stop_reason ??
-      data.stopReason ??
-      data.finish_reason ??
-      data.finishReason ??
-      eventPayload.stop_reason ??
-      eventPayload.stopReason ??
-      eventPayload.finish_reason ??
-      eventPayload.finishReason ??
-      ''
-  ).trim();
-  if (stopReason) return true;
-  return [
-    data.done,
-    data.is_final,
-    data.isFinal,
-    data.final,
-    eventPayload.done,
-    eventPayload.is_final,
-    eventPayload.isFinal,
-    eventPayload.final
-  ].some((flag) => flag === true);
 };
 
 const buildWsPayloadError = (payload: unknown, phase?: string): WsError => {

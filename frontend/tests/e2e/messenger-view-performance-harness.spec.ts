@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 type HarnessApi = {
+  runTwoTurnProbe: () => Promise<{ turns: number; toolCalls: number; maxFrameGapMs: number; maxNodes: number }>;
   runScrollProbe: () => Promise<void>;
   switchSessionAndReturn: () => Promise<void>;
   prependHistory: () => Promise<void>;
@@ -59,4 +60,31 @@ test('real MessengerView keeps a bounded DOM through long history, scroll and se
   expect(metrics.streamingWorkflowShellVisible).toBe(true);
   expect(metrics.toolStreamFrameGapMs).toBeLessThan(250);
   expect(metrics.composerInputLatencyMs).toBeLessThan(5000);
+});
+
+test('two tool-heavy turns keep streaming, typing and refreshed scrolling responsive', async ({ page }) => {
+  await page.route('**/*', async route => {
+    if (!new URL(route.request().url()).pathname.startsWith('/wunder/')) {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ data: { items: [] } }) });
+  });
+  await page.goto('/__e2e/messenger-view-performance');
+  await page.waitForFunction(() => Boolean((window as any).__messengerViewPerformanceE2E));
+  const metrics = await page.evaluate(() =>
+    (window as unknown as { __messengerViewPerformanceE2E: HarnessApi }).__messengerViewPerformanceE2E.runTwoTurnProbe());
+  expect(metrics.turns).toBe(2);
+  expect(metrics.toolCalls).toBe(160);
+  expect(metrics.maxNodes).toBeLessThan(5000);
+  expect(metrics.maxFrameGapMs).toBeLessThan(150);
+  console.log('two-turn probe', JSON.stringify(metrics));
+  await page.reload();
+  await page.waitForFunction(() => Boolean((window as any).__messengerViewPerformanceE2E));
+  await page.evaluate(() => (window as unknown as { __messengerViewPerformanceE2E: HarnessApi })
+    .__messengerViewPerformanceE2E.runScrollProbe());
+  const refreshed = await readMetrics(page);
+  expect(refreshed.maxFrameGapMs).toBeLessThan(150);
+  expect(refreshed.domNodeCount).toBeLessThan(5000);
 });

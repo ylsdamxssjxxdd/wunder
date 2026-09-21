@@ -1,4 +1,4 @@
-﻿import { defineStore } from 'pinia';
+import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -204,34 +204,7 @@ export const shouldTreatRuntimeEventAsTerminal = (eventType, payload) => {
   return isTerminalRuntimeStatus(payload?.thread_status ?? payload?.status);
 };
 
-export const isTerminalLlmOutputPayload = (payload, data = null) => {
-  const source = data && typeof data === 'object' ? data : {};
-  const stopReason = String(
-    source?.stop_reason ??
-      source?.stopReason ??
-      source?.finish_reason ??
-      source?.finishReason ??
-      payload?.stop_reason ??
-      payload?.stopReason ??
-      payload?.finish_reason ??
-      payload?.finishReason ??
-      ''
-  ).trim();
-  if (stopReason) {
-    return true;
-  }
-  const terminalFlags = [
-    source?.done,
-    source?.is_final,
-    source?.isFinal,
-    source?.final,
-    payload?.done,
-    payload?.is_final,
-    payload?.isFinal,
-    payload?.final
-  ];
-  return terminalFlags.some((flag) => flag === true);
-};
+export { isTerminalLlmOutputPayload } from '@/utils/chatStreamTerminal';
 
 export const handleApprovalEvent = (store, eventType, payload, requestId, sessionId) => {
   if (!store) return;

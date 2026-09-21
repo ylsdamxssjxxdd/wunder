@@ -9,10 +9,11 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import MessengerView from '@/views/MessengerView.vue';
+import { runMessengerTwoTurnProbe } from './messengerTwoTurnProbe';
 import { useAgentStore } from '@/stores/agents';
 import { useChatStore } from '@/stores/chat';
 import { useSessionHubStore } from '@/stores/sessionHub';
-import { syncChatRuntimeProjectionFromSnapshot } from '@/stores/chatRuntimeState';
+import { applyCanonicalStreamRuntimeEvent, syncChatRuntimeProjectionFromSnapshot } from '@/stores/chatRuntimeState';
 
 type HarnessMetrics = {
   firstInteractiveMs: number;
@@ -77,6 +78,9 @@ const buildMessages = (sessionId: string, count: number) =>
       id: `${sessionId}-message-${index}`,
       message_id: `${sessionId}-message-${index}`,
       history_id: index + 1,
+      user_turn_id: `user-turn:${sessionId}:round:${Math.floor(index / 2) + 1}`,
+      model_turn_id: assistant ? `model-turn:${sessionId}:user:${Math.floor(index / 2) + 1}:model:1` : undefined,
+      turn_index: index + 1,
       role: assistant ? 'assistant' : 'user',
       content: assistant
         ? `## Message ${index}\n\n${'Long markdown paragraph for viewport performance. '.repeat(18)}\n\n| key | value |\n| --- | --- |\n| index | ${index} |`
@@ -163,18 +167,27 @@ const prependHistory = async () => {
 
 const streamLatestMessage = async () => {
   const chat = useChatStore();
-  const messages = Array.isArray(chat.messages) ? chat.messages : [];
-  const latest = messages[messages.length - 1] as Record<string, unknown> | undefined;
-  if (!latest) return;
-  latest.stream_incomplete = true;
-  for (let index = 0; index < 12; index += 1) {
-    latest.content = `${String(latest.content || '')} stream-${index}`;
-    metrics.value.streamedCharacters = String(latest.content).length;
-    chat.runtimeProjectionContentVersion += 1;
+  const session = chat.runtimeProjection.sessions[SESSION_A];
+  const latest = [...session.messages].reverse().map(id => session.messageById[id])
+    .find(message => message.role === 'assistant');
+  if (!latest) throw new Error('Missing assistant projection');
+  for (let index = 0; index < 48; index += 1) {
+    const seq = session.appliedSeq + 1;
+    applyCanonicalStreamRuntimeEvent(chat, SESSION_A, 'llm_output_delta', {
+      user_turn_id: latest.userTurnId, model_turn_id: latest.modelTurnId,
+      assistant_message_id: latest.id, delta: ` stream-${index}`, event_seq: seq
+    }, String(seq), { phase: 'watch' });
+    metrics.value.streamedCharacters = latest.content.length;
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   }
-  latest.stream_incomplete = false;
-  syncChatRuntimeProjectionFromSnapshot(chat, SESSION_A, messages, { immediate: true, running: false });
+  await new Promise<void>((resolve) => setTimeout(resolve, 160));
+  if (!document.querySelector('[data-testid="messenger-message-list"]')?.textContent?.includes('stream-47')) {
+    throw new Error('Canonical stream did not reach the rendered message');
+  }
+  applyCanonicalStreamRuntimeEvent(chat, SESSION_A, 'final', {
+    user_turn_id: latest.userTurnId, model_turn_id: latest.modelTurnId,
+    assistant_message_id: latest.id, answer: latest.content, event_seq: session.appliedSeq + 1
+  }, String(session.appliedSeq + 1), { phase: 'watch' });
   collectMetrics();
 };
 
@@ -290,6 +303,7 @@ onMounted(async () => {
   collectMetrics();
   (window as Window & { __messengerViewPerformanceE2E?: unknown }).__messengerViewPerformanceE2E = {
     installSession,
+    runTwoTurnProbe: () => runMessengerTwoTurnProbe(SESSION_A),
     runScrollProbe,
     prependHistory,
     streamLatestMessage,

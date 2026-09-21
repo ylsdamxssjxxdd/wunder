@@ -29,6 +29,7 @@ mod memory_manager_tool;
 mod multimodal_generation_tool;
 mod node_invoke_tool;
 mod panel_tools;
+pub(crate) mod ptc_script;
 mod read_file_guard;
 mod read_image_tool;
 mod read_indentation;
@@ -238,7 +239,11 @@ fn collect_orchestration_run_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
 
 pub(crate) fn collect_orchestration_aware_allow_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
     let mut roots = collect_allow_roots(context);
-    roots.extend(collect_orchestration_run_roots(context));
+    // An unrestricted filesystem root already includes every orchestration
+    // directory; querying storage here only adds blocking work to file tools.
+    if !roots_allow_any_path(&roots) {
+        roots.extend(collect_orchestration_run_roots(context));
+    }
     roots
 }
 

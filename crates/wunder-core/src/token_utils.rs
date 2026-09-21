@@ -42,18 +42,23 @@ pub fn trim_text_to_tokens(text: &str, max_tokens: i64, suffix: &str) -> String 
         return String::new();
     }
     if max_tokens <= 0 {
-        return suffix.to_string();
+        return String::new();
     }
     if approx_token_count(text) <= max_tokens {
         return text.to_string();
     }
-    let suffix_text = suffix;
-    let suffix_tokens = approx_token_count(suffix_text);
-    let max_chars = (max_tokens.max(1) as f64 * APPROX_BYTES_PER_TOKEN) as usize;
-    if max_tokens <= suffix_tokens {
-        return trim_text_to_chars(text, max_chars, "");
+    // Estimation uses UTF-8 bytes, so trimming must use the same unit. Counting
+    // characters here lets CJK/emoji exceed the requested budget severalfold.
+    let max_bytes = (max_tokens as usize).saturating_mul(APPROX_BYTES_PER_TOKEN as usize);
+    let suffix = if suffix.len() < max_bytes { suffix } else { "" };
+    let mut end = max_bytes.saturating_sub(suffix.len()).min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
     }
-    trim_text_to_chars(text, max_chars, suffix_text)
+    if end == 0 {
+        return String::new();
+    }
+    format!("{}{suffix}", &text[..end])
 }
 
 pub fn estimate_message_tokens(message: &Value) -> i64 {
@@ -278,5 +283,23 @@ mod tests {
         });
 
         assert!(estimate_message_tokens(&message) > baseline);
+    }
+}
+
+#[cfg(test)]
+mod utf8_budget_tests {
+    use super::*;
+
+    #[test]
+    fn trimming_respects_byte_estimate_for_unicode_and_small_budgets() {
+        for text in ["字".repeat(300), "🙂".repeat(300), "a字🙂".repeat(300)] {
+            for budget in 0..128 {
+                for suffix in ["", "...(truncated)", "（省略）"] {
+                    let trimmed = trim_text_to_tokens(&text, budget, suffix);
+                    assert!(approx_token_count(&trimmed) <= budget);
+                    assert!(trimmed.is_char_boundary(trimmed.len()));
+                }
+            }
+        }
     }
 }
