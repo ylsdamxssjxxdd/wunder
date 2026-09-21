@@ -12,18 +12,30 @@ export const runMessengerTwoTurnProbe = async (sessionId: string) => {
   const gaps: number[] = [];
   let previous = performance.now();
   let maxNodes = 0;
+  let peakNodeBreakdown: unknown = null;
   const sample = async () => {
     await frame();
     const now = performance.now();
     gaps.push(now - previous);
     previous = now;
-    maxNodes = Math.max(maxNodes, document.querySelectorAll('*').length);
+    const nodes = document.querySelectorAll('*').length;
+    if (nodes > maxNodes) {
+      maxNodes = nodes;
+      peakNodeBreakdown = {
+        messages: document.querySelectorAll('.messenger-message').length,
+        toolEntries: document.querySelectorAll('.tool-workflow-entry').length,
+        messageNodes: document.querySelectorAll('.messenger-message-panel *').length,
+        viewport: document.querySelector('[data-testid="messenger-message-list"]')?.clientHeight,
+        heights: [...document.querySelectorAll<HTMLElement>('.messenger-message')].slice(0, 10).map(node => node.offsetHeight)
+      };
+    }
   };
   const emit = (eventType: string, payload: Record<string, unknown>) => {
     const seq = (chat.runtimeProjection.sessions[sessionId]?.appliedSeq || 0) + 1;
     applyCanonicalStreamRuntimeEvent(chat, sessionId, eventType,
       { ...payload, event_seq: seq }, String(seq), { phase: 'watch' });
   };
+  const retainedWorkflowCounts: number[] = [];
   for (let turn = 1; turn <= 2; turn++) {
     const userTurnId = `user-turn:${sessionId}:round:${200 + turn}`;
     const modelTurnId = `model-turn:${sessionId}:user:${200 + turn}:model:1`;
@@ -38,11 +50,23 @@ export const runMessengerTwoTurnProbe = async (sessionId: string) => {
     for (let tool = 0; tool < 80; tool++) {
       const call = { ...ids, tool: 'read_file', tool_call_id: `call-${turn}-${tool}` };
       emit('llm_output', { ...ids, finish_reason: 'tool_calls', tool_calls: [{ id: call.tool_call_id }] });
-      emit('tool_call', { ...call, args: {} });
+      emit('tool_call', { ...call, args: { item: tool } });
       emit('tool_output_delta', { ...call, delta: 'x'.repeat(512) });
       emit('tool_result', { ...call, result: 'x'.repeat(512), status: 'completed' });
       if (!chat.isSessionBusy(sessionId)) throw new Error('Tool round lost running status');
       await sample();
+      if (tool === 0) {
+        await nextTick();
+        for (let attempt = 0; attempt < 12; attempt++) {
+          if (document.querySelector(`[data-virtual-key="runtime:assistant:${messageId}"] .message-tool-workflow`)) break;
+          await frame();
+        }
+        const workflow = document.querySelector<HTMLDetailsElement>(
+          `[data-virtual-key="runtime:assistant:${messageId}"] .message-tool-workflow`
+        );
+        if (!workflow) throw new Error('Active workflow shell is missing');
+        if (!workflow.open) workflow.querySelector<HTMLElement>('summary')?.click();
+      }
     }
     const seed = 'stream-text '.repeat(5600);
     emit('llm_output_delta', { ...ids, delta: seed });
@@ -69,6 +93,9 @@ export const runMessengerTwoTurnProbe = async (sessionId: string) => {
     if (JSON.stringify(after.map(message => message.id)) !== JSON.stringify(before.map(message => message.id))) {
       throw new Error('Refresh changed transcript order');
     }
+    const retained = after.filter(message => message.id.startsWith('assistant:user-turn:') && message.workflowItems.length >= 80);
+    retainedWorkflowCounts.push(retained.length);
+    if (retained.length !== turn) throw new Error('Earlier workflow was discarded after refresh');
     previous = performance.now();
     for (let index = 0; index < 12; index++) {
       if (list) {
@@ -78,5 +105,5 @@ export const runMessengerTwoTurnProbe = async (sessionId: string) => {
       await sample();
     }
   }
-  return { turns: 2, toolCalls: 160, maxFrameGapMs: Math.max(...gaps), maxNodes };
+  return { turns: 2, toolCalls: 160, maxFrameGapMs: Math.max(...gaps), maxNodes, retainedWorkflowCounts, peakNodeBreakdown };
 };

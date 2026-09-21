@@ -3,12 +3,14 @@
 mod args;
 mod bridge;
 mod runtime;
+mod startup;
 
 use anyhow::{anyhow, Context, Result};
 use args::DesktopArgs;
 use bridge::{DesktopBridge, DesktopRuntimeInfo};
 use clap::Parser;
 use serde::Serialize;
+use startup::{desktop_startup_ready, DesktopStartupState};
 use std::process::Command;
 use std::sync::Arc;
 use tauri::{WebviewUrl, WebviewWindowBuilder};
@@ -16,11 +18,6 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 use tokio::sync::Mutex;
 use tracing_subscriber::EnvFilter;
 use url::Url;
-
-#[derive(Clone)]
-struct DesktopAppState {
-    runtime: DesktopRuntimeInfo,
-}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,8 +101,10 @@ const DESKTOP_WINDOW_BRIDGE_SCRIPT: &str = r#"
 "#;
 
 #[tauri::command]
-fn desktop_runtime_info(state: tauri::State<'_, DesktopAppState>) -> DesktopRuntimeInfo {
-    state.runtime.clone()
+async fn desktop_runtime_info(
+    state: tauri::State<'_, Arc<DesktopStartupState>>,
+) -> Result<DesktopRuntimeInfo, String> {
+    state.runtime_info().await
 }
 
 fn normalize_update_message(error: impl std::fmt::Display) -> String {
@@ -416,24 +415,18 @@ fn run_bridge_only(args: DesktopArgs) -> Result<()> {
 
 fn run_gui(args: DesktopArgs) -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(8)
         .enable_all()
         .build()
         .context("create tokio runtime failed")?;
-    let mut bridge = rt.block_on(DesktopBridge::launch(&args))?;
-
-    let runtime_info = bridge.info().clone();
-    if args.print_token {
-        println!("desktop_token={}", runtime_info.desktop_token);
-    }
-
-    let web_url = runtime_info.web_base.clone();
+    tauri::async_runtime::set(rt.handle().clone());
+    let startup_state = Arc::new(DesktopStartupState::new(args));
     let run_result = tauri::Builder::default()
-        .manage(DesktopAppState {
-            runtime: runtime_info,
-        })
+        .manage(Arc::clone(&startup_state))
         .manage(Arc::new(Mutex::new(DesktopUpdateState::new())))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            desktop_startup_ready,
             desktop_runtime_info,
             desktop_get_update_state,
             desktop_check_for_updates,
@@ -446,9 +439,7 @@ fn run_gui(args: DesktopArgs) -> Result<()> {
             desktop_window_start_dragging
         ])
         .setup(move |app| {
-            let external = url::Url::parse(&web_url)
-                .with_context(|| format!("invalid desktop web url: {web_url}"))?;
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::External(external))
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("startup.html".into()))
                 .title("Wunder Desktop")
                 .decorations(false)
                 .inner_size(1360.0, 860.0)
@@ -462,7 +453,7 @@ fn run_gui(args: DesktopArgs) -> Result<()> {
         })
         .run(tauri::generate_context!("tauri.conf.json"));
 
-    rt.block_on(bridge.shutdown());
+    rt.block_on(startup_state.shutdown());
     run_result.map_err(|err| anyhow!("tauri runtime exited with error: {err}"))
 }
 

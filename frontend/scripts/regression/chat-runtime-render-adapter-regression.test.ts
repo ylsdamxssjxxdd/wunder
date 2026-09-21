@@ -212,7 +212,7 @@ test('chat runtime render adapter preserves untouched workflow row identity', ()
   assert.equal(secondRows[1]?.detail, 'updated output');
 });
 
-test('chat runtime render adapter retains the latest user-turn workflow after completion', () => {
+test('chat runtime render adapter retains every user-turn workflow across completion and the next turn', () => {
   const sessionId = 'session-active-workflow-window';
   const projection = apply([{
     event_type: 'session_snapshot',
@@ -270,7 +270,7 @@ test('chat runtime render adapter retains the latest user-turn workflow after co
   const history = materialized.find((message) => message.message_id === 'assistant-history');
   const active = materialized.find((message) => message.message_id === 'assistant-active');
 
-  assert.deepEqual(history?.workflowItems, []);
+  assert.equal((history?.workflowItems as unknown[]).length, 1);
   assert.equal(history?.workflowStreaming, false);
   assert.equal((active?.workflowItems as Array<Record<string, unknown>>).length, 1);
   assert.equal(active?.workflowStreaming, true);
@@ -291,7 +291,7 @@ test('chat runtime render adapter retains the latest user-turn workflow after co
   const completedHistory = completed.find((message) => message.message_id === 'assistant-history');
   const completedActive = completed.find((message) => message.message_id === 'assistant-active');
 
-  assert.deepEqual(completedHistory?.workflowItems, []);
+  assert.equal((completedHistory?.workflowItems as unknown[]).length, 1);
   assert.equal((completedActive?.workflowItems as Array<Record<string, unknown>>).length, 1);
   assert.equal(completedActive?.workflowStreaming, false);
   assert.equal(completedActive?.stream_incomplete, false);
@@ -326,11 +326,11 @@ test('chat runtime render adapter retains the latest user-turn workflow after co
   const previous = next.find((message) => message.message_id === 'assistant-active');
   const nextActive = next.find((message) => message.message_id === 'assistant-next');
 
-  assert.deepEqual(previous?.workflowItems, []);
+  assert.equal((previous?.workflowItems as unknown[]).length, 1);
   assert.equal((nextActive?.workflowItems as Array<Record<string, unknown>>).length, 1);
 });
 
-test('chat runtime render adapter retains every model loop in the latest user turn', () => {
+test('chat runtime render adapter retains every model loop and earlier user-turn workflow', () => {
   const sessionId = 'session-user-turn-workflow-window';
   const projection = apply([{
     event_type: 'session_snapshot',
@@ -395,7 +395,7 @@ test('chat runtime render adapter retains every model loop in the latest user tu
   const imageLoop = materialized.find((message) => message.message_id === 'assistant-image');
   const finalLoop = materialized.find((message) => message.message_id === 'assistant-final');
 
-  assert.deepEqual(history?.workflowItems, []);
+  assert.equal((history?.workflowItems as unknown[]).length, 1);
   assert.equal((imageLoop?.workflowItems as Array<Record<string, unknown>>).length, 1);
   assert.equal((finalLoop?.workflowItems as Array<Record<string, unknown>>).length, 1);
   assert.equal(
@@ -445,7 +445,7 @@ test('chat runtime render adapter restores an active workflow placeholder after 
   const history = materialized.find((message) => message.message_id === 'assistant-history');
   const active = materialized.find((message) => message.message_id === 'assistant-active');
 
-  assert.deepEqual(history?.workflowItems, []);
+  assert.equal((history?.workflowItems as unknown[]).length, 1);
   assert.equal(history?.workflowStreaming, false);
   assert.deepEqual(active?.workflowItems, []);
   assert.equal(active?.workflowStreaming, true);

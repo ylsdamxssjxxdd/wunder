@@ -200,6 +200,7 @@
           </div>
         </div>
       </section>
+      <ChatPerformanceCapture />
       <DesktopRuntimeSettingsPanel :desktop-local-mode="desktopLocalMode" />
     </template>
 
@@ -396,6 +397,7 @@ import { useChatStore } from '@/stores/chat';
 import { showApiError } from '@/utils/apiError';
 import { sumConversationConsumedTokens } from '@/utils/messageStats';
 import DesktopRuntimeSettingsPanel from '@/components/messenger/DesktopRuntimeSettingsPanel.vue';
+import ChatPerformanceCapture from '@/components/messenger/ChatPerformanceCapture.vue';
 import UserAvatarGlyph from '@/components/messenger/UserAvatarGlyph.vue';
 import { normalizeThemePalette, type ThemePalette } from '@/utils/themeAppearance';
 

@@ -411,7 +411,16 @@ async fn run_pressure_rounds(
     rounds: usize,
     repeat: usize,
 ) {
-    for round in 1..=rounds {
+    run_pressure_round_range(context, session_id, 1..=rounds, repeat).await;
+}
+
+async fn run_pressure_round_range(
+    context: &TestContext,
+    session_id: &str,
+    rounds: std::ops::RangeInclusive<usize>,
+    repeat: usize,
+) {
+    for round in rounds {
         let question = build_pressure_question(round, repeat);
         let (status, payload) = send_json(
             &context.app,
@@ -1022,9 +1031,20 @@ async fn auto_loop_compaction_keeps_first_and_recent_two_turns_after_manual_base
     .await;
     let session_id = create_test_session(&context, "Auto loop compaction edge turns").await;
 
-    run_pressure_rounds(&context, &session_id, 4, 100).await;
+    run_pressure_rounds(&context, &session_id, 4, 125).await;
     trigger_manual_compaction_and_wait(&context, &session_id).await;
-    run_pressure_rounds(&context, &session_id, 3, 100).await;
+    run_pressure_round_range(&context, &session_id, 5..=7, 125).await;
+
+    // The next request must actually cross the provider-observed trigger.
+    let observed_tokens = context
+        .state
+        .workspace
+        .load_session_context_tokens_async(&context.user_id, &session_id)
+        .await;
+    assert!(
+        observed_tokens >= 7_200,
+        "fixture below trigger: {observed_tokens}"
+    );
 
     let (status, payload) = send_json(
         &context.app,
@@ -1032,7 +1052,7 @@ async fn auto_loop_compaction_keeps_first_and_recent_two_turns_after_manual_base
         Method::POST,
         &format!("/wunder/chat/sessions/{session_id}/messages"),
         Some(json!({
-            "content": build_pressure_question(8, 100),
+            "content": build_pressure_question(8, 125),
             "stream": false
         })),
     )

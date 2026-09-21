@@ -9,11 +9,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import MessengerView from '@/views/MessengerView.vue';
+import { runChatWorkerProbe } from './chatWorkerProbe';
 import { runMessengerTwoTurnProbe } from './messengerTwoTurnProbe';
+import { enableWorkflowHistoryFixture, readWorkflowHistoryFixture } from './messengerWorkflowHistoryFixture';
 import { useAgentStore } from '@/stores/agents';
 import { useChatStore } from '@/stores/chat';
 import { useSessionHubStore } from '@/stores/sessionHub';
-import { applyCanonicalStreamRuntimeEvent, syncChatRuntimeProjectionFromSnapshot } from '@/stores/chatRuntimeState';
+import { applyCanonicalStreamRuntimeEvent, cacheSessionMessages, markSessionDetailWarm, syncChatRuntimeProjectionFromSnapshot } from '@/stores/chatRuntimeState';
 
 type HarnessMetrics = {
   firstInteractiveMs: number;
@@ -38,6 +40,22 @@ type HarnessMetrics = {
 const SESSION_A = 'perf-session-a';
 const SESSION_B = 'perf-session-b';
 const AGENT_ID = 'perf-agent';
+// Keep unrelated bootstrap requests from replacing the render fixture with empty API mocks.
+const fixtureSessions = [
+  { id: SESSION_A, agent_id: AGENT_ID, title: 'Session A', updated_at: '2026-01-02T00:00:00Z' },
+  { id: SESSION_B, agent_id: AGENT_ID, title: 'Session B', updated_at: '2026-01-01T00:00:00Z' }
+];
+const fixtureAgent = { id: AGENT_ID, name: 'Performance Agent', display_name: 'Performance Agent' };
+const fixtureChat = useChatStore();
+const fixtureAgents = useAgentStore();
+const originalLoadSessions = fixtureChat.loadSessions;
+const originalLoadAgents = fixtureAgents.loadAgents;
+fixtureChat.loadSessions = async () => { fixtureChat.sessions = fixtureSessions; return fixtureSessions; };
+fixtureAgents.loadAgents = async () => {
+  fixtureAgents.agents = [fixtureAgent];
+  fixtureAgents.agentMap = { [AGENT_ID]: fixtureAgent };
+  return { owned: [fixtureAgent], shared: [] };
+};
 const metrics = ref<HarnessMetrics>({
   firstInteractiveMs: 0,
   maxFrameGapMs: 0,
@@ -68,7 +86,8 @@ const buildWorkflowItems = (sessionId: string, messageIndex: number, count: numb
     toolCallId: `${sessionId}-tool-${messageIndex}-${toolIndex}`,
     title: `Tool ${toolIndex}`,
     status: 'completed',
-    detail: 'Bounded tool detail output.'
+    detail: 'Bounded tool detail output.',
+    toolCallRawDetail: JSON.stringify({ args: { item: toolIndex } })
   }));
 
 const buildMessages = (sessionId: string, count: number) =>
@@ -97,12 +116,11 @@ const installSession = async (sessionId: string, count = 320) => {
   const hub = useSessionHubStore();
   chat.activeSessionId = sessionId;
   chat.draftAgentId = AGENT_ID;
-  chat.sessions = [
-    { id: SESSION_A, agent_id: AGENT_ID, title: 'Session A', updated_at: '2026-01-02T00:00:00Z' },
-    { id: SESSION_B, agent_id: AGENT_ID, title: 'Session B', updated_at: '2026-01-01T00:00:00Z' }
-  ];
-  const messages = buildMessages(sessionId, count);
+  chat.sessions = fixtureSessions;
+  const messages = readWorkflowHistoryFixture(sessionId) || buildMessages(sessionId, count);
   chat.messages = messages;
+  cacheSessionMessages(sessionId, messages);
+  markSessionDetailWarm(sessionId);
   syncChatRuntimeProjectionFromSnapshot(chat, sessionId, messages, {
     immediate: true,
     authoritative: true
@@ -206,9 +224,10 @@ const streamToolOutputWhileTyping = async () => {
   liveItem.status = 'loading';
   latestAssistant.structureVersion = Number(latestAssistant.structureVersion || 0) + 1;
   chat.runtimeProjectionVersion += 1;
+  chat.runtimeProjectionVersionBySession[SESSION_A] = Number(chat.runtimeProjectionVersionBySession[SESSION_A] || 0) + 1;
   await nextTick();
   metrics.value.streamingWorkflowShellVisible = Boolean(
-    document.querySelector('.message-tool-workflow')?.querySelector('.tool-workflow-entry-summary')
+    document.querySelector(`[data-virtual-key="runtime:assistant:${latestAssistant.id}"] .message-tool-workflow`)
   );
 
   const input = document.querySelector<HTMLTextAreaElement>('.messenger-agent-composer textarea');
@@ -237,6 +256,7 @@ const streamToolOutputWhileTyping = async () => {
   latestAssistant.status = 'streaming';
   liveItem.status = 'completed';
   chat.runtimeProjectionVersion += 1;
+  chat.runtimeProjectionVersionBySession[SESSION_A] = Number(chat.runtimeProjectionVersionBySession[SESSION_A] || 0) + 1;
   collectMetrics();
 };
 
@@ -247,7 +267,12 @@ const expandToolDetails = async () => {
     list.dispatchEvent(new Event('scroll'));
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   }
-  const summaries = Array.from(document.querySelectorAll<HTMLElement>('.tool-workflow-entry-summary')).slice(0, 5);
+  const workflow = Array.from(document.querySelectorAll<HTMLDetailsElement>('.message-tool-workflow')).at(-1);
+  if (workflow && !workflow.open) {
+    workflow.querySelector<HTMLElement>('summary')?.click();
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  const summaries = Array.from(workflow?.querySelectorAll<HTMLElement>('.tool-workflow-entry-summary') || []).slice(0, 5);
   summaries.forEach((summary) => summary.click());
   await nextTick();
   collectMetrics();
@@ -264,10 +289,10 @@ const showEarlierToolEntries = async () => {
     latestAssistant.workflowItems = buildWorkflowItems(SESSION_A, 319, 260);
     latestAssistant.structureVersion = Number(latestAssistant.structureVersion || 0) + 1;
     chat.runtimeProjectionVersion += 1;
+  chat.runtimeProjectionVersionBySession[SESSION_A] = Number(chat.runtimeProjectionVersionBySession[SESSION_A] || 0) + 1;
     await nextTick();
   }
-  const workflow = Array.from(document.querySelectorAll<HTMLElement>('.message-tool-workflow'))
-    .find((node) => Boolean(node.querySelector('.tool-workflow-load-earlier')));
+  const workflow = Array.from(document.querySelectorAll<HTMLElement>('.message-tool-workflow')).at(-1);
   const summary = workflow?.querySelector<HTMLElement>('summary');
   if (workflow && !workflow.hasAttribute('open')) {
     summary?.click();
@@ -295,15 +320,35 @@ onMounted(async () => {
     return originalFetch(...args);
   }) as typeof fetch;
   const agents = useAgentStore();
-  const agent = { id: AGENT_ID, name: 'Performance Agent', display_name: 'Performance Agent' };
+  const agent = fixtureAgent;
   agents.agents = [agent];
   agents.agentMap = { [AGENT_ID]: agent };
   await installSession(SESSION_A);
   metrics.value.firstInteractiveMs = performance.now() - startedAt;
   collectMetrics();
   (window as Window & { __messengerViewPerformanceE2E?: unknown }).__messengerViewPerformanceE2E = {
+    runChatWorkerProbe,
     installSession,
+    installWorkflowHistory: async () => { enableWorkflowHistoryFixture(); await installSession(SESSION_A); },
     runTwoTurnProbe: () => runMessengerTwoTurnProbe(SESSION_A),
+    setSection: (section: 'messages' | 'more') => useSessionHubStore().setSection(section),
+    streamInBackground: async () => {
+      const chat = useChatStore();
+      const session = chat.runtimeProjection.sessions[SESSION_A];
+      const message = [...session.messages].reverse().map(id => session.messageById[id])
+        .find(row => row.role === 'assistant');
+      if (!message) throw new Error('Missing assistant');
+      for (let index = 0; index < 24; index++) {
+        const seq = session.appliedSeq + 1;
+        applyCanonicalStreamRuntimeEvent(chat, SESSION_A, 'llm_output_delta', {
+          user_turn_id: message.userTurnId, model_turn_id: message.modelTurnId,
+          assistant_message_id: message.id, delta: ` background-${index}`, event_seq: seq
+        }, String(seq), { phase: 'watch' });
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        if (document.querySelector('.messenger-message-panel')) throw new Error('Hidden chat remounted');
+      }
+      return chat.isSessionBusy(SESSION_A);
+    },
     runScrollProbe,
     prependHistory,
     streamLatestMessage,
@@ -316,6 +361,8 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  fixtureChat.loadSessions = originalLoadSessions;
+  fixtureAgents.loadAgents = originalLoadAgents;
   window.fetch = originalFetch;
   delete (window as Window & { __messengerViewPerformanceE2E?: unknown }).__messengerViewPerformanceE2E;
 });

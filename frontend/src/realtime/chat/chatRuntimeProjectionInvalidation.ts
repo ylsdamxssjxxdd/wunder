@@ -1,3 +1,4 @@
+import { scheduleBackgroundPublication, flushBackgroundPublication, clearBackgroundPublications } from './chatBackgroundPublication';
 import { applyChatRuntimeEvent } from './chatRuntimeReducer';
 import type {
   ChatRuntimeApplyResult,
@@ -8,6 +9,9 @@ import { chatDebugLog } from '@/utils/chatDebug';
 import { chatPerf } from '@/utils/chatPerf';
 
 type ProjectionVersionStore = {
+  activeSessionId?: unknown;
+  foregroundChatSessionId?: string | null;
+  runtimeProjectionVersionBySession?: Record<string, number>;
   runtimeProjectionContentVersion?: unknown;
   runtimeProjectionContentVersionByMessage?: Record<string, number>;
   runtimeProjectionVersion?: unknown;
@@ -16,7 +20,8 @@ type ProjectionVersionStore = {
 export const runtimeProjectionInvalidationState = {
   cancel: null as null | (() => void),
   pending: false,
-  lastBumpedAt: 0
+  lastBumpedAt: 0,
+  sessionIds: new Set<string>()
 };
 
 export const runtimeProjectionContentInvalidationState = {
@@ -27,6 +32,12 @@ export const runtimeProjectionContentInvalidationState = {
   messageIds: new Set<string>(),
   slowFlushCount: 0,
   maxSlowFlushMs: 0
+};
+
+let backgroundChanges = new WeakMap<object, { sessions: Set<string>; messages: Set<string> }>();
+const bumpSessionClock = (store: ProjectionVersionStore, sessionId: string) => {
+  if (!store.runtimeProjectionVersionBySession) store.runtimeProjectionVersionBySession = {};
+  store.runtimeProjectionVersionBySession[sessionId] = Number(store.runtimeProjectionVersionBySession[sessionId] || 0) + 1;
 };
 
 const DEFAULT_PROJECTION_INVALIDATION_DELAY_MS = 24;
@@ -107,10 +118,14 @@ const markRuntimeProjectionContentChanged = (
 
 export const markRuntimeProjectionChanged = (
   store: ProjectionVersionStore | null | undefined,
-  options: { immediate?: boolean; reason?: string } = {}
+  options: { immediate?: boolean; reason?: string; sessionId?: string; sessionIds?: Iterable<string> } = {}
 ) => {
   if (!store || typeof store !== 'object') return;
+  if (options.sessionId) runtimeProjectionInvalidationState.sessionIds.add(options.sessionId);
+  for (const id of options.sessionIds || []) runtimeProjectionInvalidationState.sessionIds.add(id);
   const bump = () => {
+    runtimeProjectionInvalidationState.sessionIds.forEach(id => bumpSessionClock(store, id));
+    runtimeProjectionInvalidationState.sessionIds.clear();
     runtimeProjectionInvalidationState.cancel = null;
     runtimeProjectionInvalidationState.pending = false;
     runtimeProjectionInvalidationState.lastBumpedAt = Date.now();
@@ -176,6 +191,9 @@ export const markRuntimeProjectionChanged = (
 };
 
 export const clearRuntimeProjectionInvalidation = () => {
+  clearBackgroundPublications();
+  backgroundChanges = new WeakMap();
+  runtimeProjectionInvalidationState.sessionIds.clear();
   if (runtimeProjectionInvalidationState.cancel) {
     runtimeProjectionInvalidationState.cancel();
   }
@@ -207,6 +225,33 @@ export const applyChatRuntimeEventsWithInvalidation = (
   });
   if (changed) {
     const appliedResults = results.filter((result) => result.applied);
+    if (store) {
+      const foreground = store.foregroundChatSessionId ?? store.activeSessionId;
+      const background = appliedResults.every(result => result.sessionId !== String(foreground || ''));
+      const urgent = options.immediate === true || events.some(event =>
+        /^(session_runtime|session_snapshot|turn_completed|turn_failed|turn_cancelled|assistant_final|approval_|user_message)/.test(event.event_type));
+      if (background && !urgent) {
+        let changes = backgroundChanges.get(store);
+        if (!changes) { changes = { sessions: new Set(), messages: new Set() }; backgroundChanges.set(store, changes); }
+        for (const result of appliedResults) {
+          if (result.contentOnly && result.messageId) changes.messages.add(result.messageId);
+          else changes.sessions.add(result.sessionId);
+        }
+        const publish = () => {
+          const next = backgroundChanges.get(store);
+          backgroundChanges.delete(store);
+          if (!next) return;
+          next.sessions.forEach(id => bumpSessionClock(store, id));
+          if (next.sessions.size) markRuntimeProjectionChanged(store, { immediate: true });
+          markRuntimeProjectionContentChanged(store, next.messages, { immediate: true });
+        };
+        scheduleBackgroundPublication(store, publish);
+        if (changes.messages.size + changes.sessions.size > 2048) flushBackgroundPublication(store);
+        return results;
+      }
+      // Navigation/terminal events publish everything pending before observers run.
+      if (urgent) flushBackgroundPublication(store);
+    }
     const contentOnlyResults = appliedResults.filter((result) => result.contentOnly === true);
     if (contentOnlyResults.length === appliedResults.length && contentOnlyResults.length > 0) {
       markRuntimeProjectionContentChanged(
@@ -215,7 +260,8 @@ export const applyChatRuntimeEventsWithInvalidation = (
         { immediate: options.immediate }
       );
     } else {
-      markRuntimeProjectionChanged(store, options);
+      markRuntimeProjectionChanged(store, { ...options,
+        sessionIds: new Set(appliedResults.map(result => result.sessionId)) });
       if (contentOnlyResults.length > 0) {
         markRuntimeProjectionContentChanged(
           store,

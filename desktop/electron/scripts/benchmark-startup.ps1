@@ -10,6 +10,7 @@ param(
   [string]$ElectronExe = '',
   [string]$BridgeExe = '',
   [string]$FrontendRoot = '',
+  [string]$ShellEntry = '',
   [switch]$ResetData
 )
 
@@ -20,6 +21,7 @@ $electronExe = if ($ElectronExe) { $ElectronExe } else { Join-Path $repoRoot 'no
 $bridgeExe = if ($BridgeExe) { $BridgeExe } else { Join-Path $repoRoot 'target\release\wunder-desktop-bridge.exe' }
 $frontendRoot = if ($FrontendRoot) { $FrontendRoot } else { Join-Path $repoRoot 'frontend\dist-desktop' }
 $skillsRoot = Join-Path $repoRoot 'config\skills'
+$shellEntry = if ($ShellEntry) { (Resolve-Path -LiteralPath $ShellEntry).Path } else { Join-Path $repoRoot 'desktop\electron' }
 
 foreach ($requiredPath in @($electronExe, $bridgeExe, $frontendRoot, $skillsRoot)) {
   if (!(Test-Path -LiteralPath $requiredPath)) {
@@ -152,7 +154,7 @@ try {
     $electronArguments = if ($isPackagedExecutable) {
       @("--user-data-dir=$DataRoot")
     } else {
-      @((Join-Path $repoRoot 'desktop\electron'), "--user-data-dir=$DataRoot")
+      @($shellEntry, "--user-data-dir=$DataRoot")
     }
     $process = Start-Process -FilePath $electronExe `
       -ArgumentList $electronArguments `
@@ -187,6 +189,10 @@ try {
         run = $index
         kind = $kind
         window_ready_to_show_ms = Find-StartupTotalMs -Text $stdout -Scope 'electron' -Kind 'point' -Name 'window_ready_to_show'
+        main_process_loaded_ms = Find-StartupTotalMs -Text $stdout -Scope 'electron' -Kind 'point' -Name 'main_process_loaded'
+        app_ready_ms = Find-StartupTotalMs -Text $stdout -Scope 'electron' -Kind 'segment' -Name 'app_when_ready'
+        post_first_frame_ms = Find-StartupTotalMs -Text $stdout -Scope 'electron' -Kind 'point' -Name 'post_first_frame_start'
+        frontend_post_first_frame_ms = Find-RendererStageTotalMs -Text $stdout -Stage 'frontend-post-first-frame'
         bridge_ready_ms = Find-StartupTotalMs -Text $stdout -Scope 'electron' -Kind 'segment' -Name 'bridge_start_total'
         document_loaded_ms = Find-StartupTotalMs -Text $stdout -Scope 'electron' -Kind 'point' -Name 'main_ui_loaded'
         app_mounted_ms = Find-RendererStageTotalMs -Text $stdout -Stage 'app-mounted'
@@ -210,10 +216,10 @@ try {
 }
 
 $measuredSamples = @($samples | Where-Object { $_.kind -eq 'measure' })
-$metrics = @('window_ready_to_show_ms', 'bridge_ready_ms', 'document_loaded_ms', 'app_mounted_ms', 'messenger_shell_frame_ms', 'messenger_ready_ms', 'messenger_profile_ready_ms', 'messenger_session_list_ready_ms', 'messenger_conversation_ready_ms')
+$metrics = @('main_process_loaded_ms', 'app_ready_ms', 'window_ready_to_show_ms', 'post_first_frame_ms', 'frontend_post_first_frame_ms', 'bridge_ready_ms', 'document_loaded_ms', 'app_mounted_ms', 'messenger_shell_frame_ms', 'messenger_ready_ms', 'messenger_profile_ready_ms', 'messenger_session_list_ready_ms', 'messenger_conversation_ready_ms')
 $median = [ordered]@{}
 foreach ($metric in $metrics) {
-  $values = @($measuredSamples | ForEach-Object { [double]$_[$metric] })
+  $values = @($measuredSamples | Where-Object { $null -ne $_[$metric] } | ForEach-Object { [double]$_[$metric] })
   $median[$metric] = Get-Median -Values $values
 }
 

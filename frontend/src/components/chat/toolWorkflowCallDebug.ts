@@ -57,10 +57,10 @@ const parseArgumentObject = (candidate: unknown): UnknownObject | null => {
   return null;
 };
 
-const extractExplicitCallArgs = (item: WorkflowItem | null): UnknownObject | null => {
+const extractExplicitCallArgs = (item: WorkflowItem | null, parse = parseDetailObject): UnknownObject | null => {
   if (!item) return null;
-  const rawDetail = parseDetailObject(item.toolCallRawDetail ?? item.tool_call_raw_detail);
-  const detailObject = rawDetail || parseDetailObject(item.detail);
+  const rawDetail = parse(item.toolCallRawDetail ?? item.tool_call_raw_detail);
+  const detailObject = rawDetail || parse(item.detail);
   if (!detailObject) return null;
   const nestedFunction = asObject(detailObject.function);
   const candidates: unknown[] = [
@@ -75,11 +75,11 @@ const extractExplicitCallArgs = (item: WorkflowItem | null): UnknownObject | nul
   return null;
 };
 
-export const extractWorkflowCallArgs = (item: WorkflowItem | null): UnknownObject | null => {
+export const extractWorkflowCallArgs = (item: WorkflowItem | null, parse = parseDetailObject): UnknownObject | null => {
   if (!item) return null;
-  const detailObject = parseDetailObject(item.detail);
+  const detailObject = parse(item.detail);
   if (!detailObject) return null;
-  return extractExplicitCallArgs(item) || detailObject;
+  return extractExplicitCallArgs(item, parse) || detailObject;
 };
 
 const isRuntimeCommandSessionPayload = (payload: UnknownObject): boolean => {

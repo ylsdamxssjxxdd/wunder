@@ -312,8 +312,7 @@ export const chatStopResumeActions = {
       abortWatchStream(sessionId);
       clearSessionEventsSnapshot(sessionId);
       setSessionLoading(this, sessionId, true);
-      const perfEnabled = chatPerf.enabled();
-      const perfStreamStart = perfEnabled ? performance.now() : 0;
+      const perfStreamStart = performance.now();
       const sessionMessagesRef = resolveSessionMessageArray(this, sessionId, this.messages);
       cacheSessionMessages(sessionId, sessionMessagesRef);
       const projectionOnlyResume = !message;
@@ -723,7 +722,7 @@ export const chatStopResumeActions = {
             textStats,
             contentTraceMarker
           );
-          if (perfEnabled) {
+          if (chatPerf.enabled()) {
             chatPerf.count('chat_resume_event', 1, { eventType: effectiveEventType, sessionId });
           }
           if (normalizedEventType === 'heartbeat' || normalizedEventType === 'ping') {
@@ -847,7 +846,7 @@ export const chatStopResumeActions = {
                 message.content = detail;
               }
             }
-          } else if (perfEnabled) {
+          } else if (chatPerf.enabled()) {
             chatPerf.count('chat_resume_interrupted', 1, { sessionId });
           }
         }
@@ -882,7 +881,7 @@ export const chatStopResumeActions = {
         if (shouldMutateLegacyResumeMessage) {
           notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
         }
-        if (perfEnabled) {
+        if (chatPerf.enabled()) {
           chatPerf.recordDuration('chat_resume_total', performance.now() - perfStreamStart, {
             sessionId,
             terminalSeen,

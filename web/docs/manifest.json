@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-09-21T10:11:12.749157+00:00",
+  "generated_at": "2026-09-21T12:06:03.554433+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -9797,11 +9797,16 @@
         },
         {
           "id": "section-17",
+          "level": 3,
+          "text": "聊天卡顿，如何采集性能报告？"
+        },
+        {
+          "id": "section-18",
           "level": 2,
           "text": "仍未解决？"
         },
         {
-          "id": "section-18",
+          "id": "section-19",
           "level": 2,
           "text": "提交问题时建议附带"
         }
@@ -17433,11 +17438,16 @@
         },
         {
           "id": "section-17",
+          "level": 3,
+          "text": "Collect a report for chat slowdowns"
+        },
+        {
+          "id": "section-18",
           "level": 2,
           "text": "Still Not Resolved?"
         },
         {
-          "id": "section-18",
+          "id": "section-19",
           "level": 2,
           "text": "When Reporting an Issue, Include"
         }

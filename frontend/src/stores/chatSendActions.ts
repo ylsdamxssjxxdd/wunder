@@ -342,8 +342,7 @@ export const chatSendActions = {
       if (!this.activeSessionId) {
         clearDraftSessionBootstrapMessages(this.messages);
       }
-      const perfEnabled = chatPerf.enabled();
-      const perfStreamStart = perfEnabled ? performance.now() : 0;
+      const perfStreamStart = performance.now();
       const initialRuntime = ensureRuntime(initialSessionId);
       if (initialRuntime) {
         initialRuntime.stopRequested = false;
@@ -937,7 +936,7 @@ export const chatSendActions = {
             applySessionRuntimeEvent(this, sessionId, approvalPayload, normalizedEventType);
             return;
           }
-          if (perfEnabled) {
+          if (chatPerf.enabled()) {
             chatPerf.count('chat_stream_event', 1, { eventType: normalizedEventType || eventType, sessionId });
           }
           if (normalizedEventType === 'heartbeat' || normalizedEventType === 'ping') {
@@ -1125,7 +1124,7 @@ export const chatSendActions = {
                 assistantMessage.content = detail;
               }
             }
-          } else if (perfEnabled) {
+          } else if (chatPerf.enabled()) {
             chatPerf.count('chat_stream_interrupted', 1, { sessionId });
           }
         }
@@ -1243,7 +1242,7 @@ export const chatSendActions = {
             ? { messages: buildMessageIdentityDebugList(sessionMessagesRef) }
             : {})
         });
-        if (perfEnabled) {
+        if (chatPerf.enabled()) {
           chatPerf.recordDuration('chat_stream_total', performance.now() - perfStreamStart, {
             sessionId,
             terminalSeen,

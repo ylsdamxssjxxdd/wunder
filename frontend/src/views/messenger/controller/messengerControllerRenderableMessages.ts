@@ -683,7 +683,7 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
 
   ctx.agentRenderableMessages = computed<AgentRenderableMessage[]>(() => {
       const shadowEnabled = isChatRuntimeProjectionRenderShadowEnabled();
-      const _projectionRenderVersion = ctx.chatStore.runtimeProjectionVersion;
+      const _projectionRenderVersion = ctx.chatStore.runtimeProjectionVersionBySession?.[ctx.chatStore.activeSessionId] || 0;
       const syntheticGreeting = resolveSyntheticGreetingRenderable();
       const projection = toRaw(ctx.chatStore.runtimeProjection);
       const projectionRenderable = buildChatRuntimeRenderableMessages({
@@ -1119,9 +1119,8 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           Boolean(message?.workflowStreaming) ||
           (Array.isArray(message?.workflowItems) && message.workflowItems.length > 0) ||
           (Array.isArray(message?.subagents) && message.subagents.length > 0);
-      // Only the current model turn keeps a live workflow component. Older
-      // turns remain in the projection but must not retain hidden watchers.
-      return hasWorkflow && ctx.latestVisibleAgentAssistantMessage.value === message;
+      // Message virtualization bounds mounted shells; each shell lazily mounts details.
+      return hasWorkflow;
   };
 
   ctx.hasPlanSteps = (plan: unknown): boolean => Array.isArray((plan as {

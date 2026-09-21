@@ -2,17 +2,16 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const {
-  DEFAULT_LOADING_SHELL_DELAY_MS,
-  resolveLoadingShellDelayMs
+  parseNonNegativeNumber
 } = require('./startupPolicy')
 
-test('shows the loading shell immediately by default', () => {
-  assert.equal(DEFAULT_LOADING_SHELL_DELAY_MS, 0)
-  assert.equal(resolveLoadingShellDelayMs(undefined), 0)
+test('uses the default for absent or invalid timing values', () => {
+  assert.equal(parseNonNegativeNumber(undefined, 10), 10)
+  assert.equal(parseNonNegativeNumber('-1', 10), 10)
+  assert.equal(parseNonNegativeNumber('invalid', 10), 10)
 })
 
-test('allows an explicit loading shell delay for diagnostics', () => {
-  assert.equal(resolveLoadingShellDelayMs('180'), 180)
-  assert.equal(resolveLoadingShellDelayMs('-1'), 0)
-  assert.equal(resolveLoadingShellDelayMs('invalid'), 0)
+test('accepts zero and positive timing values', () => {
+  assert.equal(parseNonNegativeNumber('180', 10), 180)
+  assert.equal(parseNonNegativeNumber('0', 10), 0)
 })

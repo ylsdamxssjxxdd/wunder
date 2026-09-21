@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { flushBackgroundPublication } from '@/realtime/chat/chatBackgroundPublication';
 // Cross-domain watchers, mounted listeners, realtime pulse wiring, and unmount cleanup.
 import type { MessengerControllerContext } from './messengerControllerContext';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -418,6 +419,11 @@ type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 export function installMessengerControllerLifecycleReactiveEffects(ctx: MessengerControllerContext): void {
   installActiveChatRealtimeRecovery(ctx);
+  watch(() => [ctx.sessionHub.activeSection, ctx.chatStore.activeSessionId], () => {
+    ctx.chatStore.foregroundChatSessionId = ctx.sessionHub.activeSection === 'messages'
+      ? String(ctx.chatStore.activeSessionId || '') : '';
+    if (ctx.chatStore.foregroundChatSessionId) flushBackgroundPublication(ctx.chatStore);
+  }, { immediate: true, flush: 'sync' });
   const rememberAgentPlanExpandedState = (key: unknown, value: unknown) => {
       const normalizedKey = String(key || '').trim();
       if (!normalizedKey)
@@ -990,6 +996,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.userWorldStore.activeMessages.length,
       ctx.sessionHub.activeConversationKey
   ], () => {
+      if (ctx.sessionHub.activeSection !== 'messages') return;
       ctx.pruneMessageVirtualHeightCache();
       void nextTick(() => {
           ctx.scheduleMessageViewportRefresh({
@@ -1041,6 +1048,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           ctx.buildLatestAssistantLayoutSignature(latestMessage)
       ].join('::');
   }, () => {
+      if (ctx.sessionHub.activeSection !== 'messages') return;
       ctx.refreshLatestAssistantMessageLayout('latest-assistant-signature');
   }, { flush: 'post' });
 
@@ -1061,11 +1069,13 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           String(lastWorkflowItem?.status || '').trim()
       ].join('::');
   }, () => {
+      if (ctx.sessionHub.activeSection !== 'messages') return;
       const latestKey = ctx.latestAgentRenderableMessageKey.value;
       ctx.scheduleWorkspaceResourceHydration('latest-assistant-workflow-resources', latestKey ? { messageKeys: [latestKey] } : {});
   }, { flush: 'post' });
 
   watch(() => ctx.userWorldStore.activeMessages[ctx.userWorldStore.activeMessages.length - 1]?.content, () => {
+      if (ctx.sessionHub.activeSection !== 'messages') return;
       ctx.scheduleWorkspaceResourceHydration('world-latest-content');
       const latestMessageKey = ctx.latestWorldRenderableMessageKey.value;
       ctx.scheduleMessageViewportRefresh({
@@ -1075,6 +1085,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
   });
 
   watch(() => [ctx.agentRenderableMessages.value.length, ctx.worldRenderableMessages.value.length], () => {
+      if (ctx.sessionHub.activeSection !== 'messages') return;
       ctx.pruneMessageVirtualHeightCache();
       void nextTick(() => {
           ctx.scheduleMessageViewportRefresh({
@@ -1317,6 +1328,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
   });
 
   onBeforeUnmount(() => {
+      ctx.chatStore.foregroundChatSessionId = '';
       ctx.sectionRouteSyncToken += 1;
       clearDesktopRealtimePulseStartTimer();
       if (typeof window !== 'undefined') {

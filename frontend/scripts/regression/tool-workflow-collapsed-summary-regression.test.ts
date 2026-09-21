@@ -1,7 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 
 import {
   buildCollapsedToolWorkflowSummary,
@@ -49,16 +47,6 @@ test('read image aliases render as one visible image-reading tool with a path su
     assert.equal(summary.brief, 'preview.png');
     assert.equal(summary.title, '\u8bfb\u56fe preview.png');
   }
-});
-
-test('workflow component keeps the same bounded summary after a row expands', () => {
-  const source = readFileSync(
-    resolve(process.cwd(), 'src/components/chat/MessageToolWorkflow.vue'),
-    'utf8'
-  );
-  assert.ok(source.includes('const collapsedSummary = buildCollapsedToolWorkflowSummary(entry, toolDisplay);'));
-  assert.ok(source.includes('summaryBrief: collapsedSummary.brief || summary.summaryBrief'));
-  assert.ok(source.includes('grid-template-columns: 144px minmax(0, 1fr)'));
 });
 
 test('collapsed workflow rows retain token and duration metadata without parsing a full result', () => {

@@ -34,12 +34,11 @@ export type ChatRuntimeRenderableSourceDecision = {
 };
 
 type MaterializationOptions = {
-  includeWorkflow: boolean;
   workflowActive: boolean;
 };
 
 type MaterializeChatRuntimeMessagesOptions = {
-  retainActiveWorkflowOnly?: boolean;
+  trustProjectionVersions?: boolean;
 };
 
 const RENDER_STORAGE_KEYS = [
@@ -71,7 +70,7 @@ type MaterializedMessageCacheEntry = {
   sourceRevision: string;
   source?: ChatRuntimeMessageProjection;
   structureVersion?: number;
-  includeWorkflow?: boolean;
+  workflowActive?: boolean;
   materializedMutableRevision: string;
   message: ChatMessageLike;
   lastUsed: number;
@@ -79,6 +78,7 @@ type MaterializedMessageCacheEntry = {
 
 type MaterializedSessionMessageCache = {
   byMessageId: Map<string, MaterializedMessageCacheEntry>;
+  bySource: WeakMap<ChatRuntimeMessageProjection, MaterializedMessageCacheEntry>;
   lastUsed: number;
 };
 
@@ -96,8 +96,8 @@ const resolveWorkflowMaterializationTarget = (
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.role === 'assistant') {
-      // One user turn can contain several model/tool loops. Keep that whole
-      // latest user-turn group for diagnosis, while unloading older turns.
+      // A busy snapshot may precede its first tool event. Only the latest
+      // assistant needs a pending placeholder; history keeps its own records.
       return {
         userTurnId: message.userTurnId,
         placeholderMessageId: message.id,
@@ -155,14 +155,10 @@ export const materializeChatRuntimeMessages = (
 ): ChatMessageLike[] => {
   const projectedMessages = selectVisibleMessageProjections(projection, sessionId);
   const sessionCache = resolveMaterializedSessionMessageCache(projection, sessionId);
-  // Tool rows are the heaviest chat surface. Keep them only for the active
-  // assistant turn; the reducer remains the replayable source of history.
-  const workflowTarget = options.retainActiveWorkflowOnly === true
-    ? resolveWorkflowMaterializationTarget(
-      projectedMessages,
-      selectChatRuntimeSession(projection, sessionId)?.runtimeStatus
-    )
-    : { userTurnId: '', placeholderMessageId: '', workflowActive: false };
+  const workflowTarget = resolveWorkflowMaterializationTarget(
+    projectedMessages,
+    selectChatRuntimeSession(projection, sessionId)?.runtimeStatus
+  );
   const activeMessageIds = new Set<string>();
   let userRound = 0;
   const materialized = projectedMessages
@@ -172,13 +168,8 @@ export const materializeChatRuntimeMessages = (
         userRound += 1;
       }
       const result = materializeChatRuntimeMessageWithCache(sessionCache, message, {
-        includeWorkflow: options.retainActiveWorkflowOnly !== true || (
-          message.role === 'assistant' &&
-          Boolean(workflowTarget.userTurnId) &&
-          message.userTurnId === workflowTarget.userTurnId
-        ),
         workflowActive: message.id === workflowTarget.placeholderMessageId && workflowTarget.workflowActive
-      });
+      }, options.trustProjectionVersions === true);
       if (result && message.role === 'assistant' && userRound > 0) {
         // Keep presentation-only round state local so stats do not rescan history.
         result.__runtime_user_round = userRound;
@@ -194,7 +185,7 @@ export const buildChatRuntimeRenderableMessages = (
   options: BuildChatRuntimeRenderableMessagesOptions
 ): ChatRuntimeRenderableMessage[] => {
   const materialized = materializeChatRuntimeMessages(options.projection, options.sessionId, {
-    retainActiveWorkflowOnly: true
+    trustProjectionVersions: true
   });
   const shouldRender = typeof options.shouldRenderMessage === 'function'
     ? options.shouldRenderMessage
@@ -244,7 +235,7 @@ export const summarizeChatRuntimeRenderableMessages = (
 
 export const materializeChatRuntimeMessage = (
   message: ChatRuntimeMessageProjection | null | undefined,
-  options: MaterializationOptions = { includeWorkflow: true, workflowActive: false }
+  options: MaterializationOptions = { workflowActive: false }
 ): ChatMessageLike | null => {
   if (!message || (message.role !== 'user' && message.role !== 'assistant')) {
     return null;
@@ -277,12 +268,8 @@ export const materializeChatRuntimeMessage = (
     base.final = message.status === 'final';
     base.failed = message.status === 'failed';
     base.cancelled = message.status === 'cancelled';
-    base.workflowItems = options.includeWorkflow
-      ? cloneProjectionRecords(message.workflowItems, base.workflowItems)
-      : [];
-    base.subagents = options.includeWorkflow
-      ? cloneProjectionRecords(message.subagents, base.subagents)
-      : [];
+    base.workflowItems = cloneProjectionRecords(message.workflowItems, base.workflowItems);
+    base.subagents = cloneProjectionRecords(message.subagents, base.subagents);
     base.workflowPendingPlaceholder = shouldMaterializeWorkflowPlaceholder(message, options)
       ? buildWorkflowPendingPlaceholder(message)
       : null;
@@ -295,31 +282,32 @@ export const materializeChatRuntimeMessage = (
 const materializeChatRuntimeMessageWithCache = (
   sessionCache: MaterializedSessionMessageCache | null,
   message: ChatRuntimeMessageProjection | null | undefined,
-  options: MaterializationOptions
+  options: MaterializationOptions,
+  trustProjectionVersions: boolean
 ): ChatMessageLike | null => {
   if (!sessionCache || !message?.id) {
     return materializeChatRuntimeMessage(message, options);
   }
-  const previous = sessionCache.byMessageId.get(message.id);
-  if (previous?.source === message && message.structureVersion !== undefined &&
+  const previous = sessionCache.bySource.get(message) || sessionCache.byMessageId.get(message.id);
+  // Canonical terminal rows change only through the reducer structure clock.
+  // Reusing them must not traverse historical tool payloads on every live event.
+  if (trustProjectionVersions && previous?.source === message && message.structureVersion !== undefined &&
       previous.structureVersion === message.structureVersion &&
-      previous.includeWorkflow === options.includeWorkflow &&
-      !options.includeWorkflow && !isRuntimeMessageActive(message.status) &&
+      previous.workflowActive === options.workflowActive &&
+      !isRuntimeMessageActive(message.status) &&
       isMaterializedMessageAligned(previous.message, message)) {
     previous.lastUsed = ++materializedMessageCacheClock;
     return previous.message;
   }
-  const sourceRevision = [
-    buildProjectionMessageMaterializationRevision(message),
-    options.includeWorkflow ? 'workflow' : 'no-workflow'
-  ].join('\u0001');
-  const cached = sessionCache.byMessageId.get(message.id);
+  const sourceRevision = buildProjectionMessageMaterializationRevision(message);
+  const cached = previous;
   if (cached?.sourceRevision === sourceRevision) {
     cached.lastUsed = ++materializedMessageCacheClock;
     sessionCache.lastUsed = cached.lastUsed;
     // Keep the legacy two-argument update path stable for hot text deltas.
     syncMaterializedStreamingFields(cached.message, message);
-    syncMaterializedWorkflowWindow(cached.message, message, options);
+    syncMaterializedWorkflowPlaceholder(cached.message, message, options);
+    cached.workflowActive = options.workflowActive;
     if (
       isMaterializedMessageAligned(cached.message, message) &&
       cached.materializedMutableRevision === buildMaterializedMutableFieldsRevision(cached.message)
@@ -341,22 +329,24 @@ const materializeChatRuntimeMessageWithCache = (
     const lastUsed = ++materializedMessageCacheClock;
     sessionCache.byMessageId.set(message.id, {
       sourceRevision, source: message, structureVersion: message.structureVersion,
-      includeWorkflow: options.includeWorkflow,
+      workflowActive: options.workflowActive,
       materializedMutableRevision: buildMaterializedMutableFieldsRevision(cached.message),
       message: cached.message,
       lastUsed
     });
+    sessionCache.bySource.set(message, sessionCache.byMessageId.get(message.id)!);
     sessionCache.lastUsed = lastUsed;
     return cached.message;
   }
   const lastUsed = ++materializedMessageCacheClock;
   sessionCache.byMessageId.set(message.id, {
     sourceRevision, source: message, structureVersion: message.structureVersion,
-    includeWorkflow: options.includeWorkflow,
+    workflowActive: options.workflowActive,
     materializedMutableRevision: buildMaterializedMutableFieldsRevision(materialized),
     message: materialized,
     lastUsed
   });
+  sessionCache.bySource.set(message, sessionCache.byMessageId.get(message.id)!);
   sessionCache.lastUsed = lastUsed;
   return materialized;
 };
@@ -472,6 +462,8 @@ const resolveMaterializedSessionMessageCache = (
   if (!sessionCache) {
     sessionCache = {
       byMessageId: new Map(),
+      // Weak keys preserve cold-row identity without retaining evicted history.
+      bySource: new WeakMap(),
       lastUsed: ++materializedMessageCacheClock
     };
     projectionCache.set(key, sessionCache);
@@ -564,7 +556,7 @@ const syncMaterializedStreamingFields = (
   settleTerminalMaterializedArtifacts(materialized, source.status);
 };
 
-const syncMaterializedWorkflowWindow = (
+const syncMaterializedWorkflowPlaceholder = (
   materialized: ChatMessageLike,
   source: ChatRuntimeMessageProjection,
   options: MaterializationOptions
@@ -574,9 +566,6 @@ const syncMaterializedWorkflowWindow = (
   materialized.workflowPendingPlaceholder = shouldMaterializeWorkflowPlaceholder(source, options)
     ? buildWorkflowPendingPlaceholder(source)
     : null;
-  if (options.includeWorkflow) return;
-  materialized.workflowItems = [];
-  materialized.subagents = [];
 };
 
 const MATERIALIZED_MUTABLE_FIELDS = [

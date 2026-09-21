@@ -47,6 +47,7 @@ class FakeResizeObserver {
 
 const createFakeMessageNode = (key: string, height: number) =>
   ({
+    isConnected: true,
     dataset: { virtualKey: key },
     offsetHeight: height,
     getBoundingClientRect: () => ({ height })
@@ -70,6 +71,7 @@ test('message viewport runtime remeasures visible message rows on resize observe
       scrollTop: 0,
       clientHeight: 720,
       scrollHeight: 720,
+      contains: (node: HTMLElement) => node.isConnected,
       querySelectorAll: () => [messageNode],
       getBoundingClientRect: () => ({ top: 0, height: 720 })
     } as unknown as HTMLElement;
@@ -126,6 +128,12 @@ test('message viewport runtime remeasures visible message rows on resize observe
     assert.equal(messageVirtualHeightCache.get('assistant-1'), grownHeight);
     assert.equal(messageVirtualLayoutVersion.value, 2);
 
+    // Browsers may deliver queued observer entries after a virtual row is detached.
+    Object.assign(messageNode, { isConnected: false, offsetHeight: 0,
+      getBoundingClientRect: () => ({ height: 0 }) });
+    FakeResizeObserver.instances[0]?.emit([messageNode]);
+    assert.equal(messageVirtualHeightCache.get('assistant-1'), grownHeight);
+    assert.equal(messageVirtualLayoutVersion.value, 2);
     runtime.dispose();
   } finally {
     if (originalWindow === undefined) {
@@ -159,6 +167,7 @@ test('message viewport runtime batches rapid resize observer updates', () => {
       scrollTop: 0,
       clientHeight: 720,
       scrollHeight: 720,
+      contains: (node: HTMLElement) => node.isConnected,
       querySelectorAll: () => [messageNode],
       getBoundingClientRect: () => ({ height: 720 })
     } as unknown as HTMLElement;
@@ -279,6 +288,7 @@ test('message viewport runtime does not synchronously measure rows while scrolli
       scrollTop: 0,
       clientHeight: 600,
       scrollHeight: 3200,
+      contains: (node: HTMLElement) => node.isConnected,
       querySelectorAll: () => {
         measureCalls += 1;
         return [messageNode];
@@ -339,6 +349,7 @@ test('message viewport runtime releases bottom follow mode before a deferred scr
       scrollTop: 420,
       clientHeight: 500,
       scrollHeight: 1400,
+      contains: (node: HTMLElement) => node.isConnected,
       querySelectorAll: () => [],
       getBoundingClientRect: () => ({ top: 0, height: 500 })
     } as unknown as HTMLElement;
@@ -477,6 +488,7 @@ test('message viewport runtime can defer row measurement while restoring scroll'
       scrollTop: 260,
       clientHeight: 500,
       scrollHeight: 1800,
+      contains: (node: HTMLElement) => node.isConnected,
       querySelectorAll: () => [messageNode],
       getBoundingClientRect: () => ({ top: 0, height: 500 })
     } as unknown as HTMLElement;
@@ -586,6 +598,7 @@ test('message viewport runtime loads older agent history near top and preserves 
       scrollTop: 0,
       clientHeight: 500,
       scrollHeight: 1000,
+      contains: (node: HTMLElement) => node.isConnected,
       querySelectorAll: () => [],
       getBoundingClientRect: () => ({ top: 0, height: 500 })
     } as unknown as HTMLElement;
@@ -656,6 +669,7 @@ test('message viewport runtime auto-loads older history when refreshed viewport 
       scrollTop: 0,
       clientHeight: 720,
       scrollHeight: 480,
+      contains: (node: HTMLElement) => node.isConnected,
       querySelectorAll: () => [],
       getBoundingClientRect: () => ({ top: 0, height: 720 })
     } as unknown as HTMLElement;

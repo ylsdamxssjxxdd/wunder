@@ -76,14 +76,13 @@ mod execute_support;
 mod execute_tools;
 mod limiter;
 mod llm;
-#[cfg(all(test, feature = "sqlite-storage"))]
-mod virtual_replay_tests;
 mod memory;
 mod memory_auto_extract;
+mod memory_compaction_budget;
 mod memory_compaction_window;
 mod memory_messages;
-mod microcompaction;
 mod memory_support;
+mod microcompaction;
 mod prompt;
 mod request;
 mod result_normalizer;
@@ -97,6 +96,8 @@ mod tool_parallel;
 mod tool_result_payload;
 mod turn_state;
 mod types;
+#[cfg(all(test, feature = "sqlite-storage"))]
+mod virtual_replay_tests;
 
 use context::ContextManager;
 pub(crate) use error::OrchestratorError;

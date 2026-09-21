@@ -87,7 +87,7 @@
     "./chat-runtime-render-adapter-regression.test.ts",
     "./chat-runtime-render-shadow-regression.test.ts",
     "./chat-runtime-message-keys-regression.test.ts",
-    "./messenger-renderable-source-regression.test.ts",
+    "./chat-workflow-history-regression.test.ts",
     "./chat-snapshot-scheduler-regression.test.ts",
     "./chat-timing-regression.test.ts",
     "./chat-pending-regression.test.ts",

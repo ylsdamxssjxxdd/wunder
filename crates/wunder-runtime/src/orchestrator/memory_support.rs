@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 pub(super) use super::memory_auto_extract::*;
+use super::memory_compaction_budget::rebalance_retained_interaction_context;
 pub(super) use super::memory_compaction_window::*;
 
 pub(super) const COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS: i64 = 64;
@@ -342,7 +343,7 @@ pub(super) fn reduce_to_summary_priority_context(
     }
 
     if total_tokens > limit {
-        rebalance_retained_interaction_context(messages, limit);
+        rebalance_retained_interaction_context(messages, limit, stats);
         total_tokens = estimate_messages_tokens(messages);
     }
 
@@ -434,105 +435,6 @@ pub(super) fn trim_summary_to_preserve_retained_interaction_budget(
     stats.summary_tokens_after = estimate_message_tokens(&trimmed);
     stats.summary_trimmed |= stats.summary_tokens_after < stats.summary_tokens_before;
     messages[summary_index] = trimmed;
-}
-
-pub(super) fn rebalance_retained_interaction_context(messages: &mut Vec<Value>, limit: i64) {
-    if messages.is_empty() || limit <= 0 {
-        return;
-    }
-
-    let summary_index = locate_compaction_summary_message_index(messages);
-    let current_user_index = locate_rebuilt_current_user_index(messages);
-    let preserved_tokens = messages
-        .iter()
-        .enumerate()
-        .filter(|(index, message)| {
-            !is_retained_interaction_message(message)
-                || Some(*index) == summary_index
-                || Some(*index) == current_user_index
-        })
-        .map(|(_, message)| estimate_message_tokens(message))
-        .sum::<i64>();
-    let remaining = limit.saturating_sub(preserved_tokens);
-
-    let head_messages = summary_index
-        .map(|summary_index| {
-            messages[..summary_index]
-                .iter()
-                .filter(|message| is_retained_interaction_message(message))
-                .cloned()
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let tail_messages = match summary_index {
-        Some(summary_index) => {
-            let tail_end = current_user_index.unwrap_or(messages.len());
-            if summary_index + 1 >= tail_end {
-                Vec::new()
-            } else {
-                messages[summary_index + 1..tail_end]
-                    .iter()
-                    .filter(|message| is_retained_interaction_message(message))
-                    .cloned()
-                    .collect::<Vec<_>>()
-            }
-        }
-        None => Vec::new(),
-    };
-
-    let head_tokens_total = estimate_messages_tokens(&head_messages);
-    let tail_tokens_total = estimate_messages_tokens(&tail_messages);
-    let total_tokens = head_tokens_total.saturating_add(tail_tokens_total);
-    let (head_budget, tail_budget) = if remaining <= 0 || total_tokens <= 0 {
-        (0, 0)
-    } else if total_tokens <= remaining {
-        (head_tokens_total, tail_tokens_total)
-    } else {
-        let mut head_budget = remaining
-            .saturating_mul(head_tokens_total)
-            .checked_div(total_tokens)
-            .unwrap_or(0);
-        if head_tokens_total > 0 && head_budget == 0 {
-            head_budget = 1;
-        }
-        let mut tail_budget = remaining.saturating_sub(head_budget);
-        if tail_tokens_total > 0 && tail_budget == 0 && remaining > 1 {
-            tail_budget = 1;
-            head_budget = remaining.saturating_sub(1);
-        }
-        (head_budget, tail_budget)
-    };
-    let retained_head =
-        collect_retained_interaction_messages_from_window(&head_messages, head_budget, false);
-    let retained_tail =
-        collect_retained_interaction_messages_from_window(&tail_messages, tail_budget, true);
-
-    let system_message = messages
-        .first()
-        .filter(|message| message.get("role").and_then(Value::as_str) == Some("system"))
-        .cloned();
-    let summary_message = summary_index.and_then(|index| messages.get(index)).cloned();
-    let current_user_message = current_user_index
-        .and_then(|index| messages.get(index))
-        .cloned();
-
-    let mut rebuilt = Vec::new();
-    if let Some(system_message) = system_message {
-        rebuilt.push(system_message);
-    }
-    rebuilt.extend(retained_head);
-    if let Some(summary_message) = summary_message {
-        rebuilt.push(summary_message);
-    }
-    rebuilt.extend(retained_tail);
-    if let Some(current_user_message) = current_user_message {
-        if !is_compaction_inflight_current_user_message(&current_user_message)
-            || rebuilt.last() != Some(&current_user_message)
-        {
-            rebuilt.push(current_user_message);
-        }
-    }
-    *messages = rebuilt;
 }
 
 pub(super) fn tighten_retained_interaction_context(messages: &mut Vec<Value>, limit: i64) -> bool {
@@ -656,7 +558,7 @@ pub(super) fn apply_rebuilt_context_guard(
     }
 
     if total_tokens > limit {
-        rebalance_retained_interaction_context(messages, limit);
+        rebalance_retained_interaction_context(messages, limit, &mut stats);
         total_tokens = estimate_messages_tokens(messages);
     }
 

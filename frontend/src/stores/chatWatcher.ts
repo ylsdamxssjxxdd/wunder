@@ -140,7 +140,6 @@ export const startSessionWatcher = (store, sessionId) => {
   if (!runtime) return;
   recoverRuntimeInteractiveControllers(store, key, runtime);
   refreshRuntimeStreamLifecycle(runtime);
-  const perfEnabled = chatPerf.enabled();
   runtime.watchController = new AbortController();
   runtime.watchActiveRoundCount = 0;
   refreshRuntimeStreamLifecycle(runtime);
@@ -279,10 +278,10 @@ export const startSessionWatcher = (store, sessionId) => {
           if (settledTerminalArtifacts) {
             notifySessionSnapshot(store, key, sessionMessagesRef, true);
           }
-          if (perfEnabled) {
+          if (chatPerf.enabled()) {
             chatPerf.count('chat_watchdog_idle_complete', 1, { sessionId: key });
           }
-        } else if (perfEnabled) {
+        } else if (chatPerf.enabled()) {
           chatPerf.count('chat_watchdog_idle', 1, { sessionId: key });
         }
       } finally {
@@ -360,7 +359,7 @@ export const startSessionWatcher = (store, sessionId) => {
     if (normalizedEventType === 'heartbeat' || normalizedEventType === 'ping') {
       return;
     }
-    if (perfEnabled) {
+    if (chatPerf.enabled()) {
       chatPerf.count('chat_watch_event', 1, { eventType: normalizedEventType || eventType, sessionId: key });
     }
     handleApprovalEvent(store, normalizedEventType || eventType, data, requestId, key);
@@ -369,7 +368,7 @@ export const startSessionWatcher = (store, sessionId) => {
       (normalizedEventType === 'llm_output' && isTerminalLlmOutputPayload(payload, data));
     if (projectionTerminal) {
       setSessionLoading(store, key, false);
-      if (perfEnabled) {
+      if (chatPerf.enabled()) {
         chatPerf.count('chat_watch_terminal', 1, {
           eventType: normalizedEventType || eventType,
           sessionId: key
@@ -408,7 +407,7 @@ export const startSessionWatcher = (store, sessionId) => {
       const transient =
         resumeRequired || error?.phase === 'connect' || error?.phase === 'stream' || error?.name === 'TypeError';
       if (transient) {
-        if (perfEnabled) {
+        if (chatPerf.enabled()) {
           chatPerf.count('chat_watch_interrupted', 1, { sessionId: key });
         }
         return;

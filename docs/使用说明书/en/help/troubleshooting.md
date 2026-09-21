@@ -115,6 +115,20 @@ Check:
 - Has the docs site been built?
 - Is the reverse proxy correctly configured for the `/docs/` path?
 
+### Collect a report for chat slowdowns
+
+Open **More → Settings → Performance capture**:
+
+1. Click **Start**, return to chat and reproduce the slowdown while streaming, scrolling or switching pages.
+2. Return to settings and click **Download JSON** to save a report for your issue report.
+3. Click **Stop**. You can still download afterward; starting again creates a new report.
+
+No console or reload is needed to start. Reloading continues capture in this tab and retains earlier statistics, for up to 30 minutes. Unsupported browser metrics are marked unavailable.
+
+Reports include frame gaps, main-thread long tasks, slow input events, chat rendering/loading timings, sampled DOM/heap peaks, and browser/app versions. They exclude messages, tool arguments, accounts, session identifiers and file paths. Downloading does not stop capture or upload any data.
+
+Include the action and approximate time of the slowdown with the file. Model response totals and Worker waiting times are listed separately from main-thread stalls.
+
 ## Still Not Resolved?
 
 Continue with:

@@ -1,6 +1,6 @@
 <template>
   <div
-    v-if="usePlainTextRender"
+    v-if="usePlainTextRender || markdownPending"
     ref="plainTextRef"
     class="markdown-body message-markdown-body"
     :class="{
@@ -27,7 +27,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useMessageMarkdownCache } from './messageMarkdownCache';
-import { renderMarkdown } from '@/utils/markdown';
+import { renderChatInWorker } from './chatRenderWorker';
 import { t } from '@/i18n';
 import { buildAssistantDisplayContent } from '@/utils/assistantFailureNotice';
 import {
@@ -95,6 +95,10 @@ const { readMarkdownCacheEntry, writeMarkdownCacheEntry, deleteMarkdownCacheEntr
   readHydratedHistoryContent, writeHydratedHistoryContent } = useMessageMarkdownCache(chatStore.runtimeProjection);
 
 const visibleHtml = ref('');
+const markdownPending = ref(false);
+let markdownAbort: AbortController | null = null;
+let markdownRequestKey = '';
+let markdownRequestSource = '';
 const visiblePlainText = ref('');
 const plainTextRef = ref<HTMLElement | null>(null);
 const expandedLongContent = ref(false);
@@ -120,7 +124,7 @@ let lastStreamRenderTraceSignature = '';
 let lastPlainTextSource = '';
 
 const runtimeContentVersion = computed(() => {
-  const structureVersion = chatStore.runtimeProjectionVersion;
+  const structureVersion = chatStore.runtimeProjectionVersionBySession?.[String(props.sessionId || chatStore.activeSessionId || '')] || 0;
   const messageIds = resolveRuntimeMessageContentSubscriptionIds({
     // Raw projection changes are published through explicit clocks: per-row
     // clocks drive deltas, while the structural clock resolves replaced ids.
@@ -362,7 +366,7 @@ const schedulePlainTextLayout = () => {
   }, waitMs);
 };
 
-const renderNow = () => {
+const renderNow = async () => {
   if (renderTimer !== null && typeof window !== 'undefined') {
     window.clearTimeout(renderTimer);
     renderTimer = null;
@@ -379,7 +383,8 @@ const renderNow = () => {
     updateVisiblePlainText(source, !streamingTextPreview);
   } else {
     clearPlainTextFlushTimer();
-    setVisiblePlainText('');
+    // Keep the readable fallback mounted while the same worker request is pending.
+    if (!markdownPending.value) setVisiblePlainText('');
   }
   if (!source) {
     updateVisiblePlainText('', true);
@@ -399,12 +404,30 @@ const renderNow = () => {
   clearPlainTextLayoutTimer();
   const cached = cacheKey ? readMarkdownCacheEntry(cacheKey) : null;
   if (cached?.source === source) {
+    markdownPending.value = false;
     visibleHtml.value = cached.html;
     emit('rendered', buildRenderedPayload(source, cached.html));
     return;
   }
+  if (markdownAbort && markdownRequestKey === cacheKey && markdownRequestSource === source) return;
+  markdownAbort?.abort();
+  const controller = new AbortController();
+  markdownAbort = controller;
+  markdownRequestKey = cacheKey;
+  markdownRequestSource = source;
+  markdownPending.value = true;
+  updateVisiblePlainText(source, true);
   const renderStartedAt = Date.now();
-  const html = renderMarkdown(source, { resolveWorkspacePath: workspacePathResolver.value });
+  const result = await renderChatInWorker('markdown', source, controller.signal, workspacePathResolver.value);
+  if (disposed || controller.signal.aborted || markdownAbort !== controller) return;
+  markdownAbort = null;
+  // Worker failures leave readable text, never a synchronous main-thread parse spike.
+  if (typeof result?.html !== 'string') {
+    emit('rendered', buildRenderedPayload(source));
+    return;
+  }
+  const html = result.html;
+  markdownPending.value = false;
   const renderMs = Date.now() - renderStartedAt;
   if (renderMs >= MARKDOWN_RENDER_DEBUG_SLOW_MS) {
     const payload = {
@@ -457,6 +480,11 @@ const traceStreamingRenderSource = (source: string, plainStreaming: boolean) => 
 
 const scheduleRender = () => {
   const source = renderContent.value;
+  if (markdownRequestSource !== source || markdownRequestKey !== normalizedCacheKey.value || usePlainTextRender.value) {
+    markdownAbort?.abort();
+    markdownAbort = null;
+    markdownPending.value = false;
+  }
   const plainTextRender = usePlainTextRender.value;
   const streamingTextPreview = isStreamingTextPreview.value;
   traceStreamingRenderSource(source, plainTextRender);
@@ -464,7 +492,8 @@ const scheduleRender = () => {
     updateVisiblePlainText(source, !streamingTextPreview);
   } else {
     clearPlainTextFlushTimer();
-    setVisiblePlainText('');
+    // Keep the readable fallback mounted while the same worker request is pending.
+    if (!markdownPending.value) setVisiblePlainText('');
   }
   if (!shouldThrottle.value || typeof window === 'undefined') {
     renderNow();
@@ -474,6 +503,7 @@ const scheduleRender = () => {
   const cached = cacheKey ? readMarkdownCacheEntry(cacheKey) : null;
   const now = Date.now();
   if (cached?.source === source) {
+    markdownPending.value = false;
     visibleHtml.value = cached.html;
     return;
   }
@@ -559,6 +589,8 @@ const expandLongContent = async () => {
 
 onBeforeUnmount(() => {
   disposed = true;
+  markdownAbort?.abort();
+  markdownAbort = null;
   if (renderTimer !== null && typeof window !== 'undefined') {
     window.clearTimeout(renderTimer);
     renderTimer = null;

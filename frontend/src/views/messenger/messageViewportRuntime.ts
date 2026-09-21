@@ -162,14 +162,14 @@ export const createMessageViewportRuntime = (
     node: HTMLElement, measuredHeight?: number
   ): { key: string; previous: number | null; next: number } | null => {
     const key = String(node?.dataset?.virtualKey || '').trim();
-    if (!key) {
+    // ResizeObserver can deliver a final zero-size entry after virtual unmount.
+    // Never poison the height prefix with a detached/hidden row's measurement.
+    if (!key || !node.isConnected || !options.messageListRef.value?.contains(node)) {
       return null;
     }
     const offsetHeight = Math.round(measuredHeight ?? node.offsetHeight ?? 0);
-    const height = Math.max(
-      1,
-      offsetHeight || Math.round(node.getBoundingClientRect().height)
-    );
+    const height = offsetHeight || Math.round(node.getBoundingClientRect().height);
+    if (height <= 0) return null;
     const cached = options.messageVirtualHeightCache.get(key);
     if (cached && Math.abs(cached - height) <= 1) {
       return null;

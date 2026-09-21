@@ -17,7 +17,7 @@
         <span v-else class="tool-workflow-spacer" />
       </summary>
 
-      <div ref="workflowListRef" class="tool-workflow-list" @scroll="handleWorkflowScroll">
+      <div v-if="workflowOpen" ref="workflowListRef" class="tool-workflow-list" @scroll="handleWorkflowScroll">
         <div v-if="displayEntries.length === 0 && pendingPlaceholder" class="tool-workflow-placeholder">
           <div class="tool-workflow-placeholder-head">
             <span class="tool-workflow-placeholder-lamp" aria-hidden="true"></span>
@@ -47,13 +47,13 @@
           :open="expandedKeys.has(entry.key)"
           @toggle="handleEntryToggle(entry.key, $event)"
         >
-          <summary class="tool-workflow-entry-summary">
+          <summary
+            class="tool-workflow-entry-summary"
+            @contextmenu.prevent.stop="handleToolCallTitleContextMenu(entry, $event)"
+          >
             <span :class="['tool-workflow-entry-lamp', `is-${entry.status}`]" aria-hidden="true"></span>
             <i :class="['fa-solid', 'tool-workflow-entry-tool-icon', entry.toolIconClass]" aria-hidden="true"></i>
-            <span
-              class="tool-workflow-entry-title"
-              @contextmenu.prevent.stop="handleToolCallTitleContextMenu(entry, $event)"
-            >
+            <span class="tool-workflow-entry-title">
               <span class="tool-workflow-entry-tool-name">
                 {{ entry.toolLabel }}
               </span>
@@ -131,7 +131,7 @@ let workflowStateCacheClock = 0;
 </script>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, toRaw, watch, type ComponentPublicInstance } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, triggerRef, toRaw, watch, type ComponentPublicInstance } from 'vue';
 
 import { useI18n } from '@/i18n';
 import { selectChatRuntimeMessage } from '@/realtime/chat/chatRuntimeSelectors';
@@ -166,6 +166,7 @@ import {
 } from './toolWorkflowRunModel';
 import { createToolWorkflowRenderBatcher } from './toolWorkflowRenderBatcher';
 import { shouldRenderWorkflowShell } from './toolWorkflowVisibility';
+import { useWorkflowDetailParser, WORKFLOW_DETAIL_WORKER_THRESHOLD } from './useWorkflowDetailParser';
 import { formatWorkflowDetailForDisplay } from './toolWorkflowDetailFormatter';
 import { extractToolResultDataObject } from './toolWorkflowResultPayload';
 import { chatPerf } from '@/utils/chatPerf';
@@ -213,7 +214,6 @@ type ToolEntryView = {
   toolLabel: string;
   summaryBrief: string;
   summaryTitle: string;
-  toolCallRawTitle: string;
   toolIconClass: string;
   isCompaction: boolean;
   status: string;
@@ -327,8 +327,9 @@ const emit = defineEmits<{
 const { t, language } = useI18n();
 const chatStore = useChatStore();
 const commandSessionStore = useCommandSessionStore();
+const detailParser = useWorkflowDetailParser();
 const expandedKeys = ref<Set<string>>(new Set());
-const renderedItems = ref<WorkflowItem[]>([]);
+const renderedItems = shallowRef<WorkflowItem[]>([]);
 const visibleEntryLimit = ref(WORKFLOW_ENTRY_PAGE_SIZE);
 const visibleSourceItemLimit = ref(WORKFLOW_EVENT_PAGE_SIZE);
 const streamBodyRefMap = new Map<string, HTMLPreElement>();
@@ -358,8 +359,7 @@ let workflowToggleProgrammatic = false;
 let toolCallDebugHintHideTimer: ReturnType<typeof setTimeout> | null = null;
 const programmaticEntryToggleKeys = new Set<string>();
 const resolveRuntimeWorkflowItems = (): WorkflowItem[] | null => {
-  // Historical workflow DOM is intentionally unloaded by the render adapter.
-  // Do not bypass that window by reading the complete runtime projection here.
+  // Only mounted message shells subscribe to their own projection clock.
   if (!props.visible) return null;
   const messageId = String(props.runtimeMessageId || '').trim();
   const sessionId = String(props.sessionId || chatStore.activeSessionId || '').trim();
@@ -375,8 +375,8 @@ const resolveRuntimeWorkflowItems = (): WorkflowItem[] | null => {
 };
 
 const workflowRenderBatcher = createToolWorkflowRenderBatcher(() => {
-  // The runtime keeps the workflow list identity stable. A shallow list copy
-  // publishes the coalesced revision while retaining each row object's cache.
+  // Publish the raw list revision without copying or proxying historical records.
+  // Only the bounded source window below is grouped into renderable rows.
   const runtimeItems = resolveRuntimeWorkflowItems();
   // A projection can briefly retain an empty workflow list while its already
   // materialized message still has the latest structural snapshot. Do not let
@@ -385,7 +385,8 @@ const workflowRenderBatcher = createToolWorkflowRenderBatcher(() => {
   const sourceItems = runtimeItems && (runtimeItems.length > 0 || propItems.length === 0)
     ? runtimeItems
     : propItems;
-  renderedItems.value = sourceItems.map((item) => toRaw(item) as WorkflowItem);
+  renderedItems.value = toRaw(sourceItems);
+  triggerRef(renderedItems);
 });
 
 const streamKey = (entryKey: string, stream: CommandStreamName): string => `${entryKey}::${stream}`;
@@ -610,7 +611,9 @@ const showToolCallDebugHint = (text: string, event: MouseEvent): void => {
 };
 
 const handleToolCallTitleContextMenu = (entry: ToolEntryView, event: MouseEvent): void => {
-  showToolCallDebugHint(entry.toolCallRawTitle, event);
+  // Resolve call arguments on demand, independently of the detail expansion state.
+  const rawEntry = rawToolEntries.value.find((candidate) => candidate.key === entry.key);
+  if (rawEntry) showToolCallDebugHint(buildToolCallDebugText(rawEntry), event);
 };
 
 const handleGlobalPointerDown = (event: Event): void => {
@@ -890,6 +893,7 @@ const setCachedDetailObject = (detail: string, parsed: UnknownObject | false) =>
 
 const parseDetailObject = (detail: unknown): UnknownObject | null => {
   if (typeof detail !== 'string') return null;
+  if (detail.length >= WORKFLOW_DETAIL_WORKER_THRESHOLD) return asObject(detailParser.read(detail));
   const trimmed = detail.trim();
   if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) return null;
   const cached = getCachedDetailObject(trimmed);
@@ -1551,7 +1555,7 @@ const extractToolOutputStreams = (
 };
 
 const extractCallArgs = (item: WorkflowItem | null): UnknownObject | null => {
-  return extractWorkflowCallArgs(item);
+  return extractWorkflowCallArgs(item, parseDetailObject);
 };
 
 const appendPathCandidate = (target: Set<string>, value: unknown) => {
@@ -3649,7 +3653,7 @@ const buildToolResultSection = (
   }
 
   if (rawResultDetail) {
-    const displayResultDetail = formatWorkflowDetailForDisplay(rawResultDetail);
+    const displayResultDetail = (rawResultDetail.length >= WORKFLOW_DETAIL_WORKER_THRESHOLD ? detailParser.format(rawResultDetail) : formatWorkflowDetailForDisplay(rawResultDetail));
     return {
       key: sectionKey,
       title: sectionTitle,
@@ -3662,7 +3666,7 @@ const buildToolResultSection = (
   }
 
   if (rawOutputDetail) {
-    const displayOutputDetail = formatWorkflowDetailForDisplay(rawOutputDetail);
+    const displayOutputDetail = (rawOutputDetail.length >= WORKFLOW_DETAIL_WORKER_THRESHOLD ? detailParser.format(rawOutputDetail) : formatWorkflowDetailForDisplay(rawOutputDetail));
     return {
       key: sectionKey,
       title: sectionTitle,
@@ -3756,6 +3760,11 @@ const resolveCompactionDetailObject = (entry: RawEntry): UnknownObject | null =>
   || parseDetailObject(entry.callItem?.detail);
 
 const buildEntryView = (entry: RawEntry, includeDetails: boolean): ToolEntryView => {
+  if (includeDetails) {
+    detailParser.prepare([entry.callItem?.detail, entry.outputItem?.detail, entry.resultItem?.detail,
+      entry.callItem?.toolCallRawDetail, entry.callItem?.tool_call_raw_detail]
+      .filter((detail): detail is string => typeof detail === 'string'));
+  }
   const commandSession = resolveCommandSessionSnapshot(entry);
   const isCommand = isExecuteCommandTool(entry.toolName);
   const isPatch = isApplyPatchTool(entry.toolName);
@@ -3779,7 +3788,6 @@ const buildEntryView = (entry: RawEntry, includeDetails: boolean): ToolEntryView
       toolLabel: toolDisplay,
       summaryBrief: collapsedSummary.brief,
       summaryTitle: collapsedSummary.title,
-      toolCallRawTitle: '',
       toolIconClass: resolveWorkflowToolIconClass(entry.toolName, isCompaction),
       isCompaction,
       status,
@@ -3840,7 +3848,6 @@ const buildEntryView = (entry: RawEntry, includeDetails: boolean): ToolEntryView
     toolLabel: summary.toolLabel,
     summaryBrief: collapsedSummary.brief || summary.summaryBrief,
     summaryTitle,
-    toolCallRawTitle: buildToolCallDebugText(entry),
     toolIconClass: resolveWorkflowToolIconClass(entry.toolName, isCompaction),
     isCompaction,
     status,
@@ -3911,7 +3918,8 @@ const buildEntryRevision = (entry: RawEntry): string => [
   summarizeEntryRevisionItem(entry.outputItem),
   summarizeEntryRevisionItem(entry.resultItem),
   summarizeCommandSessionRevision(entry),
-  language.value
+  language.value,
+  detailParser.revision.value
 ].join('\u0001');
 
 const buildCachedEntryView = (entry: RawEntry, includeDetails: boolean): ToolEntryView => {
@@ -3992,10 +4000,10 @@ const buildEntries = (): ToolEntryView[] => {
   entryViewCache.forEach((_cached, key) => {
     if (!validKeys.has(key)) entryViewCache.delete(key);
   });
-  const startIndex = Math.max(0, rawEntries.length - visibleEntryLimit.value);
+  const startIndex = Math.max(0, rawEntries.length - (workflowOpen.value ? visibleEntryLimit.value : 1));
   return rawEntries
-    .filter((entry, index) => index >= startIndex || expandedKeys.value.has(entry.key))
-    .map((entry) => buildCachedEntryView(entry, expandedKeys.value.has(entry.key)));
+    .filter((entry, index) => index >= startIndex || (workflowOpen.value && expandedKeys.value.has(entry.key)))
+    .map((entry) => buildCachedEntryView(entry, workflowOpen.value && expandedKeys.value.has(entry.key)));
 };
 
 const isLiveEntryStatus = (status: string): boolean =>
@@ -4092,8 +4100,6 @@ watch(
     if (count < previousCount) {
       visibleEntryLimit.value = WORKFLOW_ENTRY_PAGE_SIZE;
       visibleSourceItemLimit.value = WORKFLOW_EVENT_PAGE_SIZE;
-    } else if (count > previousCount && hiddenSourceItemCount.value === 0) {
-      visibleSourceItemLimit.value = Math.max(visibleSourceItemLimit.value, count);
     }
     // New rows and terminal states are immediate; high-frequency output deltas
     // are coalesced outside the input event path.
@@ -4130,7 +4136,9 @@ watch(
 watch(
   entries,
   (nextEntries) => {
-    const validKeys = new Set(nextEntries.map((entry) => entry.key));
+    // A closed shell renders only its latest summary; keep explicit expansion
+    // choices for the rows that will be remounted when the shell opens again.
+    const validKeys = new Set(rawToolEntries.value.map((entry) => entry.key));
     pruneStreamTracking(validKeys);
     const nextUserCollapsed = new Set<string>();
     userCollapsedEntryKeys.value.forEach((key) => {
@@ -4348,7 +4356,6 @@ const buildPendingEntryView = (
     toolLabel: isCompaction ? t('chat.toolWorkflow.pendingCompaction') : toolDisplayName || t('chat.toolWorkflow.pendingTool'),
     summaryBrief: '',
     summaryTitle,
-    toolCallRawTitle: summaryTitle,
     toolIconClass: resolveWorkflowToolIconClass(toolName, isCompaction),
     isCompaction,
     status: 'loading',

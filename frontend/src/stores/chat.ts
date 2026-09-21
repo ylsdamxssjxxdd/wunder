@@ -136,6 +136,8 @@ export const useChatStore = defineStore('chat', {
     activeSessionId: null,
     messages: [],
     runtimeProjectionVersion: 0,
+    runtimeProjectionVersionBySession: {} as Record<string, number>,
+    foregroundChatSessionId: null as string | null,
     runtimeProjectionContentVersion: 0,
     runtimeProjectionContentVersionByMessage: {} as Record<string, number>,
     sessionsLoadedAt: 0,

@@ -1,7 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 
 import {
   buildStructuredToolResultNote,
@@ -47,10 +45,6 @@ const messages: Record<string, string> = {
 };
 
 const t = (key: string): string => messages[key] || key;
-
-const frontendRoot = resolve(process.cwd());
-const readSource = (relativePath: string): string =>
-  readFileSync(resolve(frontendRoot, relativePath), 'utf8').replace(/\r\n/g, '\n');
 
 test('search structured view keeps local-only guidance when there are zero hits', () => {
   const data = {
@@ -158,57 +152,6 @@ test('read structured view unwraps nested tool data envelopes', () => {
   assert.equal(serialized.includes('action'), false);
   assert.equal(serialized.includes('data'), false);
   assert.equal(serialized.includes('>>> ./sample.py'), false);
-});
-
-test('workflow result section prefers file content and model observation before raw event detail', () => {
-  const source = readSource('src/components/chat/MessageToolWorkflow.vue');
-  const readBranch = source.indexOf('if (isReadFileTool(entry.toolName))');
-  const writeBranch = source.indexOf('if (isWriteFileTool(entry.toolName))', readBranch);
-  const commandBranch = source.indexOf('if (isCommandStreamVisualizationEnabled() && isExecuteCommandTool(entry.toolName))', writeBranch);
-  const observationBranch = source.indexOf('const observation = buildTextPreview', commandBranch);
-  const rawDetailBranch = source.indexOf('if (rawResultDetail)', observationBranch);
-  assert.ok(readBranch >= 0);
-  assert.ok(writeBranch > readBranch);
-  assert.ok(commandBranch > writeBranch);
-  assert.ok(observationBranch > commandBranch);
-  assert.ok(rawDetailBranch > observationBranch);
-  assert.ok(source.includes('pickObservationText(...detailObjects, dataObject, resultObject)'));
-  assert.ok(source.includes('formatToolObservationText(pickObservationText(...detailObjects, dataObject, resultObject))'));
-  assert.ok(source.includes('pickFileContentText(extractCallArgs(entry.callItem), ...detailObjects, dataObject, resultObject)'));
-});
-
-test('apply patch workflow result uses patch card before generic observation fallback', () => {
-  const source = readSource('src/components/chat/MessageToolWorkflow.vue');
-  const commandBranch = source.indexOf('if (isExecuteCommandTool(entry.toolName))');
-  const patchBranch = source.indexOf('if (isApplyPatchTool(entry.toolName))', commandBranch);
-  const observationBranch = source.indexOf('const observation = buildTextPreview', commandBranch);
-  assert.ok(commandBranch >= 0);
-  assert.ok(patchBranch > commandBranch);
-  assert.ok(observationBranch > patchBranch);
-  const patchBranchSource = source.slice(patchBranch, observationBranch);
-  assert.ok(patchBranchSource.includes("kind: 'patch'"));
-  assert.ok(patchBranchSource.includes('patchView'));
-  assert.ok(patchBranchSource.includes('buildPatchResultView'));
-});
-
-test('read file workflow summary can recover filename from call args and read result content headers', () => {
-  const source = readSource('src/components/chat/MessageToolWorkflow.vue');
-  const collectResultStart = source.indexOf('const collectPathHintsFromResult =');
-  assert.ok(collectResultStart >= 0);
-  const collectResultEnd = source.indexOf('const splitMoveText =', collectResultStart);
-  assert.ok(collectResultEnd > collectResultStart);
-  const collectResultSource = source.slice(collectResultStart, collectResultEnd);
-  assert.ok(collectResultSource.includes('Array.isArray(meta?.files)'));
-  assert.ok(collectResultSource.includes('parseReadFileSections(content)'));
-  assert.ok(collectResultSource.includes('appendPathCandidate(hints, section.path)'));
-
-  const readTitleStart = source.indexOf('const resolveReadFileSummaryTitle =');
-  assert.ok(readTitleStart >= 0);
-  const readTitleEnd = source.indexOf('const resolveWriteFileSummaryTitle =', readTitleStart);
-  assert.ok(readTitleEnd > readTitleStart);
-  const readTitleSource = source.slice(readTitleStart, readTitleEnd);
-  assert.ok(readTitleSource.includes('collectReadTargetLabels(args)'));
-  assert.ok(readTitleSource.includes('readTargets.length > 0 ? readTargets : pathHints'));
 });
 
 test('database structured view shows rows without surfacing query_handle', () => {

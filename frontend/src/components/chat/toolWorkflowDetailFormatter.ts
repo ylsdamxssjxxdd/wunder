@@ -11,6 +11,8 @@ const getCachedDisplay = (raw: string): string | null => {
 };
 
 const setCachedDisplay = (raw: string, display: string): void => {
+  // Large results are transient worker jobs; do not retain multi-megabyte strings.
+  if (raw.length + display.length > 48000) return;
   detailDisplayCache.set(raw, display);
   if (detailDisplayCache.size <= DETAIL_DISPLAY_CACHE_LIMIT) return;
   const oldest = detailDisplayCache.keys().next().value as string | undefined;

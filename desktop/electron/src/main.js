@@ -1,3 +1,4 @@
+const startupBootNs = process.hrtime.bigint()
 const {
   app,
   BrowserWindow,
@@ -29,9 +30,9 @@ const {
   shouldDisableElectronHardwareAcceleration
 } = require('./desktopCompatibility')
 const {
-  parseNonNegativeNumber,
-  resolveLoadingShellDelayMs
+  parseNonNegativeNumber
 } = require('./startupPolicy')
+const { waitForStartupFrame } = require('./startupFrame')
 
 const resolveRuntimeModuleRoots = () => {
   const roots = []
@@ -111,8 +112,6 @@ const detectWin7PackageFlavor = () => {
   }
 }
 
-registerRuntimeModuleRoots()
-
 const updaterDisableMarker = resolveUpdaterDisableMarker()
 const desktopSafeModeMarker = resolveDesktopSafeModeMarker()
 const runningInAppImage =
@@ -136,26 +135,32 @@ if (desktopSafeModeEnabled) {
   )
 }
 let autoUpdater = null
-if (!updaterDisabledByBuild) {
-  try {
-    ;({ autoUpdater } = require('electron-updater'))
-  } catch (error) {
-    for (const candidate of resolveUpdaterCandidates()) {
-      try {
-        ;({ autoUpdater } = require(candidate))
-        console.info(`[updater] loaded bundled updater module from: ${candidate}`)
-        break
-      } catch {
-        // Continue probing fallback locations.
+let updaterLoaded = false
+const loadUpdater = () => {
+  if (updaterLoaded) return
+  updaterLoaded = true
+  registerRuntimeModuleRoots()
+  if (!updaterDisabledByBuild) {
+    try {
+      ;({ autoUpdater } = require('electron-updater'))
+    } catch (error) {
+      for (const candidate of resolveUpdaterCandidates()) {
+        try {
+          ;({ autoUpdater } = require(candidate))
+          console.info(`[updater] loaded bundled updater module from: ${candidate}`)
+          break
+        } catch {
+          // Continue probing fallback locations.
+        }
+      }
+      if (!autoUpdater) {
+        // Keep the desktop app bootable even if auto-update assets are missing.
+        console.warn('[updater] electron-updater is unavailable, auto update disabled:', error)
       }
     }
-    if (!autoUpdater) {
-      // Keep the desktop app bootable even if auto-update assets are missing.
-      console.warn('[updater] electron-updater is unavailable, auto update disabled:', error)
-    }
+  } else {
+    console.info(`[updater] disabled by ${updaterDisabledReason}`)
   }
-} else {
-  console.info(`[updater] disabled by ${updaterDisabledReason}`)
 }
 
 let mainWindow = null
@@ -245,7 +250,6 @@ const disableElectronHardwareAcceleration = shouldDisableElectronHardwareAcceler
 if (!desktopEffectWindowsEnabled) {
   console.info(`[desktop-effects] native overlay windows disabled by ${desktopEffectWindowsDisabledReason}`)
 }
-const loadingShellDelayMs = resolveLoadingShellDelayMs(process.env.WUNDER_LOADING_SHELL_DELAY_MS)
 const mainWindowMinimizeRestoreCooldownMs = parseNonNegativeNumber(
   process.env.WUNDER_MAIN_WINDOW_MINIMIZE_GUARD_MS,
   DEFAULT_MINIMIZE_RESTORE_COOLDOWN_MS
@@ -269,7 +273,6 @@ const startupTimingEnabled =
   process.env.WUNDER_STARTUP_TIMING !== undefined
     ? process.env.WUNDER_STARTUP_TIMING !== '0'
     : true
-const startupBootNs = process.hrtime.bigint()
 
 const elapsedMsSince = (startedNs) => Number(process.hrtime.bigint() - startedNs) / 1_000_000
 
@@ -3661,6 +3664,8 @@ const checkAndDownloadUpdate = async () => {
       return getUpdateState()
     }
 
+    // Optional update dependencies are loaded on demand, after the desktop is usable.
+    loadUpdater()
     if (!autoUpdater) {
       setUpdateState({
         phase: 'unsupported',
@@ -4806,6 +4811,9 @@ const startBridge = async () => {
     workspaceRoot
   })
   bridgePort = await getFreePort()
+  if (app.isQuitting || !mainWindow || mainWindow.isDestroyed()) {
+    throw new Error('Desktop startup was canceled')
+  }
   logStartupSegment('electron', 'bridge_prepare_paths', startBridgeNs, {
     has_frontend_root: hasFrontendRoot ? 1 : 0,
     port: bridgePort
@@ -5420,7 +5428,6 @@ const createWindow = async () => {
     logStartupPoint('electron', 'window_ready_to_show')
     mainWindow.show()
     scheduleWindowRepaint()
-    scheduleLinuxDesktopIntegration()
   })
   mainWindow.on('show', () => {
     mainWindowVisibilityGuard.clearManualMinimize()
@@ -5561,61 +5568,30 @@ const createWindow = async () => {
     return
   }
 
-  const loadingHtml = createLoadingHtml()
-  const bridgeReadyPromise = startBridge()
-  let shellLoadStarted = false
-  let shellLoadPromise = null
-  let targetLoadStarted = false
-  let shellTimer = null
-  const loadShellIfNeeded = async () => {
-    if (shellLoadStarted || targetLoadStarted) {
-      return
-    }
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      return
-    }
-    shellLoadStarted = true
-    const loadShellNs = process.hrtime.bigint()
-    shellLoadPromise = mainWindow
-      .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(loadingHtml)}`)
-      .catch(() => {})
-    await shellLoadPromise
-    logStartupSegment('electron', 'window_loading_shell_loaded', loadShellNs)
-  }
-  if (loadingShellDelayMs === 0) {
-    void loadShellIfNeeded()
-  } else {
-    shellTimer = setTimeout(() => {
-      void loadShellIfNeeded()
-    }, loadingShellDelayMs)
-  }
+  const firstFrameReady = waitForStartupFrame(mainWindow)
+  const loadShellNs = process.hrtime.bigint()
+  const shellLoadPromise = mainWindow
+    .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(createLoadingHtml())}`)
+    .then(() => logStartupSegment('electron', 'window_loading_shell_loaded', loadShellNs))
 
   const startBridgeAndLoad = async () => {
     const startBridgeAndLoadNs = process.hrtime.bigint()
     try {
+      // Observe both promises immediately, including early shell load failures.
+      const [frameReady] = await Promise.all([firstFrameReady, shellLoadPromise])
+      if (!frameReady || app.isQuitting || !mainWindow || mainWindow.isDestroyed()) return
+      logStartupPoint('electron', 'post_first_frame_start', { delay_ms: 10 })
+      closeBehavior = loadCloseBehavior()
       const bridgeReadyForWindowNs = process.hrtime.bigint()
-      const port = await bridgeReadyPromise
+      scheduleLinuxDesktopIntegration()
+      const port = await startBridge()
       logStartupSegment('electron', 'bridge_ready_for_window', bridgeReadyForWindowNs, {
         port
       })
-      if (shellTimer) {
-        clearTimeout(shellTimer)
-        shellTimer = null
-      }
       const target = bridgeWebBase ? `${bridgeWebBase}/` : `http://127.0.0.1:${port}/`
       if (!mainWindow || mainWindow.isDestroyed()) {
         return
       }
-      // A data URL navigation may still be committing when a fast bridge
-      // becomes ready. Wait for it before the real app navigation so neither
-      // load is canceled and the window ever falls back to a blank page.
-      if (shellLoadPromise) {
-        await shellLoadPromise
-      }
-      if (!mainWindow || mainWindow.isDestroyed()) {
-        return
-      }
-      targetLoadStarted = true
       const loadTargetNs = process.hrtime.bigint()
       await mainWindow.loadURL(target)
       logStartupSegment('electron', 'window_target_loaded', loadTargetNs, {
@@ -5623,10 +5599,6 @@ const createWindow = async () => {
       })
       logStartupSegment('electron', 'start_bridge_and_load_total', startBridgeAndLoadNs)
     } catch (err) {
-      if (shellTimer) {
-        clearTimeout(shellTimer)
-        shellTimer = null
-      }
       if (bridgeProcess) {
         bridgeProcess.removeAllListeners('exit')
         stopBridge()
@@ -5660,8 +5632,6 @@ if (!gotLock) {
     logStartupSegment('electron', 'app_when_ready', appWhenReadyWaitNs)
     try {
       const appCorePreinitNs = process.hrtime.bigint()
-      configureUpdaterEvents()
-      closeBehavior = loadCloseBehavior()
       configureMediaPermissions()
       logStartupSegment('electron', 'app_core_preinit', appCorePreinitNs)
       screen.on('display-added', updateOverlayBounds)

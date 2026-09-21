@@ -1754,6 +1754,7 @@ export const syncChatRuntimeProjectionFromSnapshot = (
   if (result.applied) {
     markRuntimeProjectionChanged(store, {
       immediate: options.immediate === true || options.loading !== undefined || options.running !== undefined,
+      sessionId: key,
       reason: 'snapshot-reconcile'
     });
   }
@@ -1884,6 +1885,7 @@ const applyCommandSessionCanonicalSideEffect = (runtimeStore, sessionId, eventTy
     );
     if (entry) {
       markRuntimeProjectionChanged(runtimeStore, {
+        sessionId: resolveSessionKey(sessionId),
         reason: 'command-session-delta'
       });
     }
@@ -1895,6 +1897,7 @@ const applyCommandSessionCanonicalSideEffect = (runtimeStore, sessionId, eventTy
   );
   if (entry) {
     markRuntimeProjectionChanged(runtimeStore, {
+      sessionId: resolveSessionKey(sessionId),
       reason: 'command-session-snapshot'
     });
   }
@@ -2046,6 +2049,7 @@ export const syncChatRuntimeProjectionStatus = (
     runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
     markRuntimeProjectionChanged(store, {
       immediate: true,
+      sessionId: key,
       reason: 'runtime-status'
     });
   }
@@ -2261,6 +2265,7 @@ export const applyCanonicalClientMessageSubmittedRuntimeEvent = (
     runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
     markRuntimeProjectionChanged(store, {
       immediate: true,
+      sessionId: key,
       reason: 'client-submitted'
     });
   }
@@ -2317,6 +2322,7 @@ export const applyLocalChatMessageRuntimeEvent = (
     runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
     markRuntimeProjectionChanged(store, {
       immediate: true,
+      sessionId: key,
       reason: 'local-message'
     });
   }
@@ -2393,6 +2399,7 @@ export const applyLocalAssistantTurnTerminalRuntimeEvent = (
     runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
     markRuntimeProjectionChanged(store, {
       immediate: true,
+      sessionId: key,
       reason: `local-turn-${payload.terminal}`
     });
   }

@@ -3,6 +3,9 @@
   "productName": "wunder-desktop",
   "version": "0.4.0",
   "identifier": "com.wunder.desktop",
+  "build": {
+    "frontendDist": ["startup.html"]
+  },
   "app": {
     "windows": [],
     "security": {

@@ -189,6 +189,9 @@ pub(super) fn locate_rebuilt_current_user_index(messages: &[Value]) -> Option<us
         if HistoryManager::is_compaction_summary_item(message) {
             return false;
         }
+        if is_retained_interaction_message(message) {
+            return false;
+        }
         let content = message.get("content").unwrap_or(&Value::Null);
         !Orchestrator::is_observation_message("user", content)
     })
