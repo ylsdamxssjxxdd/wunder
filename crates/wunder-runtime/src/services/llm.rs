@@ -193,6 +193,29 @@ fn disable_thinking_requested(config: &LlmModelConfig) -> bool {
     )
 }
 
+// Detect provider-side rejection of the requested reasoning effort. vLLM
+// answers 422 for values outside its protocol vocabulary and 400 for values
+// outside the model chat template vocabulary; both bodies name the effort.
+fn reasoning_effort_rejected(status: u16, body: &str) -> bool {
+    if !matches!(status, 400 | 422 | 500) {
+        return false;
+    }
+    let lower = body.to_ascii_lowercase();
+    lower.contains("reasoning") && lower.contains("effort")
+}
+
+// Next degraded effort after a rejection. "medium" is the highest level
+// shared by the OpenAI protocol vocabulary and hybrid Qwen chat templates,
+// so it is the safest first fallback; after that the field is dropped and
+// the model default applies.
+fn degraded_reasoning_effort(current: &str) -> Option<Option<String>> {
+    match current {
+        "high" | "xhigh" => Some(Some("medium".to_string())),
+        "minimal" | "low" | "medium" => Some(None),
+        _ => None,
+    }
+}
+
 fn should_emit_enable_thinking_flag(config: &LlmModelConfig) -> bool {
     matches!(
         normalize_provider(config.provider.as_deref()).as_str(),
@@ -257,18 +280,16 @@ fn insert_chat_template_kwarg(payload: &mut Value, key: &str, value: Value) {
     payload["chat_template_kwargs"] = Value::Object(kwargs);
 }
 
-// Self-hosted vLLM forwards reasoning_effort to the model chat template, but
-// vLLM's OpenAI protocol validates the top-level field against OpenAI's
-// vocabulary (none/low/medium/high) before rendering. Model templates with a
-// different vocabulary (hybrid Qwen families accept only xhigh/medium/low)
-// therefore reject valid selections at two different layers. Routing the
-// effort through chat_template_kwargs bypasses protocol validation and hands
-// the value directly to the template.
+// vLLM forwards reasoning_effort to the model chat template, but vLLM's
+// OpenAI protocol validates the top-level field against OpenAI's vocabulary
+// (none/low/medium/high) before rendering. Model templates with a different
+// vocabulary (hybrid Qwen families accept only xhigh/medium/low) therefore
+// reject valid selections at two different layers. Routing the effort through
+// chat_template_kwargs bypasses protocol validation and hands the value
+// directly to the template. Applies to the same providers that already
+// tolerate vLLM-specific chat_template_kwargs extensions.
 fn should_route_reasoning_effort_via_template(config: &LlmModelConfig) -> bool {
-    matches!(
-        normalize_provider(config.provider.as_deref()).as_str(),
-        "vllm" | "vllm_ascend" | "vllm_omni"
-    )
+    should_emit_vllm_chat_template_kwargs(config)
 }
 
 fn apply_disable_thinking_controls(payload: &mut Value, config: &LlmModelConfig) {
@@ -685,6 +706,25 @@ impl LlmClient {
         normalize_provider(self.config.provider.as_deref()) == "anthropic"
     }
 
+    fn with_reasoning_effort(&self, effort: Option<String>) -> Self {
+        let mut config = self.config.clone();
+        config.reasoning_effort = effort;
+        Self {
+            http: self.http.clone(),
+            config,
+        }
+    }
+
+    // Compute the degraded effort for one retry after the provider rejected
+    // the configured effort; None means the failure is unrelated (no retry).
+    fn reasoning_effort_retry_step(&self, status: u16, body: &str) -> Option<Option<String>> {
+        let current = normalize_reasoning_effort(self.config.reasoning_effort.as_deref())?;
+        if !reasoning_effort_rejected(status, body) {
+            return None;
+        }
+        degraded_reasoning_effort(&current)
+    }
+
     pub async fn complete(&self, messages: &[ChatMessage]) -> Result<LlmResponse> {
         self.complete_with_tools(messages, None).await
     }
@@ -715,6 +755,19 @@ impl LlmClient {
             }
         };
         if !status.is_success() {
+            if let Some(next_effort) =
+                self.reasoning_effort_retry_step(status.as_u16(), &body_text)
+            {
+                warn!(
+                    "llm reasoning_effort {:?} rejected with {status}, retrying with {:?}",
+                    self.config.reasoning_effort, next_effort
+                );
+                return Box::pin(
+                    self.with_reasoning_effort(next_effort)
+                        .complete_with_tools(messages, tools),
+                )
+                .await;
+            }
             let detail = if body == Value::Null {
                 json!({ "raw": truncate_text(&body_text, 2048) })
             } else {
@@ -796,6 +849,21 @@ impl LlmClient {
                         ));
                     }
                 };
+                if let Some(next_effort) =
+                    self.reasoning_effort_retry_step(status.as_u16(), &text)
+                {
+                    warn!(
+                        "llm stream reasoning_effort {:?} rejected with {status}, retrying with {:?}",
+                        self.config.reasoning_effort, next_effort
+                    );
+                    return Box::pin(
+                        self.with_reasoning_effort(next_effort)
+                            .stream_complete_with_callback_with_tools(
+                                messages, tools, on_delta,
+                            ),
+                    )
+                    .await;
+                }
                 if usage_fallback && include_usage && matches!(status.as_u16(), 400 | 422) {
                     include_usage = false;
                     usage_fallback = false;
@@ -3821,7 +3889,7 @@ mod tests {
     fn build_chat_payload_includes_reasoning_effort_when_configured() {
         let config = LlmModelConfig {
             enable: Some(true),
-            provider: Some("openai_compatible".to_string()),
+            provider: Some("deepseek".to_string()),
             api_mode: Some("chat_completions".to_string()),
             base_url: Some("http://127.0.0.1:18000/v1".to_string()),
             api_key: Some("test-key".to_string()),
@@ -3865,49 +3933,55 @@ mod tests {
     }
 
     #[test]
-    fn build_chat_payload_routes_reasoning_effort_via_template_for_local_vllm() {
-        let config = LlmModelConfig {
-            enable: Some(true),
-            provider: Some("vllm_ascend".to_string()),
-            api_mode: Some("chat_completions".to_string()),
-            base_url: Some("http://127.0.0.1:18000/v1".to_string()),
-            api_key: Some("test-key".to_string()),
-            model: Some("test-model".to_string()),
-            temperature: Some(0.7),
-            timeout_s: Some(15),
-            max_rounds: Some(4),
-            max_context: Some(16_384),
-            max_output: Some(256),
-            thinking_token_budget: None,
-            support_vision: Some(false),
-            support_hearing: Some(false),
-            stream: Some(false),
-            stream_include_usage: Some(false),
-            history_compaction_ratio: None,
-            tool_call_mode: Some("tool_call".to_string()),
-            reasoning_effort: Some("xhigh".to_string()),
-            model_type: Some("llm".to_string()),
-            stop: None,
-            mock_if_unconfigured: None,
-            ..Default::default()
-        };
-        let client = LlmClient::new(Client::new(), config);
-        let payload = client.build_request_payload(
-            &[ChatMessage {
-                role: "user".to_string(),
-                content: Value::String("hello".to_string()),
-                reasoning_content: None,
-                tool_calls: None,
-                tool_call_id: None,
-            }],
-            false,
-        );
-        assert_eq!(
-            payload["chat_template_kwargs"]["reasoning_effort"],
-            Value::String("xhigh".to_string())
-        );
-        assert!(payload.get("reasoning_effort").is_none());
-        assert_eq!(payload["max_tokens"], 256);
+    fn build_chat_payload_routes_reasoning_effort_via_template_for_vllm_compatible() {
+        for provider in ["vllm", "vllm_ascend", "vllm_omni", "openai_compatible"] {
+            let config = LlmModelConfig {
+                enable: Some(true),
+                provider: Some(provider.to_string()),
+                api_mode: Some("chat_completions".to_string()),
+                base_url: Some("http://127.0.0.1:18000/v1".to_string()),
+                api_key: Some("test-key".to_string()),
+                model: Some("test-model".to_string()),
+                temperature: Some(0.7),
+                timeout_s: Some(15),
+                max_rounds: Some(4),
+                max_context: Some(16_384),
+                max_output: Some(256),
+                thinking_token_budget: None,
+                support_vision: Some(false),
+                support_hearing: Some(false),
+                stream: Some(false),
+                stream_include_usage: Some(false),
+                history_compaction_ratio: None,
+                tool_call_mode: Some("tool_call".to_string()),
+                reasoning_effort: Some("xhigh".to_string()),
+                model_type: Some("llm".to_string()),
+                stop: None,
+                mock_if_unconfigured: None,
+                ..Default::default()
+            };
+            let client = LlmClient::new(Client::new(), config);
+            let payload = client.build_request_payload(
+                &[ChatMessage {
+                    role: "user".to_string(),
+                    content: Value::String("hello".to_string()),
+                    reasoning_content: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                }],
+                false,
+            );
+            assert_eq!(
+                payload["chat_template_kwargs"]["reasoning_effort"],
+                Value::String("xhigh".to_string()),
+                "provider {provider} should route reasoning_effort via chat_template_kwargs"
+            );
+            assert!(
+                payload.get("reasoning_effort").is_none(),
+                "provider {provider} should not send top-level reasoning_effort"
+            );
+            assert_eq!(payload["max_tokens"], 256);
+        }
     }
 
     #[test]
@@ -3958,6 +4032,156 @@ mod tests {
             Value::Bool(false)
         );
         assert!(payload["chat_template_kwargs"].get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn reasoning_effort_rejection_detection_covers_protocol_and_template_errors() {
+        let protocol_422 = json!({
+            "detail": [{
+                "loc": ["body", "reasoning_effort"],
+                "msg": "Input should be 'none', 'low', 'medium' or 'high'",
+                "type": "literal_error"
+            }]
+        })
+        .to_string();
+        assert!(reasoning_effort_rejected(422, &protocol_422));
+
+        let template_400 = json!({
+            "error": {
+                "message": "Unexpected reasoning effort high. Supported types are xhigh (default), medium, and low."
+            }
+        })
+        .to_string();
+        assert!(reasoning_effort_rejected(400, &template_400));
+
+        assert!(!reasoning_effort_rejected(
+            400,
+            r#"{"error":{"message":"maximum context length exceeded"}}"#
+        ));
+        assert!(!reasoning_effort_rejected(401, &template_400));
+
+        assert_eq!(
+            degraded_reasoning_effort("high"),
+            Some(Some("medium".to_string()))
+        );
+        assert_eq!(
+            degraded_reasoning_effort("xhigh"),
+            Some(Some("medium".to_string()))
+        );
+        assert_eq!(degraded_reasoning_effort("medium"), Some(None));
+        assert_eq!(degraded_reasoning_effort("low"), Some(None));
+        assert_eq!(degraded_reasoning_effort("none"), None);
+    }
+
+    #[tokio::test]
+    async fn complete_with_tools_degrades_rejected_reasoning_effort() {
+        use axum::extract::State;
+        use axum::http::StatusCode;
+        use axum::routing::post;
+        use axum::{Json, Router};
+        use std::sync::{Arc, Mutex};
+        use tokio::net::TcpListener;
+
+        #[derive(Clone, Default)]
+        struct AppState {
+            seen_efforts: Arc<Mutex<Vec<String>>>,
+        }
+
+        let state = AppState::default();
+        let app = Router::new()
+            .route(
+                "/v1/chat/completions",
+                post(
+                    |State(state): State<AppState>, Json(payload): Json<Value>| async move {
+                        let effort = payload["chat_template_kwargs"]["reasoning_effort"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string();
+                        state
+                            .seen_efforts
+                            .lock()
+                            .expect("lock efforts")
+                            .push(effort.clone());
+                        if effort == "high" {
+                            return (
+                                StatusCode::BAD_REQUEST,
+                                Json(json!({
+                                    "error": {
+                                        "message": "Unexpected reasoning effort high. Supported types are xhigh (default), medium, and low."
+                                    }
+                                })),
+                            );
+                        }
+                        (
+                            StatusCode::OK,
+                            Json(json!({
+                                "choices": [
+                                    { "message": { "content": "degraded-ok" } }
+                                ],
+                                "usage": {
+                                    "prompt_tokens": 4,
+                                    "completion_tokens": 2,
+                                    "total_tokens": 6
+                                }
+                            })),
+                        )
+                    },
+                ),
+            )
+            .with_state(state.clone());
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai_compatible".to_string()),
+            api_mode: Some("chat_completions".to_string()),
+            base_url: Some(format!("http://{addr}/v1")),
+            api_key: Some("test-key".to_string()),
+            model: Some("test-model".to_string()),
+            temperature: None,
+            timeout_s: None,
+            max_rounds: None,
+            max_context: None,
+            max_output: None,
+            thinking_token_budget: None,
+            support_vision: None,
+            support_hearing: None,
+            stream: Some(false),
+            stream_include_usage: Some(false),
+            history_compaction_ratio: None,
+            tool_call_mode: Some("tool_call".to_string()),
+            reasoning_effort: Some("high".to_string()),
+            model_type: Some("llm".to_string()),
+            stop: None,
+            mock_if_unconfigured: None,
+            ..Default::default()
+        };
+        let client = LlmClient::new(Client::new(), config);
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: Value::String("hello".to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let response = client
+            .complete_with_tools(&messages, None)
+            .await
+            .expect("degraded response");
+
+        assert_eq!(response.content, "degraded-ok");
+        assert_eq!(
+            state.seen_efforts.lock().expect("lock efforts").clone(),
+            vec!["high".to_string(), "medium".to_string()]
+        );
     }
 
     #[test]
