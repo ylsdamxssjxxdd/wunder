@@ -544,6 +544,15 @@ export const buildCompactionDisplay = (
       body: modelOutput,
       tone: usedFallback ? 'warning' : 'default'
     });
+  } else if (injectedSummary) {
+    // Older compaction events persisted only the injected summary. Surface it
+    // as the actual result instead of incorrectly reporting an empty run.
+    outputs.push({
+      key: 'injected-summary',
+      title: t('chat.toolWorkflow.compaction.output.injectedTitle'),
+      body: injectedSummary,
+      tone: usedFallback ? 'warning' : 'default'
+    });
   }
   const outputEmpty = isRunning
     ? t('chat.toolWorkflow.compaction.output.pending')
@@ -637,15 +646,21 @@ export const buildCompactionDisplay = (
 
   const failure: CompactionFailureView | null = isFailed || isCancelled
     ? {
-        title: t('chat.toolWorkflow.compaction.failure.title'),
+        title: isCancelled || !hasOverflowFailure
+          ? t('chat.toolWorkflow.compaction.failure.genericTitle')
+          : t('chat.toolWorkflow.compaction.failure.title'),
         description: isCancelled
           ? t('chat.toolWorkflow.compaction.failure.cancelledDescription')
-          : t('chat.toolWorkflow.compaction.failure.description'),
-        suggestions: [
-          t('chat.toolWorkflow.compaction.failure.suggestionNewThread'),
-          t('chat.toolWorkflow.compaction.failure.suggestionShortenInput'),
-          t('chat.toolWorkflow.compaction.failure.suggestionRetry')
-        ]
+          : hasOverflowFailure
+            ? t('chat.toolWorkflow.compaction.failure.description')
+            : t('chat.toolWorkflow.compaction.failure.genericDescription'),
+        suggestions: hasOverflowFailure
+          ? [
+              t('chat.toolWorkflow.compaction.failure.suggestionNewThread'),
+              t('chat.toolWorkflow.compaction.failure.suggestionShortenInput'),
+              t('chat.toolWorkflow.compaction.failure.suggestionRetry')
+            ]
+          : [t('chat.toolWorkflow.compaction.failure.suggestionRetry')]
       }
     : null;
 

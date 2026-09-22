@@ -7,6 +7,7 @@ const MAX_MESSAGES: usize = 100;
 const MAX_INPUT_BYTES: usize = 16_384;
 
 pub fn install(app: &MainWindow) {
+    crate::demo_entities::install(app);
     let initial: Vec<_> = app.get_messages().iter().collect();
     let models: Rc<Vec<Rc<VecModel<ChatMessage>>>> = Rc::new(
         (0..9)
@@ -46,6 +47,7 @@ pub fn install(app: &MainWindow) {
             mine: true,
             time: "现在".into(),
             workflow: false,
+            state: "".into(),
         });
         model.push(reply(
             "已收到。这是一条本地演示回复，可以继续检查输入、滚动与会话切换效果。",
@@ -65,6 +67,9 @@ pub fn install(app: &MainWindow) {
         }
         select_drafts.borrow_mut()[slot(&app)] = app.get_draft().to_string();
         app.set_selected_conversation(index);
+        if let Some(conversation) = app.get_conversations().row_data(index as usize) {
+            app.set_heading(conversation.title);
+        }
         app.set_active_task(0);
         app.set_messages(ModelRc::from(select_models[slot(&app)].clone()));
         app.set_draft(select_drafts.borrow()[slot(&app)].as_str().into());
@@ -107,6 +112,7 @@ fn reply(text: &str) -> ChatMessage {
         mine: false,
         time: "现在".into(),
         workflow: false,
+        state: "任务完成  ·  演示消息".into(),
     }
 }
 

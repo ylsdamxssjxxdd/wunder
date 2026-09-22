@@ -2,7 +2,7 @@
 title: 会话线程控制
 summary: `thread_control` 的动作、线程关系与返回结构。
 read_when:
-  - 用户要创建、切换、归档或设置主线程
+  - 用户要创建、切换、归档或切换任务线程
 source_docs:
   - src/services/tools/thread_control_tool.rs
 updated_at: 2026-04-10
@@ -76,7 +76,7 @@ updated_at: 2026-04-10
 
 - `switch`
 
-也就是新建后是否立刻切过去、是否设置为主线程。
+也就是新建后是否立刻切过去、是否设置为任务线程。
 
 
 ## 和 `subagent_control` 的区别

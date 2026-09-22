@@ -70,6 +70,14 @@ const createTranslator = () => {
     'chat.toolWorkflow.compaction.output.emptySkipped': 'Skipped, no new compaction output.',
     'chat.toolWorkflow.compaction.output.emptyFailed': 'No compaction output.',
     'chat.toolWorkflow.compaction.output.emptyCancelled': 'No compaction output.',
+    'chat.toolWorkflow.compaction.failure.title': 'Recovery did not finish',
+    'chat.toolWorkflow.compaction.failure.genericTitle': 'Compaction did not finish',
+    'chat.toolWorkflow.compaction.failure.description': 'Recovery failed.',
+    'chat.toolWorkflow.compaction.failure.genericDescription': 'Compaction did not finish.',
+    'chat.toolWorkflow.compaction.failure.cancelledDescription': 'Compaction was cancelled.',
+    'chat.toolWorkflow.compaction.failure.suggestionNewThread': 'Start new thread',
+    'chat.toolWorkflow.compaction.failure.suggestionShortenInput': 'Shorten input',
+    'chat.toolWorkflow.compaction.failure.suggestionRetry': 'Retry',
     'chat.toolWorkflow.compaction.usage.before': 'Before {tokens} ({percent})',
     'chat.toolWorkflow.compaction.usage.after': 'After {tokens} ({percent})',
     'chat.toolWorkflow.compaction.stage.detect': 'Detect',
@@ -123,6 +131,16 @@ test('compaction display does not fabricate output for guard-only runs', () => {
 
   assert.equal(display.view.outputs.length, 0);
   assert.equal(display.view.outputEmpty, 'Guard only, no new compaction output.');
+});
+
+test('legacy injected summary is shown as the available compaction result', () => {
+  const display = buildCompactionDisplay(
+    { status: 'done', summary_text: 'Persisted summary text.' },
+    'completed',
+    createTranslator()
+  );
+  assert.equal(display.view.outputs.length, 1);
+  assert.equal(display.view.outputs[0]?.body, 'Persisted summary text.');
 });
 
 test('compaction display marks failed and cancelled runs as terminal warnings', () => {

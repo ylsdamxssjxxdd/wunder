@@ -37,6 +37,13 @@
       {{ view.outputEmpty }}
     </div>
 
+    <dl v-if="view.details.length" class="tool-workflow-compaction-details">
+      <template v-for="detail in view.details" :key="detail.key">
+        <dt>{{ detail.label }}</dt>
+        <dd>{{ detail.value }}</dd>
+      </template>
+    </dl>
+
     <div v-if="view.failure" class="tool-workflow-compaction-failure">
       <div class="tool-workflow-compaction-failure-title">{{ view.failure.title }}</div>
       <div class="tool-workflow-compaction-failure-description">{{ view.failure.description }}</div>
@@ -145,6 +152,30 @@ defineProps<{
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.tool-workflow-compaction-details {
+  display: grid;
+  grid-template-columns: minmax(88px, auto) minmax(0, 1fr);
+  gap: 5px 10px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--workflow-term-border);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.16);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.tool-workflow-compaction-details dt {
+  color: var(--workflow-term-muted);
+}
+
+.tool-workflow-compaction-details dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--workflow-term-text);
+  overflow-wrap: anywhere;
 }
 
 .tool-workflow-compaction-output,

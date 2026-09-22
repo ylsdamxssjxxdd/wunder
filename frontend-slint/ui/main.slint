@@ -1,10 +1,11 @@
-import { Theme, Conversation, ChatMessage } from "theme.slint";
-import { Action, RailButton, Avatar, SearchField } from "components.slint";
+import { Theme, Conversation, ChatMessage, AgentCard, ToolCard, ModelCard } from "theme.slint";
+import { Action, RailButton, Avatar, SearchField, FormField } from "components.slint";
 import { Composer } from "composer.slint";
 import { MessageRow } from "message.slint";
 import { WorkDock } from "dock.slint";
+import { AgentsPage, ToolsPage, SettingsPage } from "entity_pages.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
-export { Theme, Conversation, ChatMessage }
+export { Theme, Conversation, ChatMessage, AgentCard, ToolCard, ModelCard }
 
 export component MainWindow inherits Window {
     title: "心舰 · 蜂巢（Slint 原型）";
@@ -15,11 +16,23 @@ export component MainWindow inherits Window {
     background: Theme.panel;
     in-out property <bool> right-open: true;
     in-out property <bool> navigation-open: true;
-    in-out property <bool> dark: false;
-    changed dark => { Theme.dark = root.dark; }
     in-out property <int> selected-conversation: 0;
     in-out property <int> active-task: 0;
     in-out property <int> section: 0;
+    in-out property <int> selected-agent: -1;
+    in-out property <int> selected-model: -1;
+    in-out property <string> active-session-id;
+    in-out property <string> active-agent-id;
+    in-out property <string> heading: "默认智能体";
+    in-out property <bool> busy: false;
+    in-out property <bool> connected: false;
+    in-out property <bool> chat-loading: false;
+    in-out property <bool> session-loading: false;
+    in-out property <bool> creating-session: false;
+    in-out property <bool> agents-loading: false;
+    in-out property <bool> tools-loading: false;
+    in-out property <bool> settings-loading: false;
+    in-out property <bool> saving: false;
     in-out property <string> draft;
     in-out property <string> status: "本地演示 · 未连接后端";
     in-out property <string> dialog-title;
@@ -28,21 +41,61 @@ export component MainWindow inherits Window {
     private property <bool> dock-overlay-open: false;
     in-out property <int> scroll-revision: 0;
     in-out property <[Conversation]> conversations: [
-        { title: "默认智能体", preview: "随时开始新的对话", time: "刚刚", avatar: @image-url("../assets/avatar.png") },
-        { title: "智能体 01", preview: "上次任务已完成", time: "昨天", avatar: @image-url("../assets/hive.png") },
-        { title: "智能体 02", preview: "暂无新消息", time: "昨天", avatar: @image-url("../assets/avatar.png") }
+        { id: "demo-0", title: "默认智能体", preview: "随时开始新的对话", time: "刚刚" },
+        { id: "demo-1", title: "智能体 01", preview: "上次任务已完成", time: "昨天" },
+        { id: "demo-2", title: "智能体 02", preview: "暂无新消息", time: "昨天" }
     ];
     in-out property <[ChatMessage]> messages: [
-        { text: "你好，我是你的默认智能体。有什么可以帮助你的吗？", mine: false, time: "09:41", workflow: false },
-        { text: "请帮我整理一下当前内容。", mine: true, time: "09:42", workflow: false },
-        { text: "已经整理好了。\n\n• 内容已按顺序归纳，便于继续查看。\n• 相关文件可在右侧工作目录中预览。\n• 你可以继续提问，或新建一个任务。\n\n如果需要进一步调整，可以直接告诉我。", mine: false, time: "09:42", workflow: true }
+        { text: "你好，我是你的默认智能体。有什么可以帮助你的吗？", mine: false, time: "09:41", workflow: false, state: "任务完成  ·  演示消息" },
+        { text: "请帮我整理一下当前内容。", mine: true, time: "09:42", workflow: false, state: "" },
+        { text: "已经整理好了。\n\n• 内容已按顺序归纳，便于继续查看。\n• 相关文件可在右侧工作目录中预览。\n• 你可以继续提问，或新建一个任务。\n\n如果需要进一步调整，可以直接告诉我。", mine: false, time: "09:42", workflow: true, state: "任务完成  ·  演示消息" }
     ];
+    in-out property <[AgentCard]> agents: [
+        { id: "demo-agent", name: "默认智能体", description: "帮助你处理日常任务。", model: "默认模型", status: "active" }
+    ];
+    in-out property <[ToolCard]> tools: [
+        { name: "文件操作", description: "读取和整理本地工作目录中的内容", category: "内置工具" },
+        { name: "技能调用", description: "按权限使用已安装的技能", category: "技能" }
+    ];
+    in-out property <[ModelCard]> models: [
+        { key: "默认模型", provider: "", model: "未连接", base-url: "", model-type: "llm", is-default: true }
+    ];
+    in-out property <string> selected-agent-name;
+    in-out property <string> selected-agent-description;
+    in-out property <string> selected-agent-model;
+    in-out property <string> selected-agent-status;
+    in-out property <string> workspace-root;
+    in-out property <string> runtime-language;
+    in-out property <string> selected-model-key;
+    in-out property <string> selected-model-provider;
+    in-out property <string> selected-model-name;
+    in-out property <string> selected-model-base-url;
+    in-out property <string> selected-model-type;
+    in-out property <bool> selected-model-is-default: false;
+    in-out property <bool> agent-creator-open: false;
+    in-out property <string> agent-name-draft;
+    in-out property <bool> model-editor-open: false;
+    in-out property <bool> editing-model: false;
+    in-out property <string> model-key-draft;
+    in-out property <string> model-provider-draft;
+    in-out property <string> model-name-draft;
+    in-out property <string> model-base-url-draft;
+    in-out property <string> model-token-draft;
+    in-out property <string> model-type-draft: "llm";
     private property <string> keyword;
-    private property <string> heading: root.conversations[root.selected-conversation].title;
     callback send-message();
     callback select-conversation(int);
     callback new-thread();
     callback select-task(int);
+    callback refresh-chat();
+    callback refresh-agents();
+    callback select-agent(int);
+    callback create-agent(string);
+    callback refresh-tools();
+    callback refresh-settings();
+    callback select-model(int);
+    callback save-model(string, string, string, string, string, string);
+    callback set-default-model(string);
     changed scroll-revision => { messages-view.content-y = min(0px, messages-view.visible-height - messages-view.content-height); }
 
     function open-info(title: string, text: string) {
@@ -51,6 +104,23 @@ export component MainWindow inherits Window {
     function toggle-dock() {
         if root.width >= 1100px { root.right-open = !root.right-open; }
         else { root.dock-overlay-open = !root.dock-overlay-open; }
+    }
+    function open-agent-creator() {
+        root.agent-name-draft = "";
+        root.agent-creator-open = true;
+    }
+    function open-new-model() {
+        root.editing-model = false;
+        root.model-key-draft = ""; root.model-provider-draft = ""; root.model-name-draft = "";
+        root.model-base-url-draft = ""; root.model-token-draft = ""; root.model-type-draft = "llm";
+        root.model-editor-open = true;
+    }
+    function open-selected-model() {
+        root.editing-model = true;
+        root.model-key-draft = root.selected-model-key; root.model-provider-draft = root.selected-model-provider;
+        root.model-name-draft = root.selected-model-name; root.model-base-url-draft = root.selected-model-base-url;
+        root.model-token-draft = ""; root.model-type-draft = root.selected-model-type;
+        root.model-editor-open = true;
     }
 
     Rectangle {
@@ -65,17 +135,16 @@ export component MainWindow inherits Window {
                 }
                 Rectangle { height: 1px; background: #ffffff44; }
                 RailButton { icon: @image-url("../assets/icons/comments.svg"); label: "消息"; active: root.section == 0; clicked => { root.section = 0; } }
-                RailButton { icon: @image-url("../assets/icons/cubes.svg"); label: "蜂群"; active: root.section == 1; clicked => { root.open-info("蜂群", "此原型先展示聊天主界面。蜂群编排将在后续评估中接入。"); } }
-                RailButton { icon: @image-url("../assets/icons/robot.svg"); label: "智能体"; active: root.section == 2; clicked => { root.section = 2; } }
-                RailButton { icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "工具"; clicked => { root.open-info("工具", "文件读写   ·   技能调用   ·   知识检索\n\n当前仅展示界面，不执行工具。"); } }
-                RailButton { icon: @image-url("../assets/icons/gear.svg"); label: "设置"; clicked => { root.open-info("桌面设置", "外观可通过左下角按钮切换。\n\n模型、连接与运行时配置暂未接入。"); } }
+                RailButton { icon: @image-url("../assets/icons/cubes.svg"); label: "蜂群"; active: root.section == 1; clicked => { root.open-info("蜂群", "蜂群编排将在聊天实时事件接入后继续实现。"); } }
+                RailButton { icon: @image-url("../assets/icons/robot.svg"); label: "智能体"; active: root.section == 2; clicked => { root.section = 2; root.refresh-agents(); } }
+                RailButton { icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "工具"; active: root.section == 3; clicked => { root.section = 3; root.refresh-tools(); } }
+                RailButton { icon: @image-url("../assets/icons/gear.svg"); label: "设置"; active: root.section == 4; clicked => { root.section = 4; root.refresh-settings(); } }
                 Rectangle { vertical-stretch: 1; }
-                RailButton { icon: @image-url("../assets/icons/moon.svg"); label: root.dark ? "浅色" : "深色"; clicked => { root.dark = !root.dark; } }
-                RailButton { icon: @image-url("../assets/icons/ellipsis.svg"); label: "更多"; clicked => { root.open-info("关于原型", "心舰 · 蜂巢\n\n本地界面预览，消息仅保存在本次运行的内存中。"); } }
+                RailButton { icon: @image-url("../assets/icons/ellipsis.svg"); label: "更多"; clicked => { root.open-info("关于", root.connected ? "心舰 · 蜂巢\n\n当前已启用本地运行时连接。" : "心舰 · 蜂巢\n\n演示数据仅保存在本次运行的内存中。"); } }
             }
         }
 
-        if root.navigation-open : Rectangle {
+        if root.navigation-open && root.section == 0 : Rectangle {
             x: 56px; y: 0px; width: 220px; height: parent.height; background: Theme.middle;
             Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
             VerticalLayout {
@@ -88,7 +157,7 @@ export component MainWindow inherits Window {
                 HorizontalLayout {
                     padding-left: 14px; padding-right: 14px; height: 34px; spacing: 8px;
                     SearchField { horizontal-stretch: 1; icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索"; text <=> root.keyword; }
-                    new-chat := Action { width: 34px; height: 34px; icon: @image-url("../assets/icons/plus.svg"); label: "新建线程"; selected: true; clicked => { root.new-thread(); } }
+                    new-chat := Action { width: 34px; height: 34px; icon: @image-url("../assets/icons/plus.svg"); label: "新建线程"; enabled: !root.busy && !root.creating-session && !root.session-loading && !root.chat-loading && !root.agents-loading; selected: true; clicked => { root.new-thread(); } }
                 }
                 Rectangle { height: 14px; }
                 ScrollView {
@@ -100,19 +169,20 @@ export component MainWindow inherits Window {
                         Rectangle {
                             x: 8px; y: 2px; width: parent.width - 16px; height: 64px; border-radius: 12px;
                             background: root.selected-conversation == index ? Theme.accent : transparent;
-                            Action { width: parent.width; height: parent.height; label: conversation.title; clicked => { root.select-conversation(index); } }
-                            Avatar { x: 10px; y: 13px; source: conversation.avatar; }
+                            Action { width: parent.width; height: parent.height; label: conversation.title; enabled: !root.busy && !root.creating-session && !root.session-loading && !root.chat-loading; clicked => { root.select-conversation(index); } }
+                            Avatar { x: 10px; y: 13px; source: @image-url("../assets/avatar.png"); }
                             Text { x: 54px; y: 10px; width: parent.width - 60px; height: 19px; text: conversation.title; color: root.selected-conversation == index ? white : Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
                             Text { x: 54px; y: 35px; width: parent.width - 62px; height: 16px; text: conversation.preview; color: root.selected-conversation == index ? #ffffffe0 : Theme.muted; font-size: 11px; overflow: elide; }
                         }
                     }
                     }
                 }
-                Text { height: 36px; text: "本地界面预览"; color: Theme.muted; font-size: 11px; horizontal-alignment: center; }
+                Text { height: 36px; text: root.connected ? "本地运行时" : "本地界面预览"; color: Theme.muted; font-size: 11px; horizontal-alignment: center; }
             }
         }
 
         Rectangle {
+            visible: root.section == 0;
             x: root.navigation-open ? 276px : 56px;
             y: 0px; width: root.width - self.x - (root.right-open && root.width >= 1100px ? 284px : 0px);
             height: parent.height; background: Theme.chat;
@@ -123,9 +193,9 @@ export component MainWindow inherits Window {
                     Action { icon: @image-url("../assets/icons/bars.svg"); label: "切换导航"; clicked => { root.navigation-open = !root.navigation-open; } }
                     Text { text: root.heading; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
-                    Action { icon: @image-url("../assets/icons/plus.svg"); label: "新建线程"; clicked => { root.new-thread(); } }
+                    Action { icon: @image-url("../assets/icons/plus.svg"); label: "新建线程"; enabled: !root.busy && !root.creating-session && !root.session-loading && !root.chat-loading && !root.agents-loading; clicked => { root.new-thread(); } }
                     Action { icon: @image-url("../assets/icons/clock-rotate-left.svg"); label: "历史线程"; clicked => { root.toggle-dock(); } }
-                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; clicked => { root.status = "演示数据已刷新"; } }
+                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.busy && !root.session-loading && !root.chat-loading && !root.creating-session; clicked => { root.refresh-chat(); } }
                     dock-toggle := Action { icon: @image-url("../assets/icons/chevron-right.svg"); label: "切换工作目录"; selected: root.width >= 1100px ? root.right-open : root.dock-overlay-open; clicked => { root.toggle-dock(); } }
                 }
                 Rectangle { height: 1px; background: Theme.border; }
@@ -136,29 +206,31 @@ export component MainWindow inherits Window {
                         message-row := MessageRow {
                             x: 22px; y: 14px; width: parent.width - 44px;
                             message: message; author: root.heading;
-                            avatar: root.conversations[root.selected-conversation].avatar;
+                            avatar: @image-url("../assets/avatar.png");
                         }
                     }
                 }
                 Composer {
-                    draft <=> root.draft; status: root.status;
+                    draft <=> root.draft; status: root.status; busy: root.busy || root.session-loading || root.creating-session || root.chat-loading;
                     send => { root.send-message(); }
                     attach => { root.open-info("添加附件", "附件上传尚未连接。本地预览不会读取或上传你的文件。"); }
                 }
             }
         }
         // Preserve the chat's minimum width; the right dock becomes optional.
-        if root.right-open && root.width >= 1100px : WorkDock {
+        if root.section == 0 && root.right-open && root.width >= 1100px : WorkDock {
+            connected: root.connected;
             x: root.width - 284px; y: 0px; width: 284px; height: parent.height; active-task: root.active-task;
             activate-task(index) => { root.select-task(index); }
             preview-file(name) => { root.open-info(name, "这是本地演示文件。\n\n你可以通过此面板检查文件预览的布局与文字效果。"); }
         }
     }
 
-    if root.dock-overlay-open && root.width < 1100px : Rectangle {
+    if root.section == 0 && root.dock-overlay-open && root.width < 1100px : Rectangle {
         background: #00000030;
         TouchArea { clicked => { root.dock-overlay-open = false; } }
         WorkDock {
+            connected: root.connected;
             x: parent.width - 284px; y: 0px; width: 284px; height: parent.height;
             active-task: root.active-task;
             activate-task(index) => { root.select-task(index); root.dock-overlay-open = false; }
@@ -166,6 +238,78 @@ export component MainWindow inherits Window {
         }
     }
 
+    if root.section == 2 : AgentsPage {
+        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px;
+        loading: root.agents-loading; saving: root.saving;
+        agents: root.agents; selected-agent: root.selected-agent;
+        selected-name: root.selected-agent-name; selected-description: root.selected-agent-description;
+        selected-model: root.selected-agent-model; selected-status: root.selected-agent-status;
+        select-agent(index) => { root.select-agent(index); }
+        create-agent => { root.open-agent-creator(); }
+        refresh => { root.refresh-agents(); }
+    }
+    if root.section == 3 : ToolsPage {
+        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px;
+        tools: root.tools; refresh => { root.refresh-tools(); }
+    }
+    if root.section == 4 : SettingsPage {
+        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px;
+        loading: root.settings-loading; saving: root.saving;
+        models: root.models; selected-model: root.selected-model;
+        workspace-root: root.workspace-root; language: root.runtime-language;
+        selected-key: root.selected-model-key; selected-provider: root.selected-model-provider;
+        selected-model-name: root.selected-model-name; selected-base-url: root.selected-model-base-url;
+        selected-type: root.selected-model-type; selected-is-default: root.selected-model-is-default;
+        select-model(index) => { root.select-model(index); }
+        create-model => { root.open-new-model(); }
+        edit-model => { root.open-selected-model(); }
+        set-default-model(key) => { root.set-default-model(key); }
+        refresh => { root.refresh-settings(); }
+    }
+
+    if root.section >= 2 : Rectangle {
+        x: 56px; y: root.height - 32px; width: root.width - 56px; height: 32px; background: Theme.panel;
+        Text { x: 16px; width: parent.width - 32px; height: parent.height; text: root.status; color: Theme.muted; font-size: 11px; vertical-alignment: center; overflow: elide; }
+    }
+
+    if root.agent-creator-open : Rectangle {
+        background: #00000040;
+        TouchArea { clicked => { if !root.saving { root.agent-creator-open = false; } } }
+        Rectangle {
+            width: min(420px, parent.width - 48px); height: 190px; border-radius: 14px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+            TouchArea { }
+            VerticalLayout {
+                padding: 22px; spacing: 12px;
+                Text { height: 24px; text: "新建智能体"; color: Theme.text; font-size: 17px; font-weight: 600; }
+                FormField { label: "名称"; placeholder: "输入智能体名称"; text <=> root.agent-name-draft; }
+                HorizontalLayout { height: 30px; Rectangle { horizontal-stretch: 1; } Action { icon: @image-url("../assets/icons/xmark.svg"); label: "取消"; show-label: true; clicked => { if !root.saving { root.agent-creator-open = false; } } } Action { width: 66px; icon: @image-url("../assets/icons/check.svg"); label: root.saving ? "创建中" : "创建"; show-label: true; primary: true; enabled: !root.saving && !root.agents-loading && root.agent-name-draft != ""; clicked => { root.create-agent(root.agent-name-draft); } } }
+            }
+        }
+    }
+    if root.model-editor-open : Rectangle {
+        background: #00000040;
+        TouchArea { clicked => { if !root.saving { root.model-editor-open = false; root.model-token-draft = ""; } } }
+        Rectangle {
+            width: min(510px, parent.width - 48px); height: min(560px, parent.height - 44px); border-radius: 14px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+            TouchArea { }
+            VerticalLayout {
+                padding: 22px; spacing: 8px;
+                Text { height: 24px; text: root.selected-model-key == root.model-key-draft && root.model-key-draft != "" ? "编辑模型" : "添加模型"; color: Theme.text; font-size: 17px; font-weight: 600; }
+                ScrollView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { spacing: 7px;
+                        FormField { horizontal-stretch: 1; label: "配置键"; read-only: root.editing-model; placeholder: "输入模型配置键"; text <=> root.model-key-draft; }
+                        FormField { horizontal-stretch: 1; label: "提供方"; placeholder: "输入提供方标识"; text <=> root.model-provider-draft; }
+                    FormField { horizontal-stretch: 1; label: "模型名称"; placeholder: "输入上游模型名称"; text <=> root.model-name-draft; }
+                        FormField { horizontal-stretch: 1; label: "服务地址"; placeholder: "输入服务地址"; text <=> root.model-base-url-draft; }
+                    FormField { horizontal-stretch: 1; label: "访问密钥（留空保留原值）"; placeholder: "仅保存到本机设置"; secret: true; text <=> root.model-token-draft; }
+                    FormField { horizontal-stretch: 1; label: "类型"; placeholder: "llm、embedding、asr、tts、image 或 video"; text <=> root.model-type-draft; }
+                    }
+                }
+                HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; } Action { icon: @image-url("../assets/icons/xmark.svg"); label: "取消"; show-label: true; clicked => { if !root.saving { root.model-editor-open = false; root.model-token-draft = ""; } } } Action { width: 66px; icon: @image-url("../assets/icons/check.svg"); label: root.saving ? "保存中" : "保存"; show-label: true; primary: true; enabled: !root.saving && !root.settings-loading && root.model-provider-draft != "" && root.model-key-draft != "" && root.model-name-draft != ""; clicked => { root.save-model(root.model-key-draft, root.model-provider-draft, root.model-name-draft, root.model-base-url-draft, root.model-token-draft, root.model-type-draft); } } }
+            }
+        }
+    }
     if root.dialog-open : Rectangle {
         background: #00000040;
         TouchArea { clicked => { root.dialog-open = false; } }
@@ -189,6 +333,7 @@ export component MainWindow inherits Window {
             }
         }
     }
+
 }
 
 

@@ -1,21 +1,23 @@
 // Values mirror frontend/src/styles/base.css and messenger.css (eva-orange).
 export global Theme {
-    in-out property <bool> dark: false;
-    out property <color> text: dark ? #eef2f5 : #32170a;
-    out property <color> muted: dark ? #9aaab8 : #8d6248;
-    out property <color> panel: dark ? #1c2732 : #fffaf6;
-    out property <color> surface: dark ? #23313e : #ffffff;
-    out property <color> border: dark ? #364450 : #efdfd3;
+    out property <color> text: #32170a;
+    out property <color> muted: #8d6248;
+    out property <color> panel: #fffaf6;
+    out property <color> surface: #ffffff;
+    out property <color> border: #efdfd3;
     out property <color> accent: #ff9448;
     out property <color> accent-deep: #e5792e;
-    out property <color> accent-soft: dark ? #483325 : #fff0e3;
-    out property <color> bubble: dark ? #22313d : #ffffff;
-    out property <color> mine: dark ? #49382c : #ffe9d7;
+    out property <color> accent-soft: #fff0e3;
+    out property <color> bubble: #ffffff;
+    out property <color> mine: #ffe9d7;
     out property <brush> rail: @linear-gradient(180deg, #ffb26f 0%, #e5792e 100%);
-    out property <brush> middle: dark ? #17212b : @linear-gradient(180deg, #fffaf6 0%, #fff6ef 100%);
-    out property <brush> chat: dark ? #15212c : @linear-gradient(150deg, #ffecd9 0%, #fffbf8 32%, #fff2e8 100%);
-    out property <brush> dock: dark ? #17212b : @linear-gradient(180deg, #fff8f3 0%, #fff0e5 100%);
-    out property <brush> composer: dark ? #1b2833 : @linear-gradient(180deg, #fff8f3 0%, #fff2e9 100%);
+    out property <brush> middle: @linear-gradient(180deg, #fffaf6 0%, #fff6ef 100%);
+    out property <brush> chat: @linear-gradient(150deg, #ffecd9 0%, #fffbf8 32%, #fff2e8 100%);
+    out property <brush> dock: @linear-gradient(180deg, #fff8f3 0%, #fff0e5 100%);
+    out property <brush> composer: @linear-gradient(180deg, #fff8f3 0%, #fff2e9 100%);
 }
-export struct Conversation { title: string, preview: string, time: string, avatar: image }
-export struct ChatMessage { text: string, mine: bool, time: string, workflow: bool }
+export struct Conversation { id: string, title: string, preview: string, time: string }
+export struct ChatMessage { text: string, mine: bool, time: string, workflow: bool, state: string }
+export struct AgentCard { id: string, name: string, description: string, model: string, status: string }
+export struct ToolCard { name: string, description: string, category: string }
+export struct ModelCard { key: string, provider: string, model: string, base-url: string, model-type: string, is-default: bool }

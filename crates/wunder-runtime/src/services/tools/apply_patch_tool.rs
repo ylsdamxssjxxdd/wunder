@@ -9,6 +9,7 @@ use crate::path_utils::is_within_root;
 
 mod matching;
 mod parser;
+mod preview;
 pub(super) use matching::build_context_not_found_hint;
 use matching::{analyze_update_chunk_effect, build_patch_no_effect_hint, UpdateChunkEffect};
 #[cfg(test)]
@@ -17,6 +18,7 @@ use matching::{find_chunk_range, ChunkRangeSearchResult};
 use parser::{dedup_repaired_numbered_context_before_delete, parse_patch};
 use parser::{extract_patch_input, parse_patch_checked, ParsedPatchOp};
 pub(super) use parser::{ChunkLine, ChunkLineKind, UpdateChunk};
+use preview::{DiffPreview, DiffPreviewBudget};
 
 const BEGIN_PATCH_MARKER: &str = "*** Begin Patch";
 const END_PATCH_MARKER: &str = "*** End Patch";
@@ -61,7 +63,7 @@ struct FileChangeSummary {
     path: String,
     to_path: Option<String>,
     hunks: usize,
-    diff_blocks: Vec<FileDiffBlock>,
+    diff: DiffPreview,
 }
 
 #[derive(Debug, Clone)]
@@ -156,6 +158,19 @@ pub(super) fn patch_error_with_hint(
     let message = localized_message(zh, en);
     let hint = localized_message(hint_zh, hint_en);
     anyhow::Error::new(PatchToolError::new(code, message, Some(hint), true))
+}
+
+fn preserve_patch_tool_error(error: anyhow::Error) -> anyhow::Error {
+    if error.downcast_ref::<PatchToolError>().is_some() {
+        return error;
+    }
+    patch_error_with_hint(
+        "PATCH_RUNTIME_TASK_FAILED",
+        format!("应用补丁任务执行失败：{error}"),
+        format!("Apply patch worker task failed: {error}"),
+        "请重试；若持续失败请检查运行时环境是否稳定。",
+        "Retry; if this persists, verify runtime stability.",
+    )
 }
 
 fn patch_format_error(zh: impl Into<String>, en: impl Into<String>) -> anyhow::Error {
@@ -266,16 +281,7 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
         let cancel_probe = build_patch_cancel_probe(context);
         move || parse_patch_checked(&input, cancel_probe.as_ref())
     })
-    .await
-    .map_err(|err| {
-        patch_error_with_hint(
-            "PATCH_RUNTIME_TASK_FAILED",
-            format!("应用补丁预处理任务执行失败：{err}"),
-            format!("Apply patch preprocessing task failed: {err}"),
-            "请重试；若持续失败请检查运行时环境是否稳定。",
-            "Retry; if this persists, verify runtime stability.",
-        )
-    })?;
+    .await?;
 
     let allow_roots = collect_allow_roots(context);
     let resolved_ops = parsed_ops
@@ -283,63 +289,13 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
         .map(|op| resolve_patch_op(context, &allow_roots, op))
         .collect::<Result<Vec<_>>>()?;
 
-    if dry_run {
-        let summary = summarize_patch_ops(&resolved_ops);
-        return Ok(build_model_tool_success(
-            "apply_patch",
-            "dry_run",
-            format!(
-                "Validated patch touching {} files without applying it.",
-                summary.changed_files.len()
-            ),
-            json!({
-                "dry_run": true,
-                "changed_files": summary.changed_files.len(),
-                "added": summary.added,
-                "updated": summary.updated,
-                "deleted": summary.deleted,
-                "moved": summary.moved,
-                "hunks_applied": summary.hunks_applied,
-                "no_effect_updates": summary.no_effect_updates,
-                "files": summary.file_summaries.into_iter().map(|item| json!({
-                    "action": item.action,
-                    "path": item.path,
-                    "to_path": item.to_path,
-                    "hunks": item.hunks,
-                    "diff_blocks": item.diff_blocks.iter().map(|block| json!({
-                        "header": block.header,
-                        "start_line_before": block.start_line_before,
-                        "end_line_before": block.end_line_before,
-                        "start_line_after": block.start_line_after,
-                        "end_line_after": block.end_line_after,
-                        "lines": block.lines.iter().map(|line| json!({
-                            "kind": line.kind,
-                            "old_line": line.old_line,
-                            "new_line": line.new_line,
-                            "text": line.text,
-                        })).collect::<Vec<_>>(),
-                    })).collect::<Vec<_>>(),
-                })).collect::<Vec<_>>(),
-                "lsp": Vec::<Value>::new(),
-            }),
-        ));
-    }
-
     ensure_patch_not_cancelled(context)?;
     let summary = blocking::run_fs("tools.apply_patch.apply", {
         let cancel_probe = build_patch_cancel_probe(context);
-        move || apply_patch_ops_checked(resolved_ops, cancel_probe.as_ref())
+        move || apply_patch_ops_mode(resolved_ops, cancel_probe.as_ref(), dry_run)
     })
     .await
-    .map_err(|err| {
-        patch_error_with_hint(
-            "PATCH_RUNTIME_TASK_FAILED",
-            format!("应用补丁任务执行失败：{err}"),
-            format!("Apply patch worker task failed: {err}"),
-            "请重试；若持续失败请检查运行时环境是否稳定。",
-            "Retry; if this persists, verify runtime stability.",
-        )
-    })?;
+    .map_err(preserve_patch_tool_error)?;
 
     if !summary.no_effect_updates.is_empty()
         && summary.added == 0
@@ -369,13 +325,13 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
         .changed_files
         .iter()
         .any(|path| is_within_root(&workspace_root, path));
-    if bump_workspace {
+    if bump_workspace && !dry_run {
         context.workspace.bump_version(context.workspace_id);
     }
 
     let mut lsp_records = Vec::new();
     for path in &summary.changed_files {
-        if path.exists() {
+        if !dry_run && path.exists() {
             let lsp = touch_lsp_file(context, path, true).await;
             lsp_records.push(json!({
                 "path": path.to_string_lossy().to_string(),
@@ -384,14 +340,40 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
         }
     }
 
+    let added_lines: usize = summary
+        .file_summaries
+        .iter()
+        .map(|item| item.diff.added_lines)
+        .sum();
+    let deleted_lines: usize = summary
+        .file_summaries
+        .iter()
+        .map(|item| item.diff.deleted_lines)
+        .sum();
+    let diff_lines_omitted: usize = summary
+        .file_summaries
+        .iter()
+        .map(|item| item.diff.omitted_lines)
+        .sum();
     Ok(build_model_tool_success(
         "apply_patch",
-        "completed",
-        format!(
-            "Applied patch touching {} files.",
-            summary.changed_files.len()
-        ),
+        if dry_run { "dry_run" } else { "completed" },
+        if dry_run {
+            format!(
+                "Validated patch touching {} files without applying it.",
+                summary.changed_files.len()
+            )
+        } else {
+            format!(
+                "Applied patch touching {} files.",
+                summary.changed_files.len()
+            )
+        },
         json!({
+            "dry_run": dry_run,
+            "added_lines": added_lines,
+            "deleted_lines": deleted_lines,
+            "diff_lines_omitted": diff_lines_omitted,
             "changed_files": summary.changed_files.len(),
             "added": summary.added,
             "updated": summary.updated,
@@ -404,7 +386,10 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
                 "path": item.path,
                 "to_path": item.to_path,
                 "hunks": item.hunks,
-                "diff_blocks": item.diff_blocks.iter().map(|block| json!({
+                "added_lines": item.diff.added_lines,
+                "deleted_lines": item.diff.deleted_lines,
+                "diff_lines_omitted": item.diff.omitted_lines,
+                "diff_blocks": item.diff.blocks.iter().map(|block| json!({
                     "header": block.header,
                     "start_line_before": block.start_line_before,
                     "end_line_before": block.end_line_before,
@@ -421,78 +406,6 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
             "lsp": lsp_records,
         }),
     ))
-}
-
-fn summarize_patch_ops(ops: &[ResolvedPatchOp]) -> ApplyPatchSummary {
-    let mut changed_files = HashSet::new();
-    let mut file_summaries = Vec::new();
-    let mut added = 0usize;
-    let mut updated = 0usize;
-    let mut deleted = 0usize;
-    let mut moved = 0usize;
-    let mut hunks_applied = 0usize;
-
-    for op in ops {
-        match op {
-            ResolvedPatchOp::Add { path, target, .. } => {
-                added += 1;
-                changed_files.insert(target.clone());
-                file_summaries.push(FileChangeSummary {
-                    action: "add".to_string(),
-                    path: path.clone(),
-                    to_path: None,
-                    hunks: 0,
-                    diff_blocks: Vec::new(),
-                });
-            }
-            ResolvedPatchOp::Delete { path, target } => {
-                deleted += 1;
-                changed_files.insert(target.clone());
-                file_summaries.push(FileChangeSummary {
-                    action: "delete".to_string(),
-                    path: path.clone(),
-                    to_path: None,
-                    hunks: 0,
-                    diff_blocks: Vec::new(),
-                });
-            }
-            ResolvedPatchOp::Update {
-                path,
-                target,
-                move_to_path,
-                move_to_target,
-                chunks,
-            } => {
-                updated += 1;
-                let hunks = chunks.len();
-                hunks_applied += hunks;
-                changed_files.insert(target.clone());
-                if let Some(new_target) = move_to_target.as_ref() {
-                    moved += 1;
-                    changed_files.insert(new_target.clone());
-                }
-                file_summaries.push(FileChangeSummary {
-                    action: "update".to_string(),
-                    path: path.clone(),
-                    to_path: move_to_path.clone(),
-                    hunks,
-                    diff_blocks: Vec::new(),
-                });
-            }
-        }
-    }
-
-    ApplyPatchSummary {
-        changed_files: changed_files.into_iter().collect(),
-        added,
-        updated,
-        deleted,
-        moved,
-        hunks_applied,
-        file_summaries,
-        no_effect_updates: Vec::new(),
-        no_effect_chunk_effects: Vec::new(),
-    }
 }
 
 fn build_patch_cancel_probe(context: &ToolContext<'_>) -> Option<PatchCancelProbe> {
@@ -606,6 +519,16 @@ fn apply_patch_ops(
     ops: Vec<ResolvedPatchOp>,
     cancel_probe: Option<&PatchCancelProbe>,
 ) -> Result<ApplyPatchSummary> {
+    apply_patch_ops_mode(ops, cancel_probe, false)
+}
+
+fn apply_patch_ops_mode(
+    ops: Vec<ResolvedPatchOp>,
+    cancel_probe: Option<&PatchCancelProbe>,
+    dry_run: bool,
+) -> Result<ApplyPatchSummary> {
+    // Preview and commit share staging so conflicts and hunk matching agree.
+    let mut preview_budget = DiffPreviewBudget::default();
     let mut staged: HashMap<PathBuf, StagedEntry> = HashMap::new();
     let mut changed_files = HashSet::new();
     let mut file_summaries = Vec::new();
@@ -657,7 +580,7 @@ fn apply_patch_ops(
                     path: path.clone(),
                     to_path: None,
                     hunks: 1,
-                    diff_blocks: vec![build_add_file_diff_block(&lines)],
+                    diff: preview_budget.add(&lines),
                 });
             }
             ResolvedPatchOp::Delete { path, target } => {
@@ -689,9 +612,7 @@ fn apply_patch_ops(
                     path: path.clone(),
                     to_path: None,
                     hunks: 1,
-                    diff_blocks: vec![build_delete_file_diff_block(
-                        current.as_deref().unwrap_or_default(),
-                    )],
+                    diff: preview_budget.delete(current.as_deref().unwrap_or_default()),
                 });
             }
             ResolvedPatchOp::Update {
@@ -771,33 +692,38 @@ fn apply_patch_ops(
                     path,
                     to_path: move_to_path,
                     hunks: chunks.len(),
-                    diff_blocks,
+                    diff: preview_budget.update(diff_blocks),
                 });
             }
         }
     }
 
-    let original_states = snapshot_original_states(&staged)?;
-    if let Err(err) = write_staged_entries(&staged) {
-        let rollback_error = restore_original_states(&original_states);
-        return Err(match rollback_error {
-            Ok(()) => patch_error_with_hint(
-                "PATCH_IO_WRITE_FAILED",
-                format!("应用补丁失败，已回滚：{err}"),
-                format!("Apply patch failed and rollback succeeded: {err}"),
-                "请检查文件权限、磁盘空间与路径可写性后重试。",
-                "Check file permissions, disk space, and path writability before retrying.",
-            ),
-            Err(restore_err) => patch_error_with_hint(
-                "PATCH_IO_ROLLBACK_FAILED",
-                format!("应用补丁失败且回滚异常：{}；原始错误：{}", restore_err, err),
-                format!(
-                    "Apply patch failed and rollback also failed: {restore_err}; original error: {err}"
+    if !dry_run {
+        if let Some(probe) = cancel_probe {
+            ensure_patch_not_cancelled_probe(probe)?;
+        }
+        let original_states = snapshot_original_states(&staged)?;
+        if let Err(err) = write_staged_entries(&staged) {
+            let rollback_error = restore_original_states(&original_states);
+            return Err(match rollback_error {
+                Ok(()) => patch_error_with_hint(
+                    "PATCH_IO_WRITE_FAILED",
+                    format!("应用补丁失败，已回滚：{err}"),
+                    format!("Apply patch failed and rollback succeeded: {err}"),
+                    "请检查文件权限、磁盘空间与路径可写性后重试。",
+                    "Check file permissions, disk space, and path writability before retrying.",
                 ),
-                "检测到写入与回滚都失败，请立即人工检查受影响文件状态。",
-                "Both write and rollback failed; immediately inspect affected files manually.",
-            ),
-        });
+                Err(restore_err) => patch_error_with_hint(
+                    "PATCH_IO_ROLLBACK_FAILED",
+                    format!("应用补丁失败且回滚异常：{}；原始错误：{}", restore_err, err),
+                    format!(
+                        "Apply patch failed and rollback also failed: {restore_err}; original error: {err}"
+                    ),
+                    "检测到写入与回滚都失败，请立即人工检查受影响文件状态。",
+                    "Both write and rollback failed; immediately inspect affected files manually.",
+                ),
+            });
+        }
     }
 
     Ok(ApplyPatchSummary {
@@ -1000,47 +926,6 @@ fn join_lines(lines: &[String], ensure_newline: bool) -> String {
     text
 }
 
-fn build_add_file_diff_block(lines: &[String]) -> FileDiffBlock {
-    FileDiffBlock {
-        header: "new file".to_string(),
-        start_line_before: 0,
-        end_line_before: 0,
-        start_line_after: 1,
-        end_line_after: lines.len(),
-        lines: lines
-            .iter()
-            .enumerate()
-            .map(|(index, line)| FileDiffLine {
-                kind: "add",
-                old_line: None,
-                new_line: Some(index + 1),
-                text: line.clone(),
-            })
-            .collect(),
-    }
-}
-
-fn build_delete_file_diff_block(source: &str) -> FileDiffBlock {
-    let lines = split_lines(source);
-    FileDiffBlock {
-        header: "deleted file".to_string(),
-        start_line_before: 1,
-        end_line_before: lines.len(),
-        start_line_after: 0,
-        end_line_after: 0,
-        lines: lines
-            .iter()
-            .enumerate()
-            .map(|(index, line)| FileDiffLine {
-                kind: "delete",
-                old_line: Some(index + 1),
-                new_line: None,
-                text: line.clone(),
-            })
-            .collect(),
-    }
-}
-
 #[cfg(test)]
 fn apply_update_chunks(
     source: &str,
@@ -1164,43 +1049,6 @@ mod tests {
             result.pointer("/error_meta/code").and_then(Value::as_str),
             Some("PATCH_NO_EFFECT")
         );
-    }
-
-    #[test]
-    fn summarize_patch_ops_counts_actions_for_dry_run_preview() {
-        let add_target = PathBuf::from("/tmp/add.txt");
-        let del_target = PathBuf::from("/tmp/del.txt");
-        let old_target = PathBuf::from("/tmp/old.txt");
-        let new_target = PathBuf::from("/tmp/new.txt");
-        let summary = summarize_patch_ops(&[
-            ResolvedPatchOp::Add {
-                path: "add.txt".to_string(),
-                target: add_target.clone(),
-                lines: vec!["x".to_string()],
-            },
-            ResolvedPatchOp::Delete {
-                path: "del.txt".to_string(),
-                target: del_target.clone(),
-            },
-            ResolvedPatchOp::Update {
-                path: "old.txt".to_string(),
-                target: old_target.clone(),
-                move_to_path: Some("new.txt".to_string()),
-                move_to_target: Some(new_target.clone()),
-                chunks: vec![UpdateChunk {
-                    change_context: None,
-                    lines: vec![],
-                    end_of_file: false,
-                }],
-            },
-        ]);
-        assert_eq!(summary.added, 1);
-        assert_eq!(summary.deleted, 1);
-        assert_eq!(summary.updated, 1);
-        assert_eq!(summary.moved, 1);
-        assert_eq!(summary.hunks_applied, 1);
-        assert_eq!(summary.file_summaries.len(), 3);
-        assert_eq!(summary.changed_files.len(), 4);
     }
 
     #[test]

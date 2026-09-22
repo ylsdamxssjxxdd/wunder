@@ -1586,6 +1586,7 @@ test('chat runtime render adapter materializes projected usage stats for message
           context_occupancy_tokens: 180,
           max_context: 1000,
           decode_duration_s: 3,
+          visible_decode_speed_tps: 10,
           avg_model_round_speed_tps: 10,
           avg_model_round_speed_rounds: 1
         }
@@ -1681,6 +1682,7 @@ test('chat runtime render adapter updates cached materialization when projected 
         request_consumed_tokens: 15,
         context_occupancy_tokens: 20,
         decode_duration_s: 1,
+        visible_decode_speed_tps: 5,
         avg_model_round_speed_tps: 5,
         avg_model_round_speed_rounds: 1
       }

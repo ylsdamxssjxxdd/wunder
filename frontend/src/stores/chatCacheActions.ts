@@ -463,6 +463,7 @@ export const chatCacheActions = {
             rounds
           );
           messages = rawMessages.map((message) => hydrateMessage(message, workflowState));
+          messages = mergeCompactionMarkersIntoMessages(messages, cachedHydratedMessages);
         }
         dismissStaleInquiryPanels(messages);
         const greetingMessages = ensureGreetingMessage(messages, {

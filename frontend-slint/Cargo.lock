@@ -5143,6 +5143,7 @@ dependencies = [
  "i-slint-backend-winit",
  "i-slint-renderer-software",
  "png",
+ "serde_json",
  "slint",
  "slint-build",
  "winit",

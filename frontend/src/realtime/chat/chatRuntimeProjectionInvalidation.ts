@@ -14,6 +14,8 @@ type ProjectionVersionStore = {
   runtimeProjectionVersionBySession?: Record<string, number>;
   runtimeProjectionContentVersion?: unknown;
   runtimeProjectionContentVersionByMessage?: Record<string, number>;
+  runtimeProjectionReasoningVersion?: unknown;
+  runtimeProjectionReasoningVersionByMessage?: Record<string, number>;
   runtimeProjectionVersion?: unknown;
 };
 
@@ -34,7 +36,18 @@ export const runtimeProjectionContentInvalidationState = {
   maxSlowFlushMs: 0
 };
 
-let backgroundChanges = new WeakMap<object, { sessions: Set<string>; messages: Set<string> }>();
+export const runtimeProjectionReasoningInvalidationState = {
+  cancel: null as null | (() => void),
+  pending: false,
+  lastBumpedAt: 0,
+  messageIds: new Set<string>()
+};
+
+let backgroundChanges = new WeakMap<object, {
+  sessions: Set<string>;
+  messages: Set<string>;
+  reasoningMessages: Set<string>;
+}>();
 const bumpSessionClock = (store: ProjectionVersionStore, sessionId: string) => {
   if (!store.runtimeProjectionVersionBySession) store.runtimeProjectionVersionBySession = {};
   store.runtimeProjectionVersionBySession[sessionId] = Number(store.runtimeProjectionVersionBySession[sessionId] || 0) + 1;
@@ -42,6 +55,7 @@ const bumpSessionClock = (store: ProjectionVersionStore, sessionId: string) => {
 
 const DEFAULT_PROJECTION_INVALIDATION_DELAY_MS = 24;
 const DEFAULT_PROJECTION_CONTENT_INVALIDATION_DELAY_MS = 24;
+const DEFAULT_PROJECTION_REASONING_INVALIDATION_DELAY_MS = 150;
 const STREAM_CONTENT_DEBUG_SLOW_MS = 48;
 
 const flushRuntimeProjectionContentVersion = (store: ProjectionVersionStore) => {
@@ -114,6 +128,53 @@ const markRuntimeProjectionContentChanged = (
   const delayMs = Math.max(0, DEFAULT_PROJECTION_CONTENT_INVALIDATION_DELAY_MS - elapsedMs);
   const timer = globalThis.setTimeout(() => bump(), delayMs);
   runtimeProjectionContentInvalidationState.cancel = () => globalThis.clearTimeout(timer);
+};
+
+const flushRuntimeProjectionReasoningVersion = (store: ProjectionVersionStore) => {
+  const messageIds = Array.from(runtimeProjectionReasoningInvalidationState.messageIds);
+  runtimeProjectionReasoningInvalidationState.cancel = null;
+  runtimeProjectionReasoningInvalidationState.pending = false;
+  runtimeProjectionReasoningInvalidationState.lastBumpedAt = Date.now();
+  runtimeProjectionReasoningInvalidationState.messageIds.clear();
+  if (messageIds.length === 0) return;
+  store.runtimeProjectionReasoningVersion = Number(store.runtimeProjectionReasoningVersion || 0) + 1;
+  if (
+    !store.runtimeProjectionReasoningVersionByMessage ||
+    typeof store.runtimeProjectionReasoningVersionByMessage !== 'object'
+  ) {
+    store.runtimeProjectionReasoningVersionByMessage = {};
+  }
+  for (const messageId of messageIds) {
+    store.runtimeProjectionReasoningVersionByMessage[messageId] =
+      Number(store.runtimeProjectionReasoningVersionByMessage[messageId] || 0) + 1;
+  }
+};
+
+const markRuntimeProjectionReasoningChanged = (
+  store: ProjectionVersionStore | null | undefined,
+  messageIds: Iterable<unknown>,
+  options: { immediate?: boolean } = {}
+) => {
+  if (!store || typeof store !== 'object') return;
+  for (const rawMessageId of messageIds) {
+    const messageId = String(rawMessageId || '').trim();
+    if (messageId) runtimeProjectionReasoningInvalidationState.messageIds.add(messageId);
+  }
+  if (runtimeProjectionReasoningInvalidationState.messageIds.size === 0) return;
+  const bump = () => flushRuntimeProjectionReasoningVersion(store);
+  if (options.immediate === true) {
+    if (runtimeProjectionReasoningInvalidationState.cancel) {
+      runtimeProjectionReasoningInvalidationState.cancel();
+    }
+    bump();
+    return;
+  }
+  if (runtimeProjectionReasoningInvalidationState.pending) return;
+  runtimeProjectionReasoningInvalidationState.pending = true;
+  const elapsedMs = Date.now() - runtimeProjectionReasoningInvalidationState.lastBumpedAt;
+  const delayMs = Math.max(0, DEFAULT_PROJECTION_REASONING_INVALIDATION_DELAY_MS - elapsedMs);
+  const timer = globalThis.setTimeout(bump, delayMs);
+  runtimeProjectionReasoningInvalidationState.cancel = () => globalThis.clearTimeout(timer);
 };
 
 export const markRuntimeProjectionChanged = (
@@ -200,6 +261,9 @@ export const clearRuntimeProjectionInvalidation = () => {
   if (runtimeProjectionContentInvalidationState.cancel) {
     runtimeProjectionContentInvalidationState.cancel();
   }
+  if (runtimeProjectionReasoningInvalidationState.cancel) {
+    runtimeProjectionReasoningInvalidationState.cancel();
+  }
   runtimeProjectionInvalidationState.cancel = null;
   runtimeProjectionInvalidationState.pending = false;
   runtimeProjectionContentInvalidationState.cancel = null;
@@ -207,6 +271,9 @@ export const clearRuntimeProjectionInvalidation = () => {
   runtimeProjectionContentInvalidationState.messageIds.clear();
   runtimeProjectionContentInvalidationState.slowFlushCount = 0;
   runtimeProjectionContentInvalidationState.maxSlowFlushMs = 0;
+  runtimeProjectionReasoningInvalidationState.cancel = null;
+  runtimeProjectionReasoningInvalidationState.pending = false;
+  runtimeProjectionReasoningInvalidationState.messageIds.clear();
 };
 
 export const applyChatRuntimeEventsWithInvalidation = (
@@ -232,9 +299,15 @@ export const applyChatRuntimeEventsWithInvalidation = (
         /^(session_runtime|session_snapshot|turn_completed|turn_failed|turn_cancelled|assistant_final|approval_|user_message)/.test(event.event_type));
       if (background && !urgent) {
         let changes = backgroundChanges.get(store);
-        if (!changes) { changes = { sessions: new Set(), messages: new Set() }; backgroundChanges.set(store, changes); }
+        if (!changes) {
+          changes = { sessions: new Set(), messages: new Set(), reasoningMessages: new Set() };
+          backgroundChanges.set(store, changes);
+        }
         for (const result of appliedResults) {
-          if (result.contentOnly && result.messageId) changes.messages.add(result.messageId);
+          if (result.contentOnly && result.messageId) {
+            if (!result.reasoningOnly) changes.messages.add(result.messageId);
+            if (result.reasoningChanged) changes.reasoningMessages.add(result.messageId);
+          }
           else changes.sessions.add(result.sessionId);
         }
         const publish = () => {
@@ -244,19 +317,29 @@ export const applyChatRuntimeEventsWithInvalidation = (
           next.sessions.forEach(id => bumpSessionClock(store, id));
           if (next.sessions.size) markRuntimeProjectionChanged(store, { immediate: true });
           markRuntimeProjectionContentChanged(store, next.messages, { immediate: true });
+          markRuntimeProjectionReasoningChanged(store, next.reasoningMessages, { immediate: true });
         };
         scheduleBackgroundPublication(store, publish);
-        if (changes.messages.size + changes.sessions.size > 2048) flushBackgroundPublication(store);
+        if (changes.messages.size + changes.reasoningMessages.size + changes.sessions.size > 2048) {
+          flushBackgroundPublication(store);
+        }
         return results;
       }
       // Navigation/terminal events publish everything pending before observers run.
       if (urgent) flushBackgroundPublication(store);
     }
     const contentOnlyResults = appliedResults.filter((result) => result.contentOnly === true);
+    const reasoningChangedResults = contentOnlyResults.filter((result) => result.reasoningChanged === true);
+    const visibleContentResults = contentOnlyResults.filter((result) => result.reasoningOnly !== true);
     if (contentOnlyResults.length === appliedResults.length && contentOnlyResults.length > 0) {
       markRuntimeProjectionContentChanged(
         store,
-        contentOnlyResults.map((result) => result.messageId),
+        visibleContentResults.map((result) => result.messageId),
+        { immediate: options.immediate }
+      );
+      markRuntimeProjectionReasoningChanged(
+        store,
+        reasoningChangedResults.map((result) => result.messageId),
         { immediate: options.immediate }
       );
     } else {
@@ -265,8 +348,13 @@ export const applyChatRuntimeEventsWithInvalidation = (
       if (contentOnlyResults.length > 0) {
         markRuntimeProjectionContentChanged(
           store,
-          contentOnlyResults.map((result) => result.messageId),
+          visibleContentResults.map((result) => result.messageId),
           { immediate: options.immediate }
+        );
+        markRuntimeProjectionReasoningChanged(
+          store,
+          reasoningChangedResults.map((result) => result.messageId),
+          { immediate: true }
         );
       }
     }

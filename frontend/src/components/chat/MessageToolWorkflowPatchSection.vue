@@ -1,5 +1,8 @@
 <template>
   <div class="tool-workflow-patch-card">
+    <div v-if="view.previewOnly" class="tool-workflow-patch-preview-limit" role="note">
+      {{ t('chat.toolWorkflow.patchPreviewOnly') }}
+    </div>
     <div v-if="view.metrics.length" class="tool-workflow-patch-metrics">
       <div
         v-for="metric in view.metrics"

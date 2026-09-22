@@ -76,7 +76,7 @@ The key point is that creation can also be combined with:
 
 - `switch`
 
-That means you can create a thread and immediately switch to it or mark it as the main thread.
+That means you can create a thread and immediately switch to it for the next task.
 
 
 ## Difference from `subagent_control`

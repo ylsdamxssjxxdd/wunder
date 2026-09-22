@@ -489,7 +489,13 @@ export function installMessengerControllerRightDockSessionRuntime(ctx: Messenger
   ctx.rightPanelAgentId = computed(() => {
       if (!ctx.showRightAgentPanels.value)
           return '';
-      return ctx.normalizeAgentId(ctx.settingsAgentId.value || ctx.activeAgentId.value);
+      // The messages dock follows the active conversation agent. Settings keeps
+      // its own selection, but must never leak into the task list while the
+      // user is working in another section.
+      const source = ctx.sessionHub.activeSection === 'agents'
+          ? ctx.settingsAgentId.value
+          : ctx.activeAgentId.value;
+      return ctx.normalizeAgentId(source);
   });
 
   ctx.rightPanelAgentIdForApi = computed(() => {

@@ -15,7 +15,7 @@ pub fn run(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::erro
             .ok_or_else(|| "window closed before smoke check".to_string())
             .and_then(|app| check(&app, &directory).map_err(|error| error.to_string()));
         let report = match &checked {
-            Ok(()) => "PASS: native rendering, send, blank/oversized input, draft isolation, task switching, bounded history, new task, theme.\n".to_string(),
+            Ok(()) => "PASS: native rendering, send, blank/oversized input, draft isolation, task switching, bounded history, new task, fixed light theme, agent creation, model editing/default, entity pages.\n".to_string(),
             Err(error) => format!("FAIL: {error}\n"),
         };
         let checked = std::fs::write(directory.join("smoke.txt"), report)
@@ -86,8 +86,40 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         app.get_messages().row_count() == 1 && app.get_draft().is_empty(),
         "new task failed",
     )?;
-    app.set_dark(true);
-    snapshot(app, &directory.join("native-dark.png"))?;
+    // The prototype follows the original light visual and no longer exposes
+    // a theme switch. Keep a light snapshot for regression.
+    snapshot(app, &directory.join("native-light.png"))?;
+    app.set_section(2);
+    let count = app.get_agents().row_count();
+    app.invoke_create_agent("测试智能体".into());
+    require(
+        app.get_agents().row_count() == count + 1 && app.get_selected_agent_name() == "测试智能体",
+        "agent creation failed",
+    )?;
+    snapshot(app, &directory.join("native-agents.png"))?;
+    app.set_section(3);
+    snapshot(app, &directory.join("native-tools.png"))?;
+    app.set_section(4);
+    app.invoke_save_model(
+        "测试模型".into(),
+        "openai".into(),
+        "test-model".into(),
+        "".into(),
+        "".into(),
+        "llm".into(),
+    );
+    app.invoke_set_default_model("测试模型".into());
+    require(
+        app.get_selected_model_key() == "测试模型" && app.get_selected_model_is_default(),
+        "model/default update failed",
+    )?;
+    snapshot(app, &directory.join("native-settings.png"))?;
+    app.set_model_key_draft(app.get_selected_model_key());
+    app.set_model_editor_open(true);
+    app.set_dialog_title("操作失败".into());
+    app.set_dialog_text("请检查模型配置后重试。".into());
+    app.set_dialog_open(true);
+    snapshot(app, &directory.join("native-form-error.png"))?;
     Ok(())
 }
 
@@ -99,7 +131,10 @@ fn require(condition: bool, message: &str) -> Result<(), Box<dyn std::error::Err
     }
 }
 
-fn snapshot(app: &MainWindow, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn snapshot(
+    app: &MainWindow,
+    path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     let pixels = app.window().take_snapshot()?;
     let mut encoder = png::Encoder::new(
         std::fs::File::create(path)?,

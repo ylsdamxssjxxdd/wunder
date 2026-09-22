@@ -123,7 +123,7 @@ updated_at: 2026-04-10
 - `TOOL_EXEC_NON_ZERO_EXIT`
 - `TOOL_EXEC_BUDGET_COMMAND_LIMIT`
 
-超时或非零退出时，`data.results` 里仍会保留已经收集到的 stdout/stderr，方便继续判断。
+超时或非零退出时，`data.results` 里仍会保留已经收集到的 stdout/stderr，方便继续判断。管理员事件详情另外提供最多 4 条 `data.diagnostics`，每条包含命令、序号、退出码和有界输出尾部；送给模型的失败 observation 会自动压成一句错误和下一步提示。
 
 ## 特殊行为：误把 patch 文本传进来
 

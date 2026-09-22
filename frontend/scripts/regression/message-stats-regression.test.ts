@@ -91,7 +91,7 @@ const ensureBrowserRuntimeStub = (): void => {
   }
 };
 
-test('message stats use backend-provided user-round average decode speed', () => {
+test('message stats do not present a user-round aggregate as visible reply speed', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -110,10 +110,27 @@ test('message stats use backend-provided user-round average decode speed', () =>
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Speed'), '1050.45 token/s');
+  assert.equal(findEntryValue(entries, 'Speed'), '-');
 });
 
-test('message stats shows backend average decode speed even when usage is absent', () => {
+test('normalized message stats retain the visible reply decode speed', async () => {
+  ensureBrowserRuntimeStub();
+  const { normalizeMessageStats } = await import('../../src/stores/chatStats');
+  const stats = normalizeMessageStats({
+    visible_decode_tokens: 84,
+    visible_decode_duration_s: 1.2,
+    visible_decode_speed_tps: 70,
+    avg_model_round_speed_tps: 280,
+    avg_model_round_speed_rounds: 4
+  });
+  const entries = buildAssistantMessageStatsEntries({ role: 'assistant', stats }, createTranslator());
+
+  assert.equal(stats?.visible_decode_tokens, 84);
+  assert.equal(stats?.visible_decode_duration_s, 1.2);
+  assert.equal(findEntryValue(entries, 'Speed'), '70.00 token/s');
+});
+
+test('message stats hide speed when only the aggregate field is available', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -126,7 +143,7 @@ test('message stats shows backend average decode speed even when usage is absent
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Speed'), '1050.45 token/s');
+  assert.equal(findEntryValue(entries, 'Speed'), '-');
 });
 
 test('message stats keeps persisted aggregate duration after history refresh', () => {
@@ -945,7 +962,7 @@ test('message stats ignores legacy round-marker quota placeholders when usage to
   assert.equal(findEntryValue(entries, 'Quota'), '2048');
 });
 
-test('message stats keeps backend average speed without frontend clamping', () => {
+test('message stats show the explicit visible reply speed without frontend clamping', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -958,7 +975,8 @@ test('message stats keeps backend average speed without frontend clamping', () =
         },
         decode_duration_s: 0.23,
         avg_model_round_speed_tps: 1800,
-        avg_model_round_speed_rounds: 4
+        avg_model_round_speed_rounds: 4,
+        visible_decode_speed_tps: 1800
       }
     },
     t
@@ -966,7 +984,7 @@ test('message stats keeps backend average speed without frontend clamping', () =
   assert.equal(findEntryValue(entries, 'Speed'), '1800.00 token/s');
 });
 
-test('message stats prefers average speed for tool turns', () => {
+test('message stats prefer the explicit visible reply speed for tool turns', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -980,7 +998,8 @@ test('message stats prefers average speed for tool turns', () => {
         },
         decode_duration_s: 0.23,
         avg_model_round_speed_tps: 312.5,
-        avg_model_round_speed_rounds: 4
+        avg_model_round_speed_rounds: 4,
+        visible_decode_speed_tps: 312.5
       }
     },
     t
@@ -1251,4 +1270,11 @@ test('turn decode speed summary ignores rounds without both decode time and outp
   assert.equal(summary.decodeDurationTotalS, 1.2);
   assert.equal(summary.avgModelRoundSpeedRounds, 1);
   assert.equal(summary.avgModelRoundSpeedTps, 50);
+});
+
+test('final missing decode timing clears an earlier model speed', async () => {
+  ensureBrowserRuntimeStub();
+  const { mergeMessageStats } = await import('../../src/stores/chatStats');
+  const stats = mergeMessageStats({ visible_decode_speed_tps: 70, contextTokens: 100 }, { visible_decode_speed_tps: null });
+  assert.equal(findEntryValue(buildAssistantMessageStatsEntries({ role: 'assistant', stats }, createTranslator()), 'Speed'), '-');
 });

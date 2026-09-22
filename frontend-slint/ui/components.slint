@@ -83,3 +83,24 @@ export component SearchField inherits Rectangle {
         selection-background-color: Theme.accent-soft; selection-foreground-color: Theme.text;
     }
 }
+
+export component FormField inherits Rectangle {
+    in property <string> label;
+    in property <string> placeholder;
+    in property <bool> secret: false;
+    in property <bool> read-only: false;
+    in-out property <string> text <=> editor.text;
+    height: 62px;
+    Text { y: 0px; width: parent.width; height: 18px; text: root.label; color: Theme.muted; font-size: 11px; }
+    Rectangle {
+        y: 21px; width: parent.width; height: 36px; border-radius: 8px;
+        background: Theme.panel; border-width: 1px; border-color: editor.has-focus ? Theme.accent : Theme.border;
+        Text { x: 10px; width: parent.width - 20px; height: parent.height; text: editor.text == "" && editor.preedit-text == "" ? root.placeholder : ""; color: Theme.muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
+        editor := TextInput {
+            x: 10px; width: parent.width - 20px; height: parent.height; color: Theme.text; font-size: 12px;
+            read-only: root.read-only; single-line: true; vertical-alignment: center; input-type: root.secret ? InputType.password : InputType.text;
+            selection-background-color: Theme.accent-soft; selection-foreground-color: Theme.text;
+            accessible-role: text-input; accessible-label: root.label; accessible-placeholder-text: root.placeholder;
+        }
+    }
+}

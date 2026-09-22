@@ -16,6 +16,7 @@ const CHAT_RENDER_EVENT_TYPES = new Set([
   'llm_output_delta',
   'llm_request',
   'llm_stream_retry',
+  'bad_tool_call_retry',
   'knowledge_request',
   'token_usage',
   'round_usage',

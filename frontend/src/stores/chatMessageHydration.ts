@@ -99,7 +99,11 @@ import {
   shouldKeepForegroundLiveMessages,
   shouldRestartWatchAfterInteractiveStream
 } from './chatWatchLifecycle';
-import { isCompactionSummaryEvent } from '@/utils/chatCompactionWorkflow';
+import {
+  isCompactionOnlyWorkflowItems,
+  isCompactionSummaryEvent,
+  resolveLatestCompactionSnapshot
+} from '@/utils/chatCompactionWorkflow';
 import {
   dedupeTerminalCompactionMarkersInPlace,
   isCompactionMarkerAssistantMessage,
@@ -195,7 +199,19 @@ export const hydrateMessage = (message, workflowState) => {
   }
   const { workflow_events: _workflowEvents, workflowEvents: _workflowEventsAlias, ...messageWithoutWorkflowEvents } = message;
   const queueWorkflowItems = hydrateQueueWorkflowItems(message);
+  const persistedWorkflowItems = Array.isArray(message?.workflowItems)
+    ? message.workflowItems
+    : [];
+  const workflowItems = persistedWorkflowItems.length > 0
+    ? persistedWorkflowItems
+    : queueWorkflowItems;
   const hasQueueWorkflow = queueWorkflowItems.length > 0;
+  const terminalCompactionMarker =
+    !message.content && !message.reasoning &&
+    isCompactionOnlyWorkflowItems(persistedWorkflowItems) &&
+    ['completed', 'failed', 'cancelled'].includes(
+      resolveLatestCompactionSnapshot(persistedWorkflowItems)?.status || ''
+    );
   const queueWaiting = isHydratedQueueWaiting(queueWorkflowItems);
   const normalizedOutput = normalizeAssistantOutput(
     message.content,
@@ -211,9 +227,13 @@ export const hydrateMessage = (message, workflowState) => {
           runtime_status: 'queued'
         }
       : {}),
-    workflowItems: queueWorkflowItems,
-    workflowStreaming: hasQueueWorkflow || normalizeFlag(message?.workflowStreaming),
-    stream_incomplete: hasQueueWorkflow || normalizeFlag(message?.stream_incomplete),
+    workflowItems,
+    workflowStreaming: terminalCompactionMarker
+      ? false
+      : hasQueueWorkflow || normalizeFlag(message?.workflowStreaming),
+    stream_incomplete: terminalCompactionMarker
+      ? false
+      : hasQueueWorkflow || normalizeFlag(message?.stream_incomplete),
     resume_available: normalizeFlag(message?.resume_available),
     slow_client: normalizeFlag(message?.slow_client),
     reasoning: normalizedOutput.reasoning,

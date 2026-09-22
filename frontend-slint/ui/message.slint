@@ -47,8 +47,7 @@ export component MessageRow inherits Rectangle {
         if !root.message.mine : HorizontalLayout {
             height: 20px; spacing: 6px;
             Image { width: 11px; height: 11px; source: @image-url("../assets/icons/circle-check.svg"); colorize: Theme.muted; }
-            Text { text: "任务完成"; font-size: 10px; color: Theme.muted; }
-            Text { text: "  ·  演示消息"; font-size: 10px; color: Theme.muted; }
+            Text { text: root.message.state; font-size: 10px; color: Theme.muted; }
             Rectangle { horizontal-stretch: 1; }
         }
     }

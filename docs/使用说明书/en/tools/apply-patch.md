@@ -107,7 +107,7 @@ The tool tolerates a few common input mistakes to improve first-call success: om
 
 ## `dry_run`
 
-`dry_run` only parses and resolves the patch. It does not write to disk. Prefer it when:
+`dry_run` performs the same staging, target-conflict checks, and hunk-context matching as a real application, then discards the staged result without writing to disk. Prefer it when:
 
 - you just built the first patch from a fresh `read_file` result
 - the edit location is sensitive and you expect context matching risk
@@ -132,6 +132,12 @@ The tool tolerates a few common input mistakes to improve first-call success: om
   }
 }
 ```
+
+## Diff previews
+
+The UI and administrator result retains `files[].diff_blocks` as a preview: at most 80 lines per file, 320 lines per call, and 24 KiB of line text across the call. Lines that exceed the remaining byte budget are omitted whole, preserving the text and original line numbers of visible rows. `added_lines` and `deleted_lines` report exact totals at the result and file level; `diff_lines_omitted` reports omitted preview rows. These limits apply only to the preview, including `dry_run`, and never reduce the actual edit. The preview is not a backup of deleted content.
+
+The model receives file summaries and exact change counts without the diff body. Existing tool logs retain the invocation and bounded result for tracing.
 
 ## Failure results
 

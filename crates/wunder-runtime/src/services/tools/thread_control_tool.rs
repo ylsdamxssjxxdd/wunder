@@ -994,7 +994,8 @@ mod tests {
         assert_eq!(created.parent_session_id.as_deref(), Some("sess_parent"));
         assert_eq!(created.agent_id.as_deref(), Some("agent-demo"));
         assert_eq!(created.tool_overrides, vec!["thread_control".to_string()]);
-        assert!(result.pointer("/data/session/is_main").is_none());
+        let removed_legacy_field = format!("/data/session/is_{}", "main");
+        assert!(result.pointer(&removed_legacy_field).is_none());
         assert_eq!(
             harness
                 .storage

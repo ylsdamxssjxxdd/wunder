@@ -1,21 +1,43 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 slint::include_modules!();
+mod bridge_smoke;
+mod chat_api;
+mod chat_runtime;
 mod demo;
+mod demo_entities;
+mod entity_state;
 mod smoke;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     install_slint_platform()?;
     register_complete_font()?;
 
-    let app = MainWindow::new()?;
-    demo::install(&app);
     let mut arguments = std::env::args_os().skip(1);
-    if arguments.next().as_deref() == Some(std::ffi::OsStr::new("--smoke-check")) {
+    let first_argument = arguments.next();
+    let app = MainWindow::new()?;
+    if first_argument.as_deref() == Some(std::ffi::OsStr::new("--bridge-smoke")) {
+        let target = arguments.next().ok_or("missing isolated bridge target")?;
+        let directory = arguments
+            .next()
+            .ok_or("missing bridge smoke output directory")?;
+        let connection = chat_api::ConnectionConfig::from_target(&target.to_string_lossy())?;
+        chat_runtime::install(&app, connection);
+        app.show()?;
+        return bridge_smoke::run(&app, directory.into());
+    }
+    if first_argument.as_deref() == Some(std::ffi::OsStr::new("--smoke-check")) {
+        demo::install(&app);
         let directory = arguments
             .next()
             .ok_or("missing smoke-check output directory")?;
         return smoke::run(&app, std::path::PathBuf::from(directory));
+    }
+    let connection = chat_api::ConnectionConfig::from_process(first_argument, arguments)?;
+    if let Some(connection) = connection {
+        chat_runtime::install(&app, connection);
+    } else {
+        demo::install(&app);
     }
     app.show()?;
     app.run()?;

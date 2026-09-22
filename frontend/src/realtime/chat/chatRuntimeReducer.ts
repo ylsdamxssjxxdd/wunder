@@ -1,4 +1,5 @@
 import { captureTranscriptTail, restoreTranscriptTail } from './chatTranscriptTail';
+import { continuesRecoveryOnModelRequest, isChatRetryEventType, resolveChatRetryEvent } from './chatRetryState';
 import type {
   ChatRuntimeApplyResult,
   ChatRuntimeBusyReason,
@@ -151,6 +152,16 @@ const CONTENT_ONLY_EVENT_TYPES = new Set([
 
 const isContentOnlyRuntimeEvent = (event: { type?: string }): boolean =>
   CONTENT_ONLY_EVENT_TYPES.has(normalizeText(event.type));
+
+const isReasoningOnlyRuntimeEvent = (event: NormalizedRuntimeEvent): boolean =>
+  event.type === 'assistant_reasoning_delta' ||
+  (event.type === 'assistant_delta' &&
+    !(event.delta || event.content) &&
+    Boolean(event.reasoningDelta || event.reasoning));
+
+const hasReasoningRuntimeDelta = (event: NormalizedRuntimeEvent): boolean =>
+  (event.type === 'assistant_delta' || event.type === 'assistant_reasoning_delta') &&
+  Boolean(event.reasoningDelta || event.reasoning);
 
 export const createChatRuntimeProjection = (): ChatRuntimeProjection => ({
   activeSessionId: null,
@@ -318,6 +329,8 @@ export const applyChatRuntimeEvent = (
       ignored: false,
       quarantined: false,
       contentOnly: true,
+      reasoningOnly: isReasoningOnlyRuntimeEvent(event),
+      reasoningChanged: hasReasoningRuntimeDelta(event),
       drained: 0,
       sessionId: session.sessionId,
       messageId: contentOnlyMessageId,
@@ -332,6 +345,10 @@ export const applyChatRuntimeEvent = (
     ignored: false,
     quarantined: false,
     contentOnly: drained === 0 && Boolean(contentOnlyMessageId),
+    reasoningOnly:
+      drained === 0 && Boolean(contentOnlyMessageId) && isReasoningOnlyRuntimeEvent(event),
+    reasoningChanged:
+      drained === 0 && Boolean(contentOnlyMessageId) && hasReasoningRuntimeDelta(event),
     drained,
     sessionId: session.sessionId,
     messageId: contentOnlyMessageId || event.messageId,
@@ -352,8 +369,15 @@ const resolveContentOnlyRuntimeMessageId = (
   const message = messageId ? session.messageById[messageId] : null;
   if (!message || message.role !== 'assistant') return '';
   if (message.status !== 'streaming') return '';
+  // The first recovered delta changes status/workflow as well as text.
+  if (message.display?.retry_state) return '';
   if (event.type === 'assistant_delta') {
-    if ((event.reasoningDelta || event.reasoning) && !message.reasoning) return '';
+    if (event.reasoningDelta || event.reasoning) {
+      // Reasoning can legitimately be the first visible model output. Keep it
+      // on the presentation-only path even while the answer is still empty.
+      if (!message.reasoning) return '';
+      if (!(event.delta || event.content)) return message.id;
+    }
     return message.content ? message.id : '';
   }
   if (event.type === 'assistant_reasoning_delta') {
@@ -1064,6 +1088,7 @@ const applyAssistantDelta = (
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
   modelTurn.status = 'streaming';
   const message = ensureAssistantMessageForModelTurn(session, event, 'streaming');
+  if (message.display?.retry_state) settleProjectedRetryWorkflowItems(message);
   if (target === 'content') {
     message.content += event.delta || event.content;
   } else {
@@ -1084,6 +1109,7 @@ const applyAssistantOutputSnapshot = (
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
   modelTurn.status = 'streaming';
   const message = ensureAssistantMessageForModelTurn(session, event, 'streaming');
+  settleProjectedRetryWorkflowItems(message);
   if (event.content) {
     message.content = mergeRuntimeSnapshotText(message.content, event.content, event);
   }
@@ -1152,6 +1178,8 @@ const applyToolActivity = (
     event,
     completed ? 'streaming' : 'tooling'
   );
+  settleProjectedRetryWorkflowItems(message);
+  if (message.display) clearProjectedRetryDisplay(message.display);
   if (!completed) {
     clearAssistantTextAtToolBoundary(message);
   }
@@ -1200,8 +1228,16 @@ const applyWorkflowEvent = (
 ): void => {
   const sourceType = normalizeText(event.payload.source_event_type);
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
+  const source = asRecord(event.payload.data);
+  const retry = resolveChatRetryEvent(sourceType, Object.keys(source).length ? source : event.payload);
+  // Late recovery events cannot reopen a turn already closed by the server.
+  if (retry && isTerminalModelTurnStatus(modelTurn.status)) return;
   const message = ensureAssistantMessageForModelTurn(session, event, 'tooling');
   const status = resolveProjectedWorkflowStatus(sourceType, event.payload);
+  if (retry || (sourceType === 'llm_request' &&
+    !continuesRecoveryOnModelRequest(message.display?.retry_reason))) {
+    settleProjectedRetryWorkflowItems(message);
+  }
   if (shouldClearAssistantTextAtWorkflowBoundary(sourceType, status)) {
     clearAssistantTextAtToolBoundary(message);
   }
@@ -1282,6 +1318,7 @@ const applyTurnTerminal = (
   modelTurn.messageIds.forEach((messageId) => {
     const message = session.messageById[messageId];
     if (!message) return;
+    if (message.display) clearProjectedRetryDisplay(message.display);
     if (terminal === 'completed' && message.status !== 'failed' && message.status !== 'cancelled') {
       message.status = 'final';
       message.final = true;
@@ -1374,6 +1411,7 @@ const applySessionIdle = (
       message.final = true;
       settleProjectedWorkflowItems(message, 'completed');
       message.updatedSeq = event.eventSeq ?? message.updatedSeq;
+      if (message.display) clearProjectedRetryDisplay(message.display);
     }
   });
   session.runtimeStatus = 'idle';
@@ -2780,6 +2818,12 @@ const PROJECTED_STATS_DISPLAY_FIELDS = [
   'decode_duration_s',
   'prefill_duration_total_s',
   'decode_duration_total_s',
+  'visible_decode_tokens',
+  'visibleDecodeTokens',
+  'visible_decode_duration_s',
+  'visibleDecodeDurationS',
+  'visible_decode_speed_tps',
+  'visibleDecodeSpeedTps',
   'avg_model_round_speed_tps',
   'avg_model_round_decode_speed_tps',
   'avg_model_round_speed_rounds',
@@ -4297,7 +4341,9 @@ const resolveProjectedWorkflowStatus = (
   sourceType: string,
   payload: Record<string, unknown>
 ): 'loading' | 'completed' | 'failed' => {
-  if (sourceType === 'llm_stream_retry') return 'loading';
+  const retryData = asRecord(payload.data);
+  const retry = resolveChatRetryEvent(sourceType, Object.keys(retryData).length ? retryData : payload);
+  if (retry) return retry.willRetry ? 'loading' : 'failed';
   if (sourceType === 'slow_client') return 'failed';
   if (sourceType === 'llm_request' || sourceType === 'knowledge_request') return 'completed';
   if (sourceType === 'plan_update') return 'completed';
@@ -4377,22 +4423,23 @@ const applyProjectedWorkflowDisplay = (
   const data = asRecord(payload.data);
   const source = Object.keys(data).length > 0 ? data : payload;
   const eventType = resolveProjectedGenericWorkflowEventType(sourceType, source);
-  if (sourceType === 'llm_stream_retry') {
+  const retry = resolveChatRetryEvent(sourceType, source);
+  if (retry) {
     const attempt = parsePositiveInt(source.attempt);
     const maxAttempts = parsePositiveInt(source.max_attempts ?? source.maxAttempts);
     const delayS = parsePositiveNumber(source.delay_s ?? source.delayS);
     const startedAtMs = normalizeCreatedAtMs(source.timestamp ?? payload.timestamp) ?? Date.now();
-    display.retry_state = 'retrying';
+    display.retry_state = retry.willRetry ? 'retrying' : 'exhausted';
     display.retry_attempt = attempt;
     display.retry_max_attempts = maxAttempts;
     display.retry_delay_s = delayS;
     display.retry_started_at_ms = startedAtMs;
     display.retry_next_attempt_at_ms = delayS !== null ? startedAtMs + delayS * 1000 : null;
-    display.retry_reason = firstText(source.retry_reason, source.retryReason);
+    display.retry_reason = retry.reason;
     display.retry_error = firstText(source.error, source.message);
     return;
   }
-  if (sourceType === 'llm_request') {
+  if (sourceType === 'llm_request' && !continuesRecoveryOnModelRequest(display.retry_reason)) {
     clearProjectedRetryDisplay(display);
   }
   if (sourceType === 'slow_client') {
@@ -4721,6 +4768,12 @@ const mirrorProjectedStatsDisplay = (
     'decode_duration_s',
     'prefill_duration_total_s',
     'decode_duration_total_s',
+    'visible_decode_tokens',
+    'visibleDecodeTokens',
+    'visible_decode_duration_s',
+    'visibleDecodeDurationS',
+    'visible_decode_speed_tps',
+    'visibleDecodeSpeedTps',
     'avg_model_round_speed_tps',
     'avg_model_round_decode_speed_tps',
     'avg_model_round_speed_rounds',
@@ -4833,6 +4886,25 @@ const applyProjectedTimingStats = (
   copyProjectedPositiveNumber(stats, 'decode_duration_s', source.decode_duration_s ?? source.decodeDurationS ?? source.decodeDuration);
   copyProjectedPositiveNumber(stats, 'prefill_duration_total_s', source.prefill_duration_total_s ?? source.prefillDurationTotalS);
   copyProjectedPositiveNumber(stats, 'decode_duration_total_s', source.decode_duration_total_s ?? source.decodeDurationTotalS);
+  copyProjectedPositiveNumber(
+    stats,
+    'visible_decode_tokens',
+    source.visible_decode_tokens ?? source.visibleDecodeTokens
+  );
+  copyProjectedPositiveNumber(
+    stats,
+    'visible_decode_duration_s',
+    source.visible_decode_duration_s ?? source.visibleDecodeDurationS
+  );
+  copyProjectedPositiveNumber(
+    stats,
+    'visible_decode_speed_tps',
+    source.visible_decode_speed_tps ?? source.visibleDecodeSpeedTps
+  );
+  // A final response without measurable timing clears the previous model metric.
+  for (const key of ['visible_decode_tokens', 'visible_decode_duration_s', 'visible_decode_speed_tps']) {
+    if (source[key] === null) stats[key] = null;
+  }
   const speed = parsePositiveNumber(
     source.avg_model_round_speed_tps ??
       source.avg_model_round_decode_speed_tps ??
@@ -5114,14 +5186,16 @@ const upsertProjectedWorkflowEventItem = (
     sourceEventType: sourceType || event.type,
     updatedSeq: event.eventSeq ?? message.updatedSeq
   };
-  if (sourceType === 'llm_stream_retry') {
+  const retry = resolveChatRetryEvent(sourceType, detailSource);
+  if (retry) {
     const attempt = parsePositiveInt(detailSource.attempt);
     const maxAttempts = parsePositiveInt(detailSource.max_attempts ?? detailSource.maxAttempts);
     const delayS = parsePositiveNumber(detailSource.delay_s ?? detailSource.delayS);
     if (attempt !== null) next.attempt = attempt;
     if (maxAttempts !== null) next.maxAttempts = maxAttempts;
     if (delayS !== null) next.delayS = delayS;
-    next.retryReason = firstText(detailSource.retry_reason, detailSource.retryReason);
+    next.retryReason = retry.reason;
+    next.willRetry = retry.willRetry;
     next.error = firstText(detailSource.error, detailSource.message);
   }
   if (refs.toolCallId) {
@@ -5376,6 +5450,9 @@ const resolveProjectedGenericWorkflowEventType = (
   sourceType: string,
   source: Record<string, unknown>
 ): string => {
+  if (sourceType === 'progress' && resolveChatRetryEvent(sourceType, source)) {
+    return 'model_recovery';
+  }
   if (sourceType === 'progress' && isProjectedCompactionProgress(source)) {
     return 'compaction_progress';
   }
@@ -5502,6 +5579,8 @@ const resolveProjectedGenericWorkflowTitle = (
 ): string => {
   if (sourceType === 'llm_request') return 'Model request';
   if (sourceType === 'llm_stream_retry') return 'Model retry';
+  if (sourceType === 'bad_tool_call_retry') return 'Invalid tool call';
+  if (sourceType === 'model_recovery') return 'Model recovery';
   if (sourceType === 'knowledge_request') return 'Knowledge request';
   if (sourceType === 'plan_update') return 'Plan update';
   if (sourceType === 'question_panel') return 'Question panel';
@@ -5842,7 +5921,7 @@ const settleProjectedRetryWorkflowItems = (
   message.workflowItems.forEach((item) => {
     const eventType = normalizeText(item.eventType ?? item.event ?? item.event_type);
     const status = normalizeText(item.status);
-    if (eventType === 'llm_stream_retry' && ACTIVE_WORKFLOW_STATUSES.has(status)) {
+    if (isChatRetryEventType(eventType) && ACTIVE_WORKFLOW_STATUSES.has(status)) {
       item.status = 'completed';
     }
   });

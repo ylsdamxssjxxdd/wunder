@@ -5,6 +5,7 @@ import { TextEditBase } from "textedit-base.slint";
 export component Composer inherits Rectangle {
     in-out property <string> draft <=> editor.text;
     in property <string> status;
+    in property <bool> busy: false;
     callback send();
     callback attach();
     height: 180px;
@@ -39,7 +40,7 @@ export component Composer inherits Rectangle {
             wrap: word-wrap;
             key-pressed(event) => {
                 if event.text == "\n" && !event.modifiers.shift {
-                    root.send();
+                    if !root.busy { root.send(); }
                     return accept;
                 }
                 return reject;
@@ -50,7 +51,7 @@ export component Composer inherits Rectangle {
             Text { text: root.status; color: Theme.muted; font-size: 10px; overflow: elide; }
             Rectangle { horizontal-stretch: 1; }
             Text { text: "Enter 发送 / Shift+Enter 换行"; color: Theme.muted; font-size: 10px; }
-            send-button := Action { width: 66px; icon: @image-url("../assets/icons/arrow-up.svg"); label: "发送"; show-label: true; primary: true; enabled: root.draft != ""; clicked => { root.send(); } }
+            send-button := Action { width: 66px; icon: @image-url("../assets/icons/arrow-up.svg"); label: root.busy ? "发送中" : "发送"; show-label: true; primary: true; enabled: root.draft != "" && !root.busy; clicked => { root.send(); } }
         }
     }
 }

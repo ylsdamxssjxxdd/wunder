@@ -39,6 +39,7 @@ const GENERIC_WORKFLOW_EVENT_TYPES = new Set([
   'progress',
   'llm_request',
   'llm_stream_retry',
+  'bad_tool_call_retry',
   'knowledge_request',
   'thread_control',
   'plan_update',

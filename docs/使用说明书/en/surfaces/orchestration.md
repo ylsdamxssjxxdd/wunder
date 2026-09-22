@@ -110,7 +110,7 @@ You can delete "everything after this round" on a timeline node. The current rou
 When a swarm is in active orchestration mode, orchestration threads in the chat page have clear indicators, and:
 
 - You can't send messages directly to orchestration threads
-- You can't create new threads that override the orchestration main thread
+- You can't create new threads that override the orchestration task thread
 - Historical threads can be viewed but can't disrupt the orchestration state
 
 To continue orchestration, go back to the orchestration page.
@@ -119,7 +119,7 @@ To continue orchestration, go back to the orchestration page.
 
 ### Stop
 
-Stopping doesn't leave the orchestration page. The current run is preserved as viewable history, and the swarm switches back to its regular main thread.
+Stopping doesn't leave the orchestration page. The current run is preserved as viewable history, and the swarm switches back to its regular task thread.
 
 ### Start
 

@@ -474,7 +474,7 @@ export const dedupeTerminalCompactionMarkersInPlace = (
   const seen = new Set<string>();
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
-    if (!isTerminalManualCompactionMarker(message)) {
+    if (!isCompactionMarkerAssistantMessage(message) || isStreamingAssistantMessage(message)) {
       continue;
     }
     const canonicalKey = resolveCompactionCanonicalKey(message);

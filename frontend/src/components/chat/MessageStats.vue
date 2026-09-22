@@ -1,5 +1,5 @@
 <template>
-  <div v-if="entries.length" class="messenger-message-stats">
+  <div v-if="entries.length" class="messenger-message-stats" role="status" aria-live="polite">
     <span
       v-for="entry in entries"
       :key="entry.key"

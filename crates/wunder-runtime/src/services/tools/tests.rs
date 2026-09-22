@@ -1044,8 +1044,7 @@ fn resolve_child_session_tool_names_uses_target_agent_defaults_for_swarm_childre
 }
 
 #[tokio::test]
-async fn prepare_swarm_child_session_creates_new_thread_even_when_worker_has_existing_main_session()
-{
+async fn prepare_swarm_child_session_creates_new_thread_without_rebinding_worker_task() {
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("swarm-fresh-main-thread.db");
     let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));

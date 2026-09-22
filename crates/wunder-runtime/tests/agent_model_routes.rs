@@ -356,7 +356,7 @@ async fn agents_models_and_effective_model_fallback_work_end_to_end() {
 async fn chat_uses_agent_model_override_instead_of_default_model() {
     let context = build_test_context_with_mock_llm("agent_model_chat_user").await;
 
-    let (status, default_session) = send_json(
+    let (status, created_session) = send_json(
         &context.app,
         &context.token,
         Method::POST,
@@ -367,7 +367,7 @@ async fn chat_uses_agent_model_override_instead_of_default_model() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let default_session_id = default_session["data"]["id"]
+    let created_session_id = created_session["data"]["id"]
         .as_str()
         .expect("default session id");
 
@@ -375,7 +375,7 @@ async fn chat_uses_agent_model_override_instead_of_default_model() {
         &context.app,
         &context.token,
         Method::POST,
-        &format!("/wunder/chat/sessions/{default_session_id}/messages"),
+        &format!("/wunder/chat/sessions/{created_session_id}/messages"),
         Some(json!({
             "content": "hello",
             "stream": false

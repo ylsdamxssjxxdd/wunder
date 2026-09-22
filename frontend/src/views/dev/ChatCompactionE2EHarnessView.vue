@@ -4,6 +4,15 @@
       <button type="button" data-testid="scenario-manual-running" @click="loadManualRunningScenario()">
         Manual Running
       </button>
+      <button type="button" data-testid="scenario-failed" @click="loadFailedScenario()">
+        Failed
+      </button>
+      <button type="button" data-testid="scenario-cancelled" @click="loadCancelledScenario()">
+        Cancelled
+      </button>
+      <button type="button" data-testid="scenario-legacy-summary" @click="loadLegacySummaryScenario()">
+        Legacy Summary
+      </button>
       <button type="button" data-testid="hydrate-manual-terminal" @click="hydrateManualTerminal()">
         Hydrate Terminal
       </button>
@@ -48,6 +57,17 @@
       </div>
     </section>
 
+    <section
+      v-if="compactionDetailView"
+      class="chat-compaction-e2e-detail"
+      data-testid="chat-compaction-detail"
+      :data-compaction-detail-status="compactionDetailStatus"
+    >
+      <strong class="chat-compaction-e2e-detail-title">Compaction details</strong>
+      <MessageToolWorkflowCompactionSection :view="compactionDetailView" />
+    </section>
+
+    <DeveloperToolPreviewE2EHarness />
     <pre class="chat-compaction-e2e-state" data-testid="chat-compaction-state">{{ stateSnapshot }}</pre>
   </main>
 </template>
@@ -56,13 +76,20 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import MessageCompactionDivider from '@/components/chat/MessageCompactionDivider.vue';
+import MessageToolWorkflowCompactionSection from '@/components/chat/MessageToolWorkflowCompactionSection.vue';
 import { mergeCompactionMarkersIntoMessages, isCompactionMarkerAssistantMessage } from '@/stores/chatCompactionMarker';
 import { resolveLatestCompactionSnapshot } from '@/utils/chatCompactionWorkflow';
+import { buildCompactionDisplay, type CompactionView } from '@/utils/chatCompactionUi';
+import { useI18n } from '@/i18n';
+import DeveloperToolPreviewE2EHarness from './DeveloperToolPreviewE2EHarness.vue';
 
 type HarnessMessage = Record<string, any>;
 
 type HarnessApi = {
   loadManualRunningScenario: () => void;
+  loadFailedScenario: () => void;
+  loadCancelledScenario: () => void;
+  loadLegacySummaryScenario: () => void;
   hydrateManualTerminal: () => void;
   appendNextTurnBusy: () => void;
   rehydrateAfterNextTurn: () => void;
@@ -78,6 +105,7 @@ declare global {
 
 const messages = ref<HarnessMessage[]>([]);
 const sessionBusy = ref(false);
+const { t } = useI18n();
 
 const buildDetail = (detail: Record<string, unknown>) => JSON.stringify(detail);
 
@@ -133,6 +161,44 @@ const buildManualTerminalMarker = (): HarnessMessage => ({
       })
     }
   ]
+});
+
+const buildTerminalMarker = (key: string, status: string, detail: Record<string, unknown>): HarnessMessage => ({
+  key,
+  role: 'assistant',
+  content: '',
+  reasoning: '',
+  created_at: '2026-04-10T10:00:03.000Z',
+  stream_round: 2,
+  workflowStreaming: false,
+  stream_incomplete: false,
+  manual_compaction_marker: true,
+  workflowItems: [
+    {
+      eventType: 'compaction',
+      status,
+      toolName: 'context_compaction',
+      toolCallId: `compaction:manual:${key}`,
+      detail: buildDetail(detail)
+    }
+  ]
+});
+
+const buildFailedMarker = (): HarnessMessage => buildTerminalMarker('cmp-failed', 'failed', {
+  status: 'failed',
+  reason: 'history',
+  error_code: 'CONTEXT_WINDOW_EXCEEDED',
+  error_message: 'The compacted request still exceeds the context limit.'
+});
+
+const buildCancelledMarker = (): HarnessMessage => buildTerminalMarker('cmp-cancelled', 'cancelled', {
+  status: 'cancelled',
+  reason: 'history'
+});
+
+const buildLegacySummaryMarker = (): HarnessMessage => buildTerminalMarker('cmp-legacy-summary', 'completed', {
+  status: 'done',
+  summary_text: 'Persisted summary text from an older event.'
 });
 
 const buildBaseMessages = (): HarnessMessage[] => [
@@ -204,6 +270,21 @@ const loadManualRunningScenario = () => {
   setMessages([...buildBaseMessages(), buildManualRunningMarker()]);
 };
 
+const loadFailedScenario = () => {
+  sessionBusy.value = false;
+  setMessages([...buildBaseMessages(), buildFailedMarker()]);
+};
+
+const loadCancelledScenario = () => {
+  sessionBusy.value = false;
+  setMessages([...buildBaseMessages(), buildCancelledMarker()]);
+};
+
+const loadLegacySummaryScenario = () => {
+  sessionBusy.value = false;
+  setMessages([...buildBaseMessages(), buildLegacySummaryMarker()]);
+};
+
 const hydrateManualTerminal = () => {
   const remoteMessages = [
     ...messages.value.filter((message) => !(message.manual_compaction_marker === true || message.manualCompactionMarker === true)),
@@ -252,8 +333,27 @@ const stateSnapshot = computed(() =>
   )
 );
 
+const compactionDetailSnapshot = computed(() => {
+  for (const message of messages.value) {
+    if (!isCompactionMarkerAssistantMessage(message)) continue;
+    const snapshot = resolveLatestCompactionSnapshot(message.workflowItems);
+    if (snapshot?.detail) return snapshot;
+  }
+  return null;
+});
+
+const compactionDetailStatus = computed(() => compactionDetailSnapshot.value?.status || '');
+const compactionDetailView = computed<CompactionView | null>(() => {
+  const snapshot = compactionDetailSnapshot.value;
+  if (!snapshot?.detail) return null;
+  return buildCompactionDisplay(snapshot.detail, snapshot.status, t).view;
+});
+
 const harnessApi: HarnessApi = {
   loadManualRunningScenario,
+  loadFailedScenario,
+  loadCancelledScenario,
+  loadLegacySummaryScenario,
   hydrateManualTerminal,
   appendNextTurnBusy,
   rehydrateAfterNextTurn,
@@ -335,5 +435,22 @@ onBeforeUnmount(() => {
   color: #dbeafe;
   font-size: 12px;
   overflow: auto;
+}
+
+.chat-compaction-e2e-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 960px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 16px;
+  background: #172033;
+  color: #e2e8f0;
+}
+
+.chat-compaction-e2e-detail-title {
+  font-size: 13px;
 }
 </style>

@@ -97,6 +97,23 @@ pub(crate) fn build_execute_command_failure_data(
             payload.insert("stdout".to_string(), Value::String(stdout));
         }
     }
+    // Keep a small, structured diagnostic trail for the event/admin view. The
+    // model observation path removes `data` on failures and only receives the
+    // concise error above, so this does not inflate prompt context.
+    let diagnostics = results
+        .iter()
+        .filter(|row| {
+            row.get("returncode")
+                .and_then(Value::as_i64)
+                .is_some_and(|code| code != 0)
+                || row.get("timed_out").and_then(Value::as_bool) == Some(true)
+        })
+        .take(4)
+        .filter_map(compact_command_diagnostic)
+        .collect::<Vec<_>>();
+    if !diagnostics.is_empty() {
+        payload.insert("diagnostics".to_string(), Value::Array(diagnostics));
+    }
     if timed_out {
         payload.insert("timed_out".to_string(), Value::Bool(true));
     }
@@ -120,6 +137,26 @@ pub(crate) fn build_execute_command_failure_data(
         }
     }
     Value::Object(payload)
+}
+
+fn compact_command_diagnostic(row: &Value) -> Option<Value> {
+    let command = row.get("command").and_then(Value::as_str)?.trim();
+    if command.is_empty() {
+        return None;
+    }
+    let mut diagnostic = Map::new();
+    diagnostic.insert("command".to_string(), Value::String(command.to_string()));
+    for key in ["command_index", "returncode"] {
+        if let Some(value) = row.get(key).filter(|value| !value.is_null()) {
+            diagnostic.insert(key.to_string(), value.clone());
+        }
+    }
+    if let Some(output) = compact_command_output(row.get("stderr").and_then(Value::as_str))
+        .or_else(|| compact_command_output(row.get("stdout").and_then(Value::as_str)))
+    {
+        diagnostic.insert("output".to_string(), Value::String(output));
+    }
+    Some(Value::Object(diagnostic))
 }
 
 pub(crate) fn build_execute_command_failure_message(results: &[Value], timed_out: bool) -> String {
@@ -237,5 +274,9 @@ mod tests {
             json!("  File \"/tmp/draw_heart.py\", line 6\n    y = 1\nIndentationError: unindent does not match any outer indentation level")
         );
         assert!(payload.get("stdout").is_none());
+        assert_eq!(payload["diagnostics"][0]["command_index"], json!(0));
+        assert!(payload["diagnostics"][0]["output"]
+            .as_str()
+            .is_some_and(|text| text.contains("IndentationError")));
     }
 }

@@ -24,7 +24,7 @@ Use the input area to start tasks, add context, and control the current thread. 
 | **Message input** | Enter natural-language tasks, questions, or slash commands |
 | **Attachment entry** | Select or drag local files; after processing, they are sent with the message |
 | **Send / stop** | Send when idle, or stop the current execution while running |
-| **Current thread** | While a thread is running, high-risk actions such as creating a new thread are protected to avoid interrupting state writes |
+| **Work threads** | Each running entry has a light animation. You can switch or create another thread while the original continues in the background |
 
 For tasks that need existing files, put the files in the current agent's working directory first, then mention the path or file name in your message.
 
@@ -40,8 +40,12 @@ For tasks that need existing files, put the files in the current agent's working
 ### Protection mechanisms
 
 - **Attachment processing**: send button disabled until processing completes
-- **Thread running**: new thread button disabled until current one finishes or is stopped
+- **Background execution**: switching, creating, refreshing, or temporarily going offline does not cancel existing work threads. Reopening restores status and pending approvals from persisted events
 - **Orchestration mode**: orchestration threads are read-only in the chat page; go to the orchestration page to operate
+
+### Automatic retries
+
+If the model generates an invalid tool call or no usable content, the message status shows the reason, attempt count, and waiting time. You can stop the task during recovery. Normal progress resumes after recovery, and loading stops when the turn fails or is stopped. Refreshing or reopening the thread also restores recorded retry status.
 
 ## Orchestration workspace
 

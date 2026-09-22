@@ -841,9 +841,9 @@ export const chatSessionOpenLoadActions = {
           messages = rawMessages.map((message) =>
             hydrateMessage(message, workflowState)
           );
-          if (!hasCanonicalTranscript) {
-            messages = mergeCompactionMarkersIntoMessages(messages, finalCachedMessages);
-          }
+          // Stream-event hydration is authoritative when present, but a stale
+          // transcript must never erase a completed cached compaction marker.
+          messages = mergeCompactionMarkersIntoMessages(messages, finalCachedMessages);
         }
         if (perfEnabled) {
           perfHydrateMs = performance.now() - perfHydrateStart;

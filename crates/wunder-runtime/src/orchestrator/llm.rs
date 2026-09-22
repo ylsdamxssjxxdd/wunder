@@ -1,3 +1,4 @@
+use super::stream_timeout::StreamActivity;
 use super::*;
 use crate::core::llm_speed::LlmSpeedSummary;
 use sha2::{Digest, Sha256};
@@ -6,6 +7,8 @@ use sha2::{Digest, Sha256};
 struct OutputTiming {
     first_output_at: Option<Instant>,
     last_output_at: Option<Instant>,
+    first_content_at: Option<Instant>,
+    last_content_at: Option<Instant>,
     output_chunk_count: u64,
     content_delta_chars: usize,
     reasoning_delta_chars: usize,
@@ -24,6 +27,30 @@ struct InvalidToolCallReport {
     sample_names: Vec<String>,
 }
 
+impl InvalidToolCallReport {
+    fn retry_payload(&self, attempt: u32, stream: bool) -> Value {
+        let max_attempts = resolve_llm_max_attempts(LlmFailureKind::Unavailable);
+        let will_retry = attempt < max_attempts;
+        // The fallback request is non-streaming, so clients must retain the
+        // recovery state until its output or the authoritative terminal event.
+        json!({
+            "attempt": attempt,
+            "max_attempts": max_attempts,
+            "retry_reason": self.reason,
+            "stream": stream,
+            "next_stream": false,
+            "will_retry": will_retry,
+            "delay_s": if will_retry {
+                resolve_llm_retry_delay(attempt, LlmFailureKind::Unavailable).as_secs_f64()
+            } else {
+                0.0
+            },
+            "invalid_tool_call_count": self.count,
+            "sample_tool_names": self.sample_names,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LlmFailureKind {
     Other,
@@ -37,6 +64,13 @@ const DEFAULT_LLM_MAX_ATTEMPTS: u32 = 2;
 
 impl OutputTiming {
     fn mark_output(&mut self, now: Instant, content_delta_len: usize, reasoning_delta_len: usize) {
+        if content_delta_len > 0 {
+            self.first_content_at.get_or_insert(now);
+            self.last_content_at = Some(now);
+        }
+        if content_delta_len == 0 && reasoning_delta_len == 0 {
+            return;
+        }
         if self.first_output_at.is_none() {
             self.first_output_at = Some(now);
         }
@@ -61,14 +95,18 @@ impl OutputTiming {
         let Some(first_output_at) = self.first_output_at else {
             return (None, None);
         };
-        let last_output_at = self.last_output_at.unwrap_or(response_end);
         let prefill = first_output_at
             .saturating_duration_since(request_start)
             .as_secs_f64();
-        let decode = last_output_at
-            .saturating_duration_since(first_output_at)
-            .as_secs_f64();
-        (Some(prefill), Some(decode))
+        // Match the visible output token numerator with the answer stream only.
+        // Reasoning and tool-only chunks must not define its decode interval.
+        let decode = self.first_content_at.map(|first| {
+            self.last_content_at
+                .unwrap_or(response_end)
+                .saturating_duration_since(first)
+                .as_secs_f64()
+        });
+        (Some(prefill), decode)
     }
 
     fn stream_timing_payload(
@@ -633,7 +671,7 @@ impl Orchestrator {
             if effective_config.mock_if_unconfigured.unwrap_or(false) {
                 let content = i18n::t("error.llm_not_configured");
                 let usage = self.estimate_token_usage(messages, &content, "");
-                let decode_output_tokens = usage.total.saturating_sub(usage.input);
+                let decode_output_tokens = usage.output;
                 let round_speed = LlmSpeedSummary::from_usage_and_durations(
                     Some(usage.input),
                     Some(decode_output_tokens),
@@ -791,7 +829,10 @@ impl Orchestrator {
             if will_stream {
                 let emitter_snapshot = emitter.clone();
                 let timing_snapshot = Arc::clone(&output_timing);
+                let activity = StreamActivity::new();
+                let callback_activity = activity.clone();
                 let on_delta = move |delta: String, reasoning_delta: String| {
+                    callback_activity.touch();
                     let emitter = emitter_snapshot.clone();
                     let timing = Arc::clone(&timing_snapshot);
                     async move {
@@ -825,14 +866,18 @@ impl Orchestrator {
                     None,
                     on_delta,
                 );
-                self.await_with_cancel(session_id, timeout_s, fut)
-                    .await?
-                    .map_err(|err| {
-                        OrchestratorError::llm_unavailable(i18n::t_with_params(
-                            "error.llm_unavailable",
-                            &HashMap::from([("detail".to_string(), err.to_string())]),
-                        ))
-                    })?;
+                self.await_with_cancel(
+                    session_id,
+                    0,
+                    activity.with_idle_timeout(Duration::from_secs(timeout_s), fut),
+                )
+                .await?
+                .map_err(|err| {
+                    OrchestratorError::llm_unavailable(i18n::t_with_params(
+                        "error.llm_unavailable",
+                        &HashMap::from([("detail".to_string(), err.to_string())]),
+                    ))
+                })?;
             }
             let response_finished_at = Instant::now();
             let content = virtual_turn.content.clone();
@@ -856,7 +901,7 @@ impl Orchestrator {
             } else {
                 None
             };
-            let decode_output_tokens = usage.total.saturating_sub(usage.input);
+            let decode_output_tokens = usage.output;
             let round_speed = LlmSpeedSummary::from_usage_and_durations(
                 Some(usage.input),
                 Some(decode_output_tokens),
@@ -914,7 +959,10 @@ impl Orchestrator {
             let result = if will_stream {
                 let emitter_snapshot = emitter.clone();
                 let timing_snapshot = Arc::clone(&output_timing);
+                let activity = StreamActivity::new();
+                let callback_activity = activity.clone();
                 let on_delta = move |delta: String, reasoning_delta: String| {
+                    callback_activity.touch();
                     let emitter = emitter_snapshot.clone();
                     let timing = Arc::clone(&timing_snapshot);
                     async move {
@@ -957,7 +1005,12 @@ impl Orchestrator {
                             .await
                     }
                 };
-                self.await_with_cancel(session_id, timeout_s, fut).await?
+                self.await_with_cancel(
+                    session_id,
+                    0,
+                    activity.with_idle_timeout(Duration::from_secs(timeout_s), fut),
+                )
+                .await?
             } else {
                 let fut = client.complete_with_tools(&chat_messages.messages, tools);
                 self.await_with_cancel(session_id, timeout_s, fut).await?
@@ -975,16 +1028,8 @@ impl Orchestrator {
                         {
                             force_non_stream_retry = true;
                             if emit_events {
-                                let mut retry_payload = json!({
-                                    "attempt": attempt,
-                                    "max_attempts": resolve_llm_max_attempts(LlmFailureKind::Unavailable),
-                                    "retry_reason": invalid_tool_calls.reason,
-                                    "stream": will_stream,
-                                    "will_retry": attempt
-                                        < resolve_llm_max_attempts(LlmFailureKind::Unavailable),
-                                    "invalid_tool_call_count": invalid_tool_calls.count,
-                                    "sample_tool_names": invalid_tool_calls.sample_names,
-                                });
+                                let mut retry_payload =
+                                    invalid_tool_calls.retry_payload(attempt, will_stream);
                                 if let Value::Object(ref mut map) = retry_payload {
                                     round_info.insert_into(map);
                                 }
@@ -1020,7 +1065,7 @@ impl Orchestrator {
                     let mut usage = usage.filter(|item| item.total > 0).unwrap_or_else(|| {
                         self.estimate_token_usage(&request_messages, &content, &reasoning)
                     });
-                    if (usage.input == 0 || usage.output == 0) && usage.total > 0 {
+                    if usage.input == 0 && usage.output == 0 && usage.total > 0 {
                         let estimated =
                             self.estimate_token_usage(&request_messages, &content, &reasoning);
                         if estimated.total > 0 {
@@ -1048,7 +1093,7 @@ impl Orchestrator {
                     } else {
                         None
                     };
-                    let decode_output_tokens = usage.total.saturating_sub(usage.input);
+                    let decode_output_tokens = usage.output;
                     let round_speed = LlmSpeedSummary::from_usage_and_durations(
                         Some(usage.input),
                         Some(decode_output_tokens),
@@ -1389,6 +1434,43 @@ mod tests {
     use serde_json::json;
     use std::time::{Duration, Instant};
 
+    #[test]
+    fn invalid_tool_retry_reports_non_streaming_fallback_and_exhaustion() {
+        let report = detect_invalid_tool_calls(Some(&json!([{
+            "function": {"name": "write_file", "arguments": "{"}
+        }])))
+        .expect("invalid arguments");
+        let max_attempts = resolve_llm_max_attempts(LlmFailureKind::Unavailable);
+        assert_eq!(
+            report.retry_payload(1, true),
+            json!({
+                "attempt": 1,
+                "max_attempts": max_attempts,
+                "retry_reason": "invalid_tool_call_arguments",
+                "stream": true,
+                "next_stream": false,
+                "will_retry": true,
+                "delay_s": resolve_llm_retry_delay(1, LlmFailureKind::Unavailable).as_secs_f64(),
+                "invalid_tool_call_count": 1,
+                "sample_tool_names": ["write_file"],
+            })
+        );
+        assert_eq!(
+            report.retry_payload(max_attempts, false),
+            json!({
+                "attempt": max_attempts,
+                "max_attempts": max_attempts,
+                "retry_reason": "invalid_tool_call_arguments",
+                "stream": false,
+                "next_stream": false,
+                "will_retry": false,
+                "delay_s": 0.0,
+                "invalid_tool_call_count": 1,
+                "sample_tool_names": ["write_file"],
+            })
+        );
+    }
+
     fn test_message(role: &str, content: &str) -> ChatMessage {
         ChatMessage {
             role: role.to_string(),
@@ -1419,6 +1501,21 @@ mod tests {
         assert_eq!(payload["prefill_ms"], json!(120));
         assert_eq!(payload["decode_ms"], json!(35));
         assert_eq!(payload["max_chunk_gap_ms"], json!(35));
+    }
+
+    #[test]
+    fn output_timing_excludes_reasoning_and_empty_tool_chunks_from_decode() {
+        let start = Instant::now();
+        let mut timing = super::OutputTiming::default();
+        timing.mark_output(start + Duration::from_secs(1), 0, 128);
+        timing.mark_output(start + Duration::from_secs(60), 0, 128);
+        timing.mark_output(start + Duration::from_secs(61), 8, 0);
+        timing.mark_output(start + Duration::from_secs(63), 8, 0);
+        timing.mark_output(start + Duration::from_secs(65), 0, 0);
+        assert_eq!(
+            timing.durations(start, start + Duration::from_secs(66)),
+            (Some(1.0), Some(2.0))
+        );
     }
 
     #[test]

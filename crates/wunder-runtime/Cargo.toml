@@ -81,6 +81,10 @@ name = "context_overflow_recovery_regression"
 required-features = ["sqlite-storage"]
 
 [[test]]
+name = "developer_tools_workflow_regression"
+required-features = ["sqlite-storage"]
+
+[[test]]
 name = "cron_finish_job"
 required-features = ["sqlite-storage"]
 

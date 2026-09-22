@@ -1,6 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+const nodeRuntime = globalThis as typeof globalThis & { localStorage?: Storage; navigator?: Navigator };
+if (!nodeRuntime.localStorage) {
+  const values = new Map<string, string>();
+  nodeRuntime.localStorage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+    removeItem: (key: string) => values.delete(key),
+    clear: () => values.clear(),
+    key: (index: number) => Array.from(values.keys())[index] ?? null,
+    get length() { return values.size; }
+  } as Storage;
+}
+if (!nodeRuntime.navigator) {
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { language: 'en-US', languages: ['en-US'] }
+  });
+}
+
 import { mergeCompactionMarkersIntoMessages } from '../../src/stores/chatCompactionMarker';
 import {
   resolveCompactionDividerStatus,
@@ -336,4 +355,83 @@ test('foreground hydration restores completed manual compaction divider from wat
   assert.equal(reconciled[2]?.workflowItems?.[0]?.eventType, 'compaction');
   assert.equal(reconciled[3]?.role, 'user');
   assert.equal(reconciled[3]?.content, '不错');
+});
+
+test('history hydration rebuilds a completed automatic compaction divider', async () => {
+  const { attachWorkflowEvents } = await import('../../src/stores/chatWorkflowHydration');
+  const messages = [
+    { role: 'user', content: 'first', created_at: '2026-04-11T12:15:00.000Z' },
+    { role: 'assistant', content: 'response', created_at: '2026-04-11T12:15:01.000Z' }
+  ];
+  const hydrated = attachWorkflowEvents(messages, [{
+    user_round: 1,
+    events: [{
+      event: 'compaction',
+      timestamp: '2026-04-11T12:15:02.000Z',
+      data: {
+        status: 'done',
+        trigger_mode: 'auto_loop',
+        compaction_id: 'compaction-history-1',
+        projected_request_tokens: 16000,
+        projected_request_tokens_after: 4000
+      }
+    }]
+  }]);
+
+  const marker = hydrated.find((message) =>
+    Array.isArray(message.workflowItems) &&
+    message.workflowItems.some((item) => item.eventType === 'compaction')
+  );
+  assert.ok(marker);
+  const snapshot = resolveLatestCompactionSnapshot(marker?.workflowItems);
+  assert.equal(resolveCompactionDividerStatus({
+    snapshot,
+    runningFromWorkflowItems: isCompactionRunningFromWorkflowItems(marker?.workflowItems),
+    manualMarker: false,
+    isStreaming: false,
+    sessionBusy: true
+  }), 'completed');
+});
+
+test('hydration keeps a completed compaction marker terminal', async () => {
+  const { hydrateMessage } = await import('../../src/stores/chatMessageHydration');
+  const hydrated = hydrateMessage({
+    role: 'assistant',
+    content: '',
+    workflowStreaming: true,
+    stream_incomplete: true,
+    workflowItems: [{
+      eventType: 'compaction',
+      toolName: 'context_compaction',
+      status: 'completed',
+      detail: JSON.stringify({ status: 'completed' })
+    }]
+  }, null);
+
+  assert.equal(hydrated.workflowStreaming, false);
+  assert.equal(hydrated.stream_incomplete, false);
+});
+
+test('hydration preserves a running compaction and its streaming flags', async () => {
+  const { hydrateMessage } = await import('../../src/stores/chatMessageHydration');
+  const message = { role: 'assistant', content: '', workflowStreaming: true, stream_incomplete: true,
+    workflowItems: [{ eventType: 'compaction_progress', status: 'loading' }] };
+  const hydrated = hydrateMessage(message, null);
+  assert.deepEqual([hydrated.workflowItems, hydrated.workflowStreaming, hydrated.stream_incomplete],
+    [message.workflowItems, true, true]);
+});
+
+test('automatic compaction hydration is idempotent and uses the compaction timestamp', async () => {
+  const { attachWorkflowEvents } = await import('../../src/stores/chatWorkflowHydration');
+  const events = [{ user_round: 1, events: [
+    { event: 'compaction', timestamp: '2026-04-11T12:15:02Z', data: {
+      status: 'completed', compaction_id: 'compaction-history-2', trigger_mode: 'auto_loop' } },
+    { event: 'final', timestamp: '2026-04-11T12:15:04Z', data: { answer: 'response' } }
+  ] }];
+  const messages = [{ role: 'user', content: 'input', created_at: '2026-04-11T12:15:00Z' },
+    { role: 'assistant', content: 'response', created_at: '2026-04-11T12:15:03Z' }];
+  const first = attachWorkflowEvents(messages, events);
+  const second = attachWorkflowEvents(first, events);
+  assert.equal(second.length, 3);
+  assert.equal(second[1].created_at, '2026-04-11T12:15:02.000Z');
 });

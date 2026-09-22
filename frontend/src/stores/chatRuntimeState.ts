@@ -2179,6 +2179,17 @@ export const applyCanonicalStreamRuntimeEvent = (
   ) {
     applyCanonicalStreamSideEffects(store, key, eventType, payload);
   }
+  if (
+    results.some((result) => result.applied) &&
+    (eventType === 'approval_request' || eventType === 'approval_result' || eventType === 'approval_resolved')
+  ) {
+    const data = extractCanonicalStreamData(payload);
+    if (eventType === 'approval_request') {
+      store.enqueueApprovalRequest?.(options.requestId || data.request_id || data.requestId, key, data);
+    } else {
+      store.resolveApprovalResult?.(data);
+    }
+  }
   const session = projection.sessions[key];
   if (
     typeof options.onSyncRequired === 'function' &&
@@ -2431,6 +2442,12 @@ export const applyCanonicalSessionEventsSnapshot = (
     immediate: true,
     reason: 'session-events-snapshot'
   });
+  // Approval recovery needs the complete snapshot because an idle session can
+  // return persisted events by round instead of at the top level. A scoped
+  // workflow-history request must not clear approvals from the current turn.
+  if (includeRuntime && snapshotPayload.workflow_only !== true) {
+    store.restorePendingApprovals?.(key, snapshotPayload);
+  }
   if (runtimeBefore && projection.sessions[key]) Object.assign(projection.sessions[key], runtimeBefore);
   inspectChatRuntimeShadow(store, key, null, {
     phase: options.phase || 'session-events-snapshot'

@@ -934,7 +934,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                                 "agent_id": {"type": "string", "description": "目标智能体 ID。仅在名称不可用、存在重名歧义或用户明确指定时使用，避免手抄长 ID。"},
                                 "agent_name": {"type": "string", "description": "目标智能体名称。派发工蜂时优先使用名称。"},
                                 "session_id": {"type": "string", "description": "目标任务线程 ID，显式指定时优先使用。"},
-                    "thread_strategy": {"type": "string", "enum": ["task_thread", "new_thread"], "description": "默认 task_thread，在当前父任务内复用该工蜂的线程；new_thread 创建独立干净线程。"},
+                                "thread_strategy": {"type": "string", "enum": ["task_thread", "new_thread"], "description": "默认 task_thread，在当前父任务内复用该工蜂线程；new_thread 创建独立线程。"},
+                                "reuse_thread": {"type": "boolean", "description": "true 等同于 task_thread。"},
                                 "message": {"type": "string", "description": "任务消息。", "minLength": 1}
                             },
                             "required": ["message"],

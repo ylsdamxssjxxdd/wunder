@@ -79,14 +79,14 @@ It's suitable for these scenarios:
 - Conversation stuck in running state
 - Swarm task state is clearly inconsistent
 - Half-finished runtime files left in workspace
-- You want the default agent and all custom agents to return to clean main threads
+- You want the default agent and all custom agents to return to clean task threads
 
 After execution:
 
 - Aborts currently running conversations for the user
 - Clears queued tasks
 - Terminates current swarm tasks
-- Rebuilds main threads for the default agent and all user agents
+- Rebuilds task threads for the default agent and all user agents
 - Cleans corresponding working state directories
 
 ## What Gets Preserved After Reset

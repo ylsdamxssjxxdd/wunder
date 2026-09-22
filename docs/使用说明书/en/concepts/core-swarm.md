@@ -12,7 +12,7 @@ source_docs:
 
 A swarm is not simply "opening multiple chat windows" or "running several requests in parallel." It is Wunder's formal modeling of multi-agent collaboration relationships.
 
-![Swarm structure diagram: queen bee main thread dispatches multiple worker bee threads, worker bee results merge back to the queen](/docs/assets/manual/core-swarm.svg)
+![Swarm structure diagram: queen bee task thread dispatches multiple worker bee threads, worker bee results merge back to the queen](/docs/assets/manual/core-swarm.svg)
 
 ## Key Takeaways
 
@@ -42,7 +42,7 @@ Neither approach can stably express "who is doing what, who is responsible for w
 | Queen only orchestrates, doesn't swallow all execution | Keeps task decomposition and result merging clear |
 | Worker bees create new threads by default | Keeps context clean, doesn't bring in old task residue |
 | Collaboration relationships must remain continuously visible | Provides basis for state sync, workflows, and retrospectives |
-| Results ultimately return to the main thread | Ensures the primary agent's first-class reality state is not lost |
+| Results ultimately return to the task thread | Ensures the primary agent's first-class reality state is not lost |
 
 ## Design Focus
 

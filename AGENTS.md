@@ -11,14 +11,14 @@
 - 当前开发处于原型阶段，老旧的代码和不合适的字段或架构直接移除保持项目干净
 - 文件统一使用 UTF-8 编码保存，避免 ANSI/GBK 混用导致中文乱码
 - wunder 网页端系统使用postgres作为数据库，桌面端使用sqlite3，设计时请考虑性能和稳定性
-- 区分用户侧前端（frontend目录，vue3实现） 管理员侧前端（web目录，html实现）
+- 桌面端默认前端为 `frontend-slint/`（Rust + Slint）；Electron、Tauri 前端壳停止日常维护与功能迭代，不再作为默认开发、适配或验收目标。服务器版本用户侧前端继续使用 `frontend/`（Vue3 + TypeScript），管理员侧前端仍为 `web/`（HTML + JS）。
 - frontend中有大量的依赖库，搜索时会返回大量内容，一定要做好限制，不要直接搜索frontend的根目录
 - 前端不要使用backdrop-filter样式，这在老的浏览器中会很卡
 - 会话轮次拆分为“用户轮次/模型轮次”：用户每发送一条消息记 1 轮用户轮次；模型每执行一次动作（模型调用、工具调用或最终回复）记 1 轮模型轮次；一次会话可包含多轮用户轮次，每轮用户轮次可包含多轮模型轮次。
 - 你在开发的过程中，其他开发者也会在修改文件，如果你遇到了不是你修改的文件，不必理会
 - 后端的开发，明确好功能需求，并且一定做好测试，保证上线可用，但是注意不要改一下测试一下，而是尽量改完后统一编译测试，提高效率
 - 超过2000行代码的文件，视为维护状态，新增的功能请用新的文件，做好模块化设计，便于后期维护和协同开发
-- 用户侧前端风格一定要保持统一，注意美观和协调
+- 用户侧前端保持统一的基础配色和交互风格；桌面 Slint 以清晰可用为准，优先保障后端能力、响应速度和低资源占用，不要求完整复刻 TS 端的富文本与视觉细节。
 - 代码关键的地方，逻辑强的地方要有英文注释，方便后期维护
 - 反复出现的问题，解决后记得把经验写为一条记录到docs\经验教训.md里，避免下次再犯同样的错误
 - 不要在测试/代码或者文档记录中出现具体名称/业务的示例值，避免暴露任何场景意图
@@ -38,8 +38,8 @@
 - 以精巧/高效/稳定为核心，不要过度抽象
 - 设计工具时，其本身的描述要详细，减少歧义，方便模型调用。返回的结果要精简明确节省上下文。
 - 小心不要将wunder的子智能体工具（主智能体创建新的智能体临时工作，不阻塞）与蜂群工具（母蜂利用已存在的智能体，阻塞）搞混
-- 智能体的主线程是当前它的一等现实状态，新的任务都要落到主线程来
-- 被智能体蜂群工具唤起的工蜂默认新建线程，并作为主线程工作。这是为了它的上下文干净
+- 智能体可同时拥有多个独立任务线程；调度、锁与实时状态均按任务线程隔离
+- 蜂群工蜂默认在发起任务范围内复用任务线程；显式 new_thread 才创建独立线程
 
 # Rust 开发提示
 
@@ -85,10 +85,11 @@
 - `crates/wunder-runtime/`：wunder 后端核心运行时，承载 API、orchestrator、services、storage、gateway、channels、ops、sandbox 等主要能力。
 - `crates/wunder-server/`：server 入口、middleware、静态资源挂载、启动装配与服务端协议壳。
 - `crates/wunder-cli/`：CLI/TUI 运行形态源码，复用 runtime 核心，不另造平行运行时。
-- `crates/wunder-desktop/`：Tauri 桌面运行时、本地 bridge、能力声明、打包配置与脚本。
-- `frontend/`：用户侧前端（Vue3 + TypeScript）；主要代码在 `frontend/src/`，按 `api/`、`components/`、`realtime/`、`router/`、`stores/`、`views/`、`styles/` 等分层。
+- `crates/wunder-desktop/`：桌面本地运行时、bridge、系统能力与启动装配，供 Slint 前端复用；其中遗留 Tauri 壳不再作为维护目标，公共运行时与 bridge 继续维护。
+- `frontend-slint/`：桌面端默认用户前端（Rust + Slint）；`ui/` 放界面，`src/` 放接入与 UI 状态投影，`scripts/` 放构建和验收脚本；复用现有 Win7 x86 兼容方案与完整内嵌字体。
+- `frontend/`：服务器版本用户侧前端（Vue3 + TypeScript）；主要代码在 `frontend/src/`，按 `api/`、`components/`、`realtime/`、`router/`、`stores/`、`views/`、`styles/` 等分层。
 - `web/`：管理端/调试端前端（原生 HTML + JS 模块）；`modules/` 放业务模块，`styles/` 放样式，`shared/` 放共享前端工具，`docs/` 与 `simple-chat/` 放独立页面，`third/` 放第三方资源。
-- `desktop/electron/`：Electron 桌面壳；`src/` 放主进程/预加载脚本，`resources/`、`scripts/`、`build/` 放打包资源与构建脚本。
+- `desktop/electron/`：遗留 Electron 桌面壳及其分发资源，停止日常维护，不向此目录落入新的桌面功能。
 - `config/`：运行配置与内置资源；`prompts/`、`knowledge/`、`skills/`、`fonts/`、`preset_worker_cards/` 等统一放这里，不放仓库根目录。
 - `docs/`：API 文档、设计文档、技术说明书、使用说明书、功能迭代、经验教训等。
 - `scripts/`：仓库级脚本；包含 `update_feature_log.py`、`build_docs_site.py`、回归、压测、备份脚本等。
@@ -143,6 +144,7 @@
 
 ## 用户侧前端设计标准
 
+- 桌面端采用 `frontend-slint/`，服务器用户端采用 `frontend/`；本节中 Vue、TS、DOM、CSS、store 和 watcher 的具体规则适用于服务器用户端。Slint 的实现与验收遵循下文 Desktop 标准。
 - 用户侧前端是“温暖的蜂巢”：界面应轻、稳、亲和、可持续工作；不是营销页，不做过度装饰，不用大面积空洞 hero，不用会拖慢旧浏览器的 `backdrop-filter`。
 - 用户侧前端是后端投影消费者，不是线程真相来源。允许 optimistic UI，但最终必须接受后端 stream events 回压并收敛。
 - 页面级文件只做布局、路由衔接和组合编排；可复用逻辑放 `frontend/src/views/messenger/*.ts`、`stores/`、`realtime/`、`utils/` 或组件内部，不继续向单个大 `.vue` 或 controller 文件堆复杂逻辑。
@@ -174,7 +176,13 @@
 
 ## Desktop 与 CLI 标准
 
-- Desktop 本地能力优先放 `crates/wunder-desktop/`，Electron 仅作为 `desktop/electron/` 分发壳和系统集成壳，不承载核心业务语义。
+- Desktop 默认使用 `frontend-slint/`，本地能力与 bridge 优先放 `crates/wunder-desktop/`，执行、工具与存储语义继续复用 runtime 核心。不要为了桌面功能继续维护 Electron 或 Tauri 前端壳，也不要把停止维护前端壳理解为停止维护桌面后端。
+- 桌面端以后端能力、稳定性和性能为首要目标，前端清晰、直观、可用即可。保持原浅色蜂巢基调，不为追求 TS 端全部视觉效果引入 WebView、浏览器渲染链或重型组件。
+- Markdown 采用最低必要能力：纯文本保底，可逐步支持段落、换行、列表和代码块；图片、表格、复杂 HTML、公式、图表及语法高亮不是必需项，可降级为可读文本、链接或占位提示。降级只影响展示，原始消息与复制内容必须完整保留。
+- 流式输出的连续性优先于富文本完整性。优先复用后端既有 WebSocket 事件、去重、replay 与补水语义；不以收到完整回复后再做打字动画替代真实流式输出。
+- 网络读取、事件处理与较重解析放在后台，UI 线程只应用必要的增量投影。按帧合并 token 增量，初始可采用约 16–33 ms 的刷新节奏并按实测调整；不得每个 token 都重建消息列表、复制全部历史或重新解析整条长消息。事件缓冲必须有界，合并文本增量时不得丢字，完成与错误状态及时落地。
+- 长消息按块组织，已完成的块保持稳定，仅更新活动尾块；历史消息使用虚拟列表、限量加载和增量行更新。用户停留在底部时才自动跟随输出，上滚查看历史时保持位置；接收输出期间输入、选择、复制和滚动不能被长任务阻塞。
+- Slint 继续以 Windows 7 32 位为兼容目标，复用现有软件渲染、兼容补丁、离线构建链和完整内嵌字体；新增依赖先核对 Win7 x86、体积与内存开销。
 - CLI/TUI 能力优先放 `crates/wunder-cli/`，复用 runtime 的 AppState、配置、工具和存储语义，不另起一套执行链路。
 - Desktop 和 CLI 默认本地 SQLite，必须考虑离线、启动速度、路径权限、配置迁移和本地文件安全。
 - 本地 bridge、LAN overlay、系统能力调用要最小权限、显式能力声明、可观测错误，不把系统能力默默暴露给远端。
@@ -189,17 +197,18 @@
 - 新增 gateway 能力：优先放 `crates/wunder-runtime/src/gateway/`，不要和普通渠道或工具混淆。
 - 新增存储读写或数据库适配：优先放 `crates/wunder-runtime/src/storage/`，并同时考虑 PostgreSQL 与 SQLite。
 - 新增工具、技能、浏览器、运行时能力：优先拆到 `crates/wunder-runtime/src/services/tools/`、`services/browser/`、`services/runtime/`、`services/abilities/` 等现有子目录；公共注册或汇总逻辑再接回对应 `mod.rs` 或聚合文件。
-- 新增用户端页面能力：优先按职责放到 `frontend/src/views/`、`frontend/src/components/`、`frontend/src/stores/`、`frontend/src/api/`、`frontend/src/realtime/`；消息器主链路相关改动优先落到 `frontend/src/views/messenger/` 及其配套组件。
+- 新增服务器用户端页面能力：优先按职责放到 `frontend/src/views/`、`frontend/src/components/`、`frontend/src/stores/`、`frontend/src/api/`、`frontend/src/realtime/`；消息器主链路相关改动优先落到 `frontend/src/views/messenger/` 及其配套组件。
 - 管理端页面改动：业务逻辑放 `web/modules/`，样式放 `web/styles/`，独立文档或演示页放 `web/docs/` 或 `web/simple-chat/`。
 - CLI/TUI 改动：优先放 `crates/wunder-cli/`。
-- 桌面端改动：Tauri 相关放 `crates/wunder-desktop/`；Electron 相关放 `desktop/electron/src/`、`desktop/electron/resources/`、`desktop/electron/scripts/`。
+- 桌面端改动：界面与 UI 投影放 `frontend-slint/`，本地运行时、bridge 和系统能力放 `crates/wunder-desktop/`，共享业务能力放 `crates/wunder-runtime/`；不再向 Electron/Tauri 前端壳同步功能。
 - 内置提示词、知识、技能、字体、预设卡片等资源统一放 `config/` 对应子目录，不要放回仓库根目录。
 
 ## 测试与验收标准
 
 - 后端 Rust 改动完成后，至少运行相关 crate 的 `cargo check -j 8`；触及共享逻辑、存储、运行时或工具执行时，继续运行定向 `cargo test -j 8` 或 `cargo clippy -j 8`。
-- 前端 TypeScript/Vue 改动完成后，至少运行 `npm run typecheck` 或相关回归脚本；触及构建、路由、样式主链或依赖时运行 `npm run build:check`。
-- 实时消息、聊天运行时、watch/replay、断线恢复、发送保护等改动，要优先运行 `frontend` 中对应 `test:chat-*`、`test:chat-realtime` 或 Playwright e2e。
+- 服务器用户前端 TypeScript/Vue 改动完成后，至少运行 `npm run typecheck` 或相关回归脚本；触及构建、路由、样式主链或依赖时运行 `npm run build:check`。
+- Slint 改动按范围运行界面编译检查、`cargo check --release -j 8` 和相关原生冒烟；涉及构建链或依赖时验证 Win7 x86 Release 与 PE 导入门禁。渲染改动需查看实际截图，构建通过不能代替 Win7 真机运行验收。
+- 实时消息、聊天运行时、watch/replay、断线恢复、发送保护等改动，服务器用户端优先运行 `frontend` 中对应 `test:chat-*`、`test:chat-realtime` 或 Playwright e2e；桌面端运行 Slint 对应回归与隔离 bridge 联调。Slint 流式验收需覆盖长消息、连续增量、输出期间输入/滚动、断线恢复和最终文本完整性，并记录 UI 更新耗时、积压和内存表现，不能仅凭静态截图判断流畅。
 - 管理端原生 JS 改动至少做浏览器手工验证或已有脚本验证；涉及 API 结构时同步验证后端响应。
 - 存储改动必须覆盖 PostgreSQL 和 SQLite 的行为差异；无法同时实测时，要在最终说明中明确未覆盖的后端。
 - 修改 `docs/使用说明书` 后，必须手动执行 `python scripts/build_docs_site.py`。

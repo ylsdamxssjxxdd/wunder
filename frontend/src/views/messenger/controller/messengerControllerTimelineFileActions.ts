@@ -439,13 +439,8 @@ export function installMessengerControllerTimelineFileActions(ctx: MessengerCont
           return;
       const targetSession = ctx.resolveSessionRecordById(targetId);
       const targetAgentId = ctx.resolveSessionAgentId(targetSession);
-      const targetLock = targetSession && typeof targetSession === 'object' && !Array.isArray(targetSession)
-          ? (targetSession.orchestration_lock as Record<string, unknown> | null | undefined)
-          : null;
-      if (targetLock?.active === true) {
-          ElMessage.warning(ctx.t('orchestration.chat.lockedInMessenger'));
-          return;
-      }
+      // Navigation is independent from execution locks: users may inspect another task
+      // while it runs, while send/stop actions remain scoped to the selected session.
       await ctx.restoreTimelineSession(targetId);
   };
 

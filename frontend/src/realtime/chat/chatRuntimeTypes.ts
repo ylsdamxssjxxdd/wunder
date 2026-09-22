@@ -215,6 +215,10 @@ export type ChatRuntimeApplyResult = {
   quarantined: boolean;
   pending?: boolean;
   contentOnly?: boolean;
+  /** True when the event only extends hidden reasoning text. */
+  reasoningOnly?: boolean;
+  /** True when the event extends reasoning, including mixed visible output. */
+  reasoningChanged?: boolean;
   drained?: number;
   sessionId: string;
   messageId?: string;

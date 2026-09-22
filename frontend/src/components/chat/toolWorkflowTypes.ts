@@ -68,6 +68,7 @@ export type ToolWorkflowPatchView = {
   metrics: ToolWorkflowStructuredMetric[];
   files: ToolWorkflowPatchFileView[];
   omittedFiles?: number;
+  previewOnly?: boolean;
 };
 
 export type ToolWorkflowDetailSection = {

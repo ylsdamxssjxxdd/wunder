@@ -1,4 +1,4 @@
-﻿use crate::schemas::TokenUsage;
+use crate::schemas::TokenUsage;
 use crate::token_utils::approx_token_count;
 use chrono::DateTime;
 use serde_json::{json, Map, Value};
@@ -44,6 +44,9 @@ pub struct TurnDecodeSpeedAccumulator {
     decode_duration_total_s: f64,
     decode_tokens_total: u64,
     decode_speed_rounds: u32,
+    last_decode_tokens: Option<u64>,
+    last_decode_duration_s: Option<f64>,
+    last_decode_speed_tps: Option<f64>,
 }
 
 impl TurnDecodeSpeedAccumulator {
@@ -54,10 +57,15 @@ impl TurnDecodeSpeedAccumulator {
         }
         let decode_tokens = summary.decode_tokens.filter(|value| *value > 0);
         let decode_duration_s = normalize_duration(summary.decode_duration_s);
+        // Missing timing on the last response must not expose a previous tool round's speed.
+        self.last_decode_tokens = decode_tokens.map(|tokens| tokens as u64);
+        self.last_decode_duration_s = decode_duration_s;
+        self.last_decode_speed_tps = None;
         if let (Some(tokens), Some(duration)) = (decode_tokens, decode_duration_s) {
             self.decode_tokens_total = self.decode_tokens_total.saturating_add(tokens as u64);
             self.decode_duration_total_s += duration;
             self.decode_speed_rounds = self.decode_speed_rounds.saturating_add(1);
+            self.last_decode_speed_tps = Some(tokens as f64 / duration);
         }
     }
 
@@ -88,6 +96,21 @@ impl TurnDecodeSpeedAccumulator {
         map.insert(
             "avg_model_round_speed_rounds".to_string(),
             json!(self.decode_speed_rounds),
+        );
+        // The UI speed belongs to the final visible model response. Keep the
+        // turn aggregate for diagnostics, but expose the last response metric
+        // separately so tool/reasoning rounds are not presented as one reply.
+        map.insert(
+            "visible_decode_tokens".to_string(),
+            json!(self.last_decode_tokens),
+        );
+        map.insert(
+            "visible_decode_duration_s".to_string(),
+            json!(self.last_decode_duration_s),
+        );
+        map.insert(
+            "visible_decode_speed_tps".to_string(),
+            json!(self.last_decode_speed_tps),
         );
     }
 }
@@ -564,12 +587,12 @@ pub fn ttft_ms_from_duration(duration_s: Option<f64>) -> Option<u64> {
 
 fn decode_tokens_from_usage(usage: Option<&TokenUsage>) -> Option<u64> {
     let usage = usage?;
+    if usage.output > 0 {
+        return Some(usage.output);
+    }
     let decode_tokens = usage.total.saturating_sub(usage.input);
     if decode_tokens > 0 {
         return Some(decode_tokens);
-    }
-    if usage.output > 0 {
-        return Some(usage.output);
     }
     None
 }
@@ -797,5 +820,10 @@ mod tests {
             Some(2)
         );
         assert_eq!(ttft_ms_from_duration(Some(0.123)), Some(123));
+        assert_eq!(map.get("visible_decode_speed_tps"), Some(&json!(50.0)));
+        assert_eq!(map.get("visible_decode_tokens"), Some(&json!(50)));
+        accumulator.record_summary(&LlmSpeedSummary::default());
+        accumulator.insert_into_map(&mut map);
+        assert_eq!(map.get("visible_decode_speed_tps"), Some(&Value::Null));
     }
 }

@@ -114,12 +114,27 @@ import {
 import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
-import { normalizeApprovalResultId, normalizePendingApproval } from './chatDemoPanels';
+import { normalizeApprovalResultId, normalizePendingApproval, safeJsonParse } from './chatDemoPanels';
+import { collectSnapshotApprovalEvents } from './chatApprovalSnapshot';
 import { clearSessionWatcher } from './chatRuntimeControls';
 import { resolveSessionKey, syncSessionPendingApprovalRuntime } from './chatRuntimeState';
 import { chatPageLifecycle } from './chatSharedState';
 import { ApprovalDecision } from './chatTypes';
 import { chatWsClient, resetChatRuntimeState } from './chatWatcher';
+
+const resolveApprovalEventOrder = (record: Record<string, unknown>, fallback: number): number => {
+  const outerData = record.data && typeof record.data === 'object' && !Array.isArray(record.data)
+    ? record.data as Record<string, unknown>
+    : {};
+  const data = outerData.data && typeof outerData.data === 'object' && !Array.isArray(outerData.data)
+    ? outerData.data as Record<string, unknown>
+    : outerData;
+  const value = record.event_seq ?? record.eventSeq ?? record.event_id ?? record.eventId ??
+    outerData.event_seq ?? outerData.eventSeq ?? outerData.event_id ?? outerData.eventId ??
+    data.event_seq ?? data.eventSeq ?? data.event_id ?? data.eventId;
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
 
 export const chatApprovalActions = {
     markPageUnloading() {
@@ -141,6 +156,48 @@ export const chatApprovalActions = {
       this.pendingApprovals = [...filtered, approval];
       syncSessionPendingApprovalRuntime(this, approval.session_id);
       return approval;
+    },
+    restorePendingApprovals(sessionId, events) {
+      const targetSessionId = resolveSessionKey(sessionId);
+      const snapshotEvents = collectSnapshotApprovalEvents(events);
+      if (!targetSessionId || !snapshotEvents) return false;
+      const latestByApprovalId = new Map<string, {
+        event: string;
+        data: Record<string, unknown>;
+        order: number;
+      }>();
+      for (const [index, item] of snapshotEvents.entries()) {
+        const record = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+        const event = String(record.event ?? record.event_type ?? record.type ?? '').trim().toLowerCase();
+        if (event !== 'approval_request' && event !== 'approval_result' && event !== 'approval_resolved') continue;
+        const rawData = record.data;
+        const outerData = rawData && typeof rawData === 'object' && !Array.isArray(rawData)
+          ? rawData as Record<string, unknown>
+          : typeof rawData === 'string'
+            ? safeJsonParse(rawData) || {}
+            : {};
+        const data = outerData.data && typeof outerData.data === 'object' && !Array.isArray(outerData.data)
+          ? outerData.data as Record<string, unknown>
+          : outerData;
+        const approvalId = String(data.approval_id ?? data.approvalId ?? '').trim();
+        if (!approvalId) continue;
+        const order = resolveApprovalEventOrder(record, index);
+        const latest = latestByApprovalId.get(approvalId);
+        if (!latest || order >= latest.order) {
+          latestByApprovalId.set(approvalId, { event, data, order });
+        }
+      }
+      const current = Array.isArray(this.pendingApprovals) ? this.pendingApprovals : [];
+      const next = current.filter((item) => resolveSessionKey(item?.session_id) !== targetSessionId);
+      for (const { event, data } of latestByApprovalId.values()) {
+        if (event !== 'approval_request') continue;
+        const approval = normalizePendingApproval(data, data.request_id ?? data.requestId, targetSessionId);
+        if (approval) next.push(approval);
+      }
+      const changed = next.length !== current.length || next.some((item, index) => item?.approval_id !== current[index]?.approval_id);
+      if (changed) this.pendingApprovals = next;
+      syncSessionPendingApprovalRuntime(this, targetSessionId);
+      return changed;
     },
     resolveApprovalResult(payload) {
       const approvalId = normalizeApprovalResultId(payload);

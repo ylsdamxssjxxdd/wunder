@@ -433,6 +433,41 @@ pub(crate) async fn send_ws_event(
     }
 }
 
+pub(crate) async fn send_ws_live_event(
+    tx: &WsSender,
+    request_id: &str,
+    event: StreamEvent,
+) -> Result<(), ()> {
+    if tx.tx.capacity() <= STREAM_EVENT_SLOW_CLIENT_QUEUE_WATERMARK {
+        // Detach this live delivery with an explicit replay signal. Replay itself
+        // stays lossless; silently dropping deltas there would skip its cursor.
+        let warning = build_ws_text(
+            "event",
+            Some(request_id),
+            Some(json!({
+                "event": "slow_client",
+                "data": {
+                    "reason": "queue_full_resume_required",
+                    "resume_recommended": true
+                }
+            })),
+        );
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            send_text_backpressured(tx, warning),
+        )
+        .await;
+        return Err(());
+    }
+    // A competing request on the same socket must not stall the model forever.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        send_ws_event(tx, Some(request_id), event),
+    )
+    .await
+    .map_err(|_| ())?
+}
+
 fn enrich_ws_event_data(data: Value, event_id: Option<&str>) -> Value {
     let Some(parsed_id) = event_id
         .map(str::trim)
@@ -1226,32 +1261,69 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delta_event_waits_for_queue_capacity_and_succeeds() {
-        let (tx, mut rx) = mpsc::channel::<Message>(1);
-        tx.try_send(Message::Text("busy".into()))
-            .expect("fill queue");
+    async fn live_event_requests_replay_before_queue_saturation() {
+        let (tx, mut rx) = mpsc::channel::<Message>(4);
+        for _ in 0..2 {
+            tx.try_send(Message::Text("busy".into()))
+                .expect("fill queue");
+        }
         let sender = WsSender::new(tx);
         let event = StreamEvent {
             event: "llm_output_delta".to_string(),
-            data: json!({"delta":"hello"}),
+            data: json!({"reasoning_delta":"x"}),
             id: Some("2".to_string()),
             timestamp: None,
         };
-        let send = tokio::spawn(async move { send_ws_event(&sender, Some("req-2"), event).await });
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        assert!(
-            !send.is_finished(),
-            "delta send should wait while the queue is full"
-        );
-        let first = rx.recv().await.expect("queued busy message");
-        assert!(matches!(first, Message::Text(_)));
-        assert!(send.await.expect("send task should finish").is_ok());
-        let second = rx.recv().await.expect("delta message");
-        let Message::Text(raw) = second else {
-            panic!("expected delta message");
+        let result = tokio::time::timeout(
+            Duration::from_millis(100),
+            send_ws_live_event(&sender, "req-2", event),
+        )
+        .await
+        .expect("delivery must detach promptly");
+        assert_eq!(result, Err(()));
+        rx.recv().await.unwrap();
+        rx.recv().await.unwrap();
+        let Message::Text(raw) = rx.recv().await.unwrap() else {
+            panic!("expected replay warning");
         };
-        assert!(raw.contains("\"event\":\"llm_output_delta\""));
-        assert!(raw.contains("\"delta\":\"hello\""));
+        let payload: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(
+            payload,
+            json!({
+                "type": "event", "request_id": "req-2",
+                "payload": {"event": "slow_client", "data": {
+                    "reason": "queue_full_resume_required", "resume_recommended": true
+                }}
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn replay_delta_waits_for_queue_capacity_and_succeeds() {
+        let (tx, mut rx) = mpsc::channel::<Message>(1);
+        tx.try_send(Message::Text("busy".into())).unwrap();
+        let sender = WsSender::new(tx);
+        let send = tokio::spawn(async move {
+            send_ws_event(
+                &sender,
+                Some("req-2"),
+                StreamEvent {
+                    event: "llm_output_delta".to_string(),
+                    data: json!({"delta":"x"}),
+                    id: Some("2".to_string()),
+                    timestamp: None,
+                },
+            )
+            .await
+        });
+        tokio::task::yield_now().await;
+        assert!(!send.is_finished());
+        rx.recv().await.unwrap();
+        assert_eq!(send.await.unwrap(), Ok(()));
+        let Message::Text(raw) = rx.recv().await.unwrap() else {
+            panic!("expected replay delta");
+        };
+        assert_eq!(parse_ws_event_type(&raw), "llm_output_delta");
     }
 
     #[tokio::test]

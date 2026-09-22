@@ -1,4 +1,5 @@
 import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from './chatTiming';
+import { continuesRecoveryOnModelRequest, isChatRetryEventType, isModelRecoveryReason } from '@/realtime/chat/chatRetryState';
 import { resolveAssistantFailureNotice } from './assistantFailureNotice';
 import {
   hasAssistantPendingQuestion,
@@ -330,23 +331,10 @@ const resolveDurationSeconds = (stats: Record<string, any>): number | null => {
 const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
   const averageSpeed = normalizeSpeed(
     Number(
-      stats?.avg_model_round_speed_tps ??
-        stats?.avg_model_round_decode_speed_tps ??
-        stats?.avgModelRoundDecodeSpeedTps ??
-        stats?.avgModelRoundSpeedTps ??
-        stats?.average_speed_tps ??
-        stats?.averageSpeedTps
+      stats?.visible_decode_speed_tps ?? stats?.visibleDecodeSpeedTps
     )
   );
-  const averageRounds = Number(
-    stats?.avg_model_round_speed_rounds ??
-      stats?.avgModelRoundSpeedRounds ??
-      stats?.average_speed_rounds ??
-      stats?.averageSpeedRounds
-  );
-  return averageSpeed !== null && (!Number.isFinite(averageRounds) || averageRounds > 0)
-    ? averageSpeed
-    : null;
+  return averageSpeed;
 };
 
 const hasAssistantVisibleOutput = (message: Record<string, any>): boolean =>
@@ -393,7 +381,12 @@ const buildRetryStatusValue = (
   t: TranslateFn,
   nowMs = Date.now()
 ): string => {
-  const parts = [t('messenger.messageStatus.retrying')];
+  const reason = message?.retry_reason ?? retryItem?.retryReason;
+  const parts = [t(
+    reason === 'empty_final_answer_reroute' ? 'messenger.messageStatus.emptyOutputRetrying'
+      : isModelRecoveryReason(reason) ? 'messenger.messageStatus.toolCallRetrying'
+        : 'messenger.messageStatus.retrying'
+  )];
   const attempt = parsePositiveInteger(retryItem?.attempt ?? message?.retry_attempt ?? message?.retryAttempt);
   const maxAttempts = parsePositiveInteger(
     retryItem?.maxAttempts ?? message?.retry_max_attempts ?? message?.retryMaxAttempts
@@ -412,7 +405,8 @@ const buildRetryStatusValue = (
   const retryDelayMs =
     Number.isFinite(retryNextAttemptAtMs) && retryNextAttemptAtMs > nowMs
       ? retryNextAttemptAtMs - nowMs
-      : Number.isFinite(retryDelaySeconds) && retryDelaySeconds > 0
+      : !(Number.isFinite(retryNextAttemptAtMs) && retryNextAttemptAtMs > 0) &&
+          Number.isFinite(retryDelaySeconds) && retryDelaySeconds > 0
         ? retryDelaySeconds * 1000
         : 0;
   const retryDelayLabel = retryDelayMs > 0 ? formatCompactElapsed(retryDelayMs) : '';
@@ -597,7 +591,7 @@ const resolveAssistantStatusEntry = (
     options?.activeSessionBusy === true && options?.latestVisibleAssistant === true;
   if (!latestActiveAssistantBusy && !hasAssistantActivitySignals(message)) return null;
 
-  if (resolveAssistantFailureNotice(message, t)) {
+  if (message.failed === true || message.state === 'error' || resolveAssistantFailureNotice(message, t)) {
     return buildStatusEntry(t('messenger.messageStatus.error'), 'error', false, 'fa-solid fa-triangle-exclamation');
   }
 
@@ -610,7 +604,7 @@ const resolveAssistantStatusEntry = (
     : [];
   const latestRetry = findLastWorkflowItem(
     workflowItems,
-    (item) => normalizeWorkflowEventType(item?.eventType ?? item?.event) === 'llm_stream_retry'
+    (item) => isChatRetryEventType(item?.eventType ?? item?.event)
   );
   const latestQueue = findLastWorkflowItem(
     workflowItems,
@@ -658,7 +652,8 @@ const resolveAssistantStatusEntry = (
       Number.isFinite(Number(message?.retry_next_attempt_at_ms ?? message?.retryNextAttemptAtMs)) ||
       normalizeWorkflowStatus(message?.retry_state ?? message?.retryState) === 'retrying'
   );
-  const shouldShowRetryState = shouldDisplayTransientRetry(
+  const retryReason = message?.retry_reason ?? latestRetry.item?.retryReason;
+  const shouldShowRetryState = isModelRecoveryReason(retryReason) || shouldDisplayTransientRetry(
     {
       retry_attempt: message?.retry_attempt ?? message?.retryAttempt ?? latestRetry.item?.attempt,
       retry_started_at_ms: message?.retry_started_at_ms ?? message?.retryStartedAtMs
@@ -669,11 +664,14 @@ const resolveAssistantStatusEntry = (
     return buildStatusEntry(t('messenger.messageStatus.resumable'), 'warning', false, 'fa-solid fa-rotate-right');
   }
   if (
+    (isAssistantMessageRunning(message) || latestActiveAssistantBusy) &&
     shouldShowRetryState &&
+    (hasPersistedRetryState || ACTIVE_WORKFLOW_STATUSES.has(normalizeWorkflowStatus(latestRetry.item?.status))) &&
     (
       (latestRetry.index >= 0 &&
         latestRetry.index >= latestOutput.index &&
-        latestRetry.index >= latestRequest.index)
+        (latestRetry.index >= latestRequest.index ||
+          continuesRecoveryOnModelRequest(message?.retry_reason)))
       || (
         hasPersistedRetryState &&
         latestOutput.index < 0 &&
@@ -683,7 +681,9 @@ const resolveAssistantStatusEntry = (
     )
   ) {
     return buildStatusEntry(
-      buildRetryStatusValue(message, latestRetry.item, t, nowMs),
+      message?.retry_state === 'exhausted'
+        ? t('messenger.messageStatus.retryExhausted')
+        : buildRetryStatusValue(message, latestRetry.item, t, nowMs),
       'warning',
       true,
       'fa-solid fa-plug-circle-bolt'

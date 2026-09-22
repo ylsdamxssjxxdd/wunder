@@ -89,6 +89,7 @@ mod result_normalizer;
 mod retry_governor;
 mod runtime_snapshot;
 mod stream_persist;
+mod stream_timeout;
 mod thread_runtime;
 mod tool_calls;
 mod tool_exec;

@@ -2030,8 +2030,8 @@ const resolveApplyPatchCounts = (entry: RawEntry, patchDiffBlocks: PatchDiffBloc
     updated: toInt(dataObject?.updated, resultObject?.updated),
     deleted: toInt(dataObject?.deleted, resultObject?.deleted),
     moved: toInt(dataObject?.moved, resultObject?.moved),
-    addedLines,
-    deletedLines
+    addedLines: toOptionalInt(dataObject?.added_lines) ?? addedLines,
+    deletedLines: toOptionalInt(dataObject?.deleted_lines) ?? deletedLines
   };
 };
 
@@ -2215,11 +2215,20 @@ const buildApplyPatchResultFilesFromDiffBlocks = (
         });
       });
     });
+    const omittedLines = toInt(fileObject.diff_lines_omitted);
+    if (omittedLines > 0) {
+      lines.push({
+        key: `file-${fileIndex}-server-omitted`,
+        kind: 'note',
+        text: t('chat.toolWorkflow.patchPreviewOmittedLines', { count: omittedLines })
+      });
+    }
     output.push({
       key: `patch-result-file-${fileIndex}`,
       title,
       meta,
-      lines
+      lines,
+      omittedLines
     });
   });
 
@@ -3599,6 +3608,7 @@ const buildToolResultSection = (
     const limitedPatchFiles = limitPatchFileViews(patchFiles);
     const patchView = {
       ...buildPatchResultView(counts, limitedPatchFiles.files, t),
+      previewOnly: dataObject?.dry_run === true,
       omittedFiles: Math.max(counts.changedFiles - limitedPatchFiles.files.length, limitedPatchFiles.omittedFiles)
     };
     const summary = buildPatchResultNote(counts, t);

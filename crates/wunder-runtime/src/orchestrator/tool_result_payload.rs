@@ -1036,6 +1036,8 @@ fn compact_apply_patch_observation_data(map: &Map<String, Value>) -> Option<Valu
         "deleted",
         "moved",
         "hunks_applied",
+        "added_lines",
+        "deleted_lines",
         "no_effect_updates",
     ] {
         if let Some(value) = map.get(key) {

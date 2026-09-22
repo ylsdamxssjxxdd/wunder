@@ -149,6 +149,7 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "llm_request"
             | "llm_response"
             | "bad_tool_call_retry"
+            | "llm_stream_retry"
             | "knowledge_request"
             | "compaction"
             | "tool_call"
@@ -962,6 +963,8 @@ mod tests {
 
     #[test]
     fn exception_persists_turn_terminal_and_approval_resolved_events() {
+        assert!(should_persist_stream_event("bad_tool_call_retry"));
+        assert!(should_persist_stream_event("llm_stream_retry"));
         assert!(should_persist_stream_event("turn_terminal"));
         assert!(should_persist_stream_event("approval_resolved"));
         assert!(should_persist_stream_event("thread_status"));

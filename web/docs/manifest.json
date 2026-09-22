@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-09-22T01:38:44.269095+00:00",
+  "generated_at": "2026-09-22T04:45:49.127589+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -2451,7 +2451,7 @@
       "language": "zh-CN",
       "title": "蜂群",
       "summary": "复杂任务拆解给多个智能体协作完成：母蜂调度、工蜂执行、结果归并，过程持续可见。",
-      "updated_at": "2026-06-30",
+      "updated_at": "2026-09-22",
       "read_when": [],
       "source_docs": [],
       "tab": "核心",
@@ -3899,25 +3899,30 @@
         {
           "id": "section-8",
           "level": 2,
-          "text": "失败返回"
+          "text": "差异预览"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "常见失败原因"
+          "text": "失败返回"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "典型修正建议"
+          "text": "常见失败原因"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "适用与不适用场景"
+          "text": "典型修正建议"
         },
         {
           "id": "section-12",
+          "level": 2,
+          "text": "适用与不适用场景"
+        },
+        {
+          "id": "section-13",
           "level": 2,
           "text": "与 writefile 的区别"
         }
@@ -4565,7 +4570,7 @@
       "summary": "`thread_control` 的动作、线程关系与返回结构。",
       "updated_at": "2026-04-10",
       "read_when": [
-        "用户要创建、切换、归档或设置主线程"
+        "用户要创建、切换、归档或切换任务线程"
       ],
       "source_docs": [
         "src/services/tools/thread_control_tool.rs"
@@ -6144,7 +6149,7 @@
       "language": "zh-CN",
       "title": "蜂巢界面",
       "summary": "蜂巢是用户的工作台。左栏导航、中栏列表、右栏工作区，所有日常工作都在这里完成。",
-      "updated_at": "2026-07-06",
+      "updated_at": "2026-09-22",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -6186,61 +6191,66 @@
         },
         {
           "id": "section-7",
-          "level": 2,
-          "text": "编排工作台"
+          "level": 3,
+          "text": "自动重试状态"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "文件"
+          "text": "编排工作台"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "智能体"
+          "text": "文件"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "工具与技能"
+          "text": "智能体"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "定时任务"
+          "text": "工具与技能"
         },
         {
           "id": "section-12",
           "level": 2,
-          "text": "我的概况与设置"
+          "text": "定时任务"
         },
         {
           "id": "section-13",
-          "level": 3,
-          "text": "我的概况"
+          "level": 2,
+          "text": "我的概况与设置"
         },
         {
           "id": "section-14",
           "level": 3,
-          "text": "账户管理"
+          "text": "我的概况"
         },
         {
           "id": "section-15",
           "level": 3,
-          "text": "系统设置"
+          "text": "账户管理"
         },
         {
           "id": "section-16",
           "level": 3,
-          "text": "帮助手册"
+          "text": "系统设置"
         },
         {
           "id": "section-17",
+          "level": 3,
+          "text": "帮助手册"
+        },
+        {
+          "id": "section-18",
           "level": 2,
           "text": "状态识别"
         },
         {
-          "id": "section-18",
+          "id": "section-19",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -6255,7 +6265,7 @@
       "language": "zh-CN",
       "title": "编排功能",
       "summary": "编排页是蜂群持续推进任务的专用工作台。按轮次推进、查看历史、生成分支。",
-      "updated_at": "2026-06-30",
+      "updated_at": "2026-09-22",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -10853,7 +10863,7 @@
       "language": "en",
       "title": "Swarm",
       "summary": "The Swarm core explains how Wunder builds multi-agent collaboration into a formal system capability, rather than temporarily stuffing parallel tasks into a single large thread.",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-09-22",
       "read_when": [
         "You are designing multi-agent collaboration",
         "You need to distinguish between swarms, sub-agents, and ordinary thread flows"
@@ -12111,25 +12121,30 @@
         {
           "id": "section-8",
           "level": 2,
-          "text": "Failure results"
+          "text": "Diff previews"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "Common failure causes"
+          "text": "Failure results"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "Typical corrective hints"
+          "text": "Common failure causes"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "When to use it and when not to"
+          "text": "Typical corrective hints"
         },
         {
           "id": "section-12",
+          "level": 2,
+          "text": "When to use it and when not to"
+        },
+        {
+          "id": "section-13",
           "level": 2,
           "text": "Difference from writefile"
         }
@@ -14356,7 +14371,7 @@
       "language": "en",
       "title": "Hive Interface",
       "summary": "Hive is your workbench. Left navigation, middle list, right workspace — all daily work happens here.",
-      "updated_at": "2026-07-06",
+      "updated_at": "2026-09-22",
       "read_when": [],
       "source_docs": [],
       "tab": "Surfaces",
@@ -14398,61 +14413,66 @@
         },
         {
           "id": "section-7",
-          "level": 2,
-          "text": "Orchestration workspace"
+          "level": 3,
+          "text": "Automatic retries"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "Files"
+          "text": "Orchestration workspace"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "Agents"
+          "text": "Files"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "Tools & skills"
+          "text": "Agents"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "Scheduled tasks"
+          "text": "Tools & skills"
         },
         {
           "id": "section-12",
           "level": 2,
-          "text": "My profile & settings"
+          "text": "Scheduled tasks"
         },
         {
           "id": "section-13",
-          "level": 3,
-          "text": "My profile"
+          "level": 2,
+          "text": "My profile & settings"
         },
         {
           "id": "section-14",
           "level": 3,
-          "text": "Account management"
+          "text": "My profile"
         },
         {
           "id": "section-15",
           "level": 3,
-          "text": "System settings"
+          "text": "Account management"
         },
         {
           "id": "section-16",
           "level": 3,
-          "text": "Help manual"
+          "text": "System settings"
         },
         {
           "id": "section-17",
+          "level": 3,
+          "text": "Help manual"
+        },
+        {
+          "id": "section-18",
           "level": 2,
           "text": "Status indicators"
         },
         {
-          "id": "section-18",
+          "id": "section-19",
           "level": 2,
           "text": "Further reading"
         }
@@ -14467,7 +14487,7 @@
       "language": "en",
       "title": "Orchestration",
       "summary": "The orchestration page is a dedicated workspace for swarm tasks that need continuous advancement. Advance by rounds, view history, generate branches.",
-      "updated_at": "2026-06-30",
+      "updated_at": "2026-09-22",
       "read_when": [],
       "source_docs": [],
       "tab": "Surfaces",

@@ -21,6 +21,8 @@ const createStore = () => ({
   runtimeProjectionVersion: 0,
   runtimeProjectionContentVersion: 0,
   runtimeProjectionContentVersionByMessage: {}
+  ,runtimeProjectionReasoningVersion: 0,
+  runtimeProjectionReasoningVersionByMessage: {}
 });
 
 const flushTimers = () => new Promise((resolve) => setTimeout(resolve, 25));
@@ -206,6 +208,41 @@ test('runtime projection invalidation coalesces bursty steady assistant text del
   assert.equal(store.runtimeProjectionContentVersion, 1);
   assert.equal(store.runtimeProjectionContentVersionByMessage[messageId], 1);
   assert.equal(runtimeProjectionContentInvalidationState.pending, false);
+});
+
+test('runtime projection throttles reasoning-only deltas without publishing the content clock', async () => {
+  const store = createStore();
+  const first = (eventId: number, reasoningDelta: string) =>
+    buildCanonicalChatRuntimeEvents({
+      sessionId: 'session-1',
+      eventType: 'llm_output_delta',
+      payload: {
+        event_id: eventId,
+        event_seq: eventId,
+        user_round: 1,
+        model_round: 1,
+        reasoning_delta: reasoningDelta
+      },
+      eventId,
+      requestId: 'request-reasoning',
+      phase: 'send'
+    });
+
+  applyChatRuntimeEventsWithInvalidation(store, store.runtimeProjection, first(1, 'a'));
+  await flushTimers();
+  const messageId = 'assistant-message:model-turn:session-1:user:1:model:1';
+  assert.equal(store.runtimeProjectionVersion, 1);
+  assert.equal(store.runtimeProjectionContentVersion, 0);
+  assert.equal(store.runtimeProjectionReasoningVersion, 0);
+
+  applyChatRuntimeEventsWithInvalidation(store, store.runtimeProjection, first(2, 'b'));
+  applyChatRuntimeEventsWithInvalidation(store, store.runtimeProjection, first(3, 'c'));
+  await new Promise((resolve) => setTimeout(resolve, 170));
+
+  assert.equal(store.runtimeProjectionContentVersion, 0);
+  assert.equal(store.runtimeProjectionReasoningVersion, 1);
+  assert.equal(store.runtimeProjectionReasoningVersionByMessage[messageId], 1);
+  assert.equal(store.runtimeProjection.sessions['session-1'].messageById[messageId]?.reasoning, 'abc');
 });
 
 test('runtime projection invalidation isolates steady tool output deltas to the message clock', async () => {

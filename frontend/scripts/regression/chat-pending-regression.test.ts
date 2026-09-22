@@ -13,6 +13,95 @@ import {
 } from '../../src/stores/chatCompactionMarker';
 import { isSessionBusyFromSignals } from '../../src/utils/chatSessionRuntime';
 import { isCompactionRunningFromWorkflowItems, resolveLatestCompactionSnapshot } from '../../src/utils/chatCompactionWorkflow';
+import { collectSnapshotApprovalEvents } from '../../src/stores/chatApprovalSnapshot';
+
+const installBrowserStorageStub = () => {
+  if (typeof globalThis.localStorage !== 'undefined') return;
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: () => null,
+      setItem: () => undefined,
+      removeItem: () => undefined,
+      clear: () => undefined
+    }
+  });
+};
+
+test('approval recovery restores a request grouped by round beside top-level events', async () => {
+  const snapshot = {
+    events: [{ event: 'tool_call', data: { data: { tool: 'tool_a' } } }],
+    rounds: [{
+      user_round: 3,
+      events: [{
+        event: 'approval_request',
+        data: {
+          data: {
+            approval_id: 'approval-round-1',
+            tool: 'tool_a',
+            kind: 'exec',
+            summary: 'Approval needed'
+          }
+        }
+      }]
+    }]
+  };
+  const events = collectSnapshotApprovalEvents(snapshot);
+
+  assert.equal(events?.length, 2);
+  assert.deepEqual(
+    events?.map((event) => (event as { event?: string }).event),
+    ['tool_call', 'approval_request']
+  );
+
+  installBrowserStorageStub();
+  const { chatApprovalActions } = await import('../../src/stores/chatApprovalActions');
+  const store = { pendingApprovals: [] };
+  assert.equal(
+    chatApprovalActions.restorePendingApprovals.call(store, 'session-approval', snapshot),
+    true
+  );
+  assert.deepEqual(
+    store.pendingApprovals.map((approval) => ({
+      approval_id: approval.approval_id,
+      session_id: approval.session_id,
+      kind: approval.kind
+    })),
+    [{ approval_id: 'approval-round-1', session_id: 'session-approval', kind: 'exec' }]
+  );
+});
+
+test('approval recovery keeps a later top-level resolution over an older grouped request', async () => {
+  installBrowserStorageStub();
+  const { chatApprovalActions } = await import('../../src/stores/chatApprovalActions');
+  const store = { pendingApprovals: [] };
+  assert.equal(
+    chatApprovalActions.restorePendingApprovals.call(store, 'session-approval', {
+      events: [{
+        event: 'approval_resolved',
+        event_id: 8,
+        data: { data: { approval_id: 'approval-resolved-1', status: 'approved' } }
+      }],
+      rounds: [{
+        user_round: 1,
+        events: [{
+          event: 'approval_request',
+          event_id: 7,
+          data: {
+            data: {
+              approval_id: 'approval-resolved-1',
+              tool: 'tool_a',
+              kind: 'exec',
+              summary: 'Approval needed'
+            }
+          }
+        }]
+      }]
+    }),
+    false
+  );
+  assert.deepEqual(store.pendingApprovals, []);
+});
 
 test('finds the latest trailing pending assistant message', () => {
   const pending = { role: 'assistant', stream_incomplete: true, content: 'working' };

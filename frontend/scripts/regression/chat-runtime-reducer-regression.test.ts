@@ -3615,6 +3615,9 @@ test('canonical usage and context events project assistant stats display state',
         context_occupancy_tokens: 120,
         max_context: 1000,
         decode_duration_s: 2,
+        visible_decode_tokens: 10,
+        visible_decode_duration_s: 2,
+        visible_decode_speed_tps: 5,
         avg_model_round_speed_tps: 5,
         avg_model_round_speed_rounds: 1
       }
@@ -3683,6 +3686,11 @@ test('canonical usage and context events project assistant stats display state',
   assert.equal(assistant.display?.context_occupancy_tokens, 150);
   assert.equal(assistant.display?.quotaConsumed, 125);
   assert.equal(assistant.display?.stats?.decode_duration_s, 2);
+  assert.deepEqual(
+    [assistant.display?.visible_decode_tokens, assistant.display?.visible_decode_duration_s,
+      assistant.display?.visible_decode_speed_tps, assistant.display?.stats?.visible_decode_speed_tps],
+    [10, 2, 5, 5]
+  );
   assert.equal(assistant.display?.stats?.avg_model_round_speed_tps, 5);
 });
 

@@ -665,14 +665,48 @@ export const isManualCompactionRoundSummary = (summary): boolean => {
 export const isManualCompactionRoundEvents = (events): boolean =>
   isManualCompactionRoundSummary(summarizeCompactionRoundEvents(events));
 
-export const buildManualCompactionMarkerMessage = (roundNumber, events) => ({
-  ...buildMessage('assistant', '', resolveWorkflowRoundTimestamp(events)),
-  workflowItems: [],
+const buildCompactionWorkflowItems = (roundNumber, events) => {
+  if (!Array.isArray(events)) return [];
+  return events.flatMap((entry, index) => {
+    const eventType = String(entry?.event || '').trim().toLowerCase();
+    if (eventType !== 'compaction' && eventType !== 'progress') return [];
+    const detail =
+      entry?.data && typeof entry.data === 'object' && !Array.isArray(entry.data)
+        ? entry.data
+        : {};
+    const stage = String(detail?.stage || '').trim().toLowerCase();
+    if (
+      eventType === 'progress' &&
+      stage !== 'compacting' &&
+      stage !== 'context_guard' &&
+      stage !== 'context_overflow_recovery'
+    ) {
+      return [];
+    }
+    return [{
+      id: `compaction:${roundNumber}:${index}`,
+      eventType: eventType === 'compaction' ? 'compaction' : 'compaction_progress',
+      toolName: 'context_compaction',
+      status: String(detail?.status || (eventType === 'compaction' ? 'completed' : 'loading')),
+      detail: JSON.stringify(detail),
+      toolCallId: String(detail?.compaction_id ?? detail?.compactionId ?? '')
+    }];
+  });
+};
+
+const buildCompactionMarkerMessage = (roundNumber, events, manualMarker) => ({
+  ...buildMessage('assistant', '', resolveWorkflowRoundTimestamp(
+    events.filter((entry) => entry?.event === 'compaction')
+  ) || resolveWorkflowRoundTimestamp(events)),
+  workflowItems: buildCompactionWorkflowItems(roundNumber, events),
   workflowStreaming: false,
   stream_incomplete: false,
   stream_round: roundNumber,
-  manual_compaction_marker: true
+  ...(manualMarker ? { manual_compaction_marker: true } : {})
 });
+
+export const buildManualCompactionMarkerMessage = (roundNumber, events) =>
+  buildCompactionMarkerMessage(roundNumber, events, true);
 
 export const insertMessageByTimestamp = (messages, message) => {
   const markerTime = resolveTimestampMs(message?.created_at);
@@ -788,8 +822,8 @@ export const attachWorkflowEvents = (messages, rounds) => {
       return;
     }
     const manualCompactionRound = isManualCompactionRoundEvents(events);
+    const compactionSummary = summarizeCompactionRoundEvents(events);
     if (manualCompactionRound) {
-      const compactionSummary = summarizeCompactionRoundEvents(events);
       if (compactionSummary) {
         chatDebugLog('chat.compaction.hydrate', 'defer-manual-round-marker', {
           round: roundNumber,
@@ -800,16 +834,22 @@ export const attachWorkflowEvents = (messages, rounds) => {
       }
       return;
     }
-    assignedRounds.add(roundNumber);
-    const compactionSummary = summarizeCompactionRoundEvents(events);
+    // A compaction round is a visible divider in its own right. Only mark it
+    // assigned when the canonical assistant already carries that workflow;
+    // otherwise the ordered-round pass below creates a durable marker.
     if (compactionSummary) {
-      chatDebugLog('chat.compaction.hydrate', 'assign-round', {
+      if (isCompactionMarkerAssistantMessage(hydratedMessages[lastAssistantIndex])) {
+        assignedRounds.add(roundNumber);
+      }
+      chatDebugLog('chat.compaction.hydrate', 'defer-compaction-round-marker', {
         round: roundNumber,
-        targetIndex: lastAssistantIndex,
-        createdAt: hydratedMessages[lastAssistantIndex]?.created_at ?? null,
+        anchorIndex: lastAssistantIndex,
+        hasCanonicalMarker: isCompactionMarkerAssistantMessage(hydratedMessages[lastAssistantIndex]),
         summary: compactionSummary
       });
+      return;
     }
+    assignedRounds.add(roundNumber);
   };
   sourceMessages.forEach((message) => {
     if (message?.role === 'user') {
@@ -836,8 +876,9 @@ export const attachWorkflowEvents = (messages, rounds) => {
       return;
     }
     const manualCompactionRound = isManualCompactionRoundEvents(events);
-    const syntheticMessage = manualCompactionRound
-      ? buildManualCompactionMarkerMessage(roundNumber, events)
+    const compactionRound = Boolean(summarizeCompactionRoundEvents(events));
+    const syntheticMessage = compactionRound
+      ? buildCompactionMarkerMessage(roundNumber, events, manualCompactionRound)
       : {
           ...buildMessage('assistant', '', resolveWorkflowRoundTimestamp(events)),
           workflowItems: [],
@@ -845,7 +886,7 @@ export const attachWorkflowEvents = (messages, rounds) => {
           stream_incomplete: false,
           stream_round: roundNumber
         };
-    const insertedIndex = manualCompactionRound
+    const insertedIndex = compactionRound
       ? insertMessageByTimestamp(hydratedMessages, syntheticMessage)
       : pushMessage(syntheticMessage);
     assignedRounds.add(roundNumber);
@@ -853,7 +894,7 @@ export const attachWorkflowEvents = (messages, rounds) => {
     if (compactionSummary) {
       chatDebugLog(
         'chat.compaction.hydrate',
-        manualCompactionRound ? 'insert-manual-round-marker' : 'append-synthetic-round',
+        compactionRound ? 'insert-compaction-round-marker' : 'append-synthetic-round',
         {
         round: roundNumber,
         targetIndex: insertedIndex,
@@ -863,6 +904,7 @@ export const attachWorkflowEvents = (messages, rounds) => {
       );
     }
   });
+  dedupeTerminalCompactionMarkersInPlace(hydratedMessages);
   return hydratedMessages;
 };
 

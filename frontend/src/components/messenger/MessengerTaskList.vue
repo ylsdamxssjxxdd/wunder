@@ -5,12 +5,15 @@
       <span class="messenger-right-section-count">{{ items.length }}</span>
       <button class="messenger-header-btn" type="button" :disabled="creating" :title="t('messenger.tasks.create')" :aria-label="t('messenger.tasks.create')" @click="emit('create')"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
     </div>
-    <div v-if="!items.length" class="messenger-list-empty">{{ t('messenger.tasks.empty') }}</div>
-    <div ref="viewport" class="messenger-task-list" @scroll.passive="syncViewport">
+    <div v-if="!items.length" class="messenger-list-empty">
+      <span>{{ t('messenger.tasks.empty') }}</span>
+      <button v-if="pageError" class="messenger-task-load-more" type="button" :disabled="loading" @click="loadMore">{{ t('messenger.tasks.retry') }}</button>
+    </div>
+    <div v-else ref="viewport" class="messenger-task-list" @scroll.passive="syncViewport">
       <div :style="{ height: `${range.start * ROW_HEIGHT}px`, flexShrink: 0 }" aria-hidden="true"></div>
-      <div v-for="item in visibleItems" :key="item.id" class="messenger-task-item" :class="{ active: activeSessionId === item.id }">
+      <div v-for="item in visibleItems" :key="item.id" class="messenger-task-item" :class="{ active: activeSessionId === item.id, 'is-running': isRunning(item.id) }">
         <button class="messenger-task-select" type="button" :aria-current="activeSessionId === item.id ? 'true' : undefined" :title="item.title" @click="emit('activate', item.id)">
-          <i class="fa-solid messenger-task-item-icon" :class="isRunning(item.id) ? 'fa-circle-play' : 'fa-message'" aria-hidden="true"></i>
+          <i class="fa-solid messenger-task-item-icon" :class="isRunning(item.id) ? 'fa-circle-play is-running' : 'fa-message'" :aria-label="isRunning(item.id) ? t('chat.session.running') : undefined" aria-hidden="true"></i>
           <span class="messenger-task-item-main"><span class="messenger-task-item-title">{{ item.title }}</span><span class="messenger-task-item-preview">{{ isRunning(item.id) ? t('chat.session.running') : item.preview || t('messenger.preview.empty') }}</span></span>
         </button>
         <el-dropdown trigger="click" @command="(action) => handleAction(action, item.id)">
@@ -50,7 +53,7 @@ const range = computed(() => taskWindow(props.items.length, scrollTop.value, hei
 const visibleItems = computed(() => props.items.slice(range.value.start, range.value.end));
 // Subscribe only inside this small component. Streaming must not invalidate the page shell or sort all tasks.
 const isRunning = (id: string) => {
-  const version = store.runtimeProjectionVersionBySession[id];
+  void store.runtimeProjectionVersionBySession[id];
   return isThreadRuntimeBusy(selectSessionRuntimeStatus(store.runtimeProjection, id)) || Boolean(store.loadingBySession[id]);
 };
 const handleAction = (action: string, id: string) => {
@@ -77,4 +80,12 @@ onBeforeUnmount(() => observer?.disconnect());
 .messenger-task-select { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; height: 100%; background: none; border: 0; color: inherit; text-align: left; cursor: pointer; padding: 8px; }
 .messenger-task-menu { background: none; border: 0; color: inherit; cursor: pointer; padding: 8px; }
 .messenger-task-select:focus-visible, .messenger-task-menu:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: -2px; }
+@keyframes messenger-task-running-pulse {
+  0%, 100% { opacity: .62; transform: scale(.9); }
+  50% { opacity: 1; transform: scale(1); }
+}
+.messenger-task-item-icon.is-running { animation: messenger-task-running-pulse 1.15s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .messenger-task-item-icon.is-running { animation: none; opacity: 1; transform: none; }
+}
 </style>

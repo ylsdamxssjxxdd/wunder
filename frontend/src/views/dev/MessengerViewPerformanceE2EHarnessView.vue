@@ -11,6 +11,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import MessengerView from '@/views/MessengerView.vue';
 import { runChatWorkerProbe } from './chatWorkerProbe';
 import { runMessengerTwoTurnProbe } from './messengerTwoTurnProbe';
+import { runMessengerReasoningProbe } from './messengerReasoningProbe';
+import { createMessengerToolRetryProbe } from './messengerToolRetryProbe';
 import { enableWorkflowHistoryFixture, readWorkflowHistoryFixture } from './messengerWorkflowHistoryFixture';
 import { useAgentStore } from '@/stores/agents';
 import { useChatStore } from '@/stores/chat';
@@ -331,6 +333,8 @@ onMounted(async () => {
     installSession,
     installWorkflowHistory: async () => { enableWorkflowHistoryFixture(); await installSession(SESSION_A); },
     runTwoTurnProbe: () => runMessengerTwoTurnProbe(SESSION_A),
+    runReasoningProbe: () => runMessengerReasoningProbe(SESSION_A),
+    toolRetry: createMessengerToolRetryProbe(SESSION_A),
     setSection: (section: 'messages' | 'more') => useSessionHubStore().setSection(section),
     streamInBackground: async () => {
       const chat = useChatStore();

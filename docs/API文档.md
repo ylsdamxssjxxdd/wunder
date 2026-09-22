@@ -142,8 +142,11 @@
 - WS 恢复语义：只有在连接断开、收到 `slow_client`、页面恢复补水或主动重连时，客户端才应使用 `watch/resume` 与 `queue_after_event_id`/本地最新 `event_id` 补齐事件。
 - 排队活跃态：`watch/resume` 会把同 `session` 下的 `pending/retry/running` 队列任务视为活跃流状态，排队期仍会维持恢复链路与心跳。
 - 会话事件快照：`GET /wunder/chat/sessions/{session_id}/events` 会区分纯排队与真实运行态；纯排队时返回 `queued=true`，并在缺少运行时快照时补充 `runtime.thread_status/status=queued`，但 `running=false`。客户端应使用 `queued`/`runtime.status=queued` 恢复排队气泡，不应把纯排队当作模型轮次已开始。
-- 慢客户端恢复：当 WS 出站队列接近满载时，服务端会发送 `slow_client(reason=queue_full_resume_required)`，调用方应改走 `resume/watch` 补齐，而不是假设增量仍会持续直推。
+- 慢客户端恢复：当 WS 出站队列接近满载时，服务端会发送 `slow_client(reason=queue_full_resume_required)`，调用方应改走 `resume/watch` 补齐，而不是假设增量仍会持续直推。 实时请求随后停止向该订阅直推，继续排空后台执行流；恢复回放保持有序、无损，不能静默丢弃增量并前移游标。满队列投递最多等待 1 秒，连接不可用时通过重连或会话快照补水。
 - 模型轮次输出事件 `llm_output`：除 `content/reasoning/tool_calls/usage/prefill_duration_s/decode_duration_s` 等既有字段外，流式请求会尽量附带 `stream_timing` 诊断对象；非流式、无可见增量或旧事件回放中该字段可能为 `null` 或缺失，客户端必须兼容。
+- 解码统计：`llm_output/token_usage.decode_output_tokens` 使用归一化后的 `usage.output`（上游提供 reasoning token 明细时剔除思考 token），`decode_duration_s` 取首个正文增量到最后一个正文增量，思考与空工具分片不计入该区间；只有一个正文分片或缺少计时时，速度为 `null`。`stream_timing` 仍描述全部正文/思考分片，供诊断使用。
+- `final` 与历史消息 `stats` 增加 `visible_decode_tokens/visible_decode_duration_s/visible_decode_speed_tps`，表示最后一次模型响应的正文解码指标。前端速度优先使用该明确指标，不用累计 token 或 `avg_model_round_speed_tps` 推算当前回复速度；旧历史缺失指标时显示空缺。`avg_model_round_speed_*` 继续保留作用户轮次聚合诊断。
+- 模型 `timeout_s` 对流式调用表示首个输出及相邻有效模型分片的最大等待时间，正文、思考和工具参数分片均刷新活跃时间；持续思考不会因整次调用达到该时长而被中断。非流式调用继续使用整体超时，取消语义保持不变。
 - `llm_output` 的 `finish_reason/stop_reason=tool_calls/function_call/tool_use` 或非空 `tool_calls` 只结束模型动作，不结束用户请求；客户端继续接收工具与后续模型事件。连接关闭、本地 AbortError 或 loading 清理不等同于任务终态。
 - `/events` 的 `runtime` 是当前状态快照，其状态可在相同 `last_event_id` 下变化。客户端不得按历史游标对状态快照去重；并发补水应拒绝晚到旧响应覆盖更新的实时状态，先建立 transcript 顺序再恢复活跃尾部。
 
@@ -252,7 +255,7 @@
 - 会话历史工作流补水：`GET /wunder/chat/sessions/{session_id}/events?workflow_only=true&from_user_round={n}&to_user_round={n}` 只返回指定用户轮次的 `data.rounds[]` 工作流事件，`data.events=[]`；模型正文增量与终态正文事件不会返回，但会保留 `turn_terminal` 与带用户轮次的 `thread_status`，使渐进补水能结算模型/工具运行态。此模式用于正文先渲染、工具循环和气泡附加信息随后补齐，参数必须是递增的正整数范围。
 - 工作流补水查询按 `session_id + user_round + event_id` 索引读取；历史流事件会在存储升级时补齐 `event_type/user_round` 索引字段，避免长会话刷新时扫描完整事件流。
 - `data.events[]` 与聊天 WS 事件 payload 会补充 `event_seq`；当前 `event_seq` 与会话内递增的 `event_id` 对齐，用于前端 reducer 去重、乱序检测和 HTTP snapshot 回放。
-- 会话级实时订阅支持 `cancel`、连接关闭和任务自然结束后的幂等清理，避免断连后残留状态。
+- 会话级实时订阅支持显式 `cancel` 与任务自然结束后的幂等清理。WebSocket 连接关闭只释放传输订阅，不会取消后台线程或拒绝待审批工具；重新连接后客户端应通过会话事件快照恢复运行态和待审批项，再以 `approval_id + session_id` 提交决定。
 - 命令会话摘要现并入 `GET /wunder/chat/sessions/{session_id}/events`：返回 `data.command_sessions[]`，每项为当前会话内仍保留在 Broker 中的短期命令会话快照，包含 `command_session_id/status/seq/started_at/updated_at/ended_at/exit_code/stdout_tail/stderr_tail/pty_tail/*_dropped_bytes` 等字段；tail 为有界 head+tail 预览，中间输出可能以省略标记折叠，用于前端刷新后恢复工作流里的近期终端预览。
 - 新增命令会话回放接口：
   - `GET /wunder/chat/sessions/{session_id}/command-sessions`：返回当前会话可见的命令会话快照列表。
@@ -327,8 +330,10 @@
 - `执行命令`（`execute_command`）在本机与 sandbox 返回统一输出护栏元信息：`output_meta`（每条命令）与 `meta.output_guard`（聚合）；若未传 `workdir` 或传空值，则默认使用当前智能体工作目录；相对 `workdir` 也按当前工作区解析。若 `content` 为纯补丁正文（`*** Begin Patch ... *** End Patch`），会自动路由到 `应用补丁` 并在结果追加 `intercepted_from=execute_command`。
 - 工具结果默认允许约 `20000` 字符级别内容进入 `tool_result`/observation（管理员会话同样生效）；若仍因上下文预算被裁剪，系统会在顶层直接返回 `truncated/observation_output_chars/continuation_required/continuation_hint`（不再放入 `meta`）；数据体中可能出现 `data.truncated/original_chars/preview`、表格级 `rows_sampled/rows_omitted`，或数组级 `{"__truncated":true,"omitted_items":N}` 标记，表示当前结果为片段/样本而非全量。
 - `执行命令` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_commands`（也可放入 `budget` 对象）；`dry_run=true` 时仅返回执行计划与预算，不落地执行。
+- `执行命令` 失败结果的管理员事件通道会在 `data.diagnostics` 保留最多 4 条有界诊断（命令、序号、退出码和输出尾部）；模型 observation 仍只接收精简错误文本，避免把多命令 stderr 再次写入上下文。
 - `写入文件`、`应用补丁` 与 `文本编辑` 支持 `dry_run` 预演：返回目标文件与变更摘要，不写磁盘；传入相对 `path` 或补丁内相对文件路径时，会按当前智能体工作目录解析，不会落到服务进程 cwd。
 - `应用补丁` 的 `input` 现支持多层 JSON 包裹自动解包（如 `{"input":"{\"input\":\"*** Begin Patch ... *** End Patch\"}"}`），降低模型重复封装导致的格式失败。
+- `应用补丁` 的 `dry_run` 与正式执行共用暂存、冲突检查和上下文匹配逻辑，不写磁盘、不触发工作区版本更新或 LSP 写入通知。`data.files[].diff_blocks` 为有界预览：每文件最多 80 行，每调用最多 320 行、24 KiB 行正文；超预算整行省略。`data` 与 `files[]` 同时提供准确的 `added_lines/deleted_lines` 和 `diff_lines_omitted`，前端不能从预览行数推算实际变更量。模型 observation 保留准确增删行数与文件摘要，省略 diff 正文；事件与工具日志保留有界预览。
 - 当 `应用补丁` 返回 `PATCH_CONTEXT_NOT_FOUND` 时，`error_meta.hint` 会包含“期望旧片段 + 邻近源码 + 最相似窗口差异示例”，便于模型按上下文重新生成补丁。
 - `搜索内容` 返回保留兼容字段 `matches`，同时提供结构化 `hits`、`matched_files/matched_file_count/returned_match_count`、`summary` 与 `meta.search`。其中 `summary` 会给出实际采用的策略、顶部相关文件、命中词、`focus_points` 和下一步提示；`meta.search` 额外包含 `query_source`、`query_mode_inferred`、`strategy`、`attempts_tried`、`requested_engine/resolved_engine/rg_program/fallback/elapsed_ms/timeout_hit` 等信息，便于前端与调度层做可观测优化。
 - `搜索内容` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`（也可放入 `budget`，并支持 `budget.max_files/max_matches/max_candidates`）；超预算时会在 `meta.search.output_budget_hit` 标记结果裁剪。
@@ -345,18 +350,18 @@
 - `读取文件` 的切片读取结果会在 `meta.files[]` 里补充 `hit_eof/range_reaches_eof`，帮助模型判断当前分段是否已触达文件末尾，避免继续请求越界范围；若同文件一次请求了多个离散切片，正文里会增加 `[lines a-b]` 小标题以保持范围边界清晰。
 - 新增内置工具 `子智能体控制`（英文别名 `subagent_control`），通过 `action=list|history|send|spawn|batch_spawn|status|wait|interrupt|close|resume` 统一完成子会话派生、批量调度、状态聚合与生命周期控制。
 - 新增内置工具 `会话让出`（英文别名 `sessions_yield`/`yield`），用于在完成子智能体派发后主动结束当前轮次，向用户返回一句简短提示，并等待后台子智能体完成后自动唤醒父会话继续。
-- 新增内置工具 `会话线程控制`（英文别名 `thread_control`/`session_thread`），通过 `action=list|info|create|switch|back|update_title|archive|restore|set_main` 控制当前用户的线程树，并可触发 `thread_control` 工作流事件驱动前端同步切换线程。
+- 新增内置工具 `会话线程控制`（英文别名 `thread_control`/`session_thread`），通过 `action=list|info|create|switch|back|update_title|archive|restore| 控制当前用户的线程树，并可触发 `thread_control` 工作流事件驱动前端同步切换线程。
 - 新增内置工具 `智能体蜂群`（英文别名 `agent_swarm`/`swarm_control`），通过 `action=list|status|send|history|spawn|batch_send|wait` 管理当前用户“当前智能体以外”的其他智能体。
-- `智能体蜂群` 的 `send`/`batch_send`/`spawn` 默认会复用目标工蜂当前任务线程；当任务线程不存在时会先创建并绑定。若显式传入 `threadStrategy=fresh_main_thread`，则会为目标工蜂新建干净线程并将其绑定为新的任务线程；`threadStrategy=main_thread`（或 `reuseMainThread=true`）则显式要求复用任务线程。`send`/`batch_send` 在显式提供 `sessionKey` 时仍会优先复用指定线程。
+- `智能体蜂群` 的 `send`/`batch_send`/`spawn` 默认会复用目标工蜂当前任务线程；当任务线程不存在时会先创建并绑定。若显式传入 `threadStrategy=new_thread`，则会为目标工蜂新建干净线程并将其绑定为新的任务线程；`threadStrategy=task_thread`（或 `reuseThread=true`）则显式要求复用任务线程。`send`/`batch_send` 在显式提供 `sessionKey` 时仍会优先复用指定线程。
 - `智能体蜂群` 新增 `wait` 动作：可直接等待 `run_ids` 结果并返回聚合状态，避免母蜂反复轮询 `status`。
 - `智能体蜂群` 的 `send`/`batch_send`/`wait` 等待语义分三态：显式传 `0` 立即返回当前快照，显式传正数按该超时等待；省略等待参数时走系统默认超时，只有系统默认值本身为 `0` 时才会进入无限等待。
 - 多工蜂协作推荐：先 `batch_send` 一次并发派发，再 `wait` 统一收敛。
-- `智能体蜂群` 入参语义增强（便于模型主动调用）：`send`/`spawn` 支持 `agentId` 或 `agentName/name` 直达目标；`send` 需 `message` 且 `agentId/agentName/name/sessionKey` 四选一，`spawn` 需 `task` 且 `agentId/agentName/name` 三选一，`history` 需 `sessionKey`，`wait` 需 `runIds`，`batch_send` 需 `tasks[]`（每项需 `message` 且 `agentId/agentName/name/sessionKey` 四选一）；`send`/`batch_send`/`spawn` 还支持 `threadStrategy=new_thread|task_thread`，也兼容 `reuseMainThread=true`。
+- `智能体蜂群` 入参语义增强（便于模型主动调用）：`send`/`spawn` 支持 `agentId` 或 `agentName/name` 直达目标；`send` 需 `message` 且 `agentId/agentName/name/sessionKey` 四选一，`spawn` 需 `task` 且 `agentId/agentName/name` 三选一，`history` 需 `sessionKey`，`wait` 需 `runIds`，`batch_send` 需 `tasks[]`（每项需 `message` 且 `agentId/agentName/name/sessionKey` 四选一）；`send`/`batch_send`/`spawn` 还支持 `threadStrategy=new_thread|task_thread`，也兼容 `reuseThread=true`。
 - `智能体蜂群` 的动态提示仅注入到工具描述本身，展示“工蜂名称 + 一句话描述”；已冻结线程的 system prompt 不会因工蜂变化而改写。
 - 推荐最短调用路径：`list -> batch_send -> wait -> history/status`（单目标用 `send` 替代 `batch_send`）。
 - `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`；`batch_spawn` 会返回稳定 `dispatch_id` 并把父轮次引用写入每个子任务，便于后续在消息气泡内聚合展示。
 - 推荐的 Codex 风格子智能体调用路径更新为：`subagent_control.spawn/batch_spawn -> sessions_yield -> 子智能体自动回流唤醒 -> status/wait(按需)`；其中 `sessions_yield` 是显式“本轮先结束”的一级原语。
-- `会话线程控制` 的 `create/switch/back/set_main` 可同时更新任务线程绑定；当工具通过流式通道返回 `thread_control` 事件时，用户前端会先合并会话摘要，再按 payload 决定是否切换到目标线程。
+- `会话线程控制` 的 `create/switch/back/ 可同时更新任务线程绑定；当工具通过流式通道返回 `thread_control` 事件时，用户前端会先合并会话摘要，再按 payload 决定是否切换到目标线程。
 - 新增内置工具 `节点调用`（英文别名 `node.invoke`/`node_invoke`），通过 `action=list|invoke` 统一完成节点发现与节点调用。
 - 新增内置工具 `用户世界工具`（英文别名 `user_world`），通过 `action=list_users|send_message` 获取用户列表或发送私信（消息会在用户世界页面可见）。
 - 新增内置工具 `渠道工具`（英文别名 `channel_tool`），通过 `action=list_contacts|send_message` 查询渠道可联系对象并向指定渠道对象发送消息（支持工作区文件引用转下载链接后发送）。
@@ -3123,7 +3128,7 @@
 - 鉴权：用户侧 Bearer Token；服务端同时校验蜂群归属、母蜂归属和已绑定会话归属。
 - 请求体：空对象 `{}`。
 - 行为：默认复用同一 `user_id + group_id + mother_agent_id` 的蜂群绑定；若用户已在普通聊天页为该母蜂显式新建或切换任务线程，且该线程未被另一蜂群绑定，则当前蜂群会采用该任务线程，后续右栏消息从新会话第 1 轮开始。不同蜂群即使使用同一母蜂，也不会借用彼此的专属绑定。活动编排存在时继续返回编排态冻结的权威母蜂会话，不在运行中换线。
-- 返回：`data` 包含 `id/title/status/agent_id//created_at/updated_at/last_message_at/group_id/created`。
+- 返回：`data` 包含 `id/title/status/agent_id/created_at/updated_at/last_message_at/group_id/created`。
 - 蜂群摘要和详情中的 `mother_session_id?` 返回当前已绑定的普通蜂群母会话或活动编排母会话；尚未建立绑定时为 `null`。
 
 ### `GET /wunder/agents/running` 蜂群运行态补充
@@ -3359,6 +3364,12 @@
   - `data.round_state`
   - `data.state`
 
+
+### 模型工具调用恢复事件
+
+- `bad_tool_call_retry`：模型返回不可解析或无效的工具调用时发送，工具尚未执行。保留 `attempt/max_attempts/retry_reason/invalid_tool_call_count/sample_tool_names`，新增 `delay_s`（下次请求前的退避秒数）和 `next_stream=false`（恢复请求采用非流式响应）。`stream` 表示刚失败的请求是否流式；`will_retry=false` 时 `delay_s=0`，表示尝试已耗尽，最终轮次状态仍以 `error/turn_terminal` 为准。
+- `llm_stream_retry` 与 `bad_tool_call_retry` 都进入统一持久化事件流，沿用会话归属、轮次、稳定事件序号和 replay 机制；刷新或重连可恢复重试状态。仅上线后的普通模型重试新增持久化，既有日志不回填。
+- `progress.stage=invalid_tool_call_reroute/empty_final_answer_reroute` 表示模型正在修复不可执行的调用或空回复，前端将其投影为恢复状态，跨随后的 `llm_request` 保留，直到有效输出、工具执行或终态到达。恢复不是整轮失败，不得据此提前终止会话；终态后的迟到重试不能重新激活消息。
 
 ### 上下文本地精简事件
 

@@ -13,7 +13,7 @@ pub struct DesktopRuntimeRecoverySummary {
     pub cancelled_monitor_sessions: usize,
     pub cancelled_session_locks: usize,
     pub cancelled_agent_tasks: usize,
-    pub reset_agent_threads: usize,
+    pub reset_task_threads: usize,
 }
 
 pub async fn recover_desktop_runtime_state(
@@ -75,7 +75,7 @@ pub async fn recover_desktop_runtime_state(
         .max(0) as usize;
 
     let thread_runtime = state.kernel.thread_runtime.clone();
-    let (cancelled_agent_tasks, reset_agent_threads) =
+    let (cancelled_agent_tasks, reset_task_threads) =
         cancel_desktop_agent_tasks(state, cleaned_user_id, &thread_runtime).await?;
 
     thread_runtime.wake().await;
@@ -85,7 +85,7 @@ pub async fn recover_desktop_runtime_state(
         cancelled_monitor_sessions,
         cancelled_session_locks,
         cancelled_agent_tasks,
-        reset_agent_threads,
+        reset_task_threads,
     })
 }
 

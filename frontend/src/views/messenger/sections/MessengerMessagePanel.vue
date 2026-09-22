@@ -129,6 +129,11 @@
                     "
                     :content="String(item.message.reasoning || '')"
                     :streaming="Boolean(item.message.reasoningStreaming)"
+                    :message="item.message"
+                    :runtime-message-id="String(item.message.__runtime_message_id || item.message.message_id || '')"
+                    :runtime-user-turn-id="String(item.message.__runtime_user_turn_id || item.message.user_turn_id || item.message.userTurnId || '')"
+                    :runtime-model-turn-id="String(item.message.__runtime_model_turn_id || item.message.model_turn_id || item.message.modelTurnId || '')"
+                    :session-id="String(chatStore.activeSessionId || '')"
                   />
                 </div>
                 <div

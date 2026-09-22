@@ -126,6 +126,9 @@ export const buildMessageStats = () => ({
   decode_duration_s: null,
   prefill_duration_total_s: null,
   decode_duration_total_s: null,
+  visible_decode_tokens: null,
+  visible_decode_duration_s: null,
+  visible_decode_speed_tps: null,
   avg_model_round_speed_tps: null,
   avg_model_round_speed_rounds: 0,
   quotaConsumed: 0,
@@ -1084,6 +1087,15 @@ export const normalizeMessageStats = (stats) => {
     decode_duration_total_s: normalizeDurationValue(
       stats.decode_duration_total_s ?? stats.decodeDurationTotalS
     ),
+    visible_decode_tokens: parseOptionalCount(
+      stats.visible_decode_tokens ?? stats.visibleDecodeTokens
+    ),
+    visible_decode_duration_s: normalizeDurationValue(
+      stats.visible_decode_duration_s ?? stats.visibleDecodeDurationS
+    ),
+    visible_decode_speed_tps: normalizeSpeedValue(
+      stats.visible_decode_speed_tps ?? stats.visibleDecodeSpeedTps
+    ),
     avg_model_round_speed_tps: normalizeSpeedValue(
       stats.avg_model_round_speed_tps ??
         stats.avg_model_round_decode_speed_tps ??
@@ -1200,6 +1212,18 @@ export const mergeMessageStats = (base, incoming) => {
       right.decode_duration_total_s === null || right.decode_duration_total_s === undefined
         ? left.decode_duration_total_s
         : right.decode_duration_total_s,
+    visible_decode_tokens:
+      incoming.visible_decode_tokens === undefined && incoming.visibleDecodeTokens === undefined
+        ? left.visible_decode_tokens
+        : right.visible_decode_tokens,
+    visible_decode_duration_s:
+      incoming.visible_decode_duration_s === undefined && incoming.visibleDecodeDurationS === undefined
+        ? left.visible_decode_duration_s
+        : right.visible_decode_duration_s,
+    visible_decode_speed_tps:
+      incoming.visible_decode_speed_tps === undefined && incoming.visibleDecodeSpeedTps === undefined
+        ? left.visible_decode_speed_tps
+        : right.visible_decode_speed_tps,
     avg_model_round_speed_tps:
       preferRightAverage && right.avg_model_round_speed_tps !== null
         ? right.avg_model_round_speed_tps

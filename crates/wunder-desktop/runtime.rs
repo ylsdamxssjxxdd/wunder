@@ -336,7 +336,7 @@ impl DesktopRuntime {
                 cancelled_monitor_sessions = summary.cancelled_monitor_sessions,
                 cancelled_session_locks = summary.cancelled_session_locks,
                 cancelled_agent_tasks = summary.cancelled_agent_tasks,
-                reset_agent_threads = summary.reset_agent_threads,
+                reset_task_threads = summary.reset_task_threads,
                 "desktop runtime state recovered"
             );
         }

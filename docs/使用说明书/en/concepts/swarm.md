@@ -74,7 +74,7 @@ The current swarm system has one very important convention:
 
 The purpose is to keep the worker's context clean and avoid dragging dirty history from an older conversation directly into the new assignment.
 
-By default, the system reuses the worker's task thread scoped to the calling task, creating and binding one first when needed. You can still pass `threadStrategy=main_thread` (or `reuseMainThread=true`) to make that intent explicit; `threadStrategy=fresh_main_thread` forces a clean new thread instead. Only an explicit `sessionKey` in `send` / `batch_send` pins the run to a specific existing thread.
+By default, the system reuses the worker's task thread scoped to the calling task, creating and binding one first when needed. You can still pass `threadStrategy=task_thread` (or `reuseThread=true`) to make that intent explicit; `threadStrategy=new_thread` forces a clean new thread instead. Only an explicit `sessionKey` in `send` / `batch_send` pins the run to a specific existing thread.
 
 ## Why the task thread matters
 

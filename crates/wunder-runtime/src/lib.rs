@@ -15,6 +15,7 @@ pub mod storage;
 
 pub use api::{build_desktop_router, build_router};
 pub use channels::ChannelHub;
+pub use lsp::LspManager;
 pub use core::{
     approval, approval_registry, auth, blocking, bounded_queue, command_utils, config,
     config_store, dpi, drawio_config, exec_policy, i18n, logging, long_task, onlyoffice_config,

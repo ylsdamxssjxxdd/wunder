@@ -6,6 +6,7 @@ export component WorkDock inherits Rectangle {
     callback activate-task(int);
     callback preview-file(string);
     in property <int> active-task;
+    in property <bool> connected: false;
     background: Theme.dock;
     private property <string> keyword;
     VerticalLayout {
@@ -20,13 +21,14 @@ export component WorkDock inherits Rectangle {
                     Image { width: 14px; height: 14px; source: @image-url("../assets/icons/list-check.svg"); colorize: Theme.accent-deep; }
                     Text { text: "任务列表"; font-size: 13px; font-weight: 600; color: Theme.text; }
                     Rectangle { horizontal-stretch: 1; }
-                    Text { text: "3"; color: Theme.accent-deep; font-size: 11px; }
+                    Text { text: root.connected ? "" : "3"; color: Theme.accent-deep; font-size: 11px; }
                 }
+                if root.connected : Text { text: "任务状态将在实时同步接入后显示"; color: Theme.muted; font-size: 11px; wrap: word-wrap; }
                 ScrollView {
                     horizontal-scrollbar-policy: always-off;
                     VerticalLayout {
                         alignment: start; spacing: 6px;
-                        for title[index] in ["当前任务", "历史任务 01", "历史任务 02"] : Rectangle {
+                        for title[index] in (root.connected ? [] : ["当前任务", "历史任务 01", "历史任务 02"]) : Rectangle {
                             height: 56px; border-radius: 10px;
                             background: index == root.active-task ? Theme.accent-soft : transparent;
                             Action { width: parent.width; height: parent.height; label: title; clicked => { root.activate-task(index); } }
@@ -56,7 +58,7 @@ export component WorkDock inherits Rectangle {
                     horizontal-scrollbar-policy: always-off;
                     VerticalLayout {
                         alignment: start; spacing: 4px;
-                        for name[index] in ["文件夹", "说明.md", "记录.txt", "附件.pdf"] : Rectangle {
+                        for name[index] in (root.connected ? [] : ["文件夹", "说明.md", "记录.txt", "附件.pdf"]) : Rectangle {
                             height: root.keyword == "" || name.starts-with(root.keyword) ? 36px : 0px;
                             visible: self.height > 0px;
                             Action { width: parent.width; height: parent.height; label: name; clicked => { root.preview-file(name); } }
@@ -66,7 +68,7 @@ export component WorkDock inherits Rectangle {
                         }
                     }
                 }
-                Text { height: 18px; text: "4 项 · 演示文件"; color: Theme.muted; font-size: 10px; }
+                Text { height: 18px; text: root.connected ? "文件列表尚未接入" : "4 项 · 演示文件"; color: Theme.muted; font-size: 10px; }
             }
         }
     }

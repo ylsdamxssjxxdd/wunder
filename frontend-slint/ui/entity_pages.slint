@@ -1,0 +1,169 @@
+import { Theme, AgentCard, ToolCard, ModelCard } from "theme.slint";
+import { Action, Avatar, SearchField } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+component PageHeader inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <image> icon;
+    in property <string> action-label;
+    in property <bool> enabled: true;
+    callback action();
+    height: 82px;
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+    Image { x: 20px; y: 22px; width: 28px; height: 28px; source: root.icon; colorize: Theme.accent-deep; }
+    Text { x: 60px; y: 17px; width: parent.width - 160px; height: 24px; text: root.title; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; }
+    Text { x: 60px; y: 44px; width: parent.width - 160px; height: 18px; text: root.subtitle; color: Theme.muted; font-size: 12px; overflow: elide; }
+    if root.action-label != "" : Action { x: parent.width - 112px; y: 25px; width: 92px; height: 32px; icon: @image-url("../assets/icons/plus.svg"); enabled: root.enabled; label: root.action-label; show-label: true; primary: true; clicked => { root.action(); } }
+}
+
+export component AgentsPage inherits Rectangle {
+    in property <bool> loading: false;
+    in property <bool> saving: false;
+    in property <[AgentCard]> agents;
+    in property <int> selected-agent: -1;
+    in property <string> selected-name;
+    in property <string> selected-description;
+    in property <string> selected-model;
+    in property <string> selected-status;
+    callback select-agent(int);
+    callback create-agent();
+    callback refresh();
+    background: Theme.chat;
+    VerticalLayout {
+        spacing: 0px;
+        PageHeader { title: "智能体"; subtitle: "管理可用于新会话的智能体"; icon: @image-url("../assets/icons/robot.svg"); enabled: !root.loading && !root.saving; action-label: "新建智能体"; action => { root.create-agent(); } }
+        HorizontalLayout {
+            vertical-stretch: 1; padding: 16px; spacing: 14px;
+            Rectangle {
+                width: min(300px, parent.width * 0.42); border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                VerticalLayout {
+                    padding: 10px; spacing: 8px;
+                    HorizontalLayout { height: 26px; Text { text: "智能体列表"; color: Theme.text; font-size: 13px; font-weight: 600; } Rectangle { horizontal-stretch: 1; } Action { icon: @image-url("../assets/icons/rotate-right.svg"); enabled: !root.loading; label: "刷新"; clicked => { root.refresh(); } } }
+                    ScrollView {
+                        vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                        VerticalLayout { alignment: start; spacing: 4px;
+                            for agent[index] in root.agents : Rectangle {
+                                height: 66px; border-radius: 9px; background: root.selected-agent == index ? Theme.accent-soft : transparent;
+                                Action { width: parent.width; height: parent.height; label: agent.name; clicked => { root.select-agent(index); } }
+                                Avatar { x: 8px; y: 15px; mine: root.selected-agent == index; source: @image-url("../assets/avatar.png"); }
+                                Text { x: 50px; y: 10px; width: parent.width - 60px; height: 18px; text: agent.name; color: Theme.text; font-size: 12px; font-weight: 600; overflow: elide; }
+                                Text { x: 50px; y: 32px; width: parent.width - 60px; height: 17px; text: agent.model == "" ? "使用默认模型" : agent.model; color: Theme.muted; font-size: 10px; overflow: elide; }
+                            }
+                            if root.agents.length == 0 : Text { height: 48px; text: root.loading ? "正在加载智能体…" : "未加载到智能体"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 1; max-width: 100000px; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                VerticalLayout {
+                    padding: 24px; spacing: 12px;
+                    Avatar { width: 44px; height: 44px; mine: true; }
+                    Text { height: 28px; text: root.selected-name == "" ? "选择一个智能体" : root.selected-name; color: Theme.text; font-size: 20px; font-weight: 700; overflow: elide; }
+                    Text { height: 18px; text: root.selected-status == "" ? "" : (root.selected-status == "active" ? "可用于新会话" : root.selected-status); color: Theme.accent-deep; font-size: 12px; }
+                    Rectangle { height: 1px; background: Theme.border; }
+                    Text { text: root.selected-description == "" ? "该智能体会按既有模型、工具和权限配置执行任务。" : root.selected-description; color: Theme.muted; font-size: 13px; wrap: word-wrap; vertical-stretch: 1; }
+                    Rectangle { border-radius: 9px; background: Theme.accent-soft; height: 50px; Text { x: 12px; width: parent.width - 24px; height: parent.height; text: "模型：" + (root.selected-model == "" ? "使用默认模型" : root.selected-model); color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; } }
+                    Text { height: 20px; text: "在消息页点击新建线程时会使用当前选择。"; color: Theme.muted; font-size: 11px; }
+                }
+            }
+        }
+    }
+}
+
+export component ToolsPage inherits Rectangle {
+    in property <bool> loading: false;
+    in property <[ToolCard]> tools;
+    callback refresh();
+    background: Theme.chat;
+    private property <string> keyword;
+    VerticalLayout {
+        spacing: 0px;
+        PageHeader { title: "工具"; subtitle: "当前账户可使用的内置工具、技能和连接能力"; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); action-label: ""; }
+        VerticalLayout {
+            padding: 16px; spacing: 12px; vertical-stretch: 1;
+            HorizontalLayout { height: 34px; SearchField { horizontal-stretch: 1; icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索工具"; text <=> root.keyword; } Action { width: 72px; height: 34px; icon: @image-url("../assets/icons/rotate-right.svg"); enabled: !root.loading; label: "刷新"; show-label: true; clicked => { root.refresh(); } } }
+            ScrollView {
+                vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                VerticalLayout { alignment: start; spacing: 8px;
+                    for tool in root.tools : Rectangle {
+                        height: root.keyword == "" || tool.name.starts-with(root.keyword) || tool.category.starts-with(root.keyword) ? 68px : 0px;
+                        visible: self.height > 0px; border-radius: 11px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                        Image { x: 13px; y: 15px; width: 20px; height: 20px; source: @image-url("../assets/icons/wand-magic-sparkles.svg"); colorize: Theme.accent-deep; }
+                        Text { x: 45px; y: 10px; width: parent.width - 145px; height: 18px; text: tool.name; color: Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
+                        Text { x: 45px; y: 32px; width: parent.width - 145px; height: 17px; text: tool.description == "" ? "已启用的运行时能力" : tool.description; color: Theme.muted; font-size: 11px; overflow: elide; }
+                        Rectangle { x: parent.width - 88px; y: 20px; width: 74px; height: 26px; border-radius: 13px; background: Theme.accent-soft; Text { text: tool.category; color: Theme.accent-deep; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; overflow: elide; } }
+                    }
+                    if root.tools.length == 0 : Text { height: 72px; text: root.loading ? "正在加载工具…" : "未加载到可用工具"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
+                }
+            }
+            Text { height: 18px; text: root.tools.length + " 项能力 · 配置由本地运行时统一管理"; color: Theme.muted; font-size: 11px; }
+        }
+    }
+}
+
+export component SettingsPage inherits Rectangle {
+    in property <bool> loading: false;
+    in property <bool> saving: false;
+    in property <[ModelCard]> models;
+    in property <int> selected-model: -1;
+    in property <string> workspace-root;
+    in property <string> language;
+    in property <string> selected-key;
+    in property <string> selected-provider;
+    in property <string> selected-model-name;
+    in property <string> selected-base-url;
+    in property <string> selected-type;
+    in property <bool> selected-is-default;
+    callback select-model(int);
+    callback create-model();
+    callback edit-model();
+    callback set-default-model(string);
+    callback refresh();
+    background: Theme.chat;
+    VerticalLayout {
+        spacing: 0px;
+        PageHeader { title: "系统设置"; subtitle: "本地运行时、工作目录和模型配置"; icon: @image-url("../assets/icons/gear.svg"); enabled: !root.loading && !root.saving; action-label: "添加模型"; action => { root.create-model(); } }
+        HorizontalLayout {
+            vertical-stretch: 1; padding: 16px; spacing: 14px;
+            Rectangle {
+                width: min(330px, parent.width * 0.44); border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                VerticalLayout {
+                    padding: 12px; spacing: 10px;
+                    HorizontalLayout { height: 25px; Text { text: "模型配置"; color: Theme.text; font-size: 13px; font-weight: 600; } Rectangle { horizontal-stretch: 1; } Action { icon: @image-url("../assets/icons/rotate-right.svg"); enabled: !root.loading; label: "刷新"; clicked => { root.refresh(); } } }
+                    ScrollView {
+                        vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                        VerticalLayout { alignment: start; spacing: 5px;
+                            for model[index] in root.models : Rectangle {
+                                height: 62px; border-radius: 9px; background: root.selected-model == index ? Theme.accent-soft : transparent;
+                                Action { width: parent.width; height: parent.height; label: model.key; clicked => { root.select-model(index); } }
+                                Image { x: 9px; y: 15px; width: 18px; height: 18px; source: @image-url("../assets/icons/robot.svg"); colorize: Theme.accent-deep; }
+                                Text { x: 38px; y: 9px; width: parent.width - 46px; height: 18px; text: model.key + (model.is-default ? "  · 默认" : ""); color: Theme.text; font-size: 12px; font-weight: 600; overflow: elide; }
+                                Text { x: 38px; y: 31px; width: parent.width - 46px; height: 16px; text: model.model-type + " · " + model.model; color: Theme.muted; font-size: 10px; overflow: elide; }
+                            }
+                            if root.models.length == 0 : Text { height: 48px; text: root.loading ? "正在加载模型…" : "尚未配置模型"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 1; max-width: 100000px; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                VerticalLayout {
+                    padding: 24px; spacing: 13px;
+                    Text { height: 26px; text: "本地运行时"; color: Theme.text; font-size: 18px; font-weight: 700; }
+                    Rectangle { border-radius: 9px; background: Theme.accent-soft; height: 52px; Text { x: 13px; width: parent.width - 26px; height: parent.height; text: "工作目录：" + (root.workspace-root == "" ? "正在读取…" : root.workspace-root); color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; } }
+                    Rectangle { border-radius: 9px; background: Theme.accent-soft; height: 52px; Text { x: 13px; width: parent.width - 26px; height: parent.height; text: "语言：" + (root.language == "" ? "正在读取…" : root.language); color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; } }
+                    Rectangle { height: 1px; background: Theme.border; }
+                    Text { height: 23px; text: root.selected-key == "" ? "选择模型查看配置" : root.selected-key; color: Theme.text; font-size: 15px; font-weight: 600; overflow: elide; }
+                    Text { height: 18px; text: root.selected-key == "" ? "" : (root.selected-type + " · " + root.selected-provider); color: Theme.muted; font-size: 11px; overflow: elide; }
+                    Text { height: 18px; text: root.selected-key == "" ? "" : ("模型：" + root.selected-model-name); color: Theme.muted; font-size: 11px; overflow: elide; }
+                    Text { height: 18px; text: root.selected-key == "" ? "" : ("地址：" + root.selected-base-url); color: Theme.muted; font-size: 11px; overflow: elide; }
+                    HorizontalLayout { height: 32px; spacing: 8px; Action { width: 92px; height: 32px; icon: @image-url("../assets/icons/gear.svg"); label: "编辑模型"; show-label: true; enabled: !root.loading && !root.saving && root.selected-key != ""; clicked => { root.edit-model(); } } Action { width: 94px; height: 32px; icon: @image-url("../assets/icons/check.svg"); label: root.selected-is-default ? "当前默认" : "设为默认"; show-label: true; primary: !root.selected-is-default; enabled: !root.loading && !root.saving && root.selected-key != "" && !root.selected-is-default; clicked => { root.set-default-model(root.selected-key); } } }
+                    Text { text: "模型配置保存在本机，修改后在新任务中生效。"; color: Theme.muted; font-size: 12px; wrap: word-wrap; vertical-stretch: 1; }
+                    Text { height: 18px; text: "" + root.models.length + " 个模型条目"; color: Theme.muted; font-size: 11px; }
+                }
+            }
+        }
+    }
+}
