@@ -3,6 +3,7 @@
     <span
       v-for="entry in entries"
       :key="entry.key"
+      :title="entry.hint || (entry.kind === 'metric' ? entry.label : undefined)"
       :class="[
         'messenger-message-stat',
         entry.kind === 'status' ? 'is-status' : 'is-metric',

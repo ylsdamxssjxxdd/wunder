@@ -118,15 +118,22 @@ pub fn load_question_bank(id: Option<&str>, version: Option<&str>) -> Result<Loa
     let safe_id = validate_identifier(id, "bank id")?;
     let version = version.map(str::trim).unwrap_or("");
     if version.is_empty() {
-        return Err(anyhow!("question_bank_version is required for imported banks"));
+        return Err(anyhow!(
+            "question_bank_version is required for imported banks"
+        ));
     }
     let safe_version = validate_identifier(version, "bank version")?;
     load_imported_bank(default_banks_dir().join(safe_id).join(safe_version))
 }
 
-pub fn import_question_bank(data: &[u8], allow_executable_grading: bool) -> Result<QuestionBankSummary> {
+pub fn import_question_bank(
+    data: &[u8],
+    allow_executable_grading: bool,
+) -> Result<QuestionBankSummary> {
     if data.is_empty() || data.len() > MAX_PACKAGE_BYTES {
-        return Err(anyhow!("question bank package must be between 1 byte and {MAX_PACKAGE_BYTES} bytes"));
+        return Err(anyhow!(
+            "question bank package must be between 1 byte and {MAX_PACKAGE_BYTES} bytes"
+        ));
     }
     let staging = default_banks_dir().join(format!(".import-{}", Uuid::new_v4().simple()));
     std::fs::create_dir_all(&staging)?;
@@ -153,10 +160,15 @@ fn import_question_bank_into(
         .join(&loaded.summary.id)
         .join(&loaded.summary.version);
     if destination.exists() {
-        return Err(anyhow!("question bank {}@{} already exists", loaded.summary.id, loaded.summary.version));
+        return Err(anyhow!(
+            "question bank {}@{} already exists",
+            loaded.summary.id,
+            loaded.summary.version
+        ));
     }
     std::fs::create_dir_all(destination.parent().expect("bank destination parent"))?;
-    std::fs::rename(staging, &destination).with_context(|| "activate imported question bank failed")?;
+    std::fs::rename(staging, &destination)
+        .with_context(|| "activate imported question bank failed")?;
     Ok(loaded.summary)
 }
 
@@ -180,8 +192,8 @@ fn load_imported_bank(root: PathBuf) -> Result<LoadedQuestionBank> {
     let manifest_path = root.join(MANIFEST_FILE);
     let manifest_text = std::fs::read_to_string(&manifest_path)
         .with_context(|| format!("question bank manifest missing: {manifest_path:?}"))?;
-    let manifest: QuestionBankManifest = serde_json::from_str(&manifest_text)
-        .with_context(|| "invalid wunderbench.json")?;
+    let manifest: QuestionBankManifest =
+        serde_json::from_str(&manifest_text).with_context(|| "invalid wunderbench.json")?;
     validate_manifest(&manifest)?;
     let tasks_dir = resolve_relative_directory(&root, &manifest.tasks_path, "tasks_path")?;
     let assets_dir = resolve_relative_path(&root, &manifest.assets_path, "assets_path")?;
@@ -220,9 +232,15 @@ fn summarize(
     checksum: String,
     built_in: bool,
 ) -> QuestionBankSummary {
-    let mut task_ids = tasks.iter().map(|task| task.id().to_string()).collect::<Vec<_>>();
+    let mut task_ids = tasks
+        .iter()
+        .map(|task| task.id().to_string())
+        .collect::<Vec<_>>();
     task_ids.sort();
-    let mut suites = tasks.iter().map(|task| task.suite().to_string()).collect::<Vec<_>>();
+    let mut suites = tasks
+        .iter()
+        .map(|task| task.suite().to_string())
+        .collect::<Vec<_>>();
     suites.sort();
     suites.dedup();
     QuestionBankSummary {
@@ -264,7 +282,9 @@ fn validate_identifier(value: &str, label: &str) -> Result<String> {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
     {
-        return Err(anyhow!("{label} must use only letters, numbers, '.', '_' or '-'"));
+        return Err(anyhow!(
+            "{label} must use only letters, numbers, '.', '_' or '-'"
+        ));
     }
     Ok(value.to_string())
 }
@@ -282,7 +302,10 @@ fn resolve_relative_path(root: &Path, value: &str, label: &str) -> Result<PathBu
     if relative.as_os_str().is_empty()
         || relative.is_absolute()
         || relative.components().any(|component| {
-            matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_))
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
         })
     {
         return Err(anyhow!("{label} must be a package-relative path"));
@@ -313,10 +336,15 @@ fn validate_asset_reference(source: &str) -> Result<()> {
     let source = Path::new(source);
     if source.is_absolute()
         || source.components().any(|component| {
-            matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_))
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
         })
     {
-        return Err(anyhow!("asset source must stay inside the question bank assets directory"));
+        return Err(anyhow!(
+            "asset source must stay inside the question bank assets directory"
+        ));
     }
     Ok(())
 }
@@ -339,17 +367,24 @@ fn validate_workspace_relative_path(value: &str) -> Result<()> {
     if path.as_os_str().is_empty()
         || path.is_absolute()
         || path.components().any(|component| {
-            matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_))
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
         })
     {
-        return Err(anyhow!("workspace file path must stay inside the attempt workspace"));
+        return Err(anyhow!(
+            "workspace file path must stay inside the attempt workspace"
+        ));
     }
     Ok(())
 }
 
 pub fn build_import_preview(data: &[u8]) -> Result<QuestionBankSummary> {
     if data.is_empty() || data.len() > MAX_PACKAGE_BYTES {
-        return Err(anyhow!("question bank package must be between 1 byte and {MAX_PACKAGE_BYTES} bytes"));
+        return Err(anyhow!(
+            "question bank package must be between 1 byte and {MAX_PACKAGE_BYTES} bytes"
+        ));
     }
     let staging = default_banks_dir().join(format!(".preview-{}", Uuid::new_v4().simple()));
     std::fs::create_dir_all(&staging)?;
@@ -363,7 +398,8 @@ pub fn build_import_preview(data: &[u8]) -> Result<QuestionBankSummary> {
 
 fn extract_package(data: &[u8], target: &Path) -> Result<()> {
     let cursor = std::io::Cursor::new(data);
-    let mut archive = ZipArchive::new(cursor).context("question bank package must be a ZIP file")?;
+    let mut archive =
+        ZipArchive::new(cursor).context("question bank package must be a ZIP file")?;
     if archive.len() > MAX_FILES {
         return Err(anyhow!("question bank package has too many files"));
     }
@@ -384,7 +420,9 @@ fn extract_package(data: &[u8], target: &Path) -> Result<()> {
         }
         total = total.saturating_add(entry.size() as usize);
         if total > MAX_EXTRACTED_BYTES {
-            return Err(anyhow!("question bank package expands beyond the size limit"));
+            return Err(anyhow!(
+                "question bank package expands beyond the size limit"
+            ));
         }
         if let Some(parent) = output.parent() {
             std::fs::create_dir_all(parent)?;
@@ -493,7 +531,10 @@ mod tests {
 
     #[test]
     fn accepts_stable_identifiers() {
-        assert_eq!(validate_identifier("sample-bank_1.0", "bank id").unwrap(), "sample-bank_1.0");
+        assert_eq!(
+            validate_identifier("sample-bank_1.0", "bank id").unwrap(),
+            "sample-bank_1.0"
+        );
         assert!(validate_identifier("not/allowed", "bank id").is_err());
     }
 
@@ -513,8 +554,7 @@ mod tests {
 }"#,
         )
         .expect("write manifest");
-        std::fs::write(root.path().join("assets/input.txt"), "sample input")
-            .expect("write asset");
+        std::fs::write(root.path().join("assets/input.txt"), "sample input").expect("write asset");
         std::fs::write(
             root.path().join("tasks/task_sample.md"),
             r#"---

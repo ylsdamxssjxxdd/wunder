@@ -156,6 +156,9 @@ impl MonitorStore for SqliteStorage {
     fn get_monitor_record(&self, session_id: &str) -> Result<Option<Value>> {
         self.get_monitor_record_impl(session_id)
     }
+    fn load_monitor_records_by_session_ids(&self, session_ids: &[String]) -> Result<Vec<Value>> {
+        self.load_monitor_records_by_session_ids_impl(session_ids)
+    }
     fn load_monitor_records(&self) -> Result<Vec<Value>> {
         self.load_monitor_records_impl()
     }
@@ -211,6 +214,24 @@ impl SessionLockStore for SqliteStorage {
 }
 
 impl AgentRuntimeStore for SqliteStorage {
+    fn claim_agent_task(&self, task_id: &str, now: f64) -> Result<bool> {
+        self.claim_agent_task_impl(task_id, now)
+    }
+    fn promote_agent_task(&self, task_id: &str, now: f64) -> Result<bool> {
+        self.promote_agent_task_impl(task_id, now)
+    }
+    fn update_agent_task_queue_payload(&self, task_id: &str, payload: &Value) -> Result<bool> {
+        self.update_agent_task_queue_payload_impl(task_id, payload)
+    }
+    fn set_session_lock_suspended(
+        &self,
+        session_id: &str,
+        suspended: bool,
+        max_active: i64,
+    ) -> Result<bool> {
+        self.set_session_lock_suspended_impl(session_id, suspended, max_active)
+    }
+
     fn insert_agent_task(&self, record: &AgentTaskRecord) -> Result<()> {
         self.insert_agent_task_impl(record)
     }
@@ -634,6 +655,12 @@ impl UserAccountStore for SqliteStorage {
 }
 
 impl ChatSessionStore for SqliteStorage {
+    fn get_chat_session_owner(&self, session_id: &str) -> Result<Option<String>> {
+        self.get_chat_session_owner_impl(session_id)
+    }
+    fn list_active_chat_session_ids(&self, user_id: &str, session_ids: &[String]) -> Result<Vec<String>> {
+        self.list_active_chat_session_ids_impl(user_id, session_ids)
+    }
     fn insert_chat_session_if_absent(&self, record: &ChatSessionRecord) -> Result<bool> {
         self.insert_chat_session_if_absent_impl(record)
     }

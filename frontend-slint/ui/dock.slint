@@ -1,12 +1,19 @@
-import { Theme } from "theme.slint";
+import { Theme, Conversation, FileCard } from "theme.slint";
 import { Action, SearchField } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 export component WorkDock inherits Rectangle {
     callback activate-task(int);
     callback preview-file(string);
+    callback refresh-files();
     in property <int> active-task;
-    in property <bool> connected: false;
+    in property <bool> files-loading;
+    in property <string> files-error;
+    in property <string> directory-path;
+    in property <bool> tasks-enabled: true;
+    callback browse-files();
+    in property <[Conversation]> conversations;
+    in property <[FileCard]> files;
     background: Theme.dock;
     private property <string> keyword;
     VerticalLayout {
@@ -21,20 +28,19 @@ export component WorkDock inherits Rectangle {
                     Image { width: 14px; height: 14px; source: @image-url("../assets/icons/list-check.svg"); colorize: Theme.accent-deep; }
                     Text { text: "任务列表"; font-size: 13px; font-weight: 600; color: Theme.text; }
                     Rectangle { horizontal-stretch: 1; }
-                    Text { text: root.connected ? "" : "3"; color: Theme.accent-deep; font-size: 11px; }
+                    Text { text: root.conversations.length; color: Theme.accent-deep; font-size: 11px; }
                 }
-                if root.connected : Text { text: "任务状态将在实时同步接入后显示"; color: Theme.muted; font-size: 11px; wrap: word-wrap; }
                 ScrollView {
                     horizontal-scrollbar-policy: always-off;
                     VerticalLayout {
                         alignment: start; spacing: 6px;
-                        for title[index] in (root.connected ? [] : ["当前任务", "历史任务 01", "历史任务 02"]) : Rectangle {
+                        for conversation[index] in root.conversations : Rectangle {
                             height: 56px; border-radius: 10px;
                             background: index == root.active-task ? Theme.accent-soft : transparent;
-                            Action { width: parent.width; height: parent.height; label: title; clicked => { root.activate-task(index); } }
+                            Action { width: parent.width; height: parent.height; label: conversation.title; enabled: root.tasks-enabled; clicked => { root.activate-task(index); } }
                             Image { x: 9px; y: 16px; width: 16px; height: 16px; source: @image-url("../assets/icons/comments.svg"); colorize: Theme.accent; }
-                            Text { x: 36px; y: 8px; width: parent.width - 44px; height: 18px; text: title; color: Theme.text; font-size: 12px; }
-                            Text { x: 36px; y: 30px; width: parent.width - 44px; height: 16px; text: index == 0 ? "已完成 · 主线程" : "已完成 · 演示记录"; color: Theme.muted; font-size: 11px; }
+                            Text { x: 36px; y: 8px; width: parent.width - 44px; height: 18px; text: conversation.title; color: Theme.text; font-size: 12px; overflow: elide; }
+                            Text { x: 36px; y: 30px; width: parent.width - 44px; height: 16px; text: conversation.time == "" ? conversation.preview : conversation.time; color: Theme.muted; font-size: 11px; overflow: elide; }
                         }
                     }
                 }
@@ -50,25 +56,25 @@ export component WorkDock inherits Rectangle {
                     Image { width: 14px; height: 14px; source: @image-url("../assets/icons/box-archive.svg"); colorize: Theme.accent-deep; }
                     Text { text: "工作目录"; font-size: 13px; font-weight: 600; color: Theme.text; }
                     Rectangle { horizontal-stretch: 1; }
-                    Action { icon: @image-url("../assets/icons/upload.svg"); label: "上传"; clicked => { root.preview-file("上传"); } }
-                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; clicked => { root.keyword = ""; } }
+                    Action { icon: @image-url("../assets/icons/folder-open.svg"); label: "浏览文件"; clicked => { root.browse-files(); } }
+                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.files-loading; clicked => { root.keyword = ""; root.refresh-files(); } }
                 }
                 SearchField { icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索文件"; text <=> root.keyword; }
                 ScrollView {
                     horizontal-scrollbar-policy: always-off;
                     VerticalLayout {
                         alignment: start; spacing: 4px;
-                        for name[index] in (root.connected ? [] : ["文件夹", "说明.md", "记录.txt", "附件.pdf"]) : Rectangle {
-                            height: root.keyword == "" || name.starts-with(root.keyword) ? 36px : 0px;
+                        for file[index] in root.files : Rectangle {
+                            height: root.keyword == "" || file.name.starts-with(root.keyword) ? 36px : 0px;
                             visible: self.height > 0px;
-                            Action { width: parent.width; height: parent.height; label: name; clicked => { root.preview-file(name); } }
-                            Image { x: 4px; y: 10px; width: 16px; height: 16px; source: index == 0 ? @image-url("../assets/icons/folder-open.svg") : @image-url("../assets/icons/file-lines.svg"); colorize: index == 0 ? Theme.accent : Theme.muted; }
-                            Text { x: 29px; width: parent.width - 72px; height: parent.height; text: name; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; }
-                            Text { x: parent.width - 42px; width: 38px; height: parent.height; text: index == 0 ? "目录" : "文件"; color: Theme.muted; font-size: 10px; vertical-alignment: center; horizontal-alignment: right; }
+                            Action { width: parent.width; height: parent.height; label: file.name; clicked => { root.preview-file(file.path); } }
+                            Image { x: 4px; y: 10px; width: 16px; height: 16px; source: file.entry-type == "dir" ? @image-url("../assets/icons/folder-open.svg") : @image-url("../assets/icons/file-lines.svg"); colorize: file.entry-type == "dir" ? Theme.accent : Theme.muted; }
+                            Text { x: 29px; width: parent.width - 72px; height: parent.height; text: file.name; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                            Text { x: parent.width - 42px; width: 38px; height: parent.height; text: file.entry-type == "dir" ? "目录" : file.size; color: Theme.muted; font-size: 10px; vertical-alignment: center; horizontal-alignment: right; overflow: elide; }
                         }
                     }
                 }
-                Text { height: 18px; text: root.connected ? "文件列表尚未接入" : "4 项 · 演示文件"; color: Theme.muted; font-size: 10px; }
+                Text { height: 18px; text: root.files-loading ? "正在读取…" : root.files-error != "" ? root.files-error : root.files.length == 0 ? "工作目录为空" : root.files.length + " 项 · " + root.directory-path; overflow: elide; color: Theme.muted; font-size: 10px; }
             }
         }
     }

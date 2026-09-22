@@ -2,61 +2,7 @@ use super::payload::normalize_tool_arguments_json;
 use super::{extract_stream_text, truncate_text, ChatMessage};
 use crate::core::json_schema::normalize_tool_input_schema;
 use crate::core::tool_args::sanitize_tool_call_payload;
-use crate::schemas::TokenUsage;
 use serde_json::{json, Value};
-
-pub(super) fn normalize_usage(raw: Option<&Value>) -> Option<TokenUsage> {
-    let raw = raw?;
-    let Value::Object(map) = raw else {
-        return None;
-    };
-    let to_u64 = |value: Option<&Value>| -> Option<u64> {
-        match value {
-            Some(Value::Number(num)) => num.as_u64(),
-            Some(Value::String(text)) => text.trim().parse::<u64>().ok(),
-            _ => None,
-        }
-    };
-    let parse_reasoning_tokens = |value: Option<&Value>| -> Option<u64> {
-        let Value::Object(details) = value? else {
-            return None;
-        };
-        to_u64(details.get("reasoning_tokens"))
-            .or_else(|| to_u64(details.get("reasoningTokens")))
-            .or_else(|| {
-                details
-                    .get("reasoning")
-                    .and_then(Value::as_object)
-                    .and_then(|reasoning| {
-                        to_u64(reasoning.get("tokens"))
-                            .or_else(|| to_u64(reasoning.get("token_count")))
-                    })
-            })
-    };
-    let input = to_u64(map.get("input_tokens"))
-        .or_else(|| to_u64(map.get("prompt_tokens")))
-        .unwrap_or(0);
-    let raw_output = to_u64(map.get("output_tokens"))
-        .or_else(|| to_u64(map.get("completion_tokens")))
-        .unwrap_or(0);
-    let reasoning_tokens = to_u64(map.get("reasoning_tokens"))
-        .or_else(|| to_u64(map.get("reasoningTokens")))
-        .or_else(|| parse_reasoning_tokens(map.get("output_tokens_details")))
-        .or_else(|| parse_reasoning_tokens(map.get("outputTokensDetails")))
-        .or_else(|| parse_reasoning_tokens(map.get("completion_tokens_details")))
-        .or_else(|| parse_reasoning_tokens(map.get("completionTokensDetails")))
-        .unwrap_or(0);
-    let output = raw_output.saturating_sub(reasoning_tokens);
-    let total = to_u64(map.get("total_tokens")).unwrap_or(input.saturating_add(raw_output));
-    if input == 0 && output == 0 && total == 0 {
-        return None;
-    }
-    Some(TokenUsage {
-        input,
-        output,
-        total,
-    })
-}
 
 pub(super) fn build_anthropic_messages(messages: &[ChatMessage]) -> (Option<String>, Vec<Value>) {
     let mut system_parts = Vec::new();

@@ -66,6 +66,7 @@
               class="tool-workflow-entry-meta"
             >
               <span
+                :title="t('chat.toolWorkflow.requestContextHint')"
                 :class="[
                   'tool-workflow-entry-context',
                   { 'is-empty': !entry.contextTokensLabel }
@@ -74,6 +75,7 @@
                 {{ entry.contextTokensLabel }}
               </span>
               <span
+                :title="t('chat.toolWorkflow.requestUsageHint')"
                 :class="[
                   'tool-workflow-entry-consumed',
                   { 'is-empty': !entry.consumedTokensLabel }
@@ -82,6 +84,7 @@
                 {{ entry.consumedTokensLabel }}
               </span>
               <span
+                :title="t('chat.toolWorkflow.durationHint')"
                 :class="[
                   'tool-workflow-entry-duration',
                   { 'is-empty': !entry.durationLabel }

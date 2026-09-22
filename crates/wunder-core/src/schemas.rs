@@ -152,7 +152,7 @@ pub struct SharedToolSpec {
     pub owner_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenUsage {
     #[serde(rename = "input_tokens")]
     pub input: u64,
@@ -160,6 +160,16 @@ pub struct TokenUsage {
     pub output: u64,
     #[serde(rename = "total_tokens")]
     pub total: u64,
+    /// Known reasoning tokens are excluded from output but included in total.
+    /// None means the provider did not supply a separate reasoning count.
+    #[serde(
+        default,
+        rename = "reasoning_tokens",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reasoning: Option<u64>,
+    #[serde(default)]
+    pub estimated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

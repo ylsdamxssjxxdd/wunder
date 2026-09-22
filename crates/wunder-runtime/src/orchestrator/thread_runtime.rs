@@ -7,6 +7,7 @@ pub(super) enum ThreadRuntimeStatus {
     NotLoaded,
     Idle,
     Running,
+    Queued,
     WaitingApproval,
     WaitingUserInput,
     #[allow(dead_code)]
@@ -19,6 +20,7 @@ impl ThreadRuntimeStatus {
             Self::NotLoaded => "not_loaded",
             Self::Idle => "idle",
             Self::Running => "running",
+            Self::Queued => "queued",
             Self::WaitingApproval => "waiting_approval",
             Self::WaitingUserInput => "waiting_user_input",
             Self::SystemError => "system_error",

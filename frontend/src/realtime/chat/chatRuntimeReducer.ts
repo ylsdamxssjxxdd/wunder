@@ -1,4 +1,7 @@
 import { captureTranscriptTail, restoreTranscriptTail } from './chatTranscriptTail';
+import { normalizeTokenUsage } from '@/utils/tokenUsage';
+import { applyWorkflowMetrics, finishWorkflowMetrics } from './chatWorkflowMetrics';
+import { isCompactionOnlyWorkflowItems } from '@/utils/chatCompactionWorkflow';
 import { continuesRecoveryOnModelRequest, isChatRetryEventType, resolveChatRetryEvent } from './chatRetryState';
 import type {
   ChatRuntimeApplyResult,
@@ -840,7 +843,7 @@ const normalizeRuntimeEvent = (event: ChatRuntimeEvent): NormalizedRuntimeEvent 
     runtimeStatus: normalizeChatRuntimeStatus(
       event.runtime_status ?? payload.runtime_status ?? payload.thread_status ?? payload.status
     ),
-    createdAt: normalizeCreatedAt(event.created_at ?? payload.created_at ?? payload.createdAt),
+    createdAt: normalizeCreatedAt(event.created_at ?? payload.created_at ?? payload.createdAt ?? payload.timestamp),
     payload
   };
 };
@@ -1152,7 +1155,7 @@ const applyAssistantFinal = (
   message.final = true;
   message.failed = false;
   message.cancelled = false;
-  settleProjectedWorkflowItems(message, 'completed');
+  settleProjectedWorkflowItems(message, 'completed', event.payload.timestamp ?? event.created_at);
   markMessageStructureChanged(message);
   markVisibleMessageTopologyChanged(session);
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
@@ -1184,6 +1187,7 @@ const applyToolActivity = (
     clearAssistantTextAtToolBoundary(message);
   }
   upsertToolWorkflowItem(message, event, completed ? 'completed' : 'loading', modelTurn);
+  if (message.display) message.display.manual_compaction_marker = false;
   syncProjectedToolCallStats(message);
   message.status = completed ? 'streaming' : 'tooling';
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
@@ -1208,6 +1212,7 @@ const applyToolFailed = (
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
   const message = ensureAssistantMessageForModelTurn(session, event, 'tooling');
   upsertToolWorkflowItem(message, event, 'failed', modelTurn);
+  if (message.display) message.display.manual_compaction_marker = false;
   syncProjectedToolCallStats(message);
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
   markMessageStructureChanged(message);
@@ -1334,7 +1339,7 @@ const applyTurnTerminal = (
       }
       message.status = 'failed';
       message.failed = true;
-      settleProjectedWorkflowItems(message, 'failed');
+      settleProjectedWorkflowItems(message, 'failed', event.payload.timestamp ?? event.created_at);
       markMessageStructureChanged(message);
     } else if (terminal === 'cancelled') {
       if (event.content && !message.content) {
@@ -1345,7 +1350,7 @@ const applyTurnTerminal = (
       }
       message.status = 'cancelled';
       message.cancelled = true;
-      settleProjectedWorkflowItems(message, 'failed');
+      settleProjectedWorkflowItems(message, 'failed', event.payload.timestamp ?? event.created_at);
       markMessageStructureChanged(message);
     }
   });
@@ -1438,6 +1443,19 @@ const applySessionRuntime = (
     return;
   }
   if (isChatRuntimeBusyStatus(explicitStatus)) {
+    const data = asRecord(event.payload.data);
+    const queueState = firstText(data.queue_state, event.payload.queue_state);
+    if (explicitStatus === 'queued' && queueState === 'suspended') {
+      const message = [...session.messages].reverse().map(id => session.messageById[id])
+        .find(message => message?.role === 'assistant');
+      if (message) {
+        message.status = 'queued';
+        upsertProjectedQueueWorkflowItem(message, {
+          ...event, payload: {source_event_type:'queue_enter', reason:'admin_preempted', queue_state:queueState}
+        });
+        markMessageStructureChanged(message);
+      }
+    }
     if (explicitStatus === 'running') {
       promoteQueuedModelTurnForRuntimeStart(session, event);
     }
@@ -1457,11 +1475,12 @@ const applyQueueStatus = (
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
   const message = ensureAssistantMessageForModelTurn(session, event, 'queued');
   upsertProjectedQueueWorkflowItem(message, event);
-  message.status = 'queued';
+  const resumed = event.payload.source_event_type === 'queue_start';
+  message.status = resumed ? 'streaming' : 'queued';
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
   markMessageStructureChanged(message);
-  modelTurn.status = 'waiting_first_output';
-  setSessionBusy(session, 'queued', 'queued');
+  modelTurn.status = resumed ? 'streaming' : 'waiting_first_output';
+  setSessionBusy(session, resumed ? 'running' : 'queued', resumed ? 'streaming' : 'queued');
 };
 
 const isQueueMessageStillWaiting = (
@@ -4326,6 +4345,7 @@ const upsertToolWorkflowItem = (
     next.tool_result_raw_detail = rawResultDetail;
   }
   attachWorkflowContextSnapshot(next, message, detailSource, modelTurn);
+  applyWorkflowMetrics(next, detailSource, sourceType, payload.timestamp ?? event.created_at);
 
   if (existing) {
     Object.assign(existing, next);
@@ -4463,7 +4483,9 @@ const applyProjectedWorkflowDisplay = (
     return;
   }
   if (eventType === 'compaction' || eventType === 'compaction_progress' || eventType === 'compaction_notice') {
-    display.manual_compaction_marker = true;
+    // An automatic compaction inside a tool loop must not hide the entire loop
+    // behind a standalone divider while the assistant body is still empty.
+    display.manual_compaction_marker = isCompactionOnlyWorkflowItems(message.workflowItems);
     if (status !== 'loading') {
       display.resume_available = false;
     }
@@ -4496,7 +4518,7 @@ const applyProjectedUsageStatsDisplay = (
     }
     applyProjectedTimingStats(stats, source);
     applyProjectedContextUsageStats(stats, source, normalizedUsage);
-  } else if (sourceType === 'round_usage') {
+  } else if (sourceType === 'round_usage' || sourceType === 'model_usage') {
     if (normalizedRoundUsage) {
       stats.roundUsage = normalizedRoundUsage;
       stats.round_usage = normalizedRoundUsage;
@@ -4509,6 +4531,9 @@ const applyProjectedUsageStatsDisplay = (
     applyProjectedContextUsageStats(stats, source);
   } else if (sourceType === 'quota_usage') {
     applyProjectedQuotaStats(stats, source);
+  }
+  if (resolveProjectedContextTokensForEvent(source, event, payload) !== null) {
+    stats.contextSnapshotSeq = event.eventSeq;
   }
   mirrorProjectedStatsDisplay(display, stats);
 };
@@ -4535,14 +4560,16 @@ const updateWorkflowContextSnapshotRecord = (
   const source = Object.keys(data).length > 0 ? data : payload;
   const contextTokens = resolveProjectedContextTokensForEvent(source, event, payload);
   const contextTotalTokens = resolveProjectedContextTotalTokens(source);
-  if ((contextTokens === null || contextTokens <= 0) && contextTotalTokens === null) return;
+  if (contextTokens === null && contextTotalTokens === null) return;
+  const previous = asRecord(target[WORKFLOW_CONTEXT_SNAPSHOT_KEY]);
   const snapshot: Record<string, unknown> = {
+    ...(previous.modelTurnId === event.modelTurnId ? previous : {}),
     sourceEventType: normalizeText(payload.source_event_type) || event.type,
     modelTurnId: event.modelTurnId || undefined,
     model_turn_id: event.modelTurnId || undefined,
     eventSeq: event.eventSeq ?? null
   };
-  if (contextTokens !== null && contextTokens > 0) {
+  if (contextTokens !== null) {
     snapshot.contextTokens = contextTokens;
     snapshot.context_tokens = contextTokens;
     snapshot.context_occupancy_tokens = contextTokens;
@@ -4555,7 +4582,8 @@ const updateWorkflowContextSnapshotRecord = (
     snapshot.max_context = contextTotalTokens;
   }
   snapshot.context_usage = {
-    ...(contextTokens !== null && contextTokens > 0
+    ...asRecord(snapshot.context_usage),
+    ...(contextTokens !== null
       ? {
           context_tokens: contextTokens,
           contextTokens,
@@ -4580,7 +4608,7 @@ const resolveWorkflowContextSnapshot = (
 ): { contextTokens: number | null; contextTotalTokens: number | null } | null => {
   const contextTokens = resolveProjectedContextTokens(source);
   const contextTotalTokens = resolveProjectedContextTotalTokens(source);
-  if ((contextTokens === null || contextTokens <= 0) && contextTotalTokens === null) return null;
+  if (contextTokens === null && contextTotalTokens === null) return null;
   return { contextTokens, contextTotalTokens };
 };
 
@@ -4589,7 +4617,7 @@ const writeWorkflowContextFields = (
   contextTokens: number | null,
   contextTotalTokens: number | null
 ): void => {
-  if (contextTokens !== null && contextTokens > 0) {
+  if (contextTokens !== null) {
     item.contextTokens = contextTokens;
     item.context_tokens = contextTokens;
     item.context_occupancy_tokens = contextTokens;
@@ -4604,7 +4632,7 @@ const writeWorkflowContextFields = (
   const existingUsage = asRecord(item.context_usage);
   item.context_usage = {
     ...existingUsage,
-    ...(contextTokens !== null && contextTokens > 0
+    ...(contextTokens !== null
       ? {
           context_tokens: contextTokens,
           contextTokens,
@@ -4650,7 +4678,7 @@ const attachWorkflowContextSnapshot = (
   const messageSnapshot = canUseMessageSnapshot
     ? resolveWorkflowContextSnapshot(messageSnapshotRecord)
     : null;
-  if (existingContextTokens !== null && existingContextTokens > 0) {
+  if (existingContextTokens !== null) {
     if (existingContextTotalTokens === null) {
       const snapshotTotal =
         modelTurnSnapshot?.contextTotalTokens ?? messageSnapshot?.contextTotalTokens ?? null;
@@ -4674,7 +4702,7 @@ const backfillWorkflowItemsContextSnapshot = (
   message.workflowItems.forEach((item) => {
     if (!isPlainRecord(item)) return;
     const itemModelTurnId = firstText(item.modelTurnId, item.model_turn_id);
-    if (itemModelTurnId && modelTurn?.id && itemModelTurnId !== modelTurn.id) return;
+    if (modelTurn?.id && itemModelTurnId !== modelTurn.id) return;
     attachWorkflowContextSnapshot(item, message, undefined, modelTurn);
   });
 };
@@ -4846,9 +4874,10 @@ const applyProjectedContextUsageStats = (
   usageFallback?: { input: number; output: number; total: number } | null
 ): void => {
   const contextTokens = resolveProjectedContextTokens(source) ??
-    (usageFallback && usageFallback.total > 0 ? usageFallback.total : null);
+    (source.estimated !== true && asRecord(source.usage).estimated !== true &&
+      usageFallback && usageFallback.input > 0 ? usageFallback.input : null);
   const contextTotalTokens = resolveProjectedContextTotalTokens(source);
-  if (contextTokens !== null && contextTokens > 0) {
+  if (contextTokens !== null) {
     stats.contextTokens = contextTokens;
     stats.context_tokens = contextTokens;
     stats.context_occupancy_tokens = contextTokens;
@@ -5005,41 +5034,7 @@ const isSyntheticRuntimeMessage = (
 ): boolean => isPlainRecord(message?.display) &&
   (message.display.isGreeting === true || message.display.is_greeting === true);
 
-const normalizeProjectedUsagePayload = (
-  value: unknown
-): { input: number; output: number; total: number } | null => {
-  const source = parseProjectedUsageRecord(value);
-  if (!source) return null;
-  const input = parseNonNegativeInt(
-    source.input_tokens ??
-      source.prompt_tokens ??
-      source.inputTokens ??
-      source.promptTokens ??
-      source.input ??
-      source.prompt
-  );
-  const output = parseNonNegativeInt(
-    source.output_tokens ??
-      source.completion_tokens ??
-      source.outputTokens ??
-      source.completionTokens ??
-      source.output ??
-      source.completion
-  );
-  const total = parseNonNegativeInt(source.total_tokens ?? source.totalTokens ?? source.total);
-  if (input === null && output === null && total === null) return null;
-  const normalizedInput = input ?? 0;
-  let normalizedOutput = output ?? 0;
-  const normalizedTotal = total ?? normalizedInput + normalizedOutput;
-  if (normalizedOutput <= 0 && normalizedTotal > normalizedInput) {
-    normalizedOutput = normalizedTotal - normalizedInput;
-  }
-  return {
-    input: normalizedInput,
-    output: normalizedOutput,
-    total: normalizedTotal
-  };
-};
+const normalizeProjectedUsagePayload = normalizeTokenUsage;
 
 const parseProjectedUsageRecord = (value: unknown): Record<string, unknown> | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -5092,8 +5087,9 @@ const resolveProjectedContextTokensForEvent = (
   if (explicit !== null) return explicit;
   const sourceType = normalizeText(payload.source_event_type) || event.type;
   if (sourceType !== 'llm_output' && sourceType !== 'token_usage') return null;
+  if (source.estimated === true || asRecord(source.usage).estimated === true) return null;
   const usage = normalizeProjectedUsagePayload(source.usage ?? source);
-  return usage && usage.total > 0 ? usage.total : null;
+  return usage && usage.input > 0 ? usage.input : null;
 };
 
 const resolveProjectedContextTotalTokens = (
@@ -5183,6 +5179,8 @@ const upsertProjectedWorkflowEventItem = (
     detail: stringifyWorkflowDetail(detailSource),
     status,
     eventType: eventType || 'workflow_event',
+    modelTurnId: modelTurn?.id || event.modelTurnId,
+    model_turn_id: modelTurn?.id || event.modelTurnId,
     sourceEventType: sourceType || event.type,
     updatedSeq: event.eventSeq ?? message.updatedSeq
   };
@@ -5249,6 +5247,11 @@ const upsertProjectedWorkflowEventItem = (
     next.tool = 'context_compaction';
     next.toolCallId = refs.toolCallId || resolveCompactionWorkflowRef(event, detailSource);
     next.tool_call_id = next.toolCallId;
+    if (status === 'completed') {
+      const afterTokens = parseNonNegativeInt(detailSource.final_context_tokens ??
+        detailSource.observed_context_tokens_after ?? detailSource.context_tokens_after);
+      if (afterTokens !== null) writeWorkflowContextFields(next, afterTokens, null);
+    }
   }
   attachWorkflowContextSnapshot(next, message, detailSource, modelTurn);
 
@@ -5901,13 +5904,15 @@ const markVisibleMessageTopologyChanged = (session: ChatRuntimeSessionProjection
 
 const settleProjectedWorkflowItems = (
   message: ChatRuntimeMessageProjection,
-  terminalStatus: 'completed' | 'failed'
+  terminalStatus: 'completed' | 'failed',
+  eventTimestamp?: unknown
 ): void => {
   if (Array.isArray(message.workflowItems)) {
     message.workflowItems.forEach((item) => {
       const status = normalizeText(item.status);
       if (ACTIVE_WORKFLOW_STATUSES.has(status)) {
         item.status = terminalStatus;
+        finishWorkflowMetrics(item, eventTimestamp);
       }
     });
   }
@@ -5929,7 +5934,8 @@ const settleProjectedRetryWorkflowItems = (
 
 const settleProjectedSubagents = (
   message: ChatRuntimeMessageProjection,
-  terminalStatus: 'completed' | 'failed'
+  terminalStatus: 'completed' | 'failed',
+  eventTimestamp?: unknown
 ): void => {
   if (!Array.isArray(message.subagents)) return;
   message.subagents.forEach((item) => {

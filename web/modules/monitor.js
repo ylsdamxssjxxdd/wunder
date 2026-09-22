@@ -12,6 +12,7 @@ import {
 } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
+import { appendQueuePriorityAction } from "./monitor-queue.js";
 import { getCurrentLanguage, t } from "./i18n.js?v=20260710-01";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -2365,7 +2366,8 @@ const renderMonitorTable = (body, emptyNode, sessions, options = {}) => {
     const stageCell = document.createElement("td");
     stageCell.textContent = session.stage || "-";
     const actionCell = document.createElement("td");
-    if (statusMatches(session.status, "active")) {
+    appendQueuePriorityAction(actionCell, session, loadMonitorData);
+    if (statusMatches(session.status, "active") || statusMatches(session.status, "queued")) {
       const btn = document.createElement("button");
       btn.className = "danger";
       btn.textContent = t("monitor.actions.cancel");

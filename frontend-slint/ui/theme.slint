@@ -17,7 +17,9 @@ export global Theme {
     out property <brush> composer: @linear-gradient(180deg, #fff8f3 0%, #fff2e9 100%);
 }
 export struct Conversation { id: string, title: string, preview: string, time: string }
-export struct ChatMessage { text: string, mine: bool, time: string, workflow: bool, state: string }
-export struct AgentCard { id: string, name: string, description: string, model: string, status: string }
+export struct TextBlock { text: string, kind: int }
+export struct ChatMessage { text: string, mine: bool, time: string, workflow: bool, state: string, blocks: [TextBlock] }
+export struct FileCard { name: string, path: string, entry-type: string, size: string }
+export struct AgentCard { id: string, name: string, description: string, model: string, system-prompt: string, status: string }
 export struct ToolCard { name: string, description: string, category: string }
 export struct ModelCard { key: string, provider: string, model: string, base-url: string, model-type: string, is-default: bool }

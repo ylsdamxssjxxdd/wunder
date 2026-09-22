@@ -35,6 +35,9 @@ struct LlmRoundMetrics {
     output_tokens: Option<i64>,
     prefill_duration_s: Option<f64>,
     decode_duration_s: Option<f64>,
+    explicit_decode_timing: bool,
+    first_content_ts: Option<f64>,
+    last_content_ts: Option<f64>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -254,7 +257,6 @@ impl LlmSpeedSummary {
 pub fn build_llm_speed_summary(events: &[LlmSpeedEvent<'_>]) -> LlmSpeedSummary {
     let mut rounds: HashMap<i64, LlmRoundMetrics> = HashMap::new();
     let mut first_round: Option<i64> = None;
-    let mut latest_round: Option<i64> = None;
     let mut last_round_seen: Option<i64> = None;
     let mut implicit_round: i64 = 0;
     let mut last_round_number: Option<i64> = None;
@@ -264,7 +266,6 @@ pub fn build_llm_speed_summary(events: &[LlmSpeedEvent<'_>]) -> LlmSpeedSummary 
     fn reset_request(
         rounds: &mut HashMap<i64, LlmRoundMetrics>,
         first_round: &mut Option<i64>,
-        latest_round: &mut Option<i64>,
         last_round_seen: &mut Option<i64>,
         implicit_round: &mut i64,
         last_round_number: &mut Option<i64>,
@@ -273,7 +274,6 @@ pub fn build_llm_speed_summary(events: &[LlmSpeedEvent<'_>]) -> LlmSpeedSummary 
     ) {
         rounds.clear();
         *first_round = None;
-        *latest_round = None;
         *last_round_seen = None;
         *implicit_round = 0;
         *last_round_number = None;
@@ -286,7 +286,6 @@ pub fn build_llm_speed_summary(events: &[LlmSpeedEvent<'_>]) -> LlmSpeedSummary 
             reset_request(
                 &mut rounds,
                 &mut first_round,
-                &mut latest_round,
                 &mut last_round_seen,
                 &mut implicit_round,
                 &mut last_round_number,
@@ -307,7 +306,6 @@ pub fn build_llm_speed_summary(events: &[LlmSpeedEvent<'_>]) -> LlmSpeedSummary 
                         reset_request(
                             &mut rounds,
                             &mut first_round,
-                            &mut latest_round,
                             &mut last_round_seen,
                             &mut implicit_round,
                             &mut last_round_number,
@@ -349,6 +347,16 @@ pub fn build_llm_speed_summary(events: &[LlmSpeedEvent<'_>]) -> LlmSpeedSummary 
                         entry.first_output_ts = event.timestamp_s;
                     }
                     entry.last_output_ts = event.timestamp_s;
+                    if event
+                        .data
+                        .get("delta")
+                        .or_else(|| event.data.get("content"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|text| !text.is_empty())
+                    {
+                        entry.first_content_ts = entry.first_content_ts.or(event.timestamp_s);
+                        entry.last_content_ts = event.timestamp_s;
+                    }
                 }
             }
             "llm_output" => {
@@ -375,12 +383,10 @@ pub fn build_llm_speed_summary(events: &[LlmSpeedEvent<'_>]) -> LlmSpeedSummary 
                         entry.prefill_duration_s =
                             parse_f64_value(event.data.get("prefill_duration_s"));
                     }
-                    if entry.decode_duration_s.is_none() {
+                    if event.data.get("decode_duration_s").is_some() {
+                        entry.explicit_decode_timing = true;
                         entry.decode_duration_s =
                             parse_f64_value(event.data.get("decode_duration_s"));
-                    }
-                    if entry.output_tokens.is_some() {
-                        latest_round = Some(round);
                     }
                 }
             }
@@ -403,12 +409,10 @@ pub fn build_llm_speed_summary(events: &[LlmSpeedEvent<'_>]) -> LlmSpeedSummary 
                         entry.prefill_duration_s =
                             parse_f64_value(event.data.get("prefill_duration_s"));
                     }
-                    if entry.decode_duration_s.is_none() {
+                    if event.data.get("decode_duration_s").is_some() {
+                        entry.explicit_decode_timing = true;
                         entry.decode_duration_s =
                             parse_f64_value(event.data.get("decode_duration_s"));
-                    }
-                    if entry.output_tokens.is_some() {
-                        latest_round = Some(round);
                     }
                 }
             }
@@ -420,9 +424,10 @@ pub fn build_llm_speed_summary(events: &[LlmSpeedEvent<'_>]) -> LlmSpeedSummary 
     let mut earliest_output_ts: Option<f64> = None;
     let mut earliest_output_round: Option<i64> = None;
     let mut latest_output_ts: Option<f64> = None;
-    let mut output_tokens_total: i64 = 0;
     let mut decode_duration_total = 0.0;
     let mut has_decode_duration = false;
+    let mut timed_output_tokens = 0_i64;
+    let mut output_tokens_total = 0_i64;
     for (round, metrics) in &rounds {
         if let Some(start_ts) = metrics.start_ts {
             earliest_start_ts = Some(match earliest_start_ts {
@@ -446,32 +451,29 @@ pub fn build_llm_speed_summary(events: &[LlmSpeedEvent<'_>]) -> LlmSpeedSummary 
                 None => last_output_ts,
             });
         }
-        if let Some(tokens) = metrics.output_tokens {
-            if tokens > 0 {
-                output_tokens_total = output_tokens_total.saturating_add(tokens);
+        let duration = normalize_duration(metrics.decode_duration_s).or_else(|| {
+            if metrics.explicit_decode_timing {
+                return None;
             }
+            let duration = metrics.last_content_ts? - metrics.first_content_ts?;
+            (duration > 0.0).then_some(duration)
+        });
+        if let Some(tokens) = metrics.output_tokens.filter(|value| *value > 0) {
+            output_tokens_total = output_tokens_total.saturating_add(tokens);
         }
-        let decode_duration = normalize_duration(metrics.decode_duration_s);
-        if let Some(duration) = decode_duration {
+        // Only pair tokens and time from the same measured rounds. Explicit null
+        // means unavailable, never permission to substitute reasoning/tool time.
+        if let (Some(tokens), Some(duration)) = (metrics.output_tokens.filter(|v| *v > 0), duration)
+        {
+            timed_output_tokens = timed_output_tokens.saturating_add(tokens);
             decode_duration_total += duration;
             has_decode_duration = true;
-        } else if let (Some(first_output_ts), Some(last_output_ts)) =
-            (metrics.first_output_ts, metrics.last_output_ts)
-        {
-            let duration = (last_output_ts - first_output_ts).max(0.0);
-            if duration > 0.0 {
-                decode_duration_total += duration;
-                has_decode_duration = true;
-            }
         }
     }
 
     let prefill_round = earliest_output_round
         .or(first_round)
         .or_else(|| rounds.keys().copied().min());
-    let decode_round = latest_round
-        .or(last_round_seen)
-        .or_else(|| rounds.keys().copied().max());
     let prefill_metrics = prefill_round.and_then(|round| rounds.get(&round));
     let prefill_tokens = prefill_metrics.and_then(|metrics| metrics.input_tokens);
     let mut prefill_duration_s = prefill_metrics.and_then(|metrics| metrics.prefill_duration_s);
@@ -490,7 +492,7 @@ pub fn build_llm_speed_summary(events: &[LlmSpeedEvent<'_>]) -> LlmSpeedSummary 
         .or(earliest_output_ts);
     if let (Some(start_ts), Some(first_output_ts)) = (start_ts, first_output_ts) {
         let observed_duration = (first_output_ts - start_ts).max(0.0);
-        if prefill_duration_s.is_none_or(|provided| observed_duration > provided) {
+        if prefill_duration_s.is_none() {
             prefill_duration_s = Some(observed_duration);
             prefill_speed_lower_bound = true;
         }
@@ -503,42 +505,10 @@ pub fn build_llm_speed_summary(events: &[LlmSpeedEvent<'_>]) -> LlmSpeedSummary 
         _ => None,
     };
 
-    let decode_metrics = decode_round.and_then(|round| rounds.get(&round));
-    let decode_tokens = if output_tokens_total > 0 {
-        Some(output_tokens_total)
-    } else {
-        decode_metrics.and_then(|metrics| metrics.output_tokens)
-    };
-    let mut decode_duration_s = if has_decode_duration && decode_duration_total > 0.0 {
-        Some(decode_duration_total)
-    } else {
-        match (earliest_output_ts, latest_output_ts) {
-            (Some(start), Some(end)) => {
-                let duration = (end - start).max(0.0);
-                (duration > 0.0).then_some(duration)
-            }
-            _ => None,
-        }
-    };
-    if decode_duration_s.is_none() {
-        decode_duration_s = decode_metrics
-            .and_then(|metrics| normalize_duration(metrics.decode_duration_s))
-            .or_else(|| {
-                decode_metrics.and_then(|metrics| {
-                    let first_output_ts = metrics.first_output_ts?;
-                    let last_output_ts = metrics.last_output_ts?;
-                    let duration = (last_output_ts - first_output_ts).max(0.0);
-                    (duration > 0.0).then_some(duration)
-                })
-            });
-    }
-    let decode_duration_s = normalize_duration(decode_duration_s);
-    let decode_speed_tps = match (decode_tokens, decode_duration_s) {
-        (Some(tokens), Some(duration)) if tokens > 0 && duration > 0.0 => {
-            Some(tokens as f64 / duration)
-        }
-        _ => None,
-    };
+    // Report all output tokens, while calculating speed only from measured pairs.
+    let decode_tokens = (output_tokens_total > 0).then_some(output_tokens_total);
+    let decode_duration_s = has_decode_duration.then_some(decode_duration_total);
+    let decode_speed_tps = decode_duration_s.map(|duration| timed_output_tokens as f64 / duration);
     let decode_stream_chunk_tokens =
         (decode_stream_chunk_tokens_total > 0).then_some(decode_stream_chunk_tokens_total);
 
@@ -589,10 +559,6 @@ fn decode_tokens_from_usage(usage: Option<&TokenUsage>) -> Option<u64> {
     let usage = usage?;
     if usage.output > 0 {
         return Some(usage.output);
-    }
-    let decode_tokens = usage.total.saturating_sub(usage.input);
-    if decode_tokens > 0 {
-        return Some(decode_tokens);
     }
     None
 }
@@ -825,5 +791,37 @@ mod tests {
         accumulator.record_summary(&LlmSpeedSummary::default());
         accumulator.insert_into_map(&mut map);
         assert_eq!(map.get("visible_decode_speed_tps"), Some(&Value::Null));
+    }
+    #[test]
+    fn summary_pairs_only_measured_tokens_and_preserves_explicit_unknown_timing() {
+        let events = [
+            json!({"type":"llm_output", "timestamp":1, "data":{"model_round":1,
+                "usage":{"input_tokens":100,"output_tokens":100}, "decode_duration_s":2}}),
+            json!({"type":"llm_output_delta", "timestamp":5, "data":{"model_round":2,"reasoning_delta":"a"}}),
+            json!({"type":"llm_output_delta", "timestamp":15, "data":{"model_round":2,"delta":"b"}}),
+            json!({"type":"llm_output_delta", "timestamp":25, "data":{"model_round":2,"delta":"c"}}),
+            json!({"type":"llm_output", "timestamp":30, "data":{"model_round":2,
+                "usage":{"input_tokens":100,"output_tokens":400}, "decode_duration_s":null}}),
+        ];
+        let result = super::build_llm_speed_summary_from_value_events(&events);
+        assert_eq!(
+            (
+                result.decode_tokens,
+                result.decode_duration_s,
+                result.decode_speed_tps
+            ),
+            (Some(500), Some(2.0), Some(50.0))
+        );
+        let usage = crate::schemas::TokenUsage {
+            input: 100,
+            output: 0,
+            total: 140,
+            reasoning: Some(40),
+            estimated: false,
+        };
+        assert_eq!(
+            LlmSpeedSummary::default().resolve_decode_tokens(Some(&usage)),
+            None
+        );
     }
 }

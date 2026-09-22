@@ -28,7 +28,7 @@ pub fn run(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::erro
         };
         if matches!(checked, Ok(false)) { return; }
         let report = match &checked {
-            Ok(_) => "PASS: bridge agent/catalog/settings load, create agent, selected-agent session, model create/edit/default, chat send/history, selection refresh.\n".to_string(),
+            Ok(_) => "PASS: bridge agent/catalog/settings load, create agent, selected-agent session, model create/edit/default, chat send/history, selection refresh, agent edit, directory navigation/preview, runtime settings.\n".to_string(),
             Err(error) => format!("FAIL: {error}\n"),
         };
         let checked = std::fs::write(directory.join("smoke.txt"), report)
@@ -51,7 +51,17 @@ fn advance(
     step: &mut u8,
     session: &mut String,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    if app.get_saving()
+    if *step == 23 && app.get_busy() && app.get_stream_updates() > 3 {
+        // Input and pointer navigation must remain responsive during real deltas.
+        app.set_draft("输出期间草稿".into());
+        crate::smoke::click(app, 28.0, 160.0)?;
+        ensure(app.get_section() == 2, "navigation blocked by stream")?;
+        crate::smoke::click(app, 28.0, 102.0)?;
+        app.set_follow_output(false);
+    }
+    if app.get_files_loading()
+        || app.get_preview_loading()
+        || app.get_saving()
         || app.get_chat_loading()
         || app.get_session_loading()
         || app.get_creating_session()
@@ -167,12 +177,23 @@ fn advance(
             )?;
         }
         9 => {
-            ensure(
-                app.get_messages()
+            if !app
+                .get_messages()
+                .iter()
+                .any(|message| !message.mine && message.text == "测试回复")
+            {
+                let rows = app
+                    .get_messages()
                     .iter()
-                    .any(|message| !message.mine && message.text == "测试回复"),
-                "chat reply missing",
-            )?;
+                    .map(|message| format!("{}:{}", message.mine, message.text))
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                return Err(format!(
+                    "chat reply missing; status={}; rows={rows}",
+                    app.get_status()
+                )
+                .into());
+            }
             app.invoke_select_conversation(app.get_selected_conversation());
         }
         10 => {
@@ -221,6 +242,112 @@ fn advance(
             ensure(
                 app.get_active_session_id() == session.as_str() && app.get_draft() == "未发送内容",
                 "refresh changed session or draft",
+            )?;
+            app.invoke_save_agent(
+                "测试智能体".into(),
+                "测试描述".into(),
+                "  测试提示词\n第二行\n".into(),
+                "".into(),
+            );
+        }
+        14 => {
+            app.invoke_refresh_agents();
+        }
+        15 => {
+            ensure(
+                app.get_selected_agent_system_prompt().trim() == "测试提示词\n第二行",
+                "persisted prompt changed",
+            )?;
+            ensure(
+                app.get_selected_agent_model().is_empty(),
+                "default model inheritance lost",
+            )?;
+            app.set_section(2);
+            crate::smoke::snapshot(app, &directory.join("connected-agent-edit.png"))?;
+            // File fixtures are seeded into the default workspace, independently of agent containers.
+            app.set_active_agent_id("".into());
+            app.invoke_navigate_directory("".into());
+        }
+        16 => {
+            ensure(app.get_files_error().is_empty(), "workspace load failed")?;
+            let directory_entry = app
+                .get_files()
+                .iter()
+                .find(|file| file.name == "test-directory")
+                .ok_or("seeded directory missing")?;
+            ensure(directory_entry.entry_type == "dir", "wrong directory type")?;
+            app.invoke_open_file(directory_entry.path);
+        }
+        17 => {
+            ensure(
+                app.get_directory_path().contains("test-directory"),
+                "directory navigation failed",
+            )?;
+            let file = app
+                .get_files()
+                .iter()
+                .find(|file| file.name == "test.txt")
+                .ok_or("seeded file missing")?;
+            app.set_section(5);
+            crate::smoke::snapshot(app, &directory.join("connected-files.png"))?;
+            app.invoke_open_file(file.path);
+        }
+        18 => {
+            ensure(
+                app.get_preview_text() == "测试文件\n第二行\n",
+                "workspace preview changed",
+            )?;
+            crate::smoke::snapshot(app, &directory.join("connected-file-preview.png"))?;
+            app.set_preview_open(false);
+            app.invoke_navigate_directory(app.get_directory_parent());
+        }
+        19 => {
+            ensure(
+                app.get_files()
+                    .iter()
+                    .any(|file| file.name == "test-directory"),
+                "parent directory failed",
+            )?;
+            app.invoke_save_runtime(app.get_workspace_root(), "en-US".into());
+        }
+        20 => {
+            app.invoke_refresh_settings();
+        }
+        21 => {
+            ensure(
+                app.get_runtime_language() == "en-US",
+                "runtime settings were not persisted",
+            )?;
+            app.set_section(0);
+            app.invoke_new_thread();
+        }
+        22 => {
+            app.set_draft("流式压力测试".into());
+            app.invoke_send_message();
+        }
+        23 => {
+            let expected = format!("{}\n", "增量测试内容。".repeat(8)).repeat(600);
+            ensure(
+                app.get_messages()
+                    .iter()
+                    .any(|row| !row.mine && row.text == expected),
+                "stream text incomplete",
+            )?;
+            ensure(app.get_draft() == "输出期间草稿", "stream lost input draft")?;
+            ensure(!app.get_follow_output(), "stream forced scroll following")?;
+            ensure(
+                app.get_stream_updates() > 10,
+                "reply did not stream incrementally",
+            )?;
+            std::fs::write(
+                directory.join("stream-metrics.json"),
+                serde_json::json!({
+                    "bytes": app.get_stream_bytes(), "updates": app.get_stream_updates(),
+                    "max_ui_apply_ms": app.get_stream_max_ui_ms(), "channel_capacity": 128,
+                    "text_integrity": true, "input_during_stream": true,
+                    "navigation_during_stream": true, "follow_output_preserved": true,
+                })
+                .to_string(),
             )?;
             return Ok(true);
         }

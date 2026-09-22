@@ -638,6 +638,7 @@ fn build_round_usage_payload_keeps_context_occupancy_distinct_from_consumed_tota
             input: 120,
             output: 80,
             total: 200,
+            ..Default::default()
         },
         960,
         RoundInfo::new(3, 2),
@@ -676,14 +677,17 @@ fn persisted_message_stats_include_round_usage_and_decode_speed() {
             input: 10,
             output: 20,
             total: 30,
+            ..Default::default()
         },
         &TokenUsage {
             input: 30,
             output: 20,
             total: 50,
+            ..Default::default()
         },
         Some(80),
         &speed,
+        3.0,
     );
 
     assert_eq!(stats["round_usage"]["total_tokens"], json!(50));
@@ -801,20 +805,9 @@ fn local_full_event_logs_only_enable_for_embedded_modes() {
 }
 
 #[test]
-fn resolve_round_context_occupancy_prefers_latest_model_usage_total() {
-    let first = resolve_usage_context_occupancy_tokens(&TokenUsage {
-        input: 11675,
-        output: 4104,
-        total: 15779,
-    });
-    let second = resolve_usage_context_occupancy_tokens(&TokenUsage {
-        input: 7509,
-        output: 1,
-        total: 7510,
-    });
-    assert_eq!(first, Some(15779));
-    assert_eq!(second, Some(7510));
-    assert_eq!(resolve_round_context_occupancy_tokens(second, 3241), 7510);
+fn round_context_occupancy_keeps_only_explicit_snapshot() {
+    let explicit = Some(7510);
+    assert_eq!(resolve_round_context_occupancy_tokens(explicit, 3241), 7510);
     assert_eq!(resolve_round_context_occupancy_tokens(None, 3241), 3241);
     assert_eq!(resolve_round_context_occupancy_tokens(Some(-4), -11), 0);
 }

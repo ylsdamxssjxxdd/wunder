@@ -19,6 +19,7 @@ const CHAT_RENDER_EVENT_TYPES = new Set([
   'bad_tool_call_retry',
   'knowledge_request',
   'token_usage',
+  'model_usage',
   'round_usage',
   'context_usage',
   'quota_usage',

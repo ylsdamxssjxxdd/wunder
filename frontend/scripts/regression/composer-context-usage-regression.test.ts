@@ -63,7 +63,7 @@ test('composer context usage exposes running assistant raw value before display 
   assert.equal(source.runningContextTokens, 25888);
 });
 
-test('composer context usage merges session cache only after the assistant is stable', () => {
+test('composer context usage keeps latest assistant occupancy over stale session cache', () => {
   const source = resolveComposerContextUsageSource(
     [
       {
@@ -83,7 +83,7 @@ test('composer context usage merges session cache only after the assistant is st
   );
 
   assert.equal(source.runningAssistant, false);
-  assert.equal(source.contextTokens, 27018);
+  assert.equal(source.contextTokens, 25888);
 });
 
 test('composer context display clears both values when total tokens are missing', () => {
@@ -624,11 +624,11 @@ test('composer context usage keeps observed context ahead of preview fallback', 
     false
   );
 
-  assert.equal(source.contextTokens, 3500);
+  assert.equal(source.contextTokens, 3210);
   assert.equal(source.contextTotalTokens, 128000);
 });
 
-test('composer context usage keeps post-tool raw context resets visually monotonic', () => {
+test('composer context usage uses current observations after post-tool context decreases', () => {
   let state = resolveComposerRunningContextDisplayState({
     stableTokens: 26716,
     baseTokens: 26716,
@@ -637,7 +637,7 @@ test('composer context usage keeps post-tool raw context resets visually monoton
     runningRawTokens: 3504
   });
 
-  assert.equal(state.stableTokens, 26760);
+  assert.equal(state.stableTokens, 3504);
 
   state = resolveComposerRunningContextDisplayState({
     stableTokens: state.stableTokens,
@@ -647,7 +647,7 @@ test('composer context usage keeps post-tool raw context resets visually monoton
     runningRawTokens: 3847
   });
 
-  assert.equal(state.stableTokens, 27103);
+  assert.equal(state.stableTokens, 3847);
 
   state = resolveComposerRunningContextDisplayState({
     stableTokens: state.stableTokens,
@@ -657,8 +657,8 @@ test('composer context usage keeps post-tool raw context resets visually monoton
     runningRawTokens: 3578
   });
 
-  assert.equal(state.stableTokens, 27103);
-  assert.equal(state.baseTokens, 27103);
+  assert.equal(state.stableTokens, 3578);
+  assert.equal(state.baseTokens, 3578);
   assert.equal(state.rawBaseTokens, 3578);
 
   state = resolveComposerRunningContextDisplayState({
@@ -669,7 +669,7 @@ test('composer context usage keeps post-tool raw context resets visually monoton
     runningRawTokens: 3600
   });
 
-  assert.equal(state.stableTokens, 27125);
+  assert.equal(state.stableTokens, 3600);
 });
 
 test('composer context usage grows a new user round from the previous confirmed total instead of a stale request estimate', () => {

@@ -4,6 +4,12 @@ use anyhow::Result;
 use tokio_postgres::types::ToSql;
 
 pub(super) trait PostgresChatSessionStorage {
+    fn get_chat_session_owner_impl(&self, session_id: &str) -> Result<Option<String>>;
+    fn list_active_chat_session_ids_impl(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<Vec<String>>;
     fn upsert_chat_session_impl(&self, record: &ChatSessionRecord) -> Result<()>;
     fn insert_chat_session_if_absent_impl(&self, record: &ChatSessionRecord) -> Result<bool>;
     fn get_chat_session_impl(
@@ -47,6 +53,38 @@ pub(super) trait PostgresChatSessionStorage {
 }
 
 impl PostgresChatSessionStorage for PostgresStorage {
+    fn get_chat_session_owner_impl(&self, session_id: &str) -> Result<Option<String>> {
+        self.ensure_initialized()?;
+        Ok(self
+            .conn()?
+            .query_opt(
+                "SELECT user_id FROM chat_sessions WHERE session_id = $1",
+                &[&session_id.trim()],
+            )?
+            .map(|row| row.get(0)))
+    }
+
+    fn list_active_chat_session_ids_impl(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<Vec<String>> {
+        if session_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let mut result = Vec::new();
+        for chunk in session_ids.chunks(100) {
+            let rows = conn.query(
+                "SELECT session_id FROM chat_sessions WHERE user_id = $1 AND session_id = ANY($2) AND (status IS NULL OR status = '' OR status = 'active')",
+                &[&user_id, &chunk],
+            )?;
+            result.extend(rows.iter().map(|row| row.get::<_, String>(0)));
+        }
+        Ok(result)
+    }
+
     fn upsert_chat_session_impl(&self, record: &ChatSessionRecord) -> Result<()> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;

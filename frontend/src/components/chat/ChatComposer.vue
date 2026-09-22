@@ -500,9 +500,9 @@ import { clearWorkspaceDragPaths, hasWorkspaceDragPaths, readWorkspaceDragPaths 
 import {
   formatContextTokenCount,
   resolveStableComposerContextPair,
-  resolveComposerRunningContextDisplayState,
   resolveComposerContextUsageSource
 } from '@/components/chat/composerContextUsage';
+import { resolveComposerContextDisplay, type ComposerContextDisplayState } from './composerContextDisplay';
 
 const props = defineProps({
   loading: {
@@ -856,13 +856,6 @@ const normalizeTokenCount = (value: unknown): number | null => {
   }
   return Math.round(parsed);
 };
-const normalizePositiveTokenCount = (value: unknown): number | null => {
-  const normalized = normalizeTokenCount(value);
-  if (normalized === null || normalized <= 0) {
-    return null;
-  }
-  return normalized;
-};
 const resolveCurrentSession = (): Record<string, unknown> | null => {
   const activeSessionId = String(chatStore.activeSessionId || '').trim();
   if (!activeSessionId) {
@@ -915,7 +908,7 @@ const composerModelAriaLabel = computed(() => {
   return `${t('desktop.system.modelName')}: ${label}`;
 });
 const composerContextUsedTokensRaw = computed(() => {
-  const fromProps = normalizePositiveTokenCount(props.contextUsedTokens);
+  const fromProps = normalizeTokenCount(props.contextUsedTokens);
   if (fromProps !== null) {
     return fromProps;
   }
@@ -934,116 +927,22 @@ const composerContextTotalTokensRaw = computed(() => {
   const normalizedPreset = normalizeTokenCount(fromPreset);
   return normalizedPreset !== null && normalizedPreset > 0 ? normalizedPreset : null;
 });
-const contextDisplayAssistantSignature = computed(() => {
-  return composerContextUsageSource.value.assistantSignature;
-});
-const contextDisplayResetSignature = computed(() => {
-  return composerContextUsageSource.value.contextResetSignature;
-});
-const contextDisplaySessionId = computed(() => String(chatStore.activeSessionId || '').trim());
-const lastContextDisplaySessionId = ref<string>(contextDisplaySessionId.value);
-const lastContextDisplayAssistantSignature = ref<string>(contextDisplayAssistantSignature.value);
-const lastContextDisplayResetSignature = ref<string>(contextDisplayResetSignature.value);
-const composerContextUsedTokensStable = ref<number | null>(null);
-const composerContextTotalTokensStable = ref<number | null>(null);
-const composerContextAssistantBaseTokens = ref<number | null>(null);
-const composerContextAssistantRawBaseTokens = ref<number | null>(null);
-const composerContextAssistantLastRawTokens = ref<number | null>(null);
-watch(
-  [
-    contextDisplaySessionId,
-    contextDisplayAssistantSignature,
-    contextDisplayResetSignature,
-    () => Boolean(props.loading),
-    composerContextUsedTokensRaw,
-    composerContextTotalTokensRaw
-  ],
-  ([sessionId, assistantSignature, resetSignature, loading, rawUsed, rawTotal]) => {
-    const switchedSession = sessionId !== lastContextDisplaySessionId.value;
-    const switchedAssistant =
-      assistantSignature !== lastContextDisplayAssistantSignature.value;
-    const switchedContextReset =
-      Boolean(resetSignature) && resetSignature !== lastContextDisplayResetSignature.value;
-    lastContextDisplaySessionId.value = sessionId;
-    lastContextDisplayAssistantSignature.value = assistantSignature;
-    lastContextDisplayResetSignature.value = resetSignature;
-    if (switchedSession || switchedContextReset || !loading) {
-      const nextPair = resolveStableComposerContextPair(rawUsed, rawTotal);
-      composerContextUsedTokensStable.value = nextPair.used;
-      composerContextTotalTokensStable.value = nextPair.total;
-      composerContextAssistantBaseTokens.value = null;
-      composerContextAssistantRawBaseTokens.value = null;
-      composerContextAssistantLastRawTokens.value = null;
-      return;
-    }
-    if (switchedAssistant) {
-      const currentUsed = composerContextUsedTokensStable.value;
-      const currentTotal = composerContextTotalTokensStable.value;
-      const runningRaw = normalizePositiveTokenCount(
-        composerContextUsageSource.value.runningContextTokens
-      );
-      composerContextAssistantBaseTokens.value = currentUsed;
-      composerContextAssistantRawBaseTokens.value = runningRaw;
-      composerContextAssistantLastRawTokens.value = runningRaw;
-      const nextUsed =
-        rawUsed === null ? currentUsed : currentUsed === null ? rawUsed : Math.max(currentUsed, rawUsed);
-      const nextTotal =
-        rawTotal === null ? currentTotal : currentTotal === null ? rawTotal : Math.max(currentTotal, rawTotal);
-      const nextPair = resolveStableComposerContextPair(nextUsed, nextTotal);
-      composerContextUsedTokensStable.value = nextPair.used;
-      composerContextTotalTokensStable.value = nextPair.total;
-      return;
-    }
-    if (rawUsed !== null) {
-      const runningRaw = normalizePositiveTokenCount(
-        composerContextUsageSource.value.runningContextTokens
-      );
-      const current = composerContextUsedTokensStable.value;
-      if (
-        composerContextUsageSource.value.runningAssistant &&
-        runningRaw !== null
-      ) {
-        const next = resolveComposerRunningContextDisplayState({
-          stableTokens: current,
-          baseTokens: composerContextAssistantBaseTokens.value,
-          rawBaseTokens: composerContextAssistantRawBaseTokens.value,
-          lastRawTokens: composerContextAssistantLastRawTokens.value,
-          runningRawTokens: runningRaw
-        });
-        composerContextAssistantBaseTokens.value = next.baseTokens;
-        composerContextAssistantRawBaseTokens.value = next.rawBaseTokens;
-        composerContextAssistantLastRawTokens.value = next.lastRawTokens;
-        const nextPair = resolveStableComposerContextPair(
-          next.stableTokens,
-          composerContextTotalTokensStable.value
-        );
-        composerContextUsedTokensStable.value = nextPair.used;
-        composerContextTotalTokensStable.value = nextPair.total;
-        return;
-      }
-      const nextUsed = current === null ? rawUsed : Math.max(current, rawUsed);
-      const nextPair = resolveStableComposerContextPair(
-        nextUsed,
-        composerContextTotalTokensStable.value
-      );
-      composerContextUsedTokensStable.value = nextPair.used;
-      composerContextTotalTokensStable.value = nextPair.total;
-    }
-    if (rawTotal !== null) {
-      const current = composerContextTotalTokensStable.value;
-      const nextTotal = current === null ? rawTotal : Math.max(current, rawTotal);
-      const nextPair = resolveStableComposerContextPair(
-        composerContextUsedTokensStable.value,
-        nextTotal
-      );
-      composerContextUsedTokensStable.value = nextPair.used;
-      composerContextTotalTokensStable.value = nextPair.total;
-    }
-  },
-  { immediate: true }
+// Occupancy and capacity are snapshots; never accumulate display deltas.
+const composerContextSnapshot = computed<ComposerContextDisplayState>((previous) =>
+  resolveComposerContextDisplay(previous, {
+    scope: `${chatStore.activeSessionId || ''}:${composerModelName.value}`,
+    assistant: composerContextUsageSource.value.assistantSignature,
+    observed: normalizeTokenCount(props.contextUsedTokens) !== null ||
+      composerContextUsageSource.value.contextObserved === true,
+    used: composerContextUsedTokensRaw.value,
+    total: composerContextTotalTokensRaw.value
+  })
 );
-const composerContextUsedTokens = computed(() => composerContextUsedTokensStable.value);
-const composerContextTotalTokens = computed(() => composerContextTotalTokensStable.value);
+const composerContextPair = computed(() => resolveStableComposerContextPair(
+  composerContextSnapshot.value.used, composerContextSnapshot.value.total
+));
+const composerContextUsedTokens = computed(() => composerContextPair.value.used);
+const composerContextTotalTokens = computed(() => composerContextPair.value.total);
 const CONTEXT_WARNING_RATIO = 0.7;
 const CONTEXT_DANGER_RATIO = 0.9;
 const composerContextUsageRatio = computed(() => {

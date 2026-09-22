@@ -1,3 +1,4 @@
+import { sessionCatalogCheckIds, mergeSessionCatalogPage, cacheSessionCatalog } from './chatSessionCatalog';
 import { isChatSnapshotCurrent, readChatRealtimeRevision } from './chatSnapshotFreshness';
 import { defineStore } from 'pinia';
 
@@ -124,7 +125,7 @@ import { dismissStaleInquiryPanels, ensureGreetingMessage, hydrateSessionCommand
 import { hydrateMessage } from './chatMessageHydration';
 import { DEFAULT_AGENT_KEY, patchSessionRuntimeFields, persistActiveSession, persistAgentSession, persistDraftSession, syncGoalFromSessionRecord, syncGoalsFromSessionList } from './chatPersist';
 import { HISTORY_PAGE_LIMIT, clearDraftSessionBootstrapMarkers, clearRuntimeInteractiveControllers, clearSessionWatcher, normalizeHistoryPageLimit, recoverRuntimeInteractiveControllers, resolveKnownSessionEventFloor, resolveMaterializedMessageEventId, resolveMessageWindowMax, resolveSessionDetailMessageLimit, setSessionLoading } from './chatRuntimeControls';
-import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyLocalChatMessageRuntimeEvent, applyMessageWindow, applySessionRuntimeSnapshot, buildMessageIdentityDebugList, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, countAssistantStreamingMessages, ensureRuntime, filterSessionsByAgent, findOldestHistoryId, getHistoryState, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeForegroundHydratedMessagesWithLive, mergeRetainedActiveSessionIntoList, notifySessionSnapshot, purgeUnavailableSession, readSessionDetailSnapshot, readSessionEventsSnapshot, readSessionHydratedMessageVersion, readSessionListCacheEntry, refreshRuntimeStreamLifecycle, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveSessionKey, resolveSessionListCacheKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldApplySessionEventsSnapshotToProjection, shouldPreferCachedMessages, syncChatRuntimeProjectionFromSnapshot, touchSessionUpdatedAt, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
+import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyLocalChatMessageRuntimeEvent, applyMessageWindow, applySessionRuntimeSnapshot, buildMessageIdentityDebugList, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, countAssistantStreamingMessages, ensureRuntime, filterSessionsByAgent, findOldestHistoryId, getHistoryState, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeForegroundHydratedMessagesWithLive, notifySessionSnapshot, purgeUnavailableSession, readSessionDetailSnapshot, readSessionEventsSnapshot, readSessionHydratedMessageVersion, readSessionListCacheEntry, refreshRuntimeStreamLifecycle, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveSessionKey, resolveSessionListCacheKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldApplySessionEventsSnapshotToProjection, shouldPreferCachedMessages, syncChatRuntimeProjectionFromSnapshot, touchSessionUpdatedAt, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
 import { normalizeSnapshotMessage } from './chatSnapshot';
 import { buildMessage } from './chatStats';
 import { normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
@@ -149,10 +150,6 @@ const readLoadSessionsCacheEntry = (agentId: string | null, maxAgeMs: number) =>
   agentId === null
     ? readSessionListCacheEntry(ALL_SESSION_LIST_CACHE_KEY, { maxAgeMs })
     : readSessionListCacheEntry(agentId, { maxAgeMs });
-
-const writeLoadSessionsCache = (agentId: string | null, sessions: Record<string, unknown>[]) => {
-  writeSessionListCache(agentId === null ? ALL_SESSION_LIST_CACHE_KEY : agentId, sessions);
-};
 
 const resolveSessionOpenDetailLimit = (): number => resolveSessionDetailMessageLimit(isDesktopModeEnabled());
 
@@ -368,25 +365,15 @@ export const chatSessionOpenLoadActions = {
       const applyLoadedSessions = (
         items: unknown,
         source: string,
-        options: { writeCache?: boolean; loadedAt?: number } = {}
+        options: { writeCache?: boolean; loadedAt?: number; unavailable_session_ids?: unknown; checkedIds?: string[] } = {}
       ) => {
-        const incoming = normalizeSessionListItems(items);
-        const incomingIds = new Set(incoming.map(item => resolveSessionKey(item.id)));
-        // A first-page refresh cannot evict other agents or task pages loaded on demand.
-        const retained = this.sessions.filter(item => !incomingIds.has(resolveSessionKey(item.id)));
-        const nextSessions = mergeSessionsByIdPreservingRuntimeFields(
-          this.sessions,
-          [...incoming, ...retained],
-          patchSessionRuntimeFields,
-          sortSessionsByActivity
-        );
-        this.sessions = mergeRetainedActiveSessionIntoList(this, nextSessions);
+        mergeSessionCatalogPage(this, { items, unavailable_session_ids: options.unavailable_session_ids }, options.checkedIds);
         this.sessionsLoadedAt = Number.isFinite(Number(options.loadedAt))
           ? Number(options.loadedAt)
           : Date.now();
         syncGoalsFromSessionList(this, this.sessions);
         if (options.writeCache !== false) {
-          writeLoadSessionsCache(requestedAgentId, this.sessions);
+          cacheSessionCatalog(this, requestedAgentId);
         }
         syncDemoChatCache({ sessions: this.sessions });
         chatDebugLog('messenger.conversation', source, {
@@ -401,8 +388,11 @@ export const chatSessionOpenLoadActions = {
         return this.sessions;
       };
       const refreshSessions = async (source: string) => {
-        const { data } = await listSessions(Object.keys(params).length ? params : undefined);
-        return applyLoadedSessions(data?.data?.items || [], source);
+        const checkedIds = sessionCatalogCheckIds(this, requestedAgentId);
+        const { data } = await listSessions({ ...params, known_session_ids: checkedIds.join(',') });
+        return applyLoadedSessions(data?.data?.items, source, {
+          checkedIds, unavailable_session_ids: data?.data?.unavailable_session_ids
+        });
       };
       const scheduleBackgroundRefresh = (fallbackSessions: Record<string, unknown>[], ageMs: number) => {
         let backgroundRequest = sessionListCacheInFlight.get(cacheKey);

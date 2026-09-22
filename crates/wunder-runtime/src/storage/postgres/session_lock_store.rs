@@ -41,6 +41,8 @@ impl PostgresSessionLockStorage for PostgresStorage {
 
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
+        // Serialize admission counts across server processes.
+        tx.execute("LOCK TABLE session_locks IN SHARE ROW EXCLUSIVE MODE", &[])?;
         tx.execute("DELETE FROM session_locks WHERE expires_at <= $1", &[&now])?;
         let inserted = tx.execute(
             "INSERT INTO session_locks (session_id, user_id, agent_id, created_time, updated_time, expires_at) \
@@ -68,7 +70,10 @@ impl PostgresSessionLockStorage for PostgresStorage {
             });
         }
         let total: i64 = tx
-            .query_one("SELECT COUNT(*) FROM session_locks", &[])?
+            .query_one(
+                "SELECT COUNT(*) FROM session_locks WHERE suspended = 0",
+                &[],
+            )?
             .get(0);
         if total > max_sessions {
             tx.execute(

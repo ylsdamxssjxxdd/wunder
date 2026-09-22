@@ -1,4 +1,4 @@
-﻿// 前端国际化工具：集中管理文本与语言切换逻辑
+// 前端国际化工具：集中管理文本与语言切换逻辑
 const LOCALES = {
   "zh-CN": {
     "language.zh-CN": "简体中文",
@@ -1240,6 +1240,13 @@ const LOCALES = {
     "monitor.metric.sandbox.resources.detail": "CPU {cpu} / 内存 {memory}",
     "pagination.info": "共 {total} 条 · 第 {current} / {pages} 页 · 每页 {size} 条",
     "monitor.actions.cancel": "终止",
+    "monitor.queue.priority": "优先执行",
+    "monitor.queue.priorityHint": "提升排队优先级；必要时让正在执行的普通任务在动作结束后暂停，随后自动恢复。",
+    "monitor.queue.priorityConfirm": "优先执行此任务？必要时会暂停一个普通任务，并在此任务结束后自动恢复。",
+    "monitor.queue.priorityFailed": "任务已开始或队列操作失败，请刷新后重试。",
+    "monitor.queue.pausing": "已优先安排，正在等待当前动作结束并让出名额。",
+    "monitor.queue.prioritized": "已优先安排，轮到后自动执行。",
+
     "monitor.actions.delete": "删除",
     "monitor.filter.status": "状态",
     "monitor.filter.status.all": "全部",
@@ -2574,7 +2581,7 @@ const LOCALES = {
     "debug.stats.tokenUsageLabel": "Token 占用",
     "debug.stats.tokenUsage": "当前 {current} · 峰值 {peak}",
     "debug.stats.tokenBillingLabel": "Token 消耗",
-    "debug.stats.tokenBilling": "总 {total} · 输入 {input} · 输出 {output}",
+    "debug.stats.tokenBilling": "总 {total} · 输入 {input} · 正文 {output} · 思考 {reasoning}",
     "debug.stats.prefillSpeed": "预填充速度",
     "debug.stats.decodeSpeed": "解码速度",
     "debug.stats.llmRequests": "模型请求数",
@@ -3861,6 +3868,13 @@ const LOCALES = {
     "monitor.metric.sandbox.resources.detail": "CPU {cpu} / Memory {memory}",
     "pagination.info": "{total} total · Page {current} / {pages} · {size} per page",
     "monitor.actions.cancel": "Cancel",
+    "monitor.queue.priority": "Run first",
+    "monitor.queue.priorityHint": "Prioritize this task. If needed, pause ordinary work between actions and resume it automatically.",
+    "monitor.queue.priorityConfirm": "Prioritize this task? Ordinary work may pause after its current action and resume automatically afterwards.",
+    "monitor.queue.priorityFailed": "Task already started or queue update failed. Refresh and retry.",
+    "monitor.queue.pausing": "Prioritized. Waiting for the current action to yield its slot.",
+    "monitor.queue.prioritized": "Prioritized. Execution will start automatically.",
+
     "monitor.actions.delete": "Delete",
     "monitor.filter.status": "Status",
     "monitor.filter.status.all": "All",
@@ -5188,7 +5202,7 @@ const LOCALES = {
     "debug.stats.tokenUsageLabel": "Token Occupancy",
     "debug.stats.tokenUsage": "Current {current} · Peak {peak}",
     "debug.stats.tokenBillingLabel": "Token Usage",
-    "debug.stats.tokenBilling": "Total {total} · In {input} · Out {output}",
+    "debug.stats.tokenBilling": "Total {total} · In {input} · Text {output} · Reasoning {reasoning}",
     "debug.stats.prefillSpeed": "Prefill Speed",
     "debug.stats.decodeSpeed": "Decode Speed",
     "debug.stats.llmRequests": "LLM Requests",

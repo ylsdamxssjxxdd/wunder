@@ -67,6 +67,18 @@ impl Orchestrator {
         active_turn_round: RoundInfo,
         err: &OrchestratorError,
     ) {
+        let usage = emitter.accumulated_usage();
+        if usage.total > 0 {
+            // Preserve partial accounting when the turn fails after paid model calls.
+            let mut payload = json!({
+                "input_tokens": usage.input, "output_tokens": usage.output,
+                "reasoning_tokens": usage.reasoning, "total_tokens": usage.total,
+                "estimated": usage.estimated, "request_consumed_tokens": usage.total,
+                "usage_accounted": true,
+            });
+            active_turn_round.insert_into(payload.as_object_mut().expect("usage object"));
+            emitter.emit("round_usage", payload).await;
+        }
         emitter.emit("error", err.to_payload()).await;
         emit_turn_terminal_event(
             emitter,
@@ -258,6 +270,11 @@ impl Orchestrator {
             let emitter = emitter.clone();
             let execution_lock = Arc::clone(&execution_lock);
             async move {
+                let cancelled_call_id = planned.call.id.clone();
+                let cancelled_tool_name = planned.name.clone();
+                let invocation_started = Instant::now();
+                let outcome = async {
+                orchestrator.ensure_not_cancelled(session_id)?;
                 let PlannedToolCall {
                     mut call,
                     name,
@@ -629,15 +646,45 @@ impl Orchestrator {
                 result = orchestrator.normalize_tool_result_payload(&name, result);
                 result = orchestrator.finalize_tool_result(&name, result, started_at);
                 Ok(ToolExecutionOutcome { call, name, result })
+                }.await;
+                if let Err(err) = &outcome {
+                    let mut payload = ToolResultPayload::error(err.message().to_string(), json!({}));
+                    payload.insert_meta("duration_ms", json!(invocation_started.elapsed().as_millis() as u64));
+                    let mut event = payload.to_event_payload(&cancelled_tool_name);
+                    event["tool_call_id"] = json!(cancelled_call_id);
+                    event["status"] = json!("cancelled");
+                    round_info.insert_into(event.as_object_mut().expect("tool result object"));
+                    emitter.emit("tool_result", event).await;
+                }
+                outcome
             }
         }))
         .buffered(parallelism);
 
         let mut outcomes = Vec::new();
+        let mut failure = None;
+        // Drain cancelled siblings so every emitted call receives a terminal metric.
         while let Some(outcome) = stream.next().await {
-            outcomes.push(outcome?);
+            match outcome {
+                Ok(outcome) => outcomes.push(outcome),
+                Err(err) => {
+                    failure.get_or_insert(err);
+                }
+            }
         }
-        Ok(outcomes)
+        if let Some(err) = failure {
+            // Successful siblings have already finished; preserve their actual
+            // metrics before the turn closes instead of labelling them cancelled.
+            for outcome in outcomes {
+                let mut event = outcome.result.to_event_payload(&outcome.name);
+                event["tool_call_id"] = json!(outcome.call.id);
+                round_info.insert_into(event.as_object_mut().expect("tool result object"));
+                emitter.emit("tool_result", event).await;
+            }
+            Err(err)
+        } else {
+            Ok(outcomes)
+        }
     }
 
     async fn execute_tool_with_parallel_guard(

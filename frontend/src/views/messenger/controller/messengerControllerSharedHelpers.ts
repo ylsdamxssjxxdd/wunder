@@ -889,9 +889,7 @@ export function installMessengerControllerSharedHelpers(ctx: MessengerController
       }
       const targetAgent = ctx.normalizeAgentId(ctx.activeAgentId.value || ctx.selectedAgentId.value);
       const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
-      const reusableSessionId = ctx.resolveReusableFreshAgentSessionId(targetAgent, {
-          activeOnly: true
-      });
+      const reusableSessionId = ctx.resolveReusableFreshAgentSessionId(targetAgent);
       if (activeSessionId && reusableSessionId && activeSessionId === reusableSessionId) {
           if (options.notify === true) {
               ElMessage.info(ctx.t('chat.newSessionAlreadyCurrent'));
@@ -902,7 +900,7 @@ export function installMessengerControllerSharedHelpers(ctx: MessengerController
           ctx.creatingAgentSession.value = true;
           try {
               const sessionId = await ctx.openOrReuseFreshAgentSession(targetAgent, {
-                  reuseScope: 'active_only'
+                  reuseScope: 'any'
               });
               if (!sessionId)
                   return 'noop';

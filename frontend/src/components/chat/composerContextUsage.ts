@@ -9,6 +9,7 @@ export type ComposerContextUsageSource = {
   runningAssistant: boolean;
   runningContextTokens: number | null;
   contextResetSignature: string;
+  contextObserved?: boolean;
 };
 
 export type ComposerRunningContextDisplayInput = {
@@ -59,6 +60,7 @@ const resolveContextUsageRecord = (source: Record<string, unknown>): Record<stri
 type ComposerCompactionContextReset = {
   signature: string;
   afterTokens: number | null;
+  eventSeq: number | null;
 };
 
 const asObjectRecord = (value: unknown): Record<string, unknown> | null =>
@@ -180,6 +182,7 @@ const resolveMessageCompletedCompactionReset = (
     );
     return {
       afterTokens,
+      eventSeq: normalizeTokenCount(item.updatedSeq ?? item.updated_seq),
       signature: [messageIndex, cursor, workflowRef, status, source, afterTokens ?? '']
         .map((part) => String(part))
         .join(':')
@@ -191,25 +194,10 @@ const resolveMessageCompletedCompactionReset = (
 const resolveCompactionContextTokens = (
   reset: ComposerCompactionContextReset | null,
   sessionTokens: number | null,
-  assistantTokens: number | null
+  _assistantTokens: number | null
 ): number | null => {
   if (!reset) return null;
-  if (
-    sessionTokens !== null &&
-    (assistantTokens === null ||
-      sessionTokens <= assistantTokens ||
-      reset.afterTokens === null ||
-      sessionTokens <= reset.afterTokens)
-  ) {
-    return sessionTokens;
-  }
-  if (
-    reset.afterTokens !== null &&
-    (assistantTokens === null || reset.afterTokens <= assistantTokens)
-  ) {
-    return reset.afterTokens;
-  }
-  return null;
+  return reset.afterTokens ?? sessionTokens;
 };
 
 const buildContextResetSignature = (
@@ -225,7 +213,7 @@ const resolveExplicitAssistantContextTokens = (stats: ComposerContextStatsSource
     return null;
   }
   const contextUsage = resolveContextUsageRecord(stats);
-  return normalizePositiveTokenCount(
+  return normalizeTokenCount(
     stats.context_occupancy_tokens ??
       stats.contextOccupancyTokens ??
       contextUsage?.context_occupancy_tokens ??
@@ -261,37 +249,13 @@ const resolveFinalAssistantContextTokens = (stats: ComposerContextStatsSource): 
 export const resolveComposerRunningContextDisplayState = (
   input: ComposerRunningContextDisplayInput
 ): ComposerRunningContextDisplayState => {
-  let baseTokens = input.baseTokens;
-  let rawBaseTokens = input.rawBaseTokens;
-  const current = input.stableTokens;
-  const runningRaw = input.runningRawTokens;
-  if (baseTokens === null && current !== null) {
-    baseTokens = current;
-  }
-  if (rawBaseTokens === null) {
-    rawBaseTokens = runningRaw;
-  }
-  if (input.lastRawTokens !== null && runningRaw < input.lastRawTokens && current !== null) {
-    baseTokens = current;
-    rawBaseTokens = runningRaw;
-  }
-  if (baseTokens === null) {
-    return {
-      stableTokens: current === null ? runningRaw : Math.max(current, runningRaw),
-      baseTokens,
-      rawBaseTokens,
-      lastRawTokens: runningRaw
-    };
-  }
-  const displayTokens =
-    runningRaw >= baseTokens
-      ? runningRaw
-      : baseTokens + Math.max(0, runningRaw - rawBaseTokens);
+  // Context is a current snapshot, not a cumulative counter. Compaction,
+  // pruning and model changes can legitimately decrease it.
   return {
-    stableTokens: current === null ? displayTokens : Math.max(current, displayTokens),
-    baseTokens,
-    rawBaseTokens,
-    lastRawTokens: runningRaw
+    stableTokens: input.runningRawTokens,
+    baseTokens: input.runningRawTokens,
+    rawBaseTokens: input.runningRawTokens,
+    lastRawTokens: input.runningRawTokens
   };
 };
 
@@ -350,7 +314,7 @@ export const resolveSessionContextTokens = (session: ComposerContextSessionSourc
     return null;
   }
   const contextUsage = resolveContextUsageRecord(session);
-  return normalizePositiveTokenCount(
+  return normalizeTokenCount(
     session.context_occupancy_tokens ??
       session.contextOccupancyTokens ??
       contextUsage?.context_occupancy_tokens ??
@@ -482,16 +446,16 @@ export const resolveComposerContextUsageSource = (
     if (!current) continue;
     if (String(current.role || '').trim().toLowerCase() !== 'assistant') continue;
     const ownCompactionReset = resolveMessageCompletedCompactionReset(current, cursor);
-    if (shouldSkipComposerContextAssistant(current)) {
-      if (ownCompactionReset) {
+    const stats = asObjectRecord(current.stats);
+    const statsSeq = normalizeTokenCount(stats?.contextSnapshotSeq);
+    const observedAfterCompaction = ownCompactionReset && statsSeq !== null &&
+      ownCompactionReset.eventSeq !== null && statsSeq > ownCompactionReset.eventSeq;
+    if (shouldSkipComposerContextAssistant(current) && !observedAfterCompaction) {
+      if (ownCompactionReset && !trailingCompactionReset) {
         trailingCompactionReset = ownCompactionReset;
       }
       continue;
     }
-    const stats =
-      current.stats && typeof current.stats === 'object'
-        ? (current.stats as Record<string, unknown>)
-        : null;
     const runningAssistant = loading && isAssistantMessageRunning(current);
     const assistantContextTokens = runningAssistant
       ? resolveAssistantLiveContextTokens(stats)
@@ -502,7 +466,10 @@ export const resolveComposerContextUsageSource = (
     const sessionContextTokens = resolveSessionContextTokens(session);
     const sessionContextTokensAfterCompaction = resolveSessionContextTokensIncludingZero(session);
     const sessionTotalTokens = resolveSessionContextTotalTokens(session);
-    const compactionReset = ownCompactionReset ?? trailingCompactionReset;
+    // Once a newer observation arrives, an old compaction marker must stop
+    // forcing its zero/lower value onto every subsequent stream update.
+    const effectiveOwnReset = observedAfterCompaction ? null : ownCompactionReset;
+    const compactionReset = trailingCompactionReset ?? effectiveOwnReset;
     const compactionContextTokens = resolveCompactionContextTokens(
       compactionReset,
       sessionContextTokensAfterCompaction,
@@ -525,29 +492,24 @@ export const resolveComposerContextUsageSource = (
       runningContextTokens: runningAssistant
         ? compactionContextTokens ?? assistantContextTokens
         : null,
-      contextResetSignature
+      contextResetSignature,
+      contextObserved: compactionContextTokens !== null || assistantContextTokens !== null
     };
     if (runningAssistant) {
       return {
         ...source,
         contextTokens: compactionContextTokens ?? assistantContextTokens ?? fallbackContextTokens,
         contextTotalTokens:
-          assistantTotalTokens !== null && sessionTotalTokens !== null
-            ? Math.max(assistantTotalTokens, sessionTotalTokens)
-            : assistantTotalTokens ?? sessionTotalTokens
+          assistantTotalTokens ?? sessionTotalTokens
       };
     }
     return {
       ...source,
       contextTokens:
         compactionContextTokens ??
-        (assistantContextTokens !== null && sessionContextTokens !== null
-          ? Math.max(assistantContextTokens, sessionContextTokens)
-          : assistantContextTokens ?? fallbackContextTokens),
+        assistantContextTokens ?? fallbackContextTokens,
       contextTotalTokens:
-        assistantTotalTokens !== null && sessionTotalTokens !== null
-          ? Math.max(assistantTotalTokens, sessionTotalTokens)
-          : assistantTotalTokens ?? sessionTotalTokens
+        assistantTotalTokens ?? sessionTotalTokens
     };
   }
   const sessionContextTokens = resolveSessionContextTokens(session);
@@ -566,6 +528,7 @@ export const resolveComposerContextUsageSource = (
     contextResetSignature: buildContextResetSignature(
       trailingCompactionReset,
       compactionContextTokens
-    )
+    ),
+    contextObserved: compactionContextTokens !== null
   };
 };

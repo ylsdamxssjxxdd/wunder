@@ -1,6 +1,13 @@
 import { buildBoundedStructuralRevision } from '@/utils/boundedStructuralRevision';
 
 export type WorkflowItem = {
+  runtimeMetrics?: boolean;
+  request_context_tokens?: number | null;
+  context_occupancy_tokens?: number;
+  request_consumed_tokens?: number | null;
+  duration_ms?: number;
+  toolStartedAtMs?: number;
+  toolFinishedAtMs?: number;
   id?: string | number;
   itemId?: string | number;
   item_id?: string | number;

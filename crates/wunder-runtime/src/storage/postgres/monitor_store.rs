@@ -6,6 +6,7 @@ use serde_json::Value;
 pub(super) trait PostgresMonitorStorage {
     fn upsert_monitor_record_impl(&self, payload: &Value) -> Result<()>;
     fn get_monitor_record_impl(&self, session_id: &str) -> Result<Option<Value>>;
+    fn load_monitor_records_by_session_ids_impl(&self, session_ids: &[String]) -> Result<Vec<Value>>;
     fn load_monitor_records_impl(&self) -> Result<Vec<Value>>;
     fn load_recent_monitor_records_impl(&self, limit: i64) -> Result<Vec<Value>>;
     fn load_monitor_records_by_user_impl(
@@ -73,6 +74,27 @@ impl PostgresMonitorStorage for PostgresStorage {
             return Ok(Self::json_from_str(&payload));
         }
         Ok(None)
+    }
+
+    fn load_monitor_records_by_session_ids_impl(&self, session_ids: &[String]) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let ids = session_ids
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT payload FROM monitor_sessions WHERE session_id = ANY($1)",
+            &[&ids],
+        )?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| Self::json_from_str(&row.get::<_, String>(0)))
+            .collect())
     }
 
     fn load_monitor_records_impl(&self) -> Result<Vec<Value>> {

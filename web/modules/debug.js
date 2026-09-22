@@ -492,6 +492,7 @@ const DEBUG_RESTORE_EVENT_TYPES = new Set([
   "context_usage",
   // Token 用量事件在刷新后也需要保留，避免调试日志丢失
   "token_usage",
+  "model_usage",
   "round_usage",
   "a2ui",
   "final",
@@ -826,6 +827,7 @@ const updateDebugLogWaiting = (force) => {
 const createDebugStats = () => ({
   tokenInput: 0,
   tokenOutput: 0,
+  tokenReasoning: null,
   tokenTotal: 0,
   contextTokens: 0,
   contextTokensPeak: 0,
@@ -848,6 +850,7 @@ const createDebugStats = () => ({
   errorCount: 0,
   eventCount: 0,
   hasTokenUsage: false,
+  hasModelUsage: false,
   timeRangeStartMs: null,
   timeRangeEndMs: null,
   requestStartMs: null,
@@ -985,21 +988,13 @@ const recomputeSpeedSummary = () => {
         latestOutputMs = metrics.lastOutputMs;
       }
     }
-    if (Number.isFinite(metrics.outputTokens) && metrics.outputTokens > 0) {
-      outputTokensTotal += metrics.outputTokens;
-    }
+    // Match measured text tokens to measured text time. Missing timing is
+    // intentionally unavailable, never substituted with reasoning or tool time.
     const decodeDuration = parseOptionalNumber(metrics.decodeDuration);
-    if (decodeDuration !== null && decodeDuration > 0) {
+    if (Number.isFinite(metrics.outputTokens) && metrics.outputTokens > 0 &&
+        decodeDuration !== null && decodeDuration > 0) {
+      outputTokensTotal += metrics.outputTokens;
       decodeDurationTotal += decodeDuration;
-      hasDecodeDuration = true;
-      return;
-    }
-    const observedDecode = resolveRoundDuration(
-      metrics.firstOutputMs,
-      metrics.lastOutputMs
-    );
-    if (observedDecode !== null && observedDecode > 0) {
-      decodeDurationTotal += observedDecode;
       hasDecodeDuration = true;
     }
   });
@@ -1044,25 +1039,8 @@ const recomputeSpeedSummary = () => {
   if (prefillDuration !== null && prefillDuration < MIN_PREFILL_DURATION_S) {
     prefillDuration = MIN_PREFILL_DURATION_S;
   }
-  const decodeTokens =
-    outputTokensTotal > 0 ? outputTokensTotal : parseOptionalNumber(decodeMetrics?.outputTokens);
-  let decodeDuration =
-    hasDecodeDuration && decodeDurationTotal > 0 ? decodeDurationTotal : null;
-  if (decodeDuration === null) {
-    decodeDuration = resolveRoundDuration(earliestOutputMs, latestOutputMs);
-    if (decodeDuration !== null && decodeDuration <= 0) {
-      decodeDuration = null;
-    }
-  }
-  if (decodeDuration === null) {
-    decodeDuration = parseOptionalNumber(decodeMetrics?.decodeDuration);
-  }
-  if (decodeDuration === null) {
-    decodeDuration = resolveRoundDuration(
-      decodeMetrics?.firstOutputMs,
-      decodeMetrics?.lastOutputMs
-    );
-  }
+  const decodeTokens = outputTokensTotal;
+  const decodeDuration = hasDecodeDuration ? decodeDurationTotal : null;
   debugStats.prefillTokens = Number.isFinite(prefillTokens) ? prefillTokens : 0;
   debugStats.prefillDuration = Number.isFinite(prefillDuration) ? prefillDuration : 0;
   debugStats.decodeTokens = Number.isFinite(decodeTokens) ? decodeTokens : 0;
@@ -1138,7 +1116,7 @@ const updateLlmRoundMetrics = (eventType, payload, timestamp) => {
         metrics.prefillDuration = prefillDuration;
       }
       const decodeDuration = parseOptionalNumber(data?.decode_duration_s);
-      if (metrics.decodeDuration === null && decodeDuration !== null) {
+      if (Object.hasOwn(data || {}, "decode_duration_s")) {
         metrics.decodeDuration = decodeDuration;
       }
     }
@@ -1156,7 +1134,7 @@ const updateLlmRoundMetrics = (eventType, payload, timestamp) => {
       metrics.prefillDuration = prefillDuration;
     }
     const decodeDuration = parseOptionalNumber(data?.decode_duration_s);
-    if (metrics.decodeDuration === null && decodeDuration !== null) {
+    if (Object.hasOwn(data || {}, "decode_duration_s")) {
       metrics.decodeDuration = decodeDuration;
     }
   }
@@ -1287,7 +1265,7 @@ const renderDebugStats = () => {
     return;
   }
   const sessionId = String(state.runtime.debugSessionId || "").trim();
-  const contextCurrent = formatStatNumber(debugStats.contextTokens, "0");
+  const contextCurrent = debugStats.hasContextUsage ? formatStatNumber(debugStats.contextTokens, "0") : "-";
   const contextPeak = formatStatNumber(
     Number.isFinite(debugStats.contextTokensPeak) && debugStats.contextTokensPeak > 0
       ? debugStats.contextTokensPeak
@@ -1305,6 +1283,7 @@ const renderDebugStats = () => {
         total: formatStatNumber(debugStats.tokenTotal, "0"),
         input: formatStatNumber(debugStats.tokenInput, "0"),
         output: formatStatNumber(debugStats.tokenOutput, "0"),
+        reasoning: debugStats.tokenReasoning === null ? "-" : formatStatNumber(debugStats.tokenReasoning, "0"),
       })
     : "-";
   const prefillTokens = Number.isFinite(debugStats.prefillTokens) ? debugStats.prefillTokens : 0;
@@ -1390,6 +1369,7 @@ const applyTokenUsage = (usage) => {
   const inputTokens = Number(usage.input_tokens ?? 0);
   const outputTokens = Number(usage.output_tokens ?? 0);
   const totalTokens = Number(usage.total_tokens ?? 0);
+  const reasoningTokens = Number(usage.reasoning_tokens);
   if (Number.isFinite(inputTokens)) {
     debugStats.tokenInput += inputTokens;
   }
@@ -1398,6 +1378,9 @@ const applyTokenUsage = (usage) => {
   }
   if (Number.isFinite(totalTokens)) {
     debugStats.tokenTotal += totalTokens;
+  }
+  if (Number.isFinite(reasoningTokens) && reasoningTokens >= 0) {
+    debugStats.tokenReasoning = (debugStats.tokenReasoning ?? 0) + reasoningTokens;
   }
   debugStats.hasTokenUsage = true;
 };
@@ -1409,6 +1392,7 @@ const applyTokenUsageSnapshot = (usage, options = {}) => {
   const inputTokens = Number(usage.input_tokens ?? 0);
   const outputTokens = Number(usage.output_tokens ?? 0);
   const totalTokens = Number(usage.total_tokens ?? 0);
+  const reasoningTokens = Number(usage.reasoning_tokens);
   const hasMeaningful =
     (Number.isFinite(totalTokens) && totalTokens > 0) ||
     (Number.isFinite(inputTokens) && inputTokens > 0) ||
@@ -1420,6 +1404,7 @@ const applyTokenUsageSnapshot = (usage, options = {}) => {
     debugStats.tokenInput = Number.isFinite(inputTokens) ? inputTokens : 0;
     debugStats.tokenOutput = Number.isFinite(outputTokens) ? outputTokens : 0;
     debugStats.tokenTotal = Number.isFinite(totalTokens) ? totalTokens : 0;
+    debugStats.tokenReasoning = Number.isFinite(reasoningTokens) && reasoningTokens >= 0 ? reasoningTokens : null;
     debugStats.hasTokenUsage = true;
     return;
   }
@@ -1431,6 +1416,11 @@ const applyTokenUsageSnapshot = (usage, options = {}) => {
   }
   if (Number.isFinite(totalTokens)) {
     debugStats.tokenTotal = Math.max(debugStats.tokenTotal, totalTokens);
+  }
+  if (Number.isFinite(reasoningTokens) && reasoningTokens >= 0) {
+    debugStats.tokenReasoning = debugStats.tokenReasoning === null
+      ? reasoningTokens
+      : Math.max(debugStats.tokenReasoning, reasoningTokens);
   }
 };
 
@@ -1462,8 +1452,8 @@ const applyContextUsageSnapshot = (payload) => {
   }
   const currentTokens = resolveContextUsageTokens(payload);
   const peakTokens = resolveContextUsagePeakTokens(payload);
-  const hasCurrent = Number.isFinite(currentTokens) && currentTokens > 0;
-  const hasPeak = Number.isFinite(peakTokens) && peakTokens > 0;
+  const hasCurrent = Number.isFinite(currentTokens) && currentTokens >= 0;
+  const hasPeak = Number.isFinite(peakTokens) && peakTokens >= 0;
   if (!hasCurrent && !hasPeak) {
     return;
   }
@@ -2933,7 +2923,11 @@ const handleEvent = (eventType, dataText, options = {}) => {
       String(rawStopReason || "").trim() || stopReasonHint || "model_response";
     const stopReasonLabel = resolveStopReasonLabel(stopReason);
     // 最终事件里包含的 usage 也要写入事件日志，避免漏看整体用量
-    applyTokenUsageSnapshot(usage, { override: true });
+    // model_usage carries the authoritative cumulative snapshot. The final
+    // event's usage is only the last response and must not erase earlier rounds.
+    if (!debugStats.hasModelUsage) {
+      applyTokenUsageSnapshot(usage, { override: true });
+    }
     applyContextUsageSnapshot(payload.data || payload);
     renderDebugStats();
     const summary = t("debug.event.final");
@@ -3284,6 +3278,15 @@ const handleEvent = (eventType, dataText, options = {}) => {
     return;
   }
 
+  if (eventType === "model_usage") {
+    const data = payload.data || payload;
+    debugStats.hasModelUsage = true;
+    applyTokenUsageSnapshot(data.round_usage || {}, { override: true });
+    renderDebugStats();
+    appendLog("model_usage", { detail: JSON.stringify(data, null, 2), timestamp: eventTimestamp });
+    return;
+  }
+
   if (eventType === "round_usage") {
     const data = payload.data || payload;
     applyTokenUsageSnapshot(data, { override: true });
@@ -3297,7 +3300,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
   if (eventType === "token_usage") {
     const data = payload.data || payload;
     // 流式 token_usage 仅记录日志，统计信息等待 final usage 再对齐
-    if (!state.runtime.debugStreaming) {
+    if (!state.runtime.debugStreaming && !debugStats.hasModelUsage) {
       applyTokenUsage(data);
     }
     renderDebugStats();

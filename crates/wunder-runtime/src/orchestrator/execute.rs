@@ -86,6 +86,7 @@ impl Orchestrator {
     ) -> Result<WunderResponse, OrchestratorError> {
         let mut heartbeat_task: Option<JoinHandle<()>> = None;
         let mut acquired = false;
+        let mut _scheduling_guard = None;
         let mut prepared = prepared;
         let request_config = self
             .resolve_config(prepared.config_overrides.as_ref())
@@ -136,6 +137,10 @@ impl Orchestrator {
                 )));
             }
             acquired = true;
+            if prepared.enforce_runtime_queue {
+                let priority = prepared.config_overrides.as_ref().and_then(|value| value.get("__queue_priority")).and_then(Value::as_i64).unwrap_or(0) > 0;
+                _scheduling_guard = Some(self.scheduling.register(&session_id, prepared.is_admin || priority));
+            }
 
             if let Some(attachments) = prepared.attachments.as_mut() {
                 if let Err(err) = persist_user_chat_attachments(
@@ -186,6 +191,15 @@ impl Orchestrator {
                 monitor_debug_payload,
             );
             let request_round = RoundInfo::user_only(user_round);
+            if let Some(task_id) = prepared.config_overrides.as_ref().and_then(|value| value.get("__queue_task_id")).and_then(Value::as_str) {
+                // Cancellation may win after the worker claims a task but before monitor registration.
+                let storage = self.storage.clone();
+                let task_id = task_id.to_string();
+                let active = crate::core::blocking::run_db("queue.validate_claim", move || storage.get_agent_task(&task_id))
+                    .await.map_err(|err| OrchestratorError::internal(err.to_string()))?
+                    .is_some_and(|task| task.status == "running");
+                if !active { return Err(OrchestratorError::cancelled(i18n::t("error.session_cancelled"))); }
+            }
             let active_turn = self.active_turns.begin_turn(&session_id);
             active_turn_id = Some(active_turn.turn_id.clone());
             active_turn_round = request_round;
@@ -381,11 +395,7 @@ impl Orchestrator {
             };
             let mut reached_max_rounds = false;
             let goal_turn_started_at = Instant::now();
-            let mut round_usage = TokenUsage {
-                input: 0,
-                output: 0,
-                total: 0,
-            };
+            let mut round_usage: TokenUsage;
             let mut last_model_usage: Option<TokenUsage> = None;
             let mut confirmed_context_occupancy_tokens: Option<i64> = None;
             let mut turn_decode_speed = TurnDecodeSpeedAccumulator::default();
@@ -435,6 +445,7 @@ impl Orchestrator {
                 .load_session_context_limit_hint_async(&user_id, &session_id)
                 .await;
             loop {
+                self.yield_queue_slot(&session_id, &emitter, last_round_info).await?;
                 if let Some(max_rounds) = max_rounds {
                     if model_round >= max_rounds {
                         reached_max_rounds = true;
@@ -479,6 +490,7 @@ impl Orchestrator {
                 }
                 if compaction_result.model_context_replaced {
                     persisted_context_tokens = 0;
+                    confirmed_context_occupancy_tokens = None;
                     self.workspace
                         .save_session_context_tokens_async(&user_id, &session_id, 0)
                         .await;
@@ -671,6 +683,7 @@ impl Orchestrator {
                                 )
                                 .await;
                             persisted_context_tokens = recovered_tokens;
+                            confirmed_context_occupancy_tokens = None;
                             let mut compaction_payload = json!({
                                 "reason": "overflow_recovery",
                                 "status": "done",
@@ -748,14 +761,23 @@ impl Orchestrator {
                 };
                 last_response = Some((content.clone(), reasoning.clone()));
                 turn_decode_speed.record_summary(&round_speed);
-                update_round_usage_authority(&mut round_usage, &usage);
+                round_usage = emitter.accumulated_usage();
                 last_model_usage = Some(usage.clone());
-                if let Some(context_tokens) = resolve_usage_context_occupancy_tokens(&usage) {
-                    confirmed_context_occupancy_tokens = Some(context_tokens);
-                    persisted_context_tokens = context_tokens;
-                    self.workspace
-                        .save_session_context_tokens_async(&user_id, &session_id, context_tokens)
-                        .await;
+                // Provider input counts describe this request's prompt (including
+                // cached input). Billing totals also contain generated reasoning/output.
+                let request_context_tokens = super::usage_accounting::request_context_tokens(&usage);
+                if let Some(tokens) = request_context_tokens {
+                    confirmed_context_occupancy_tokens = Some(tokens);
+                    persisted_context_tokens = tokens;
+                    self.workspace.save_session_context_tokens_async(&user_id, &session_id, tokens).await;
+                    let mut snapshot = json!({
+                        "context_tokens": tokens,
+                        "context_occupancy_tokens": tokens,
+                        "context_usage_source": "provider_input",
+                        "max_context": merge_context_window_limit_hint(llm_config.max_context.map(i64::from), context_window_limit_hint),
+                    });
+                    round_info.insert_into(snapshot.as_object_mut().expect("context object"));
+                    emitter.emit("context_usage", snapshot).await;
                 }
                 let tool_calls = if prepared.skip_tool_calls {
                     Vec::new()
@@ -780,6 +802,9 @@ impl Orchestrator {
                 };
                 let planning_result = build_planned_tool_calls(tool_calls, &allowed_tool_names);
                 let planned_calls = planning_result.planned;
+                if !planned_calls.is_empty() {
+                    self.yield_queue_slot(&session_id, &emitter, round_info).await?;
+                }
                 if planned_calls.is_empty()
                     && !planning_result.rejected.is_empty()
                     && !prepared.skip_tool_calls
@@ -895,6 +920,7 @@ impl Orchestrator {
                             &round_usage,
                             confirmed_context_occupancy_tokens,
                             &turn_decode_speed,
+                            goal_turn_started_at.elapsed().as_secs_f64(),
                         );
                         self.append_chat(
                             &user_id,
@@ -971,6 +997,7 @@ impl Orchestrator {
                         &round_usage,
                         confirmed_context_occupancy_tokens,
                         &turn_decode_speed,
+                        goal_turn_started_at.elapsed().as_secs_f64(),
                     );
                     self.append_chat(
                         &user_id,
@@ -1134,7 +1161,11 @@ impl Orchestrator {
                     } else {
                         safe_args
                     };
-                    let mut tool_payload = json!({ "tool": planned.name, "args": event_args });
+                    let mut tool_payload = json!({
+                        "tool": planned.name, "args": event_args,
+                        "request_context_tokens": request_context_tokens,
+                        "request_usage": usage,
+                    });
                     if let Value::Object(ref mut map) = tool_payload {
                         map.insert(
                             "tool_runtime_name".to_string(),
@@ -1168,6 +1199,7 @@ impl Orchestrator {
                     let mut cached_recall_outcomes = Vec::new();
                     let mut executable_calls = Vec::new();
                     for planned in exec_calls.drain(..) {
+                        let cache_started_at = Instant::now();
                         if let Some(cached) = resolve_cached_memory_recall_result(
                             &planned,
                             &memory_manager_tool_name,
@@ -1176,6 +1208,8 @@ impl Orchestrator {
                         ) {
                             let mut result = cached.to_payload();
                             result.insert_meta("recall_cache_hit", Value::Bool(true));
+                            // A cache hit is a new invocation, not the original tool's latency.
+                            result.insert_meta("duration_ms", json!(cache_started_at.elapsed().as_millis() as u64));
                             cached_recall_outcomes.push(ToolExecutionOutcome {
                                 call: planned.call,
                                 name: planned.name,
@@ -1426,6 +1460,8 @@ impl Orchestrator {
                         }
 
                         let mut tool_result_payload = result.to_event_payload(&name);
+                        tool_result_payload["request_context_tokens"] = json!(request_context_tokens);
+                        tool_result_payload["request_usage"] = json!(usage);
                         if let Value::Object(ref mut map) = tool_result_payload {
                             map.insert(
                                 "tool_runtime_name".to_string(),
@@ -1536,6 +1572,7 @@ impl Orchestrator {
                                 &round_usage,
                                 confirmed_context_occupancy_tokens,
                                 &turn_decode_speed,
+                                goal_turn_started_at.elapsed().as_secs_f64(),
                             );
                             let meta = question_panel_meta.as_ref().map(|value| {
                                 merge_persisted_message_stats_meta(value, message_stats)
@@ -1564,6 +1601,7 @@ impl Orchestrator {
                                 &round_usage,
                                 confirmed_context_occupancy_tokens,
                                 &turn_decode_speed,
+                                goal_turn_started_at.elapsed().as_secs_f64(),
                             );
                             let meta = merge_persisted_message_stats_meta(meta, message_stats);
                             self.append_chat(
@@ -1722,6 +1760,7 @@ impl Orchestrator {
                                             &round_usage,
                                             confirmed_context_occupancy_tokens,
                                             &turn_decode_speed,
+                                            goal_turn_started_at.elapsed().as_secs_f64(),
                                         ),
                                     );
                                     self.append_chat(
@@ -1860,6 +1899,7 @@ impl Orchestrator {
                                         &round_usage,
                                         confirmed_context_occupancy_tokens,
                                         &turn_decode_speed,
+                                        goal_turn_started_at.elapsed().as_secs_f64(),
                                     );
                                     self.append_chat(
                                         &user_id,
@@ -1948,6 +1988,7 @@ impl Orchestrator {
                                         &round_usage,
                                         confirmed_context_occupancy_tokens,
                                         &turn_decode_speed,
+                                        goal_turn_started_at.elapsed().as_secs_f64(),
                                     );
                                     self.append_chat(
                                         &user_id,
@@ -2008,6 +2049,7 @@ impl Orchestrator {
                     .active_turns
                     .mark_waiting_user_input(&session_id, turn_id);
             }
+            round_usage = emitter.accumulated_usage();
             round_usage.total =
                 round_usage
                     .total
@@ -2041,7 +2083,7 @@ impl Orchestrator {
                 uid: a2ui_uid.clone(),
                 a2ui: a2ui_messages.clone(),
             };
-            let final_payload = build_final_event_payload(
+            let mut final_payload = build_final_event_payload(
                 &answer,
                 response_usage.as_ref(),
                 &round_usage,
@@ -2051,6 +2093,7 @@ impl Orchestrator {
                 last_round_info,
                 &turn_decode_speed,
             );
+            final_payload["interaction_duration_s"] = json!(goal_turn_started_at.elapsed().as_secs_f64());
             emitter.emit("final", final_payload).await;
             self.finish_request_success(
                 &user_id,

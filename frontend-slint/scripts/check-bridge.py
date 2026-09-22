@@ -18,6 +18,22 @@ class ModelHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+        long_reply = any(isinstance(item.get("content"), str) and item["content"] == "流式压力测试" for item in payload.get("messages", []))
+        if payload.get("stream") and long_reply:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            try:
+                for _ in range(600):
+                    chunk = {"choices": [{"index": 0, "delta": {"content": "增量测试内容。" * 8 + "\n"}, "finish_reason": None}]}
+                    self.wfile.write(("data: " + json.dumps(chunk, ensure_ascii=False) + "\n\n").encode("utf-8"))
+                    self.wfile.flush()
+                    time.sleep(0.01)
+                self.wfile.write(b'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         if payload.get("stream"):
             chunks = [
                 {"choices": [{"index": 0, "delta": {"role": "assistant", "content": "测试回复"}, "finish_reason": None}]},
@@ -84,12 +100,45 @@ def main():
                     if process.poll() is not None or time.monotonic() >= deadline:
                         raise RuntimeError("isolated bridge did not start; inspect bridge.log")
                     time.sleep(0.2)
-            completed = subprocess.run([
-                str(args.ui.resolve()), "--bridge-smoke", base, str(output / "ui"),
-            ], timeout=110, creationflags=flags, capture_output=True)
+            headers = {"Authorization": "Bearer " + config["desktop_token"], "Content-Type": "application/json"}
+            def post(path, data):
+                request = Request(base + path, data=json.dumps(data).encode(), headers=headers, method="POST")
+                with urlopen(request, timeout=10) as response:
+                    return json.load(response)
+            post("/wunder/workspace/dir", {"path": "test-directory"})
+            post("/wunder/workspace/file", {"path": "test-directory/test.txt", "content": "测试文件\n第二行\n", "create_if_missing": True})
+            with (output / "ui-process.log").open("wb") as ui_log:
+                ui_process = subprocess.Popen([
+                    str(args.ui.resolve()), "--bridge-smoke", base, str(output / "ui"),
+                ], creationflags=flags, stdout=ui_log, stderr=subprocess.STDOUT)
+                peak_rss = 0
+                try:
+                    import psutil
+                    watched = psutil.Process(ui_process.pid)
+                except ImportError:
+                    watched = None
+                ui_deadline = time.monotonic() + 110
+                try:
+                    while ui_process.poll() is None:
+                        if watched is not None:
+                            try:
+                                peak_rss = max(peak_rss, watched.memory_info().rss)
+                            except psutil.NoSuchProcess:
+                                pass
+                        if time.monotonic() > ui_deadline:
+                            raise RuntimeError("native bridge smoke timed out")
+                        time.sleep(0.05)
+                finally:
+                    if ui_process.poll() is None:
+                        ui_process.kill()
+                        ui_process.wait(timeout=10)
+            if not (output / "ui" / "smoke.txt").exists():
+                raise RuntimeError(f"native process exited {ui_process.returncode}; inspect ui-process.log")
+            if peak_rss:
+                (output / "memory.json").write_text(json.dumps({"peak_working_set_bytes": peak_rss}), encoding="utf-8")
             report = (output / "ui" / "smoke.txt").read_text(encoding="utf-8")
             print(report.strip())
-            if completed.returncode or not report.startswith("PASS:"):
+            if ui_process.returncode or not report.startswith("PASS:"):
                 raise RuntimeError("native bridge smoke failed")
             request = Request(base + "/wunder/desktop/settings", headers={
                 "Authorization": "Bearer " + config["desktop_token"],

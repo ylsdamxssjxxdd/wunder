@@ -6,7 +6,8 @@ export component MessageRow inherits Rectangle {
     in property <string> author;
     in property <image> avatar;
     in-out property <bool> expanded: false;
-    private property <length> bubble-width: root.message.mine ? min(root.width - 58px, max(180px, body.preferred-width + 28px)) : root.width - 58px;
+    callback copy();
+    private property <length> bubble-width: root.message.mine ? min(root.width - 58px, max(180px, root.width * 0.8)) : root.width - 58px;
     height: column.height + 22px;
     Avatar { x: root.message.mine ? parent.width - 34px : 0px; y: 0px; mine: root.message.mine; source: root.avatar; }
     column := VerticalLayout {
@@ -38,17 +39,29 @@ export component MessageRow inherits Rectangle {
             height: body.preferred-height + 24px;
             background: root.message.mine ? Theme.mine : Theme.bubble;
             border-radius: 12px; border-color: root.message.mine ? Theme.accent.transparentize(0.7) : Theme.border; border-width: 1px;
-            body := Text {
+            body := VerticalLayout {
                 x: 13px; y: 12px; width: parent.width - 26px;
-                text: root.message.text; color: Theme.text; font-size: 13px;
-                wrap: word-wrap;
+                height: self.preferred-height; spacing: 0px;
+                if root.message.blocks.length == 0 : TextInput {
+                    text: root.message.text; color: Theme.text; font-size: 13px;
+                    read-only: true; wrap: word-wrap;
+                }
+                for block in root.message.blocks : Rectangle {
+                    height: block-text.preferred-height;
+                    background: block.kind == 1 ? Theme.accent-soft : transparent;
+                    block-text := TextInput {
+                        width: parent.width; text: block.text; color: Theme.text; font-size: 13px;
+                        font-weight: block.kind == 2 ? 600 : 400;
+                        read-only: true; wrap: word-wrap;
+                    }
+                }
             }
         }
-        if !root.message.mine : HorizontalLayout {
+        HorizontalLayout {
             height: 20px; spacing: 6px;
-            Image { width: 11px; height: 11px; source: @image-url("../assets/icons/circle-check.svg"); colorize: Theme.muted; }
-            Text { text: root.message.state; font-size: 10px; color: Theme.muted; }
+            Text { text: root.message.state; font-size: 10px; color: Theme.muted; overflow: elide; }
             Rectangle { horizontal-stretch: 1; }
+            Action { width: 42px; height: 20px; label: "复制"; show-label: true; clicked => { root.copy(); } }
         }
     }
 }

@@ -34,6 +34,15 @@ pub fn run(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::erro
 
 fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     snapshot(app, &directory.join("native-preview.png"))?;
+    // Dispatch pointer events through Slint hit testing. Invoking callbacks
+    // directly cannot detect focus-only first clicks or decorative overlays.
+    for (section, y) in [(2, 160.0), (3, 218.0), (5, 276.0), (4, 334.0), (0, 102.0)] {
+        click(app, 28.0, y)?;
+        require(
+            app.get_section() == section,
+            "rail navigation required another click",
+        )?;
+    }
     let count = app.get_messages().row_count();
     app.set_draft("  \n ".into());
     app.invoke_send_message();
@@ -96,9 +105,21 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         app.get_agents().row_count() == count + 1 && app.get_selected_agent_name() == "测试智能体",
         "agent creation failed",
     )?;
+    app.invoke_save_agent(
+        "测试智能体".into(),
+        "测试描述".into(),
+        "  测试提示词\n第二行\n".into(),
+        "".into(),
+    );
+    require(
+        app.get_selected_agent_system_prompt() == "  测试提示词\n第二行\n",
+        "prompt edit lost whitespace",
+    )?;
     snapshot(app, &directory.join("native-agents.png"))?;
     app.set_section(3);
     snapshot(app, &directory.join("native-tools.png"))?;
+    app.set_section(5);
+    snapshot(app, &directory.join("native-files.png"))?;
     app.set_section(4);
     app.invoke_save_model(
         "测试模型".into(),
@@ -120,6 +141,24 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
     app.set_dialog_text("请检查模型配置后重试。".into());
     app.set_dialog_open(true);
     snapshot(app, &directory.join("native-form-error.png"))?;
+    Ok(())
+}
+
+pub(crate) fn click(app: &MainWindow, x: f32, y: f32) -> Result<(), Box<dyn std::error::Error>> {
+    use slint::platform::{PointerEventButton, WindowEvent};
+    let position = slint::LogicalPosition::new(x, y);
+    app.window()
+        .dispatch_event_with_result(WindowEvent::PointerMoved { position })?;
+    app.window()
+        .dispatch_event_with_result(WindowEvent::PointerPressed {
+            position,
+            button: PointerEventButton::Left,
+        })?;
+    app.window()
+        .dispatch_event_with_result(WindowEvent::PointerReleased {
+            position,
+            button: PointerEventButton::Left,
+        })?;
     Ok(())
 }
 

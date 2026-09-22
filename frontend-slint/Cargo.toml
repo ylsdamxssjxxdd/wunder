@@ -19,6 +19,7 @@ i-slint-renderer-software = { version = "=1.18.0", default-features = false, fea
 winit = { version = "=0.30.2", default-features = false }
 png = "=0.18.1"
 serde_json = "=1.0.151"
+tungstenite = { version = "=0.29.0", default-features = false, features = ["handshake"] }
 
 [build-dependencies]
 slint-build = { version = "=1.18.0" }
@@ -39,6 +40,18 @@ i-slint-renderer-software = { path = "vendor/i-slint-renderer-software-1.18" }
 fontique = { path = "vendor/fontique-0.11" }
 parley = { path = "vendor/parley-0.11" }
 winit = { path = "vendor/winit-0.30.2" }
+
+tungstenite = { path = "vendor/tungstenite-0.29.0" }
+http = { path = "vendor/http-1.4.0" }
+httparse = { path = "vendor/httparse-1.10.1" }
+data-encoding = { path = "vendor/data-encoding-2.10.0" }
+sha1 = { path = "vendor/sha1-0.10.6" }
+digest = { path = "vendor/digest-0.10.7" }
+block-buffer = { path = "vendor/block-buffer-0.10.4" }
+crypto-common = { path = "vendor/crypto-common-0.1.7" }
+generic-array = { path = "vendor/generic-array-0.14.7" }
+typenum = { path = "vendor/typenum-1.20.1" }
+cpufeatures = { path = "vendor/cpufeatures-0.2.17" }
 
 [workspace]
 

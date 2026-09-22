@@ -1,8 +1,10 @@
-# wunder API 文档
+﻿# wunder API 文档
 
 ## 4. API 设计
 
 ### 4.0 实现说明
+
+- Slint 桌面端复用本地 bridge 既有接口：`/wunder/chat/ws` 用于 start/watch 与事件恢复，HTTP 用于会话、专家、工具目录和桌面设置；目录浏览使用 `/wunder/workspace` 的 path/offset/limit/agent_id，文本预览使用 `/wunder/workspace/content` 的 max_bytes。专家更新提交配置键空字符串表示继承默认模型，不以有效模型名称覆盖继承关系。未增加桌面专属业务协议或存储。
 
 - 接口实现基于 Rust Axum，路由拆分在 `src/api`（core/chat/user_world/user_tools/user_agents/user_channels/admin/a2a/desktop 等模块）。
 - 当前产品核心能力采用“五维能力框架”：**形态协同 / 租户治理 / 智能体协作 / 工具生态 / 接口开放**；用户体系聊天（用户↔智能体 + 用户↔用户）是默认主线。
@@ -145,6 +147,9 @@
 - 慢客户端恢复：当 WS 出站队列接近满载时，服务端会发送 `slow_client(reason=queue_full_resume_required)`，调用方应改走 `resume/watch` 补齐，而不是假设增量仍会持续直推。 实时请求随后停止向该订阅直推，继续排空后台执行流；恢复回放保持有序、无损，不能静默丢弃增量并前移游标。满队列投递最多等待 1 秒，连接不可用时通过重连或会话快照补水。
 - 模型轮次输出事件 `llm_output`：除 `content/reasoning/tool_calls/usage/prefill_duration_s/decode_duration_s` 等既有字段外，流式请求会尽量附带 `stream_timing` 诊断对象；非流式、无可见增量或旧事件回放中该字段可能为 `null` 或缺失，客户端必须兼容。
 - 解码统计：`llm_output/token_usage.decode_output_tokens` 使用归一化后的 `usage.output`（上游提供 reasoning token 明细时剔除思考 token），`decode_duration_s` 取首个正文增量到最后一个正文增量，思考与空工具分片不计入该区间；只有一个正文分片或缺少计时时，速度为 `null`。`stream_timing` 仍描述全部正文/思考分片，供诊断使用。
+- 用量口径：模型服务返回的 `usage.input_tokens` 为输入，`usage.output_tokens` 为已知正文输出，`usage.reasoning_tokens` 仅在服务明确报告时出现；`total_tokens` 包含思考。服务未报告思考分项时不会由系统猜测。每次模型响应产生一个 `model_usage` 累计快照，用户轮次的 `round_usage` 只作为兼容汇总，客户端重放应覆盖同轮快照而不能重复相加；`context_occupancy_tokens` 是当前上下文观测值，可因压缩下降，与消耗 Token 分开。
+- 工具指标：`tool_call` / `tool_result` 的 `request_context_tokens` 固定为触发该工具的模型请求输入 Token（含缓存输入），未知/估算时为 `null`；`request_usage` 是该次模型请求消耗，同次请求的并行工具共享快照，不能逐工具相加。`meta.duration_ms` 是本次工具处理的单调时钟耗时，包含处理期间的审批和执行锁等待，允许为 `0`；缓存命中重新计时，取消亦发送终态指标。历史记录缺少耗时时，客户端可按该调用服务端开始/结束事件的时间间隔回退，但不得使用整个用户轮次耗时或业务结果中的同名字段。
+- `context_usage.context_usage_source=provider_input` 表示供应商报告的本次请求输入占用（不含当次生成输出/思考）；压缩后明确归零，下一次有效输入观测可重新增长。流式正文增量不估算上下文，也不以累计消耗推进上下文动画。
 - `final` 与历史消息 `stats` 增加 `visible_decode_tokens/visible_decode_duration_s/visible_decode_speed_tps`，表示最后一次模型响应的正文解码指标。前端速度优先使用该明确指标，不用累计 token 或 `avg_model_round_speed_tps` 推算当前回复速度；旧历史缺失指标时显示空缺。`avg_model_round_speed_*` 继续保留作用户轮次聚合诊断。
 - 模型 `timeout_s` 对流式调用表示首个输出及相邻有效模型分片的最大等待时间，正文、思考和工具参数分片均刷新活跃时间；持续思考不会因整次调用达到该时长而被中断。非流式调用继续使用整体超时，取消语义保持不变。
 - `llm_output` 的 `finish_reason/stop_reason=tool_calls/function_call/tool_use` 或非空 `tool_calls` 只结束模型动作，不结束用户请求；客户端继续接收工具与后续模型事件。连接关闭、本地 AbortError 或 loading 清理不等同于任务终态。
@@ -1794,7 +1799,7 @@
 - `llm_request` 事件仅保存 `payload_summary` 与 `message_count`，不保留完整请求体。
 - `observability.monitor_drop_event_types` 主要作用于 `normal` 画像；`debug` 画像默认保留完整增量事件。
 - 预填充速度基于会话第一轮 LLM 请求计算，避免多轮缓存导致速度偏高；当只能从“请求发出到首个输出事件”反推 TTFT 时，`prefill_speed_lower_bound=true`，表示该预填充速度是下界而非模型内部精确值。
-- `session.context_tokens/context_tokens_peak` 汇总优先采用模型服务端返回的显式 `context_occupancy_tokens/context_tokens` 作为有效占用；上下文压缩触发也只使用已观测上下文占用，不再叠加本地 token 估算或工具 schema 开销。压缩完成后在下一次模型 usage 返回前，上下文占用会标记为未观测。
+- `session.context_tokens/context_tokens_peak` 汇总采用最新 `context_usage` 显式占用；正常请求由供应商输入 Token（含缓存输入）刷新，不含当次生成的输出与思考；上下文压缩触发也只使用已观测上下文占用，不再叠加本地 token 估算或工具 schema 开销。压缩完成后在下一次模型 usage 返回前，上下文占用会标记为未观测。
 - `round_usage.context_occupancy_tokens` 表示当前线程上下文占用；`round_usage.total_tokens` 与 `request_consumed_tokens` 表示本轮请求消耗，多模型轮次时会累加每次模型调用的用量。
 - 新接入展示“当前上下文占用”时优先读取 `context_occupancy_tokens`，展示“单次请求消耗”或扣费统计时读取 `request_consumed_tokens`/`round_usage.total_tokens`。
 - 取消请求会在 `session.cancel_source`、`cancel` 事件、最终 `cancelled` 事件和 `CANCELLED.detail.cancel_source` 中记录来源。REST 停止使用 `rest_cancel`，WebSocket 停止默认使用 `ws_cancel`/`core_ws_cancel`，客户端本地 Abort 若确实转成后端取消会使用 `client_abort`。当取消发生在用户消息已持久化但模型尚未产生可见回复的窗口，服务端会幂等写入 `meta.type=session_cancelled`、`stop_reason=user_stop` 的 assistant 历史标记，避免刷新后只剩用户消息。REST/WS 会话取消还会写入持久化 `thread_status` 事件，`status/thread_status=cancelled`，并为被取消的 queued/running 任务发送 `queue_fail` 终态事件，便于客户端断线补水后清除停止按钮、排队提示和尾部 pending 气泡。
@@ -1808,6 +1813,15 @@
   - `ok`：是否成功
   - `message`：提示信息
 - 说明：取消会中断正在进行的 LLM/工具调用，内部轮询取消标记，通常 200ms 内生效。监控记录会保留 `cancel_source`，便于区分用户显式停止、WebSocket 停止和客户端本地 Abort。
+
+### 4.1.10.2 `/wunder/admin/monitor/{session_id}/priority`
+
+- 方法：`POST`
+- 权限：管理员 Bearer token 或配置的 API key。
+- 作用：将该会话最早的 `pending/retry` 队列任务提升为管理员优先级，并唤醒队列调度器。
+- 返回：`ok/queue_id/priority/pause_requested/resume_policy`。
+- 说明：优先任务仍受全局并发上限约束。并发已满时，服务端会在普通任务完成当前模型动作或工具动作后协作让出执行槽位；已产生的正文、工具结果和当前模型轮次会保留，管理员任务完成后自动恢复原任务。用户主动取消属于终态取消，不会被自动恢复。
+- 说明：队列优先级写入 `agent_tasks`，SQLite 与 PostgreSQL 都使用原子领取和单向终态更新；刷新或断线重连通过 `queue_enter/queue_start/queue_finish/queue_fail` 与 runtime snapshot 恢复排队、暂停和继续状态。
 
 ### 4.1.10.1 `/wunder/admin/monitor/{session_id}/compaction`
 
@@ -2928,6 +2942,12 @@
   - `404`：会话不存在、无权访问或消息不存在。
 
 ### 会话消息返回体补充（用户侧聊天接口）
+
+`GET /wunder/chat/sessions` 的 `data.items[]` 额外返回 `consumed_tokens` 与 `tool_calls` 两个有界会话累计摘要字段，供线程列表直接展示；接口不会把消息正文或监控事件明细嵌入列表响应。
+
+列表可带 `known_session_ids`（逗号分隔，最多 100 个 ID，每个不超过 128 字节），响应 `data.unavailable_session_ids[]` 返回其中不属于当前用户活动会话目录的 ID（已删除、归档或不属于该用户）。核对独立于本次分页和智能体筛选；不能将某页未返回的条目直接视为删除。客户端轮换核对已缓存 ID，收到明确失效结果后清理列表、详情和关联缓存，并拒绝迟到分页重新加入该条目。
+
+`DELETE /wunder/admin/monitor/{session_id}` 从持久化会话目录确定归属，监控记录缺失时仍清理用户会话、关联日志及定时任务；目录删除失败返回错误，不再静默报告成功。
 
 - `GET /wunder/chat/sessions/{session_id}`
 - `GET /wunder/chat/sessions/{session_id}/history`

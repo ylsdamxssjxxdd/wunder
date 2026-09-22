@@ -112,13 +112,10 @@ fn write_workspace_file(
                 .map(Path::to_path_buf)
                 .unwrap_or_else(default_assets_dir);
             let source_path = resolve_asset_source(&asset_base, source)?;
-            let target_path = resolve_workspace_target(root, &apply_task_placeholders(
-                dest,
-                run_id,
-                task_id,
-                attempt_no,
-                attempt_root,
-            ))?;
+            let target_path = resolve_workspace_target(
+                root,
+                &apply_task_placeholders(dest, run_id, task_id, attempt_no, attempt_root),
+            )?;
             if let Some(parent) = target_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -127,13 +124,10 @@ fn write_workspace_file(
             })?;
         }
         WorkspaceFileSpec::Inline { path, content } => {
-            let target_path = resolve_workspace_target(root, &apply_task_placeholders(
-                path,
-                run_id,
-                task_id,
-                attempt_no,
-                attempt_root,
-            ))?;
+            let target_path = resolve_workspace_target(
+                root,
+                &apply_task_placeholders(path, run_id, task_id, attempt_no, attempt_root),
+            )?;
             if let Some(parent) = target_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -158,7 +152,9 @@ fn resolve_asset_source(root: &Path, source: &str) -> Result<PathBuf> {
             )
         })
     {
-        return Err(anyhow!("benchmark asset source must stay inside its asset directory"));
+        return Err(anyhow!(
+            "benchmark asset source must stay inside its asset directory"
+        ));
     }
     let path = root.join(relative);
     if !path.is_file() {
@@ -179,7 +175,9 @@ fn resolve_workspace_target(root: &Path, value: &str) -> Result<PathBuf> {
             )
         })
     {
-        return Err(anyhow!("benchmark workspace file path must stay inside its attempt workspace"));
+        return Err(anyhow!(
+            "benchmark workspace file path must stay inside its attempt workspace"
+        ));
     }
     Ok(root.join(relative))
 }

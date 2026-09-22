@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia';
+import { normalizeTokenUsage } from '@/utils/tokenUsage';
 
 import {
   archiveSession as archiveSessionApi,
@@ -116,7 +117,7 @@ import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
 import { normalizeStreamRound } from './chatStreamIds';
-import { MessageSubagentItem, NormalizedUsagePayload } from './chatTypes';
+import { MessageSubagentItem } from './chatTypes';
 
 export const buildMessageStats = () => ({
   toolCalls: 0,
@@ -1008,37 +1009,7 @@ export const attachSubagentsToMessages = (messages, subagents) => {
   return messages;
 };
 
-export const normalizeUsagePayload = (payload) => {
-  if (!payload || typeof payload !== 'object') return null;
-  const source = payload;
-  const input = Number.parseInt(
-    source.input_tokens ?? source.prompt_tokens ?? source.input ?? source.prompt ?? 0,
-    10
-  );
-  const output = Number.parseInt(
-    source.output_tokens ?? source.completion_tokens ?? source.output ?? source.completion ?? 0,
-    10
-  );
-  const totalRaw = source.total_tokens ?? source.total ?? null;
-  const totalParsed = totalRaw === null || totalRaw === undefined ? null : Number.parseInt(totalRaw, 10);
-  const hasInput = Number.isFinite(input) && input > 0;
-  const hasOutput = Number.isFinite(output) && output > 0;
-  const total =
-    Number.isFinite(totalParsed) && totalParsed >= 0 ? totalParsed : (hasInput || hasOutput ? input + output : null);
-  if (!hasInput && !hasOutput && total === null) {
-    return null;
-  }
-  const normalizedInput = hasInput ? input : 0;
-  let normalizedOutput = hasOutput ? output : 0;
-  if (normalizedOutput <= 0 && Number.isFinite(total) && (total ?? 0) > normalizedInput) {
-    normalizedOutput = Math.max(0, (total ?? 0) - normalizedInput);
-  }
-  return {
-    input: normalizedInput,
-    output: normalizedOutput,
-    total: total ?? 0
-  } satisfies NormalizedUsagePayload;
-};
+export const normalizeUsagePayload = normalizeTokenUsage;
 
 export const estimateStreamOutputTokens = estimateChatTextTokens;
 

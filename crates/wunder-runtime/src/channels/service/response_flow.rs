@@ -1,4 +1,7 @@
-use super::support::{append_weixin_context_token_from_message, merge_object_value_into, message_preview_text, truncate_text};
+use super::support::{
+    append_weixin_context_token_from_message, merge_object_value_into, message_preview_text,
+    truncate_text,
+};
 use super::{
     ChannelCommand, ChannelHub, ChannelInboundResult, ChannelSessionInfo, ChannelSessionStrategy,
 };

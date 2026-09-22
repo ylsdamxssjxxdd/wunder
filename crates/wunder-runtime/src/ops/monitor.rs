@@ -300,6 +300,7 @@ struct SessionRecord {
     context_tokens: i64,
     context_tokens_peak: i64,
     consumed_tokens: i64,
+    tool_calls: i64,
     message_feedback: BTreeMap<i64, MessageFeedbackItem>,
     next_event_id: i64,
     events: VecDeque<MonitorEvent>,
@@ -351,6 +352,7 @@ impl SessionRecord {
             context_tokens: 0,
             context_tokens_peak: 0,
             consumed_tokens: 0,
+            tool_calls: 0,
             message_feedback: BTreeMap::new(),
             next_event_id: 1,
             events: VecDeque::new(),
@@ -432,6 +434,7 @@ impl SessionRecord {
             "context_tokens_peak": context_tokens_peak,
             "context_occupancy_tokens_peak": context_tokens_peak,
             "consumed_tokens": self.consumed_tokens,
+            "tool_calls": self.tool_calls,
             "feedback_up_count": feedback_up_count,
             "feedback_down_count": feedback_down_count,
             "feedback_total_count": feedback_total_count,
@@ -467,6 +470,7 @@ impl SessionRecord {
             "context_tokens": self.context_tokens,
             "context_tokens_peak": self.context_tokens_peak,
             "consumed_tokens": self.consumed_tokens,
+            "tool_calls": self.tool_calls,
             "message_feedback": message_feedback,
             "next_event_id": self.next_event_id,
             "events": self
@@ -604,8 +608,15 @@ impl SessionRecord {
         } else {
             let mut total = 0_i64;
             for event in &events {
-                if event.event_type == "round_usage" {
-                    let tokens = parse_usage_billing_tokens(&event.data);
+                if event.event_type == "model_usage"
+                    || (event.event_type == "round_usage"
+                        && event.data.get("usage_accounted").and_then(Value::as_bool) != Some(true))
+                {
+                    let tokens = if event.event_type == "model_usage" {
+                        parse_usage_billing_tokens(&event.data["usage"])
+                    } else {
+                        parse_usage_billing_tokens(&event.data)
+                    };
                     if tokens > 0 {
                         total = total.saturating_add(tokens);
                     }
@@ -613,6 +624,16 @@ impl SessionRecord {
             }
             total
         };
+        let derived_tool_calls = events
+            .iter()
+            .filter(|event| event.event_type == "tool_call")
+            .count() as i64;
+        let tool_calls = payload
+            .get("tool_calls")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            .max(derived_tool_calls)
+            .max(0);
         let next_event_id = payload
             .get("next_event_id")
             .and_then(Value::as_i64)
@@ -641,6 +662,7 @@ impl SessionRecord {
             context_tokens,
             context_tokens_peak: context_tokens_peak.max(context_tokens),
             consumed_tokens,
+            tool_calls,
             message_feedback,
             next_event_id,
             events,
@@ -666,7 +688,7 @@ fn derive_effective_context_tokens(events: &VecDeque<MonitorEvent>) -> Option<(i
     for event in events {
         if event.event_type == "context_usage" || event.event_type == "round_usage" {
             let context_tokens = parse_context_occupancy_tokens(&event.data);
-            if context_tokens <= 0 {
+            if !has_context_occupancy(&event.data) {
                 continue;
             }
             latest = Some(context_tokens);
@@ -1046,11 +1068,11 @@ impl MonitorState {
                     };
                     let mut pending_award = None;
                     record.updated_time = now;
-                    if event_type == "context_usage" {
+                    if event_type == "context_usage" && has_context_occupancy(data) {
                         if let Some(total) = parse_i64_value(
                             data.get("context_occupancy_tokens")
                                 .or_else(|| data.get("context_tokens"))
-                                .or_else(|| data.get("total_tokens")),
+                                .or_else(|| data.get("persisted_context_tokens")),
                         ) {
                             record.context_tokens = total;
                             if total > record.context_tokens_peak {
@@ -1066,6 +1088,7 @@ impl MonitorState {
                             record.summary = summary.to_string();
                         }
                     } else if event_type == "tool_call" {
+                        record.tool_calls = record.tool_calls.saturating_add(1);
                         record.stage = "tool_call".to_string();
                         let tool = data.get("tool").and_then(Value::as_str).unwrap_or("");
                         let summary_key = if data.get("repair").is_some() {
@@ -1687,6 +1710,56 @@ impl MonitorState {
                     .max(0)
             },
         )
+    }
+
+    /// Return bounded per-session usage summaries without exposing monitor event payloads.
+    /// Hot records are read from memory; cold records fall back to the indexed monitor store.
+    pub fn session_usage_summaries(&self, session_ids: &[String]) -> HashMap<String, (i64, i64)> {
+        let ids = session_ids
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return HashMap::new();
+        }
+        let mut output = HashMap::with_capacity(ids.len());
+        let mut missing = Vec::new();
+        {
+            let sessions = self.sessions.lock();
+            for session_id in &ids {
+                if let Some(record) = sessions.get(*session_id) {
+                    output.insert(
+                        (*session_id).to_string(),
+                        (record.consumed_tokens.max(0), record.tool_calls.max(0)),
+                    );
+                } else {
+                    missing.push((*session_id).to_string());
+                }
+            }
+        }
+        let missing_records = self
+            .storage
+            .load_monitor_records_by_session_ids(&missing)
+            .unwrap_or_default();
+        for payload in missing_records {
+            let Some(session_id) = payload
+                .get("session_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            // Reuse the canonical storage hydration path so legacy records also
+            // backfill usage from their persisted events.
+            if let Some(record) = SessionRecord::from_storage(&payload) {
+                output.insert(
+                    session_id,
+                    (record.consumed_tokens.max(0), record.tool_calls.max(0)),
+                );
+            }
+        }
+        output
     }
 
     pub fn get_detail(&self, session_id: &str) -> Option<Value> {
@@ -2616,9 +2689,17 @@ impl MonitorState {
             event_type: event_type.to_string(),
             data: sanitized.clone(),
         });
-        // Accumulate consumed tokens on each round_usage event
-        if event_type == "round_usage" {
-            let tokens = parse_usage_billing_tokens(&sanitized);
+        // Each response is counted once, including rejected calls and compaction.
+        // Legacy turns without per-response accounting still use round_usage.
+        if event_type == "model_usage"
+            || (event_type == "round_usage"
+                && sanitized.get("usage_accounted").and_then(Value::as_bool) != Some(true))
+        {
+            let tokens = if event_type == "model_usage" {
+                parse_usage_billing_tokens(&sanitized["usage"])
+            } else {
+                parse_usage_billing_tokens(&sanitized)
+            };
             if tokens > 0 {
                 record.consumed_tokens = record.consumed_tokens.saturating_add(tokens);
             }
@@ -2757,6 +2838,21 @@ fn parse_positive_i64_value(value: Option<&Value>) -> Option<i64> {
     (parsed > 0).then_some(parsed)
 }
 
+fn has_context_occupancy(data: &Value) -> bool {
+    [
+        "context_occupancy_tokens",
+        "context_tokens",
+        "persisted_context_tokens",
+    ]
+    .iter()
+    .any(|key| parse_i64_value(data.get(*key)).is_some())
+        || data.get("context_usage").is_some_and(|usage| {
+            ["context_occupancy_tokens", "context_tokens"]
+                .iter()
+                .any(|key| parse_i64_value(usage.get(*key)).is_some())
+        })
+}
+
 fn parse_context_occupancy_tokens(data: &Value) -> i64 {
     parse_i64_value(data.get("context_occupancy_tokens"))
         .or_else(|| parse_i64_value(data.get("context_tokens")))
@@ -2773,25 +2869,22 @@ fn parse_context_occupancy_tokens(data: &Value) -> i64 {
         .max(0)
 }
 
-/// Parse billing tokens (input + output) from usage data, ignoring context_occupancy.
+/// Total includes reasoning; context occupancy is never a billing fallback.
 pub(crate) fn parse_usage_billing_tokens(data: &Value) -> i64 {
-    let input = parse_i64_value(data.get("input_tokens"))
+    if let Some(total) = parse_i64_value(data.get("total_tokens"))
         .or_else(|| {
             data.get("usage")
-                .and_then(|usage| parse_i64_value(usage.get("input_tokens")))
+                .and_then(|usage| parse_i64_value(usage.get("total_tokens")))
         })
-        .unwrap_or(0);
-    let output = parse_i64_value(data.get("output_tokens"))
-        .or_else(|| {
-            data.get("usage")
-                .and_then(|usage| parse_i64_value(usage.get("output_tokens")))
-        })
-        .unwrap_or(0);
-    if input > 0 || output > 0 {
-        input.saturating_add(output)
-    } else {
-        0
+        .filter(|total| *total > 0)
+    {
+        return total;
     }
+    let value = data.get("usage").unwrap_or(data);
+    ["input_tokens", "output_tokens", "reasoning_tokens"]
+        .iter()
+        .map(|key| parse_i64_value(value.get(*key)).unwrap_or(0).max(0))
+        .fold(0_i64, i64::saturating_add)
 }
 
 fn format_panic_payload(payload: &(dyn Any + Send)) -> String {
@@ -3803,5 +3896,32 @@ mod tests {
             updated.last_token_grant_date.as_deref(),
             Some(today.as_str())
         );
+    }
+    #[test]
+    fn token_accounting_includes_reasoning_and_accepts_zero_context_reset() {
+        assert_eq!(
+            super::parse_usage_billing_tokens(&json!({"input_tokens":10,
+            "output_tokens":0,"reasoning_tokens":30,"total_tokens":40})),
+            40
+        );
+        assert_eq!(
+            super::parse_usage_billing_tokens(&json!({"usage":{"reasoning_tokens":30}})),
+            30
+        );
+        let events = VecDeque::from([
+            MonitorEvent {
+                event_id: 1,
+                timestamp: 1.0,
+                event_type: "context_usage".into(),
+                data: json!({"context_tokens":100}),
+            },
+            MonitorEvent {
+                event_id: 2,
+                timestamp: 2.0,
+                event_type: "context_usage".into(),
+                data: json!({"context_tokens":0}),
+            },
+        ]);
+        assert_eq!(derive_effective_context_tokens(&events), Some((0, 100)));
     }
 }

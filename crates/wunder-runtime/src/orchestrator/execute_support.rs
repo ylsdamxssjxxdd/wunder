@@ -1018,22 +1018,6 @@ pub(super) fn build_tool_budget_guard_model_notice(
     )
 }
 
-// Accumulate token usage across model rounds within a user round.
-// Each llm_output reports its own usage; the round_usage total must be the sum.
-pub(super) fn update_round_usage_authority(target: &mut TokenUsage, usage: &TokenUsage) {
-    target.input = target.input.saturating_add(usage.input);
-    target.output = target.output.saturating_add(usage.output);
-    target.total = target.total.saturating_add(usage.total);
-}
-
-pub(super) fn resolve_usage_context_occupancy_tokens(usage: &TokenUsage) -> Option<i64> {
-    let total = usage.total.max(usage.input.saturating_add(usage.output));
-    if total == 0 || total > i64::MAX as u64 {
-        return None;
-    }
-    Some(total as i64)
-}
-
 pub(super) fn resolve_round_context_occupancy_tokens(
     confirmed_context_occupancy_tokens: Option<i64>,
     persisted_context_tokens: i64,
@@ -1052,8 +1036,11 @@ pub(super) fn build_round_usage_payload(
         "input_tokens": round_usage.input,
         "output_tokens": round_usage.output,
         "total_tokens": round_usage.total,
+        "reasoning_tokens": round_usage.reasoning,
+        "estimated": round_usage.estimated,
         "context_occupancy_tokens": context_occupancy_tokens.max(0),
         "request_consumed_tokens": round_usage.total,
+        "usage_accounted": true,
     });
     if let Value::Object(ref mut map) = usage_payload {
         request_round.insert_into(map);
@@ -1077,6 +1064,7 @@ pub(super) fn build_final_event_payload(
             input: 0,
             output: 0,
             total: 0,
+            ..Default::default()
         }),
         "round_usage": round_usage,
         "context_occupancy_tokens": context_occupancy_tokens,
@@ -1097,15 +1085,20 @@ pub(super) fn build_persisted_message_stats(
     round_usage: &TokenUsage,
     context_occupancy_tokens: Option<i64>,
     turn_decode_speed: &TurnDecodeSpeedAccumulator,
+    interaction_duration_s: f64,
 ) -> Value {
     let mut stats = serde_json::Map::new();
+    stats.insert(
+        "interaction_duration_s".to_string(),
+        json!(interaction_duration_s),
+    );
     stats.insert("usage".to_string(), json!(usage));
     stats.insert("round_usage".to_string(), json!(round_usage));
     stats.insert(
         "quotaConsumed".to_string(),
         json!(round_usage.total.max(usage.total)),
     );
-    if let Some(context_tokens) = context_occupancy_tokens.filter(|value| *value > 0) {
+    if let Some(context_tokens) = context_occupancy_tokens.filter(|value| *value >= 0) {
         stats.insert("contextTokens".to_string(), json!(context_tokens));
         stats.insert(
             "context_occupancy_tokens".to_string(),

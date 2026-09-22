@@ -13,6 +13,7 @@ import { runChatWorkerProbe } from './chatWorkerProbe';
 import { runMessengerTwoTurnProbe } from './messengerTwoTurnProbe';
 import { runMessengerReasoningProbe } from './messengerReasoningProbe';
 import { createMessengerToolRetryProbe } from './messengerToolRetryProbe';
+import { createMessengerWorkflowMetricsProbe } from './messengerWorkflowMetricsProbe';
 import { enableWorkflowHistoryFixture, readWorkflowHistoryFixture } from './messengerWorkflowHistoryFixture';
 import { useAgentStore } from '@/stores/agents';
 import { useChatStore } from '@/stores/chat';
@@ -335,6 +336,7 @@ onMounted(async () => {
     runTwoTurnProbe: () => runMessengerTwoTurnProbe(SESSION_A),
     runReasoningProbe: () => runMessengerReasoningProbe(SESSION_A),
     toolRetry: createMessengerToolRetryProbe(SESSION_A),
+    workflowMetrics: createMessengerWorkflowMetricsProbe(SESSION_A),
     setSection: (section: 'messages' | 'more') => useSessionHubStore().setSection(section),
     streamInBackground: async () => {
       const chat = useChatStore();

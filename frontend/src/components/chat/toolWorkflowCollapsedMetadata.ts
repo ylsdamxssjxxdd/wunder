@@ -19,9 +19,7 @@ const EXPLICIT_CONSUMED_KEYS = [
   'requestConsumedTokens',
   'consumed_tokens',
   'consumedTokens',
-  'consumed',
-  'used',
-  'count'
+  'consumed'
 ] as const;
 const USAGE_CONTAINER_KEYS = [
   'roundUsage',
@@ -77,12 +75,12 @@ const asRecord = (value: unknown): UnknownRecord | null =>
     : null;
 
 const parsePositiveInteger = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
     return Math.floor(value);
   }
   if (typeof value !== 'string' || !/^\d+$/.test(value.trim())) return null;
   const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 };
 
 const compactRawSample = (value: string): string => {
@@ -179,6 +177,7 @@ const readUsageFallback = (records: UnknownRecord[], rawValues: string[]): numbe
 };
 
 const resolveItemMetadata = (item: WorkflowItem | null): { records: UnknownRecord[]; rawValues: string[] } => {
+  if (item?.runtimeMetrics) return { records: [item], rawValues: [] };
   const records = collectRecords(item);
   return { records, rawValues: collectRawMetadata(records) };
 };
@@ -209,12 +208,14 @@ export const resolveCollapsedWorkflowEntryMetadata = (
     ...resolveItemMetadata(candidate.item)
   }));
 
-  let contextTokens: number | null = null;
-  let contextTokensSource: MetadataSource = 'none';
+  const requestItem = sources.find(({ item }) => item && Object.prototype.hasOwnProperty.call(item, 'request_context_tokens'));
+  const hasRequestContext = Boolean(requestItem);
+  let contextTokens = parsePositiveInteger(requestItem?.item?.request_context_tokens);
+  let contextTokensSource: MetadataSource = contextTokens !== null ? requestItem!.source : 'none';
   let consumedTokens: number | null = null;
   let consumedTokensSource: MetadataSource = 'none';
   for (const metadata of metadataBySource) {
-    if (contextTokens === null) {
+    if (contextTokens === null && !hasRequestContext) {
       const resolved = readNumber(metadata.records, metadata.rawValues, CONTEXT_TOKEN_KEYS);
       if (resolved !== null) {
         contextTokens = resolved;
@@ -234,13 +235,12 @@ export const resolveCollapsedWorkflowEntryMetadata = (
     }
   }
 
-  let durationMs = parsePositiveInteger(liveDurationMs);
-  if (durationMs === null) {
-    for (const metadata of [...metadataBySource].reverse()) {
-      durationMs = readNumber(metadata.records, metadata.rawValues, DURATION_KEYS);
-      if (durationMs !== null) break;
-    }
+  let durationMs: number | null = null;
+  for (const metadata of [...metadataBySource].reverse()) {
+    durationMs = readNumber(metadata.records, metadata.rawValues, DURATION_KEYS);
+    if (durationMs !== null) break;
   }
+  durationMs ??= parsePositiveInteger(liveDurationMs);
   return {
     contextTokensLabel: formatTokenLabel(contextTokens),
     contextTokensSource,

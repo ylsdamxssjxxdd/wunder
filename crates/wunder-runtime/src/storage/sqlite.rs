@@ -45,6 +45,7 @@ mod media_store;
 mod memory_store;
 mod meta_store;
 mod monitor_store;
+mod queue_control;
 mod retention_store;
 mod schema;
 mod session_goal;

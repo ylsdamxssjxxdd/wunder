@@ -278,6 +278,7 @@ export const chatCacheActions = {
       for (const session of sessions) {
         const sessionId = resolveSessionKey(session?.id);
         if (!sessionId) continue;
+        if (this.loadingBySession?.[sessionId]) continue;
         if (activeOnly && sessionId !== activeSessionId) continue;
         const fallbackMessages = sessionId === activeSessionId ? this.messages : null;
         if (isReusableFreshSession(session, fallbackMessages)) {

@@ -1176,11 +1176,12 @@ impl WorkspaceManager {
         session_id: &str,
         payload: &Value,
     ) -> Result<()> {
-        self.write_queue().enqueue(StorageWrite::ModelContextAppend {
-            user_id: user_id.to_string(),
-            session_id: session_id.to_string(),
-            payload: payload.clone(),
-        })?;
+        self.write_queue()
+            .enqueue(StorageWrite::ModelContextAppend {
+                user_id: user_id.to_string(),
+                session_id: session_id.to_string(),
+                payload: payload.clone(),
+            })?;
         self.maybe_schedule_retention_cleanup();
         Ok(())
     }

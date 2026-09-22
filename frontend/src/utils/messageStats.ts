@@ -1,4 +1,5 @@
 import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from './chatTiming';
+import { tokenUsageDetails } from './tokenUsageDetails';
 import { continuesRecoveryOnModelRequest, isChatRetryEventType, isModelRecoveryReason } from '@/realtime/chat/chatRetryState';
 import { resolveAssistantFailureNotice } from './assistantFailureNotice';
 import {
@@ -10,6 +11,7 @@ import {
 import { isCompactionRunningFromWorkflowItems } from './chatCompactionWorkflow';
 import { shouldDisplayTransientRetry } from './retryVisibility';
 import { hasActiveSubagentItems } from './subagentRuntime';
+import { readQueueSchedulingState } from './queueScheduling';
 
 export type MessageStatsEntry = {
   key: string;
@@ -19,6 +21,7 @@ export type MessageStatsEntry = {
   tone?: 'running' | 'warning' | 'success' | 'error' | 'muted';
   live?: boolean;
   iconClass?: string;
+  hint?: string;
 };
 
 export type AssistantMessageStatsOptions = {
@@ -193,7 +196,7 @@ const resolvePartialConsumedTokens = (source: Record<string, any> | null | undef
 
 const resolveExplicitContextTokens = (stats: Record<string, any> | null | undefined): number | null => {
   if (!stats || typeof stats !== 'object') return null;
-  return parsePositiveInteger(
+  const raw =
     stats.context_occupancy_tokens ??
       stats.contextOccupancyTokens ??
       stats.context_usage?.context_occupancy_tokens ??
@@ -201,8 +204,9 @@ const resolveExplicitContextTokens = (stats: Record<string, any> | null | undefi
       stats.contextTokens ??
       stats.context_tokens ??
       stats.context_usage?.contextTokens ??
-      stats.context_usage?.context_tokens
-  );
+      stats.context_usage?.context_tokens;
+  if (raw === 0 || raw === '0') return 0;
+  return parsePositiveInteger(raw);
 };
 
 const resolveContextTokens = (stats: Record<string, any> | null | undefined): number | null => {
@@ -238,7 +242,7 @@ const resolveAssistantTurnConsumedTokens = (
       resolveExplicitConsumedTokens(candidate?.stats as Record<string, any> | null | undefined) ??
       resolveExplicitConsumedTokens(candidate);
     if (!isMeaningfulConsumedTokens(consumed)) continue;
-    total += consumed;
+    total = Math.max(total, consumed);
     found = true;
   }
   return found ? total : null;
@@ -287,7 +291,7 @@ export const sumConversationConsumedTokens = (messages: MessageLike[] | null | u
     if (message.role !== 'assistant') {
       return;
     }
-    const consumed = resolveAssistantConsumedTokens(message, messages);
+    const consumed = resolveAssistantConsumedTokens(message);
     if (consumed === null || consumed <= 0) {
       return;
     }
@@ -698,6 +702,10 @@ const resolveAssistantStatusEntry = (
     );
   }
   if (isAssistantExplicitlyQueued(message)) {
+    const scheduling = readQueueSchedulingState(latestQueue.item?.detail);
+    if (scheduling === 'pausing' || scheduling === 'suspended') {
+      return buildStatusEntry(t(scheduling === 'pausing' ? 'chat.waiting.queuePausingTitle' : 'chat.waiting.queueSuspendedTitle'), 'muted', true, 'fa-solid fa-clock');
+    }
     const queueAhead = resolveQueueAheadCount(latestQueue.item);
     const queuedLabel =
       queueAhead !== null
@@ -705,7 +713,7 @@ const resolveAssistantStatusEntry = (
         : t('messenger.messageStatus.queued');
     return buildStatusEntry(queuedLabel, 'muted', true, 'fa-solid fa-clock');
   }
-  if (latestQueue.index >= 0 && latestQueue.index >= latestRequest.index && latestQueue.index >= latestOutput.index) {
+  if (latestQueue.index >= 0 && latestQueue.index >= latestRequest.index && latestQueue.index >= latestOutput.index && latestQueue.item?.eventType !== 'queue_start') {
     const queueAhead = resolveQueueAheadCount(latestQueue.item);
     const queuedLabel =
       queueAhead !== null
@@ -781,7 +789,7 @@ export const buildAssistantMessageStatsEntries = (
   const speed = resolveTokenSpeed(stats);
   const contextTokens = resolveContextTokens(stats);
   const effectiveQuotaConsumedTokens = resolveAssistantConsumedTokens(message, allMessages);
-  const hasUsage = Number.isFinite(Number(contextTokens)) && Number(contextTokens) > 0;
+  const hasUsage = contextTokens !== null && Number.isFinite(Number(contextTokens));
   const hasQuota =
     Number.isFinite(Number(effectiveQuotaConsumedTokens)) && Number(effectiveQuotaConsumedTokens) > 0;
   const hasDuration = Number.isFinite(Number(durationSeconds)) && Number(durationSeconds) > 0;
@@ -816,5 +824,10 @@ export const buildAssistantMessageStatsEntries = (
       'fa-solid fa-screwdriver-wrench'
     )
   );
+  for (const entry of entries) {
+    if (entry.key === 'quota') entry.hint = tokenUsageDetails(stats, t);
+    if (entry.key === 'speed') entry.hint = t('chat.stats.speedHint');
+    if (entry.key === 'contextTokens') entry.hint = t('chat.stats.contextHint');
+  }
   return entries;
 };

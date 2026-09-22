@@ -84,6 +84,9 @@ mod memory_messages;
 mod memory_support;
 mod microcompaction;
 mod prompt;
+mod queue_handoff;
+#[cfg(test)]
+mod queue_handoff_tests;
 mod request;
 mod result_normalizer;
 mod retry_governor;
@@ -97,6 +100,11 @@ mod tool_parallel;
 mod tool_result_payload;
 mod turn_state;
 mod types;
+mod usage_accounting;
+#[cfg(test)]
+mod usage_accounting_tests;
+#[cfg(all(test, feature = "sqlite-storage"))]
+mod workflow_metrics_tests;
 #[cfg(all(test, feature = "sqlite-storage"))]
 mod virtual_replay_tests;
 
@@ -117,6 +125,7 @@ use types::{PreparedRequest, RoundInfo};
 
 #[derive(Clone)]
 pub struct Orchestrator {
+    pub(crate) scheduling: Arc<crate::services::runtime::thread::scheduling::CooperativeScheduler>,
     config_store: ConfigStore,
     workspace: Arc<WorkspaceManager>,
     monitor: Arc<MonitorState>,
@@ -159,6 +168,7 @@ impl Orchestrator {
         cron_wake_signal: Option<CronWakeSignal>,
     ) -> Self {
         Self {
+            scheduling: Arc::new(Default::default()),
             config_store,
             workspace,
             monitor,

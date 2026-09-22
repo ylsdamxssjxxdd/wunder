@@ -1,3 +1,4 @@
+import { restoreSessionCatalogEntry } from './chatSessionCatalog';
 import { defineStore } from 'pinia';
 
 import {
@@ -197,6 +198,7 @@ export const chatSessionMutationActions = {
       const targetId = resolveSessionKey(sessionId);
       if (!targetId) return null;
       const { data } = await restoreSessionApi(targetId);
+      restoreSessionCatalogEntry(this, targetId);
       const restored = data?.data || null;
       if (!restored || typeof restored !== 'object') {
         return restored;

@@ -24,21 +24,18 @@ export component Action inherits Rectangle {
     accessible-enabled: root.enabled;
     accessible-action-default => { if root.enabled { root.clicked(); } }
     Image {
-        x: root.show-label ? 10px : (parent.width - 15px) / 2;
+        x: root.show-label ? 8px : (parent.width - 15px) / 2;
         y: (parent.height - 15px) / 2;
         width: 15px; height: 15px;
         source: root.icon; image-fit: contain;
         colorize: root.rail || root.primary ? white : Theme.muted;
     }
     if root.show-label : Text {
-        x: 32px; width: parent.width - 36px; height: parent.height;
+        x: root.icon.width > 0 ? 28px : 6px; width: parent.width - self.x - 6px;
+        horizontal-alignment: center; height: parent.height;
         text: root.label; font-size: 11px;
         color: root.primary ? white : Theme.text;
         vertical-alignment: center; overflow: elide;
-    }
-    touch := TouchArea {
-        enabled: root.enabled; mouse-cursor: pointer;
-        clicked => { focus.focus(); root.clicked(); }
     }
     focus := FocusScope {
         enabled: root.enabled;
@@ -47,16 +44,39 @@ export component Action inherits Rectangle {
             return reject;
         }
     }
+    // Keep the pointer target above the focus scope. This avoids the first
+    // click being consumed solely to focus controls on the Win7 renderer.
+    touch := TouchArea {
+        enabled: root.enabled; mouse-cursor: pointer;
+        clicked => { focus.focus(); root.clicked(); }
+    }
 }
 export component RailButton inherits Rectangle {
     in property <image> icon;
     in property <string> label;
     in property <bool> active: false;
     callback clicked();
+    width: 46px;
     height: 50px;
-    Action { width: 46px; height: 50px; rail: true; selected: root.active; label: root.label; clicked => { root.clicked(); } }
+    forward-focus: rail-focus;
+    accessible-role: button; accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    border-radius: 10px;
+    background: root.active || rail-touch.has-hover ? #ffffff33 : transparent;
+    border-width: rail-focus.has-focus ? 1px : 0px; border-color: white;
     Image { y: 8px; width: 16px; height: 16px; source: root.icon; image-fit: contain; colorize: #ffffff; }
     Text { y: 30px; width: parent.width; height: 14px; text: root.label; color: #ffffffe6; font-size: 10px; horizontal-alignment: center; }
+    rail-focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == " " || event.text == "\n" { root.clicked(); return accept; }
+            return reject;
+        }
+    }
+    // One full-cell pointer target remains above the keyboard focus scope.
+    rail-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { rail-focus.focus(); root.clicked(); }
+    }
 }
 export component Avatar inherits Rectangle {
     in property <image> source;

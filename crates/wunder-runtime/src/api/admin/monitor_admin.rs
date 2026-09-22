@@ -28,6 +28,10 @@ use tracing::{info, warn};
 const ADMIN_MONITOR_TIMING_INFO_MS: u128 = 200;
 const ADMIN_MONITOR_TIMING_WARN_MS: u128 = 1000;
 
+#[cfg(test)]
+#[path = "session_catalog_tests.rs"]
+mod session_catalog_tests;
+
 pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/wunder/admin/monitor", get(admin_monitor))
@@ -496,7 +500,26 @@ async fn admin_monitor_cancel(
     State(state): State<Arc<AppState>>,
     AxumPath(session_id): AxumPath<String>,
 ) -> Result<Json<Value>, Response> {
-    let ok = state.monitor.cancel(&session_id);
+    let record = state.monitor.get_record(&session_id);
+    let user_id = record
+        .as_ref()
+        .and_then(|record| record.get("user_id"))
+        .and_then(Value::as_str);
+    let ok = if let Some(user_id) = user_id {
+        state
+            .kernel
+            .thread_runtime
+            .cancel_session_activity(user_id, &session_id, "admin_cancel")
+            .await
+            .map(|result| {
+                result.monitor_cancelled
+                    || result.queued_tasks_cancelled > 0
+                    || result.running_tasks_marked_cancelled > 0
+            })
+            .unwrap_or(false)
+    } else {
+        false
+    };
     if !ok {
         return Ok(Json(json!({
             "ok": false,
@@ -613,18 +636,28 @@ async fn admin_monitor_delete(
     AxumPath(session_id): AxumPath<String>,
 ) -> Result<Json<Value>, Response> {
     let cleaned = session_id.trim();
-    let user_id = state.monitor.get_record(cleaned).and_then(|record| {
-        record
-            .get("user_id")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-    });
-    if let Some(user_id) = user_id {
-        state.workspace.purge_session_data(&user_id, cleaned);
-        let _ = state.memory.delete_record(&user_id, cleaned);
-        let _ = state.user_store.delete_chat_session(&user_id, cleaned);
+    if cleaned.is_empty() {
+        return Err(error_response(StatusCode::BAD_REQUEST, i18n::t("error.param_required")));
     }
-    let ok = state.monitor.purge_session(cleaned);
+    let session_id = cleaned.to_string();
+    let ok = crate::core::blocking::run_db("api.admin.delete_session", move || -> anyhow::Result<bool> {
+        // The durable catalog owns identity; monitor history may already be evicted.
+        let monitor_user_id = state.monitor.get_record(&session_id).and_then(|record| {
+            record.get("user_id").and_then(Value::as_str).map(str::to_string)
+        });
+        let user_id = state.storage.get_chat_session_owner(&session_id)?.or(monitor_user_id);
+        if let Some(user_id) = user_id {
+            // Never report successful deletion while the user-visible catalog survives.
+            state.user_store.delete_chat_session(&user_id, &session_id)?;
+            state.workspace.purge_session_data(&user_id, &session_id);
+            state.storage.delete_cron_jobs_by_session(&user_id, &session_id)?;
+            state.memory.delete_record(&user_id, &session_id);
+        }
+        Ok(state.monitor.purge_session(&session_id))
+    }).await.map_err(|err| {
+        warn!(error = %err, "admin session deletion failed");
+        error_response(StatusCode::INTERNAL_SERVER_ERROR, i18n::t("error.internal_error"))
+    })?;
     if !ok {
         return Ok(Json(json!({
             "ok": false,

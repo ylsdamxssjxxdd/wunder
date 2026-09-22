@@ -50,6 +50,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from '@/i18n';
 import { normalizeChatTimestampMs } from '@/utils/chatTiming';
 import { shouldDisplayTransientRetry } from '@/utils/retryVisibility';
+import { readQueueSchedulingState } from '@/utils/queueScheduling';
 
 type WorkflowItemLike = {
   eventType?: unknown;
@@ -165,7 +166,6 @@ const silentMs = computed(() => Math.max(0, nowMs.value - lastProgressMs.value))
 const normalizeEventType = (value: unknown) => String(value || '').trim().toLowerCase();
 
 const isMessageQueued = computed(() => {
-  if (hasVisibleOutput.value) return false;
   const status = normalizeEventType(
     props.message?.runtime_status ??
       props.message?.runtimeStatus ??
@@ -229,7 +229,8 @@ const phase = computed<WaitingPhase>(() => {
   }
   if (
     isMessageQueued.value ||
-    (latestQueue.value.index >= 0 && latestQueue.value.index > latestRequest.value.index)
+    (latestQueue.value.index >= 0 && latestQueue.value.index > latestRequest.value.index &&
+      normalizeEventType(latestQueue.value.item?.eventType) !== 'queue_start')
   ) {
     return 'queued';
   }
@@ -246,6 +247,7 @@ const shouldRender = computed(() => {
   if (String(props.message?.role || '').trim().toLowerCase() !== 'assistant') {
     return false;
   }
+  if (isPending.value && isMessageQueued.value) return true;
   if (!isPending.value || hasVisibleOutput.value) {
     return false;
   }
@@ -346,10 +348,13 @@ const parseQueueAhead = (item: WorkflowItemLike | null) => {
 };
 
 const queueAheadCount = computed(() => parseQueueAhead(latestQueue.value.item));
+const schedulingState = computed(() => readQueueSchedulingState(latestQueue.value.item?.detail));
 
 const title = computed(() => {
   switch (phase.value) {
     case 'queued':
+      if (schedulingState.value === 'pausing') return t('chat.waiting.queuePausingTitle');
+      if (schedulingState.value === 'suspended') return t('chat.waiting.queueSuspendedTitle');
       return t('chat.waiting.queuedTitle');
     case 'model':
       return t('chat.waiting.modelTitle');
@@ -367,6 +372,9 @@ const title = computed(() => {
 const detail = computed(() => {
   switch (phase.value) {
     case 'queued':
+      if (schedulingState.value === 'pausing') return t('chat.waiting.queuePausingDetail');
+      if (schedulingState.value === 'suspended') return t('chat.waiting.queueSuspendedDetail');
+      if (schedulingState.value === 'priority') return t('chat.waiting.queuePriorityDetail');
       return queueAheadCount.value !== null
         ? t('chat.waiting.queuedDetailWithAhead', { count: queueAheadCount.value })
         : t('chat.waiting.queuedDetail');

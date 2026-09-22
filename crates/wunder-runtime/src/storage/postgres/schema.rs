@@ -1884,6 +1884,7 @@ impl PostgresSchemaStorage for PostgresStorage {
                     self.ensure_stream_event_workflow_columns(&mut conn)?;
                     self.ensure_channel_columns(&mut conn)?;
                     self.ensure_session_lock_columns(&mut conn)?;
+                    self.ensure_queue_control_schema(&mut conn)?;
                     self.ensure_session_run_columns(&mut conn)?;
                     self.ensure_user_agent_columns(&mut conn)?;
                     self.ensure_team_run_columns(&mut conn)?;

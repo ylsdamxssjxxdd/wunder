@@ -126,7 +126,7 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
         let rows = conn.query(
             "SELECT task_id, thread_id, user_id, agent_id, session_id, status, request_payload, request_id, retry_count, retry_at, created_at, updated_at, started_at, finished_at, last_error \
              FROM agent_tasks WHERE (status = 'pending' OR status = 'retry') AND retry_at <= $1 \
-             ORDER BY retry_at ASC, created_at ASC LIMIT $2",
+             ORDER BY priority DESC, retry_at ASC, created_at ASC, task_id ASC LIMIT $2",
             &[&now, &limit.max(1)],
         )?;
         Ok(rows
@@ -181,7 +181,7 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
             .query_one(
                 "SELECT COUNT(*) FROM agent_tasks \
                  WHERE (status = 'pending' OR status = 'retry') AND retry_at <= $1 \
-                   AND (retry_at < $2 OR (retry_at = $3 AND created_at < $4) OR (retry_at = $5 AND created_at = $6 AND task_id < $7))",
+                   AND (priority > COALESCE((SELECT priority FROM agent_tasks WHERE task_id = $7), 0) OR (priority = COALESCE((SELECT priority FROM agent_tasks WHERE task_id = $7), 0) AND (retry_at < $2 OR (retry_at = $3 AND created_at < $4) OR (retry_at = $5 AND created_at = $6 AND task_id < $7))))",
                 &[&now, &retry_at, &retry_at, &created_at, &retry_at, &created_at, &task_id],
             )?
             .get(0);
@@ -245,9 +245,17 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
         if cleaned.is_empty() {
             return Ok(());
         }
+        // Terminal states are monotonic. A late completion/error callback must not
+        // resurrect a cancelled or already finished task.
+        let allowed_sources = match params.status {
+            "running" => "('pending','retry')",
+            "retry" => "('pending','retry','running')",
+            "success" | "failed" | "dead" | "cancelled" => "('pending','retry','running')",
+            _ => return Ok(()),
+        };
         let mut conn = self.conn()?;
         conn.execute(
-            "UPDATE agent_tasks SET status = $1, retry_count = $2, retry_at = $3, started_at = $4, finished_at = $5, last_error = $6, updated_at = $7 WHERE task_id = $8",
+            &format!("UPDATE agent_tasks SET status = $1, retry_count = $2, retry_at = $3, started_at = $4, finished_at = $5, last_error = $6, updated_at = $7 WHERE task_id = $8 AND status IN {allowed_sources}"),
             &[
                 &params.status,
                 &params.retry_count,

@@ -26,6 +26,7 @@ pub struct AgentRecord {
     pub name: String,
     pub description: String,
     pub model: String,
+    pub system_prompt: String,
     pub status: String,
 }
 
@@ -34,6 +35,14 @@ pub struct ToolRecord {
     pub name: String,
     pub description: String,
     pub category: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct FileRecord {
+    pub name: String,
+    pub path: String,
+    pub entry_type: String,
+    pub size: String,
 }
 
 #[derive(Clone, Debug)]
@@ -124,6 +133,12 @@ impl ConnectionConfig {
 }
 
 impl LocalApiBase {
+    pub(crate) fn websocket_target(&self) -> (std::net::SocketAddr, String) {
+        (
+            self.address.into(),
+            format!("ws://{}{}/chat/ws", self.host_header, self.path_prefix),
+        )
+    }
     fn parse(input: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let cleaned = input.trim().trim_end_matches('/');
         let Some(rest) = cleaned.strip_prefix("http://") else {
@@ -167,7 +182,7 @@ impl LocalApiBase {
 
 #[derive(Clone)]
 pub struct ChatApi {
-    api_base: LocalApiBase,
+    pub(crate) api_base: LocalApiBase,
     token: Arc<Mutex<String>>,
 }
 
@@ -220,16 +235,19 @@ impl ChatApi {
         Ok((session, transcript))
     }
 
-    pub fn send_message(&self, session_id: &str, content: &str) -> Result<String, String> {
-        let path = format!(
-            "/chat/sessions/{}/messages",
+    pub fn cancel(&self, session_id: &str) -> Result<(), String> {
+        self.post_json(
+            &format!("/chat/sessions/{}/cancel", encode_path_segment(session_id)),
+            json!({}),
+        )
+        .map(|_| ())
+    }
+
+    pub fn event_tail(&self, session_id: &str) -> Result<Value, String> {
+        self.get_json(&format!(
+            "/chat/sessions/{}/events?limit=1",
             encode_path_segment(session_id)
-        );
-        let payload = self.post_json(&path, json!({ "content": content, "stream": false }))?;
-        value_text(payload.get("data").unwrap_or(&Value::Null), "answer")
-            .or_else(|| value_text(payload.get("data").unwrap_or(&Value::Null), "content"))
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| "server returned an empty response".to_string())
+        ))
     }
 
     pub fn list_agents(&self) -> Result<Vec<AgentRecord>, String> {
@@ -257,6 +275,39 @@ impl ChatApi {
             .get("data")
             .and_then(parse_agent)
             .ok_or_else(|| "invalid create-agent response".to_string())
+    }
+
+    pub fn update_agent(
+        &self,
+        id: &str,
+        name: &str,
+        description: &str,
+        system_prompt: &str,
+        model_name: &str,
+    ) -> Result<AgentRecord, String> {
+        let name = name.trim();
+        if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
+            return Err("名称不能为空、超过 80 个字符或包含控制字符".into());
+        }
+        let description = validate_agent_text(description, "description")?;
+        let system_prompt = validate_agent_text(system_prompt, "system prompt")?;
+        let model_name = model_name.trim();
+        if model_name.len() > 512 || model_name.contains(['\r', '\n']) {
+            return Err("invalid model name".to_string());
+        }
+        let payload = self.put_json(
+            &format!("/agents/{}", encode_path_segment(id)),
+            json!({
+                "name": name,
+                "description": description,
+                "system_prompt": system_prompt,
+                "model_name": model_name,
+            }),
+        )?;
+        payload
+            .get("data")
+            .and_then(parse_agent)
+            .ok_or_else(|| "invalid update-agent response".to_string())
     }
 
     pub fn list_tools(&self) -> Result<Vec<ToolRecord>, String> {
@@ -368,7 +419,7 @@ impl ChatApi {
         parse_desktop_settings(&updated)
     }
 
-    fn put_json(&self, suffix: &str, payload: Value) -> Result<Value, String> {
+    pub(crate) fn put_json(&self, suffix: &str, payload: Value) -> Result<Value, String> {
         let token = self.resolve_token()?;
         request_json(&self.api_base, "PUT", suffix, Some(&token), Some(payload))
     }
@@ -428,7 +479,7 @@ fn parse_desktop_settings(payload: &Value) -> Result<DesktopSettings, String> {
 }
 
 impl ChatApi {
-    fn get_json(&self, suffix: &str) -> Result<Value, String> {
+    pub(crate) fn get_json(&self, suffix: &str) -> Result<Value, String> {
         let token = self.resolve_token()?;
         request_json(&self.api_base, "GET", suffix, Some(&token), None)
     }
@@ -438,7 +489,7 @@ impl ChatApi {
         request_json(&self.api_base, "POST", suffix, Some(&token), Some(payload))
     }
 
-    fn resolve_token(&self) -> Result<String, String> {
+    pub(crate) fn resolve_token(&self) -> Result<String, String> {
         match self.token.lock() {
             Ok(token) if !token.is_empty() => return Ok(token.clone()),
             _ => {}
@@ -569,11 +620,27 @@ fn parse_agent(value: &Value) -> Option<AgentRecord> {
         id: value_text(value, "id")?,
         name: value_text(value, "name").unwrap_or_else(|| "未命名智能体".to_string()),
         description: value_text(value, "description").unwrap_or_default(),
-        model: value_text(value, "configured_model_name")
-            .or_else(|| value_text(value, "model_name"))
-            .unwrap_or_default(),
+        // Keep inheritance distinct from the effective default model.
+        model: value
+            .get("configured_model_name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        system_prompt: value
+            .get("system_prompt")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
         status: value_text(value, "status").unwrap_or_else(|| "active".to_string()),
     })
+}
+
+fn validate_agent_text(raw: &str, label: &str) -> Result<String, String> {
+    // Preserve prompt indentation, line endings and trailing newlines verbatim.
+    if raw.len() > 131_072 || raw.contains('\0') {
+        return Err(format!("{label} 超过 128 KiB 或包含无效字符"));
+    }
+    Ok(raw.to_string())
 }
 
 fn parse_tool(value: &Value, category: &str) -> Option<ToolRecord> {
@@ -582,6 +649,30 @@ fn parse_tool(value: &Value, category: &str) -> Option<ToolRecord> {
         description: value_text(value, "description").unwrap_or_default(),
         category: category.to_string(),
     })
+}
+
+pub(crate) fn parse_file(value: &Value) -> Option<FileRecord> {
+    let name = value_text(value, "name")?;
+    Some(FileRecord {
+        path: value_text(value, "path").unwrap_or_else(|| name.clone()),
+        entry_type: value_text(value, "type").unwrap_or_else(|| "file".to_string()),
+        size: value
+            .get("size")
+            .and_then(Value::as_u64)
+            .map(format_size)
+            .unwrap_or_default(),
+        name,
+    })
+}
+
+fn format_size(size: u64) -> String {
+    if size >= 1024 * 1024 {
+        format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+    } else if size >= 1024 {
+        format!("{:.1} KB", size as f64 / 1024.0)
+    } else {
+        format!("{size} B")
+    }
 }
 
 fn parse_transcript_message(value: &Value) -> Option<TranscriptMessage> {
@@ -654,4 +745,28 @@ fn encode_path_segment(input: &str) -> String {
             }
         })
         .collect()
+}
+
+pub(crate) fn encode_query_value(input: &str) -> String {
+    encode_path_segment(input)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inherited_model_and_prompt_whitespace_survive_projection() {
+        let record = parse_agent(&json!({"id":"test", "configured_model_name":null,
+            "model_name":"effective", "system_prompt":"  line\r\nnext\n"}))
+        .unwrap();
+        assert_eq!(
+            (record.model, record.system_prompt),
+            (String::new(), "  line\r\nnext\n".into())
+        );
+        assert_eq!(
+            validate_agent_text("  line\r\nnext\n", "prompt"),
+            Ok("  line\r\nnext\n".into())
+        );
+    }
 }

@@ -150,6 +150,7 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "llm_response"
             | "bad_tool_call_retry"
             | "llm_stream_retry"
+            | "model_usage"
             | "knowledge_request"
             | "compaction"
             | "tool_call"
@@ -186,6 +187,14 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "subagent_dispatch_item_update"
             | "subagent_dispatch_finish"
             | "subagent_announce"
+            // Queue handoff events are durable boundaries too. In particular,
+            // an action-boundary suspension is emitted by the live EventEmitter
+            // rather than the thread queue service, so replay must retain it.
+            | "queue_enter"
+            | "queue_start"
+            | "queue_update"
+            | "queue_finish"
+            | "queue_fail"
             | "final"
             | "turn_terminal"
             | "thread_status"
@@ -220,6 +229,7 @@ pub(super) struct EventEmitter {
     overflow_version: Arc<AtomicU64>,
     delta_buffer: Option<Arc<ParkingMutex<StreamDeltaBuffer>>>,
     client_message_id: Option<String>,
+    usage: Arc<ParkingMutex<TokenUsage>>,
 }
 
 impl EventEmitter {
@@ -250,11 +260,25 @@ impl EventEmitter {
             overflow_version: Arc::new(AtomicU64::new(0)),
             delta_buffer,
             client_message_id,
+            usage: Arc::new(ParkingMutex::new(TokenUsage {
+                reasoning: Some(0),
+                ..Default::default()
+            })),
         }
     }
 
     fn with_client_message_id(&self, data: Value) -> Value {
         inject_client_message_id(data, self.client_message_id.as_deref())
+    }
+
+    pub(super) fn record_usage(&self, usage: &TokenUsage) -> TokenUsage {
+        let mut total = self.usage.lock();
+        super::usage_accounting::accumulate_usage(&mut total, usage);
+        total.clone()
+    }
+
+    pub(super) fn accumulated_usage(&self) -> TokenUsage {
+        self.usage.lock().clone()
     }
 
     fn close(&self) {
@@ -965,10 +989,12 @@ mod tests {
     fn exception_persists_turn_terminal_and_approval_resolved_events() {
         assert!(should_persist_stream_event("bad_tool_call_retry"));
         assert!(should_persist_stream_event("llm_stream_retry"));
+        assert!(should_persist_stream_event("model_usage"));
         assert!(should_persist_stream_event("turn_terminal"));
         assert!(should_persist_stream_event("approval_resolved"));
         assert!(should_persist_stream_event("thread_status"));
         assert!(should_persist_stream_event("thread_closed"));
+        assert!(should_persist_stream_event("queue_enter"));
         assert!(!should_persist_stream_event("command_session_delta"));
     }
 

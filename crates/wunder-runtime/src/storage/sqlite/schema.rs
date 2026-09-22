@@ -1462,6 +1462,7 @@ impl SqliteSchemaStorage for SqliteStorage {
         self.ensure_stream_event_workflow_columns(&conn)?;
         self.ensure_channel_columns(&conn)?;
         self.ensure_session_lock_columns(&conn)?;
+        self.ensure_queue_control_schema(&conn)?;
         self.ensure_session_run_columns(&conn)?;
         self.ensure_user_agent_columns(&conn)?;
         self.ensure_team_run_columns(&conn)?;

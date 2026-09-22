@@ -50,6 +50,7 @@ const GENERIC_WORKFLOW_EVENT_TYPES = new Set([
   'compaction_notice'
 ]);
 const USAGE_EVENT_TYPES = new Set([
+  'model_usage',
   'token_usage',
   'round_usage',
   'context_usage',
@@ -535,7 +536,7 @@ export const buildCanonicalChatRuntimeEvents = (
 
   if (eventType === 'error' || eventType === 'queue_fail') {
     return [
-      buildBaseEvent(options, 'turn_failed', {
+      buildBaseEvent(options, TERMINAL_CANCELLED_STATUSES.has(normalizeEventType(data.status ?? payload.status)) ? 'turn_cancelled' : 'turn_failed', {
         content: firstText(data.message, payload.message, data.error, payload.error)
       })
     ];
@@ -608,6 +609,8 @@ export const buildCanonicalChatRuntimeEvents = (
 
   if (eventType === 'tool_result' || eventType === 'approval_result' || eventType === 'approval_resolved') {
     const failed =
+      data.ok === false ||
+      payload.ok === false ||
       data.success === false ||
       payload.success === false ||
       TERMINAL_FAILED_STATUSES.has(normalizeEventType(data.status ?? payload.status));

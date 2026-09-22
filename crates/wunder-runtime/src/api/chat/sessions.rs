@@ -94,6 +94,9 @@ pub(super) fn router() -> Router<Arc<AppState>> {
 
 #[derive(Debug, Deserialize)]
 struct SessionListQuery {
+    /// Bounded client catalog reconciliation, independent of the requested page.
+    #[serde(default)]
+    known_session_ids: Option<String>,
     #[serde(default)]
     page: Option<i64>,
     #[serde(default)]
@@ -226,6 +229,22 @@ async fn list_sessions(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let (offset, limit) = resolve_pagination(&query);
+    let known_ids = query.known_session_ids.as_deref().unwrap_or("")
+        .split(',').map(str::trim).filter(|id| !id.is_empty()).collect::<Vec<_>>();
+    if known_ids.len() > 100 || known_ids.iter().any(|id| id.len() > 128) {
+        return Err(error_response(StatusCode::BAD_REQUEST, i18n::t("error.param_required")));
+    }
+    let storage = state.storage.clone();
+    let user_id = resolved.user.user_id.clone();
+    let known_ids = known_ids.into_iter().map(str::to_string).collect::<Vec<_>>();
+    let unavailable_ids = crate::core::blocking::run_db("api.chat.reconcile_catalog", move || -> anyhow::Result<Vec<String>> {
+        let active = storage.list_active_chat_session_ids(&user_id, &known_ids)?
+            .into_iter().collect::<std::collections::HashSet<_>>();
+        Ok(known_ids.into_iter().filter(|id| !active.contains(id)).collect())
+    }).await.map_err(|err| {
+        warn!(error = %err, "session catalog reconciliation failed");
+        error_response(StatusCode::INTERNAL_SERVER_ERROR, i18n::t("error.internal_error"))
+    })?;
     let agent_id = query.agent_id.as_deref().map(str::trim);
     let parent_session_id = query.parent_session_id.as_deref().map(str::trim);
     let status_filter = match query.status.as_deref().map(str::trim) {
@@ -264,8 +283,19 @@ async fn list_sessions(
     .map(|record| (record.session_id.clone(), record))
     .collect::<HashMap<_, _>>();
     let mut items = Vec::with_capacity(sessions.len());
+    let session_ids = sessions
+        .iter()
+        .map(|record| record.session_id.clone())
+        .collect::<Vec<_>>();
+    let usage_by_session = state.monitor.session_usage_summaries(&session_ids);
     for record in &sessions {
         let mut payload = session_payload(record);
+        if let Some((consumed_tokens, tool_calls)) = usage_by_session.get(&record.session_id) {
+            if let Value::Object(map) = &mut payload {
+                map.insert("consumed_tokens".to_string(), json!(consumed_tokens));
+                map.insert("tool_calls".to_string(), json!(tool_calls));
+            }
+        }
         insert_session_orchestration_lock_fields(
             &mut payload,
             &state,
@@ -290,7 +320,7 @@ async fn list_sessions(
         );
         items.push(payload);
     }
-    Ok(Json(json!({ "data": { "total": total, "items": items } })))
+    Ok(Json(json!({ "data": { "total": total, "items": items, "unavailable_session_ids": unavailable_ids } })))
 }
 
 async fn get_session(
@@ -1279,6 +1309,10 @@ fn project_queued_session_messages(
         return;
     }
     for task in active_queue_tasks {
+        // A parked execution already owns its transcript; never append its original request again.
+        if task.status == "running" {
+            continue;
+        }
         if latest_trailing_user_matches_queue_task(messages, task) {
             messages.push(build_projected_queue_assistant_message(task));
             continue;

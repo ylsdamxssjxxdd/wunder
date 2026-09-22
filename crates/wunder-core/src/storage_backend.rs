@@ -113,6 +113,15 @@ pub trait LogStatsStore {
 pub trait MonitorStore {
     fn upsert_monitor_record(&self, payload: &Value) -> Result<()>;
     fn get_monitor_record(&self, session_id: &str) -> Result<Option<Value>>;
+    fn load_monitor_records_by_session_ids(&self, session_ids: &[String]) -> Result<Vec<Value>> {
+        let mut records = Vec::with_capacity(session_ids.len());
+        for session_id in session_ids {
+            if let Some(record) = self.get_monitor_record(session_id)? {
+                records.push(record);
+            }
+        }
+        Ok(records)
+    }
     fn load_monitor_records(&self) -> Result<Vec<Value>>;
     fn load_recent_monitor_records(&self, limit: i64) -> Result<Vec<Value>> {
         if limit <= 0 {
@@ -217,6 +226,15 @@ pub trait SessionLockStore {
 
 /// Agent thread, task queue, and stream event storage.
 pub trait AgentRuntimeStore {
+    fn claim_agent_task(&self, task_id: &str, now: f64) -> Result<bool>;
+    fn promote_agent_task(&self, task_id: &str, now: f64) -> Result<bool>;
+    fn update_agent_task_queue_payload(&self, task_id: &str, payload: &Value) -> Result<bool>;
+    fn set_session_lock_suspended(
+        &self,
+        session_id: &str,
+        suspended: bool,
+        max_active: i64,
+    ) -> Result<bool>;
     fn insert_agent_task(&self, record: &AgentTaskRecord) -> Result<()>;
     fn get_agent_task(&self, task_id: &str) -> Result<Option<AgentTaskRecord>>;
     fn list_pending_agent_tasks(&self, limit: i64) -> Result<Vec<AgentTaskRecord>>;
@@ -459,6 +477,10 @@ pub trait UserAccountStore {
 
 /// Chat session catalog storage.
 pub trait ChatSessionStore {
+    /// Global ownership lookup for privileged administration only.
+    fn get_chat_session_owner(&self, session_id: &str) -> Result<Option<String>>;
+    /// Resolve a bounded set of active catalog entries within one user's scope.
+    fn list_active_chat_session_ids(&self, user_id: &str, session_ids: &[String]) -> Result<Vec<String>>;
     fn upsert_chat_session(&self, record: &ChatSessionRecord) -> Result<()>;
     fn insert_chat_session_if_absent(&self, record: &ChatSessionRecord) -> Result<bool>;
     fn get_chat_session(

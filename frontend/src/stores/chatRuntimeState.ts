@@ -1127,6 +1127,10 @@ export const purgeUnavailableSession = (store, sessionId) => {
     persistAgentSession(targetAgentId, '');
   }
   writeSessionListCache(targetAgentId, filterSessionsByAgent(targetAgentId, nextSessions));
+  // All-agent and prefetched lists must lose the same entry, or navigation can resurrect it.
+  for (const entry of sessionListCache.values()) {
+    entry.sessions = entry.sessions.filter((item) => resolveSessionKey(item?.id) !== targetId);
+  }
 
   if (resolveSessionKey(store?.activeSessionId) === targetId) {
     store.activeSessionId = null;
@@ -1591,6 +1595,8 @@ export const isReusableFreshSession = (session, fallbackMessages = null) => {
   if (status === 'archived') return false;
   // "New thread" can only reuse root sessions. Spawned/subagent threads must not be recycled.
   if (isSessionSpawnedFromAnotherThread(session)) return false;
+  if (isThreadRuntimeBusy(normalizeThreadRuntimeStatus(getRuntime(sessionId)?.threadStatus))) return false;
+  if (session.orchestration_lock?.active || Number(session.consumed_tokens) > 0 || Number(session.tool_calls) > 0) return false;
   const cachedMessages = getSessionMessages(sessionId);
   const messages = Array.isArray(cachedMessages) && cachedMessages.length ? cachedMessages : fallbackMessages;
   if (hasSubmittedUserMessage(messages)) {
@@ -1598,10 +1604,9 @@ export const isReusableFreshSession = (session, fallbackMessages = null) => {
   }
   const createdAt = resolveTimestampMs(session.created_at);
   const lastMessageAt = resolveTimestampMs(session.last_message_at);
-  if (createdAt !== null && lastMessageAt !== null && lastMessageAt > createdAt + 1000) {
-    return false;
-  }
-  return true;
+  // Even a message sent immediately after creation consumes the draft. Unknown
+  // timestamps are not proof of an empty thread after caches have been evicted.
+  return createdAt !== null && lastMessageAt !== null && lastMessageAt <= createdAt;
 };
 
 export const touchSessionUpdatedAt = (store, sessionId, timestamp) => {
@@ -2616,52 +2621,6 @@ export function buildRuntimeDebugSnapshot(runtime) {
         : null
   };
 }
-
-export const shouldRetainActiveSessionDuringListRefresh = (store, nextSessions) => {
-  const activeSessionId = resolveSessionKey(store?.activeSessionId);
-  if (!activeSessionId) {
-    return false;
-  }
-  if ((Array.isArray(nextSessions) ? nextSessions : []).some((item) => resolveSessionKey(item?.id) === activeSessionId)) {
-    return false;
-  }
-  const activeMessages = Array.isArray(store?.messages) ? store.messages : [];
-  const runtime = getRuntime(activeSessionId);
-  const runtimeStatus = normalizeThreadRuntimeStatus(runtime?.threadStatus);
-  const isRuntimeHot =
-    Boolean(store?.loadingBySession?.[activeSessionId]) ||
-    isThreadRuntimeBusy(runtimeStatus) ||
-    hasRunningAssistantMessage(activeMessages);
-  const hasContext = hasRetainedConversationContext({
-    activeSessionId,
-    draftAgentId: store?.draftAgentId,
-    messageCount: activeMessages.length
-  });
-  return isRuntimeHot || hasContext;
-};
-
-export const mergeRetainedActiveSessionIntoList = (store, nextSessions) => {
-  const normalizedNextSessions = Array.isArray(nextSessions) ? nextSessions : [];
-  if (!shouldRetainActiveSessionDuringListRefresh(store, normalizedNextSessions)) {
-    return normalizedNextSessions;
-  }
-  const activeSessionId = resolveSessionKey(store?.activeSessionId);
-  const existingActiveSession =
-    (Array.isArray(store?.sessions)
-      ? store.sessions.find((item) => resolveSessionKey(item?.id) === activeSessionId)
-      : null) || null;
-  if (!existingActiveSession) {
-    return normalizedNextSessions;
-  }
-  chatDebugLog('messenger.conversation', 'retain-active-session-during-refresh', {
-    activeSessionId,
-    previousSessionCount: Array.isArray(store?.sessions) ? store.sessions.length : 0,
-    nextSessionCount: normalizedNextSessions.length,
-    messageCount: Array.isArray(store?.messages) ? store.messages.length : 0,
-    runtime: buildRuntimeDebugSnapshot(getRuntime(activeSessionId))
-  });
-  return sortSessionsByActivity([existingActiveSession, ...normalizedNextSessions]);
-};
 
 export const readRuntimePendingManualCompaction = (runtime, sessionId = null) => {
   const pending = runtime?.pendingManualCompaction;

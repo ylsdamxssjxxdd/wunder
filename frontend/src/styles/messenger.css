@@ -3543,10 +3543,10 @@ button.messenger-chat-header-model {
 
 .messenger-right-section-count {
   margin-left: auto;
-  min-width: 20px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: rgba(var(--ui-accent-rgb), 0.12);
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--ui-accent-deep);
   font-size: 11px;
   text-align: center;
@@ -3554,7 +3554,8 @@ button.messenger-chat-header-model {
 
 .messenger-task-list {
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -3596,8 +3597,7 @@ button.messenger-chat-header-model {
   gap: 3px;
 }
 
-.messenger-task-item-title,
-.messenger-task-item-preview {
+.messenger-task-item-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3606,11 +3606,6 @@ button.messenger-chat-header-model {
 .messenger-task-item-title {
   font-size: 12px;
   font-weight: 650;
-}
-
-.messenger-task-item-preview {
-  color: var(--messenger-polish-muted, #7d8591);
-  font-size: 11px;
 }
 
 .messenger-task-item-status {

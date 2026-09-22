@@ -33,13 +33,32 @@ pub fn install(app: &MainWindow, connection: ConnectionConfig) {
     bind_refresh(app, api.clone());
     let drafts = Rc::new(RefCell::new(HashMap::new()));
     bind_session_selection(app, api.clone(), drafts.clone());
+    bind_task_selection(app);
     bind_new_thread(app, api.clone(), drafts);
-    bind_send(app, api.clone());
+    let stream = crate::stream_ui::install(app, api.clone());
+    bind_send(app, stream);
     bind_agents(app, api.clone());
     bind_tools(app, api.clone());
+    crate::workspace_ui::install(app, api.clone());
+    crate::runtime_settings::install(app, api.clone());
     bind_settings(app, api);
     app.invoke_refresh_chat();
     app.invoke_refresh_agents();
+    app.invoke_refresh_files();
+}
+
+fn bind_task_selection(app: &MainWindow) {
+    let weak = app.as_weak();
+    app.on_select_task(move |index| {
+        let Some(app) = weak.upgrade() else { return };
+        // The dock exposes the same durable conversation projection as the
+        // navigation rail. Reuse the normal session loader so selection has
+        // one idempotent path and never creates a second local task model.
+        if index < 0 || index >= app.get_conversations().row_count() as i32 {
+            return;
+        }
+        app.invoke_select_conversation(index);
+    });
 }
 
 fn bind_refresh(app: &MainWindow, api: ChatApi) {
@@ -209,6 +228,7 @@ fn bind_agents(app: &MainWindow, api: ChatApi) {
             });
         });
     });
+    let agent_create_api = api.clone();
     let weak = app.as_weak();
     app.on_create_agent(move |requested_name| {
         let Some(app) = weak.upgrade() else { return };
@@ -224,7 +244,7 @@ fn bind_agents(app: &MainWindow, api: ChatApi) {
         }
         app.set_saving(true);
         let weak = weak.clone();
-        let api = api.clone();
+        let api = agent_create_api.clone();
         run_background(move || {
             let result = api.create_agent(&name);
             let _ = weak.upgrade_in_event_loop(move |app| {
@@ -240,6 +260,43 @@ fn bind_agents(app: &MainWindow, api: ChatApi) {
                         app.set_status("新智能体已创建".into());
                     }
                     Err(error) => show_error(&app, format!("无法创建智能体：{error}")),
+                }
+            });
+        });
+    });
+    let weak = app.as_weak();
+    app.on_save_agent(move |name, description, system_prompt, model| {
+        let Some(app) = weak.upgrade() else { return };
+        let Some(agent) = usize::try_from(app.get_selected_agent())
+            .ok()
+            .and_then(|index| app.get_agents().row_data(index))
+        else {
+            return;
+        };
+        if app.get_saving() || app.get_agents_loading() || agent.id.is_empty() {
+            return;
+        }
+        app.set_saving(true);
+        let weak = weak.clone();
+        let api = api.clone();
+        let id = agent.id.to_string();
+        run_background(move || {
+            let result = api.update_agent(&id, &name, &description, &system_prompt, &model);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_saving(false);
+                match result {
+                    Ok(updated) => {
+                        let selected = app.get_selected_agent();
+                        let rows = app.get_agents();
+                        if let Some(index) = rows.iter().position(|row| row.id == id) {
+                            rows.set_row_data(index, to_agent_card(updated));
+                            if selected == index as i32 {
+                                app.invoke_select_agent(selected);
+                            }
+                        }
+                        app.set_status("智能体配置已保存".into());
+                    }
+                    Err(error) => show_error(&app, format!("无法保存智能体配置：{error}")),
                 }
             });
         });
@@ -355,7 +412,7 @@ fn bind_settings(app: &MainWindow, api: ChatApi) {
     });
 }
 
-fn bind_send(app: &MainWindow, api: ChatApi) {
+fn bind_send(app: &MainWindow, stream: crate::stream_ui::Shared) {
     let weak = app.as_weak();
     app.on_send_message(move || {
         let Some(app) = weak.upgrade() else { return };
@@ -379,63 +436,7 @@ fn bind_send(app: &MainWindow, api: ChatApi) {
             app.set_status("请先新建或选择一个会话".into());
             return;
         }
-        app.set_busy(true);
-        app.set_draft("".into());
-        app.set_status("正在发送到本地运行时…".into());
-        append_message(
-            &app,
-            ChatMessage {
-                text: content.clone().into(),
-                mine: true,
-                time: "刚刚".into(),
-                workflow: false,
-                state: "".into(),
-            },
-        );
-        scroll_to_end(&app);
-        let weak = app.as_weak();
-        let api = api.clone();
-        run_background(move || {
-            let sent = api.send_message(&session_id, &content);
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_busy(false);
-                if app.get_active_session_id() != session_id {
-                    return;
-                }
-                match sent {
-                    Ok(answer) => {
-                        append_message(
-                            &app,
-                            ChatMessage {
-                                text: answer.into(),
-                                mine: false,
-                                time: "刚刚".into(),
-                                workflow: false,
-                                state: "任务完成".into(),
-                            },
-                        );
-                        app.set_status("已完成".into());
-                    }
-                    Err(error) => {
-                        append_message(
-                            &app,
-                            ChatMessage {
-                                text: "未能确认本轮结果，请刷新会话查看最新记录。".into(),
-                                mine: false,
-                                time: "刚刚".into(),
-                                workflow: false,
-                                state: format!("失败：{error}").into(),
-                            },
-                        );
-                        show_error(
-                            &app,
-                            format!("未能确认回复，请刷新会话后再决定是否重发：{error}"),
-                        );
-                    }
-                }
-                scroll_to_end(&app);
-            });
-        });
+        crate::stream_ui::start(&stream, &app, Some(content));
     });
 }
 
@@ -489,7 +490,11 @@ fn apply_active_session(
     transcript: Vec<TranscriptMessage>,
 ) {
     app.set_active_session_id(session.id.as_str().into());
+    let agent_changed = app.get_active_agent_id() != session.agent_id;
     app.set_active_agent_id(session.agent_id.as_str().into());
+    if agent_changed {
+        app.invoke_navigate_directory("".into());
+    }
     app.set_heading(session.title.as_str().into());
     app.set_messages(model_from(
         transcript
@@ -520,6 +525,7 @@ fn to_conversation(session: &ChatSession) -> Conversation {
 
 fn to_chat_message(message: TranscriptMessage) -> ChatMessage {
     ChatMessage {
+        blocks: crate::message_blocks::from_text(&message.text),
         text: message.text.into(),
         mine: message.mine,
         time: message.time.into(),
@@ -544,6 +550,7 @@ fn to_agent_card(agent: AgentRecord) -> AgentCard {
         name: agent.name.into(),
         description: agent.description.into(),
         model: agent.model.into(),
+        system_prompt: agent.system_prompt.into(),
         status: agent.status.into(),
     }
 }
@@ -556,7 +563,7 @@ fn to_tool_card(tool: ToolRecord) -> ToolCard {
     }
 }
 
-fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
+pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     let selected = app.get_selected_model_key();
     app.set_workspace_root(settings.workspace_root.into());
     app.set_runtime_language(settings.language.into());
@@ -583,15 +590,6 @@ fn select_model_key(app: &MainWindow, key: &str) {
     }
 }
 
-fn append_message(app: &MainWindow, message: ChatMessage) {
-    let mut rows = app.get_messages().iter().collect::<Vec<_>>();
-    while rows.len() >= MESSAGE_LIMIT {
-        rows.remove(0);
-    }
-    rows.push(message);
-    app.set_messages(model_from(rows));
-}
-
 fn model_from<T: Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
     ModelRc::from(Rc::new(VecModel::from(rows)))
 }
@@ -601,6 +599,7 @@ fn empty_model<T: Clone + 'static>() -> ModelRc<T> {
 }
 
 fn scroll_to_end(app: &MainWindow) {
+    app.set_follow_output(true);
     let weak = app.as_weak();
     slint::Timer::single_shot(std::time::Duration::from_millis(16), move || {
         if let Some(app) = weak.upgrade() {

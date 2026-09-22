@@ -8,6 +8,7 @@ use serde_json::Value;
 pub(super) trait SqliteMonitorStorage {
     fn upsert_monitor_record_impl(&self, payload: &Value) -> Result<()>;
     fn get_monitor_record_impl(&self, session_id: &str) -> Result<Option<Value>>;
+    fn load_monitor_records_by_session_ids_impl(&self, session_ids: &[String]) -> Result<Vec<Value>>;
     fn load_monitor_records_impl(&self) -> Result<Vec<Value>>;
     fn load_recent_monitor_records_impl(&self, limit: i64) -> Result<Vec<Value>>;
     fn load_monitor_records_by_user_impl(
@@ -72,6 +73,26 @@ impl SqliteMonitorStorage for SqliteStorage {
             return Ok(Self::json_from_str(&payload));
         }
         Ok(None)
+    }
+
+    fn load_monitor_records_by_session_ids_impl(&self, session_ids: &[String]) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let ids = session_ids
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = std::iter::repeat_n("?", ids.len()).collect::<Vec<_>>().join(", ");
+        let sql = format!("SELECT payload FROM monitor_sessions WHERE session_id IN ({placeholders})");
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(params_from_iter(ids.iter().copied()), |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
+        Ok(rows.into_iter().filter_map(|payload| Self::json_from_str(&payload)).collect())
     }
 
     fn load_monitor_records_impl(&self) -> Result<Vec<Value>> {

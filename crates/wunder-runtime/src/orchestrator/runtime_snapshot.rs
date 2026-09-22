@@ -56,6 +56,8 @@ impl Orchestrator {
             "loaded": thread_snapshot.is_some() || active_turn_snapshot.is_some(),
             "subscriber_count": subscriber_count,
             "active_turn_id": turn_id,
+            "queue_state": self.scheduling.state(cleaned_session),
+            "queue_reason": self.scheduling.state(cleaned_session).map(|_| "admin_preempted"),
             "turn": {
                 "turn_id": turn_id,
                 "pending_approval_ids": pending_approval_ids,

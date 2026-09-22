@@ -869,7 +869,7 @@ test('message stats falls back to user-round total tokens when quota event is mi
   assert.equal(findEntryValue(entries, 'Quota'), '4198');
 });
 
-test('message stats sums explicit consumed tokens across assistant messages in the same user turn', () => {
+test('message stats takes the cumulative maximum across assistant snapshots in the same user turn', () => {
   const t = createTranslator();
   const messages = [
     {
@@ -900,7 +900,7 @@ test('message stats sums explicit consumed tokens across assistant messages in t
 
   const entries = buildAssistantMessageStatsEntries(messages[2], t, messages);
 
-  assert.equal(findEntryValue(entries, 'Quota'), '4200');
+  assert.equal(findEntryValue(entries, 'Quota'), '2800');
   assert.equal(findEntryValue(entries, 'Context'), '-');
 });
 

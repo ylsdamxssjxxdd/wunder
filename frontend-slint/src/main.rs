@@ -4,10 +4,18 @@ slint::include_modules!();
 mod bridge_smoke;
 mod chat_api;
 mod chat_runtime;
+mod chat_stream;
 mod demo;
 mod demo_entities;
+mod desktop_launch;
 mod entity_state;
+mod message_blocks;
+mod runtime_settings;
 mod smoke;
+mod stream_events;
+mod stream_ui;
+mod workspace_api;
+mod workspace_ui;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     install_slint_platform()?;
@@ -33,12 +41,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or("missing smoke-check output directory")?;
         return smoke::run(&app, std::path::PathBuf::from(directory));
     }
-    let connection = chat_api::ConnectionConfig::from_process(first_argument, arguments)?;
-    if let Some(connection) = connection {
-        chat_runtime::install(&app, connection);
-    } else {
+    let _bridge = if first_argument.as_deref() == Some(std::ffi::OsStr::new("--demo")) {
         demo::install(&app);
-    }
+        None
+    } else if first_argument.is_none() {
+        Some(desktop_launch::start(&app))
+    } else {
+        if let Some(connection) =
+            chat_api::ConnectionConfig::from_process(first_argument, arguments)?
+        {
+            chat_runtime::install(&app, connection);
+        }
+        None
+    };
     app.show()?;
     app.run()?;
     Ok(())

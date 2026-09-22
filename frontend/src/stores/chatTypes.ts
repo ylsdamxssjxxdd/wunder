@@ -196,6 +196,8 @@ export type NormalizedUsagePayload = {
   input: number;
   output: number;
   total: number;
+  reasoning?: number;
+  estimated?: boolean;
 };
 
 export type InquiryPanelPatch = {

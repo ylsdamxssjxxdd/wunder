@@ -130,7 +130,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         let mut stmt = conn.prepare(
             "SELECT task_id, thread_id, user_id, agent_id, session_id, status, request_payload, request_id, retry_count, retry_at, created_at, updated_at, started_at, finished_at, last_error \
              FROM agent_tasks WHERE (status = 'pending' OR status = 'retry') AND retry_at <= ? \
-             ORDER BY retry_at ASC, created_at ASC LIMIT ?",
+             ORDER BY priority DESC, retry_at ASC, created_at ASC, task_id ASC LIMIT ?",
         )?;
         let rows = stmt
             .query_map(params![now, limit.max(1)], |row| {
@@ -182,8 +182,8 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         let total = conn.query_row(
             "SELECT COUNT(*) FROM agent_tasks \
              WHERE (status = 'pending' OR status = 'retry') AND retry_at <= ? \
-               AND (retry_at < ? OR (retry_at = ? AND created_at < ?) OR (retry_at = ? AND created_at = ? AND task_id < ?))",
-            params![now, retry_at, retry_at, created_at, retry_at, created_at, task_id],
+               AND (priority > COALESCE((SELECT priority FROM agent_tasks WHERE task_id = ?), 0) OR (priority = COALESCE((SELECT priority FROM agent_tasks WHERE task_id = ?), 0) AND (retry_at < ? OR (retry_at = ? AND created_at < ?) OR (retry_at = ? AND created_at = ? AND task_id < ?))))",
+            params![now, task_id, task_id, retry_at, retry_at, created_at, retry_at, created_at, task_id],
             |row| row.get(0),
         )?;
         Ok(total)
@@ -258,9 +258,17 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         if cleaned.is_empty() {
             return Ok(());
         }
+        // Terminal states are monotonic. A late completion/error callback must not
+        // resurrect a cancelled or already finished task.
+        let allowed_sources = match params.status {
+            "running" => "('pending','retry')",
+            "retry" => "('pending','retry','running')",
+            "success" | "failed" | "dead" | "cancelled" => "('pending','retry','running')",
+            _ => return Ok(()),
+        };
         let conn = self.open()?;
         conn.execute(
-            "UPDATE agent_tasks SET status = ?, retry_count = ?, retry_at = ?, started_at = ?, finished_at = ?, last_error = ?, updated_at = ? WHERE task_id = ?",
+            &format!("UPDATE agent_tasks SET status = ?, retry_count = ?, retry_at = ?, started_at = ?, finished_at = ?, last_error = ?, updated_at = ? WHERE task_id = ? AND status IN {allowed_sources}"),
             params![
                 params.status,
                 params.retry_count,

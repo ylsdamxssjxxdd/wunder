@@ -5,6 +5,12 @@ use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, OptionalExtension};
 
 pub(super) trait SqliteChatSessionStorage {
+    fn get_chat_session_owner_impl(&self, session_id: &str) -> Result<Option<String>>;
+    fn list_active_chat_session_ids_impl(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<Vec<String>>;
     fn upsert_chat_session_impl(&self, record: &ChatSessionRecord) -> Result<()>;
     fn insert_chat_session_if_absent_impl(&self, record: &ChatSessionRecord) -> Result<bool>;
     fn get_chat_session_impl(
@@ -48,6 +54,43 @@ pub(super) trait SqliteChatSessionStorage {
 }
 
 impl SqliteChatSessionStorage for SqliteStorage {
+    fn get_chat_session_owner_impl(&self, session_id: &str) -> Result<Option<String>> {
+        self.ensure_initialized()?;
+        Ok(self
+            .open()?
+            .query_row(
+                "SELECT user_id FROM chat_sessions WHERE session_id = ?",
+                params![session_id.trim()],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    fn list_active_chat_session_ids_impl(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<Vec<String>> {
+        if session_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut result = Vec::new();
+        // Chunk bind parameters to stay within SQLite limits on every distribution.
+        for chunk in session_ids.chunks(100) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let sql = format!("SELECT session_id FROM chat_sessions WHERE user_id = ? AND session_id IN ({placeholders}) AND (status IS NULL OR status = '' OR status = 'active')");
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(
+                params_from_iter(std::iter::once(user_id).chain(chunk.iter().map(String::as_str))),
+                |row| row.get::<_, String>(0),
+            )?;
+            result.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+        }
+        Ok(result)
+    }
+
     fn upsert_chat_session_impl(&self, record: &ChatSessionRecord) -> Result<()> {
         self.ensure_initialized()?;
         let conn = self.open()?;

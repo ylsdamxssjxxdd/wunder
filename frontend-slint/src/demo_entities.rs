@@ -33,6 +33,34 @@ pub fn install(app: &MainWindow) {
         app.set_status("智能体已创建 · 仅本次演示有效".into());
     });
     let weak = app.as_weak();
+    app.on_save_agent(move |name, description, system_prompt, model| {
+        let Some(app) = weak.upgrade() else { return };
+        let Ok(index) = usize::try_from(app.get_selected_agent()) else {
+            return;
+        };
+        let Some(mut agent) = app.get_agents().row_data(index) else {
+            return;
+        };
+        if name.trim().is_empty() {
+            return;
+        }
+        agent.name = name;
+        agent.description = description;
+        agent.system_prompt = system_prompt;
+        agent.model = model;
+        app.get_agents().set_row_data(index, agent);
+        app.invoke_select_agent(index as i32);
+        app.set_status("配置已保存 · 仅本次演示有效".into());
+    });
+    let weak = app.as_weak();
+    app.on_save_runtime(move |workspace, language| {
+        if let Some(app) = weak.upgrade() {
+            app.set_workspace_root(workspace);
+            app.set_runtime_language(language);
+            app.set_status("设置已保存 · 仅本次演示有效".into());
+        }
+    });
+    let weak = app.as_weak();
     app.on_save_model(move |key, provider, model, base_url, _token, kind| {
         let Some(app) = weak.upgrade() else { return };
         if key.trim().is_empty()

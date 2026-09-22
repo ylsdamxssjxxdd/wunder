@@ -17,9 +17,6 @@
       <i class="fa-solid" :class="collapsed ? 'fa-chevron-left' : 'fa-chevron-right'" aria-hidden="true"></i>
     </button>
     <div class="messenger-right-content messenger-right-content--stack">
-      <MessengerTaskList :items="sessionHistory" :active-session-id="activeSessionId" :agent-id="agentIdForApi" :creating="creating"
-        @create="emit('create-session')" @activate="(id) => emit('activate-session', id)"
-        @detail="(id) => emit('open-session-detail', id)" @rename="(id) => emit('rename-session', id)" @archive="(id) => emit('archive-session', id)" />
       <div class="messenger-right-panel messenger-right-panel--sandbox">
         <div v-if="showAgentPanels" class="messenger-workspace-scope chat-shell">
           <WorkspacePanel
@@ -34,6 +31,9 @@
         </div>
         <div v-else class="messenger-list-empty">{{ t('messenger.settings.agentOnly') }}</div>
       </div>
+      <MessengerTaskList :items="sessionHistory" :active-session-id="activeSessionId" :agent-id="agentIdForApi"
+        @activate="(id) => emit('activate-session', id)"
+        @detail="(id) => emit('open-session-detail', id)" @rename="(id) => emit('rename-session', id)" @archive="(id) => emit('archive-session', id)" />
 
     </div>
   </aside>
@@ -61,7 +61,6 @@ defineProps<{
   containerId: number;
   activeSessionId: string;
   sessionHistory: TaskListItem[];
-  creating: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -69,7 +68,6 @@ const emit = defineEmits<{
   (event: 'request-quote-path', payload: { paths: string[] }): void;
   (event: 'open-workspace-binding', payload: { containerId: number; currentPath: string }): void;
   (event: 'activate-session', sessionId: string): void;
-  (event: 'create-session'): void;
   (event: 'open-session-detail' | 'rename-session' | 'archive-session', sessionId: string): void;
 }>();
 

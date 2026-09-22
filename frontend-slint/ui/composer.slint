@@ -6,6 +6,9 @@ export component Composer inherits Rectangle {
     in-out property <string> draft <=> editor.text;
     in property <string> status;
     in property <bool> busy: false;
+    in property <bool> generating;
+    in property <bool> stopping;
+    callback stop();
     callback send();
     callback attach();
     height: 180px;
@@ -19,7 +22,7 @@ export component Composer inherits Rectangle {
             Action { icon: @image-url("../assets/icons/paperclip.svg"); label: "添加附件"; clicked => { root.attach(); } }
             Action { icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "快捷输入"; clicked => { root.draft = "请帮我整理当前内容。"; editor.focus(); } }
             Rectangle { horizontal-stretch: 1; }
-            Text { text: "自动放行"; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
+            Text { text: "按智能体权限执行"; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
         }
         editor := TextEditBase {
             accessible-role: text-input;
@@ -51,7 +54,8 @@ export component Composer inherits Rectangle {
             Text { text: root.status; color: Theme.muted; font-size: 10px; overflow: elide; }
             Rectangle { horizontal-stretch: 1; }
             Text { text: "Enter 发送 / Shift+Enter 换行"; color: Theme.muted; font-size: 10px; }
-            send-button := Action { width: 66px; icon: @image-url("../assets/icons/arrow-up.svg"); label: root.busy ? "发送中" : "发送"; show-label: true; primary: true; enabled: root.draft != "" && !root.busy; clicked => { root.send(); } }
+            if root.generating : Action { width: 88px; label: root.stopping ? "正在停止" : "停止生成"; show-label: true; enabled: !root.stopping; clicked => { root.stop(); } }
+            if !root.generating : Action { width: 66px; icon: @image-url("../assets/icons/arrow-up.svg"); label: root.busy ? "发送中" : "发送"; show-label: true; primary: true; enabled: root.draft != "" && !root.busy; clicked => { root.send(); } }
         }
     }
 }

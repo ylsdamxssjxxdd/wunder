@@ -20,6 +20,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 use uuid::Uuid;
 
+#[path = "queue_admin.rs"]
+mod queue_admin;
+
 const DEFAULT_SESSION_TITLE: &str = "新会话";
 
 const TASK_STATUS_PENDING: &str = "pending";
@@ -164,6 +167,15 @@ impl ThreadRuntime {
         }
         request.client_message_id =
             normalize_client_message_id(request.client_message_id.as_deref());
+        if let Some(overrides) = request
+            .config_overrides
+            .as_mut()
+            .and_then(Value::as_object_mut)
+        {
+            // Scheduler authority is internal; request payloads cannot grant priority or claim ownership.
+            overrides.remove("__queue_task_id");
+            overrides.remove("__queue_priority");
+        }
         request.enforce_runtime_queue = true;
         let agent_id = normalize_agent_id(request.agent_id.as_deref());
         // The request owns its task thread. Agent identity never selects or locks a conversation.
@@ -188,7 +200,10 @@ impl ThreadRuntime {
         let config = self.config_store.get().await;
         if config.agent_queue.enabled {
             if let Some(session_id) = session_id.as_deref() {
-                if self.should_queue(&user_id, Some(session_id)).await {
+                if self.should_queue(&user_id, Some(session_id)).await
+                    || self.user_store.count_pending_agent_tasks()? > 0
+                    || self.orchestrator.scheduling.suspended_count() > 0
+                {
                     let info = self
                         .enqueue_task(&request, &agent_id, Some(session_id))
                         .await?;
@@ -428,11 +443,17 @@ impl ThreadRuntime {
 
         let monitor_cancelled = self.monitor.cancel_with_source(cleaned_session, source);
         self.cancel_pending_goal_continuation(cleaned_session);
+        self.orchestrator.scheduling.cancel(cleaned_session);
 
         let thread_id = format!("thread_{cleaned_session}");
-        let tasks = self
-            .user_store
-            .list_agent_tasks_by_thread(&thread_id, None, 64)?;
+        let mut tasks = Vec::new();
+        for status in [TASK_STATUS_PENDING, TASK_STATUS_RETRY, TASK_STATUS_RUNNING] {
+            tasks.extend(self.user_store.list_agent_tasks_by_thread(
+                &thread_id,
+                Some(status),
+                4096,
+            )?);
+        }
         let mut queued_tasks_cancelled = 0usize;
         let mut running_tasks_marked_cancelled = 0usize;
         for task in tasks {
@@ -598,7 +619,11 @@ impl ThreadRuntime {
         let config = self.config_store.get().await;
         try_acquire_start_lease_with_limit(
             session_id,
-            config.server.max_active_sessions.max(1),
+            config
+                .server
+                .max_active_sessions
+                .max(1)
+                .saturating_add(self.orchestrator.scheduling.suspended_count()),
             &self.pending_sessions,
             &self.active_runtime_sessions,
         )
@@ -638,17 +663,15 @@ impl ThreadRuntime {
         };
         self.user_store.insert_agent_task(&record)?;
         let queue_stats = self.compute_queue_stats(&record).await;
-        let mut request_payload = record.request_payload.clone();
-        if let Value::Object(ref mut map) = request_payload {
-            map.insert("queue_ahead".to_string(), json!(queue_stats.queue_ahead));
-            map.insert("queue_total".to_string(), json!(queue_stats.queue_total));
-            map.insert("active_ahead".to_string(), json!(queue_stats.active_ahead));
-            map.insert("wait_ahead".to_string(), json!(queue_stats.wait_ahead));
-        }
-        self.user_store.insert_agent_task(&AgentTaskRecord {
-            request_payload,
-            ..record.clone()
-        })?;
+        self.user_store
+            .storage_backend()
+            .update_agent_task_queue_payload(
+                &record.task_id,
+                &json!({
+                    "queue_ahead": queue_stats.queue_ahead, "queue_total": queue_stats.queue_total,
+                    "active_ahead": queue_stats.active_ahead, "wait_ahead": queue_stats.wait_ahead
+                }),
+            )?;
         let queue_before_event_id = self
             .stream_events
             .tail_event_id(&record.session_id)
@@ -688,15 +711,18 @@ impl ThreadRuntime {
             "wait_ahead": queue_stats.wait_ahead,
             "queue_event_id": queue_event_id,
         });
-        self.monitor.register_queued(
-            &record.session_id,
-            &record.user_id,
-            &record.agent_id,
-            &request.question,
-            request.is_admin,
-            request.debug_payload,
-            &queue_monitor_payload,
-        );
+        if !self.session_has_active_runtime_slot(&record.session_id) {
+            self.monitor.register_queued(
+                &record.session_id,
+                &record.user_id,
+                &record.agent_id,
+                &request.question,
+                request.is_admin,
+                request.debug_payload,
+                &queue_monitor_payload,
+            );
+        }
+        let _ = self.queue_tx.try_send(());
         Ok(QueueInfo {
             task_id: record.task_id,
             thread_id: record.thread_id,
@@ -757,7 +783,11 @@ impl ThreadRuntime {
     fn active_runtime_session_count(&self) -> usize {
         self.active_runtime_sessions
             .lock()
-            .map(|guard| guard.len())
+            .map(|guard| {
+                guard
+                    .len()
+                    .saturating_sub(self.orchestrator.scheduling.suspended_count())
+            })
             .unwrap_or(0)
     }
 
@@ -774,17 +804,25 @@ impl ThreadRuntime {
 
     async fn emit_queue_update(&self, task: &AgentTaskRecord) {
         let stats = self.compute_queue_stats(task).await;
-        let mut request_payload = task.request_payload.clone();
-        if let Value::Object(ref mut map) = request_payload {
-            map.insert("queue_ahead".to_string(), json!(stats.queue_ahead));
-            map.insert("queue_total".to_string(), json!(stats.queue_total));
-            map.insert("active_ahead".to_string(), json!(stats.active_ahead));
-            map.insert("wait_ahead".to_string(), json!(stats.wait_ahead));
+        let payload = json!({"queue_ahead":stats.queue_ahead, "queue_total":stats.queue_total,
+            "active_ahead":stats.active_ahead, "wait_ahead":stats.wait_ahead});
+        if payload.as_object().is_some_and(|fields| {
+            fields
+                .iter()
+                .all(|(key, value)| task.request_payload.get(key) == Some(value))
+        }) {
+            return;
         }
-        let _ = self.user_store.insert_agent_task(&AgentTaskRecord {
-            request_payload,
-            ..task.clone()
-        });
+        let storage = self.user_store.storage_backend();
+        let id = task.task_id.clone();
+        if !blocking::run_db("queue.update_position", move || {
+            storage.update_agent_task_queue_payload(&id, &payload)
+        })
+        .await
+        .unwrap_or(false)
+        {
+            return;
+        }
         self.emit_queue_event(
             &task.session_id,
             &task.user_id,
@@ -991,6 +1029,7 @@ impl ThreadRuntime {
                 },
             }
             if !config.agent_queue.enabled {
+                self.resume_suspended_tasks().await;
                 continue;
             }
             if let Err(err) = self.process_pending_tasks().await {
@@ -1014,15 +1053,21 @@ impl ThreadRuntime {
                 }
             }
         };
-        if pending.is_empty() {
-            return Ok(());
-        }
         for task in &pending {
             self.emit_queue_update(task).await;
         }
         let config = self.config_store.get().await;
         let ttl_s = config.agent_queue.task_ttl_s as f64;
         for task in pending {
+            if task
+                .request_payload
+                .get("queue_priority")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+                == 0
+            {
+                self.resume_suspended_tasks().await;
+            }
             if ttl_s > 0.0 {
                 let age = now_ts() - task.created_at;
                 if age > ttl_s {
@@ -1042,6 +1087,7 @@ impl ThreadRuntime {
                 runtime.execute_task(task_clone).await;
             });
         }
+        self.resume_suspended_tasks().await;
         Ok(())
     }
 
@@ -1075,18 +1121,22 @@ impl ThreadRuntime {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
-        let _ = self
-            .user_store
-            .update_agent_task_status(UpdateAgentTaskStatusParams {
-                task_id: &task.task_id,
-                status: TASK_STATUS_RUNNING,
-                retry_count: task.retry_count,
-                retry_at: started_at,
-                started_at: Some(started_at),
-                finished_at: None,
-                last_error: None,
-                updated_at: started_at,
-            });
+        let storage = self.user_store.storage_backend();
+        let id = task.task_id.clone();
+        match blocking::run_db("queue.claim", move || {
+            storage.claim_agent_task(&id, started_at)
+        })
+        .await
+        {
+            Ok(true) => {}
+            result => {
+                if let Err(err) = result {
+                    warn!("queue claim failed: {err}");
+                }
+                self.finish_thread(&task.thread_id).await;
+                return;
+            }
+        }
         self.emit_queue_event(&task.session_id, &task.user_id, "queue_start", {
             let mut payload = json!({
             "queue_id": task.task_id,
@@ -1122,7 +1172,19 @@ impl ThreadRuntime {
             }
         };
         request.stream = true;
+        request.enforce_runtime_queue = true;
         request.session_id = Some(task.session_id.clone());
+        let overrides = request.config_overrides.get_or_insert_with(|| json!({}));
+        if let Some(map) = overrides.as_object_mut() {
+            map.insert("__queue_task_id".into(), json!(task.task_id));
+            map.insert(
+                "__queue_priority".into(),
+                task.request_payload
+                    .get("queue_priority")
+                    .cloned()
+                    .unwrap_or(json!(0)),
+            );
+        }
         if request.agent_id.is_none() && !task.agent_id.trim().is_empty() {
             request.agent_id = Some(task.agent_id.clone());
         }
@@ -1134,9 +1196,24 @@ impl ThreadRuntime {
             Ok(stream) => {
                 let mut stream = Box::pin(stream);
                 let mut goal_continue_ready = false;
+                let mut failed = None;
+                let mut completed = false;
                 while let Some(item) = stream.next().await {
                     match item {
                         Ok(event) => {
+                            if event.event == "error" {
+                                failed = Some(
+                                    event
+                                        .data
+                                        .get("message")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("execution failed")
+                                        .to_string(),
+                                );
+                            }
+                            if event.event == "final" {
+                                completed = true;
+                            }
                             if event.event == "goal_continuation_ready" {
                                 goal_continue_ready = true;
                             }
@@ -1147,6 +1224,18 @@ impl ThreadRuntime {
                 }
                 crate::orchestrator::flush_stream_event_persist_queue().await;
                 if self.is_task_cancelled(&task.task_id) {
+                    self.finish_thread(&task.thread_id).await;
+                    let _ = self.queue_tx.try_send(());
+                    return;
+                }
+                if failed.is_some() || !completed {
+                    let _ = self
+                        .fail_task(
+                            &task,
+                            failed.unwrap_or_else(|| "execution ended without final output".into()),
+                            TASK_STATUS_FAILED,
+                        )
+                        .await;
                     self.finish_thread(&task.thread_id).await;
                     let _ = self.queue_tx.try_send(());
                     return;

@@ -27,6 +27,7 @@ mod identity_admin;
 mod integration_admin;
 mod knowledge_admin;
 mod monitor_admin;
+mod queue_admin;
 mod resource_admin;
 
 pub(crate) use integration_admin::{
@@ -47,6 +48,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(channel_admin::router())
         .merge(gateway_admin::router())
         .merge(monitor_admin::router())
+        .merge(queue_admin::router())
         .merge(knowledge_admin::router())
         .merge(identity_admin::router())
         .merge(resource_admin::router())

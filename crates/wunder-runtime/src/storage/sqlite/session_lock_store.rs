@@ -69,8 +69,11 @@ impl SqliteSessionLockStorage for SqliteStorage {
         );
         match insert {
             Ok(_) => {
-                let total: i64 =
-                    tx.query_row("SELECT COUNT(*) FROM session_locks", [], |row| row.get(0))?;
+                let total: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM session_locks WHERE suspended = 0",
+                    [],
+                    |row| row.get(0),
+                )?;
                 if total > max_sessions {
                     tx.execute(
                         "DELETE FROM session_locks WHERE session_id = ?",

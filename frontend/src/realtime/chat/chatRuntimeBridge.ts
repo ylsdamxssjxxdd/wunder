@@ -176,7 +176,10 @@ const buildCanonicalSnapshotRuntimeEvents = (
     payload: {
       ...runtime,
       status: runtimeStatus,
-      thread_status: runtimeStatus
+      thread_status: runtimeStatus,
+      // Preserve queue handoff state across refresh/snapshot hydration.
+      queue_state: firstId(runtime.queue_state, runtime.queueState, payload.queue_state, payload.queueState),
+      queue_reason: firstId(runtime.queue_reason, runtime.queueReason, payload.queue_reason, payload.queueReason)
     },
     // Runtime may change without a newly persisted stream event. Its freshness
     // is checked at the request boundary, not deduplicated by the history cursor.

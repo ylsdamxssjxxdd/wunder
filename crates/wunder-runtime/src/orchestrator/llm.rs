@@ -632,6 +632,8 @@ impl Orchestrator {
         TokenUsage {
             input,
             output,
+            reasoning: Some(reasoning_tokens),
+            estimated: true,
             total: input
                 .saturating_add(output)
                 .saturating_add(reasoning_tokens),
@@ -694,6 +696,8 @@ impl Orchestrator {
                         "input_tokens": usage.input,
                         "output_tokens": usage.output,
                         "total_tokens": usage.total,
+                        "reasoning_tokens": usage.reasoning,
+                        "estimated": usage.estimated,
                         "decode_output_tokens": decode_output_tokens,
                     });
                     if let Value::Object(ref mut map) = usage_payload {
@@ -702,6 +706,8 @@ impl Orchestrator {
                     }
                     emitter.emit("token_usage", usage_payload).await;
                 }
+                self.account_model_usage(&usage, emitter, user_id, true, round_info, false, "mock")
+                    .await?;
                 return Ok((content, String::new(), usage, None, round_speed));
             }
             let detail = i18n::t("error.llm_config_missing");
@@ -935,6 +941,8 @@ impl Orchestrator {
                     "input_tokens": usage.input,
                     "output_tokens": usage.output,
                     "total_tokens": usage.total,
+                        "reasoning_tokens": usage.reasoning,
+                        "estimated": usage.estimated,
                     "decode_output_tokens": decode_output_tokens,
                     "prefill_duration_s": prefill_duration_s,
                     "decode_duration_s": decode_duration_s,
@@ -945,6 +953,8 @@ impl Orchestrator {
                 }
                 emitter.emit("token_usage", usage_payload).await;
             }
+            self.account_model_usage(&usage, emitter, user_id, true, round_info, false, "replay")
+                .await?;
             // Recorded/estimated usage is diagnostic only; replay never spends user quota.
             return Ok((content, reasoning, usage, tool_calls, round_speed));
         }
@@ -1022,6 +1032,39 @@ impl Orchestrator {
                     let content = response.content;
                     let reasoning = response.reasoning;
                     let tool_calls = response.tool_calls;
+                    let mut usage = response.usage;
+                    if let Some(item) = usage.as_mut() {
+                        if item.total == 0 {
+                            let total = item.input.saturating_add(item.output);
+                            if total > 0 {
+                                item.total = total;
+                            }
+                        }
+                    }
+                    let usage = usage.filter(|item| item.total > 0).unwrap_or_else(|| {
+                        let mut estimated =
+                            self.estimate_token_usage(&request_messages, &content, &reasoning);
+                        let tool_tokens = tool_calls.as_ref().map_or(0, |calls| {
+                            approx_token_count(&calls.to_string()).max(0) as u64
+                        });
+                        estimated.output = estimated.output.saturating_add(tool_tokens);
+                        estimated.total = estimated.total.saturating_add(tool_tokens);
+                        estimated
+                    });
+                    self.account_model_usage(
+                        &usage,
+                        emitter,
+                        user_id,
+                        is_admin,
+                        round_info,
+                        emit_quota_events,
+                        if emit_events {
+                            "response"
+                        } else {
+                            "compaction"
+                        },
+                    )
+                    .await?;
                     if native_tools_attached {
                         if let Some(invalid_tool_calls) =
                             detect_invalid_tool_calls(tool_calls.as_ref())
@@ -1053,33 +1096,7 @@ impl Orchestrator {
                             continue;
                         }
                     }
-                    let mut usage = response.usage;
-                    if let Some(item) = usage.as_mut() {
-                        if item.total == 0 {
-                            let total = item.input.saturating_add(item.output);
-                            if total > 0 {
-                                item.total = total;
-                            }
-                        }
-                    }
-                    let mut usage = usage.filter(|item| item.total > 0).unwrap_or_else(|| {
-                        self.estimate_token_usage(&request_messages, &content, &reasoning)
-                    });
-                    if usage.input == 0 && usage.output == 0 && usage.total > 0 {
-                        let estimated =
-                            self.estimate_token_usage(&request_messages, &content, &reasoning);
-                        if estimated.total > 0 {
-                            let ratio = usage.total as f64 / estimated.total as f64;
-                            let mut input = (estimated.input as f64 * ratio).round() as u64;
-                            if input > usage.total {
-                                input = usage.total;
-                            }
-                            let output = usage.total.saturating_sub(input);
-                            usage.input = input;
-                            usage.output = output;
-                        }
-                    }
-                    let (prefill_duration_s, decode_duration_s) = if will_stream {
+                    let (prefill_duration_s, mut decode_duration_s) = if will_stream {
                         output_timing
                             .lock()
                             .durations(request_started_at, response_finished_at)
@@ -1093,6 +1110,15 @@ impl Orchestrator {
                     } else {
                         None
                     };
+                    if tool_calls
+                        .as_ref()
+                        .and_then(Value::as_array)
+                        .is_some_and(|calls| !calls.is_empty())
+                        || (!reasoning.is_empty() && usage.reasoning.is_none())
+                        || usage.estimated
+                    {
+                        decode_duration_s = None;
+                    }
                     let decode_output_tokens = usage.output;
                     let round_speed = LlmSpeedSummary::from_usage_and_durations(
                         Some(usage.input),
@@ -1121,6 +1147,8 @@ impl Orchestrator {
                             "input_tokens": usage.input,
                             "output_tokens": usage.output,
                             "total_tokens": usage.total,
+                        "reasoning_tokens": usage.reasoning,
+                        "estimated": usage.estimated,
                             "decode_output_tokens": decode_output_tokens,
                             "prefill_duration_s": prefill_duration_s,
                             "decode_duration_s": decode_duration_s,
@@ -1131,20 +1159,25 @@ impl Orchestrator {
                         }
                         emitter.emit("token_usage", usage_payload).await;
                     }
-                    if !is_admin {
-                        let consumed_tokens = usage.total.min(i64::MAX as u64) as i64;
-                        self.consume_user_tokens(
-                            user_id,
-                            consumed_tokens,
-                            emitter,
-                            round_info,
-                            emit_quota_events,
-                        )
-                        .await?;
-                    }
                     return Ok((content, reasoning, usage, tool_calls, round_speed));
                 }
                 Err(err) => {
+                    if let Some(usage) = crate::services::llm::failed_response_usage(&err) {
+                        self.account_model_usage(
+                            usage,
+                            emitter,
+                            user_id,
+                            is_admin,
+                            round_info,
+                            emit_quota_events,
+                            if emit_events {
+                                "failed_response"
+                            } else {
+                                "compaction"
+                            },
+                        )
+                        .await?;
+                    }
                     let failure_kind = classify_llm_error(&err);
                     let max_attempts = resolve_llm_max_attempts(failure_kind);
                     let should_retry = attempt < max_attempts;

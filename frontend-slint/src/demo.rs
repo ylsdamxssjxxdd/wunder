@@ -8,6 +8,20 @@ const MAX_INPUT_BYTES: usize = 16_384;
 
 pub fn install(app: &MainWindow) {
     crate::demo_entities::install(app);
+    let weak = app.as_weak();
+    app.on_refresh_files(move || {
+        if let Some(app) = weak.upgrade() {
+            app.set_status("本地演示 · 未连接后端".into());
+        }
+    });
+    let weak = app.as_weak();
+    app.on_copy_message(move |index| {
+        if let Some(app) = weak.upgrade() {
+            if let Some(row) = app.get_messages().row_data(index.max(0) as usize) {
+                app.invoke_copy_raw(row.text);
+            }
+        }
+    });
     let initial: Vec<_> = app.get_messages().iter().collect();
     let models: Rc<Vec<Rc<VecModel<ChatMessage>>>> = Rc::new(
         (0..9)
@@ -43,6 +57,7 @@ pub fn install(app: &MainWindow) {
             model.remove(0);
         }
         model.push(ChatMessage {
+            blocks: crate::message_blocks::from_text(text),
             text: text.into(),
             mine: true,
             time: "现在".into(),
@@ -108,6 +123,7 @@ fn slot(app: &MainWindow) -> usize {
 
 fn reply(text: &str) -> ChatMessage {
     ChatMessage {
+        blocks: crate::message_blocks::from_text(text),
         text: text.into(),
         mine: false,
         time: "现在".into(),

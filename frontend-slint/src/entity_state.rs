@@ -6,6 +6,9 @@ pub fn bind_selection(app: &MainWindow) {
     let weak = app.as_weak();
     app.on_select_agent(move |index| {
         let Some(app) = weak.upgrade() else { return };
+        if app.get_saving() {
+            return;
+        }
         let Some(agent) = usize::try_from(index)
             .ok()
             .and_then(|i| app.get_agents().row_data(i))
@@ -53,6 +56,7 @@ fn apply_agent(app: &MainWindow, agent: AgentCard) {
     app.set_selected_agent_name(agent.name);
     app.set_selected_agent_description(agent.description);
     app.set_selected_agent_model(agent.model);
+    app.set_selected_agent_system_prompt(agent.system_prompt);
     app.set_selected_agent_status(agent.status);
 }
 

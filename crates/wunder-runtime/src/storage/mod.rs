@@ -6,6 +6,8 @@ mod constants;
 mod factory;
 #[cfg(feature = "postgres-storage")]
 mod postgres;
+#[cfg(test)]
+mod queue_control_tests;
 mod records;
 #[cfg(any(feature = "sqlite-storage", test))]
 mod sqlite;

@@ -1440,12 +1440,11 @@ pub(crate) async fn execute_ptc(context: &ToolContext<'_>, args: &Value) -> Resu
     let ptc_root = context
         .workspace
         .resolve_path(context.workspace_id, LOCAL_PTC_DIR_NAME)?;
-    let script_path = match super::ptc_script::save_script(&ptc_root, script_name.as_ref(), &content)
-        .await
-    {
-        Ok(path) => path,
-        Err(err) => return Ok(build_ptc_exec_error(err.to_string())),
-    };
+    let script_path =
+        match super::ptc_script::save_script(&ptc_root, script_name.as_ref(), &content).await {
+            Ok(path) => path,
+            Err(err) => return Ok(build_ptc_exec_error(err.to_string())),
+        };
 
     let output = match run_ptc_python_script_streaming(
         context,

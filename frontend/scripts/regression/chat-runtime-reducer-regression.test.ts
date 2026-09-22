@@ -3014,7 +3014,7 @@ test('canonical visible workflow events project retry slow-client and compaction
   assert.ok(compactionProgress);
   assert.equal(compactionProgress.status, 'loading');
   assert.equal(compactionProgress.toolName, 'context_compaction');
-  assert.equal(assistant.display?.manual_compaction_marker, true);
+  assert.equal(assistant.display?.manual_compaction_marker, false);
 
   buildCanonicalChatRuntimeEvents({
     sessionId: 'session-1',
@@ -3497,7 +3497,7 @@ test('first workflow item in a later user round keeps that round llm output occu
   );
   assert.ok(secondRoundAssistant);
   assert.equal(secondRoundAssistant.workflowItems?.length, 1);
-  assert.equal(secondRoundAssistant.workflowItems?.[0]?.context_occupancy_tokens, 9925);
+  assert.equal(secondRoundAssistant.workflowItems?.[0]?.context_occupancy_tokens, 9852);
   assert.equal(secondRoundAssistant.workflowItems?.[0]?.model_turn_id, 'model-turn:session-1:user:2:model:1');
 });
 

@@ -1114,8 +1114,6 @@
       :container-id="rightPanelContainerId"
       :active-session-id="String(chatStore.activeSessionId || '')"
       :session-history="rightPanelSessionHistory"
-      :creating="creatingAgentSession"
-      @create-session="startNewSession"
       @open-session-detail="openTimelineSessionDetail"
       @rename-session="renameTimelineSession"
       @archive-session="archiveTimelineSession"

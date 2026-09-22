@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-09-22T04:45:49.127589+00:00",
+  "generated_at": "2026-09-22T12:02:54.377334+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -6182,75 +6182,80 @@
         {
           "id": "section-5",
           "level": 3,
-          "text": "斜杠命令"
+          "text": "上下文与工具耗时"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "保护机制"
+          "text": "斜杠命令"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "自动重试状态"
+          "text": "保护机制"
         },
         {
           "id": "section-8",
-          "level": 2,
-          "text": "编排工作台"
+          "level": 3,
+          "text": "自动重试状态"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "文件"
+          "text": "编排工作台"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "智能体"
+          "text": "文件"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "工具与技能"
+          "text": "智能体"
         },
         {
           "id": "section-12",
           "level": 2,
-          "text": "定时任务"
+          "text": "工具与技能"
         },
         {
           "id": "section-13",
           "level": 2,
-          "text": "我的概况与设置"
+          "text": "定时任务"
         },
         {
           "id": "section-14",
-          "level": 3,
-          "text": "我的概况"
+          "level": 2,
+          "text": "我的概况与设置"
         },
         {
           "id": "section-15",
           "level": 3,
-          "text": "账户管理"
+          "text": "我的概况"
         },
         {
           "id": "section-16",
           "level": 3,
-          "text": "系统设置"
+          "text": "账户管理"
         },
         {
           "id": "section-17",
           "level": 3,
-          "text": "帮助手册"
+          "text": "系统设置"
         },
         {
           "id": "section-18",
+          "level": 3,
+          "text": "帮助手册"
+        },
+        {
+          "id": "section-19",
           "level": 2,
           "text": "状态识别"
         },
         {
-          "id": "section-19",
+          "id": "section-20",
           "level": 2,
           "text": "延伸阅读"
         }

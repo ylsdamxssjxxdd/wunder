@@ -14,6 +14,8 @@ mod context_probe;
 mod payload;
 mod provider;
 mod response;
+mod usage;
+use usage::{merge_anthropic_usage, normalize_usage};
 mod stream_tool;
 #[cfg(test)]
 use context_probe::normalize_root_url;
@@ -36,9 +38,8 @@ pub use provider::{
 use response::extract_tool_calls;
 use response::{
     build_anthropic_messages, extract_responses_output, extract_stream_error_message,
-    has_stream_tool_activity, is_false_tool_stop_reason, normalize_usage,
-    openai_tool_definition_to_anthropic_tool, parse_anthropic_body, parse_chat_completion_body,
-    parse_responses_body,
+    has_stream_tool_activity, is_false_tool_stop_reason, openai_tool_definition_to_anthropic_tool,
+    parse_anthropic_body, parse_chat_completion_body, parse_responses_body,
 };
 #[cfg(test)]
 use stream_tool::merge_stream_delta_field;
@@ -342,6 +343,12 @@ pub struct LlmResponse {
 
 const EMPTY_LLM_RESPONSE_ERROR: &str =
     "LLM returned empty response without content, reasoning, or tool calls";
+
+pub(crate) fn failed_response_usage(error: &anyhow::Error) -> Option<&TokenUsage> {
+    error
+        .downcast_ref::<usage::FailedResponseUsage>()
+        .map(|failure| &failure.usage)
+}
 
 fn llm_response_has_payload(content: &str, reasoning: &str, tool_calls: Option<&Value>) -> bool {
     if !content.trim().is_empty() || !reasoning.trim().is_empty() {
@@ -755,8 +762,7 @@ impl LlmClient {
             }
         };
         if !status.is_success() {
-            if let Some(next_effort) =
-                self.reasoning_effort_retry_step(status.as_u16(), &body_text)
+            if let Some(next_effort) = self.reasoning_effort_retry_step(status.as_u16(), &body_text)
             {
                 warn!(
                     "llm reasoning_effort {:?} rejected with {status}, retrying with {:?}",
@@ -796,6 +802,13 @@ impl LlmClient {
                 .and_then(|value| normalize_usage(value.get("usage")))
         });
         if !llm_response_has_payload(&content, &reasoning, tool_calls.as_ref()) {
+            if let Some(usage) = usage {
+                return Err(usage::FailedResponseUsage {
+                    usage,
+                    message: EMPTY_LLM_RESPONSE_ERROR,
+                }
+                .into());
+            }
             return Err(anyhow!(EMPTY_LLM_RESPONSE_ERROR));
         }
         Ok(LlmResponse {
@@ -849,8 +862,7 @@ impl LlmClient {
                         ));
                     }
                 };
-                if let Some(next_effort) =
-                    self.reasoning_effort_retry_step(status.as_u16(), &text)
+                if let Some(next_effort) = self.reasoning_effort_retry_step(status.as_u16(), &text)
                 {
                     warn!(
                         "llm stream reasoning_effort {:?} rejected with {status}, retrying with {:?}",
@@ -858,9 +870,7 @@ impl LlmClient {
                     );
                     return Box::pin(
                         self.with_reasoning_effort(next_effort)
-                            .stream_complete_with_callback_with_tools(
-                                messages, tools, on_delta,
-                            ),
+                            .stream_complete_with_callback_with_tools(messages, tools, on_delta),
                     )
                     .await;
                 }
@@ -960,6 +970,14 @@ impl LlmClient {
             let stream_payload_empty =
                 !llm_response_has_payload(&combined, &reasoning_combined, tool_calls.as_ref());
             if stream_payload_empty {
+                // Let the orchestrator account this completed response before retrying.
+                if let Some(usage) = usage {
+                    return Err(usage::FailedResponseUsage {
+                        usage,
+                        message: EMPTY_LLM_RESPONSE_ERROR,
+                    }
+                    .into());
+                }
                 let empty_reason = if saw_done {
                     "LLM stream finished with [DONE] but without payload"
                 } else {
@@ -974,6 +992,9 @@ impl LlmClient {
                         return Ok(fallback);
                     }
                     Err(err) => {
+                        if err.downcast_ref::<usage::FailedResponseUsage>().is_some() {
+                            return Err(err);
+                        }
                         return Err(anyhow!("{empty_reason}; fallback request failed: {err}"));
                     }
                 }
@@ -1751,16 +1772,13 @@ where
         .to_ascii_lowercase();
     match payload_type.as_str() {
         "message_start" => {
-            if let Some(new_usage) =
-                normalize_usage(payload.get("message").and_then(|value| value.get("usage")))
-            {
-                *usage = Some(new_usage);
-            }
+            merge_anthropic_usage(
+                usage,
+                payload.get("message").and_then(|value| value.get("usage")),
+            );
         }
         "message_delta" => {
-            if let Some(new_usage) = normalize_usage(payload.get("usage")) {
-                *usage = Some(new_usage);
-            }
+            merge_anthropic_usage(usage, payload.get("usage"));
         }
         "content_block_start" => {
             let index = payload.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
@@ -4031,7 +4049,9 @@ mod tests {
             payload["chat_template_kwargs"]["enable_thinking"],
             Value::Bool(false)
         );
-        assert!(payload["chat_template_kwargs"].get("reasoning_effort").is_none());
+        assert!(payload["chat_template_kwargs"]
+            .get("reasoning_effort")
+            .is_none());
     }
 
     #[test]
