@@ -24,6 +24,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = std::env::args_os().skip(1);
     let first_argument = arguments.next();
     let app = MainWindow::new()?;
+    app.window().on_close_requested(|| {
+        // Hiding the native window alone can leave the event loop running.
+        // Return from main so the owned bridge is reaped on every normal close.
+        let _ = slint::quit_event_loop();
+        slint::CloseRequestResponse::HideWindow
+    });
     if first_argument.as_deref() == Some(std::ffi::OsStr::new("--bridge-smoke")) {
         let target = arguments.next().ok_or("missing isolated bridge target")?;
         let directory = arguments

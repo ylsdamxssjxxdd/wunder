@@ -1,4 +1,5 @@
-import { sessionCatalogCheckIds, mergeSessionCatalogPage, cacheSessionCatalog } from './chatSessionCatalog';
+import { sessionCatalogCheckIds, sessionCatalogCandidateIds, mergeSessionCatalogPage, cacheSessionCatalog } from './chatSessionCatalog';
+import { isSessionUnavailable } from './chatSessionAvailability';
 import { isChatSnapshotCurrent, readChatRealtimeRevision } from './chatSnapshotFreshness';
 import { defineStore } from 'pinia';
 
@@ -365,9 +366,10 @@ export const chatSessionOpenLoadActions = {
       const applyLoadedSessions = (
         items: unknown,
         source: string,
-        options: { writeCache?: boolean; loadedAt?: number; unavailable_session_ids?: unknown; checkedIds?: string[] } = {}
+        options: { writeCache?: boolean; loadedAt?: number; unavailable_session_ids?: unknown; checkedIds?: string[]; total?: unknown; candidateIds?: string[] } = {}
       ) => {
-        mergeSessionCatalogPage(this, { items, unavailable_session_ids: options.unavailable_session_ids }, options.checkedIds);
+        mergeSessionCatalogPage(this, { items, total: options.total, unavailable_session_ids: options.unavailable_session_ids }, options.checkedIds,
+          options.candidateIds ? { candidateIds: options.candidateIds, offset: 0 } : undefined);
         this.sessionsLoadedAt = Number.isFinite(Number(options.loadedAt))
           ? Number(options.loadedAt)
           : Date.now();
@@ -388,10 +390,11 @@ export const chatSessionOpenLoadActions = {
         return this.sessions;
       };
       const refreshSessions = async (source: string) => {
+        const candidateIds = sessionCatalogCandidateIds(this, requestedAgentId);
         const checkedIds = sessionCatalogCheckIds(this, requestedAgentId);
         const { data } = await listSessions({ ...params, known_session_ids: checkedIds.join(',') });
         return applyLoadedSessions(data?.data?.items, source, {
-          checkedIds, unavailable_session_ids: data?.data?.unavailable_session_ids
+          checkedIds, candidateIds, total: data?.data?.total, unavailable_session_ids: data?.data?.unavailable_session_ids
         });
       };
       const scheduleBackgroundRefresh = (fallbackSessions: Record<string, unknown>[], ageMs: number) => {
@@ -553,6 +556,7 @@ export const chatSessionOpenLoadActions = {
     async loadSessionDetail(sessionId, options: LoadSessionDetailOptions = {}) {
       const targetSessionId = resolveSessionKey(sessionId);
       if (!targetSessionId) return null;
+      if (isSessionUnavailable(this, targetSessionId)) return null;
       return withSessionDetailLoadInFlight(targetSessionId, options, async () => {
         const perfEnabled = chatPerf.enabled();
         const perfStart = perfEnabled ? performance.now() : 0;
@@ -631,10 +635,6 @@ export const chatSessionOpenLoadActions = {
         if (cachedSessionMessages?.length || snapshot?.messages?.length) {
           cacheSessionMessages(targetSessionId, this.messages);
         }
-        if (!hasKnownSessionInStore(this, targetSessionId)) {
-          purgeUnavailableSession(this, targetSessionId);
-          return null;
-        }
         const pendingPrefetch = sessionDetailPrefetchInFlight.get(targetSessionId);
         let prefetchedSessionDetail = null;
         if (pendingPrefetch) {
@@ -684,7 +684,8 @@ export const chatSessionOpenLoadActions = {
               loadSessionEventsSnapshot(targetSessionId, {
                 limit: detailLimit,
                 minLastEventId: knownEventFloor,
-                shouldCache: () => !isStaleDesktopSessionDetailLoad(this, targetSessionId, preserveWatcher),
+                shouldCache: () => !isSessionUnavailable(this, targetSessionId) &&
+                  !isStaleDesktopSessionDetailLoad(this, targetSessionId, preserveWatcher),
                 ...(detailAbortController ? { signal: detailAbortController.signal } : {})
               }).catch((error) => {
                 if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
@@ -703,6 +704,7 @@ export const chatSessionOpenLoadActions = {
               perfFetchMs = performance.now() - perfFetchStart;
             }
             sessionDetail = sessionRes?.data?.data || null;
+            if (isSessionUnavailable(this, targetSessionId)) return null;
             cacheSessionDetailSnapshot(targetSessionId, sessionDetail);
           }
         } catch (error) {
@@ -717,7 +719,7 @@ export const chatSessionOpenLoadActions = {
         } finally {
           clearDesktopSessionDetailController(targetSessionId, detailAbortController);
         }
-        if (isStaleDesktopSessionDetailLoad(this, targetSessionId, preserveWatcher)) {
+        if (isSessionUnavailable(this, targetSessionId) || isStaleDesktopSessionDetailLoad(this, targetSessionId, preserveWatcher)) {
           return null;
         }
         if (!isChatSnapshotCurrent(ensureRuntime(targetSessionId), eventsPayload, hydrationRevision)) {

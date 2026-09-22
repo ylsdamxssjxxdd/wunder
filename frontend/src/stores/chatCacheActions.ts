@@ -1,5 +1,6 @@
 import { isChatSnapshotCurrent, readChatRealtimeRevision } from './chatSnapshotFreshness';
 import { defineStore } from 'pinia';
+import { isSessionUnavailable } from './chatSessionAvailability';
 
 import {
   archiveSession as archiveSessionApi,
@@ -165,6 +166,7 @@ export const chatCacheActions = {
       const targetSessionId = resolveSessionKey(normalized.id);
       const targetAgentId = String(normalized.agent_id || fallbackAgentId).trim();
       if (!targetSessionId) return null;
+      if (isSessionUnavailable(this, targetSessionId)) return null;
       const nextSession: Record<string, unknown> = {
         ...(session as Record<string, unknown>),
         ...normalized,
@@ -329,6 +331,7 @@ export const chatCacheActions = {
     async preloadSessionDetail(sessionId, options: { force?: boolean; syncActive?: boolean } = {}) {
       const targetId = resolveSessionKey(sessionId);
       if (!targetId) return null;
+      if (isSessionUnavailable(this, targetId)) return null;
       const force = options.force === true;
       const syncActive = options.syncActive !== false;
       const activeSessionId = resolveSessionKey(this.activeSessionId);
@@ -340,15 +343,6 @@ export const chatCacheActions = {
           syncActive
         });
         return this.sessions.find((session) => session.id === targetId) || null;
-      }
-      if (!hasKnownSessionInStore(this, targetId)) {
-        chatDebugLog('chat.store.preload', 'skip-unknown-session', {
-          sessionId: targetId,
-          force,
-          syncActive
-        });
-        purgeUnavailableSession(this, targetId);
-        return null;
       }
       const cachedMessages = getSessionMessages(targetId) || [];
       if (!force && isSessionDetailWarm(targetId) && cachedMessages.length) {
@@ -388,7 +382,8 @@ export const chatCacheActions = {
             getSessionWithParams(targetId, { limit: detailLimit, summary: true }),
             loadSessionEventsSnapshot(targetId, {
               limit: detailLimit,
-              minLastEventId: knownEventFloor
+              minLastEventId: knownEventFloor,
+              shouldCache: () => !isSessionUnavailable(this, targetId)
             }).catch((error) => {
               if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
                 throw error;
@@ -414,6 +409,7 @@ export const chatCacheActions = {
         }
         const payload = sessionRes?.data;
         const sessionDetail = payload?.data || null;
+        if (isSessionUnavailable(this, targetId)) return null;
         cacheSessionDetailSnapshot(targetId, sessionDetail);
         syncGoalFromSessionRecord(this, sessionDetail);
         const hydratedVersion = buildSessionHydratedMessageVersion(sessionDetail, eventsPayload);

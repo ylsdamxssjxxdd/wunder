@@ -30,7 +30,7 @@ wunder-frontend-slint-0.4.0-win7-x86.exe --connect http://127.0.0.1:18123
 
 ## Win7 32 位
 
-工程复用了参考项目的 Slint 实现及 已验证的 Slint 1.18 software renderer、Winit 0.30.2 和 Win7 兼容 vendor patch。完整的 `config/fonts/msyh.ttc` 与 `config/fonts/msyhbd.ttc` 会在启动前从 EXE 内存注册，UI 不依赖目标机器安装字体。
+工程复用了参考项目的 Slint 实现及已验证的 Slint 1.18 software renderer、Winit 0.30.2 和 Win7 兼容 vendor patch。完整的 `config/fonts/msyh.ttc` 与 `config/fonts/msyhbd.ttc` 会在启动前从 EXE 内存注册，UI 不依赖目标机器安装字体。
 
 有离线 SDK 时运行：
 
@@ -56,3 +56,11 @@ python frontend-slint/scripts/check-bridge.py --ui target/frontend-slint/dist/wi
 ```
 
 脚本启动隔离 SQLite/工作目录及本机模型测试服务，通过原生 UI 回调验证专家创建/编辑、工具、模型保存/默认项、聊天历史回读、目录导航/预览、运行时设置，以及连续长文本输出的完整性、输出期间输入和导航；UI 合并耗时记录在 `ui/stream-metrics.json`；完成后关闭测试进程，不连接外部模型。`--bridge-smoke` 会写入测试数据，仅用于该隔离环境。Windows 7 的验收目前包含 x86 Release 构建及 PE 导入门禁，仍需在 Win7 真机完成实际运行验证。
+
+Windows 启动/退出回归（需要 Python `psutil`，输出目录必须尚不存在）：
+
+```powershell
+python frontend-slint/scripts/check-launch.py --ui target/frontend-slint/dist/win7-x86/wunder-frontend-slint-0.4.0-win7-x86.exe --bridge target/release/wunder-desktop-bridge.exe --output frontend-slint/artifacts/launch-check
+```
+
+脚本复制程序到隔离目录，发送原生窗口关闭事件，验证默认启动、启动中关闭时回收自建 bridge，以及 `--connect` 退出后保留外部 bridge；不会调用外部模型。

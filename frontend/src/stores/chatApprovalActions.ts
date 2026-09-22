@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia';
+import { resetSessionAvailability } from './chatSessionAvailability';
 
 import {
   archiveSession as archiveSessionApi,
@@ -142,6 +143,7 @@ export const chatApprovalActions = {
       clearSessionWatcher();
     },
     resetState() {
+      resetSessionAvailability(this);
       chatPageLifecycle.pageUnloading = false;
       resetChatRuntimeState();
       this.$reset();

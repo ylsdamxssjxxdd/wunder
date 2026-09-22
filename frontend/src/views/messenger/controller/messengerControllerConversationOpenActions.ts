@@ -1,6 +1,7 @@
 // @ts-nocheck
 // Search-create routing, middle-pane selections, world conversation openers, agent sessions, and prompt previews.
 import type { MessengerControllerContext } from './messengerControllerContext';
+import { isSessionUnavailable } from '@/stores/chatSessionAvailability';
 import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
@@ -1299,6 +1300,17 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
               agentId: fallbackAgentId || DEFAULT_AGENT_KEY,
               hasSessionDetail: Boolean(sessionDetail)
           });
+          if (!sessionDetail && isSessionUnavailable(ctx.chatStore, normalizedSessionId)) {
+              // Purging clears activeSessionId. Use navigation intent to report
+              // failure without mistaking deletion for a subsequent user switch.
+              if (ctx.sessionHub.activeConversation?.kind === 'agent' &&
+                  ctx.sessionHub.activeConversation.id === normalizedSessionId) {
+                  ctx.openAgentDraftSession(fallbackAgentId);
+                  ElMessage.warning(ctx.t('chat.session.unavailable'));
+              }
+              ctx.finishMessengerPerfTrace(perfTrace, 'fail', { reason: 'sessionUnavailable' });
+              return;
+          }
           if (!isForegroundSession()) {
               ctx.finishMessengerPerfTrace(perfTrace, 'ok', { stale: true });
               return;

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { markRaw, toRaw } from 'vue';
+import { isSessionUnavailable, markSessionUnavailable } from './chatSessionAvailability';
 import { isChatSnapshotCurrent, readChatRealtimeRevision } from './chatSnapshotFreshness';
 
 import {
@@ -990,6 +991,7 @@ export const applyThreadControlSessionPatch = (store, session, options: { allowA
   if (!normalized) return null;
   const targetId = resolveSessionKey(normalized.id);
   if (!targetId) return null;
+  if (isSessionUnavailable(store, targetId)) return null;
   const status = String(normalized.status || '').trim().toLowerCase();
   const allowArchived = options.allowArchived === true;
   const targetAgentId = String(normalized.agent_id || '').trim();
@@ -1084,14 +1086,15 @@ export const isSessionUnavailableStatus = (status) => [401, 403, 404].includes(N
 export const hasKnownSessionInStore = (store, sessionId) => {
   const targetId = resolveSessionKey(sessionId);
   if (!targetId) return false;
-  const sessions = Array.isArray(store?.sessions) ? store.sessions : [];
-  if (!sessions.length) return true;
-  return sessions.some((item) => resolveSessionKey(item?.id) === targetId);
+  if (isSessionUnavailable(store, targetId)) return false;
+  // Catalog pages are partial. Only explicit server rejection makes an id unavailable.
+  return true;
 };
 
 export const purgeUnavailableSession = (store, sessionId) => {
   const targetId = resolveSessionKey(sessionId);
   if (!targetId) return '';
+  markSessionUnavailable(store, targetId);
   const sessions = Array.isArray(store?.sessions) ? store.sessions : [];
   const targetSession = sessions.find((item) => resolveSessionKey(item?.id) === targetId) || null;
   const targetAgentId = String(targetSession?.agent_id || '').trim();

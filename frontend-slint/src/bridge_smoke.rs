@@ -330,7 +330,7 @@ fn advance(
             ensure(
                 app.get_messages()
                     .iter()
-                    .any(|row| !row.mine && row.text == expected),
+                    .any(|row| !row.mine && row.text == expected.trim_end()),
                 "stream text incomplete",
             )?;
             ensure(app.get_draft() == "输出期间草稿", "stream lost input draft")?;

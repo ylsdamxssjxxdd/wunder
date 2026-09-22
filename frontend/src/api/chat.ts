@@ -75,7 +75,8 @@ const sanitizeQueryParams = (params: QueryParams = {}): QueryParams => {
 };
 
 export const createSession = (payload: unknown) => api.post('/chat/sessions', payload);
-export const listSessions = (params: QueryParams) => api.get('/chat/sessions', { params });
+export const listSessions = (params: QueryParams, options: { signal?: AbortSignal } = {}) =>
+  api.get('/chat/sessions', { params, ...options });
 export const getSession = (id: string, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}`, options);
 export const getSessionWithParams = (

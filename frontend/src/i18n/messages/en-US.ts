@@ -1453,6 +1453,7 @@ export default {
   'messenger.messageStatus.done': 'Task completed',
   'messenger.messageStatus.error': 'Task failed',
   'chat.session.unnamed': 'Untitled session',
+  'chat.session.unavailable': 'This thread was deleted or is unavailable and has been removed from the work thread list.',
   'chat.session.running': 'Running',
   'chat.session.waitingApproval': 'Waiting for approval',
   'chat.session.waitingUserInput': 'Waiting for input',

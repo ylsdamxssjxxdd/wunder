@@ -1419,6 +1419,7 @@ export default {
   'messenger.messageStatus.done': '任务完成',
   'messenger.messageStatus.error': '任务失败',
   'chat.session.unnamed': '未命名会话',
+  'chat.session.unavailable': '该线程已删除或不可访问，已从工作线程列表移除',
   'chat.session.running': '运行中',
   'chat.session.waitingApproval': '等待审批',
   'chat.session.waitingUserInput': '等待输入',

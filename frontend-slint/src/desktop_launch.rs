@@ -7,11 +7,17 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-pub struct BridgeProcess(Arc<Mutex<Option<Child>>>);
+#[derive(Default)]
+struct ProcessState {
+    child: Option<Child>,
+    closed: bool,
+}
+pub struct BridgeProcess(Arc<Mutex<ProcessState>>);
 impl Drop for BridgeProcess {
     fn drop(&mut self) {
-        if let Ok(mut child) = self.0.lock() {
-            if let Some(mut child) = child.take() {
+        if let Ok(mut state) = self.0.lock() {
+            state.closed = true;
+            if let Some(mut child) = state.child.take() {
                 let _ = child.kill();
                 let _ = child.wait();
             }
@@ -26,7 +32,7 @@ pub fn start(app: &MainWindow) -> BridgeProcess {
     app.set_tools(slint::ModelRc::default());
     app.set_models(slint::ModelRc::default());
     app.set_status("正在启动本地运行时…".into());
-    let child = Arc::new(Mutex::new(None));
+    let child = Arc::new(Mutex::new(ProcessState::default()));
     let process = BridgeProcess(child.clone());
     let weak = app.as_weak();
     std::thread::spawn(move || {
@@ -44,7 +50,7 @@ pub fn start(app: &MainWindow) -> BridgeProcess {
     process
 }
 
-fn launch(slot: &Arc<Mutex<Option<Child>>>) -> Result<ConnectionConfig, String> {
+fn launch(slot: &Arc<Mutex<ProcessState>>) -> Result<ConnectionConfig, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let parent = exe.parent().ok_or("无法定位程序目录")?;
     let mut candidates = vec![parent.join("wunder-desktop-bridge.exe")];
@@ -69,11 +75,14 @@ fn launch(slot: &Arc<Mutex<Option<Child>>>) -> Result<ConnectionConfig, String> 
         command.creation_flags(0x08000000); // CREATE_NO_WINDOW, available on Win7.
     }
     let mut process_slot = slot.lock().map_err(|_| "运行时进程状态不可用")?;
+    if process_slot.closed {
+        return Err("窗口已关闭".into());
+    }
     let mut child = command
         .spawn()
         .map_err(|e| format!("无法启动本地运行时：{e}"))?;
     let output = child.stdout.take().ok_or("无法读取运行时启动信息")?;
-    *process_slot = Some(child);
+    process_slot.child = Some(child);
     drop(process_slot);
     let (tx, rx) = std::sync::mpsc::sync_channel::<String>(1);
     std::thread::spawn(move || {
@@ -91,8 +100,8 @@ fn launch(slot: &Arc<Mutex<Option<Child>>>) -> Result<ConnectionConfig, String> 
     let target = rx
         .recv_timeout(std::time::Duration::from_secs(60))
         .map_err(|_| {
-            if let Ok(mut child) = slot.lock() {
-                if let Some(mut child) = child.take() {
+            if let Ok(mut state) = slot.lock() {
+                if let Some(mut child) = state.child.take() {
                     let _ = child.kill();
                     let _ = child.wait();
                 }

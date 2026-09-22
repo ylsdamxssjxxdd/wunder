@@ -97,3 +97,105 @@ test('explicit restoration makes an unavailable thread visible again', async () 
   assert.deepEqual(store.sessions.map(item => item.id), ['session-a']);
   store.resetState();
 });
+
+test('complete first page evicts all old scoped entries but preserves concurrent creation', async () => {
+  const store = await setup();
+  const { default: api } = await import('../../src/api/http');
+  store.sessions = Array.from({ length: 150 }, (_, i) => session(`old-${i}`, 'agent-a'));
+  store.sessions.push(session('other', 'agent-b'));
+  const original = api.defaults.adapter;
+  api.defaults.adapter = async config => {
+    store.sessions.push(session('created-during-request', 'agent-a'));
+    return { status: 200, statusText: 'OK', headers: {}, config,
+      data: { data: { total: 1, items: [session('server-thread', 'agent-a')] } } };
+  };
+  try {
+    await store.loadSessions({ agent_id: 'agent-a', force: true });
+    assert.deepEqual(store.sessions.map(item => item.id).sort(), ['created-during-request', 'other', 'server-thread']);
+  } finally { api.defaults.adapter = original; store.resetState(); }
+});
+
+test('detail 404 rejects subsequent summary and cached list resurrection', async () => {
+  const store = await setup();
+  const { default: api } = await import('../../src/api/http');
+  const { mergeSessionCatalogPage } = await import('../../src/stores/chatSessionCatalog');
+  store.sessions = [session('session-a'), session('session-b')];
+  const original = api.defaults.adapter;
+  api.defaults.adapter = async () => { throw { response: { status: 404 } }; };
+  try {
+    assert.equal(await store.loadSessionDetail('session-a', { startWatcherAfterHydration: false }), null);
+    store.syncSessionSummary(session('session-a'));
+    mergeSessionCatalogPage(store, { items: [session('session-a')] });
+    assert.deepEqual(store.sessions.map(item => item.id), ['session-b']);
+  } finally { api.defaults.adapter = original; store.resetState(); }
+});
+
+test('late successful detail cannot revive a thread deleted while the request was in flight', async () => {
+  const store = await setup();
+  const { default: api } = await import('../../src/api/http');
+  const { purgeUnavailableSession, readSessionDetailSnapshot, readSessionEventsSnapshot } = await import('../../src/stores/chatRuntimeState');
+  store.sessions = [session('session-a')];
+  const pending: Array<() => void> = [];
+  const original = api.defaults.adapter;
+  api.defaults.adapter = config => new Promise(resolve => pending.push(() => resolve({
+    status: 200, statusText: 'OK', headers: {}, config,
+    data: { data: config.url?.endsWith('/events') ? { events: [], rounds: [], running: false } : { ...session('session-a'), transcript: [] } }
+  })));
+  try {
+    const loading = store.loadSessionDetail('session-a', { startWatcherAfterHydration: false });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    purgeUnavailableSession(store, 'session-a');
+    pending.forEach(resolve => resolve());
+    assert.equal(await loading, null);
+    assert.equal(readSessionDetailSnapshot('session-a'), null);
+    assert.equal(readSessionEventsSnapshot('session-a', { limit: 80 }), null);
+    assert.deepEqual(store.sessions, []);
+  } finally { api.defaults.adapter = original; store.resetState(); }
+});
+
+test('partial catalog membership cannot reject a valid thread opened by id', async () => {
+  const store = await setup();
+  const { default: api } = await import('../../src/api/http');
+  store.sessions = [session('session-a')];
+  const original = api.defaults.adapter;
+  let detailRequests = 0;
+  api.defaults.adapter = async config => {
+    if (config.url === '/chat/sessions/session-b') detailRequests++;
+    return { status: 200, statusText: 'OK', headers: {}, config,
+      data: { data: config.url?.endsWith('/events') ? { events: [], rounds: [], running: false } : { ...session('session-b'), transcript: [] } } };
+  };
+  try {
+    const result = await store.loadSessionDetail('session-b', { startWatcherAfterHydration: false });
+    assert.equal(result?.id, 'session-b');
+    assert.equal(detailRequests, 1);
+  } finally { api.defaults.adapter = original; store.resetState(); }
+});
+
+test('only a complete first page can remove omitted entries, including an empty catalog', async () => {
+  const store = await setup();
+  const { mergeSessionCatalogPage } = await import('../../src/stores/chatSessionCatalog');
+  store.sessions = [session('session-a'), session('session-b')];
+  const candidateIds = ['session-a', 'session-b'];
+  for (const [total, offset] of [[3, 0], [1, 50]]) {
+    mergeSessionCatalogPage(store, { total, items: [session('session-b')] }, [], { candidateIds, offset });
+    assert.deepEqual(store.sessions.map(item => item.id).sort(), candidateIds);
+  }
+  mergeSessionCatalogPage(store, { total: 0, items: [] }, [], { candidateIds, offset: 0 });
+  assert.deepEqual(store.sessions, []);
+  store.resetState();
+});
+
+test('transient list and detail failures preserve the catalog for retry', async () => {
+  const store = await setup();
+  const { default: api } = await import('../../src/api/http');
+  const { isSessionUnavailable } = await import('../../src/stores/chatSessionAvailability');
+  store.sessions = [session('session-a')];
+  const original = api.defaults.adapter;
+  api.defaults.adapter = async () => { throw { response: { status: 503 } }; };
+  try {
+    await assert.rejects(store.loadSessions({ force: true }));
+    await assert.rejects(store.loadSessionDetail('session-a', { startWatcherAfterHydration: false }));
+    assert.deepEqual(store.sessions.map(item => item.id), ['session-a']);
+    assert.equal(isSessionUnavailable(store, 'session-a'), false);
+  } finally { api.defaults.adapter = original; store.resetState(); }
+});

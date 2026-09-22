@@ -3,16 +3,17 @@ import { patchSessionRuntimeFields } from './chatPersist';
 import { sortSessionsByActivity } from './chatDemoPanels';
 import { filterSessionsByAgent, purgeUnavailableSession, writeSessionListCache } from './chatRuntimeState';
 import { ALL_SESSION_LIST_CACHE_KEY, normalizeSessionListItems } from './chatSessionListLoadCache';
+import { isSessionUnavailable, restoreSessionAvailability } from './chatSessionAvailability';
 
-const states = new WeakMap<object, { cursor: number; unavailable: Set<string> }>();
+const states = new WeakMap<object, { cursor: number }>();
 const stateFor = (store: object) => {
   let state = states.get(store);
-  if (!state) { state = { cursor: 0, unavailable: new Set() }; states.set(store, state); }
+  if (!state) { state = { cursor: 0 }; states.set(store, state); }
   return state;
 };
 
 // Rotate a bounded catalog check alongside ordinary list reads. Missing rows on a
-// single page are never evidence of deletion, even after reaching the last page.
+// partial page are never evidence of deletion, even after reaching the last page.
 export function sessionCatalogCheckIds(store: any, agentId: string | null): string[] {
   const state = stateFor(store);
   const sessions = agentId === null ? store.sessions : filterSessionsByAgent(agentId, store.sessions);
@@ -30,22 +31,29 @@ export function sessionCatalogCheckIds(store: any, agentId: string | null): stri
 
 export function mergeSessionCatalogPage(
   store: any,
-  payload: { items?: unknown; unavailable_session_ids?: unknown },
-  checkedIds: string[] = []
+  payload: { items?: unknown; unavailable_session_ids?: unknown; total?: unknown },
+  checkedIds: string[] = [],
+  snapshot?: { candidateIds: string[]; offset: number }
 ) {
-  const state = stateFor(store);
+  const items = normalizeSessionListItems(payload.items);
+  const unavailable = new Set<string>();
   const checked = new Set(checkedIds);
   for (const value of Array.isArray(payload.unavailable_session_ids) ? payload.unavailable_session_ids : []) {
     const id = String(value || '').trim();
     if (!checked.has(id)) continue;
-    state.unavailable.add(id);
-    purgeUnavailableSession(store, id);
+    unavailable.add(id);
   }
-  // Bound protection against stale in-flight pages; ids are globally unique.
-  while (state.unavailable.size > 2048) state.unavailable.delete(state.unavailable.values().next().value!);
-  const incoming = normalizeSessionListItems(payload.items).filter(item => !state.unavailable.has(String(item.id)));
+  // A complete first page is authoritative only for entries known BEFORE this
+  // request. Partial pages and threads created during the request remain intact.
+  if (snapshot?.offset === 0 && Array.isArray(payload.items) && typeof payload.total === 'number' &&
+      payload.total === items.length) {
+    const present = new Set(items.map(item => String(item.id)));
+    for (const id of snapshot.candidateIds) if (!present.has(id)) unavailable.add(id);
+  }
+  for (const id of unavailable) purgeUnavailableSession(store, id);
+  const incoming = items.filter(item => !isSessionUnavailable(store, item.id));
   const incomingIds = new Set(incoming.map(item => String(item.id)));
-  const retained = store.sessions.filter(item => !incomingIds.has(String(item.id)) && !state.unavailable.has(String(item.id)));
+  const retained = store.sessions.filter(item => !incomingIds.has(String(item.id)) && !isSessionUnavailable(store, item.id));
   store.sessions = mergeSessionsByIdPreservingRuntimeFields(
     store.sessions, [...incoming, ...retained], patchSessionRuntimeFields, sortSessionsByActivity
   );
@@ -58,5 +66,9 @@ export function cacheSessionCatalog(store: any, agentId: string | null) {
 }
 
 export function restoreSessionCatalogEntry(store: object, sessionId: string) {
-  stateFor(store).unavailable.delete(sessionId);
+  restoreSessionAvailability(store, sessionId);
 }
+
+export const sessionCatalogCandidateIds = (store: any, agentId: string | null): string[] =>
+  (agentId === null ? store.sessions : filterSessionsByAgent(agentId, store.sessions))
+    .map(item => String(item.id || '').trim()).filter(Boolean);

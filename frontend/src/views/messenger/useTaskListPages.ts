@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue';
 import { listSessions } from '@/api/chat';
 import { useChatStore } from '@/stores/chat';
-import { sessionCatalogCheckIds, mergeSessionCatalogPage, cacheSessionCatalog } from '@/stores/chatSessionCatalog';
+import { sessionCatalogCheckIds, sessionCatalogCandidateIds, mergeSessionCatalogPage, cacheSessionCatalog } from '@/stores/chatSessionCatalog';
 
 // Fetch summaries only and only on demand. A late page cannot change navigation.
 export function useTaskListPages(agentId: Ref<string>) {
@@ -12,6 +12,7 @@ export function useTaskListPages(agentId: Ref<string>) {
   const total = ref<number | null>(null);
   let generation = 0;
   let disposed = false;
+  let controller: AbortController | null = null;
   const hasMore = computed(() => total.value === null || offset.value < total.value);
   const loadMore = async () => {
     if (disposed || loading.value || !hasMore.value) return;
@@ -20,11 +21,13 @@ export function useTaskListPages(agentId: Ref<string>) {
     error.value = false;
     try {
       const targetAgentId = String(agentId.value || '').trim().replace(/^(?:default|__default__)$/, '');
+      const snapshot = { candidateIds: sessionCatalogCandidateIds(store, targetAgentId), offset: offset.value };
       const checkedIds = sessionCatalogCheckIds(store, targetAgentId);
-      const { data } = await listSessions({ agent_id: targetAgentId, offset: offset.value, limit: 50, known_session_ids: checkedIds.join(',') });
+      controller = new AbortController();
+      const { data } = await listSessions({ agent_id: targetAgentId, offset: offset.value, limit: 50, known_session_ids: checkedIds.join(',') }, { signal: controller.signal });
       if (disposed || request !== generation) return;
       const items = Array.isArray(data?.data?.items) ? data.data.items : [];
-      mergeSessionCatalogPage(store, data?.data || {}, checkedIds);
+      mergeSessionCatalogPage(store, data?.data || {}, checkedIds, snapshot);
       cacheSessionCatalog(store, targetAgentId);
       offset.value += items.length;
       total.value = items.length ? Number(data?.data?.total ?? offset.value) : offset.value;
@@ -35,6 +38,7 @@ export function useTaskListPages(agentId: Ref<string>) {
     }
   };
   watch(agentId, () => {
+    controller?.abort();
     generation += 1;
     offset.value = 0;
     total.value = null;
@@ -42,6 +46,6 @@ export function useTaskListPages(agentId: Ref<string>) {
     error.value = false;
     void loadMore();
   });
-  onBeforeUnmount(() => { disposed = true; generation += 1; });
+  onBeforeUnmount(() => { disposed = true; generation += 1; controller?.abort(); });
   return { loading, error, hasMore, loadMore };
 }
