@@ -1777,36 +1777,58 @@ const isUsageContextStreamEvent = (eventType) => {
   );
 };
 
-const syncSessionContextTokensFromRuntimeProjection = (store, sessionId) => {
+const syncSessionUsageFromRuntimeProjection = (store, sessionId) => {
   const key = resolveSessionKey(sessionId);
   const projection = store?.runtimeProjection as ChatRuntimeProjection | undefined;
   if (!key || !projection) return;
-  const assistant = [...selectVisibleMessageProjections(projection, key)]
-    .reverse()
-    .find((message) => message.role === 'assistant' && message.display?.stats);
-  if (!assistant) return;
-  const stats = assistant.display?.stats as Record<string, unknown> | undefined;
+  const assistants = selectVisibleMessageProjections(projection, key)
+    .filter((message) => message.role === 'assistant' && message.display?.stats);
+  const assistant = assistants[assistants.length - 1];
+  const stats = assistant?.display?.stats as Record<string, unknown> | undefined;
+  if (!stats) return;
   const contextTokens = normalizeContextTokens(
-    stats?.contextTokens ??
-      stats?.context_tokens ??
-      stats?.context_occupancy_tokens ??
-      stats?.contextOccupancyTokens ??
-      (stats?.context_usage as Record<string, unknown> | undefined)?.context_occupancy_tokens ??
-      (stats?.context_usage as Record<string, unknown> | undefined)?.contextOccupancyTokens ??
-      (stats?.context_usage as Record<string, unknown> | undefined)?.contextTokens ??
-      (stats?.context_usage as Record<string, unknown> | undefined)?.context_tokens
+    stats.contextTokens ?? stats.context_tokens ?? stats.context_occupancy_tokens ??
+      stats.contextOccupancyTokens ?? (stats.context_usage as Record<string, unknown> | undefined)?.context_occupancy_tokens ??
+      (stats.context_usage as Record<string, unknown> | undefined)?.contextTokens
   );
-  if (contextTokens === null || contextTokens <= 0) return;
   const contextTotalTokens = normalizeContextTotalTokens(
-    stats?.contextTotalTokens ??
-      stats?.context_total_tokens ??
-      stats?.context_max_tokens ??
-      stats?.max_context ??
-      (stats?.context_usage as Record<string, unknown> | undefined)?.max_context ??
-      (stats?.context_usage as Record<string, unknown> | undefined)?.maxContext ??
-      (stats?.context_usage as Record<string, unknown> | undefined)?.context_max_tokens
+    stats.contextTotalTokens ?? stats.context_total_tokens ?? stats.context_max_tokens ?? stats.max_context
   );
-  syncSessionContextTokens(store, key, contextTokens, contextTotalTokens);
+  const consumedCandidates = assistants.map((message) => {
+    const value = (message.display?.stats as Record<string, unknown> | undefined)?.quotaConsumed ??
+      (message.display?.stats as Record<string, unknown> | undefined)?.quota_consumed ??
+      (message.display?.stats as Record<string, unknown> | undefined)?.request_consumed_tokens;
+    return Number(value);
+  }).filter((value) => Number.isFinite(value) && value >= 0);
+  const toolCalls = assistants.reduce((total, message) => {
+    const value = Number((message.display?.stats as Record<string, unknown> | undefined)?.toolCalls ??
+      (message.display?.stats as Record<string, unknown> | undefined)?.tool_calls ?? 0);
+    return total + (Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0);
+  }, 0);
+  const session = Array.isArray(store.sessions)
+    ? store.sessions.find((item) => resolveSessionKey(item?.id) === key)
+    : null;
+  if (!session) return;
+  const currentConsumed = Number(session.consumed_tokens ?? session.consumedTokens ?? 0);
+  const nextConsumed = consumedCandidates.length > 0
+    ? Math.max(Number.isFinite(currentConsumed) ? currentConsumed : 0, ...consumedCandidates)
+    : currentConsumed;
+  const next = {
+    ...session,
+    ...(Number.isFinite(nextConsumed) && nextConsumed >= 0
+      ? { consumed_tokens: Math.trunc(nextConsumed), consumedTokens: Math.trunc(nextConsumed) }
+      : {}),
+    tool_calls: toolCalls,
+    toolCalls,
+    ...(contextTokens !== null
+      ? { context_tokens: contextTokens, context_occupancy_tokens: contextTokens, contextTokens, contextOccupancyTokens: contextTokens }
+      : {}),
+    ...(contextTotalTokens !== null
+      ? { context_total_tokens: contextTotalTokens, context_max_tokens: contextTotalTokens, contextTotalTokens }
+      : {})
+  };
+  const index = store.sessions.indexOf(session);
+  if (index >= 0) store.sessions[index] = next;
 };
 
 const COMMAND_SESSION_STREAM_EVENTS = new Set([
@@ -2172,8 +2194,11 @@ export const applyCanonicalStreamRuntimeEvent = (
     const runtime = ensureRuntime(key);
     runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
   }
-  if (isUsageContextStreamEvent(eventType) && results.some((result) => result.applied)) {
-    syncSessionContextTokensFromRuntimeProjection(store, key);
+  if (results.some((result) => result.applied) && (
+    isUsageContextStreamEvent(eventType) ||
+    ['llm_output', 'tool_call', 'tool_result', 'tool_call_completed', 'tool_call_failed', 'final', 'turn_completed'].includes(String(eventType).toLowerCase())
+  )) {
+    syncSessionUsageFromRuntimeProjection(store, key);
   }
   const isCommandProjectionOnlyEvent =
     !isCommandStreamVisualizationEnabled() && isCommandStreamRuntimeEvent(eventType);

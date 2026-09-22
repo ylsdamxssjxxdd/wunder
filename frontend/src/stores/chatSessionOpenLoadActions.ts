@@ -815,6 +815,10 @@ export const chatSessionOpenLoadActions = {
         const canReuseHydratedMessages =
           !hasCanonicalTranscript &&
           !remoteRunning &&
+          // A cached transcript can predate workflow event hydration. When
+          // persisted rounds are available, rebuild the projection so tool
+          // loops survive a page refresh instead of silently disappearing.
+          (!Array.isArray(rounds) || rounds.length === 0) &&
           Array.isArray(finalCachedMessages) &&
           finalCachedMessages.length > 0 &&
           previousHydratedVersion === hydratedVersion;

@@ -2848,7 +2848,8 @@ const PROJECTED_STATS_DISPLAY_FIELDS = [
   'avg_model_round_speed_rounds',
   'interaction_start_ms',
   'interaction_end_ms',
-  'interaction_duration_s'
+  'interaction_duration_s',
+  'stream_timing'
 ];
 
 const buildMessageDisplayProjection = (
@@ -4911,6 +4912,10 @@ const applyProjectedTimingStats = (
   stats: Record<string, unknown>,
   source: Record<string, unknown>
 ): void => {
+  const streamTiming = asRecord(source.stream_timing ?? source.streamTiming);
+  if (streamTiming) {
+    stats.stream_timing = cloneProjectedDisplayValue(streamTiming);
+  }
   copyProjectedPositiveNumber(stats, 'prefill_duration_s', source.prefill_duration_s ?? source.prefillDurationS ?? source.prefillDuration);
   copyProjectedPositiveNumber(stats, 'decode_duration_s', source.decode_duration_s ?? source.decodeDurationS ?? source.decodeDuration);
   copyProjectedPositiveNumber(stats, 'prefill_duration_total_s', source.prefill_duration_total_s ?? source.prefillDurationTotalS);
@@ -4920,6 +4925,17 @@ const applyProjectedTimingStats = (
     'visible_decode_tokens',
     source.visible_decode_tokens ?? source.visibleDecodeTokens
   );
+  const timingMs = parsePositiveNumber(
+    streamTiming?.content_decode_ms ?? streamTiming?.contentDecodeMs ?? streamTiming?.decode_ms ?? streamTiming?.decodeMs
+  );
+  const bodyTokens = parsePositiveInt(
+    source.decode_output_tokens ?? source.decodeOutputTokens ?? source.visible_decode_tokens ?? source.visibleDecodeTokens
+  );
+  if (bodyTokens !== null && timingMs !== null) {
+    stats.visible_decode_tokens = bodyTokens;
+    stats.visible_decode_duration_s = timingMs / 1000;
+    stats.visible_decode_speed_tps = bodyTokens / (timingMs / 1000);
+  }
   copyProjectedPositiveNumber(
     stats,
     'visible_decode_duration_s',
@@ -4931,9 +4947,8 @@ const applyProjectedTimingStats = (
     source.visible_decode_speed_tps ?? source.visibleDecodeSpeedTps
   );
   // A final response without measurable timing clears the previous model metric.
-  for (const key of ['visible_decode_tokens', 'visible_decode_duration_s', 'visible_decode_speed_tps']) {
-    if (source[key] === null) stats[key] = null;
-  }
+  // A terminal `final` event may carry null legacy speed fields. Keep the
+  // measured llm_output snapshot instead of erasing the visible body speed.
   const speed = parsePositiveNumber(
     source.avg_model_round_speed_tps ??
       source.avg_model_round_decode_speed_tps ??

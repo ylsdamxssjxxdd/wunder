@@ -12,6 +12,7 @@ import { isCompactionRunningFromWorkflowItems } from './chatCompactionWorkflow';
 import { shouldDisplayTransientRetry } from './retryVisibility';
 import { hasActiveSubagentItems } from './subagentRuntime';
 import { readQueueSchedulingState } from './queueScheduling';
+import { formatCompactCount } from './compactNumber';
 
 export type MessageStatsEntry = {
   key: string;
@@ -44,10 +45,10 @@ const formatDuration = (seconds: unknown): string => {
 };
 
 const formatCount = (value: unknown): string => {
-  if (value === null || value === undefined) return '-';
+  if (value === null || value === undefined) return '--';
   const parsed = Number.parseInt(String(value), 10);
-  if (!Number.isFinite(parsed) || parsed < 0) return '-';
-  return String(parsed);
+  if (!Number.isFinite(parsed) || parsed < 0) return '--';
+  return formatCompactCount(parsed);
 };
 
 const formatSpeed = (value: unknown): string => {
@@ -335,10 +336,28 @@ const resolveDurationSeconds = (stats: Record<string, any>): number | null => {
 const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
   const averageSpeed = normalizeSpeed(
     Number(
-      stats?.visible_decode_speed_tps ?? stats?.visibleDecodeSpeedTps
+      stats?.visible_decode_speed_tps ?? stats?.visibleDecodeSpeedTps ??
+        stats?.decode_speed_tps ?? stats?.decodeSpeedTps
     )
   );
-  return averageSpeed;
+  if (averageSpeed !== null) return averageSpeed;
+  const tokens = Number(
+    stats?.visible_decode_tokens ?? stats?.visibleDecodeTokens ?? stats?.decode_output_tokens
+  );
+  const timing = stats?.stream_timing && typeof stats.stream_timing === 'object'
+    ? stats.stream_timing
+    : null;
+  const durationSeconds = Number(
+    stats?.visible_decode_duration_s ?? stats?.visibleDecodeDurationS ?? stats?.decode_duration_s
+  );
+  const timingMs = Number(timing?.content_decode_ms ?? timing?.decode_ms);
+  const durationMs = Number.isFinite(durationSeconds) && durationSeconds > 0
+    ? durationSeconds * 1000
+    : timingMs;
+  if (Number.isFinite(tokens) && tokens > 0 && Number.isFinite(durationMs) && durationMs > 0) {
+    return normalizeSpeed(tokens / (durationMs / 1000));
+  }
+  return null;
 };
 
 const hasAssistantVisibleOutput = (message: Record<string, any>): boolean =>
@@ -794,7 +813,7 @@ export const buildAssistantMessageStatsEntries = (
     Number.isFinite(Number(effectiveQuotaConsumedTokens)) && Number(effectiveQuotaConsumedTokens) > 0;
   const hasDuration = Number.isFinite(Number(durationSeconds)) && Number(durationSeconds) > 0;
   const hasSpeed = Number.isFinite(Number(speed)) && Number(speed) > 0;
-  const hasToolCalls = Number.isFinite(Number(stats?.toolCalls)) && Number(stats.toolCalls) > 0;
+  const hasToolCalls = stats?.toolCalls !== undefined && Number.isFinite(Number(stats.toolCalls)) && Number(stats.toolCalls) >= 0;
   if (!hasUsage && !hasQuota && !hasDuration && !hasToolCalls && !hasSpeed) {
     return statusEntry ? [statusEntry] : [];
   }

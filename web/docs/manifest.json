@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-09-22T12:35:54.486174+00:00",
+  "generated_at": "2026-09-22T13:24:33.924367+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -6391,7 +6391,7 @@
       "language": "zh-CN",
       "title": "管理端界面",
       "summary": "管理员的后台工作台。模型配置、工具管理、用户治理、渠道接入，都在这里。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-09-22",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",

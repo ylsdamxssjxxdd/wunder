@@ -41,6 +41,7 @@ import { isThreadRuntimeBusy } from '@/utils/chatSessionRuntime';
 import { taskWindow, type TaskListItem } from '@/views/messenger/taskList';
 import { useTaskListPages } from '@/views/messenger/useTaskListPages';
 import { usePersistentStableListOrder } from '@/views/messenger/stableListOrder';
+import { formatCompactCount } from '@/utils/compactNumber';
 
 const props = defineProps<{ items: TaskListItem[]; activeSessionId: string; agentId: string }>();
 const emit = defineEmits<{ activate: [id: string]; detail: [id: string]; rename: [id: string]; archive: [id: string] }>();
@@ -108,12 +109,6 @@ const handleDrop = (event: DragEvent) => {
 const resetDrag = () => { dragState.value = { key: '', index: -1 }; };
 const isDropBefore = (index: number) => dragState.value.index === index;
 const isDropAfter = (index: number) => index === visibleItems.value.length - 1 && dragState.value.index === visibleItems.value.length;
-const formatCompactCount = (value: number) => {
-  const count = Math.max(0, Math.trunc(Number(value) || 0));
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`;
-  return String(count);
-};
 const syncViewport = () => { scrollTop.value = viewport.value?.scrollTop || 0; height.value = viewport.value?.clientHeight || 400; };
 let observer: ResizeObserver | undefined;
 onMounted(() => {

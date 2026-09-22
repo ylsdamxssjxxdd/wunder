@@ -234,6 +234,7 @@ impl StorageWriteQueue {
 
 #[derive(Debug, Clone)]
 pub struct PurgeResult {
+    pub chat_sessions: i64,
     pub chat_records: i64,
     pub tool_records: i64,
     pub workspace_deleted: bool,
@@ -1559,16 +1560,19 @@ impl WorkspaceManager {
         let _ = self.delete_session_context_limit_hint(cleaned_user, cleaned_session);
     }
 
-    pub fn purge_user_data(&self, user_id: &str) -> PurgeResult {
+    pub fn purge_user_data(&self, user_id: &str) -> Result<PurgeResult> {
         let cleaned = user_id.trim();
         if cleaned.is_empty() {
-            return PurgeResult {
+            return Ok(PurgeResult {
+                chat_sessions: 0,
                 chat_records: 0,
                 tool_records: 0,
                 workspace_deleted: false,
                 legacy_history_deleted: false,
-            };
+            });
         }
+        // Directory deletion must succeed before reporting a successful user purge.
+        let chat_sessions = self.storage.delete_chat_sessions_by_user(cleaned)?;
         let chat_deleted = self.storage.delete_chat_history(cleaned).unwrap_or(0);
         let tool_deleted = self.storage.delete_tool_logs(cleaned).unwrap_or(0);
         let _ = self.storage.delete_memory_records_by_user(cleaned);
@@ -1608,12 +1612,13 @@ impl WorkspaceManager {
             .delete_meta_prefix(&format!("session_context_limit_hint:{safe_id}:"));
         let _ = self.storage.delete_session_locks_by_user(cleaned);
         let _ = self.storage.delete_stream_events_by_user(cleaned);
-        PurgeResult {
+        Ok(PurgeResult {
+            chat_sessions,
             chat_records: chat_deleted,
             tool_records: tool_deleted,
             workspace_deleted,
             legacy_history_deleted,
-        }
+        })
     }
 
     pub fn write_file(

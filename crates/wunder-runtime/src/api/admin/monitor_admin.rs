@@ -694,10 +694,14 @@ async fn admin_monitor_logs_cleanup(
             i18n::t("error.invalid_time_range"),
         ));
     }
-    let deleted = state
-        .monitor
-        .delete_logs_by_time_range(start_time, end_time)
-        .map_err(|message| error_response(StatusCode::BAD_REQUEST, message))?;
+    let monitor = state.monitor.clone();
+    let deleted = crate::core::blocking::run_db("api.admin.cleanup_logs", move || {
+        monitor.delete_logs_by_time_range(start_time, end_time).map_err(anyhow::Error::msg)
+    }).await
+        .map_err(|err| {
+            warn!(error = %err, "admin log cleanup failed");
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, i18n::t("error.internal_error"))
+        })?;
     let deleted_total: i64 = deleted.values().copied().sum();
     let system = state.monitor.get_system_metrics();
     Ok(Json(json!({

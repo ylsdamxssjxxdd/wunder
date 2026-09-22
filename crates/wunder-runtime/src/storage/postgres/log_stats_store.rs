@@ -238,11 +238,26 @@ impl PostgresLogStatsStorage for PostgresStorage {
             return Ok(HashMap::new());
         }
         let mut conn = self.conn()?;
+        let mut tx = conn.transaction()?;
+        tx.execute("SET LOCAL lock_timeout = '5s'", &[])?;
+        tx.execute("SET LOCAL statement_timeout = '30s'", &[])?;
+        // Serialize this rare maintenance command with new thread starts; a
+        // transaction alone would still allow a start between guard and deletion.
+        tx.execute("LOCK TABLE chat_sessions, session_locks, agent_tasks, session_runs, monitor_sessions, \
+            chat_history, model_context_entries, stream_events, tool_logs, artifact_logs, cron_jobs, session_goals \
+            IN SHARE ROW EXCLUSIVE MODE", &[])?;
+        let now = Self::now_ts();
+        let live = crate::storage::session_cleanup::LIVE_SESSION_PREDICATE.replace(":now", "$1");
+        // Freeze the protected set before deleting monitor evidence. Never erase
+        // the replay/history of a running, queued or approval-suspended thread.
+        tx.execute(&format!("CREATE TEMP TABLE protected_chat_sessions ON COMMIT DROP AS \
+            SELECT c.session_id FROM chat_sessions c WHERE {live}"), &[&now])?;
         let mut results = HashMap::new();
         let mut delete_range = |table: &str, time_field: &str| -> Result<i64> {
             let sql =
-                format!("DELETE FROM {table} WHERE {time_field} >= $1 AND {time_field} <= $2");
-            Ok(conn.execute(&sql, &[&start, &end])? as i64)
+                format!("DELETE FROM {table} WHERE {time_field} >= $1 AND {time_field} <= $2 \
+                    AND NOT EXISTS (SELECT 1 FROM protected_chat_sessions p WHERE p.session_id = {table}.session_id)");
+            Ok(tx.execute(&sql, &[&start, &end])? as i64)
         };
         results.insert(
             "chat_history".to_string(),
@@ -272,6 +287,11 @@ impl PostgresLogStatsStorage for PostgresStorage {
             "memory_task_logs".to_string(),
             delete_range("memory_task_logs", "updated_time")?,
         );
+        results.insert(
+            "chat_sessions".to_string(),
+            super::session_cleanup::remove_empty_catalog(&mut tx, start, end, now)?,
+        );
+        tx.commit()?;
         Ok(results)
     }
 

@@ -1329,7 +1329,11 @@ async fn admin_user_accounts_delete(
     let _ = state.user_store.set_user_tool_access(cleaned, None);
     let _ = state.user_store.set_user_agent_access(cleaned, None, None);
     let monitor_result = state.monitor.purge_user_sessions(cleaned);
-    let purge_result = state.workspace.purge_user_data(cleaned);
+    let purge_result = state.workspace.purge_user_data(cleaned)
+        .map_err(|err| {
+            tracing::warn!(error = %err, "user data purge failed");
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, i18n::t("error.internal_error"))
+        })?;
     let tool_root = state.user_tool_store.get_user_dir(cleaned);
     let tool_dir_deleted = std::fs::remove_dir_all(&tool_root).is_ok();
     Ok(Json(json!({
@@ -1338,6 +1342,7 @@ async fn admin_user_accounts_delete(
         "deleted_user": deleted_user,
         "cancelled_sessions": monitor_result.get("cancelled").copied().unwrap_or(0),
         "deleted_sessions": monitor_result.get("deleted").copied().unwrap_or(0),
+        "deleted_chat_sessions": purge_result.chat_sessions,
         "deleted_chat_records": purge_result.chat_records,
         "deleted_tool_records": purge_result.tool_records,
         "workspace_deleted": purge_result.workspace_deleted,
@@ -1508,12 +1513,17 @@ async fn admin_user_delete(
         ));
     }
     let monitor_result = state.monitor.purge_user_sessions(cleaned);
-    let purge_result = state.workspace.purge_user_data(cleaned);
+    let purge_result = state.workspace.purge_user_data(cleaned)
+        .map_err(|err| {
+            tracing::warn!(error = %err, "user data purge failed");
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, i18n::t("error.internal_error"))
+        })?;
     Ok(Json(json!({
         "ok": true,
         "message": i18n::t("message.user_deleted"),
         "cancelled_sessions": monitor_result.get("cancelled").copied().unwrap_or(0),
         "deleted_sessions": monitor_result.get("deleted").copied().unwrap_or(0),
+        "deleted_chat_sessions": purge_result.chat_sessions,
         "deleted_chat_records": purge_result.chat_records,
         "deleted_tool_records": purge_result.tool_records,
         "workspace_deleted": purge_result.workspace_deleted,

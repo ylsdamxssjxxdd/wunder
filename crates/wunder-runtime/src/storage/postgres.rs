@@ -53,6 +53,7 @@ mod queue_control;
 mod retention_store;
 mod schema;
 mod session_goal;
+mod session_cleanup;
 mod session_lock_store;
 mod session_run;
 mod token_balance_store;

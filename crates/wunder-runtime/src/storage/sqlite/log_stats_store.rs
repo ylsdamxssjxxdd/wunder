@@ -260,10 +260,17 @@ impl SqliteLogStatsStorage for SqliteStorage {
         if !start.is_finite() || !end.is_finite() || start < 0.0 || end <= start {
             return Ok(HashMap::new());
         }
-        let conn = self.open()?;
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let now = Self::now_ts();
+        let live = crate::storage::session_cleanup::LIVE_SESSION_PREDICATE.replace(":now", "?1");
+        // Keep the protection snapshot and all deletion steps in one transaction.
+        tx.execute(&format!("CREATE TEMP TABLE protected_chat_sessions AS \
+            SELECT c.session_id FROM chat_sessions c WHERE {live}"), [now])?;
         let delete_range = |table: &str, time_field: &str| -> Result<i64> {
-            let sql = format!("DELETE FROM {table} WHERE {time_field} >= ? AND {time_field} <= ?");
-            Ok(conn.execute(&sql, params![start, end])? as i64)
+            let sql = format!("DELETE FROM {table} WHERE {time_field} >= ? AND {time_field} <= ? \
+                AND NOT EXISTS (SELECT 1 FROM protected_chat_sessions p WHERE p.session_id = {table}.session_id)");
+            Ok(tx.execute(&sql, params![start, end])? as i64)
         };
         let mut results = HashMap::new();
         results.insert(
@@ -294,6 +301,12 @@ impl SqliteLogStatsStorage for SqliteStorage {
             "memory_task_logs".to_string(),
             delete_range("memory_task_logs", "updated_time")?,
         );
+        results.insert(
+            "chat_sessions".to_string(),
+            super::session_cleanup::remove_empty_catalog(&tx, start, end, now)?,
+        );
+        tx.execute("DROP TABLE protected_chat_sessions", [])?;
+        tx.commit()?;
         Ok(results)
     }
 

@@ -1,4 +1,5 @@
 import type { RawToolRun, WorkflowItem } from './toolWorkflowRunModel';
+import { formatCompactCount } from '@/utils/compactNumber';
 
 type UnknownRecord = Record<string, unknown>;
 type MetadataSource = 'call' | 'output' | 'result' | 'none';
@@ -182,7 +183,7 @@ const resolveItemMetadata = (item: WorkflowItem | null): { records: UnknownRecor
   return { records, rawValues: collectRawMetadata(records) };
 };
 
-const formatTokenLabel = (tokens: number | null): string => tokens === null ? '' : `${tokens} token`;
+const formatTokenLabel = (tokens: number | null): string => tokens === null ? '' : `${formatCompactCount(tokens)} token`;
 
 const formatDurationLabel = (durationMs: number | null): string => {
   if (durationMs === null) return '';

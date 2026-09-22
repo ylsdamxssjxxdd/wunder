@@ -655,6 +655,9 @@ impl UserAccountStore for PostgresStorage {
 }
 
 impl ChatSessionStore for PostgresStorage {
+    fn delete_chat_sessions_by_user(&self, user_id: &str) -> Result<i64> {
+        self.delete_chat_sessions_by_user_impl(user_id)
+    }
     fn get_chat_session_owner(&self, session_id: &str) -> Result<Option<String>> {
         self.get_chat_session_owner_impl(session_id)
     }

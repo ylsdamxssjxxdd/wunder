@@ -262,7 +262,11 @@ export const resolveComposerRunningContextDisplayState = (
 export const formatContextTokenCount = (value: unknown): string => {
   const normalized = normalizeTokenCount(value);
   if (normalized === null) return '--';
-  return String(normalized);
+  if (normalized < 1_000) return String(normalized);
+  const unit = normalized >= 1_000_000 ? 'm' : 'k';
+  const divisor = unit === 'm' ? 1_000_000 : 1_000;
+  const compact = normalized / divisor;
+  return `${compact.toFixed(compact >= 100 ? 0 : 1).replace(/\.0$/, '')}${unit}`;
 };
 
 export const resolveStableComposerContextPair = (

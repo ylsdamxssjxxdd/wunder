@@ -122,12 +122,17 @@ impl OutputTiming {
         let decode_ms = last_output_at
             .saturating_duration_since(first_output_at)
             .as_millis() as u64;
+        let content_decode_ms = self
+            .first_content_at
+            .zip(self.last_content_at)
+            .map(|(first, last)| last.saturating_duration_since(first).as_millis() as u64);
         Some(json!({
             "chunk_count": self.output_chunk_count,
             "content_delta_chars": self.content_delta_chars,
             "reasoning_delta_chars": self.reasoning_delta_chars,
             "prefill_ms": prefill_ms,
             "decode_ms": decode_ms,
+            "content_decode_ms": content_decode_ms,
             "max_chunk_gap_ms": (self.max_chunk_gap_s * 1000.0).round() as u64,
         }))
     }
@@ -907,7 +912,12 @@ impl Orchestrator {
             } else {
                 None
             };
-            let decode_output_tokens = usage.output;
+            // Body speed must use visible answer tokens, excluding hidden reasoning.
+            let decode_output_tokens = if content.trim().is_empty() {
+                usage.output
+            } else {
+                approx_token_count(&content).max(0) as u64
+            };
             let round_speed = LlmSpeedSummary::from_usage_and_durations(
                 Some(usage.input),
                 Some(decode_output_tokens),
@@ -1114,12 +1124,16 @@ impl Orchestrator {
                         .as_ref()
                         .and_then(Value::as_array)
                         .is_some_and(|calls| !calls.is_empty())
-                        || (!reasoning.is_empty() && usage.reasoning.is_none())
                         || usage.estimated
                     {
                         decode_duration_s = None;
                     }
-                    let decode_output_tokens = usage.output;
+                    // Body speed must use visible answer tokens, excluding hidden reasoning.
+                    let decode_output_tokens = if content.trim().is_empty() {
+                        usage.output
+                    } else {
+                        approx_token_count(&content).max(0) as u64
+                    };
                     let round_speed = LlmSpeedSummary::from_usage_and_durations(
                         Some(usage.input),
                         Some(decode_output_tokens),

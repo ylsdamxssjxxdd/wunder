@@ -1778,6 +1778,7 @@
   - `system`：删除后的系统资源指标快照
 - 说明：该接口用于管理员侧“内部状态”的日志管理弹窗，按时间范围清理系统热日志表。
 - 说明：清理范围与 `system.log_used` 口径一致，覆盖 `chat_history`、`model_context_entries`、`tool_logs`、`artifact_logs`、`monitor_sessions`、`stream_events`、`memory_task_logs`。其中包含聊天历史上下文与流事件，删除后不可恢复。
+- 清理日志与空历史线程目录在同一事务提交，`deleted.chat_sessions` 返回目录删除数。仅清理范围内曾有消息、现已无聊天/上下文/流事件/监控/工具/产物记录的目录；保留未使用草稿、部分历史、有定时任务或活动目标的线程。运行中、排队中和等待审批线程的日志也会跳过。
 - 说明：必须同时提供开始和结束时间，后端会拒绝空范围或无效范围；若开始时间大于结束时间，后端会自动交换顺序。
 
 ### 4.1.9 `/wunder/admin/monitor/{session_id}`
@@ -2605,6 +2606,7 @@
   - `message`：提示信息
   - `cancelled_sessions`：已终止的活动线程数量
   - `deleted_sessions`：已清除的会话数量
+  - `deleted_chat_sessions`：已删除的线程目录数（包括监控中不存在的目录）
   - `deleted_chat_records`：已删除的对话记录数
   - `deleted_tool_records`：已删除的工具日志数
   - `workspace_deleted`：工作区是否删除

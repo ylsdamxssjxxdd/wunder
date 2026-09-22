@@ -521,6 +521,8 @@ pub trait ChatSessionStore {
         last_message_at: f64,
     ) -> Result<()>;
     fn delete_chat_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
+    /// Delete the durable directory and its bindings when explicitly clearing a user.
+    fn delete_chat_sessions_by_user(&self, user_id: &str) -> Result<i64>;
 }
 
 /// Session goal accounting storage.
