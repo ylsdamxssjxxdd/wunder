@@ -755,7 +755,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "type": "object",
                 "properties": {
                     "input": {"type": "string", "description": t("tool.spec.apply_patch.args.input")},
-                    "dry_run": {"type": "boolean", "description": "Preview whether the patch can be parsed and matched without writing files. Prefer dry_run first when the patch was built from a fresh read or when you are unsure about context matching."}
+                    "dry_run": {"type": "boolean", "description": "Preview whether the patch can be parsed and matched without writing files. Use when context matching or a multi-file change is uncertain; apply directly when the patch is already precise."}
                 },
                 "required": ["input"],
                 "additionalProperties": false
@@ -880,8 +880,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                             "back",
                             "update_title",
                             "archive",
-                            "restore",
-                            "set_main"
+                            "restore"
                         ]
                     },
                     "session_id": {"type": "string", "description": t("tool.spec.thread_control.args.session_id")},
@@ -898,7 +897,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "enum": ["active", "archived", "all"]
                     },
                     "limit": {"type": "integer", "description": t("tool.spec.thread_control.args.limit"), "minimum": 1, "maximum": 200},
-                    "set_main": {"type": "boolean", "description": t("tool.spec.thread_control.args.set_main")}
                 },
                 "required": ["action"],
                 "additionalProperties": false
@@ -918,7 +916,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     },
                     "agent_id": {"type": "string", "description": "目标智能体 ID。仅在名称不可用、存在重名歧义或用户明确指定时使用，避免手抄长 ID。"},
                     "agent_name": {"type": "string", "description": "目标智能体名称。派发工蜂时优先使用名称。"},
-                    "session_id": {"type": "string", "description": "目标会话 ID。"},
+                    "session_id": {"type": "string", "description": "目标任务线程 ID，显式指定时优先使用。"},
+                    "thread_strategy": {"type": "string", "enum": ["task_thread", "new_thread"], "description": "默认 task_thread，在当前父任务内复用工蜂线程；new_thread 创建独立线程。"},
+                    "reuse_thread": {"type": "boolean", "description": "兼容简写：true 等同于 task_thread。"},
                     "message": {"type": "string", "description": "消息内容。", "minLength": 1},
                     "task": {"type": "string", "description": "任务描述。spawn 仅在已提供 agent_name/agent_id 时有效；临时子会话请用 subagent_control.spawn。", "minLength": 1},
                     "limit": {"type": "integer", "description": "Maximum number of items to return for list/status.", "minimum": 1},
@@ -933,7 +933,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                             "properties": {
                                 "agent_id": {"type": "string", "description": "目标智能体 ID。仅在名称不可用、存在重名歧义或用户明确指定时使用，避免手抄长 ID。"},
                                 "agent_name": {"type": "string", "description": "目标智能体名称。派发工蜂时优先使用名称。"},
-                                "session_id": {"type": "string", "description": "目标会话 ID。"},
+                                "session_id": {"type": "string", "description": "目标任务线程 ID，显式指定时优先使用。"},
+                    "thread_strategy": {"type": "string", "enum": ["task_thread", "new_thread"], "description": "默认 task_thread，在当前父任务内复用该工蜂的线程；new_thread 创建独立干净线程。"},
                                 "message": {"type": "string", "description": "任务消息。", "minLength": 1}
                             },
                             "required": ["message"],
@@ -2509,7 +2510,6 @@ mod tests {
         assert!(spec.description.contains("list/info"));
         assert!(spec.input_schema["properties"]["session_id"].is_object());
         assert!(spec.input_schema["properties"]["parent_session_id"].is_object());
-        assert!(spec.input_schema["properties"]["set_main"].is_object());
         assert!(spec.input_schema["properties"]["agentId"].is_null());
         assert!(spec.input_schema["properties"]["label"].is_null());
         assert!(spec.input_schema["properties"]["setMain"].is_null());

@@ -124,23 +124,8 @@ impl Orchestrator {
         let mut active_turn_round = RoundInfo::default();
 
         let result = async {
-            let mut lock_agent_id = prepared.agent_id.clone().unwrap_or_default();
-            if !is_admin {
-                let storage = self.storage.clone();
-                let lock_user = user_id.clone();
-                let lock_session = session_id.clone();
-                let lock_session_query = lock_session.clone();
-                if let Ok(Some(record)) =
-                    crate::core::blocking::run_db("orchestrator.execute.lock_session", move || {
-                        storage.get_chat_session(&lock_user, &lock_session_query)
-                    })
-                    .await
-                {
-                    if record.parent_session_id.is_some() {
-                        lock_agent_id = format!("subagent:{lock_session}");
-                    }
-                }
-            }
+            // Execution exclusion belongs to a session; one agent can run independent tasks.
+            let lock_agent_id = prepared.agent_id.clone().unwrap_or_default();
             let ok = limiter
                 .acquire(&session_id, &user_id, &lock_agent_id, prepared.allow_queue)
                 .await

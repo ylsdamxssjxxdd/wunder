@@ -24,7 +24,6 @@ import {
   updateSessionTools as updateSessionToolsApi
 } from '@/api/chat';
 import { t } from '@/i18n';
-import { setDefaultSession } from '@/api/agents';
 import { formatStructuredErrorText } from '@/utils/streamError';
 import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
 import {
@@ -154,7 +153,7 @@ import {
 } from './chatDesktopMemoryGuard';
 
 import { clearSessionCommandSessions, ensureGreetingMessage, removeDemoChatSession, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
-import { DEFAULT_AGENT_KEY, applyDesktopOverlayEvent, applyMainSession, normalizeAgentKey, patchSessionRuntimeFields, persistAgentSession, persistDraftSession, resolvePersistedSessionId } from './chatPersist';
+import { DEFAULT_AGENT_KEY, applyDesktopOverlayEvent, normalizeAgentKey, patchSessionRuntimeFields, persistAgentSession, persistDraftSession, resolvePersistedSessionId } from './chatPersist';
 import { abortWatchStream, clearRuntimeInteractiveControllers, clearSessionWatcher, clearWatchdog, isWindowingEnabled, resolveMessageWindowLimit, resolveMessageWindowThreshold, setSessionLoading } from './chatRuntimeControls';
 import { clearChatSnapshot, scheduleChatSnapshot } from './chatSnapshot';
 import { buildMessage, clearAssistantRetryState, normalizeContextTokens, normalizeContextTotalTokens, normalizeMessageSubagents, parseOptionalCount, resolveTimestampIso, resolveTimestampMs } from './chatStats';
@@ -923,10 +922,6 @@ export const filterSessionsByAgent = (agentId, sourceSessions = []) => {
 export const resolveInitialSessionIdFromList = (agentId, sourceSessions = []) => {
   const sessions = filterSessionsByAgent(agentId, sourceSessions);
   if (!sessions.length) return '';
-  const mainSession = sessions.find((session) => session.is_main);
-  if (mainSession?.id) {
-    return mainSession.id;
-  }
   const persistedSessionId = resolvePersistedSessionId(agentId);
   if (persistedSessionId && sessions.some((session) => session.id === persistedSessionId)) {
     return persistedSessionId;
@@ -1038,13 +1033,12 @@ export const handleThreadControlWorkflowEvent = async (store, payloadRaw) => {
       ? (payloadRaw as Record<string, unknown>)
       : {};
   const primarySession = normalizeThreadControlSession(payload.session);
-  const mainSession = normalizeThreadControlSession(payload.main_session ?? payload.mainSession);
   const switchSession = normalizeThreadControlSession(
     payload.switch_session ?? payload.switchSession ?? payload.session
   );
   const activeSessionId = resolveSessionKey(store?.activeSessionId);
   const retainIds = new Set(
-    [activeSessionId, resolveSessionKey(mainSession?.id), resolveSessionKey(switchSession?.id)].filter(Boolean)
+    [activeSessionId, resolveSessionKey(switchSession?.id)].filter(Boolean)
   );
   const affectedAgentIds = new Set<string>();
   const applyPatch = (session, options: { allowArchived?: boolean } = {}) => {
@@ -1057,17 +1051,10 @@ export const handleThreadControlWorkflowEvent = async (store, payloadRaw) => {
   const patchedPrimary = applyPatch(primarySession, {
     allowArchived: retainIds.has(resolveSessionKey(primarySession?.id))
   });
-  const patchedMain = applyPatch(mainSession, { allowArchived: true });
   const patchedSwitch = applyPatch(switchSession, { allowArchived: true });
 
-  if (patchedMain?.id) {
-    const mainAgentId = String(patchedMain.agent_id || '').trim();
-    store.sessions = applyMainSession(store.sessions, mainAgentId, patchedMain.id);
-    persistAgentSession(mainAgentId, patchedMain.id);
-    affectedAgentIds.add(mainAgentId);
-  }
 
-  if (!patchedMain?.id && patchedPrimary?.status === 'archived') {
+  if (patchedPrimary?.status === 'archived') {
     const archivedAgentId = String(patchedPrimary.agent_id || '').trim();
     if (resolvePersistedSessionId(archivedAgentId) === patchedPrimary.id) {
       persistAgentSession(archivedAgentId, '');
@@ -1076,7 +1063,9 @@ export const handleThreadControlWorkflowEvent = async (store, payloadRaw) => {
 
   applyThreadControlCaches(store, affectedAgentIds);
 
-  const shouldSwitch = payload.switch === true;
+  // A background task may update its summary, but cannot steal the user's foreground task.
+  const shouldSwitch = payload.switch === true &&
+    resolveSessionKey(payload.previous_session_id) === activeSessionId;
   const targetSwitchId = resolveSessionKey(
     patchedSwitch?.id ?? payload.switch_session_id ?? payload.switchSessionId ?? ''
   );

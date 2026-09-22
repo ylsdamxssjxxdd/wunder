@@ -111,7 +111,7 @@ a2a: # A2A 配置
 channels: # 渠道业务层配置（账号绑定/会话路由/出站队列/多模态）
   enabled: true # 建议与 gateway.enabled 联动开启；仅关闭时会禁用渠道业务能力
   allow_unknown_accounts: true # Allow unknown account inbound
-  session_strategy: main_thread # main_thread | per_peer | hybrid
+  session_strategy: task_thread # task_thread | per_peer | hybrid
   default_agent_id: null # Default routed agent_id
   default_tool_overrides: [] # Default tool overrides
   rate_limit: # Channel rate limits

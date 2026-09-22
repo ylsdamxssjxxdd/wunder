@@ -3537,6 +3537,88 @@ button.messenger-chat-header-model {
   overflow: hidden;
 }
 
+.messenger-right-panel--tasks {
+  overflow: hidden;
+}
+
+.messenger-right-section-count {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(var(--ui-accent-rgb), 0.12);
+  color: var(--ui-accent-deep);
+  font-size: 11px;
+  text-align: center;
+}
+
+.messenger-task-list {
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  contain: content;
+}
+
+.messenger-task-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 52px;
+  padding: 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.messenger-task-item:hover,
+.messenger-task-item.active {
+  background: rgba(var(--ui-accent-rgb), 0.1);
+}
+
+.messenger-task-item-icon {
+  width: 24px;
+  flex: 0 0 24px;
+  color: var(--ui-accent);
+  text-align: center;
+}
+
+.messenger-task-item-main {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.messenger-task-item-title,
+.messenger-task-item-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messenger-task-item-title {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.messenger-task-item-preview {
+  color: var(--messenger-polish-muted, #7d8591);
+  font-size: 11px;
+}
+
+.messenger-task-item-status {
+  flex: 0 0 auto;
+  color: var(--ui-accent);
+  font-size: 10px;
+}
+
 .messenger-right-panel--sandbox .messenger-workspace-scope {
   flex: 1;
   min-height: 0;

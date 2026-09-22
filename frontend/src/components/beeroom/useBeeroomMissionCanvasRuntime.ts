@@ -1715,18 +1715,18 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     return resolveValidDispatchSessionId(primarySessionId, primarySummary);
   };
 
-  const resolveExplicitMainDispatchSessionId = (
+  const resolveTaskDispatchSessionId = (
     agentId: string,
     sourceSessions: Record<string, any>[] | null = null
   ) => {
     const normalizedAgentId = String(agentId || '').trim();
     if (!normalizedAgentId) return '';
     const sessions = Array.isArray(sourceSessions) ? sourceSessions : chatStore.getCachedSessions(normalizedAgentId);
-    const mainSession = Array.isArray(sessions)
-      ? sessions.find((item) => item?.is_main === true) || null
+    const taskSession = Array.isArray(sessions)
+      ? sessions[0] || null
       : null;
-    if (!mainSession?.id) return '';
-    return resolveValidDispatchSessionId(String(mainSession.id), mainSession as Record<string, unknown>);
+    if (!taskSession?.id) return '';
+    return resolveValidDispatchSessionId(String(taskSession.id), taskSession as Record<string, unknown>);
   };
 
   const resolvePreferredDispatchSessionId = (
@@ -1745,8 +1745,8 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     const primarySessionId = resolvePrimaryDispatchSessionId(target.agentId);
     const explicitPrimarySessionId =
       target.role === 'mother' && target.agentId === String(motherAgentId.value || '').trim()
-        ? fixedMotherDispatchSessionId.value || resolveExplicitMainDispatchSessionId(target.agentId)
-        : resolveExplicitMainDispatchSessionId(target.agentId);
+        ? fixedMotherDispatchSessionId.value || resolveTaskDispatchSessionId(target.agentId)
+        : resolveTaskDispatchSessionId(target.agentId);
     const resolvedSessionId = resolvePreferredBeeroomDispatchSessionId({
       targetRole: target.role,
       targetAgentId: target.agentId,
@@ -1815,7 +1815,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     const currentSessionId = String(dispatchSessionId.value || '').trim();
     const currentValidSessionId = resolveValidDispatchSessionId(currentSessionId);
     const explicitPrimarySessionId =
-      fixedMotherDispatchSessionId.value || resolveExplicitMainDispatchSessionId(resolvedMotherAgentId);
+      fixedMotherDispatchSessionId.value || resolveTaskDispatchSessionId(resolvedMotherAgentId);
     const fallbackPrimarySessionId = resolvePrimaryDispatchSessionId(resolvedMotherAgentId);
     const nextSessionId = resolveNextBeeroomMotherDispatchSessionId({
       motherAgentId: resolvedMotherAgentId,
@@ -2042,7 +2042,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       preferPrimarySession,
       matchedSessionIds: matched.slice(0, 8).map((item) => ({
         id: String(item?.id || '').trim(),
-        isMain: item?.is_main === true,
+        isCurrent: String(item?.id) === String(chatStore.activeSessionId),
         updatedAt: String(item?.updated_at || item?.last_message_at || item?.created_at || '').trim()
       }))
     });
@@ -2050,7 +2050,6 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       const resolvedPrimarySessionId = resolvePrimaryDispatchSessionId(agentId, matched);
       const primary =
         matched.find((item) => String(item?.id || '').trim() === resolvedPrimarySessionId) ||
-        matched.find((item) => item?.is_main === true) ||
         (preferredSessionId
           ? matched.find((item) => String(item?.id || '').trim() === preferredSessionId) || null
           : null) ||
@@ -2061,7 +2060,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
           preferredSessionId,
           resolvedPrimarySessionId,
           selectedSessionId: String(primary.id || '').trim(),
-          isMain: primary?.is_main === true
+          isCurrent: String(primary?.id) === String(chatStore.activeSessionId)
         });
         return {
           sessionId: String(primary.id),
@@ -2085,14 +2084,13 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     const resolvedSessionId = String(chatStore.resolveInitialSessionId(agentId, matched) || '').trim();
     const primary =
       matched.find((item) => String(item?.id || '').trim() === resolvedSessionId) ||
-      matched.find((item) => item?.is_main === true) ||
       matched[0];
     if (primary?.id) {
       logBeeroomRuntime('ensure-dispatch-session:resolved-existing', {
         agentId,
         resolvedSessionId,
         selectedSessionId: String(primary.id || '').trim(),
-        isMain: primary?.is_main === true
+        isCurrent: String(primary?.id) === String(chatStore.activeSessionId)
       });
       return {
         sessionId: String(primary.id),
@@ -2625,7 +2623,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         const sessionId = String(item?.session_id || '').trim();
         if (!sessionId) return;
         chatStore.syncSessionSummary(
-          { id: sessionId, agent_id: agentId, is_main: true, title: '' },
+          { id: sessionId, agent_id: agentId, title: '' },
           { agentId, remember: true }
         );
       });
@@ -3124,7 +3122,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       dispatchTargetTone.value === 'mother' ||
       (resolvedMotherAgentId && cachedTargetAgentId === resolvedMotherAgentId);
     if (!isMotherTarget || !resolvedMotherAgentId) return '';
-    const explicitPrimarySessionId = resolveExplicitMainDispatchSessionId(resolvedMotherAgentId);
+    const explicitPrimarySessionId = resolveTaskDispatchSessionId(resolvedMotherAgentId);
     const fallbackPrimarySessionId = resolvePrimaryDispatchSessionId(resolvedMotherAgentId);
     return [
       resolvedMotherAgentId,

@@ -1301,6 +1301,24 @@ struct WriteFileOutcome {
 
 pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let args = recover_tool_args_value(args);
+    // Validate required input before sandbox dispatch or filesystem resolution.
+    // Missing content must never be interpreted as an intentional empty write.
+    if !args.get("content").is_some_and(Value::is_string) {
+        return Ok(build_failed_tool_result(
+            "缺少 content",
+            json!({
+                "path": args.get("path").cloned().unwrap_or(Value::Null),
+                "content_required": true,
+            }),
+            ToolErrorMeta::new(
+                "TOOL_WRITE_CONTENT_REQUIRED",
+                Some("请提供字符串 content；空字符串可用于明确清空文件。".to_string()),
+                false,
+                None,
+            ),
+            false,
+        ));
+    }
     if let Some(result) = execute_in_sandbox(context, "写入文件", &args).await {
         if !parse_dry_run(&args) {
             context.workspace.mark_tree_dirty(context.workspace_id);
@@ -1326,7 +1344,10 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         ));
     }
     let dry_run = parse_dry_run(&args);
-    let content = args.get("content").and_then(Value::as_str).unwrap_or("");
+    let content = args
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let path = path.to_string();
     let content = content.to_string();
     let bytes = content.len();

@@ -22,7 +22,7 @@ pub const BRIDGE_IDENTITY_STRATEGY_PLATFORM_CONVERSATION: &str = "platform_conve
 pub const BRIDGE_USERNAME_POLICY_NAMESPACED_GENERATED: &str = "namespaced_generated";
 pub const BRIDGE_USERNAME_POLICY_PREFER_RAW_USERNAME: &str = "prefer_raw_username";
 
-pub const BRIDGE_THREAD_STRATEGY_MAIN_THREAD: &str = "main_thread";
+pub const BRIDGE_THREAD_STRATEGY_TASK_THREAD: &str = "task_thread";
 pub const BRIDGE_THREAD_STRATEGY_PER_PEER: &str = "per_peer";
 pub const BRIDGE_THREAD_STRATEGY_HYBRID: &str = "hybrid";
 
@@ -88,7 +88,7 @@ pub fn normalize_bridge_thread_strategy(value: &str) -> String {
     match value.trim().to_ascii_lowercase().as_str() {
         BRIDGE_THREAD_STRATEGY_PER_PEER => BRIDGE_THREAD_STRATEGY_PER_PEER.to_string(),
         BRIDGE_THREAD_STRATEGY_HYBRID => BRIDGE_THREAD_STRATEGY_HYBRID.to_string(),
-        _ => BRIDGE_THREAD_STRATEGY_MAIN_THREAD.to_string(),
+        _ => BRIDGE_THREAD_STRATEGY_TASK_THREAD.to_string(),
     }
 }
 

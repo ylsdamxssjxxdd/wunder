@@ -23,6 +23,8 @@ const createTranslator = () => {
     'chat.toolWorkflow.compaction.summaryRecoveringLive': 'Recovering from overflow.',
     'chat.toolWorkflow.compaction.summaryGuardLive': 'Running context guard.',
     'chat.toolWorkflow.compaction.summaryFailedOverflow': 'Compaction failed after overflow.',
+    'chat.toolWorkflow.compaction.summaryFailed': 'Compaction failed.',
+    'chat.toolWorkflow.compaction.summaryCancelled': 'Compaction cancelled.',
     'chat.toolWorkflow.compaction.summaryFallbackAppend': 'Fallback summary was used.',
     'chat.toolWorkflow.compaction.notePrepared': 'Compaction finished.',
     'chat.toolWorkflow.compaction.noteRecovered': 'Recovered after overflow.',
@@ -33,6 +35,8 @@ const createTranslator = () => {
     'chat.toolWorkflow.compaction.noteRecoveringLive': 'Recovering from overflow.',
     'chat.toolWorkflow.compaction.noteGuardLive': 'Running context guard.',
     'chat.toolWorkflow.compaction.noteFailedOverflow': 'Compaction failed after overflow.',
+    'chat.toolWorkflow.compaction.noteFailed': 'Compaction failed.',
+    'chat.toolWorkflow.compaction.noteCancelled': 'Compaction cancelled.',
     'chat.toolWorkflow.compaction.reason.default': 'Compaction',
     'chat.toolWorkflow.compaction.reason.history': 'History',
     'chat.toolWorkflow.compaction.reason.overflow': 'Overflow',
@@ -50,6 +54,7 @@ const createTranslator = () => {
     'chat.toolWorkflow.compaction.detail.result': 'Result',
     'chat.toolWorkflow.compaction.detail.resultDone': 'Completed',
     'chat.toolWorkflow.compaction.detail.resultFailed': 'Failed',
+    'chat.toolWorkflow.compaction.detail.resultCancelled': 'Cancelled',
     'chat.toolWorkflow.compaction.detail.resultFallback': 'Fallback',
     'chat.toolWorkflow.compaction.detail.resultGuardOnly': 'Guard only',
     'chat.toolWorkflow.compaction.detail.resultSkipped': 'Skipped',
@@ -63,6 +68,8 @@ const createTranslator = () => {
     'chat.toolWorkflow.compaction.output.empty': 'No compaction output.',
     'chat.toolWorkflow.compaction.output.emptyGuardOnly': 'Guard only, no new compaction output.',
     'chat.toolWorkflow.compaction.output.emptySkipped': 'Skipped, no new compaction output.',
+    'chat.toolWorkflow.compaction.output.emptyFailed': 'No compaction output.',
+    'chat.toolWorkflow.compaction.output.emptyCancelled': 'No compaction output.',
     'chat.toolWorkflow.compaction.usage.before': 'Before {tokens} ({percent})',
     'chat.toolWorkflow.compaction.usage.after': 'After {tokens} ({percent})',
     'chat.toolWorkflow.compaction.stage.detect': 'Detect',
@@ -116,6 +123,16 @@ test('compaction display does not fabricate output for guard-only runs', () => {
 
   assert.equal(display.view.outputs.length, 0);
   assert.equal(display.view.outputEmpty, 'Guard only, no new compaction output.');
+});
+
+test('compaction display marks failed and cancelled runs as terminal warnings', () => {
+  const failed = buildCompactionDisplay({ status: 'failed', reason: 'history' }, 'failed', createTranslator());
+  assert.equal(failed.view.stages.find((stage) => stage.key === 'resume')?.state, 'warning');
+  assert.equal(failed.view.outputEmpty, 'No compaction output.');
+
+  const cancelled = buildCompactionDisplay({ status: 'cancelled', reason: 'history' }, 'cancelled', createTranslator());
+  assert.equal(cancelled.view.stages.find((stage) => stage.key === 'resume')?.state, 'warning');
+  assert.equal(cancelled.view.outputs.length, 0);
 });
 
 test('compaction usage percent keeps real overflow ratio while bar width stays clamped', () => {

@@ -318,6 +318,8 @@ export const buildCompactionDisplay = (
   const normalizedStatus = pickString(detailObject?.status, status).toLowerCase();
   const normalizedStage = pickString(detailObject?.stage).toLowerCase();
   const isRunning = normalizedStatus === 'loading' || normalizedStatus === 'pending';
+  const isCancelled = normalizedStatus === 'cancelled' || normalizedStatus === 'canceled';
+  const isFailed = normalizedStatus === 'failed' || normalizedStatus === 'error' || normalizedStatus === 'timeout';
   const reason = pickString(detailObject?.reason).toLowerCase();
   const summaryFallback = toBool(detailObject?.summary_fallback) === true;
   const usedFallback = summaryFallback || normalizedStatus === 'fallback';
@@ -409,7 +411,7 @@ export const buildCompactionDisplay = (
     detailObject?.detail
   );
   const hasOverflowFailure =
-    normalizedStatus === 'failed'
+    isFailed
     && (errorCode === 'CONTEXT_WINDOW_EXCEEDED' || looksLikeContextOverflow(errorMessage));
   const overflowFailureSummary = hasOverflowFailure
     ? t('chat.toolWorkflow.compaction.summaryFailedOverflow')
@@ -430,7 +432,9 @@ export const buildCompactionDisplay = (
   );
 
   const resultLine =
-    normalizedStatus === 'failed'
+    isCancelled
+      ? t('chat.toolWorkflow.compaction.detail.resultCancelled')
+      : isFailed
       ? t('chat.toolWorkflow.compaction.detail.resultFailed')
       : normalizedStatus === 'guard_only'
       ? t('chat.toolWorkflow.compaction.detail.resultGuardOnly')
@@ -442,6 +446,10 @@ export const buildCompactionDisplay = (
 
   const note = isRunning
     ? resolveRunningNote(normalizedStage, t)
+    : isCancelled
+      ? t('chat.toolWorkflow.compaction.noteCancelled')
+    : isFailed
+      ? t('chat.toolWorkflow.compaction.noteFailed')
     : hasOverflowFailure
       ? t('chat.toolWorkflow.compaction.noteFailedOverflow')
     : usedFallback
@@ -455,6 +463,8 @@ export const buildCompactionDisplay = (
             : t('chat.toolWorkflow.compaction.notePrepared');
   const noteTone: CompactionDisplay['summaryNoteTone'] = isRunning
     ? 'info'
+    : isCancelled || isFailed
+      ? 'warning'
     : hasOverflowFailure
       ? 'warning'
     : usedFallback
@@ -481,6 +491,10 @@ export const buildCompactionDisplay = (
 
   let resultSummary = isRunning
     ? resolveRunningSummary(normalizedStage, t)
+    : isCancelled
+      ? t('chat.toolWorkflow.compaction.summaryCancelled')
+    : isFailed && !hasOverflowFailure
+      ? t('chat.toolWorkflow.compaction.summaryFailed')
     : hasOverflowFailure
       ? overflowFailureSummary
     : reason === 'history'
@@ -536,8 +550,12 @@ export const buildCompactionDisplay = (
     : normalizedStatus === 'guard_only'
       ? t('chat.toolWorkflow.compaction.output.emptyGuardOnly')
       : normalizedStatus === 'skipped'
-        ? t('chat.toolWorkflow.compaction.output.emptySkipped')
-        : t('chat.toolWorkflow.compaction.output.empty');
+      ? t('chat.toolWorkflow.compaction.output.emptySkipped')
+      : isCancelled
+        ? t('chat.toolWorkflow.compaction.output.emptyCancelled')
+        : isFailed
+          ? t('chat.toolWorkflow.compaction.output.emptyFailed')
+      : t('chat.toolWorkflow.compaction.output.empty');
 
   const beforeRatio = resolveUsageRatio(projectedBefore, usageCapacity);
   const afterRatio = resolveUsageRatio(projectedAfter, usageCapacity);
@@ -617,10 +635,12 @@ export const buildCompactionDisplay = (
   appendDetail(details, 'error-message', t('chat.toolWorkflow.compaction.detail.errorMessage'), errorMessage);
   appendDetail(details, 'result', t('chat.toolWorkflow.compaction.detail.result'), resultLine);
 
-  const failure: CompactionFailureView | null = hasOverflowFailure
+  const failure: CompactionFailureView | null = isFailed || isCancelled
     ? {
         title: t('chat.toolWorkflow.compaction.failure.title'),
-        description: t('chat.toolWorkflow.compaction.failure.description'),
+        description: isCancelled
+          ? t('chat.toolWorkflow.compaction.failure.cancelledDescription')
+          : t('chat.toolWorkflow.compaction.failure.description'),
         suggestions: [
           t('chat.toolWorkflow.compaction.failure.suggestionNewThread'),
           t('chat.toolWorkflow.compaction.failure.suggestionShortenInput'),
@@ -652,6 +672,8 @@ export const buildCompactionDisplay = (
       : 'pending';
   const resumeState: CompactionStageState = isRunning
     ? 'pending'
+    : isCancelled || isFailed
+      ? 'warning'
     : usedFallback
       ? 'warning'
       : 'done';

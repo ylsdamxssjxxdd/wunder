@@ -352,26 +352,15 @@
           <button
             v-if="!showChatSettingsView && resolvedMessageConversationKind === 'agent'"
             class="messenger-header-btn messenger-header-btn--text"
-            :class="{ 'is-orchestration-disabled': activeSessionOrchestrationLocked || activeSessionGoalLocked }"
+            
             type="button"
-            :disabled="creatingAgentSession || isMessengerInteractionBlocked || activeMessengerSessionBusy || activeSessionOrchestrationLocked || activeSessionGoalLocked"
+            :disabled="creatingAgentSession || isMessengerInteractionBlocked"
             :title="t('chat.newConversation')"
             :aria-label="t('chat.newConversation')"
             @click="startNewSession"
           >
             <i class="fa-solid fa-plus" aria-hidden="true"></i>
             {{ t('chat.newConversation') }}
-          </button>
-          <button
-            v-if="!showChatSettingsView && resolvedMessageConversationKind === 'agent'"
-            class="messenger-header-btn"
-            :class="{ 'is-orchestration-disabled': activeSessionOrchestrationLocked }"
-            type="button"
-            :title="t('chat.history')"
-            :aria-label="t('chat.history')"
-            @click="timelineDialogVisible = true"
-          >
-            <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
           </button>
           <button
             v-if="!showChatSettingsView && resolvedMessageConversationKind === 'agent'"
@@ -1123,17 +1112,19 @@
       :show-agent-panels="showRightAgentPanels"
       :agent-id-for-api="rightPanelAgentIdForApi"
       :container-id="rightPanelContainerId"
-      :skills-loading="rightDockSkillsLoading"
-      :skills-uploading="skillDockUploading"
-      :enabled-skills="rightDockEnabledSkills"
-      :disabled-skills="rightDockDisabledSkills"
+      :active-session-id="String(chatStore.activeSessionId || '')"
+      :session-history="rightPanelSessionHistory"
+      :creating="creatingAgentSession"
+      @create-session="startNewSession"
+      @open-session-detail="openTimelineSessionDetail"
+      @rename-session="renameTimelineSession"
+      @archive-session="archiveTimelineSession"
       @toggle-collapse="rightDockCollapsed = !rightDockCollapsed"
-      @upload-skill-archive="handleRightDockSkillArchiveUpload"
-      @open-skill-detail="openRightDockSkillDetail"
       @open-container="openContainerFromRightDock"
       @open-container-settings="openContainerSettingsFromRightDock"
       @request-quote-path="handleWorkspaceQuotePath"
       @open-workspace-binding="openChatWorkspaceBindingDialog"
+      @activate-session="handleTimelineDialogActivateSession"
     />
     <MessengerGroupDock
       ref="rightDockRef"
@@ -1228,16 +1219,6 @@
       :filtered-group-create-contacts="filteredGroupCreateContacts"
       :resolve-unit-label="resolveUnitLabel"
       :submit-group-create="submitGroupCreate"
-    />
-    <MessengerTimelineDialog
-      v-model:visible="timelineDialogVisible"
-      :active-session-id="String(chatStore.activeSessionId || '')"
-      :session-history="timelineDialogVisible ? rightPanelSessionHistory : []"
-      :timeline-readonly="activeSessionOrchestrationLocked"
-      @activate-session="handleTimelineDialogActivateSession"
-      @open-session-detail="openTimelineSessionDetail"
-      @archive-session="archiveTimelineSession"
-      @rename-session="renameTimelineSession"
     />
     <el-dialog
       v-model="rightDockSkillDialogVisible"
@@ -2009,7 +1990,6 @@ const MessengerRightDock = controller.MessengerRightDock;
 const messengerRootRef = controller.messengerRootRef;
 const messengerSendKey = controller.messengerSendKey;
 const MessengerSettingsPanel = controller.MessengerSettingsPanel;
-const MessengerTimelineDialog = controller.MessengerTimelineDialog;
 const MessengerToolsSection = controller.MessengerToolsSection;
 const messengerViewStyle = controller.messengerViewStyle;
 const MessengerWorldComposer = controller.MessengerWorldComposer;
@@ -2441,7 +2421,6 @@ const setLanguage = controller.setLanguage;
 const setNavigationPaneCollapsed = controller.setNavigationPaneCollapsed;
 const setRightDockEdgeHover = controller.setRightDockEdgeHover;
 const setRuntimeStateOverride = controller.setRuntimeStateOverride;
-const setTimelineSessionMain = controller.setTimelineSessionMain;
 const settingsAgentId = controller.settingsAgentId;
 const settingsAgentIdForApi = controller.settingsAgentIdForApi;
 const settingsAgentIdForPanel = controller.settingsAgentIdForPanel;
@@ -2540,7 +2519,6 @@ const timelineDetailDialogVisible = controller.timelineDetailDialogVisible;
 const timelineDetailSessionId = controller.timelineDetailSessionId;
 const goalDialogLoading = controller.goalDialogLoading;
 const goalDialogSubmitting = controller.goalDialogSubmitting;
-const timelineDialogVisible = controller.timelineDialogVisible;
 const timelinePreviewMap = controller.timelinePreviewMap;
 const toggleAgentOverviewMode = controller.toggleAgentOverviewMode;
 const toggleAgentVoiceRecord = controller.toggleAgentVoiceRecord;

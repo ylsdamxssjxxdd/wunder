@@ -281,7 +281,7 @@ wunder 的内置工具已经不再是“每个工具各回各的格式”。大�
 
 - 当前会话里临时拉起子运行：用 [子智能体控制](/docs/zh-CN/tools/subagent-control/)
 - 调度用户已经拥有的其他智能体：用 [智能体蜂群](/docs/zh-CN/tools/agent-swarm/)
-- 管理主线程/分支线程：用 [会话线程控制](/docs/zh-CN/tools/thread-control/)
+- 管理任务线程/分支线程：用 [会话线程控制](/docs/zh-CN/tools/thread-control/)
 
 ## 这次工具改版的重点变化
 

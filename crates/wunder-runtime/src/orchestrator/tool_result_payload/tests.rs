@@ -429,7 +429,7 @@ fn test_compact_payload_strips_ids_and_budget_noise() {
     assert!(data.get("scope").is_none());
     assert!(data.get("scope_note").is_none());
     assert!(data.get("hits").is_some());
-    assert!(data.get("matches").is_some());
+    assert!(data.get("matches").is_none());
 }
 
 #[test]
@@ -834,8 +834,8 @@ fn test_compact_observation_payload_compacts_search_payload() {
                 "path": format!("docs/{idx}.md"),
                 "line": idx + 1,
                 "content": format!("match-{idx}-{}", "x".repeat(240)),
-                "before": [],
-                "after": [],
+                "before": [{"line": idx, "content": "context before"}],
+                "after": [{"line": idx + 2, "content": "context after"}],
                 "segments": [{"matched": true, "text": "match"}]
             })
         })
@@ -869,7 +869,7 @@ fn test_compact_observation_payload_compacts_search_payload() {
     assert!(data.get("scope").is_none());
     assert!(data.get("scope_note").is_none());
     assert!(data.get("hits").and_then(Value::as_array).is_some());
-    assert!(data.get("matches").and_then(Value::as_array).is_some());
+    assert!(data.get("matches").is_none());
     let first_hit = data["hits"][0].as_object().cloned().unwrap_or_default();
     assert!(first_hit.get("content").is_none());
     assert!(first_hit
@@ -880,6 +880,8 @@ fn test_compact_observation_payload_compacts_search_payload() {
         .get("content_head")
         .and_then(Value::as_str)
         .is_some_and(|text| !text.contains(TOOL_RESULT_TRUNCATION_MARKER)));
+    assert_eq!(first_hit["before"][0]["content"], json!("context before"));
+    assert_eq!(first_hit["after"][0]["content"], json!("context after"));
 }
 
 #[test]

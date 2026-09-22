@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="messenger-cron-panel">
     <div class="messenger-cron-toolbar">
       <div class="messenger-inline-hint">{{ t('cron.subtitle') }}</div>
@@ -351,7 +351,7 @@ const resolveTargetSessionId = async (): Promise<string> => {
   const params = agentId ? { agent_id: agentId } : undefined;
   const { data } = await listSessions(params);
   const items = Array.isArray(data?.data?.items) ? data.data.items : [];
-  const candidate = items.find((item: Record<string, unknown>) => item?.is_main) || items[0];
+  const candidate = items[0];
   const sessionId = String(candidate?.id || '').trim();
   if (sessionId) return sessionId;
   const created = await createSession(agentId ? { agent_id: agentId } : {});

@@ -77,13 +77,13 @@ Only use the nested `schedule` object when you need exact control:
 ## `session` semantics
 
 - `main`
-  At fire time, send the message into the agent's **current main thread**.
+  At fire time, send the message into the agent's **current task thread**.
   It does not keep using the old thread captured when the job was created.
 
 - `isolated`
-  At fire time, run in a fresh isolated thread first, then send the result back into the agent's **current main thread**.
+  At fire time, run in a fresh isolated thread first, then send the result back into the agent's **current task thread**.
 
-If the agent does not currently have a bound main thread, the runtime falls back to the job's stored `session_id`.
+If the agent does not currently have a bound task thread, the runtime falls back to the job's stored `session_id`.
 
 ## Do recurring jobs pile up?
 

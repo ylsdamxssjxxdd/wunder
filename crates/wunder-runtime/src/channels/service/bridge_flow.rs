@@ -2,7 +2,7 @@ use super::support::{
     extract_bridge_meta_ids, extract_session_id, message_preview_text, now_ts,
     outbound_preview_text,
 };
-use super::{ChannelHub, SESSION_STRATEGY_MAIN_THREAD};
+use super::{ChannelHub, SESSION_STRATEGY_TASK_THREAD};
 use crate::channels::types::{ChannelMessage, ChannelOutboundMessage};
 use crate::core::blocking;
 use crate::services::bridge::{
@@ -55,7 +55,7 @@ impl ChannelHub {
             let session_strategy = center_account
                 .thread_strategy
                 .as_deref()
-                .unwrap_or(SESSION_STRATEGY_MAIN_THREAD)
+                .unwrap_or(SESSION_STRATEGY_TASK_THREAD)
                 .to_string();
             Ok(Some(BridgeRouteResolution {
                 center,

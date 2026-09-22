@@ -7,9 +7,7 @@ use crate::orchestrator::{Orchestrator, OrchestratorError};
 use crate::schemas::WunderRequest;
 use crate::services::goal;
 use crate::services::stream_events::StreamEventService;
-use crate::storage::{
-    AgentTaskRecord, AgentThreadRecord, ChatSessionRecord, UpdateAgentTaskStatusParams,
-};
+use crate::storage::{AgentTaskRecord, ChatSessionRecord, UpdateAgentTaskStatusParams};
 use crate::user_store::UserStore;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -23,9 +21,6 @@ use tracing::warn;
 use uuid::Uuid;
 
 const DEFAULT_SESSION_TITLE: &str = "新会话";
-const THREAD_STATUS_IDLE: &str = "idle";
-const THREAD_STATUS_BUSY: &str = "busy";
-const THREAD_STATUS_WAITING: &str = "waiting";
 
 const TASK_STATUS_PENDING: &str = "pending";
 const TASK_STATUS_RUNNING: &str = "running";
@@ -171,62 +166,26 @@ impl ThreadRuntime {
             normalize_client_message_id(request.client_message_id.as_deref());
         request.enforce_runtime_queue = true;
         let agent_id = normalize_agent_id(request.agent_id.as_deref());
-        let explicit_session = request
+        // The request owns its task thread. Agent identity never selects or locks a conversation.
+        let session_id = match request
             .session_id
-            .as_ref()
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false);
-        let mut session_id = request
-            .session_id
-            .clone()
-            .filter(|value| !value.trim().is_empty());
-        let mut set_as_main = !explicit_session;
-
-        if session_id.is_none() {
-            let resolved = self
-                .resolve_or_create_main_session(&user_id, &agent_id)
-                .await?;
-            session_id = Some(resolved);
-        }
-
-        request.session_id = session_id.clone();
-        request.agent_id = if agent_id.is_empty() {
-            None
-        } else {
-            Some(agent_id.clone())
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        {
+            Some(id) => id.to_string(),
+            None => self.create_task_session_id(&user_id, &agent_id)?,
         };
-
+        self.ensure_session_record(&user_id, &session_id, &agent_id)?;
+        if !goal::is_goal_continuation(request.config_overrides.as_ref()) {
+            self.cancel_pending_goal_continuation(&session_id);
+            self.cancel_queued_goal_continuations(&session_id)?;
+        }
+        request.session_id = Some(session_id.clone());
+        request.agent_id = (!agent_id.is_empty()).then_some(agent_id.clone());
+        let session_id = Some(session_id);
         let mut lease = None;
         let config = self.config_store.get().await;
-        if !explicit_session && set_as_main {
-            if let Some(current_session_id) = session_id.as_deref() {
-                if !self
-                    .is_session_available_for_submit(&user_id, current_session_id)
-                    .await
-                {
-                    // For implicit session requests, fork when main is busy so concurrent app calls stay parallel.
-                    let forked = self.create_isolated_session(&user_id, &agent_id)?;
-                    session_id = Some(forked);
-                    request.session_id = session_id.clone();
-                    set_as_main = false;
-                }
-            }
-        }
-
-        if let Some(session_id) = session_id.as_ref() {
-            if !goal::is_goal_continuation(request.config_overrides.as_ref()) {
-                self.cancel_pending_goal_continuation(session_id);
-                self.cancel_queued_goal_continuations(session_id)?;
-            }
-            if set_as_main {
-                let _ = self
-                    .set_main_session(&user_id, &agent_id, session_id, "user_message")
-                    .await;
-            } else {
-                let _ = self.ensure_session_record(&user_id, session_id, &agent_id)?;
-            }
-        }
-
         if config.agent_queue.enabled {
             if let Some(session_id) = session_id.as_deref() {
                 if self.should_queue(&user_id, Some(session_id)).await {
@@ -423,147 +382,6 @@ impl ThreadRuntime {
         Ok(())
     }
 
-    pub async fn resolve_main_session_id(
-        &self,
-        user_id: &str,
-        agent_id: &str,
-    ) -> Result<Option<String>> {
-        let record = self.user_store.get_agent_thread(user_id, agent_id)?;
-        if let Some(record) = record {
-            if !record.session_id.trim().is_empty() {
-                return Ok(Some(record.session_id));
-            }
-        }
-        let (sessions, _) =
-            self.user_store
-                .list_chat_sessions(user_id, Some(agent_id), None, 0, 1)?;
-        if let Some(session) = sessions.first() {
-            let _ = self
-                .set_main_session(user_id, agent_id, &session.session_id, "fallback")
-                .await;
-            return Ok(Some(session.session_id.clone()));
-        }
-        Ok(None)
-    }
-
-    pub async fn resolve_or_create_main_session_id(
-        &self,
-        user_id: &str,
-        agent_id: &str,
-    ) -> Result<String> {
-        self.resolve_or_create_main_session(user_id, agent_id).await
-    }
-
-    pub async fn create_fresh_main_session_id(
-        &self,
-        user_id: &str,
-        agent_id: &str,
-        reason: &str,
-    ) -> Result<String> {
-        let session_id = self.create_isolated_session(user_id, agent_id)?;
-        let _ = self
-            .set_main_session(user_id, agent_id, &session_id, reason)
-            .await?;
-        Ok(session_id)
-    }
-
-    pub async fn set_main_session(
-        &self,
-        user_id: &str,
-        agent_id: &str,
-        session_id: &str,
-        reason: &str,
-    ) -> Result<AgentThreadRecord> {
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Err(anyhow!(i18n::t("error.content_required")));
-        }
-        let cleaned_agent = agent_id.trim();
-        let session_record =
-            self.ensure_session_record(cleaned_user, cleaned_session, cleaned_agent)?;
-        if !cleaned_agent.is_empty() {
-            let record_agent = session_record.agent_id.as_deref().unwrap_or("").trim();
-            if !record_agent.is_empty() && record_agent != cleaned_agent {
-                return Err(anyhow!(i18n::t("error.permission_denied")));
-            }
-        }
-
-        let existing = self
-            .user_store
-            .get_agent_thread(cleaned_user, cleaned_agent)?;
-        let now = now_ts();
-        let thread_id = format!("thread_{cleaned_session}");
-        let (created_at, status) = if let Some(record) = existing.as_ref() {
-            (record.created_at, record.status.clone())
-        } else {
-            (now, THREAD_STATUS_IDLE.to_string())
-        };
-        let next_status = if status.trim().is_empty() {
-            THREAD_STATUS_IDLE.to_string()
-        } else {
-            status
-        };
-        let record = AgentThreadRecord {
-            thread_id,
-            user_id: cleaned_user.to_string(),
-            agent_id: cleaned_agent.to_string(),
-            session_id: cleaned_session.to_string(),
-            status: next_status,
-            created_at,
-            updated_at: now,
-        };
-        self.user_store.upsert_agent_thread(&record)?;
-        self.monitor.record_event(
-            cleaned_session,
-            "main_thread_changed",
-            &json!({
-                "session_id": cleaned_session,
-                "agent_id": cleaned_agent,
-                "user_id": cleaned_user,
-                "reason": reason,
-            }),
-        );
-        Ok(record)
-    }
-
-    pub async fn set_main_session_by_thread(
-        &self,
-        user_id: &str,
-        agent_id: &str,
-        session_id: &str,
-        reason: &str,
-    ) -> Result<()> {
-        let _ = self
-            .set_main_session(user_id, agent_id, session_id, reason)
-            .await?;
-        Ok(())
-    }
-
-    pub fn update_thread_status(
-        &self,
-        user_id: &str,
-        agent_id: &str,
-        session_id: &str,
-        status: &str,
-    ) -> Result<()> {
-        let existing = self.user_store.get_agent_thread(user_id, agent_id)?;
-        let now = now_ts();
-        if let Some(record) = existing {
-            let cleaned_session = session_id.trim();
-            if !cleaned_session.is_empty() && record.session_id.trim() != cleaned_session {
-                return Ok(());
-            }
-            let updated = AgentThreadRecord {
-                status: status.to_string(),
-                updated_at: now,
-                ..record
-            };
-            self.user_store.upsert_agent_thread(&updated)?;
-        }
-        Ok(())
-    }
-
     pub async fn list_thread_tasks(
         &self,
         thread_id: &str,
@@ -617,13 +435,9 @@ impl ThreadRuntime {
             .list_agent_tasks_by_thread(&thread_id, None, 64)?;
         let mut queued_tasks_cancelled = 0usize;
         let mut running_tasks_marked_cancelled = 0usize;
-        let mut agent_id = String::new();
         for task in tasks {
             if task.user_id.trim() != cleaned_user {
                 continue;
-            }
-            if agent_id.is_empty() && !task.agent_id.trim().is_empty() {
-                agent_id = task.agent_id.clone();
             }
             let status = task.status.trim().to_ascii_lowercase();
             if status == TASK_STATUS_PENDING || status == TASK_STATUS_RETRY {
@@ -669,25 +483,7 @@ impl ThreadRuntime {
             }
         }
 
-        if agent_id.is_empty() {
-            if let Ok(Some(session)) = self
-                .user_store
-                .get_chat_session(cleaned_user, cleaned_session)
-            {
-                agent_id = session.agent_id.unwrap_or_default();
-            }
-        }
-
-        let mut thread_status_reset = false;
-        if !agent_id.trim().is_empty() {
-            self.update_thread_status(
-                cleaned_user,
-                &agent_id,
-                cleaned_session,
-                THREAD_STATUS_IDLE,
-            )?;
-            thread_status_reset = true;
-        }
+        let thread_status_reset = true;
         let settlement_event_id = self
             .emit_thread_status_event(
                 cleaned_session,
@@ -709,43 +505,7 @@ impl ThreadRuntime {
         })
     }
 
-    async fn resolve_or_create_main_session(
-        &self,
-        user_id: &str,
-        agent_id: &str,
-    ) -> Result<String> {
-        if let Some(existing) = self.resolve_main_session_id(user_id, agent_id).await? {
-            return Ok(existing);
-        }
-        let now = now_ts();
-        let session_id = format!("sess_{}", Uuid::new_v4().simple());
-        let record = ChatSessionRecord {
-            session_id: session_id.clone(),
-            user_id: user_id.to_string(),
-            title: DEFAULT_SESSION_TITLE.to_string(),
-            status: "active".to_string(),
-            created_at: now,
-            updated_at: now,
-            last_message_at: now,
-            agent_id: if agent_id.trim().is_empty() {
-                None
-            } else {
-                Some(agent_id.trim().to_string())
-            },
-            tool_overrides: Vec::new(),
-            parent_session_id: None,
-            parent_message_id: None,
-            spawn_label: None,
-            spawned_by: None,
-        };
-        self.user_store.upsert_chat_session(&record)?;
-        let _ = self
-            .set_main_session(user_id, agent_id, &session_id, "auto_create")
-            .await;
-        Ok(session_id)
-    }
-
-    fn create_isolated_session(&self, user_id: &str, agent_id: &str) -> Result<String> {
+    pub fn create_task_session_id(&self, user_id: &str, agent_id: &str) -> Result<String> {
         let cleaned_user = user_id.trim();
         if cleaned_user.is_empty() {
             return Err(anyhow!(i18n::t("error.user_id_required")));
@@ -789,13 +549,11 @@ impl ThreadRuntime {
         let existing = self
             .user_store
             .get_chat_session(cleaned_user, cleaned_session)?;
-        if let Some(mut record) = existing {
-            if !agent_id.trim().is_empty() {
-                let record_agent = record.agent_id.as_deref().unwrap_or("").trim();
-                if record_agent.is_empty() {
-                    record.agent_id = Some(agent_id.trim().to_string());
-                    self.user_store.upsert_chat_session(&record)?;
-                }
+        if let Some(record) = existing {
+            if record.agent_id.as_deref().unwrap_or("").trim() != agent_id.trim()
+                || record.status == "archived"
+            {
+                return Err(anyhow!(i18n::t("error.permission_denied")));
             }
             return Ok(record);
         }
@@ -891,12 +649,6 @@ impl ThreadRuntime {
             request_payload,
             ..record.clone()
         })?;
-        let _ = self.update_thread_status(
-            &record.user_id,
-            &record.agent_id,
-            &record.session_id,
-            THREAD_STATUS_WAITING,
-        );
         let queue_before_event_id = self
             .stream_events
             .tail_event_id(&record.session_id)
@@ -1052,7 +804,7 @@ impl ThreadRuntime {
         .await;
     }
 
-    async fn is_session_available_for_submit(&self, user_id: &str, session_id: &str) -> bool {
+    pub async fn is_session_available_for_submit(&self, user_id: &str, session_id: &str) -> bool {
         let cleaned_user = user_id.trim();
         let cleaned_session = session_id.trim();
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
@@ -1335,12 +1087,6 @@ impl ThreadRuntime {
                 last_error: None,
                 updated_at: started_at,
             });
-        let _ = self.update_thread_status(
-            &task.user_id,
-            &task.agent_id,
-            &task.session_id,
-            THREAD_STATUS_BUSY,
-        );
         self.emit_queue_event(&task.session_id, &task.user_id, "queue_start", {
             let mut payload = json!({
             "queue_id": task.task_id,
@@ -1401,12 +1147,6 @@ impl ThreadRuntime {
                 }
                 crate::orchestrator::flush_stream_event_persist_queue().await;
                 if self.is_task_cancelled(&task.task_id) {
-                    let _ = self.update_thread_status(
-                        &task.user_id,
-                        &task.agent_id,
-                        &task.session_id,
-                        THREAD_STATUS_IDLE,
-                    );
                     self.finish_thread(&task.thread_id).await;
                     let _ = self.queue_tx.try_send(());
                     return;
@@ -1424,12 +1164,6 @@ impl ThreadRuntime {
                         last_error: None,
                         updated_at: finished_at,
                     });
-                let _ = self.update_thread_status(
-                    &task.user_id,
-                    &task.agent_id,
-                    &task.session_id,
-                    THREAD_STATUS_IDLE,
-                );
                 self.emit_queue_event(&task.session_id, &task.user_id, "queue_finish", {
                     let mut payload = json!({
                     "queue_id": task.task_id,
@@ -1462,12 +1196,6 @@ impl ThreadRuntime {
                     .unwrap_or(false);
                 if is_busy {
                     let _ = self.retry_task(&task, err.to_string()).await;
-                    let _ = self.update_thread_status(
-                        &task.user_id,
-                        &task.agent_id,
-                        &task.session_id,
-                        THREAD_STATUS_WAITING,
-                    );
                 } else {
                     let _ = self
                         .fail_task(&task, err.to_string(), TASK_STATUS_FAILED)
@@ -1523,12 +1251,6 @@ impl ThreadRuntime {
         } else {
             self.monitor.mark_error(&task.session_id, &message);
         }
-        self.update_thread_status(
-            &task.user_id,
-            &task.agent_id,
-            &task.session_id,
-            THREAD_STATUS_IDLE,
-        )?;
         self.emit_queue_event(&task.session_id, &task.user_id, "queue_fail", {
             let task_client_message_id = task
                 .request_payload

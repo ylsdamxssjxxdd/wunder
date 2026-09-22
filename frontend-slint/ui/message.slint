@@ -1,0 +1,55 @@
+import { Theme, ChatMessage } from "theme.slint";
+import { Action, Avatar } from "components.slint";
+
+export component MessageRow inherits Rectangle {
+    in property <ChatMessage> message;
+    in property <string> author;
+    in property <image> avatar;
+    in-out property <bool> expanded: false;
+    private property <length> bubble-width: root.message.mine ? min(root.width - 58px, max(180px, body.preferred-width + 28px)) : root.width - 58px;
+    height: column.height + 22px;
+    Avatar { x: root.message.mine ? parent.width - 34px : 0px; y: 0px; mine: root.message.mine; source: root.avatar; }
+    column := VerticalLayout {
+        x: root.message.mine ? root.width - 44px - root.bubble-width : 44px;
+        width: root.bubble-width;
+        height: self.preferred-height;
+        spacing: 6px;
+        Text {
+            height: 16px; font-size: 11px; color: Theme.muted;
+            text: (root.message.mine ? "你" : root.author) + "   " + root.message.time;
+            horizontal-alignment: root.message.mine ? right : left;
+        }
+        if root.message.workflow : Rectangle {
+            height: root.expanded ? 92px : 34px;
+            border-radius: 8px; border-width: 1px; border-color: Theme.border;
+            background: Theme.surface.transparentize(0.35);
+            Action {
+                x: 4px; y: 2px; width: parent.width - 8px; label: "智能体循环 · 2 个步骤"; show-label: true;
+                icon: @image-url("../assets/icons/chevron-right.svg");
+                clicked => { root.expanded = !root.expanded; }
+            }
+            if root.expanded : Text {
+                x: 16px; y: 40px; width: parent.width - 32px; height: 40px;
+                text: "1. 读取文件    已完成\n2. 整理内容    已完成";
+                font-size: 12px; color: Theme.muted;
+            }
+        }
+        Rectangle {
+            height: body.preferred-height + 24px;
+            background: root.message.mine ? Theme.mine : Theme.bubble;
+            border-radius: 12px; border-color: root.message.mine ? Theme.accent.transparentize(0.7) : Theme.border; border-width: 1px;
+            body := Text {
+                x: 13px; y: 12px; width: parent.width - 26px;
+                text: root.message.text; color: Theme.text; font-size: 13px;
+                wrap: word-wrap;
+            }
+        }
+        if !root.message.mine : HorizontalLayout {
+            height: 20px; spacing: 6px;
+            Image { width: 11px; height: 11px; source: @image-url("../assets/icons/circle-check.svg"); colorize: Theme.muted; }
+            Text { text: "任务完成"; font-size: 10px; color: Theme.muted; }
+            Text { text: "  ·  演示消息"; font-size: 10px; color: Theme.muted; }
+            Rectangle { horizontal-stretch: 1; }
+        }
+    }
+}

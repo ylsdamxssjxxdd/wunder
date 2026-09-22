@@ -1619,7 +1619,7 @@ mod tests {
                     "channel": "xmpp",
                     "account_id": "support@example.com",
                     "enabled": true,
-                    "thread_strategy": "main_thread"
+                    "thread_strategy": "task_thread"
                 }
             ]
         }))
@@ -1638,7 +1638,7 @@ mod tests {
                 enabled: Some(true),
                 default_preset_agent_name_override: None,
                 identity_strategy: None,
-                thread_strategy: Some("main_thread".to_string()),
+                thread_strategy: Some("task_thread".to_string()),
                 reply_strategy: None,
                 fallback_policy: None,
                 status_reason: None,

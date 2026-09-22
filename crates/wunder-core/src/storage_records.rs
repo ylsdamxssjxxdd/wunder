@@ -408,17 +408,6 @@ pub struct BeeroomChatMessageRecord {
 }
 
 #[derive(Debug, Clone)]
-pub struct AgentThreadRecord {
-    pub thread_id: String,
-    pub user_id: String,
-    pub agent_id: String,
-    pub session_id: String,
-    pub status: String,
-    pub created_at: f64,
-    pub updated_at: f64,
-}
-
-#[derive(Debug, Clone)]
 pub struct AgentTaskRecord {
     pub task_id: String,
     pub thread_id: String,

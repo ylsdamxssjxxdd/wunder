@@ -1,7 +1,4 @@
-use super::support::{
-    append_weixin_context_token_from_message, build_bridge_session_metadata,
-    merge_object_value_into, message_preview_text, truncate_text,
-};
+use super::support::{append_weixin_context_token_from_message, merge_object_value_into, message_preview_text, truncate_text};
 use super::{
     ChannelCommand, ChannelHub, ChannelInboundResult, ChannelSessionInfo, ChannelSessionStrategy,
 };
@@ -14,8 +11,6 @@ use crate::core::approval::ApprovalResponse;
 use crate::services::bridge::{append_bridge_meta, BridgeRouteResolution};
 use anyhow::Result;
 use serde_json::{json, Value};
-use tracing::warn;
-use uuid::Uuid;
 
 impl ChannelHub {
     pub(super) async fn respond_busy(
@@ -207,42 +202,20 @@ impl ChannelHub {
         message: &ChannelMessage,
         session_info: &ChannelSessionInfo,
         bridge_resolution: Option<&BridgeRouteResolution>,
-        agent_id: Option<&str>,
-        tool_names: &[String],
-        tts_enabled: Option<bool>,
-        tts_voice: Option<&str>,
-        session_strategy: ChannelSessionStrategy,
+        _agent_id: Option<&str>,
+        _tool_names: &[String],
+        _tts_enabled: Option<bool>,
+        _tts_voice: Option<&str>,
+        _session_strategy: ChannelSessionStrategy,
     ) -> Result<ChannelInboundResult> {
         let user_id = session_info.user_id.clone();
         let command_text = message.text.as_deref().map(str::trim).unwrap_or("");
         let (target_session_id, reply_text) = match command {
-            ChannelCommand::NewThread => {
-                let new_session_id = format!("sess_{}", Uuid::new_v4().simple());
-                let agent_key = agent_id.unwrap_or("").trim();
-                if let Err(err) = self
-                    .thread_runtime
-                    .set_main_session(&user_id, agent_key, &new_session_id, "channel_command")
-                    .await
-                {
-                    warn!(
-                        "channel /new failed to set main session: user_id={}, agent_id={}, error={err}",
-                        user_id, agent_key
-                    );
-                }
-                let updated = self
-                    .resolve_channel_session(
-                        message,
-                        agent_id,
-                        tool_names,
-                        tts_enabled,
-                        tts_voice,
-                        session_strategy,
-                        Some(user_id.clone()),
-                        bridge_resolution.map(build_bridge_session_metadata),
-                    )
-                    .await?;
-                (updated.session_id, "已创建新线程。".to_string())
-            }
+            // The inbound resolver has already created and bound the new task.
+            ChannelCommand::NewThread => (
+                session_info.session_id.clone(),
+                "已创建新线程。".to_string(),
+            ),
             ChannelCommand::Stop => {
                 self.clear_pending_channel_approvals(
                     Some(&session_info.session_id),

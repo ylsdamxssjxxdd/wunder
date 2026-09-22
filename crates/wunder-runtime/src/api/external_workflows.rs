@@ -367,14 +367,12 @@ async fn prepare_workflow_inner(
     // Always cancel any active external workflow for this user before starting a new one.
     // This simplifies the API: new requests automatically preempt old ones.
     cancel_active_external_workflow(state.as_ref(), &user.user_id)?;
-    let _preempted = preempt_agent_current_work(state.as_ref(), &user.user_id, &agent.agent_id)?;
 
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     let session_id = state
         .kernel
         .thread_runtime
-        .create_fresh_main_session_id(&user.user_id, &agent.agent_id, "external_workflow")
-        .await
+        .create_task_session_id(&user.user_id, &agent.agent_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let workspace_id = workflow_workspace_id(state.as_ref(), &user.user_id);
     let removed = state
@@ -918,41 +916,6 @@ fn ensure_agent_allowed(
             "agent not found".to_string(),
         ))
     }
-}
-
-fn preempt_agent_current_work(
-    state: &AppState,
-    user_id: &str,
-    agent_id: &str,
-) -> Result<bool, Response> {
-    let Some(thread) = state
-        .user_store
-        .get_agent_thread(user_id, agent_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-    else {
-        return Ok(false);
-    };
-    let record = SessionRunRecord {
-        run_id: String::new(),
-        session_id: thread.session_id,
-        parent_session_id: None,
-        user_id: user_id.to_string(),
-        dispatch_id: None,
-        run_kind: None,
-        requested_by: None,
-        agent_id: Some(agent_id.to_string()),
-        model_name: None,
-        status: String::new(),
-        queued_time: 0.0,
-        started_time: 0.0,
-        finished_time: 0.0,
-        elapsed_s: 0.0,
-        result: None,
-        error: None,
-        updated_time: 0.0,
-        metadata: None,
-    };
-    Ok(cancel_session_and_tasks(state, user_id, &record))
 }
 
 fn cancel_session_and_tasks(state: &AppState, user_id: &str, record: &SessionRunRecord) -> bool {

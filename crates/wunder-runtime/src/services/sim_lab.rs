@@ -783,9 +783,6 @@ fn reset_swarm_sim_user_runtime(state: &AppState, user_id: &str) -> Result<()> {
     let agents = state.user_store.list_user_agents(user_id)?;
     for agent in agents {
         let _ = state.user_store.delete_user_agent(user_id, &agent.agent_id);
-        let _ = state
-            .user_store
-            .delete_agent_thread(user_id, &agent.agent_id);
     }
 
     Ok(())

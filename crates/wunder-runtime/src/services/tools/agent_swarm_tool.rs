@@ -448,7 +448,7 @@ pub(crate) async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) ->
     let requested_agent_name = normalize_optional_string(payload.agent_name);
     let thread_strategy = match parse_swarm_worker_thread_strategy(
         payload.thread_strategy.as_deref(),
-        payload.reuse_main_thread,
+        payload.reuse_thread,
     ) {
         Ok(strategy) => strategy,
         Err(err) => {
@@ -456,12 +456,12 @@ pub(crate) async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) ->
                 "send",
                 "TOOL_ARGS_INVALID",
                 format!("agent_swarm send thread strategy is invalid: {err}"),
-                "threadStrategy must be fresh_main_thread or main_thread; reuseMainThread=true is also supported.",
+                "threadStrategy must be new_thread or task_thread; reuseThread=true is also supported.",
                 &[],
                 agent_swarm_send_example(),
                 args,
                 json!({
-                    "allowed_thread_strategies": ["fresh_main_thread", "main_thread"]
+                    "allowed_thread_strategies": ["new_thread", "task_thread"]
                 }),
             ));
         }
@@ -539,34 +539,17 @@ pub(crate) async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) ->
         )?
         .ok_or_else(|| anyhow!("agent_swarm send requires agent_id/agent_name or session_id"))?;
         match thread_strategy {
-            SwarmWorkerThreadStrategy::MainThread => {
-                let (main_session, created_main_session) = if let Some((orchestration_state, _)) =
-                    active_orchestration_for_agent(
+            SwarmWorkerThreadStrategy::TaskThread => {
+                let (task_session, created_task_session) =
+                    crate::services::swarm::task_session::resolve_or_create_agent_task_session(
                         context.storage.as_ref(),
                         user_id,
-                        &target_agent.agent_id,
-                    ) {
-                    let (binding, created) = ensure_orchestration_member_session(
-                        context.storage.as_ref(),
-                        user_id,
-                        &orchestration_state,
                         &target_agent,
+                        context.session_id,
                     )?;
-                    let session = context
-                        .storage
-                        .get_chat_session(user_id, &binding.session_id)?
-                        .ok_or_else(|| anyhow!("orchestration worker session not found"))?;
-                    (session, created)
-                } else {
-                    crate::services::swarm::beeroom::resolve_or_create_agent_main_session(
-                        context.storage.as_ref(),
-                        user_id,
-                        &target_agent,
-                    )?
-                };
-                (target_agent, main_session.session_id, created_main_session)
+                (target_agent, task_session.session_id, created_task_session)
             }
-            SwarmWorkerThreadStrategy::FreshMainThread => {
+            SwarmWorkerThreadStrategy::NewThread => {
                 // Callers can still force a clean worker thread, but this is no longer the
                 // default path for swarm workers.
                 let dispatch_preview = build_swarm_dispatch_message(
@@ -888,7 +871,7 @@ pub(crate) async fn agent_swarm_batch_send(
     let shared_label = normalize_optional_string(payload.label.clone());
     let shared_thread_strategy = match parse_swarm_worker_thread_strategy(
         payload.thread_strategy.as_deref(),
-        payload.reuse_main_thread,
+        payload.reuse_thread,
     ) {
         Ok(strategy) => strategy,
         Err(err) => {
@@ -896,12 +879,12 @@ pub(crate) async fn agent_swarm_batch_send(
                 "batch_send",
                 "TOOL_ARGS_INVALID",
                 format!("agent_swarm batch_send thread strategy is invalid: {err}"),
-                "threadStrategy must be fresh_main_thread or main_thread; reuseMainThread=true is also supported.",
+                "threadStrategy must be new_thread or task_thread; reuseThread=true is also supported.",
                 &[],
                 agent_swarm_batch_send_example(),
                 args,
                 json!({
-                    "allowed_thread_strategies": ["fresh_main_thread", "main_thread"]
+                    "allowed_thread_strategies": ["new_thread", "task_thread"]
                 }),
             ));
         }
@@ -1012,12 +995,9 @@ pub(crate) async fn agent_swarm_batch_send(
         let requested_agent_name = normalize_optional_string(task.agent_name)
             .or_else(|| infer_swarm_agent_name_from_task_message(&message));
         let task_thread_strategy = match if task.thread_strategy.is_some()
-            || task.reuse_main_thread.is_some()
+            || task.reuse_thread.is_some()
         {
-            parse_swarm_worker_thread_strategy(
-                task.thread_strategy.as_deref(),
-                task.reuse_main_thread,
-            )
+            parse_swarm_worker_thread_strategy(task.thread_strategy.as_deref(), task.reuse_thread)
         } else {
             Ok(shared_thread_strategy)
         } {
@@ -1029,13 +1009,13 @@ pub(crate) async fn agent_swarm_batch_send(
                     format!(
                         "agent_swarm batch_send task[{index}] thread strategy is invalid: {err}"
                     ),
-                    "Each task threadStrategy must be fresh_main_thread or main_thread; reuseMainThread=true is also supported.",
+                    "Each task threadStrategy must be new_thread or task_thread; reuseThread=true is also supported.",
                     &[],
                     agent_swarm_batch_send_example(),
                     args,
                     json!({
                         "task_index": index,
-                        "allowed_thread_strategies": ["fresh_main_thread", "main_thread"]
+                        "allowed_thread_strategies": ["new_thread", "task_thread"]
                     }),
                 ));
             }
@@ -1166,38 +1146,21 @@ pub(crate) async fn agent_swarm_batch_send(
             )
         } else {
             match task_thread_strategy {
-                SwarmWorkerThreadStrategy::MainThread => {
-                    let (main_session, created_main_session) =
-                        if let Some((orchestration_state, _)) = active_orchestration_for_agent(
+                SwarmWorkerThreadStrategy::TaskThread => {
+                    let (task_session, created_task_session) =
+                        crate::services::swarm::task_session::resolve_or_create_agent_task_session(
                             context.storage.as_ref(),
                             user_id,
-                            &agent_record.agent_id,
-                        ) {
-                            let (binding, created) = ensure_orchestration_member_session(
-                                context.storage.as_ref(),
-                                user_id,
-                                &orchestration_state,
-                                &agent_record,
-                            )?;
-                            let session = context
-                                .storage
-                                .get_chat_session(user_id, &binding.session_id)?
-                                .ok_or_else(|| anyhow!("orchestration worker session not found"))?;
-                            (session, created)
-                        } else {
-                            crate::services::swarm::beeroom::resolve_or_create_agent_main_session(
-                                context.storage.as_ref(),
-                                user_id,
-                                &agent_record,
-                            )?
-                        };
+                            &agent_record,
+                            context.session_id,
+                        )?;
                     let tool_names = resolve_swarm_batch_tool_names(
                         context,
                         context.config,
                         context.skills,
                         &allowed_tools,
                         user_id,
-                        &main_session,
+                        &task_session,
                         &agent_record,
                     );
                     let agent_prompt = {
@@ -1210,16 +1173,16 @@ pub(crate) async fn agent_swarm_batch_send(
                     };
                     let model_name = normalize_optional_string(agent_record.model_name.clone());
                     (
-                        main_session.session_id,
-                        created_main_session,
-                        SwarmWorkerThreadStrategy::MainThread.as_tool_value(),
+                        task_session.session_id,
+                        created_task_session,
+                        SwarmWorkerThreadStrategy::TaskThread.as_tool_value(),
                         tool_names,
                         model_name,
                         agent_prompt,
                         agent_record.preview_skill,
                     )
                 }
-                SwarmWorkerThreadStrategy::FreshMainThread => {
+                SwarmWorkerThreadStrategy::NewThread => {
                     let prepared = prepare_swarm_child_session(
                         context,
                         &dispatch_message,
@@ -1229,7 +1192,7 @@ pub(crate) async fn agent_swarm_batch_send(
                     (
                         prepared.child_session_id,
                         true,
-                        SwarmWorkerThreadStrategy::FreshMainThread.as_tool_value(),
+                        SwarmWorkerThreadStrategy::NewThread.as_tool_value(),
                         prepared.request.tool_names,
                         prepared.model_name,
                         prepared.request.agent_prompt,
@@ -1800,7 +1763,7 @@ async fn agent_swarm_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Va
         run_timeout_seconds,
         cleanup: _,
         thread_strategy,
-        reuse_main_thread,
+        reuse_thread,
     } = payload;
     if task.trim().is_empty() {
         return Ok(build_agent_swarm_args_failure(
@@ -1865,8 +1828,8 @@ async fn agent_swarm_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Va
         if let Some(thread_strategy) = thread_strategy {
             map.insert("threadStrategy".to_string(), json!(thread_strategy));
         }
-        if let Some(reuse_main_thread) = reuse_main_thread {
-            map.insert("reuseMainThread".to_string(), json!(reuse_main_thread));
+        if let Some(reuse_thread) = reuse_thread {
+            map.insert("reuseThread".to_string(), json!(reuse_thread));
         }
         if let Some(hive_id) = swarm_hive_arg(args) {
             map.insert("hiveId".to_string(), json!(hive_id));

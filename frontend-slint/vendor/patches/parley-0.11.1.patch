@@ -1,0 +1,27 @@
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/parley-0.11.1/Cargo.toml b/parley-0.11/Cargo.toml
+index d08d05b..1abe832 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/parley-0.11.1/Cargo.toml
++++ b/parley-0.11/Cargo.toml
+@@ -40,7 +40,9 @@ all-features = true
+ [features]
+ accesskit = ["dep:accesskit"]
+ complex-scripts = []
+-default = ["system"]
++# Match the local Fontique patch: text layout remains available for the
++# bundled font, while Windows system-font discovery stays disabled for Win7.
++default = ["std"]
+ libm = [
+     "fontique/libm",
+     "harfrust/libm",
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/parley-0.11.1/src/bidi.rs b/parley-0.11/src/bidi.rs
+index 1229a32..43a7385 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/parley-0.11.1/src/bidi.rs
++++ b/parley-0.11/src/bidi.rs
+@@ -889,6 +889,7 @@ impl BracketStack {
+     }
+ }
+ 
++#[allow(deprecated)]
+ const fn mask(t: BidiClass) -> u32 {
+     1 << (t.to_icu4c_value() as u32)
+ }

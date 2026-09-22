@@ -1,0 +1,43 @@
+[package]
+name = "wunder-frontend-slint"
+version = "0.4.0"
+edition = "2021"
+rust-version = "1.92"
+publish = false
+
+[dependencies]
+slint = { version = "=1.18.0", default-features = false, features = [
+  "backend-winit",
+  "compat-1-2",
+  "raw-window-handle-06",
+  "renderer-software",
+  "std",
+  "unstable-fontique-011",
+] }
+i-slint-backend-winit = { version = "=1.18.0", default-features = false, features = ["raw-window-handle-06", "renderer-software"] }
+i-slint-renderer-software = { version = "=1.18.0", default-features = false, features = ["std", "systemfonts"] }
+winit = { version = "=0.30.2", default-features = false }
+png = "=0.18.1"
+
+[build-dependencies]
+slint-build = { version = "=1.18.0" }
+
+[profile.release]
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+
+[patch.crates-io]
+i-slint-compiler = { path = "vendor/i-slint-compiler-1.18" }
+i-slint-backend-winit = { path = "vendor/i-slint-backend-winit-1.18" }
+softbuffer = { path = "vendor/softbuffer-0.4.8" }
+i-slint-common = { path = "vendor/i-slint-common-1.18" }
+i-slint-core = { path = "vendor/i-slint-core-1.18" }
+i-slint-renderer-software = { path = "vendor/i-slint-renderer-software-1.18" }
+fontique = { path = "vendor/fontique-0.11" }
+parley = { path = "vendor/parley-0.11" }
+winit = { path = "vendor/winit-0.30.2" }
+
+[workspace]
+

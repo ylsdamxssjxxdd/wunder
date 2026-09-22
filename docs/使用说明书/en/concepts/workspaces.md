@@ -47,7 +47,7 @@ These containers are mainly for agent runtime use, suitable for carrying:
 
 `agent_id` is not equal to workspace.
 
-- `agent_id` determines conversation, configuration, and main thread binding
+- `agent_id` determines conversation, configuration, and task thread binding
 - `container_id` determines file space routing
 
 In the current system, `agent_id` can participate in container derivation, but it does not mean "one agent corresponds to one complete private directory world".

@@ -7,9 +7,8 @@ use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
 use crate::services::chat_cancel_marker::persist_user_cancelled_turn_marker;
 use crate::services::llm::is_llm_model;
 use crate::services::orchestration_context::{
-    active_orchestration_for_agent, build_locked_thread_message,
-    repair_orchestration_session_main_thread, session_orchestration_lock_info,
-    ORCHESTRATION_THREAD_LOCKED_CODE,
+    build_locked_thread_message, repair_orchestration_session_context,
+    session_orchestration_lock_info, ORCHESTRATION_THREAD_LOCKED_CODE,
 };
 use crate::services::runtime::thread::ThreadSubmitOutcome;
 use crate::services::subagents;
@@ -841,25 +840,9 @@ pub(crate) fn reject_or_repair_orchestration_dispatch(
         }
         return Ok(());
     }
-    if let Some((lock_state, lock_binding)) =
-        active_orchestration_for_agent(state.storage.as_ref(), user_id, agent_id)
+    if let Some((_lock_state, _lock_binding)) =
+        session_orchestration_lock_info(state.storage.as_ref(), user_id, session_id)
     {
-        if lock_binding.session_id.trim() != session_id {
-            return Err(crate::api::errors::error_response_with_detail(
-                StatusCode::CONFLICT,
-                Some(ORCHESTRATION_THREAD_LOCKED_CODE),
-                build_locked_thread_message(&lock_state, &lock_binding),
-                Some("Use the orchestration page to continue this orchestration thread."),
-                Some(json!({
-                    "group_id": lock_state.group_id,
-                    "orchestration_id": lock_state.orchestration_id,
-                    "run_id": lock_state.run_id,
-                    "session_id": lock_binding.session_id,
-                    "agent_id": lock_binding.agent_id,
-                    "role": lock_binding.role,
-                })),
-            ));
-        }
         if allow_orchestration_send {
             let round_index = crate::services::orchestration_context::load_session_context(
                 state.storage.as_ref(),
@@ -868,7 +851,7 @@ pub(crate) fn reject_or_repair_orchestration_dispatch(
             )
             .map(|context| context.round_index)
             .unwrap_or(1);
-            let _ = repair_orchestration_session_main_thread(
+            let _ = repair_orchestration_session_context(
                 state.storage.as_ref(),
                 user_id,
                 session_id,

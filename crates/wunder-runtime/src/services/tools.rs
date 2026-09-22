@@ -142,8 +142,7 @@ use crate::orchestrator_constants::truncate_tool_result_text;
 use crate::sandbox;
 use crate::schemas::WunderRequest;
 use crate::services::orchestration_context::{
-    active_orchestration_for_agent, build_worker_dispatch_message,
-    ensure_orchestration_member_session, load_dispatch_context, persist_session_context,
+    build_worker_dispatch_message, load_dispatch_context, persist_session_context,
     session_has_visible_history, session_orchestration_run_root, OrchestrationSessionContext,
     ORCHESTRATION_MODE,
 };

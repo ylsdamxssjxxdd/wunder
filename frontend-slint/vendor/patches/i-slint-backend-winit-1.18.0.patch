@@ -1,0 +1,1653 @@
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-backend-winit-1.18.0/drag_resize_window.rs b/i-slint-backend-winit-1.18/drag_resize_window.rs
+index 050cf11..e4b40ec 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-backend-winit-1.18.0/drag_resize_window.rs
++++ b/i-slint-backend-winit-1.18/drag_resize_window.rs
+@@ -11,7 +11,16 @@ pub fn handle_cursor_move_for_resize(
+     current_direction: Option<ResizeDirection>,
+     border_width: LogicalLength,
+ ) -> Option<ResizeDirection> {
+-    if !window.is_decorated() && window.is_resizable() {
++    // A maximized frameless HWND fills the monitor work area, but Winit keeps
++    // reporting it as resizable. Starting a native resize gesture there can
++    // leave Win7's drag loop active and prevents later move/resize gestures.
++    // Reset a previously cached edge direction as soon as the state changes.
++    if can_resize_window(
++        window.is_decorated(),
++        window.is_resizable(),
++        window.is_maximized(),
++        window.fullscreen().is_some(),
++    ) {
+         let border_size = f64::from(border_width.get()) * window.scale_factor();
+         let location = get_resize_direction(window.inner_size(), position, border_size);
+ 
+@@ -22,13 +31,26 @@ pub fn handle_cursor_move_for_resize(
+         return location;
+     }
+ 
++    if current_direction.is_some() {
++        window.set_cursor(CursorIcon::Default);
++    }
+     None
+ }
+ 
+-pub fn handle_resize(window: &winit::window::Window, direction: Option<ResizeDirection>) {
+-    if let Some(dir) = direction {
+-        let _ = window.drag_resize_window(dir);
++pub fn handle_resize(window: &winit::window::Window, direction: Option<ResizeDirection>) -> bool {
++    if !can_resize_window(
++        window.is_decorated(),
++        window.is_resizable(),
++        window.is_maximized(),
++        window.fullscreen().is_some(),
++    ) {
++        return false;
+     }
++    direction.is_some_and(|dir| window.drag_resize_window(dir).is_ok())
++}
++
++fn can_resize_window(decorated: bool, resizable: bool, maximized: bool, fullscreen: bool) -> bool {
++    !decorated && resizable && !maximized && !fullscreen
+ }
+ 
+ /// Get the cursor icon that corresponds to the resize direction.
+@@ -95,3 +117,17 @@ fn get_resize_direction(
+         (X::Default, Y::Default) => return None,
+     })
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::can_resize_window;
++
++    #[test]
++    fn only_normal_frameless_windows_expose_the_resize_hot_zone() {
++        assert!(can_resize_window(false, true, false, false));
++        assert!(!can_resize_window(false, true, true, false));
++        assert!(!can_resize_window(false, true, false, true));
++        assert!(!can_resize_window(true, true, false, false));
++        assert!(!can_resize_window(false, false, false, false));
++    }
++}
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-backend-winit-1.18.0/event_loop.rs b/i-slint-backend-winit-1.18/event_loop.rs
+index 48d8487..213b43e 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-backend-winit-1.18.0/event_loop.rs
++++ b/i-slint-backend-winit-1.18/event_loop.rs
+@@ -101,7 +101,9 @@ impl winit::application::ApplicationHandler<SlintEvent> for EventLoopState {
+         if matches!(
+             self.custom_application_handler
+                 .as_mut()
+-                .map_or(EventResult::Propagate, |handler| { handler.resumed(event_loop) }),
++                .map_or(EventResult::Propagate, |handler| {
++                    handler.resumed(event_loop)
++                }),
+             EventResult::PreventDefault
+         ) {
+             return;
+@@ -167,7 +169,10 @@ impl winit::application::ApplicationHandler<SlintEvent> for EventLoopState {
+                 // else ignore the event, since it's from a previous run of the event loop
+             }
+             #[cfg(enable_accesskit)]
+-            CustomEvent::Accesskit(accesskit_winit::Event { window_id, window_event }) => {
++            CustomEvent::Accesskit(accesskit_winit::Event {
++                window_id,
++                window_event,
++            }) => {
+                 if let Some(window) = self.shared_backend_data.window_by_id(window_id) {
+                     let deferred_action = window
+                         .accesskit_adapter()
+@@ -206,9 +211,11 @@ impl winit::application::ApplicationHandler<SlintEvent> for EventLoopState {
+ 
+     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
+         if matches!(
+-            self.custom_application_handler.as_mut().map_or(EventResult::Propagate, |handler| {
+-                handler.new_events(event_loop, cause)
+-            }),
++            self.custom_application_handler
++                .as_mut()
++                .map_or(EventResult::Propagate, |handler| {
++                    handler.new_events(event_loop, cause)
++                }),
+             EventResult::PreventDefault
+         ) {
+             return;
+@@ -225,7 +232,9 @@ impl winit::application::ApplicationHandler<SlintEvent> for EventLoopState {
+         if matches!(
+             self.custom_application_handler
+                 .as_mut()
+-                .map_or(EventResult::Propagate, |handler| { handler.about_to_wait(event_loop) }),
++                .map_or(EventResult::Propagate, |handler| {
++                    handler.about_to_wait(event_loop)
++                }),
+             EventResult::PreventDefault
+         ) {
+             return;
+@@ -353,7 +362,9 @@ impl EventLoopState {
+ 
+         // Keep the EventLoop instance alive and re-use it in future invocations of run_event_loop().
+         // Winit does not support creating multiple instances of the event loop.
+-        self.shared_backend_data.not_running_event_loop.replace(Some(winit_loop));
++        self.shared_backend_data
++            .not_running_event_loop
++            .replace(Some(winit_loop));
+ 
+         if let Some(error) = self.loop_error {
+             return Err(error);
+diff --git a/i-slint-backend-winit-1.18/first_frame.rs b/i-slint-backend-winit-1.18/first_frame.rs
+new file mode 100644
+index 0000000..3607d74
+--- /dev/null
++++ b/i-slint-backend-winit-1.18/first_frame.rs
+@@ -0,0 +1,43 @@
++// Copyright © SixtyFPS GmbH <info@slint.dev>
++// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
++
++//! First-presented-frame notification for the rcho workbench.
++//!
++//! `Window::set_rendering_notifier` is unsupported by the software renderer,
++//! so the backend reports the first successful present here. Application code
++//! uses it to defer heavyweight startup services (recent-directory restore,
++//! decode warm-up) until the window is actually on screen. All entry points
++//! must run on the Slint event-loop thread; the software renderer presents on
++//! that same thread.
++
++use std::cell::{Cell, RefCell};
++
++thread_local! {
++    static PRESENTED: Cell<bool> = const { Cell::new(false) };
++    static OBSERVERS: RefCell<Vec<Box<dyn FnOnce()>>> = const { RefCell::new(Vec::new()) };
++}
++
++/// Runs `observer` once the first frame has actually been presented, or
++/// immediately when a frame was already presented. Must be called from the
++/// Slint event-loop thread; the observer runs on that same thread.
++pub fn on_first_frame_presented(observer: impl FnOnce() + 'static) {
++    let already = PRESENTED.with(|presented| presented.get());
++    if already {
++        observer();
++        return;
++    }
++    OBSERVERS.with(|observers| observers.borrow_mut().push(Box::new(observer)));
++}
++
++/// The software renderer reports every successful present here; only the
++/// first one latched fires the pending observers.
++pub(crate) fn notify_presented() {
++    let first = PRESENTED.with(|presented| !presented.replace(true));
++    if !first {
++        return;
++    }
++    let observers = OBSERVERS.with(|observers| std::mem::take(&mut *observers.borrow_mut()));
++    for observer in observers {
++        observer();
++    }
++}
+diff --git a/i-slint-backend-winit-1.18/frame_capture.rs b/i-slint-backend-winit-1.18/frame_capture.rs
+new file mode 100644
+index 0000000..00d6e4a
+--- /dev/null
++++ b/i-slint-backend-winit-1.18/frame_capture.rs
+@@ -0,0 +1,73 @@
++// Copyright © SixtyFPS GmbH <info@slint.dev>
++// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
++
++//! On-demand frame capture for the rcho workbench screenshot feature.
++//!
++//! A screenshot request arms a one-shot capture; the next presented frame of
++//! the matching window is copied out of the software surface as opaque RGBA8.
++//! Arming is a pair of atomic stores, so presented frames are copied only
++//! while a capture is pending and the normal render path stays untouched.
++
++use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
++use std::sync::{Mutex, OnceLock};
++
++/// A single presented frame copied out of the software surface.
++pub struct CapturedFrame {
++    /// Frame width in physical pixels.
++    pub width: u32,
++    /// Frame height in physical pixels.
++    pub height: u32,
++    /// RGBA8, row-major, top-down, alpha forced opaque.
++    pub rgba: Vec<u8>,
++}
++
++static ARMED: AtomicBool = AtomicBool::new(false);
++static TARGET_WINDOW: AtomicU64 = AtomicU64::new(0);
++static FRAME: OnceLock<Mutex<Option<CapturedFrame>>> = OnceLock::new();
++
++/// Arms the one-shot capture for the given winit window id. Called on the
++/// Slint event-loop thread when a screenshot is requested; any stale frame
++/// from a previous (timed-out) capture is dropped.
++pub fn arm(window_id: u64) {
++    if let Ok(mut slot) = FRAME.get_or_init(|| Mutex::new(None)).lock() {
++        *slot = None;
++    }
++    TARGET_WINDOW.store(window_id, Ordering::Release);
++    ARMED.store(true, Ordering::Release);
++}
++
++/// Disarms a pending capture without taking a frame (timeout path).
++pub fn disarm() {
++    ARMED.store(false, Ordering::Release);
++}
++
++/// Takes the captured frame, if one has arrived since `arm`.
++pub fn take() -> Option<CapturedFrame> {
++    FRAME.get()?.lock().ok()?.take()
++}
++
++/// Called by the software renderer after a successful present. Runs on the
++/// event-loop thread; the copy happens only while a capture is armed for this
++/// window, and the buffer always holds the complete current frame.
++pub(crate) fn maybe_capture(window_id: u64, width: u32, height: u32, pixels: &[u32]) {
++    if !ARMED.load(Ordering::Acquire) || TARGET_WINDOW.load(Ordering::Acquire) != window_id {
++        return;
++    }
++    if pixels.len() != width as usize * height as usize {
++        return;
++    }
++    ARMED.store(false, Ordering::Release);
++    // Softbuffer pixels are 0xAARRGGBB; expand to RGBA8 with opaque alpha.
++    let mut rgba = Vec::with_capacity(pixels.len() * 4);
++    for pixel in pixels {
++        rgba.push((pixel >> 16) as u8);
++        rgba.push((pixel >> 8) as u8);
++        rgba.push(*pixel as u8);
++        rgba.push(0xff);
++    }
++    if let Some(slot) = FRAME.get() {
++        if let Ok(mut guard) = slot.lock() {
++            *guard = Some(CapturedFrame { width, height, rgba });
++        }
++    }
++}
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-backend-winit-1.18.0/frame_throttle.rs b/i-slint-backend-winit-1.18/frame_throttle.rs
+index 9c3dc61..62f6e4c 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-backend-winit-1.18.0/frame_throttle.rs
++++ b/i-slint-backend-winit-1.18/frame_throttle.rs
+@@ -51,6 +51,10 @@ impl FrameThrottle for TimerBasedFrameThrottle {
+         let refresh_interval_millihertz = winit_window
+             .current_monitor()
+             .and_then(|monitor| monitor.refresh_rate_millihertz())
++            // Win7 display drivers (basic/mirror/remote adapters) report the
++            // dmDisplayFrequency sentinel 0 or 1 for "hardware default". Treat
++            // any implausible rate as unknown; 0 would also divide by zero.
++            .filter(|&millihertz| (20_000..=500_000).contains(&millihertz))
+             .unwrap_or(60000) as u64;
+         let window_adapter = self.window_adapter.clone();
+         let timer = Rc::downgrade(&self.timer);
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-backend-winit-1.18.0/lib.rs b/i-slint-backend-winit-1.18/lib.rs
+index 1924501..c82a211 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-backend-winit-1.18.0/lib.rs
++++ b/i-slint-backend-winit-1.18/lib.rs
+@@ -68,6 +68,15 @@ pub enum EventResult {
+     PreventDefault,
+ }
+ 
++#[cfg(feature = "renderer-software")]
++pub mod software_diagnostics;
++
++#[cfg(feature = "renderer-software")]
++pub mod first_frame;
++
++#[cfg(feature = "renderer-software")]
++pub mod frame_capture;
++
+ mod renderer {
+     use std::rc::Weak;
+     use std::sync::Arc;
+@@ -842,21 +851,23 @@ impl i_slint_core::platform::Platform for Backend {
+         }
+         #[cfg(target_os = "windows")]
+         if let Some(ctx) = _ctx.upgrade() {
+-            use windows::Win32::UI::HiDpi::SystemParametersInfoForDpi;
+             use windows::Win32::UI::WindowsAndMessaging::{
+-                NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS,
++                SystemParametersInfoW, NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS,
++                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+             };
+             let mut metrics = NONCLIENTMETRICSW {
+                 cbSize: core::mem::size_of::<NONCLIENTMETRICSW>() as u32,
+                 ..NONCLIENTMETRICSW::default()
+             };
++            // SystemParametersInfoForDpi is Windows 10-only. The classic API
++            // is available on Windows 7 and returns the 96-DPI message font,
++            // which is exactly the logical size Slint needs here.
+             let ok = unsafe {
+-                SystemParametersInfoForDpi(
+-                    SPI_GETNONCLIENTMETRICS.0,
++                SystemParametersInfoW(
++                    SPI_GETNONCLIENTMETRICS,
+                     metrics.cbSize,
+                     Some(&mut metrics as *mut _ as *mut core::ffi::c_void),
+-                    0,
+-                    96,
++                    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+                 )
+             }
+             .is_ok();
+diff --git a/i-slint-backend-winit-1.18/renderer/sw/popup_repaint.rs b/i-slint-backend-winit-1.18/renderer/sw/popup_repaint.rs
+new file mode 100644
+index 0000000..9323d3a
+--- /dev/null
++++ b/i-slint-backend-winit-1.18/renderer/sw/popup_repaint.rs
+@@ -0,0 +1,75 @@
++// Copyright © SixtyFPS GmbH <info@slint.dev>
++// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
++
++//! Keep embedded popups opaque over independently changing parent items,
++//! without rasterizing the entire desktop window for every hover update.
++
++use i_slint_core::item_tree::ItemTreeRc;
++use i_slint_core::lengths::LogicalRect;
++use i_slint_core::renderer::RendererSealed;
++use i_slint_core::window::{PopupWindowLocation, WindowInner};
++use i_slint_renderer_software::SoftwareRenderer;
++use std::cell::RefCell;
++use std::num::NonZeroU32;
++
++pub(super) struct PopupRepaint {
++    previous: RefCell<Vec<(NonZeroU32, LogicalRect)>>,
++    full_repaint_check: bool,
++}
++
++impl Default for PopupRepaint {
++    fn default() -> Self {
++        Self {
++            previous: Default::default(),
++            // Diagnostic A/B switch: compare the same executable and font
++            // state against the old complete-frame popup behavior.
++            full_repaint_check: std::env::var_os("RCHO_SLINT_POPUP_FULL_REPAINT")
++                .is_some_and(|value| value == "1"),
++        }
++    }
++}
++
++impl PopupRepaint {
++    /// Returns (popup visible, popup stack/geometry changed). Transitions
++    /// retain the full-repaint safety net, covering old bounds and shadows.
++    /// Steady popups repaint their whole local rectangle, including a pixel
++    /// margin for fractional DPI rounding, above any dirty parent content.
++    pub(super) fn prepare(
++        &self,
++        window: &i_slint_core::api::Window,
++        renderer: &SoftwareRenderer,
++    ) -> (bool, bool) {
++        let inner = WindowInner::from_pub(window);
++        let popups = inner.active_popups();
++        let mut previous = self.previous.borrow_mut();
++        if popups.is_empty() && previous.is_empty() {
++            return (false, false);
++        }
++
++        let current: Vec<_> = popups
++            .iter()
++            .filter_map(|popup| {
++                let PopupWindowLocation::ChildWindow(origin) = &popup.location else {
++                    return None;
++                };
++                let rect = i_slint_core::properties::evaluate_no_tracking(|| {
++                    ItemTreeRc::borrow_pin(&popup.component)
++                        .as_ref()
++                        .item_geometry(0)
++                })
++                .translate(origin.to_vector());
++                Some((popup.popup_id, rect))
++            })
++            .collect();
++        let visible = !current.is_empty();
++        let changed = *previous != current;
++        if !changed {
++            let margin = 1.0 / window.scale_factor();
++            for (_, rect) in &current {
++                renderer.mark_dirty_region(rect.inflate(margin, margin).into());
++            }
++        }
++        *previous = current;
++        (visible, changed || (visible && self.full_repaint_check))
++    }
++}
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-backend-winit-1.18.0/renderer/sw.rs b/i-slint-backend-winit-1.18/renderer/sw.rs
+index 966a4e2..97d1d33 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-backend-winit-1.18.0/renderer/sw.rs
++++ b/i-slint-backend-winit-1.18/renderer/sw.rs
+@@ -9,20 +9,31 @@ use i_slint_core::graphics::Rgb8Pixel;
+ use i_slint_core::platform::PlatformError;
+ use i_slint_core::renderer::DrawOutcome;
+ pub use i_slint_renderer_software::SoftwareRenderer;
++use i_slint_core::Color;
+ use i_slint_renderer_software::{PremultipliedRgbaColor, RepaintBufferType, TargetPixel};
+-use std::cell::RefCell;
++#[cfg(target_os = "windows")]
++use i_slint_renderer_software::SubpixelOrder;
++use std::cell::{Cell, RefCell};
+ use std::rc::Rc;
+ use std::sync::Arc;
+ use winit::event_loop::ActiveEventLoop;
+ 
+ use super::WinitCompatibleRenderer;
+ 
++mod popup_repaint;
++
+ pub struct WinitSoftwareRenderer {
+     renderer: SoftwareRenderer,
+     _context: RefCell<Option<softbuffer::Context<Arc<winit::window::Window>>>>,
+     surface: RefCell<
+         Option<softbuffer::Surface<Arc<winit::window::Window>, Arc<winit::window::Window>>>,
+     >,
++    resize_retry_count: Cell<u8>,
++    /// Win32 can erase a hidden or moved GDI surface without updating the
++    /// softbuffer age. The next visible frame must therefore ignore the age
++    /// and render every pixel once.
++    force_full_repaint: Cell<bool>,
++    popup_repaint: popup_repaint::PopupRepaint,
+ }
+ 
+ #[repr(transparent)]
+@@ -61,6 +72,21 @@ impl TargetPixel for SoftBufferPixel {
+         *self = x.into();
+     }
+ 
++    fn blend_subpixel(&mut self, color: Color, coverage: [u8; 3]) {
++        let blend_channel = |dst: u8, src: u8, coverage: u8| {
++            let alpha = coverage as u16 * color.alpha() as u16 / 255;
++            (dst as u16 * (255 - alpha) / 255 + src as u16 * alpha / 255)
++                as u8
++        };
++        let value = self.0;
++        *self = Self(
++            0xff000000
++                | ((blend_channel((value >> 16) as u8, color.red(), coverage[0]) as u32) << 16)
++                | ((blend_channel((value >> 8) as u8, color.green(), coverage[1]) as u32) << 8)
++                | (blend_channel(value as u8, color.blue(), coverage[2]) as u32),
++        );
++    }
++
+     fn from_rgb(r: u8, g: u8, b: u8) -> Self {
+         Self(0xff000000 | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32))
+     }
+@@ -74,14 +100,61 @@ impl WinitSoftwareRenderer {
+     pub fn new_suspended(
+         _shared_backend_data: &Rc<crate::SharedBackendData>,
+     ) -> Result<Box<dyn WinitCompatibleRenderer>, PlatformError> {
++        #[allow(unused_mut)] // mut is only used by the Windows subpixel-order setup
++        let mut renderer = SoftwareRenderer::new();
++        #[cfg(target_os = "windows")]
++        renderer.set_subpixel_order(system_subpixel_order());
+         Ok(Box::new(Self {
+-            renderer: SoftwareRenderer::new(),
++            renderer,
+             _context: RefCell::new(None),
+             surface: RefCell::new(None),
++            resize_retry_count: Default::default(),
++            force_full_repaint: Default::default(),
++            popup_repaint: Default::default(),
+         }))
+     }
+ }
+ 
++/// Query the user's ClearType mode through the Win7-era User32 API. It has no
++/// WinRT/DirectWrite dependency. A disabled setting or failed query uses
++/// grayscale blending, which is safe for every monitor arrangement.
++#[cfg(target_os = "windows")]
++fn system_subpixel_order() -> SubpixelOrder {
++    use windows::Win32::UI::WindowsAndMessaging::{
++        SystemParametersInfoW, FE_FONTSMOOTHINGCLEARTYPE, FE_FONTSMOOTHINGORIENTATIONBGR,
++        SPI_GETFONTSMOOTHING, SPI_GETFONTSMOOTHINGORIENTATION, SPI_GETFONTSMOOTHINGTYPE,
++        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
++    };
++
++    let query = |action, value: &mut u32| unsafe {
++        SystemParametersInfoW(
++            action,
++            0,
++            Some(value as *mut _ as *mut core::ffi::c_void),
++            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
++        )
++        .is_ok()
++    };
++
++    let mut enabled = 0u32;
++    let mut smoothing_type = 0u32;
++    let mut orientation = 1u32;
++    if !query(SPI_GETFONTSMOOTHING, &mut enabled)
++        || !query(SPI_GETFONTSMOOTHINGTYPE, &mut smoothing_type)
++        || !query(SPI_GETFONTSMOOTHINGORIENTATION, &mut orientation)
++    {
++        return SubpixelOrder::None;
++    }
++
++    if enabled == 0 || smoothing_type != FE_FONTSMOOTHINGCLEARTYPE {
++        SubpixelOrder::None
++    } else if orientation == FE_FONTSMOOTHINGORIENTATIONBGR {
++        SubpixelOrder::Bgr
++    } else {
++        SubpixelOrder::Rgb
++    }
++}
++
+ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
+     fn render(&self, window: &i_slint_core::api::Window) -> Result<DrawOutcome, PlatformError> {
+         let size = window.size();
+@@ -99,22 +172,48 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
+         };
+ 
+         let winit_window = surface.window().clone();
++        let diagnostic_start = crate::software_diagnostics::frame_start();
+ 
+-        surface
+-            .resize(width, height)
+-            .map_err(|e| format!("Error resizing softbuffer surface: {e}"))?;
++        // On legacy Win32, GDI can transiently reject a DIB allocation while
++        // the user drags a window edge. Rendering is best effort here: keep
++        // the event loop alive and let the next redraw retry instead of
++        // returning an error that terminates it.
++        if let Err(error) = surface.resize(width, height) {
++            eprintln!("Slint software surface resize deferred: {error}");
++            self.retry_deferred_resize(&winit_window);
++            return Ok(DrawOutcome::Success);
++        }
+ 
+-        let mut target_buffer = surface
+-            .buffer_mut()
+-            .map_err(|e| format!("Error retrieving softbuffer rendering buffer: {e}"))?;
++        let mut target_buffer = match surface.buffer_mut() {
++            Ok(buffer) => buffer,
++            Err(error) => {
++                eprintln!("Slint software surface buffer deferred: {error}");
++                self.retry_deferred_resize(&winit_window);
++                return Ok(DrawOutcome::Success);
++            }
++        };
++        self.resize_retry_count.set(0);
+ 
++        let (has_embedded_popup, popup_changed) = self.popup_repaint.prepare(window, &self.renderer);
+         let age = target_buffer.age();
+-        self.renderer.set_repaint_buffer_type(match age {
+-            1 => RepaintBufferType::ReusedBuffer,
+-            2 => RepaintBufferType::SwappedBuffers,
+-            _ => RepaintBufferType::NewBuffer,
+-        });
++        // Opening/closing/moving a popup retains a complete repaint. Stable
++        // popups explicitly dirty their own rectangle, so their background is
++        // composited again over the toolbar without clearing every UI cache.
++        // Consume the flag even when a popup changed, preserving retry state.
++        let force_full_repaint = self.force_full_repaint.take();
++        self.renderer
++            .set_repaint_buffer_type(if popup_changed || force_full_repaint {
++                RepaintBufferType::NewBuffer
++            } else {
++                match age {
++                    1 => RepaintBufferType::ReusedBuffer,
++                    2 => RepaintBufferType::SwappedBuffers,
++                    _ => RepaintBufferType::NewBuffer,
++                }
++            });
+ 
++        let prepare_ms = diagnostic_start.map(|t| t.elapsed().as_secs_f64() * 1000.0);
++        let render_start = diagnostic_start.map(|_| std::time::Instant::now());
+         let region = if std::env::var_os("SLINT_LINE_BY_LINE").is_none() {
+             let buffer: &mut [SoftBufferPixel] =
+                 bytemuck::cast_slice_mut(target_buffer.deref_mut());
+@@ -149,22 +248,74 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
+             })
+         };
+ 
+-        let damage = region
++        let render_ms = render_start.map(|t| t.elapsed().as_secs_f64() * 1000.0);
++        let present_start = diagnostic_start.map(|_| std::time::Instant::now());
++        let mut present_failed = false;
++        // Present each disjoint damage rectangle instead of the single bounding
++        // box: a workbench frame change dirties distant regions (radar canvas,
++        // file list row, status bar, side panels) whose bounding box spans the
++        // entire window, forcing a full-surface BitBlt of unchanged pixels on
++        // every navigation. Slint 1.18 upstream presents per-rectangle as well;
++        // the local addition is the deferred-error handling and diagnostics.
++        let damage_rects: Vec<softbuffer::Rect> = region
+             .iter()
+-            .filter_map(|(pos, size)| {
+-                Some(softbuffer::Rect {
+-                    x: pos.x as u32,
+-                    y: pos.y as u32,
+-                    width: NonZeroU32::new(size.width)?,
+-                    height: NonZeroU32::new(size.height)?,
++            .filter_map(|(origin, size)| {
++                Option::zip(
++                    NonZeroU32::new(size.width),
++                    NonZeroU32::new(size.height),
++                )
++                .map(|(w, h)| softbuffer::Rect {
++                    width: w,
++                    height: h,
++                    x: origin.x as u32,
++                    y: origin.y as u32,
+                 })
+             })
+-            .collect::<Vec<_>>();
+-        if !damage.is_empty() {
++            .collect();
++        let damage_pixels: u64 = damage_rects
++            .iter()
++            .map(|rect| u64::from(rect.width.get()) * u64::from(rect.height.get()))
++            .sum();
++        // One-shot screenshot hook: the buffer already holds the complete new
++        // frame here, and `present_with_damage` consumes it below. The copy
++        // happens only while a capture is armed, so the steady-state cost is
++        // one atomic load.
++        crate::frame_capture::maybe_capture(
++            winit_window.id().into(),
++            width.get(),
++            height.get(),
++            &target_buffer,
++        );
++        if !damage_rects.is_empty() {
+             winit_window.pre_present_notify();
+-            target_buffer
+-                .present_with_damage(&damage)
+-                .map_err(|e| format!("Error presenting softbuffer buffer: {e}"))?;
++            if let Err(error) = target_buffer.present_with_damage(&damage_rects) {
++                present_failed = true;
++                eprintln!("Slint software surface present deferred: {error}");
++                // `force_full_repaint.take()` was consumed before rendering.
++                // A failed Win32 BitBlt did not publish that frame, so the
++                // retry must redraw every pixel instead of trusting damage or
++                // buffer age from the failed presentation.
++                self.force_full_repaint.set(true);
++                self.retry_deferred_resize(&winit_window);
++            }
++        }
++        if !present_failed && !damage_rects.is_empty() {
++            crate::first_frame::notify_presented();
++        }
++        if let Some(present_start) = present_start {
++            crate::software_diagnostics::record(crate::software_diagnostics::FrameSample {
++                at_ms: 0.0,
++                window_id: winit_window.id().into(),
++                width: width.get(),
++                height: height.get(),
++                scale: window.scale_factor(),
++                prepare_ms: prepare_ms.unwrap_or_default(),
++                render_ms: render_ms.unwrap_or_default(),
++                present_ms: present_start.elapsed().as_secs_f64() * 1000.0,
++                damage_pixels,
++                popup: has_embedded_popup,
++                failed: present_failed,
++            });
+         }
+         Ok(DrawOutcome::Success)
+     }
+@@ -176,7 +327,7 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
+     fn occluded(&self, _: bool) {
+         // On X11 and Windows, the buffer is completely cleared when the window is hidden
+         // and the buffer age doesn't respect that, so clean the partial rendering cache
+-        self.renderer.set_repaint_buffer_type(RepaintBufferType::NewBuffer);
++        self.force_full_repaint.set(true);
+     }
+ 
+     fn resume(
+@@ -212,3 +363,15 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
+         Ok(())
+     }
+ }
++
++impl WinitSoftwareRenderer {
++    fn retry_deferred_resize(&self, winit_window: &winit::window::Window) {
++        // A permanent allocation failure must not turn into a continuous
++        // redraw loop. Later WM_SIZE and paint events still retry normally.
++        let count = self.resize_retry_count.get().saturating_add(1);
++        self.resize_retry_count.set(count);
++        if count <= 2 {
++            winit_window.request_redraw();
++        }
++    }
++}
+diff --git a/i-slint-backend-winit-1.18/software_diagnostics.rs b/i-slint-backend-winit-1.18/software_diagnostics.rs
+new file mode 100644
+index 0000000..a773d16
+--- /dev/null
++++ b/i-slint-backend-winit-1.18/software_diagnostics.rs
+@@ -0,0 +1,122 @@
++// Copyright © SixtyFPS GmbH <info@slint.dev>
++// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
++
++//! Opt-in, bounded frame samples for the rcho CPU presentation diagnostic.
++//! No file I/O or additional redraws take place on the window thread.
++
++use std::sync::{Mutex, OnceLock};
++use std::time::Instant;
++
++/// One attempt to draw and present a software window.
++#[derive(Debug)]
++pub struct FrameSample {
++    /// Process-relative completion timestamp, in milliseconds.
++    pub at_ms: f64,
++    /// Winit window identity (process-local).
++    pub window_id: u64,
++    /// Physical surface dimensions.
++    pub width: u32,
++    /// Physical surface height.
++    pub height: u32,
++    /// Logical-to-physical scale factor.
++    pub scale: f32,
++    /// Surface acquisition/resize time, in milliseconds.
++    pub prepare_ms: f64,
++    /// Software render time (including layout/text work it evaluates).
++    pub render_ms: f64,
++    /// Native present call duration; not the time a monitor displays the frame.
++    pub present_ms: f64,
++    /// Bounding box pixels submitted to the native surface.
++    pub damage_pixels: u64,
++    /// Whether an embedded popup is visible (not necessarily a full repaint).
++    pub popup: bool,
++    /// Whether presentation returned an error.
++    pub failed: bool,
++}
++
++/// One windowing event that can schedule or skip frames (resize, move, focus,
++/// occlusion, native ShowWindow). `a`/`b` carry per-kind payload (e.g. the new
++/// width/height for `resized`); `ms` is an optional measured duration.
++#[derive(Debug)]
++pub struct EventSample {
++    /// Process-relative timestamp, in milliseconds.
++    pub at_ms: f64,
++    /// Winit window identity (process-local); 0 when unrelated to one window.
++    pub window_id: u64,
++    /// Stable lowercase tag, e.g. `resized`, `moved`, `focused`, `showwindow`.
++    pub kind: String,
++    /// Per-kind payload (e.g. new width for `resized`, focus flag for `focused`).
++    pub a: i64,
++    /// Per-kind secondary payload (e.g. new height for `resized`).
++    pub b: i64,
++    /// Measured blocking duration of the event, in milliseconds; 0 when untimed.
++    pub ms: f64,
++}
++
++struct Samples {
++    started: Instant,
++    frames: Mutex<(Vec<FrameSample>, u64)>,
++    events: Mutex<(Vec<EventSample>, u64)>,
++}
++
++fn samples() -> Option<&'static Samples> {
++    static SAMPLES: OnceLock<Option<Samples>> = OnceLock::new();
++    SAMPLES.get_or_init(|| {
++        std::env::var_os("RCHO_SLINT_DIAGNOSTICS").filter(|v| !v.is_empty()).map(|_| Samples {
++            started: Instant::now(),
++            frames: Mutex::new((Vec::new(), 0)),
++            events: Mutex::new((Vec::new(), 0)),
++        })
++    }).as_ref()
++}
++
++pub(crate) fn frame_start() -> Option<Instant> {
++    samples().map(|_| Instant::now())
++}
++
++pub(crate) fn record(mut frame: FrameSample) {
++    if let Some(samples) = samples() {
++        frame.at_ms = samples.started.elapsed().as_secs_f64() * 1000.0;
++        if let Ok(mut frames) = samples.frames.lock() {
++            if frames.0.len() < 4096 {
++                frames.0.push(frame);
++            } else {
++                frames.1 += 1;
++            }
++        }
++    }
++}
++
++/// Drain pending frames on the diagnostic worker, reporting any dropped samples.
++pub fn take_samples() -> (Vec<FrameSample>, u64) {
++    samples().and_then(|s| s.frames.lock().ok().map(|mut f| std::mem::take(&mut *f)))
++        .unwrap_or_default()
++}
++
++/// Record one windowing event. No-op unless diagnostics are enabled, so the
++/// window thread can call it unconditionally on hot paths.
++pub fn record_event(window_id: u64, kind: &str, a: i64, b: i64, ms: f64) {
++    if let Some(samples) = samples() {
++        let event = EventSample {
++            at_ms: samples.started.elapsed().as_secs_f64() * 1000.0,
++            window_id,
++            kind: kind.to_string(),
++            a,
++            b,
++            ms,
++        };
++        if let Ok(mut events) = samples.events.lock() {
++            if events.0.len() < 4096 {
++                events.0.push(event);
++            } else {
++                events.1 += 1;
++            }
++        }
++    }
++}
++
++/// Drain pending windowing events on the diagnostic worker.
++pub fn take_events() -> (Vec<EventSample>, u64) {
++    samples().and_then(|s| s.events.lock().ok().map(|mut e| std::mem::take(&mut *e)))
++        .unwrap_or_default()
++}
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-backend-winit-1.18.0/winitwindowadapter.rs b/i-slint-backend-winit-1.18/winitwindowadapter.rs
+index 1ad204f..edceb3a 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-backend-winit-1.18.0/winitwindowadapter.rs
++++ b/i-slint-backend-winit-1.18/winitwindowadapter.rs
+@@ -114,7 +114,10 @@ fn filter_out_zero_width_or_height(
+             v
+         }
+     }
+-    winit::dpi::LogicalSize { width: filter(size.width), height: filter(size.height) }
++    winit::dpi::LogicalSize {
++        width: filter(size.width),
++        height: filter(size.height),
++    }
+ }
+ 
+ /// The smallest integer logical size whose physical size is at least
+@@ -212,8 +215,16 @@ fn window_is_resizable(
+     max_size: Option<corelib::api::LogicalSize>,
+ ) -> bool {
+     if let Some((
+-        corelib::api::LogicalSize { width: min_width, height: min_height, .. },
+-        corelib::api::LogicalSize { width: max_width, height: max_height, .. },
++        corelib::api::LogicalSize {
++            width: min_width,
++            height: min_height,
++            ..
++        },
++        corelib::api::LogicalSize {
++            width: max_width,
++            height: max_height,
++            ..
++        },
+     )) = min_size.zip(max_size)
+     {
+         min_width < max_width || min_height < max_height
+@@ -415,6 +426,11 @@ pub struct WinitWindowAdapter {
+     /// Whether the current winit window has presented a frame.
+     first_frame_presented: Cell<bool>,
+ 
++    /// When the last successful frame was presented. Used on Windows to skip a
++    /// redundant forced full frame on focus gain right after another present.
++    #[cfg(target_os = "windows")]
++    last_presented_frame: Cell<Option<std::time::Instant>>,
++
+     #[cfg(target_arch = "wasm32")]
+     virtual_keyboard_helper: RefCell<Option<super::wasm_input_helper::WasmInputHelper>>,
+ 
+@@ -494,6 +510,8 @@ impl WinitWindowAdapter {
+             has_explicit_size: Default::default(),
+             pending_resize_event_after_show: Default::default(),
+             first_frame_presented: Default::default(),
++            #[cfg(target_os = "windows")]
++            last_presented_frame: Default::default(),
+             renderer,
+             #[cfg(target_arch = "wasm32")]
+             virtual_keyboard_helper: Default::default(),
+@@ -518,7 +536,9 @@ impl WinitWindowAdapter {
+             touch_finger_ids: Default::default(),
+         });
+ 
+-        self_rc.shared_backend_data.register_inactive_window((self_rc.clone()) as _);
++        self_rc
++            .shared_backend_data
++            .register_inactive_window((self_rc.clone()) as _);
+ 
+         self_rc
+     }
+@@ -747,6 +767,16 @@ impl WinitWindowAdapter {
+             ),
+         };
+ 
++        // Register the adapter before the first visibility/layout pass. On
++        // Win32, request_inner_size() uses SetWindowPos and emits WM_SIZE
++        // synchronously. The old order registered only after set_visibility,
++        // so that first WM_SIZE was discarded because the backend could not
++        // find this WindowId yet. Slint then rendered the placeholder size
++        // until the user moved/resized the window, which caused the initial
++        // bottom gap, missing frame edge, and unstable dialog centering.
++        self.shared_backend_data
++            .register_window(winit_window.id(), (self.self_weak.upgrade().unwrap()) as _);
++
+         #[cfg(muda)]
+         {
+             let menubar = self.menubar();
+@@ -775,17 +805,19 @@ impl WinitWindowAdapter {
+         }
+ 
+         {
+-            // Workaround for winit bug #2990
+-            // Non-resizable windows can still contain a maximize button,
+-            // so we'd have to additionally remove the button.
++            // Work around winit #2990 only for system-decorated windows.
++            // A frameless Slint window owns its caption buttons in client
++            // content; enabling Winit's maximize box here leaves Win7 with a
++            // latent native button that can surface after the first minimize
++            // or maximize state transition.
+             let mut buttons = winit_window.enabled_buttons();
+-            buttons.set(WindowButtons::MAXIMIZE, resizable);
++            buttons.set(
++                WindowButtons::MAXIMIZE,
++                resizable && winit_window.is_decorated(),
++            );
+             winit_window.set_enabled_buttons(buttons);
+         }
+ 
+-        self.shared_backend_data
+-            .register_window(winit_window.id(), (self.self_weak.upgrade().unwrap()) as _);
+-
+         for waker in self.window_existence_wakers.take().into_iter() {
+             waker.wake();
+         }
+@@ -810,7 +842,8 @@ impl WinitWindowAdapter {
+                     // Note: Don't register the window in inactive_windows for re-creation later, as creating the window
+                     // on wayland implies making it visible. Unfortunately, winit won't allow creating a window on wayland
+                     // that's not visible.
+-                    self.shared_backend_data.unregister_window(Some(last_instance.id()));
++                    self.shared_backend_data
++                        .unregister_window(Some(last_instance.id()));
+                     drop(last_instance);
+                 } else {
+                     i_slint_core::debug_log!(
+@@ -827,7 +860,15 @@ impl WinitWindowAdapter {
+     }
+ 
+     pub(crate) fn window_attributes() -> Result<WindowAttributes, PlatformError> {
+-        let mut attrs = WindowAttributes::default().with_transparent(true).with_visible(false);
++        // rcho paints every Win32 top-level surface opaquely. Keeping a
++        // borderless software-rendered window on Winit's transparent/layered
++        // path lets DWM expose erased client-edge pixels while the window is
++        // being activated (especially on Win7). Keep the native top-level
++        // surface opaque on Windows; Slint still composes translucent items
++        // inside that surface as usual.
++        let mut attrs = WindowAttributes::default()
++            .with_transparent(!cfg!(target_os = "windows"))
++            .with_visible(false);
+ 
+         // Only until the component's own title reaches the window
+         attrs = attrs.with_title(i_slint_core::window::application_name().to_string());
+@@ -864,6 +905,25 @@ impl WinitWindowAdapter {
+ 
+         self.pending_redraw.set(false);
+ 
++        // A minimized Win32 window has no visible client area: rendering a
++        // forced full frame into the DIB is wasted work and stalls the
++        // minimize/restore transition on slow CPUs. The renderer's occluded
++        // flag stays armed, so the first frame after restore is still a
++        // complete repaint.
++        #[cfg(target_os = "windows")]
++        if self.winit_window().is_some_and(|winit_window| {
++            winit_window.is_minimized() == Some(true)
++        }) {
++            crate::software_diagnostics::record_event(
++                self.winit_window().map_or(0, |w| w.id().into()),
++                "draw_skip_minimized",
++                0,
++                0,
++                0.0,
++            );
++            return Ok(());
++        }
++
+         if let Some(winit_window) = self.winit_window_or_none.borrow().as_window() {
+             // on macOS we sometimes don't get a resize event after calling
+             // request_inner_size(), it returning None (promising a resize event), and then delivering RedrawRequested. To work around this,
+@@ -884,6 +944,8 @@ impl WinitWindowAdapter {
+         }
+         if matches!(outcome?, DrawOutcome::Success) {
+             self.first_frame_presented.set(true);
++            #[cfg(target_os = "windows")]
++            self.last_presented_frame.set(Some(std::time::Instant::now()));
+         } else {
+             // Frame was skipped (e.g. surface occluded). pending_redraw was already
+             // cleared above, so re-arm it so we try again.
+@@ -903,7 +965,10 @@ impl WinitWindowAdapter {
+         f: impl FnOnce(&super::ios::KeyboardCurveSampler) -> R,
+     ) -> Option<R> {
+         let winit_window_or_none = self.winit_window_or_none.borrow();
+-        if let WinitWindowOrNone::HasWindow { keyboard_curve_sampler, .. } = &*winit_window_or_none
++        if let WinitWindowOrNone::HasWindow {
++            keyboard_curve_sampler,
++            ..
++        } = &*winit_window_or_none
+         {
+             Some(f(keyboard_curve_sampler))
+         } else {
+@@ -941,7 +1006,10 @@ impl WinitWindowAdapter {
+                     Some(muda_adapter)
+                 }
+                 (
+-                    WinitWindowOrNone::HasWindow { context_menu_muda_adapter, .. },
++                    WinitWindowOrNone::HasWindow {
++                        context_menu_muda_adapter,
++                        ..
++                    },
+                     MudaType::Context,
+                 ) => Some(context_menu_muda_adapter),
+                 (WinitWindowOrNone::None(..), _) => None,
+@@ -1052,7 +1120,9 @@ impl WinitWindowAdapter {
+     }
+ 
+     pub fn set_accent_color(&self, color: Color) {
+-        WindowInner::from_pub(self.window()).context().set_accent_color(color);
++        WindowInner::from_pub(self.window())
++            .context()
++            .set_accent_color(color);
+     }
+ 
+     fn query_system_accent_color() -> Color {
+@@ -1113,7 +1183,9 @@ impl WinitWindowAdapter {
+     }
+ 
+     pub fn set_color_scheme(&self, scheme: ColorScheme) {
+-        WindowInner::from_pub(self.window()).context().set_color_scheme(scheme);
++        WindowInner::from_pub(self.window())
++            .context()
++            .set_color_scheme(scheme);
+ 
+         // Update the menubar theme
+         #[cfg(all(target_os = "windows", muda))]
+@@ -1142,11 +1214,15 @@ impl WinitWindowAdapter {
+ 
+     #[cfg(target_os = "ios")]
+     pub fn set_platform_default_font_size(&self, size: i_slint_core::lengths::LogicalLength) {
+-        WindowInner::from_pub(self.window()).context().set_platform_default_font_size(Some(size));
++        WindowInner::from_pub(self.window())
++            .context()
++            .set_platform_default_font_size(Some(size));
+     }
+ 
+     pub fn window_state_event(&self) {
+-        let Some(winit_window) = self.winit_window_or_none.borrow().as_window() else { return };
++        let Some(winit_window) = self.winit_window_or_none.borrow().as_window() else {
++            return;
++        };
+ 
+         if let Some(minimized) = winit_window.is_minimized() {
+             self.minimized.set(minimized);
+@@ -1175,6 +1251,14 @@ impl WinitWindowAdapter {
+         if fullscreen != self.window().is_fullscreen() {
+             self.window().set_fullscreen(fullscreen);
+         }
++
++        crate::software_diagnostics::record_event(
++            winit_window.id().into(),
++            "state",
++            self.minimized.get() as i64,
++            self.maximized.get() as i64,
++            0.0,
++        );
+     }
+ 
+     #[cfg(enable_accesskit)]
+@@ -1184,7 +1268,9 @@ impl WinitWindowAdapter {
+         std::cell::Ref::filter_map(
+             self.winit_window_or_none.try_borrow().ok()?,
+             |wor: &WinitWindowOrNone| match wor {
+-                WinitWindowOrNone::HasWindow { accesskit_adapter, .. } => Some(accesskit_adapter),
++                WinitWindowOrNone::HasWindow {
++                    accesskit_adapter, ..
++                } => Some(accesskit_adapter),
+                 WinitWindowOrNone::None(..) => None,
+             },
+         )
+@@ -1196,10 +1282,14 @@ impl WinitWindowAdapter {
+         self_weak: Weak<Self>,
+         callback: impl FnOnce(&RefCell<crate::accesskit::AccessKitAdapter>),
+     ) {
+-        let Some(self_) = self_weak.upgrade() else { return };
++        let Some(self_) = self_weak.upgrade() else {
++            return;
++        };
+         let winit_window_or_none = self_.winit_window_or_none.borrow();
+         match &*winit_window_or_none {
+-            WinitWindowOrNone::HasWindow { accesskit_adapter, .. } => callback(accesskit_adapter),
++            WinitWindowOrNone::HasWindow {
++                accesskit_adapter, ..
++            } => callback(accesskit_adapter),
+             WinitWindowOrNone::None(..) => {}
+         }
+     }
+@@ -1209,12 +1299,13 @@ impl WinitWindowAdapter {
+     #[cfg(target_os = "macos")]
+     fn setup_macos_color_observer(&self) {
+         let self_weak = self.self_weak.clone();
+-        let block =
+-            block2::RcBlock::new(move |_: core::ptr::NonNull<objc2_foundation::NSNotification>| {
++        let block = block2::RcBlock::new(
++            move |_: core::ptr::NonNull<objc2_foundation::NSNotification>| {
+                 if let Some(adapter) = self_weak.upgrade() {
+                     adapter.update_accent_color();
+                 }
+-            });
++            },
++        );
+         let observer = unsafe {
+             objc2_foundation::NSNotificationCenter::defaultCenter()
+                 .addObserverForName_object_queue_usingBlock(
+@@ -1302,7 +1393,15 @@ impl WinitWindowAdapter {
+         match event {
+             WinitWindowEvent::RedrawRequested => self.draw()?,
+             WinitWindowEvent::Resized(size) => {
++                let layout_start = crate::software_diagnostics::frame_start();
+                 let resized = self.resize_event(size);
++                crate::software_diagnostics::record_event(
++                    winit_window.id().into(),
++                    "resized",
++                    size.width as i64,
++                    size.height as i64,
++                    layout_start.map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0),
++                );
+ 
+                 // Entering fullscreen, maximizing or minimizing the window will
+                 // trigger a resize event. We need to update the internal window
+@@ -1311,6 +1410,18 @@ impl WinitWindowAdapter {
+                 // See: https://github.com/rust-windowing/winit/issues/2334
+                 self.window_state_event();
+ 
++                // A resize event is also how Winit announces a transition to
++                // maximized/fullscreen state. Clear an edge direction cached
++                // while the window was still normal immediately, rather than
++                // waiting for another cursor-move event before restoring the
++                // default pointer and normal pointer dispatch.
++                if self.current_resize_direction.get().is_some()
++                    && (winit_window.is_maximized() || winit_window.fullscreen().is_some())
++                {
++                    self.current_resize_direction.set(None);
++                    winit_window.set_cursor(winit::window::CursorIcon::Default);
++                }
++
+                 // Some platforms (e.g., Windows) may not emit an Occluded event when minimized,
+                 // so manually mark the window as occluded if its size is zero.
+                 #[cfg(target_os = "windows")]
+@@ -1322,6 +1433,28 @@ impl WinitWindowAdapter {
+ 
+                 resized?;
+             }
++            // Win7/GDI can discard portions of a software surface while a
++            // native window is dragged across another window. Winit 0.30 does
++            // not reliably emit Occluded in that case, so invalidate the
++            // renderer's partial-repaint cache and queue a complete frame.
++            #[cfg(target_os = "windows")]
++            WinitWindowEvent::Moved(position) => {
++                let minimized = winit_window.is_minimized() == Some(true);
++                crate::software_diagnostics::record_event(
++                    winit_window.id().into(),
++                    "moved",
++                    position.x as i64,
++                    position.y as i64,
++                    0.0,
++                );
++                // Minimizing moves the window to the off-screen bookkeeping
++                // position; nothing is or will be visible, so forcing a full
++                // repaint here only wastes a frame on the transition.
++                if !minimized {
++                    self.renderer.occluded(true);
++                    self.request_redraw();
++                }
++            }
+             WinitWindowEvent::CloseRequested => {
+                 self.window()
+                     .dispatch_event_with_result(corelib::platform::WindowEvent::CloseRequested)?;
+@@ -1330,7 +1463,59 @@ impl WinitWindowAdapter {
+                 // Work around https://github.com/rust-windowing/winit/issues/4371
+                 let have_focus =
+                     if cfg!(target_os = "macos") { winit_window.has_focus() } else { have_focus };
+-                self.activation_changed(have_focus)?;
++                let activation_result = self.activation_changed(have_focus);
++
++                // A child/auxiliary Win32 window can expose or cover part of
++                // a software-rendered parent without producing an Occluded
++                // event. Its backing DIB may then report a reusable age even
++                // though GDI erased a frame edge. Repaint a complete frame on
++                // either focus transition so the lower client rule is restored
++                // without requiring a manual move or resize.
++                #[cfg(target_os = "windows")]
++                {
++                    self.renderer.occluded(true);
++
++                    if have_focus {
++                        // WM_ACTIVATE can expose the client surface before a
++                        // queued redraw is dispatched. Present the forced full
++                        // software frame in this message turn, so the custom
++                        // border never flashes transparent while regaining
++                        // focus on Win7 or newer Windows versions. Skip it when
++                        // a frame was presented just now: restoring from
++                        // minimize otherwise paints two full frames
++                        // back-to-back (the queued WM_PAINT frame plus this
++                        // one), stalling slow CPUs for tens of milliseconds.
++                        let recently_presented =
++                            self.last_presented_frame.get().is_some_and(|at| {
++                                at.elapsed() < std::time::Duration::from_millis(250)
++                            });
++                        crate::software_diagnostics::record_event(
++                            winit_window.id().into(),
++                            "focused",
++                            have_focus as i64,
++                            recently_presented as i64,
++                            0.0,
++                        );
++                        if !recently_presented {
++                            activation_result.and_then(|_| self.draw())?;
++                        } else {
++                            activation_result?;
++                        }
++                    } else {
++                        crate::software_diagnostics::record_event(
++                            winit_window.id().into(),
++                            "focused",
++                            0,
++                            0,
++                            0.0,
++                        );
++                        activation_result?;
++                        self.request_redraw();
++                    }
++                }
++
++                #[cfg(not(target_os = "windows"))]
++                activation_result?;
+             }
+ 
+             WinitWindowEvent::KeyboardInput { event, is_synthetic, .. } => {
+@@ -1509,8 +1694,8 @@ impl WinitWindowAdapter {
+                     winit::event::ElementState::Pressed => {
+                         if button == PointerEventButton::Left
+                             && self.current_resize_direction.get().is_some()
++                            && handle_resize(winit_window, self.current_resize_direction.get())
+                         {
+-                            handle_resize(winit_window, self.current_resize_direction.get());
+                             return Ok(());
+                         }
+ 
+@@ -1574,6 +1759,13 @@ impl WinitWindowAdapter {
+                 self.update_accent_color();
+             }
+             WinitWindowEvent::Occluded(occluded) => {
++                crate::software_diagnostics::record_event(
++                    winit_window.id().into(),
++                    "occluded",
++                    occluded as i64,
++                    0,
++                    0.0,
++                );
+                 self.renderer.occluded(occluded);
+ 
+                 // wgpu hands out no drawable while the window isn't visible, see
+@@ -1632,9 +1824,13 @@ impl WinitWindowAdapter {
+         }
+ 
+         self.shown.set(visibility);
+-        self.pending_resize_event_after_show.set(!matches!(visibility, WindowVisibility::Hidden));
++        self.pending_resize_event_after_show
++            .set(!matches!(visibility, WindowVisibility::Hidden));
+         self.pending_redraw.set(false);
+-        if matches!(visibility, WindowVisibility::ShownFirstTime | WindowVisibility::Shown) {
++        if matches!(
++            visibility,
++            WindowVisibility::ShownFirstTime | WindowVisibility::Shown
++        ) {
+             let recreating_window = matches!(visibility, WindowVisibility::Shown);
+ 
+             let Some(winit_window) = self.winit_window() else {
+@@ -1671,6 +1867,11 @@ impl WinitWindowAdapter {
+ 
+             if !platform_dictates_window_size()
+                 && winit_window.fullscreen().is_none()
++                // request_inner_size() restores a maximized Win32 window.
++                // Preserve an initial or existing maximized state and let the
++                // window manager keep the current client size; the preferred
++                // size remains the restore rectangle for the next unmaximize.
++                && !winit_window.is_maximized()
+                 && !self.has_explicit_size.get()
+                 && preferred_size.width > 0 as Coord
+                 && preferred_size.height > 0 as Coord
+@@ -1682,6 +1883,29 @@ impl WinitWindowAdapter {
+                 self.resize_window(size.into())?;
+             };
+ 
++            // A Slint auxiliary window obtains its native HWND only after
++            // application code has requested show(). Centering it from that
++            // earlier call races this final preferred-size request. Place a
++            // frameless window here instead: its final size is known and it
++            // has not yet been mapped to the desktop.
++            #[cfg(target_os = "windows")]
++            if matches!(visibility, WindowVisibility::ShownFirstTime)
++                && !winit_window.is_decorated()
++                && !winit_window.is_maximized()
++            {
++                // request_inner_size() reaches Win32 through SWP_ASYNCWINDOWPOS,
++                // so GetWindowRect still reports the creation size at this point.
++                // Center against the preferred size the resize above just asked
++                // for; a skipped resize leaves the current rectangle authoritative.
++                let final_size = (winit_window.fullscreen().is_none()
++                    && !self.has_explicit_size.get()
++                    && preferred_size.width > 0 as Coord
++                    && preferred_size.height > 0 as Coord
++                    && !recreating_window)
++                    .then(|| preferred_size.to_physical::<u32>(scale_factor));
++                self.center_frameless_window_before_first_show(&winit_window, final_size);
++            }
++
+             // Pre-render the first frame before mapping the window to avoid a flash of
+             // uninitialized VRAM on X11 (no background_pixmap). Skipped on Wayland, where
+             // rendering before the initial configure makes the compositor mis-size the window.
+@@ -1705,6 +1929,15 @@ impl WinitWindowAdapter {
+                 });
+             }
+ 
++            // A Winit window which was created while hidden is not guaranteed
++            // to receive a paint request when it is mapped later. This is
++            // particularly visible with the Win32 software renderer: the
++            // native frame appears, but the client area remains untouched.
++            // Always enqueue a frame after making an existing surface visible.
++            self.renderer.occluded(false);
++            self.pending_redraw.set(false);
++            self.request_redraw();
++
+             // In wasm a request_redraw() issued before show() results in a draw() even when the window
+             // isn't visible, as opposed to regular windowing systems. The compensate for the lost draw,
+             // explicitly render the first frame on show().
+@@ -1726,6 +1959,13 @@ impl WinitWindowAdapter {
+             self.context_menu.take();
+ 
+             // Wayland doesn't support hiding a window, only destroying it entirely.
++            // Hiding a Win32 window can clear the GDI-backed software surface
++            // without producing a Winit Occluded event. Mark the renderer as
++            // occluded explicitly so the next show repaints the full scene
++            // instead of reusing a now-empty damage buffer.
++            #[cfg(target_os = "windows")]
++            self.renderer.occluded(true);
++
+             if self.winit_window_or_none.borrow().as_window().is_some_and(|winit_window| {
+                 use raw_window_handle::HasWindowHandle;
+                 winit_window.window_handle().is_ok_and(|h| {
+@@ -1753,6 +1993,101 @@ impl WinitWindowAdapter {
+         }
+     }
+ 
++    /// Centers a newly-created auxiliary HWND relative to the Rcho window
++    /// that currently owns the user's input. Both rectangles come from the
++    /// same Win32 API coordinate space, avoiding the mixed-DPI `rcWork` /
++    /// `GetWindowRect` mismatch seen on Windows 7. `final_size` carries the
++    /// physical size of the pending asynchronous resize; the still-mapped
++    /// creation rectangle is only measured when no resize was requested.
++    #[cfg(target_os = "windows")]
++    fn center_frameless_window_before_first_show(
++        &self,
++        window: &winit::window::Window,
++        final_size: Option<winit::dpi::PhysicalSize<u32>>,
++    ) {
++        use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
++        use std::ffi::c_void;
++        use windows::Win32::Foundation::{HWND, RECT};
++        use windows::Win32::UI::WindowsAndMessaging::{
++            GetForegroundWindow, GetWindowRect, SetWindowPos, SWP_NOACTIVATE, SWP_NOSIZE,
++            SWP_NOZORDER,
++        };
++
++        fn hwnd(window: &winit::window::Window) -> Option<HWND> {
++            let RawWindowHandle::Win32(handle) = window.window_handle().ok()?.as_raw() else {
++                return None;
++            };
++            Some(HWND(handle.hwnd.get() as *mut c_void))
++        }
++
++        fn rect(hwnd: HWND) -> Option<RECT> {
++            let mut rect = RECT::default();
++            unsafe { GetWindowRect(hwnd, &mut rect).ok()? };
++            (rect.right > rect.left && rect.bottom > rect.top).then_some(rect)
++        }
++
++        let Some(auxiliary_hwnd) = hwnd(window) else {
++            return;
++        };
++        let (width, height) = match final_size {
++            // A frameless window has no non-client frame, so the physical
++            // inner size is also its final outer rectangle.
++            Some(size) => (size.width as i32, size.height as i32),
++            None => {
++                let Some(auxiliary_rect) = rect(auxiliary_hwnd) else {
++                    return;
++                };
++                (
++                    auxiliary_rect.right - auxiliary_rect.left,
++                    auxiliary_rect.bottom - auxiliary_rect.top,
++                )
++            }
++        };
++        let foreground = unsafe { GetForegroundWindow() };
++        let windows = self.shared_backend_data.active_windows.borrow();
++        let reference_rect = windows
++            .values()
++            .filter_map(|candidate| candidate.upgrade())
++            .filter_map(|candidate| candidate.winit_window())
++            .filter(|candidate| candidate.id() != window.id())
++            .find_map(|candidate| {
++                let candidate_hwnd = hwnd(&candidate)?;
++                (candidate_hwnd == foreground).then(|| rect(candidate_hwnd))?
++            })
++            // Focus can change during the click turn. The workbench is
++            // maximized and Winit already constrains it to rcWork, so it is a
++            // stable fallback reference without querying virtualized monitor
++            // coordinates again.
++            .or_else(|| {
++                windows
++                    .values()
++                    .filter_map(|candidate| candidate.upgrade())
++                    .filter_map(|candidate| candidate.winit_window())
++                    .filter(|candidate| {
++                        candidate.id() != window.id() && candidate.is_maximized()
++                    })
++                    .find_map(|candidate| hwnd(&candidate).and_then(rect))
++            });
++        drop(windows);
++
++        let Some(reference_rect) = reference_rect else {
++            return;
++        };
++        let x = reference_rect.left + (reference_rect.right - reference_rect.left - width) / 2;
++        let y = reference_rect.top + (reference_rect.bottom - reference_rect.top - height) / 2;
++        unsafe {
++            let _ = SetWindowPos(
++                auxiliary_hwnd,
++                None,
++                x,
++                y,
++                0,
++                0,
++                SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE,
++            );
++        }
++    }
++
+     pub(crate) fn visibility(&self) -> WindowVisibility {
+         self.shown.get()
+     }
+@@ -1767,15 +2102,25 @@ impl WinitWindowAdapter {
+         std::future::poll_fn(move |context| {
+             let Some(self_) = self_weak.upgrade() else {
+                 return std::task::Poll::Ready(Err(
+-                    "Unable to obtain winit window from destroyed window".to_string().into(),
++                    "Unable to obtain winit window from destroyed window"
++                        .to_string()
++                        .into(),
+                 ));
+             };
+             match self_.winit_window() {
+                 Some(window) => std::task::Poll::Ready(Ok(window)),
+                 None => {
+                     let waker = context.waker();
+-                    if !self_.window_existence_wakers.borrow().iter().any(|w| w.will_wake(waker)) {
+-                        self_.window_existence_wakers.borrow_mut().push(waker.clone());
++                    if !self_
++                        .window_existence_wakers
++                        .borrow()
++                        .iter()
++                        .any(|w| w.will_wake(waker))
++                    {
++                        self_
++                            .window_existence_wakers
++                            .borrow_mut()
++                            .push(waker.clone());
+                     }
+                     std::task::Poll::Pending
+                 }
+@@ -1805,9 +2150,10 @@ impl WindowAdapter for WinitWindowAdapter {
+     fn position(&self) -> Option<corelib::api::PhysicalPosition> {
+         match &*self.winit_window_or_none.borrow() {
+             WinitWindowOrNone::HasWindow { window, .. } => match window.outer_position() {
+-                Ok(outer_position) => {
+-                    Some(corelib::api::PhysicalPosition::new(outer_position.x, outer_position.y))
+-                }
++                Ok(outer_position) => Some(corelib::api::PhysicalPosition::new(
++                    outer_position.x,
++                    outer_position.y,
++                )),
+                 Err(_) => None,
+             },
+             WinitWindowOrNone::None(attributes) => {
+@@ -1852,8 +2198,11 @@ impl WindowAdapter for WinitWindowAdapter {
+ 
+     fn request_redraw(&self) {
+         if !self.pending_redraw.replace(true)
+-            && let WinitWindowOrNone::HasWindow { window, frame_throttle, .. } =
+-                &*self.winit_window_or_none.borrow()
++            && let WinitWindowOrNone::HasWindow {
++                window,
++                frame_throttle,
++                ..
++            } = &*self.winit_window_or_none.borrow()
+         {
+             frame_throttle.request_throttled_redraw(window);
+         }
+@@ -1925,6 +2274,8 @@ impl WindowAdapter for WinitWindowAdapter {
+             }
+         }
+ 
++        let requested_maximized = properties.is_maximized();
++
+         // Adjust the size of the window to the value of the width and height property (if these property are changed from .slint).
+         // But not if there is a pending resize in flight as that resize will reset these properties back
+         if ((existing_size.width - width).abs() > 1. || (existing_size.height - height).abs() > 1.)
+@@ -1938,7 +2289,13 @@ impl WindowAdapter for WinitWindowAdapter {
+             // If we're in fullscreen state, don't try to resize the window but maintain the surface
+             // size we've been assigned to from the windowing system. Weston/Wayland don't like it
+             // when we create a surface that's bigger than the screen due to constraints (#532).
+-            if winit_window_or_none.fullscreen().is_none() {
++            // On Win32, request_inner_size() restores a maximized HWND before
++            // applying the requested client size. Slint's first preferred-size
++            // pass could therefore undo an initial maximized state while the
++            // Window.maximized property remained true. Preserve the native
++            // restore rectangle and let the window manager own the size while
++            // maximized, just as we already do for fullscreen windows.
++            if winit_window_or_none.fullscreen().is_none() && !requested_maximized {
+                 // TODO: don't ignore error, propagate to caller
+                 let immediately_resized = self
+                     .resize_window(winit::dpi::LogicalSize::new(width, height).into())
+@@ -1973,7 +2330,7 @@ impl WindowAdapter for WinitWindowAdapter {
+             self.fullscreen.set(m);
+         }
+ 
+-        let m = properties.is_maximized();
++        let m = requested_maximized;
+         if m != self.maximized.get() {
+             self.maximized.set(m);
+             winit_window_or_none.set_maximized(m);
+@@ -2005,11 +2362,15 @@ impl WindowAdapter for WinitWindowAdapter {
+         winit_window_or_none.set_resizable(resizable);
+         // Important: Filter out (temporary?) zero width/heights, to avoid attempting to create a zero surface. For example, with wayland
+         // the client-side rendering ends up passing a zero width/height to the renderer.
+-        let winit_min_inner =
+-            new_constraints.min.map(logical_size_to_winit).map(filter_out_zero_width_or_height);
++        let winit_min_inner = new_constraints
++            .min
++            .map(logical_size_to_winit)
++            .map(filter_out_zero_width_or_height);
+         winit_window_or_none.set_min_inner_size(winit_min_inner, sf as f64);
+-        let winit_max_inner =
+-            new_constraints.max.map(logical_size_to_winit).map(filter_out_zero_width_or_height);
++        let winit_max_inner = new_constraints
++            .max
++            .map(logical_size_to_winit)
++            .map(filter_out_zero_width_or_height);
+         winit_window_or_none.set_max_inner_size(winit_max_inner, sf as f64);
+ 
+         if !platform_dictates_window_size() {
+@@ -2018,8 +2379,9 @@ impl WindowAdapter for WinitWindowAdapter {
+ 
+         // Auto-resize to the preferred size if users (SlintPad) requests it
+         #[cfg(target_arch = "wasm32")]
+-        if let Some(canvas) =
+-            winit_window_or_none.as_window().and_then(|winit_window| winit_window.canvas())
++        if let Some(canvas) = winit_window_or_none
++            .as_window()
++            .and_then(|winit_window| winit_window.canvas())
+         {
+             if is_preferred_sized_canvas(&canvas) {
+                 let pref = new_constraints.preferred;
+@@ -2147,8 +2509,9 @@ impl WindowAdapterInternal for WinitWindowAdapter {
+         match request {
+             corelib::window::InputMethodRequest::Enable(..) => {
+                 let mut vkh = self.virtual_keyboard_helper.borrow_mut();
+-                let Some(canvas) =
+-                    self.winit_window().and_then(|winit_window| winit_window.canvas())
++                let Some(canvas) = self
++                    .winit_window()
++                    .and_then(|winit_window| winit_window.canvas())
+                 else {
+                     return;
+                 };
+@@ -2202,8 +2565,10 @@ impl WindowAdapterInternal for WinitWindowAdapter {
+         // Set before showing: on Windows the activation event can arrive before this returns.
+         self.context_menu.replace(Some(context_menu_item));
+ 
+-        if let WinitWindowOrNone::HasWindow { context_menu_muda_adapter, .. } =
+-            &*self.winit_window_or_none.borrow()
++        if let WinitWindowOrNone::HasWindow {
++            context_menu_muda_adapter,
++            ..
++        } = &*self.winit_window_or_none.borrow()
+         {
+             // On Windows, we must destroy the muda menu before re-creating a new one
+             drop(context_menu_muda_adapter.borrow_mut().take());
+@@ -2246,7 +2611,9 @@ impl WindowAdapterInternal for WinitWindowAdapter {
+         component: ItemTreeRef,
+         _: &mut dyn Iterator<Item = core::pin::Pin<ItemRef<'_>>>,
+     ) {
+-        let Some(accesskit_adapter_cell) = self.accesskit_adapter() else { return };
++        let Some(accesskit_adapter_cell) = self.accesskit_adapter() else {
++            return;
++        };
+         if let Ok(mut a) = accesskit_adapter_cell.try_borrow_mut() {
+             a.unregister_item_tree(component);
+         };
+@@ -2310,7 +2677,10 @@ impl WindowAdapterInternal for WinitWindowAdapter {
+ impl Drop for WinitWindowAdapter {
+     fn drop(&mut self) {
+         self.shared_backend_data.unregister_window(
+-            self.winit_window_or_none.borrow().as_window().map(|winit_window| winit_window.id()),
++            self.winit_window_or_none
++                .borrow()
++                .as_window()
++                .map(|winit_window| winit_window.id()),
+         );
+ 
+         #[cfg(target_os = "macos")]
+@@ -2405,8 +2775,14 @@ fn is_preferred_sized_canvas(canvas: &web_sys::HtmlCanvasElement) -> bool {
+ #[cfg(target_family = "wasm")]
+ fn canvas_has_explicit_size_set(canvas: &web_sys::HtmlCanvasElement) -> bool {
+     let style = canvas.style();
+-    if !style.get_property_value("width").unwrap_or_default().is_empty()
+-        || !style.get_property_value("height").unwrap_or_default().is_empty()
++    if !style
++        .get_property_value("width")
++        .unwrap_or_default()
++        .is_empty()
++        || !style
++            .get_property_value("height")
++            .unwrap_or_default()
++            .is_empty()
+     {
+         return true;
+     }

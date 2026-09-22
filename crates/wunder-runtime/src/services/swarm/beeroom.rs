@@ -3,8 +3,8 @@ use crate::services::user_store::{
     build_default_agent_record_from_storage, list_user_agents_by_hive_with_default,
 };
 use crate::storage::{
-    normalize_hive_id, AgentThreadRecord, ChatSessionRecord, SessionRunRecord, StorageBackend,
-    TeamRunRecord, TeamTaskRecord, UserAgentRecord, DEFAULT_HIVE_ID,
+    normalize_hive_id, ChatSessionRecord, SessionRunRecord, StorageBackend, TeamRunRecord,
+    TeamTaskRecord, UserAgentRecord, DEFAULT_HIVE_ID,
 };
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,14 @@ use uuid::Uuid;
 
 const BEE_ROOM_MOTHER_META_PREFIX: &str = "beeroom:mother:";
 const BEE_ROOM_MOTHER_SESSION_META_PREFIX: &str = "beeroom:mother-session:";
+
+fn now_ts() -> f64 {
+    chrono::Utc::now().timestamp_millis() as f64 / 1000.0
+}
+
+fn is_default_agent_alias(agent_id: &str) -> bool {
+    matches!(agent_id.trim(), "__default__" | "default")
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MotherSessionBinding {
@@ -182,31 +190,6 @@ fn bind_hive_mother_session(
     Ok(())
 }
 
-fn session_is_bound_to_another_hive(
-    storage: &dyn StorageBackend,
-    user_id: &str,
-    hive_id: &str,
-    agent_id: &str,
-    session_id: &str,
-) -> Result<bool> {
-    let current_key = mother_session_meta_key(user_id, hive_id);
-    let prefix = format!("{BEE_ROOM_MOTHER_SESSION_META_PREFIX}{}:", user_id.trim());
-    for (key, raw) in storage.list_meta_prefix(&prefix)? {
-        if key == current_key {
-            continue;
-        }
-        let Ok(binding) = serde_json::from_str::<MotherSessionBinding>(&raw) else {
-            continue;
-        };
-        if binding.agent_id.trim() == agent_id.trim()
-            && binding.session_id.trim() == session_id.trim()
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 pub fn resolve_or_create_hive_mother_session(
     storage: &dyn StorageBackend,
     user_id: &str,
@@ -223,35 +206,6 @@ pub fn resolve_or_create_hive_mother_session(
         &normalized_hive_id,
         &mother_agent.agent_id,
     )?;
-
-    // A manually selected/newly created main thread is the user's explicit
-    // continuation target. Adopt it for this hive unless another hive already
-    // owns that dedicated mother session.
-    if let Some(main_session) =
-        resolve_agent_main_session(storage, user_id, &mother_agent.agent_id)?
-    {
-        let differs_from_binding = bound_session
-            .as_ref()
-            .is_none_or(|bound| bound.session_id != main_session.session_id);
-        if differs_from_binding
-            && !session_is_bound_to_another_hive(
-                storage,
-                user_id,
-                &normalized_hive_id,
-                &mother_agent.agent_id,
-                &main_session.session_id,
-            )?
-        {
-            bind_hive_mother_session(
-                storage,
-                user_id,
-                &normalized_hive_id,
-                &mother_agent.agent_id,
-                &main_session.session_id,
-            )?;
-            return Ok((main_session, false));
-        }
-    }
 
     if let Some(record) = bound_session {
         return Ok((record, false));
@@ -425,98 +379,6 @@ pub fn set_mother_agent(
     });
     storage.set_meta(&key, &payload.to_string())?;
     Ok(candidate.to_string())
-}
-
-pub fn resolve_agent_main_session(
-    storage: &dyn StorageBackend,
-    user_id: &str,
-    agent_id: &str,
-) -> Result<Option<ChatSessionRecord>> {
-    let cleaned_user = user_id.trim();
-    let cleaned_agent = agent_id.trim();
-    if cleaned_user.is_empty() || cleaned_agent.is_empty() {
-        return Ok(None);
-    }
-    let thread_agent_id = if is_default_agent_alias(cleaned_agent) {
-        ""
-    } else {
-        cleaned_agent
-    };
-
-    let existing_thread = storage.get_agent_thread(cleaned_user, thread_agent_id)?;
-    if let Some(session_id) = existing_thread
-        .as_ref()
-        .map(|record| record.session_id.trim())
-        .filter(|value| !value.is_empty())
-    {
-        if let Some(record) = storage.get_chat_session(cleaned_user, session_id)? {
-            let record_agent_id = record.agent_id.as_deref().map(str::trim).unwrap_or("");
-            if (is_default_agent_alias(cleaned_agent) && record_agent_id.is_empty())
-                || record_agent_id == cleaned_agent
-            {
-                return Ok(Some(record));
-            }
-        }
-    }
-    // Do not silently promote an arbitrary historical session as the main thread.
-    // If the explicit binding is missing or stale, callers should create a fresh
-    // main thread through `resolve_or_create_agent_main_session`.
-    Ok(None)
-}
-
-pub fn resolve_or_create_agent_main_session(
-    storage: &dyn StorageBackend,
-    user_id: &str,
-    agent: &UserAgentRecord,
-) -> Result<(ChatSessionRecord, bool)> {
-    if let Some(record) = resolve_agent_main_session(storage, user_id, &agent.agent_id)? {
-        return Ok((record, false));
-    }
-
-    let cleaned_user = user_id.trim();
-    let cleaned_agent = agent.agent_id.trim();
-    if cleaned_user.is_empty() || cleaned_agent.is_empty() {
-        return Err(anyhow!("user_id or agent_id is empty"));
-    }
-
-    let now = now_ts();
-    let session_id = format!("sess_{}", Uuid::new_v4().simple());
-    let title = agent
-        .name
-        .trim()
-        .strip_prefix('@')
-        .unwrap_or(agent.name.trim())
-        .trim()
-        .to_string();
-    let record = ChatSessionRecord {
-        session_id: session_id.clone(),
-        user_id: cleaned_user.to_string(),
-        title: if title.is_empty() {
-            cleaned_agent.to_string()
-        } else {
-            title
-        },
-        status: "active".to_string(),
-        created_at: now,
-        updated_at: now,
-        last_message_at: now,
-        agent_id: Some(cleaned_agent.to_string()),
-        tool_overrides: Vec::new(),
-        parent_session_id: None,
-        parent_message_id: None,
-        spawn_label: None,
-        spawned_by: None,
-    };
-    storage.upsert_chat_session(&record)?;
-    let existing_thread = storage.get_agent_thread(cleaned_user, cleaned_agent)?;
-    bind_agent_main_thread(
-        storage,
-        cleaned_user,
-        cleaned_agent,
-        &session_id,
-        existing_thread,
-    )?;
-    Ok((record, true))
 }
 
 pub fn collect_agent_activity(
@@ -783,200 +645,16 @@ fn is_terminal_status(status: &str) -> bool {
     )
 }
 
-fn bind_agent_main_thread(
-    storage: &dyn StorageBackend,
-    user_id: &str,
-    agent_id: &str,
-    session_id: &str,
-    existing: Option<AgentThreadRecord>,
-) -> Result<()> {
-    let now = now_ts();
-    let (created_at, status) = if let Some(record) = existing {
-        let next_status = if record.status.trim().is_empty() {
-            "idle".to_string()
-        } else {
-            record.status
-        };
-        (record.created_at, next_status)
-    } else {
-        (now, "idle".to_string())
-    };
-    let record = AgentThreadRecord {
-        thread_id: format!("thread_{session_id}"),
-        user_id: user_id.to_string(),
-        agent_id: agent_id.to_string(),
-        session_id: session_id.to_string(),
-        status,
-        created_at,
-        updated_at: now,
-    };
-    storage.upsert_agent_thread(&record)?;
-    Ok(())
-}
-
-fn now_ts() -> f64 {
-    chrono::Utc::now().timestamp_millis() as f64 / 1000.0
-}
-
-fn is_default_agent_alias(agent_id: &str) -> bool {
-    let cleaned = agent_id.trim();
-    cleaned.eq_ignore_ascii_case("__default__") || cleaned.eq_ignore_ascii_case("default")
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        bind_agent_main_thread, build_swarm_dispatch_message, resolve_agent_main_session,
-        resolve_or_create_agent_main_session, resolve_or_create_hive_mother_session,
-        resolve_swarm_hive_id, set_mother_agent,
+        build_swarm_dispatch_message, resolve_or_create_hive_mother_session, resolve_swarm_hive_id,
+        set_mother_agent,
     };
     use crate::storage::*;
     use serde_json::Value;
     use std::sync::Arc;
     use tempfile::tempdir;
-
-    #[test]
-    fn resolve_agent_main_session_requires_explicit_main_thread_binding() {
-        let dir = tempdir().expect("tempdir");
-        let db_path = dir.path().join("beeroom-main-thread.db");
-        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
-
-        let session = ChatSessionRecord {
-            session_id: "sess_existing".to_string(),
-            user_id: "alice".to_string(),
-            title: "Intel".to_string(),
-            status: "active".to_string(),
-            created_at: 10.0,
-            updated_at: 12.0,
-            last_message_at: 12.0,
-            agent_id: Some("agent-intel".to_string()),
-            tool_overrides: Vec::new(),
-            parent_session_id: None,
-            parent_message_id: None,
-            spawn_label: None,
-            spawned_by: None,
-        };
-        storage
-            .upsert_chat_session(&session)
-            .expect("upsert chat session");
-
-        let resolved = resolve_agent_main_session(storage.as_ref(), "alice", "agent-intel")
-            .expect("resolve main session");
-
-        assert!(resolved.is_none());
-        assert!(storage
-            .get_agent_thread("alice", "agent-intel")
-            .expect("get agent thread")
-            .is_none());
-    }
-
-    #[test]
-    fn resolve_or_create_agent_main_session_does_not_promote_arbitrary_existing_session() {
-        let dir = tempdir().expect("tempdir");
-        let db_path = dir.path().join("beeroom-create-main-thread-fresh.db");
-        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
-
-        let old_session = ChatSessionRecord {
-            session_id: "sess_old".to_string(),
-            user_id: "alice".to_string(),
-            title: "Legacy".to_string(),
-            status: "active".to_string(),
-            created_at: 5.0,
-            updated_at: 8.0,
-            last_message_at: 8.0,
-            agent_id: Some("agent-ops".to_string()),
-            tool_overrides: Vec::new(),
-            parent_session_id: None,
-            parent_message_id: None,
-            spawn_label: None,
-            spawned_by: None,
-        };
-        storage
-            .upsert_chat_session(&old_session)
-            .expect("upsert old chat session");
-
-        let agent = UserAgentRecord {
-            agent_id: "agent-ops".to_string(),
-            user_id: "alice".to_string(),
-            hive_id: DEFAULT_HIVE_ID.to_string(),
-            name: "Ops Analyst".to_string(),
-            description: String::new(),
-            system_prompt: String::new(),
-            preview_skill: false,
-            model_name: None,
-            ability_items: Vec::new(),
-            tool_names: Vec::new(),
-            declared_tool_names: Vec::new(),
-            declared_skill_names: Vec::new(),
-            visible_unit_ids: Vec::new(),
-            preset_questions: Vec::new(),
-            access_level: "A".to_string(),
-            approval_mode: "full_auto".to_string(),
-            is_shared: false,
-            status: "active".to_string(),
-            icon: None,
-            sandbox_container_id: 0,
-            created_at: 1.0,
-            updated_at: 1.0,
-            preset_binding: None,
-            silent: false,
-            prefer_mother: false,
-        };
-
-        let (session, created) =
-            resolve_or_create_agent_main_session(storage.as_ref(), "alice", &agent)
-                .expect("resolve or create main session");
-
-        assert!(created);
-        assert_ne!(session.session_id, old_session.session_id);
-    }
-
-    #[test]
-    fn resolve_or_create_agent_main_session_creates_and_binds_when_missing() {
-        let dir = tempdir().expect("tempdir");
-        let db_path = dir.path().join("beeroom-create-main-thread.db");
-        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
-
-        let agent = UserAgentRecord {
-            agent_id: "agent-ops".to_string(),
-            user_id: "alice".to_string(),
-            hive_id: DEFAULT_HIVE_ID.to_string(),
-            name: "Ops Analyst".to_string(),
-            description: String::new(),
-            system_prompt: String::new(),
-            preview_skill: false,
-            model_name: None,
-            ability_items: Vec::new(),
-            tool_names: Vec::new(),
-            declared_tool_names: Vec::new(),
-            declared_skill_names: Vec::new(),
-            visible_unit_ids: Vec::new(),
-            preset_questions: Vec::new(),
-            access_level: "A".to_string(),
-            approval_mode: "full_auto".to_string(),
-            is_shared: false,
-            status: "active".to_string(),
-            icon: None,
-            sandbox_container_id: 0,
-            created_at: 1.0,
-            updated_at: 1.0,
-            preset_binding: None,
-            silent: false,
-            prefer_mother: false,
-        };
-
-        let (session, created) =
-            resolve_or_create_agent_main_session(storage.as_ref(), "alice", &agent)
-                .expect("resolve or create main session");
-        let thread = storage
-            .get_agent_thread("alice", "agent-ops")
-            .expect("get agent thread")
-            .expect("thread record");
-
-        assert!(created);
-        assert_eq!(thread.session_id, session.session_id);
-        assert_eq!(session.agent_id.as_deref(), Some("agent-ops"));
-    }
 
     #[test]
     fn hive_mother_sessions_are_stable_and_isolated_by_hive() {
@@ -1041,86 +719,6 @@ mod tests {
     }
 
     #[test]
-    fn hive_mother_session_adopts_a_fresh_explicit_main_thread() {
-        let dir = tempdir().expect("tempdir");
-        let db_path = dir.path().join("beeroom-hive-adopt-main.db");
-        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
-        let agent = UserAgentRecord {
-            agent_id: "agent-mother".to_string(),
-            user_id: "user-a".to_string(),
-            hive_id: "hive-a".to_string(),
-            name: "Agent".to_string(),
-            description: String::new(),
-            system_prompt: String::new(),
-            preview_skill: false,
-            model_name: None,
-            ability_items: Vec::new(),
-            tool_names: Vec::new(),
-            declared_tool_names: Vec::new(),
-            declared_skill_names: Vec::new(),
-            visible_unit_ids: Vec::new(),
-            preset_questions: Vec::new(),
-            access_level: "A".to_string(),
-            approval_mode: "full_auto".to_string(),
-            is_shared: false,
-            status: "active".to_string(),
-            icon: None,
-            sandbox_container_id: 0,
-            created_at: 1.0,
-            updated_at: 1.0,
-            preset_binding: None,
-            silent: false,
-            prefer_mother: true,
-        };
-        let (old_session, _) =
-            resolve_or_create_hive_mother_session(storage.as_ref(), "user-a", "hive-a", &agent)
-                .expect("create old hive session");
-        let fresh_session = ChatSessionRecord {
-            session_id: "sess-fresh".to_string(),
-            user_id: "user-a".to_string(),
-            title: "Fresh".to_string(),
-            status: "active".to_string(),
-            created_at: 2.0,
-            updated_at: 2.0,
-            last_message_at: 2.0,
-            agent_id: Some(agent.agent_id.clone()),
-            tool_overrides: Vec::new(),
-            parent_session_id: None,
-            parent_message_id: None,
-            spawn_label: None,
-            spawned_by: None,
-        };
-        storage
-            .upsert_chat_session(&fresh_session)
-            .expect("upsert fresh session");
-        bind_agent_main_thread(
-            storage.as_ref(),
-            "user-a",
-            &agent.agent_id,
-            &fresh_session.session_id,
-            None,
-        )
-        .expect("bind fresh main thread");
-
-        let (resolved, created) =
-            resolve_or_create_hive_mother_session(storage.as_ref(), "user-a", "hive-a", &agent)
-                .expect("adopt fresh main thread");
-        let rebound = super::resolve_bound_hive_mother_session(
-            storage.as_ref(),
-            "user-a",
-            "hive-a",
-            &agent.agent_id,
-        )
-        .expect("resolve rebound session")
-        .expect("rebound session");
-
-        assert!(!created);
-        assert_ne!(resolved.session_id, old_session.session_id);
-        assert_eq!(resolved.session_id, fresh_session.session_id);
-        assert_eq!(rebound.session_id, fresh_session.session_id);
-    }
-
-    #[test]
     fn hive_mother_session_does_not_adopt_another_hives_binding() {
         let dir = tempdir().expect("tempdir");
         let db_path = dir.path().join("beeroom-hive-binding-isolation.db");
@@ -1160,14 +758,6 @@ mod tests {
             &first_agent,
         )
         .expect("create first hive session");
-        bind_agent_main_thread(
-            storage.as_ref(),
-            "user-a",
-            &first_agent.agent_id,
-            &first.session_id,
-            None,
-        )
-        .expect("bind first hive main thread");
 
         let (second, second_created) = resolve_or_create_hive_mother_session(
             storage.as_ref(),

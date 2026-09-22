@@ -72,7 +72,7 @@ use support::{
 
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 const DEFAULT_SESSION_TITLE: &str = "Channel Session";
-const SESSION_STRATEGY_MAIN_THREAD: &str = "main_thread";
+const SESSION_STRATEGY_TASK_THREAD: &str = "task_thread";
 const SESSION_STRATEGY_PER_PEER: &str = "per_peer";
 const SESSION_STRATEGY_HYBRID: &str = "hybrid";
 const CHANNEL_MESSAGE_DEDUPE_TTL_S: f64 = 120.0;
@@ -100,7 +100,7 @@ struct ChannelApprovalContext {
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum ChannelSessionStrategy {
-    MainThread,
+    TaskThread,
     PerPeer,
     Hybrid,
 }
@@ -114,8 +114,8 @@ impl ChannelSessionStrategy {
         match raw.trim().to_ascii_lowercase().as_str() {
             SESSION_STRATEGY_PER_PEER => Self::PerPeer,
             SESSION_STRATEGY_HYBRID => Self::Hybrid,
-            SESSION_STRATEGY_MAIN_THREAD => Self::MainThread,
-            _ => Self::MainThread,
+            SESSION_STRATEGY_TASK_THREAD => Self::TaskThread,
+            _ => Self::TaskThread,
         }
     }
 }
@@ -616,7 +616,7 @@ impl ChannelHub {
             .trim()
             .eq_ignore_ascii_case(feishu::FEISHU_CHANNEL)
         {
-            session_strategy = ChannelSessionStrategy::MainThread;
+            session_strategy = ChannelSessionStrategy::TaskThread;
         }
         if bound_user_id.is_none() {
             bound_user_id = bridge_resolution
@@ -1267,7 +1267,7 @@ impl ChannelHub {
         tool_overrides: &[String],
         tts_enabled: Option<bool>,
         tts_voice: Option<&str>,
-        session_strategy: ChannelSessionStrategy,
+        _session_strategy: ChannelSessionStrategy,
         bound_user_id: Option<String>,
         session_metadata: Option<Value>,
     ) -> Result<ChannelSessionInfo> {
@@ -1323,26 +1323,16 @@ impl ChannelHub {
         } else {
             Some(cleaned_agent.to_string())
         };
-        let use_main_thread = matches!(session_strategy, ChannelSessionStrategy::MainThread)
-            || (matches!(session_strategy, ChannelSessionStrategy::Hybrid)
-                && is_direct_peer(&peer_kind));
-        let session_id = if use_main_thread {
-            if let Some(existing_main) = self
-                .thread_runtime
-                .resolve_main_session_id(&user_id, cleaned_agent)
-                .await?
-            {
-                existing_main
-            } else {
-                self.thread_runtime
-                    .resolve_or_create_main_session_id(&user_id, cleaned_agent)
-                    .await?
-            }
-        } else if let Some(record) = existing.as_ref() {
-            record.session_id.clone()
-        } else {
-            format!("sess_{}", Uuid::new_v4().simple())
-        };
+        // External conversations own their routing binding independently of other agent tasks.
+        let new_thread = message
+            .text
+            .as_deref()
+            .is_some_and(|text| text.trim() == "/new");
+        let session_id = existing
+            .as_ref()
+            .filter(|_| !new_thread)
+            .map(|record| record.session_id.clone())
+            .unwrap_or_else(|| format!("sess_{}", Uuid::new_v4().simple()));
 
         let existing_chat = self.get_chat_session(&user_id, &session_id).await?;
         let mut title = message
@@ -1355,7 +1345,7 @@ impl ChannelHub {
         let mut resolved_tool_overrides = tool_overrides.to_vec();
         let mut created_at = existing.as_ref().map(|r| r.created_at).unwrap_or(now);
         if let Some(chat_record) = existing_chat.as_ref() {
-            if use_main_thread {
+            {
                 if !chat_record.title.trim().is_empty() {
                     title = chat_record.title.clone();
                 }
@@ -1394,44 +1384,6 @@ impl ChannelHub {
             spawned_by: None,
         };
         self.save_chat_session(&chat_record).await?;
-        if !use_main_thread {
-            if let Some(agent_key) = agent_value
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                match self
-                    .thread_runtime
-                    .resolve_main_session_id(&user_id, agent_key)
-                    .await
-                {
-                    Ok(Some(_)) => {}
-                    Ok(None) => {
-                        if let Err(err) = self
-                            .thread_runtime
-                            .set_main_session(
-                                &user_id,
-                                agent_key,
-                                &session_id,
-                                "channel_inbound_auto_create",
-                            )
-                            .await
-                        {
-                            warn!(
-                                "channel inbound failed to set main session: user_id={}, agent_id={}, session_id={}, error={err}",
-                                user_id, agent_key, session_id
-                            );
-                        }
-                    }
-                    Err(err) => {
-                        warn!(
-                            "channel inbound failed to resolve main session: user_id={}, agent_id={}, session_id={}, error={err}",
-                            user_id, agent_key, session_id
-                        );
-                    }
-                }
-            }
-        }
 
         let record = ChannelSessionRecord {
             channel,

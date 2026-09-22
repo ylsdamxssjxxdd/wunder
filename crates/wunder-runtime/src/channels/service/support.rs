@@ -916,7 +916,7 @@ mod tests {
                 enabled: true,
                 default_preset_agent_name_override: None,
                 identity_strategy: None,
-                thread_strategy: Some("main_thread".to_string()),
+                thread_strategy: Some("task_thread".to_string()),
                 reply_strategy: Some("reply_only".to_string()),
                 fallback_policy: "forbid_owner_fallback".to_string(),
                 provider_caps: None,
@@ -952,7 +952,7 @@ mod tests {
                 created_at: 1.0,
                 updated_at: 1.0,
             },
-            session_strategy: "main_thread".to_string(),
+            session_strategy: "task_thread".to_string(),
         };
         let meta = build_bridge_session_metadata(&resolution);
         assert_eq!(

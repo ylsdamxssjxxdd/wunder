@@ -16,9 +16,7 @@ use crate::monitor::MonitorState;
 use crate::orchestrator_constants::truncate_tool_result_text;
 use crate::schemas::WunderRequest;
 use crate::services::subagents;
-use crate::storage::{
-    AgentThreadRecord, ChatSessionRecord, SessionRunRecord, StorageBackend, UserAgentRecord,
-};
+use crate::storage::{ChatSessionRecord, SessionRunRecord, StorageBackend, UserAgentRecord};
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -161,14 +159,6 @@ pub(crate) fn prepare_swarm_child_session(
     )?;
     let user_id = context.user_id.trim();
     if !user_id.is_empty() {
-        if let Some(ref child_agent_id) = prepared.child_agent_id {
-            bind_child_session_as_agent_main_thread(
-                context.storage.as_ref(),
-                user_id,
-                child_agent_id,
-                &prepared.child_session_id,
-            )?;
-        }
         if let Some(mut session) = context
             .storage
             .get_chat_session(user_id, &prepared.child_session_id)?
@@ -323,43 +313,6 @@ pub(crate) fn prepare_child_session(
         },
         run_metadata,
     })
-}
-
-pub(crate) fn bind_child_session_as_agent_main_thread(
-    storage: &dyn StorageBackend,
-    user_id: &str,
-    agent_id: &str,
-    child_session_id: &str,
-) -> Result<()> {
-    let cleaned_user_id = user_id.trim();
-    let cleaned_agent_id = agent_id.trim();
-    let cleaned_child_session_id = child_session_id.trim();
-    if cleaned_user_id.is_empty()
-        || cleaned_agent_id.is_empty()
-        || cleaned_child_session_id.is_empty()
-    {
-        return Ok(());
-    }
-    let now = now_ts();
-    let existing_thread = storage.get_agent_thread(cleaned_user_id, cleaned_agent_id)?;
-    let thread_record = AgentThreadRecord {
-        thread_id: format!("thread_{cleaned_child_session_id}"),
-        user_id: cleaned_user_id.to_string(),
-        agent_id: cleaned_agent_id.to_string(),
-        session_id: cleaned_child_session_id.to_string(),
-        status: existing_thread
-            .as_ref()
-            .map(|record| record.status.trim().to_string())
-            .filter(|status| !status.is_empty())
-            .unwrap_or_else(|| "idle".to_string()),
-        created_at: existing_thread
-            .as_ref()
-            .map(|record| record.created_at)
-            .unwrap_or(now),
-        updated_at: now,
-    };
-    storage.upsert_agent_thread(&thread_record)?;
-    Ok(())
 }
 
 pub(crate) fn resolve_effective_agent_model_name(

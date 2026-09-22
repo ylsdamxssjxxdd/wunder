@@ -1,0 +1,447 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+//! This pass removes the property used in a two ways bindings
+
+use crate::diagnostics::BuildDiagnostics;
+use crate::expression_tree::{BindingExpression, Expression, NamedReference, TwoWayBinding};
+use crate::langtype::Type;
+use crate::object_tree::*;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
+
+// The property in the key is to be removed, and replaced by the property in the value
+type Mapping = HashMap<NamedReference, (NamedReference, PropertySet)>;
+type PropertySet = Rc<RefCell<HashSet<NamedReference>>>;
+
+#[derive(Default, Debug)]
+struct PropertySets {
+    map: HashMap<NamedReference, Rc<RefCell<HashSet<NamedReference>>>>,
+    all_sets: Vec<PropertySet>,
+}
+
+impl PropertySets {
+    fn add_link(&mut self, p1: NamedReference, p2: NamedReference) {
+        let mut members = vec![p1.clone(), p2.clone()];
+        for p in [&p1, &p2] {
+            if let Some(s) = self.map.get(p) {
+                members.extend(s.borrow().iter().cloned());
+            }
+        }
+        let initial_component = members[0].element().borrow().enclosing_component.clone();
+        let link_is_same_component = std::rc::Weak::ptr_eq(
+            &p1.element().borrow().enclosing_component,
+            &p2.element().borrow().enclosing_component,
+        );
+        let contains_changed_handlers = members.iter().any(|property| {
+            property.element().borrow().change_callbacks.contains_key(property.name())
+        });
+        let set_is_same_component = members.iter().all(|property| {
+            std::rc::Weak::ptr_eq(
+                &initial_component,
+                &property.element().borrow().enclosing_component,
+            )
+        });
+        let link_involves_global = [&p1, &p2].iter().any(|property| {
+            property.element().borrow().enclosing_component.upgrade().unwrap().is_global()
+        });
+
+        if !link_is_same_component {
+            // We can only add a new link across components if the link involves a global and none
+            // of the involved bindings (including earlier aliases) have a changed handler.
+            let can_merge_across_components = !contains_changed_handlers && link_involves_global;
+            if !can_merge_across_components {
+                return;
+            }
+        } else {
+            // the new link is within the same component,
+            // but the previously processed aliases may already contain another component (which must be a
+            // global due to the `if` path.
+            // If that is the case, only alias if no changed handlers are involved.
+            let can_merge_within_component = !contains_changed_handlers || set_is_same_component;
+            if !can_merge_within_component {
+                return;
+            }
+        }
+
+        if let Some(s1) = self.map.get(&p1).cloned() {
+            if let Some(s2) = self.map.get(&p2).cloned() {
+                if Rc::ptr_eq(&s1, &s2) {
+                    return;
+                }
+                for x in s1.borrow().iter() {
+                    self.map.insert(x.clone(), s2.clone());
+                    s2.borrow_mut().insert(x.clone());
+                }
+                *s1.borrow_mut() = HashSet::new();
+            } else {
+                s1.borrow_mut().insert(p2.clone());
+                self.map.insert(p2, s1);
+            }
+        } else if let Some(s2) = self.map.get(&p2).cloned() {
+            s2.borrow_mut().insert(p1.clone());
+            self.map.insert(p1, s2);
+        } else {
+            let mut set = HashSet::new();
+            set.insert(p1.clone());
+            set.insert(p2.clone());
+            let set = Rc::new(RefCell::new(set));
+            self.map.insert(p1, set.clone());
+            self.map.insert(p2, set.clone());
+            self.all_sets.push(set)
+        }
+    }
+}
+
+pub fn remove_aliases(doc: &Document, diag: &mut BuildDiagnostics) {
+    // collect all sets that are linked together
+    let mut property_sets = PropertySets::default();
+
+    // Track how many distinct declarations alias into the same target
+    // target -> [aliases]
+    let mut callback_aliases: HashMap<NamedReference, Vec<NamedReference>> = HashMap::new();
+
+    let mut process_element = |e: &ElementRc| {
+        'bindings: for (name, binding) in e.borrow().real_bindings() {
+            for twb in &binding.borrow().two_way_bindings {
+                if let TwoWayBinding::Property { property, field_access } = twb {
+                    if !field_access.is_empty() {
+                        // Don't optimize two way bindings to fields for now
+                        continue;
+                    }
+                    let other_e = property.element();
+                    if name == property.name() && Rc::ptr_eq(e, &other_e) {
+                        diag.push_error(
+                            "Property cannot alias to itself".into(),
+                            &*binding.borrow(),
+                        );
+                        continue 'bindings;
+                    }
+                    let source = NamedReference::new(e, name.clone());
+                    if matches!(source.ty(), Type::Callback(..)) {
+                        let bucket = callback_aliases.entry(property.clone()).or_default();
+                        if !bucket.contains(&source) {
+                            bucket.push(source.clone());
+                        }
+                    }
+                    property_sets.add_link(source, property.clone());
+                }
+            }
+        }
+    };
+
+    doc.visit_all_used_components(|component| {
+        recurse_elem_including_sub_components(component, &(), &mut |e, &()| process_element(e))
+    });
+
+    for (target, sources) in &callback_aliases {
+        if sources.len() < 2 {
+            continue;
+        }
+        // if a callback has an implementation, the rest are alternate names for invoking it
+        let has_implementation = property_sets.map.get(target).is_some_and(|set_rc| {
+            set_rc.borrow().iter().any(|nr| {
+                let elem = nr.element();
+                let elem = elem.borrow();
+                elem.binding(nr.name())
+                    .is_some_and(|b| !matches!(b.value_expression(), Expression::Invalid))
+            })
+        });
+        if has_implementation {
+            continue;
+        }
+        for nr in sources {
+            let other_names = sources
+                .iter()
+                .filter(|other| *other != nr)
+                .map(|other| format!("'{}'", other.name()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let elem = nr.element();
+            let elem = elem.borrow();
+            if let Some(b) = elem.binding(nr.name()) {
+                // Only a warning: this compiled fine up to 1.17 and code relies on it.
+                diag.push_warning(
+                    format!(
+                        "Callback '{}' shares a handler slot with {other_names}, so only one of them can have an implementation",
+                        nr.name()
+                    ),
+                    &*b,
+                );
+            }
+        }
+    }
+
+    // The key will be removed and replaced by the named reference
+    let mut aliases_to_remove = Mapping::new();
+
+    // For each set, find a "master" property. Only reference to this master property will be kept,
+    // and only the master property will keep its binding
+    for set_rc in property_sets.all_sets {
+        let set = set_rc.borrow();
+
+        // Globals are singletons, so a callback aliased across globals must have at most
+        // one implementation. More than one handler in the set is an ambiguous conflict.
+        // (For non-global elements multiple handlers are fine: instances legitimately
+        // override a base's handler, resolved below by binding priority.)
+        let implementers: Vec<NamedReference> = set
+            .iter()
+            .filter(|nr| {
+                if !matches!(nr.ty(), Type::Callback(..)) {
+                    return false;
+                }
+                let elem = nr.element();
+                let elem = elem.borrow();
+                elem.enclosing_component.upgrade().is_some_and(|c| c.is_global())
+                    && elem
+                        .binding(nr.name())
+                        .is_some_and(|b| !matches!(b.value_expression(), Expression::Invalid))
+            })
+            .cloned()
+            .collect();
+        if implementers.len() > 1 {
+            for nr in &implementers {
+                let elem = nr.element();
+                let elem = elem.borrow();
+                if let Some(b) = elem.binding(nr.name()) {
+                    diag.push_error(
+                        format!("Callback '{}' is implemented in more than one global", nr.name()),
+                        &*b,
+                    );
+                }
+            }
+        }
+
+        let mut set_iter = set.iter();
+        if let Some(mut best) = set_iter.next().cloned() {
+            for candidate in set_iter {
+                best = best_property(best.clone(), candidate.clone());
+            }
+            let best_is_global =
+                best.element().borrow().enclosing_component.upgrade().unwrap().is_global();
+            for x in set.iter() {
+                if *x != best {
+                    // Keep a property with a `changed` handler or an animation in its own
+                    // component rather than aliasing it onto a global (a singleton it can't
+                    // reach); the replacement below leaves it two-way bound to `best`.
+                    let elem = x.element();
+                    let elem = elem.borrow();
+                    let carries_local_state = elem.change_callbacks.contains_key(x.name())
+                        || elem
+                            .binding(x.name())
+                            .is_some_and(|binding| binding.animation.is_some());
+                    if best_is_global
+                        && !elem.enclosing_component.upgrade().unwrap().is_global()
+                        && carries_local_state
+                    {
+                        continue;
+                    }
+                    aliases_to_remove.insert(x.clone(), (best.clone(), Rc::clone(&set_rc)));
+                }
+            }
+        }
+    }
+
+    doc.visit_all_used_components(|component| {
+        // Do the replacements
+        visit_all_named_references(component, &mut |nr: &mut NamedReference| {
+            if let Some((new, _set)) = aliases_to_remove.get(nr) {
+                *nr = new.clone();
+            }
+        })
+    });
+
+    // Process the removal in a deterministic order to ensure that changed callbacks
+    // are always merged in the same order.
+    let mut aliases_to_remove = aliases_to_remove.into_iter().collect::<Vec<_>>();
+    aliases_to_remove.sort_by_cached_key(|(remove, _)| {
+        (remove.element().borrow().id.clone(), remove.name().clone())
+    });
+    for (remove, (to, set)) in aliases_to_remove {
+        let elem = remove.element();
+        let to_elem = to.element();
+
+        // adjust the bindings
+        let old_binding = elem.borrow_mut().take_binding(remove.name());
+        let mut old_binding = old_binding.unwrap_or_else(|| {
+            // ensure that we set an expression, because the right hand side of a binding always wins,
+            // and if that was not set, we must still keep the default then
+            let mut b = BindingExpression::from(Expression::default_value_for_type(&to.ty()));
+            b.priority = to_elem
+                .borrow()
+                .binding(to.name())
+                .map_or(i32::MAX, |to_binding| to_binding.priority.saturating_add(1));
+            b
+        });
+
+        remove_from_binding_expression(&mut old_binding, &to);
+
+        // When the master `to` is a global, re-home two-way bindings whose target is *not* in this
+        // set onto the surviving target instead of merging them onto `to`.
+        //
+        // A two-way binding to a property outside this set only survives here because `add_link`
+        // *rejected* merging it into the set (e.g. it would have pulled a `changed` handler across
+        // into a global). The two endpoints are still meant to be linked at runtime, but the rejected
+        // target was never folded away, so we must not let `old_binding` carry that reference onto `to`
+        // via the `merge_with` below: that would leave the global singleton holding a reference to an
+        // instance element it cannot resolve ("accessing deleted parent" at runtime).
+        //
+        // Instead, re-express the link from the surviving target's side as `target <=> to`. This is
+        // only sound because `to` is a global: at runtime an element-to-global reference is resolved by
+        // a direct global lookup (`enclosing_component_instance_for_element`), so `target` can always
+        // resolve `to` regardless of where `target` lives in the tree.
+        //
+        // The reverse is *not* true, which is why this is gated on `to` being a global: when `to` is an
+        // instance, references to it are resolved by walking *up* the parent chain from the hosting
+        // element (`enclosing_component_for_element`). The normal `merge_with` keeps the binding on `to`
+        // and references `target` -- the same direction the original `remove <=> target` binding used,
+        // so it is known to resolve. Flipping it to host on `target` and reference the instance `to`
+        // would require `target`'s context to reach `to`, which is not guaranteed (e.g. `to` lives in a
+        // nested sub-component) and panics with the same "accessing deleted parent" -- as observed when
+        // this guard is dropped (e.g. the `todo` demo).
+        if to_elem.borrow().enclosing_component.upgrade().unwrap().is_global() {
+            old_binding.two_way_bindings.retain(|twb| {
+                let TwoWayBinding::Property { property, field_access } = twb else { return true };
+                if !field_access.is_empty() || set.borrow().contains(property) {
+                    // Field-access bindings aren't aliased (see above), and a target that *is* in
+                    // the set was folded into `to` already, so the normal merge below handles it.
+                    return true;
+                }
+                let target_elem = property.element();
+                let mut target_elem = target_elem.borrow_mut();
+                let mut target_binding = if let Some(b) = target_elem.binding_mut(property.name()) {
+                    // need to unwrap manually here so the borrow checker understands that
+                    // target_elem is no longer borrowed in the `else` path.
+                    b
+                } else {
+                    target_elem.set_binding(
+                        property.name().clone(),
+                        BindingExpression::new_two_way(to.clone().into()),
+                    );
+                    target_elem.binding_mut(property.name()).unwrap()
+                };
+                // let b = target_elem.binding_mut(property.name()).expect("Binding was just set");
+                if !target_binding.two_way_bindings.iter().any(|x| x.property() == Some(&to)) {
+                    target_binding.two_way_bindings.push(to.clone().into());
+                }
+                // drop from old_binding so the merge below won't carry it onto the global
+                false
+            });
+        }
+
+        let same_component = std::rc::Weak::ptr_eq(
+            &elem.borrow().enclosing_component,
+            &to_elem.borrow().enclosing_component,
+        );
+        // Globals are singletons, so a handler an aliasing global provides for another
+        // global's callback must be carried over to the master, just like within a component.
+        let both_global =
+            elem.borrow().enclosing_component.upgrade().is_some_and(|c| c.is_global())
+                && to_elem.borrow().enclosing_component.upgrade().is_some_and(|c| c.is_global());
+        {
+            let mut to_elem = to_elem.borrow_mut();
+            // use if let else here instead of match so that to_elem is no longer borrowed
+            // in the else path.
+            if let Some(mut b) = to_elem.binding_mut(to.name()) {
+                let b = &mut *b;
+                remove_from_binding_expression(b, &to);
+                if !same_component || b.priority < old_binding.priority || !b.has_binding() {
+                    b.merge_with(&old_binding);
+                } else {
+                    old_binding.merge_with(b);
+                    *b = old_binding;
+                }
+            } else {
+                if (same_component || both_global)
+                    && (old_binding.has_binding() || old_binding.animation.is_some())
+                {
+                    to_elem.set_binding(to.name().clone(), old_binding);
+                }
+            }
+        }
+
+        // Adjust the change callbacks
+        {
+            let mut elem = elem.borrow_mut();
+            if let Some(old_change_callback) = elem.change_callbacks.remove(remove.name()) {
+                drop(elem);
+                let mut old_change_callback = old_change_callback.into_inner();
+                to_elem
+                    .borrow_mut()
+                    .change_callbacks
+                    .entry(to.name().clone())
+                    .or_default()
+                    .borrow_mut()
+                    .append(&mut old_change_callback);
+            }
+        }
+
+        // Remove the declaration
+        {
+            let mut elem = elem.borrow_mut();
+            let used_externally = elem
+                .property_analysis
+                .borrow()
+                .get(remove.name())
+                .is_some_and(|v| v.is_read_externally || v.is_set_externally);
+            if let Some(d) = elem.property_declarations.get_mut(remove.name()) {
+                if d.expose_in_public_api || used_externally {
+                    d.is_alias = Some(to.clone());
+                    drop(elem);
+                    // one must mark the aliased property as settable from outside
+                    to.mark_as_set();
+                } else {
+                    elem.property_declarations.remove(remove.name());
+                    let analysis = elem.property_analysis.borrow().get(remove.name()).cloned();
+                    if let Some(analysis) = analysis {
+                        drop(elem);
+                        to.element()
+                            .borrow()
+                            .property_analysis
+                            .borrow_mut()
+                            .entry(to.name().clone())
+                            .or_default()
+                            .merge(&analysis);
+                    };
+                }
+            } else {
+                // This is not a declaration, we must re-create the binding
+                elem.set_binding(
+                    remove.name().clone(),
+                    BindingExpression::new_two_way(to.clone().into()),
+                );
+                drop(elem);
+                if remove.is_externally_modified() {
+                    to.mark_as_set();
+                }
+            }
+        }
+    }
+}
+
+fn is_declaration(x: &NamedReference) -> bool {
+    x.element().borrow().property_declarations.contains_key(x.name())
+}
+
+/// Out of two named reference, return the one which is the best to keep.
+fn best_property(p1: NamedReference, p2: NamedReference) -> NamedReference {
+    // Try to find which is the more canonical property
+    macro_rules! canonical_order {
+        ($x: expr) => {{
+            (
+                !$x.element().borrow().enclosing_component.upgrade().unwrap().is_global(),
+                is_declaration(&$x),
+                $x.element().borrow().id.clone(),
+                $x.name(),
+            )
+        }};
+    }
+
+    if canonical_order!(p1) < canonical_order!(p2) { p1 } else { p2 }
+}
+
+/// Remove the `to` from the two_way_bindings
+fn remove_from_binding_expression(expression: &mut BindingExpression, to: &NamedReference) {
+    expression.two_way_bindings.retain(|x| x.property() != Some(to));
+}

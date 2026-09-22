@@ -70,8 +70,7 @@ import {
 import {
   MessengerFileContainerMenu,
   MessengerGroupDock,
-  MessengerRightDock,
-  MessengerTimelineDialog
+  MessengerRightDock
 } from '@/views/messenger/lazyShell';
 import {
   AgentCronPanel,
@@ -404,7 +403,6 @@ export function useMessengerViewController(): Record<string, any> {
     MessengerMiddlePane,
     MessengerRightDock,
     MessengerSettingsPanel,
-    MessengerTimelineDialog,
     MessengerToolsSection,
     MessengerWorldComposer,
     nextTick,

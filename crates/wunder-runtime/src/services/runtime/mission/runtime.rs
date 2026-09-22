@@ -26,10 +26,10 @@ use tokio::time::{sleep, timeout, Duration};
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::services::swarm::beeroom::resolve_or_create_agent_main_session;
 use crate::services::swarm::events::{
     TEAM_ERROR, TEAM_FINISH, TEAM_MERGE, TEAM_START, TEAM_TASK_RESULT, TEAM_TASK_UPDATE,
 };
+use crate::services::swarm::task_session::resolve_or_create_agent_task_session;
 
 const RUNNER_CHANNEL_CAPACITY: usize = 128;
 const RUNNER_POLL_INTERVAL_MS: u64 = 600;
@@ -763,8 +763,12 @@ impl MissionRuntime {
         }
 
         let storage = self.user_store.storage_backend();
-        let (record, created) =
-            resolve_or_create_agent_main_session(storage.as_ref(), &run.user_id, agent)?;
+        let (record, created) = resolve_or_create_agent_task_session(
+            storage.as_ref(),
+            &run.user_id,
+            agent,
+            &run.parent_session_id,
+        )?;
         Ok((record.session_id, created))
     }
 

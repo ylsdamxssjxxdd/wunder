@@ -25,15 +25,15 @@ pub(crate) enum SessionCleanup {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SwarmWorkerThreadStrategy {
-    FreshMainThread,
-    MainThread,
+    NewThread,
+    TaskThread,
 }
 
 impl SwarmWorkerThreadStrategy {
     pub(crate) fn as_tool_value(self) -> &'static str {
         match self {
-            Self::FreshMainThread => "fresh_main_thread",
-            Self::MainThread => "main_thread",
+            Self::NewThread => "new_thread",
+            Self::TaskThread => "task_thread",
         }
     }
 }
@@ -54,10 +54,10 @@ pub(crate) fn parse_cleanup_mode(value: Option<&str>) -> SessionCleanup {
 
 pub(crate) fn parse_swarm_worker_thread_strategy(
     thread_strategy: Option<&str>,
-    reuse_main_thread: Option<bool>,
+    reuse_thread: Option<bool>,
 ) -> Result<SwarmWorkerThreadStrategy> {
-    if reuse_main_thread.unwrap_or(false) {
-        return Ok(SwarmWorkerThreadStrategy::MainThread);
+    if reuse_thread.unwrap_or(false) {
+        return Ok(SwarmWorkerThreadStrategy::TaskThread);
     }
     let normalized = thread_strategy
         .map(str::trim)
@@ -65,22 +65,18 @@ pub(crate) fn parse_swarm_worker_thread_strategy(
         .map(|value| value.to_ascii_lowercase().replace('-', "_"))
         .unwrap_or_default();
     if normalized.is_empty() {
-        return Ok(SwarmWorkerThreadStrategy::MainThread);
+        // Every dispatch gets an ordinary task thread. The old agent-main binding
+        // made one agent appear to have a single exclusive conversation.
+        return Ok(SwarmWorkerThreadStrategy::TaskThread);
     }
-    if matches!(
-        normalized.as_str(),
-        "fresh_main_thread" | "new_main_thread" | "fresh" | "new_thread"
-    ) {
-        return Ok(SwarmWorkerThreadStrategy::FreshMainThread);
+    if matches!(normalized.as_str(), "new_thread" | "fresh") {
+        return Ok(SwarmWorkerThreadStrategy::NewThread);
     }
-    if matches!(
-        normalized.as_str(),
-        "main_thread" | "current_main_thread" | "reuse_main_thread" | "main"
-    ) {
-        return Ok(SwarmWorkerThreadStrategy::MainThread);
+    if matches!(normalized.as_str(), "task_thread" | "reuse_thread") {
+        return Ok(SwarmWorkerThreadStrategy::TaskThread);
     }
     Err(anyhow!(
-        "invalid thread_strategy: {normalized}; expected fresh_main_thread or main_thread"
+        "invalid thread_strategy: {normalized}; expected new_thread or task_thread"
     ))
 }
 

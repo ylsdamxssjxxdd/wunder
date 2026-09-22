@@ -1,0 +1,194 @@
+import { Theme, Conversation, ChatMessage } from "theme.slint";
+import { Action, RailButton, Avatar, SearchField } from "components.slint";
+import { Composer } from "composer.slint";
+import { MessageRow } from "message.slint";
+import { WorkDock } from "dock.slint";
+import { ListView, ScrollView } from "std-widgets.slint";
+export { Theme, Conversation, ChatMessage }
+
+export component MainWindow inherits Window {
+    title: "心舰 · 蜂巢（Slint 原型）";
+    preferred-width: 1360px; preferred-height: 820px;
+    min-width: 760px; min-height: 580px;
+    default-font-family: "Microsoft YaHei"; default-font-size: 13px;
+    icon: @image-url("../assets/hive.png");
+    background: Theme.panel;
+    in-out property <bool> right-open: true;
+    in-out property <bool> navigation-open: true;
+    in-out property <bool> dark: false;
+    changed dark => { Theme.dark = root.dark; }
+    in-out property <int> selected-conversation: 0;
+    in-out property <int> active-task: 0;
+    in-out property <int> section: 0;
+    in-out property <string> draft;
+    in-out property <string> status: "本地演示 · 未连接后端";
+    in-out property <string> dialog-title;
+    in-out property <string> dialog-text;
+    in-out property <bool> dialog-open: false;
+    private property <bool> dock-overlay-open: false;
+    in-out property <int> scroll-revision: 0;
+    in-out property <[Conversation]> conversations: [
+        { title: "默认智能体", preview: "随时开始新的对话", time: "刚刚", avatar: @image-url("../assets/avatar.png") },
+        { title: "智能体 01", preview: "上次任务已完成", time: "昨天", avatar: @image-url("../assets/hive.png") },
+        { title: "智能体 02", preview: "暂无新消息", time: "昨天", avatar: @image-url("../assets/avatar.png") }
+    ];
+    in-out property <[ChatMessage]> messages: [
+        { text: "你好，我是你的默认智能体。有什么可以帮助你的吗？", mine: false, time: "09:41", workflow: false },
+        { text: "请帮我整理一下当前内容。", mine: true, time: "09:42", workflow: false },
+        { text: "已经整理好了。\n\n• 内容已按顺序归纳，便于继续查看。\n• 相关文件可在右侧工作目录中预览。\n• 你可以继续提问，或新建一个任务。\n\n如果需要进一步调整，可以直接告诉我。", mine: false, time: "09:42", workflow: true }
+    ];
+    private property <string> keyword;
+    private property <string> heading: root.conversations[root.selected-conversation].title;
+    callback send-message();
+    callback select-conversation(int);
+    callback new-thread();
+    callback select-task(int);
+    changed scroll-revision => { messages-view.content-y = min(0px, messages-view.visible-height - messages-view.content-height); }
+
+    function open-info(title: string, text: string) {
+        root.dialog-title = title; root.dialog-text = text; root.dialog-open = true;
+    }
+    function toggle-dock() {
+        if root.width >= 1100px { root.right-open = !root.right-open; }
+        else { root.dock-overlay-open = !root.dock-overlay-open; }
+    }
+
+    Rectangle {
+    width: parent.width; height: parent.height;
+        Rectangle {
+            x: 0px; y: 0px; width: 56px; height: parent.height; background: Theme.rail;
+            VerticalLayout {
+                padding-top: 10px; padding-bottom: 10px; padding-left: 5px; padding-right: 5px; spacing: 8px;
+                Rectangle {
+                    height: 44px;
+                    Avatar { width: 38px; height: 38px; mine: true; }
+                }
+                Rectangle { height: 1px; background: #ffffff44; }
+                RailButton { icon: @image-url("../assets/icons/comments.svg"); label: "消息"; active: root.section == 0; clicked => { root.section = 0; } }
+                RailButton { icon: @image-url("../assets/icons/cubes.svg"); label: "蜂群"; active: root.section == 1; clicked => { root.open-info("蜂群", "此原型先展示聊天主界面。蜂群编排将在后续评估中接入。"); } }
+                RailButton { icon: @image-url("../assets/icons/robot.svg"); label: "智能体"; active: root.section == 2; clicked => { root.section = 2; } }
+                RailButton { icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "工具"; clicked => { root.open-info("工具", "文件读写   ·   技能调用   ·   知识检索\n\n当前仅展示界面，不执行工具。"); } }
+                RailButton { icon: @image-url("../assets/icons/gear.svg"); label: "设置"; clicked => { root.open-info("桌面设置", "外观可通过左下角按钮切换。\n\n模型、连接与运行时配置暂未接入。"); } }
+                Rectangle { vertical-stretch: 1; }
+                RailButton { icon: @image-url("../assets/icons/moon.svg"); label: root.dark ? "浅色" : "深色"; clicked => { root.dark = !root.dark; } }
+                RailButton { icon: @image-url("../assets/icons/ellipsis.svg"); label: "更多"; clicked => { root.open-info("关于原型", "心舰 · 蜂巢\n\n本地界面预览，消息仅保存在本次运行的内存中。"); } }
+            }
+        }
+
+        if root.navigation-open : Rectangle {
+            x: 56px; y: 0px; width: 220px; height: parent.height; background: Theme.middle;
+            Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+            VerticalLayout {
+                spacing: 0px;
+                Rectangle {
+                    height: 80px;
+                    Text { x: 16px; y: 20px; width: parent.width - 32px; text: root.section == 2 ? "智能体" : "消息"; color: Theme.text; font-size: 18px; font-weight: 700; }
+                    Text { x: 16px; y: 49px; width: parent.width - 32px; text: root.section == 2 ? "管理你的智能体" : "与智能体一起，继续工作"; color: Theme.muted; font-size: 12px; }
+                }
+                HorizontalLayout {
+                    padding-left: 14px; padding-right: 14px; height: 34px; spacing: 8px;
+                    SearchField { horizontal-stretch: 1; icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索"; text <=> root.keyword; }
+                    new-chat := Action { width: 34px; height: 34px; icon: @image-url("../assets/icons/plus.svg"); label: "新建线程"; selected: true; clicked => { root.new-thread(); } }
+                }
+                Rectangle { height: 14px; }
+                ScrollView {
+                    horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { alignment: start;
+                    for conversation[index] in root.conversations : Rectangle {
+                        height: root.keyword == "" || conversation.title.starts-with(root.keyword) ? 68px : 0px;
+                        visible: self.height > 0px;
+                        Rectangle {
+                            x: 8px; y: 2px; width: parent.width - 16px; height: 64px; border-radius: 12px;
+                            background: root.selected-conversation == index ? Theme.accent : transparent;
+                            Action { width: parent.width; height: parent.height; label: conversation.title; clicked => { root.select-conversation(index); } }
+                            Avatar { x: 10px; y: 13px; source: conversation.avatar; }
+                            Text { x: 54px; y: 10px; width: parent.width - 60px; height: 19px; text: conversation.title; color: root.selected-conversation == index ? white : Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
+                            Text { x: 54px; y: 35px; width: parent.width - 62px; height: 16px; text: conversation.preview; color: root.selected-conversation == index ? #ffffffe0 : Theme.muted; font-size: 11px; overflow: elide; }
+                        }
+                    }
+                    }
+                }
+                Text { height: 36px; text: "本地界面预览"; color: Theme.muted; font-size: 11px; horizontal-alignment: center; }
+            }
+        }
+
+        Rectangle {
+            x: root.navigation-open ? 276px : 56px;
+            y: 0px; width: root.width - self.x - (root.right-open && root.width >= 1100px ? 284px : 0px);
+            height: parent.height; background: Theme.chat;
+            VerticalLayout {
+                spacing: 0px;
+                HorizontalLayout {
+                    height: 62px; padding-left: 14px; padding-right: 14px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
+                    Action { icon: @image-url("../assets/icons/bars.svg"); label: "切换导航"; clicked => { root.navigation-open = !root.navigation-open; } }
+                    Text { text: root.heading; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Action { icon: @image-url("../assets/icons/plus.svg"); label: "新建线程"; clicked => { root.new-thread(); } }
+                    Action { icon: @image-url("../assets/icons/clock-rotate-left.svg"); label: "历史线程"; clicked => { root.toggle-dock(); } }
+                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; clicked => { root.status = "演示数据已刷新"; } }
+                    dock-toggle := Action { icon: @image-url("../assets/icons/chevron-right.svg"); label: "切换工作目录"; selected: root.width >= 1100px ? root.right-open : root.dock-overlay-open; clicked => { root.toggle-dock(); } }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                messages-view := ListView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    for message in root.messages : Rectangle {
+                        height: message-row.height + 14px;
+                        message-row := MessageRow {
+                            x: 22px; y: 14px; width: parent.width - 44px;
+                            message: message; author: root.heading;
+                            avatar: root.conversations[root.selected-conversation].avatar;
+                        }
+                    }
+                }
+                Composer {
+                    draft <=> root.draft; status: root.status;
+                    send => { root.send-message(); }
+                    attach => { root.open-info("添加附件", "附件上传尚未连接。本地预览不会读取或上传你的文件。"); }
+                }
+            }
+        }
+        // Preserve the chat's minimum width; the right dock becomes optional.
+        if root.right-open && root.width >= 1100px : WorkDock {
+            x: root.width - 284px; y: 0px; width: 284px; height: parent.height; active-task: root.active-task;
+            activate-task(index) => { root.select-task(index); }
+            preview-file(name) => { root.open-info(name, "这是本地演示文件。\n\n你可以通过此面板检查文件预览的布局与文字效果。"); }
+        }
+    }
+
+    if root.dock-overlay-open && root.width < 1100px : Rectangle {
+        background: #00000030;
+        TouchArea { clicked => { root.dock-overlay-open = false; } }
+        WorkDock {
+            x: parent.width - 284px; y: 0px; width: 284px; height: parent.height;
+            active-task: root.active-task;
+            activate-task(index) => { root.select-task(index); root.dock-overlay-open = false; }
+            preview-file(name) => { root.open-info(name, "这是本地演示文件。\n\n仅用于查看文件预览布局。"); }
+        }
+    }
+
+    if root.dialog-open : Rectangle {
+        background: #00000040;
+        TouchArea { clicked => { root.dialog-open = false; } }
+        Rectangle {
+            width: min(440px, parent.width - 48px); height: 246px;
+            border-radius: 14px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+            TouchArea { }
+            VerticalLayout {
+                padding: 22px; spacing: 14px;
+                HorizontalLayout {
+                    height: 30px;
+                    Text { text: root.dialog-title; color: Theme.text; font-size: 17px; font-weight: 600; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Action { icon: @image-url("../assets/icons/xmark.svg"); label: "关闭"; clicked => { root.dialog-open = false; } }
+                }
+                Text { text: root.dialog-text; color: Theme.muted; font-size: 13px; wrap: word-wrap; vertical-stretch: 1; }
+                HorizontalLayout {
+                    Rectangle { horizontal-stretch: 1; }
+                    Action { label: "知道了"; icon: @image-url("../assets/icons/check.svg"); show-label: true; primary: true; clicked => { root.dialog-open = false; } }
+                }
+            }
+        }
+    }
+}
+
+

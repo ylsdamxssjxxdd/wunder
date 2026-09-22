@@ -1634,7 +1634,7 @@ pub struct ChannelRateLimitConfig {
 }
 
 fn default_channel_session_strategy() -> String {
-    "main_thread".to_string()
+    "task_thread".to_string()
 }
 
 fn default_gateway_protocol_version() -> i32 {

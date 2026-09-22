@@ -72,8 +72,7 @@ import {
 import {
   MessengerFileContainerMenu,
   MessengerGroupDock,
-  MessengerRightDock,
-  MessengerTimelineDialog
+  MessengerRightDock
 } from '@/views/messenger/lazyShell';
 import {
   AgentCronPanel,
@@ -450,7 +449,7 @@ export function installMessengerControllerAgentUnreadRuntime(ctx: MessengerContr
           .map(([agentId, sessions]) => {
           const sorted = [...sessions].sort((left, right) => ctx.resolveSessionActivityTimestamp(right) -
               ctx.resolveSessionActivityTimestamp(left));
-          const main = sorted.find((item) => Boolean(item?.is_main)) || sorted[0];
+          const main = sorted[0];
           const sessionId = String(main?.id || '').trim();
           if (!sessionId) {
               return null;

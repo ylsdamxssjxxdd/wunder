@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::prompting::read_prompt_template;
 use crate::services::attachment::sanitize_filename_stem;
-use crate::storage::{AgentThreadRecord, ChatSessionRecord, StorageBackend, UserAgentRecord};
+use crate::storage::{ChatSessionRecord, StorageBackend, UserAgentRecord};
 use crate::workspace::WorkspaceManager;
 use anyhow::Result;
 use chrono::Utc;
@@ -1345,12 +1345,7 @@ pub fn ensure_orchestration_member_session(
                         mother_agent_id: state.mother_agent_id.clone(),
                     },
                 )?;
-                bind_member_session_as_main_thread(
-                    storage,
-                    user_id,
-                    &agent.agent_id,
-                    existing.session_id.trim(),
-                )?;
+
                 return Ok((existing, false));
             }
         }
@@ -1389,11 +1384,11 @@ pub fn ensure_orchestration_member_session(
             mother_agent_id: state.mother_agent_id.clone(),
         },
     )?;
-    bind_member_session_as_main_thread(storage, user_id, &agent.agent_id, &session.session_id)?;
+
     Ok((binding, true))
 }
 
-pub fn ensure_orchestration_binding_main_thread(
+pub fn ensure_orchestration_binding_context(
     storage: &dyn StorageBackend,
     user_id: &str,
     state: &OrchestrationHiveState,
@@ -1431,20 +1426,10 @@ pub fn ensure_orchestration_binding_main_thread(
             mother_agent_id: state.mother_agent_id.clone(),
         },
     )?;
-    let already_main = storage
-        .get_agent_thread(cleaned_user_id, cleaned_agent_id)?
-        .map(|record| record.session_id.trim() == cleaned_session_id)
-        .unwrap_or(false);
-    bind_member_session_as_main_thread(
-        storage,
-        cleaned_user_id,
-        cleaned_agent_id,
-        cleaned_session_id,
-    )?;
-    Ok(!already_main)
+    Ok(true)
 }
 
-pub fn repair_active_orchestration_main_threads(
+pub fn repair_active_orchestration_contexts(
     storage: &dyn StorageBackend,
     user_id: &str,
     state: &OrchestrationHiveState,
@@ -1456,15 +1441,14 @@ pub fn repair_active_orchestration_main_threads(
     let bindings = list_member_bindings(storage, &state.orchestration_id)?;
     let mut repaired_agent_ids = Vec::new();
     for binding in bindings {
-        if ensure_orchestration_binding_main_thread(storage, user_id, state, &binding, round_index)?
-        {
+        if ensure_orchestration_binding_context(storage, user_id, state, &binding, round_index)? {
             repaired_agent_ids.push(binding.agent_id);
         }
     }
     Ok(repaired_agent_ids)
 }
 
-pub fn repair_orchestration_session_main_thread(
+pub fn repair_orchestration_session_context(
     storage: &dyn StorageBackend,
     user_id: &str,
     session_id: &str,
@@ -1489,7 +1473,7 @@ pub fn repair_orchestration_session_main_thread(
     if binding.session_id.trim() != cleaned_session_id {
         return Ok(Some((state, binding, false)));
     }
-    let repaired = ensure_orchestration_binding_main_thread(
+    let repaired = ensure_orchestration_binding_context(
         storage,
         cleaned_user_id,
         &state,
@@ -1497,42 +1481,6 @@ pub fn repair_orchestration_session_main_thread(
         round_index,
     )?;
     Ok(Some((state, binding, repaired)))
-}
-
-fn bind_member_session_as_main_thread(
-    storage: &dyn StorageBackend,
-    user_id: &str,
-    agent_id: &str,
-    session_id: &str,
-) -> Result<()> {
-    let cleaned_user_id = user_id.trim();
-    let cleaned_agent_id = agent_id.trim();
-    let cleaned_session_id = session_id.trim();
-    if cleaned_user_id.is_empty() || cleaned_agent_id.is_empty() || cleaned_session_id.is_empty() {
-        return Ok(());
-    }
-    let now = now_ts();
-    let existing = storage.get_agent_thread(cleaned_user_id, cleaned_agent_id)?;
-    let (created_at, status) = if let Some(record) = existing {
-        let next_status = if record.status.trim().is_empty() {
-            "idle".to_string()
-        } else {
-            record.status
-        };
-        (record.created_at, next_status)
-    } else {
-        (now, "idle".to_string())
-    };
-    storage.upsert_agent_thread(&AgentThreadRecord {
-        thread_id: format!("thread_{cleaned_session_id}"),
-        user_id: cleaned_user_id.to_string(),
-        agent_id: cleaned_agent_id.to_string(),
-        session_id: cleaned_session_id.to_string(),
-        status,
-        created_at,
-        updated_at: now,
-    })?;
-    Ok(())
 }
 
 pub fn load_dispatch_context(

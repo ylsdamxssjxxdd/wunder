@@ -72,8 +72,7 @@ import {
 import {
   MessengerFileContainerMenu,
   MessengerGroupDock,
-  MessengerRightDock,
-  MessengerTimelineDialog
+  MessengerRightDock
 } from '@/views/messenger/lazyShell';
 import {
   AgentCronPanel,
@@ -518,7 +517,6 @@ export function installMessengerControllerHiveMixedLists(ctx: MessengerControlle
       const sessionsByAgent = new Map<string, Array<{
           session: Record<string, unknown>;
           lastAt: number;
-          isMain: boolean;
       }>>();
       (Array.isArray(ctx.chatStore.sessions) ? ctx.chatStore.sessions : []).forEach((sessionRaw) => {
           const session = (sessionRaw || {}) as Record<string, unknown>;
@@ -529,8 +527,7 @@ export function installMessengerControllerHiveMixedLists(ctx: MessengerControlle
           const list = sessionsByAgent.get(agentId) || [];
           list.push({
               session,
-              lastAt: ctx.resolveSessionActivityTimestamp(session),
-              isMain: Boolean(session.is_main)
+              lastAt: ctx.resolveSessionActivityTimestamp(session)
           });
           sessionsByAgent.set(agentId, list);
       });
@@ -538,7 +535,7 @@ export function installMessengerControllerHiveMixedLists(ctx: MessengerControlle
           .map(([agentId, records]) => {
           const sorted = [...records].sort((left, right) => right.lastAt - left.lastAt);
           const latest = sorted[0];
-          const main = sorted.find((item) => item.isMain) || latest;
+          const main = sorted.find((item) => item.session.id === ctx.resolvePreferredAgentSessionId(agentId)) || latest;
           const agent = ctx.agentMap.value.get(agentId) || null;
           const title = String((agent as Record<string, unknown> | null)?.name ||
               (agentId === DEFAULT_AGENT_KEY ? ctx.t('messenger.defaultAgent') : agentId));

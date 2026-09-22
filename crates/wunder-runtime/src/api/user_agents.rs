@@ -14,9 +14,6 @@ use crate::services::default_agent_protocol::{
 };
 use crate::services::default_tool_profile::curated_default_tool_names;
 use crate::services::llm::is_llm_model;
-use crate::services::orchestration_context::{
-    active_orchestration_for_agent, build_locked_thread_message, ORCHESTRATION_THREAD_LOCKED_CODE,
-};
 use crate::services::tools::resolve_tool_name;
 use crate::services::user_store::build_default_agent_record_from_storage;
 use crate::state::AppState;
@@ -78,10 +75,6 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/agents/{agent_id}",
             get(get_agent).put(update_agent).delete(delete_agent),
-        )
-        .route(
-            "/wunder/agents/{agent_id}/default-session",
-            get(get_default_session).post(set_default_session),
         )
 }
 
@@ -1548,143 +1541,6 @@ async fn delete_agent(
     Ok(Json(json!({ "data": { "id": cleaned } })))
 }
 
-async fn get_default_session(
-    State(state): State<Arc<AppState>>,
-    headers: axum::http::HeaderMap,
-    AxumPath(agent_id): AxumPath<String>,
-    Query(query): Query<AgentUserQuery>,
-) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
-    let user_id = resolved.user.user_id.clone();
-    let normalized_agent = normalize_agent_id(&agent_id);
-    if !normalized_agent.is_empty() {
-        let record = state
-            .user_store
-            .get_user_agent_by_id(&normalized_agent)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        let Some(record) = record else {
-            return Err(error_response(
-                StatusCode::NOT_FOUND,
-                i18n::t("error.agent_not_found"),
-            ));
-        };
-        let access = state
-            .user_store
-            .get_user_agent_access(&user_id)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        if !is_agent_allowed(&resolved.user, access.as_ref(), &record) {
-            return Err(error_response(
-                StatusCode::NOT_FOUND,
-                i18n::t("error.agent_not_found"),
-            ));
-        }
-    }
-    let record = state
-        .user_store
-        .get_agent_thread(&user_id, &normalized_agent)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let session_id = record.as_ref().map(|item| item.session_id.clone());
-    Ok(Json(json!({
-        "data": {
-            "agent_id": normalized_agent,
-            "session_id": session_id,
-        }
-    })))
-}
-
-async fn set_default_session(
-    State(state): State<Arc<AppState>>,
-    headers: axum::http::HeaderMap,
-    AxumPath(agent_id): AxumPath<String>,
-    Query(query): Query<AgentUserQuery>,
-    Json(payload): Json<DefaultSessionRequest>,
-) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
-    let user_id = resolved.user.user_id.clone();
-    let normalized_agent = normalize_agent_id(&agent_id);
-    if !normalized_agent.is_empty() {
-        if let Some((lock_state, lock_binding)) =
-            active_orchestration_for_agent(state.storage.as_ref(), &user_id, &normalized_agent)
-        {
-            return Err(crate::api::errors::error_response_with_detail(
-                StatusCode::CONFLICT,
-                Some(ORCHESTRATION_THREAD_LOCKED_CODE),
-                build_locked_thread_message(&lock_state, &lock_binding),
-                Some("Use the orchestration page to continue this orchestration thread."),
-                Some(json!({
-                    "group_id": lock_state.group_id,
-                    "orchestration_id": lock_state.orchestration_id,
-                    "run_id": lock_state.run_id,
-                    "session_id": lock_binding.session_id,
-                    "agent_id": lock_binding.agent_id,
-                    "role": lock_binding.role,
-                })),
-            ));
-        }
-    }
-    if !normalized_agent.is_empty() {
-        let record = state
-            .user_store
-            .get_user_agent_by_id(&normalized_agent)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        let Some(record) = record else {
-            return Err(error_response(
-                StatusCode::NOT_FOUND,
-                i18n::t("error.agent_not_found"),
-            ));
-        };
-        let access = state
-            .user_store
-            .get_user_agent_access(&user_id)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        if !is_agent_allowed(&resolved.user, access.as_ref(), &record) {
-            return Err(error_response(
-                StatusCode::NOT_FOUND,
-                i18n::t("error.agent_not_found"),
-            ));
-        }
-    }
-    let session_id = payload.session_id.trim().to_string();
-    if session_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.content_required"),
-        ));
-    }
-    let session_record = state
-        .user_store
-        .get_chat_session(&user_id, &session_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let Some(session_record) = session_record else {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
-            i18n::t("error.session_not_found"),
-        ));
-    };
-    let session_agent = session_record.agent_id.clone().unwrap_or_default();
-    if session_agent.trim() != normalized_agent {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.permission_denied"),
-        ));
-    }
-    let record = state
-        .kernel
-        .thread_runtime
-        .set_main_session(&user_id, &normalized_agent, &session_id, "manual")
-        .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({
-        "data": {
-            "agent_id": record.agent_id,
-            "session_id": record.session_id,
-            "thread_id": record.thread_id,
-            "status": record.status,
-            "updated_at": format_ts(record.updated_at),
-        }
-    })))
-}
-
 fn agent_payload(
     record: &crate::storage::UserAgentRecord,
     default_model_name: Option<&str>,
@@ -2557,11 +2413,6 @@ struct AgentCreateRequest {
     hive_description: Option<String>,
     #[serde(default, alias = "copyFromAgentId", alias = "copy_from_agent_id")]
     copy_from_agent_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct DefaultSessionRequest {
-    session_id: String,
 }
 
 #[derive(Debug, Deserialize)]

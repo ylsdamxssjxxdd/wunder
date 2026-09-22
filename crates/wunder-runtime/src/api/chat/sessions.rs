@@ -9,8 +9,8 @@ use crate::monitor::MonitorState;
 use crate::services::chat_transcript::build_chat_transcript;
 use crate::services::llm::is_llm_model;
 use crate::services::orchestration_context::{
-    active_orchestration_for_agent, build_locked_thread_message, load_round_state,
-    load_session_context, session_orchestration_lock_info, ORCHESTRATION_THREAD_LOCKED_CODE,
+    active_orchestration_for_agent, load_round_state, load_session_context,
+    session_orchestration_lock_info,
 };
 use crate::state::AppState;
 use crate::user_store::UserStore;
@@ -169,26 +169,6 @@ async fn create_session(
         .as_deref()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    if let Some(agent_id) = agent_id.as_deref() {
-        if let Some((lock_state, lock_binding)) =
-            active_orchestration_for_agent(state.storage.as_ref(), &resolved.user.user_id, agent_id)
-        {
-            return Err(crate::api::errors::error_response_with_detail(
-                StatusCode::CONFLICT,
-                Some(ORCHESTRATION_THREAD_LOCKED_CODE),
-                build_locked_thread_message(&lock_state, &lock_binding),
-                Some("Use the orchestration page to continue this orchestration thread."),
-                Some(json!({
-                    "group_id": lock_state.group_id,
-                    "orchestration_id": lock_state.orchestration_id,
-                    "run_id": lock_state.run_id,
-                    "session_id": lock_binding.session_id,
-                    "agent_id": lock_binding.agent_id,
-                    "role": lock_binding.role,
-                })),
-            ));
-        }
-    }
     let agent_record =
         fetch_agent_record(&state, &resolved.user, agent_id.as_deref(), false).await?;
     let record = crate::storage::ChatSessionRecord {
@@ -214,17 +194,6 @@ async fn create_session(
         .user_store
         .upsert_chat_session(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let is_main = state
-        .kernel
-        .thread_runtime
-        .set_main_session(
-            &resolved.user.user_id,
-            record.agent_id.as_deref().unwrap_or(""),
-            &session_id,
-            "create",
-        )
-        .await
-        .is_ok();
     let config = state.config_store.get().await;
     let runtime = resolve_session_model_runtime(&config, agent_record.as_ref());
     let goal =
@@ -232,7 +201,7 @@ async fn create_session(
             .await
             .ok()
             .flatten();
-    let mut payload = session_payload_with_main(&record, is_main);
+    let mut payload = session_payload(&record);
     insert_session_orchestration_lock_fields(
         &mut payload,
         &state,
@@ -277,20 +246,6 @@ async fn list_sessions(
             limit,
         )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let mut main_map: HashMap<String, Option<String>> = HashMap::new();
-    for record in &sessions {
-        let agent_key = record.agent_id.clone().unwrap_or_default();
-        if main_map.contains_key(&agent_key) {
-            continue;
-        }
-        let main = state
-            .user_store
-            .get_agent_thread(&resolved.user.user_id, &agent_key)
-            .ok()
-            .flatten()
-            .map(|item| item.session_id);
-        main_map.insert(agent_key, main);
-    }
     let config = state.config_store.get().await;
     let mut agent_record_map: HashMap<String, Option<crate::storage::UserAgentRecord>> =
         HashMap::new();
@@ -310,13 +265,7 @@ async fn list_sessions(
     .collect::<HashMap<_, _>>();
     let mut items = Vec::with_capacity(sessions.len());
     for record in &sessions {
-        let agent_key = record.agent_id.clone().unwrap_or_default();
-        let is_main = main_map
-            .get(&agent_key)
-            .and_then(|value| value.as_ref())
-            .map(|session_id| session_id == &record.session_id)
-            .unwrap_or(false);
-        let mut payload = session_payload_with_main(record, is_main);
+        let mut payload = session_payload(record);
         insert_session_orchestration_lock_fields(
             &mut payload,
             &state,
@@ -907,12 +856,6 @@ async fn update_session_title(
         .user_store
         .upsert_chat_session(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let is_main = resolve_session_main_flag(
-        &state,
-        &resolved.user.user_id,
-        record.agent_id.as_deref(),
-        &session_id,
-    );
     let config = state.config_store.get().await;
     let agent_record =
         fetch_agent_record(&state, &resolved.user, record.agent_id.as_deref(), true).await?;
@@ -922,7 +865,7 @@ async fn update_session_title(
             .await
             .ok()
             .flatten();
-    let mut payload = session_payload_with_main(&record, is_main);
+    let mut payload = session_payload(&record);
     insert_session_orchestration_lock_fields(
         &mut payload,
         &state,
@@ -959,6 +902,17 @@ async fn archive_session(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
     reject_locked_orchestration_session(state.as_ref(), &resolved.user.user_id, &session_id)?;
+    if !state
+        .kernel
+        .thread_runtime
+        .is_session_available_for_submit(&resolved.user.user_id, &session_id)
+        .await
+    {
+        return Err(error_response(
+            StatusCode::CONFLICT,
+            i18n::t("error.user_session_busy"),
+        ));
+    }
     let now = now_ts();
     record.status = CHAT_SESSION_STATUS_ARCHIVED.to_string();
     record.updated_at = now;
@@ -967,47 +921,6 @@ async fn archive_session(
         .upsert_chat_session(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
-    let agent_key = record.agent_id.as_deref().unwrap_or("").trim().to_string();
-    let is_current_main = resolve_session_main_flag(
-        &state,
-        &resolved.user.user_id,
-        Some(&agent_key),
-        &session_id,
-    );
-    if is_current_main {
-        let (fallback_sessions, _) = state
-            .user_store
-            .list_chat_sessions_by_status(
-                &resolved.user.user_id,
-                Some(agent_key.as_str()),
-                None,
-                Some(CHAT_SESSION_STATUS_ACTIVE),
-                0,
-                32,
-            )
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        if let Some(fallback) = fallback_sessions
-            .into_iter()
-            .find(|item| item.session_id != session_id)
-        {
-            let _ = state
-                .kernel
-                .thread_runtime
-                .set_main_session(
-                    &resolved.user.user_id,
-                    agent_key.as_str(),
-                    &fallback.session_id,
-                    "archive",
-                )
-                .await;
-        }
-    }
-    let is_main = resolve_session_main_flag(
-        &state,
-        &resolved.user.user_id,
-        record.agent_id.as_deref(),
-        &session_id,
-    );
     let config = state.config_store.get().await;
     let agent_record =
         fetch_agent_record(&state, &resolved.user, record.agent_id.as_deref(), true).await?;
@@ -1017,7 +930,7 @@ async fn archive_session(
             .await
             .ok()
             .flatten();
-    let mut payload = session_payload_with_main(&record, is_main);
+    let mut payload = session_payload(&record);
     insert_session_orchestration_lock_fields(
         &mut payload,
         &state,
@@ -1062,54 +975,6 @@ async fn restore_session(
         .upsert_chat_session(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
-    let agent_key = record.agent_id.as_deref().unwrap_or("").trim().to_string();
-    let main_thread = state
-        .user_store
-        .get_agent_thread(&resolved.user.user_id, agent_key.as_str())
-        .ok()
-        .flatten();
-    let should_rebind_main = match main_thread {
-        None => true,
-        Some(thread) => {
-            let thread_session_id = thread.session_id.trim().to_string();
-            if thread_session_id.is_empty() {
-                true
-            } else {
-                let thread_is_active = state
-                    .user_store
-                    .get_chat_session(&resolved.user.user_id, thread_session_id.as_str())
-                    .ok()
-                    .flatten()
-                    .map(|item| {
-                        !item
-                            .status
-                            .trim()
-                            .eq_ignore_ascii_case(CHAT_SESSION_STATUS_ARCHIVED)
-                    })
-                    .unwrap_or(false);
-                !thread_is_active
-            }
-        }
-    };
-    if should_rebind_main {
-        let _ = state
-            .kernel
-            .thread_runtime
-            .set_main_session(
-                &resolved.user.user_id,
-                agent_key.as_str(),
-                &record.session_id,
-                "restore",
-            )
-            .await;
-    }
-
-    let is_main = resolve_session_main_flag(
-        &state,
-        &resolved.user.user_id,
-        record.agent_id.as_deref(),
-        &session_id,
-    );
     let config = state.config_store.get().await;
     let agent_record =
         fetch_agent_record(&state, &resolved.user, record.agent_id.as_deref(), true).await?;
@@ -1119,7 +984,7 @@ async fn restore_session(
             .await
             .ok()
             .flatten();
-    let mut payload = session_payload_with_main(&record, is_main);
+    let mut payload = session_payload(&record);
     insert_session_orchestration_lock_fields(
         &mut payload,
         &state,
@@ -1721,22 +1586,6 @@ fn filter_orchestration_suppressed_history(
         .collect()
 }
 
-fn resolve_session_main_flag(
-    state: &Arc<AppState>,
-    user_id: &str,
-    agent_id: Option<&str>,
-    session_id: &str,
-) -> bool {
-    let agent_key = agent_id.unwrap_or("").trim();
-    state
-        .user_store
-        .get_agent_thread(user_id, agent_key)
-        .ok()
-        .flatten()
-        .map(|thread| thread.session_id == session_id)
-        .unwrap_or(false)
-}
-
 fn session_payload(record: &crate::storage::ChatSessionRecord) -> Value {
     json!({
         "id": record.session_id,
@@ -1752,14 +1601,6 @@ fn session_payload(record: &crate::storage::ChatSessionRecord) -> Value {
         "spawn_label": record.spawn_label,
         "spawned_by": record.spawned_by,
     })
-}
-
-fn session_payload_with_main(record: &crate::storage::ChatSessionRecord, is_main: bool) -> Value {
-    let mut payload = session_payload(record);
-    if let Value::Object(ref mut map) = payload {
-        map.insert("is_main".to_string(), json!(is_main));
-    }
-    payload
 }
 
 fn insert_session_orchestration_lock_fields(

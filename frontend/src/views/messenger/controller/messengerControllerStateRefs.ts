@@ -72,8 +72,7 @@ import {
 import {
   MessengerFileContainerMenu,
   MessengerGroupDock,
-  MessengerRightDock,
-  MessengerTimelineDialog
+  MessengerRightDock
 } from '@/views/messenger/lazyShell';
 import {
   AgentCronPanel,
@@ -864,7 +863,6 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
 
   ctx.rightDockSkillToggleSaving = ref(false);
 
-  ctx.timelineDialogVisible = ref(false);
 
   ctx.timelineDetailDialogVisible = ref(false);
 

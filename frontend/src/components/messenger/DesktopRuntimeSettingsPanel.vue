@@ -86,9 +86,9 @@ const syncChatStateAfterReset = async (summary: ResetWorkStateSummary) => {
   const targetSessionId =
     chatStore.sessions.find((item) => {
       const itemAgentId = String(item?.agent_id || '').trim();
-      return itemAgentId === targetAgentId && item?.is_main === true;
+      return itemAgentId === targetAgentId;
     })?.id ||
-    summary.fresh_main_sessions.find(
+    summary.fresh_sessions.find(
       (item) => String(item.agent_id || '').trim() === targetAgentId
     )?.session_id ||
     '';

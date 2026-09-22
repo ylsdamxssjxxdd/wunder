@@ -73,8 +73,7 @@ import {
 import {
   MessengerFileContainerMenu,
   MessengerGroupDock,
-  MessengerRightDock,
-  MessengerTimelineDialog
+  MessengerRightDock
 } from '@/views/messenger/lazyShell';
 import {
   AgentCronPanel,
@@ -448,11 +447,6 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
           return;
       }
       if (item.kind === 'agent') {
-          const goalLockedSessionId = ctx.resolveAgentGoalLockedSessionId(item.agentId);
-          if (goalLockedSessionId) {
-              await ctx.openAgentSession(goalLockedSessionId, item.agentId);
-              return;
-          }
           const targetSessionId = String(item.sourceId || '').trim();
           if (targetSessionId) {
               await ctx.openAgentSession(targetSessionId, item.agentId);
@@ -648,11 +642,6 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
               }
               return;
           }
-          const goalLockedSessionId = ctx.resolveAgentGoalLockedSessionId(normalized);
-          if (goalLockedSessionId) {
-              await ctx.openAgentSession(goalLockedSessionId, normalized);
-              return;
-          }
           const preferredSessionId = ctx.resolvePreferredAgentSessionId(normalized);
           if (preferredSessionId) {
               await ctx.openAgentSession(preferredSessionId, normalized);
@@ -680,9 +669,6 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
   };
 
   ctx.openAgentDraftSession = (agentId: unknown) => {
-      if (ctx.blockWhenAgentGoalLocked(agentId)) {
-          return;
-      }
       const normalized = ctx.normalizeAgentId(agentId);
       ctx.chatStore.openDraftSession({ agent_id: normalized === DEFAULT_AGENT_KEY ? '' : normalized });
       ctx.clearMiddlePaneOverlayHide();
@@ -1252,9 +1238,6 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
       const fallbackAgentId = agentId
           ? ctx.normalizeAgentId(agentId)
           : ctx.resolveSessionAgentId(knownSession, ctx.chatStore.draftAgentId);
-      if (activeSessionId && normalizedSessionId !== activeSessionId && ctx.blockWhenAgentGoalLocked(fallbackAgentId || DEFAULT_AGENT_KEY, normalizedSessionId)) {
-          return;
-      }
       const perfTrace = ctx.startMessengerPerfTrace('openAgentSession', { sessionId: normalizedSessionId, agentId });
       reportDesktopRendererStage('messenger-open-agent-session-start', {
           sessionId: normalizedSessionId,

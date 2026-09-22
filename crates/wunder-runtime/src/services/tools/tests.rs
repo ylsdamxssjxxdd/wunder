@@ -254,19 +254,19 @@ fn session_spawn_args_prefers_task_when_task_and_message_are_both_present() {
 fn session_spawn_args_accept_thread_strategy_aliases() {
     let camel: SessionSpawnArgs = serde_json::from_value(json!({
         "task": "hello child",
-        "threadStrategy": "main_thread",
+        "threadStrategy": "task_thread",
     }))
     .expect("camel thread strategy should deserialize");
-    assert_eq!(camel.thread_strategy.as_deref(), Some("main_thread"));
+    assert_eq!(camel.thread_strategy.as_deref(), Some("task_thread"));
 
     let snake: SessionSpawnArgs = serde_json::from_value(json!({
         "task": "hello child",
-        "thread_strategy": "fresh_main_thread",
-        "reuse_main_thread": true,
+        "thread_strategy": "new_thread",
+        "reuse_thread": true,
     }))
     .expect("snake thread strategy should deserialize");
-    assert_eq!(snake.thread_strategy.as_deref(), Some("fresh_main_thread"));
-    assert_eq!(snake.reuse_main_thread, Some(true));
+    assert_eq!(snake.thread_strategy.as_deref(), Some("new_thread"));
+    assert_eq!(snake.reuse_thread, Some(true));
 }
 
 #[test]
@@ -1044,8 +1044,8 @@ fn resolve_child_session_tool_names_uses_target_agent_defaults_for_swarm_childre
 }
 
 #[tokio::test]
-async fn prepare_swarm_child_session_creates_fresh_main_thread_even_when_worker_has_existing_main_session(
-) {
+async fn prepare_swarm_child_session_creates_new_thread_even_when_worker_has_existing_main_session()
+{
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("swarm-fresh-main-thread.db");
     let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
@@ -1073,17 +1073,6 @@ async fn prepare_swarm_child_session_creates_fresh_main_thread_even_when_worker_
     storage_backend
         .upsert_chat_session(&old_worker_session)
         .expect("upsert existing worker session");
-    storage_backend
-        .upsert_agent_thread(&AgentThreadRecord {
-            thread_id: "thread_existing_worker".to_string(),
-            user_id: "alice".to_string(),
-            agent_id: worker_agent.agent_id.clone(),
-            session_id: old_worker_session.session_id.clone(),
-            status: "idle".to_string(),
-            created_at: 1.0,
-            updated_at: 1.0,
-        })
-        .expect("bind existing worker main thread");
 
     let workspace_root = dir.path().join("workspace");
     let workspace = Arc::new(WorkspaceManager::new(
@@ -1139,14 +1128,6 @@ async fn prepare_swarm_child_session_creates_fresh_main_thread_even_when_worker_
     assert_ne!(prepared.child_session_id, old_worker_session.session_id);
     assert_eq!(
         storage_backend
-            .get_agent_thread("alice", &worker_agent.agent_id)
-            .expect("get worker thread")
-            .expect("worker thread")
-            .session_id,
-        prepared.child_session_id
-    );
-    assert_eq!(
-        storage_backend
             .get_chat_session("alice", &prepared.child_session_id)
             .expect("load child session")
             .expect("child session")
@@ -1166,7 +1147,7 @@ async fn prepare_swarm_child_session_creates_fresh_main_thread_even_when_worker_
 }
 
 #[tokio::test]
-async fn prepare_child_session_does_not_rebind_parent_agent_main_thread_for_subagent_children() {
+async fn prepare_child_session_does_not_rebind_parent_agent_task_thread_for_subagent_children() {
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("subagent-keep-parent-main-thread.db");
     let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
@@ -1183,17 +1164,6 @@ async fn prepare_child_session_does_not_rebind_parent_agent_main_thread_for_suba
     storage_backend
         .upsert_chat_session(&parent_session)
         .expect("upsert parent session");
-    storage_backend
-        .upsert_agent_thread(&AgentThreadRecord {
-            thread_id: "thread_parent_main".to_string(),
-            user_id: "alice".to_string(),
-            agent_id: parent_agent.agent_id.clone(),
-            session_id: parent_session.session_id.clone(),
-            status: "idle".to_string(),
-            created_at: 1.0,
-            updated_at: 1.0,
-        })
-        .expect("bind parent main thread");
 
     let workspace_root = dir.path().join("workspace");
     let workspace = Arc::new(WorkspaceManager::new(
@@ -1252,14 +1222,6 @@ async fn prepare_child_session_does_not_rebind_parent_agent_main_thread_for_suba
     assert_ne!(prepared.child_session_id, "sess_parent");
     assert_eq!(
         storage_backend
-            .get_agent_thread("alice", &parent_agent.agent_id)
-            .expect("get parent thread")
-            .expect("parent thread")
-            .session_id,
-        "sess_parent"
-    );
-    assert_eq!(
-        storage_backend
             .get_chat_session("alice", &prepared.child_session_id)
             .expect("load child session")
             .expect("child session")
@@ -1279,7 +1241,7 @@ async fn prepare_child_session_does_not_rebind_parent_agent_main_thread_for_suba
 }
 
 #[tokio::test]
-async fn swarm_worker_subagent_child_does_not_steal_worker_main_thread() {
+async fn swarm_worker_subagent_child_does_not_steal_worker_task_thread() {
     let dir = tempdir().expect("tempdir");
     let db_path = dir
         .path()
@@ -1355,15 +1317,6 @@ async fn swarm_worker_subagent_child_does_not_steal_worker_main_thread() {
     )
     .expect("prepare worker session");
 
-    assert_eq!(
-        storage_backend
-            .get_agent_thread("alice", &worker_agent.agent_id)
-            .expect("get worker thread after swarm dispatch")
-            .expect("worker thread after swarm dispatch")
-            .session_id,
-        worker_prepared.child_session_id
-    );
-
     let worker_context = ToolContext {
         user_id: "alice",
         session_id: worker_prepared.child_session_id.as_str(),
@@ -1408,14 +1361,6 @@ async fn swarm_worker_subagent_child_does_not_steal_worker_main_thread() {
 
     assert_ne!(
         subagent_prepared.child_session_id,
-        worker_prepared.child_session_id
-    );
-    assert_eq!(
-        storage_backend
-            .get_agent_thread("alice", &worker_agent.agent_id)
-            .expect("get worker thread after subagent spawn")
-            .expect("worker thread after subagent spawn")
-            .session_id,
         worker_prepared.child_session_id
     );
     assert_eq!(
@@ -1656,47 +1601,47 @@ fn agent_swarm_send_args_accept_thread_strategy_aliases() {
     let camel: AgentSwarmSendArgs = serde_json::from_value(json!({
         "agent_name": "worker_a",
         "message": "hello",
-        "threadStrategy": "main_thread",
+        "threadStrategy": "task_thread",
     }))
     .expect("parse camel send args");
-    assert_eq!(camel.thread_strategy.as_deref(), Some("main_thread"));
+    assert_eq!(camel.thread_strategy.as_deref(), Some("task_thread"));
 
     let snake: AgentSwarmSendArgs = serde_json::from_value(json!({
         "agent_name": "worker_a",
         "message": "hello",
-        "thread_strategy": "fresh_main_thread",
-        "reuse_main_thread": true,
+        "thread_strategy": "new_thread",
+        "reuse_thread": true,
     }))
     .expect("parse snake send args");
-    assert_eq!(snake.thread_strategy.as_deref(), Some("fresh_main_thread"));
-    assert_eq!(snake.reuse_main_thread, Some(true));
+    assert_eq!(snake.thread_strategy.as_deref(), Some("new_thread"));
+    assert_eq!(snake.reuse_thread, Some(true));
 }
 
 #[test]
 fn agent_swarm_batch_send_args_accept_thread_strategy_aliases() {
     let camel: AgentSwarmBatchSendArgs = serde_json::from_value(json!({
         "tasks": [{ "agent_id": "worker_a", "message": "hello" }],
-        "threadStrategy": "main_thread",
+        "threadStrategy": "task_thread",
     }))
     .expect("parse camel batch args");
-    assert_eq!(camel.thread_strategy.as_deref(), Some("main_thread"));
+    assert_eq!(camel.thread_strategy.as_deref(), Some("task_thread"));
 
     let snake: AgentSwarmBatchSendArgs = serde_json::from_value(json!({
         "tasks": [{
             "agent_id": "worker_a",
             "message": "hello",
-            "thread_strategy": "fresh_main_thread",
-            "reuse_main_thread": true
+            "thread_strategy": "new_thread",
+            "reuse_thread": true
         }],
-        "reuse_main_thread": true,
+        "reuse_thread": true,
     }))
     .expect("parse snake batch args");
-    assert_eq!(snake.reuse_main_thread, Some(true));
+    assert_eq!(snake.reuse_thread, Some(true));
     assert_eq!(
         snake.tasks[0].thread_strategy.as_deref(),
-        Some("fresh_main_thread")
+        Some("new_thread")
     );
-    assert_eq!(snake.tasks[0].reuse_main_thread, Some(true));
+    assert_eq!(snake.tasks[0].reuse_thread, Some(true));
 }
 
 #[test]
@@ -1732,7 +1677,7 @@ fn tool_result_field_reads_nested_data_before_top_level() {
             "agent_name": "Worker A",
             "session_id": "sess_worker_a",
             "created_session": true,
-            "thread_strategy": "main_thread",
+            "thread_strategy": "task_thread",
             "error": "nested error"
         }
     });
@@ -1759,7 +1704,7 @@ fn tool_result_field_reads_nested_data_before_top_level() {
     );
     assert_eq!(
         tool_result_field_or_null(&result, "thread_strategy").as_str(),
-        Some("main_thread")
+        Some("task_thread")
     );
     assert_eq!(tool_result_field_or_null(&result, "missing"), Value::Null);
     assert_eq!(
@@ -1832,24 +1777,23 @@ fn batch_send_all_skipped_response_keeps_team_run_null() {
 }
 
 #[test]
-fn parse_swarm_worker_thread_strategy_supports_main_thread_option() {
+fn parse_swarm_worker_thread_strategy_supports_task_thread_option() {
     assert_eq!(
         parse_swarm_worker_thread_strategy(None, None).expect("default strategy"),
-        SwarmWorkerThreadStrategy::MainThread
+        SwarmWorkerThreadStrategy::TaskThread
     );
     assert_eq!(
-        parse_swarm_worker_thread_strategy(Some("main_thread"), None)
-            .expect("main_thread strategy"),
-        SwarmWorkerThreadStrategy::MainThread
+        parse_swarm_worker_thread_strategy(Some("task_thread"), None)
+            .expect("task_thread strategy"),
+        SwarmWorkerThreadStrategy::TaskThread
     );
     assert_eq!(
-        parse_swarm_worker_thread_strategy(Some("fresh_main_thread"), None)
-            .expect("fresh_main_thread strategy"),
-        SwarmWorkerThreadStrategy::FreshMainThread
+        parse_swarm_worker_thread_strategy(Some("new_thread"), None).expect("new_thread strategy"),
+        SwarmWorkerThreadStrategy::NewThread
     );
     assert_eq!(
-        parse_swarm_worker_thread_strategy(None, Some(true)).expect("reuseMainThread strategy"),
-        SwarmWorkerThreadStrategy::MainThread
+        parse_swarm_worker_thread_strategy(None, Some(true)).expect("reuseThread strategy"),
+        SwarmWorkerThreadStrategy::TaskThread
     );
 }
 
@@ -1857,104 +1801,8 @@ fn parse_swarm_worker_thread_strategy_supports_main_thread_option() {
 fn parse_swarm_worker_thread_strategy_rejects_unknown_value() {
     let err = parse_swarm_worker_thread_strategy(Some("reuse_previous"), None)
         .expect_err("unknown strategy should fail");
-    assert!(err.to_string().contains("fresh_main_thread"));
-    assert!(err.to_string().contains("main_thread"));
-}
-
-#[tokio::test]
-async fn swarm_main_thread_strategy_reuses_existing_worker_main_thread() {
-    let dir = tempdir().expect("tempdir");
-    let db_path = dir.path().join("swarm-main-thread-reuse.db");
-    let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
-    storage.ensure_initialized().expect("init storage");
-    let storage_backend: Arc<dyn StorageBackend> = storage.clone();
-
-    let worker_agent = sample_agent_record();
-    storage_backend
-        .upsert_user_agent(&worker_agent)
-        .expect("upsert worker agent");
-
-    let mut worker_session = sample_chat_session_record(&worker_agent.agent_id);
-    worker_session.session_id = "sess_worker_main".to_string();
-    storage_backend
-        .upsert_chat_session(&worker_session)
-        .expect("upsert worker session");
-    storage_backend
-        .upsert_agent_thread(&AgentThreadRecord {
-            thread_id: "thread_worker_main".to_string(),
-            user_id: "alice".to_string(),
-            agent_id: worker_agent.agent_id.clone(),
-            session_id: worker_session.session_id.clone(),
-            status: "idle".to_string(),
-            created_at: 1.0,
-            updated_at: 1.0,
-        })
-        .expect("bind worker main thread");
-
-    let (resolved, created) =
-        crate::services::swarm::beeroom::resolve_or_create_agent_main_session(
-            storage_backend.as_ref(),
-            "alice",
-            &worker_agent,
-        )
-        .expect("resolve main session");
-
-    assert!(!created);
-    assert_eq!(resolved.session_id, worker_session.session_id);
-    assert_eq!(
-        storage_backend
-            .get_agent_thread("alice", &worker_agent.agent_id)
-            .expect("get agent thread")
-            .expect("agent thread")
-            .session_id,
-        worker_session.session_id
-    );
-}
-
-#[tokio::test]
-async fn swarm_main_thread_strategy_creates_worker_main_thread_when_missing() {
-    let dir = tempdir().expect("tempdir");
-    let db_path = dir.path().join("swarm-main-thread-create.db");
-    let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
-    storage.ensure_initialized().expect("init storage");
-    let storage_backend: Arc<dyn StorageBackend> = storage.clone();
-
-    let worker_agent = sample_agent_record();
-    storage_backend
-        .upsert_user_agent(&worker_agent)
-        .expect("upsert worker agent");
-
-    let (resolved, created) =
-        crate::services::swarm::beeroom::resolve_or_create_agent_main_session(
-            storage_backend.as_ref(),
-            "alice",
-            &worker_agent,
-        )
-        .expect("create main session");
-
-    assert!(created);
-    assert_eq!(
-        resolved.agent_id.as_deref(),
-        Some(worker_agent.agent_id.as_str())
-    );
-    assert!(resolved.parent_session_id.is_none());
-    assert!(resolved.spawned_by.is_none());
-    assert_eq!(
-        storage_backend
-            .get_agent_thread("alice", &worker_agent.agent_id)
-            .expect("get agent thread")
-            .expect("agent thread")
-            .session_id,
-        resolved.session_id
-    );
-    assert_eq!(
-        storage_backend
-            .get_chat_session("alice", &resolved.session_id)
-            .expect("load created session")
-            .expect("created session")
-            .session_id,
-        resolved.session_id
-    );
+    assert!(err.to_string().contains("new_thread"));
+    assert!(err.to_string().contains("task_thread"));
 }
 
 #[tokio::test]

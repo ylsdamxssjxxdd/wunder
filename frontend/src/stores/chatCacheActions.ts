@@ -21,7 +21,6 @@ import {
   updateSessionTools as updateSessionToolsApi
 } from '@/api/chat';
 import { t } from '@/i18n';
-import { setDefaultSession } from '@/api/agents';
 import { formatStructuredErrorText } from '@/utils/streamError';
 import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
 import {
@@ -120,7 +119,7 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 
 import { dismissStaleInquiryPanels, ensureGreetingMessage, hydrateSessionCommandSessions, normalizeInquiryPanelState, normalizeInquiryPanelStatus, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
 import { hydrateMessage } from './chatMessageHydration';
-import { DEFAULT_AGENT_KEY, applyMainSession, patchSessionRuntimeFields, persistAgentSession, readChatPersistState, resolvePersistedSessionId, syncGoalFromSessionRecord } from './chatPersist';
+import { DEFAULT_AGENT_KEY, patchSessionRuntimeFields, persistAgentSession, readChatPersistState, resolvePersistedSessionId, syncGoalFromSessionRecord } from './chatPersist';
 import { resolveKnownSessionEventFloor, resolveMaterializedMessageEventId, resolveSessionDetailMessageLimit } from './chatRuntimeControls';
 import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, cloneSessionList, ensureRuntime, filterSessionsByAgent, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isReusableFreshSession, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, loadSessionWorkflowEventsSnapshot, markSessionDetailWarm, normalizeThreadControlSession, purgeUnavailableSession, readSessionHydratedMessageVersion, readSessionListCache, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveInitialSessionIdFromList, resolveSessionKey, resolveSessionListCacheKey, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldApplySessionEventsSnapshotToProjection, syncChatRuntimeProjectionFromSnapshot, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
 import { readChatSnapshot, scheduleChatSnapshot } from './chatSnapshot';
@@ -182,12 +181,9 @@ export const chatCacheActions = {
       } else {
         this.sessions.unshift(patchedSession);
       }
-      if (patchedSession.is_main === true) {
-        this.sessions = applyMainSession(this.sessions, targetAgentId, targetSessionId);
-      }
       this.sessions = sortSessionsByActivity(this.sessions);
       writeSessionListCache(targetAgentId, filterSessionsByAgent(targetAgentId, this.sessions));
-      if (options.remember === true || nextSession.is_main === true) {
+      if (options.remember === true) {
         persistAgentSession(targetAgentId, targetSessionId);
       }
       syncDemoChatCache({ sessions: this.sessions });

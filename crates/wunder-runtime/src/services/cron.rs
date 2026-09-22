@@ -11,7 +11,6 @@ use crate::services::cron_schedule::{
     normalize_every_ms, parse_schedule_text, validate_cron_expr, validate_message, validate_name,
     validate_schedule_at, ParsedScheduleText, MIN_EVERY_MS,
 };
-use crate::services::swarm::beeroom::resolve_agent_main_session;
 use crate::skills::SkillRegistry;
 use crate::storage::{
     ChatSessionRecord, CronJobRecord, CronRunRecord, StorageBackend, UserAccountRecord,
@@ -1149,24 +1148,14 @@ fn resolve_cron_delivery_session_id(
     storage: &dyn StorageBackend,
     job: &CronJobRecord,
 ) -> Result<String> {
-    let fallback = job.session_id.trim();
-    if let Some(agent_id) = job
-        .agent_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        if let Some(record) = resolve_agent_main_session(storage, &job.user_id, agent_id)? {
-            let session_id = record.session_id.trim();
-            if !session_id.is_empty() {
-                return Ok(session_id.to_string());
-            }
-        }
-    }
-    if fallback.is_empty() {
+    let id = job.session_id.trim();
+    let record = storage
+        .get_chat_session(&job.user_id, id)?
+        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+    if record.status == "archived" {
         return Err(anyhow!(i18n::t("error.session_not_found")));
     }
-    Ok(fallback.to_string())
+    Ok(record.session_id)
 }
 
 fn resolve_scoped_agent_id(
@@ -2139,7 +2128,6 @@ impl CronScheduler {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_cron_session_routing;
     use crate::storage::*;
     use serde_json::json;
 
@@ -2197,80 +2185,5 @@ mod tests {
             created_at: now,
             updated_at: now,
         }
-    }
-
-    #[test]
-    fn cron_main_mode_routes_to_current_agent_main_session() {
-        let db_path = std::env::temp_dir().join(format!(
-            "wunder_cron_main_route_{}.db",
-            uuid::Uuid::new_v4().simple()
-        ));
-        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
-        storage.ensure_initialized().unwrap();
-        let now = now_ts_test();
-
-        storage
-            .upsert_chat_session(&build_chat_session("sess_old", "agent_a", now))
-            .unwrap();
-        storage
-            .upsert_chat_session(&build_chat_session("sess_current_main", "agent_a", now))
-            .unwrap();
-        storage
-            .upsert_agent_thread(&AgentThreadRecord {
-                thread_id: "thread_sess_current_main".to_string(),
-                user_id: "cron_user".to_string(),
-                agent_id: "agent_a".to_string(),
-                session_id: "sess_current_main".to_string(),
-                status: "idle".to_string(),
-                created_at: now,
-                updated_at: now,
-            })
-            .unwrap();
-
-        let routing =
-            resolve_cron_session_routing(&storage, &build_job("sess_old", "main", now)).unwrap();
-        assert_eq!(routing.run_session_id, "sess_current_main");
-        assert_eq!(routing.deliver_session_id, "sess_current_main");
-        assert!(routing.parent_session_id.is_none());
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[test]
-    fn cron_isolated_mode_returns_result_to_current_agent_main_session() {
-        let db_path = std::env::temp_dir().join(format!(
-            "wunder_cron_isolated_route_{}.db",
-            uuid::Uuid::new_v4().simple()
-        ));
-        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
-        storage.ensure_initialized().unwrap();
-        let now = now_ts_test();
-
-        storage
-            .upsert_chat_session(&build_chat_session("sess_current_main", "agent_a", now))
-            .unwrap();
-        storage
-            .upsert_agent_thread(&AgentThreadRecord {
-                thread_id: "thread_sess_current_main".to_string(),
-                user_id: "cron_user".to_string(),
-                agent_id: "agent_a".to_string(),
-                session_id: "sess_current_main".to_string(),
-                status: "idle".to_string(),
-                created_at: now,
-                updated_at: now,
-            })
-            .unwrap();
-
-        let routing =
-            resolve_cron_session_routing(&storage, &build_job("sess_created", "isolated", now))
-                .unwrap();
-        assert_ne!(routing.run_session_id, "sess_current_main");
-        assert_eq!(routing.deliver_session_id, "sess_current_main");
-        assert_eq!(
-            routing.parent_session_id.as_deref(),
-            Some("sess_current_main")
-        );
-
-        let _ = std::fs::remove_file(db_path);
     }
 }

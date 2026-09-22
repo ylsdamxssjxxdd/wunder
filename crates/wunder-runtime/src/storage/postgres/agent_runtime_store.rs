@@ -1,18 +1,9 @@
 use super::PostgresStorage;
-use crate::storage::{
-    AgentTaskRecord, AgentThreadRecord, StorageLifecycle, UpdateAgentTaskStatusParams,
-};
+use crate::storage::{AgentTaskRecord, StorageLifecycle, UpdateAgentTaskStatusParams};
 use anyhow::Result;
 use serde_json::{json, Value};
 
 pub(super) trait PostgresAgentRuntimeStorage {
-    fn upsert_agent_thread_impl(&self, record: &AgentThreadRecord) -> Result<()>;
-    fn get_agent_thread_impl(
-        &self,
-        user_id: &str,
-        agent_id: &str,
-    ) -> Result<Option<AgentThreadRecord>>;
-    fn delete_agent_thread_impl(&self, user_id: &str, agent_id: &str) -> Result<i64>;
     fn insert_agent_task_impl(&self, record: &AgentTaskRecord) -> Result<()>;
     fn get_agent_task_impl(&self, task_id: &str) -> Result<Option<AgentTaskRecord>>;
     fn list_pending_agent_tasks_impl(&self, limit: i64) -> Result<Vec<AgentTaskRecord>>;
@@ -57,74 +48,6 @@ pub(super) trait PostgresAgentRuntimeStorage {
 }
 
 impl PostgresAgentRuntimeStorage for PostgresStorage {
-    fn upsert_agent_thread_impl(&self, record: &AgentThreadRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let cleaned_user = record.user_id.trim();
-        if cleaned_user.is_empty() {
-            return Ok(());
-        }
-        let mut conn = self.conn()?;
-        conn.execute(
-            "INSERT INTO agent_threads (thread_id, user_id, agent_id, session_id, status, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) \
-             ON CONFLICT (user_id, agent_id) DO UPDATE SET thread_id = EXCLUDED.thread_id, session_id = EXCLUDED.session_id, \
-             status = EXCLUDED.status, updated_at = EXCLUDED.updated_at",
-            &[
-                &record.thread_id,
-                &cleaned_user,
-                &record.agent_id.trim(),
-                &record.session_id,
-                &record.status,
-                &record.created_at,
-                &record.updated_at,
-            ],
-        )?;
-        Ok(())
-    }
-
-    fn get_agent_thread_impl(
-        &self,
-        user_id: &str,
-        agent_id: &str,
-    ) -> Result<Option<AgentThreadRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        if cleaned_user.is_empty() {
-            return Ok(None);
-        }
-        let cleaned_agent = agent_id.trim();
-        let mut conn = self.conn()?;
-        let row = conn.query_opt(
-            "SELECT thread_id, user_id, agent_id, session_id, status, created_at, updated_at \
-             FROM agent_threads WHERE user_id = $1 AND agent_id = $2 LIMIT 1",
-            &[&cleaned_user, &cleaned_agent],
-        )?;
-        Ok(row.map(|row| AgentThreadRecord {
-            thread_id: row.get(0),
-            user_id: row.get(1),
-            agent_id: row.get(2),
-            session_id: row.get(3),
-            status: row.get(4),
-            created_at: row.get(5),
-            updated_at: row.get(6),
-        }))
-    }
-
-    fn delete_agent_thread_impl(&self, user_id: &str, agent_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        if cleaned_user.is_empty() {
-            return Ok(0);
-        }
-        let cleaned_agent = agent_id.trim();
-        let mut conn = self.conn()?;
-        let affected = conn.execute(
-            "DELETE FROM agent_threads WHERE user_id = $1 AND agent_id = $2",
-            &[&cleaned_user, &cleaned_agent],
-        )?;
-        Ok(affected as i64)
-    }
-
     fn insert_agent_task_impl(&self, record: &AgentTaskRecord) -> Result<()> {
         self.ensure_initialized()?;
         let cleaned_user = record.user_id.trim();

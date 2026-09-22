@@ -1,0 +1,43 @@
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/fontique-0.11.1/Cargo.toml b/fontique-0.11/Cargo.toml
+index 9e53546..d1bc1ab 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/fontique-0.11.1/Cargo.toml
++++ b/fontique-0.11/Cargo.toml
+@@ -38,7 +38,11 @@ all-features = true
+ 
+ [features]
+ bytemuck = ["parlance/bytemuck"]
+-default = ["system"]
++# The Slint workbench supplies its own bundled fallback font. Keep the parser
++# and layout support available, but do not opt into platform font discovery:
++# on Windows that feature pulls in DirectWrite/WinRT and makes the Win7 build
++# import combase.dll.
++default = ["std"]
+ fontconfig-dlopen = ["yeslogic-fontconfig-sys?/dlopen"]
+ libm = ["read-fonts/libm"]
+ std = [
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/fontique-0.11.1/src/collection/mod.rs b/fontique-0.11/src/collection/mod.rs
+index 08ad5af..5f82ffd 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/fontique-0.11.1/src/collection/mod.rs
++++ b/fontique-0.11/src/collection/mod.rs
+@@ -680,7 +680,6 @@ struct CommonData {
+ impl CommonData {
+     #[cfg(feature = "std")]
+     fn load_fonts_from_paths(&mut self, paths: impl IntoIterator<Item = impl AsRef<Path>>) {
+-        let mut families: HashMap<FamilyId, (FamilyName, Vec<FontInfo>)> = HashMap::default();
+         let mut scratch_family_name = String::default();
+         crate::scan::scan_paths(paths, 16, |scanned_font| {
+             let source = SourceInfo {
+@@ -689,6 +688,13 @@ impl CommonData {
+             };
+ 
+             let font_data = scanned_font.font.data().as_bytes();
++            // rcho patch: the batch map must be per-font. register_font_impl
++            // merges the whole map into self.families on every call, so a map
++            // shared across the scan re-appends every previously scanned face
++            // of a family each time, growing family font lists quadratically
++            // (e.g. ~2000 duplicate entries for Arial on a default Windows
++            // install) and making full-system scans take seconds.
++            let mut families: HashMap<FamilyId, (FamilyName, Vec<FontInfo>)> = HashMap::default();
+             self.register_font_impl(
+                 font_data,
+                 source,

@@ -5,6 +5,7 @@ use tokio_postgres::types::ToSql;
 
 pub(super) trait PostgresChatSessionStorage {
     fn upsert_chat_session_impl(&self, record: &ChatSessionRecord) -> Result<()>;
+    fn insert_chat_session_if_absent_impl(&self, record: &ChatSessionRecord) -> Result<bool>;
     fn get_chat_session_impl(
         &self,
         user_id: &str,
@@ -87,6 +88,46 @@ impl PostgresChatSessionStorage for PostgresStorage {
             ],
         )?;
         Ok(())
+    }
+
+    fn insert_chat_session_if_absent_impl(&self, record: &ChatSessionRecord) -> Result<bool> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let tool_overrides = if record.tool_overrides.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.tool_overrides))
+        };
+        let status = {
+            let cleaned = record.status.trim().to_lowercase();
+            if cleaned.is_empty() {
+                "active".to_string()
+            } else {
+                cleaned
+            }
+        };
+        let inserted = conn.execute(
+            "INSERT INTO chat_sessions (session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
+             parent_session_id, parent_message_id, spawn_label, spawned_by) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
+             ON CONFLICT(session_id) DO NOTHING",
+            &[
+                &record.session_id,
+                &record.user_id,
+                &record.title,
+                &status,
+                &record.created_at,
+                &record.updated_at,
+                &record.last_message_at,
+                &record.agent_id,
+                &tool_overrides,
+                &record.parent_session_id,
+                &record.parent_message_id,
+                &record.spawn_label,
+                &record.spawned_by,
+            ],
+        )?;
+        Ok(inserted > 0)
     }
 
     fn get_chat_session_impl(
@@ -201,7 +242,7 @@ impl PostgresChatSessionStorage for PostgresStorage {
         let total: i64 = conn.query_one(&count_sql, &params_ref)?.get(0);
 
         let mut sql = format!(
-            "{}{where_clause} ORDER BY updated_at DESC",
+            "{}{where_clause} ORDER BY created_at DESC, session_id DESC",
             chat_session_select_sql()
         );
         let mut list_params: Vec<Box<dyn ToSql + Sync>> = params;

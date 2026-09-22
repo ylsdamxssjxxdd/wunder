@@ -21,7 +21,6 @@ import {
   updateSessionTools as updateSessionToolsApi
 } from '@/api/chat';
 import { t } from '@/i18n';
-import { setDefaultSession } from '@/api/agents';
 import { formatStructuredErrorText } from '@/utils/streamError';
 import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
 import {
@@ -123,7 +122,7 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 
 import { dismissStaleInquiryPanels, ensureGreetingMessage, hydrateSessionCommandSessions, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
 import { hydrateMessage } from './chatMessageHydration';
-import { DEFAULT_AGENT_KEY, applyMainSession, patchSessionRuntimeFields, persistActiveSession, persistAgentSession, persistDraftSession, syncGoalFromSessionRecord, syncGoalsFromSessionList } from './chatPersist';
+import { DEFAULT_AGENT_KEY, patchSessionRuntimeFields, persistActiveSession, persistAgentSession, persistDraftSession, syncGoalFromSessionRecord, syncGoalsFromSessionList } from './chatPersist';
 import { HISTORY_PAGE_LIMIT, clearDraftSessionBootstrapMarkers, clearRuntimeInteractiveControllers, clearSessionWatcher, normalizeHistoryPageLimit, recoverRuntimeInteractiveControllers, resolveKnownSessionEventFloor, resolveMaterializedMessageEventId, resolveMessageWindowMax, resolveSessionDetailMessageLimit, setSessionLoading } from './chatRuntimeControls';
 import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyLocalChatMessageRuntimeEvent, applyMessageWindow, applySessionRuntimeSnapshot, buildMessageIdentityDebugList, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, countAssistantStreamingMessages, ensureRuntime, filterSessionsByAgent, findOldestHistoryId, getHistoryState, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeForegroundHydratedMessagesWithLive, mergeRetainedActiveSessionIntoList, notifySessionSnapshot, purgeUnavailableSession, readSessionDetailSnapshot, readSessionEventsSnapshot, readSessionHydratedMessageVersion, readSessionListCacheEntry, refreshRuntimeStreamLifecycle, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveSessionKey, resolveSessionListCacheKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldApplySessionEventsSnapshotToProjection, shouldPreferCachedMessages, syncChatRuntimeProjectionFromSnapshot, touchSessionUpdatedAt, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
 import { normalizeSnapshotMessage } from './chatSnapshot';
@@ -371,9 +370,13 @@ export const chatSessionOpenLoadActions = {
         source: string,
         options: { writeCache?: boolean; loadedAt?: number } = {}
       ) => {
+        const incoming = normalizeSessionListItems(items);
+        const incomingIds = new Set(incoming.map(item => resolveSessionKey(item.id)));
+        // A first-page refresh cannot evict other agents or task pages loaded on demand.
+        const retained = this.sessions.filter(item => !incomingIds.has(resolveSessionKey(item.id)));
         const nextSessions = mergeSessionsByIdPreservingRuntimeFields(
           this.sessions,
-          normalizeSessionListItems(items),
+          [...incoming, ...retained],
           patchSessionRuntimeFields,
           sortSessionsByActivity
         );
@@ -535,9 +538,6 @@ export const chatSessionOpenLoadActions = {
       const session = patchSessionRuntimeFields(data.data);
       this.sessions.unshift(session);
       syncGoalFromSessionRecord(this, session);
-      if (session?.is_main === true) {
-        this.sessions = applyMainSession(this.sessions, session.agent_id, session.id);
-      }
       writeSessionListCache(session.agent_id, filterSessionsByAgent(session.agent_id, this.sessions));
       this.activeSessionId = session.id;
       this.draftAgentId = String(session.agent_id || '').trim();
@@ -557,28 +557,9 @@ export const chatSessionOpenLoadActions = {
         sessionId: this.activeSessionId,
         messages: this.messages
       });
-      if (session?.is_main !== true) {
-        // Keep creation flow responsive; main-session sync can finish in background.
-        void this.setMainSession(session.id).catch(() => {
-          // Keep local session state when explicit main-session sync fails.
-        });
-      }
       startSessionWatcher(this, session.id);
       return session;
     },
-    async setMainSession(sessionId) {
-      const targetId = sessionId || this.activeSessionId;
-      if (!targetId) return null;
-      const targetSession = this.sessions.find((item) => item.id === targetId) || null;
-      const agentId = String(targetSession?.agent_id || this.draftAgentId || '').trim();
-      const apiAgentId = agentId || DEFAULT_AGENT_KEY;
-      await setDefaultSession(apiAgentId, { session_id: targetId });
-      this.sessions = applyMainSession(this.sessions, agentId, targetId);
-      writeSessionListCache(agentId, filterSessionsByAgent(agentId, this.sessions));
-      persistAgentSession(agentId, targetId);
-      return targetId;
-    },
-
     async loadSessionDetail(sessionId, options: LoadSessionDetailOptions = {}) {
       const targetSessionId = resolveSessionKey(sessionId);
       if (!targetSessionId) return null;

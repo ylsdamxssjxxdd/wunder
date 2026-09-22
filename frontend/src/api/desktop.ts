@@ -167,7 +167,7 @@ export type DesktopResetWorkStateSummary = {
   cancelled_team_runs: number;
   cleared_workspaces: number;
   removed_workspace_entries: number;
-  fresh_main_sessions: DesktopResetWorkStateSession[];
+  fresh_sessions: DesktopResetWorkStateSession[];
 };
 
 const desktopApi = axios.create({

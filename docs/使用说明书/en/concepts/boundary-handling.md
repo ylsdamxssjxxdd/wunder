@@ -211,14 +211,14 @@ Thread status is synced in real-time via `thread_status` events:
 
 ### 5.1 Main Thread Queue
 
-Each `user_id + agent_id` has only one main thread; when busy, new requests enter the queue:
+Each `user_id + agent_id` has only one task thread; when busy, new requests enter the queue:
 
 ```
-New request → Is main thread idle? → Yes → Execute immediately
+New request → Is task thread idle? → Yes → Execute immediately
               ↓ No
          Enter agent_tasks queue
               ↓
-         Execute sequentially when main thread becomes idle
+         Execute sequentially when task thread becomes idle
 ```
 
 ### 5.2 Queue Configuration
@@ -354,7 +354,7 @@ All errors carry structured `error_meta`:
 | WebSocket disconnected | Auto-reconnect + event replay | 2. Network Interruption Handling |
 | Tool output too large | Trim + signal feedback | 3.2 Tool Result Overflow Protection |
 | Crash during file write | Atomic write, original file preserved | 3.3 Atomic Write Strategy |
-| Main thread busy | New requests queue | 5.1 Main Thread Queue |
+| Task thread busy | New requests queue | 5.1 Main Thread Queue |
 | Network fluctuation | Exponential backoff retry | 2.3 Model API Call Failures |
 | Database operation failed | Transaction rollback | 6.1 Database Transactions |
 

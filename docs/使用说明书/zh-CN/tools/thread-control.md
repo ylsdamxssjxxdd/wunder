@@ -22,7 +22,6 @@ updated_at: 2026-04-10
 - `update_title`
 - `archive`
 - `restore`
-- `set_main`
 
 ## 返回骨架
 
@@ -64,7 +63,6 @@ updated_at: 2026-04-10
         "agent_id": "agent_docs",
         "parent_session_id": null,
         "spawn_label": null,
-        "is_main": true,
         "runtime_status": "idle"
       }
     ]
@@ -77,18 +75,14 @@ updated_at: 2026-04-10
 重点不只是新建，还可以：
 
 - `switch`
-- `set_main`
 
 也就是新建后是否立刻切过去、是否设置为主线程。
 
-## `set_main`
-
-这个动作很重要。它会把某个会话线程绑定为当前智能体的一等现实主线程。
 
 ## 和 `subagent_control` 的区别
 
 - `thread_control`：管会话线程本身
 - `subagent_control`：管临时派生的子智能体运行
 
-如果用户想管理主线程、分支线程、归档状态，用 `thread_control`。  
+如果用户想管理任务线程与归档状态，用 `thread_control`。  
 如果用户想等子智能体跑完、打断它、看它历史，用 `subagent_control`。

@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-09-21T23:45:38.760291+00:00",
+  "generated_at": "2026-09-22T01:38:44.269095+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -4605,11 +4605,6 @@
         {
           "id": "section-6",
           "level": 2,
-          "text": "setmain"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
           "text": "和 subagentcontrol 的区别"
         }
       ],
@@ -8634,7 +8629,7 @@
       "language": "zh-CN",
       "title": "工作区与容器",
       "summary": "文件空间的隔离策略。每个用户有独立工作区，工作区内按容器区分个人文件和智能体文件。",
-      "updated_at": "2026-06-30",
+      "updated_at": "2026-09-22",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -9427,7 +9422,7 @@
       "language": "zh-CN",
       "title": "蜂群协作",
       "summary": "蜂群的实际运作：母蜂如何拆解任务、工蜂如何执行、结果如何归并、状态如何展示。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-09-22",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -9500,7 +9495,7 @@
         {
           "id": "section-13",
           "level": 3,
-          "text": "主线程保护"
+          "text": "任务线程保护"
         },
         {
           "id": "section-14",
@@ -9523,7 +9518,7 @@
       "language": "zh-CN",
       "title": "边界处理",
       "summary": "上下文超限、网络中断、工具失败...系统在各种边界情况下保持稳定，而不是直接崩溃。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-09-22",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -12782,7 +12777,7 @@
       "summary": "The actions, thread relationships, and return structure of `thread_control`.",
       "updated_at": "2026-04-10",
       "read_when": [
-        "You need to create, switch, archive, restore, or assign the main thread"
+        "You need to create, switch, archive, restore"
       ],
       "source_docs": [
         "src/services/tools/thread_control_tool.rs"
@@ -12821,11 +12816,6 @@
         },
         {
           "id": "section-6",
-          "level": 2,
-          "text": "setmain"
-        },
-        {
-          "id": "section-7",
           "level": 2,
           "text": "Difference from subagentcontrol"
         }
@@ -16252,7 +16242,7 @@
       "language": "en",
       "title": "Workspaces and Containers",
       "summary": "Wunder's file isolation is not 'a current directory', but a persistent workspace organized by `user_id + container_id` in layers.",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-09-22",
       "read_when": [
         "You want to understand why files are isolated by user and container",
         "You need to determine the relationship between `agent_id`, `container_id`, and workspace"
@@ -17003,7 +16993,7 @@
         {
           "id": "section-9",
           "level": 2,
-          "text": "Why the main thread matters"
+          "text": "Why the task thread matters"
         },
         {
           "id": "section-10",
@@ -17036,7 +17026,7 @@
       "language": "en",
       "title": "Boundary Handling",
       "summary": "wunder's handling strategies and recovery mechanisms for edge cases such as context overflow, network interruption, tool failure, and system exceptions.",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-09-22",
       "read_when": [
         "You need to understand system behavior under exceptional conditions",
         "You need to design fault tolerance and recovery logic",

@@ -94,8 +94,8 @@ struct RawSessionSpawnArgs {
     cleanup: Option<String>,
     #[serde(default, rename = "threadStrategy", alias = "thread_strategy")]
     thread_strategy: Option<String>,
-    #[serde(default, rename = "reuseMainThread", alias = "reuse_main_thread")]
-    reuse_main_thread: Option<bool>,
+    #[serde(default, rename = "reuseThread", alias = "reuse_thread")]
+    reuse_thread: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -108,7 +108,7 @@ pub(crate) struct SessionSpawnArgs {
     pub(crate) run_timeout_seconds: Option<f64>,
     pub(crate) cleanup: Option<String>,
     pub(crate) thread_strategy: Option<String>,
-    pub(crate) reuse_main_thread: Option<bool>,
+    pub(crate) reuse_thread: Option<bool>,
 }
 
 impl<'de> Deserialize<'de> for SessionSpawnArgs {
@@ -131,7 +131,7 @@ impl<'de> Deserialize<'de> for SessionSpawnArgs {
             run_timeout_seconds: raw.run_timeout_seconds,
             cleanup: raw.cleanup,
             thread_strategy: raw.thread_strategy,
-            reuse_main_thread: raw.reuse_main_thread,
+            reuse_thread: raw.reuse_thread,
         })
     }
 }
@@ -186,8 +186,8 @@ pub(crate) struct AgentSwarmSendArgs {
     pub(crate) message: String,
     #[serde(default, rename = "threadStrategy", alias = "thread_strategy")]
     pub(crate) thread_strategy: Option<String>,
-    #[serde(default, rename = "reuseMainThread", alias = "reuse_main_thread")]
-    pub(crate) reuse_main_thread: Option<bool>,
+    #[serde(default, rename = "reuseThread", alias = "reuse_thread")]
+    pub(crate) reuse_thread: Option<bool>,
     #[serde(default, rename = "timeoutSeconds", alias = "timeout_seconds")]
     pub(crate) timeout_seconds: Option<f64>,
     #[serde(default)]
@@ -214,8 +214,8 @@ pub(crate) struct AgentSwarmBatchTaskArgs {
     pub(crate) message: Option<String>,
     #[serde(default, rename = "threadStrategy", alias = "thread_strategy")]
     pub(crate) thread_strategy: Option<String>,
-    #[serde(default, rename = "reuseMainThread", alias = "reuse_main_thread")]
-    pub(crate) reuse_main_thread: Option<bool>,
+    #[serde(default, rename = "reuseThread", alias = "reuse_thread")]
+    pub(crate) reuse_thread: Option<bool>,
     #[serde(default)]
     pub(crate) label: Option<String>,
     #[serde(default, rename = "includeCurrent", alias = "include_current")]
@@ -230,8 +230,8 @@ pub(crate) struct AgentSwarmBatchSendArgs {
     pub(crate) message: Option<String>,
     #[serde(default, rename = "threadStrategy", alias = "thread_strategy")]
     pub(crate) thread_strategy: Option<String>,
-    #[serde(default, rename = "reuseMainThread", alias = "reuse_main_thread")]
-    pub(crate) reuse_main_thread: Option<bool>,
+    #[serde(default, rename = "reuseThread", alias = "reuse_thread")]
+    pub(crate) reuse_thread: Option<bool>,
     #[serde(default)]
     pub(crate) label: Option<String>,
     #[serde(default, rename = "waitSeconds", alias = "wait_seconds")]

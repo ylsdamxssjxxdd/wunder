@@ -70,20 +70,20 @@ If the goal is "fork a small temporary child task from the current session," pre
 The current swarm system has one very important convention:
 
 - when a worker receives a task, it starts in a new thread by default
-- that new thread becomes the worker's new main thread
+- that new thread becomes the worker's new task thread
 
 The purpose is to keep the worker's context clean and avoid dragging dirty history from an older conversation directly into the new assignment.
 
-By default, the system reuses the worker's current main thread, creating and binding one first when needed. You can still pass `threadStrategy=main_thread` (or `reuseMainThread=true`) to make that intent explicit; `threadStrategy=fresh_main_thread` forces a clean new thread instead. Only an explicit `sessionKey` in `send` / `batch_send` pins the run to a specific existing thread.
+By default, the system reuses the worker's task thread scoped to the calling task, creating and binding one first when needed. You can still pass `threadStrategy=main_thread` (or `reuseMainThread=true`) to make that intent explicit; `threadStrategy=fresh_main_thread` forces a clean new thread instead. Only an explicit `sessionKey` in `send` / `batch_send` pins the run to a specific existing thread.
 
-## Why the main thread matters
+## Why the task thread matters
 
-In wunder, an agent's main thread is its first-class runtime reality.
+In wunder, an agent's task thread is its first-class runtime reality.
 
 This means:
 
-- new tasks should land on the main thread first
-- once a worker switches to a new main thread, later collaboration continues around that new thread
+- new tasks should land on the task thread first
+- once a worker switches to a new task thread, later collaboration continues around that new thread
 
 This is also why the frontend protects thread switching very strictly while a run is active.
 

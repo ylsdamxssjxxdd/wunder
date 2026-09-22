@@ -18,13 +18,13 @@ pub struct ResetWorkStateSummary {
     pub cancelled_team_runs: usize,
     pub cleared_workspaces: usize,
     pub removed_workspace_entries: u64,
-    pub fresh_main_sessions: Vec<ResetWorkStateSession>,
+    pub fresh_sessions: Vec<ResetWorkStateSession>,
 }
 
 pub async fn reset_user_work_state(
     state: &Arc<AppState>,
     user_id: &str,
-    reason: &str,
+    _reason: &str,
 ) -> Result<ResetWorkStateSummary> {
     let cleaned_user_id = user_id.trim();
     if cleaned_user_id.is_empty() {
@@ -155,13 +155,12 @@ pub async fn reset_user_work_state(
             .saturating_add(state.workspace.clear_work_state_contents(scope)?);
     }
 
-    let mut fresh_main_sessions = Vec::with_capacity(agents.len().saturating_add(1));
+    let mut fresh_sessions = Vec::with_capacity(agents.len().saturating_add(1));
     let default_session_id = state
         .kernel
         .thread_runtime
-        .create_fresh_main_session_id(cleaned_user_id, "", reason)
-        .await?;
-    fresh_main_sessions.push(ResetWorkStateSession {
+        .create_task_session_id(cleaned_user_id, "")?;
+    fresh_sessions.push(ResetWorkStateSession {
         agent_id: String::new(),
         session_id: default_session_id,
     });
@@ -169,9 +168,8 @@ pub async fn reset_user_work_state(
         let session_id = state
             .kernel
             .thread_runtime
-            .create_fresh_main_session_id(cleaned_user_id, &agent.agent_id, reason)
-            .await?;
-        fresh_main_sessions.push(ResetWorkStateSession {
+            .create_task_session_id(cleaned_user_id, &agent.agent_id)?;
+        fresh_sessions.push(ResetWorkStateSession {
             agent_id: agent.agent_id.clone(),
             session_id,
         });
@@ -186,7 +184,7 @@ pub async fn reset_user_work_state(
         cancelled_team_runs,
         cleared_workspaces: workspace_scopes.len(),
         removed_workspace_entries,
-        fresh_main_sessions,
+        fresh_sessions,
     })
 }
 

@@ -13,8 +13,8 @@ use crate::services::orchestration_context::{
     list_history_records, load_history_record, load_hive_state, load_round_state,
     normalize_orchestration_run_name, orchestration_agent_artifact_dir_name,
     persist_history_record, persist_hive_state, persist_member_binding, persist_round_state,
-    persist_session_context, rebuild_branch_round_state, repair_active_orchestration_main_threads,
-    repair_orchestration_session_main_thread, round_dir_name, round_id, OrchestrationHistoryRecord,
+    persist_session_context, rebuild_branch_round_state, repair_active_orchestration_contexts,
+    repair_orchestration_session_context, round_dir_name, round_id, OrchestrationHistoryRecord,
     OrchestrationHiveState, OrchestrationMemberBinding, OrchestrationRoundRecord,
     OrchestrationRoundState, OrchestrationSessionContext, OrchestrationSuppressedMessageRange,
     ORCHESTRATION_HISTORY_STATUS_ACTIVE, ORCHESTRATION_HISTORY_STATUS_CLOSED, ORCHESTRATION_MODE,
@@ -224,7 +224,7 @@ async fn update_orchestration_session_context(
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         }
     }
-    let _ = repair_orchestration_session_main_thread(
+    let _ = repair_orchestration_session_context(
         state.storage.as_ref(),
         &user_id,
         session_id,
@@ -264,7 +264,7 @@ async fn get_orchestration_state(
         let round_index = current_occupied_round_index(
             load_or_migrate_round_state(state.as_ref(), &user_id, active_state).as_ref(),
         );
-        let _ = repair_active_orchestration_main_threads(
+        let _ = repair_active_orchestration_contexts(
             state.storage.as_ref(),
             &user_id,
             active_state,
@@ -420,17 +420,6 @@ async fn create_orchestration_state(
         } else {
             "worker"
         };
-        state
-            .kernel
-            .thread_runtime
-            .set_main_session(
-                &user_id,
-                &agent.agent_id,
-                &session.session_id,
-                "orchestration_create",
-            )
-            .await
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         let binding = OrchestrationMemberBinding {
             orchestration_id: orchestration_id.clone(),
             run_id: run_id.clone(),
@@ -528,8 +517,7 @@ async fn exit_orchestration_state(
         let fresh_session_id = state
             .kernel
             .thread_runtime
-            .create_fresh_main_session_id(&user_id, &agent.agent_id, "orchestration_exit")
-            .await
+            .create_task_session_id(&user_id, &agent.agent_id)
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         clear_session_context(state.storage.as_ref(), &user_id, &fresh_session_id)
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -941,17 +929,6 @@ async fn restore_orchestration_history(
                 },
             )
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-            state
-                .kernel
-                .thread_runtime
-                .set_main_session(
-                    &user_id,
-                    &agent.agent_id,
-                    &binding.session_id,
-                    "orchestration_restore",
-                )
-                .await
-                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         }
         member_bindings.push(binding);
     }
@@ -1116,19 +1093,6 @@ async fn branch_orchestration_history(
             )
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
             mother_session_id = session.session_id.clone();
-        }
-        if activate {
-            state
-                .kernel
-                .thread_runtime
-                .set_main_session(
-                    &user_id,
-                    &agent.agent_id,
-                    &session.session_id,
-                    "orchestration_branch",
-                )
-                .await
-                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         }
         let binding = OrchestrationMemberBinding {
             orchestration_id: orchestration_id.clone(),
@@ -1515,7 +1479,7 @@ async fn reserve_orchestration_round(
     let mut round_state = load_or_migrate_round_state(state.as_ref(), &user_id, &hive_state)
         .unwrap_or_else(|| build_initial_round_state(&hive_state));
     let current_round_index = current_occupied_round_index(Some(&round_state));
-    let _ = repair_active_orchestration_main_threads(
+    let _ = repair_active_orchestration_contexts(
         state.storage.as_ref(),
         &user_id,
         &hive_state,
@@ -2198,17 +2162,6 @@ async fn ensure_beeroom_mother_session(
         )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     };
-    state
-        .kernel
-        .thread_runtime
-        .set_main_session(
-            &user_id,
-            session.agent_id.as_deref().unwrap_or(""),
-            &session.session_id,
-            "beeroom_group_dispatch",
-        )
-        .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
     Ok(Json(json!({
         "data": {
@@ -2216,7 +2169,6 @@ async fn ensure_beeroom_mother_session(
             "title": session.title,
             "status": session.status,
             "agent_id": session.agent_id,
-            "is_main": true,
             "created_at": session.created_at,
             "updated_at": session.updated_at,
             "last_message_at": session.last_message_at,

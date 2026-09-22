@@ -17,6 +17,9 @@
       <i class="fa-solid" :class="collapsed ? 'fa-chevron-left' : 'fa-chevron-right'" aria-hidden="true"></i>
     </button>
     <div class="messenger-right-content messenger-right-content--stack">
+      <MessengerTaskList :items="sessionHistory" :active-session-id="activeSessionId" :agent-id="agentIdForApi" :creating="creating"
+        @create="emit('create-session')" @activate="(id) => emit('activate-session', id)"
+        @detail="(id) => emit('open-session-detail', id)" @rename="(id) => emit('rename-session', id)" @archive="(id) => emit('archive-session', id)" />
       <div class="messenger-right-panel messenger-right-panel--sandbox">
         <div v-if="showAgentPanels" class="messenger-workspace-scope chat-shell">
           <WorkspacePanel
@@ -32,171 +35,46 @@
         <div v-else class="messenger-list-empty">{{ t('messenger.settings.agentOnly') }}</div>
       </div>
 
-      <div
-        class="messenger-right-panel messenger-right-panel--skills"
-        :class="{ 'is-drop-active': skillDropActive }"
-        @dragenter.prevent="handleSkillDragEnter"
-        @dragover.prevent="handleSkillDragOver"
-        @dragleave.prevent="handleSkillDragLeave"
-        @drop.prevent="handleSkillDrop"
-      >
-        <div class="messenger-right-section-title messenger-right-section-title--with-actions">
-          <span class="messenger-right-section-title-main">
-            <i class="fa-solid fa-book" aria-hidden="true"></i>
-            <span>技能 skill</span>
-          </span>
-        </div>
-        <div v-if="skillsLoading && !enabledSkills.length && !disabledSkills.length" class="messenger-list-empty">
-          {{ t('chat.ability.loading') }}
-        </div>
-        <div v-else-if="!enabledSkills.length && !disabledSkills.length" class="messenger-list-empty">
-          {{ t('chat.ability.emptySkills') }}
-        </div>
-        <div v-else class="messenger-skill-groups" @wheel.capture="handleSkillGroupsWheel">
-          <div class="messenger-skill-list">
-            <div
-              v-for="item in allSkills"
-              :key="`${item.enabled ? 'enabled' : 'disabled'}-${item.name}`"
-              class="messenger-skill-item"
-              :class="item.enabled ? 'is-enabled' : 'is-disabled'"
-              role="button"
-              tabindex="0"
-              :title="item.name"
-              @click="openSkillDetail(item.name)"
-              @keydown.enter.prevent="openSkillDetail(item.name)"
-              @keydown.space.prevent="openSkillDetail(item.name)"
-            >
-              <i class="fa-solid fa-book messenger-skill-item-icon" aria-hidden="true"></i>
-              <div class="messenger-skill-item-title">{{ compactSkillName(item.name) }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   </aside>
 
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ref } from 'vue';
 
 import { WorkspacePanel } from '@/components/messenger/lazyDockPanels';
 import { isDesktopSafeModeEnabled } from '@/config/desktop';
 import { useI18n } from '@/i18n';
-
-type SkillItem = {
-  name: string;
-  description: string;
-  enabled: boolean;
-};
+import MessengerTaskList from './MessengerTaskList.vue';
+import type { TaskListItem } from '@/views/messenger/taskList';
 
 type WorkspacePanelViewRef = {
   refreshView?: (options?: { background?: boolean }) => Promise<boolean>;
 };
 
-const props = defineProps<{
+defineProps<{
   collapsed: boolean;
   edgeActive: boolean;
   showAgentPanels: boolean;
   agentIdForApi: string;
   containerId: number;
-  skillsLoading: boolean;
-  skillsUploading: boolean;
-  enabledSkills: SkillItem[];
-  disabledSkills: SkillItem[];
+  activeSessionId: string;
+  sessionHistory: TaskListItem[];
+  creating: boolean;
 }>();
 
 const emit = defineEmits<{
   (event: 'toggle-collapse'): void;
-  (event: 'upload-skill-archive', file: File): void;
-  (event: 'open-skill-detail', skillName: string): void;
-  (event: 'open-container', containerId: number): void;
-  (event: 'open-container-settings', containerId: number): void;
   (event: 'request-quote-path', payload: { paths: string[] }): void;
   (event: 'open-workspace-binding', payload: { containerId: number; currentPath: string }): void;
+  (event: 'activate-session', sessionId: string): void;
+  (event: 'create-session'): void;
+  (event: 'open-session-detail' | 'rename-session' | 'archive-session', sessionId: string): void;
 }>();
 
 const { t } = useI18n();
 const workspacePanelRef = ref<WorkspacePanelViewRef | null>(null);
-const skillDropDepth = ref(0);
-const skillDropActive = ref(false);
-const allSkills = computed(() => [...props.enabledSkills, ...props.disabledSkills]);
-const SUPPORTED_SKILL_ARCHIVE_SUFFIXES = [
-  '.zip',
-  '.skill',
-  '.rar',
-  '.7z',
-  '.tar',
-  '.tgz',
-  '.tar.gz',
-  '.tbz2',
-  '.tar.bz2',
-  '.txz',
-  '.tar.xz'
-];
-
-const isSkillArchiveFilename = (name: string): boolean => {
-  const lower = String(name || '').trim().toLowerCase();
-  return SUPPORTED_SKILL_ARCHIVE_SUFFIXES.some((suffix) => lower.endsWith(suffix));
-};
-
-const emitSkillArchive = (file: File | null | undefined) => {
-  if (!file || props.skillsUploading) return;
-  if (!isSkillArchiveFilename(file.name)) {
-    ElMessage.warning(t('userTools.skills.upload.zipOnly'));
-    return;
-  }
-  emit('upload-skill-archive', file);
-};
-
-const openSkillDetail = (name: unknown) => {
-  const normalized = String(name || '').trim();
-  if (!normalized) return;
-  emit('open-skill-detail', normalized);
-};
-
-const compactSkillName = (name: unknown): string => {
-  const normalized = String(name || '').trim();
-  if (!normalized) return '';
-  const visibleChars = Array.from(normalized);
-  return visibleChars.slice(0, 4).join('');
-};
-
-const hasFilePayload = (event: DragEvent): boolean => {
-  const transfer = event.dataTransfer;
-  if (!transfer) return false;
-  if (transfer.files && transfer.files.length > 0) return true;
-  const types = Array.from(transfer.types || []);
-  return types.includes('Files');
-};
-
-const handleSkillDragEnter = (event: DragEvent) => {
-  if (props.skillsUploading || !hasFilePayload(event)) return;
-  skillDropDepth.value += 1;
-  skillDropActive.value = true;
-};
-
-const handleSkillDragOver = (event: DragEvent) => {
-  if (props.skillsUploading || !hasFilePayload(event)) return;
-  event.preventDefault();
-  skillDropActive.value = true;
-};
-
-const handleSkillDragLeave = () => {
-  skillDropDepth.value = Math.max(0, skillDropDepth.value - 1);
-  if (!skillDropDepth.value) {
-    skillDropActive.value = false;
-  }
-};
-
-const handleSkillDrop = (event: DragEvent) => {
-  skillDropDepth.value = 0;
-  skillDropActive.value = false;
-  if (props.skillsUploading) return;
-  const file = event.dataTransfer?.files?.[0];
-  emitSkillArchive(file);
-};
 
 const handleQuotePath = (payload: { paths?: string[] } = {}) => {
   const paths = Array.isArray(payload.paths)
@@ -210,27 +88,6 @@ const handleOpenWorkspaceBinding = (payload: { containerId: number; currentPath:
   emit('open-workspace-binding', payload);
 };
 
-const handleSkillGroupsWheel = (event: WheelEvent) => {
-  const container = event.currentTarget as HTMLElement | null;
-  if (!container) return;
-  const deltaY = Number(event.deltaY || 0);
-  if (!Number.isFinite(deltaY) || deltaY === 0) return;
-  if (event.cancelable) {
-    event.preventDefault();
-  }
-  event.stopPropagation();
-  const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
-  const nextScrollTop = container.scrollTop + deltaY;
-  container.scrollTop = Math.min(maxScrollTop, Math.max(0, nextScrollTop));
-};
-
-watch(
-  () => props.collapsed,
-  () => {
-    skillDropDepth.value = 0;
-    skillDropActive.value = false;
-  }
-);
 
 const refreshWorkspace = async (options: { background?: boolean } = {}) => {
   if (isDesktopSafeModeEnabled()) {

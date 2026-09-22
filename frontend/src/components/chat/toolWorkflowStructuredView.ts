@@ -14,6 +14,8 @@ type SearchHit = {
   path: string;
   line: number | null;
   content: string;
+  before: string[];
+  after: string[];
 };
 
 const READ_FILE_LIMIT = 8;
@@ -267,22 +269,35 @@ const buildListStructuredView = (
 const parseSearchHit = (value: unknown): SearchHit | null => {
   const obj = asObject(value);
   if (obj) {
+    const parseContext = (raw: unknown): string[] => Array.isArray(raw)
+      ? raw.map((item) => {
+          const line = asObject(item);
+          if (!line) return String(item || '').trim();
+          const number = toInt(line.line);
+          const content = pickString(line.content);
+          return content ? `${number ? `${number}: ` : ''}${content}` : '';
+        }).filter(Boolean)
+      : [];
     return {
       path: pickString(obj.path),
       line: toInt(obj.line) || null,
-      content: pickString(obj.content)
+      content: pickString(obj.content, obj.content_head),
+      before: parseContext(obj.before),
+      after: parseContext(obj.after)
     };
   }
   const text = String(value || '').trim();
   if (!text) return null;
   const match = text.match(/^(.+?):(\d+):(.*)$/);
   if (!match) {
-    return { path: '', line: null, content: text };
+    return { path: '', line: null, content: text, before: [], after: [] };
   }
   return {
     path: match[1].trim(),
     line: Number.parseInt(match[2], 10) || null,
-    content: match[3].trim()
+    content: match[3].trim(),
+    before: [],
+    after: []
   };
 };
 
@@ -322,7 +337,10 @@ const buildSearchStructuredView = (
           rows: groupHits.map((hit, rowIndex) => ({
             key: `search-row-${index}-${rowIndex}`,
             title: hit.line !== null ? `#${hit.line}` : path,
-            body: truncateText(hit.content, 600),
+            body: truncateText(
+              [...hit.before, hit.content, ...hit.after].filter(Boolean).join('\n'),
+              900
+            ),
             mono: true
           }))
         }))

@@ -261,7 +261,7 @@ fn now_ts() -> f64 {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn exit_orchestration_clears_active_state_and_rebinds_fresh_main_threads() {
+async fn exit_orchestration_clears_active_state_and_rebinds_new_threads() {
     let app = build_test_app().await;
     let user = create_user_session(&app, "orch_exit_user");
     let hive = create_hive(
@@ -862,19 +862,6 @@ async fn disconnected_history_restore_keeps_orchestration_inactive() {
     assert!(!mother_session_before.is_empty());
     assert!(!worker_session_before.is_empty());
 
-    let mother_thread_before = app
-        .state
-        .user_store
-        .get_agent_thread(&user.user_id, &mother.agent_id)
-        .expect("mother thread before")
-        .expect("mother thread record before");
-    let worker_thread_before = app
-        .state
-        .user_store
-        .get_agent_thread(&user.user_id, &worker.agent_id)
-        .expect("worker thread before")
-        .expect("worker thread record before");
-
     let (status, exit_payload) = send_json(
         &app.app,
         &user.token,
@@ -946,27 +933,10 @@ async fn disconnected_history_restore_keeps_orchestration_inactive() {
         Some(false)
     );
     assert_eq!(state_payload.pointer("/data/state"), Some(&Value::Null));
-
-    let mother_thread_after = app
-        .state
-        .user_store
-        .get_agent_thread(&user.user_id, &mother.agent_id)
-        .expect("mother thread after")
-        .expect("mother thread record after");
-    let worker_thread_after = app
-        .state
-        .user_store
-        .get_agent_thread(&user.user_id, &worker.agent_id)
-        .expect("worker thread after")
-        .expect("worker thread record after");
-    assert_eq!(mother_thread_after.session_id, mother_fresh_session);
-    assert_eq!(worker_thread_after.session_id, worker_fresh_session);
-    assert_eq!(mother_thread_before.session_id, mother_session_before);
-    assert_eq!(worker_thread_before.session_id, worker_session_before);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_state_repairs_mother_main_thread_back_to_orchestration_session() {
+async fn get_state_preserves_unrelated_task_threads() {
     let app = build_test_app().await;
     let user = create_user_session(&app, "orch_repair_user");
     let hive = create_hive(
@@ -1030,26 +1000,6 @@ async fn get_state_repairs_mother_main_thread_back_to_orchestration_session() {
             spawned_by: None,
         })
         .expect("create detached chat session");
-    app.state
-        .user_store
-        .upsert_agent_thread(&wunder_server::storage::AgentThreadRecord {
-            thread_id: format!("thread_{detached_session_id}"),
-            user_id: user.user_id.clone(),
-            agent_id: mother.agent_id.clone(),
-            session_id: detached_session_id.to_string(),
-            status: "idle".to_string(),
-            created_at: now,
-            updated_at: now,
-        })
-        .expect("rebind detached mother thread");
-
-    let before = app
-        .state
-        .user_store
-        .get_agent_thread(&user.user_id, &mother.agent_id)
-        .expect("load mother thread before")
-        .expect("mother thread before exists");
-    assert_eq!(before.session_id, detached_session_id);
 
     let (status, state_payload) = send_json(
         &app.app,
@@ -1076,15 +1026,11 @@ async fn get_state_repairs_mother_main_thread_back_to_orchestration_session() {
         Some(mother_orchestration_session.as_str())
     );
 
-    let repaired = app
+    let unrelated = app
         .state
         .user_store
-        .get_agent_thread(&user.user_id, &mother.agent_id)
-        .expect("load mother thread after")
-        .expect("mother thread after exists");
-    assert_eq!(repaired.session_id, mother_orchestration_session);
-    assert_eq!(
-        repaired.thread_id,
-        format!("thread_{mother_orchestration_session}")
-    );
+        .get_chat_session(&user.user_id, detached_session_id)
+        .expect("load unrelated task")
+        .expect("task remains available");
+    assert_eq!(unrelated.session_id, detached_session_id);
 }

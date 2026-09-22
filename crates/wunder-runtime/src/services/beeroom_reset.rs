@@ -131,8 +131,7 @@ pub async fn reset_beeroom_group(
         let session_id = state
             .kernel
             .thread_runtime
-            .create_fresh_main_session_id(user_id, runtime_agent_id, "beeroom_reset")
-            .await?;
+            .create_task_session_id(user_id, runtime_agent_id)?;
         clear_session_context(state.storage.as_ref(), user_id, &session_id)?;
         member_threads.push(ResetBeeroomMemberThread {
             agent_id: agent.agent_id.clone(),

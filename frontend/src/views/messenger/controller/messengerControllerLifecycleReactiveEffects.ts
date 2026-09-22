@@ -74,8 +74,7 @@ import {
 import {
   MessengerFileContainerMenu,
   MessengerGroupDock,
-  MessengerRightDock,
-  MessengerTimelineDialog
+  MessengerRightDock
 } from '@/views/messenger/lazyShell';
 import {
   AgentCronPanel,
@@ -517,7 +516,6 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       void ctx.hydrateMessengerOrderPreferences();
       ctx.cronPermissionDenied.value = false;
       ctx.cronAgentIds.value = new Set<string>();
-      ctx.timelineDialogVisible.value = false;
       ctx.skillDockUploading.value = false;
       ctx.agentPromptToolSummary.value = null;
       ctx.agentToolSummaryLoading.value = false;
@@ -543,7 +541,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.refreshAgentMainUnreadFromSessions();
       ctx.warmMessengerUserToolsData({
           catalog: ctx.sessionHub.activeSection === 'agents' || ctx.sessionHub.activeSection === 'tools',
-          skills: ctx.showAgentRightDock.value,
+          skills: false,
           summary: ctx.sessionHub.activeSection === 'agents' || ctx.showAgentRightDock.value
       });
       ctx.scheduleWorkspaceResourceHydration('profile-change');
@@ -842,7 +840,6 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           .map((session) => [
           String(session?.id || ''),
           ctx.normalizeAgentId(session?.agent_id),
-          session?.is_main ? '1' : '0',
           String(session?.last_message_at || session?.updated_at || session?.created_at || '')
       ].join(':'))
           .join('|'),
@@ -1248,7 +1245,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.scheduleWorkspaceResourceHydration('mounted');
       ctx.warmMessengerUserToolsData({
           catalog: ctx.sessionHub.activeSection === 'agents' || ctx.sessionHub.activeSection === 'tools',
-          skills: ctx.showAgentRightDock.value,
+          skills: false,
           summary: ctx.sessionHub.activeSection === 'agents' || ctx.showAgentRightDock.value
       });
       ctx.stopWorkspaceRefreshListener = onWorkspaceRefresh(ctx.handleWorkspaceResourceRefresh);

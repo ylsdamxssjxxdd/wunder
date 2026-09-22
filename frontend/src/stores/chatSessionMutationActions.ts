@@ -1,4 +1,4 @@
-﻿import { defineStore } from 'pinia';
+import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -21,7 +21,6 @@ import {
   updateSessionTools as updateSessionToolsApi
 } from '@/api/chat';
 import { t } from '@/i18n';
-import { setDefaultSession } from '@/api/agents';
 import { formatStructuredErrorText } from '@/utils/streamError';
 import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
 import {
@@ -116,7 +115,7 @@ import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
 import { clearSessionCommandSessions, removeDemoChatSession, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
-import { DEFAULT_AGENT_KEY, applyMainSession, goalSessionIdFromPayload, persistAgentSession, resolvePersistedSessionId, writeSessionGoalState } from './chatPersist';
+import { DEFAULT_AGENT_KEY, goalSessionIdFromPayload, persistAgentSession, resolvePersistedSessionId, writeSessionGoalState } from './chatPersist';
 import { clearSessionWatcher, setSessionLoading } from './chatRuntimeControls';
 import { clearSessionEventsSnapshot, filterSessionsByAgent, resolveSessionKey, sessionDetailPrefetchInFlight, sessionDetailWarmState, sessionHistoryState, sessionMessages, sessionRuntime, sessionSubagentsCache, sessionSubagentsInFlight, writeSessionListCache } from './chatRuntimeState';
 import { clearChatSnapshot } from './chatSnapshot';
@@ -149,6 +148,9 @@ export const chatSessionMutationActions = {
     async archiveSession(sessionId) {
       const targetId = resolveSessionKey(sessionId || this.activeSessionId);
       if (!targetId) return null;
+      // Keep the live subscription intact when the server rejects a running/locked task.
+      const { data } = await archiveSessionApi(targetId);
+      const archived = data?.data || null;
       if (resolveSessionKey(targetId) === resolveSessionKey(this.activeSessionId)) {
         clearSessionWatcher();
       }
@@ -166,24 +168,7 @@ export const chatSessionMutationActions = {
       sessionSubagentsInFlight.delete(resolveSessionKey(targetId));
       sessionSubagentsCache.delete(resolveSessionKey(targetId));
       sessionHistoryState.delete(resolveSessionKey(targetId));
-      const { data } = await archiveSessionApi(targetId);
-      const archived = data?.data || null;
       this.sessions = this.sessions.filter((item) => resolveSessionKey(item?.id) !== targetId);
-      if (targetSession?.is_main) {
-        const fallback = this.sessions.find((item) => {
-          const agentId = String(item.agent_id || '').trim();
-          return targetAgentId ? agentId === targetAgentId : !agentId;
-        });
-        const apiAgentId = targetAgentId || DEFAULT_AGENT_KEY;
-        if (fallback) {
-          await setDefaultSession(apiAgentId, { session_id: fallback.id });
-          this.sessions = applyMainSession(this.sessions, targetAgentId, fallback.id);
-          persistAgentSession(targetAgentId, fallback.id);
-        } else {
-          this.sessions = applyMainSession(this.sessions, targetAgentId, '');
-          persistAgentSession(targetAgentId, '');
-        }
-      }
       sessionWorkflowState.delete(String(targetId));
       removeDemoChatSession(targetId);
       clearChatSnapshot(targetId);
@@ -227,10 +212,6 @@ export const chatSessionMutationActions = {
         this.sessions.unshift({ ...restored, id: resolvedId });
       }
       const restoredAgentId = String(restored.agent_id || '').trim();
-      if (restored?.is_main) {
-        this.sessions = applyMainSession(this.sessions, restoredAgentId, resolvedId);
-        persistAgentSession(restoredAgentId, resolvedId);
-      }
       this.sessions = sortSessionsByActivity(this.sessions);
       writeSessionListCache(restoredAgentId, filterSessionsByAgent(restoredAgentId, this.sessions));
       syncDemoChatCache({ sessions: this.sessions });
@@ -259,21 +240,6 @@ export const chatSessionMutationActions = {
       clearSessionCommandSessions(targetId);
       await deleteSessionApi(targetId);
       this.sessions = this.sessions.filter((item) => item.id !== targetId);
-      if (targetSession?.is_main) {
-        const fallback = this.sessions.find((item) => {
-          const agentId = String(item.agent_id || '').trim();
-          return targetAgentId ? agentId === targetAgentId : !agentId;
-        });
-        const apiAgentId = targetAgentId || DEFAULT_AGENT_KEY;
-        if (fallback) {
-          await setDefaultSession(apiAgentId, { session_id: fallback.id });
-          this.sessions = applyMainSession(this.sessions, targetAgentId, fallback.id);
-          persistAgentSession(targetAgentId, fallback.id);
-        } else {
-          this.sessions = applyMainSession(this.sessions, targetAgentId, '');
-          persistAgentSession(targetAgentId, '');
-        }
-      }
       sessionWorkflowState.delete(String(targetId));
       clearSessionCommandSessions(targetId);
       removeDemoChatSession(targetId);

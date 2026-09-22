@@ -1,0 +1,85 @@
+import { Theme } from "theme.slint";
+
+// Keyboard and accessibility actions share the pointer callback.
+export component Action inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> enabled: true;
+    in property <bool> selected: false;
+    in property <bool> primary: false;
+    in property <bool> rail: false;
+    in property <bool> show-label: false;
+    callback clicked();
+    width: root.show-label ? 92px : 30px;
+    height: 30px;
+    border-radius: 7px;
+    background: root.primary ? (root.enabled ? Theme.accent : Theme.accent.transparentize(0.6))
+        : root.rail ? (root.selected || touch.has-hover ? #ffffff33 : transparent)
+        : root.selected || touch.has-hover ? Theme.accent-soft : transparent;
+    border-width: focus.has-focus ? 1px : 0px;
+    border-color: root.rail ? white : Theme.accent;
+    forward-focus: focus;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+    Image {
+        x: root.show-label ? 10px : (parent.width - 15px) / 2;
+        y: (parent.height - 15px) / 2;
+        width: 15px; height: 15px;
+        source: root.icon; image-fit: contain;
+        colorize: root.rail || root.primary ? white : Theme.muted;
+    }
+    if root.show-label : Text {
+        x: 32px; width: parent.width - 36px; height: parent.height;
+        text: root.label; font-size: 11px;
+        color: root.primary ? white : Theme.text;
+        vertical-alignment: center; overflow: elide;
+    }
+    touch := TouchArea {
+        enabled: root.enabled; mouse-cursor: pointer;
+        clicked => { focus.focus(); root.clicked(); }
+    }
+    focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == " " || event.text == "\n" { root.clicked(); return accept; }
+            return reject;
+        }
+    }
+}
+export component RailButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> active: false;
+    callback clicked();
+    height: 50px;
+    Action { width: 46px; height: 50px; rail: true; selected: root.active; label: root.label; clicked => { root.clicked(); } }
+    Image { y: 8px; width: 16px; height: 16px; source: root.icon; image-fit: contain; colorize: #ffffff; }
+    Text { y: 30px; width: parent.width; height: 14px; text: root.label; color: #ffffffe6; font-size: 10px; horizontal-alignment: center; }
+}
+export component Avatar inherits Rectangle {
+    in property <image> source;
+    in property <bool> mine: false;
+    width: 34px; height: 34px; border-radius: 17px;
+    background: root.mine ? Theme.accent-soft : #ffffff;
+    clip: true;
+    if !root.mine : Image { width: 100%; height: 100%; source: root.source; image-fit: cover; }
+    if root.mine : Text { text: "我"; font-size: 13px; color: Theme.accent-deep; horizontal-alignment: center; vertical-alignment: center; }
+}
+export component SearchField inherits Rectangle {
+    in property <image> icon;
+    in property <string> placeholder: "搜索";
+    in-out property <string> text <=> editor.text;
+    height: 34px; background: Theme.accent-soft; border-radius: 8px;
+    border-width: 1px; border-color: editor.has-focus ? Theme.accent : transparent;
+    forward-focus: editor;
+    Image { x: 10px; width: 12px; height: 12px; source: root.icon; colorize: Theme.muted; }
+    Text { x: 30px; width: parent.width - 38px; height: parent.height; text: editor.text == "" && editor.preedit-text == "" ? root.placeholder : ""; color: Theme.muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
+    editor := TextInput {
+        x: 30px; width: parent.width - 38px; height: parent.height;
+        color: Theme.text; font-size: 12px; single-line: true;
+        vertical-alignment: center;
+        selection-background-color: Theme.accent-soft; selection-foreground-color: Theme.text;
+    }
+}

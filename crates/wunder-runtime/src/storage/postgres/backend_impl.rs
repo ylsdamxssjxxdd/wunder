@@ -211,15 +211,6 @@ impl SessionLockStore for PostgresStorage {
 }
 
 impl AgentRuntimeStore for PostgresStorage {
-    fn upsert_agent_thread(&self, record: &AgentThreadRecord) -> Result<()> {
-        self.upsert_agent_thread_impl(record)
-    }
-    fn get_agent_thread(&self, user_id: &str, agent_id: &str) -> Result<Option<AgentThreadRecord>> {
-        self.get_agent_thread_impl(user_id, agent_id)
-    }
-    fn delete_agent_thread(&self, user_id: &str, agent_id: &str) -> Result<i64> {
-        self.delete_agent_thread_impl(user_id, agent_id)
-    }
     fn insert_agent_task(&self, record: &AgentTaskRecord) -> Result<()> {
         self.insert_agent_task_impl(record)
     }
@@ -643,6 +634,10 @@ impl UserAccountStore for PostgresStorage {
 }
 
 impl ChatSessionStore for PostgresStorage {
+    fn insert_chat_session_if_absent(&self, record: &ChatSessionRecord) -> Result<bool> {
+        self.insert_chat_session_if_absent_impl(record)
+    }
+
     fn upsert_chat_session(&self, record: &ChatSessionRecord) -> Result<()> {
         self.upsert_chat_session_impl(record)
     }

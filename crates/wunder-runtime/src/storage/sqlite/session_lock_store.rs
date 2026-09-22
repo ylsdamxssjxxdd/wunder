@@ -200,6 +200,34 @@ mod tests {
     }
 
     #[test]
+    fn task_threads_of_one_agent_are_independent() {
+        let (storage, _dir) = build_storage();
+        for id in ["task-a", "task-b"] {
+            assert_eq!(
+                storage
+                    .try_acquire_session_lock(id, "user-a", "agent-a", 60.0, 8)
+                    .unwrap(),
+                SessionLockStatus::Acquired
+            );
+        }
+        assert_eq!(
+            storage
+                .try_acquire_session_lock("task-a", "user-a", "agent-a", 60.0, 8)
+                .unwrap(),
+            SessionLockStatus::UserBusy
+        );
+        storage.release_session_lock("task-a").unwrap();
+        let remaining = storage.list_session_locks_by_user("user-a").unwrap();
+        assert_eq!(
+            remaining
+                .iter()
+                .map(|lock| lock.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["task-b"]
+        );
+    }
+
+    #[test]
     fn session_lock_roundtrip_enforces_duplicate_and_limit() {
         let (storage, _dir) = build_storage();
 

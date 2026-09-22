@@ -8,6 +8,3 @@ export const MessengerFileContainerMenu = lazy(
 );
 export const MessengerGroupDock = lazy(() => import('@/components/messenger/MessengerGroupDock.vue'));
 export const MessengerRightDock = lazy(() => import('@/components/messenger/MessengerRightDock.vue'));
-export const MessengerTimelineDialog = lazy(
-  () => import('@/components/messenger/MessengerTimelineDialog.vue')
-);

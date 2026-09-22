@@ -5,12 +5,11 @@ use crate::services::default_agent_protocol::{
 };
 use crate::services::user_leveling::{build_user_level_snapshot, normalize_total_experience};
 use crate::storage::{
-    normalize_hive_id, normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord,
-    BeeroomChatMessageRecord, ChatSessionRecord, HiveRecord, OrgUnitRecord, SessionLockRecord,
-    SessionRunRecord, StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
-    UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserSessionScopeRecord,
-    UserTokenBalanceStatus, UserTokenRecord, UserToolAccessRecord, DEFAULT_HIVE_ID,
-    DEFAULT_SANDBOX_CONTAINER_ID,
+    normalize_hive_id, normalize_sandbox_container_id, AgentTaskRecord, BeeroomChatMessageRecord,
+    ChatSessionRecord, HiveRecord, OrgUnitRecord, SessionLockRecord, SessionRunRecord,
+    StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams, UserAccountRecord,
+    UserAgentAccessRecord, UserAgentRecord, UserSessionScopeRecord, UserTokenBalanceStatus,
+    UserTokenRecord, UserToolAccessRecord, DEFAULT_HIVE_ID, DEFAULT_SANDBOX_CONTAINER_ID,
 };
 use anyhow::{anyhow, Result};
 use argon2::password_hash::{
@@ -1122,22 +1121,6 @@ impl UserStore {
 
     pub fn count_session_locks(&self) -> Result<i64> {
         self.storage.count_session_locks()
-    }
-
-    pub fn upsert_agent_thread(&self, record: &AgentThreadRecord) -> Result<()> {
-        self.storage.upsert_agent_thread(record)
-    }
-
-    pub fn get_agent_thread(
-        &self,
-        user_id: &str,
-        agent_id: &str,
-    ) -> Result<Option<AgentThreadRecord>> {
-        self.storage.get_agent_thread(user_id, agent_id)
-    }
-
-    pub fn delete_agent_thread(&self, user_id: &str, agent_id: &str) -> Result<i64> {
-        self.storage.delete_agent_thread(user_id, agent_id)
     }
 
     pub fn insert_agent_task(&self, record: &AgentTaskRecord) -> Result<()> {

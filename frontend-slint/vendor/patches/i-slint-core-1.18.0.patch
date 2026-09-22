@@ -1,0 +1,132 @@
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-core-1.18.0/Cargo.toml b/i-slint-core-1.18/Cargo.toml
+index b86f7de..b9202c7 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-core-1.18.0/Cargo.toml
++++ b/i-slint-core-1.18/Cargo.toml
+@@ -55,7 +55,6 @@ box-shadow-cache = []
+ default = [
+     "std",
+     "unicode",
+-    "shared-parley",
+ ]
+ ffi = [
+     "dep:static_assertions",
+@@ -97,7 +96,6 @@ std = [
+     "chrono/wasmbind",
+     "chrono/clock",
+     "dep:sys-locale",
+-    "shared-fontique",
+     "i-slint-common/locale-decimal-separator",
+     "i-slint-common/color-parsing",
+     "i-slint-common/markdown",
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-core-1.18.0/Cargo.toml.orig b/i-slint-core-1.18/Cargo.toml.orig
+index 3711a08..7960b5e 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-core-1.18.0/Cargo.toml.orig
++++ b/i-slint-core-1.18/Cargo.toml.orig
+@@ -35,7 +35,6 @@ std = [
+   "chrono/wasmbind",
+   "chrono/clock",
+   "dep:sys-locale",
+-  "shared-fontique",
+   "i-slint-common/locale-decimal-separator",
+   "i-slint-common/color-parsing",
+   "i-slint-common/markdown",
+@@ -78,7 +77,7 @@ log = ["dep:log"]
+ tr = ["dep:tr"]
+ 
+ 32-bit-color = []
+-default = ["std", "unicode", "shared-parley"]
++default = ["std", "unicode"]
+ 
+ # System tray (`SystemTrayIcon`) support. On Linux/BSD this pulls `ksni`; on
+ # other platforms it gates the native backend. When disabled, `SystemTrayIcon`
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-core-1.18.0/graphics/bitmapfont.rs b/i-slint-core-1.18/graphics/bitmapfont.rs
+index 118dbf6..9a0715f 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-core-1.18.0/graphics/bitmapfont.rs
++++ b/i-slint-core-1.18/graphics/bitmapfont.rs
+@@ -20,8 +20,15 @@ pub struct BitmapGlyph {
+     /// The horizontal distance to the next glyph
+     /// This is a fixed point number that is shifted by 6 bits
+     pub x_advance: i16,
+-    /// The 8-bit alpha map that's to be blended with the current text color
+-    /// or 8-bit signed distance field depending on `BitmapFont::sdf`
++    /// Packing of `data`: 0 = 8-bit alpha map (or SDF when `BitmapFont::sdf`),
++    /// 1 = 1-bit monochrome rows (MSB first, rows padded to whole bytes) that
++    /// expand to 0/255 alpha. The software renderer expands packed glyphs on
++    /// demand as they are first painted; 2 = 32-bit RGB subpixel coverage map
++    /// (the fourth byte is unused).
++    pub data_packing: u8,
++    /// The glyph coverage data. This is an 8-bit alpha map (or signed distance
++    /// field depending on `BitmapFont::sdf`) unless `data_packing == 2`,
++    /// in which case each pixel has red, green, blue, and unused coverage bytes.
+     pub data: Slice<'static, u8>,
+ }
+ 
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-core-1.18.0/partial_renderer.rs b/i-slint-core-1.18/partial_renderer.rs
+index ec58837..e98f2d3 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-core-1.18.0/partial_renderer.rs
++++ b/i-slint-core-1.18/partial_renderer.rs
+@@ -268,7 +268,13 @@ impl core::fmt::Debug for DirtyRegion {
+ 
+ impl DirtyRegion {
+     /// The maximum number of rectangles that can be stored in a DirtyRegion
+-    pub const MAX_COUNT: usize = 3;
++    ///
++    /// rcho: raised from the upstream 3. A workbench frame change (radar
++    /// image + file list row + status bar + side panel) dirties far more
++    /// than three disjoint rectangles; with only three slots the merge
++    /// fallback unions them into a whole-window bounding box, so every file
++    /// switch repainted and presented the entire surface.
++    pub const MAX_COUNT: usize = 16;
+ 
+     /// An iterator over the part of the region (they can overlap)
+     pub fn iter(&self) -> impl Iterator<Item = euclid::Box2D<Coord, LogicalPx>> + '_ {
+@@ -741,6 +747,17 @@ impl<'a, T: ItemRenderer + ItemRendererFeatures> PartialRenderer<'a, T> {
+         self.get_current_clip().intersection(item_bounding_rect).is_some_and(|clipped_geom| {
+             let screen_geom =
+                 self.current_transform().outer_transformed_rect(&clipped_geom.cast()).cast();
++            // Software damage is rounded outward to physical pixels before
++            // clearing the buffer. An adjacent item can contribute to those
++            // edge pixels even though its logical bounds do not intersect
++            // the original damage (e.g. a toolbar border above changed text
++            // at 175% scale). Keep it in the draw list; the actual renderer
++            // still clips writes to the physical damage region.
++            #[cfg(not(slint_int_coord))]
++            let screen_geom = {
++                let pixel = 1.0 / self.scale_factor().get();
++                screen_geom.inflate(pixel, pixel)
++            };
+             self.dirty_region.draw_intersects(screen_geom)
+         })
+     }
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-core-1.18.0/window.rs b/i-slint-core-1.18/window.rs
+index f7f5622..04f210d 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-core-1.18.0/window.rs
++++ b/i-slint-core-1.18/window.rs
+@@ -668,6 +668,9 @@ pub struct WindowInner {
+ 
+     /// Stack of currently active popups
+     pub active_popups: RefCell<Vec<PopupWindow>>,
++    /// Project extension: a live native canvas must keep its event loop running
++    /// while a context menu is open (Win32 TrackPopupMenu runs a modal loop).
++    pub native_popup_menus_enabled: Cell<bool>,
+     next_popup_id: Cell<NonZeroU32>,
+     had_popup_on_press: Cell<bool>,
+     close_requested: Callback<(), CloseRequestResponse>,
+@@ -735,6 +738,7 @@ impl WindowInner {
+             last_ime_text: Default::default(),
+             cursor_blinker: Default::default(),
+             active_popups: Default::default(),
++            native_popup_menus_enabled: Cell::new(true),
+             next_popup_id: Cell::new(NonZeroU32::MIN),
+             had_popup_on_press: Default::default(),
+             close_requested: Default::default(),
+@@ -2208,6 +2212,9 @@ impl WindowInner {
+         position: LogicalPosition,
+         parent_item: &ItemRc,
+     ) -> bool {
++        if !self.native_popup_menus_enabled.get() {
++            return false;
++        }
+         if let Some(x) = self.window_adapter().internal(crate::InternalToken) {
+             let position = parent_item.map_to_native_window(
+                 parent_item.geometry().origin + position.to_euclid().to_vector(),

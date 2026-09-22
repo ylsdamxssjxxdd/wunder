@@ -1,3 +1,4 @@
+import { buildTaskList } from '@/views/messenger/taskList';
 // @ts-nocheck
 // File lifecycle text, right dock visibility, right-panel session history, and timeline preview caching.
 import type { MessengerControllerContext } from './messengerControllerContext';
@@ -71,8 +72,7 @@ import {
 import {
   MessengerFileContainerMenu,
   MessengerGroupDock,
-  MessengerRightDock,
-  MessengerTimelineDialog
+  MessengerRightDock
 } from '@/views/messenger/lazyShell';
 import {
   AgentCronPanel,
@@ -461,7 +461,7 @@ export function installMessengerControllerRightDockSessionRuntime(ctx: Messenger
           return;
       }
       ctx.warmMessengerUserToolsData({
-          skills: true,
+          skills: false,
           summary: true
       });
   }, { immediate: true });
@@ -607,46 +607,7 @@ export function installMessengerControllerRightDockSessionRuntime(ctx: Messenger
       return preview;
   };
 
-  ctx.rightPanelSessionHistory = computed(() => {
-      if (!ctx.showAgentRightDock.value)
-          return [];
-      const targetAgentId = ctx.normalizeAgentId(ctx.rightPanelAgentId.value);
-      const seenIds = new Set<string>();
-      let mainAssigned = false;
-      const result = (Array.isArray(ctx.chatStore.sessions) ? ctx.chatStore.sessions : [])
-          .filter((session) => ctx.normalizeAgentId(session?.agent_id) === targetAgentId)
-          .map((session) => ({
-          id: String(session?.id || '').trim(),
-          title: String(session?.title || ctx.t('chat.newSession')),
-          preview: ctx.resolveSessionTimelinePreview(session as Record<string, unknown>),
-          lastAt: ctx.resolveSessionActivityTimestamp((session || {}) as Record<string, unknown>),
-          isMain: Boolean(session?.is_main),
-          orchestrationLock: session && typeof session === 'object' && !Array.isArray(session)
-              ? ((session as Record<string, unknown>).orchestration_lock as Record<string, unknown> | null | undefined)
-              : null
-      }))
-          .filter((item) => item.id)
-          .sort((left, right) => {
-          if (left.isMain !== right.isMain) {
-              return left.isMain ? -1 : 1;
-          }
-          return ctx.normalizeTimestamp(right.lastAt) - ctx.normalizeTimestamp(left.lastAt);
-      })
-          .filter((item) => {
-          if (seenIds.has(item.id)) {
-              return false;
-          }
-          seenIds.add(item.id);
-          return true;
-      })
-          .map((item) => {
-          if (!item.isMain || mainAssigned) {
-              return { ...item, isMain: false };
-          }
-          mainAssigned = true;
-          return item;
-      });
-      return result;
-  });
-
+  ctx.rightPanelSessionHistory = computed(() => ctx.showAgentRightDock.value
+      ? buildTaskList(ctx.chatStore.sessions || [], ctx.rightPanelAgentId.value, ctx.t('chat.newSession'))
+      : []);
 }

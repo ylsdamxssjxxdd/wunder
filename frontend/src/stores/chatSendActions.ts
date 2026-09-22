@@ -21,7 +21,6 @@ import {
   updateSessionTools as updateSessionToolsApi
 } from '@/api/chat';
 import { t } from '@/i18n';
-import { setDefaultSession } from '@/api/agents';
 import { formatStructuredErrorText } from '@/utils/streamError';
 import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
 import {
@@ -118,7 +117,7 @@ import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
 import { buildWorkflowItem, normalizeInquiryPanelState, safeJsonParse, syncDemoChatCache } from './chatDemoPanels';
-import { applyGoalStreamEvent, applyMainSession, persistAgentSession } from './chatPersist';
+import { applyGoalStreamEvent, persistAgentSession } from './chatPersist';
 import { abortWatchStream, clearDraftSessionBootstrapMarkers, clearDraftSessionBootstrapMessages, clearRuntimeSendStreamState, clearSlowClientResume, markAssistantMessageRequestFailed, markRuntimeSendStreamActivity, markRuntimeSendStreamStarted, resolveMaxStreamRound, setSessionLoading } from './chatRuntimeControls';
 import { applyCanonicalClientMessageSubmittedRuntimeEvent, applyCanonicalStreamRuntimeEvent, applyLocalAssistantTurnTerminalRuntimeEvent, applySessionRuntimeEvent, buildRuntimeDebugSnapshot, cacheSessionMessages, clearSessionEventsSnapshot, ensureRuntime, notifySessionSnapshot, refreshRuntimeStreamLifecycle, syncChatRuntimeProjectionStatus, touchSessionUpdatedAt } from './chatRuntimeState';
 import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
@@ -494,7 +493,6 @@ export const chatSendActions = {
 
       const activeSession = this.sessions.find((item) => item.id === sessionId);
       if (activeSession) {
-        this.sessions = applyMainSession(this.sessions, activeSession.agent_id, sessionId);
         persistAgentSession(activeSession.agent_id, sessionId);
         const hasExistingLegacyUserMessage = sessionMessagesRef.some(
           (message) => message !== userMessage && String(message?.role || '').trim() === 'user'

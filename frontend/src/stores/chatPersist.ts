@@ -1,4 +1,4 @@
-﻿import { defineStore } from 'pinia';
+import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -21,7 +21,6 @@ import {
   updateSessionTools as updateSessionToolsApi
 } from '@/api/chat';
 import { t } from '@/i18n';
-import { setDefaultSession } from '@/api/agents';
 import { formatStructuredErrorText } from '@/utils/streamError';
 import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
 import {
@@ -474,19 +473,6 @@ export const persistActiveSession = (sessionId, agentId) => {
     draft: false,
     lastSessionByAgent: updateAgentSessionMap(current.lastSessionByAgent, agentId, cleanedSessionId)
   }));
-};
-
-export const applyMainSession = (sessions, agentId, sessionId) => {
-  const normalizedAgent = String(agentId || '').trim();
-  const normalizedSessionId = String(sessionId || '').trim();
-  return sessions.map((session) => {
-    const sessionAgentId = String(session.agent_id || '').trim();
-    const isMatch = normalizedAgent ? sessionAgentId === normalizedAgent : !sessionAgentId;
-    if (!isMatch) return session;
-    const isMain = Boolean(normalizedSessionId && session.id === normalizedSessionId);
-    if (session.is_main === isMain) return session;
-    return { ...session, is_main: isMain };
-  });
 };
 
 export const persistDraftSession = () => {

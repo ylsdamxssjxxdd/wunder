@@ -6,7 +6,7 @@
 
 ## 环境与入口
 
-- Windows 工作区 `D:\proj\wunder`，Electron 38.7.0，Node 24.14.0。
+- Windows 本地工作区，Electron 38.7.0，Node 24.14.0。
 - Electron 开发壳，前端分别使用构建后的 `dist-desktop` 目录；每组 1 次预热、3 次测量。
 - 命令：`powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/benchmark-startup.ps1 -Runs 3 -WarmupRuns 1 -FrontendRoot <dist-desktop> -DataRoot <data-root>`。
 - 运行期间机器存在 Rust 编译负载，结果用于验证时序和回归趋势，不作为硬件无关承诺。

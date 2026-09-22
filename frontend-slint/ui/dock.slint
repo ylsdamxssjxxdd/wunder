@@ -1,0 +1,74 @@
+import { Theme } from "theme.slint";
+import { Action, SearchField } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export component WorkDock inherits Rectangle {
+    callback activate-task(int);
+    callback preview-file(string);
+    in property <int> active-task;
+    background: Theme.dock;
+    private property <string> keyword;
+    VerticalLayout {
+        padding: 10px; spacing: 10px;
+        Rectangle {
+            border-radius: 12px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding: 12px; spacing: 10px;
+                HorizontalLayout {
+                    height: 24px; spacing: 8px;
+                    Image { width: 14px; height: 14px; source: @image-url("../assets/icons/list-check.svg"); colorize: Theme.accent-deep; }
+                    Text { text: "任务列表"; font-size: 13px; font-weight: 600; color: Theme.text; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text { text: "3"; color: Theme.accent-deep; font-size: 11px; }
+                }
+                ScrollView {
+                    horizontal-scrollbar-policy: always-off;
+                    VerticalLayout {
+                        alignment: start; spacing: 6px;
+                        for title[index] in ["当前任务", "历史任务 01", "历史任务 02"] : Rectangle {
+                            height: 56px; border-radius: 10px;
+                            background: index == root.active-task ? Theme.accent-soft : transparent;
+                            Action { width: parent.width; height: parent.height; label: title; clicked => { root.activate-task(index); } }
+                            Image { x: 9px; y: 16px; width: 16px; height: 16px; source: @image-url("../assets/icons/comments.svg"); colorize: Theme.accent; }
+                            Text { x: 36px; y: 8px; width: parent.width - 44px; height: 18px; text: title; color: Theme.text; font-size: 12px; }
+                            Text { x: 36px; y: 30px; width: parent.width - 44px; height: 16px; text: index == 0 ? "已完成 · 主线程" : "已完成 · 演示记录"; color: Theme.muted; font-size: 11px; }
+                        }
+                    }
+                }
+            }
+        }
+        Rectangle {
+            border-radius: 12px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding: 12px; spacing: 10px;
+                HorizontalLayout {
+                    height: 26px; spacing: 6px;
+                    Image { width: 14px; height: 14px; source: @image-url("../assets/icons/box-archive.svg"); colorize: Theme.accent-deep; }
+                    Text { text: "工作目录"; font-size: 13px; font-weight: 600; color: Theme.text; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Action { icon: @image-url("../assets/icons/upload.svg"); label: "上传"; clicked => { root.preview-file("上传"); } }
+                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; clicked => { root.keyword = ""; } }
+                }
+                SearchField { icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索文件"; text <=> root.keyword; }
+                ScrollView {
+                    horizontal-scrollbar-policy: always-off;
+                    VerticalLayout {
+                        alignment: start; spacing: 4px;
+                        for name[index] in ["文件夹", "说明.md", "记录.txt", "附件.pdf"] : Rectangle {
+                            height: root.keyword == "" || name.starts-with(root.keyword) ? 36px : 0px;
+                            visible: self.height > 0px;
+                            Action { width: parent.width; height: parent.height; label: name; clicked => { root.preview-file(name); } }
+                            Image { x: 4px; y: 10px; width: 16px; height: 16px; source: index == 0 ? @image-url("../assets/icons/folder-open.svg") : @image-url("../assets/icons/file-lines.svg"); colorize: index == 0 ? Theme.accent : Theme.muted; }
+                            Text { x: 29px; width: parent.width - 72px; height: parent.height; text: name; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                            Text { x: parent.width - 42px; width: 38px; height: parent.height; text: index == 0 ? "目录" : "文件"; color: Theme.muted; font-size: 10px; vertical-alignment: center; horizontal-alignment: right; }
+                        }
+                    }
+                }
+                Text { height: 18px; text: "4 项 · 演示文件"; color: Theme.muted; font-size: 10px; }
+            }
+        }
+    }
+}
+

@@ -482,7 +482,7 @@ const resolveTargetSessionId = async () => {
   const params = agentId ? { agent_id: agentId } : undefined;
   const { data } = await listSessions(params);
   const items = Array.isArray(data?.data?.items) ? data.data.items : [];
-  const candidate = items.find((item) => item?.is_main) || items[0];
+  const candidate = items[0];
   const sessionId = String(candidate?.id || '').trim();
   if (sessionId) {
     return sessionId;

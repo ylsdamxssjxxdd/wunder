@@ -281,7 +281,7 @@ The usual sequence is:
 
 - To launch temporary child runs inside the current session, use [Subagent Control](/docs/en/tools/subagent-control/)
 - To dispatch other formal agents the user already owns, use [Agent Swarm](/docs/en/tools/agent-swarm/)
-- To manage the main thread and branch threads, use [Thread Control](/docs/en/tools/thread-control/)
+- To manage the task thread and branch threads, use [Thread Control](/docs/en/tools/thread-control/)
 
 ## What changed in this tool redesign
 

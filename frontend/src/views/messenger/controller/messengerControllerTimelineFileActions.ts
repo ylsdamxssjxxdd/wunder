@@ -72,8 +72,7 @@ import {
 import {
   MessengerFileContainerMenu,
   MessengerGroupDock,
-  MessengerRightDock,
-  MessengerTimelineDialog
+  MessengerRightDock
 } from '@/views/messenger/lazyShell';
 import {
   AgentCronPanel,
@@ -417,9 +416,6 @@ export function installMessengerControllerTimelineFileActions(ctx: MessengerCont
           return;
       const targetSession = ctx.resolveSessionRecordById(targetId);
       const targetAgentId = ctx.resolveSessionAgentId(targetSession);
-      if (ctx.blockWhenAgentGoalLocked(targetAgentId, targetId)) {
-          return;
-      }
       await ctx.openAgentSession(targetId, targetAgentId);
   };
 
@@ -437,42 +433,12 @@ export function installMessengerControllerTimelineFileActions(ctx: MessengerCont
       }
   });
 
-  ctx.setTimelineSessionMain = async (sessionId: string) => {
-      const targetId = String(sessionId || '').trim();
-      if (!targetId)
-          return false;
-      const targetSession = ctx.resolveSessionRecordById(targetId);
-      const targetAgentId = ctx.resolveSessionAgentId(targetSession);
-      if (ctx.blockWhenAgentGoalLocked(targetAgentId, targetId))
-          return false;
-      const targetLock = targetSession && typeof targetSession === 'object' && !Array.isArray(targetSession)
-          ? (targetSession.orchestration_lock as Record<string, unknown> | null | undefined)
-          : null;
-      if (targetLock?.active === true) {
-          ElMessage.warning(ctx.t('orchestration.chat.lockedInMessenger'));
-          return false;
-      }
-      if (targetSession?.is_main) {
-          return true;
-      }
-      try {
-          await ctx.chatStore.setMainSession(targetId);
-          return true;
-      }
-      catch (error) {
-          showApiError(error, ctx.t('chat.history.setMainFailed'));
-          return false;
-      }
-  };
-
   ctx.handleTimelineDialogActivateSession = async (sessionId: string) => {
       const targetId = String(sessionId || '').trim();
       if (!targetId)
           return;
       const targetSession = ctx.resolveSessionRecordById(targetId);
       const targetAgentId = ctx.resolveSessionAgentId(targetSession);
-      if (ctx.blockWhenAgentGoalLocked(targetAgentId))
-          return;
       const targetLock = targetSession && typeof targetSession === 'object' && !Array.isArray(targetSession)
           ? (targetSession.orchestration_lock as Record<string, unknown> | null | undefined)
           : null;
@@ -480,8 +446,6 @@ export function installMessengerControllerTimelineFileActions(ctx: MessengerCont
           ElMessage.warning(ctx.t('orchestration.chat.lockedInMessenger'));
           return;
       }
-      ctx.timelineDialogVisible.value = false;
-      await ctx.setTimelineSessionMain(targetId);
       await ctx.restoreTimelineSession(targetId);
   };
 
@@ -491,8 +455,6 @@ export function installMessengerControllerTimelineFileActions(ctx: MessengerCont
           return;
       const session = ctx.resolveSessionRecordById(targetId);
       const targetAgentId = ctx.resolveSessionAgentId(session);
-      if (ctx.blockWhenAgentGoalLocked(targetAgentId))
-          return;
       const currentTitle = String(session?.title || ctx.t('chat.newSession')).trim() || ctx.t('chat.newSession');
       try {
           const { value } = await ElMessageBox.prompt(ctx.t('chat.history.renamePrompt'), ctx.t('chat.history.rename'), {
@@ -523,8 +485,6 @@ export function installMessengerControllerTimelineFileActions(ctx: MessengerCont
           return;
       const targetSession = ctx.resolveSessionRecordById(targetId);
       const targetAgentId = ctx.resolveSessionAgentId(targetSession);
-      if (ctx.blockWhenAgentGoalLocked(targetAgentId))
-          return;
       const confirmed = await confirmWithFallback(ctx.t('chat.history.confirmArchive'), ctx.t('chat.history.confirmTitle'), {
           type: 'warning',
           confirmButtonText: ctx.t('common.confirm'),

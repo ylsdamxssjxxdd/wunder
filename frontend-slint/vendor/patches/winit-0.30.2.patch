@@ -1,0 +1,254 @@
+diff --git a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform/x11.rs b/winit-0.30.2/src/platform/x11.rs
+index 749c400..4ab900c 100644
+--- a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform/x11.rs
++++ b/winit-0.30.2/src/platform/x11.rs
+@@ -81,9 +81,7 @@ pub type XWindow = u32;
+ #[inline]
+ pub fn register_xlib_error_hook(hook: XlibErrorHook) {
+     // Append new hook.
+-    unsafe {
+-        crate::platform_impl::XLIB_ERROR_HOOKS.lock().unwrap().push(hook);
+-    }
++    crate::platform_impl::XLIB_ERROR_HOOKS.lock().unwrap().push(hook);
+ }
+ 
+ /// Additional methods on [`ActiveEventLoop`] that are specific to X11.
+diff --git a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/linux/mod.rs b/winit-0.30.2/src/platform_impl/linux/mod.rs
+index 776689f..6f1f5e3 100644
+--- a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/linux/mod.rs
++++ b/winit-0.30.2/src/platform_impl/linux/mod.rs
+@@ -643,7 +643,12 @@ pub(crate) enum PlatformCustomCursor {
+ 
+ /// Hooks for X11 errors.
+ #[cfg(x11_platform)]
+-pub(crate) static mut XLIB_ERROR_HOOKS: Mutex<Vec<XlibErrorHook>> = Mutex::new(Vec::new());
++// This is mutated only behind the mutex.  `static mut` was used by the
++// original 0.30.2 implementation, but merely borrowing that static is
++// rejected by Rust 2024 compatibility checks and can be unsound.  The local
++// Lazy wrapper provides the required const initialization on this MSRV.
++pub(crate) static XLIB_ERROR_HOOKS: Lazy<Mutex<Vec<XlibErrorHook>>> =
++    Lazy::new(|| Mutex::new(Vec::new()));
+ 
+ #[cfg(x11_platform)]
+ unsafe extern "C" fn x_error_callback(
+@@ -654,7 +659,7 @@ unsafe extern "C" fn x_error_callback(
+     if let Ok(ref xconn) = *xconn_lock {
+         // Call all the hooks.
+         let mut error_handled = false;
+-        for hook in unsafe { XLIB_ERROR_HOOKS.lock() }.unwrap().iter() {
++        for hook in XLIB_ERROR_HOOKS.lock().unwrap().iter() {
+             error_handled |= hook(display as *mut _, event as *mut _);
+         }
+ 
+diff --git a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs b/winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs
+index aa046af..3710d6d 100644
+--- a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs
++++ b/winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs
+@@ -158,7 +158,13 @@ struct PreeditCallbacks {
+ impl PreeditCallbacks {
+     pub fn new(client_data: ffi::XPointer) -> PreeditCallbacks {
+         let start_callback = create_xim_callback(client_data, unsafe {
+-            mem::transmute::<usize, unsafe extern "C" fn(ffi::XIM, *mut i8, *mut i8)>(
++            // `XIMProc` is defined with `XPointer` arguments. Do not hard-code
++            // `i8`: `c_char` is `u8` on Linux/aarch64, which otherwise makes
++            // this callback incompatible with the Xlib ABI at compile time.
++            mem::transmute::<
++                usize,
++                unsafe extern "C" fn(ffi::XIM, ffi::XPointer, ffi::XPointer),
++            >(
+                 preedit_start_callback as usize,
+             )
+         });
+diff --git a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/windows/event_loop.rs b/winit-0.30.2/src/platform_impl/windows/event_loop.rs
+index 4fc3155..ec08c8e 100644
+--- a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/windows/event_loop.rs
++++ b/winit-0.30.2/src/platform_impl/windows/event_loop.rs
+@@ -46,6 +46,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
+     SWP_NOSIZE, SWP_NOZORDER, WHEEL_DELTA, WINDOWPOS, WMSZ_BOTTOM, WMSZ_BOTTOMLEFT,
+     WMSZ_BOTTOMRIGHT, WMSZ_LEFT, WMSZ_RIGHT, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT,
+     WM_CAPTURECHANGED, WM_CLOSE, WM_CREATE, WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE,
++    WM_ERASEBKGND,
+     WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
+     WM_IME_SETCONTEXT, WM_IME_STARTCOMPOSITION, WM_INPUT, WM_INPUT_DEVICE_CHANGE, WM_KEYDOWN,
+     WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+@@ -2021,7 +2022,12 @@ unsafe fn public_window_callback_inner(
+ 
+         WM_NCACTIVATE => {
+             let is_active = wparam != false.into();
+-            let active_focus_changed = userdata.window_state_lock().set_active(is_active);
++            let mut window_state = userdata.window_state_lock();
++            let frameless = !window_state
++                .window_flags
++                .contains(WindowFlags::MARKER_DECORATIONS);
++            let active_focus_changed = window_state.set_active(is_active);
++            drop(window_state);
+             if active_focus_changed {
+                 if is_active {
+                     unsafe { gain_active_focus(window, userdata) };
+@@ -2029,7 +2035,28 @@ unsafe fn public_window_callback_inner(
+                     unsafe { lose_active_focus(window, userdata) };
+                 }
+             }
+-            result = ProcResult::DefWindowProc(wparam);
++            // A frameless window retains WS_SIZEBOX for native snap and edge
++            // resize. DefWindowProc would repaint a native activation border
++            // before Slint presents its next custom frame.
++            result = if frameless {
++                ProcResult::Value(1)
++            } else {
++                ProcResult::DefWindowProc(wparam)
++            };
++        },
++
++        WM_ERASEBKGND => {
++            // The custom Slint surface owns every pixel of a frameless client
++            // rectangle. Do not let User32 erase an edge between focus events.
++            let frameless = !userdata
++                .window_state_lock()
++                .window_flags
++                .contains(WindowFlags::MARKER_DECORATIONS);
++            result = if frameless {
++                ProcResult::Value(1)
++            } else {
++                ProcResult::DefWindowProc(wparam)
++            };
+         },
+ 
+         WM_SETFOCUS => {
+@@ -2083,6 +2110,38 @@ unsafe fn public_window_callback_inner(
+             let window_state = userdata.window_state_lock();
+             let window_flags = window_state.window_flags;
+ 
++            // The native undecorated style retains WS_SIZEBOX so that snap
++            // and edge resizing still work. Unlike a regular captioned frame,
++            // however, our WM_NCCALCSIZE path makes the whole outer rectangle
++            // client content. Letting Windows maximize that rectangle to
++            // rcMonitor therefore extends the software surface underneath the
++            // taskbar until the later NCCALCSIZE correction runs. On Win7 the
++            // stale bottom strip can be painted white for a frame, and the
++            // Slint root keeps the old height until a user resize arrives.
++            //
++            // Constrain the *outer* maximized rectangle to rcWork up front.
++            // This keeps the HWND, Winit's Resized event and the renderer
++            // surface in the same coordinate system from the first frame.
++            if !window_flags.contains(WindowFlags::MARKER_DECORATIONS) {
++                let monitor = unsafe { MonitorFromWindow(window, MONITOR_DEFAULTTONULL) };
++                if let Ok(monitor_info) = monitor::get_monitor_info(monitor) {
++                    let monitor_rect = monitor_info.monitorInfo.rcMonitor;
++                    let work = monitor_info.monitorInfo.rcWork;
++                    unsafe {
++                        // MINMAXINFO position is relative to the monitor's
++                        // origin, not absolute desktop coordinates.
++                        (*mmi).ptMaxPosition = POINT {
++                            x: work.left - monitor_rect.left,
++                            y: work.top - monitor_rect.top,
++                        };
++                        (*mmi).ptMaxSize = POINT {
++                            x: work.right - work.left,
++                            y: work.bottom - work.top,
++                        };
++                    }
++                }
++            }
++
+             if window_state.min_size.is_some() || window_state.max_size.is_some() {
+                 if let Some(min_size) = window_state.min_size {
+                     let min_size = min_size.to_physical(window_state.scale_factor);
+@@ -2441,7 +2500,7 @@ unsafe extern "system" fn thread_event_target_callback(
+     if userdata_removed {
+         drop(userdata);
+     } else {
+-        Box::into_raw(userdata);
++        let _ = Box::into_raw(userdata);
+     }
+     result
+ }
+diff --git a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/windows/util.rs b/winit-0.30.2/src/platform_impl/windows/util.rs
+index 87bcbd4..f55eef0 100644
+--- a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/windows/util.rs
++++ b/winit-0.30.2/src/platform_impl/windows/util.rs
+@@ -219,6 +219,7 @@ pub type GetDpiForMonitor = unsafe extern "system" fn(
+     dpi_y: *mut u32,
+ ) -> HRESULT;
+ pub type EnableNonClientDpiScaling = unsafe extern "system" fn(hwnd: HWND) -> BOOL;
++#[allow(non_snake_case)]
+ pub type AdjustWindowRectExForDpi = unsafe extern "system" fn(
+     rect: *mut RECT,
+     dwStyle: u32,
+@@ -227,6 +228,7 @@ pub type AdjustWindowRectExForDpi = unsafe extern "system" fn(
+     dpi: u32,
+ ) -> BOOL;
+ 
++#[allow(non_snake_case)]
+ pub type GetPointerFrameInfoHistory = unsafe extern "system" fn(
+     pointerId: u32,
+     entriesCount: *mut u32,
+@@ -234,16 +236,20 @@ pub type GetPointerFrameInfoHistory = unsafe extern "system" fn(
+     pointerInfo: *mut POINTER_INFO,
+ ) -> BOOL;
+ 
++#[allow(non_snake_case)]
+ pub type SkipPointerFrameMessages = unsafe extern "system" fn(pointerId: u32) -> BOOL;
++#[allow(non_snake_case)]
+ pub type GetPointerDeviceRects = unsafe extern "system" fn(
+     device: HANDLE,
+     pointerDeviceRect: *mut RECT,
+     displayRect: *mut RECT,
+ ) -> BOOL;
+ 
++#[allow(non_snake_case)]
+ pub type GetPointerTouchInfo =
+     unsafe extern "system" fn(pointerId: u32, touchInfo: *mut POINTER_TOUCH_INFO) -> BOOL;
+ 
++#[allow(non_snake_case)]
+ pub type GetPointerPenInfo =
+     unsafe extern "system" fn(pointId: u32, penInfo: *mut POINTER_PEN_INFO) -> BOOL;
+ 
+diff --git a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/windows/window_state.rs b/winit-0.30.2/src/platform_impl/windows/window_state.rs
+index 911467b..fd4de84 100644
+--- a/D:/proj/rcho/target/tmp/patch-verify/winit-0.30.2/src/platform_impl/windows/window_state.rs
++++ b/winit-0.30.2/src/platform_impl/windows/window_state.rs
+@@ -309,6 +309,19 @@ impl WindowFlags {
+             style &= !WS_OVERLAPPEDWINDOW;
+         }
+ 
++        // Winit normally retains WS_CAPTION and WS_SYSMENU for an undecorated
++        // top-level so the frame can participate in Windows' snap behavior;
++        // WM_NCCALCSIZE then covers the non-client area. That works on modern
++        // Windows, but after a frame refresh Win7 may briefly paint the latent
++        // system caption control before the custom client chrome receives its
++        // input. A frameless application already owns those controls, so keep
++        // WS_SIZEBOX for edge resizing/snap but remove every native caption
++        // style from the actual HWND.
++        if !self.contains(WindowFlags::MARKER_DECORATIONS) {
++            style &= !(WS_CAPTION | WS_BORDER | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
++            style_ex &= !WS_EX_WINDOWEDGE;
++        }
++
+         (style, style_ex)
+     }
+ 
+@@ -427,12 +440,21 @@ impl WindowFlags {
+     pub fn adjust_rect(self, hwnd: HWND, mut rect: RECT) -> Result<RECT, io::Error> {
+         unsafe {
+             let mut style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+-            let style_ex = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
++            let mut style_ex = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+ 
+             // Frameless style implemented by manually overriding the non-client area in
+             // `WM_NCCALCSIZE`.
+             if !self.contains(WindowFlags::MARKER_DECORATIONS) {
+-                style &= !(WS_CAPTION | WS_SIZEBOX);
++                // Keep WS_SIZEBOX on the real HWND for edge resize and snap,
++                // but omit it from the synthetic client-size calculation: the
++                // WM_NCCALCSIZE override already makes that border client area.
++                style &= !(WS_CAPTION
++                    | WS_BORDER
++                    | WS_SIZEBOX
++                    | WS_SYSMENU
++                    | WS_MINIMIZEBOX
++                    | WS_MAXIMIZEBOX);
++                style_ex &= !WS_EX_WINDOWEDGE;
+             }
+ 
+             util::win_to_err({

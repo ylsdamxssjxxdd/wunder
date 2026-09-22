@@ -71,8 +71,7 @@ import {
 import {
   MessengerFileContainerMenu,
   MessengerGroupDock,
-  MessengerRightDock,
-  MessengerTimelineDialog
+  MessengerRightDock
 } from '@/views/messenger/lazyShell';
 import {
   AgentCronPanel,
@@ -569,48 +568,6 @@ export function installMessengerControllerSharedHelpers(ctx: MessengerController
       return ctx.normalizeAgentId(session?.agent_id || (session?.is_default === true ? DEFAULT_AGENT_KEY : '') || fallbackAgentId || DEFAULT_AGENT_KEY);
   };
 
-  ctx.resolveAgentGoalLockedSessionId = function resolveAgentGoalLockedSessionId(agentId: unknown): string {
-      const targetAgentId = ctx.normalizeAgentId(agentId || ctx.activeAgentId?.value || ctx.selectedAgentId?.value || ctx.chatStore.draftAgentId || DEFAULT_AGENT_KEY);
-      if (!targetAgentId)
-          return '';
-      const sessions = Array.isArray(ctx.chatStore.sessions) ? ctx.chatStore.sessions : [];
-      const lockedSessions = sessions
-          .filter((sessionRaw) => {
-          const session = (sessionRaw || {}) as Record<string, unknown>;
-          const sessionId = String(session?.id || session?.session_id || '').trim();
-          if (!sessionId || !ctx.chatStore.isSessionGoalLocked?.(sessionId)) {
-              return false;
-          }
-          return ctx.resolveSessionAgentId(session) === targetAgentId;
-      })
-          .sort((left, right) => ctx.resolveSessionActivityTimestamp((right || {}) as Record<string, unknown>) -
-          ctx.resolveSessionActivityTimestamp((left || {}) as Record<string, unknown>));
-      const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
-      if (!lockedSessions.length) {
-          if (activeSessionId &&
-              ctx.chatStore.isSessionGoalLocked?.(activeSessionId) &&
-              ctx.resolveSessionAgentId(activeSessionId, ctx.activeAgentId?.value || ctx.selectedAgentId?.value || ctx.chatStore.draftAgentId) === targetAgentId) {
-              return activeSessionId;
-          }
-          return '';
-      }
-      const activeLockedSession = lockedSessions.find((item) => String(item?.id || item?.session_id || '').trim() === activeSessionId);
-      return String((activeLockedSession || lockedSessions[0])?.id || (activeLockedSession || lockedSessions[0])?.session_id || '').trim();
-  };
-
-  ctx.blockWhenAgentGoalLocked = function blockWhenAgentGoalLocked(agentId: unknown, targetSessionId: unknown = ''): boolean {
-      const lockedSessionId = ctx.resolveAgentGoalLockedSessionId(agentId);
-      if (!lockedSessionId) {
-          return false;
-      }
-      const normalizedTargetSessionId = String(targetSessionId || '').trim();
-      if (normalizedTargetSessionId && normalizedTargetSessionId === lockedSessionId) {
-          return false;
-      }
-      ElMessage.warning(ctx.t('chat.goal.lockedInMessenger'));
-      return true;
-  };
-
   ctx.resolveMessengerRootElement = function resolveMessengerRootElement(): HTMLElement | null {
       const root = ctx.messengerRootRef.value as unknown;
       if (!root)
@@ -914,7 +871,6 @@ export function installMessengerControllerSharedHelpers(ctx: MessengerController
               activeOnly: reuseScope === 'active_only'
           });
       if (reusableSessionId) {
-          void ctx.chatStore.setMainSession(reusableSessionId).catch(() => null);
           return reusableSessionId;
       }
       const payloadAgentId = targetAgentId === DEFAULT_AGENT_KEY ? '' : targetAgentId;
@@ -928,22 +884,10 @@ export function installMessengerControllerSharedHelpers(ctx: MessengerController
   ctx.runStartNewSession = async function runStartNewSession(options: {
       notify?: boolean;
   } = {}): Promise<StartNewSessionOutcome> {
-      if (!ctx.isAgentConversationActive.value || ctx.creatingAgentSession.value || ctx.isMessengerInteractionBlocked.value) {
-          return 'noop';
-      }
-      if (ctx.activeSessionOrchestrationLocked.value) {
-          ElMessage.warning(ctx.t('orchestration.chat.lockedInMessenger'));
+      if (ctx.creatingAgentSession.value || ctx.isMessengerInteractionBlocked.value) {
           return 'noop';
       }
       const targetAgent = ctx.normalizeAgentId(ctx.activeAgentId.value || ctx.selectedAgentId.value);
-      if (ctx.blockWhenAgentGoalLocked(targetAgent)) {
-          return 'noop';
-      }
-      if (ctx.activeMessengerSessionBusy.value) {
-          void ctx.refreshActiveAgentConversation();
-          ElMessage.info(ctx.t('chat.session.running'));
-          return 'noop';
-      }
       const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
       const reusableSessionId = ctx.resolveReusableFreshAgentSessionId(targetAgent, {
           activeOnly: true

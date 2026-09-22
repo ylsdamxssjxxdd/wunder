@@ -396,8 +396,13 @@ const OBSERVATION_MAX_ARRAY_ITEMS: usize = 32;
 const OBSERVATION_ARRAY_HEAD_ITEMS: usize = 20;
 const OBSERVATION_ARRAY_TAIL_ITEMS: usize = 8;
 const OBSERVATION_TABLE_SAMPLE_ROWS: usize = 4;
-const OBSERVATION_SEARCH_HIT_LIMIT: usize = 10;
-const OBSERVATION_SEARCH_CONTENT_HEAD_CHARS: usize = 180;
+// Search already applies an output budget at execution time. Keep enough hits
+// and local context for the model to make an edit decision without replaying
+// the same search, while bounding the second observation envelope.
+const OBSERVATION_SEARCH_HIT_LIMIT: usize = 12;
+const OBSERVATION_SEARCH_CONTENT_HEAD_CHARS: usize = 360;
+const OBSERVATION_SEARCH_CONTEXT_LINE_LIMIT: usize = 2;
+const OBSERVATION_SEARCH_CONTEXT_LINE_CHARS: usize = 220;
 const OBSERVATION_READ_FILE_LIMIT: usize = 8;
 const READ_OUTPUT_TRUNCATION_PREFIX: &str = "...(truncated read output, omitted ";
 const READ_OUTPUT_TRUNCATION_SUFFIX: &str = " bytes)...";
@@ -547,7 +552,7 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
         return;
     };
     let continuation_supported = supports_tool_result_continuation(&raw_data, None);
-    let mut compacted_data = extract_observation_data(&raw_data);
+    let mut compacted_data = extract_observation_data(&raw_data, canonical.as_str());
     compact_tabular_observation_data(&mut compacted_data);
     compact_command_observation_rows(&mut compacted_data, canonical.as_str());
     copy_continuation_fields(&mut compacted_data, &raw_data);
@@ -793,18 +798,22 @@ fn restore_compact_observation_path(compacted_map: &mut Map<String, Value>, raw_
         .or_insert_with(|| Value::String(path.to_string()));
 }
 
-fn extract_observation_data(value: &Value) -> Value {
+fn extract_observation_data(value: &Value, tool_name: &str) -> Value {
     let Value::Object(map) = value else {
         return value.clone();
     };
     if map.get("truncated").and_then(Value::as_bool) == Some(true) && map.contains_key("preview") {
         return compact_truncated_observation_wrapper(map);
     }
-    if let Some(compacted_search) = compact_search_observation_data(map) {
-        return compacted_search;
+    if matches!(tool_name, "搜索内容" | "search_content") {
+        if let Some(compacted_search) = compact_search_observation_data(map) {
+            return compacted_search;
+        }
     }
-    if let Some(compacted_read) = compact_read_file_observation_data(map) {
-        return compacted_read;
+    if matches!(tool_name, "读取文件" | "read_file") {
+        if let Some(compacted_read) = compact_read_file_observation_data(map) {
+            return compacted_read;
+        }
     }
     if let Some(structured_content) = map.get("structured_content") {
         if !structured_content.is_null() {
@@ -870,6 +879,26 @@ fn compact_search_observation_data(map: &Map<String, Value>) -> Option<Value> {
                     item.insert("content_omitted_chars".to_string(), json!(omitted_chars));
                 }
             }
+            for key in ["before", "after"] {
+                let Some(lines) = hit_obj.get(key).and_then(Value::as_array) else {
+                    continue;
+                };
+                let compacted_lines = lines
+                    .iter()
+                    .take(OBSERVATION_SEARCH_CONTEXT_LINE_LIMIT)
+                    .filter_map(|line| {
+                        let line_obj = line.as_object()?;
+                        let line_no = line_obj.get("line").cloned().unwrap_or(Value::Null);
+                        let content = line_obj.get("content").and_then(Value::as_str)?;
+                        let (content, _) =
+                            truncate_text_head(content, OBSERVATION_SEARCH_CONTEXT_LINE_CHARS);
+                        Some(json!({"line": line_no, "content": content}))
+                    })
+                    .collect::<Vec<_>>();
+                if !compacted_lines.is_empty() {
+                    item.insert(key.to_string(), Value::Array(compacted_lines));
+                }
+            }
             if !item.is_empty() {
                 compacted_hits.push(Value::Object(item));
             }
@@ -883,7 +912,13 @@ fn compact_search_observation_data(map: &Map<String, Value>) -> Option<Value> {
             compacted.insert("hits".to_string(), Value::Array(compacted_hits));
         }
     }
-    if let Some(matches) = map.get("matches").and_then(Value::as_array) {
+    // `matches` is a legacy flat representation. Do not send it alongside
+    // structured hits: that duplicates the same evidence and costs tokens.
+    if let Some(matches) = map
+        .get("matches")
+        .and_then(Value::as_array)
+        .filter(|_| !map.get("hits").is_some_and(Value::is_array))
+    {
         let mut compacted_matches = matches
             .iter()
             .take(OBSERVATION_SEARCH_HIT_LIMIT)

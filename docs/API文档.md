@@ -40,8 +40,8 @@
 - 用户资料接口：`GET /wunder/auth/me` 会额外返回 `usage_summary`（当前用于用户侧“我的概况”展示累计消耗与工具调用数）与 `session_summary`（`total_sessions/sessions_last_7d/trend_last_7d/last_active_at`，用于统一展示总会话、近 7 天会话、7 天趋势与最后活跃时间），并补充等级字段 `level/max_level/experience_total/experience_current/experience_for_next_level/experience_remaining/experience_progress/reached_max_level`，以及 Token 账户字段 `token_balance/token_granted_total/token_used_total/daily_token_grant/last_token_grant_date`；其中 `token_balance` 是用户当前可支配的 Token 资产余额，`token_granted_total` 记录累计发放与奖励总额，`token_used_total` 记录累计消耗。`PATCH /wunder/auth/me` 支持更新 `username/email/unit_id`，并保持返回同一结构；已登录用户如同时提交 `current_password` 与 `new_password`，服务端会先校验当前密码，再更新自己的登录密码。另提供未登录的 `POST /wunder/auth/reset_password`，仅凭账号、邮箱和新密码即可重置登录密码。
 - 注册开关接口：`GET /wunder/auth/settings` 无需登录，返回 `data.allow_user_registration`，供用户侧前端决定是否展示注册入口。`security.allow_user_registration=false` 时，`POST /wunder/auth/register` 会返回 403，管理员仍可通过用户管理创建或批量导入账号。
 - 用户偏好接口：`GET /wunder/auth/me/preferences` / `PATCH /wunder/auth/me/preferences` 当前除主题与头像外，还支持 `messenger_order`，用于同步用户侧消息页/智能体页/蜂群页中栏条目顺序。`messenger_order` 结构为 `messages[] / agents_owned[] / agents_shared[] / swarms[]`，均为字符串 key 数组；服务端会去重并过滤空字符串，前端可用它在刷新后恢复用户自定义排序。
-- 用户态工作状态重置接口：`POST /wunder/auth/me/reset_work_state`，按当前登录用户中止运行中的会话/排队任务/蜂群任务，清空相关工作区内容，并为默认智能体与各用户智能体重建新的主线程。
-- 蜂群整体重置接口：`POST /wunder/beeroom/groups/{group_id}/reset`，仅作用于当前用户指定蜂群；中止该蜂群成员的活动会话、排队任务和蜂群任务，关闭活动编排，清除蜂群任务与右栏消息投影，并为母蜂及全部工蜂创建新的主线程。返回 `member_threads[]`（`agent_id/agent_name/role/session_id`）以及取消、清理计数。
+- 用户态工作状态重置接口：`POST /wunder/auth/me/reset_work_state`，按当前登录用户中止运行中的会话/排队任务/蜂群任务，清空相关工作区内容，并为默认智能体与各用户智能体重建新的任务线程。
+- 蜂群整体重置接口：`POST /wunder/beeroom/groups/{group_id}/reset`，仅作用于当前用户指定蜂群；中止该蜂群成员的活动会话、排队任务和蜂群任务，关闭活动编排，清除蜂群任务与右栏消息投影，并为母蜂及全部工蜂创建新的任务线程。返回 `member_threads[]`（`agent_id/agent_name/role/session_id`）以及取消、清理计数。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 模型配置支持 `model_type=llm|embedding|tts|image`；向量知识库依赖 embedding 模型调用 `/v1/embeddings`，聊天页语音播放通过 TTS 模型代理 `/v1/audio/speech`。
@@ -57,7 +57,7 @@
 - draw.io 在线图表编辑：配置 `drawio.enabled/editor_url` 后，用户侧工作区中的 `.drawio`、`.dio`、`.drawio.xml` 文件可通过 `/wunder/workspace/drawio/config` 获取 diagrams.net/draw.io 嵌入编辑器地址；前端通过现有 `/wunder/workspace/content` 读取 XML，并通过 `/wunder/workspace/file` 保存回写。仓库 compose 默认提供 `wunder-drawio` 服务，宿主机默认端口为 `18081`。
 - Desktop 本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
 - Desktop 现仅保留本地模式，不再提供 desktop 内部的服务端连接切换与端云协同入口；需要服务端能力时请直接使用浏览器访问 server 形态。Desktop 本地模式固定优先使用安装包附带的 Python 运行时，不再通过 `/wunder/desktop/settings` 配置自定义解释器，也不再提供 `/wunder/desktop/python/interpreters` 本机探测接口；`GET /wunder/desktop/fs/list` 仍保留用于本地目录浏览等通用场景。
-- Desktop 本地模式新增 `POST /wunder/desktop/reset_work_state`：统一中止当前 desktop 用户的运行中会话、队列任务与蜂群任务，为默认智能体和全部用户智能体切换到新的主线程，并清空各自工作目录内容，供系统设置页执行“一键重置工作状态”。
+- Desktop 本地模式新增 `POST /wunder/desktop/reset_work_state`：统一中止当前 desktop 用户的运行中会话、队列任务与蜂群任务，为默认智能体和全部用户智能体切换到新的任务线程，并清空各自工作目录内容，供系统设置页执行“一键重置工作状态”。
 - 智能体形象能力统一复用智能体 `icon` 字段：静态头像保存为 `{"kind":"static","name":"avatar-046","color":"#94a3b8"}`，动态形象保存为 `{"kind":"companion","scope":"global|private","id":"...","color":"#94a3b8","show":true,"messageHints":true,"scale":1}`。标准形象包为 zip，根目录包含 `pet.json` 与 `spritesheetPath` 指向的帧图；用户私有形象保存在浏览器 IndexedDB，并在 Electron 桌面端同步到 userData 下的 `desktop-companion-library-state.json` 作为重启恢复兜底；管理员全局形象由 `/wunder/admin/companions*` 管理并通过 `/wunder/companions/global*` 供用户侧读取。Electron 桌面壳通过 `window.wunderDesktop.showCompanion/updateCompanion/hideCompanion/getCompanionState/onCompanionStateChanged` 同步透明桌面浮窗状态，`getCompanionState` 兼容返回 `runtimes[]` 多形象状态；Web/Tauri 不支持独立桌面浮窗时回退为浏览器内可拖动浮层。
 - Desktop GUI 启动新增本地 Tauri IPC `desktop_startup_ready`：启动页首帧后至少 10ms 调用，无参数；幂等初始化 DesktopBridge 并返回本地 web base，失败返回可重试的通用错误。`desktop_runtime_info` 在初始化前返回 `desktop runtime is starting`，成功时 payload 保持不变。这不是 HTTP/WS 对外接口；Electron 使用内部首帧门槛，不新增远程 API。
 - Desktop 引导接口 `GET /config.json` 与 `GET /wunder/desktop/bootstrap` 现补充 `runtime_profile` 与 `runtime_capabilities`：前者用于标识 `desktop_embedded` / 其他运行形态，后者用于下发 `embedded_mode/thread_runtime_active/mission_runtime_active/cron_active/channels_enabled/channel_outbox_worker_enabled/lan_overlay_supported` 等能力位，供前端按实际运行能力启用订阅、恢复与降级策略。
@@ -158,7 +158,7 @@
 - 用途：供外部系统后端把单个 Wunder 智能体嵌入到自有前端小部件。调用方指定目标用户、目标智能体、消息和上传文件；Wunder 会打断该智能体当前工作，新建主会话，在目标用户的 `container_id=10` 工作目录执行一次性任务，并返回中间事件、最终回复和可下载文件。
 - 鉴权：外部系统后端使用 `X-API-Key: <security.external_auth_key>` 或 `Authorization: Bearer <security.external_auth_key>`；管理员 token 也可访问。用户 Bearer Token 只能访问自身 run，不能跨用户指定目标。`external_auth_key` 未配置时按现有配置逻辑回退到 `security.api_key`。外部密钥路径下指定未注册普通用户时会自动开通账号，并同步该用户的预设智能体。
 - 工作区语义：MVP 固定 `workspace_container_id=10`，创建 run 前会清空该用户 10 号目录；上传文件落到 `input/`，服务端会创建 `output/`，最终下载清单包含 `output/` 下文件，以及最终回答中引用到的 `input/...` 或 `output/...` 文件。该覆盖是请求级的，不修改智能体的持久 `sandbox_container_id`。
-- 并发与打断：同一 `user_id + container_id=10` 同时只允许一个外部工作流。默认已有外部工作流时返回 `409 EXTERNAL_WORKFLOW_BUSY`；传 `preempt_active_workflow=true` 会先取消旧外部工作流。一次性工作流始终要求 `preempt=true`，会取消目标智能体当前主线程工作并强制创建新的主会话。
+- 并发与打断：同一 `user_id + container_id=10` 同时只允许一个外部工作流。默认已有外部工作流时返回 `409 EXTERNAL_WORKFLOW_BUSY`；传 `preempt_active_workflow=true` 会先取消旧外部工作流。一次性工作流始终要求 `preempt=true`，会取消目标智能体当前任务线程工作并强制创建新的主会话。
 - 请求格式：创建接口使用 `multipart/form-data`，必须包含 `request` JSON 字段，可重复上传 `files` 或 `files[]` 文件字段。单次请求上限当前为 200MB。
 
 #### `POST /wunder/external/workflows:stream`
@@ -347,16 +347,16 @@
 - 新增内置工具 `会话让出`（英文别名 `sessions_yield`/`yield`），用于在完成子智能体派发后主动结束当前轮次，向用户返回一句简短提示，并等待后台子智能体完成后自动唤醒父会话继续。
 - 新增内置工具 `会话线程控制`（英文别名 `thread_control`/`session_thread`），通过 `action=list|info|create|switch|back|update_title|archive|restore|set_main` 控制当前用户的线程树，并可触发 `thread_control` 工作流事件驱动前端同步切换线程。
 - 新增内置工具 `智能体蜂群`（英文别名 `agent_swarm`/`swarm_control`），通过 `action=list|status|send|history|spawn|batch_send|wait` 管理当前用户“当前智能体以外”的其他智能体。
-- `智能体蜂群` 的 `send`/`batch_send`/`spawn` 默认会复用目标工蜂当前主线程；当主线程不存在时会先创建并绑定。若显式传入 `threadStrategy=fresh_main_thread`，则会为目标工蜂新建干净线程并将其绑定为新的主线程；`threadStrategy=main_thread`（或 `reuseMainThread=true`）则显式要求复用主线程。`send`/`batch_send` 在显式提供 `sessionKey` 时仍会优先复用指定线程。
+- `智能体蜂群` 的 `send`/`batch_send`/`spawn` 默认会复用目标工蜂当前任务线程；当任务线程不存在时会先创建并绑定。若显式传入 `threadStrategy=fresh_main_thread`，则会为目标工蜂新建干净线程并将其绑定为新的任务线程；`threadStrategy=main_thread`（或 `reuseMainThread=true`）则显式要求复用任务线程。`send`/`batch_send` 在显式提供 `sessionKey` 时仍会优先复用指定线程。
 - `智能体蜂群` 新增 `wait` 动作：可直接等待 `run_ids` 结果并返回聚合状态，避免母蜂反复轮询 `status`。
 - `智能体蜂群` 的 `send`/`batch_send`/`wait` 等待语义分三态：显式传 `0` 立即返回当前快照，显式传正数按该超时等待；省略等待参数时走系统默认超时，只有系统默认值本身为 `0` 时才会进入无限等待。
 - 多工蜂协作推荐：先 `batch_send` 一次并发派发，再 `wait` 统一收敛。
-- `智能体蜂群` 入参语义增强（便于模型主动调用）：`send`/`spawn` 支持 `agentId` 或 `agentName/name` 直达目标；`send` 需 `message` 且 `agentId/agentName/name/sessionKey` 四选一，`spawn` 需 `task` 且 `agentId/agentName/name` 三选一，`history` 需 `sessionKey`，`wait` 需 `runIds`，`batch_send` 需 `tasks[]`（每项需 `message` 且 `agentId/agentName/name/sessionKey` 四选一）；`send`/`batch_send`/`spawn` 还支持 `threadStrategy=fresh_main_thread|main_thread`，也兼容 `reuseMainThread=true`。
+- `智能体蜂群` 入参语义增强（便于模型主动调用）：`send`/`spawn` 支持 `agentId` 或 `agentName/name` 直达目标；`send` 需 `message` 且 `agentId/agentName/name/sessionKey` 四选一，`spawn` 需 `task` 且 `agentId/agentName/name` 三选一，`history` 需 `sessionKey`，`wait` 需 `runIds`，`batch_send` 需 `tasks[]`（每项需 `message` 且 `agentId/agentName/name/sessionKey` 四选一）；`send`/`batch_send`/`spawn` 还支持 `threadStrategy=new_thread|task_thread`，也兼容 `reuseMainThread=true`。
 - `智能体蜂群` 的动态提示仅注入到工具描述本身，展示“工蜂名称 + 一句话描述”；已冻结线程的 system prompt 不会因工蜂变化而改写。
 - 推荐最短调用路径：`list -> batch_send -> wait -> history/status`（单目标用 `send` 替代 `batch_send`）。
 - `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`；`batch_spawn` 会返回稳定 `dispatch_id` 并把父轮次引用写入每个子任务，便于后续在消息气泡内聚合展示。
 - 推荐的 Codex 风格子智能体调用路径更新为：`subagent_control.spawn/batch_spawn -> sessions_yield -> 子智能体自动回流唤醒 -> status/wait(按需)`；其中 `sessions_yield` 是显式“本轮先结束”的一级原语。
-- `会话线程控制` 的 `create/switch/back/set_main` 可同时更新主线程绑定；当工具通过流式通道返回 `thread_control` 事件时，用户前端会先合并会话摘要，再按 payload 决定是否切换到目标线程。
+- `会话线程控制` 的 `create/switch/back/set_main` 可同时更新任务线程绑定；当工具通过流式通道返回 `thread_control` 事件时，用户前端会先合并会话摘要，再按 payload 决定是否切换到目标线程。
 - 新增内置工具 `节点调用`（英文别名 `node.invoke`/`node_invoke`），通过 `action=list|invoke` 统一完成节点发现与节点调用。
 - 新增内置工具 `用户世界工具`（英文别名 `user_world`），通过 `action=list_users|send_message` 获取用户列表或发送私信（消息会在用户世界页面可见）。
 - 新增内置工具 `渠道工具`（英文别名 `channel_tool`），通过 `action=list_contacts|send_message` 查询渠道可联系对象并向指定渠道对象发送消息（支持工作区文件引用转下载链接后发送）。
@@ -1019,8 +1019,8 @@
   - 说明：
     - `job.schedule.kind=every` 时支持可选 `schedule.at` 作为首次触发时间锚点；若未提供则默认以任务创建时间为起点，首次触发为“下一个间隔点”（严格晚于当前时刻，避免创建即触发）。
     - 可选 `job.schedule_text` 支持自然语言或 cron（如 `every 5 minutes`、`daily at 9am`、`0 */6 * * *`）；若同时传 `schedule` 与 `schedule_text`，以 `schedule` 为准。
-    - `job.session=main` 时，任务触发会把消息发送到该智能体**触发时的当前主线程**；若当前没有可用主线程，则回退到任务记录保存的 `session_id`。
-    - `job.session=isolated` 时，任务会先在新线程执行，再把结果回送到该智能体**触发时的当前主线程**；若没有可用主线程，同样回退到任务记录保存的 `session_id`。
+    - `job.session=main` 时，任务触发会把消息发送到该智能体**触发时的当前任务线程**；若当前没有可用任务线程，则回退到任务记录保存的 `session_id`。
+    - `job.session=isolated` 时，任务会先在新线程执行，再把结果回送到该智能体**触发时的当前任务线程**；若没有可用任务线程，同样回退到任务记录保存的 `session_id`。
     - `schedule.at` 必须是未来时间且不超过 1 年；`schedule.every_ms` 最大 24 小时；`schedule.cron` 需为 5-7 段字段。
     - 周期任务同一时刻最多只有一个活跃执行实例；如果执行耗时超过间隔，系统不会为每个错过的 tick 额外堆积并发实例，而是跳过或折叠逾期间隔后继续推进下一次执行时间。
     - 调度执行遇到 `USER_BUSY` 会按 `cron.idle_retry_ms` 重试，并受 `cron.max_busy_wait_ms` 上限保护，超时后写入 error 运行记录。
@@ -3119,11 +3119,11 @@
 
 ### `POST /wunder/beeroom/groups/{group_id}/mother-session`
 
-- 用途：解析或创建当前蜂群专属的母蜂聊天会话，并在发送前将其绑定为母蜂主线程；蜂群右栏不得从普通聊天页活动会话或母蜂“最近会话”猜测归属。
+- 用途：解析或创建当前蜂群专属的母蜂聊天会话，并在发送前将其绑定为母蜂任务线程；蜂群右栏不得从普通聊天页活动会话或母蜂“最近会话”猜测归属。
 - 鉴权：用户侧 Bearer Token；服务端同时校验蜂群归属、母蜂归属和已绑定会话归属。
 - 请求体：空对象 `{}`。
-- 行为：默认复用同一 `user_id + group_id + mother_agent_id` 的蜂群绑定；若用户已在普通聊天页为该母蜂显式新建或切换主线程，且该线程未被另一蜂群绑定，则当前蜂群会采用该主线程，后续右栏消息从新会话第 1 轮开始。不同蜂群即使使用同一母蜂，也不会借用彼此的专属绑定。活动编排存在时继续返回编排态冻结的权威母蜂会话，不在运行中换线。
-- 返回：`data` 包含 `id/title/status/agent_id/is_main/created_at/updated_at/last_message_at/group_id/created`。
+- 行为：默认复用同一 `user_id + group_id + mother_agent_id` 的蜂群绑定；若用户已在普通聊天页为该母蜂显式新建或切换任务线程，且该线程未被另一蜂群绑定，则当前蜂群会采用该任务线程，后续右栏消息从新会话第 1 轮开始。不同蜂群即使使用同一母蜂，也不会借用彼此的专属绑定。活动编排存在时继续返回编排态冻结的权威母蜂会话，不在运行中换线。
+- 返回：`data` 包含 `id/title/status/agent_id//created_at/updated_at/last_message_at/group_id/created`。
 - 蜂群摘要和详情中的 `mother_session_id?` 返回当前已绑定的普通蜂群母会话或活动编排母会话；尚未建立绑定时为 `null`。
 
 ### `GET /wunder/agents/running` 蜂群运行态补充
@@ -3183,7 +3183,7 @@
 - 用途：用户侧编排页在“新建编排”或每次向母蜂发送用户消息前，同步当前母蜂线程对应的编排运行状态，供后端在编排态下识别这条线程不是普通对话。
 - 鉴权：用户端 Bearer Token，与 `/wunder/beeroom/groups` 一致。
 - 请求体：
-  - `session_id: string`，必填，母蜂主线程会话 ID。
+  - `session_id: string`，必填，母蜂任务线程会话 ID。
   - `run_id: string`，必填，当前编排 run id。
   - `group_id?: string`，可选，蜂群 ID / hive_id。
   - `role?: string`，可选，默认 `mother`。
@@ -3222,7 +3222,7 @@
 
 ### `POST /wunder/beeroom/orchestration/state/create`
 
-- 用途：为指定蜂群新建一次编排态，强制为母蜂与全部工蜂创建新的编排主线程，并将整群切换到该编排现实。
+- 用途：为指定蜂群新建一次编排态，强制为母蜂与全部工蜂创建新的编排任务线程，并将整群切换到该编排现实。
 - 鉴权：用户端 Bearer Token。
 - 请求体：
   - `group_id: string`，必填。
@@ -3236,14 +3236,14 @@
 
 ### `POST /wunder/beeroom/orchestration/state/exit`
 
-- 用途：解除指定蜂群的编排态，并为整群智能体切换到新的普通主线程。
+- 用途：解除指定蜂群的编排态，并为整群智能体切换到新的普通任务线程。
 - 鉴权：用户端 Bearer Token。
 - 请求体：
   - `group_id: string`，必填。
 - 返回：
   - `data.group_id`
   - `data.active: false`
-  - `data.member_threads[]`：解除后各智能体新建的普通主线程。
+  - `data.member_threads[]`：解除后各智能体新建的普通任务线程。
 - 说明：
   - 被解除的编排态会保留为历史可恢复对象；原编排线程不再是当前活跃编排态的一部分。
 

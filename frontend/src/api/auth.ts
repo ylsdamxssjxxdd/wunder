@@ -21,7 +21,7 @@ export type ResetWorkStateSummary = {
   cancelled_team_runs: number;
   cleared_workspaces: number;
   removed_workspace_entries: number;
-  fresh_main_sessions: ResetWorkStateSession[];
+  fresh_sessions: ResetWorkStateSession[];
 };
 
 const resolveAuthSessionScope = (): 'user_web' | 'admin_web' => {

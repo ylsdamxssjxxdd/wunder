@@ -5,7 +5,7 @@ use crate::services::bridge::identity::{
     extract_bridge_identity, normalize_bridge_route_status, normalize_bridge_thread_strategy,
     normalize_bridge_username_policy, BRIDGE_CENTER_STATUS_ACTIVE,
     BRIDGE_FALLBACK_POLICY_FORBID_OWNER, BRIDGE_ROUTE_STATUS_ACTIVE,
-    BRIDGE_THREAD_STRATEGY_MAIN_THREAD, BRIDGE_USERNAME_POLICY_NAMESPACED_GENERATED,
+    BRIDGE_THREAD_STRATEGY_TASK_THREAD, BRIDGE_USERNAME_POLICY_NAMESPACED_GENERATED,
 };
 use crate::services::external::ensure_external_embed_agent_with_runtime;
 use crate::services::user_store::UserStore;
@@ -108,7 +108,7 @@ pub async fn resolve_inbound_bridge_route(
             .thread_strategy
             .as_deref()
             .map(normalize_bridge_thread_strategy)
-            .unwrap_or_else(|| BRIDGE_THREAD_STRATEGY_MAIN_THREAD.to_string()),
+            .unwrap_or_else(|| BRIDGE_THREAD_STRATEGY_TASK_THREAD.to_string()),
     }))
 }
 

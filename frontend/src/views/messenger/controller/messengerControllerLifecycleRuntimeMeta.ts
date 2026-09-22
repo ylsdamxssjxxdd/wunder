@@ -80,8 +80,7 @@ import {
 import {
   MessengerFileContainerMenu,
   MessengerGroupDock,
-  MessengerRightDock,
-  MessengerTimelineDialog
+  MessengerRightDock
 } from '@/views/messenger/lazyShell';
 import {
   AgentCronPanel,
@@ -847,7 +846,7 @@ export function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerCon
                   if (!sessionId)
                       return;
                   const explicitAgent = normalizeCronAgentKey(session?.agent_id ?? session?.agentId);
-                  const fallbackAgent = session?.is_main === true ? DEFAULT_AGENT_KEY : '';
+                  const fallbackAgent = DEFAULT_AGENT_KEY;
                   const resolvedAgent = explicitAgent || fallbackAgent;
                   if (resolvedAgent) {
                       sessionAgentMap.set(sessionId, resolvedAgent);

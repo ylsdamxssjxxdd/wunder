@@ -1,6 +1,6 @@
 use crate::core::{long_task, schemas::WunderRequest};
 use crate::services::swarm::beeroom::{
-    claim_mother_agent, get_mother_agent_id, resolve_or_create_agent_main_session,
+    claim_mother_agent, get_mother_agent_id, resolve_or_create_hive_mother_session,
     set_mother_agent, snapshot_team_run,
 };
 use crate::state::AppState;
@@ -615,9 +615,10 @@ fn choose_worker_tools(tool_names: &[String], profile: &str) -> (Option<String>,
 
 async fn execute_demo_run(state: Arc<AppState>, control: Arc<DemoRunControl>, plan: DemoPlan) {
     let run_result = async {
-        let (mother_session, _created) = resolve_or_create_agent_main_session(
+        let (mother_session, _created) = resolve_or_create_hive_mother_session(
             state.storage.as_ref(),
             &plan.user_id,
+            &plan.mother.hive_id,
             &plan.mother,
         )?;
         control.mark_running(&mother_session.session_id, &plan.workers);

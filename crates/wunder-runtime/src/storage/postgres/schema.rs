@@ -942,18 +942,6 @@ impl PostgresSchemaStorage for PostgresStorage {
                   ON session_locks (user_id, agent_id);
                 CREATE INDEX IF NOT EXISTS idx_session_locks_expires
                   ON session_locks (expires_at);
-                CREATE TABLE IF NOT EXISTS agent_threads (
-                  thread_id TEXT PRIMARY KEY,
-                  user_id TEXT NOT NULL,
-                  agent_id TEXT NOT NULL DEFAULT '',
-                  session_id TEXT NOT NULL,
-                  status TEXT NOT NULL,
-                  created_at DOUBLE PRECISION NOT NULL,
-                  updated_at DOUBLE PRECISION NOT NULL,
-                  UNIQUE(user_id, agent_id)
-                );
-                CREATE INDEX IF NOT EXISTS idx_agent_threads_user
-                  ON agent_threads (user_id);
                 CREATE TABLE IF NOT EXISTS agent_tasks (
                   task_id TEXT PRIMARY KEY,
                   thread_id TEXT NOT NULL,
@@ -1262,7 +1250,9 @@ impl PostgresSchemaStorage for PostgresStorage {
                 );
                 CREATE INDEX IF NOT EXISTS idx_chat_sessions_user
                   ON chat_sessions (user_id);
-                CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated
+                CREATE INDEX IF NOT EXISTS idx_chat_sessions_tasks
+              ON chat_sessions (user_id, agent_id, created_at DESC, session_id DESC);
+            CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated
                   ON chat_sessions (user_id, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_chat_sessions_parent
                   ON chat_sessions (user_id, parent_session_id, updated_at);

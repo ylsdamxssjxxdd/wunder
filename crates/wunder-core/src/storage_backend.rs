@@ -217,9 +217,6 @@ pub trait SessionLockStore {
 
 /// Agent thread, task queue, and stream event storage.
 pub trait AgentRuntimeStore {
-    fn upsert_agent_thread(&self, record: &AgentThreadRecord) -> Result<()>;
-    fn get_agent_thread(&self, user_id: &str, agent_id: &str) -> Result<Option<AgentThreadRecord>>;
-    fn delete_agent_thread(&self, user_id: &str, agent_id: &str) -> Result<i64>;
     fn insert_agent_task(&self, record: &AgentTaskRecord) -> Result<()>;
     fn get_agent_task(&self, task_id: &str) -> Result<Option<AgentTaskRecord>>;
     fn list_pending_agent_tasks(&self, limit: i64) -> Result<Vec<AgentTaskRecord>>;
@@ -463,6 +460,7 @@ pub trait UserAccountStore {
 /// Chat session catalog storage.
 pub trait ChatSessionStore {
     fn upsert_chat_session(&self, record: &ChatSessionRecord) -> Result<()>;
+    fn insert_chat_session_if_absent(&self, record: &ChatSessionRecord) -> Result<bool>;
     fn get_chat_session(
         &self,
         user_id: &str,

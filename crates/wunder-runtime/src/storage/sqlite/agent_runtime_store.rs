@@ -1,19 +1,10 @@
 use super::SqliteStorage;
-use crate::storage::{
-    AgentTaskRecord, AgentThreadRecord, StorageLifecycle, UpdateAgentTaskStatusParams,
-};
+use crate::storage::{AgentTaskRecord, StorageLifecycle, UpdateAgentTaskStatusParams};
 use anyhow::Result;
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 
 pub(super) trait SqliteAgentRuntimeStorage {
-    fn upsert_agent_thread_impl(&self, record: &AgentThreadRecord) -> Result<()>;
-    fn get_agent_thread_impl(
-        &self,
-        user_id: &str,
-        agent_id: &str,
-    ) -> Result<Option<AgentThreadRecord>>;
-    fn delete_agent_thread_impl(&self, user_id: &str, agent_id: &str) -> Result<i64>;
     fn insert_agent_task_impl(&self, record: &AgentTaskRecord) -> Result<()>;
     fn get_agent_task_impl(&self, task_id: &str) -> Result<Option<AgentTaskRecord>>;
     fn list_pending_agent_tasks_impl(&self, limit: i64) -> Result<Vec<AgentTaskRecord>>;
@@ -58,79 +49,6 @@ pub(super) trait SqliteAgentRuntimeStorage {
 }
 
 impl SqliteAgentRuntimeStorage for SqliteStorage {
-    fn upsert_agent_thread_impl(&self, record: &AgentThreadRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let cleaned_user = record.user_id.trim();
-        if cleaned_user.is_empty() {
-            return Ok(());
-        }
-        let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO agent_threads (thread_id, user_id, agent_id, session_id, status, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(user_id, agent_id) DO UPDATE SET thread_id = excluded.thread_id, session_id = excluded.session_id, \
-             status = excluded.status, updated_at = excluded.updated_at",
-            params![
-                record.thread_id,
-                cleaned_user,
-                record.agent_id.trim(),
-                record.session_id,
-                record.status,
-                record.created_at,
-                record.updated_at
-            ],
-        )?;
-        Ok(())
-    }
-
-    fn get_agent_thread_impl(
-        &self,
-        user_id: &str,
-        agent_id: &str,
-    ) -> Result<Option<AgentThreadRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        if cleaned_user.is_empty() {
-            return Ok(None);
-        }
-        let cleaned_agent = agent_id.trim();
-        let conn = self.open()?;
-        let record = conn
-            .query_row(
-                "SELECT thread_id, user_id, agent_id, session_id, status, created_at, updated_at \
-                 FROM agent_threads WHERE user_id = ? AND agent_id = ? LIMIT 1",
-                params![cleaned_user, cleaned_agent],
-                |row| {
-                    Ok(AgentThreadRecord {
-                        thread_id: row.get(0)?,
-                        user_id: row.get(1)?,
-                        agent_id: row.get(2)?,
-                        session_id: row.get(3)?,
-                        status: row.get(4)?,
-                        created_at: row.get(5)?,
-                        updated_at: row.get(6)?,
-                    })
-                },
-            )
-            .optional()?;
-        Ok(record)
-    }
-
-    fn delete_agent_thread_impl(&self, user_id: &str, agent_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        if cleaned_user.is_empty() {
-            return Ok(0);
-        }
-        let cleaned_agent = agent_id.trim();
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM agent_threads WHERE user_id = ? AND agent_id = ?",
-            params![cleaned_user, cleaned_agent],
-        )?;
-        Ok(affected as i64)
-    }
-
     fn insert_agent_task_impl(&self, record: &AgentTaskRecord) -> Result<()> {
         self.ensure_initialized()?;
         let cleaned_user = record.user_id.trim();
@@ -610,75 +528,6 @@ mod tests {
             finished_at: None,
             last_error: None,
         }
-    }
-
-    #[test]
-    fn agent_runtime_task_queue_roundtrip_preserves_order_and_status() {
-        let (storage, _dir) = build_storage();
-        let thread = AgentThreadRecord {
-            thread_id: "thread-1".to_string(),
-            user_id: "user-1".to_string(),
-            agent_id: "agent-1".to_string(),
-            session_id: "session-1".to_string(),
-            status: "active".to_string(),
-            created_at: 1.0,
-            updated_at: 1.0,
-        };
-
-        storage.upsert_agent_thread(&thread).expect("upsert thread");
-        assert_eq!(
-            storage
-                .get_agent_thread("user-1", "agent-1")
-                .expect("get thread")
-                .map(|record| record.thread_id),
-            Some("thread-1".to_string())
-        );
-
-        storage
-            .insert_agent_task(&task("task-2", 2.0, 2.0))
-            .expect("insert second task");
-        storage
-            .insert_agent_task(&task("task-1", 1.0, 1.0))
-            .expect("insert first task");
-
-        let pending = storage
-            .list_pending_agent_tasks(8)
-            .expect("list pending tasks");
-        assert_eq!(
-            pending
-                .iter()
-                .map(|record| record.task_id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["task-1", "task-2"]
-        );
-        assert_eq!(storage.count_pending_agent_tasks().expect("count"), 2);
-        assert_eq!(
-            storage
-                .count_pending_agent_tasks_ahead(2.0, 2.0, "task-2")
-                .expect("count ahead"),
-            1
-        );
-
-        storage
-            .update_agent_task_status(UpdateAgentTaskStatusParams {
-                task_id: "task-1",
-                status: "running",
-                retry_count: 1,
-                retry_at: 3.0,
-                started_at: Some(4.0),
-                finished_at: None,
-                last_error: None,
-                updated_at: 4.0,
-            })
-            .expect("update task");
-
-        let running = storage
-            .list_agent_tasks_by_thread("thread-1", Some("running"), 8)
-            .expect("list by thread");
-        assert_eq!(running.len(), 1);
-        assert_eq!(running[0].task_id, "task-1");
-        assert_eq!(running[0].retry_count, 1);
-        assert_eq!(running[0].started_at, Some(4.0));
     }
 
     #[test]

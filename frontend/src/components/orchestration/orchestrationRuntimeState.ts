@@ -1011,7 +1011,6 @@ export const useOrchestrationRuntimeState = (options: {
         {
           id: sessionId,
           agent_id: agentId,
-          is_main: true,
           title: ''
         },
         {
@@ -1258,8 +1257,7 @@ export const useOrchestrationRuntimeState = (options: {
           {
             id: item.sessionId,
             agent_id: item.agentId,
-            is_main: true,
-            title: ''
+              title: ''
           },
           {
             agentId: item.agentId,
@@ -1291,7 +1289,6 @@ export const useOrchestrationRuntimeState = (options: {
         {
           id: item.sessionId,
           agent_id: item.agentId,
-          is_main: true,
           title: ''
         },
         {

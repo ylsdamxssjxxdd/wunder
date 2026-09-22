@@ -72,8 +72,7 @@ import {
 import {
   MessengerFileContainerMenu,
   MessengerGroupDock,
-  MessengerRightDock,
-  MessengerTimelineDialog
+  MessengerRightDock
 } from '@/views/messenger/lazyShell';
 import {
   AgentCronPanel,
@@ -515,10 +514,6 @@ export function installMessengerControllerMessageRoutingPreferences(ctx: Messeng
                   : ctx.chatStore.sessions.find((session) => String(session?.id || '') === identity.id)?.agent_id));
           if (currentAgentId !== item.agentId)
               return false;
-          const goalLockedSessionId = ctx.resolveAgentGoalLockedSessionId(item.agentId);
-          if (goalLockedSessionId) {
-              return String(identity.id || ctx.chatStore.activeSessionId || '').trim() === goalLockedSessionId;
-          }
           return true;
       }
       return identity.kind === item.kind && identity.id === item.sourceId;
@@ -573,9 +568,6 @@ export function installMessengerControllerMessageRoutingPreferences(ctx: Messeng
       const sourceId = String(item?.sourceId || '').trim();
       if (!sourceId)
           return;
-      if (item?.kind === 'agent' && ctx.blockWhenAgentGoalLocked(item.agentId)) {
-          return;
-      }
       const confirmed = await confirmWithFallback(ctx.t('chat.history.confirmDelete'), ctx.t('chat.history.confirmTitle'), {
           type: 'warning',
           confirmButtonText: ctx.t('common.confirm'),

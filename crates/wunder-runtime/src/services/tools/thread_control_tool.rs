@@ -1,6 +1,6 @@
 use super::{build_model_tool_success_with_hint, context::ToolContext};
 use crate::i18n;
-use crate::storage::{AgentThreadRecord, ChatSessionRecord};
+use crate::storage::ChatSessionRecord;
 use anyhow::{anyhow, Result};
 use chrono::{Local, Utc};
 use serde::Deserialize;
@@ -19,7 +19,6 @@ const CHAT_SESSION_STATUS_ARCHIVED: &str = "archived";
 const DEFAULT_LIST_LIMIT: i64 = 20;
 const MAX_LIST_LIMIT: i64 = 200;
 const DEFAULT_SESSION_TITLE: &str = "新会话";
-const THREAD_STATUS_IDLE: &str = "idle";
 
 #[derive(Debug, Deserialize)]
 struct ThreadControlArgs {
@@ -56,8 +55,6 @@ struct ThreadControlArgs {
     limit: Option<i64>,
     #[serde(default, alias = "switchTo", alias = "switch_to")]
     switch: Option<bool>,
-    #[serde(default, alias = "setMain", alias = "set_main")]
-    set_main: Option<bool>,
 }
 
 pub(crate) async fn execute_thread_control_tool(
@@ -79,7 +76,6 @@ pub(crate) async fn execute_thread_control_tool(
         "update_title" => update_thread_title(context, payload).await,
         "archive" => archive_thread(context, payload).await,
         "restore" => restore_thread(context, payload).await,
-        "set_main" => set_main_thread(context, payload).await,
         _ => Err(anyhow!("unknown thread_control action: {}", payload.action)),
     }
 }
@@ -103,7 +99,6 @@ fn normalize_action(raw: &str) -> String {
         }
         "archive" | "archived" | "归档" => "archive",
         "restore" | "unarchive" | "恢复" => "restore",
-        "set_main" | "main" | "pin_main" | "主线程" | "设为主线程" => "set_main",
         _ => "",
     }
     .to_string()
@@ -228,19 +223,6 @@ fn resolve_agent_scope(
     context_agent_id.map(|value| value.trim().to_string())
 }
 
-fn resolve_main_session_id(
-    context: &ToolContext<'_>,
-    user_id: &str,
-    agent_key: &str,
-) -> Option<String> {
-    context
-        .storage
-        .get_agent_thread(user_id, agent_key)
-        .ok()
-        .flatten()
-        .map(|record| record.session_id)
-}
-
 fn resolve_runtime_status(context: &ToolContext<'_>, session_id: &str) -> Option<String> {
     context
         .monitor
@@ -256,14 +238,10 @@ fn resolve_runtime_status(context: &ToolContext<'_>, session_id: &str) -> Option
 
 fn session_payload(
     context: &ToolContext<'_>,
-    user_id: &str,
+    _user_id: &str,
     record: &ChatSessionRecord,
     relation: Option<&str>,
 ) -> Value {
-    let agent_key = session_agent_key(record);
-    let is_main = resolve_main_session_id(context, user_id, &agent_key)
-        .map(|value| value == record.session_id)
-        .unwrap_or(false);
     let mut payload = json!({
         "id": record.session_id,
         "title": record.title,
@@ -277,7 +255,6 @@ fn session_payload(
         "parent_message_id": record.parent_message_id,
         "spawn_label": record.spawn_label,
         "spawned_by": record.spawned_by,
-        "is_main": is_main,
         "runtime_status": resolve_runtime_status(context, &record.session_id),
     });
     if let Some(relation) = relation.filter(|value| !value.trim().is_empty()) {
@@ -291,19 +268,15 @@ fn session_payload(
 fn build_thread_control_event(
     action: &str,
     session: Option<Value>,
-    main_session: Option<Value>,
     switch_session: Option<Value>,
     switch: bool,
-    set_main: bool,
     previous_session_id: Option<&str>,
 ) -> Value {
     json!({
         "action": action,
         "session": session,
-        "main_session": main_session,
         "switch_session": switch_session,
         "switch": switch,
-        "set_main": set_main,
         "previous_session_id": previous_session_id.filter(|value| !value.trim().is_empty()),
     })
 }
@@ -321,50 +294,6 @@ fn build_thread_control_success(
     next_step_hint: Option<String>,
 ) -> Value {
     build_model_tool_success_with_hint(action, "completed", summary, data, next_step_hint)
-}
-
-fn bind_main_session(
-    context: &ToolContext<'_>,
-    user_id: &str,
-    agent_id: &str,
-    session_id: &str,
-    reason: &str,
-) -> Result<AgentThreadRecord> {
-    let session_record = load_session_record(context, user_id, session_id)?;
-    let record_agent = session_agent_key(&session_record);
-    let cleaned_agent = agent_id.trim();
-    if !cleaned_agent.is_empty() && cleaned_agent != record_agent {
-        return Err(anyhow!(i18n::t("error.permission_denied")));
-    }
-    let existing = context.storage.get_agent_thread(user_id, &record_agent)?;
-    let now = now_ts();
-    let record = AgentThreadRecord {
-        thread_id: format!("thread_{session_id}"),
-        user_id: user_id.to_string(),
-        agent_id: record_agent.clone(),
-        session_id: session_id.to_string(),
-        status: existing
-            .as_ref()
-            .map(|item| item.status.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| THREAD_STATUS_IDLE.to_string()),
-        created_at: existing.as_ref().map(|item| item.created_at).unwrap_or(now),
-        updated_at: now,
-    };
-    context.storage.upsert_agent_thread(&record)?;
-    if let Some(monitor) = context.monitor.as_ref() {
-        monitor.record_event(
-            session_id,
-            "main_thread_changed",
-            &json!({
-                "session_id": session_id,
-                "agent_id": record.agent_id,
-                "user_id": user_id,
-                "reason": reason,
-            }),
-        );
-    }
-    Ok(record)
 }
 
 fn list_sessions_by_status(
@@ -459,7 +388,7 @@ fn collect_branch_records(
     Ok(output)
 }
 
-fn resolve_fallback_main_session(
+fn resolve_fallback_session(
     context: &ToolContext<'_>,
     user_id: &str,
     agent_key: &str,
@@ -569,9 +498,6 @@ async fn list_threads(context: &ToolContext<'_>, args: ThreadControlArgs) -> Res
         .iter()
         .map(|(record, relation)| session_payload(context, user_id, record, Some(relation)))
         .collect::<Vec<_>>();
-    let main_session_id = agent_scope
-        .as_deref()
-        .and_then(|agent_key| resolve_main_session_id(context, user_id, agent_key));
     Ok(build_thread_control_success(
         "list",
         format!("Listed {} threads.", items.len()),
@@ -581,7 +507,6 @@ async fn list_threads(context: &ToolContext<'_>, args: ThreadControlArgs) -> Res
             "agent_id": agent_scope,
             "current_session_id": current.as_ref().map(|record| record.session_id.clone()),
             "target_session_id": target_session_id,
-            "main_session_id": main_session_id,
             "total": items.len(),
             "items": items,
         }),
@@ -627,7 +552,6 @@ async fn info_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Resu
                 .iter()
                 .map(|item| session_payload(context, user_id, item, Some("child")))
                 .collect::<Vec<_>>(),
-            "main_session_id": resolve_main_session_id(context, user_id, &agent_key),
         }),
         None,
     ))
@@ -674,32 +598,15 @@ async fn create_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Re
     };
     context.storage.upsert_chat_session(&record)?;
     let switch = args.switch.unwrap_or(true);
-    let set_main = args.set_main.unwrap_or(switch);
-    if set_main {
-        let _ = bind_main_session(
-            context,
-            user_id,
-            &agent_scope,
-            &record.session_id,
-            "thread_control_create",
-        )?;
-    }
     let session = session_payload(context, user_id, &record, Some("current"));
-    let main_session = if set_main {
-        Some(session.clone())
-    } else {
-        None
-    };
     let switch_session = if switch { Some(session.clone()) } else { None };
     emit_thread_control_event(
         context,
         build_thread_control_event(
             "create",
             Some(session.clone()),
-            main_session.clone(),
             switch_session.clone(),
             switch,
-            set_main,
             Some(context.session_id),
         ),
     );
@@ -708,10 +615,8 @@ async fn create_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Re
         format!("Created thread {}.", record.session_id),
         json!({
             "session": session,
-            "main_session": main_session,
             "switch_session": switch_session,
             "switch": switch,
-            "set_main": set_main,
         }),
         None,
     ))
@@ -724,31 +629,14 @@ async fn switch_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Re
     let record = load_session_record(context, user_id, &session_id)?;
     let agent_key = session_agent_key(&record);
     validate_agent_access(context, user_id, &agent_key)?;
-    let set_main = args.set_main.unwrap_or(true);
-    if set_main {
-        let _ = bind_main_session(
-            context,
-            user_id,
-            &agent_key,
-            &record.session_id,
-            "thread_control_switch",
-        )?;
-    }
     let session = session_payload(context, user_id, &record, Some("current"));
-    let main_session = if set_main {
-        Some(session.clone())
-    } else {
-        None
-    };
     emit_thread_control_event(
         context,
         build_thread_control_event(
             "switch",
             Some(session.clone()),
-            main_session.clone(),
             Some(session.clone()),
             true,
-            set_main,
             Some(context.session_id),
         ),
     );
@@ -757,10 +645,8 @@ async fn switch_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Re
         format!("Switched to thread {}.", record.session_id),
         json!({
             "session": session,
-            "main_session": main_session,
             "switch_session": session,
             "switch": true,
-            "set_main": set_main,
         }),
         None,
     ))
@@ -791,7 +677,6 @@ async fn back_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Resu
             status: None,
             limit: None,
             switch: Some(true),
-            set_main: args.set_main,
         },
     )
     .await
@@ -835,8 +720,6 @@ async fn update_thread_title(context: &ToolContext<'_>, args: ThreadControlArgs)
             "update_title",
             Some(session.clone()),
             None,
-            None,
-            false,
             false,
             Some(context.session_id),
         ),
@@ -864,36 +747,23 @@ async fn archive_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> R
     record.updated_at = now_ts();
     apply_session_update(context, user_id, &record)?;
 
-    let main_session_id = resolve_main_session_id(context, user_id, &agent_key);
-    let fallback = if main_session_id.as_deref() == Some(record.session_id.as_str()) {
-        resolve_fallback_main_session(context, user_id, &agent_key, &record.session_id)?
-    } else {
-        None
-    };
     let switch = args.switch.unwrap_or(false);
-    let main_session = if let Some(fallback) = fallback.as_ref() {
-        let _ = bind_main_session(
-            context,
-            user_id,
-            &agent_key,
-            &fallback.session_id,
-            "thread_control_archive",
-        )?;
-        Some(session_payload(context, user_id, fallback, Some("current")))
+    let fallback = if switch {
+        resolve_fallback_session(context, user_id, &agent_key, &record.session_id)?
     } else {
         None
     };
-    let switch_session = if switch { main_session.clone() } else { None };
+    let switch_session = fallback
+        .as_ref()
+        .map(|item| session_payload(context, user_id, item, Some("current")));
     let session = session_payload(context, user_id, &record, Some("current"));
     emit_thread_control_event(
         context,
         build_thread_control_event(
             "archive",
             Some(session.clone()),
-            main_session.clone(),
             switch_session.clone(),
             switch_session.is_some(),
-            main_session.is_some(),
             Some(context.session_id),
         ),
     );
@@ -902,7 +772,6 @@ async fn archive_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> R
         format!("Archived thread {}.", record.session_id),
         json!({
             "session": session,
-            "main_session": main_session,
             "switch_session": switch_session,
             "switch": switch_session.is_some(),
         }),
@@ -924,49 +793,16 @@ async fn restore_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> R
     record.updated_at = now_ts();
     apply_session_update(context, user_id, &record)?;
 
-    let current_main =
-        resolve_main_session_id(context, user_id, &agent_key).and_then(|main_session_id| {
-            context
-                .storage
-                .get_chat_session(user_id, &main_session_id)
-                .ok()
-                .flatten()
-        });
-    let set_main = args.set_main.unwrap_or_else(|| {
-        current_main
-            .as_ref()
-            .map(|item| {
-                item.status
-                    .eq_ignore_ascii_case(CHAT_SESSION_STATUS_ARCHIVED)
-            })
-            .unwrap_or(true)
-    });
-    if set_main {
-        let _ = bind_main_session(
-            context,
-            user_id,
-            &agent_key,
-            &record.session_id,
-            "thread_control_restore",
-        )?;
-    }
     let switch = args.switch.unwrap_or(false);
     let session = session_payload(context, user_id, &record, Some("current"));
-    let main_session = if set_main {
-        Some(session.clone())
-    } else {
-        None
-    };
     let switch_session = if switch { Some(session.clone()) } else { None };
     emit_thread_control_event(
         context,
         build_thread_control_event(
             "restore",
             Some(session.clone()),
-            main_session.clone(),
             switch_session.clone(),
             switch,
-            set_main,
             Some(context.session_id),
         ),
     );
@@ -975,55 +811,8 @@ async fn restore_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> R
         format!("Restored thread {}.", record.session_id),
         json!({
             "session": session,
-            "main_session": main_session,
             "switch_session": switch_session,
             "switch": switch,
-            "set_main": set_main,
-        }),
-        None,
-    ))
-}
-
-async fn set_main_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Result<Value> {
-    let user_id = require_user_id(context)?;
-    let current = current_session_record(context, user_id)?;
-    let session_id = normalize_optional_string(args.session_id.clone())
-        .or_else(|| current.as_ref().map(|record| record.session_id.clone()))
-        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
-    let record = load_session_record(context, user_id, &session_id)?;
-    let agent_key = session_agent_key(&record);
-    validate_agent_access(context, user_id, &agent_key)?;
-    let _ = bind_main_session(
-        context,
-        user_id,
-        &agent_key,
-        &record.session_id,
-        "thread_control_set_main",
-    )?;
-    let switch = args.switch.unwrap_or(false);
-    let session = session_payload(context, user_id, &record, Some("current"));
-    let switch_session = if switch { Some(session.clone()) } else { None };
-    emit_thread_control_event(
-        context,
-        build_thread_control_event(
-            "set_main",
-            Some(session.clone()),
-            Some(session.clone()),
-            switch_session.clone(),
-            switch,
-            true,
-            Some(context.session_id),
-        ),
-    );
-    Ok(build_thread_control_success(
-        "set_main",
-        format!("Set thread {} as main.", record.session_id),
-        json!({
-            "session": session,
-            "main_session": session,
-            "switch_session": switch_session,
-            "switch": switch,
-            "set_main": true,
         }),
         None,
     ))
@@ -1165,11 +954,10 @@ mod tests {
         assert_eq!(normalize_action("switch"), "switch");
         assert_eq!(normalize_action("open"), "switch");
         assert_eq!(normalize_action("新建"), "create");
-        assert_eq!(normalize_action("设为主线程"), "set_main");
     }
 
     #[tokio::test]
-    async fn create_thread_inherits_parent_agent_and_bind_main() {
+    async fn create_thread_inherits_parent_agent_without_exclusive_binding() {
         let harness = TestHarness::new();
         harness.upsert_agent("u1", "agent-demo");
         let parent = ChatSessionRecord {
@@ -1206,12 +994,16 @@ mod tests {
         assert_eq!(created.parent_session_id.as_deref(), Some("sess_parent"));
         assert_eq!(created.agent_id.as_deref(), Some("agent-demo"));
         assert_eq!(created.tool_overrides, vec!["thread_control".to_string()]);
-        let main_thread = harness
-            .storage
-            .get_agent_thread("u1", "agent-demo")
-            .expect("get agent thread")
-            .expect("main thread");
-        assert_eq!(main_thread.session_id, created.session_id);
+        assert!(result.pointer("/data/session/is_main").is_none());
+        assert_eq!(
+            harness
+                .storage
+                .get_chat_session("u1", "sess_parent")
+                .unwrap()
+                .unwrap()
+                .session_id,
+            parent.session_id
+        );
     }
 
     #[tokio::test]

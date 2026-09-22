@@ -1,0 +1,57 @@
+import { Theme } from "theme.slint";
+import { Action } from "components.slint";
+import { TextEditBase } from "textedit-base.slint";
+
+export component Composer inherits Rectangle {
+    in-out property <string> draft <=> editor.text;
+    in property <string> status;
+    callback send();
+    callback attach();
+    height: 180px;
+    background: Theme.composer;
+    Rectangle { y: 0px; height: 1px; background: Theme.border; }
+    VerticalLayout {
+        padding: 14px; padding-top: 8px; spacing: 6px;
+        HorizontalLayout {
+            height: 30px; spacing: 4px;
+            Action { icon: @image-url("../assets/icons/plus.svg"); label: "预设问题"; clicked => { root.draft = "你好，请介绍一下你的能力。"; editor.focus(); } }
+            Action { icon: @image-url("../assets/icons/paperclip.svg"); label: "添加附件"; clicked => { root.attach(); } }
+            Action { icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "快捷输入"; clicked => { root.draft = "请帮我整理当前内容。"; editor.focus(); } }
+            Rectangle { horizontal-stretch: 1; }
+            Text { text: "自动放行"; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
+        }
+        editor := TextEditBase {
+            accessible-role: text-input;
+            accessible-value <=> self.text;
+            accessible-placeholder-text: self.placeholder-text;
+            accessible-action-set-value(value) => { self.text = value; }
+            min-height: 72px;
+            scroll-view-padding: 10px;
+            background: Theme.surface.transparentize(0.18);
+            border-width: 1px; border-radius: 10px;
+            border-color: self.has-focus ? Theme.accent : Theme.border;
+            foreground: Theme.text;
+            placeholder-text: "输入消息，开始新的对话…";
+            placeholder-color: Theme.muted;
+            selection-background-color: Theme.accent-soft;
+            selection-foreground-color: Theme.text;
+            font-size: 15px; font-family: "Microsoft YaHei";
+            wrap: word-wrap;
+            key-pressed(event) => {
+                if event.text == "\n" && !event.modifiers.shift {
+                    root.send();
+                    return accept;
+                }
+                return reject;
+            }
+        }
+        HorizontalLayout {
+            height: 30px; spacing: 8px;
+            Text { text: root.status; color: Theme.muted; font-size: 10px; overflow: elide; }
+            Rectangle { horizontal-stretch: 1; }
+            Text { text: "Enter 发送 / Shift+Enter 换行"; color: Theme.muted; font-size: 10px; }
+            send-button := Action { width: 66px; icon: @image-url("../assets/icons/arrow-up.svg"); label: "发送"; show-label: true; primary: true; enabled: root.draft != ""; clicked => { root.send(); } }
+        }
+    }
+}
+
