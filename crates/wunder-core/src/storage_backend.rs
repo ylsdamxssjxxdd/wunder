@@ -236,6 +236,8 @@ pub trait AgentRuntimeStore {
         max_active: i64,
     ) -> Result<bool>;
     fn insert_agent_task(&self, record: &AgentTaskRecord) -> Result<()>;
+    /// Atomic insert-only admission with per-thread backpressure and retry idempotency.
+    fn insert_agent_message_task(&self, record: &AgentTaskRecord, pending_limit: i64) -> Result<()>;
     fn get_agent_task(&self, task_id: &str) -> Result<Option<AgentTaskRecord>>;
     fn list_pending_agent_tasks(&self, limit: i64) -> Result<Vec<AgentTaskRecord>>;
     fn count_pending_agent_tasks(&self) -> Result<i64>;

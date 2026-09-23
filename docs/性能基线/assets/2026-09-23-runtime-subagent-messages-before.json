@@ -1,0 +1,53 @@
+{
+  "stage": "before_sqlite_connection_reuse",
+  "results": [
+    {
+      "test": "mailbox_pressure",
+      "exit_code": 0,
+      "elapsed_s": 0.184,
+      "sampled_peak_rss_mib": 8.64,
+      "sampled_cpu_s": 0.406
+    },
+    {
+      "test": "agent_message_sqlite_pressure",
+      "exit_code": 0,
+      "elapsed_s": 6.116,
+      "sampled_peak_rss_mib": 11.31,
+      "sampled_cpu_s": 7.672
+    },
+    {
+      "test": "agent_message_postgres_pressure",
+      "exit_code": 0,
+      "elapsed_s": 6.455,
+      "sampled_peak_rss_mib": 10.02,
+      "sampled_cpu_s": 2.219
+    },
+    {
+      "test": "child_pool_pressure",
+      "exit_code": 101,
+      "elapsed_s": 4.03,
+      "sampled_peak_rss_mib": 109.05,
+      "sampled_cpu_s": 5.469
+    }
+  ],
+  "metrics": {
+    "mailbox_pressure": [
+      "test services::runtime::thread::mailbox::tests::mailbox_pressure ... MAILBOX_PRESSURE {\"workers\":1,\"messages\":20000,\"messages_per_s\":622225,\"p50_us\":1.400,\"p95_us\":2.300,\"p99_us\":3.000}",
+      "MAILBOX_PRESSURE {\"workers\":2,\"messages\":40000,\"messages_per_s\":1158923,\"p50_us\":1.500,\"p95_us\":2.800,\"p99_us\":3.100}",
+      "MAILBOX_PRESSURE {\"workers\":4,\"messages\":80000,\"messages_per_s\":2179136,\"p50_us\":1.500,\"p95_us\":2.200,\"p99_us\":3.300}",
+      "MAILBOX_PRESSURE {\"workers\":8,\"messages\":160000,\"messages_per_s\":3805338,\"p50_us\":1.600,\"p95_us\":2.800,\"p99_us\":3.300}"
+    ],
+    "agent_message_sqlite_pressure": [
+      "test storage::agent_message_tests::agent_message_sqlite_pressure ... ADMISSION_PRESSURE backend=sqlite concurrency=1 messages=200 messages_per_s=195.8 p50_us=5012 p95_us=5930 p99_us=6260",
+      "ADMISSION_PRESSURE backend=sqlite concurrency=2 messages=400 messages_per_s=406.0 p50_us=1233 p95_us=7093 p99_us=59543",
+      "ADMISSION_PRESSURE backend=sqlite concurrency=4 messages=800 messages_per_s=837.6 p50_us=1129 p95_us=16255 p99_us=68043",
+      "ADMISSION_PRESSURE backend=sqlite concurrency=8 messages=1600 messages_per_s=518.9 p50_us=3332 p95_us=44049 p99_us=202515"
+    ],
+    "agent_message_postgres_pressure": [
+      "test storage::agent_message_tests::agent_message_postgres_pressure ... ADMISSION_PRESSURE backend=postgres concurrency=1 messages=200 messages_per_s=134.5 p50_us=7342 p95_us=8302 p99_us=9245",
+      "ADMISSION_PRESSURE backend=postgres concurrency=2 messages=400 messages_per_s=265.4 p50_us=7435 p95_us=8146 p99_us=8733",
+      "ADMISSION_PRESSURE backend=postgres concurrency=4 messages=800 messages_per_s=511.1 p50_us=7679 p95_us=8887 p99_us=10544",
+      "ADMISSION_PRESSURE backend=postgres concurrency=8 messages=1600 messages_per_s=934.1 p50_us=8424 p95_us=9991 p99_us=11376"
+    ]
+  }
+}

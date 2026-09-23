@@ -52,7 +52,7 @@ If you need to see "how models are configured and exposed", start here.
 This group is oriented toward engineering validation:
 
 - Throughput Testing: one model and input/output length combination per run, live metrics on the right, and selectable history curves. Only the latest 50 summaries are retained; tests create no sessions or thread logs.
-- Virtual models have Fast (default), Medium and Slow profiles: prefill at 2000 / 500 / 100 tokens/s and reasoning/answer generation at 200 / 50 / 10 tokens/s. Random replies and throughput simulations emit reasoning before the answer; replay preserves recorded reasoning. Benchmark reasoning uses one quarter of the total output budget. History retains the profile and separates curves accordingly.
+- Virtual models have Fast (default), Medium and Slow profiles: prefill at 2000 / 500 / 100 tokens/s and reasoning/answer generation at 200 / 50 / 10 tokens/s. Random replies and throughput simulations emit reasoning before the answer; replay uses recorded reasoning within the configured capability and budget. Benchmark reasoning defaults to one quarter of the total output budget and respects the reasoning switch and budget. History retains the profile and separates curves accordingly.
 - Performance Testing
 - Swarm Testing
 - Capability Evaluation
@@ -128,3 +128,9 @@ If you are not sure where to start investigating a problem, follow this order:
 - [Admin Interface](/docs/en/surfaces/web-admin/)
 - [Configuration Reference](/docs/en/reference/config/)
 - [Stream Events Reference](/docs/en/reference/stream-events/)
+
+### Simulated model capabilities
+
+Virtual models use the context, output, vision and hearing settings, with additional reasoning/tool switches and token costs per image or audio part. Empty limits default to 128k context and 4k output. Input (including tool schemas) plus reserved output exceeding context returns a context error. Unsupported media is rejected. Media recognition is not performed.
+
+Replay follows Tool calling mode: native `function_call`, text `tool_call`, or native/text fallback for `freeform_call` depending on the API mode. Names and arguments come from the log; no manual tool configuration is needed. Tools use normal permissions and approvals, then replay advances to the next model round. Exhausted logs fail rather than repeat old calls. Synthetic replies do not initiate tools. Output limits prevent partial tool arguments from executing. Reasoning settings also apply to throughput tests.

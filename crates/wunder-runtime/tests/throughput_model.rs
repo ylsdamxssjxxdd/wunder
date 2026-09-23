@@ -44,6 +44,7 @@ async fn fast_profile_concurrency_preserves_per_request_rates_and_reasoning() {
             let barrier = Arc::clone(&barrier);
             tasks.spawn(async move {
                 let turn = VirtualReplayTurn {
+                    finish_reason: None,
                     content: " one".repeat(768),
                     reasoning: " one".repeat(256),
                     usage: None,

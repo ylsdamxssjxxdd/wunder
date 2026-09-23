@@ -63,6 +63,8 @@ pub fn install(app: &MainWindow) {
             time: "现在".into(),
             workflow: false,
             state: "".into(),
+            avatar_glyph: "".into(),
+            avatar_tone: 0,
         });
         model.push(reply(
             "已收到。这是一条本地演示回复，可以继续检查输入、滚动与会话切换效果。",
@@ -129,6 +131,8 @@ fn reply(text: &str) -> ChatMessage {
         time: "现在".into(),
         workflow: false,
         state: "任务完成  ·  演示消息".into(),
+        avatar_glyph: "✦".into(),
+        avatar_tone: 1,
     }
 }
 

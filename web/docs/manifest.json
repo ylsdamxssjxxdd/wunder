@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-09-23T02:49:33.954662+00:00",
+  "generated_at": "2026-09-23T05:01:08.478671+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -4696,6 +4696,11 @@
           "id": "section-12",
           "level": 2,
           "text": "保留与复用子智能体"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "执行中的指导与汇报"
         }
       ],
       "prev_slug": "zh-CN/tools/thread-control",
@@ -8521,6 +8526,11 @@
           "id": "section-38",
           "level": 2,
           "text": "廸伸阅读"
+        },
+        {
+          "id": "section-39",
+          "level": 3,
+          "text": "模拟模型能力"
         }
       ],
       "prev_slug": "zh-CN/reference/prompt-templates",
@@ -16104,6 +16114,11 @@
           "id": "section-14",
           "level": 2,
           "text": "Further Reading"
+        },
+        {
+          "id": "section-15",
+          "level": 3,
+          "text": "Simulated model capabilities"
         }
       ],
       "prev_slug": "en/reference/prompt-templates",

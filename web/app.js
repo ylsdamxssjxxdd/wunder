@@ -67,7 +67,7 @@ import {
 } from "./modules/tool-visibility.js?v=20260518-01";
 import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?v=20260603-02";
 
-import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20260215-01";
+import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20260923-04";
 import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20260215-01";
 
 import { initSettingsPanel, loadAdminDefaults } from "./modules/settings.js?v=20260602-01";

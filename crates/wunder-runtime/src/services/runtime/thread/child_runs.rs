@@ -95,9 +95,14 @@ impl ChildRuns {
             .get(session_id)
             .is_some_and(|entry| entry.token.is_cancelled())
     }
+
+    pub(crate) fn token(&self, session_id: &str) -> Option<CancellationToken> {
+        self.entries.lock().get(session_id).map(|entry| entry.token.clone())
+    }
 }
 
 impl ChildRunGuard {
+    pub(crate) fn session_id(&self) -> &str { &self.session_id }
     pub(crate) fn settle(&self) {
         if let Some(entry) = self.registry.entries.lock().get_mut(&self.session_id) {
             if Arc::ptr_eq(&entry.identity, &self.identity) {

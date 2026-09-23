@@ -69,7 +69,7 @@ These are not the same thing:
 
 - Throughput tests one model, input length and output length combination per run. Input presets span 1k to 1m; output presets are 1k, 2k, 4k and 8k (1k = 1024). Input size is estimated and actual API usage is reported separately. Supported engines receive fixed-length controls; other APIs receive an output limit and results are checked for target attainment. No sessions or thread logs are created. Only the latest 50 summaries are retained. Select history rows to compare curves by input length or time, reuse settings, or export selected data.
 - Performance sampling is more about pipeline baseline sampling, not involving model capability evaluation
-- Virtual models offer Fast (default), Medium and Slow under Model Configuration → Simulation speed. Prefill runs at 2000 / 500 / 100 tokens/s; reasoning and answer generation run at 200 / 50 / 10 tokens/s. The benchmark emits reasoning first, using one quarter of the requested total output budget, then the answer. Reasoning counts are shown separately. Details retain the selected speed and curves group by profile. First-token latency includes prefill: a 1m input takes about 524 seconds on Fast, so configure a sufficient timeout or cancel while waiting.
+- Virtual models offer Fast (default), Medium and Slow under Model Configuration → Simulation speed. Prefill runs at 2000 / 500 / 100 tokens/s; reasoning and answer generation run at 200 / 50 / 10 tokens/s. The benchmark emits reasoning first, using one quarter of the requested total output budget by default (subject to the reasoning switch and budget), then the answer. Reasoning counts are shown separately. Details retain the selected speed and curves group by profile. First-token latency includes prefill: a 1m input takes about 524 seconds on Fast, so configure a sufficient timeout or cancel while waiting.
 
 ### WunderBench
 
@@ -144,3 +144,5 @@ Many issues require looking at monitor, tool_usage, and channel runtime together
 - [Channel Runtime](/docs/en/ops/channel-runtime/)
 - [Stream Events Reference](/docs/en/reference/stream-events/)
 - [Admin Panels Index](/docs/en/reference/admin-panels/)
+
+Simulation enforces context and output limits and records violations as failures. The default context is 128k; set a window large enough for input plus output before testing 1m inputs.

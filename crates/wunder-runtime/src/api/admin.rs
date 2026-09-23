@@ -93,6 +93,15 @@ async fn admin_llm_update(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<LlmUpdateRequest>,
 ) -> Result<Json<Value>, Response> {
+    for model in payload
+        .llm
+        .models
+        .values()
+        .filter(|model| virtual_llm::is_virtual_replay_provider(model.provider.as_deref()))
+    {
+        virtual_llm::capabilities::validate_config(model)
+            .map_err(|error| error_response(StatusCode::BAD_REQUEST, error.to_string()))?;
+    }
     let updated = state
         .config_store
         .update(|config| {

@@ -805,7 +805,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "action": {
                         "type": "string",
                         "description": t("tool.spec.subagent_control.args.action"),
-                        "enum": ["list", "history", "send", "spawn", "batch_spawn", "status", "wait", "interrupt", "close", "resume"]
+                        "enum": ["list", "history", "send", "report", "spawn", "batch_spawn", "status", "wait", "interrupt", "close", "resume"]
                     },
                     "limit": {"type": "integer", "description": t("tool.spec.sessions_list.args.limit"), "minimum": 1},
                     "parent_id": {"type": "string", "description": t("tool.spec.subagent_control.args.parent_id")},
@@ -825,7 +825,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "enum": ["keep", "interrupt", "close"]
                     },
                     "include_tools": {"type": "boolean", "description": t("tool.spec.sessions_history.args.include_tools")},
-                    "message": {"type": "string", "description": t("tool.spec.subagent_control.args.message")},
+                    "message": {"type": "string", "description": t("tool.spec.subagent_control.args.message"), "minLength": 1, "maxLength": 20000},
+                    "message_id": {"type":"string", "maxLength":128, "description":"Optional retry id for running-turn messages or reports. Reuse the same id only for the same message."},
                     "timeout_seconds": {"type": "number", "description": t("tool.spec.sessions_send.args.timeout")},
                     "task": {"type": "string", "description": t("tool.spec.subagent_control.args.task")},
                     "tasks": {

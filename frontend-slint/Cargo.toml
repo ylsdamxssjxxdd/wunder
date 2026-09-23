@@ -6,7 +6,7 @@ rust-version = "1.92"
 publish = false
 
 [dependencies]
-wunder-desktop = { path = "../crates/wunder-desktop", default-features = false, features = ["sqlite-storage"], optional = true }
+wunder-desktop = { path = "../crates/wunder-desktop", default-features = false, features = ["sqlite-storage"] }
 slint = { version = "=1.18.0", default-features = false, features = [
   "backend-winit",
   "compat-1-2",
@@ -20,14 +20,14 @@ i-slint-renderer-software = { version = "=1.18.0", default-features = false, fea
 winit = { version = "=0.30.2", default-features = false }
 png = "=0.18.1"
 serde_json = "=1.0.151"
-tungstenite = { version = "=0.29.0", default-features = false, features = ["handshake"] }
 
 [build-dependencies]
 slint-build = { version = "=1.18.0" }
 
 [features]
-default = []
-native-runtime = ["dep:wunder-desktop"]
+default = ["native-runtime"]
+# Compatibility feature; the native runtime is always linked.
+native-runtime = []
 
 [profile.release]
 strip = "symbols"

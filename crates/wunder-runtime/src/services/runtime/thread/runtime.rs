@@ -22,6 +22,8 @@ use uuid::Uuid;
 
 #[path = "queue_admin.rs"]
 mod queue_admin;
+#[path = "agent_messages.rs"]
+mod agent_messages;
 
 const DEFAULT_SESSION_TITLE: &str = "新会话";
 
@@ -117,6 +119,7 @@ pub struct ThreadRuntime {
     pending_sessions: Arc<StdMutex<HashSet<String>>>,
     active_runtime_sessions: Arc<StdMutex<HashSet<String>>>,
     pending_goal_continuations: Arc<StdMutex<std::collections::HashMap<String, CancellationToken>>>,
+    started: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ThreadRuntime {
@@ -128,7 +131,7 @@ impl ThreadRuntime {
     ) -> Arc<Self> {
         let stream_events = StreamEventService::new(user_store.storage_backend());
         let (queue_tx, queue_rx) = mpsc::channel(64);
-        Arc::new(Self {
+        let runtime = Arc::new(Self {
             config_store,
             user_store,
             monitor,
@@ -140,7 +143,10 @@ impl ThreadRuntime {
             pending_sessions: Arc::new(StdMutex::new(HashSet::new())),
             active_runtime_sessions: Arc::new(StdMutex::new(HashSet::new())),
             pending_goal_continuations: Arc::new(StdMutex::new(std::collections::HashMap::new())),
-        })
+            started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        });
+        *runtime.orchestrator.task_runtime.write() = Arc::downgrade(&runtime);
+        runtime
     }
 
     pub fn queue_waker(&self) -> mpsc::Sender<()> {
@@ -148,6 +154,7 @@ impl ThreadRuntime {
     }
 
     pub fn start(self: Arc<Self>) {
+        if self.started.swap(true, std::sync::atomic::Ordering::AcqRel) { return; }
         let runtime = self.clone();
         long_task::spawn("runtime.thread.queue_loop", async move {
             runtime.run_loop().await;
@@ -1051,10 +1058,6 @@ impl ThreadRuntime {
                     runtime_metrics::record_loop_tick("runtime.thread.queue_loop", "poll");
                 },
             }
-            if !config.agent_queue.enabled {
-                self.resume_suspended_tasks().await;
-                continue;
-            }
             if let Err(err) = self.process_pending_tasks().await {
                 warn!("agent queue loop error: {err}");
             }
@@ -1082,6 +1085,7 @@ impl ThreadRuntime {
         let config = self.config_store.get().await;
         let ttl_s = config.agent_queue.task_ttl_s as f64;
         for task in pending {
+            // Disabling admission must not strand previously accepted durable tasks.
             if task
                 .request_payload
                 .get("queue_priority")
@@ -1136,6 +1140,22 @@ impl ThreadRuntime {
     }
 
     async fn execute_task(&self, task: AgentTaskRecord) {
+        match self.agent_message_is_current(&task).await {
+            Ok(true) => {},
+            Ok(false) => {
+                if let Err(error) = self.discard_agent_message(&task).await {
+                    warn!("discard stale agent message failed: {error}");
+                }
+                self.finish_thread(&task.thread_id).await;
+                return;
+            }
+            Err(error) => {
+                // A transient validation failure must leave the durable input pending.
+                warn!("validate agent message failed: {error}");
+                self.finish_thread(&task.thread_id).await;
+                return;
+            }
+        }
         let started_at = now_ts();
         let task_client_message_id = task
             .request_payload

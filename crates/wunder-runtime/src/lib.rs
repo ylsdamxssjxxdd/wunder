@@ -25,12 +25,13 @@ pub use lsp::LspManager;
 pub use ops::{benchmark, monitor, performance, throughput};
 pub use orchestrator::constants as orchestrator_constants;
 pub use services::{
-    a2a_store, admin_skills, attachment, beeroom_realtime, browser, cron, desktop_lan,
+    agent_management, a2a_store, admin_skills, attachment, beeroom_realtime, browser, cron, desktop_lan,
     desktop_runtime_recovery, doc2md, drawio, goal, history, knowledge, llm, mcp, memory,
     multimodal_models, onlyoffice, org_units, presence, prompting, ragflow_knowledge, runtime,
     sim_lab, skills, swarm, tools, user_access, user_leveling, user_plaza, user_prompt_templates,
     user_store, user_tools, user_world, vector_knowledge, virtual_llm, workspace,
 };
+pub use services::worker_card_settings;
 pub use services::runtime::thread::{ThreadCancelSettlement, ThreadSubmitOutcome};
 pub use services::chat_cancel_marker::persist_user_cancelled_turn_marker;
 pub use wunder_core as stable_core;

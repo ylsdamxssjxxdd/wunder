@@ -214,6 +214,9 @@ impl SessionLockStore for PostgresStorage {
 }
 
 impl AgentRuntimeStore for PostgresStorage {
+    fn insert_agent_message_task(&self, record: &AgentTaskRecord, pending_limit: i64) -> Result<()> {
+        self.insert_agent_message_task_impl(record, pending_limit)
+    }
     fn claim_agent_task(&self, task_id: &str, now: f64) -> Result<bool> {
         self.claim_agent_task_impl(task_id, now)
     }

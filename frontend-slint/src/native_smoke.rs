@@ -143,7 +143,7 @@ pub fn run(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::erro
         }
         let report = match &checked {
             Ok(_) => {
-                "PASS: native SQLite/create/send/stream/history/cancel/input/navigation/scroll\n"
+                "PASS: native SQLite/create/send/stream/history/cancel/input/navigation/scroll/agents/tools/settings/files\n"
                     .to_string()
             }
             Err(error) => format!("FAIL: step {step}: {error}\n"),
@@ -192,6 +192,12 @@ fn advance(
         || app.get_session_loading()
         || app.get_creating_session()
         || app.get_busy()
+        || app.get_saving()
+        || app.get_agents_loading()
+        || app.get_settings_loading()
+        || app.get_tools_loading()
+        || app.get_files_loading()
+        || app.get_preview_loading()
     {
         return Ok(false);
     }
@@ -256,6 +262,79 @@ fn advance(
         7 => {
             ensure(app.get_status() == "已停止", "cancel did not settle")?;
             crate::smoke::snapshot(app, &directory.join("native-stopped.png"))?;
+            app.set_section(2);
+            app.invoke_create_agent("test-ui-agent".into());
+        }
+        8 => {
+            ensure(
+                app.get_selected_agent_name() == "test-ui-agent",
+                "native UI create failed",
+            )?;
+            app.invoke_save_agent(
+                "test-ui-updated".into(),
+                "test-description".into(),
+                "test-prompt".into(),
+                "".into(),
+                "spark".into(),
+                "#f97316".into(),
+            );
+        }
+        9 => {
+            ensure(
+                app.get_selected_agent_name() == "test-ui-updated",
+                "native UI save failed",
+            )?;
+            crate::smoke::snapshot(app, &directory.join("native-agents.png"))?;
+            app.set_section(3);
+            app.invoke_refresh_tools();
+        }
+        10 => {
+            ensure(app.get_tools().row_count() > 0, "native tools empty")?;
+            crate::smoke::snapshot(app, &directory.join("native-tools.png"))?;
+            app.set_section(4);
+            app.invoke_save_model(
+                "test-ui-model".into(),
+                "openai".into(),
+                "test-model".into(),
+                "".into(),
+                "".into(),
+                "embedding".into(),
+            );
+        }
+        11 => {
+            ensure(
+                app.get_models().iter().any(|m| m.key == "test-ui-model"),
+                "native UI model save failed",
+            )?;
+            app.invoke_set_default_model("test-ui-model".into());
+        }
+        12 => {
+            ensure(
+                app.get_models()
+                    .iter()
+                    .any(|m| m.key == "test-ui-model" && m.is_default),
+                "native UI default failed",
+            )?;
+            crate::smoke::snapshot(app, &directory.join("native-settings.png"))?;
+            app.invoke_save_runtime(app.get_workspace_root(), "zh-CN".into());
+        }
+        13 => {
+            app.set_section(0);
+            app.invoke_navigate_directory("".into());
+        }
+        14 => {
+            ensure(
+                app.get_files().iter().any(|f| f.name == "test.txt"),
+                "native UI file list failed",
+            )?;
+            app.invoke_open_file("test.txt".into());
+        }
+        15 => {
+            ensure(
+                app.get_preview_text().starts_with("测试文本"),
+                "native UI preview failed",
+            )?;
+            crate::smoke::snapshot(app, &directory.join("native-workspace.png"))?;
             return Ok(true);
         }
         _ => return Err("unexpected smoke step".into()),

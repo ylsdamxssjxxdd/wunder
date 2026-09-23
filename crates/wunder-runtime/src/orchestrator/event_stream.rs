@@ -225,7 +225,6 @@ pub(super) struct EventEmitter {
     is_admin: bool,
     closed: Arc<AtomicBool>,
     next_event_id: Arc<AtomicI64>,
-    last_cleanup_ts: Arc<AtomicU64>,
     overflow_version: Arc<AtomicU64>,
     delta_buffer: Option<Arc<ParkingMutex<StreamDeltaBuffer>>>,
     client_message_id: Option<String>,
@@ -260,7 +259,6 @@ impl EventEmitter {
             is_admin,
             closed: Arc::new(AtomicBool::new(false)),
             next_event_id: Arc::new(AtomicI64::new(start_event_id.saturating_add(1))),
-            last_cleanup_ts: Arc::new(AtomicU64::new(0)),
             overflow_version: Arc::new(AtomicU64::new(0)),
             delta_buffer,
             client_message_id,
@@ -364,7 +362,6 @@ impl EventEmitter {
         let session_id = self.session_id.clone();
         let user_id = self.user_id.clone();
         let storage = storage.clone();
-        let cleanup_cutoff = self.cleanup_cutoff();
         let event_type = event_type.to_string();
         super::stream_persist::enqueue_stream_event_persist(
             storage,
@@ -373,7 +370,6 @@ impl EventEmitter {
             event_id,
             payload,
             event_type,
-            cleanup_cutoff,
         );
     }
 
@@ -479,20 +475,6 @@ impl EventEmitter {
         self.persist_stream_event(event_id, &event.event, raw_data, timestamp);
     }
 
-    fn cleanup_cutoff(&self) -> Option<f64> {
-        if self.is_admin {
-            return None;
-        }
-        let now = Utc::now().timestamp_millis() as u64;
-        let last = self.last_cleanup_ts.load(AtomicOrdering::SeqCst);
-        let interval_ms = (STREAM_EVENT_CLEANUP_INTERVAL_S * 1000.0) as u64;
-        if last > 0 && now.saturating_sub(last) < interval_ms {
-            return None;
-        }
-        self.last_cleanup_ts.store(now, AtomicOrdering::SeqCst);
-        let cutoff = Utc::now().timestamp_millis() as f64 / 1000.0 - STREAM_EVENT_TTL_S;
-        Some(cutoff)
-    }
 }
 
 fn reset_stream_poll_state(

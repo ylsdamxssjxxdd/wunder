@@ -12,7 +12,6 @@ struct StreamPersistTask {
     event_id: i64,
     payload: Value,
     event_type: String,
-    cleanup_cutoff: Option<f64>,
 }
 
 enum StreamPersistCommand {
@@ -94,15 +93,9 @@ impl StreamPersistQueue {
             event_id,
             payload,
             event_type,
-            cleanup_cutoff,
         } = task;
         if let Err(err) = storage.append_stream_event(&session_id, &user_id, event_id, &payload) {
             warn!("failed to persist stream event {event_type} for session {session_id}: {err}");
-        }
-        if let Some(cutoff) = cleanup_cutoff {
-            if let Err(err) = storage.delete_stream_events_before(cutoff) {
-                warn!("failed to cleanup stream events before {cutoff} for session {session_id}: {err}");
-            }
         }
     }
 }
@@ -119,7 +112,6 @@ pub(super) fn enqueue_stream_event_persist(
     event_id: i64,
     payload: Value,
     event_type: String,
-    cleanup_cutoff: Option<f64>,
 ) {
     if event_id <= 0 {
         return;
@@ -134,7 +126,6 @@ pub(super) fn enqueue_stream_event_persist(
         event_id,
         payload,
         event_type,
-        cleanup_cutoff,
     });
 }
 
@@ -180,7 +171,6 @@ mod tests {
                 "timestamp": "2026-03-07T00:00:00+08:00"
             }),
             event_type: "progress".to_string(),
-            cleanup_cutoff: None,
         });
 
         let records = storage
@@ -190,29 +180,6 @@ mod tests {
         assert_eq!(records[0]["event"], json!("progress"));
         assert_eq!(records[0]["data"]["summary"], json!("queued"));
         assert_eq!(records[0]["event_id"], json!(7));
-    }
-
-    #[test]
-    fn apply_task_runs_cleanup_cutoff() {
-        let storage = build_storage();
-        StreamPersistQueue::apply_task(StreamPersistTask {
-            storage: storage.clone(),
-            session_id: "sess_queue_cleanup".to_string(),
-            user_id: "user_queue_cleanup".to_string(),
-            event_id: 3,
-            payload: json!({
-                "event": "progress",
-                "data": { "summary": "cleanup" },
-                "timestamp": "2026-03-07T00:00:00+08:00"
-            }),
-            event_type: "progress".to_string(),
-            cleanup_cutoff: Some(Utc::now().timestamp_millis() as f64 / 1000.0 + 60.0),
-        });
-
-        let records = storage
-            .load_stream_events("sess_queue_cleanup", 0, 16)
-            .expect("load stream events");
-        assert!(records.is_empty());
     }
 
     #[tokio::test]
@@ -229,7 +196,6 @@ mod tests {
                 "timestamp": "2026-03-07T00:00:00+08:00"
             }),
             "progress".to_string(),
-            None,
         );
 
         flush_stream_event_persist_queue().await;

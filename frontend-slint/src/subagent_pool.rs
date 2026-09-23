@@ -1,58 +1,29 @@
 //! Bounded parent-owned directory. Opening a child never changes the active conversation.
-use crate::{chat_api::ChatApi, Conversation, MainWindow};
+use crate::{Conversation, MainWindow};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{cell::RefCell, rc::Rc};
 
 #[derive(Clone)]
-enum Source {
-    Bridge(ChatApi),
-    #[cfg(feature = "native-runtime")]
-    Native(std::sync::Arc<wunder_desktop::NativeDesktop>),
-}
-
+struct Source(std::sync::Arc<wunder_desktop::NativeDesktop>);
 impl Source {
     fn list(&self, session: &str) -> Result<serde_json::Value, String> {
-        match self {
-            Self::Bridge(api) => api.get_json(&format!(
-                "/chat/sessions/{}/subagents?limit=200",
-                crate::chat_api::encode_query_value(session)
-            )),
-            #[cfg(feature = "native-runtime")]
-            Self::Native(desktop) => desktop.list_subagents(session),
-        }
+        self.0.list_subagents(session)
     }
-
     fn history(&self, session: &str) -> Result<String, String> {
-        match self {
-            Self::Bridge(api) => api.get_session(session).map(|(_, messages)| {
+        self.0
+            .get_session(session)
+            .map(|(_, messages)| {
                 messages
                     .into_iter()
                     .map(|message| message.text)
                     .collect::<Vec<_>>()
                     .join("\n\n")
-            }),
-            #[cfg(feature = "native-runtime")]
-            Self::Native(desktop) => desktop
-                .get_session(session)
-                .map(|(_, messages)| {
-                    messages
-                        .into_iter()
-                        .map(|message| message.text)
-                        .collect::<Vec<_>>()
-                        .join("\n\n")
-                })
-                .map_err(|error| error.to_string()),
-        }
+            })
+            .map_err(|_| "无法读取子智能体历史".into())
     }
 }
-
-pub fn install(app: &MainWindow, api: ChatApi) {
-    install_source(app, Source::Bridge(api));
-}
-
-#[cfg(feature = "native-runtime")]
 pub fn install_native(app: &MainWindow, desktop: std::sync::Arc<wunder_desktop::NativeDesktop>) {
-    install_source(app, Source::Native(desktop));
+    install_source(app, Source(desktop));
 }
 
 fn install_source(app: &MainWindow, api: Source) {

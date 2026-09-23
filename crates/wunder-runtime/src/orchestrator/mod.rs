@@ -16,11 +16,11 @@ use crate::orchestrator_constants::{
     COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS, DEFAULT_LLM_TIMEOUT_S, DEFAULT_TOOL_PARALLELISM,
     DEFAULT_TOOL_TIMEOUT_S, MIN_TOOL_TIMEOUT_S, OBSERVATION_PREFIX, SESSION_LOCK_BUSY_RETRY_S,
     SESSION_LOCK_HEARTBEAT_S, SESSION_LOCK_POLL_INTERVAL_S, SESSION_LOCK_TTL_S,
-    STREAM_EVENT_CLEANUP_INTERVAL_S, STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_PERSIST_CHARS,
+    STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_PERSIST_CHARS,
     STREAM_EVENT_PERSIST_INTERVAL_MS, STREAM_EVENT_QUEUE_SIZE,
     STREAM_EVENT_RESUME_POLL_BACKOFF_AFTER, STREAM_EVENT_RESUME_POLL_BACKOFF_FACTOR,
     STREAM_EVENT_RESUME_POLL_INTERVAL_S, STREAM_EVENT_RESUME_POLL_MAX_INTERVAL_S,
-    STREAM_EVENT_TTL_S, TOOL_RESULT_ARRAY_HEAD_ITEMS, TOOL_RESULT_ARRAY_TAIL_ITEMS,
+    TOOL_RESULT_ARRAY_HEAD_ITEMS, TOOL_RESULT_ARRAY_TAIL_ITEMS,
     TOOL_RESULT_HEAD_CHARS, TOOL_RESULT_MAX_ARRAY_ITEMS, TOOL_RESULT_MAX_CHARS,
     TOOL_RESULT_PAGINATED_ARRAY_HEAD_ITEMS, TOOL_RESULT_PAGINATED_ARRAY_TAIL_ITEMS,
     TOOL_RESULT_PAGINATED_MAX_ARRAY_ITEMS, TOOL_RESULT_TAIL_CHARS, TOOL_RESULT_TRUNCATION_MARKER,
@@ -95,10 +95,12 @@ mod stream_persist;
 mod stream_timeout;
 mod thread_runtime;
 mod tool_calls;
+mod virtual_replay_protocol;
 mod tool_exec;
 mod tool_parallel;
 mod tool_result_payload;
 mod turn_state;
+mod agent_messages;
 mod types;
 mod usage_accounting;
 mod quota;
@@ -126,6 +128,7 @@ use types::{PreparedRequest, RoundInfo};
 
 #[derive(Clone)]
 pub struct Orchestrator {
+    pub(crate) task_runtime: Arc<parking_lot::RwLock<std::sync::Weak<crate::services::runtime::thread::ThreadRuntime>>>,
     pub(crate) scheduling: Arc<crate::services::runtime::thread::scheduling::CooperativeScheduler>,
     config_store: ConfigStore,
     workspace: Arc<WorkspaceManager>,
@@ -169,6 +172,7 @@ impl Orchestrator {
         cron_wake_signal: Option<CronWakeSignal>,
     ) -> Self {
         Self {
+            task_runtime: Arc::default(),
             scheduling: Arc::new(Default::default()),
             config_store,
             workspace,

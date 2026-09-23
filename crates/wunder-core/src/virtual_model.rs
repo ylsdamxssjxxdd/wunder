@@ -2,6 +2,28 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// Provider capabilities shared by synthetic responses and recorded replay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+// Ignore removed prototype fields when loading existing configs; serialization drops them.
+#[serde(default)]
+pub struct VirtualModelOptions {
+    pub support_tools: bool,
+    pub support_reasoning: bool,
+    pub image_tokens: u32,
+    pub audio_tokens: u32,
+}
+
+impl Default for VirtualModelOptions {
+    fn default() -> Self {
+        Self {
+            support_tools: true,
+            support_reasoning: true,
+            image_tokens: 256,
+            audio_tokens: 1024,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VirtualModelSpeed {

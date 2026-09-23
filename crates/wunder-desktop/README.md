@@ -1,6 +1,8 @@
-﻿# wunder-desktop (Tauri) 打包说明
+﻿# wunder-desktop 本地运行时
 
-本目录用于 `wunder-desktop`（Tauri 原生桌面端）构建与打包。
+默认桌面入口是 `frontend-slint/`，直接链接本 crate 的 `NativeDesktop`，双击启动同进程后端，无需 bridge、WebView 或 `--native`。构建与验收见 [Slint README](../../frontend-slint/README.md)。本目录继续维护共享桌面运行时；独立 bridge 用于已有兼容客户端。
+
+下方为停止日常维护的 Tauri 分发壳历史说明，不是默认桌面构建流程。
 
 ## 环境准备（Windows）
 

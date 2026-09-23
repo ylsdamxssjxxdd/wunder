@@ -9,6 +9,8 @@ mod postgres;
 #[cfg(test)]
 mod queue_control_tests;
 #[cfg(test)]
+mod agent_message_tests;
+#[cfg(test)]
 mod quota_tests;
 mod records;
 #[cfg(any(feature = "postgres-storage", feature = "sqlite-storage", test))]

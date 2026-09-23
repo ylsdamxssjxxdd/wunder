@@ -13,7 +13,7 @@ use crate::storage::{
     SessionLockRecord, SessionLockStatus, SessionRunRecord, SpeechJobRecord, TeamRunRecord,
     TeamTaskRecord, UpdateAgentTaskStatusParams, UpdateChannelOutboxStatusParams,
     UpsertMemoryTaskLogParams, UserAccountRecord, UserAgentAccessRecord, UserAgentPresetBinding,
-    UserAgentRecord, UserExperienceUpdateResult, UserSessionScopeRecord, UserQuotaStatus,
+    UserAgentRecord, UserExperienceUpdateResult, UserQuotaStatus, UserSessionScopeRecord,
     UserTokenRecord, UserToolAccessRecord, UserWorldConversationRecord,
     UserWorldConversationSummaryRecord, UserWorldEventRecord, UserWorldGroupRecord,
     UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult, UserWorldSendMessageResult,
@@ -30,6 +30,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 mod agent_directory_store;
+mod agent_message;
 mod agent_runtime_store;
 mod backend_impl;
 mod benchmark_store;
@@ -46,13 +47,13 @@ mod memory_store;
 mod meta_store;
 mod monitor_store;
 mod queue_control;
+mod quota_balance_store;
 mod retention_store;
 mod schema;
-mod session_goal;
 mod session_cleanup;
+mod session_goal;
 mod session_lock_store;
 mod session_run;
-mod quota_balance_store;
 mod user_account_store;
 mod user_world_store;
 mod vector_document_store;
@@ -72,12 +73,12 @@ use media_store::SqliteMediaStorage;
 use memory_store::SqliteMemoryStorage;
 use meta_store::SqliteMetaStorage;
 use monitor_store::SqliteMonitorStorage;
+use quota_balance_store::SqliteQuotaBalanceStorage;
 use retention_store::SqliteRetentionStorage;
 use schema::SqliteSchemaStorage;
 use session_goal::SqliteSessionGoalStorage;
 use session_lock_store::SqliteSessionLockStorage;
 use session_run::SqliteSessionRunStorage;
-use quota_balance_store::SqliteQuotaBalanceStorage;
 use user_account_store::SqliteUserAccountStorage;
 use user_world_store::SqliteUserWorldStorage;
 use vector_document_store::SqliteVectorDocumentStorage;
@@ -86,6 +87,9 @@ pub struct SqliteStorage {
     db_path: PathBuf,
     initialized: AtomicBool,
     init_guard: Mutex<()>,
+    // SQLite has one writer. Reuse one bounded connection for message admission
+    // instead of reopening/checkpointing the WAL for every small queue write.
+    agent_message_connection: Mutex<Option<Connection>>,
 }
 
 impl SqliteStorage {
@@ -99,6 +103,7 @@ impl SqliteStorage {
             db_path: path,
             initialized: AtomicBool::new(false),
             init_guard: Mutex::new(()),
+            agent_message_connection: Mutex::new(None),
         }
     }
 
@@ -392,13 +397,25 @@ mod tests {
             account.last_quota_grant_date.as_deref(),
             Some(today.as_str())
         );
-        let spent = storage.consume_user_quota("user_1", &today, 1000, 1000).unwrap().unwrap();
-        assert_eq!((spent.balance, spent.used_total, spent.allowed), (0, 1000, true));
+        let spent = storage
+            .consume_user_quota("user_1", &today, 1000, 1000)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (spent.balance, spent.used_total, spent.allowed),
+            (0, 1000, true)
+        );
         drop(storage);
         let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
         storage.ensure_initialized().unwrap();
-        let denied = storage.consume_user_quota("user_1", &today, 1000, 1).unwrap().unwrap();
-        assert_eq!((denied.balance, denied.used_total, denied.allowed), (0, 1000, false));
+        let denied = storage
+            .consume_user_quota("user_1", &today, 1000, 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (denied.balance, denied.used_total, denied.allowed),
+            (0, 1000, false)
+        );
     }
 
     #[test]

@@ -35,6 +35,7 @@ bench = false
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+chrono.workspace = true
 clap.workspace = true
 futures.workspace = true
 serde.workspace = true

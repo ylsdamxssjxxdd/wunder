@@ -3,8 +3,8 @@ use crate::storage::{
     AgentDirectoryStore, AgentRuntimeStore, BeeroomStore, BenchmarkStore, BridgeStore,
     ChannelDirectoryStore, ChannelRuntimeStore, ChatSessionStore, ConversationLogStore, CronStore,
     GatewayStore, LogStatsStore, MediaStore, MemoryRecordStore, MetaStore, MonitorStore,
-    RetentionStore, SessionGoalStore, SessionLockStore, SessionRunStore, StorageLifecycle,
-    QuotaBalanceStore, UserAccountStore, UserWorldStore, VectorDocumentStore,
+    QuotaBalanceStore, RetentionStore, SessionGoalStore, SessionLockStore, SessionRunStore,
+    StorageLifecycle, UserAccountStore, UserWorldStore, VectorDocumentStore,
 };
 
 impl StorageLifecycle for SqliteStorage {
@@ -214,6 +214,13 @@ impl SessionLockStore for SqliteStorage {
 }
 
 impl AgentRuntimeStore for SqliteStorage {
+    fn insert_agent_message_task(
+        &self,
+        record: &AgentTaskRecord,
+        pending_limit: i64,
+    ) -> Result<()> {
+        self.insert_agent_message_task_impl(record, pending_limit)
+    }
     fn claim_agent_task(&self, task_id: &str, now: f64) -> Result<bool> {
         self.claim_agent_task_impl(task_id, now)
     }
@@ -664,7 +671,11 @@ impl ChatSessionStore for SqliteStorage {
     fn get_chat_session_owner(&self, session_id: &str) -> Result<Option<String>> {
         self.get_chat_session_owner_impl(session_id)
     }
-    fn list_active_chat_session_ids(&self, user_id: &str, session_ids: &[String]) -> Result<Vec<String>> {
+    fn list_active_chat_session_ids(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<Vec<String>> {
         self.list_active_chat_session_ids_impl(user_id, session_ids)
     }
     fn insert_chat_session_if_absent(&self, record: &ChatSessionRecord) -> Result<bool> {
@@ -713,8 +724,12 @@ impl ChatSessionStore for SqliteStorage {
         self.list_chat_session_agent_ids_impl(user_id)
     }
     fn list_work_chat_sessions(
-        &self, user_id: &str, agent_id: Option<&str>, status: Option<&str>,
-        offset: i64, limit: i64,
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        status: Option<&str>,
+        offset: i64,
+        limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)> {
         self.list_chat_sessions_filtered_impl(user_id, agent_id, None, status, offset, limit, true)
     }
@@ -1457,7 +1472,13 @@ impl AgentDirectoryStore for SqliteStorage {
 }
 
 impl QuotaBalanceStore for SqliteStorage {
-    fn set_user_quota_balance(&self, user_id: &str, today: &str, daily_grant: i64, balance: i64) -> Result<Option<UserQuotaStatus>> {
+    fn set_user_quota_balance(
+        &self,
+        user_id: &str,
+        today: &str,
+        daily_grant: i64,
+        balance: i64,
+    ) -> Result<Option<UserQuotaStatus>> {
         self.set_user_quota_balance_impl(user_id, today, daily_grant, balance)
     }
     fn prepare_user_quota(

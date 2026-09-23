@@ -28,8 +28,6 @@ use walkdir::WalkDir;
 
 mod quota_usage;
 
-const DEFAULT_EVENT_LIMIT: usize = 500;
-const DEFAULT_PERSISTED_EVENT_LIMIT: usize = 500;
 const MIN_PAYLOAD_LIMIT: usize = 256;
 const DEFAULT_PERSIST_INTERVAL_S: f64 = 15.0;
 const DEFAULT_SYSTEM_SNAPSHOT_TTL_S: f64 = 1.0;
@@ -39,6 +37,8 @@ const DEFAULT_WORKSPACE_USAGE_FULL_SCAN_INTERVAL_S: f64 = 300.0;
 const DEFAULT_WORKSPACE_USAGE_SCAN_BATCH_USERS: usize = 2;
 const MONITOR_WRITE_QUEUE_SIZE: usize = 1024;
 const MONITOR_WRITE_BATCH_SIZE: usize = 64;
+// Keep startup bounded. Cold session details are hydrated directly from durable
+// storage when requested, so this cache limit never deletes historical logs.
 const MONITOR_HISTORY_LOAD_LIMIT: i64 = 5000;
 const MONITOR_ROUND_HYDRATE_STREAM_EVENT_LIMIT: i64 = 1000;
 
@@ -81,17 +81,6 @@ impl MonitorLogProfile {
         }
     }
 
-    fn keeps_full_payload(self) -> bool {
-        matches!(self, Self::Debug)
-    }
-
-    fn should_keep_high_volume_events(self) -> bool {
-        matches!(self, Self::Debug)
-    }
-
-    fn should_apply_event_limit(self) -> bool {
-        matches!(self, Self::Normal)
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -785,6 +774,8 @@ struct WorkspaceUsageScanState {
 }
 
 pub struct MonitorState {
+    pub(crate) mailboxes: Arc<crate::services::runtime::thread::mailbox::Mailboxes>,
+    pub(crate) run_signals: crate::services::runtime::thread::signals::RunSignals,
     child_runs: Arc<crate::services::runtime::thread::child_runs::ChildRuns>,
     sessions: Mutex<HashMap<String, SessionRecord>>,
     forced_cancelled: Mutex<HashSet<String>>,
@@ -802,10 +793,8 @@ pub struct MonitorState {
     workspace_usage_ttl_s: f64,
     workspace_usage_full_scan_interval_s: f64,
     workspace_usage_scan_batch_users: usize,
-    event_limit: Option<usize>,
     payload_limit: Option<usize>,
     persist_interval_s: f64,
-    drop_event_types: HashSet<String>,
     history_dir: PathBuf,
     history_ready: AtomicBool,
     history_loading: AtomicBool,
@@ -829,15 +818,8 @@ impl MonitorState {
     ) -> Self {
         let system = new_system();
         let disks = new_disks();
-        let event_limit = resolve_event_limit(observability.monitor_event_limit);
         let payload_limit = resolve_payload_limit(observability.monitor_payload_max_chars);
         let persist_interval_s = DEFAULT_PERSIST_INTERVAL_S;
-        let drop_event_types = observability
-            .monitor_drop_event_types
-            .into_iter()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .collect::<HashSet<_>>();
         let history_dir = PathBuf::from("config/data/historys/monitor");
         let workspace_root = PathBuf::from(workspace_root);
         if let Err(err) = storage.ensure_initialized() {
@@ -847,6 +829,8 @@ impl MonitorState {
         Self {
             sessions: Mutex::new(HashMap::new()),
             child_runs: Arc::default(),
+            mailboxes: Arc::default(),
+            run_signals: Default::default(),
             forced_cancelled: Mutex::new(HashSet::new()),
             storage,
             write_queue,
@@ -862,10 +846,8 @@ impl MonitorState {
             workspace_usage_ttl_s: DEFAULT_WORKSPACE_USAGE_TTL_S,
             workspace_usage_full_scan_interval_s: DEFAULT_WORKSPACE_USAGE_FULL_SCAN_INTERVAL_S,
             workspace_usage_scan_batch_users: DEFAULT_WORKSPACE_USAGE_SCAN_BATCH_USERS,
-            event_limit,
             payload_limit,
             persist_interval_s,
-            drop_event_types,
             history_dir,
             history_ready: AtomicBool::new(false),
             history_loading: AtomicBool::new(false),
@@ -1373,6 +1355,7 @@ impl MonitorState {
                     let mut sessions = self.sessions.lock();
                     // Serialize cancellation with child admission, even before monitor registration.
                     let children_cancelled = self.child_runs.cancel_tree(session_id) > 0;
+                    self.run_signals.notify(session_id);
                     let Some(record) = sessions.get_mut(session_id) else {
                         return children_cancelled;
                     };
@@ -1428,6 +1411,10 @@ impl MonitorState {
 
     pub fn cancel(&self, session_id: &str) -> bool {
         self.cancel_with_source(session_id, "monitor_cancel")
+    }
+
+    pub(crate) fn child_run_token(&self, session_id: &str) -> Option<tokio_util::sync::CancellationToken> {
+        self.child_runs.token(session_id)
     }
 
     pub fn delete_session(&self, session_id: &str) -> bool {
@@ -1775,8 +1762,17 @@ impl MonitorState {
             "monitor.get_detail",
             || None,
             || {
-                let sessions = self.sessions.lock();
-                let record = sessions.get(session_id)?;
+                let record = {
+                    let sessions = self.sessions.lock();
+                    sessions.get(session_id).cloned()
+                }
+                .or_else(|| {
+                    self.storage
+                        .get_monitor_record(session_id)
+                        .ok()
+                        .flatten()
+                        .and_then(|payload| SessionRecord::from_storage(&payload))
+                })?;
                 let events = record
                     .events
                     .iter()
@@ -2258,10 +2254,13 @@ impl MonitorState {
 
     fn load_history(&self) {
         self.migrate_legacy_history();
-        let records = self
-            .storage
-            .load_recent_monitor_records(MONITOR_HISTORY_LOAD_LIMIT)
-            .unwrap_or_default();
+        let records = if MONITOR_HISTORY_LOAD_LIMIT <= 0 {
+            self.storage.load_monitor_records().unwrap_or_default()
+        } else {
+            self.storage
+                .load_recent_monitor_records(MONITOR_HISTORY_LOAD_LIMIT)
+                .unwrap_or_default()
+        };
         let mut rebuilt = HashMap::new();
         for payload in records {
             let Some(mut record) = SessionRecord::from_storage(&payload) else {
@@ -2289,13 +2288,6 @@ impl MonitorState {
                 record.stage = "cancelled".to_string();
             } else if record.status == Self::STATUS_CANCELLING {
                 record.stage = "cancelling".to_string();
-            }
-            if record.log_profile.should_apply_event_limit() {
-                if let Some(limit) = self.event_limit {
-                    while record.events.len() > limit {
-                        record.events.pop_front();
-                    }
-                }
             }
             rebuilt.insert(record.session_id.clone(), record);
         }
@@ -2668,12 +2660,6 @@ impl MonitorState {
         data: &Value,
         timestamp: f64,
     ) {
-        let dropped_by_config = self.drop_event_types.contains(event_type);
-        if should_skip_event_for_profile(record.log_profile, event_type)
-            || (dropped_by_config && !record.log_profile.keeps_full_payload())
-        {
-            return;
-        }
         let mut payload = data.clone();
         if let Value::Object(ref mut map) = payload {
             map.entry("trace_id".to_string())
@@ -2712,26 +2698,16 @@ impl MonitorState {
                 record.consumed_tokens = record.consumed_tokens.saturating_add(tokens);
             }
         }
-        if record.log_profile.should_apply_event_limit() {
-            if let Some(limit) = self.event_limit {
-                while record.events.len() > limit {
-                    record.events.pop_front();
-                }
-            }
-        }
     }
 
     fn sanitize_event_data(
         &self,
         event_type: &str,
         data: &Value,
-        log_profile: MonitorLogProfile,
+        _log_profile: MonitorLogProfile,
     ) -> Value {
         if event_type == "llm_request" {
             return summarize_llm_request_event(data, self.payload_limit);
-        }
-        if log_profile.keeps_full_payload() {
-            return data.clone();
         }
         if !data.is_object() {
             return data.clone();
@@ -2784,13 +2760,10 @@ impl MonitorState {
 
     fn build_persisted_record_payload(&self, record: &SessionRecord) -> Value {
         let mut compacted = record.clone();
-        let limit = self.event_limit.unwrap_or(DEFAULT_PERSISTED_EVENT_LIMIT);
         let mut events = compacted
             .events
             .iter()
             .rev()
-            .filter(|event| !is_high_volume_monitor_event(&event.event_type))
-            .take(limit)
             .map(|event| MonitorEvent {
                 event_id: event.event_id,
                 timestamp: event.timestamp,
@@ -2905,21 +2878,6 @@ fn format_panic_payload(payload: &(dyn Any + Send)) -> String {
     "unknown panic payload".to_string()
 }
 
-fn resolve_event_limit(raw: i64) -> Option<usize> {
-    if raw == 0 {
-        return Some(DEFAULT_EVENT_LIMIT);
-    }
-    if raw < 0 {
-        return None;
-    }
-    let value = raw as usize;
-    if value == 0 {
-        None
-    } else {
-        Some(value)
-    }
-}
-
 fn resolve_payload_limit(raw: i64) -> Option<usize> {
     if raw <= 0 {
         return None;
@@ -2934,20 +2892,6 @@ fn resolve_payload_limit(raw: i64) -> Option<usize> {
 
 fn build_monitor_trace_id() -> String {
     format!("trace_{}", Uuid::new_v4().simple())
-}
-
-fn should_skip_event_for_profile(log_profile: MonitorLogProfile, event_type: &str) -> bool {
-    if log_profile.should_keep_high_volume_events() {
-        return false;
-    }
-    is_high_volume_monitor_event(event_type)
-}
-
-fn is_high_volume_monitor_event(event_type: &str) -> bool {
-    matches!(
-        event_type,
-        "llm_output_delta" | "tool_output_delta" | "command_session_delta"
-    )
 }
 
 fn sanitize_persisted_event_data(event_type: &str, data: &Value, limit: Option<usize>) -> Value {
@@ -3418,8 +3362,7 @@ fn localize_summary(summary: &str) -> String {
 mod tests {
     use super::{
         derive_effective_context_tokens, is_workspace_usage_dir_name,
-        llm_speed_summary_from_monitor_events, resolve_payload_limit,
-        should_skip_event_for_profile, trim_string_fields,
+        llm_speed_summary_from_monitor_events, resolve_payload_limit, trim_string_fields,
         update_workspace_usage_state_incremental, MonitorEvent, MonitorLogProfile, MonitorState,
         PendingExperienceAward, WorkspaceUsageScanState, MIN_PAYLOAD_LIMIT,
     };
@@ -3431,42 +3374,6 @@ mod tests {
     use serde_json::json;
     use std::{collections::VecDeque, fs, sync::Arc};
     use tempfile::tempdir;
-
-    #[test]
-    fn normal_profile_skips_high_volume_events() {
-        assert!(should_skip_event_for_profile(
-            MonitorLogProfile::Normal,
-            "llm_output_delta"
-        ));
-        assert!(should_skip_event_for_profile(
-            MonitorLogProfile::Normal,
-            "tool_output_delta"
-        ));
-        assert!(should_skip_event_for_profile(
-            MonitorLogProfile::Normal,
-            "command_session_delta"
-        ));
-        assert!(!should_skip_event_for_profile(
-            MonitorLogProfile::Normal,
-            "llm_output"
-        ));
-    }
-
-    #[test]
-    fn debug_profile_keeps_high_volume_events() {
-        assert!(!should_skip_event_for_profile(
-            MonitorLogProfile::Debug,
-            "llm_output_delta"
-        ));
-        assert!(!should_skip_event_for_profile(
-            MonitorLogProfile::Debug,
-            "tool_output_delta"
-        ));
-        assert!(!should_skip_event_for_profile(
-            MonitorLogProfile::Debug,
-            "command_session_delta"
-        ));
-    }
 
     #[test]
     fn debug_profile_requires_admin_flag() {

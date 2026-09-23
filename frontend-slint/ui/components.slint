@@ -81,10 +81,13 @@ export component RailButton inherits Rectangle {
 export component Avatar inherits Rectangle {
     in property <image> source;
     in property <bool> mine: false;
+    in property <string> glyph: "";
+    in property <int> tone: 0;
     width: 34px; height: 34px; border-radius: 17px;
-    background: root.mine ? Theme.accent-soft : #ffffff;
+    background: root.mine ? Theme.accent-soft : (root.tone == 1 ? #fff0e3 : root.tone == 2 ? #e7f5ef : root.tone == 3 ? #e8efff : #ffffff);
     clip: true;
     if !root.mine : Image { width: 100%; height: 100%; source: root.source; image-fit: cover; }
+    if !root.mine && root.glyph != "" : Text { width: 100%; height: 100%; text: root.glyph; font-size: 16px; color: Theme.accent-deep; horizontal-alignment: center; vertical-alignment: center; }
     if root.mine : Text { text: "我"; font-size: 13px; color: Theme.accent-deep; horizontal-alignment: center; vertical-alignment: center; }
 }
 export component SearchField inherits Rectangle {

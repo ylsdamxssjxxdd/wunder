@@ -5,7 +5,6 @@
   [string]$HostMingwBin = $(if ($env:WUNDER_WIN7_HOST_MINGW_BIN) { $env:WUNDER_WIN7_HOST_MINGW_BIN } else { "C:\mingw64\bin" }),
   [string]$OutputDirectory = "",
   [ValidateRange(1, 8)][int]$Jobs = 8,
-  [switch]$NativeRuntime,
   [switch]$Check
 )
 
@@ -103,7 +102,6 @@ $env:RANLIB_i686_win7_windows_gnu = Join-Path $MingwBin 'i686-w64-mingw32-gcc-ra
 # script. Resolve its prebuilt GNU import library explicitly for the Win7
 # vendor target used by this repository.
 $metadataArgs = @("metadata", "--locked", "--manifest-path", $manifest, "--format-version", "1", "--filter-platform", $target)
-if ($NativeRuntime) { $metadataArgs += @("--features", "native-runtime") }
 if ($CargoExe) {
   $metadataJson = & $cargoCommand @metadataArgs
 } else {
@@ -145,7 +143,6 @@ $cargoArgs += @(
 )
 
 $cargoArgs += "--release"
-if ($NativeRuntime) { $cargoArgs += @("--features", "native-runtime") }
 if ($Check) { $cargoArgs[$cargoArgs.IndexOf("build")] = "check" }
 # Release packaging needs only the application, not the large benchmark bins.
 # Override the repository's 16-job/16-thread defaults for this build only;
@@ -204,7 +201,13 @@ $blockedDlls = @(
 )
 $blockedImports = @(
   'SystemParametersInfoForDpi',
-  'GetDpiForWindow'
+  'GetDpiForWindow',
+  'GetSystemTimePreciseAsFileTime',
+  'WaitOnAddress',
+  'WakeByAddressSingle',
+  'WakeByAddressAll',
+  'SetThreadDescription',
+  'ProcessPrng'
 ) | Where-Object { $peDetails -match ("(?m)^\s*(?:[0-9a-fA-F]+\s+[0-9]+\s+)?" + [regex]::Escape($_) + "(?:A|W)?\s*$") }
 # objdump prefixes imported names with an address and ordinal. Match that
 # form as well as a plain name. CreateWaitableTimerEx is available since

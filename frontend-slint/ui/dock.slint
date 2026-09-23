@@ -10,8 +10,9 @@ export component WorkDock inherits Rectangle {
     in property <bool> files-loading;
     in property <string> files-error;
     in property <string> directory-path;
+    in property <string> directory-root;
+    in property <int> directory-container-id: 1;
     in property <bool> tasks-enabled: true;
-    callback browse-files();
     in property <[Conversation]> conversations;
     in property <[Conversation]> subagents;
     in property <string> subagents-status;
@@ -22,6 +23,36 @@ export component WorkDock inherits Rectangle {
     private property <string> keyword;
     VerticalLayout {
         padding: 10px; spacing: 10px;
+        Rectangle {
+            border-radius: 12px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding: 12px; spacing: 10px;
+                HorizontalLayout {
+                    height: 26px; spacing: 6px;
+                    Image { width: 14px; height: 14px; source: @image-url("../assets/icons/box-archive.svg"); colorize: Theme.accent-deep; }
+                    Text { text: "工作目录"; font-size: 13px; font-weight: 600; color: Theme.text; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.files-loading; clicked => { root.keyword = ""; root.refresh-files(); } }
+                }
+                SearchField { icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索文件"; text <=> root.keyword; }
+                ScrollView {
+                    horizontal-scrollbar-policy: always-off;
+                    VerticalLayout {
+                        alignment: start; spacing: 4px;
+                        for file[index] in root.files : Rectangle {
+                            height: root.keyword == "" || file.name.starts-with(root.keyword) ? 36px : 0px;
+                            visible: self.height > 0px;
+                            Action { width: parent.width; height: parent.height; label: file.name; clicked => { root.preview-file(file.path); } }
+                            Image { x: 4px; y: 10px; width: 16px; height: 16px; source: file.entry-type == "dir" ? @image-url("../assets/icons/folder-open.svg") : @image-url("../assets/icons/file-lines.svg"); colorize: file.entry-type == "dir" ? Theme.accent : Theme.muted; }
+                            Text { x: 29px; width: parent.width - 72px; height: parent.height; text: file.name; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                            Text { x: parent.width - 42px; width: 38px; height: parent.height; text: file.entry-type == "dir" ? "目录" : file.size; color: Theme.muted; font-size: 10px; vertical-alignment: center; horizontal-alignment: right; overflow: elide; }
+                        }
+                    }
+                }
+                Text { height: 18px; text: root.files-loading ? "正在读取…" : root.files-error != "" ? root.files-error : "容器 #" + root.directory-container-id + " · " + (root.directory-root == "" ? "本地工作目录" : root.directory-root); overflow: elide; color: Theme.muted; font-size: 10px; }
+            }
+        }
         Rectangle {
             min-height: 110px; max-height: 200px; vertical-stretch: 1;
             border-radius: 12px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
@@ -74,37 +105,6 @@ export component WorkDock inherits Rectangle {
                         }
                     }
                 }
-            }
-        }
-        Rectangle {
-            border-radius: 12px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
-            vertical-stretch: 1;
-            VerticalLayout {
-                padding: 12px; spacing: 10px;
-                HorizontalLayout {
-                    height: 26px; spacing: 6px;
-                    Image { width: 14px; height: 14px; source: @image-url("../assets/icons/box-archive.svg"); colorize: Theme.accent-deep; }
-                    Text { text: "工作目录"; font-size: 13px; font-weight: 600; color: Theme.text; }
-                    Rectangle { horizontal-stretch: 1; }
-                    Action { icon: @image-url("../assets/icons/folder-open.svg"); label: "浏览文件"; clicked => { root.browse-files(); } }
-                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.files-loading; clicked => { root.keyword = ""; root.refresh-files(); } }
-                }
-                SearchField { icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索文件"; text <=> root.keyword; }
-                ScrollView {
-                    horizontal-scrollbar-policy: always-off;
-                    VerticalLayout {
-                        alignment: start; spacing: 4px;
-                        for file[index] in root.files : Rectangle {
-                            height: root.keyword == "" || file.name.starts-with(root.keyword) ? 36px : 0px;
-                            visible: self.height > 0px;
-                            Action { width: parent.width; height: parent.height; label: file.name; clicked => { root.preview-file(file.path); } }
-                            Image { x: 4px; y: 10px; width: 16px; height: 16px; source: file.entry-type == "dir" ? @image-url("../assets/icons/folder-open.svg") : @image-url("../assets/icons/file-lines.svg"); colorize: file.entry-type == "dir" ? Theme.accent : Theme.muted; }
-                            Text { x: 29px; width: parent.width - 72px; height: parent.height; text: file.name; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; }
-                            Text { x: parent.width - 42px; width: 38px; height: parent.height; text: file.entry-type == "dir" ? "目录" : file.size; color: Theme.muted; font-size: 10px; vertical-alignment: center; horizontal-alignment: right; overflow: elide; }
-                        }
-                    }
-                }
-                Text { height: 18px; text: root.files-loading ? "正在读取…" : root.files-error != "" ? root.files-error : root.files.length == 0 ? "工作目录为空" : root.files.length + " 项 · " + root.directory-path; overflow: elide; color: Theme.muted; font-size: 10px; }
             }
         }
     }

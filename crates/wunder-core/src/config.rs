@@ -392,6 +392,8 @@ fn default_user_agent_presets() -> Vec<UserAgentPresetConfig> {
 pub struct LlmModelConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub simulation_speed: Option<crate::virtual_model::VirtualModelSpeed>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simulation: Option<crate::virtual_model::VirtualModelOptions>,
     #[serde(default, alias = "enabled")]
     pub enable: Option<bool>,
     pub provider: Option<String>,
@@ -1554,7 +1556,7 @@ fn default_server_log_dir() -> String {
 }
 
 fn default_server_log_retention_days() -> u64 {
-    14
+    0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

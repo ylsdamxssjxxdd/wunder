@@ -1,9 +1,10 @@
-//! Desktop runtime settings use the same control endpoint as the TS frontend.
-use crate::{chat_api::ChatApi, MainWindow};
-use serde_json::json;
+//! Desktop configuration callback backed by the embedded runtime.
+use crate::MainWindow;
 use slint::ComponentHandle;
+use std::sync::Arc;
+use wunder_desktop::NativeDesktop;
 
-pub fn install(app: &MainWindow, api: ChatApi) {
+pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     app.on_save_runtime(move |workspace, language| {
         let Some(app) = weak.upgrade() else { return };
@@ -18,23 +19,19 @@ pub fn install(app: &MainWindow, api: ChatApi) {
         let api = api.clone();
         let weak = app.as_weak();
         std::thread::spawn(move || {
-            let result = api
-                .put_json(
-                    "/desktop/settings",
-                    json!({"workspace_root": workspace.as_str(), "language": language.as_str()}),
-                )
-                .and_then(|_| api.get_desktop_settings());
+            let result = api.save_runtime(&workspace, &language);
             let _ = weak.upgrade_in_event_loop(move |app| {
                 app.set_saving(false);
                 match result {
                     Ok(settings) => {
-                        crate::chat_runtime::apply_settings(&app, settings);
+                        crate::native_pages::apply_settings(&app, settings);
                         app.set_status("运行时设置已保存".into());
                         app.invoke_navigate_directory("".into());
                     }
                     Err(error) => {
                         app.set_dialog_title("保存失败".into());
-                        app.set_dialog_text(error.into());
+                        app.set_dialog_text("配置保存失败，请检查目录权限后重试".into());
+                        eprintln!("native settings failed: {error:#}");
                         app.set_dialog_open(true);
                     }
                 }

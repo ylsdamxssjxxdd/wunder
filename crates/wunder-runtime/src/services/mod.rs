@@ -2,6 +2,7 @@ pub mod a2a_store;
 pub mod abilities;
 pub mod admin_skills;
 pub mod agent_abilities;
+pub mod agent_management;
 pub mod agent_runtime_projection;
 pub mod archive_extract;
 pub mod attachment;

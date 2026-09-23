@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 mod flow;
 mod targeting;
+mod messaging;
 use flow::*;
 use targeting::*;
 
@@ -217,6 +218,7 @@ pub(super) async fn execute(context: &ToolContext<'_>, args: &Value) -> Result<V
         "send" | "sessions_send" | "session_send" | "会话发送" | "发送" => {
             send(context, args).await
         }
+        "report" => messaging::report(context, args).await,
         "spawn" | "sessions_spawn" | "session_spawn" | "会话派生" | "派生" => {
             super::sessions_spawn(context, args).await
         }
@@ -465,6 +467,10 @@ async fn send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: SubagentSendArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let session_id = resolve_single_child_session_target(context, &payload.target, "send")?;
+    let message = messaging::message(context, args, "guide")?;
+    if messaging::steer(context, &session_id, &message)? {
+        return Ok(messaging::receipt("send", &session_id, &message, "queued_current_turn"));
+    }
     resolve_subagent_parent_scope(payload.announce_parent_session_id, context.session_id)?;
     let scoped_args = json!({
         "session_id": session_id,

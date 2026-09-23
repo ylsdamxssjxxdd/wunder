@@ -7294,6 +7294,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum",
+ "chrono",
  "clap",
  "futures",
  "serde",
@@ -7319,7 +7320,6 @@ dependencies = [
  "serde_json",
  "slint",
  "slint-build",
- "tungstenite 0.29.0",
  "winit",
  "wunder-desktop",
 ]

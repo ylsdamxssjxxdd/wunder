@@ -6,28 +6,32 @@ use std::time::Instant;
 pub(super) async fn simulate<F>(
     messages: &[ChatMessage],
     output_tokens: u32,
-    speed: timing::VirtualModelSpeed,
+    model: &crate::config::LlmModelConfig,
     mut progress: F,
 ) -> Result<BenchmarkMetrics, String>
 where
     F: FnMut(BenchmarkMetrics),
 {
-    let input = messages
+    let request = messages
         .iter()
-        .map(|message| {
-            crate::token_utils::estimate_message_tokens(
-                &json!({ "role": message.role, "content": message.content }),
-            )
-        })
-        .sum::<i64>()
-        .max(0) as u64;
+        .map(|message| serde_json::to_value(message).unwrap_or_default())
+        .collect::<Vec<_>>();
+    let input = crate::services::virtual_llm::capabilities::validate_request(
+        model,
+        &request,
+        None,
+        output_tokens,
+    )
+    .map_err(|error| error.to_string())?;
+    let speed = model.simulation_speed.unwrap_or_default();
     let started = Instant::now();
     timing::wait_for_prefill(input, speed).await;
     let decode_start = tokio::time::Instant::now();
     let mut stats = StreamStats::default();
     let mut emitted = 0u32;
     // Reasoning is a subset of the requested output budget, never an extra generation.
-    let reasoning_target = output_tokens / 4;
+    let reasoning_target =
+        crate::services::virtual_llm::capabilities::reasoning_budget(model, output_tokens);
     let batch = (speed.generation_tokens_per_second() / 20).max(1) as u32;
     while emitted < output_tokens {
         let thinking = emitted < reasoning_target;

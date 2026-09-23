@@ -588,7 +588,7 @@ impl Orchestrator {
     ) -> Result<(String, String, TokenUsage, Option<Value>, LlmSpeedSummary), OrchestratorError>
     {
         self.ensure_not_cancelled(session_id)?;
-        let effective_config = llm_config_override.unwrap_or_else(|| llm_config.clone());
+        let mut effective_config = llm_config_override.unwrap_or_else(|| llm_config.clone());
         if !is_llm_configured(&effective_config) {
             if effective_config.mock_if_unconfigured.unwrap_or(false) {
                 let content = i18n::t("error.llm_not_configured");
@@ -640,6 +640,16 @@ impl Orchestrator {
         let virtual_replay = crate::services::virtual_llm::is_virtual_replay_provider(
             effective_config.provider.as_deref(),
         );
+        if virtual_replay {
+            // Existing threads retain the protocol frozen with their system prompt.
+            if let Some(mode) = self
+                .workspace
+                .load_session_frozen_tool_call_mode_async(user_id, session_id)
+                .await
+            {
+                effective_config.tool_call_mode = Some(mode);
+            }
+        }
 
         let client = build_llm_client(&effective_config, self.http.clone());
         let client = if is_admin || virtual_replay {
@@ -678,19 +688,38 @@ impl Orchestrator {
             build_context_cache_probe(&chat_messages.messages, tools, request_payload.as_ref());
         let virtual_turn = if virtual_replay {
             let app_config = self.config_store.get().await;
+            let turn = crate::services::virtual_llm::load_turn_for_round(
+                app_config,
+                &effective_config,
+                round_info.user_round,
+                round_info.model_round,
+            )
+            .await
+            .map_err(|err| {
+                OrchestratorError::llm_unavailable(i18n::t_with_params(
+                    "error.llm_unavailable",
+                    &HashMap::from([("detail".to_string(), err.to_string())]),
+                ))
+            })?;
             Some(
-                crate::services::virtual_llm::load_turn_for_round(
-                    app_config,
+                crate::services::virtual_llm::request::prepare_turn(
+                    super::virtual_replay_protocol::normalize(
+                        turn,
+                        crate::llm::resolve_tool_call_mode(&effective_config),
+                    ),
                     &effective_config,
-                    round_info.user_round,
-                    round_info.model_round,
+                    &request_messages,
+                    tools,
                 )
-                .await
-                .map_err(|err| {
-                    OrchestratorError::llm_unavailable(i18n::t_with_params(
-                        "error.llm_unavailable",
-                        &HashMap::from([("detail".to_string(), err.to_string())]),
-                    ))
+                .map_err(|error| {
+                    if error.code == "context_length_exceeded" {
+                        OrchestratorError::context_window_exceeded(error.to_string())
+                    } else {
+                        OrchestratorError::invalid_request_with_detail(
+                            error.to_string(),
+                            error.response(),
+                        )
+                    }
                 })?,
             )
         } else {
@@ -753,11 +782,17 @@ impl Orchestrator {
             let request_started_at = Instant::now();
             let simulation_speed = effective_config.simulation_speed.unwrap_or_default();
             // Replay usage may describe an older prompt. Simulate prefill from this request.
-            let input_tokens = crate::services::virtual_llm::timing::input_tokens(&request_messages);
+            let input_tokens = virtual_turn.usage.as_ref().map_or(0, |usage| usage.input);
             self.await_with_cancel(session_id, timeout_s, async {
-                crate::services::virtual_llm::timing::wait_for_prefill(input_tokens, simulation_speed).await;
+                crate::services::virtual_llm::timing::wait_for_prefill(
+                    input_tokens,
+                    simulation_speed,
+                )
+                .await;
                 Ok(())
-            }).await?.map_err(|error| OrchestratorError::llm_unavailable(error.to_string()))?;
+            })
+            .await?
+            .map_err(|error| OrchestratorError::llm_unavailable(error.to_string()))?;
             let output_timing = Arc::new(parking_lot::Mutex::new(OutputTiming::default()));
             let will_stream = initial_will_stream;
             if will_stream {
@@ -814,11 +849,18 @@ impl Orchestrator {
                 })?;
             }
             if !will_stream {
-                self.await_with_cancel(session_id, timeout_s,
+                self.await_with_cancel(
+                    session_id,
+                    timeout_s,
                     crate::services::virtual_llm::emit_virtual_deltas(
-                        &virtual_turn, false, simulation_speed, |_, _| std::future::ready(Ok(())),
+                        &virtual_turn,
+                        false,
+                        simulation_speed,
+                        |_, _| std::future::ready(Ok(())),
                     ),
-                ).await?.map_err(|error| OrchestratorError::llm_unavailable(error.to_string()))?;
+                )
+                .await?
+                .map_err(|error| OrchestratorError::llm_unavailable(error.to_string()))?;
             }
             let response_finished_at = Instant::now();
             let content = virtual_turn.content.clone();
@@ -1109,7 +1151,9 @@ impl Orchestrator {
                 Err(err) => {
                     // Admission failures are terminal, not provider errors eligible for retry.
                     if err.is::<OrchestratorError>() {
-                        return Err(err.downcast::<OrchestratorError>().expect("admission error"));
+                        return Err(err
+                            .downcast::<OrchestratorError>()
+                            .expect("admission error"));
                     }
                     if let Some(usage) = crate::services::llm::failed_response_usage(&err) {
                         self.account_model_usage(

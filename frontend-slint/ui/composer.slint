@@ -16,14 +16,6 @@ export component Composer inherits Rectangle {
     Rectangle { y: 0px; height: 1px; background: Theme.border; }
     VerticalLayout {
         padding: 14px; padding-top: 8px; spacing: 6px;
-        HorizontalLayout {
-            height: 30px; spacing: 4px;
-            Action { icon: @image-url("../assets/icons/plus.svg"); label: "预设问题"; clicked => { root.draft = "你好，请介绍一下你的能力。"; editor.focus(); } }
-            Action { icon: @image-url("../assets/icons/paperclip.svg"); label: "添加附件"; clicked => { root.attach(); } }
-            Action { icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "快捷输入"; clicked => { root.draft = "请帮我整理当前内容。"; editor.focus(); } }
-            Rectangle { horizontal-stretch: 1; }
-            Text { text: "按智能体权限执行"; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
-        }
         editor := TextEditBase {
             accessible-role: text-input;
             accessible-value <=> self.text;
@@ -51,6 +43,9 @@ export component Composer inherits Rectangle {
         }
         HorizontalLayout {
             height: 30px; spacing: 8px;
+            Action { icon: @image-url("../assets/icons/plus.svg"); label: "预设问题"; clicked => { root.draft = "你好，请介绍一下你的能力。"; editor.focus(); } }
+            Action { icon: @image-url("../assets/icons/paperclip.svg"); label: "添加附件"; clicked => { root.attach(); } }
+            Action { icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "快捷输入"; clicked => { root.draft = "请帮我整理当前内容。"; editor.focus(); } }
             Text { text: root.status; color: Theme.muted; font-size: 10px; overflow: elide; }
             Rectangle { horizontal-stretch: 1; }
             Text { text: "Enter 发送 / Shift+Enter 换行"; color: Theme.muted; font-size: 10px; }

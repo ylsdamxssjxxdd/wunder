@@ -10,9 +10,10 @@ use chrono::Utc;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
-use tokio::time::sleep;
 use tracing::warn;
+
+#[path = "subagents/message_payload.rs"]
+mod message_payload;
 
 pub const AUTO_WAKE_CONFIG_KEY: &str = "_subagent_auto_wake";
 pub const HIDE_START_QUESTION_CONFIG_KEY: &str = "_subagent_hide_start_question";
@@ -25,8 +26,6 @@ const PARENT_TURN_REF_PREFIX: &str = "subagent_turn:";
 const DEFAULT_LIST_LIMIT: i64 = 200;
 const MAX_LIST_LIMIT: i64 = 500;
 const AUTO_WAKE_OBSERVATION_MAX_CHARS: usize = 240;
-const AUTO_WAKE_PARENT_UNLOCK_POLL_MS: u64 = 250;
-const AUTO_WAKE_PARENT_UNLOCK_MAX_WAIT_MS: u64 = 15_000;
 
 #[derive(Debug, Clone)]
 pub struct ParentTurnRef {
@@ -829,7 +828,7 @@ fn schedule_parent_auto_wake(
     if !mark_wake_once(&wake_key) {
         return;
     }
-    let payload = build_auto_wake_payload(payload, &dispatch);
+    let payload = message_payload::bounded_completion(build_auto_wake_payload(payload, &dispatch));
     let request = match build_parent_auto_wake_request(
         storage.as_ref(),
         &user_id,
@@ -848,7 +847,6 @@ fn schedule_parent_auto_wake(
         }
     };
     long_task::spawn("services.subagents.parent_auto_wake", async move {
-        wait_parent_session_unlock(storage.clone(), &user_id, &parent_session_id).await;
         // Retain the original run cancellation through delayed wake-up; a new
         // parent turn must not revive a completion from an interrupted run.
         let _cancellation_guard = dispatch.cancellation_guard;
@@ -879,7 +877,20 @@ fn schedule_parent_auto_wake(
         ) {
             return;
         }
-        if let Err(err) = run_parent_auto_wake(orchestrator, request).await {
+        let message = crate::services::runtime::thread::mailbox::AgentMessage {
+            id: auto_wake_run_id.clone().map(|id| format!("completion_{id}"))
+                .unwrap_or_else(|| format!("completion_{}", uuid::Uuid::new_v4().simple())),
+            source: _cancellation_guard.as_ref().map(|guard| guard.session_id().to_string())
+                .unwrap_or_default(),
+            kind: "completion".into(), text: request.question.clone(),
+            cancellation: _cancellation_guard.as_ref().map(|guard| guard.token.clone()),
+        };
+        let runtime = orchestrator.task_runtime.read().upgrade();
+        let result = match runtime {
+            Some(runtime) => runtime.submit_agent_message(request, &message).await.map(|_| ()),
+            None => Err(anyhow!("thread runtime unavailable")),
+        };
+        if let Err(err) = result {
             warn!(
                 "run parent auto wake failed: parent_session_id={}, error={err}",
                 parent_session_id
@@ -889,59 +900,7 @@ fn schedule_parent_auto_wake(
     });
 }
 
-async fn wait_parent_session_unlock(
-    storage: Arc<dyn StorageBackend>,
-    user_id: &str,
-    parent_session_id: &str,
-) {
-    let cleaned_user_id = user_id.trim();
-    let cleaned_parent_session_id = parent_session_id.trim();
-    if cleaned_user_id.is_empty() || cleaned_parent_session_id.is_empty() {
-        return;
-    }
-    let deadline = Instant::now() + Duration::from_millis(AUTO_WAKE_PARENT_UNLOCK_MAX_WAIT_MS);
-    loop {
-        match parent_session_has_active_lock(
-            storage.as_ref(),
-            cleaned_user_id,
-            cleaned_parent_session_id,
-        ) {
-            Ok(false) => return,
-            Ok(true) => {
-                if Instant::now() >= deadline {
-                    return;
-                }
-            }
-            Err(err) => {
-                warn!(
-                    "list parent session locks failed before auto wake: parent_session_id={}, error={err}",
-                    cleaned_parent_session_id
-                );
-                return;
-            }
-        }
-        sleep(Duration::from_millis(AUTO_WAKE_PARENT_UNLOCK_POLL_MS)).await;
-    }
-}
-
-fn parent_session_has_active_lock(
-    storage: &dyn StorageBackend,
-    user_id: &str,
-    parent_session_id: &str,
-) -> Result<bool> {
-    let cleaned_user_id = user_id.trim();
-    let cleaned_parent_session_id = parent_session_id.trim();
-    if cleaned_user_id.is_empty() || cleaned_parent_session_id.is_empty() {
-        return Ok(false);
-    }
-    let now = now_ts();
-    Ok(storage
-        .list_session_locks_by_user(cleaned_user_id)?
-        .into_iter()
-        .any(|lock| lock.session_id.trim() == cleaned_parent_session_id && lock.expires_at > now))
-}
-
-fn build_parent_auto_wake_request(
+pub(crate) fn build_parent_auto_wake_request(
     storage: &dyn StorageBackend,
     user_id: &str,
     parent_session_id: &str,
@@ -973,36 +932,6 @@ fn build_parent_auto_wake_request(
         enforce_runtime_queue: false,
         approval_tx: None,
     })
-}
-
-async fn run_parent_auto_wake(
-    orchestrator: Arc<Orchestrator>,
-    request: WunderRequest,
-) -> Result<()> {
-    let mut stream = Box::pin(orchestrator.stream(request).await?);
-    use futures::StreamExt;
-    while let Some(item) = stream.next().await {
-        let event = item.expect("stream event should be infallible");
-        let event_name = event.event.trim().to_ascii_lowercase();
-        if event_name == "error" {
-            let payload = event
-                .data
-                .get("data")
-                .cloned()
-                .unwrap_or(event.data.clone());
-            let message = payload
-                .get("message")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("subagent auto wake failed");
-            return Err(anyhow!(message.to_string()));
-        }
-        if event_name == "final" {
-            return Ok(());
-        }
-    }
-    Err(anyhow!("subagent auto wake finished without final event"))
 }
 
 fn build_runtime_item(

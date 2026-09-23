@@ -74,8 +74,14 @@ pub(super) async fn wait_for_targets(
 ) -> Result<Value> {
     let poll_interval = normalize_poll_interval(poll_interval_seconds);
     let started_at = Instant::now();
+    // Subscribe before reading snapshots so a concurrent settlement cannot be missed.
+    let mut subscription = context.monitor.as_ref()
+        .and_then(|monitor| monitor.run_signals.subscribe(context.session_id));
     let mut status_index = HashMap::new();
     loop {
+        if context.monitor.as_ref().is_some_and(|monitor| monitor.is_cancelled(context.session_id)) {
+            return Err(anyhow!("subagent wait interrupted"));
+        }
         let snapshots = collect_snapshots(context, &selector)?;
         if snapshots.is_empty() {
             return Ok(summarize_snapshots(
@@ -96,14 +102,19 @@ pub(super) async fn wait_for_targets(
             ));
         }
         let elapsed_s = started_at.elapsed().as_secs_f64();
-        let progress_state = evaluate_wait_progress(completion_mode, &snapshots);
+        let mut progress_state = evaluate_wait_progress(completion_mode, &snapshots);
+        let message_received = context.monitor.as_ref().is_some_and(|monitor|
+            monitor.mailboxes.has_pending(context.user_id, context.session_id));
+        if message_received && !progress_state.completion_reached {
+            progress_state.completed_reason = "message_received";
+        }
         let timed_out =
             wait_seconds > 0.0 && elapsed_s >= wait_seconds && !progress_state.completion_reached;
         emit_wait_updates(context, &selector, &snapshots, &mut status_index);
         if emit_progress {
             emit_wait_progress(context, &selector, &snapshots, elapsed_s);
         }
-        if progress_state.completion_reached || timed_out || wait_seconds <= 0.0 {
+        if progress_state.completion_reached || timed_out || wait_seconds <= 0.0 || message_received {
             return Ok(summarize_snapshots(
                 &selector,
                 snapshots,
@@ -114,7 +125,15 @@ pub(super) async fn wait_for_targets(
                 timed_out,
             ));
         }
-        sleep(tokio::time::Duration::from_secs_f64(poll_interval)).await;
+        let remaining = (wait_seconds - started_at.elapsed().as_secs_f64()).max(0.0);
+        let fallback = if subscription.is_some() { poll_interval.max(5.0) } else { poll_interval };
+        let delay = tokio::time::Duration::from_secs_f64(fallback.min(remaining));
+        if let Some(subscription) = subscription.as_mut() {
+            tokio::select! {
+                _ = subscription.receiver.changed() => {},
+                _ = sleep(delay) => {},
+            }
+        } else { sleep(delay).await; }
     }
 }
 

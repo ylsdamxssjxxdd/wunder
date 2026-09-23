@@ -1,7 +1,4 @@
 //! Native chat projection for the in-process desktop runtime.
-//!
-//! This first slice intentionally covers only the chat page. Entity pages keep
-//! the compatibility adapter until their typed projections are migrated.
 
 use crate::{message_blocks::Blocks, ChatMessage, Conversation, MainWindow};
 use serde_json::Value;
@@ -32,6 +29,7 @@ struct State {
     desktop: Arc<NativeDesktop>,
     active: Option<Active>,
     history_generation: Arc<AtomicU64>,
+    drafts: std::collections::HashMap<String, String>,
 }
 
 pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
@@ -43,11 +41,13 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     app.set_agents(ModelRc::default());
     app.set_tools(ModelRc::default());
     app.set_models(ModelRc::default());
+    app.set_files(ModelRc::default());
     let state = Rc::new(RefCell::new(State {
         timer: Timer::default(),
         desktop,
         active: None,
         history_generation: Arc::new(AtomicU64::new(0)),
+        drafts: std::collections::HashMap::new(),
     }));
     bind_refresh(app, state.clone());
     bind_selection(app, state.clone());
@@ -129,6 +129,30 @@ fn bind_refresh(app: &MainWindow, state: Rc<RefCell<State>>) {
     });
 }
 
+fn agent_avatar_glyph(app: &MainWindow) -> slint::SharedString {
+    usize::try_from(app.get_selected_agent())
+        .ok()
+        .and_then(|index| app.get_agents().row_data(index))
+        .map(|agent| agent.icon_glyph)
+        .unwrap_or_else(|| "✦".into())
+}
+
+fn agent_avatar_tone(app: &MainWindow) -> i32 {
+    usize::try_from(app.get_selected_agent())
+        .ok()
+        .and_then(|index| app.get_agents().row_data(index))
+        .map(|agent| agent.icon_tone)
+        .unwrap_or(1)
+}
+
+fn agent_avatar_glyph_from_row(row: Option<ChatMessage>) -> slint::SharedString {
+    row.map(|message| message.avatar_glyph).unwrap_or_else(|| "✦".into())
+}
+
+fn agent_avatar_tone_from_row(row: Option<ChatMessage>) -> i32 {
+    row.map(|message| message.avatar_tone).unwrap_or(1)
+}
+
 fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
     app.on_select_conversation(move |index| {
@@ -140,6 +164,21 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
             return;
         };
         let id = row.id.to_string();
+        {
+            let mut current = state.borrow_mut();
+            if current.drafts.len() >= 100 {
+                current.drafts.retain(|key, _| {
+                    app.get_conversations()
+                        .iter()
+                        .any(|row| row.id == key.as_str())
+                });
+            }
+            let previous = app.get_active_session_id().to_string();
+            if !previous.is_empty() {
+                current.drafts.insert(previous, app.get_draft().to_string());
+            }
+            app.set_draft(current.drafts.get(&id).cloned().unwrap_or_default().into());
+        }
         let desktop = state.borrow().desktop.clone();
         let generation = state.borrow().history_generation.clone();
         let request = generation.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
@@ -161,7 +200,12 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                 app.set_session_loading(false);
                 match result {
                     Ok((session, messages)) => {
-                        app.set_active_agent_id(session.agent_id.unwrap_or_default().into());
+                        let agent = session.agent_id.unwrap_or_else(|| "__default__".into());
+                        if app.get_active_agent_id() != agent {
+                            app.set_active_agent_id(agent.clone().into());
+                            app.invoke_navigate_directory("".into());
+                        }
+                        crate::entity_state::restore_agent(&app, &agent);
                         app.set_heading(session.title.into());
                         app.set_messages(ModelRc::new(VecModel::from(
                             messages
@@ -172,6 +216,8 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                                     time: format_time(message.created_at).into(),
                                     state: message.state.into(),
                                     blocks: crate::message_blocks::from_text(&message.text),
+                                    avatar_glyph: agent_avatar_glyph(&app),
+                                    avatar_tone: agent_avatar_tone(&app),
                                     ..Default::default()
                                 })
                                 .collect::<Vec<_>>(),
@@ -198,10 +244,14 @@ fn bind_new_thread(app: &MainWindow, state: Rc<RefCell<State>>) {
             return;
         }
         app.set_creating_session(true);
+        let agent = usize::try_from(app.get_selected_agent())
+            .ok()
+            .and_then(|index| app.get_agents().row_data(index))
+            .map(|row| row.id.to_string());
         let desktop = state.borrow().desktop.clone();
         let weak = app.as_weak();
         std::thread::spawn(move || {
-            let result = desktop.create_session_for_agent(None);
+            let result = desktop.create_session_for_agent(agent.as_deref());
             let _ = weak.upgrade_in_event_loop(move |app| {
                 app.set_creating_session(false);
                 match result {
@@ -216,6 +266,7 @@ fn bind_new_thread(app: &MainWindow, state: Rc<RefCell<State>>) {
                         rows.insert(0, row);
                         rows.truncate(100);
                         app.set_conversations(ModelRc::new(VecModel::from(rows)));
+                        app.set_section(0);
                         app.invoke_select_conversation(0);
                     }
                     Err(error) => app.set_status(format!("无法新建会话：{error}").into()),
@@ -265,6 +316,8 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             mine: true,
             time: "刚刚".into(),
             blocks: crate::message_blocks::from_text(&content),
+            avatar_glyph: "".into(),
+            avatar_tone: 0,
             ..Default::default()
         });
         let blocks = Blocks::new();
@@ -273,6 +326,8 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             time: "刚刚".into(),
             state: "正在生成…".into(),
             blocks: ModelRc::from(blocks.model.clone()),
+            avatar_glyph: agent_avatar_glyph(&app),
+            avatar_tone: agent_avatar_tone(&app),
             ..Default::default()
         });
         let model = Rc::new(VecModel::from(rows));
@@ -436,6 +491,8 @@ fn apply_event(active: &mut Active, event: &Value) -> Result<bool, String> {
         active.model.push(ChatMessage {
             time: "刚刚".into(),
             blocks: ModelRc::from(active.blocks.model.clone()),
+            avatar_glyph: agent_avatar_glyph_from_row(active.model.row_data(active.row)),
+            avatar_tone: agent_avatar_tone_from_row(active.model.row_data(active.row)),
             ..Default::default()
         });
     }

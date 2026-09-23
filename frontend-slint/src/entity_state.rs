@@ -58,6 +58,9 @@ fn apply_agent(app: &MainWindow, agent: AgentCard) {
     app.set_selected_agent_model(agent.model);
     app.set_selected_agent_system_prompt(agent.system_prompt);
     app.set_selected_agent_status(agent.status);
+    app.set_selected_agent_icon_name(agent.icon_name);
+    app.set_selected_agent_icon_color(agent.icon_color);
+    app.set_selected_agent_icon_glyph(agent.icon_glyph);
 }
 
 fn apply_model(app: &MainWindow, model: ModelCard) {

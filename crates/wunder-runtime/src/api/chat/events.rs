@@ -455,8 +455,19 @@ fn normalize_workflow_round_range(
     from_user_round: Option<i64>,
     to_user_round: Option<i64>,
 ) -> Option<(i64, i64)> {
-    let from = from_user_round.filter(|value| *value > 0)?;
-    let to = to_user_round.filter(|value| *value >= from)?;
+    // An omitted range means the complete durable workflow history. The SQL
+    // query still returns only workflow events, so the response stays bounded
+    // by event payload rather than chat message count.
+    let from = match from_user_round {
+        Some(value) if value > 0 => value,
+        Some(_) => return None,
+        None => 1,
+    };
+    let to = match to_user_round {
+        Some(value) if value >= from => value,
+        Some(_) => return None,
+        None => i64::MAX,
+    };
     Some((from, to))
 }
 
@@ -806,6 +817,13 @@ mod tests {
         );
         assert_eq!(normalize_workflow_round_range(Some(0), Some(5)), None);
         assert_eq!(normalize_workflow_round_range(Some(5), Some(3)), None);
-        assert_eq!(normalize_workflow_round_range(Some(3), None), None);
+        assert_eq!(
+            normalize_workflow_round_range(Some(3), None),
+            Some((3, i64::MAX))
+        );
+        assert_eq!(
+            normalize_workflow_round_range(None, None),
+            Some((1, i64::MAX))
+        );
     }
 }

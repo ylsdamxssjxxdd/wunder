@@ -6,7 +6,7 @@
 
 - Slint 桌面端复用本地 bridge 既有接口：`/wunder/chat/ws` 用于 start/watch 与事件恢复，HTTP 用于会话、专家、工具目录和桌面设置；目录浏览使用 `/wunder/workspace` 的 path/offset/limit/agent_id，文本预览使用 `/wunder/workspace/content` 的 max_bytes。专家更新提交配置键空字符串表示继承默认模型，不以有效模型名称覆盖继承关系。未增加桌面专属业务协议或存储。
 
-- Slint 原生化迁移新增 `wunder-desktop` 库 façade：桌面进程可直接复用 `AppState`、`ThreadRuntime` 和 `Orchestrator`，通过有界内存通道接收聊天 `StreamEvent`，绕过本机 HTTP/WebSocket；当前原生入口覆盖聊天与子线程目录，未迁移页面不绑定 bridge；默认 bridge 入口仍保留完整已接入页面。`NativeStream::try_recv` 区分暂时为空和订阅关闭，通道容量 128；生产端异步等待容量，消费者 33 ms 合并增量。显式 `cancel` 清理目标/线程活动并持久化停止标记；正常完成或丢弃订阅不会隐式取消会话。排队路径按任务 ID 回读有界持久化事件；即时执行持有线程 lease 直到流结束，原生窗口不开放本机监听端口。
+- Slint 原生化迁移新增 `wunder-desktop` 库 façade：桌面进程可直接复用 `AppState`、`ThreadRuntime` 和 `Orchestrator`，通过有界内存通道接收聊天 `StreamEvent`，绕过本机 HTTP/WebSocket；Slint 默认启动覆盖聊天、子线程目录、智能体、工具、文件及系统/模型设置；已移除 Slint bridge 适配和启动路径。`NativeStream::try_recv` 区分暂时为空和订阅关闭，通道容量 128；生产端异步等待容量，消费者 33 ms 合并增量。显式 `cancel` 清理目标/线程活动并持久化停止标记；正常完成或丢弃订阅不会隐式取消会话。排队路径按任务 ID 回读有界持久化事件；即时执行持有线程 lease 直到流结束，原生窗口不开放本机监听端口。
 
 - 接口实现基于 Rust Axum，路由拆分在 `src/api`（core/chat/user_world/user_tools/user_agents/user_channels/admin/a2a/desktop 等模块）。
 - 当前产品核心能力采用“五维能力框架”：**形态协同 / 租户治理 / 智能体协作 / 工具生态 / 接口开放**；用户体系聊天（用户↔智能体 + 用户↔用户）是默认主线。
@@ -1321,8 +1321,13 @@
   - 说明：当检测到模型连接失败、`503 Loading model`、连接拒绝/重置、请求发送失败或超时等 LLM 不可用错误时，编排层会至少按长退避重试 5 次；若最终仍失败，错误码统一返回 `LLM_UNAVAILABLE`。
   - 说明：若流式响应在没有任何可用内容、推理或 `tool_calls` 的情况下结束，服务端会先自动补拉一次非流式请求；若补拉仍为空，则同样按 `LLM_UNAVAILABLE` 处理并进入重试。
   - 说明：`provider` 支持预置（`virtual_replay/openai_compatible/openai/anthropic/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`）；`openai_compatible` 需显式填写 `base_url`，其余 provider 可省略 `base_url` 自动补齐。
-  - 说明：`provider=virtual_replay` 表示虚拟模型回放，`model` 可填已上传回放日志的 `id`，不需要 `base_url/api_key`；执行时按当前用户轮次与模型轮次严格匹配 JSONL 中的 `llm_output`、`tool_calls` 与用量信息，轮次缺失或耗尽会返回错误，不会循环复用旧输出。省略 `model` 时才使用轻量随机虚拟回复，便于本地连通性测试；回放用量仅作统计，不扣减用户额度。
-  - `simulation_speed`：仅虚拟模型生效，`fast/medium/slow`，缺省或 null 为 `fast`；非法值拒绝。预处理速度分别为 2000/500/100 Token/s，思考与正文生成速度分别为 200/50/10 Token/s。管理员模型配置可选择档位。随机虚拟回复先发送明确标识的模拟思考，再发送正文；回放保持日志原有思考内容，非流式调用也等待生成时长。三种运行形态共用此配置。
+  - 说明：`provider=virtual_replay` 表示虚拟模型回放，`model` 可填已上传回放日志的 `id`，不需要 `base_url/api_key`；执行时按当前用户轮次与模型轮次严格匹配 JSONL 中的 `llm_output` 与 `tool_calls`，轮次缺失或耗尽会返回错误，不会循环复用旧输出。省略 `model` 时才使用轻量随机虚拟回复，便于本地连通性测试；回放用量仅作统计，不扣减用户额度。
+  - `simulation_speed`：仅虚拟模型生效，`fast/medium/slow`，缺省或 null 为 `fast`；非法值拒绝。预处理速度分别为 2000/500/100 Token/s，思考与正文生成速度分别为 200/50/10 Token/s。管理员模型配置可选择档位。随机虚拟回复先发送明确标识的模拟思考，再发送正文；回放在能力和预算范围内使用日志思考内容，非流式调用也等待生成时长。三种运行形态共用此配置。
+  - `simulation`：虚拟模型能力对象，支持 `support_tools` / `support_reasoning`（默认 true）、`image_tokens`（每张图片默认 256）、`audio_tokens`（每段音频默认 1024），媒体 token 必须为正整数。复用 `max_context`（缺省 131072）、`max_output`（缺省 4096）、`support_vision` / `support_hearing`（缺省 false）、`thinking_token_budget` 和 `reasoning_effort`。文本按 UTF-8 字节数 / 4 向上估算；消息开销、工具定义、思考历史与工具结果均计入输入。媒体只模拟能力和用量，不读取、识别或下载内容。
+  - 虚拟请求在预处理前验证“输入 + 请求输出预算 <= 最大上下文”；等于上限允许，超过返回模拟 HTTP 400 的 `invalid_request_error`，含 `code/param/message`。错误码包括 `context_length_exceeded`、`max_tokens_exceeded`、`unsupported_image`、`unsupported_audio`、`unsupported_tools`、`tool_not_available`。线程流仍使用现有错误事件封装，上下文错误映射 `CONTEXT_WINDOW_EXCEEDED` 并走现有压缩恢复；其他参数或能力错误映射不可重试的 `INVALID_REQUEST`。吞吐失败通过快照的 `error` 展示；开始前的上下文校验仍可直接返回 400。
+  - 虚拟回放直接使用 `tool_call_mode`（工具调用方式）：`function_call` 返回原生 `tool_calls`；`tool_call` 返回 `<tool_call>` 文本块；`freeform_call` 在 Responses 模式使用原生通道，其他模式使用文本回退。日志中的结构化或文本调用复用现有解析器归一，保留调用 ID、参数与轮次，不额外生成工具场景。原生工具必须在请求提供的 schema 中，文本协议由现有执行器校验允许工具；权限、审批和实际执行不变。没有日志的合成回复不发起调用。已存量配置中的旧 `simulation.tool_call` 被忽略并在保存时移除，管理端不再提供工具名称或参数输入框。线程仍遵守初始化时冻结的调用协议。
+  - 虚拟模型将思考、正文、工具参数共同限制在输出预算内，正文截断保持 UTF-8 完整，超长工具调用不交给执行器。`llm_output.finish_reason` 为 `stop/tool_calls/length`（原生工具调用为 `tool_calls`，文本协议正常结束为 `stop`）；用量根据当前模拟请求重新估算，不采用历史日志用量。关闭思考能力或设置 `reasoning_effort=none` 后不发送思考；吞吐思考默认占总输出 1/4，显式思考预算可覆盖且至少留一个正文 token。吞吐测试只测文本，不执行回放工具调用。
+
   - 说明：`provider=anthropic` 使用 `/v1/messages` 协议，鉴权头为 `x-api-key`（同时兼容 `Authorization: Bearer`）。
   - 说明：`model_type=llm` 表示对话模型，额外支持 `api_mode/temperature/timeout_s/max_rounds/max_context/max_output/thinking_token_budget/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/reasoning_effort/history_compaction_ratio/stop`。
   - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力；配置页只需要连接字段。
@@ -1512,9 +1517,9 @@
   - `sandbox.timeout_s`：单次执行超时秒数
   - `sandbox.resources`：资源限制（cpu/memory_mb/pids）
   - `observability.log_level`：日志级别
-  - `observability.monitor_event_limit`：监控事件上限
-  - `observability.monitor_payload_max_chars`：监控事件内容最大字符
-  - `observability.monitor_drop_event_types`：需要丢弃的事件类型
+  - `observability.monitor_event_limit`：历史字段，线程监控日志不再按条数自动裁剪；保留 `0` 表示无限制
+  - `observability.monitor_payload_max_chars`：监控事件内容最大字符；设为 `0` 表示不截断
+  - `observability.monitor_drop_event_types`：历史字段，线程日志不再按事件类型自动丢弃
   - `cors.allow_origins`：允许来源列表
   - `cors.allow_methods`：允许方法列表
   - `cors.allow_headers`：允许请求头列表
@@ -1779,7 +1784,7 @@
   - `deleted`：按表统计的删除条数
   - `deleted_total`：总删除条数
   - `system`：删除后的系统资源指标快照
-- 说明：该接口用于管理员侧“内部状态”的日志管理弹窗，按时间范围清理系统热日志表。
+- 说明：该接口是线程日志的唯一正常删除入口，仅供管理员按时间范围手动维护日志。
 - 说明：清理范围与 `system.log_used` 口径一致，覆盖 `chat_history`、`model_context_entries`、`tool_logs`、`artifact_logs`、`monitor_sessions`、`stream_events`、`memory_task_logs`。其中包含聊天历史上下文与流事件，删除后不可恢复。
 - 清理日志与空历史线程目录在同一事务提交，`deleted.chat_sessions` 返回目录删除数。仅清理范围内曾有消息、现已无聊天/上下文/流事件/监控/工具/产物记录的目录；保留未使用草稿、部分历史、有定时任务或活动目标的线程。运行中、排队中和等待审批线程的日志也会跳过。
 - 说明：必须同时提供开始和结束时间，后端会拒绝空范围或无效范围；若开始时间大于结束时间，后端会自动交换顺序。
@@ -1798,10 +1803,10 @@
 - `session` 详情新增 `agent_name`（智能体名称），用于在线程详情中快速辨认线程归属。
 - `events` 每条记录新增 `event_id`（线程内递增）。
 - 每轮用户提问会额外写入 `user_input` 事件，`data.message/question` 保存原始用户消息，便于在线程详情中快速定位上下文。
-- `normal` 日志画像会按 `observability.monitor_event_limit` 保留最近 N 条（<= 0 表示不截断），并按 `observability.monitor_payload_max_chars` 截断字符串字段（<= 0 表示不截断）。
-- `normal` 日志画像默认跳过高频增量事件：`llm_output_delta`、`tool_output_delta`；`debug` 日志画像仅在管理员调试会话（`is_admin=true` 且 `debug_payload=true`）启用，并保留这些高频事件与完整字段。
+- 线程日志事件按事件序号完整持久化，服务重启、切换线程和刷新页面不会自动删除历史轮次；前端通过虚拟窗口按需渲染高频事件。
+- `observability.monitor_event_limit` 与 `observability.monitor_drop_event_types` 仅为旧配置兼容保留，不再触发线程日志裁剪或丢弃。
+- `observability.monitor_payload_max_chars` 仍可限制单字段大小；需要完整字段时设为 `0`。
 - `llm_request` 事件仅保存 `payload_summary` 与 `message_count`，不保留完整请求体。
-- `observability.monitor_drop_event_types` 主要作用于 `normal` 画像；`debug` 画像默认保留完整增量事件。
 - 预填充速度基于会话第一轮 LLM 请求计算，避免多轮缓存导致速度偏高；当只能从“请求发出到首个输出事件”反推 TTFT 时，`prefill_speed_lower_bound=true`，表示该预填充速度是下界而非模型内部精确值。
 - `session.context_tokens/context_tokens_peak` 汇总采用最新 `context_usage` 显式占用；正常请求由供应商输入 Token（含缓存输入）刷新，不含当次生成的输出与思考；上下文压缩触发也只使用已观测上下文占用，不再叠加本地 token 估算或工具 schema 开销。压缩完成后在下一次模型 usage 返回前，上下文占用会标记为未观测。
 - `round_usage.context_occupancy_tokens` 表示当前线程上下文占用；`round_usage.total_tokens` 与 `request_consumed_tokens` 表示本轮请求消耗，多模型轮次时会累加每次模型调用的用量。
@@ -3368,7 +3373,7 @@
 - `GET /wunder/chat/sessions` 未指定 `parent_session_id` 时，工作目录在数据库计数与分页之前排除 `spawned_by=model|subagent_control` 且有父会话的子智能体。显式父会话筛选保持原语义，普通 `thread_control` 派生线程与蜂群线程不受此过滤影响。SQLite、PostgreSQL 与原生桌面目录共用此规则。
 - `GET /wunder/chat/sessions/{session_id}/subagents` 默认跨用户轮次返回保留的子智能体，包含已完成、已中断及已关闭会话，沿用 `limit` 上限 500；`latestTurnOnly` 仅供单轮消息投影使用。子智能体目录不包含蜂群和普通线程派生项。
 - `POST /wunder/chat/sessions/{session_id}/cancel` 及 WS cancel 统一中断当前会话和后代执行，保留子会话、历史与提示词。REST 增加 `child_sessions_cancelled`；子运行终态为 `cancelled`，不会因中断自动关闭或删除。后台执行同样受父会话中断约束。
-- `subagent_control.list` 返回持久子智能体池及最新运行状态；`send(session_id,message)` 或 `resume(session_id,message)` 在原线程执行下一项任务，默认非阻塞。`resume` 不带消息仅重新开放线程。运行中重复分派会返回错误，调用方应等待当前运行收敛；不会自动恢复全部子智能体。
+- `subagent_control.list` 返回持久子智能体池及最新运行状态；`send(session_id,message)` 或 `resume(session_id,message)` 在原线程执行下一项任务，默认非阻塞。`resume` 不带消息仅重新开放线程。运行中 send 作为追加指导；启动/收尾窗口暂不接收，调用方应等待收敛后重试；不会自动恢复全部子智能体。
 - 复用运行刷新 `parent_turn_ref/parent_user_round/parent_model_round`，默认把状态事件投递给所属父会话。中断和重新分派会使旧运行延迟唤醒失效。会话 system prompt 与长期记忆注入规则不变。
 
 ### 用户额度账户迁移与实时投影
@@ -3377,3 +3382,28 @@
 - 新接口只返回 `quota_balance/quota_granted_total/quota_used_total/daily_quota_grant/last_quota_grant_date`；移除旧 Token 字段、旧资料接口 `daily_quota*` 别名和 `/token_adjustment` 路由。
 - 每次成功准入通过既有 `quota_usage` 事件发布扣减快照：`consumed=1`、上述额度字段以及事件快照 `daily_quota/used/remaining/date`（分别表示累计发放、累计使用、余额、发放日期）。事件仅用于额度投影，不计入 Token 消耗。
 - 真实 Token 用量通过 `model_usage/token_usage/round_usage` 保留，供上下文、速度与消耗统计使用。
+
+
+### Slint 默认原生桌面接入
+
+Slint 程序默认链接 `wunder-desktop` library；不拉起 bridge，不通过本机 HTTP/WebSocket 转发。旧的 `--connect` 与 `--bridge-smoke` 参数移除，`--native` 兼容无参数启动。服务器现有 HTTP/WS 协议保持不变。
+
+`NativeDesktop` 新增同步 Rust façade（调用方必须放在后台工作线程）：
+
+- `list_agents/create_agent/update_agent`：最多返回 100 项，共享 `agent_management`、UserStore、默认智能体/预设初始化、归属和访问控制、inner-visible 投影；只修改智能体模板，不改已有线程冻结提示词。
+- `list_tools`：最多返回 200 项，直接复用模型调用的工具描述和当前用户权限集合，界面支持分类与检索。
+- `get_desktop_settings/save_model/set_default_model/save_runtime`：强类型配置投影，无 API key；`ModelEdit` 中空密钥保留原值，配置更改串行化，复用 desktop.settings.json 备份写入及 ConfigStore。工作目录变更保留显式容器映射，不迁移旧文件。
+- `workspace_directory/workspace_preview`：按智能体归属选择容器；每页最多 100 项，预览最多 32 KiB，拒绝绝对路径、父路径和指向工作区外部的链接。
+
+原生页面请求在后台完成，UI 只应用投影；目录/历史请求通过版本与归属检查拒绝过期回写。事件仍使用容量 128 的通道和共享持久化队列事件，聊天不因切换页面中断。
+
+
+## 子智能体运行中消息（2026-09-23）
+
+- `subagent_control.send(session_id,message,message_id?)`：目标正在接收时返回 `state=accepted`、`data.delivery=queued_current_turn`、`message_id`；当前模型调用/工具结束后按顺序应用。目标已结束则维持原线程复用语义；收尾窗口或容量满返回错误，调用方可重试。
+- 新动作 `subagent_control.report(message,message_id?)`：仅临时子智能体可调用，目标由 durable 直接父关系决定，不接受任意父目标。父线程接收中返回 `queued_current_turn`；否则持久排队，返回 `queued_next_turn` 和 `queue_id`。
+- message 最大 20000 UTF-8 字节；message_id 最大 128 字节。同一来源的同 ID 不得改变内容；运行中去重范围是当前接收轮最近 256 条，持久队列去重范围是尚保留的任务记录。跨已结束轮次重新 send 仍表示新任务。
+- 接收线程的持久实时事件 `subagent_message` 包含 `message_id/source_session_id/session_id/kind/delivery`；kind 为 guide/report/completion，delivery 为 applied/not_applied，applied 附带 message 和当前轮次字段。使用既有 WS replay 补水。空闲投递通过现有 queue 事件和 queue_id 观察；过期内部消息只发 `subagent_message` 的 not_applied 和 queue_status=cancelled，不发会使父线程进入错误状态的 queue_fail。
+- accepted 表示已接收而非执行完成。运行中收件箱不承诺进程崩溃恢复；已应用上下文和空闲持久队列可恢复。主线程停止后的旧消息不能唤醒新一轮。
+- `wait.poll_interval_seconds` 保留兼容；本地事件即时唤醒，跨进程回查间隔不低于 5 秒，最终截止由 wait_seconds 决定。收件箱有未消费消息时提前返回 `completed_reason=message_received`，`completion_reached=false`，不标记任务完成或抑制后续完成回流。
+- 超长完成通知压缩为摘要及 session/run/dispatch 引用，并标记 `truncated=true`；批量通知最多保留三个结果引用并给出 `items_omitted`，完整内容通过 `status/history` 查询。

@@ -78,3 +78,21 @@ Docker Linux x86_64 Release 实测（每请求 1024 输入、1024 总输出，�
 ```powershell
 docker compose -p wunder-throughput -f packaging/docker/docker-compose-throughput.yml down
 ```
+
+
+## 模拟能力与工具调用验收
+
+`node tests/virtual-model-browser.mjs` 验证三档速度、视觉/听觉、思考和工具开关、媒体计量、工具调用方式的保存与切换恢复，并断言工具名和 JSON 参数输入框不存在，结束后恢复快档和默认能力。
+
+`node tests/virtual-model-docker.mjs` 上传临时结构化/文本调用日志，使用临时模型配置，结束后删除测试日志、移除配置并恢复工具开关。Linux x86_64 Release + PostgreSQL 实测通过：
+
+- 结构化和文本日志分别覆盖 `function_call`、`tool_call`、`freeform_call` 的 Chat / Responses 组合。只读工具由真实执行器完成，每次仅执行一次，第二轮回放日志中的最终回复。原生调用第一轮以 `tool_calls` 结束，文本协议以 `stop` 结束。
+- 工具能力关闭时返回 `unsupported_tools`，无工具执行事件；非法媒体 token 配置在管理员保存接口返回 400。
+- 关闭思考后，1024 token 输出完整，reasoning 为 0，快档生成速度在 200 Token/s 的 5% 范围内。
+- 请求 1024 输出但模型最大输出为 512 时，吞吐状态为 `error`，错误包含 `max_tokens_exceeded`。
+- 1k 档提示词实际估算为 1025 token，配置窗口 2048、输出 1024 时，虽然档位预校验通过，请求层仍返回 `context_length_exceeded`。
+- 连续启动需等待上一条摘要落盘；脚本只对保存窗口的 409 做短暂等待重试，不绕过任务互斥。
+
+这里的普通工具调用验收会产生正常调试线程；吞吐请求仍不产生线程日志。媒体能力不做内容识别，按配置估算 token。文本边界、媒体开关与计量、UTF-8 输出截断、工具参数计量和回放限制另由共享运行时定向测试覆盖。
+
+本次定向验证：Windows MSVC Release 模拟/编排相关 24 项通过，吞吐适配 9 项通过；Windows SQLite + PostgreSQL 配置检查和 Linux PostgreSQL 服务构建通过。管理端吞吐脚本、模拟配置浏览器脚本与 Docker 能力验收通过。

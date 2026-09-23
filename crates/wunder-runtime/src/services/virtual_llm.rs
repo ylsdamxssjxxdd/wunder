@@ -11,10 +11,13 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
+pub mod capabilities;
 mod replay_cache;
 mod replay_selection;
+pub mod request;
 mod streaming;
 pub mod timing;
+mod tool_protocol;
 pub use streaming::emit_virtual_deltas;
 #[cfg(test)]
 mod replay_tests;
@@ -36,6 +39,7 @@ const WUNDER_REPLAY_FORMAT: &str = "wunder_session_export";
 
 #[derive(Debug, Clone)]
 pub struct VirtualReplayTurn {
+    pub finish_reason: Option<String>,
     pub content: String,
     pub reasoning: String,
     pub usage: Option<TokenUsage>,
@@ -312,6 +316,7 @@ fn random_virtual_turn(round: usize, model_round: Option<usize>) -> VirtualRepla
     let random_index = (Uuid::new_v4().as_u128() as usize) % RANDOM_REPLY_KEYS.len();
     let content = crate::i18n::t(RANDOM_REPLY_KEYS[random_index]);
     VirtualReplayTurn {
+        finish_reason: None,
         content,
         reasoning: crate::i18n::t("virtual_llm.random.reasoning"),
         usage: None,
@@ -327,7 +332,8 @@ fn random_virtual_turn(round: usize, model_round: Option<usize>) -> VirtualRepla
 pub fn estimate_virtual_usage(input_messages: &[Value], turn: &VirtualReplayTurn) -> TokenUsage {
     turn.usage.clone().unwrap_or_else(|| {
         let input = timing::input_tokens(input_messages);
-        let output = approx_text_tokens(&turn.content);
+        let output =
+            approx_text_tokens(&turn.content) + request::tool_tokens(turn.tool_calls.as_ref());
         let reasoning = approx_text_tokens(&turn.reasoning);
         TokenUsage {
             input,
@@ -343,6 +349,7 @@ pub fn build_virtual_request_meta(turn: &VirtualReplayTurn) -> Value {
     json!({
         "virtual_replay": true,
         "billable": false,
+        "finish_reason": turn.finish_reason,
         "source_log_id": turn.source_log_id,
         "source_log_name": turn.source_log_name,
         "source_round": turn.source_round,
@@ -385,6 +392,7 @@ fn parse_virtual_log(text: &str, log_id: &str, log_name: &str) -> Result<ParsedV
                     if !content.is_empty() || !reasoning.is_empty() || tool_calls.is_some() {
                         simple_model_round += 1;
                         simple_turns.push(VirtualReplayTurn {
+                            finish_reason: None,
                             content,
                             reasoning,
                             usage: parse_usage(value.get("usage")),
@@ -440,6 +448,7 @@ fn parse_wunder_line(value: &Value, log_id: &str, log_name: &str) -> Option<Virt
         .unwrap_or(1)
         .max(1) as usize;
     Some(VirtualReplayTurn {
+        finish_reason: None,
         content,
         reasoning,
         usage: parse_usage(data.get("usage")),

@@ -2696,12 +2696,12 @@
     "zh-CN": "写入文件内容，已存在文件会被覆盖。常用 path 和 content；dry_run 仅用于预览，不会真正落盘。"
   },
   "tool.spec.subagent_control.description": {
-    "en-US": "Manage the persistent child-agent pool owned by this session. Use list to find reusable children. send(session_id, message) or resume(session_id, message) starts another task on a completed or interrupted child while preserving its history and frozen prompt. resume without message only reopens it. spawn(task) creates a new child and sends its first task, running in the background by default; do not immediately send again. Stopping the parent interrupts all descendants but retains their sessions; resume selected children only when needed. Wait for active children to settle before sending again. Use agent_swarm for existing swarm agents.",
-    "zh-CN": "管理当前会话持久保留的子智能体池。先 list 查找可复用子智能体；用 send(session_id, message) 或 resume(session_id, message) 给已完成或已中断的子智能体继续任务，保留原线程历史与提示词。resume 不带 message 仅重新开放。仅在需要新工作单元时 spawn(task)，默认后台执行；spawn 已发送首轮任务，不要立刻 send。主会话中断会级联中断全部后代，子线程保留且不会自动恢复，后续按需选择复用。运行中的子线程需先等待结束或中断收敛再 send。蜂群协作请使用 agent_swarm。"
+    "zh-CN": "管理当前会话的持久子智能体池。先 list 查找可复用线程；spawn(task) 创建并派发首轮任务，默认后台执行。send(session_id,message) 向运行中的子线程追加指导，在下一模型动作边界接收；向已结束的子线程发送则复用历史执行新任务。resume 带 message 等同 send，不带消息只重新开放。子智能体用 report(message) 主动汇报给自己的直接父线程；父线程运行中接收，空闲时排队唤醒。accepted 仅表示接收，非处理完成；收尾窗口或队列已满时会拒绝，应稍后重试。主会话中断级联取消后代，保留历史，后续按需恢复。蜂群协作使用 agent_swarm。",
+    "en-US": "Manage the current session persistent child pool. List before spawning. spawn(task) creates and dispatches a background child. send(session_id,message) guides a running child at the next model action boundary, or reuses a settled child for new work. resume with message equals send; without message only reopens. A child uses report(message) to notify its direct parent: delivered in the current turn or durably queued for an idle parent. accepted is not completed. Closing or full mailboxes reject input; retry later. Parent interruption cancels descendants and preserves history for selective reuse. Use agent_swarm for existing agents."
   },
   "tool.spec.subagent_control.args.action": {
-    "en-US": "Action to perform: list/history/send/spawn/batch_spawn/status/wait/interrupt/close/resume. Typical flow: spawn(task=...) for the first turn, then send(...) only for follow-up turns on the existing child session.",
-    "zh-CN": "操作类型：list/history/send/spawn/batch_spawn/status/wait/interrupt/close/resume。典型流程是先用 spawn(task=...) 发起第一轮，再仅在需要继续追问时对现有子会话调用 send(...)。"
+    "zh-CN": "动作：list/history/send/report/spawn/batch_spawn/status/wait/interrupt/close/resume。report 仅子智能体可用，目标固定为直接父线程。",
+    "en-US": "Action: list/history/send/report/spawn/batch_spawn/status/wait/interrupt/close/resume. report is child-only and targets its direct parent."
   },
   "tool.spec.agent_swarm.description": {
     "en-US": "Swarm collaboration tool, only manages already existing other agents. Common flow: send/batch_send -> wait/status -> history. Prefer agent_name for dispatching workers; use agent_id only when the name is unavailable, ambiguous, or explicitly provided by the user. Use session_id and run_ids for existing sessions/runs; use subagent_control for temporary child sessions.",
@@ -2964,8 +2964,8 @@
     "zh-CN": "提前收敛后如何处理未完成的兄弟子智能体。"
   },
   "tool.spec.subagent_control.args.message": {
-    "en-US": "Follow-up message content for send. Do not resend the same task immediately after spawn.",
-    "zh-CN": "send 的后续消息内容。不要在 spawn 后立刻重复发送同一任务。"
+    "zh-CN": "指导、下一项任务或向父线程汇报的内容；最多 20000 UTF-8 字节。",
+    "en-US": "Guidance, next task, or report to the parent; at most 20000 UTF-8 bytes."
   },
   "tool.spec.subagent_control.args.task": {
     "en-US": "First task for spawn or batch_spawn.",
@@ -2980,8 +2980,8 @@
     "zh-CN": "wait 的等待秒数。"
   },
   "tool.spec.subagent_control.args.poll_interval_seconds": {
-    "en-US": "Polling interval in seconds for wait.",
-    "zh-CN": "wait 的轮询间隔秒数。"
+    "zh-CN": "兼容轮询间隔；本地状态变更立即唤醒，跨进程回查至少间隔 5 秒。",
+    "en-US": "Compatibility polling interval; local changes wake immediately, with a cross-process fallback of at least 5 seconds."
   },
   "tool.spec.subagent_control.args.wait_mode": {
     "en-US": "Completion mode for wait.",

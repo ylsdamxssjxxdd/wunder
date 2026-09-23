@@ -40,5 +40,8 @@ where
             offset = end;
         }
     }
+    // Tool argument generation costs time even though it is delivered atomically to the executor.
+    generated += super::request::tool_tokens(turn.tool_calls.as_ref());
+    sleep_until(started + speed.generation_duration(generated.saturating_sub(1))).await;
     Ok(())
 }

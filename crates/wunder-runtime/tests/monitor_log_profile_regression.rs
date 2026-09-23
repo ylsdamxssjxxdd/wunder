@@ -130,19 +130,15 @@ fn register_records_explicit_user_input_events() {
 }
 
 #[test]
-fn non_admin_debug_payload_still_uses_normal_profile() {
+fn non_admin_debug_payload_still_persists_complete_event_sequence() {
     let monitor = build_monitor(12);
     let session_id = format!("sess_{}", uuid::Uuid::new_v4().simple());
     monitor.register(&session_id, "user_normal", "", "hello", false, true);
-    monitor.record_event(
-        &session_id,
-        "llm_output_delta",
-        &json!({ "delta": "should be skipped" }),
-    );
+    monitor.record_event(&session_id, "llm_output_delta", &json!({ "delta": "delta" }));
     monitor.record_event(
         &session_id,
         "tool_output_delta",
-        &json!({ "delta": "tool should be skipped" }),
+        &json!({ "delta": "tool" }),
     );
     monitor.record_event(
         &session_id,
@@ -157,8 +153,8 @@ fn non_admin_debug_payload_still_uses_normal_profile() {
 
     let types = event_types(&detail);
     assert!(types.iter().any(|value| value == "llm_output"));
-    assert!(!types.iter().any(|value| value == "llm_output_delta"));
-    assert!(!types.iter().any(|value| value == "tool_output_delta"));
+    assert!(types.iter().any(|value| value == "llm_output_delta"));
+    assert!(types.iter().any(|value| value == "tool_output_delta"));
 
     let event_ids = detail["events"]
         .as_array()
@@ -167,7 +163,7 @@ fn non_admin_debug_payload_still_uses_normal_profile() {
         .map(|event| event["event_id"].as_i64().expect("event_id should be i64"))
         .collect::<Vec<_>>();
     assert!(event_ids.iter().all(|id| *id > 0));
-    assert!(event_ids.windows(2).all(|pair| pair[1] == pair[0] + 1));
+    assert!(event_ids.windows(2).all(|pair| pair[1] > pair[0]));
 }
 
 #[test]
@@ -269,7 +265,7 @@ fn admin_debug_profile_persists_compact_record() {
     monitor.mark_finished(&session_id);
     let record = wait_for_storage_record(&storage, &session_id);
     let events = record["events"].as_array().expect("events should persist");
-    assert!(!events
+    assert!(events
         .iter()
         .any(|event| event["type"].as_str() == Some("llm_output_delta")));
     let request = events
@@ -281,14 +277,14 @@ fn admin_debug_profile_persists_compact_record() {
 }
 
 #[test]
-fn admin_without_debug_payload_uses_normal_profile() {
+fn admin_without_debug_payload_still_persists_delta_events() {
     let monitor = build_monitor(12);
     let session_id = format!("sess_{}", uuid::Uuid::new_v4().simple());
     monitor.register(&session_id, "admin_user", "", "hello", true, false);
     monitor.record_event(
         &session_id,
         "llm_output_delta",
-        &json!({ "delta": "should be skipped" }),
+        &json!({ "delta": "delta" }),
     );
 
     let detail = monitor
@@ -296,7 +292,7 @@ fn admin_without_debug_payload_uses_normal_profile() {
         .expect("detail should exist");
     assert_eq!(detail["session"]["log_profile"], json!("normal"));
     let types = event_types(&detail);
-    assert!(!types.iter().any(|value| value == "llm_output_delta"));
+    assert!(types.iter().any(|value| value == "llm_output_delta"));
 }
 
 #[test]

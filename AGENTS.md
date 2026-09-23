@@ -176,7 +176,7 @@
 
 ## Desktop 与 CLI 标准
 
-- Desktop 默认使用 `frontend-slint/`，本地能力与 bridge 优先放 `crates/wunder-desktop/`，执行、工具与存储语义继续复用 runtime 核心。不要为了桌面功能继续维护 Electron 或 Tauri 前端壳，也不要把停止维护前端壳理解为停止维护桌面后端。
+- Desktop 默认使用 `frontend-slint/`，无参数启动即在同一进程通过 `wunder-desktop::NativeDesktop` 原生调用后端，不经本机 HTTP/WebSocket，不拉起 bridge 子进程。桌面页面新增能力使用强类型 Rust façade；本地能力放 `crates/wunder-desktop/`，执行、工具与存储语义继续复用 runtime 核心。独立 bridge 仅为已有兼容客户端保留。不要为了桌面功能继续维护 Electron 或 Tauri 前端壳，也不要把停止维护前端壳理解为停止维护桌面后端。
 - 桌面端以后端能力、稳定性和性能为首要目标，前端清晰、直观、可用即可。保持原浅色蜂巢基调，不为追求 TS 端全部视觉效果引入 WebView、浏览器渲染链或重型组件。
 - Markdown 采用最低必要能力：纯文本保底，可逐步支持段落、换行、列表和代码块；图片、表格、复杂 HTML、公式、图表及语法高亮不是必需项，可降级为可读文本、链接或占位提示。降级只影响展示，原始消息与复制内容必须完整保留。
 - 流式输出的连续性优先于富文本完整性。优先复用后端既有 WebSocket 事件、去重、replay 与补水语义；不以收到完整回复后再做打字动画替代真实流式输出。

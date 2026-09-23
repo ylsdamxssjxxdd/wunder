@@ -484,6 +484,9 @@ pub(crate) async fn spawn_session_run(
             return;
         }
         let _ = ready_tx.send(Ok(()));
+        if let (Some(monitor), Some(parent)) = (&monitor, &parent_session_id) {
+            monitor.run_signals.notify(parent);
+        }
         let started = now_ts();
         let running = SessionRunRecord {
             status: "running".to_string(),
@@ -631,6 +634,9 @@ pub(crate) async fn spawn_session_run(
             }
         }
         if let Some(announce) = announce {
+            if let Some(monitor) = &monitor {
+                monitor.run_signals.notify(&announce.parent_session_id);
+            }
             if announce.persist_history_message && !should_skip_announce(answer.as_deref()) {
                 append_child_announce(
                     &workspace,

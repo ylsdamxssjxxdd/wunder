@@ -8,6 +8,9 @@ pub fn install(app: &MainWindow) {
     crate::entity_state::restore_model(app, "");
     app.set_workspace_root("本地演示".into());
     app.set_runtime_language("zh-CN".into());
+    app.on_refresh_profile(|| {});
+    app.on_save_lan(|_, _| {});
+    app.on_save_profile_avatar(|_, _| {});
     let weak = app.as_weak();
     app.on_create_agent(move |name| {
         let Some(app) = weak.upgrade() else { return };
@@ -23,6 +26,10 @@ pub fn install(app: &MainWindow) {
                 id: format!("preview-{}", agents.len()).into(),
                 name: name.into(),
                 status: "active".into(),
+                icon_name: "spark".into(),
+                icon_color: "#f97316".into(),
+                icon_glyph: "✦".into(),
+                icon_tone: 1,
                 ..Default::default()
             },
         );
@@ -33,7 +40,7 @@ pub fn install(app: &MainWindow) {
         app.set_status("智能体已创建 · 仅本次演示有效".into());
     });
     let weak = app.as_weak();
-    app.on_save_agent(move |name, description, system_prompt, model| {
+    app.on_save_agent(move |name, description, system_prompt, model, _icon_name, _icon_color| {
         let Some(app) = weak.upgrade() else { return };
         let Ok(index) = usize::try_from(app.get_selected_agent()) else {
             return;

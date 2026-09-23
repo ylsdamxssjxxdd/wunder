@@ -334,7 +334,7 @@ async fn admin_user_account_quota_adjustment_rejects_admin_accounts() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(
-        payload["error"],
+        payload["error"]["message"],
         json!("admin users do not use quota balance limits")
     );
 }

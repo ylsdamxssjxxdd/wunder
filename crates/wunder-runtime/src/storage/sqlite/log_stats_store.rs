@@ -265,8 +265,13 @@ impl SqliteLogStatsStorage for SqliteStorage {
         let now = Self::now_ts();
         let live = crate::storage::session_cleanup::LIVE_SESSION_PREDICATE.replace(":now", "?1");
         // Keep the protection snapshot and all deletion steps in one transaction.
-        tx.execute(&format!("CREATE TEMP TABLE protected_chat_sessions AS \
-            SELECT c.session_id FROM chat_sessions c WHERE {live}"), [now])?;
+        tx.execute(
+            &format!(
+                "CREATE TEMP TABLE protected_chat_sessions AS \
+            SELECT c.session_id FROM chat_sessions c WHERE {live}"
+            ),
+            [now],
+        )?;
         let delete_range = |table: &str, time_field: &str| -> Result<i64> {
             let sql = format!("DELETE FROM {table} WHERE {time_field} >= ? AND {time_field} <= ? \
                 AND NOT EXISTS (SELECT 1 FROM protected_chat_sessions p WHERE p.session_id = {table}.session_id)");

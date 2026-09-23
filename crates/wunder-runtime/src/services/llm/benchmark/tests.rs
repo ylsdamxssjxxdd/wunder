@@ -1,11 +1,45 @@
 use super::*;
 
 #[tokio::test]
+async fn simulation_rejects_limits_before_streaming_and_honors_reasoning_switch() {
+    let mut config = model("virtual_replay");
+    config.max_output = Some(20);
+    config.max_context = Some(10);
+    let error = simulate(&messages(64), 20, &config, |_| {
+        panic!("must reject before generation")
+    })
+    .await
+    .unwrap_err();
+    assert!(error.contains("context_length_exceeded"));
+    config.max_context = Some(4096);
+    assert!(simulate(&messages(64), 21, &config, |_| panic!(
+        "must reject before generation"
+    ))
+    .await
+    .unwrap_err()
+    .contains("max_tokens_exceeded"));
+    config.reasoning_effort = Some("none".into());
+    let metrics = simulate(&messages(64), 20, &config, |_| {}).await.unwrap();
+    assert_eq!(
+        (
+            metrics.output_tokens,
+            metrics.reasoning_tokens,
+            metrics.finish_reason
+        ),
+        (Some(20), Some(0), Some("length".into()))
+    );
+}
+
+#[tokio::test]
 async fn simulated_profiles_include_reasoning_in_the_exact_output_budget() {
     use crate::services::virtual_llm::timing::VirtualModelSpeed::{Fast, Medium, Slow};
     for speed in [Fast, Medium, Slow] {
         let mut progress = Vec::new();
-        let result = simulate(&messages(64), 20, speed, |metrics| progress.push(metrics))
+        let config = LlmModelConfig {
+            simulation_speed: Some(speed),
+            ..Default::default()
+        };
+        let result = simulate(&messages(64), 20, &config, |metrics| progress.push(metrics))
             .await
             .unwrap();
         assert_eq!(

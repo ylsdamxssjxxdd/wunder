@@ -1,27 +1,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 slint::include_modules!();
-mod bridge_smoke;
-mod chat_api;
-mod chat_runtime;
-mod chat_stream;
 mod demo;
 mod demo_entities;
-mod desktop_launch;
 mod entity_state;
 mod message_blocks;
-#[cfg(feature = "native-runtime")]
 mod native_chat;
-#[cfg(feature = "native-runtime")]
+mod native_pages;
+mod native_pages_smoke;
 mod native_runtime;
-#[cfg(feature = "native-runtime")]
 mod native_smoke;
 mod runtime_settings;
 mod smoke;
-mod stream_events;
-mod stream_ui;
 mod subagent_pool;
-mod workspace_api;
 mod workspace_ui;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -33,20 +24,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = MainWindow::new()?;
     app.window().on_close_requested(|| {
         // Hiding the native window alone can leave the event loop running.
-        // Return from main so the owned bridge is reaped on every normal close.
+        // Return from main so the embedded runtime is released on normal close.
         let _ = slint::quit_event_loop();
         slint::CloseRequestResponse::HideWindow
     });
-    if first_argument.as_deref() == Some(std::ffi::OsStr::new("--bridge-smoke")) {
-        let target = arguments.next().ok_or("missing isolated bridge target")?;
-        let directory = arguments
-            .next()
-            .ok_or("missing bridge smoke output directory")?;
-        let connection = chat_api::ConnectionConfig::from_target(&target.to_string_lossy())?;
-        chat_runtime::install(&app, connection);
-        app.show()?;
-        return bridge_smoke::run(&app, directory.into());
-    }
     if first_argument.as_deref() == Some(std::ffi::OsStr::new("--smoke-check")) {
         demo::install(&app);
         let directory = arguments
@@ -54,8 +35,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or("missing smoke-check output directory")?;
         return smoke::run(&app, std::path::PathBuf::from(directory));
     }
-    #[cfg(feature = "native-runtime")]
-    if first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-smoke")) {
+    if matches!(
+        first_argument.as_deref().and_then(std::ffi::OsStr::to_str),
+        Some("--native-smoke" | "--native-restore")
+    ) {
         let directory = std::path::PathBuf::from(
             arguments
                 .next()
@@ -66,33 +49,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let mut args = wunder_desktop::args::DesktopArgs::native_defaults();
         args.temp_root = Some(directory.join("runtime").canonicalize()?);
-        args.workspace = Some(directory.join("workspace"));
+        if first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-smoke")) {
+            args.workspace = Some(directory.join("workspace"));
+        }
         let runtime = std::sync::Arc::new(wunder_desktop::NativeDesktop::start_with_args(args)?);
+        if first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-restore")) {
+            return native_pages_smoke::check_restored(&runtime, &directory);
+        }
         native_smoke::check_runtime(&runtime)?;
-        native_chat::install(&app, runtime);
+        native_pages_smoke::check_runtime(&runtime, &directory)?;
+        native_runtime::install_ready(&app, runtime);
         app.show()?;
         return native_smoke::run(&app, directory);
     }
-    #[cfg(feature = "native-runtime")]
-    if first_argument.as_deref() == Some(std::ffi::OsStr::new("--native")) {
-        native_runtime::install(&app);
-        app.show()?;
-        app.run()?;
-        return Ok(());
+    match first_argument.as_deref().and_then(std::ffi::OsStr::to_str) {
+        Some("--demo") => demo::install(&app),
+        None | Some("--native") => native_runtime::install(&app),
+        Some(_) => return Err("旧 bridge 参数已移除；请直接启动桌面程序".into()),
     }
-    let _bridge = if first_argument.as_deref() == Some(std::ffi::OsStr::new("--demo")) {
-        demo::install(&app);
-        None
-    } else if first_argument.is_none() {
-        Some(desktop_launch::start(&app))
-    } else {
-        if let Some(connection) =
-            chat_api::ConnectionConfig::from_process(first_argument, arguments)?
-        {
-            chat_runtime::install(&app, connection);
-        }
-        None
-    };
     app.show()?;
     app.run()?;
     Ok(())

@@ -105,13 +105,7 @@ impl LlmClient {
     {
         if crate::services::virtual_llm::is_virtual_replay_provider(self.config.provider.as_deref())
         {
-            return simulate(
-                messages,
-                output_tokens,
-                self.config.simulation_speed.unwrap_or_default(),
-                progress,
-            )
-            .await;
+            return simulate(messages, output_tokens, &self.config, progress).await;
         }
         let payload = self.benchmark_payload(messages, output_tokens);
         let started = Instant::now();

@@ -1,4 +1,6 @@
 pub(crate) mod child_runs;
+pub(crate) mod mailbox;
+pub(crate) mod signals;
 mod descendants;
 #[cfg(all(test, feature = "sqlite-storage"))]
 mod child_runs_tests;

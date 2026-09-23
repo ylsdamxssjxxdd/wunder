@@ -86,6 +86,7 @@ impl Orchestrator {
     ) -> Result<WunderResponse, OrchestratorError> {
         let mut heartbeat_task: Option<JoinHandle<()>> = None;
         let mut acquired = false;
+        let mut agent_inbox = None;
         let mut _scheduling_guard = None;
         let mut prepared = prepared;
         let request_config = self
@@ -158,10 +159,8 @@ impl Orchestrator {
                 }
             }
 
-            // Stream events are kept across rounds and reclaimed by the TTL
-            // cleanup (constants::STREAM_EVENT_TTL_S). Clearing them per round
-            // broke the event_id sequence and caused resume gaps on the client.
-            // Keep renewing the session lock heartbeat for long-running requests.
+            // Stream events are durable across rounds; never clear them from the
+            // request path because replay depends on a continuous event sequence.
             let heartbeat_limiter = limiter.clone();
             if acquired {
                 let heartbeat_session = session_id.clone();
@@ -193,6 +192,8 @@ impl Orchestrator {
             let request_round = RoundInfo::user_only(user_round);
             // Child cancellation survives monitor registration resetting the turn flags.
             self.ensure_not_cancelled(&session_id)?;
+            agent_inbox = Some(self.monitor.mailboxes.open(&user_id, &session_id)
+                .map_err(|error| OrchestratorError::internal(error.to_string()))?);
             if let Some(task_id) = prepared.config_overrides.as_ref().and_then(|value| value.get("__queue_task_id")).and_then(Value::as_str) {
                 // Cancellation may win after the worker claims a task but before monitor registration.
                 let storage = self.storage.clone();
@@ -490,6 +491,7 @@ impl Orchestrator {
                 if compaction_result.model_context_replaced {
                     user_context_appended = true;
                 }
+
                 if compaction_result.model_context_replaced {
                     persisted_context_tokens = 0;
                     confirmed_context_occupancy_tokens = None;
@@ -574,6 +576,8 @@ impl Orchestrator {
                 }
 
                 let mut overflow_recovery_attempts = 0_u32;
+                self.apply_agent_messages(agent_inbox.as_ref().expect("active inbox"),
+                    &user_id, &session_id, &mut messages, &emitter, round_info, false).await?;
                 let (content, reasoning, usage, tool_calls_payload, round_speed) = loop {
                     match self
                         .call_llm(
@@ -916,6 +920,13 @@ impl Orchestrator {
                         &session_id,
                         &assistant_model_message,
                     );
+                    messages.push(assistant_model_message);
+                    if self.apply_agent_messages(agent_inbox.as_ref().expect("active inbox"),
+                        &user_id, &session_id, &mut messages, &emitter, round_info, true).await? {
+                        answer.clear();
+                        stop_reason = None;
+                        continue;
+                    }
                     if !assistant_content.trim().is_empty() {
                         let message_stats = build_persisted_message_stats(
                             &usage,
@@ -1855,13 +1866,13 @@ impl Orchestrator {
                             TerminalTool::A2ui => {
                                 let (uid, messages_payload, content) =
                                     self.resolve_a2ui_tool_payload(&args, &user_id, &session_id);
-                                append_terminal_tool_context_result(
+                                messages.push(append_terminal_tool_context_result(
                                     self,
                                     &user_id,
                                     &session_id,
                                     &terminal.call,
                                     &name,
-                                );
+                                ));
                                 if let Some(messages_payload) = messages_payload.as_ref() {
                                     let mut a2ui_payload = json!({
                                         "uid": uid,
@@ -1920,13 +1931,13 @@ impl Orchestrator {
                             }
                             TerminalTool::Final => {
                                 answer = self.resolve_final_answer_from_tool(&args);
-                                append_terminal_tool_context_result(
+                                messages.push(append_terminal_tool_context_result(
                                     self,
                                     &user_id,
                                     &session_id,
                                     &terminal.call,
                                     &name,
-                                );
+                                ));
                                 if !answer.trim().is_empty() {
                                     answer = self.reconcile_final_answer_workspace_images(
                                         &prepared.workspace_id,
@@ -2011,6 +2022,14 @@ impl Orchestrator {
                     }
                 }
                 if should_finish || !answer.is_empty() {
+                    if matches!(stop_reason.as_deref(), Some("final_tool" | "a2ui")) && self.apply_agent_messages(agent_inbox.as_ref().expect("active inbox"),
+                        &user_id, &session_id, &mut messages, &emitter, round_info, true).await? {
+                        answer.clear();
+                        a2ui_uid = None;
+                        a2ui_messages = None;
+                        stop_reason = None;
+                        continue;
+                    }
                     break;
                 }
             }
@@ -2121,6 +2140,14 @@ impl Orchestrator {
             Ok(response)
         }
         .await;
+
+        if let Some(inbox) = agent_inbox {
+            for message in inbox.close() {
+                emitter.emit("subagent_message", json!({"message_id":message.id,
+                    "source_session_id":message.source,"session_id":session_id,
+                    "kind":message.kind,"delivery":"not_applied"})).await;
+            }
+        }
 
         match result {
             Ok(value) => {

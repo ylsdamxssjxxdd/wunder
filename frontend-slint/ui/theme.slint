@@ -18,8 +18,9 @@ export global Theme {
 }
 export struct Conversation { id: string, title: string, preview: string, time: string }
 export struct TextBlock { text: string, kind: int }
-export struct ChatMessage { text: string, mine: bool, time: string, workflow: bool, state: string, blocks: [TextBlock] }
+export struct ChatMessage { text: string, mine: bool, time: string, workflow: bool, state: string, blocks: [TextBlock], avatar-glyph: string, avatar-tone: int }
 export struct FileCard { name: string, path: string, entry-type: string, size: string }
-export struct AgentCard { id: string, name: string, description: string, model: string, system-prompt: string, status: string }
+export struct AgentCard { id: string, name: string, description: string, model: string, system-prompt: string, status: string, icon-name: string, icon-color: string, icon-glyph: string, icon-tone: int }
 export struct ToolCard { name: string, description: string, category: string }
 export struct ModelCard { key: string, provider: string, model: string, base-url: string, model-type: string, is-default: bool }
+export struct ProfileCard { user-id: string, username: string, email: string, unit: string, sessions: string, sessions-last-7d: string, tool-calls: string, tokens: string, agents: string, last-active: string, avatar-icon: string, avatar-glyph: string, avatar-color: string }

@@ -269,7 +269,7 @@ pub(super) fn append_terminal_tool_context_result(
     session_id: &str,
     call: &ToolCall,
     tool_name: &str,
-) {
+) -> Value {
     let payload = json!({
         "tool": tool_name,
         "ok": true,
@@ -282,27 +282,13 @@ pub(super) fn append_terminal_tool_context_result(
         let cleaned = id.trim();
         !cleaned.is_empty() && !cleaned.starts_with("call_terminal_")
     });
-    if use_native_tool_result {
-        let tool_call_id = call.id.as_deref().unwrap().trim();
-        orchestrator.append_model_context_entry(
-            user_id,
-            session_id,
-            &json!({
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "content": serialized,
-            }),
-        );
+    let message = if use_native_tool_result {
+        json!({"role":"tool", "tool_call_id":call.id.as_deref().unwrap().trim(), "content":serialized})
     } else {
-        orchestrator.append_model_context_entry(
-            user_id,
-            session_id,
-            &json!({
-                "role": "user",
-                "content": format!("{OBSERVATION_PREFIX}{serialized}"),
-            }),
-        );
-    }
+        json!({"role":"user", "content":format!("{OBSERVATION_PREFIX}{serialized}")})
+    };
+    orchestrator.append_model_context_entry(user_id, session_id, &message);
+    message
 }
 
 pub(super) fn build_assistant_history_snapshot(

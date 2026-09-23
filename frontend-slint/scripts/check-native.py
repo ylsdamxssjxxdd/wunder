@@ -86,6 +86,11 @@ def main():
         metrics = json.loads((output / "stream-metrics.json").read_text())
         metrics["peak_working_set_bytes"] = peak
         (output / "stream-metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+        with (output / "restore.log").open("wb") as log:
+            subprocess.run([str(args.ui.resolve()), "--native-restore", str(output)], stdout=log,
+                           stderr=subprocess.STDOUT, check=True, timeout=40,
+                           creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        assert (output / "restore.txt").read_text(encoding="utf-8").startswith("PASS")
         print(report.strip())
         print(json.dumps(metrics))
     finally:

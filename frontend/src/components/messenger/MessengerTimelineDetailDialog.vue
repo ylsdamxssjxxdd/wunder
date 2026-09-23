@@ -117,7 +117,6 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import {
-  getSessionEvents as getChatSessionEventsApi,
   getSessionEventsWithParams as getChatSessionEventsWithParams,
   getSessionWithParams as getChatSessionWithParams
 } from '@/api/chat';
@@ -170,7 +169,7 @@ type TimelineDetailSession = {
 type TimelineExportLine = Record<string, unknown>;
 
 const TIMELINE_DETAIL_EVENT_TITLE_MAX_LENGTH = 120;
-const TIMELINE_DETAIL_EVENT_FETCH_LIMIT = 180;
+const TIMELINE_DETAIL_EVENT_FETCH_LIMIT = 0;
 const TIMELINE_DETAIL_SESSION_MESSAGE_LIMIT = 32;
 const TIMELINE_DETAIL_EXPANDED_EVENT_LIMIT = 3;
 const TIMELINE_DETAIL_RAW_CACHE_LIMIT = 12;
@@ -1019,7 +1018,8 @@ const loadTimelineDetail = async (sessionId: string) => {
         summary: true
       }),
       getChatSessionEventsWithParams(targetId, {
-        limit: TIMELINE_DETAIL_EVENT_FETCH_LIMIT
+        limit: TIMELINE_DETAIL_EVENT_FETCH_LIMIT,
+        workflow_only: true
       }).catch(() => null)
     ]);
     if (currentToken !== requestToken) {
@@ -1051,7 +1051,10 @@ const exportTimelineDetail = async () => {
     return;
   }
   try {
-    const response = await getChatSessionEventsApi(session.id).catch(() => null);
+    const response = await getChatSessionEventsWithParams(session.id, {
+      limit: 0,
+      workflow_only: true
+    }).catch(() => null);
     const payload = (response?.data as { data?: Record<string, unknown> } | undefined)?.data;
     const sourceEvents = payload
       ? selectTimelineExportEvents(buildTimelineDetailEvents(normalizeRounds(payload.rounds)))

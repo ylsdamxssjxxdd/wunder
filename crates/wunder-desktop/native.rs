@@ -13,6 +13,18 @@ use tokio::runtime::Runtime;
 #[path = "native_stream.rs"]
 mod stream;
 pub use stream::{NativeChatEvent, NativeStream};
+#[path = "native_catalog.rs"]
+mod catalog;
+#[path = "native_settings.rs"]
+mod settings;
+#[path = "native_workspace.rs"]
+mod workspace;
+#[path = "native_profile.rs"]
+mod profile;
+pub use catalog::{AgentRecord, ToolRecord};
+pub use settings::{DesktopSettings, LanSettings, ModelEdit, ModelRecord};
+pub use workspace::{Directory, FileRecord};
+pub use profile::NativeProfile;
 
 #[derive(Debug, Clone)]
 pub struct NativeChatInput {
@@ -40,6 +52,7 @@ pub struct NativeMessage {
 pub struct NativeDesktop {
     runtime: Arc<Runtime>,
     desktop: DesktopRuntime,
+    settings_lock: std::sync::Mutex<()>,
 }
 
 impl NativeDesktop {
@@ -57,7 +70,11 @@ impl NativeDesktop {
                 .build()?,
         );
         let desktop = runtime.block_on(DesktopRuntime::init(&args))?;
-        Ok(Self { runtime, desktop })
+        Ok(Self {
+            runtime,
+            desktop,
+            settings_lock: std::sync::Mutex::new(()),
+        })
     }
 
     pub fn user_id(&self) -> &str {
@@ -113,13 +130,12 @@ impl NativeDesktop {
         let agent_id = agent_id
             .map(str::trim)
             .filter(|value| !value.is_empty() && *value != "__default__");
-        if let Some(id) = agent_id {
-            self.desktop
-                .state
-                .user_store
-                .get_user_agent(&self.desktop.user_id, id)?
-                .ok_or_else(|| anyhow!("agent not found"))?;
-        }
+        self.runtime
+            .block_on(wunder_server::agent_management::owned(
+                self.state(),
+                self.user_id(),
+                agent_id.unwrap_or("__default__"),
+            ))?;
         let now = now_ts();
         let id = format!("native_{}", uuid::Uuid::new_v4().simple());
         let record = wunder_server::storage::ChatSessionRecord {

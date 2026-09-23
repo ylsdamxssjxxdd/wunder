@@ -183,8 +183,13 @@ impl DesktopRuntime {
         if settings.lan_mesh.display_name.trim().is_empty() {
             settings.lan_mesh.display_name = user_id.clone();
         }
+        let mut active_lan = settings.lan_mesh.clone();
+        if args.native_runtime {
+            // Native desktop has no network control listener or bridge.
+            active_lan.enabled = false;
+        }
         desktop_lan::manager()
-            .apply_settings(settings.lan_mesh.clone())
+            .apply_settings(active_lan)
             .await;
         settings.updated_at = now_ts();
         save_desktop_settings(&settings_path, &settings)?;

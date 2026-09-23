@@ -10,6 +10,7 @@ mod apply_patch_update;
 mod browser_tool;
 mod catalog;
 mod channel_tool;
+pub(crate) mod compact;
 pub(crate) mod command_options;
 pub(crate) mod command_output_guard;
 pub mod command_sessions;

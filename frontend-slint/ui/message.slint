@@ -9,7 +9,7 @@ export component MessageRow inherits Rectangle {
     callback copy();
     private property <length> bubble-width: root.message.mine ? min(root.width - 58px, max(180px, root.width * 0.8)) : root.width - 58px;
     height: column.height + 22px;
-    Avatar { x: root.message.mine ? parent.width - 34px : 0px; y: 0px; mine: root.message.mine; source: root.avatar; }
+    Avatar { x: root.message.mine ? parent.width - 34px : 0px; y: 0px; mine: root.message.mine; source: root.avatar; glyph: root.message.avatar-glyph; tone: root.message.avatar-tone; }
     column := VerticalLayout {
         x: root.message.mine ? root.width - 44px - root.bubble-width : 44px;
         width: root.bubble-width;

@@ -1,12 +1,13 @@
 //! Independent, single-flight workspace projection shared by the dock and files page.
-use crate::{chat_api::ChatApi, FileCard, MainWindow};
+use crate::{FileCard, MainWindow};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
 };
+use wunder_desktop::NativeDesktop;
 
-pub fn install(app: &MainWindow, api: ChatApi) {
+pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let revision = Arc::new(AtomicU64::new(0));
     let weak = app.as_weak();
     let list_api = api.clone();
@@ -43,6 +44,8 @@ pub fn install(app: &MainWindow, api: ChatApi) {
                     Ok(page) => {
                         app.set_directory_path(page.path.into());
                         app.set_directory_parent(page.parent.into());
+                        app.set_directory_container_id(page.container_id);
+                        app.set_directory_root(page.root.into());
                         app.set_files_total(page.total);
                         app.set_files(ModelRc::new(VecModel::from(
                             page.entries

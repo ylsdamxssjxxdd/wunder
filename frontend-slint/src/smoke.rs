@@ -40,7 +40,7 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
     snapshot(app, &directory.join("native-preview.png"))?;
     // Dispatch pointer events through Slint hit testing. Invoking callbacks
     // directly cannot detect focus-only first clicks or decorative overlays.
-    for (section, y) in [(2, 160.0), (3, 218.0), (5, 276.0), (4, 334.0), (0, 102.0)] {
+    for (section, y) in [(2, 160.0), (3, 218.0), (0, 102.0)] {
         click(app, 28.0, y)?;
         require(
             app.get_section() == section,
@@ -114,6 +114,8 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         "测试描述".into(),
         "  测试提示词\n第二行\n".into(),
         "".into(),
+        "spark".into(),
+        "#f97316".into(),
     );
     require(
         app.get_selected_agent_system_prompt() == "  测试提示词\n第二行\n",
@@ -122,8 +124,9 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
     snapshot(app, &directory.join("native-agents.png"))?;
     app.set_section(3);
     snapshot(app, &directory.join("native-tools.png"))?;
-    app.set_section(5);
-    snapshot(app, &directory.join("native-files.png"))?;
+    // The workspace stays in the chat dock; the standalone files rail entry
+    // was removed to match the web messenger information architecture.
+    snapshot(app, &directory.join("native-workspace.png"))?;
     app.set_section(4);
     app.invoke_save_model(
         "测试模型".into(),
@@ -139,6 +142,8 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         "model/default update failed",
     )?;
     snapshot(app, &directory.join("native-settings.png"))?;
+    app.set_section(5);
+    snapshot(app, &directory.join("native-profile.png"))?;
     app.set_model_key_draft(app.get_selected_model_key());
     app.set_model_editor_open(true);
     app.set_dialog_title("操作失败".into());
