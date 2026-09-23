@@ -5,8 +5,7 @@ use crate::i18n;
 use crate::ops::sysinfo_compat::{
     collect_host_metrics, new_disks, new_system, MonitorDisks, MonitorSystem,
 };
-use crate::services::user_leveling::{build_user_level_snapshot, experience_from_runtime_seconds};
-use crate::services::user_store::{UserStore, DEFAULT_LEVEL_UP_TOKEN_REWARD};
+use crate::services::user_leveling::experience_from_runtime_seconds;
 use crate::storage::StorageBackend;
 use chrono::{DateTime, Local, Utc};
 use parking_lot::Mutex;
@@ -26,6 +25,8 @@ use std::thread;
 use tracing::{error, warn};
 use uuid::Uuid;
 use walkdir::WalkDir;
+
+mod quota_usage;
 
 const DEFAULT_EVENT_LIMIT: usize = 500;
 const DEFAULT_PERSISTED_EVENT_LIMIT: usize = 500;
@@ -301,6 +302,7 @@ struct SessionRecord {
     context_tokens_peak: i64,
     consumed_tokens: i64,
     tool_calls: i64,
+    quota_used: Option<i64>,
     message_feedback: BTreeMap<i64, MessageFeedbackItem>,
     next_event_id: i64,
     events: VecDeque<MonitorEvent>,
@@ -353,6 +355,7 @@ impl SessionRecord {
             context_tokens_peak: 0,
             consumed_tokens: 0,
             tool_calls: 0,
+            quota_used: Some(0),
             message_feedback: BTreeMap::new(),
             next_event_id: 1,
             events: VecDeque::new(),
@@ -435,6 +438,7 @@ impl SessionRecord {
             "context_occupancy_tokens_peak": context_tokens_peak,
             "consumed_tokens": self.consumed_tokens,
             "tool_calls": self.tool_calls,
+            "quota_used": self.quota_used,
             "feedback_up_count": feedback_up_count,
             "feedback_down_count": feedback_down_count,
             "feedback_total_count": feedback_total_count,
@@ -471,6 +475,7 @@ impl SessionRecord {
             "context_tokens_peak": self.context_tokens_peak,
             "consumed_tokens": self.consumed_tokens,
             "tool_calls": self.tool_calls,
+            "quota_used": self.quota_used,
             "message_feedback": message_feedback,
             "next_event_id": self.next_event_id,
             "events": self
@@ -628,6 +633,17 @@ impl SessionRecord {
             .iter()
             .filter(|event| event.event_type == "tool_call")
             .count() as i64;
+        // Only explicit thread totals can recover quota; legacy quota fields counted tokens.
+        let quota_used = payload
+            .get("quota_used")
+            .and_then(Value::as_i64)
+            .into_iter()
+            .chain(
+                events.iter().filter(|event| event.event_type == "quota_usage")
+                    .filter_map(|event| event.data.get("session_quota_used").and_then(Value::as_i64)),
+            )
+            .filter(|value| *value >= 0)
+            .max();
         let tool_calls = payload
             .get("tool_calls")
             .and_then(Value::as_i64)
@@ -663,6 +679,7 @@ impl SessionRecord {
             context_tokens_peak: context_tokens_peak.max(context_tokens),
             consumed_tokens,
             tool_calls,
+            quota_used,
             message_feedback,
             next_event_id,
             events,
@@ -768,6 +785,7 @@ struct WorkspaceUsageScanState {
 }
 
 pub struct MonitorState {
+    child_runs: Arc<crate::services::runtime::thread::child_runs::ChildRuns>,
     sessions: Mutex<HashMap<String, SessionRecord>>,
     forced_cancelled: Mutex<HashSet<String>>,
     storage: Arc<dyn StorageBackend>,
@@ -828,6 +846,7 @@ impl MonitorState {
         let write_queue = MonitorWriteQueue::new(storage.clone());
         Self {
             sessions: Mutex::new(HashMap::new()),
+            child_runs: Arc::default(),
             forced_cancelled: Mutex::new(HashSet::new()),
             storage,
             write_queue,
@@ -1068,6 +1087,15 @@ impl MonitorState {
                     };
                     let mut pending_award = None;
                     record.updated_time = now;
+                    if event_type == "quota_usage" {
+                        if let Some(total) = data
+                            .get("session_quota_used")
+                            .and_then(Value::as_i64)
+                            .filter(|value| *value >= 0)
+                        {
+                            record.quota_used = Some(record.quota_used.unwrap_or(0).max(total));
+                        }
+                    }
                     if event_type == "context_usage" && has_context_occupancy(data) {
                         if let Some(total) = parse_i64_value(
                             data.get("context_occupancy_tokens")
@@ -1215,44 +1243,7 @@ impl MonitorState {
             .storage
             .add_user_experience(&award.user_id, award.delta, award.updated_time)
         {
-            Ok(settlement) => {
-                let previous_level = build_user_level_snapshot(settlement.previous_total).level;
-                let current_level = build_user_level_snapshot(settlement.current_total).level;
-                let level_gain = current_level.saturating_sub(previous_level);
-                if level_gain > 0 {
-                    let daily_grant = self
-                        .storage
-                        .get_user_account(&award.user_id)
-                        .ok()
-                        .flatten()
-                        .and_then(|user| {
-                            user.unit_id.as_deref().and_then(|unit_id| {
-                                self.storage
-                                    .get_org_unit(unit_id)
-                                    .ok()
-                                    .flatten()
-                                    .map(|unit| unit.level)
-                            })
-                        })
-                        .map(|level| UserStore::default_daily_token_grant_by_level(Some(level)))
-                        .unwrap_or_else(|| UserStore::default_daily_token_grant_by_level(None));
-                    let reward = level_gain.saturating_mul(DEFAULT_LEVEL_UP_TOKEN_REWARD);
-                    let today = Local::now().format("%Y-%m-%d").to_string();
-                    if reward > 0 {
-                        if let Err(err) = self.storage.grant_user_tokens(
-                            &award.user_id,
-                            &today,
-                            daily_grant,
-                            reward,
-                            award.updated_time,
-                        ) {
-                            warn!(
-                                "grant level-up tokens failed: session_id={}, user_id={}, level_gain={}, reward={}, error={err}",
-                                award.session_id, award.user_id, level_gain, reward
-                            );
-                        }
-                    }
-                }
+            Ok(_settlement) => {
                 let to_persist = {
                     let mut sessions = self.sessions.lock();
                     let Some(record) = sessions.get_mut(&award.session_id) else {
@@ -1380,15 +1371,17 @@ impl MonitorState {
             || {
                 let to_persist = {
                     let mut sessions = self.sessions.lock();
+                    // Serialize cancellation with child admission, even before monitor registration.
+                    let children_cancelled = self.child_runs.cancel_tree(session_id) > 0;
                     let Some(record) = sessions.get_mut(session_id) else {
-                        return false;
+                        return children_cancelled;
                     };
                     if record.status != Self::STATUS_RUNNING
                         && record.status != Self::STATUS_CANCELLING
                         && record.status != Self::STATUS_QUEUED
                         && record.status != Self::STATUS_WAITING
                     {
-                        return false;
+                        return children_cancelled;
                     }
                     let normalized_source = source.trim();
                     record.cancel_requested = true;
@@ -1419,6 +1412,18 @@ impl MonitorState {
                 true
             },
         )
+    }
+
+    pub(crate) fn register_child_run(
+        &self,
+        session_id: &str,
+        parent: &str,
+    ) -> anyhow::Result<crate::services::runtime::thread::child_runs::ChildRunGuard> {
+        let sessions = self.sessions.lock();
+        if sessions.get(parent).is_some_and(|record| record.cancel_requested) {
+            anyhow::bail!("parent run was interrupted");
+        }
+        self.child_runs.register(session_id, parent)
     }
 
     pub fn cancel(&self, session_id: &str) -> bool {
@@ -1565,6 +1570,9 @@ impl MonitorState {
     }
 
     pub fn is_cancelled(&self, session_id: &str) -> bool {
+        if self.child_runs.is_cancelled(session_id) {
+            return true;
+        }
         self.run_guarded(
             "monitor.is_cancelled",
             || false,
@@ -1714,7 +1722,7 @@ impl MonitorState {
 
     /// Return bounded per-session usage summaries without exposing monitor event payloads.
     /// Hot records are read from memory; cold records fall back to the indexed monitor store.
-    pub fn session_usage_summaries(&self, session_ids: &[String]) -> HashMap<String, (i64, i64)> {
+    pub fn session_usage_summaries(&self, session_ids: &[String]) -> HashMap<String, (i64, i64, Option<i64>)> {
         let ids = session_ids
             .iter()
             .map(|value| value.trim())
@@ -1731,7 +1739,7 @@ impl MonitorState {
                 if let Some(record) = sessions.get(*session_id) {
                     output.insert(
                         (*session_id).to_string(),
-                        (record.consumed_tokens.max(0), record.tool_calls.max(0)),
+                        (record.consumed_tokens.max(0), record.tool_calls.max(0), record.quota_used),
                     );
                 } else {
                     missing.push((*session_id).to_string());
@@ -1755,7 +1763,7 @@ impl MonitorState {
             if let Some(record) = SessionRecord::from_storage(&payload) {
                 output.insert(
                     session_id,
-                    (record.consumed_tokens.max(0), record.tool_calls.max(0)),
+                    (record.consumed_tokens.max(0), record.tool_calls.max(0), record.quota_used),
                 );
             }
         }
@@ -3417,7 +3425,7 @@ mod tests {
     };
     use crate::config::ObservabilityConfig;
     use crate::i18n;
-    use crate::services::user_store::{UserStore, DEFAULT_LEVEL_UP_TOKEN_REWARD};
+    use crate::services::user_store::UserStore;
     use crate::storage::{SqliteStorage, StorageBackend};
     use chrono::Local;
     use serde_json::json;
@@ -3836,7 +3844,7 @@ mod tests {
     }
 
     #[test]
-    fn finalize_user_experience_settlement_grants_level_up_tokens() {
+    fn finalize_user_experience_settlement_does_not_grant_quota() {
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join("monitor-level-up.db");
         let storage: Arc<dyn StorageBackend> =
@@ -3861,9 +3869,9 @@ mod tests {
             .expect("load user")
             .expect("user exists");
         seeded.experience_total = 267;
-        seeded.token_balance = 10;
-        seeded.token_granted_total = 10;
-        seeded.last_token_grant_date = Some(today.clone());
+        seeded.quota_balance = 10;
+        seeded.quota_granted_total = 10;
+        seeded.last_quota_grant_date = Some(today.clone());
         storage
             .upsert_user_account(&seeded)
             .expect("seed user account");
@@ -3886,14 +3894,14 @@ mod tests {
             .expect("reload user")
             .expect("user exists");
         assert_eq!(updated.experience_total, 268);
-        assert_eq!(updated.token_balance, 10 + DEFAULT_LEVEL_UP_TOKEN_REWARD);
+        assert_eq!(updated.quota_balance, 10);
         assert_eq!(
-            updated.token_granted_total,
-            10 + DEFAULT_LEVEL_UP_TOKEN_REWARD
+            updated.quota_granted_total,
+            10
         );
-        assert_eq!(updated.token_used_total, 0);
+        assert_eq!(updated.quota_used_total, 0);
         assert_eq!(
-            updated.last_token_grant_date.as_deref(),
+            updated.last_quota_grant_date.as_deref(),
             Some(today.as_str())
         );
     }

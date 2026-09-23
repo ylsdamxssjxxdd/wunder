@@ -6,9 +6,6 @@ use crate::performance::{
     run_sample as run_performance_sample, PerformanceSampleRequest, PerformanceSampleResponse,
 };
 use crate::state::AppState;
-use crate::throughput::{
-    ThroughputConfig, ThroughputReport, ThroughputSnapshot, ThroughputStatusResponse,
-};
 use crate::tools::{
     build_mcp_tool_alias_entries_for_names, builtin_aliases, builtin_tool_specs, resolve_tool_name,
 };
@@ -54,19 +51,6 @@ pub(super) fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/admin/monitor/{session_id}/compaction",
             post(admin_monitor_compaction),
-        )
-        .route(
-            "/wunder/admin/throughput/start",
-            post(admin_throughput_start),
-        )
-        .route("/wunder/admin/throughput/stop", post(admin_throughput_stop))
-        .route(
-            "/wunder/admin/throughput/status",
-            get(admin_throughput_status),
-        )
-        .route(
-            "/wunder/admin/throughput/report",
-            get(admin_throughput_report),
         )
         .route(
             "/wunder/admin/performance/sample",
@@ -715,59 +699,6 @@ async fn admin_monitor_logs_cleanup(
     })))
 }
 
-async fn admin_throughput_start(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<ThroughputStartRequest>,
-) -> Result<Json<ThroughputSnapshot>, Response> {
-    let config = ThroughputConfig::new(
-        payload.concurrency_list,
-        payload.user_id_prefix,
-        payload.model_name,
-        payload.request_timeout_s,
-        payload.max_tokens,
-    )
-    .map_err(|message| error_response(StatusCode::BAD_REQUEST, message))?;
-    let snapshot = state
-        .throughput
-        .start(
-            state.kernel.orchestrator.clone(),
-            state.monitor.clone(),
-            config,
-        )
-        .await
-        .map_err(|message| error_response(StatusCode::CONFLICT, message))?;
-    Ok(Json(snapshot))
-}
-
-async fn admin_throughput_stop(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<ThroughputSnapshot>, Response> {
-    let snapshot = state
-        .throughput
-        .stop()
-        .await
-        .map_err(|message| error_response(StatusCode::BAD_REQUEST, message))?;
-    Ok(Json(snapshot))
-}
-
-async fn admin_throughput_status(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<ThroughputStatusResponse>, Response> {
-    Ok(Json(state.throughput.status().await))
-}
-
-async fn admin_throughput_report(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<ThroughputReportQuery>,
-) -> Result<Json<ThroughputReport>, Response> {
-    let report = state
-        .throughput
-        .report(query.run_id.as_deref())
-        .await
-        .map_err(|message| error_response(StatusCode::NOT_FOUND, message))?;
-    Ok(Json(report))
-}
-
 async fn admin_performance_sample(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<PerformanceSampleRequest>,
@@ -921,25 +852,6 @@ struct MonitorQuery {
     tool_hours: Option<f64>,
     start_time: Option<f64>,
     end_time: Option<f64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ThroughputStartRequest {
-    #[serde(default)]
-    concurrency_list: Vec<usize>,
-    #[serde(default)]
-    user_id_prefix: Option<String>,
-    #[serde(default)]
-    model_name: Option<String>,
-    #[serde(default)]
-    request_timeout_s: Option<f64>,
-    #[serde(default)]
-    max_tokens: Option<u32>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct ThroughputReportQuery {
-    run_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]

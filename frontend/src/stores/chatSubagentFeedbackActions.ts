@@ -115,7 +115,7 @@ import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
 import { HISTORY_PAGE_LIMIT } from './chatRuntimeControls';
-import { SESSION_SUBAGENTS_CACHE_TTL_MS, applyAssistantHistoryIdBackfill, applyMessageFeedbackByHistoryId, cacheSessionMessages, getSessionMessages, isAssistantFeedbackCandidate, notifySessionSnapshot, resolveChatHttpStatus, resolveSessionKey, resolveTerminableSubagentSessionIds, sessionSubagentsCache, sessionSubagentsInFlight, touchSessionUpdatedAt } from './chatRuntimeState';
+import { SESSION_SUBAGENTS_CACHE_TTL_MS, applyAssistantHistoryIdBackfill, applyMessageFeedbackByHistoryId, cacheSessionMessages, getSessionMessages, isAssistantFeedbackCandidate, notifySessionSnapshot, resolveChatHttpStatus, resolveSessionKey, sessionSubagentsCache, sessionSubagentsInFlight, touchSessionUpdatedAt } from './chatRuntimeState';
 import { attachSubagentsToMessages } from './chatStats';
 
 export const chatSubagentFeedbackActions = {
@@ -182,73 +182,6 @@ export const chatSubagentFeedbackActions = {
       });
       await this.refreshSessionSubagents(targetSessionId, { force: true });
       return data?.data || null;
-    },
-    async terminateSessionSubagentTree(sessionId, options: { force?: boolean } = {}) {
-      const targetSessionId = resolveSessionKey(sessionId || this.activeSessionId);
-      if (!targetSessionId) {
-        return {
-          terminatedSessionIds: [],
-          failedSessionIds: []
-        };
-      }
-      const visitedParents = new Set<string>();
-      const relations: Array<{ parentSessionId: string; childSessionIds: string[] }> = [];
-      const stack = [targetSessionId];
-      while (stack.length > 0) {
-        const parentSessionId = String(stack.pop() || '').trim();
-        if (!parentSessionId || visitedParents.has(parentSessionId)) continue;
-        visitedParents.add(parentSessionId);
-        let items: unknown[] = [];
-        try {
-          const fetched = await this.refreshSessionSubagents(parentSessionId, { force: options.force === true });
-          items = Array.isArray(fetched) ? fetched : [];
-        } catch {
-          items = [];
-        }
-        const childSessionIds = resolveTerminableSubagentSessionIds(items);
-        if (!childSessionIds.length) continue;
-        relations.push({ parentSessionId, childSessionIds });
-        childSessionIds.forEach((childSessionId) => {
-          if (!visitedParents.has(childSessionId)) {
-            stack.push(childSessionId);
-          }
-        });
-      }
-
-      const terminatedSessionIds = new Set<string>();
-      const failedSessionIds = new Set<string>();
-      for (const relation of relations.reverse()) {
-        try {
-          const { data } = await controlSessionSubagentsApi(relation.parentSessionId, {
-            action: 'terminate',
-            session_ids: relation.childSessionIds
-          });
-          const payload = data?.data as Record<string, unknown> | null;
-          const resultItems = Array.isArray(payload?.items) ? payload.items : [];
-          const updatedIds = resolveTerminableSubagentSessionIds(resultItems);
-          relation.childSessionIds.forEach((childSessionId) => {
-            if (updatedIds.includes(childSessionId)) {
-              failedSessionIds.add(childSessionId);
-            } else {
-              terminatedSessionIds.add(childSessionId);
-            }
-          });
-        } catch {
-          relation.childSessionIds.forEach((childSessionId) => {
-            failedSessionIds.add(childSessionId);
-          });
-        } finally {
-          await this.refreshSessionSubagents(relation.parentSessionId, { force: true }).catch(() => []);
-        }
-      }
-
-      terminatedSessionIds.forEach((sessionKey) => {
-        failedSessionIds.delete(sessionKey);
-      });
-      return {
-        terminatedSessionIds: Array.from(terminatedSessionIds),
-        failedSessionIds: Array.from(failedSessionIds)
-      };
     },
     async ensureAssistantMessageHistoryId(sessionId, message = null) {
       const targetSessionId = resolveSessionKey(sessionId || this.activeSessionId);

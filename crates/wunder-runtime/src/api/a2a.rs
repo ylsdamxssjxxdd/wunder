@@ -4,7 +4,7 @@ use crate::i18n;
 use crate::orchestrator::OrchestratorError;
 use crate::schemas::{StreamEvent, WunderRequest};
 use crate::state::AppState;
-use crate::storage::UserTokenBalanceStatus;
+use crate::storage::UserQuotaStatus;
 use crate::tools::{
     builtin_aliases, builtin_tool_specs, mcp_pack_spec_for_server, resolve_tool_name,
     MCP_PACK_TOOL_NAME,
@@ -430,58 +430,53 @@ impl A2AError {
         )
     }
 
-    fn token_insufficient(status: &UserTokenBalanceStatus) -> Self {
-        let message = i18n::t("error.user_token_insufficient");
+    fn quota_insufficient(status: &UserQuotaStatus) -> Self {
+        let message = i18n::t("error.user_quota_insufficient");
         Self::new(
             A2A_QUOTA_EXCEEDED,
             message,
             Some(json!({
-                "token_account": {
-                    "token_balance": status.balance,
-                    "token_granted_total": status.granted_total,
-                    "token_used_total": status.used_total,
-                    "daily_token_grant": status.daily_grant,
-                    "last_token_grant_date": status.last_grant_date,
+                "quota_account": {
+                    "quota_balance": status.balance,
+                    "quota_granted_total": status.granted_total,
+                    "quota_used_total": status.used_total,
+                    "daily_quota_grant": status.daily_grant,
+                    "last_quota_grant_date": status.last_grant_date,
                 }
             })),
         )
     }
 }
 
-fn token_status_from_payload(payload: &Value) -> Option<UserTokenBalanceStatus> {
+fn quota_status_from_payload(payload: &Value) -> Option<UserQuotaStatus> {
     let detail = payload.get("detail")?.as_object()?;
     let balance = detail
-        .get("token_balance")
+        .get("quota_balance")
         .and_then(Value::as_i64)
-        .or_else(|| detail.get("remaining").and_then(Value::as_i64))
         .unwrap_or(0);
     let granted_total = detail
-        .get("token_granted_total")
+        .get("quota_granted_total")
         .and_then(Value::as_i64)
-        .or_else(|| detail.get("daily_quota").and_then(Value::as_i64))
         .unwrap_or(0);
     let used_total = detail
-        .get("token_used_total")
+        .get("quota_used_total")
         .and_then(Value::as_i64)
-        .or_else(|| detail.get("used").and_then(Value::as_i64))
         .unwrap_or(0);
     let daily_grant = detail
-        .get("daily_token_grant")
+        .get("daily_quota_grant")
         .and_then(Value::as_i64)
         .unwrap_or(0);
     let last_grant_date = detail
-        .get("last_token_grant_date")
-        .or_else(|| detail.get("date"))
+        .get("last_quota_grant_date")
         .and_then(Value::as_str)
         .map(str::to_string);
-    Some(UserTokenBalanceStatus {
+    Some(UserQuotaStatus {
         balance,
         granted_total,
         used_total,
         daily_grant,
         last_grant_date,
         allowed: false,
-        overspent_tokens: 0,
     })
 }
 
@@ -608,7 +603,7 @@ fn a2a_error_code(code: i64) -> &'static str {
         A2A_TASK_NOT_CANCELABLE => "TASK_NOT_CANCELABLE",
         A2A_PUSH_NOT_SUPPORTED => "PUSH_NOT_SUPPORTED",
         A2A_CONTENT_TYPE_NOT_SUPPORTED => "CONTENT_TYPE_NOT_SUPPORTED",
-        A2A_QUOTA_EXCEEDED => "USER_TOKEN_INSUFFICIENT",
+        A2A_QUOTA_EXCEEDED => "USER_QUOTA_INSUFFICIENT",
         A2A_VERSION_NOT_SUPPORTED => "VERSION_NOT_SUPPORTED",
         _ => "REQUEST_ERROR",
     }
@@ -703,11 +698,11 @@ impl A2aService {
         if let Some(orchestrator_err) = err.downcast_ref::<OrchestratorError>() {
             if matches!(
                 orchestrator_err.code(),
-                "USER_QUOTA_EXCEEDED" | "USER_TOKEN_INSUFFICIENT"
+                "USER_QUOTA_EXCEEDED" | "USER_QUOTA_INSUFFICIENT"
             ) {
                 let payload = orchestrator_err.to_payload();
-                if let Some(status) = token_status_from_payload(&payload) {
-                    return A2AError::token_insufficient(&status);
+                if let Some(status) = quota_status_from_payload(&payload) {
+                    return A2AError::quota_insufficient(&status);
                 }
                 return A2AError::new(A2A_QUOTA_EXCEEDED, orchestrator_err.to_string(), None);
             }
@@ -2073,14 +2068,14 @@ mod tests {
     }
 
     #[test]
-    fn token_status_from_payload_reads_token_fields() {
-        let status = token_status_from_payload(&json!({
+    fn quota_status_from_payload_reads_quota_fields() {
+        let status = quota_status_from_payload(&json!({
             "detail": {
-                "token_balance": 80,
-                "token_granted_total": 120,
-                "token_used_total": 40,
-                "daily_token_grant": 100,
-                "last_token_grant_date": "2026-04-10"
+                "quota_balance": 80,
+                "quota_granted_total": 120,
+                "quota_used_total": 40,
+                "daily_quota_grant": 100,
+                "last_quota_grant_date": "2026-04-10"
             }
         }))
         .expect("status");
@@ -2093,23 +2088,5 @@ mod tests {
         assert!(!status.allowed);
     }
 
-    #[test]
-    fn token_status_from_payload_falls_back_to_legacy_quota_fields() {
-        let status = token_status_from_payload(&json!({
-            "detail": {
-                "daily_quota": 200,
-                "used": 60,
-                "remaining": 140,
-                "date": "2026-04-10"
-            }
-        }))
-        .expect("status");
 
-        assert_eq!(status.balance, 140);
-        assert_eq!(status.granted_total, 200);
-        assert_eq!(status.used_total, 60);
-        assert_eq!(status.daily_grant, 0);
-        assert_eq!(status.last_grant_date.as_deref(), Some("2026-04-10"));
-        assert!(!status.allowed);
-    }
 }

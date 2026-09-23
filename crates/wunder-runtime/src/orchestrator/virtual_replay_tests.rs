@@ -28,9 +28,9 @@ async fn virtual_replay_works_at_zero_balance_without_spending_or_granting_token
             false,
         )
         .unwrap();
-    user.token_balance = 0;
-    user.last_token_grant_date = Some(UserStore::today_string());
-    state.user_store.update_user(&user).unwrap();
+    user.quota_balance = 0;
+    user.last_quota_grant_date = Some(UserStore::today_string());
+    state.storage.upsert_user_account(&user).unwrap();
     let before = state
         .user_store
         .get_user_by_id(&user.user_id)
@@ -77,8 +77,8 @@ async fn virtual_replay_works_at_zero_balance_without_spending_or_granting_token
         .get_user_by_id(&user.user_id)
         .unwrap()
         .unwrap();
-    assert_eq!(after.token_balance, before.token_balance);
-    assert_eq!(after.token_granted_total, before.token_granted_total);
-    assert_eq!(after.token_used_total, before.token_used_total);
-    assert_eq!(after.last_token_grant_date, before.last_token_grant_date);
+    assert_eq!(after.quota_balance, before.quota_balance);
+    assert_eq!(after.quota_granted_total, before.quota_granted_total);
+    assert_eq!(after.quota_used_total, before.quota_used_total);
+    assert_eq!(after.last_quota_grant_date, before.last_quota_grant_date);
 }

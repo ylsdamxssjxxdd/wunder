@@ -10,10 +10,17 @@ mod demo_entities;
 mod desktop_launch;
 mod entity_state;
 mod message_blocks;
+#[cfg(feature = "native-runtime")]
+mod native_chat;
+#[cfg(feature = "native-runtime")]
+mod native_runtime;
+#[cfg(feature = "native-runtime")]
+mod native_smoke;
 mod runtime_settings;
 mod smoke;
 mod stream_events;
 mod stream_ui;
+mod subagent_pool;
 mod workspace_api;
 mod workspace_ui;
 
@@ -46,6 +53,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .next()
             .ok_or("missing smoke-check output directory")?;
         return smoke::run(&app, std::path::PathBuf::from(directory));
+    }
+    #[cfg(feature = "native-runtime")]
+    if first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-smoke")) {
+        let directory = std::path::PathBuf::from(
+            arguments
+                .next()
+                .ok_or("missing isolated native directory")?,
+        );
+        if !directory.join("runtime/config/wunder.yaml").is_file() {
+            return Err("native smoke requires an explicitly prepared isolated runtime".into());
+        }
+        let mut args = wunder_desktop::args::DesktopArgs::native_defaults();
+        args.temp_root = Some(directory.join("runtime").canonicalize()?);
+        args.workspace = Some(directory.join("workspace"));
+        let runtime = std::sync::Arc::new(wunder_desktop::NativeDesktop::start_with_args(args)?);
+        native_smoke::check_runtime(&runtime)?;
+        native_chat::install(&app, runtime);
+        app.show()?;
+        return native_smoke::run(&app, directory);
+    }
+    #[cfg(feature = "native-runtime")]
+    if first_argument.as_deref() == Some(std::ffi::OsStr::new("--native")) {
+        native_runtime::install(&app);
+        app.show()?;
+        app.run()?;
+        return Ok(());
     }
     let _bridge = if first_argument.as_deref() == Some(std::ffi::OsStr::new("--demo")) {
         demo::install(&app);

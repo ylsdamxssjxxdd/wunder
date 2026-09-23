@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-09-22T13:24:33.924367+00:00",
+  "generated_at": "2026-09-23T02:49:33.954662+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -142,7 +142,7 @@
                   {
                     "slug": "zh-CN/concepts/core-multi-user-management",
                     "title": "多用户管理",
-                    "summary": "Server 模式的核心能力。组织、用户、权限、Token 账户，从架构层面就内置治理。",
+                    "summary": "Server 模式的核心能力。组织、用户、权限、额度账户，从架构层面就内置治理。",
                     "url": "/docs/zh-CN/concepts/core-multi-user-management/"
                   },
                   {
@@ -659,8 +659,8 @@
                   },
                   {
                     "slug": "zh-CN/concepts/quota-and-token-usage",
-                    "title": "Token 与配额",
-                    "summary": "Token 账户是用户的资源余额，Token 占用是当前上下文的实际负载。两个概念相关但不同，理解区别才能用好配额。",
+                    "title": "额度与 Token 用量",
+                    "summary": "每次模型请求消耗 1 额度，每日发放 1000；Token 用量用于运行观测。",
                     "url": "/docs/zh-CN/concepts/quota-and-token-usage/"
                   },
                   {
@@ -846,7 +846,7 @@
                   {
                     "slug": "en/concepts/core-multi-user-management",
                     "title": "Multi-user Management",
-                    "summary": "The Multi-user Management core explains why Wunder must build organization, user, permission, and token account governance into the system skeleton from day one, rather than bolting it on later.",
+                    "summary": "The Multi-user Management core explains why Wunder must build organization, user, permission, and quota account governance into the system skeleton from day one, rather than bolting it on later.",
                     "url": "/docs/en/concepts/core-multi-user-management/"
                   },
                   {
@@ -1363,8 +1363,8 @@
                   },
                   {
                     "slug": "en/concepts/quota-and-token-usage",
-                    "title": "Token Account and Usage",
-                    "summary": "Wunder uses Token accounts to manage user's disposable balance, and Token usage to observe context load; these are related but not the same thing.",
+                    "title": "Quota and Token Usage",
+                    "summary": "Each model request costs 1 credit; regular users receive 1000 credits daily. Token usage remains diagnostic.",
                     "url": "/docs/en/concepts/quota-and-token-usage/"
                   },
                   {
@@ -2990,8 +2990,8 @@
       "slug": "zh-CN/concepts/core-multi-user-management",
       "language": "zh-CN",
       "title": "多用户管理",
-      "summary": "Server 模式的核心能力。组织、用户、权限、Token 账户，从架构层面就内置治理。",
-      "updated_at": "2026-06-29",
+      "summary": "Server 模式的核心能力。组织、用户、权限、额度账户，从架构层面就内置治理。",
+      "updated_at": "2026-09-23",
       "read_when": [],
       "source_docs": [],
       "tab": "核心",
@@ -3049,7 +3049,7 @@
         {
           "id": "section-10",
           "level": 3,
-          "text": "Token 账户"
+          "text": "额度账户"
         },
         {
           "id": "section-11",
@@ -3064,7 +3064,7 @@
         {
           "id": "section-13",
           "level": 3,
-          "text": "设置 Token"
+          "text": "设置额度"
         },
         {
           "id": "section-14",
@@ -4691,6 +4691,11 @@
           "id": "section-11",
           "level": 2,
           "text": "重点理解"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "保留与复用子智能体"
         }
       ],
       "prev_slug": "zh-CN/tools/thread-control",
@@ -6149,7 +6154,7 @@
       "language": "zh-CN",
       "title": "蜂巢界面",
       "summary": "蜂巢是用户的工作台。左栏导航、中栏列表、右栏工作区，所有日常工作都在这里完成。",
-      "updated_at": "2026-09-22",
+      "updated_at": "2026-09-23",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -6999,7 +7004,7 @@
       "language": "zh-CN",
       "title": "账户与安全",
       "summary": "分清不同账户类型和权限层级，配置好安全边界，让系统在可控范围内运行。",
-      "updated_at": "2026-06-30",
+      "updated_at": "2026-09-23",
       "read_when": [],
       "source_docs": [],
       "tab": "运维",
@@ -7150,7 +7155,7 @@
       "language": "zh-CN",
       "title": "监控与 WunderBench",
       "summary": "观测能力各有分工：会话监控看线程、工具统计看热点、性能采样看链路、WunderBench 看模型能力质量。",
-      "updated_at": "2026-06-30",
+      "updated_at": "2026-09-23",
       "read_when": [],
       "source_docs": [],
       "tab": "运维",
@@ -7607,7 +7612,7 @@
       "language": "zh-CN",
       "title": "功能与能力速查",
       "summary": "Wunder 能做什么，每个能力在哪使用。按功能类别组织，方便快速定位。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-09-23",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -8317,7 +8322,7 @@
       "language": "zh-CN",
       "title": "管理端面板指南",
       "summary": "管理员后台各面板的功能定位，帮助管理员快速找到需要的管理入口。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-09-23",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -9339,9 +9344,9 @@
     "zh-CN/concepts/quota-and-token-usage": {
       "slug": "zh-CN/concepts/quota-and-token-usage",
       "language": "zh-CN",
-      "title": "Token 与配额",
-      "summary": "Token 账户是用户的资源余额，Token 占用是当前上下文的实际负载。两个概念相关但不同，理解区别才能用好配额。",
-      "updated_at": "2026-06-29",
+      "title": "额度与 Token 用量",
+      "summary": "每次模型请求消耗 1 额度，每日发放 1000；Token 用量用于运行观测。",
+      "updated_at": "2026-09-23",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -9354,77 +9359,17 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Token 与配额"
+          "text": "额度与 Token 用量"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "原理"
+          "text": "查看和调整"
         },
         {
           "id": "section-3",
-          "level": 3,
-          "text": "Token 账户"
-        },
-        {
-          "id": "section-4",
-          "level": 3,
-          "text": "Token 占用"
-        },
-        {
-          "id": "section-5",
           "level": 2,
-          "text": "作用"
-        },
-        {
-          "id": "section-6",
-          "level": 3,
-          "text": "Token 账户的作用"
-        },
-        {
-          "id": "section-7",
-          "level": 3,
-          "text": "Token 占用的作用"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "实践"
-        },
-        {
-          "id": "section-9",
-          "level": 3,
-          "text": "查看账户余额"
-        },
-        {
-          "id": "section-10",
-          "level": 3,
-          "text": "查看上下文占用"
-        },
-        {
-          "id": "section-11",
-          "level": 3,
-          "text": "优化使用"
-        },
-        {
-          "id": "section-12",
-          "level": 3,
-          "text": "管理员管理 Token"
-        },
-        {
-          "id": "section-13",
-          "level": 2,
-          "text": "用户等级与发放"
-        },
-        {
-          "id": "section-14",
-          "level": 2,
-          "text": "常见误区"
-        },
-        {
-          "id": "section-15",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "Token 统计"
         }
       ],
       "prev_slug": "zh-CN/concepts/memory",
@@ -10624,7 +10569,7 @@
       "language": "en",
       "title": "Core Concepts",
       "summary": "The eleven core concepts are not eleven feature bullets. They are the structural boundaries wunder establishes for long-running threads, concurrent users, and multiple entry surfaces.",
-      "updated_at": "2026-06-30",
+      "updated_at": "2026-09-23",
       "read_when": [
         "You are trying to understand wunder systematically for the first time",
         "You are preparing for integration, operations, or tool development and need one shared perspective",
@@ -11302,8 +11247,8 @@
       "slug": "en/concepts/core-multi-user-management",
       "language": "en",
       "title": "Multi-user Management",
-      "summary": "The Multi-user Management core explains why Wunder must build organization, user, permission, and token account governance into the system skeleton from day one, rather than bolting it on later.",
-      "updated_at": "2026-06-29",
+      "summary": "The Multi-user Management core explains why Wunder must build organization, user, permission, and quota account governance into the system skeleton from day one, rather than bolting it on later.",
+      "updated_at": "2026-09-23",
       "read_when": [
         "You are deploying server or designing the admin side",
         "You want to understand why multi-user governance cannot be retrofitted"
@@ -14376,7 +14321,7 @@
       "language": "en",
       "title": "Hive Interface",
       "summary": "Hive is your workbench. Left navigation, middle list, right workspace — all daily work happens here.",
-      "updated_at": "2026-09-22",
+      "updated_at": "2026-09-23",
       "read_when": [],
       "source_docs": [],
       "tab": "Surfaces",
@@ -15291,7 +15236,7 @@
       "language": "en",
       "title": "Monitoring and WunderBench",
       "summary": "Wunder's observability surface is not a single monitoring page, but composed of session monitoring, tool statistics, performance sampling, throughput stress testing, and WunderBench together.",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-09-23",
       "read_when": [
         "You are troubleshooting thread, tool, or model pipeline issues",
         "You need to distinguish the responsibilities of monitor, throughput, performance, and WunderBench"
@@ -16074,7 +16019,7 @@
       "language": "en",
       "title": "Admin Panels",
       "summary": "The admin-side frontend is not a single debug page, but a set of well-organized governance panels with clear responsibilities.",
-      "updated_at": "2026-04-30",
+      "updated_at": "2026-09-23",
       "read_when": [
         "You are using the admin side for the first time",
         "You want to know where to find a specific configuration, monitoring view, or documentation entry"
@@ -16879,17 +16824,11 @@
     "en/concepts/quota-and-token-usage": {
       "slug": "en/concepts/quota-and-token-usage",
       "language": "en",
-      "title": "Token Account and Usage",
-      "summary": "Wunder uses Token accounts to manage user's disposable balance, and Token usage to observe context load; these are related but not the same thing.",
-      "updated_at": "2026-06-29",
-      "read_when": [
-        "You are looking at Token balance, daily grants, or session resource usage",
-        "You want to understand why the system distinguishes context_occupancy_tokens from request consumption"
-      ],
-      "source_docs": [
-        "docs/API文档.md",
-        "docs/设计文档/01-系统总体设计.md"
-      ],
+      "title": "Quota and Token Usage",
+      "summary": "Each model request costs 1 credit; regular users receive 1000 credits daily. Token usage remains diagnostic.",
+      "updated_at": "2026-09-23",
+      "read_when": [],
+      "source_docs": [],
       "tab": "Reference",
       "group": "Deep Dives",
       "group_path": [
@@ -16900,52 +16839,17 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Token Account and Usage"
+          "text": "Quota and Token Usage"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "Key Points"
+          "text": "View and manage credits"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "What Is a Token Account"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "What Is Token Usage"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "Why Emphasize This Metric"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "Key Fields to Watch"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "Token Account and Token Usage Are Not the Same Thing"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "Applicable Scenarios"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "Implementation Suggestions"
-        },
-        {
-          "id": "section-10",
-          "level": 2,
-          "text": "Further Reading"
+          "text": "Token observations"
         }
       ],
       "prev_slug": "en/concepts/memory",

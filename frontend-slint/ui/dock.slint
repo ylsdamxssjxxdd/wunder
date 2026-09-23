@@ -13,11 +13,41 @@ export component WorkDock inherits Rectangle {
     in property <bool> tasks-enabled: true;
     callback browse-files();
     in property <[Conversation]> conversations;
+    in property <[Conversation]> subagents;
+    in property <string> subagents-status;
+    callback refresh-subagents();
+    callback inspect-subagent(int);
     in property <[FileCard]> files;
     background: Theme.dock;
     private property <string> keyword;
     VerticalLayout {
         padding: 10px; spacing: 10px;
+        Rectangle {
+            min-height: 110px; max-height: 200px; vertical-stretch: 1;
+            border-radius: 12px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+            VerticalLayout {
+                padding: 12px; spacing: 6px;
+                HorizontalLayout {
+                    height: 26px;
+                    Text { text: "子智能体 · " + root.subagents.length; color: Theme.text; font-size: 13px; font-weight: 600; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新子智能体"; clicked => { root.refresh-subagents(); } }
+                }
+                ScrollView {
+                    horizontal-scrollbar-policy: always-off;
+                    VerticalLayout {
+                        alignment: start; spacing: 4px;
+                        for child[index] in root.subagents : Rectangle {
+                            height: 44px;
+                            Action { width: parent.width; height: parent.height; label: child.title; clicked => { root.inspect-subagent(index); } }
+                            Text { x: 8px; y: 3px; width: parent.width - 16px; text: child.title; color: Theme.text; font-size: 12px; overflow: elide; }
+                            Text { x: 8px; y: 23px; width: parent.width - 16px; text: child.preview; color: Theme.muted; font-size: 11px; overflow: elide; }
+                        }
+                    }
+                }
+                Text { text: root.subagents-status; height: 16px; color: Theme.muted; font-size: 10px; overflow: elide; }
+            }
+        }
         Rectangle {
             border-radius: 12px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
             vertical-stretch: 1;

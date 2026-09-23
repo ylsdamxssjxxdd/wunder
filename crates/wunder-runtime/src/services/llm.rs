@@ -11,6 +11,8 @@ use std::time::Duration;
 use tracing::warn;
 
 mod context_probe;
+mod admission;
+pub(crate) mod benchmark;
 mod payload;
 mod provider;
 mod response;
@@ -702,11 +704,12 @@ fn text_overlap_len(current: &str, next: &str) -> usize {
 pub struct LlmClient {
     http: Client,
     config: LlmModelConfig,
+    request_admission: Option<admission::RequestAdmission>,
 }
 
 impl LlmClient {
     pub fn new(http: Client, config: LlmModelConfig) -> Self {
-        Self { http, config }
+        Self { http, config, request_admission: None }
     }
 
     fn is_anthropic_provider(&self) -> bool {
@@ -719,6 +722,7 @@ impl LlmClient {
         Self {
             http: self.http.clone(),
             config,
+            request_admission: self.request_admission.clone(),
         }
     }
 
@@ -742,6 +746,7 @@ impl LlmClient {
         tools: Option<&[Value]>,
     ) -> Result<LlmResponse> {
         let api_mode = self.api_mode();
+        self.admit_request().await?;
         let response = self
             .http
             .post(self.endpoint())
@@ -845,6 +850,7 @@ impl LlmClient {
         let mut include_usage = self.config.stream_include_usage.unwrap_or(true);
         let mut usage_fallback = include_usage;
         loop {
+            self.admit_request().await?;
             let response = self
                 .http
                 .post(self.endpoint())
@@ -883,9 +889,9 @@ impl LlmClient {
                     return self
                         .complete_with_tools(messages, tools)
                         .await
-                        .map_err(|fallback_err| {
-                            anyhow!(
-                                "LLM stream request failed: {status} {}; fallback request failed: {fallback_err}",
+                        .with_context(|| {
+                            format!(
+                                "LLM stream request failed: {status} {}; fallback request failed",
                                 truncate_text(&text, 2048)
                             )
                         });
@@ -995,7 +1001,7 @@ impl LlmClient {
                         if err.downcast_ref::<usage::FailedResponseUsage>().is_some() {
                             return Err(err);
                         }
-                        return Err(anyhow!("{empty_reason}; fallback request failed: {err}"));
+                        return Err(err.context(format!("{empty_reason}; fallback request failed")));
                     }
                 }
             }

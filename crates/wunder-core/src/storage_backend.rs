@@ -436,6 +436,8 @@ pub trait RetentionStore {
 
 /// User, organization, token, external link, and session-scope storage.
 pub trait UserAccountStore {
+    /// Update identity fields without overwriting concurrent quota or experience changes.
+    fn update_user_account_profile(&self, record: &UserAccountRecord) -> Result<()>;
     fn upsert_user_account(&self, record: &UserAccountRecord) -> Result<()>;
     fn upsert_user_accounts(&self, records: &[UserAccountRecord]) -> Result<()>;
     fn get_user_account(&self, user_id: &str) -> Result<Option<UserAccountRecord>>;
@@ -477,6 +479,11 @@ pub trait UserAccountStore {
 
 /// Chat session catalog storage.
 pub trait ChatSessionStore {
+    /// User work catalog: exclude model-created children before counting/pagination.
+    fn list_work_chat_sessions(
+        &self, user_id: &str, agent_id: Option<&str>, status: Option<&str>,
+        offset: i64, limit: i64,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)>;
     /// Global ownership lookup for privileged administration only.
     fn get_chat_session_owner(&self, session_id: &str) -> Result<Option<String>>;
     /// Resolve a bounded set of active catalog entries within one user's scope.
@@ -950,29 +957,31 @@ pub trait AgentDirectoryStore {
     fn get_team_task(&self, task_id: &str) -> Result<Option<TeamTaskRecord>>;
 }
 
-/// User token balance accounting storage.
-pub trait TokenBalanceStore {
-    fn prepare_user_token_balance(
+/// User quota balance accounting storage.
+pub trait QuotaBalanceStore {
+    /// Set the available balance and settle today's grant atomically.
+    fn set_user_quota_balance(&self, user_id: &str, today: &str, daily_grant: i64, balance: i64) -> Result<Option<UserQuotaStatus>>;
+    fn prepare_user_quota(
         &self,
         user_id: &str,
         today: &str,
         daily_grant: i64,
-    ) -> Result<Option<UserTokenBalanceStatus>>;
-    fn consume_user_tokens(
+    ) -> Result<Option<UserQuotaStatus>>;
+    fn consume_user_quota(
         &self,
         user_id: &str,
         today: &str,
         daily_grant: i64,
         amount: i64,
-    ) -> Result<Option<UserTokenBalanceStatus>>;
-    fn grant_user_tokens(
+    ) -> Result<Option<UserQuotaStatus>>;
+    fn grant_user_quota(
         &self,
         user_id: &str,
         today: &str,
         daily_grant: i64,
         amount: i64,
         updated_at: f64,
-    ) -> Result<Option<UserTokenBalanceStatus>>;
+    ) -> Result<Option<UserQuotaStatus>>;
 }
 
 /// Complete storage surface kept for existing runtime call paths.
@@ -1001,7 +1010,7 @@ pub trait StorageBackend:
     + SessionRunStore
     + CronStore
     + AgentDirectoryStore
-    + TokenBalanceStore
+    + QuotaBalanceStore
     + Send
     + Sync
 {
@@ -1033,7 +1042,7 @@ impl<T> StorageBackend for T where
         + SessionRunStore
         + CronStore
         + AgentDirectoryStore
-        + TokenBalanceStore
+        + QuotaBalanceStore
         + Send
         + Sync
 {

@@ -115,7 +115,7 @@
               </div>
               <div class="profile-metric-item">
                 <div class="profile-stat-label">{{ t('profile.quota.dailyGrant') }}</div>
-                <div class="profile-stat-value">{{ dailyTokenGrantText }}</div>
+                <div class="profile-stat-value">{{ dailyQuotaGrantText }}</div>
               </div>
             </div>
           </div>
@@ -457,65 +457,14 @@ const parseQuotaNumber = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-const normalizeQuotaDate = (value) => {
-  const text = String(value || '').trim();
-  if (!text) return '';
-  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (match) {
-    return `${match[1]}-${match[2]}-${match[3]}`;
-  }
-  const parsed = new Date(text);
-  if (Number.isNaN(parsed.getTime())) return '';
-  const pad = (part) => String(part).padStart(2, '0');
-  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
-};
-
-const resolveTodayString = () => {
-  const now = new Date();
-  const pad = (part) => String(part).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-};
-
-const accountQuotaSnapshot = computed(() => {
-  const user = authStore.user || {};
-  const daily = parseQuotaNumber(
-    user.token_granted_total ?? user.tokenGrantedTotal ?? user.daily_quota ?? user.dailyQuota
-  );
-  const used = parseQuotaNumber(
-    user.token_used_total ?? user.tokenUsedTotal ?? user.daily_quota_used ?? user.dailyQuotaUsed
-  );
-  const remaining = parseQuotaNumber(
-    user.token_balance
-      ?? user.tokenBalance
-      ?? user.daily_quota_remaining
-      ?? user.dailyQuotaRemaining
-  );
-  const date = normalizeQuotaDate(
-    user.last_token_grant_date ?? user.lastTokenGrantDate ?? user.daily_quota_date ?? user.dailyQuotaDate ?? ''
-  );
-  const dailyGrant = parseQuotaNumber(
-    user.daily_token_grant ?? user.dailyTokenGrant ?? user.token_daily_grant ?? user.tokenDailyGrant
-  );
-  if (daily === null && used === null && remaining === null && !date && dailyGrant === null) return null;
-  return {
-    daily,
-    used,
-    remaining,
-    date: date || resolveTodayString(),
-    dailyGrant
-  };
-});
-
 const latestQuotaSnapshot = computed(() => {
-  const accountSnapshot = accountQuotaSnapshot.value;
-  if (accountSnapshot) return accountSnapshot;
-  const today = resolveTodayString();
-  for (let i = assistantMessages.value.length - 1; i >= 0; i -= 1) {
-    const snapshot = assistantMessages.value[i]?.stats?.quotaSnapshot;
-    const date = normalizeQuotaDate(snapshot?.date);
-    if (snapshot && date && date === today) return snapshot;
-  }
-  return accountQuotaSnapshot.value;
+  const user = authStore.user || {};
+  return {
+    daily: parseQuotaNumber(user.quota_granted_total),
+    used: parseQuotaNumber(user.quota_used_total),
+    remaining: parseQuotaNumber(user.quota_balance),
+    dailyGrant: parseQuotaNumber(user.daily_quota_grant)
+  };
 });
 
 const quotaTotal = computed(() => {
@@ -719,7 +668,7 @@ const quotaTotalText = computed(() =>
   Number.isFinite(quotaTotal.value) ? formatNumber(quotaTotal.value) : '-'
 );
 
-const dailyTokenGrantText = computed(() => {
+const dailyQuotaGrantText = computed(() => {
   const grant = latestQuotaSnapshot.value?.dailyGrant;
   return Number.isFinite(grant) ? formatNumber(grant) : '-';
 });

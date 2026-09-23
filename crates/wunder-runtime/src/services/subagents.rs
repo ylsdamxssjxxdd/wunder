@@ -36,6 +36,7 @@ pub struct ParentTurnRef {
 
 #[derive(Debug, Clone)]
 pub struct ParentDispatchConfig {
+    pub(crate) cancellation_guard: Option<Arc<crate::services::runtime::thread::child_runs::ChildRunGuard>>,
     pub parent_session_id: String,
     pub dispatch_id: Option<String>,
     pub strategy: Option<String>,
@@ -848,6 +849,12 @@ fn schedule_parent_auto_wake(
     };
     long_task::spawn("services.subagents.parent_auto_wake", async move {
         wait_parent_session_unlock(storage.clone(), &user_id, &parent_session_id).await;
+        // Retain the original run cancellation through delayed wake-up; a new
+        // parent turn must not revive a completion from an interrupted run.
+        let _cancellation_guard = dispatch.cancellation_guard;
+        if _cancellation_guard.as_ref().is_some_and(|guard| guard.token.is_cancelled()) {
+            return;
+        }
         match parent_session_blocks_auto_wake(
             storage.as_ref(),
             monitor.as_deref(),
@@ -1075,6 +1082,7 @@ fn runtime_marker_matches(value: Option<&str>, expected: &str) -> bool {
 
 fn should_include_parent_subagent_runtime_item(item: &SubagentRuntimeItem) -> bool {
     !runtime_marker_matches(item.session.spawned_by.as_deref(), "agent_swarm")
+        && !runtime_marker_matches(item.session.spawned_by.as_deref(), "thread_control")
         && !item
             .run
             .as_ref()

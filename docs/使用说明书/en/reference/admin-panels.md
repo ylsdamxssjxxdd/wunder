@@ -28,10 +28,10 @@ If you need to check runtime state, organizational structure, or global configur
 
 ### User Management Supplement
 
-The settings dialog in User Management now also handles Token account governance:
+The settings dialog in User Management now also handles Quota account governance:
 
-- You can directly modify a regular user's Token balance
-- You can issue or deduct Tokens with proper accounting semantics
+- You can directly modify a regular user's Quota balance
+- You can grant or deduct credits with proper accounting semantics
 - Deductions validate the available balance to prevent over-drafting
 - Admin accounts are not subject to these balance restrictions
 
@@ -51,7 +51,8 @@ If you need to see "how models are configured and exposed", start here.
 
 This group is oriented toward engineering validation:
 
-- Throughput Testing
+- Throughput Testing: one model and input/output length combination per run, live metrics on the right, and selectable history curves. Only the latest 50 summaries are retained; tests create no sessions or thread logs.
+- Virtual models have Fast (default), Medium and Slow profiles: prefill at 2000 / 500 / 100 tokens/s and reasoning/answer generation at 200 / 50 / 10 tokens/s. Random replies and throughput simulations emit reasoning before the answer; replay preserves recorded reasoning. Benchmark reasoning uses one quarter of the total output budget. History retains the profile and separates curves accordingly.
 - Performance Testing
 - Swarm Testing
 - Capability Evaluation

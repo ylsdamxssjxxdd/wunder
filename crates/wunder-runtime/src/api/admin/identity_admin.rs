@@ -70,8 +70,8 @@ pub(super) fn router() -> Router<Arc<AppState>> {
             post(admin_user_accounts_reset_password),
         )
         .route(
-            "/wunder/admin/user_accounts/{user_id}/token_adjustment",
-            post(admin_user_accounts_token_adjustment),
+            "/wunder/admin/user_accounts/{user_id}/quota_adjustment",
+            post(admin_user_accounts_quota_adjustment),
         )
         .route(
             "/wunder/admin/user_accounts/{user_id}/logout",
@@ -703,9 +703,8 @@ async fn admin_user_accounts_list(
                 .as_ref()
                 .and_then(|unit_id| unit_map.get(unit_id));
             let profile = UserStore::to_profile_with_unit(&user, unit);
-            let token_status = UserStore::effective_token_balance_status(
+            let quota_status = UserStore::effective_quota_status(
                 &user,
-                unit.map(|item| item.level),
                 Some(today.as_str()),
             );
             let active_count = active_map.get(&profile.id).copied().unwrap_or(0);
@@ -722,36 +721,22 @@ async fn admin_user_accounts_list(
                 map.insert("active_sessions".to_string(), json!(active_count));
                 map.insert("online".to_string(), json!(presence_online));
                 map.insert("last_seen_at".to_string(), json!(presence_last_seen));
-                map.insert("token_balance".to_string(), json!(token_status.balance));
+                map.insert("quota_balance".to_string(), json!(quota_status.balance));
                 map.insert(
-                    "token_granted_total".to_string(),
-                    json!(token_status.granted_total),
+                    "quota_granted_total".to_string(),
+                    json!(quota_status.granted_total),
                 );
                 map.insert(
-                    "token_used_total".to_string(),
-                    json!(token_status.used_total),
+                    "quota_used_total".to_string(),
+                    json!(quota_status.used_total),
                 );
                 map.insert(
-                    "daily_token_grant".to_string(),
-                    json!(token_status.daily_grant),
+                    "daily_quota_grant".to_string(),
+                    json!(quota_status.daily_grant),
                 );
                 map.insert(
-                    "last_token_grant_date".to_string(),
-                    json!(token_status.last_grant_date),
-                );
-                // Legacy aliases for existing admin clients during migration.
-                map.insert("daily_quota".to_string(), json!(token_status.granted_total));
-                map.insert(
-                    "daily_quota_used".to_string(),
-                    json!(token_status.used_total),
-                );
-                map.insert(
-                    "daily_quota_remaining".to_string(),
-                    json!(token_status.balance),
-                );
-                map.insert(
-                    "daily_quota_date".to_string(),
-                    json!(token_status.last_grant_date),
+                    "last_quota_grant_date".to_string(),
+                    json!(quota_status.last_grant_date),
                 );
                 map.insert("activity_series".to_string(), Value::Array(activity_series));
             }
@@ -888,14 +873,24 @@ async fn admin_user_accounts_update(
     if let Some(roles) = payload.roles {
         record.roles = normalize_user_roles(roles);
     }
-    if let Some(token_balance) = payload.token_balance {
-        record.token_balance = token_balance.max(0);
+    if payload.quota_balance.is_some_and(|balance| balance < 0) {
+        return Err(error_response(StatusCode::BAD_REQUEST, "quota balance must be nonnegative".to_string()));
+    }
+    if payload.quota_balance.is_some() && UserStore::is_admin(&record) {
+        return Err(error_response(StatusCode::BAD_REQUEST, "admin users do not use quota balance limits".to_string()));
     }
     record.updated_at = now_ts();
     state
         .user_store
         .update_user(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if let Some(balance) = payload.quota_balance {
+        state.storage.set_user_quota_balance(cleaned, &UserStore::today_string(), UserStore::default_daily_quota(), balance)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
+    let record = state.user_store.get_user_by_id(cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found")))?;
     if let Err(err) = state.inner_visible.sync_user_state(&record.user_id).await {
         tracing::warn!("failed to sync user state after admin update: {err}");
     }
@@ -948,11 +943,11 @@ async fn admin_user_accounts_reset_password(
     ))
 }
 
-async fn admin_user_accounts_token_adjustment(
+async fn admin_user_accounts_quota_adjustment(
     State(state): State<Arc<AppState>>,
     headers: AxumHeaderMap,
     AxumPath(user_id): AxumPath<String>,
-    Json(payload): Json<UserAccountTokenAdjustmentRequest>,
+    Json(payload): Json<UserAccountQuotaAdjustmentRequest>,
 ) -> Result<Json<Value>, Response> {
     let cleaned = user_id.trim();
     if cleaned.is_empty() {
@@ -965,7 +960,7 @@ async fn admin_user_accounts_token_adjustment(
     if amount <= 0 {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
-            "token amount must be greater than 0".to_string(),
+            "quota amount must be greater than 0".to_string(),
         ));
     }
     let record = state
@@ -982,44 +977,31 @@ async fn admin_user_accounts_token_adjustment(
     if UserStore::is_admin(&record) {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
-            "admin users do not use token balance limits".to_string(),
+            "admin users do not use quota balance limits".to_string(),
         ));
     }
     let today = UserStore::today_string();
-    let unit = record
-        .unit_id
-        .as_ref()
-        .and_then(|unit_id| units.iter().find(|item| item.unit_id == *unit_id));
-    let daily_grant = UserStore::default_daily_token_grant_by_level(unit.map(|item| item.level));
+    let daily_grant = UserStore::default_daily_quota();
     let action = payload.action.trim().to_ascii_lowercase();
     match action.as_str() {
         "grant" => {
             state
                 .storage
-                .grant_user_tokens(cleaned, today.as_str(), daily_grant, amount, now_ts())
+                .grant_user_quota(cleaned, today.as_str(), daily_grant, amount, now_ts())
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         }
         "deduct" => {
-            let token_status = UserStore::effective_token_balance_status(
-                &record,
-                unit.map(|item| item.level),
-                Some(today.as_str()),
-            );
-            if amount > token_status.balance {
-                return Err(error_response(
-                    StatusCode::BAD_REQUEST,
-                    i18n::t("error.user_token_insufficient"),
-                ));
+            let status = state.storage.consume_user_quota(cleaned, today.as_str(), daily_grant, amount)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+                .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found")))?;
+            if !status.allowed {
+                return Err(error_response(StatusCode::BAD_REQUEST, i18n::t("error.user_quota_insufficient")));
             }
-            state
-                .storage
-                .consume_user_tokens(cleaned, today.as_str(), daily_grant, amount)
-                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         }
         _ => {
             return Err(error_response(
                 StatusCode::BAD_REQUEST,
-                "invalid token adjustment action".to_string(),
+                "invalid quota adjustment action".to_string(),
             ));
         }
     }
@@ -1695,7 +1677,7 @@ struct UserAccountUpdateRequest {
     #[serde(default)]
     roles: Option<Vec<String>>,
     #[serde(default)]
-    token_balance: Option<i64>,
+    quota_balance: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1704,7 +1686,7 @@ struct UserAccountPasswordResetRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct UserAccountTokenAdjustmentRequest {
+struct UserAccountQuotaAdjustmentRequest {
     action: String,
     amount: i64,
 }

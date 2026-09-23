@@ -14,7 +14,7 @@ use crate::storage::{
     SessionLockRecord, SessionLockStatus, SessionRunRecord, SpeechJobRecord, TeamRunRecord,
     TeamTaskRecord, UpdateAgentTaskStatusParams, UpdateChannelOutboxStatusParams,
     UpsertMemoryTaskLogParams, UserAccountRecord, UserAgentAccessRecord, UserAgentPresetBinding,
-    UserAgentRecord, UserExperienceUpdateResult, UserSessionScopeRecord, UserTokenBalanceStatus,
+    UserAgentRecord, UserExperienceUpdateResult, UserSessionScopeRecord, UserQuotaStatus,
     UserTokenRecord, UserToolAccessRecord, UserWorldConversationRecord,
     UserWorldConversationSummaryRecord, UserWorldEventRecord, UserWorldGroupRecord,
     UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult, UserWorldSendMessageResult,
@@ -56,7 +56,7 @@ mod session_goal;
 mod session_cleanup;
 mod session_lock_store;
 mod session_run;
-mod token_balance_store;
+mod quota_balance_store;
 mod user_account_store;
 mod user_world_store;
 mod vector_document_store;
@@ -81,7 +81,7 @@ use schema::PostgresSchemaStorage;
 use session_goal::PostgresSessionGoalStorage;
 use session_lock_store::PostgresSessionLockStorage;
 use session_run::PostgresSessionRunStorage;
-use token_balance_store::PostgresTokenBalanceStorage;
+use quota_balance_store::PostgresQuotaBalanceStorage;
 use user_account_store::PostgresUserAccountStorage;
 use user_world_store::PostgresUserWorldStorage;
 use vector_document_store::PostgresVectorDocumentStorage;

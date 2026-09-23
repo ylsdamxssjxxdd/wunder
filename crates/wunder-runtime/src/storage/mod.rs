@@ -8,6 +8,8 @@ mod factory;
 mod postgres;
 #[cfg(test)]
 mod queue_control_tests;
+#[cfg(test)]
+mod quota_tests;
 mod records;
 #[cfg(any(feature = "postgres-storage", feature = "sqlite-storage", test))]
 mod session_cleanup;

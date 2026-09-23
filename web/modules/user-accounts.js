@@ -104,10 +104,10 @@ const ensureUserAccountElements = () => {
     "userAccountQuotaSave",
     "userAccountQuotaMeta",
     "userAccountQuotaHint",
-    "userAccountTokenAdjustInput",
-    "userAccountTokenGrantBtn",
-    "userAccountTokenDeductBtn",
-    "userAccountTokenAdjustHint",
+    "userAccountQuotaAdjustInput",
+    "userAccountQuotaGrantBtn",
+    "userAccountQuotaDeductBtn",
+    "userAccountQuotaAdjustHint",
     "userAccountSettingsPasswordInput",
     "userAccountSettingsPasswordSave",
     "userAccountSettingsUnitSelect",
@@ -133,20 +133,18 @@ const normalizeUserAccount = (item) => {
   const activeSessions = Number(item?.active_sessions ?? item?.activeSessions ?? 0);
   const online =
     typeof item?.online === "boolean" ? item.online : Number.isFinite(activeSessions) && activeSessions > 0;
-  const tokenBalance = Number(
-    item?.token_balance ?? item?.tokenBalance ?? item?.daily_quota_remaining ?? item?.dailyQuotaRemaining ?? 0
-  );
-  const tokenUsed = Number(item?.token_used_total ?? item?.tokenUsedTotal ?? item?.daily_quota_used ?? item?.dailyQuotaUsed ?? 0);
-  const tokenGranted = Number(item?.token_granted_total ?? item?.tokenGrantedTotal ?? item?.daily_quota ?? item?.dailyQuota ?? 0);
-  const dailyTokenGrant = Number(item?.daily_token_grant ?? item?.dailyTokenGrant ?? 0);
+  const quotaBalance = Number(item?.quota_balance ?? 0);
+  const quotaUsed = Number(item?.quota_used_total ?? 0);
+  const quotaGranted = Number(item?.quota_granted_total ?? 0);
+  const dailyQuotaGrant = Number(item?.daily_quota_grant ?? 0);
   const unit = item?.unit || item?.unit_profile || null;
   const unitId = String(item?.unit_id || item?.unitId || unit?.id || unit?.unit_id || "").trim();
   const unitPath = String(unit?.path_name || unit?.pathName || "").trim();
   const unitName = String(unit?.name || "").trim();
-  const safeTokenBalance = Number.isFinite(tokenBalance) ? Math.max(0, Math.floor(tokenBalance)) : 0;
-  const safeTokenUsed = Number.isFinite(tokenUsed) ? Math.max(0, Math.floor(tokenUsed)) : 0;
-  const safeTokenGranted = Number.isFinite(tokenGranted) ? Math.max(0, Math.floor(tokenGranted)) : 0;
-  const safeDailyTokenGrant = Number.isFinite(dailyTokenGrant) ? Math.max(0, Math.floor(dailyTokenGrant)) : 0;
+  const safeQuotaBalance = Number.isFinite(quotaBalance) ? Math.max(0, Math.floor(quotaBalance)) : 0;
+  const safeQuotaUsed = Number.isFinite(quotaUsed) ? Math.max(0, Math.floor(quotaUsed)) : 0;
+  const safeQuotaGranted = Number.isFinite(quotaGranted) ? Math.max(0, Math.floor(quotaGranted)) : 0;
+  const safeDailyQuotaGrant = Number.isFinite(dailyQuotaGrant) ? Math.max(0, Math.floor(dailyQuotaGrant)) : 0;
   const activitySeries = Array.isArray(item?.activity_series ?? item?.activitySeries)
     ? (item.activity_series ?? item.activitySeries)
         .map((point) => {
@@ -167,11 +165,11 @@ const normalizeUserAccount = (item) => {
     unit_level: Number.isFinite(Number(unit?.level)) ? Number(unit?.level) : null,
     status: String(item?.status || "active"),
     roles: Array.isArray(item?.roles) ? item.roles : [],
-    token_balance: safeTokenBalance,
-    token_used_total: safeTokenUsed,
-    token_granted_total: safeTokenGranted,
-    daily_token_grant: safeDailyTokenGrant,
-    last_token_grant_date: String(item?.last_token_grant_date || item?.lastTokenGrantDate || item?.daily_quota_date || item?.dailyQuotaDate || "").trim(),
+    quota_balance: safeQuotaBalance,
+    quota_used_total: safeQuotaUsed,
+    quota_granted_total: safeQuotaGranted,
+    daily_quota_grant: safeDailyQuotaGrant,
+    last_quota_grant_date: String(item?.last_quota_grant_date || "").trim(),
     last_login_at: item?.last_login_at ?? item?.lastLoginAt ?? null,
     is_demo: Boolean(item?.is_demo || item?.isDemo),
     active_sessions: Number.isFinite(activeSessions) ? activeSessions : 0,
@@ -233,11 +231,11 @@ const formatQuotaValue = (user) => {
   if (!user) {
     return "-";
   }
-  const balance = Number(user.token_balance);
+  const balance = Number(user.quota_balance);
   if (!Number.isFinite(balance)) {
     return "-";
   }
-  return formatTokenDisplay(balance);
+  return isAdminRole(user.roles) ? "∞" : formatQuotaDisplay(balance);
 };
 
 const formatTokenDisplay = (value) => {
@@ -248,19 +246,21 @@ const formatTokenDisplay = (value) => {
   return `${(Math.max(0, amount) / 1000).toFixed(1)}k`;
 };
 
+const formatQuotaDisplay = (value) => Math.max(0, Math.floor(value)).toLocaleString();
+
 const formatQuotaMeta = (user) => {
   if (!user) {
     return "";
   }
-  const balance = Number.isFinite(user.token_balance) ? Math.max(0, Math.floor(user.token_balance)) : 0;
-  const used = Number.isFinite(user.token_used_total) ? Math.max(0, Math.floor(user.token_used_total)) : 0;
-  const granted = Number.isFinite(user.token_granted_total) ? Math.max(0, Math.floor(user.token_granted_total)) : 0;
-  const daily = Number.isFinite(user.daily_token_grant) ? Math.max(0, Math.floor(user.daily_token_grant)) : 0;
+  const balance = Number.isFinite(user.quota_balance) ? Math.max(0, Math.floor(user.quota_balance)) : 0;
+  const used = Number.isFinite(user.quota_used_total) ? Math.max(0, Math.floor(user.quota_used_total)) : 0;
+  const granted = Number.isFinite(user.quota_granted_total) ? Math.max(0, Math.floor(user.quota_granted_total)) : 0;
+  const daily = Number.isFinite(user.daily_quota_grant) ? Math.max(0, Math.floor(user.daily_quota_grant)) : 0;
   return t("userAccounts.modal.settings.quota.meta", {
-    balance: formatTokenDisplay(balance),
-    used: formatTokenDisplay(used),
-    granted: formatTokenDisplay(granted),
-    daily: formatTokenDisplay(daily),
+    balance: formatQuotaDisplay(balance),
+    used: formatQuotaDisplay(used),
+    granted: formatQuotaDisplay(granted),
+    daily: formatQuotaDisplay(daily),
   });
 };
 
@@ -1052,17 +1052,17 @@ const isAdminRole = (roles) =>
 
 const resolveRoleSelection = (roles) => (isAdminRole(roles) ? "admin" : "user");
 
-const userUsesTokenBalance = (user) => !isAdminRole(user?.roles);
+const userUsesQuota = (user) => !isAdminRole(user?.roles);
 
-const syncTokenControls = (user) => {
-  const enabled = userUsesTokenBalance(user);
-  const title = enabled ? "" : t("userAccounts.modal.settings.tokenControls.disabledTitle");
+const syncQuotaControls = (user) => {
+  const enabled = userUsesQuota(user);
+  const title = enabled ? "" : t("userAccounts.modal.settings.quotaControls.disabledTitle");
   [
     elements.userAccountQuotaInput,
     elements.userAccountQuotaSave,
-    elements.userAccountTokenAdjustInput,
-    elements.userAccountTokenGrantBtn,
-    elements.userAccountTokenDeductBtn,
+    elements.userAccountQuotaAdjustInput,
+    elements.userAccountQuotaGrantBtn,
+    elements.userAccountQuotaDeductBtn,
   ].forEach((node) => {
     if (!node) {
       return;
@@ -1077,11 +1077,11 @@ const syncTokenControls = (user) => {
         : "userAccounts.modal.settings.quota.adminHint"
     );
   }
-  if (elements.userAccountTokenAdjustHint) {
-    elements.userAccountTokenAdjustHint.textContent = t(
+  if (elements.userAccountQuotaAdjustHint) {
+    elements.userAccountQuotaAdjustHint.textContent = t(
       enabled
-        ? "userAccounts.modal.settings.tokenAdjust.hint"
-        : "userAccounts.modal.settings.tokenAdjust.adminHint"
+        ? "userAccounts.modal.settings.quotaAdjust.hint"
+        : "userAccounts.modal.settings.quotaAdjust.adminHint"
     );
   }
 };
@@ -1092,16 +1092,16 @@ const syncSettingsTarget = (user) => {
     return;
   }
   elements.userAccountSettingsUser.textContent = user.username || user.id || "-";
-  elements.userAccountQuotaInput.value = Number.isFinite(user.token_balance) ? user.token_balance : "";
+  elements.userAccountQuotaInput.value = Number.isFinite(user.quota_balance) ? user.quota_balance : "";
   elements.userAccountQuotaMeta.textContent = formatQuotaMeta(user);
-  elements.userAccountTokenAdjustInput.value = "";
+  elements.userAccountQuotaAdjustInput.value = "";
   if (elements.userAccountSettingsPasswordUsername) {
     elements.userAccountSettingsPasswordUsername.value = user.username || user.id || "";
   }
   elements.userAccountSettingsPasswordInput.value = "";
   syncUnitSelect(elements.userAccountSettingsUnitSelect, user.unit_id || "");
   elements.userAccountSettingsRolesInput.value = resolveRoleSelection(user.roles);
-  syncTokenControls(user);
+  syncQuotaControls(user);
 };
 
 const refreshSettingsTarget = () => {
@@ -1146,37 +1146,38 @@ const saveQuota = async () => {
   if (!settingsTarget?.id) {
     return;
   }
-  if (!userUsesTokenBalance(settingsTarget)) {
-    notify(t("userAccounts.toast.tokenAdminDisabled"), "warn");
+  if (!userUsesQuota(settingsTarget)) {
+    notify(t("userAccounts.toast.quotaAdminDisabled"), "warn");
     return;
   }
-  const raw = Number(elements.userAccountQuotaInput.value);
-  if (!Number.isFinite(raw) || raw < 0) {
+  const value = elements.userAccountQuotaInput.value.trim();
+  const raw = Number(value);
+  if (!value || !Number.isSafeInteger(raw) || raw < 0) {
     notify(t("userAccounts.toast.quotaInvalid"), "warn");
     return;
   }
-  const ok = await updateUserAccount(settingsTarget.id, { token_balance: Math.floor(raw) });
+  const ok = await updateUserAccount(settingsTarget.id, { quota_balance: raw });
   if (ok) {
     refreshSettingsTarget();
   }
 };
 
-const adjustUserTokens = async (action) => {
+const adjustUserQuota = async (action) => {
   if (!settingsTarget?.id) {
     return;
   }
-  if (!userUsesTokenBalance(settingsTarget)) {
-    notify(t("userAccounts.toast.tokenAdminDisabled"), "warn");
+  if (!userUsesQuota(settingsTarget)) {
+    notify(t("userAccounts.toast.quotaAdminDisabled"), "warn");
     return;
   }
-  const raw = Number(elements.userAccountTokenAdjustInput.value);
-  if (!Number.isFinite(raw) || raw <= 0) {
-    notify(t("userAccounts.toast.tokenAdjustInvalid"), "warn");
+  const raw = Number(elements.userAccountQuotaAdjustInput.value);
+  if (!Number.isSafeInteger(raw) || raw <= 0) {
+    notify(t("userAccounts.toast.quotaAdjustInvalid"), "warn");
     return;
   }
-  const amount = Math.floor(raw);
+  const amount = raw;
   const wunderBase = getWunderBase();
-  const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(settingsTarget.id)}/token_adjustment`;
+  const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(settingsTarget.id)}/quota_adjustment`;
   try {
     const response = await fetch(endpoint, {
       method: "POST",
@@ -1188,20 +1189,20 @@ const adjustUserTokens = async (action) => {
         response,
         t("common.requestFailed", { status: response.status })
       );
-      notify(t("userAccounts.toast.tokenAdjustFailed", { message }), "error");
+      notify(t("userAccounts.toast.quotaAdjustFailed", { message }), "error");
       return;
     }
-    elements.userAccountTokenAdjustInput.value = "";
+    elements.userAccountQuotaAdjustInput.value = "";
     await loadUserAccounts();
     refreshSettingsTarget();
     notify(
       action === "grant"
-        ? t("userAccounts.toast.tokenGrantSuccess", { amount })
-        : t("userAccounts.toast.tokenDeductSuccess", { amount }),
+        ? t("userAccounts.toast.quotaGrantSuccess", { amount })
+        : t("userAccounts.toast.quotaDeductSuccess", { amount }),
       "success"
     );
   } catch (error) {
-    notify(t("userAccounts.toast.tokenAdjustFailed", { message: error.message }), "error");
+    notify(t("userAccounts.toast.quotaAdjustFailed", { message: error.message }), "error");
   }
 };
 
@@ -1469,8 +1470,8 @@ export const initUserAccountsPanel = () => {
   elements.userAccountSettingsClose?.addEventListener("click", () => closeModal(elements.userAccountSettingsModal));
   elements.userAccountSettingsCancel.addEventListener("click", () => closeModal(elements.userAccountSettingsModal));
   elements.userAccountQuotaSave.addEventListener("click", saveQuota);
-  elements.userAccountTokenGrantBtn.addEventListener("click", () => adjustUserTokens("grant"));
-  elements.userAccountTokenDeductBtn.addEventListener("click", () => adjustUserTokens("deduct"));
+  elements.userAccountQuotaGrantBtn.addEventListener("click", () => adjustUserQuota("grant"));
+  elements.userAccountQuotaDeductBtn.addEventListener("click", () => adjustUserQuota("deduct"));
   elements.userAccountSettingsPasswordSave.addEventListener("click", submitPasswordReset);
   elements.userAccountSettingsUnitSave.addEventListener("click", saveUnit);
   elements.userAccountSettingsRolesSave.addEventListener("click", saveRoles);
@@ -1503,5 +1504,4 @@ export const initUserAccountsPanel = () => {
   setCleanupBusy(false);
   syncUserAccountUnitFilter();
 };
-
 

@@ -121,7 +121,6 @@ import WorkerCardImportWaitingOverlay from '@/components/agent/WorkerCardImportW
 import { downloadWorkerCardBundle, parseWorkerCardText, workerCardToAgentPayload } from '@/utils/workerCard';
 import { redirectToLoginAfterLogout } from '@/utils/authNavigation';
 import { copyText } from '@/utils/clipboard';
-import { confirmWithFallback } from '@/utils/confirm';
 import {
   buildAssistantDisplayContent,
   resolveAssistantFailureNotice
@@ -478,16 +477,6 @@ export function installMessengerControllerTimelineFileActions(ctx: MessengerCont
       const targetId = String(sessionId || '').trim();
       if (!targetId)
           return;
-      const targetSession = ctx.resolveSessionRecordById(targetId);
-      const targetAgentId = ctx.resolveSessionAgentId(targetSession);
-      const confirmed = await confirmWithFallback(ctx.t('chat.history.confirmArchive'), ctx.t('chat.history.confirmTitle'), {
-          type: 'warning',
-          confirmButtonText: ctx.t('common.confirm'),
-          cancelButtonText: ctx.t('common.cancel')
-      });
-      if (!confirmed) {
-          return;
-      }
       try {
           await ctx.chatStore.archiveSession(targetId);
           ctx.timelinePreviewMap.value.delete(targetId);

@@ -229,24 +229,52 @@ async fn list_sessions(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let (offset, limit) = resolve_pagination(&query);
-    let known_ids = query.known_session_ids.as_deref().unwrap_or("")
-        .split(',').map(str::trim).filter(|id| !id.is_empty()).collect::<Vec<_>>();
+    let known_ids = query
+        .known_session_ids
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .collect::<Vec<_>>();
     if known_ids.len() > 100 || known_ids.iter().any(|id| id.len() > 128) {
-        return Err(error_response(StatusCode::BAD_REQUEST, i18n::t("error.param_required")));
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.param_required"),
+        ));
     }
     let storage = state.storage.clone();
     let user_id = resolved.user.user_id.clone();
-    let known_ids = known_ids.into_iter().map(str::to_string).collect::<Vec<_>>();
-    let unavailable_ids = crate::core::blocking::run_db("api.chat.reconcile_catalog", move || -> anyhow::Result<Vec<String>> {
-        let active = storage.list_active_chat_session_ids(&user_id, &known_ids)?
-            .into_iter().collect::<std::collections::HashSet<_>>();
-        Ok(known_ids.into_iter().filter(|id| !active.contains(id)).collect())
-    }).await.map_err(|err| {
+    let known_ids = known_ids
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let unavailable_ids = crate::core::blocking::run_db(
+        "api.chat.reconcile_catalog",
+        move || -> anyhow::Result<Vec<String>> {
+            let active = storage
+                .list_active_chat_session_ids(&user_id, &known_ids)?
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>();
+            Ok(known_ids
+                .into_iter()
+                .filter(|id| !active.contains(id))
+                .collect())
+        },
+    )
+    .await
+    .map_err(|err| {
         warn!(error = %err, "session catalog reconciliation failed");
-        error_response(StatusCode::INTERNAL_SERVER_ERROR, i18n::t("error.internal_error"))
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            i18n::t("error.internal_error"),
+        )
     })?;
     let agent_id = query.agent_id.as_deref().map(str::trim);
-    let parent_session_id = query.parent_session_id.as_deref().map(str::trim);
+    let parent_session_id = query
+        .parent_session_id
+        .as_deref()
+        .map(str::trim);
     let status_filter = match query.status.as_deref().map(str::trim) {
         Some(value) if value.eq_ignore_ascii_case(CHAT_SESSION_STATUS_ARCHIVED) => {
             Some(CHAT_SESSION_STATUS_ARCHIVED)
@@ -254,9 +282,12 @@ async fn list_sessions(
         Some(value) if value.eq_ignore_ascii_case("all") => None,
         _ => Some(CHAT_SESSION_STATUS_ACTIVE),
     };
-    let (sessions, total) = state
-        .user_store
-        .list_chat_sessions_by_status(
+    let (sessions, total) = if parent_session_id.is_none() {
+        state.storage.list_work_chat_sessions(
+            &resolved.user.user_id, agent_id, status_filter, offset, limit,
+        )
+    } else {
+        state.user_store.list_chat_sessions_by_status(
             &resolved.user.user_id,
             agent_id,
             parent_session_id,
@@ -264,6 +295,7 @@ async fn list_sessions(
             offset,
             limit,
         )
+    }
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let config = state.config_store.get().await;
     let mut agent_record_map: HashMap<String, Option<crate::storage::UserAgentRecord>> =
@@ -290,10 +322,11 @@ async fn list_sessions(
     let usage_by_session = state.monitor.session_usage_summaries(&session_ids);
     for record in &sessions {
         let mut payload = session_payload(record);
-        if let Some((consumed_tokens, tool_calls)) = usage_by_session.get(&record.session_id) {
+        if let Some((consumed_tokens, tool_calls, quota_used)) = usage_by_session.get(&record.session_id) {
             if let Value::Object(map) = &mut payload {
                 map.insert("consumed_tokens".to_string(), json!(consumed_tokens));
                 map.insert("tool_calls".to_string(), json!(tool_calls));
+                map.insert("quota_used".to_string(), json!(quota_used));
             }
         }
         insert_session_orchestration_lock_fields(
@@ -320,7 +353,9 @@ async fn list_sessions(
         );
         items.push(payload);
     }
-    Ok(Json(json!({ "data": { "total": total, "items": items, "unavailable_session_ids": unavailable_ids } })))
+    Ok(Json(
+        json!({ "data": { "total": total, "items": items, "unavailable_session_ids": unavailable_ids } }),
+    ))
 }
 
 async fn get_session(

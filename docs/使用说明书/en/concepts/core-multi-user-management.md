@@ -1,6 +1,6 @@
 ---
 title: Multi-user Management
-summary: The Multi-user Management core explains why Wunder must build organization, user, permission, and token account governance into the system skeleton from day one, rather than bolting it on later.
+summary: The Multi-user Management core explains why Wunder must build organization, user, permission, and quota account governance into the system skeleton from day one, rather than bolting it on later.
 read_when:
   - You are deploying server or designing the admin side
   - You want to understand why multi-user governance cannot be retrofitted
@@ -17,7 +17,7 @@ Wunder targets both organizations and individuals, but once it enters server mod
 ## Bottom Line
 
 - Multi-user management is not just a "login system"; it is the sum of operational boundaries, resource boundaries, and governance boundaries.
-- If data isolation, permission boundaries, and token account control are not designed upfront, you will almost certainly need to rework them later.
+- If data isolation, permission boundaries, and quota account control are not designed upfront, you will almost certainly need to rework them later.
 - The admin panel is not a showcase page — it is the formal entry point for system governance capabilities.
 
 ## Why It Must Be a Core
@@ -26,7 +26,7 @@ Without multi-user management as a core, the system will expose structural probl
 
 - Not knowing whether a request represents a "logged-in user" or an "externally mapped user_id."
 - Threads, workspaces, tool visibility, and channels all lacking consistent boundaries.
-- Token account governance and permissions can only be patched at the API layer, never truly resolved at runtime.
+- Quota account governance and permissions can only be patched at the API layer, never truly resolved at runtime.
 
 ## What This Core Actually Protects
 
@@ -40,7 +40,7 @@ Without multi-user management as a core, the system will expose structural probl
 |------|------|
 | Default to multi-user concurrent design | Avoid discovering later that the system only supports single-user scenarios |
 | Data isolation must be designed upfront | Workspaces, sessions, configurations, and logs must have clear boundaries from the start |
-| Permissions and token account governance cannot be retrofitted | Otherwise "can view but cannot manage, can invoke but cannot control" gray zones easily appear |
+| Permissions and quota account governance cannot be retrofitted | Otherwise "can view but cannot manage, can invoke but cannot control" gray zones easily appear |
 | Admin panel and runtime share the same governance model | What administrators see must be consistent with actual runtime behavior |
 
 ## Design Highlights
@@ -56,7 +56,7 @@ It will not stay in backend forms; it will ultimately materialize in:
 - Thread ownership
 - Workspace isolation
 - Tool visibility
-- Token accounts and resource governance
+- Quota accounts and resource governance
 
 ### Highlight 3: Administrator capabilities must be strong, but boundaries must remain clear
 

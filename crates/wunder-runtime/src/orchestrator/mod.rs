@@ -33,7 +33,7 @@ use crate::services::beeroom_realtime::BeeroomRealtimeService;
 use crate::services::inner_visible::InnerVisibleService;
 use crate::services::tools::command_sessions::CommandSessionBroker;
 use crate::skills::{load_skills, SkillRegistry};
-use crate::storage::{SessionLockStatus, StorageBackend, UserTokenBalanceStatus};
+use crate::storage::{SessionLockStatus, StorageBackend, UserQuotaStatus};
 use crate::token_utils::{
     approx_token_count, estimate_message_tokens, estimate_messages_tokens, trim_messages_to_budget,
     trim_text_to_chars, trim_text_to_tokens,
@@ -101,6 +101,7 @@ mod tool_result_payload;
 mod turn_state;
 mod types;
 mod usage_accounting;
+mod quota;
 #[cfg(test)]
 mod usage_accounting_tests;
 #[cfg(all(test, feature = "sqlite-storage"))]

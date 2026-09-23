@@ -53,7 +53,7 @@ name = "admin_org_units_import_routes"
 required-features = ["sqlite-storage"]
 
 [[test]]
-name = "admin_user_account_token_adjustment_routes"
+name = "admin_user_account_quota_adjustment_routes"
 required-features = ["sqlite-storage"]
 
 [[test]]

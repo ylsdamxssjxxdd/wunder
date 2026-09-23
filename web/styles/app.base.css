@@ -454,7 +454,6 @@ h1 {
 /* 调试/A2A 面板布局：左右分栏 */
 .debug-layout,
 .a2a-layout,
-.throughput-layout,
 .performance-layout {
   flex: 1 1 0;
   min-height: 0;
@@ -467,7 +466,6 @@ h1 {
 
 .debug-form,
 .a2a-form,
-.throughput-form,
 .performance-form {
   display: flex;
   flex-direction: column;
@@ -479,15 +477,6 @@ h1 {
   border-radius: 12px;
   padding: 12px;
   gap: 12px;
-}
-
-.throughput-results {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-height: 0;
-  overflow: hidden;
-  flex: 1 1 0;
 }
 
 .performance-results {
@@ -549,171 +538,6 @@ h1 {
   text-overflow: ellipsis;
 }
 
-.throughput-summary-block {
-  overflow: hidden;
-  max-height: 40vh;
-  flex: 0 1 auto;
-  min-height: 0;
-}
-
-.monitor-summary.throughput-summary {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-
-.throughput-status-badge {
-  margin-left: auto;
-}
-
-.throughput-status-hint {
-  font-size: 12px;
-  color: #94a3b8;
-}
-
-.throughput-charts {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
-  min-height: 0;
-  flex: 1 1 0;
-  overflow: hidden;
-  max-height: 100%;
-}
-
-.throughput-chart-card {
-  height: auto;
-  min-height: 0;
-  flex: 1 1 0;
-  overflow: hidden;
-  max-height: 100%;
-}
-
-.throughput-chart-wide {
-  grid-column: 1 / -1;
-  min-height: 0;
-}
-
-.throughput-threads {
-  min-height: 200px;
-  height: auto;
-  flex: 1 1 0;
-}
-
-.throughput-form .throughput-threads {
-  margin-top: 12px;
-  min-height: 220px;
-}
-
-.throughput-form .form-section {
-  flex: 0 1 auto;
-  max-height: 45%;
-  overflow-y: auto;
-}
-
-.throughput-chart-card .monitor-chart {
-  min-height: 0;
-  height: auto;
-}
-
-.throughput-thread-filters {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.throughput-thread-filters .tab-btn {
-  font-size: 12px;
-  padding: 4px 10px;
-}
-
-.throughput-thread-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  padding: 6px;
-  max-height: 100%;
-  overflow: auto;
-  align-content: start;
-}
-
-.throughput-thread-stat {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid #cbd5f5;
-  background: linear-gradient(135deg, #ffffff, #eef2ff);
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
-  min-height: 48px;
-}
-
-.throughput-thread-stat .stat-label {
-  font-size: 11px;
-  color: #475569;
-}
-
-.throughput-thread-stat .stat-value {
-  font-size: 15px;
-  font-weight: 700;
-  color: #1d4ed8;
-}
-
-.throughput-header-actions {
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.throughput-history-table th:last-child,
-.throughput-history-table td:last-child {
-  text-align: right;
-}
-
-.throughput-history-table col.col-time {
-  width: 15%;
-}
-
-.throughput-history-table col.col-status {
-  width: 8%;
-}
-
-.throughput-history-table col.col-max-concurrency {
-  width: 6%;
-}
-
-.throughput-history-table col.col-concurrency-list {
-  width: 16%;
-}
-
-.throughput-history-table col.col-total {
-  width: 8%;
-}
-
-.throughput-history-table col.col-success-rate {
-  width: 8%;
-}
-
-.throughput-history-table col.col-avg-latency {
-  width: 8%;
-}
-
-.throughput-history-table col.col-rps {
-  width: 7%;
-}
-
-.throughput-history-table col.col-dataset {
-  width: 16%;
-}
-
-.throughput-history-table col.col-actions {
-  width: 8%;
-}
-
 .performance-history-table th:last-child,
 .performance-history-table td:last-child {
   text-align: right;
@@ -744,9 +568,7 @@ h1 {
   opacity: 0.6;
 }
 
-.throughput-export-input select {
-  min-width: 120px;
-}
+
 
 /* 提示说明区域：显示本页用途与注意事项 */
 .tips {
@@ -2209,10 +2031,6 @@ button.btn-with-icon[aria-busy="true"] i {
   white-space: nowrap;
 }
 
-.throughput-model-select {
-  width: 100%;
-  text-align: left;
-}
 
 .evaluation-model-select {
   width: 100%;

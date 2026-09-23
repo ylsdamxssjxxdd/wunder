@@ -34,6 +34,11 @@ pub(super) trait PostgresChatSessionStorage {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)>;
+    #[allow(clippy::too_many_arguments)]
+    fn list_chat_sessions_filtered_impl(
+        &self, user_id: &str, agent_id: Option<&str>, parent_session_id: Option<&str>,
+        status: Option<&str>, offset: i64, limit: i64, work_catalog: bool,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)>;
     fn list_chat_session_agent_ids_impl(&self, user_id: &str) -> Result<Vec<String>>;
     fn update_chat_session_title_impl(
         &self,
@@ -217,6 +222,14 @@ impl PostgresChatSessionStorage for PostgresStorage {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)> {
+        self.list_chat_sessions_filtered_impl(user_id, agent_id, parent_session_id, status, offset, limit, false)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn list_chat_sessions_filtered_impl(
+        &self, user_id: &str, agent_id: Option<&str>, parent_session_id: Option<&str>,
+        status: Option<&str>, offset: i64, limit: i64, work_catalog: bool,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)> {
         self.ensure_initialized()?;
         let cleaned_user = user_id.trim();
         if cleaned_user.is_empty() {
@@ -269,6 +282,9 @@ impl PostgresChatSessionStorage for PostgresStorage {
             }
         }
 
+        if work_catalog {
+            conditions.push("(COALESCE(parent_session_id, '') = '' OR COALESCE(spawned_by, '') NOT IN ('model', 'subagent_control'))".to_string());
+        }
         let where_clause = if conditions.is_empty() {
             String::new()
         } else {

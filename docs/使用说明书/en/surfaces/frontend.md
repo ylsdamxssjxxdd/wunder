@@ -95,7 +95,7 @@ The Files page shows the working directory available to the current agent. You c
 - Avatar, username, level
 - Experience progress bar
 - Usage statistics (sessions, tool calls, Token consumption)
-- Token account balance and trends
+- Quota account balance and trends
 
 ### Account management
 

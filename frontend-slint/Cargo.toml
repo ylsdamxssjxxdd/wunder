@@ -6,6 +6,7 @@ rust-version = "1.92"
 publish = false
 
 [dependencies]
+wunder-desktop = { path = "../crates/wunder-desktop", default-features = false, features = ["sqlite-storage"], optional = true }
 slint = { version = "=1.18.0", default-features = false, features = [
   "backend-winit",
   "compat-1-2",
@@ -24,13 +25,23 @@ tungstenite = { version = "=0.29.0", default-features = false, features = ["hand
 [build-dependencies]
 slint-build = { version = "=1.18.0" }
 
+[features]
+default = []
+native-runtime = ["dep:wunder-desktop"]
+
 [profile.release]
 strip = "symbols"
 lto = "thin"
 codegen-units = 1
 panic = "abort"
 
+# Keep the large shared runtime parallel during Release code generation.
+# Thin LTO still optimizes the statically linked executable as a whole.
+[profile.release.package.wunder-runtime]
+codegen-units = 8
+
 [patch.crates-io]
+html2md = { path = "vendor/html2md-0.2.15" }
 i-slint-compiler = { path = "vendor/i-slint-compiler-1.18" }
 i-slint-backend-winit = { path = "vendor/i-slint-backend-winit-1.18" }
 softbuffer = { path = "vendor/softbuffer-0.4.8" }

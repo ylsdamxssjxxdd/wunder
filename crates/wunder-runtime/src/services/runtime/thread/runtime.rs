@@ -49,6 +49,7 @@ pub struct QueueInfo {
 #[derive(Debug, Clone, Default)]
 pub struct ThreadCancelSettlement {
     pub monitor_cancelled: bool,
+    pub child_sessions_cancelled: usize,
     pub queued_tasks_cancelled: usize,
     pub running_tasks_marked_cancelled: usize,
     pub thread_status_reset: bool,
@@ -445,62 +446,83 @@ impl ThreadRuntime {
         self.cancel_pending_goal_continuation(cleaned_session);
         self.orchestrator.scheduling.cancel(cleaned_session);
 
-        let thread_id = format!("thread_{cleaned_session}");
-        let mut tasks = Vec::new();
-        for status in [TASK_STATUS_PENDING, TASK_STATUS_RETRY, TASK_STATUS_RUNNING] {
-            tasks.extend(self.user_store.list_agent_tasks_by_thread(
-                &thread_id,
-                Some(status),
-                4096,
-            )?);
+        // Cancelling a parent turn also cancels every descendant execution unit.
+        // Child records stay durable so a later subagent send can resume them.
+        let storage = self.user_store.storage_backend();
+        let user = cleaned_user.to_string();
+        let root = cleaned_session.to_string();
+        let descendant_session_ids = blocking::run_db("thread.cancel.descendants", move || {
+            super::descendants::collect(storage.as_ref(), &user, &root)
+        })
+        .await?;
+        let mut child_sessions_cancelled = 0usize;
+        for child_session_id in &descendant_session_ids {
+            if self.monitor.cancel_with_source(child_session_id, source) {
+                child_sessions_cancelled = child_sessions_cancelled.saturating_add(1);
+                self.emit_thread_status_event(
+                    child_session_id,
+                    cleaned_user,
+                    "cancelled",
+                    source,
+                    0,
+                    0,
+                )
+                .await;
+            }
+            self.cancel_pending_goal_continuation(child_session_id);
+            self.orchestrator.scheduling.cancel(child_session_id);
         }
+
         let mut queued_tasks_cancelled = 0usize;
         let mut running_tasks_marked_cancelled = 0usize;
-        for task in tasks {
-            if task.user_id.trim() != cleaned_user {
-                continue;
-            }
-            let status = task.status.trim().to_ascii_lowercase();
-            if status == TASK_STATUS_PENDING || status == TASK_STATUS_RETRY {
-                self.cancel_task(&task.task_id)?;
-                queued_tasks_cancelled = queued_tasks_cancelled.saturating_add(1);
-                self.emit_queue_event(
-                    cleaned_session,
-                    cleaned_user,
-                    "queue_fail",
-                    json!({
-                        "queue_id": task.task_id,
-                        "thread_id": task.thread_id,
-                        "session_id": task.session_id,
-                        "agent_id": task.agent_id,
-                        "user_id": task.user_id,
-                        "status": TASK_STATUS_CANCELLED,
-                        "error": "cancelled",
-                        "queue_ahead": 0,
-                        "queue_total": 0,
-                    }),
-                )
-                .await;
-            } else if status == TASK_STATUS_RUNNING {
-                self.cancel_task(&task.task_id)?;
-                running_tasks_marked_cancelled = running_tasks_marked_cancelled.saturating_add(1);
-                self.emit_queue_event(
-                    cleaned_session,
-                    cleaned_user,
-                    "queue_fail",
-                    json!({
-                        "queue_id": task.task_id,
-                        "thread_id": task.thread_id,
-                        "session_id": task.session_id,
-                        "agent_id": task.agent_id,
-                        "user_id": task.user_id,
-                        "status": TASK_STATUS_CANCELLED,
-                        "error": "cancelled",
-                        "queue_ahead": 0,
-                        "queue_total": 0,
-                    }),
-                )
-                .await;
+        for task_session_id in std::iter::once(cleaned_session)
+            .chain(descendant_session_ids.iter().map(String::as_str))
+        {
+            let thread_id = format!("thread_{task_session_id}");
+            for status in [TASK_STATUS_PENDING, TASK_STATUS_RETRY, TASK_STATUS_RUNNING] {
+                loop {
+                    let store = self.user_store.clone();
+                    let thread = thread_id.clone();
+                    let user = cleaned_user.to_string();
+                    let tasks = blocking::run_db("thread.cancel.queue_page", move || {
+                        store
+                            .list_agent_tasks_by_thread(&thread, Some(status), 256)
+                            .map(|tasks| {
+                                tasks
+                                    .into_iter()
+                                    .filter(|task| task.user_id == user)
+                                    .collect::<Vec<_>>()
+                            })
+                    })
+                    .await?;
+                    if tasks.is_empty() {
+                        break;
+                    }
+                    let page_len = tasks.len();
+                    for task in tasks {
+                        self.cancel_task(&task.task_id)?;
+                        if status == TASK_STATUS_RUNNING {
+                            running_tasks_marked_cancelled += 1;
+                        } else {
+                            queued_tasks_cancelled += 1;
+                        }
+                        self.emit_queue_event(
+                            task_session_id,
+                            cleaned_user,
+                            "queue_fail",
+                            json!({
+                                "queue_id": task.task_id, "thread_id": task.thread_id,
+                                "session_id": task.session_id, "agent_id": task.agent_id,
+                                "user_id": task.user_id, "status": TASK_STATUS_CANCELLED,
+                                "error": "cancelled", "queue_ahead": 0, "queue_total": 0,
+                            }),
+                        )
+                        .await;
+                    }
+                    if page_len < 256 {
+                        break;
+                    }
+                }
             }
         }
 
@@ -519,6 +541,7 @@ impl ThreadRuntime {
 
         Ok(ThreadCancelSettlement {
             monitor_cancelled,
+            child_sessions_cancelled,
             queued_tasks_cancelled,
             running_tasks_marked_cancelled,
             thread_status_reset,

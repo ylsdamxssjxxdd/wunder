@@ -12,10 +12,10 @@ impl Orchestrator {
         &self,
         usage: &TokenUsage,
         emitter: &EventEmitter,
-        user_id: &str,
-        is_admin: bool,
+        _user_id: &str,
+        _is_admin: bool,
         round: RoundInfo,
-        emit_events: bool,
+        _emit_events: bool,
         purpose: &str,
     ) -> Result<(), OrchestratorError> {
         let cumulative = emitter.record_usage(usage);
@@ -28,16 +28,8 @@ impl Orchestrator {
         round.insert_into(payload.as_object_mut().expect("usage object"));
         // Cumulative snapshots are replay-safe, including partial failed turns.
         emitter.emit("model_usage", payload).await;
-        if !is_admin {
-            self.consume_user_tokens(
-                user_id,
-                usage.total.min(i64::MAX as u64) as i64,
-                emitter,
-                round,
-                emit_events,
-            )
-            .await?;
-        }
+        // Quota admission runs before each HTTP attempt, including provider fallbacks.
+        // Provider token usage remains diagnostic and never affects the user's allowance.
         Ok(())
     }
 }

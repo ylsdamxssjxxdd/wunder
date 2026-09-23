@@ -1,7 +1,7 @@
 use super::*;
 use crate::orchestrator::execute_support::build_round_usage_payload;
 use crate::state::{AppState, AppStateInitOptions};
-use axum::{routing::post, Json, Router};
+use axum::{http::StatusCode, response::IntoResponse, routing::post, Json, Router};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[tokio::test]
@@ -13,6 +13,25 @@ async fn usage_accounting_includes_rejected_calls_empty_responses_and_compaction
         post(move || {
             let index = counter.fetch_add(1, Ordering::SeqCst);
             async move {
+                if index == 8 {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(json!({"error":"unavailable"})),
+                    )
+                        .into_response();
+                }
+                if (5..=7).contains(&index) {
+                    let message = if index < 7 {
+                        "reasoning_effort unsupported"
+                    } else {
+                        "stream_options unsupported"
+                    };
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"error":{"message":message}})),
+                    )
+                        .into_response();
+                }
                 let message = match index {
                     0 => {
                         json!({"role":"assistant", "tool_calls":[{"id":"call_1", "type":"function",
@@ -26,6 +45,7 @@ async fn usage_accounting_includes_rejected_calls_empty_responses_and_compaction
                 "usage":{"prompt_tokens":100,"completion_tokens":40,"total_tokens":140,
                     "completion_tokens_details":{"reasoning_tokens":30}}}),
                 )
+                .into_response()
             }
         }),
     );
@@ -57,9 +77,9 @@ async fn usage_accounting_includes_rejected_calls_empty_responses_and_compaction
             false,
         )
         .unwrap();
-    user.token_balance = 10000;
-    user.last_token_grant_date = Some(UserStore::today_string());
-    state.user_store.update_user(&user).unwrap();
+    user.quota_balance = 10000;
+    user.last_quota_grant_date = Some(UserStore::today_string());
+    state.storage.upsert_user_account(&user).unwrap();
     state
         .monitor
         .register("session_1", &user.user_id, "agent_1", "input", true, false);
@@ -123,10 +143,111 @@ async fn usage_accounting_includes_rejected_calls_empty_responses_and_compaction
         .unwrap()
         .unwrap();
     assert_eq!(
-        (requests.load(Ordering::SeqCst), after.token_balance),
-        (4, 9440)
+        (requests.load(Ordering::SeqCst), after.quota_balance),
+        (4, 9996)
     );
     let detail = state.monitor.get_detail("session_1").unwrap();
     assert_eq!(detail["session"]["consumed_tokens"], json!(560));
+    assert_eq!(detail["session"]["quota_used"], json!(4));
+    // The last credit is usable; the following request must fail before HTTP dispatch.
+    state
+        .storage
+        .set_user_quota_balance(&user.user_id, &UserStore::today_string(), 1000, 1)
+        .unwrap();
+    for (round, should_succeed) in [(3, true), (4, false)] {
+        let result = state
+            .kernel
+            .orchestrator
+            .call_llm(
+                &model,
+                &[json!({"role":"user","content":"input"})],
+                &user.user_id,
+                false,
+                &emitter,
+                "session_1",
+                false,
+                RoundInfo::new(1, round),
+                true,
+                true,
+                false,
+                Some(&tools),
+                None,
+            )
+            .await;
+        if should_succeed {
+            assert!(result.is_ok());
+        } else {
+            assert_eq!(result.unwrap_err().code(), "USER_QUOTA_INSUFFICIENT");
+        }
+    }
+    let after = state
+        .storage
+        .get_user_account(&user.user_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            requests.load(Ordering::SeqCst),
+            after.quota_balance,
+            after.quota_used_total
+        ),
+        (5, 0, 5)
+    );
+    assert_eq!(
+        state.monitor.session_usage_summaries(&["session_1".into()])["session_1"].2,
+        Some(5)
+    );
+    // Internal reasoning and streaming fallbacks must also debit before dispatch.
+    for (balance, stream, effort, expected_requests) in [
+        (2, false, Some("xhigh".to_string()), 7),
+        (1, true, None, 8),
+        (1, true, None, 9),
+    ] {
+        state
+            .storage
+            .set_user_quota_balance(&user.user_id, &UserStore::today_string(), 1000, balance)
+            .unwrap();
+        let mut fallback_model = model.clone();
+        fallback_model.reasoning_effort = effort;
+        let error = state
+            .kernel
+            .orchestrator
+            .call_llm(
+                &fallback_model,
+                &[json!({"role":"user","content":"input"})],
+                &user.user_id,
+                false,
+                &emitter,
+                "session_1",
+                stream,
+                RoundInfo::new(2, 1),
+                true,
+                true,
+                false,
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+        let after = state
+            .storage
+            .get_user_account(&user.user_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                error.code(),
+                requests.load(Ordering::SeqCst),
+                after.quota_balance,
+                after.quota_used_total
+            ),
+            (
+                "USER_QUOTA_INSUFFICIENT",
+                expected_requests,
+                0,
+                expected_requests as i64
+            )
+        );
+    }
     server.abort();
 }

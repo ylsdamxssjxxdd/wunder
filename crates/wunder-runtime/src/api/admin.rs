@@ -29,6 +29,7 @@ mod knowledge_admin;
 mod monitor_admin;
 mod queue_admin;
 mod resource_admin;
+mod throughput_admin;
 
 pub(crate) use integration_admin::{
     ensure_admin_skill_editable, is_admin_skill_editable, resolve_admin_skill_root,
@@ -48,6 +49,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(channel_admin::router())
         .merge(gateway_admin::router())
         .merge(monitor_admin::router())
+        .merge(throughput_admin::router())
         .merge(queue_admin::router())
         .merge(knowledge_admin::router())
         .merge(identity_admin::router())

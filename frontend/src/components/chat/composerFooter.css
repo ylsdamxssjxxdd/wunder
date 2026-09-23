@@ -1,0 +1,107 @@
+/* Keep DOM and keyboard order aligned with the bottom action row. */
+.input-box--world .chat-composer-world-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+
+.input-box--world .chat-composer-world-toolbar {
+  flex: 0 0 auto;
+  min-width: 0;
+  gap: 4px;
+}
+
+.chat-composer-world-toolbar > .messenger-world-tool-anchor,
+.chat-composer-world-toolbar > .messenger-world-tool-btn {
+  flex-shrink: 0;
+}
+
+.chat-composer-footer-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  font-size: calc(12px * var(--messenger-font-scale, 1));
+  font-weight: 600;
+}
+
+.chat-composer-footer-status .chat-composer-world-model {
+  margin-right: 0;
+  max-width: 240px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.chat-composer-footer-status .messenger-world-send-group {
+  flex-shrink: 0;
+}
+
+.chat-composer-world-toolbar .messenger-world-approval-select-wrap,
+.chat-composer-world-toolbar .chat-composer-approval-label {
+  min-width: 0;
+  max-width: 120px;
+  flex: 0 1 auto;
+}
+
+.chat-composer-world-toolbar .messenger-world-approval-select {
+  min-width: 0;
+  width: 100%;
+  text-overflow: ellipsis;
+}
+
+.chat-composer-world-toolbar .messenger-world-approval-select-wrap {
+  flex-shrink: 0;
+}
+
+.chat-composer-world-toolbar .messenger-world-voice-indicator {
+  margin-left: 0;
+  min-width: 0;
+  max-width: 100px;
+}
+
+.messenger-world-voice-indicator > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-composer-world-footer button:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+/* Use the available panel width, including layouts with an open right dock. */
+.input-container--world {
+  container-type: inline-size;
+}
+
+@container (max-width: 480px) {
+  .input-box--world .chat-composer-world-footer,
+  .chat-composer-footer-status {
+    gap: 6px;
+  }
+
+  .chat-composer-world-toolbar .messenger-world-approval-select-wrap {
+    max-width: 56px;
+  }
+
+  .chat-composer-world-toolbar .messenger-world-approval-select {
+    padding: 0 18px 0 4px;
+  }
+
+  .chat-composer-world-toolbar .messenger-world-approval-select-caret {
+    right: 5px;
+  }
+
+  .chat-composer-world-toolbar .chat-composer-approval-label {
+    max-width: 48px;
+  }
+
+  .chat-composer-world-toolbar .messenger-world-voice-indicator {
+    max-width: 48px;
+  }
+}

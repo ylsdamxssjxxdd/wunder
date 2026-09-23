@@ -23,6 +23,10 @@ export component MainWindow inherits Window {
     in-out property <int> selected-agent: -1;
     in-out property <int> selected-model: -1;
     in-out property <string> active-session-id;
+    in-out property <[Conversation]> subagents: [];
+    in-out property <string> subagents-status;
+    callback refresh-subagents();
+    callback inspect-subagent(int);
     in-out property <string> active-agent-id;
     in-out property <string> heading: "默认智能体";
     in-out property <bool> busy: false;
@@ -101,6 +105,7 @@ export component MainWindow inherits Window {
     in-out property <int> stream-updates;
     in-out property <int> stream-bytes;
     in-out property <float> stream-max-ui-ms;
+    in-out property <int> stream-max-backlog;
     callback stop-generation();
     callback copy-message(int);
     callback copy-raw(string);
@@ -253,6 +258,9 @@ export component MainWindow inherits Window {
             files-loading: root.files-loading; files-error: root.files-error; directory-path: root.directory-path;
             tasks-enabled: !root.busy && !root.session-loading && !root.chat-loading && !root.creating-session;
             conversations: root.conversations;
+            subagents: root.subagents; subagents-status: root.subagents-status;
+            refresh-subagents => { root.refresh-subagents(); }
+            inspect-subagent(index) => { root.inspect-subagent(index); }
             files: root.files;
             x: root.width - 284px; y: 0px; width: 284px; height: parent.height; active-task: root.connected ? root.selected-conversation : root.active-task;
             activate-task(index) => { root.select-task(index); }
@@ -269,6 +277,9 @@ export component MainWindow inherits Window {
             files-loading: root.files-loading; files-error: root.files-error; directory-path: root.directory-path;
             tasks-enabled: !root.busy && !root.session-loading && !root.chat-loading && !root.creating-session;
             conversations: root.conversations;
+            subagents: root.subagents; subagents-status: root.subagents-status;
+            refresh-subagents => { root.refresh-subagents(); }
+            inspect-subagent(index) => { root.inspect-subagent(index); }
             files: root.files;
             x: parent.width - 284px; y: 0px; width: 284px; height: parent.height;
             active-task: root.connected ? root.selected-conversation : root.active-task;

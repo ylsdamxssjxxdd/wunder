@@ -67,8 +67,9 @@ Main endpoints:
 
 These are not the same thing:
 
-- Throughput is more about concurrent stress testing
+- Throughput tests one model, input length and output length combination per run. Input presets span 1k to 1m; output presets are 1k, 2k, 4k and 8k (1k = 1024). Input size is estimated and actual API usage is reported separately. Supported engines receive fixed-length controls; other APIs receive an output limit and results are checked for target attainment. No sessions or thread logs are created. Only the latest 50 summaries are retained. Select history rows to compare curves by input length or time, reuse settings, or export selected data.
 - Performance sampling is more about pipeline baseline sampling, not involving model capability evaluation
+- Virtual models offer Fast (default), Medium and Slow under Model Configuration → Simulation speed. Prefill runs at 2000 / 500 / 100 tokens/s; reasoning and answer generation run at 200 / 50 / 10 tokens/s. The benchmark emits reasoning first, using one quarter of the requested total output budget, then the answer. Reasoning counts are shown separately. Details retain the selected speed and curves group by profile. First-token latency includes prefill: a 1m input takes about 524 seconds on Fast, so configure a sufficient timeout or cancel while waiting.
 
 ### WunderBench
 
@@ -105,7 +106,7 @@ Because these types of problems are inherently different:
 
 - Online thread anomalies: check monitor
 - Whether a tool has become a hotspot or bottleneck: check tool_usage
-- Whether the service can handle high concurrency: check throughput
+- How model latency and generation speed change with context length: check throughput
 - Whether a change caused capability regression: check WunderBench
 
 ## Key Fields to Remember When Observing
@@ -124,7 +125,7 @@ WunderBench cannot replace real thread monitoring.
 
 ### Using throughput stress testing as a substitute for capability evaluation
 
-Throughput only tells you "can it handle the load," not "is it answering well."
+Throughput measures model API performance for a length combination; it does not evaluate answer quality.
 
 ### Only looking at one layer of logs
 
@@ -134,7 +135,7 @@ Many issues require looking at monitor, tool_usage, and channel runtime together
 
 - Use `monitor` for online threads.
 - Use `tool_usage` for tool hotspots and call coverage.
-- Use `throughput/performance` for system pipeline load capacity.
+- Use `throughput` for model API length scenarios and `performance` for pipeline baselines.
 - Use `wunderbench` for task quality and capability regression.
 
 ## Further Reading

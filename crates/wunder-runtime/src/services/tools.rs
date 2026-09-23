@@ -38,6 +38,8 @@ mod search_content_tool;
 mod self_status_tool;
 mod session_announce_support;
 mod session_run_lifecycle;
+#[cfg(all(test, feature = "sqlite-storage"))]
+mod child_pool_tests;
 mod session_run_stream;
 mod session_tool;
 mod session_tool_access;

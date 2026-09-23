@@ -4,7 +4,7 @@ use crate::storage::{
     ChannelDirectoryStore, ChannelRuntimeStore, ChatSessionStore, ConversationLogStore, CronStore,
     GatewayStore, LogStatsStore, MediaStore, MemoryRecordStore, MetaStore, MonitorStore,
     RetentionStore, SessionGoalStore, SessionLockStore, SessionRunStore, StorageLifecycle,
-    TokenBalanceStore, UserAccountStore, UserWorldStore, VectorDocumentStore,
+    QuotaBalanceStore, UserAccountStore, UserWorldStore, VectorDocumentStore,
 };
 
 impl StorageLifecycle for SqliteStorage {
@@ -571,6 +571,9 @@ impl RetentionStore for SqliteStorage {
 }
 
 impl UserAccountStore for SqliteStorage {
+    fn update_user_account_profile(&self, record: &UserAccountRecord) -> Result<()> {
+        self.update_user_account_profile_impl(record)
+    }
     fn upsert_user_account(&self, record: &UserAccountRecord) -> Result<()> {
         self.upsert_user_account_impl(record)
     }
@@ -708,6 +711,12 @@ impl ChatSessionStore for SqliteStorage {
     }
     fn list_chat_session_agent_ids(&self, user_id: &str) -> Result<Vec<String>> {
         self.list_chat_session_agent_ids_impl(user_id)
+    }
+    fn list_work_chat_sessions(
+        &self, user_id: &str, agent_id: Option<&str>, status: Option<&str>,
+        offset: i64, limit: i64,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)> {
+        self.list_chat_sessions_filtered_impl(user_id, agent_id, None, status, offset, limit, true)
     }
     fn update_chat_session_title(
         &self,
@@ -1447,32 +1456,35 @@ impl AgentDirectoryStore for SqliteStorage {
     }
 }
 
-impl TokenBalanceStore for SqliteStorage {
-    fn prepare_user_token_balance(
+impl QuotaBalanceStore for SqliteStorage {
+    fn set_user_quota_balance(&self, user_id: &str, today: &str, daily_grant: i64, balance: i64) -> Result<Option<UserQuotaStatus>> {
+        self.set_user_quota_balance_impl(user_id, today, daily_grant, balance)
+    }
+    fn prepare_user_quota(
         &self,
         user_id: &str,
         today: &str,
         daily_grant: i64,
-    ) -> Result<Option<UserTokenBalanceStatus>> {
-        self.prepare_user_token_balance_impl(user_id, today, daily_grant)
+    ) -> Result<Option<UserQuotaStatus>> {
+        self.prepare_user_quota_impl(user_id, today, daily_grant)
     }
-    fn consume_user_tokens(
+    fn consume_user_quota(
         &self,
         user_id: &str,
         today: &str,
         daily_grant: i64,
         amount: i64,
-    ) -> Result<Option<UserTokenBalanceStatus>> {
-        self.consume_user_tokens_impl(user_id, today, daily_grant, amount)
+    ) -> Result<Option<UserQuotaStatus>> {
+        self.consume_user_quota_impl(user_id, today, daily_grant, amount)
     }
-    fn grant_user_tokens(
+    fn grant_user_quota(
         &self,
         user_id: &str,
         today: &str,
         daily_grant: i64,
         amount: i64,
         updated_at: f64,
-    ) -> Result<Option<UserTokenBalanceStatus>> {
-        self.grant_user_tokens_impl(user_id, today, daily_grant, amount, updated_at)
+    ) -> Result<Option<UserQuotaStatus>> {
+        self.grant_user_quota_impl(user_id, today, daily_grant, amount, updated_at)
     }
 }

@@ -176,17 +176,17 @@ impl OrchestratorError {
         Self::new("INTERNAL_ERROR", message, None)
     }
 
-    pub(super) fn user_token_insufficient(status: UserTokenBalanceStatus) -> Self {
-        let message = i18n::t("error.user_token_insufficient");
+    pub(super) fn user_quota_insufficient(status: UserQuotaStatus) -> Self {
+        let message = i18n::t("error.user_quota_insufficient");
         Self::new(
-            "USER_TOKEN_INSUFFICIENT",
+            "USER_QUOTA_INSUFFICIENT",
             message,
             Some(json!({
-                "token_balance": status.balance,
-                "token_granted_total": status.granted_total,
-                "token_used_total": status.used_total,
-                "daily_token_grant": status.daily_grant,
-                "last_token_grant_date": status.last_grant_date,
+                "quota_balance": status.balance,
+                "quota_granted_total": status.granted_total,
+                "quota_used_total": status.used_total,
+                "daily_quota_grant": status.daily_grant,
+                "last_quota_grant_date": status.last_grant_date,
             })),
         )
     }
@@ -272,7 +272,7 @@ fn default_meta_for_code(code: &str) -> OrchestratorErrorMeta {
             ErrorSourceStage::Llm,
             RecoveryAction::CompactContext,
         ),
-        "USER_QUOTA_EXCEEDED" | "USER_TOKEN_INSUFFICIENT" => OrchestratorErrorMeta::new(
+        "USER_QUOTA_EXCEEDED" | "USER_QUOTA_INSUFFICIENT" => OrchestratorErrorMeta::new(
             ErrorCategory::Quota,
             ErrorSeverity::Warning,
             true,

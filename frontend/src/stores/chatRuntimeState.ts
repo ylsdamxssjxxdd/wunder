@@ -1,3 +1,5 @@
+import { emitSubagentPoolChanged } from '@/utils/subagentPoolEvents';
+import { applySessionQuotaUsage } from './chatSessionQuota';
 import { defineStore } from 'pinia';
 import { markRaw, toRaw } from 'vue';
 import { isSessionUnavailable, markSessionUnavailable } from './chatSessionAvailability';
@@ -1784,8 +1786,7 @@ const syncSessionUsageFromRuntimeProjection = (store, sessionId) => {
   const assistants = selectVisibleMessageProjections(projection, key)
     .filter((message) => message.role === 'assistant' && message.display?.stats);
   const assistant = assistants[assistants.length - 1];
-  const stats = assistant?.display?.stats as Record<string, unknown> | undefined;
-  if (!stats) return;
+  const stats = (assistant?.display?.stats as Record<string, unknown> | undefined) || {};
   const contextTokens = normalizeContextTokens(
     stats.contextTokens ?? stats.context_tokens ?? stats.context_occupancy_tokens ??
       stats.contextOccupancyTokens ?? (stats.context_usage as Record<string, unknown> | undefined)?.context_occupancy_tokens ??
@@ -1794,25 +1795,60 @@ const syncSessionUsageFromRuntimeProjection = (store, sessionId) => {
   const contextTotalTokens = normalizeContextTotalTokens(
     stats.contextTotalTokens ?? stats.context_total_tokens ?? stats.context_max_tokens ?? stats.max_context
   );
-  const consumedCandidates = assistants.map((message) => {
+  const consumedByUserTurn = new Map<string, number>();
+  const fallbackToolCallsByUserTurn = new Map<string, number>();
+  assistants.forEach((message) => {
     const value = (message.display?.stats as Record<string, unknown> | undefined)?.quotaConsumed ??
       (message.display?.stats as Record<string, unknown> | undefined)?.quota_consumed ??
       (message.display?.stats as Record<string, unknown> | undefined)?.request_consumed_tokens;
-    return Number(value);
-  }).filter((value) => Number.isFinite(value) && value >= 0);
-  const toolCalls = assistants.reduce((total, message) => {
-    const value = Number((message.display?.stats as Record<string, unknown> | undefined)?.toolCalls ??
-      (message.display?.stats as Record<string, unknown> | undefined)?.tool_calls ?? 0);
-    return total + (Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0);
-  }, 0);
+    const parsed = Number(value);
+    const turn = String(message.userTurnId || message.id);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      consumedByUserTurn.set(turn, Math.max(consumedByUserTurn.get(turn) || 0, parsed));
+    }
+    const items = Array.isArray(message.workflowItems) ? message.workflowItems : [];
+    if (items.length === 0) {
+      const stats = message.display?.stats as Record<string, unknown> | undefined;
+      const explicit = Number(stats?.toolCalls ?? stats?.tool_calls ?? 0);
+      if (Number.isFinite(explicit) && explicit > 0) {
+        fallbackToolCallsByUserTurn.set(turn, Math.max(
+          fallbackToolCallsByUserTurn.get(turn) || 0,
+          Math.trunc(explicit)
+        ));
+      }
+    }
+  });
+  const toolCallKeys = new Set<string>();
+  assistants.forEach((message) => {
+    const items = Array.isArray(message.workflowItems) ? message.workflowItems : [];
+    items.forEach((item, index) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return;
+      const record = item as Record<string, unknown>;
+      const eventType = String(record.eventType ?? record.event_type ?? record.event ?? '').trim().toLowerCase();
+      const isTool = record.isTool === true || record.is_tool === true ||
+        ['tool_call', 'tool_result', 'tool_output', 'tool_output_delta', 'tool_call_started',
+          'tool_call_completed', 'tool_call_failed'].includes(eventType);
+      if (!isTool) return;
+      const ref = String(
+        record.toolCallId ?? record.tool_call_id ?? record.callId ?? record.call_id ??
+        record.commandSessionId ?? record.command_session_id ?? record.approvalId ?? record.approval_id ?? ''
+      ).trim();
+      const toolName = String(record.toolName ?? record.tool_name ?? record.tool ?? record.name ?? '').trim();
+      const key = ref
+        ? `ref:${ref}`
+        : `turn:${message.userTurnId}:${message.modelTurnId}:${toolName}:${index}`;
+      toolCallKeys.add(key);
+    });
+  });
+  const toolCalls = toolCallKeys.size + Array.from(fallbackToolCallsByUserTurn.values())
+    .reduce((sum, value) => sum + value, 0);
   const session = Array.isArray(store.sessions)
     ? store.sessions.find((item) => resolveSessionKey(item?.id) === key)
     : null;
   if (!session) return;
   const currentConsumed = Number(session.consumed_tokens ?? session.consumedTokens ?? 0);
-  const nextConsumed = consumedCandidates.length > 0
-    ? Math.max(Number.isFinite(currentConsumed) ? currentConsumed : 0, ...consumedCandidates)
-    : currentConsumed;
+  const projectedConsumed = Array.from(consumedByUserTurn.values()).reduce((sum, value) => sum + value, 0);
+  const nextConsumed = Math.max(Number.isFinite(currentConsumed) ? currentConsumed : 0, projectedConsumed);
   const next = {
     ...session,
     ...(Number.isFinite(nextConsumed) && nextConsumed >= 0
@@ -1828,7 +1864,12 @@ const syncSessionUsageFromRuntimeProjection = (store, sessionId) => {
       : {})
   };
   const index = store.sessions.indexOf(session);
-  if (index >= 0) store.sessions[index] = next;
+  if (index >= 0) {
+    store.sessions[index] = next;
+    const agentId = String(next.agent_id || '').trim();
+    writeSessionListCache(agentId, filterSessionsByAgent(agentId, store.sessions));
+    syncDemoChatCache({ sessions: store.sessions });
+  }
 };
 
 const COMMAND_SESSION_STREAM_EVENTS = new Set([
@@ -1967,6 +2008,7 @@ const applyCollaborationCanonicalSideEffect = (
     const key = resolveSessionKey(sessionId);
     if (key) {
       sessionSubagentsCache.delete(key);
+      emitSubagentPoolChanged(key);
     }
   }
   if (agentIds.size > 0) {
@@ -2190,6 +2232,17 @@ export const applyCanonicalStreamRuntimeEvent = (
     immediate: options.phase === 'snapshot',
     reason: `stream:${options.phase || 'ws'}`
   });
+  // Quota can precede the assistant message; absolute totals remain replay-safe.
+  if (eventType === 'quota_usage' && applySessionQuotaUsage(
+    store.sessions, key, extractCanonicalStreamData(payload)
+  )) {
+    const next = store.sessions.find((item) => resolveSessionKey(item?.id) === key);
+    for (const entry of sessionListCache.values()) {
+      const index = entry.sessions.findIndex((item) => resolveSessionKey(item?.id) === key);
+      if (index >= 0) entry.sessions[index] = { ...entry.sessions[index], quota_used: next.quota_used };
+    }
+    syncDemoChatCache({ sessions: store.sessions });
+  }
   if (results.some((result) => result.applied)) {
     const runtime = ensureRuntime(key);
     runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;

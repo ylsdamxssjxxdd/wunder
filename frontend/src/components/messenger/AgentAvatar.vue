@@ -1,15 +1,15 @@
 <template>
-  <span class="messenger-agent-avatar" :class="[sizeClass, stateClass, motionClass]" :title="title">
+  <span class="messenger-agent-avatar" :class="[sizeClass, stateClass, motionClass, { 'is-status-only': statusOnly }]" :title="title">
     <span class="messenger-agent-avatar-image-shell" :style="avatarFaceStyle" aria-hidden="true">
       <CompanionAvatarSprite
-        v-if="showCompanionSprite"
+        v-if="!statusOnly && showCompanionSprite"
         class="messenger-agent-avatar-sprite"
         :icon="avatarConfig"
         :state="state"
         :animated="animated"
       />
-      <img v-else-if="avatarImageUrl" class="messenger-agent-avatar-image" :src="avatarImageUrl" alt="" />
-      <span v-else class="messenger-agent-avatar-initial">{{ avatarInitial }}</span>
+      <img v-else-if="!statusOnly && avatarImageUrl" class="messenger-agent-avatar-image" :src="avatarImageUrl" alt="" />
+      <span v-else-if="!statusOnly" class="messenger-agent-avatar-initial">{{ avatarInitial }}</span>
     </span>
     <span class="messenger-agent-avatar-status" aria-hidden="true">
       <span
@@ -38,6 +38,7 @@ const props = withDefaults(
   defineProps<{
     size?: AgentAvatarSize;
     state?: AgentRuntimeState;
+    statusOnly?: boolean;
     title?: string;
     icon?: unknown;
     imageUrl?: string;
@@ -50,7 +51,8 @@ const props = withDefaults(
     title: '',
     imageUrl: '',
     name: '',
-    animated: false
+    animated: false,
+    statusOnly: false
   }
 );
 
@@ -74,7 +76,7 @@ const avatarImageUrl = computed(
 );
 const avatarInitial = computed(() => resolveAgentAvatarInitial(props.name || props.title));
 const avatarFaceStyle = computed(() => ({
-  background: avatarImageUrl.value || showCompanionSprite.value ? 'transparent' : avatarConfig.value.color
+  background: props.statusOnly ? 'transparent' : (avatarImageUrl.value || showCompanionSprite.value ? 'transparent' : avatarConfig.value.color)
 }));
 const statusIconClass = computed(() => {
   switch (props.state) {
@@ -134,6 +136,26 @@ const statusIconClass = computed(() => {
   display: block;
   background: #ffffff;
   position: relative;
+}
+
+.messenger-agent-avatar.is-status-only {
+  --avatar-size: 24px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.messenger-agent-avatar.is-status-only .messenger-agent-avatar-image-shell {
+  display: none;
+}
+
+.messenger-agent-avatar.is-status-only .messenger-agent-avatar-status {
+  position: static;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: none;
 }
 
 .messenger-agent-avatar-image {

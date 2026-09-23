@@ -31,7 +31,6 @@ use uuid::Uuid;
 const DEFAULT_SESSION_TITLE: &str = "新会话";
 const SUBAGENT_MESSAGE_PREVIEW_MAX_CHARS: usize = 240;
 const MAX_SUBAGENT_SESSION_DEPTH: usize = 32;
-const SESSION_RUN_BLOCKING_EXEC_TIMEOUT_S: u64 = 24 * 60 * 60;
 
 #[derive(Debug)]
 pub(crate) struct SessionRunOutcome {
@@ -417,6 +416,14 @@ pub(crate) async fn spawn_session_run(
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
     let user_id = request.user_id.clone();
+    // Admission precedes the first await so a concurrent stop cannot miss queued runs.
+    let child_run = context
+        .monitor
+        .as_ref()
+        .zip(parent_session_id.as_deref())
+        .map(|(monitor, parent)| monitor.register_child_run(&session_id, parent))
+        .transpose()?
+        .map(Arc::new);
     let request_config_overrides = request.config_overrides.clone();
     let mut run_metadata = match run_meta.metadata.clone() {
         Some(Value::Object(map)) => Value::Object(map),
@@ -455,14 +462,6 @@ pub(crate) async fn spawn_session_run(
         updated_time: now,
         metadata: Some(run_metadata),
     };
-    {
-        let queued_storage = context.storage.clone();
-        let queued_record = record.clone();
-        blocking::run_db("tools.session_run.queued", move || {
-            queued_storage.upsert_session_run(&queued_record)
-        })
-        .await?;
-    }
 
     let storage = context.storage.clone();
     let workspace = context.workspace.clone();
@@ -470,8 +469,21 @@ pub(crate) async fn spawn_session_run(
     let beeroom_realtime = context.beeroom_realtime.clone();
     let swarm_team_task_id = run_meta.team_task_id.clone();
     let (tx, rx) = oneshot::channel::<SessionRunOutcome>();
+    let (ready_tx, ready_rx) = oneshot::channel::<Result<()>>();
     let announce_for_start = announce.clone();
     long_task::spawn("tools.session_run.lifecycle", async move {
+        let _child_run = child_run;
+        if let Err(error) = blocking::run_db("tools.session_run.queued", {
+            let storage = storage.clone();
+            let record = record.clone();
+            move || storage.upsert_session_run(&record)
+        })
+        .await
+        {
+            let _ = ready_tx.send(Err(error));
+            return;
+        }
+        let _ = ready_tx.send(Ok(()));
         let started = now_ts();
         let running = SessionRunRecord {
             status: "running".to_string(),
@@ -514,23 +526,12 @@ pub(crate) async fn spawn_session_run(
         let mut run_request = request;
         run_request.stream = true;
         let child_orchestrator = orchestrator.clone();
-        let blocking_exec_timeout = run_timeout_s
-            .filter(|value| *value > 0.0)
-            .map(|value| Duration::from_secs_f64(value + 5.0))
-            .unwrap_or_else(|| Duration::from_secs(SESSION_RUN_BLOCKING_EXEC_TIMEOUT_S));
-        let mut run_handle = long_task::spawn(
-            "tools.session_run.execute",
-            blocking::run_external_with_timeout(
-                "tools.session_run.execute",
-                blocking_exec_timeout,
-                move || {
-                    session_run_runtime().block_on(session_run_stream::run_request(
-                        child_orchestrator,
-                        run_request,
-                    ))
-                },
-            ),
-        );
+        let child_token = _child_run.as_ref().map(|guard| guard.token.clone());
+        let execution_guard = _child_run.clone();
+        let mut run_handle = session_run_runtime().spawn(async move {
+            let _execution_guard = execution_guard;
+            session_run_stream::run_request(child_orchestrator, run_request, child_token).await
+        });
         let mut timeout_triggered = false;
         let run_result = if let Some(timeout_s) = run_timeout_s.filter(|value| *value > 0.0) {
             let timeout_duration = Duration::from_secs_f64(timeout_s);
@@ -541,10 +542,12 @@ pub(crate) async fn spawn_session_run(
                 },
                 _ = sleep(timeout_duration) => {
                     timeout_triggered = true;
-                    run_handle.abort();
                     if let Some(monitor) = monitor.as_ref() {
                         let _ = monitor.cancel(&session_id);
                     }
+                    // Keep admission ownership until the actual worker exits.
+                    // Dropping the event stream would leave its orchestrator pump detached.
+                    let _ = (&mut run_handle).await;
                     Err(anyhow!("timeout"))
                 }
             }
@@ -556,21 +559,35 @@ pub(crate) async fn spawn_session_run(
         };
         let finished = now_ts();
         let elapsed = (finished - started).max(0.0);
-        let (status, answer, error) = match run_result {
-            Ok(response) => {
-                let answer =
-                    truncate_tool_result_text(response.answer.as_deref().unwrap_or_default());
-                ("success".to_string(), Some(answer), None)
-            }
-            Err(err) => {
-                if timeout_triggered {
-                    ("timeout".to_string(), None, Some("timeout".to_string()))
-                } else {
-                    (
-                        "error".to_string(),
-                        None,
-                        Some(truncate_tool_result_text(&err.to_string())),
-                    )
+        let interrupted = _child_run
+            .as_ref()
+            .is_some_and(|guard| guard.token.is_cancelled())
+            || monitor
+                .as_ref()
+                .is_some_and(|monitor| monitor.is_cancelled(&session_id));
+        let (status, answer, error) = if interrupted && !timeout_triggered {
+            (
+                "cancelled".to_string(),
+                None,
+                Some("interrupted".to_string()),
+            )
+        } else {
+            match run_result {
+                Ok(response) => {
+                    let answer =
+                        truncate_tool_result_text(response.answer.as_deref().unwrap_or_default());
+                    ("success".to_string(), Some(answer), None)
+                }
+                Err(err) => {
+                    if timeout_triggered {
+                        ("timeout".to_string(), None, Some("timeout".to_string()))
+                    } else {
+                        (
+                            "error".to_string(),
+                            None,
+                            Some(truncate_tool_result_text(&err.to_string())),
+                        )
+                    }
                 }
             }
         };
@@ -608,6 +625,11 @@ pub(crate) async fn spawn_session_run(
             }
         }
 
+        if matches!(cleanup, SessionCleanup::Keep) || interrupted {
+            if let Some(guard) = &_child_run {
+                guard.settle();
+            }
+        }
         if let Some(announce) = announce {
             if announce.persist_history_message && !should_skip_announce(answer.as_deref()) {
                 append_child_announce(
@@ -629,6 +651,7 @@ pub(crate) async fn spawn_session_run(
             }
             if announce.emit_parent_events || announce.auto_wake {
                 let parent_dispatch = subagents::ParentDispatchConfig {
+                    cancellation_guard: _child_run.clone(),
                     parent_session_id: announce.parent_session_id.clone(),
                     dispatch_id: announce.dispatch_id.clone(),
                     strategy: announce.strategy.clone(),
@@ -639,7 +662,7 @@ pub(crate) async fn spawn_session_run(
                     parent_user_round: announce.parent_user_round,
                     parent_model_round: announce.parent_model_round,
                     emit_parent_events: announce.emit_parent_events,
-                    auto_wake: announce.auto_wake,
+                    auto_wake: announce.auto_wake && !interrupted,
                 };
                 subagents::handle_child_completion(
                     storage.clone(),
@@ -656,7 +679,7 @@ pub(crate) async fn spawn_session_run(
                 .await;
             }
         }
-        if matches!(cleanup, SessionCleanup::Delete) {
+        if matches!(cleanup, SessionCleanup::Delete) && !interrupted {
             cleanup_session(
                 &storage,
                 &workspace,
@@ -673,6 +696,11 @@ pub(crate) async fn spawn_session_run(
             elapsed_s: elapsed,
         });
     });
+    // The worker owns cancellation even if this tool future is dropped while
+    // persisting. Accepted callers must see the queued ledger immediately.
+    ready_rx
+        .await
+        .map_err(|_| anyhow!("child startup did not settle"))??;
     Ok(rx)
 }
 

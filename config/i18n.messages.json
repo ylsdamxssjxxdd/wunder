@@ -251,6 +251,10 @@
     "en-US": "LLM unavailable: {detail}",
     "zh-CN": "模型不可用: {detail}"
   },
+  "virtual_llm.random.reasoning": {
+    "zh-CN": "这是模拟思考阶段：检查输入结构，整理回复要点，然后生成正文。此内容仅用于验证流式显示与计时，不代表真实模型推理。",
+    "en-US": "This is a simulated reasoning phase: check the input structure, organize response points, then generate the answer. It validates streaming and timing, not actual model reasoning."
+  },
   "virtual_llm.random.log_name": {
     "en-US": "Virtual random response",
     "zh-CN": "虚拟随机回复"
@@ -459,9 +463,9 @@
     "en-US": "Daily quota reached. Please try again tomorrow or contact an administrator.",
     "zh-CN": "今日额度已用完，请明日再试或联系管理员调整。"
   },
-  "error.user_token_insufficient": {
-    "en-US": "Token balance is insufficient. Please wait for the next grant or contact an administrator.",
-    "zh-CN": "Token 余额不足，请等待下次发放或联系管理员调整。"
+  "error.user_quota_insufficient": {
+    "en-US": "Quota balance is insufficient. Please wait for the next grant or contact an administrator.",
+    "zh-CN": "额度不足，请等待下次发放或联系管理员调整。"
   },
   "error.permission_denied": {
     "en-US": "Permission denied",
@@ -2692,8 +2696,8 @@
     "zh-CN": "写入文件内容，已存在文件会被覆盖。常用 path 和 content；dry_run 仅用于预览，不会真正落盘。"
   },
   "tool.spec.subagent_control.description": {
-    "en-US": "Manage child sub-agents under the current session. Common flow: spawn(task) -> wait/status -> history; spawn already sends the first turn, so do not call send immediately after spawn; prefer the session_id or run_id returned by spawn.",
-    "zh-CN": "管理当前会话下的子智能体。常用流程：spawn(task) -> wait/status -> history；spawn 已经会发送第一轮任务，不要立刻再 send；优先使用 spawn 返回的 session_id 或 run_id。"
+    "en-US": "Manage the persistent child-agent pool owned by this session. Use list to find reusable children. send(session_id, message) or resume(session_id, message) starts another task on a completed or interrupted child while preserving its history and frozen prompt. resume without message only reopens it. spawn(task) creates a new child and sends its first task, running in the background by default; do not immediately send again. Stopping the parent interrupts all descendants but retains their sessions; resume selected children only when needed. Wait for active children to settle before sending again. Use agent_swarm for existing swarm agents.",
+    "zh-CN": "管理当前会话持久保留的子智能体池。先 list 查找可复用子智能体；用 send(session_id, message) 或 resume(session_id, message) 给已完成或已中断的子智能体继续任务，保留原线程历史与提示词。resume 不带 message 仅重新开放。仅在需要新工作单元时 spawn(task)，默认后台执行；spawn 已发送首轮任务，不要立刻 send。主会话中断会级联中断全部后代，子线程保留且不会自动恢复，后续按需选择复用。运行中的子线程需先等待结束或中断收敛再 send。蜂群协作请使用 agent_swarm。"
   },
   "tool.spec.subagent_control.args.action": {
     "en-US": "Action to perform: list/history/send/spawn/batch_spawn/status/wait/interrupt/close/resume. Typical flow: spawn(task=...) for the first turn, then send(...) only for follow-up turns on the existing child session.",

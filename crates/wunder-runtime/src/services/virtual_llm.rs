@@ -9,19 +9,18 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::time::Duration;
-use tokio::time::sleep;
 use uuid::Uuid;
 
 mod replay_cache;
 mod replay_selection;
+mod streaming;
+pub mod timing;
+pub use streaming::emit_virtual_deltas;
 #[cfg(test)]
 mod replay_tests;
 
 pub const VIRTUAL_REPLAY_PROVIDER: &str = "virtual_replay";
 const MAX_VIRTUAL_LLM_JSONL_BYTES: u64 = 32 * 1024 * 1024;
-const DEFAULT_TOKEN_DELAY_MS: u64 = 18;
-const MAX_TOKEN_DELAY_MS: u64 = 500;
 const DEFAULT_MODEL_NAME: &str = "default";
 const RANDOM_REPLAY_LOG_ID: &str = "virtual_random";
 const RANDOM_REPLAY_FORMAT: &str = "virtual_random";
@@ -314,7 +313,7 @@ fn random_virtual_turn(round: usize, model_round: Option<usize>) -> VirtualRepla
     let content = crate::i18n::t(RANDOM_REPLY_KEYS[random_index]);
     VirtualReplayTurn {
         content,
-        reasoning: String::new(),
+        reasoning: crate::i18n::t("virtual_llm.random.reasoning"),
         usage: None,
         tool_calls: None,
         source_log_id: RANDOM_REPLAY_LOG_ID.to_string(),
@@ -325,42 +324,9 @@ fn random_virtual_turn(round: usize, model_round: Option<usize>) -> VirtualRepla
     }
 }
 
-pub async fn emit_virtual_deltas<F, Fut>(
-    turn: &VirtualReplayTurn,
-    stream: bool,
-    token_delay_ms: Option<u64>,
-    mut on_delta: F,
-) -> Result<()>
-where
-    F: FnMut(String, String) -> Fut,
-    Fut: std::future::Future<Output = Result<()>>,
-{
-    if !stream {
-        return Ok(());
-    }
-    let delay_ms = token_delay_ms
-        .unwrap_or(DEFAULT_TOKEN_DELAY_MS)
-        .min(MAX_TOKEN_DELAY_MS);
-    let reasoning_tokens = tokenize_for_stream(&turn.reasoning);
-    for token in reasoning_tokens {
-        on_delta(String::new(), token).await?;
-        if delay_ms > 0 {
-            sleep(Duration::from_millis(delay_ms)).await;
-        }
-    }
-    let content_tokens = tokenize_for_stream(&turn.content);
-    for token in content_tokens {
-        on_delta(token, String::new()).await?;
-        if delay_ms > 0 {
-            sleep(Duration::from_millis(delay_ms)).await;
-        }
-    }
-    Ok(())
-}
-
 pub fn estimate_virtual_usage(input_messages: &[Value], turn: &VirtualReplayTurn) -> TokenUsage {
     turn.usage.clone().unwrap_or_else(|| {
-        let input = approx_value_tokens(&Value::Array(input_messages.to_vec()));
+        let input = timing::input_tokens(input_messages);
         let output = approx_text_tokens(&turn.content);
         let reasoning = approx_text_tokens(&turn.reasoning);
         TokenUsage {
@@ -604,44 +570,8 @@ fn read_usage_u64(value: &Value, keys: &[&str]) -> Option<u64> {
     None
 }
 
-fn tokenize_for_stream(text: &str) -> Vec<String> {
-    if text.is_empty() {
-        return Vec::new();
-    }
-    let mut output = Vec::new();
-    let mut current = String::new();
-    for ch in text.chars() {
-        current.push(ch);
-        if ch.is_whitespace() || is_cjk_char(ch) || ch.is_ascii_punctuation() {
-            output.push(std::mem::take(&mut current));
-        }
-    }
-    if !current.is_empty() {
-        output.push(current);
-    }
-    output
-}
-
-fn is_cjk_char(ch: char) -> bool {
-    matches!(
-        ch as u32,
-        0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0x20000..=0x2A6DF | 0x2A700..=0x2B73F
-            | 0x2B740..=0x2B81F | 0x2B820..=0x2CEAF | 0xF900..=0xFAFF
-    )
-}
-
-fn approx_value_tokens(value: &Value) -> u64 {
-    serde_json::to_string(value)
-        .map(|text| approx_text_tokens(&text))
-        .unwrap_or(0)
-}
-
 fn approx_text_tokens(text: &str) -> u64 {
-    if text.trim().is_empty() {
-        return 0;
-    }
-    let chars = text.chars().count() as u64;
-    chars.saturating_add(3) / 4
+    crate::token_utils::approx_token_count(text).max(0) as u64
 }
 
 fn sanitize_log_name(raw: &str) -> String {
@@ -811,13 +741,5 @@ mod tests {
         assert_eq!(turn.source_round, 2);
         assert_eq!(turn.source_model_round, Some(3));
         assert_eq!(turn.format, RANDOM_REPLAY_FORMAT);
-    }
-
-    #[test]
-    fn tokenizes_ascii_text_for_streaming() {
-        assert_eq!(
-            tokenize_for_stream("hi, ok"),
-            vec!["hi,".to_string(), " ".to_string(), "ok".to_string()]
-        );
     }
 }

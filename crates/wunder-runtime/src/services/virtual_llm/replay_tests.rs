@@ -115,10 +115,15 @@ async fn stream_emits_reasoning_before_content_and_propagates_cancellation() {
     turn.content = "A".into();
     turn.reasoning = "B".into();
     let mut deltas = Vec::new();
-    emit_virtual_deltas(&turn, true, Some(0), |content, reasoning| {
-        deltas.push((content, reasoning));
-        std::future::ready(Ok(()))
-    })
+    emit_virtual_deltas(
+        &turn,
+        true,
+        timing::VirtualModelSpeed::Fast,
+        |content, reasoning| {
+            deltas.push((content, reasoning));
+            std::future::ready(Ok(()))
+        },
+    )
     .await
     .unwrap();
     assert_eq!(
@@ -126,11 +131,55 @@ async fn stream_emits_reasoning_before_content_and_propagates_cancellation() {
         vec![(String::new(), "B".into()), ("A".into(), String::new())]
     );
     let mut count = 0;
-    assert!(emit_virtual_deltas(&turn, true, Some(0), |_, _| {
-        count += 1;
-        std::future::ready(Err(anyhow!("cancelled")))
+    assert!(
+        emit_virtual_deltas(&turn, true, timing::VirtualModelSpeed::Fast, |_, _| {
+            count += 1;
+            std::future::ready(Err(anyhow!("cancelled")))
+        })
+        .await
+        .is_err()
+    );
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn simulation_preserves_utf8_and_nonstream_generation_still_takes_time() {
+    let mut turn = random_virtual_turn(1, Some(1));
+    assert!(!turn.reasoning.trim().is_empty());
+    turn.reasoning = "字🙂".repeat(5);
+    turn.content = "abcd".repeat(5);
+    let mut content = String::new();
+    let mut reasoning = String::new();
+    emit_virtual_deltas(
+        &turn,
+        true,
+        timing::VirtualModelSpeed::Fast,
+        |text, thought| {
+            assert!(content.is_empty() || thought.is_empty());
+            content.push_str(&text);
+            reasoning.push_str(&thought);
+            std::future::ready(Ok(()))
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        (content, reasoning),
+        (turn.content.clone(), turn.reasoning.clone())
+    );
+    let usage = estimate_virtual_usage(&[], &turn);
+    assert_eq!(
+        (usage.output, usage.reasoning, usage.total),
+        (5, Some(9), 14)
+    );
+    let started = std::time::Instant::now();
+    let mut callbacks = 0;
+    emit_virtual_deltas(&turn, false, timing::VirtualModelSpeed::Fast, |_, _| {
+        callbacks += 1;
+        std::future::ready(Ok(()))
     })
     .await
-    .is_err());
-    assert_eq!(count, 1);
+    .unwrap();
+    assert!(started.elapsed() >= timing::VirtualModelSpeed::Fast.generation_duration(13));
+    assert_eq!(callbacks, 0);
 }

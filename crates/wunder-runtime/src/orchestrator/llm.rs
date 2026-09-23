@@ -373,91 +373,6 @@ fn is_known_bad_tool_call_name(name: &str) -> bool {
 }
 
 impl Orchestrator {
-    fn resolve_user_daily_token_grant(&self, user_id: &str) -> Result<i64, OrchestratorError> {
-        let user = self
-            .storage
-            .get_user_account(user_id)
-            .map_err(|err| OrchestratorError::internal(err.to_string()))?;
-        let unit_level = user
-            .as_ref()
-            .and_then(|record| record.unit_id.as_deref())
-            .and_then(|unit_id| {
-                self.storage
-                    .get_org_unit(unit_id)
-                    .ok()
-                    .flatten()
-                    .map(|unit| unit.level)
-            });
-        Ok(UserStore::default_daily_token_grant_by_level(unit_level))
-    }
-
-    pub(super) async fn ensure_user_token_balance(
-        &self,
-        user_id: &str,
-        _emitter: &EventEmitter,
-        _round_info: RoundInfo,
-        _emit_quota_events: bool,
-    ) -> Result<(), OrchestratorError> {
-        let today = UserStore::today_string();
-        let daily_grant = self.resolve_user_daily_token_grant(user_id)?;
-        let status = self
-            .storage
-            .prepare_user_token_balance(user_id, &today, daily_grant)
-            .map_err(|err| OrchestratorError::internal(err.to_string()))?;
-        let Some(status) = status else {
-            return Ok(());
-        };
-        if !status.allowed {
-            return Err(OrchestratorError::user_token_insufficient(status));
-        }
-        Ok(())
-    }
-
-    pub(super) async fn consume_user_tokens(
-        &self,
-        user_id: &str,
-        consumed_tokens: i64,
-        emitter: &EventEmitter,
-        round_info: RoundInfo,
-        emit_quota_events: bool,
-    ) -> Result<(), OrchestratorError> {
-        let safe_consumed = consumed_tokens.max(0);
-        if safe_consumed <= 0 {
-            return Ok(());
-        }
-        let today = UserStore::today_string();
-        let daily_grant = self.resolve_user_daily_token_grant(user_id)?;
-        let status = self
-            .storage
-            .consume_user_tokens(user_id, &today, daily_grant, safe_consumed)
-            .map_err(|err| OrchestratorError::internal(err.to_string()))?;
-        let Some(status) = status else {
-            return Ok(());
-        };
-        if emit_quota_events {
-            let mut payload = json!({
-                "consumed": safe_consumed,
-                "token_balance": status.balance,
-                "token_granted_total": status.granted_total,
-                "token_used_total": status.used_total,
-                "daily_token_grant": status.daily_grant,
-                "last_token_grant_date": status.last_grant_date,
-                "overspent_tokens": status.overspent_tokens,
-                // Legacy aliases kept for existing clients during migration.
-                "daily_quota": status.granted_total,
-                "used": status.used_total,
-                "remaining": status.balance,
-                "date": status.last_grant_date,
-            });
-            if let Value::Object(ref mut map) = payload {
-                round_info.insert_into(map);
-            }
-            emitter.emit("token_balance", payload.clone()).await;
-            emitter.emit("quota_usage", payload).await;
-        }
-        Ok(())
-    }
-
     pub(super) fn resolve_llm_config(
         &self,
         config: &Config,
@@ -725,12 +640,13 @@ impl Orchestrator {
         let virtual_replay = crate::services::virtual_llm::is_virtual_replay_provider(
             effective_config.provider.as_deref(),
         );
-        if !is_admin && !virtual_replay {
-            self.ensure_user_token_balance(user_id, emitter, round_info, emit_quota_events)
-                .await?;
-        }
 
         let client = build_llm_client(&effective_config, self.http.clone());
+        let client = if is_admin || virtual_replay {
+            client
+        } else {
+            self.with_user_quota_admission(client, user_id, emitter, round_info)
+        };
         let context_manager = ContextManager;
         let request_messages = context_manager.normalize_messages(messages.to_vec());
         let message_repair = (request_messages.as_slice() != messages).then(|| {
@@ -835,6 +751,13 @@ impl Orchestrator {
         };
         if let Some(virtual_turn) = virtual_turn {
             let request_started_at = Instant::now();
+            let simulation_speed = effective_config.simulation_speed.unwrap_or_default();
+            // Replay usage may describe an older prompt. Simulate prefill from this request.
+            let input_tokens = crate::services::virtual_llm::timing::input_tokens(&request_messages);
+            self.await_with_cancel(session_id, timeout_s, async {
+                crate::services::virtual_llm::timing::wait_for_prefill(input_tokens, simulation_speed).await;
+                Ok(())
+            }).await?.map_err(|error| OrchestratorError::llm_unavailable(error.to_string()))?;
             let output_timing = Arc::new(parking_lot::Mutex::new(OutputTiming::default()));
             let will_stream = initial_will_stream;
             if will_stream {
@@ -874,7 +797,7 @@ impl Orchestrator {
                 let fut = crate::services::virtual_llm::emit_virtual_deltas(
                     &virtual_turn,
                     true,
-                    None,
+                    simulation_speed,
                     on_delta,
                 );
                 self.await_with_cancel(
@@ -889,6 +812,13 @@ impl Orchestrator {
                         &HashMap::from([("detail".to_string(), err.to_string())]),
                     ))
                 })?;
+            }
+            if !will_stream {
+                self.await_with_cancel(session_id, timeout_s,
+                    crate::services::virtual_llm::emit_virtual_deltas(
+                        &virtual_turn, false, simulation_speed, |_, _| std::future::ready(Ok(())),
+                    ),
+                ).await?.map_err(|error| OrchestratorError::llm_unavailable(error.to_string()))?;
             }
             let response_finished_at = Instant::now();
             let content = virtual_turn.content.clone();
@@ -972,6 +902,7 @@ impl Orchestrator {
         let mut last_err: anyhow::Error;
         let mut force_non_stream_retry = false;
         loop {
+            self.ensure_not_cancelled(session_id)?;
             attempt += 1;
             let request_started_at = Instant::now();
             let output_timing = Arc::new(parking_lot::Mutex::new(OutputTiming::default()));
@@ -1176,6 +1107,10 @@ impl Orchestrator {
                     return Ok((content, reasoning, usage, tool_calls, round_speed));
                 }
                 Err(err) => {
+                    // Admission failures are terminal, not provider errors eligible for retry.
+                    if err.is::<OrchestratorError>() {
+                        return Err(err.downcast::<OrchestratorError>().expect("admission error"));
+                    }
                     if let Some(usage) = crate::services::llm::failed_response_usage(&err) {
                         self.account_model_usage(
                             usage,

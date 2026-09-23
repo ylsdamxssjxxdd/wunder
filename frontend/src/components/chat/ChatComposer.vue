@@ -144,144 +144,6 @@
       >
         <span class="chat-composer-resize-grip"></span>
       </button>
-      <div v-if="worldStyle" class="messenger-world-toolbar chat-composer-world-toolbar">
-        <div
-          v-if="presetQuestionItems.length"
-          ref="worldPresetCommandAnchorRef"
-          class="messenger-world-tool-anchor"
-          :class="{ 'is-open': isWorldCommandPanelVisible('preset') }"
-          @mouseenter="handleWorldCommandAnchorMouseEnter('preset')"
-          @mouseleave="handleWorldCommandAnchorMouseLeave('preset')"
-          @focusin="handleWorldCommandAnchorFocusIn('preset')"
-          @focusout="handleWorldCommandAnchorFocusOut('preset', $event)"
-        >
-          <button
-            class="messenger-world-tool-btn"
-            type="button"
-            :class="{ active: isWorldCommandPanelVisible('preset') }"
-            :disabled="stopButtonActive"
-            :title="t('chat.commandMenu.presetQuestions')"
-            :aria-label="t('chat.commandMenu.presetQuestions')"
-            @click.prevent="toggleWorldCommandPanel('preset')"
-          >
-            <i class="fa-solid fa-wand-magic-sparkles chat-composer-command-btn-icon" aria-hidden="true"></i>
-          </button>
-          <div
-            v-if="isWorldCommandPanelVisible('preset')"
-            class="chat-composer-command-panel"
-            @mouseenter="handleWorldCommandPanelMouseEnter('preset')"
-            @mouseleave="handleWorldCommandPanelMouseLeave('preset')"
-          >
-            <div class="chat-composer-command-section-label">
-              {{ t('chat.commandMenu.presetQuestions') }}
-            </div>
-            <button
-              v-for="item in presetQuestionItems"
-              :key="`preset-question:${item.command}`"
-              class="chat-composer-command-item chat-composer-command-item--question"
-              type="button"
-              :title="item.command"
-              @click="applyPresetQuestion(item.command)"
-            >
-              <span class="chat-composer-command-name">{{ item.command }}</span>
-            </button>
-          </div>
-        </div>
-        <div
-          ref="worldSystemCommandAnchorRef"
-          class="messenger-world-tool-anchor"
-          :class="{ 'is-open': isWorldCommandPanelVisible('system') }"
-          @mouseenter="handleWorldCommandAnchorMouseEnter('system')"
-          @mouseleave="handleWorldCommandAnchorMouseLeave('system')"
-          @focusin="handleWorldCommandAnchorFocusIn('system')"
-          @focusout="handleWorldCommandAnchorFocusOut('system', $event)"
-        >
-          <button
-            class="messenger-world-tool-btn"
-            type="button"
-            :class="{ active: isWorldCommandPanelVisible('system') }"
-            :disabled="stopButtonActive"
-            :title="t('chat.commandMenu.commands')"
-            :aria-label="t('chat.commandMenu.commands')"
-            @click.prevent="toggleWorldCommandPanel('system')"
-          >
-            <i class="fa-solid fa-terminal chat-composer-command-btn-icon" aria-hidden="true"></i>
-          </button>
-          <div
-            v-if="isWorldCommandPanelVisible('system')"
-            class="chat-composer-command-panel"
-            @mouseenter="handleWorldCommandPanelMouseEnter('system')"
-            @mouseleave="handleWorldCommandPanelMouseLeave('system')"
-          >
-            <button
-              v-for="item in quickCommandItems"
-              :key="item.command"
-              class="chat-composer-command-item"
-              type="button"
-              @click="sendQuickCommand(item.command)"
-            >
-              <span class="chat-composer-command-name">{{ item.command }}</span>
-              <span class="chat-composer-command-desc">{{ item.description }}</span>
-            </button>
-          </div>
-        </div>
-        <button
-          class="messenger-world-tool-btn"
-          type="button"
-          :class="{
-            'messenger-world-tool-btn--recording': voiceRecording,
-            'messenger-world-tool-btn--transcribing': voiceTranscribing
-          }"
-          :title="voiceButtonTitle"
-          :aria-label="voiceButtonTitle"
-          :disabled="composerBusy > 0 || stopButtonActive || voiceTranscribing"
-          @click="handleToggleVoiceRecord"
-        >
-          <i
-            :class="[
-              voiceRecording
-                ? 'fa-solid fa-stop'
-                : voiceTranscribing
-                  ? 'fa-solid fa-waveform-lines'
-                  : 'fa-solid fa-microphone',
-              'messenger-world-tool-fa-icon'
-            ]"
-            aria-hidden="true"
-          ></i>
-        </button>
-        <div
-          v-if="desktopScreenshotSupported"
-          ref="screenshotMenuAnchorRef"
-          class="messenger-world-tool-anchor chat-screenshot-anchor"
-          :class="{ 'is-open': screenshotMenuVisible }"
-        >
-          <button
-            class="messenger-world-tool-btn chat-screenshot-toggle"
-            type="button"
-            :class="{ active: screenshotMenuVisible }"
-            :title="t('chat.attachments.screenshot')"
-            :aria-label="t('chat.attachments.screenshot')"
-            :aria-expanded="screenshotMenuVisible"
-            :disabled="composerBusy > 0 || voiceRecording || stopButtonActive"
-            @click.stop.prevent="toggleScreenshotMenu"
-          >
-            <i class="fa-solid fa-camera messenger-world-tool-fa-icon" aria-hidden="true"></i>
-            <i class="fa-solid fa-chevron-down chat-screenshot-caret" aria-hidden="true"></i>
-          </button>
-        </div>
-        <div v-if="voiceRecording" class="messenger-world-voice-indicator">
-          <i class="fa-solid fa-circle messenger-world-voice-indicator-dot" aria-hidden="true"></i>
-          <span>{{ voiceRecordingLabel }}</span>
-        </div>
-        <div v-else-if="voiceTranscribing" class="messenger-world-voice-indicator messenger-world-voice-indicator--transcribing">
-          <span class="messenger-world-transcribing-rings" aria-hidden="true">
-            <span></span>
-            <span></span>
-            <span></span>
-          </span>
-          <span>{{ voiceTranscribingLabel }}</span>
-        </div>
-      </div>
       <textarea
         v-model="inputText"
         ref="inputRef"
@@ -318,53 +180,151 @@
       </div>
       <template v-if="worldStyle">
         <div class="messenger-world-footer chat-composer-world-footer">
-          <button
-            v-if="composerModelDisplayName && composerModelActionable"
-            class="chat-composer-world-model chat-composer-world-model--action"
-            type="button"
-            :title="composerModelWithContextTooltip"
-            :aria-label="composerModelAriaLabel"
-            @click="emit('open-model-settings')"
-          >
-            <span class="chat-composer-world-model-text">{{ composerModelDisplayName }}</span>
-            <span
-              v-if="composerContextUsageDisplay"
-              class="chat-composer-world-context-usage"
-              :class="composerContextUsageClass"
-              :style="composerContextUsageStyle"
-              :title="composerContextUsageTooltip"
-              :aria-label="composerContextUsageTooltip"
+          <div class="messenger-world-toolbar chat-composer-world-toolbar">
+            <div
+              v-if="presetQuestionItems.length"
+              ref="worldPresetCommandAnchorRef"
+              class="messenger-world-tool-anchor"
+              :class="{ 'is-open': isWorldCommandPanelVisible('preset') }"
+              @mouseenter="handleWorldCommandAnchorMouseEnter('preset')"
+              @mouseleave="handleWorldCommandAnchorMouseLeave('preset')"
+              @focusin="handleWorldCommandAnchorFocusIn('preset')"
+              @focusout="handleWorldCommandAnchorFocusOut('preset', $event)"
             >
-              {{ composerContextUsageDisplay }}
-            </span>
-          </button>
-          <div
-            v-else-if="composerModelDisplayName"
-            class="chat-composer-world-model"
-            :title="composerModelWithContextTooltip"
-            :aria-label="composerModelAriaLabel"
-          >
-            <span class="chat-composer-world-model-text">{{ composerModelDisplayName }}</span>
-            <span
-              v-if="composerContextUsageDisplay"
-              class="chat-composer-world-context-usage"
-              :class="composerContextUsageClass"
-              :style="composerContextUsageStyle"
-              :title="composerContextUsageTooltip"
-              :aria-label="composerContextUsageTooltip"
+              <button
+                class="messenger-world-tool-btn"
+                type="button"
+                :class="{ active: isWorldCommandPanelVisible('preset') }"
+                :disabled="stopButtonActive"
+                :title="t('chat.commandMenu.presetQuestions')"
+                :aria-label="t('chat.commandMenu.presetQuestions')"
+                @click.prevent="toggleWorldCommandPanel('preset')"
+              >
+                <i class="fa-solid fa-wand-magic-sparkles chat-composer-command-btn-icon" aria-hidden="true"></i>
+              </button>
+              <div
+                v-if="isWorldCommandPanelVisible('preset')"
+                class="chat-composer-command-panel"
+                @mouseenter="handleWorldCommandPanelMouseEnter('preset')"
+                @mouseleave="handleWorldCommandPanelMouseLeave('preset')"
+              >
+                <div class="chat-composer-command-section-label">
+                  {{ t('chat.commandMenu.presetQuestions') }}
+                </div>
+                <button
+                  v-for="item in presetQuestionItems"
+                  :key="`preset-question:${item.command}`"
+                  class="chat-composer-command-item chat-composer-command-item--question"
+                  type="button"
+                  :title="item.command"
+                  @click="applyPresetQuestion(item.command)"
+                >
+                  <span class="chat-composer-command-name">{{ item.command }}</span>
+                </button>
+              </div>
+            </div>
+            <div
+              ref="worldSystemCommandAnchorRef"
+              class="messenger-world-tool-anchor"
+              :class="{ 'is-open': isWorldCommandPanelVisible('system') }"
+              @mouseenter="handleWorldCommandAnchorMouseEnter('system')"
+              @mouseleave="handleWorldCommandAnchorMouseLeave('system')"
+              @focusin="handleWorldCommandAnchorFocusIn('system')"
+              @focusout="handleWorldCommandAnchorFocusOut('system', $event)"
             >
-              {{ composerContextUsageDisplay }}
-            </span>
-          </div>
-          <div
-            v-if="showApprovalLabel && approvalLabelText"
-            class="chat-composer-approval-label"
-            :title="approvalLabelTooltip"
-            :aria-label="approvalLabelTooltip"
-          >
-            {{ approvalLabelText }}
-          </div>
-          <div class="messenger-world-send-group">
+              <button
+                class="messenger-world-tool-btn"
+                type="button"
+                :class="{ active: isWorldCommandPanelVisible('system') }"
+                :disabled="stopButtonActive"
+                :title="t('chat.commandMenu.commands')"
+                :aria-label="t('chat.commandMenu.commands')"
+                @click.prevent="toggleWorldCommandPanel('system')"
+              >
+                <i class="fa-solid fa-terminal chat-composer-command-btn-icon" aria-hidden="true"></i>
+              </button>
+              <div
+                v-if="isWorldCommandPanelVisible('system')"
+                class="chat-composer-command-panel"
+                @mouseenter="handleWorldCommandPanelMouseEnter('system')"
+                @mouseleave="handleWorldCommandPanelMouseLeave('system')"
+              >
+                <button
+                  v-for="item in quickCommandItems"
+                  :key="item.command"
+                  class="chat-composer-command-item"
+                  type="button"
+                  @click="sendQuickCommand(item.command)"
+                >
+                  <span class="chat-composer-command-name">{{ item.command }}</span>
+                  <span class="chat-composer-command-desc">{{ item.description }}</span>
+                </button>
+              </div>
+            </div>
+            <button
+              class="messenger-world-tool-btn"
+              type="button"
+              :class="{
+                'messenger-world-tool-btn--recording': voiceRecording,
+                'messenger-world-tool-btn--transcribing': voiceTranscribing
+              }"
+              :title="voiceButtonTitle"
+              :aria-label="voiceButtonTitle"
+              :disabled="composerBusy > 0 || stopButtonActive || voiceTranscribing"
+              @click="handleToggleVoiceRecord"
+            >
+              <i
+                :class="[
+                  voiceRecording
+                    ? 'fa-solid fa-stop'
+                    : voiceTranscribing
+                      ? 'fa-solid fa-waveform-lines'
+                      : 'fa-solid fa-microphone',
+                  'messenger-world-tool-fa-icon'
+                ]"
+                aria-hidden="true"
+              ></i>
+            </button>
+            <div
+              v-if="desktopScreenshotSupported"
+              ref="screenshotMenuAnchorRef"
+              class="messenger-world-tool-anchor chat-screenshot-anchor"
+              :class="{ 'is-open': screenshotMenuVisible }"
+            >
+              <button
+                class="messenger-world-tool-btn chat-screenshot-toggle"
+                type="button"
+                :class="{ active: screenshotMenuVisible }"
+                :title="t('chat.attachments.screenshot')"
+                :aria-label="t('chat.attachments.screenshot')"
+                :aria-expanded="screenshotMenuVisible"
+                :disabled="composerBusy > 0 || voiceRecording || stopButtonActive"
+                @click.stop.prevent="toggleScreenshotMenu"
+              >
+                <i class="fa-solid fa-camera messenger-world-tool-fa-icon" aria-hidden="true"></i>
+                <i class="fa-solid fa-chevron-down chat-screenshot-caret" aria-hidden="true"></i>
+              </button>
+            </div>
+            <div v-if="voiceRecording" class="messenger-world-voice-indicator">
+              <i class="fa-solid fa-circle messenger-world-voice-indicator-dot" aria-hidden="true"></i>
+              <span>{{ voiceRecordingLabel }}</span>
+            </div>
+            <div v-else-if="voiceTranscribing" class="messenger-world-voice-indicator messenger-world-voice-indicator--transcribing">
+              <span class="messenger-world-transcribing-rings" aria-hidden="true">
+                <span></span>
+                <span></span>
+                <span></span>
+              </span>
+              <span>{{ voiceTranscribingLabel }}</span>
+            </div>
+            <div
+              v-if="showApprovalLabel && approvalLabelText"
+              class="chat-composer-approval-label"
+              :title="approvalLabelTooltip"
+              :aria-label="approvalLabelTooltip"
+            >
+              {{ approvalLabelText }}
+            </div>
             <label
               v-if="showApprovalModeSelector"
               class="messenger-world-approval-select-wrap"
@@ -390,24 +350,56 @@
                 aria-hidden="true"
               ></i>
             </label>
+          </div>
+          <div class="chat-composer-footer-status">
             <button
-              class="messenger-world-send-main"
+              v-if="composerModelDisplayName && composerModelActionable"
+              class="chat-composer-world-model chat-composer-world-model--action"
               type="button"
-              :disabled="!canSendOrStop"
-              :title="stopButtonActive ? t('common.stop') : t('chat.input.send')"
-              :aria-label="stopButtonActive ? t('common.stop') : t('chat.input.send')"
-              @keydown="handleSendButtonKeydown"
-              @click="handleSendOrStop"
+              :title="composerModelWithContextTooltip"
+              :aria-label="composerModelAriaLabel"
+              @click="emit('open-model-settings')"
             >
-              <i
-                v-if="stopButtonActive"
-                class="fa-solid fa-stop input-icon chat-composer-world-send-stop-icon"
-                aria-hidden="true"
-              ></i>
-              <svg v-else class="messenger-world-send-icon" aria-hidden="true">
-                <use href="#send"></use>
-              </svg>
+              <span class="chat-composer-world-model-text">{{ composerModelDisplayName }}</span>
             </button>
+            <div
+              v-else-if="composerModelDisplayName"
+              class="chat-composer-world-model"
+              :title="composerModelWithContextTooltip"
+              :aria-label="composerModelAriaLabel"
+            >
+              <span class="chat-composer-world-model-text">{{ composerModelDisplayName }}</span>
+            </div>
+            <span
+              v-if="composerContextUsageDisplay"
+              class="chat-composer-world-context-usage"
+              :class="composerContextUsageClass"
+              :style="composerContextUsageStyle"
+              :title="composerContextUsageTooltip"
+              :aria-label="composerContextUsageTooltip"
+            >
+              {{ composerContextUsageDisplay }}
+            </span>
+            <div class="messenger-world-send-group">
+              <button
+                class="messenger-world-send-main"
+                type="button"
+                :disabled="!canSendOrStop"
+                :title="stopButtonActive ? t('common.stop') : t('chat.input.send')"
+                :aria-label="stopButtonActive ? t('common.stop') : t('chat.input.send')"
+                @keydown="handleSendButtonKeydown"
+                @click="handleSendOrStop"
+              >
+                <i
+                  v-if="stopButtonActive"
+                  class="fa-solid fa-stop input-icon chat-composer-world-send-stop-icon"
+                  aria-hidden="true"
+                ></i>
+                <svg v-else class="messenger-world-send-icon" aria-hidden="true">
+                  <use href="#send"></use>
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       </template>
@@ -2882,6 +2874,8 @@ defineExpose({
   focusComposerInputAtEnd
 });
 </script>
+
+<style scoped src="./composerFooter.css"></style>
 
 <style scoped>
 .chat-goal-context-usage {

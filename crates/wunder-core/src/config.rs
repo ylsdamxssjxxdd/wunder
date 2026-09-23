@@ -390,6 +390,8 @@ fn default_user_agent_presets() -> Vec<UserAgentPresetConfig> {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LlmModelConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simulation_speed: Option<crate::virtual_model::VirtualModelSpeed>,
     #[serde(default, alias = "enabled")]
     pub enable: Option<bool>,
     pub provider: Option<String>,

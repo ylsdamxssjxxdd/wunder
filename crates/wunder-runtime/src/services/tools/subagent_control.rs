@@ -438,12 +438,12 @@ async fn list(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: super::SessionListArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let parent_session_id = resolve_subagent_parent_scope(payload.parent_id, context.session_id)?;
-    let mut scoped_args = args.clone();
-    if let Value::Object(ref mut map) = scoped_args {
-        map.insert("parentId".to_string(), json!(parent_session_id));
-    }
+    let items = crate::services::subagents::list_parent_subagents(
+        context.storage.as_ref(), context.monitor.as_deref(), context.user_id,
+        &parent_session_id, payload.limit,
+    )?;
     Ok(build_subagent_list_result(
-        super::sessions_list(context, &scoped_args).await?,
+        json!({"items": items, "total": items.len()}),
     ))
 }
 
@@ -465,14 +465,15 @@ async fn send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: SubagentSendArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let session_id = resolve_single_child_session_target(context, &payload.target, "send")?;
+    resolve_subagent_parent_scope(payload.announce_parent_session_id, context.session_id)?;
     let scoped_args = json!({
         "session_id": session_id,
         "message": payload.message,
         "timeoutSeconds": payload.timeout_seconds,
-        "announceParentSessionId": payload.announce_parent_session_id,
+        "announceParentSessionId": context.session_id,
         "label": payload.label,
-        "announcePersistHistory": payload.announce_persist_history,
-        "announceEmitParentEvents": payload.announce_emit_parent_events,
+        "announcePersistHistory": payload.announce_persist_history.unwrap_or(false),
+        "announceEmitParentEvents": payload.announce_emit_parent_events.unwrap_or(true),
     });
     super::sessions_send(context, &scoped_args).await
 }
@@ -910,7 +911,11 @@ async fn close(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
 }
 
 async fn resume(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    session_control(context, args, "active", false, "subagent_resume").await
+    if args.get("message").and_then(Value::as_str).is_some_and(|message| !message.trim().is_empty()) {
+        send(context, args).await
+    } else {
+        session_control(context, args, "active", false, "subagent_resume").await
+    }
 }
 
 async fn session_control(

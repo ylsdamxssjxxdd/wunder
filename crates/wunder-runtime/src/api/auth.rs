@@ -1328,26 +1328,6 @@ fn build_user_profile_value(
     let mut payload = serde_json::to_value(profile)
         .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     if let Value::Object(ref mut map) = payload {
-        let token_balance = map
-            .get("token_balance")
-            .and_then(Value::as_i64)
-            .unwrap_or(0);
-        let token_granted_total = map
-            .get("token_granted_total")
-            .and_then(Value::as_i64)
-            .unwrap_or(0);
-        let token_used_total = map
-            .get("token_used_total")
-            .and_then(Value::as_i64)
-            .unwrap_or(0);
-        let last_token_grant_date = map
-            .get("last_token_grant_date")
-            .cloned()
-            .unwrap_or(Value::Null);
-        map.insert("daily_quota".to_string(), json!(token_granted_total));
-        map.insert("daily_quota_used".to_string(), json!(token_used_total));
-        map.insert("daily_quota_remaining".to_string(), json!(token_balance));
-        map.insert("daily_quota_date".to_string(), last_token_grant_date);
         map.insert(
             "usage_summary".to_string(),
             build_user_usage_summary(state, &user.user_id),

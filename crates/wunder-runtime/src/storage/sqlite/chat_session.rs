@@ -35,6 +35,11 @@ pub(super) trait SqliteChatSessionStorage {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)>;
+    #[allow(clippy::too_many_arguments)]
+    fn list_chat_sessions_filtered_impl(
+        &self, user_id: &str, agent_id: Option<&str>, parent_session_id: Option<&str>,
+        status: Option<&str>, offset: i64, limit: i64, work_catalog: bool,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)>;
     fn list_chat_session_agent_ids_impl(&self, user_id: &str) -> Result<Vec<String>>;
     fn update_chat_session_title_impl(
         &self,
@@ -228,6 +233,14 @@ impl SqliteChatSessionStorage for SqliteStorage {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)> {
+        self.list_chat_sessions_filtered_impl(user_id, agent_id, parent_session_id, status, offset, limit, false)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn list_chat_sessions_filtered_impl(
+        &self, user_id: &str, agent_id: Option<&str>, parent_session_id: Option<&str>,
+        status: Option<&str>, offset: i64, limit: i64, work_catalog: bool,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)> {
         self.ensure_initialized()?;
         let cleaned_user = user_id.trim();
         if cleaned_user.is_empty() {
@@ -246,7 +259,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
                 vec![SqlValue::from(value.to_string())],
             ),
         };
-        let (parent_clause, parent_params) = match parent_session_id {
+        let (mut parent_clause, parent_params) = match parent_session_id {
             None => ("".to_string(), Vec::new()),
             Some(value) if value.trim().is_empty() => (
                 " AND (parent_session_id IS NULL OR parent_session_id = '')".to_string(),
@@ -261,6 +274,9 @@ impl SqliteChatSessionStorage for SqliteStorage {
             .map(str::trim)
             .map(str::to_lowercase)
             .unwrap_or_default();
+        if work_catalog {
+            parent_clause.push_str(" AND (COALESCE(parent_session_id, '') = '' OR COALESCE(spawned_by, '') NOT IN ('model', 'subagent_control'))");
+        }
         let (status_clause, status_params) =
             if normalized_status.is_empty() || normalized_status == "all" {
                 ("".to_string(), Vec::new())

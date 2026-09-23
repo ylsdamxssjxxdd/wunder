@@ -262,6 +262,7 @@ impl DesktopRuntime {
         let container_roots_for_update = settings.container_roots.clone();
         let language_for_update = settings.language.clone();
         let llm_for_update = settings.llm.clone();
+        let native_runtime = args.native_runtime;
         let _config = config_store
             .update(move |config| {
                 apply_desktop_defaults(
@@ -276,6 +277,9 @@ impl DesktopRuntime {
                         llm: llm_for_update.as_ref(),
                     },
                 );
+                // The native facade owns a dispatcher and must retain the
+                // shared ThreadRuntime lease/queue contract for concurrent turns.
+                config.agent_queue.enabled = native_runtime;
             })
             .await
             .context("apply desktop runtime config failed")?;
@@ -289,14 +293,15 @@ impl DesktopRuntime {
         );
 
         step_start = Instant::now();
-        let state = Arc::new(
-            AppState::new_with_options(
-                config_store.clone(),
-                config.clone(),
-                AppStateInitOptions::desktop_default().with_start_thread_runtime(false),
-            )
-            .context("initialize desktop state failed")?,
-        );
+        let mut state = AppState::new_with_options(
+            config_store.clone(),
+            config.clone(),
+            AppStateInitOptions::desktop_default().with_start_thread_runtime(false),
+        )
+        .context("initialize desktop state failed")?;
+        // Recover stale SQLite tasks before the native queue dispatcher starts.
+        state.runtime_capabilities.thread_runtime_active = args.native_runtime;
+        let state = Arc::new(state);
         log_startup_segment(
             startup_enabled,
             "bridge-runtime",

@@ -1,114 +1,35 @@
 ---
-title: "Token Account and Usage"
-summary: "Wunder uses Token accounts to manage user's disposable balance, and Token usage to observe context load; these are related but not the same thing."
-read_when:
-  - "You are looking at Token balance, daily grants, or session resource usage"
-  - "You want to understand why the system distinguishes context_occupancy_tokens from request consumption"
-source_docs:
-  - "docs/API文档.md"
-  - "docs/设计文档/01-系统总体设计.md"
+title: Quota and Token Usage
+summary: Each model request costs 1 credit; regular users receive 1000 credits daily. Token usage remains diagnostic.
 ---
 
-# Token Account and Usage
+# Quota and Token Usage
 
-In Wunder, the most easily misunderstood thing is conflating Token account, Token consumption, and vendor billing into one concept.
+Regular users receive **1000 credits daily**, regardless of organization or user level. Unspent credits accumulate. The daily grant is applied once on the first account operation that day; inactive days are not backfilled.
 
-## Key Points
+Each actual model request costs **1 credit**, including tool-loop continuations, compaction requests, and retries. Stream chunks, standalone tool execution, and history replay cost no additional credits. Failed dispatched requests still consume a credit. Insufficient balance prevents dispatch. Administrators and unregistered virtual users retain their existing exemptions.
 
-This page explains two parallel concepts:
+## View and manage credits
 
-- What is the user's Token account
-- What is runtime Token usage
+My Profile shows available credits and the daily grant. Administrators can set the final balance or grant/deduct credits in User Management → Settings. An exact set is the final balance after settling today's grant. Grants increase cumulative grants; deductions increase cumulative usage. Overdrafts are rejected atomically.
 
-## What Is a Token Account
+| Field | Meaning |
+| --- | --- |
+| `quota_balance` | Available credits |
+| `quota_granted_total` | Cumulative grants |
+| `quota_used_total` | Cumulative usage and administrative deductions |
+| `daily_quota_grant` | Daily grant |
+| `last_quota_grant_date` | Last grant date |
 
-You can think of a Token account as the disposable currency balance a user has in Wunder:
+Concurrent threads share the user account and cannot overspend. Levels still track experience but no longer award credits. On first upgrade, existing token-balance accounts start with 1000 credits; historical tokens are not converted. Restarting does not reset the balance.
 
-- `token_balance`: Current balance, can accumulate, and will decrease with model consumption
-- `token_granted_total`: Cumulative total of grants and rewards
-- `token_used_total`: Cumulative total of consumption
-- `daily_token_grant`: Number of Tokens to be granted to the current user each day
-- `last_token_grant_date`: The date when the last daily grant was completed
+## Token observations
 
-The current default rules are:
+Input, output, reasoning and context tokens remain available for runtime diagnostics. They do not determine the credit charge. Short and long model requests both cost 1 credit.
 
-- Level 1/2/3/4 users receive `100M / 50M / 10M / 1M` Tokens daily respectively
-- Daily grants are directly accumulated into `token_balance`
-- Model calls are deducted based on actual `total_tokens`
-- When users upgrade, they receive additional Token rewards, which are also directly credited to the Token account
+- `context_occupancy_tokens`: latest observed context occupancy.
+- `request_consumed_tokens` / `round_usage.total_tokens`: cumulative model tokens for a user request.
+- `token_usage` / `model_usage`: model usage events.
+- `quota_usage`: credit account snapshot.
 
-So the Tokens here are more like an in-system currency, not a "reset daily" quota bar.
-
-## What Is Token Usage
-
-Token usage is a runtime observation metric, answering:
-
-- How much context did this current round of request actually occupy
-- How many Tokens did this request actually consume
-
-It is not the vendor billing metric, nor is it the user balance itself.
-
-## Why Emphasize This Metric
-
-Because many stability issues in Wunder are fundamentally related to context size:
-
-- Whether threads are too long
-- Whether compression is timely
-- Whether tool results are maxing out the context
-- Whether certain tasks are persistently occupying high input windows
-
-If you only watch the billing, it's hard to guide system governance.
-
-## Key Fields to Watch
-
-In monitoring and session summaries, the most meaningful are:
-
-- `round_usage.context_occupancy_tokens`
-- `round_usage.total_tokens`
-- `token_usage.total_tokens`
-
-Where:
-
-- `round_usage.context_occupancy_tokens` represents **the current context occupancy after a single request completes**, currently serving as the authoritative metric for context occupancy.
-- `round_usage.total_tokens` represents **the current request consumption accumulated across model calls**.
-- `token_usage.total_tokens` represents **the usage breakdown of a single model call**; when only one model call occurs in a request, it usually matches `round_usage.total_tokens`.
-
-If you are doing new integrations, we recommend directly consuming these explicit aliases:
-
-- `context_occupancy_tokens`: Current context occupancy
-- `request_consumed_tokens`: Single request consumption
-- `consumed_tokens`: Cumulative consumption in aggregate APIs
-
-Fields like `context_usage` now report the latest provider-observed context occupancy when available. After compaction, the value is marked as unobserved until the next model usage response arrives; local token estimates are not treated as authoritative occupancy.
-
-## Token Account and Token Usage Are Not the Same Thing
-
-You can understand it this way:
-
-- Token Account: Governance and settlement metric, determines how much disposable Token the user has left
-- Token Usage: Runtime observation metric, tells you how heavy this round's context actually is
-
-So a request might:
-
-- Have enough balance, but the context is already heavy
-- Have low billing, but thread governance is already strained
-
-## Applicable Scenarios
-
-- Some sessions show abnormally high token_usage in monitoring
-- You are investigating why a user has insufficient balance
-- You are working on compression, pruning, and tool result length governance
-- You are explaining "why admin mode and regular user mode metrics differ"
-
-## Implementation Suggestions
-
-- When checking if a user can continue to use, prioritize Token account fields.
-- For current context occupancy recorded by Wunder, prioritize provider-observed `context_occupancy_tokens`.
-- For cumulative consumption recorded by Wunder, sum up each request's `request_consumed_tokens` or `round_usage.total_tokens`.
-- Do not conflate single-call usage, context occupancy, cumulative consumption, Token account, and vendor billing into one concept.
-
-## Further Reading
-
-- [Stream Events Reference](/docs/en/reference/stream-events/)
-- [Operations Overview](/docs/en/ops/)
-- [Long-term Memory](/docs/en/concepts/memory/)
+[User management](/docs/en/concepts/core-multi-user-management/) · [Admin panels](/docs/en/reference/admin-panels/)

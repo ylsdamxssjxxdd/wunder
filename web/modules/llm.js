@@ -4,6 +4,7 @@ import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { notify } from "./notify.js";
 import { t } from "./i18n.js?v=20260215-01";
+import { normalizeSimulationSpeed, renderSimulationConfig, showSimulationConfig, readSimulationConfig } from "./llm-simulation.js?v=20260923-02";
 
 let contextProbeTimer = null;
 let lastProbeKey = "";
@@ -520,6 +521,7 @@ const loadVirtualReplayLogs = async (options = {}) => {
 const updateVirtualReplayVisibility = () => {
   const isLlm = normalizeModelType(elements.llmModelType?.value || "llm") === "llm";
   const virtualSelected = isLlm && isVirtualReplayProvider(elements.llmProvider?.value);
+  showSimulationConfig(virtualSelected);
   if (elements.llmVirtualReplayRows) {
     elements.llmVirtualReplayRows.style.display = virtualSelected ? "" : "none";
   }
@@ -559,6 +561,7 @@ const normalizeLlmConfig = (raw) => {
   const modelType = normalizeModelType(raw?.model_type);
   const provider = normalizeProviderId(raw?.provider || getDefaultProviderIdForType(modelType));
   return {
+    simulation_speed: normalizeSimulationSpeed(raw?.simulation_speed),
     enable: raw?.enable !== false,
     model_type: modelType,
     provider,
@@ -735,6 +738,7 @@ const resetProbeState = () => {
 };
 
 const clearLlmForm = () => {
+  renderSimulationConfig("fast");
   const modelType = normalizeModelType(elements.llmModelType?.value || "llm");
   const defaultProvider = getDefaultProviderIdForType(modelType);
   if (elements.llmConfigName) {
@@ -859,6 +863,7 @@ const applyLlmConfigToForm = (name, config) => {
     return;
   }
   const llm = normalizeLlmConfig(config || {});
+  renderSimulationConfig(llm.simulation_speed);
   if (elements.llmConfigName) {
     elements.llmConfigName.value = getDisplayName(name);
   }
@@ -1198,6 +1203,7 @@ const buildLlmConfigFromForm = (baseConfig) => {
       provider
     ),
     reasoning_effort: reasoningEffort || null,
+    simulation_speed: readSimulationConfig(),
     history_compaction_ratio:
       Number.isFinite(historyCompactionRatio) && historyCompactionRatio > 0
         ? historyCompactionRatio
@@ -1313,6 +1319,7 @@ const buildLlmConfigForPayload = (rawConfig) => {
     stream_include_usage: config.stream_include_usage,
     tool_call_mode: config.tool_call_mode,
     reasoning_effort: config.reasoning_effort || undefined,
+    simulation_speed: virtualReplay ? config.simulation_speed : undefined,
     history_compaction_ratio: config.history_compaction_ratio,
   };
 };
@@ -2123,6 +2130,7 @@ const handleModelTypeChange = () => {
 
 // 初始化模型配置面板交互。
 export const initLlmPanel = () => {
+  renderSimulationConfig("fast");
   renderProviderOptions(DEFAULT_PROVIDER_ID);
   updateBaseUrlPlaceholder(DEFAULT_PROVIDER_ID);
   ensureTtsVoiceDatalist();

@@ -12,10 +12,10 @@ pub struct UserAccountRecord {
     pub status: String,
     pub access_level: String,
     pub unit_id: Option<String>,
-    pub token_balance: i64,
-    pub token_granted_total: i64,
-    pub token_used_total: i64,
-    pub last_token_grant_date: Option<String>,
+    pub quota_balance: i64,
+    pub quota_granted_total: i64,
+    pub quota_used_total: i64,
+    pub last_quota_grant_date: Option<String>,
     pub experience_total: i64,
     pub is_demo: bool,
     pub created_at: f64,
@@ -38,14 +38,13 @@ pub struct OrgUnitRecord {
 }
 
 #[derive(Debug, Clone)]
-pub struct UserTokenBalanceStatus {
+pub struct UserQuotaStatus {
     pub balance: i64,
     pub granted_total: i64,
     pub used_total: i64,
     pub daily_grant: i64,
     pub last_grant_date: Option<String>,
     pub allowed: bool,
-    pub overspent_tokens: i64,
 }
 
 #[derive(Debug, Clone)]

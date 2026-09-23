@@ -11,8 +11,11 @@ pub(super) trait PostgresSchemaStorage {
 
 impl PostgresStorage {
     fn ensure_user_account_quota_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
-        let rows = conn.query(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = 'user_accounts'",
+        let mut tx = conn.transaction()?;
+        // Serializes startup migrations across server instances.
+        tx.execute("LOCK TABLE user_accounts IN ACCESS EXCLUSIVE MODE", &[])?;
+        let rows = tx.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'user_accounts'",
             &[],
         )?;
         let mut columns = HashSet::new();
@@ -20,60 +23,47 @@ impl PostgresStorage {
             let name: String = row.get(0);
             columns.insert(name);
         }
-        if !columns.contains("token_balance") {
-            conn.execute(
-                "ALTER TABLE user_accounts ADD COLUMN token_balance BIGINT NOT NULL DEFAULT 0",
+        if !columns.contains("quota_balance") {
+            tx.execute(
+                "ALTER TABLE user_accounts ADD COLUMN quota_balance BIGINT NOT NULL DEFAULT 0",
                 &[],
             )?;
         }
-        if !columns.contains("token_granted_total") {
-            conn.execute(
-                "ALTER TABLE user_accounts ADD COLUMN token_granted_total BIGINT NOT NULL DEFAULT 0",
+        if !columns.contains("quota_granted_total") {
+            tx.execute(
+                "ALTER TABLE user_accounts ADD COLUMN quota_granted_total BIGINT NOT NULL DEFAULT 0",
                 &[],
             )?;
         }
-        if !columns.contains("token_used_total") {
-            conn.execute(
-                "ALTER TABLE user_accounts ADD COLUMN token_used_total BIGINT NOT NULL DEFAULT 0",
+        if !columns.contains("quota_used_total") {
+            tx.execute(
+                "ALTER TABLE user_accounts ADD COLUMN quota_used_total BIGINT NOT NULL DEFAULT 0",
                 &[],
             )?;
         }
-        if !columns.contains("last_token_grant_date") {
-            conn.execute(
-                "ALTER TABLE user_accounts ADD COLUMN last_token_grant_date TEXT",
+        if !columns.contains("last_quota_grant_date") {
+            tx.execute(
+                "ALTER TABLE user_accounts ADD COLUMN last_quota_grant_date TEXT",
                 &[],
             )?;
         }
-        // Only migrate from legacy daily_quota columns when they exist
-        let has_legacy_quota = columns.contains("daily_quota_date")
-            && columns.contains("daily_quota")
-            && columns.contains("daily_quota_used");
-        if has_legacy_quota {
+        // Initialize only once; never infer migration from a zero balance.
+        if !columns.contains("quota_balance") {
             let today = Local::now().format("%Y-%m-%d").to_string();
-            conn.execute(
-                "UPDATE user_accounts
-                 SET token_balance = CASE
-                         WHEN COALESCE(token_balance, 0) > 0 THEN token_balance
-                         WHEN COALESCE(daily_quota_date, '') = $1 THEN GREATEST(COALESCE(daily_quota, 0) - COALESCE(daily_quota_used, 0), 0)
-                         ELSE GREATEST(COALESCE(daily_quota, 0), 0)
-                     END,
-                     token_granted_total = CASE
-                         WHEN COALESCE(token_granted_total, 0) > 0 THEN token_granted_total
-                         ELSE GREATEST(COALESCE(daily_quota, 0), 0)
-                     END,
-                     token_used_total = CASE
-                         WHEN COALESCE(token_used_total, 0) > 0 THEN token_used_total
-                         WHEN COALESCE(daily_quota_date, '') = $1 THEN GREATEST(COALESCE(daily_quota_used, 0), 0)
-                         ELSE 0
-                     END,
-                     last_token_grant_date = COALESCE(last_token_grant_date, daily_quota_date)
-                 WHERE COALESCE(token_balance, 0) = 0
-                    OR COALESCE(token_granted_total, 0) = 0
-                    OR COALESCE(token_used_total, 0) = 0
-                    OR last_token_grant_date IS NULL",
+            tx.execute(
+                "UPDATE user_accounts SET quota_balance = 1000, quota_granted_total = 1000,
+                 quota_used_total = 0, last_quota_grant_date = $1",
                 &[&today],
             )?;
         }
+        // Retire incompatible token accounting columns after initializing request credits.
+        for column in ["token_balance", "token_granted_total", "token_used_total",
+            "last_token_grant_date", "daily_quota", "daily_quota_used", "daily_quota_date"] {
+            if columns.contains(column) {
+                tx.execute(&format!("ALTER TABLE user_accounts DROP COLUMN {column}"), &[])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -1162,10 +1152,10 @@ impl PostgresSchemaStorage for PostgresStorage {
                   status TEXT NOT NULL,
                   access_level TEXT NOT NULL,
                   unit_id TEXT,
-                  token_balance BIGINT NOT NULL DEFAULT 0,
-                  token_granted_total BIGINT NOT NULL DEFAULT 0,
-                  token_used_total BIGINT NOT NULL DEFAULT 0,
-                  last_token_grant_date TEXT,
+                  quota_balance BIGINT NOT NULL DEFAULT 0,
+                  quota_granted_total BIGINT NOT NULL DEFAULT 0,
+                  quota_used_total BIGINT NOT NULL DEFAULT 0,
+                  last_quota_grant_date TEXT,
                   experience_total BIGINT NOT NULL DEFAULT 0,
                   is_demo INTEGER NOT NULL DEFAULT 0,
                   created_at DOUBLE PRECISION NOT NULL,

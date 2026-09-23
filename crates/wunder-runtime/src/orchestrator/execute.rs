@@ -191,6 +191,8 @@ impl Orchestrator {
                 monitor_debug_payload,
             );
             let request_round = RoundInfo::user_only(user_round);
+            // Child cancellation survives monitor registration resetting the turn flags.
+            self.ensure_not_cancelled(&session_id)?;
             if let Some(task_id) = prepared.config_overrides.as_ref().and_then(|value| value.get("__queue_task_id")).and_then(Value::as_str) {
                 // Cancellation may win after the worker claims a task but before monitor registration.
                 let storage = self.storage.clone();

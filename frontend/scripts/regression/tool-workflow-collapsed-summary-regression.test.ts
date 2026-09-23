@@ -71,7 +71,7 @@ test('collapsed workflow rows retain token and duration metadata without parsing
   });
 
   assert.deepEqual(metadata, {
-    contextTokensLabel: '4096 token',
+    contextTokensLabel: '4.1k token',
     contextTokensSource: 'call',
     consumedTokensLabel: '321 token',
     consumedTokensSource: 'call',
@@ -103,7 +103,7 @@ test('collapsed workflow metadata reads terminal fields from a bounded result ta
   });
 
   assert.deepEqual(metadata, {
-    contextTokensLabel: '8192 token',
+    contextTokensLabel: '8.2k token',
     contextTokensSource: 'result',
     consumedTokensLabel: '654 token',
     consumedTokensSource: 'result',

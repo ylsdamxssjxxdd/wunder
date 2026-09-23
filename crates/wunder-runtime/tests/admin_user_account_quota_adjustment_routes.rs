@@ -86,14 +86,14 @@ async fn send_json(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn admin_user_account_token_adjustment_grants_and_deducts_tokens() {
-    let context = build_test_context("admin-user-account-token-adjustment").await;
+async fn admin_user_account_quota_adjustment_grants_and_deducts_quota() {
+    let context = build_test_context("admin-user-account-quota-adjustment").await;
     let created = context
         .state
         .user_store
         .create_user(
-            "token_adjust_target",
-            Some("token_adjust_target@example.test".to_string()),
+            "quota_adjust_target",
+            Some("quota_adjust_target@example.test".to_string()),
             "password-123",
             Some("A"),
             None,
@@ -109,18 +109,18 @@ async fn admin_user_account_token_adjustment_grants_and_deducts_tokens() {
         .get_user_by_id(&created.user_id)
         .expect("load user")
         .expect("user exists");
-    record.token_balance = 10;
-    record.token_granted_total = 20;
-    record.token_used_total = 3;
-    record.last_token_grant_date = Some(today);
+    record.quota_balance = 10;
+    record.quota_granted_total = 20;
+    record.quota_used_total = 3;
+    record.last_quota_grant_date = Some(today);
     context
         .state
-        .user_store
-        .update_user(&record)
-        .expect("seed token account");
+        .storage
+        .upsert_user_account(&record)
+        .expect("seed quota account");
 
     let path = format!(
-        "/wunder/admin/user_accounts/{}/token_adjustment",
+        "/wunder/admin/user_accounts/{}/quota_adjustment",
         created.user_id
     );
     let (grant_status, grant_payload) = send_json(
@@ -143,9 +143,9 @@ async fn admin_user_account_token_adjustment_grants_and_deducts_tokens() {
         .get_user_by_id(&created.user_id)
         .expect("reload after grant")
         .expect("user exists");
-    assert_eq!(after_grant.token_balance, 35);
-    assert_eq!(after_grant.token_granted_total, 45);
-    assert_eq!(after_grant.token_used_total, 3);
+    assert_eq!(after_grant.quota_balance, 35);
+    assert_eq!(after_grant.quota_granted_total, 45);
+    assert_eq!(after_grant.quota_used_total, 3);
 
     let (deduct_status, deduct_payload) = send_json(
         &context.app,
@@ -167,20 +167,20 @@ async fn admin_user_account_token_adjustment_grants_and_deducts_tokens() {
         .get_user_by_id(&created.user_id)
         .expect("reload after deduct")
         .expect("user exists");
-    assert_eq!(after_deduct.token_balance, 30);
-    assert_eq!(after_deduct.token_granted_total, 45);
-    assert_eq!(after_deduct.token_used_total, 8);
+    assert_eq!(after_deduct.quota_balance, 30);
+    assert_eq!(after_deduct.quota_granted_total, 45);
+    assert_eq!(after_deduct.quota_used_total, 8);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn admin_user_account_token_adjustment_rejects_overdraft_deduction() {
-    let context = build_test_context("admin-user-account-token-adjustment-overdraft").await;
+async fn admin_user_account_quota_adjustment_rejects_overdraft_deduction() {
+    let context = build_test_context("admin-user-account-quota-adjustment-overdraft").await;
     let created = context
         .state
         .user_store
         .create_user(
-            "token_adjust_overdraft",
-            Some("token_adjust_overdraft@example.test".to_string()),
+            "quota_adjust_overdraft",
+            Some("quota_adjust_overdraft@example.test".to_string()),
             "password-123",
             Some("A"),
             None,
@@ -196,18 +196,18 @@ async fn admin_user_account_token_adjustment_rejects_overdraft_deduction() {
         .get_user_by_id(&created.user_id)
         .expect("load user")
         .expect("user exists");
-    record.token_balance = 7;
-    record.token_granted_total = 9;
-    record.token_used_total = 1;
-    record.last_token_grant_date = Some(today);
+    record.quota_balance = 7;
+    record.quota_granted_total = 9;
+    record.quota_used_total = 1;
+    record.last_quota_grant_date = Some(today);
     context
         .state
-        .user_store
-        .update_user(&record)
-        .expect("seed token account");
+        .storage
+        .upsert_user_account(&record)
+        .expect("seed quota account");
 
     let path = format!(
-        "/wunder/admin/user_accounts/{}/token_adjustment",
+        "/wunder/admin/user_accounts/{}/quota_adjustment",
         created.user_id
     );
     let (status, payload) = send_json(
@@ -229,20 +229,20 @@ async fn admin_user_account_token_adjustment_rejects_overdraft_deduction() {
         .get_user_by_id(&created.user_id)
         .expect("reload user")
         .expect("user exists");
-    assert_eq!(after.token_balance, 7);
-    assert_eq!(after.token_granted_total, 9);
-    assert_eq!(after.token_used_total, 1);
+    assert_eq!(after.quota_balance, 7);
+    assert_eq!(after.quota_granted_total, 9);
+    assert_eq!(after.quota_used_total, 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn admin_user_account_token_adjustment_materializes_pending_daily_grant_before_deduction() {
-    let context = build_test_context("admin-user-account-token-adjustment-pending-daily").await;
+async fn admin_user_account_quota_adjustment_materializes_pending_daily_grant_before_deduction() {
+    let context = build_test_context("admin-user-account-quota-adjustment-pending-daily").await;
     let created = context
         .state
         .user_store
         .create_user(
-            "token_adjust_pending_daily",
-            Some("token_adjust_pending_daily@example.test".to_string()),
+            "quota_adjust_pending_daily",
+            Some("quota_adjust_pending_daily@example.test".to_string()),
             "password-123",
             Some("A"),
             None,
@@ -251,38 +251,27 @@ async fn admin_user_account_token_adjustment_materializes_pending_daily_grant_be
             false,
         )
         .expect("create user");
-    let units = context
-        .state
-        .user_store
-        .list_org_units()
-        .expect("list org units");
     let mut record = context
         .state
         .user_store
         .get_user_by_id(&created.user_id)
         .expect("load user")
         .expect("user exists");
-    let daily_grant = UserStore::default_daily_token_grant_by_level(
-        record
-            .unit_id
-            .as_ref()
-            .and_then(|unit_id| units.iter().find(|item| item.unit_id == *unit_id))
-            .map(|item| item.level),
-    );
+    let daily_grant = UserStore::default_daily_quota();
     assert!(daily_grant > 0);
-    record.token_balance = 4;
-    record.token_granted_total = 4;
-    record.token_used_total = 0;
-    record.last_token_grant_date = Some("2000-01-01".to_string());
+    record.quota_balance = 4;
+    record.quota_granted_total = 4;
+    record.quota_used_total = 0;
+    record.last_quota_grant_date = Some("2000-01-01".to_string());
     context
         .state
-        .user_store
-        .update_user(&record)
-        .expect("seed token account");
+        .storage
+        .upsert_user_account(&record)
+        .expect("seed quota account");
 
     let deduct_amount = daily_grant + 2;
     let path = format!(
-        "/wunder/admin/user_accounts/{}/token_adjustment",
+        "/wunder/admin/user_accounts/{}/quota_adjustment",
         created.user_id
     );
     let (status, payload) = send_json(
@@ -305,21 +294,21 @@ async fn admin_user_account_token_adjustment_materializes_pending_daily_grant_be
         .get_user_by_id(&created.user_id)
         .expect("reload after deduct")
         .expect("user exists");
-    assert_eq!(after.token_balance, 2);
-    assert_eq!(after.token_granted_total, 4 + daily_grant);
-    assert_eq!(after.token_used_total, deduct_amount);
-    assert_eq!(after.last_token_grant_date, Some(UserStore::today_string()));
+    assert_eq!(after.quota_balance, 2);
+    assert_eq!(after.quota_granted_total, 4 + daily_grant);
+    assert_eq!(after.quota_used_total, deduct_amount);
+    assert_eq!(after.last_quota_grant_date, Some(UserStore::today_string()));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn admin_user_account_token_adjustment_rejects_admin_accounts() {
-    let context = build_test_context("admin-user-account-token-adjustment-admin").await;
+async fn admin_user_account_quota_adjustment_rejects_admin_accounts() {
+    let context = build_test_context("admin-user-account-quota-adjustment-admin").await;
     let created = context
         .state
         .user_store
         .create_user(
-            "token_adjust_admin_target",
-            Some("token_adjust_admin_target@example.test".to_string()),
+            "quota_adjust_admin_target",
+            Some("quota_adjust_admin_target@example.test".to_string()),
             "password-123",
             Some("A"),
             None,
@@ -330,7 +319,7 @@ async fn admin_user_account_token_adjustment_rejects_admin_accounts() {
         .expect("create user");
 
     let path = format!(
-        "/wunder/admin/user_accounts/{}/token_adjustment",
+        "/wunder/admin/user_accounts/{}/quota_adjustment",
         created.user_id
     );
     let (status, payload) = send_json(
@@ -346,6 +335,63 @@ async fn admin_user_account_token_adjustment_rejects_admin_accounts() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(
         payload["error"],
-        json!("admin users do not use token balance limits")
+        json!("admin users do not use quota balance limits")
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_quota_exact_zero_survives_profile_updates_and_daily_grant() {
+    let context = build_test_context("quota-settings").await;
+    let mut user = context
+        .state
+        .user_store
+        .create_user(
+            "quota_user",
+            None,
+            "test-password",
+            None,
+            None,
+            vec!["user".into()],
+            "active",
+            false,
+        )
+        .unwrap();
+    user.last_quota_grant_date = Some("2000-01-01".into());
+    context.state.storage.upsert_user_account(&user).unwrap();
+    let path = format!("/wunder/admin/user_accounts/{}", user.user_id);
+    let (status, body) = send_json(
+        &context.app,
+        Method::PATCH,
+        &path,
+        json!({"quota_balance":0}),
+    )
+    .await;
+    assert_eq!(
+        (
+            status,
+            body["data"]["quota_balance"].clone(),
+            body["data"]["daily_quota_grant"].clone()
+        ),
+        (StatusCode::OK, json!(0), json!(1000))
+    );
+    assert!(body["data"].get("token_balance").is_none());
+    let (status, body) = send_json(
+        &context.app,
+        Method::PATCH,
+        &path,
+        json!({"email":"user@example.test"}),
+    )
+    .await;
+    assert_eq!(
+        (status, body["data"]["quota_balance"].clone()),
+        (StatusCode::OK, json!(0))
+    );
+    let (status, _) = send_json(
+        &context.app,
+        Method::PATCH,
+        &path,
+        json!({"quota_balance":-1}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }

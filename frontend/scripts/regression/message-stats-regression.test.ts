@@ -130,6 +130,26 @@ test('normalized message stats retain the visible reply decode speed', async () 
   assert.equal(findEntryValue(entries, 'Speed'), '70.00 token/s');
 });
 
+test('message stats derive visible reply speed from stream timing when explicit speed is absent', () => {
+  const entries = buildAssistantMessageStatsEntries({
+    role: 'assistant',
+    stats: {
+      decode_output_tokens: 82,
+      visible_decode_speed_tps: null,
+      stream_timing: { decode_ms: 722 }
+    }
+  }, createTranslator());
+  assert.equal(findEntryValue(entries, 'Speed'), '113.57 token/s');
+});
+
+test('message stats render a legal zero tool count as zero', () => {
+  const entries = buildAssistantMessageStatsEntries({
+    role: 'assistant',
+    stats: { toolCalls: 0, contextTokens: 12 }
+  }, createTranslator());
+  assert.equal(findEntryValue(entries, 'Tools'), '0');
+});
+
 test('message stats hide speed when only the aggregate field is available', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
@@ -184,7 +204,7 @@ test('message stats context ignores final usage and round usage totals without o
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Context'), '-');
+  assert.equal(findEntryValue(entries, 'Context'), '--');
 });
 
 test('message stats context prefers explicit occupancy over final usage total', () => {
@@ -208,7 +228,7 @@ test('message stats context prefers explicit occupancy over final usage total', 
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Context'), '7101');
+  assert.equal(findEntryValue(entries, 'Context'), '7.1k');
 });
 
 test('message stats context does not fall back to final usage total when explicit occupancy is absent', () => {
@@ -257,7 +277,7 @@ test('message stats context supports explicit context_occupancy_tokens alias', (
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Context'), '6123');
+  assert.equal(findEntryValue(entries, 'Context'), '6.1k');
 });
 
 test('message stats context supports explicit contextOccupancyTokens alias', () => {
@@ -271,7 +291,7 @@ test('message stats context supports explicit contextOccupancyTokens alias', () 
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Context'), '6124');
+  assert.equal(findEntryValue(entries, 'Context'), '6.1k');
 });
 
 test('message stats context supports explicit contextTokens alias', () => {
@@ -285,7 +305,7 @@ test('message stats context supports explicit contextTokens alias', () => {
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Context'), '6125');
+  assert.equal(findEntryValue(entries, 'Context'), '6.1k');
 });
 
 test('message stats context supports explicit context_tokens alias', () => {
@@ -299,7 +319,7 @@ test('message stats context supports explicit context_tokens alias', () => {
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Context'), '6126');
+  assert.equal(findEntryValue(entries, 'Context'), '6.1k');
 });
 
 test('message stats context prefers explicit occupancy over accumulated round usage', () => {
@@ -318,7 +338,7 @@ test('message stats context prefers explicit occupancy over accumulated round us
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Context'), '7510');
+  assert.equal(findEntryValue(entries, 'Context'), '7.5k');
 });
 
 test('message stats context prefers observed occupancy alias over cached contextTokens', () => {
@@ -333,7 +353,7 @@ test('message stats context prefers observed occupancy alias over cached context
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Context'), '1693');
+  assert.equal(findEntryValue(entries, 'Context'), '1.7k');
 });
 
 test('message stats shows quota consumed tokens for the user round', () => {
@@ -352,7 +372,7 @@ test('message stats shows quota consumed tokens for the user round', () => {
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Quota'), '4198');
+  assert.equal(findEntryValue(entries, 'Quota'), '4.2k');
 });
 
 test('message stats still shows quota consumed after an interrupted response', () => {
@@ -368,7 +388,7 @@ test('message stats still shows quota consumed after an interrupted response', (
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Quota'), '1536');
+  assert.equal(findEntryValue(entries, 'Quota'), '1.5k');
 });
 
 test('message stats interrupted response prefers accumulated user-round quota over latest usage snapshot', () => {
@@ -390,8 +410,8 @@ test('message stats interrupted response prefers accumulated user-round quota ov
     t
   );
 
-  assert.equal(findEntryValue(entries, 'Quota'), '1536');
-  assert.equal(findEntryValue(entries, 'Context'), '5000');
+  assert.equal(findEntryValue(entries, 'Quota'), '1.5k');
+  assert.equal(findEntryValue(entries, 'Context'), '5k');
 });
 
 test('message stats interrupted response falls back to round usage instead of usage snapshot when quota event is missing', () => {
@@ -418,8 +438,8 @@ test('message stats interrupted response falls back to round usage instead of us
     t
   );
 
-  assert.equal(findEntryValue(entries, 'Quota'), '2520');
-  assert.equal(findEntryValue(entries, 'Context'), '6200');
+  assert.equal(findEntryValue(entries, 'Quota'), '2.5k');
+  assert.equal(findEntryValue(entries, 'Context'), '6.2k');
 });
 
 test('transient first retry stays hidden during grace window', () => {
@@ -706,8 +726,8 @@ test('message stats interrupted response falls back to completed model-round usa
     t
   );
 
-  assert.equal(findEntryValue(entries, 'Quota'), '4224');
-  assert.equal(findEntryValue(entries, 'Context'), '4224');
+  assert.equal(findEntryValue(entries, 'Quota'), '4.2k');
+  assert.equal(findEntryValue(entries, 'Context'), '4.2k');
 });
 
 test('message stats shows queue ahead count in queued status', () => {
@@ -846,7 +866,7 @@ test('message stats sums explicit and partial consumed tokens across assistant m
   ];
 
   const entries = buildAssistantMessageStatsEntries(messages[1], t, messages);
-  assert.equal(findEntryValue(entries, 'Quota'), '6805');
+  assert.equal(findEntryValue(entries, 'Quota'), '6.8k');
   assert.equal(sumConversationConsumedTokens(messages), 6805);
 });
 
@@ -866,7 +886,7 @@ test('message stats falls back to user-round total tokens when quota event is mi
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Quota'), '4198');
+  assert.equal(findEntryValue(entries, 'Quota'), '4.2k');
 });
 
 test('message stats takes the cumulative maximum across assistant snapshots in the same user turn', () => {
@@ -900,8 +920,8 @@ test('message stats takes the cumulative maximum across assistant snapshots in t
 
   const entries = buildAssistantMessageStatsEntries(messages[2], t, messages);
 
-  assert.equal(findEntryValue(entries, 'Quota'), '2800');
-  assert.equal(findEntryValue(entries, 'Context'), '-');
+  assert.equal(findEntryValue(entries, 'Quota'), '2.8k');
+  assert.equal(findEntryValue(entries, 'Context'), '--');
 });
 
 test('conversation consumed tokens aggregate by user turn instead of context totals', () => {
@@ -959,7 +979,7 @@ test('message stats ignores legacy round-marker quota placeholders when usage to
     t
   );
 
-  assert.equal(findEntryValue(entries, 'Quota'), '2048');
+  assert.equal(findEntryValue(entries, 'Quota'), '2k');
 });
 
 test('message stats show the explicit visible reply speed without frontend clamping', () => {

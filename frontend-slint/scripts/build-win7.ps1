@@ -5,6 +5,7 @@
   [string]$HostMingwBin = $(if ($env:WUNDER_WIN7_HOST_MINGW_BIN) { $env:WUNDER_WIN7_HOST_MINGW_BIN } else { "C:\mingw64\bin" }),
   [string]$OutputDirectory = "",
   [ValidateRange(1, 8)][int]$Jobs = 8,
+  [switch]$NativeRuntime,
   [switch]$Check
 )
 
@@ -101,10 +102,12 @@ $env:RANLIB_i686_win7_windows_gnu = Join-Path $MingwBin 'i686-w64-mingw32-gcc-ra
 # windows-targets 0.48 only recognizes target_vendor=pc/uwp in its build
 # script. Resolve its prebuilt GNU import library explicitly for the Win7
 # vendor target used by this repository.
+$metadataArgs = @("metadata", "--locked", "--manifest-path", $manifest, "--format-version", "1", "--filter-platform", $target)
+if ($NativeRuntime) { $metadataArgs += @("--features", "native-runtime") }
 if ($CargoExe) {
-  $metadataJson = & $cargoCommand metadata --locked --manifest-path $manifest --format-version 1
+  $metadataJson = & $cargoCommand @metadataArgs
 } else {
-  $metadataJson = & cargo "+$Toolchain" metadata --locked --manifest-path $manifest --format-version 1
+  $metadataJson = & cargo "+$Toolchain" @metadataArgs
 }
 if ($LASTEXITCODE -ne 0) {
   throw "cargo metadata failed with exit code $LASTEXITCODE"
@@ -142,6 +145,7 @@ $cargoArgs += @(
 )
 
 $cargoArgs += "--release"
+if ($NativeRuntime) { $cargoArgs += @("--features", "native-runtime") }
 if ($Check) { $cargoArgs[$cargoArgs.IndexOf("build")] = "check" }
 # Release packaging needs only the application, not the large benchmark bins.
 # Override the repository's 16-job/16-thread defaults for this build only;

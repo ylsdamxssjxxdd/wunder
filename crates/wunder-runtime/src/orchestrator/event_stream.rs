@@ -169,7 +169,7 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "llm_output_delta"
             | "llm_output"
             | "context_usage"
-            | "token_balance"
+            | "quota_balance"
             | "quota_usage"
             | "round_usage"
             | "team_start"
@@ -233,6 +233,10 @@ pub(super) struct EventEmitter {
 }
 
 impl EventEmitter {
+    pub(super) fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
     pub(super) fn new(
         session_id: String,
         user_id: String,

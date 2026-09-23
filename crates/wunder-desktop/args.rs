@@ -44,4 +44,25 @@ pub struct DesktopArgs {
     /// Run as local bridge only without Tauri desktop window.
     #[arg(long, alias = "headless", default_value_t = false)]
     pub bridge_only: bool,
+
+    /// Start the embedded runtime for native desktop callers instead of the HTTP bridge.
+    #[arg(skip)]
+    pub native_runtime: bool,
+}
+
+impl DesktopArgs {
+    pub fn native_defaults() -> Self {
+        Self {
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            workspace: None,
+            temp_root: None,
+            frontend_root: None,
+            user: None,
+            print_token: false,
+            open: false,
+            bridge_only: true,
+            native_runtime: true,
+        }
+    }
 }

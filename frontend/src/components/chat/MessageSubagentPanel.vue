@@ -45,7 +45,7 @@
             :disabled="terminatingKeys.has(item.key)"
             @click.stop="terminate(item)"
           >
-            {{ terminatingKeys.has(item.key) ? '终止中' : '终止' }}
+            {{ terminatingKeys.has(item.key) ? '中断中' : '中断' }}
           </button>
         </div>
       </button>
@@ -126,6 +126,7 @@ const statusText = (value: unknown, item: SubagentPanelItem | null = null) => {
     if (status === 'cancelling') return '终止中';
     return '运行中';
   }
+  if (['cancelled', 'canceled', 'interrupted'].includes(status)) return '已中断';
   if (isSubagentStatusSuccessful(status)) return '已完成';
   if (isSubagentStatusFailed(status) || status === 'timeout') {
     return '异常';
@@ -193,7 +194,7 @@ const terminate = async (item: SubagentPanelItem) => {
   if (!key || !props.sessionId) return;
   terminatingKeys.value.add(key);
   try {
-    await chatStore.controlSubagent(props.sessionId, item, 'terminate');
+    await chatStore.controlSubagent(props.sessionId, item, 'interrupt');
   } finally {
     terminatingKeys.value.delete(key);
   }

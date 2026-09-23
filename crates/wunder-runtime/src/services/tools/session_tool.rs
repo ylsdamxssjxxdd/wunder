@@ -136,7 +136,7 @@ pub(crate) async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Re
     if user_id.is_empty() {
         return Err(anyhow!(i18n::t("error.user_id_required")));
     }
-    let record = context
+    let mut record = context
         .storage
         .get_chat_session(user_id, &session_id)?
         .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
@@ -147,6 +147,10 @@ pub(crate) async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Re
         true,
     )?;
     let tool_names = build_effective_tool_names(context, user_id, &record, agent_record.as_ref())?;
+    if record.status == "closed" {
+        record.status = "active".to_string();
+        context.storage.upsert_chat_session(&record)?;
+    }
     let agent_prompt = agent_record
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
@@ -221,6 +225,14 @@ pub(crate) async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Re
             run_kind: Some(run_kind),
             requested_by: Some(requested_by),
             team_task_id: swarm_team_task_id,
+            metadata: Some(json!({
+                "controller_session_id": context.session_id,
+                "parent_turn_ref": subagents::encode_parent_turn_ref(context.user_round, context.model_round),
+                "parent_user_round": context.user_round,
+                "parent_model_round": context.model_round,
+                "auto_wake": auto_wake,
+                "background": !wait_forever && timeout_seconds <= 0.0,
+            })),
             ..SessionRunMeta::default()
         },
         announce,

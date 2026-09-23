@@ -6,6 +6,10 @@ rust-version.workspace = true
 build = "build.rs"
 default-run = "wunder-desktop"
 
+[lib]
+name = "wunder_desktop"
+path = "lib.rs"
+
 [features]
 default = ["sqlite-storage", "web-fetch"]
 desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-updater"]
@@ -32,12 +36,14 @@ bench = false
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
+futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 tauri = { workspace = true, optional = true }
 tauri-plugin-updater = { workspace = true, optional = true }
 tokio.workspace = true
+tokio-util.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

@@ -2843,6 +2843,10 @@ const PROJECTED_STATS_DISPLAY_FIELDS = [
   'visibleDecodeDurationS',
   'visible_decode_speed_tps',
   'visibleDecodeSpeedTps',
+  'decode_output_tokens',
+  'decodeOutputTokens',
+  'decode_speed_tps',
+  'decodeSpeedTps',
   'avg_model_round_speed_tps',
   'avg_model_round_decode_speed_tps',
   'avg_model_round_speed_rounds',
@@ -4803,12 +4807,17 @@ const mirrorProjectedStatsDisplay = (
     'visibleDecodeDurationS',
     'visible_decode_speed_tps',
     'visibleDecodeSpeedTps',
+    'decode_output_tokens',
+    'decodeOutputTokens',
+    'decode_speed_tps',
+    'decodeSpeedTps',
     'avg_model_round_speed_tps',
     'avg_model_round_decode_speed_tps',
     'avg_model_round_speed_rounds',
     'interaction_start_ms',
     'interaction_end_ms',
-    'interaction_duration_s'
+    'interaction_duration_s',
+    'stream_timing'
   ];
   aliases.forEach((key) => {
     if (stats[key] !== undefined) {
@@ -4845,21 +4854,7 @@ const applyProjectedQuotaStats = (
   stats: Record<string, unknown>,
   source: Record<string, unknown>
 ): void => {
-  const consumed = parsePositiveInt(
-    source.request_consumed_tokens ??
-      source.requestConsumedTokens ??
-      source.consumed_tokens ??
-      source.consumedTokens ??
-      source.consumed ??
-      source.count ??
-      source.used
-  );
-  if (consumed !== null) {
-    stats.quotaConsumed = Math.max(normalizeProjectedCount(stats.quotaConsumed), consumed);
-    stats.quota_consumed = stats.quotaConsumed;
-    stats.request_consumed_tokens = stats.quotaConsumed;
-    stats.requestConsumedTokens = stats.quotaConsumed;
-  }
+  // Quota counts provider requests; token usage is projected only from model usage events.
   const snapshot = normalizeProjectedQuotaSnapshot(source);
   if (snapshot) {
     stats.quotaSnapshot = snapshot;

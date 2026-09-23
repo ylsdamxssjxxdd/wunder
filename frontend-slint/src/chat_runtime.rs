@@ -30,6 +30,7 @@ pub fn install(app: &MainWindow, connection: ConnectionConfig) {
     app.set_connected(true);
     app.set_status("正在连接本地运行时…".into());
     crate::entity_state::bind_selection(app);
+    crate::subagent_pool::install(app, api.clone());
     bind_refresh(app, api.clone());
     let drafts = Rc::new(RefCell::new(HashMap::new()));
     bind_session_selection(app, api.clone(), drafts.clone());
@@ -136,6 +137,7 @@ fn bind_session_selection(app: &MainWindow, api: ChatApi, drafts: Drafts) {
         app.set_session_loading(true);
         app.set_selected_conversation(index.max(0));
         app.set_active_session_id(session_id.as_str().into());
+        app.invoke_refresh_subagents();
         app.set_heading(conversation.title);
         app.set_messages(empty_model());
         app.set_status("正在加载聊天记录…".into());

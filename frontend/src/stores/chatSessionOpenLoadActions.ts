@@ -1058,11 +1058,12 @@ export const chatSessionOpenLoadActions = {
         // Establish transcript identity/order before replaying the active tail.
         // Replaying first lets a later transcript replacement erase streamed rows
         // while deduplication prevents the same events from rebuilding them.
-        applyCanonicalSessionEventsSnapshot(this, targetSessionId,
-          shouldApplySessionEventsSnapshotToProjection(eventsPayload, runtime)
-            ? eventsPayload
-            : { ...eventsPayload, events: [], rounds: [] },
-          { phase: 'detail' });
+        // Workflow history is durable even when the thread is idle. Replay it
+        // after the transcript snapshot, while keeping runtime status separate.
+        applyCanonicalSessionEventsSnapshot(this, targetSessionId, eventsPayload, {
+          phase: 'detail',
+          includeRuntime: shouldApplySessionEventsSnapshotToProjection(eventsPayload, runtime)
+        });
         applyMessageWindow(this, targetSessionId, this.messages);
         syncDemoChatCache({ sessionId: targetSessionId, messages: this.messages });
         if (perfEnabled) {

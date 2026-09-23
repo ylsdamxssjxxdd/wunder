@@ -6,6 +6,7 @@ use crate::storage::{
 use anyhow::Result;
 
 pub(super) trait PostgresUserAccountStorage {
+    fn update_user_account_profile_impl(&self, record: &UserAccountRecord) -> Result<()>;
     fn upsert_user_account_impl(&self, record: &UserAccountRecord) -> Result<()>;
     fn upsert_user_accounts_impl(&self, records: &[UserAccountRecord]) -> Result<()>;
     fn get_user_account_impl(&self, user_id: &str) -> Result<Option<UserAccountRecord>>;
@@ -49,18 +50,26 @@ pub(super) trait PostgresUserAccountStorage {
 }
 
 impl PostgresUserAccountStorage for PostgresStorage {
+    fn update_user_account_profile_impl(&self, record: &UserAccountRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let roles = Self::string_list_to_json(&record.roles);
+        let mut conn = self.conn()?;
+        conn.execute("UPDATE user_accounts SET username = $1, email = $2, password_hash = $3, roles = $4, status = $5, access_level = $6, unit_id = $7, is_demo = $8, updated_at = $9, last_login_at = $10 WHERE user_id = $11", &[&record.username, &record.email, &record.password_hash, &roles, &record.status, &record.access_level, &record.unit_id, &(record.is_demo as i32), &record.updated_at, &record.last_login_at, &record.user_id])?;
+        Ok(())
+    }
+
     fn upsert_user_account_impl(&self, record: &UserAccountRecord) -> Result<()> {
         self.ensure_initialized()?;
         let roles = Self::string_list_to_json(&record.roles);
         let mut conn = self.conn()?;
         conn.execute(
             "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, unit_id, \
-             token_balance, token_granted_total, token_used_total, last_token_grant_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
+             quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
              ON CONFLICT(user_id) DO UPDATE SET username = EXCLUDED.username, email = EXCLUDED.email, password_hash = EXCLUDED.password_hash, \
              roles = EXCLUDED.roles, status = EXCLUDED.status, access_level = EXCLUDED.access_level, unit_id = EXCLUDED.unit_id, \
-             token_balance = EXCLUDED.token_balance, token_granted_total = EXCLUDED.token_granted_total, token_used_total = EXCLUDED.token_used_total, \
-             last_token_grant_date = EXCLUDED.last_token_grant_date, \
+             quota_balance = EXCLUDED.quota_balance, quota_granted_total = EXCLUDED.quota_granted_total, quota_used_total = EXCLUDED.quota_used_total, \
+             last_quota_grant_date = EXCLUDED.last_quota_grant_date, \
              experience_total = EXCLUDED.experience_total, \
              is_demo = EXCLUDED.is_demo, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, last_login_at = EXCLUDED.last_login_at",
             &[
@@ -72,10 +81,10 @@ impl PostgresUserAccountStorage for PostgresStorage {
                 &record.status,
                 &record.access_level,
                 &record.unit_id,
-                &record.token_balance,
-                &record.token_granted_total,
-                &record.token_used_total,
-                &record.last_token_grant_date,
+                &record.quota_balance,
+                &record.quota_granted_total,
+                &record.quota_used_total,
+                &record.last_quota_grant_date,
                 &record.experience_total,
                 &(record.is_demo as i32),
                 &record.created_at,
@@ -97,12 +106,12 @@ impl PostgresUserAccountStorage for PostgresStorage {
             let roles = Self::string_list_to_json(&record.roles);
             tx.execute(
                 "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, unit_id, \
-                 token_balance, token_granted_total, token_used_total, last_token_grant_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
+                 quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
                  ON CONFLICT(user_id) DO UPDATE SET username = EXCLUDED.username, email = EXCLUDED.email, password_hash = EXCLUDED.password_hash, \
                  roles = EXCLUDED.roles, status = EXCLUDED.status, access_level = EXCLUDED.access_level, unit_id = EXCLUDED.unit_id, \
-                 token_balance = EXCLUDED.token_balance, token_granted_total = EXCLUDED.token_granted_total, token_used_total = EXCLUDED.token_used_total, \
-                 last_token_grant_date = EXCLUDED.last_token_grant_date, \
+                 quota_balance = EXCLUDED.quota_balance, quota_granted_total = EXCLUDED.quota_granted_total, quota_used_total = EXCLUDED.quota_used_total, \
+                 last_quota_grant_date = EXCLUDED.last_quota_grant_date, \
                  experience_total = EXCLUDED.experience_total, \
                  is_demo = EXCLUDED.is_demo, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, last_login_at = EXCLUDED.last_login_at",
                 &[
@@ -114,10 +123,10 @@ impl PostgresUserAccountStorage for PostgresStorage {
                     &record.status,
                     &record.access_level,
                     &record.unit_id,
-                    &record.token_balance,
-                    &record.token_granted_total,
-                    &record.token_used_total,
-                    &record.last_token_grant_date,
+                    &record.quota_balance,
+                    &record.quota_granted_total,
+                    &record.quota_used_total,
+                    &record.last_quota_grant_date,
                     &record.experience_total,
                     &(record.is_demo as i32),
                     &record.created_at,
@@ -137,7 +146,7 @@ impl PostgresUserAccountStorage for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, \
              experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE user_id = $1",
             &[&cleaned],
         )?;
@@ -150,10 +159,10 @@ impl PostgresUserAccountStorage for PostgresStorage {
             status: row.get(5),
             access_level: row.get(6),
             unit_id: row.get(7),
-            token_balance: row.get::<_, Option<i64>>(8).unwrap_or(0),
-            token_granted_total: row.get::<_, Option<i64>>(9).unwrap_or(0),
-            token_used_total: row.get::<_, Option<i64>>(10).unwrap_or(0),
-            last_token_grant_date: row.get(11),
+            quota_balance: row.get::<_, Option<i64>>(8).unwrap_or(0),
+            quota_granted_total: row.get::<_, Option<i64>>(9).unwrap_or(0),
+            quota_used_total: row.get::<_, Option<i64>>(10).unwrap_or(0),
+            last_quota_grant_date: row.get(11),
             experience_total: row.get::<_, Option<i64>>(12).unwrap_or(0),
             is_demo: row.get::<_, i32>(13) != 0,
             created_at: row.get(14),
@@ -173,7 +182,7 @@ impl PostgresUserAccountStorage for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, \
              experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE username = $1",
             &[&cleaned],
         )?;
@@ -186,10 +195,10 @@ impl PostgresUserAccountStorage for PostgresStorage {
             status: row.get(5),
             access_level: row.get(6),
             unit_id: row.get(7),
-            token_balance: row.get::<_, Option<i64>>(8).unwrap_or(0),
-            token_granted_total: row.get::<_, Option<i64>>(9).unwrap_or(0),
-            token_used_total: row.get::<_, Option<i64>>(10).unwrap_or(0),
-            last_token_grant_date: row.get(11),
+            quota_balance: row.get::<_, Option<i64>>(8).unwrap_or(0),
+            quota_granted_total: row.get::<_, Option<i64>>(9).unwrap_or(0),
+            quota_used_total: row.get::<_, Option<i64>>(10).unwrap_or(0),
+            last_quota_grant_date: row.get(11),
             experience_total: row.get::<_, Option<i64>>(12).unwrap_or(0),
             is_demo: row.get::<_, i32>(13) != 0,
             created_at: row.get(14),
@@ -206,7 +215,7 @@ impl PostgresUserAccountStorage for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, \
              experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE email = $1",
             &[&cleaned],
         )?;
@@ -219,10 +228,10 @@ impl PostgresUserAccountStorage for PostgresStorage {
             status: row.get(5),
             access_level: row.get(6),
             unit_id: row.get(7),
-            token_balance: row.get::<_, Option<i64>>(8).unwrap_or(0),
-            token_granted_total: row.get::<_, Option<i64>>(9).unwrap_or(0),
-            token_used_total: row.get::<_, Option<i64>>(10).unwrap_or(0),
-            last_token_grant_date: row.get(11),
+            quota_balance: row.get::<_, Option<i64>>(8).unwrap_or(0),
+            quota_granted_total: row.get::<_, Option<i64>>(9).unwrap_or(0),
+            quota_used_total: row.get::<_, Option<i64>>(10).unwrap_or(0),
+            last_quota_grant_date: row.get(11),
             experience_total: row.get::<_, Option<i64>>(12).unwrap_or(0),
             is_demo: row.get::<_, i32>(13) != 0,
             created_at: row.get(14),
@@ -280,7 +289,7 @@ impl PostgresUserAccountStorage for PostgresStorage {
                 let pattern = format!("%{keyword}%");
                 if limit > 0 {
                     conn.query(
-                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, \
                          experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts \
                          WHERE (username ILIKE $1 OR email ILIKE $1) AND unit_id = ANY($2) \
                          ORDER BY created_at DESC LIMIT $3 OFFSET $4",
@@ -288,7 +297,7 @@ impl PostgresUserAccountStorage for PostgresStorage {
                     )?
                 } else {
                     conn.query(
-                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, \
                          experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts \
                          WHERE (username ILIKE $1 OR email ILIKE $1) AND unit_id = ANY($2) \
                          ORDER BY created_at DESC",
@@ -300,7 +309,7 @@ impl PostgresUserAccountStorage for PostgresStorage {
                 let pattern = format!("%{keyword}%");
                 if limit > 0 {
                     conn.query(
-                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, \
                          experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts \
                          WHERE username ILIKE $1 OR email ILIKE $1 \
                          ORDER BY created_at DESC LIMIT $2 OFFSET $3",
@@ -308,7 +317,7 @@ impl PostgresUserAccountStorage for PostgresStorage {
                     )?
                 } else {
                     conn.query(
-                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, \
                          experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts \
                          WHERE username ILIKE $1 OR email ILIKE $1 \
                          ORDER BY created_at DESC",
@@ -319,7 +328,7 @@ impl PostgresUserAccountStorage for PostgresStorage {
             (None, Some(unit_ids)) => {
                 if limit > 0 {
                     conn.query(
-                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, \
                          experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts \
                          WHERE unit_id = ANY($1) \
                          ORDER BY created_at DESC LIMIT $2 OFFSET $3",
@@ -327,7 +336,7 @@ impl PostgresUserAccountStorage for PostgresStorage {
                     )?
                 } else {
                     conn.query(
-                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, \
                          experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts \
                          WHERE unit_id = ANY($1) ORDER BY created_at DESC",
                         &[unit_ids],
@@ -337,14 +346,14 @@ impl PostgresUserAccountStorage for PostgresStorage {
             (None, None) => {
                 if limit > 0 {
                     conn.query(
-                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, \
                          experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts \
                          ORDER BY created_at DESC LIMIT $1 OFFSET $2",
                         &[&limit, &offset.max(0)],
                     )?
                 } else {
                     conn.query(
-                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, \
                          experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts ORDER BY created_at DESC",
                         &[],
                     )?
@@ -363,10 +372,10 @@ impl PostgresUserAccountStorage for PostgresStorage {
                 status: row.get(5),
                 access_level: row.get(6),
                 unit_id: row.get(7),
-                token_balance: row.get::<_, Option<i64>>(8).unwrap_or(0),
-                token_granted_total: row.get::<_, Option<i64>>(9).unwrap_or(0),
-                token_used_total: row.get::<_, Option<i64>>(10).unwrap_or(0),
-                last_token_grant_date: row.get(11),
+                quota_balance: row.get::<_, Option<i64>>(8).unwrap_or(0),
+                quota_granted_total: row.get::<_, Option<i64>>(9).unwrap_or(0),
+                quota_used_total: row.get::<_, Option<i64>>(10).unwrap_or(0),
+                last_quota_grant_date: row.get(11),
                 experience_total: row.get::<_, Option<i64>>(12).unwrap_or(0),
                 is_demo: row.get::<_, i32>(13) != 0,
                 created_at: row.get(14),

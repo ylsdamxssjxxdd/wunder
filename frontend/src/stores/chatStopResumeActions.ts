@@ -292,14 +292,9 @@ export const chatStopResumeActions = {
         });
         // Ignore cancel API failures; local stop behavior still applies.
       }
-      let terminatedSubagentCount = 0;
-      if (options.terminateSubagents !== false) {
-        const termination = await this.terminateSessionSubagentTree(targetSessionId, { force: true });
-        terminatedSubagentCount = Array.isArray(termination?.terminatedSessionIds)
-          ? termination.terminatedSessionIds.length
-          : 0;
-      }
-      return locallyStopped || cancelled || terminatedSubagentCount > 0;
+      // The server owns recursive interruption. Keep children available for later reuse.
+      void this.refreshSessionSubagents(targetSessionId, { force: true }).catch(() => {});
+      return locallyStopped || cancelled;
     },
     async stopStream() {
       return this.stopSessionActivity(this.activeSessionId, { terminateSubagents: true });

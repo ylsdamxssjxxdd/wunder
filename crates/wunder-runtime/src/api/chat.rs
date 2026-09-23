@@ -582,6 +582,37 @@ pub(crate) async fn build_chat_request(
     })
 }
 
+/// Build a local desktop request without going through the HTTP adapter.
+///
+/// The transport handlers still own authentication and response shaping; the
+/// embedded desktop supplies its already-resolved local user directly.
+pub async fn build_native_chat_request(
+    state: &Arc<AppState>,
+    user: &crate::storage::UserAccountRecord,
+    session_id: &str,
+    content: String,
+    client_message_id: Option<String>,
+) -> anyhow::Result<WunderRequest> {
+    reject_locked_orchestration_session(state, &user.user_id, session_id)
+        .map_err(|_| anyhow::anyhow!("chat session is locked"))?;
+    build_chat_request(
+        state,
+        user,
+        session_id,
+        content,
+        client_message_id,
+        true,
+        None,
+        ChatRequestOverrides {
+            tool_call_mode: None,
+            approval_mode: None,
+            debug_payload: false,
+        },
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("chat request was rejected"))
+}
+
 fn normalize_tool_call_mode(raw: Option<&str>) -> Result<Option<String>, Response> {
     let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
@@ -654,6 +685,7 @@ async fn cancel_session(
     Ok(Json(json!({
         "data": {
             "cancelled": cancel_settlement.monitor_cancelled,
+            "child_sessions_cancelled": cancel_settlement.child_sessions_cancelled,
             "goal_cleared": goal_cleared,
             "marker_persisted": marker_persisted,
             "queued_tasks_cancelled": cancel_settlement.queued_tasks_cancelled,

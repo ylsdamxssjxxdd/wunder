@@ -1373,8 +1373,8 @@ async fn swarm_worker_subagent_child_does_not_steal_worker_task_thread() {
     );
 }
 
-#[test]
-fn prepare_child_session_inherits_effective_model_from_parent_agent() {
+#[tokio::test]
+async fn prepare_child_session_inherits_effective_model_from_parent_agent() {
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("subagent-inherit-model.db");
     let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));

@@ -432,6 +432,16 @@ export const chatCacheActions = {
           applyCanonicalSessionEventsSnapshot(this, targetId, eventsPayload, {
             phase: 'preload'
           });
+        } else if (
+          (Array.isArray(eventsPayload?.events) && eventsPayload.events.length > 0) ||
+          (Array.isArray(eventsPayload?.rounds) && eventsPayload.rounds.length > 0)
+        ) {
+          // Idle sessions still need their persisted tool workflow rows after a
+          // refresh; do not replay runtime state from this historical preload.
+          applyCanonicalSessionEventsSnapshot(this, targetId, eventsPayload, {
+            phase: 'preload-history',
+            includeRuntime: false
+          });
         } else {
           chatDebugLog('chat.store.preload', 'events-snapshot-skip-idle-transcript', {
             sessionId: targetId,

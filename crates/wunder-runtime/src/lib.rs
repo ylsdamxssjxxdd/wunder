@@ -31,4 +31,7 @@ pub use services::{
     sim_lab, skills, swarm, tools, user_access, user_leveling, user_plaza, user_prompt_templates,
     user_store, user_tools, user_world, vector_knowledge, virtual_llm, workspace,
 };
+pub use services::runtime::thread::{ThreadCancelSettlement, ThreadSubmitOutcome};
+pub use services::chat_cancel_marker::persist_user_cancelled_turn_marker;
 pub use wunder_core as stable_core;
+pub use services::subagents::list_parent_subagents;

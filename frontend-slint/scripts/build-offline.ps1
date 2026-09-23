@@ -1,6 +1,7 @@
 param(
     [string]$BuilderRoot = "",
     [ValidateRange(1, 8)][int]$Jobs = 8,
+    [switch]$NativeRuntime,
     [switch]$Check
 )
 $ErrorActionPreference = "Stop"
@@ -30,4 +31,4 @@ $env:CARGO_HOME = $cargoCache
 $env:CARGO_NET_OFFLINE = "true"
 $env:RUSTC = Join-Path $toolchainBin "rustc.exe"
 $env:PATH = "$toolchainBin;$env:PATH"
-& (Join-Path $PSScriptRoot "build-win7.ps1") -CargoExe (Join-Path $toolchainBin "cargo.exe") -MingwBin (Join-Path $offline "mingw32\bin") -HostMingwBin (Join-Path $offline "mingw64\bin") -Jobs $Jobs -Check:$Check
+& (Join-Path $PSScriptRoot "build-win7.ps1") -CargoExe (Join-Path $toolchainBin "cargo.exe") -MingwBin (Join-Path $offline "mingw32\bin") -HostMingwBin (Join-Path $offline "mingw64\bin") -Jobs $Jobs -Check:$Check -NativeRuntime:$NativeRuntime

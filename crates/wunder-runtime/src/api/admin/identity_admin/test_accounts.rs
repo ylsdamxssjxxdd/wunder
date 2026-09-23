@@ -88,7 +88,7 @@ async fn admin_user_accounts_seed(
     let mut next_seed_serial = max_seed_serial.saturating_add(1).max(1);
     let mut records = Vec::with_capacity(capacity);
     for unit in &scoped_units {
-        let token_grant = UserStore::default_daily_token_grant_by_level(Some(unit.level));
+        let quota_grant = UserStore::default_daily_quota();
         for _ in 0..per_unit {
             let username = loop {
                 let candidate = format!("{DEFAULT_TEST_USER_PREFIX}_{next_seed_serial}");
@@ -112,10 +112,10 @@ async fn admin_user_accounts_seed(
                 status: "active".to_string(),
                 access_level: access_level.clone(),
                 unit_id: Some(unit.unit_id.clone()),
-                token_balance: token_grant,
-                token_granted_total: token_grant,
-                token_used_total: 0,
-                last_token_grant_date: Some(UserStore::today_string()),
+                quota_balance: quota_grant,
+                quota_granted_total: quota_grant,
+                quota_used_total: 0,
+                last_quota_grant_date: Some(UserStore::today_string()),
                 experience_total: 0,
                 is_demo: true,
                 created_at: now,

@@ -67,7 +67,7 @@ The older topic pages were not removed. They were moved under [Reference Overvie
   <a class="docs-card" href="/docs/en/concepts/core-memory/"><strong>Memory</strong><span>Initialization-time injection and frozen prompt constraints.</span></a>
   <a class="docs-card" href="/docs/en/concepts/core-channels/"><strong>Channels</strong><span>Shared kernel across multiple entry surfaces.</span></a>
   <a class="docs-card" href="/docs/en/concepts/core-scheduled-tasks/"><strong>Scheduled Tasks</strong><span>Recurring execution, background governance, and execution history.</span></a>
-  <a class="docs-card" href="/docs/en/concepts/core-multi-user-management/"><strong>Multi-user Management</strong><span>Tenants, permissions, token accounts, and governance panels.</span></a>
+  <a class="docs-card" href="/docs/en/concepts/core-multi-user-management/"><strong>Multi-user Management</strong><span>Tenants, permissions, quota accounts, and governance panels.</span></a>
   <a class="docs-card" href="/docs/en/concepts/core-realtime/"><strong>Realtime</strong><span>Event streams, snapshot compensation, and reconnect recovery.</span></a>
   <a class="docs-card" href="/docs/en/concepts/core-stability/"><strong>Stability</strong><span>Error isolation, retries, recovery, and regression acceptance.</span></a>
   <a class="docs-card" href="/docs/en/concepts/core-observability/"><strong>Observability</strong><span>Fact streams, replay, profiling, and metric conventions.</span></a>

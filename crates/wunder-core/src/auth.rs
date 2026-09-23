@@ -1,4 +1,8 @@
 pub fn is_admin_path(path: &str) -> bool {
+    // This exact endpoint authenticates a single-use admin ticket during upgrade.
+    if path == "/wunder/throughput/ws" {
+        return false;
+    }
     if path == "/.well-known/agent-card.json" {
         return false;
     }
@@ -183,6 +187,9 @@ mod tests {
 
     #[test]
     fn route_prefixes_do_not_unlock_similar_admin_paths() {
+        assert!(!is_admin_path("/wunder/throughput/ws"));
+        assert!(is_admin_path("/wunder/throughput/ws/extra"));
+        assert!(is_admin_path("/wunder/admin/throughput/ticket"));
         assert!(is_admin_path("/wunder/plazadmin"));
         assert!(is_admin_path("/wunder/user_tooling"));
         assert!(is_admin_path("/wunder/companions/global-admin"));

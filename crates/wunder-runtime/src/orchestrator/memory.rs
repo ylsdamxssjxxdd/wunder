@@ -465,7 +465,7 @@ impl Orchestrator {
             Err(err) => {
                 if matches!(
                     err.code(),
-                    "USER_QUOTA_EXCEEDED" | "USER_TOKEN_INSUFFICIENT"
+                    "USER_QUOTA_EXCEEDED" | "USER_QUOTA_INSUFFICIENT"
                 ) {
                     return Err(err);
                 }

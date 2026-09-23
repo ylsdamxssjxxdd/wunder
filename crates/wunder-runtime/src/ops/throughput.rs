@@ -1,538 +1,104 @@
-use crate::core::llm_speed::{
-    build_llm_speed_summary_from_value_events, ttft_ms_from_duration, LlmSpeedSummary,
-};
-use crate::monitor::MonitorState;
-use crate::orchestrator::Orchestrator;
-use crate::schemas::{TokenUsage, WunderRequest};
-use chrono::{DateTime, Local, Utc};
-use futures::future::join_all;
-use parking_lot::Mutex as ParkingMutex;
+//! Single-request model benchmarks. No users, sessions, prompts or responses are persisted.
+use crate::config::{Config, LlmModelConfig};
+use crate::llm::{is_llm_configured, is_llm_model, LlmClient};
+use chrono::Utc;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use std::collections::{hash_map::DefaultHasher, HashSet};
-use std::fs;
-use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::fs as tokio_fs;
-use tokio::sync::Mutex;
-use tracing::info;
+use std::{path::PathBuf, sync::Arc, time::Instant};
+use tokio::sync::watch;
 use uuid::Uuid;
 
-const DEFAULT_USER_PREFIX: &str = "throughput_user";
-const MAX_CONCURRENCY: usize = 500;
-const MAX_ERROR_SAMPLES: usize = 20;
-const MAX_REPORT_HISTORY: usize = 50;
-const REPORT_DIR: &str = "config/data/throughput";
-const REPORT_INDEX_FILE: &str = "index.json";
-const LATENCY_BUCKETS_MS: [u64; 12] = [
-    50, 100, 200, 300, 500, 800, 1000, 1500, 2000, 3000, 5000, 10000,
+mod history;
+#[cfg(test)]
+mod tests;
+
+pub const INPUT_PRESETS: [u32; 10] = [
+    1024, 2048, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576,
 ];
-const BUILTIN_QUESTION_SET_NAME: &str = "builtin";
-const BUILTIN_QUESTIONS: [&str; 50] = [
-    "用一句话解释什么是大型语言模型。",
-    "列出三种常见的数据库索引类型及用途。",
-    "用 100 字以内说明 HTTP 与 HTTPS 的区别。",
-    "将下面中文翻译成英文：人工智能正在改变世界。",
-    "写出 Rust 中所有权的核心规则。",
-    "给出一个用于计算阶乘的伪代码。",
-    "解释什么是幂等接口，并举一个例子。",
-    "比较 TCP 与 UDP 的主要差异。",
-    "简要说明缓存击穿、穿透、雪崩的区别。",
-    "给出 5 个提升 API 吞吐量的优化点。",
-    "简述 LRU 缓存的工作原理。",
-    "给出一个判断质数的算法思路。",
-    "用要点说明日志采样的优缺点。",
-    "写一个 SQL 查询示例：按城市统计用户数。",
-    "解释什么是向量数据库及常见场景。",
-    "举例说明并发与并行的区别。",
-    "将英文翻译成中文：Latency is more important than throughput in interactive systems.",
-    "给出一次 HTTP 请求的关键阶段。",
-    "写出 JSON 与 YAML 的主要差别。",
-    "简要描述 OAuth2 的授权码流程。",
-    "用 3 点说明怎样设计可观测性指标。",
-    "解释什么是 RPS 与 TPS。",
-    "给出一次压测需要收集的核心指标列表。",
-    "写出一个二分查找的步骤。",
-    "简要说明 CAP 定理的含义。",
-    "解释什么是消息队列以及常见用途。",
-    "用 50 字以内说明什么是背压。",
-    "给出一个字符串反转的示例代码（任意语言）。",
-    "解释什么是服务降级，并给出一个场景。",
-    "列出 4 种常见的监控告警策略。",
-    "简要说明什么是微服务架构。",
-    "写出 Kubernetes 的两项核心能力。",
-    "给出一次接口超时排查的思路。",
-    "解释什么是冷启动以及可能影响。",
-    "列出 3 种常见的负载均衡算法。",
-    "用一句话描述 B 树与 B+ 树的区别。",
-    "解释什么是上下文窗口（Context Window）。",
-    "给出一个文本摘要任务的评估指标。",
-    "说明为什么需要限流，并举例。",
-    "用 3 点描述 API 版本管理的建议。",
-    "写出一次日志追踪链路的关键字段。",
-    "解释幂等重试可能带来的问题。",
-    "简要描述分布式锁的实现方式。",
-    "列出 3 种常见的序列化格式。",
-    "解释什么是热分区以及影响。",
-    "给出一个简单的正则表达式，用于匹配邮箱。",
-    "用两句话描述什么是向量相似度检索。",
-    "说明如何估算文本的 token 数量。",
-    "给出一个性能测试的基线建立方法。",
-    "简要说明如何设置最大输出 token 的意义。",
-];
+pub const OUTPUT_PRESETS: [u32; 4] = [1024, 2048, 4096, 8192];
+const HISTORY_LIMIT: usize = 50;
 
-#[derive(Clone)]
-pub struct ThroughputManager {
-    inner: Arc<ThroughputManagerInner>,
-}
-
-struct ThroughputManagerInner {
-    state: Mutex<ThroughputState>,
-}
-
-struct ThroughputState {
-    active: Option<ActiveRun>,
-    history: Vec<ThroughputSnapshot>,
-}
-
-struct ActiveRun {
-    id: String,
-    config: ThroughputConfig,
-    started_at: DateTime<Utc>,
-    started_instant: Instant,
-    finished_at: Option<DateTime<Utc>>,
-    finished_instant: Option<Instant>,
-    status: RunStatus,
-    metrics: Arc<ThroughputMetrics>,
-    stop_flag: Arc<AtomicBool>,
-}
-
-#[derive(Clone, Copy)]
-enum RunStatus {
-    Running,
-    Stopping,
-    Finished,
-    Stopped,
-}
-
-impl RunStatus {
-    fn as_str(&self) -> &'static str {
-        match self {
-            RunStatus::Running => "running",
-            RunStatus::Stopping => "stopping",
-            RunStatus::Finished => "finished",
-            RunStatus::Stopped => "stopped",
-        }
-    }
-}
-
-#[derive(Clone)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ThroughputConfig {
-    pub concurrency_list: Vec<usize>,
-    pub max_concurrency: usize,
-    pub questions: Vec<String>,
-    pub question_set: String,
-    pub user_id_prefix: String,
-    pub model_name: Option<String>,
-    pub request_timeout_s: f64,
-    pub max_tokens: Option<u32>,
+    pub model_name: String,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
 }
 
 impl ThroughputConfig {
-    pub fn new(
-        concurrency_list: Vec<usize>,
-        user_id_prefix: Option<String>,
-        model_name: Option<String>,
-        request_timeout_s: Option<f64>,
-        max_tokens: Option<u32>,
-    ) -> Result<Self, String> {
-        let concurrency_list = normalize_concurrency_list(concurrency_list)?;
-        let max_concurrency = concurrency_list.iter().copied().max().unwrap_or_default();
-        let prefix = user_id_prefix
-            .unwrap_or_else(|| DEFAULT_USER_PREFIX.to_string())
-            .trim()
-            .to_string();
-        let prefix = if prefix.is_empty() {
-            DEFAULT_USER_PREFIX.to_string()
-        } else {
-            prefix
-        };
-        let timeout = request_timeout_s.unwrap_or(0.0);
-        let timeout = if timeout.is_finite() && timeout > 0.0 {
-            timeout
-        } else {
-            0.0
-        };
-        let model_name = model_name
-            .map(|name| name.trim().to_string())
-            .filter(|name| !name.is_empty());
-        let max_tokens = max_tokens.filter(|value| *value > 0);
-        let questions = builtin_questions();
-        let question_set = BUILTIN_QUESTION_SET_NAME.to_string();
-        Ok(Self {
-            concurrency_list,
-            max_concurrency,
-            questions,
-            question_set,
-            user_id_prefix: prefix,
-            model_name,
-            request_timeout_s: timeout,
-            max_tokens,
-        })
+    pub fn resolve(&self, config: &Config) -> Result<LlmModelConfig, String> {
+        if !INPUT_PRESETS.contains(&self.input_tokens)
+            || !OUTPUT_PRESETS.contains(&self.output_tokens)
+        {
+            return Err("请选择支持的输入和输出 Token 档位".into());
+        }
+        let model = config
+            .llm
+            .models
+            .get(&self.model_name)
+            .filter(|model| {
+                model.enable != Some(false) && is_llm_model(model) && is_llm_configured(model)
+            })
+            .ok_or("请选择已启用并配置完整的语言模型")?;
+        if model
+            .max_context
+            .is_some_and(|limit| limit > 0 && self.input_tokens + self.output_tokens > limit)
+        {
+            return Err("输入与输出 Token 之和超过模型配置的上下文窗口".into());
+        }
+        Ok(model.clone())
     }
 }
 
-fn builtin_questions() -> Vec<String> {
-    BUILTIN_QUESTIONS
-        .iter()
-        .map(|item| item.trim().to_string())
-        .filter(|item| !item.is_empty())
-        .collect()
-}
+pub use crate::llm::benchmark::BenchmarkMetrics as ThroughputMetrics;
 
-fn normalize_concurrency_list(list: Vec<usize>) -> Result<Vec<usize>, String> {
-    let mut normalized = Vec::new();
-    let mut seen = HashSet::new();
-    for value in list {
-        if value == 0 {
-            return Err("并发数必须大于 0".to_string());
-        }
-        if value > MAX_CONCURRENCY {
-            return Err(format!("并发数不能超过 {MAX_CONCURRENCY}"));
-        }
-        if seen.insert(value) {
-            normalized.push(value);
-        }
-    }
-    if normalized.is_empty() {
-        return Err("并发列表不能为空".to_string());
-    }
-    Ok(normalized)
-}
-
-struct ThroughputMetrics {
-    total: AtomicU64,
-    success: AtomicU64,
-    error: AtomicU64,
-    total_latency_ms: AtomicU64,
-    first_token_latency_total_ms: AtomicU64,
-    first_token_latency_count: AtomicU64,
-    min_latency_ms: AtomicU64,
-    max_latency_ms: AtomicU64,
-    input_tokens: AtomicU64,
-    output_tokens: AtomicU64,
-    total_tokens: AtomicU64,
-    buckets: Vec<AtomicU64>,
-    errors: ParkingMutex<Vec<ThroughputErrorSnapshot>>,
-    samples: ParkingMutex<Vec<ThroughputSample>>,
-}
-
-impl ThroughputMetrics {
-    fn new() -> Self {
-        let mut buckets = Vec::with_capacity(LATENCY_BUCKETS_MS.len() + 1);
-        for _ in 0..=LATENCY_BUCKETS_MS.len() {
-            buckets.push(AtomicU64::new(0));
-        }
-        Self {
-            total: AtomicU64::new(0),
-            success: AtomicU64::new(0),
-            error: AtomicU64::new(0),
-            total_latency_ms: AtomicU64::new(0),
-            first_token_latency_total_ms: AtomicU64::new(0),
-            first_token_latency_count: AtomicU64::new(0),
-            min_latency_ms: AtomicU64::new(u64::MAX),
-            max_latency_ms: AtomicU64::new(0),
-            input_tokens: AtomicU64::new(0),
-            output_tokens: AtomicU64::new(0),
-            total_tokens: AtomicU64::new(0),
-            buckets,
-            errors: ParkingMutex::new(Vec::new()),
-            samples: ParkingMutex::new(Vec::new()),
-        }
-    }
-
-    fn record(
-        &self,
-        latency_ms: u64,
-        usage: Option<crate::schemas::TokenUsage>,
-        error_message: Option<String>,
-        first_token_latency_ms: Option<u64>,
-    ) {
-        self.total.fetch_add(1, Ordering::Relaxed);
-        self.total_latency_ms
-            .fetch_add(latency_ms, Ordering::Relaxed);
-        if let Some(first_token_latency_ms) = first_token_latency_ms {
-            if first_token_latency_ms > 0 {
-                self.first_token_latency_total_ms
-                    .fetch_add(first_token_latency_ms, Ordering::Relaxed);
-                self.first_token_latency_count
-                    .fetch_add(1, Ordering::Relaxed);
-            }
-        }
-        if error_message.is_some() {
-            self.error.fetch_add(1, Ordering::Relaxed);
-        } else {
-            self.success.fetch_add(1, Ordering::Relaxed);
-        }
-        self.update_min_latency(latency_ms);
-        self.update_max_latency(latency_ms);
-        self.update_latency_bucket(latency_ms);
-        if let Some(usage) = usage {
-            self.input_tokens.fetch_add(usage.input, Ordering::Relaxed);
-            self.output_tokens
-                .fetch_add(usage.output, Ordering::Relaxed);
-            self.total_tokens.fetch_add(usage.total, Ordering::Relaxed);
-        }
-        if let Some(message) = error_message {
-            self.push_error(message);
-        }
-    }
-
-    fn update_min_latency(&self, latency_ms: u64) {
-        let mut current = self.min_latency_ms.load(Ordering::Relaxed);
-        while latency_ms < current {
-            match self.min_latency_ms.compare_exchange(
-                current,
-                latency_ms,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(updated) => current = updated,
-            }
-        }
-    }
-
-    fn update_max_latency(&self, latency_ms: u64) {
-        let mut current = self.max_latency_ms.load(Ordering::Relaxed);
-        while latency_ms > current {
-            match self.max_latency_ms.compare_exchange(
-                current,
-                latency_ms,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(updated) => current = updated,
-            }
-        }
-    }
-
-    fn update_latency_bucket(&self, latency_ms: u64) {
-        let mut index = LATENCY_BUCKETS_MS.len();
-        for (idx, bound) in LATENCY_BUCKETS_MS.iter().enumerate() {
-            if latency_ms <= *bound {
-                index = idx;
-                break;
-            }
-        }
-        if let Some(bucket) = self.buckets.get(index) {
-            bucket.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    fn push_error(&self, message: String) {
-        let mut guard = self.errors.lock();
-        guard.push(ThroughputErrorSnapshot {
-            timestamp: Local::now().to_rfc3339(),
-            message,
-        });
-        if guard.len() > MAX_ERROR_SAMPLES {
-            let overflow = guard.len() - MAX_ERROR_SAMPLES;
-            guard.drain(0..overflow);
-        }
-    }
-
-    fn push_sample(&self, sample: ThroughputSample) {
-        self.samples.lock().push(sample);
-    }
-
-    fn samples(&self) -> Vec<ThroughputSample> {
-        self.samples.lock().clone()
-    }
-
-    fn snapshot(&self, elapsed_s: f64) -> ThroughputMetricsSnapshot {
-        let total = self.total.load(Ordering::Relaxed);
-        let success = self.success.load(Ordering::Relaxed);
-        let error = self.error.load(Ordering::Relaxed);
-        let total_latency_ms = self.total_latency_ms.load(Ordering::Relaxed);
-        let first_token_latency_total_ms =
-            self.first_token_latency_total_ms.load(Ordering::Relaxed);
-        let first_token_latency_count = self.first_token_latency_count.load(Ordering::Relaxed);
-        let min_latency_raw = self.min_latency_ms.load(Ordering::Relaxed);
-        let max_latency_ms = self.max_latency_ms.load(Ordering::Relaxed);
-        let min_latency_ms = if min_latency_raw == u64::MAX {
-            None
-        } else {
-            Some(min_latency_raw)
-        };
-        let avg_latency_ms = if total > 0 {
-            Some((total_latency_ms as f64 / total as f64).round() as u64)
-        } else {
-            None
-        };
-        let first_token_latency_ms = if first_token_latency_count > 0 {
-            Some(
-                (first_token_latency_total_ms as f64 / first_token_latency_count as f64).round()
-                    as u64,
-            )
-        } else {
-            None
-        };
-        let rps = if elapsed_s > 0.0 {
-            ((total as f64 / elapsed_s) * 100.0).round() / 100.0
-        } else {
-            0.0
-        };
-        let bucket_counts = self
-            .buckets
-            .iter()
-            .map(|bucket| bucket.load(Ordering::Relaxed))
-            .collect::<Vec<_>>();
-        let p50 = estimate_percentile(&bucket_counts, 0.5);
-        let p90 = estimate_percentile(&bucket_counts, 0.9);
-        let p99 = estimate_percentile(&bucket_counts, 0.99);
-        let input_tokens = self.input_tokens.load(Ordering::Relaxed);
-        let output_tokens = self.output_tokens.load(Ordering::Relaxed);
-        let total_tokens = self.total_tokens.load(Ordering::Relaxed);
-        let avg_total_tokens = if success > 0 {
-            Some((total_tokens as f64 / success as f64).round() as u64)
-        } else {
-            None
-        };
-        let latency_buckets = build_bucket_snapshots(&bucket_counts);
-        ThroughputMetricsSnapshot {
-            total_requests: total,
-            success_requests: success,
-            error_requests: error,
-            rps,
-            avg_latency_ms,
-            ttft_ms: first_token_latency_ms,
-            first_token_latency_ms,
-            min_latency_ms,
-            max_latency_ms: if total > 0 {
-                Some(max_latency_ms)
-            } else {
-                None
-            },
-            p50_latency_ms: p50,
-            p90_latency_ms: p90,
-            p99_latency_ms: p99,
-            input_tokens,
-            output_tokens,
-            total_tokens,
-            avg_total_tokens,
-            latency_buckets,
-        }
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ThroughputSnapshot {
-    pub run: ThroughputRunSnapshot,
-    pub metrics: ThroughputMetricsSnapshot,
-    pub errors: Vec<ThroughputErrorSnapshot>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct ThroughputRunSnapshot {
     pub id: String,
     pub status: String,
-    #[serde(default)]
-    pub max_concurrency: usize,
-    #[serde(default)]
-    pub concurrency_list: Vec<usize>,
-    #[serde(default)]
-    pub question_set: Option<String>,
-    #[serde(default)]
-    pub question_count: usize,
-    pub user_id_prefix: String,
-    pub stream: bool,
-    pub model_name: Option<String>,
-    pub request_timeout_s: f64,
-    #[serde(default)]
-    pub max_tokens: Option<u32>,
+    pub config: ThroughputConfig,
     pub started_at: String,
     pub finished_at: Option<String>,
     pub elapsed_s: f64,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct ThroughputMetricsSnapshot {
-    pub total_requests: u64,
-    pub success_requests: u64,
-    pub error_requests: u64,
-    pub rps: f64,
-    pub avg_latency_ms: Option<u64>,
+    pub length_control: String,
     #[serde(default)]
-    pub ttft_ms: Option<u64>,
-    #[serde(default)]
-    pub first_token_latency_ms: Option<u64>,
-    pub min_latency_ms: Option<u64>,
-    pub max_latency_ms: Option<u64>,
-    pub p50_latency_ms: Option<u64>,
-    pub p90_latency_ms: Option<u64>,
-    pub p99_latency_ms: Option<u64>,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub total_tokens: u64,
-    pub avg_total_tokens: Option<u64>,
-    pub latency_buckets: Vec<LatencyBucketSnapshot>,
+    pub simulated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simulation_speed: Option<wunder_core::virtual_model::VirtualModelSpeed>,
+    pub metrics: ThroughputMetrics,
+    pub error: Option<String>,
+    pub persistence_error: bool,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct LatencyBucketSnapshot {
-    pub le_ms: Option<u64>,
-    pub count: u64,
+impl ThroughputSnapshot {
+    pub fn running(&self) -> bool {
+        matches!(self.status.as_str(), "running" | "stopping")
+    }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct ThroughputErrorSnapshot {
-    pub timestamp: String,
-    pub message: String,
-}
-
-#[derive(Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
-pub struct ThroughputSample {
-    pub timestamp: String,
-    pub concurrency: usize,
-    pub elapsed_s: f64,
-    pub total_requests: u64,
-    pub success_requests: u64,
-    pub error_requests: u64,
-    pub rps: f64,
-    pub avg_latency_ms: Option<u64>,
-    pub ttft_ms: Option<u64>,
-    pub p50_latency_ms: Option<u64>,
-    pub p90_latency_ms: Option<u64>,
-    pub p99_latency_ms: Option<u64>,
-    pub total_prefill_speed_tps: Option<f64>,
-    pub single_prefill_speed_tps: Option<f64>,
-    pub total_decode_speed_tps: Option<f64>,
-    pub single_decode_speed_tps: Option<f64>,
-    pub total_decode_speed_stream_chunk_tps: Option<f64>,
-    pub single_decode_speed_stream_chunk_tps: Option<f64>,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub total_tokens: u64,
-    pub avg_total_tokens: Option<u64>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct ThroughputReport {
-    pub summary: ThroughputSnapshot,
-    #[serde(default)]
-    pub samples: Vec<ThroughputSample>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize)]
 pub struct ThroughputStatusResponse {
+    pub schema_version: u8,
     pub active: Option<ThroughputSnapshot>,
     pub history: Vec<ThroughputSnapshot>,
+}
+
+pub type ThroughputReport = ThroughputSnapshot;
+
+#[derive(Clone)]
+pub struct ThroughputManager {
+    inner: Arc<Mutex<ManagerState>>,
+    history_path: Arc<PathBuf>,
+    http: reqwest::Client,
+}
+
+struct ManagerState {
+    active: Option<ThroughputSnapshot>,
+    started: Option<Instant>,
+    cancel: Option<watch::Sender<bool>>,
+    history: Vec<ThroughputSnapshot>,
+    tickets: Vec<(String, Instant)>,
 }
 
 impl Default for ThroughputManager {
@@ -543,831 +109,210 @@ impl Default for ThroughputManager {
 
 impl ThroughputManager {
     pub fn new() -> Self {
-        let history = load_report_index();
+        Self::with_history_path(PathBuf::from("config/data/throughput/scenarios-v2.json"))
+    }
+
+    fn with_history_path(path: PathBuf) -> Self {
+        crate::rustls_provider::install_process_default_provider();
         Self {
-            inner: Arc::new(ThroughputManagerInner {
-                state: Mutex::new(ThroughputState {
-                    active: None,
-                    history,
-                }),
-            }),
+            inner: Arc::new(Mutex::new(ManagerState {
+                active: None,
+                started: None,
+                cancel: None,
+                history: history::load(&path),
+                tickets: Vec::new(),
+            })),
+            history_path: Arc::new(path),
+            http: reqwest::Client::new(),
         }
     }
 
     pub async fn start(
         &self,
-        orchestrator: Arc<Orchestrator>,
-        monitor: Arc<MonitorState>,
         config: ThroughputConfig,
+        model: LlmModelConfig,
     ) -> Result<ThroughputSnapshot, String> {
-        let mut state = self.inner.state.lock().await;
-        if let Some(active) = state.active.as_ref() {
-            if matches!(active.status, RunStatus::Running | RunStatus::Stopping) {
-                return Err("已有运行中的压测任务，请先停止或等待完成".to_string());
-            }
+        let mut state = self.inner.lock();
+        if state.cancel.is_some() {
+            return Err("已有运行中或正在保存的测试，请等待完成".into());
         }
-        if let Some(active) = state.active.take() {
-            state.history.push(active.snapshot());
-            if state.history.len() > MAX_REPORT_HISTORY {
-                let overflow = state.history.len() - MAX_REPORT_HISTORY;
-                state.history.drain(0..overflow);
-            }
-        }
-
-        let run_id = Uuid::new_v4().simple().to_string();
-        let metrics = Arc::new(ThroughputMetrics::new());
-        let stop_flag = Arc::new(AtomicBool::new(false));
-        let started_at = Utc::now();
-        let started_instant = Instant::now();
-        let active = ActiveRun {
-            id: run_id.clone(),
+        let (cancel, receiver) = watch::channel(false);
+        let snapshot = ThroughputSnapshot {
+            id: Uuid::new_v4().simple().to_string(),
+            status: "running".into(),
             config: config.clone(),
-            started_at,
-            started_instant,
+            started_at: Utc::now().to_rfc3339(),
             finished_at: None,
-            finished_instant: None,
-            status: RunStatus::Running,
-            metrics: Arc::clone(&metrics),
-            stop_flag: Arc::clone(&stop_flag),
-        };
-        state.active = Some(active);
-        let inner = Arc::clone(&self.inner);
-        tokio::spawn(async move {
-            run_supervisor(
-                inner,
-                orchestrator,
-                monitor,
-                run_id,
-                config,
-                metrics,
-                stop_flag,
+            elapsed_s: 0.0,
+            length_control: if crate::llm::benchmark::supports_fixed_output(&model) {
+                "fixed"
+            } else {
+                "best_effort"
+            }
+            .into(),
+            simulated: crate::services::virtual_llm::is_virtual_replay_provider(
+                model.provider.as_deref(),
+            ),
+            simulation_speed: crate::services::virtual_llm::is_virtual_replay_provider(
+                model.provider.as_deref(),
             )
-            .await;
+            .then(|| model.simulation_speed.unwrap_or_default()),
+            metrics: ThroughputMetrics::default(),
+            error: None,
+            persistence_error: false,
+        };
+        state.active = Some(snapshot.clone());
+        state.started = Some(Instant::now());
+        state.cancel = Some(cancel);
+        let manager = self.clone();
+        tokio::spawn(async move {
+            manager.execute(config, model, receiver).await;
         });
-        match state.active.as_ref().map(ActiveRun::snapshot) {
-            Some(snapshot) => Ok(snapshot),
-            None => Err("throughput run start failed: active snapshot missing".to_string()),
+        Ok(snapshot)
+    }
+
+    pub fn issue_ticket(&self) -> String {
+        let mut state = self.inner.lock();
+        state
+            .tickets
+            .retain(|(_, time)| time.elapsed().as_secs() < 30);
+        if state.tickets.len() >= 64 {
+            state.tickets.remove(0);
+        }
+        let ticket = Uuid::new_v4().simple().to_string();
+        state.tickets.push((ticket.clone(), Instant::now()));
+        ticket
+    }
+
+    pub fn consume_ticket(&self, ticket: &str) -> bool {
+        let mut state = self.inner.lock();
+        state
+            .tickets
+            .retain(|(_, time)| time.elapsed().as_secs() < 30);
+        if let Some(index) = state.tickets.iter().position(|(value, _)| value == ticket) {
+            state.tickets.swap_remove(index);
+            true
+        } else {
+            false
         }
     }
 
     pub async fn stop(&self) -> Result<ThroughputSnapshot, String> {
-        let mut state = self.inner.state.lock().await;
-        let Some(active) = state.active.as_mut() else {
-            return Err("当前没有运行中的压测任务".to_string());
+        let mut state = self.inner.lock();
+        let Some(cancel) = state.cancel.as_ref() else {
+            return Err("当前没有运行中的测试".into());
         };
-        if matches!(active.status, RunStatus::Finished | RunStatus::Stopped) {
-            return Err("当前压测任务已结束".to_string());
+        let _ = cancel.send(true);
+        let active = state.active.as_mut().ok_or("当前没有运行中的测试")?;
+        if active.running() {
+            active.status = "stopping".into();
         }
-        active.status = RunStatus::Stopping;
-        active.stop_flag.store(true, Ordering::Relaxed);
-        Ok(active.snapshot())
+        Ok(active.clone())
     }
 
     pub async fn status(&self) -> ThroughputStatusResponse {
-        let state = self.inner.state.lock().await;
+        let state = self.inner.lock();
+        let mut active = state.active.clone();
+        if let Some(active) = active.as_mut().filter(|item| item.running()) {
+            active.elapsed_s = state
+                .started
+                .map(|time| time.elapsed().as_secs_f64())
+                .unwrap_or_default();
+        }
         ThroughputStatusResponse {
-            active: state.active.as_ref().map(ActiveRun::snapshot),
+            schema_version: 2,
+            active,
             history: state.history.clone(),
         }
     }
 
-    pub async fn report(&self, run_id: Option<&str>) -> Result<ThroughputReport, String> {
-        let target_id = {
-            let state = self.inner.state.lock().await;
-            if let Some(run_id) = run_id {
-                if let Some(active) = state.active.as_ref() {
-                    if active.id == run_id {
-                        return Ok(active.report());
-                    }
-                }
-                Some(run_id.to_string())
-            } else if let Some(active) = state.active.as_ref() {
-                return Ok(active.report());
-            } else {
-                state.history.last().map(|last| last.run.id.clone())
-            }
-        };
-        let Some(target_id) = target_id else {
-            return Err("暂无可导出的压测结果".to_string());
-        };
-        load_report(&target_id).await
-    }
-}
-
-impl ActiveRun {
-    fn snapshot(&self) -> ThroughputSnapshot {
-        let elapsed_s = if let Some(finished_instant) = self.finished_instant {
-            finished_instant
-                .duration_since(self.started_instant)
-                .as_secs_f64()
-        } else {
-            self.started_instant.elapsed().as_secs_f64()
-        };
-        let metrics = self.metrics.snapshot(elapsed_s);
-        let errors = self.metrics.errors.lock().clone();
-        ThroughputSnapshot {
-            run: ThroughputRunSnapshot {
-                id: self.id.clone(),
-                status: self.status.as_str().to_string(),
-                max_concurrency: self.config.max_concurrency,
-                concurrency_list: self.config.concurrency_list.clone(),
-                question_set: Some(self.config.question_set.clone()),
-                question_count: self.config.questions.len(),
-                user_id_prefix: self.config.user_id_prefix.clone(),
-                stream: true,
-                model_name: self.config.model_name.clone(),
-                request_timeout_s: self.config.request_timeout_s,
-                max_tokens: self.config.max_tokens,
-                started_at: self.started_at.with_timezone(&Local).to_rfc3339(),
-                finished_at: self
-                    .finished_at
-                    .map(|value| value.with_timezone(&Local).to_rfc3339()),
-                elapsed_s,
-            },
-            metrics,
-            errors,
-        }
-    }
-
-    fn report(&self) -> ThroughputReport {
-        let summary = self.snapshot();
-        let samples = self.metrics.samples();
-        ThroughputReport { summary, samples }
-    }
-}
-
-#[derive(Default)]
-struct SpeedAccumulator {
-    prefill_speed_sum: f64,
-    prefill_speed_count: u64,
-    decode_speed_sum: f64,
-    decode_speed_count: u64,
-    prefill_tokens_total: u64,
-    prefill_duration_total_s: f64,
-    decode_tokens_total: u64,
-    decode_duration_total_s: f64,
-}
-
-fn record_speed_sample(
-    tokens: Option<i64>,
-    duration: Option<f64>,
-    speed: Option<f64>,
-    tokens_total: &mut u64,
-    duration_total_s: &mut f64,
-    speed_sum: &mut f64,
-    speed_count: &mut u64,
-) {
-    let tokens = tokens.filter(|value| *value > 0).map(|value| value as u64);
-    let duration = duration.filter(|value| *value > 0.0);
-    let speed = speed.filter(|value| *value > 0.0);
-    let mut resolved_speed = None;
-    if let (Some(tokens), Some(duration)) = (tokens, duration) {
-        *tokens_total = tokens_total.saturating_add(tokens);
-        *duration_total_s += duration;
-        resolved_speed = Some(tokens as f64 / duration);
-    } else if let (Some(tokens), Some(speed)) = (tokens, speed) {
-        let derived_duration = tokens as f64 / speed;
-        if derived_duration.is_finite() && derived_duration > 0.0 {
-            *tokens_total = tokens_total.saturating_add(tokens);
-            *duration_total_s += derived_duration;
-            resolved_speed = Some(speed);
-        }
-    } else if let Some(speed) = speed {
-        resolved_speed = Some(speed);
-    }
-    if let Some(value) = resolved_speed {
-        *speed_sum += value;
-        *speed_count += 1;
-    }
-}
-
-impl SpeedAccumulator {
-    fn record(&mut self, speed: &LlmSpeedSummary) {
-        record_speed_sample(
-            speed.prefill_tokens,
-            speed.prefill_duration_s,
-            speed.prefill_speed_tps,
-            &mut self.prefill_tokens_total,
-            &mut self.prefill_duration_total_s,
-            &mut self.prefill_speed_sum,
-            &mut self.prefill_speed_count,
-        );
-        record_speed_sample(
-            speed.decode_tokens,
-            speed.decode_duration_s,
-            speed.decode_speed_tps,
-            &mut self.decode_tokens_total,
-            &mut self.decode_duration_total_s,
-            &mut self.decode_speed_sum,
-            &mut self.decode_speed_count,
-        );
-    }
-
-    fn single_prefill_speed(&self) -> Option<f64> {
-        if self.prefill_speed_count > 0 {
-            return Some(self.prefill_speed_sum / self.prefill_speed_count as f64);
-        }
-        if self.prefill_tokens_total > 0 && self.prefill_duration_total_s > 0.0 {
-            return Some(self.prefill_tokens_total as f64 / self.prefill_duration_total_s);
-        }
-        None
-    }
-
-    fn single_decode_speed(&self) -> Option<f64> {
-        if self.decode_speed_count > 0 {
-            return Some(self.decode_speed_sum / self.decode_speed_count as f64);
-        }
-        if self.decode_tokens_total > 0 && self.decode_duration_total_s > 0.0 {
-            return Some(self.decode_tokens_total as f64 / self.decode_duration_total_s);
-        }
-        None
-    }
-
-    fn total_prefill_speed(&self, elapsed_s: f64, fallback_tokens: u64) -> Option<f64> {
-        let mut total = if self.prefill_speed_count > 0 {
-            Some(self.prefill_speed_sum)
-        } else {
-            None
-        };
-        if elapsed_s > 0.0 {
-            let tokens = if fallback_tokens > 0 {
-                fallback_tokens
-            } else {
-                self.prefill_tokens_total
-            };
-            if tokens > self.prefill_tokens_total {
-                // Some sessions may miss per-session speed; estimate their contribution
-                // with step elapsed time to avoid under-reporting aggregate throughput.
-                let missing_tokens = tokens.saturating_sub(self.prefill_tokens_total);
-                let missing_speed = missing_tokens as f64 / elapsed_s;
-                total = Some(total.unwrap_or(0.0) + missing_speed);
-            } else if total.is_none() {
-                total = Some(tokens as f64 / elapsed_s);
-            }
-        }
-        total.filter(|value| value.is_finite() && *value > 0.0)
-    }
-
-    fn total_decode_speed(&self, elapsed_s: f64, fallback_tokens: u64) -> Option<f64> {
-        let mut total = if self.decode_speed_count > 0 {
-            Some(self.decode_speed_sum)
-        } else {
-            None
-        };
-        if elapsed_s > 0.0 {
-            let tokens = if fallback_tokens > 0 {
-                fallback_tokens
-            } else {
-                self.decode_tokens_total
-            };
-            if tokens > self.decode_tokens_total {
-                // Some sessions may miss per-session speed; estimate their contribution
-                // with step elapsed time to avoid under-reporting aggregate throughput.
-                let missing_tokens = tokens.saturating_sub(self.decode_tokens_total);
-                let missing_speed = missing_tokens as f64 / elapsed_s;
-                total = Some(total.unwrap_or(0.0) + missing_speed);
-            } else if total.is_none() {
-                total = Some(tokens as f64 / elapsed_s);
-            }
-        }
-        total.filter(|value| value.is_finite() && *value > 0.0)
-    }
-}
-
-struct RequestOutcome {
-    latency_ms: u64,
-    usage: Option<TokenUsage>,
-    error_message: Option<String>,
-    speed: LlmSpeedSummary,
-}
-
-fn compute_speed_drift_percent(main: Option<f64>, approx: Option<f64>) -> Option<f64> {
-    let main = main?;
-    let approx = approx?;
-    if !main.is_finite() || main <= 0.0 || !approx.is_finite() || approx <= 0.0 {
-        return None;
-    }
-    Some(((approx - main).abs() / main) * 100.0)
-}
-
-async fn run_supervisor(
-    inner: Arc<ThroughputManagerInner>,
-    orchestrator: Arc<Orchestrator>,
-    monitor: Arc<MonitorState>,
-    run_id: String,
-    config: ThroughputConfig,
-    metrics: Arc<ThroughputMetrics>,
-    stop_flag: Arc<AtomicBool>,
-) {
-    let sequence = config.concurrency_list.clone();
-    let questions = Arc::new(config.questions.clone());
-    let user_prefix = config.user_id_prefix.clone();
-    let max_tokens = config.max_tokens;
-    for concurrency in sequence {
-        if stop_flag.load(Ordering::Relaxed) {
-            break;
-        }
-        let step_started = Instant::now();
-        let step_metrics = Arc::new(ThroughputMetrics::new());
-        let request_timeout_s = config.request_timeout_s;
-        let model_name = config.model_name.clone();
-        let run_id_ref = run_id.as_str();
-        let user_prefix_ref = user_prefix.as_str();
-        let tasks = (0..concurrency)
-            .map(|index| {
-                run_request(
-                    Arc::clone(&orchestrator),
-                    Arc::clone(&monitor),
-                    run_id_ref,
-                    user_prefix_ref,
-                    concurrency,
-                    index,
-                    Arc::clone(&questions),
-                    model_name.clone(),
-                    request_timeout_s,
-                    max_tokens,
-                )
+    pub async fn report(&self, id: Option<&str>) -> Result<ThroughputReport, String> {
+        let state = self.inner.lock();
+        state
+            .active
+            .as_ref()
+            .filter(|item| id.is_none_or(|id| item.id == id))
+            .or_else(|| {
+                state
+                    .history
+                    .iter()
+                    .rev()
+                    .find(|item| id.is_none_or(|id| item.id == id))
             })
-            .collect::<Vec<_>>();
-        let results = join_all(tasks).await;
-        let mut speed_acc = SpeedAccumulator::default();
-        let mut decode_tokens_total_by_request = 0u64;
-        let mut decode_speed_sum_by_request = 0.0;
-        let mut decode_speed_count_by_request = 0u64;
-        let mut decode_stream_chunk_tokens_total_by_request = 0u64;
-        let mut decode_stream_chunk_speed_sum_by_request = 0.0;
-        let mut decode_stream_chunk_speed_count_by_request = 0u64;
-        for outcome in results {
-            let usage = outcome.usage.clone();
-            if let Some(decode_tokens) = outcome.speed.resolve_decode_tokens(usage.as_ref()) {
-                decode_tokens_total_by_request =
-                    decode_tokens_total_by_request.saturating_add(decode_tokens);
-                let request_elapsed_s = outcome.latency_ms as f64 / 1000.0;
-                if request_elapsed_s.is_finite() && request_elapsed_s > 0.0 {
-                    decode_speed_sum_by_request += decode_tokens as f64 / request_elapsed_s;
-                    decode_speed_count_by_request += 1;
-                }
-            }
-            if let Some(stream_chunk_tokens) = outcome
-                .speed
-                .decode_stream_chunk_tokens
-                .filter(|value| *value > 0)
-            {
-                let stream_chunk_tokens = stream_chunk_tokens as u64;
-                decode_stream_chunk_tokens_total_by_request =
-                    decode_stream_chunk_tokens_total_by_request.saturating_add(stream_chunk_tokens);
-                let request_elapsed_s = outcome.latency_ms as f64 / 1000.0;
-                if request_elapsed_s.is_finite() && request_elapsed_s > 0.0 {
-                    decode_stream_chunk_speed_sum_by_request +=
-                        stream_chunk_tokens as f64 / request_elapsed_s;
-                    decode_stream_chunk_speed_count_by_request += 1;
-                }
-            }
-            let first_token_latency_ms = outcome
-                .speed
-                .ttft_ms
-                .or_else(|| ttft_ms_from_duration(outcome.speed.prefill_duration_s));
-            metrics.record(
-                outcome.latency_ms,
-                usage.clone(),
-                outcome.error_message.clone(),
-                first_token_latency_ms,
-            );
-            step_metrics.record(
-                outcome.latency_ms,
-                usage,
-                outcome.error_message,
-                first_token_latency_ms,
-            );
-            speed_acc.record(&outcome.speed);
-        }
-        let elapsed_s = step_started.elapsed().as_secs_f64();
-        let snapshot = step_metrics.snapshot(elapsed_s);
-        let concurrency_f = concurrency as f64;
-        let mut total_prefill_speed =
-            speed_acc.total_prefill_speed(elapsed_s, snapshot.input_tokens);
-        let decode_fallback_tokens = snapshot.total_tokens.saturating_sub(snapshot.input_tokens);
-        let mut total_decode_speed = if elapsed_s > 0.0 {
-            let decode_tokens = if decode_tokens_total_by_request > 0 {
-                decode_tokens_total_by_request
-            } else {
-                decode_fallback_tokens
-            };
-            if decode_tokens > 0 {
-                Some(decode_tokens as f64 / elapsed_s)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        if total_decode_speed.is_none() {
-            total_decode_speed = speed_acc.total_decode_speed(elapsed_s, decode_fallback_tokens);
-        }
-        let mut single_prefill_speed = speed_acc.single_prefill_speed();
-        let mut single_decode_speed = if decode_speed_count_by_request > 0 {
-            Some(decode_speed_sum_by_request / decode_speed_count_by_request as f64)
-        } else {
-            speed_acc.single_decode_speed()
-        };
-        let total_decode_speed_stream_chunk =
-            if elapsed_s > 0.0 && decode_stream_chunk_tokens_total_by_request > 0 {
-                Some(decode_stream_chunk_tokens_total_by_request as f64 / elapsed_s)
-            } else {
-                None
-            };
-        let single_decode_speed_stream_chunk = if decode_stream_chunk_speed_count_by_request > 0 {
-            Some(
-                decode_stream_chunk_speed_sum_by_request
-                    / decode_stream_chunk_speed_count_by_request as f64,
-            )
-        } else {
-            None
-        };
-        let total_decode_stream_chunk_drift_pct =
-            compute_speed_drift_percent(total_decode_speed, total_decode_speed_stream_chunk);
-        let single_decode_stream_chunk_drift_pct =
-            compute_speed_drift_percent(single_decode_speed, single_decode_speed_stream_chunk);
-        info!(
-            run_id = run_id_ref,
-            concurrency,
-            elapsed_s,
-            total_decode_speed_tps = ?total_decode_speed,
-            total_decode_speed_stream_chunk_tps = ?total_decode_speed_stream_chunk,
-            total_decode_stream_chunk_drift_pct = ?total_decode_stream_chunk_drift_pct,
-            single_decode_speed_tps = ?single_decode_speed,
-            single_decode_speed_stream_chunk_tps = ?single_decode_speed_stream_chunk,
-            single_decode_stream_chunk_drift_pct = ?single_decode_stream_chunk_drift_pct,
-            decode_tokens_total = decode_tokens_total_by_request,
-            decode_stream_chunk_tokens_total = decode_stream_chunk_tokens_total_by_request,
-            "throughput decode speed comparison"
-        );
-        if single_prefill_speed.is_none() {
-            if let Some(total) = total_prefill_speed {
-                if concurrency_f > 0.0 {
-                    single_prefill_speed = Some(total / concurrency_f);
-                }
-            }
-        }
-        if single_decode_speed.is_none() {
-            if let Some(total) = total_decode_speed {
-                if concurrency_f > 0.0 {
-                    single_decode_speed = Some(total / concurrency_f);
-                }
-            }
-        }
-        if total_prefill_speed.is_none() {
-            if let Some(single) = single_prefill_speed {
-                if concurrency_f > 0.0 {
-                    total_prefill_speed = Some(single * concurrency_f);
-                }
-            }
-        }
-        if total_decode_speed.is_none() {
-            if let Some(single) = single_decode_speed {
-                if concurrency_f > 0.0 {
-                    total_decode_speed = Some(single * concurrency_f);
-                }
-            }
-        }
-        let sample = ThroughputSample {
-            timestamp: Local::now().to_rfc3339(),
-            concurrency,
-            elapsed_s,
-            total_requests: snapshot.total_requests,
-            success_requests: snapshot.success_requests,
-            error_requests: snapshot.error_requests,
-            rps: snapshot.rps,
-            avg_latency_ms: snapshot.avg_latency_ms,
-            ttft_ms: snapshot.ttft_ms,
-            p50_latency_ms: snapshot.p50_latency_ms,
-            p90_latency_ms: snapshot.p90_latency_ms,
-            p99_latency_ms: snapshot.p99_latency_ms,
-            total_prefill_speed_tps: total_prefill_speed,
-            single_prefill_speed_tps: single_prefill_speed,
-            total_decode_speed_tps: total_decode_speed,
-            single_decode_speed_tps: single_decode_speed,
-            total_decode_speed_stream_chunk_tps: total_decode_speed_stream_chunk,
-            single_decode_speed_stream_chunk_tps: single_decode_speed_stream_chunk,
-            input_tokens: snapshot.input_tokens,
-            output_tokens: snapshot.output_tokens,
-            total_tokens: snapshot.total_tokens,
-            avg_total_tokens: snapshot.avg_total_tokens,
-        };
-        metrics.push_sample(sample);
+            .cloned()
+            .ok_or_else(|| "测试记录不存在或已超出保留数量".into())
     }
 
-    let mut report_to_persist = None;
-    let mut history_to_persist = None;
-    {
-        let mut state = inner.state.lock().await;
+    async fn execute(
+        &self,
+        config: ThroughputConfig,
+        model: LlmModelConfig,
+        mut cancel: watch::Receiver<bool>,
+    ) {
+        // Build large synthetic inputs off the async executor; never create a thread runtime.
+        let input_tokens = config.input_tokens;
+        let messages =
+            tokio::task::spawn_blocking(move || crate::llm::benchmark::messages(input_tokens))
+                .await;
+        let started = Instant::now();
+        let timeout =
+            std::time::Duration::from_secs(model.timeout_s.unwrap_or(1800).clamp(1, 3600));
+        let client = LlmClient::new(self.http.clone(), model);
+        let result = match messages {
+            Ok(messages) => {
+                let request = client.benchmark(&messages, config.output_tokens, |metrics| {
+                    if let Some(active) = self.inner.lock().active.as_mut() {
+                        active.metrics = metrics;
+                    }
+                });
+                tokio::select! {
+                    biased;
+                    _ = cancel.wait_for(|value| *value) => Err("stopped".to_string()),
+                    result = tokio::time::timeout(timeout, request) => result.unwrap_or_else(|_| Err("模型请求超时".into())),
+                }
+            }
+            Err(_) => Err("无法生成测试输入".into()),
+        };
+        let history = {
+            let mut state = self.inner.lock();
+            let Some(active) = state.active.as_mut() else {
+                return;
+            };
+            active.elapsed_s = started.elapsed().as_secs_f64();
+            active.finished_at = Some(Utc::now().to_rfc3339());
+            match result {
+                Ok(metrics) => {
+                    active.status = if metrics.target_reached == Some(true) {
+                        "finished"
+                    } else {
+                        "incomplete"
+                    }
+                    .into();
+                    active.metrics = metrics;
+                }
+                Err(error) if error == "stopped" => {
+                    active.status = "stopped".into();
+                }
+                Err(error) => {
+                    active.status = "error".into();
+                    active.error = Some(error);
+                }
+            }
+            let snapshot = active.clone();
+            state.history.push(snapshot);
+            let overflow = state.history.len().saturating_sub(HISTORY_LIMIT);
+            state.history.drain(..overflow);
+            state.history.clone()
+        };
+        // Keep the start gate until persistence completes so older writes cannot win.
+        let failed = history::save(&self.history_path, &history).await.is_err();
+        let mut state = self.inner.lock();
         if let Some(active) = state.active.as_mut() {
-            if active.id == run_id {
-                active.finished_at = Some(Utc::now());
-                active.finished_instant = Some(Instant::now());
-                active.status = if active.stop_flag.load(Ordering::Relaxed) {
-                    RunStatus::Stopped
-                } else {
-                    RunStatus::Finished
-                };
-                let report = active.report();
-                state.history.push(report.summary.clone());
-                if state.history.len() > MAX_REPORT_HISTORY {
-                    let overflow = state.history.len() - MAX_REPORT_HISTORY;
-                    state.history.drain(0..overflow);
-                }
-                report_to_persist = Some(report);
-                history_to_persist = Some(state.history.clone());
-                state.active = None;
-            }
+            active.persistence_error = failed;
         }
-    }
-    if let Some(report) = report_to_persist {
-        let _ = persist_report(&report).await;
-    }
-    if let Some(history) = history_to_persist {
-        let _ = persist_report_index(&history).await;
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn run_request(
-    orchestrator: Arc<Orchestrator>,
-    monitor: Arc<MonitorState>,
-    run_id: &str,
-    user_prefix: &str,
-    concurrency: usize,
-    index: usize,
-    questions: Arc<Vec<String>>,
-    model_name: Option<String>,
-    request_timeout_s: f64,
-    max_tokens: Option<u32>,
-) -> RequestOutcome {
-    let user_index = index + 1;
-    let user_id = format!("{user_prefix}-{concurrency}-{user_index}");
-    let session_id = format!("throughput_{run_id}_{concurrency}_{user_index}");
-    let mut seed = seed_for_user(&user_id);
-    let question = select_question(&questions, &mut seed).to_string();
-    let config_overrides = build_max_tokens_override(model_name.as_deref(), max_tokens);
-    let request = WunderRequest {
-        user_id: user_id.clone(),
-        question,
-        client_message_id: None,
-        tool_names: Vec::new(),
-        skip_tool_calls: true,
-        stream: true,
-        debug_payload: true,
-        session_id: Some(session_id.clone()),
-        agent_id: None,
-        workspace_container_id: None,
-        model_name,
-        language: None,
-        config_overrides,
-        agent_prompt: None,
-        preview_skill: false,
-        attachments: None,
-        allow_queue: true,
-        is_admin: true,
-        enforce_runtime_queue: false,
-        approval_tx: None,
-    };
-    let started = Instant::now();
-    let result = if request_timeout_s > 0.0 {
-        tokio::time::timeout(
-            Duration::from_secs_f64(request_timeout_s),
-            orchestrator.run(request),
-        )
-        .await
-        .map_err(|_| "请求超时".to_string())
-        .and_then(|value| value.map_err(|err| err.to_string()))
-    } else {
-        orchestrator
-            .run(request)
-            .await
-            .map_err(|err| err.to_string())
-    };
-    let latency_ms = started.elapsed().as_millis() as u64;
-    let (usage, error_message) = match result {
-        Ok(response) => (response.usage, None),
-        Err(err) => (None, Some(err)),
-    };
-    let detail = monitor.get_detail(&session_id);
-    let mut speed = extract_session_speed(detail);
-    if speed.prefill_tokens.is_none()
-        || speed.prefill_duration_s.is_none()
-        || speed.prefill_speed_tps.is_none()
-        || speed.decode_tokens.is_none()
-        || speed.decode_duration_s.is_none()
-        || speed.decode_speed_tps.is_none()
-        || speed.decode_stream_chunk_tokens.is_none()
-    {
-        if let Some(record) = monitor.get_record(&session_id) {
-            let fallback = extract_session_speed_from_record(&record);
-            speed.merge_missing(&fallback);
+        if let Some(last) = state.history.last_mut() {
+            last.persistence_error = failed;
         }
-    }
-    RequestOutcome {
-        latency_ms,
-        usage,
-        error_message,
-        speed,
-    }
-}
-
-fn extract_session_speed(detail: Option<Value>) -> LlmSpeedSummary {
-    LlmSpeedSummary::from_session_payload(detail.as_ref())
-}
-
-fn build_max_tokens_override(model_name: Option<&str>, max_tokens: Option<u32>) -> Option<Value> {
-    let max_tokens = max_tokens.filter(|value| *value > 0)?;
-    let model_name = model_name?.trim();
-    if model_name.is_empty() {
-        return None;
-    }
-    Some(json!({
-        "llm": {
-            "models": {
-                model_name: {
-                    "max_output": max_tokens
-                }
-            }
-        }
-    }))
-}
-
-fn extract_session_speed_from_record(record: &Value) -> LlmSpeedSummary {
-    record
-        .get("events")
-        .and_then(Value::as_array)
-        .map(|events| build_llm_speed_summary_from_value_events(events))
-        .unwrap_or_default()
-}
-
-fn seed_for_user(user_id: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    user_id.hash(&mut hasher);
-    let time_seed = Utc::now().timestamp_millis() as u64;
-    hasher.finish() ^ time_seed
-}
-
-fn select_question<'a>(questions: &'a [String], seed: &mut u64) -> &'a str {
-    if questions.len() <= 1 {
-        return questions.first().map(String::as_str).unwrap_or("");
-    }
-    *seed = seed
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    let index = (*seed as usize) % questions.len();
-    questions[index].as_str()
-}
-
-fn estimate_percentile(counts: &[u64], percentile: f64) -> Option<u64> {
-    let total: u64 = counts.iter().sum();
-    if total == 0 {
-        return None;
-    }
-    let target = (total as f64 * percentile).ceil().max(1.0) as u64;
-    let mut cumulative = 0u64;
-    for (index, count) in counts.iter().enumerate() {
-        cumulative += count;
-        if cumulative >= target {
-            if index < LATENCY_BUCKETS_MS.len() {
-                return Some(LATENCY_BUCKETS_MS[index]);
-            }
-            return LATENCY_BUCKETS_MS.last().copied();
-        }
-    }
-    LATENCY_BUCKETS_MS.last().copied()
-}
-
-fn build_bucket_snapshots(counts: &[u64]) -> Vec<LatencyBucketSnapshot> {
-    let mut snapshots = Vec::with_capacity(counts.len());
-    for (index, count) in counts.iter().enumerate() {
-        let le_ms = if index < LATENCY_BUCKETS_MS.len() {
-            Some(LATENCY_BUCKETS_MS[index])
-        } else {
-            None
-        };
-        snapshots.push(LatencyBucketSnapshot {
-            le_ms,
-            count: *count,
-        });
-    }
-    snapshots
-}
-
-fn report_dir() -> PathBuf {
-    PathBuf::from(REPORT_DIR)
-}
-
-fn report_index_path() -> PathBuf {
-    report_dir().join(REPORT_INDEX_FILE)
-}
-
-fn report_file_path(run_id: &str) -> PathBuf {
-    report_dir().join(format!("{run_id}.json"))
-}
-
-fn load_report_index() -> Vec<ThroughputSnapshot> {
-    let path = report_index_path();
-    let data = match fs::read_to_string(&path) {
-        Ok(data) => data,
-        Err(_) => return Vec::new(),
-    };
-    match serde_json::from_str::<Vec<ThroughputSnapshot>>(&data) {
-        Ok(mut history) => {
-            if history.len() > MAX_REPORT_HISTORY {
-                let overflow = history.len() - MAX_REPORT_HISTORY;
-                history.drain(0..overflow);
-            }
-            history
-        }
-        Err(_) => Vec::new(),
-    }
-}
-
-async fn persist_report(report: &ThroughputReport) -> Result<(), String> {
-    let dir = report_dir();
-    tokio_fs::create_dir_all(&dir)
-        .await
-        .map_err(|err| err.to_string())?;
-    let payload = serde_json::to_vec_pretty(report).map_err(|err| err.to_string())?;
-    let path = report_file_path(&report.summary.run.id);
-    tokio_fs::write(path, payload)
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(())
-}
-
-async fn persist_report_index(history: &[ThroughputSnapshot]) -> Result<(), String> {
-    let dir = report_dir();
-    tokio_fs::create_dir_all(&dir)
-        .await
-        .map_err(|err| err.to_string())?;
-    let payload = serde_json::to_vec_pretty(history).map_err(|err| err.to_string())?;
-    let path = report_index_path();
-    tokio_fs::write(path, payload)
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(())
-}
-
-async fn load_report(run_id: &str) -> Result<ThroughputReport, String> {
-    let path = report_file_path(run_id);
-    let payload = tokio_fs::read(&path)
-        .await
-        .map_err(|_| "未找到对应压测报告".to_string())?;
-    serde_json::from_slice::<ThroughputReport>(&payload).map_err(|err| err.to_string())
-}
-#[cfg(test)]
-mod tests {
-    use super::SpeedAccumulator;
-    use crate::core::llm_speed::LlmSpeedSummary;
-
-    #[test]
-    fn single_prefill_speed_prefers_request_average() {
-        let mut acc = SpeedAccumulator::default();
-        acc.record(&LlmSpeedSummary {
-            prefill_tokens: Some(600),
-            prefill_duration_s: Some(2.0),
-            prefill_speed_tps: Some(300.0),
-            ..LlmSpeedSummary::default()
-        });
-        acc.record(&LlmSpeedSummary {
-            prefill_tokens: Some(400),
-            prefill_duration_s: Some(4.0),
-            prefill_speed_tps: Some(100.0),
-            ..LlmSpeedSummary::default()
-        });
-
-        let single = acc
-            .single_prefill_speed()
-            .expect("single prefill speed should exist");
-        let total = acc
-            .total_prefill_speed(10.0, 1_000)
-            .expect("total prefill speed should exist");
-
-        assert!((single - 200.0).abs() < f64::EPSILON);
-        assert!((total - 400.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn single_prefill_speed_falls_back_to_weighted_total_when_average_missing() {
-        let acc = SpeedAccumulator {
-            prefill_speed_sum: 0.0,
-            prefill_speed_count: 0,
-            decode_speed_sum: 0.0,
-            decode_speed_count: 0,
-            prefill_tokens_total: 900,
-            prefill_duration_total_s: 3.0,
-            decode_tokens_total: 0,
-            decode_duration_total_s: 0.0,
-        };
-
-        let single = acc
-            .single_prefill_speed()
-            .expect("weighted fallback should exist");
-
-        assert!((single - 300.0).abs() < f64::EPSILON);
+        state.cancel = None;
     }
 }

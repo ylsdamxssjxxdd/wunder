@@ -123,7 +123,8 @@
             </div>
           </div>
           <div class="messenger-profile-quota-meta">
-            <span>{{ t('profile.quota.dailyGrant') }}: {{ dailyTokenGrantCompactText }}</span>
+            <span>{{ t('profile.quota.dailyGrant') }}: {{ dailyQuotaGrantCompactText }}</span>
+            <span>{{ t('profile.quota.rule') }}</span>
           </div>
         </div>
       </section>
@@ -910,20 +911,8 @@ const parseQuotaNumber = (value: unknown): number | null => {
 
 const quotaSnapshot = computed(() => {
   const user = (authStore.user || {}) as Record<string, unknown>;
-  const remaining = parseQuotaNumber(
-    user.token_balance
-      ?? user.tokenBalance
-      ?? user.daily_quota_remaining
-      ?? user.dailyQuotaRemaining
-  );
-  const dailyGrant = parseQuotaNumber(
-    user.daily_token_grant
-      ?? user.dailyTokenGrant
-      ?? user.token_daily_grant
-      ?? user.tokenDailyGrant
-      ?? user.daily_quota
-      ?? user.dailyQuota
-  );
+  const remaining = parseQuotaNumber(user.quota_balance);
+  const dailyGrant = parseQuotaNumber(user.daily_quota_grant);
   if (remaining === null && dailyGrant === null) return null;
   return {
     remaining,
@@ -932,7 +921,7 @@ const quotaSnapshot = computed(() => {
 });
 
 const quotaRemaining = computed(() => quotaSnapshot.value?.remaining ?? null);
-const dailyTokenGrant = computed(() => quotaSnapshot.value?.dailyGrant ?? null);
+const dailyQuotaGrant = computed(() => quotaSnapshot.value?.dailyGrant ?? null);
 
 const levelSnapshot = computed(() => {
   const user = (authStore.user || {}) as Record<string, unknown>;
@@ -984,8 +973,8 @@ const levelProgressHint = computed(() => {
   });
 });
 
-const quotaRemainingCompactText = computed(() => formatCompactTokenUnit(quotaRemaining.value));
-const dailyTokenGrantCompactText = computed(() => formatCompactTokenUnit(dailyTokenGrant.value));
+const quotaRemainingCompactText = computed(() => formatNumber(quotaRemaining.value));
+const dailyQuotaGrantCompactText = computed(() => formatNumber(dailyQuotaGrant.value));
 const tokenUsageTotalCompactText = computed(() =>
   formatCompactTokenUnit(tokenUsageTotal.value, { zeroAsDash: true })
 );

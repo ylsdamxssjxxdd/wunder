@@ -118,7 +118,7 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 import { clearSessionCommandSessions, removeDemoChatSession, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
 import { DEFAULT_AGENT_KEY, goalSessionIdFromPayload, persistAgentSession, resolvePersistedSessionId, writeSessionGoalState } from './chatPersist';
 import { clearSessionWatcher, setSessionLoading } from './chatRuntimeControls';
-import { clearSessionEventsSnapshot, filterSessionsByAgent, resolveSessionKey, sessionDetailPrefetchInFlight, sessionDetailWarmState, sessionHistoryState, sessionMessages, sessionRuntime, sessionSubagentsCache, sessionSubagentsInFlight, writeSessionListCache } from './chatRuntimeState';
+import { clearSessionEventsSnapshot, filterSessionsByAgent, purgeUnavailableSession, resolveSessionKey, sessionDetailPrefetchInFlight, sessionDetailWarmState, sessionHistoryState, sessionMessages, sessionRuntime, sessionSubagentsCache, sessionSubagentsInFlight, writeSessionListCache } from './chatRuntimeState';
 import { clearChatSnapshot } from './chatSnapshot';
 import { abortResumeStream, abortSendStream, startSessionWatcher } from './chatWatcher';
 import { sessionWorkflowState } from './chatWorkflowHydration';
@@ -152,36 +152,9 @@ export const chatSessionMutationActions = {
       // Keep the live subscription intact when the server rejects a running/locked task.
       const { data } = await archiveSessionApi(targetId);
       const archived = data?.data || null;
-      if (resolveSessionKey(targetId) === resolveSessionKey(this.activeSessionId)) {
-        clearSessionWatcher();
-      }
-      const targetSession = this.sessions.find((item) => resolveSessionKey(item?.id) === targetId) || null;
-      const targetAgentId = String(targetSession?.agent_id || this.draftAgentId || '').trim();
-      abortResumeStream(targetId);
-      abortSendStream(targetId);
-      setSessionLoading(this, targetId, false);
-      this.clearPendingApprovals({ sessionId: targetId });
-      sessionRuntime.delete(resolveSessionKey(targetId));
-      sessionMessages.delete(resolveSessionKey(targetId));
-      clearSessionEventsSnapshot(targetId);
-      sessionDetailWarmState.delete(resolveSessionKey(targetId));
-      sessionDetailPrefetchInFlight.delete(resolveSessionKey(targetId));
-      sessionSubagentsInFlight.delete(resolveSessionKey(targetId));
-      sessionSubagentsCache.delete(resolveSessionKey(targetId));
-      sessionHistoryState.delete(resolveSessionKey(targetId));
-      this.sessions = this.sessions.filter((item) => resolveSessionKey(item?.id) !== targetId);
-      sessionWorkflowState.delete(String(targetId));
-      removeDemoChatSession(targetId);
-      clearChatSnapshot(targetId);
-      if (resolvePersistedSessionId(targetAgentId) === targetId) {
-        const fallback = this.sessions.find((item) => {
-          const agentId = String(item.agent_id || '').trim();
-          return targetAgentId ? agentId === targetAgentId : !agentId;
-        });
-        persistAgentSession(targetAgentId, fallback?.id || '');
-      }
-      writeSessionListCache(targetAgentId, filterSessionsByAgent(targetAgentId, this.sessions));
-      if (this.activeSessionId === targetId) {
+      const wasActiveSession = resolveSessionKey(this.activeSessionId) === targetId;
+      const targetAgentId = purgeUnavailableSession(this, targetId);
+      if (wasActiveSession) {
         const nextSession = this.sessions.find((item) => {
           const agentId = String(item.agent_id || '').trim();
           return targetAgentId ? agentId === targetAgentId : !agentId;

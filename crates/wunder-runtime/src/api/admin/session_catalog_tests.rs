@@ -1,7 +1,7 @@
 use super::*;
 use crate::config_store::ConfigStore;
 use crate::state::AppStateInitOptions;
-use crate::storage::{ChatSessionRecord, StorageBackend};
+use crate::storage::{ChatSessionRecord, ChatSessionStore, StorageBackend};
 use axum::body::{to_bytes, Body};
 use axum::http::Request;
 use tower::ServiceExt;
@@ -22,6 +22,26 @@ fn session(id: &str, user_id: &str, status: &str) -> ChatSessionRecord {
         spawn_label: None,
         spawned_by: None,
     }
+}
+
+#[test]
+fn root_session_catalog_filter_excludes_child_sessions() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage =
+        crate::storage::SqliteStorage::new(dir.path().join("catalog.db").to_string_lossy().into());
+    storage
+        .upsert_chat_session(&session("root", "user-a", "active"))
+        .unwrap();
+    let mut child = session("child", "user-a", "active");
+    child.parent_session_id = Some("root".into());
+    storage.upsert_chat_session(&child).unwrap();
+
+    let (roots, total) = storage
+        .list_chat_sessions_by_status("user-a", None, Some(""), Some("active"), 0, 50)
+        .unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(roots.len(), 1);
+    assert_eq!(roots[0].session_id, "root");
 }
 
 fn verify_catalog_storage(storage: &dyn StorageBackend) {
@@ -131,6 +151,10 @@ async fn session_catalog_admin_delete_without_monitor_reconciles_across_pages() 
             .unwrap();
     }
     assert!(state.monitor.get_record("session-a").is_none());
+    let mut child = session("session-child", &user.user_id, "active");
+    child.parent_session_id = Some("session-b".into());
+    child.spawned_by = Some("model".into());
+    state.storage.upsert_chat_session(&child).unwrap();
     let deleted = admin_monitor_delete(State(state.clone()), AxumPath("session-a".into()))
         .await
         .unwrap();

@@ -162,6 +162,9 @@ pub fn start(shared: &Shared, app: &MainWindow, content: Option<String>) {
                 };
                 match update {
                     Update::Event(event) => {
+                        if event["event"].as_str().is_some_and(|kind| kind.starts_with("subagent_")) {
+                            app.invoke_refresh_subagents();
+                        }
                         match active.apply(&event) {
                             Ok(changed) => dirty |= changed,
                             Err(error) => {
@@ -213,6 +216,7 @@ pub fn start(shared: &Shared, app: &MainWindow, content: Option<String>) {
                 // Settled text is on the row; release the old model and channel.
                 state.current = None;
                 app.invoke_refresh_files();
+                app.invoke_refresh_subagents();
             }
             app.set_stream_max_ui_ms(
                 app.get_stream_max_ui_ms()

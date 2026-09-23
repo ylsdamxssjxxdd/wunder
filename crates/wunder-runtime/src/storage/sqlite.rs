@@ -13,7 +13,7 @@ use crate::storage::{
     SessionLockRecord, SessionLockStatus, SessionRunRecord, SpeechJobRecord, TeamRunRecord,
     TeamTaskRecord, UpdateAgentTaskStatusParams, UpdateChannelOutboxStatusParams,
     UpsertMemoryTaskLogParams, UserAccountRecord, UserAgentAccessRecord, UserAgentPresetBinding,
-    UserAgentRecord, UserExperienceUpdateResult, UserSessionScopeRecord, UserTokenBalanceStatus,
+    UserAgentRecord, UserExperienceUpdateResult, UserSessionScopeRecord, UserQuotaStatus,
     UserTokenRecord, UserToolAccessRecord, UserWorldConversationRecord,
     UserWorldConversationSummaryRecord, UserWorldEventRecord, UserWorldGroupRecord,
     UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult, UserWorldSendMessageResult,
@@ -52,7 +52,7 @@ mod session_goal;
 mod session_cleanup;
 mod session_lock_store;
 mod session_run;
-mod token_balance_store;
+mod quota_balance_store;
 mod user_account_store;
 mod user_world_store;
 mod vector_document_store;
@@ -77,7 +77,7 @@ use schema::SqliteSchemaStorage;
 use session_goal::SqliteSessionGoalStorage;
 use session_lock_store::SqliteSessionLockStorage;
 use session_run::SqliteSessionRunStorage;
-use token_balance_store::SqliteTokenBalanceStorage;
+use quota_balance_store::SqliteQuotaBalanceStorage;
 use user_account_store::SqliteUserAccountStorage;
 use user_world_store::SqliteUserWorldStorage;
 use vector_document_store::SqliteVectorDocumentStorage;
@@ -297,10 +297,10 @@ mod tests {
 
     fn sample_user(
         user_id: &str,
-        token_balance: i64,
-        token_granted_total: i64,
-        token_used_total: i64,
-        last_token_grant_date: Option<&str>,
+        quota_balance: i64,
+        quota_granted_total: i64,
+        quota_used_total: i64,
+        last_quota_grant_date: Option<&str>,
     ) -> UserAccountRecord {
         UserAccountRecord {
             user_id: user_id.to_string(),
@@ -311,10 +311,10 @@ mod tests {
             status: "active".to_string(),
             access_level: "A".to_string(),
             unit_id: None,
-            token_balance,
-            token_granted_total,
-            token_used_total,
-            last_token_grant_date: last_token_grant_date.map(str::to_string),
+            quota_balance,
+            quota_granted_total,
+            quota_used_total,
+            last_quota_grant_date: last_quota_grant_date.map(str::to_string),
             experience_total: 0,
             is_demo: false,
             created_at: 1.0,
@@ -324,7 +324,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_daily_quota_rows_migrate_to_token_account_fields() {
+    fn legacy_token_accounts_initialize_quota_once() {
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join("legacy-user-accounts.db");
         let conn = Connection::open(&db_path).expect("open sqlite");
@@ -338,9 +338,9 @@ mod tests {
                 status TEXT NOT NULL,
                 access_level TEXT NOT NULL,
                 unit_id TEXT,
-                daily_quota INTEGER NOT NULL DEFAULT 0,
-                daily_quota_used INTEGER NOT NULL DEFAULT 0,
-                daily_quota_date TEXT,
+                token_balance INTEGER NOT NULL DEFAULT 0,
+                token_used_total INTEGER NOT NULL DEFAULT 0,
+                last_token_grant_date TEXT,
                 experience_total INTEGER NOT NULL DEFAULT 0,
                 is_demo INTEGER NOT NULL DEFAULT 0,
                 created_at REAL NOT NULL,
@@ -353,12 +353,12 @@ mod tests {
         conn.execute(
             "INSERT INTO user_accounts (
                 user_id, username, email, password_hash, roles, status, access_level, unit_id,
-                daily_quota, daily_quota_used, daily_quota_date, experience_total, is_demo,
+                token_balance, token_used_total, last_token_grant_date, experience_total, is_demo,
                 created_at, updated_at, last_login_at
              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
-                "alice",
-                "alice",
+                "user_1",
+                "user_1",
                 Option::<String>::None,
                 "hash",
                 "[\"user\"]",
@@ -382,16 +382,23 @@ mod tests {
         storage.ensure_initialized().expect("initialize storage");
 
         let account = storage
-            .get_user_account("alice")
+            .get_user_account("user_1")
             .expect("load user")
             .expect("user exists");
-        assert_eq!(account.token_balance, 7_500);
-        assert_eq!(account.token_granted_total, 10_000);
-        assert_eq!(account.token_used_total, 2_500);
+        assert_eq!(account.quota_balance, 1_000);
+        assert_eq!(account.quota_granted_total, 1_000);
+        assert_eq!(account.quota_used_total, 0);
         assert_eq!(
-            account.last_token_grant_date.as_deref(),
+            account.last_quota_grant_date.as_deref(),
             Some(today.as_str())
         );
+        let spent = storage.consume_user_quota("user_1", &today, 1000, 1000).unwrap().unwrap();
+        assert_eq!((spent.balance, spent.used_total, spent.allowed), (0, 1000, true));
+        drop(storage);
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().unwrap();
+        let denied = storage.consume_user_quota("user_1", &today, 1000, 1).unwrap().unwrap();
+        assert_eq!((denied.balance, denied.used_total, denied.allowed), (0, 1000, false));
     }
 
     #[test]
@@ -450,9 +457,9 @@ mod tests {
     }
 
     #[test]
-    fn prepare_user_token_balance_grants_once_per_day() {
+    fn prepare_user_quota_grants_once_per_day() {
         let temp = tempdir().expect("tempdir");
-        let db_path = temp.path().join("prepare-user-tokens.db");
+        let db_path = temp.path().join("prepare-user-quota.db");
         let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
         storage.ensure_initialized().expect("initialize storage");
         storage
@@ -460,7 +467,7 @@ mod tests {
             .expect("insert user");
 
         let first = storage
-            .prepare_user_token_balance("alice", "2026-04-10", 100)
+            .prepare_user_quota("alice", "2026-04-10", 100)
             .expect("prepare first")
             .expect("status");
         assert_eq!(first.balance, 105);
@@ -470,7 +477,7 @@ mod tests {
         assert!(first.allowed);
 
         let second = storage
-            .prepare_user_token_balance("alice", "2026-04-10", 100)
+            .prepare_user_quota("alice", "2026-04-10", 100)
             .expect("prepare second")
             .expect("status");
         assert_eq!(second.balance, 105);
@@ -482,47 +489,47 @@ mod tests {
             .get_user_account("alice")
             .expect("load user")
             .expect("user exists");
-        assert_eq!(account.token_balance, 105);
-        assert_eq!(account.token_granted_total, 115);
-        assert_eq!(account.token_used_total, 2);
+        assert_eq!(account.quota_balance, 105);
+        assert_eq!(account.quota_granted_total, 115);
+        assert_eq!(account.quota_used_total, 2);
     }
 
     #[test]
-    fn consume_user_tokens_deducts_usage_and_reports_overspend() {
+    fn consume_user_quota_rejects_overdraft_without_spending() {
         let temp = tempdir().expect("tempdir");
-        let db_path = temp.path().join("consume-user-tokens.db");
+        let db_path = temp.path().join("consume-user-quota.db");
         let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
         storage.ensure_initialized().expect("initialize storage");
         storage
-            .upsert_user_account(&sample_user("alice", 50, 50, 10, Some("2026-04-09")))
+            .upsert_user_account(&sample_user("user_1", 50, 50, 10, Some("2026-04-09")))
             .expect("insert user");
 
         let status = storage
-            .consume_user_tokens("alice", "2026-04-10", 100, 180)
-            .expect("consume tokens")
+            .consume_user_quota("user_1", "2026-04-10", 100, 180)
+            .expect("consume quota")
             .expect("status");
-        assert_eq!(status.balance, 0);
+        assert_eq!(status.balance, 150);
         assert_eq!(status.granted_total, 150);
-        assert_eq!(status.used_total, 190);
+        assert_eq!(status.used_total, 10);
         assert_eq!(status.daily_grant, 100);
-        assert_eq!(status.overspent_tokens, 30);
+
         assert_eq!(status.last_grant_date.as_deref(), Some("2026-04-10"));
         assert!(!status.allowed);
 
         let account = storage
-            .get_user_account("alice")
+            .get_user_account("user_1")
             .expect("load user")
             .expect("user exists");
-        assert_eq!(account.token_balance, 0);
-        assert_eq!(account.token_granted_total, 150);
-        assert_eq!(account.token_used_total, 190);
-        assert_eq!(account.last_token_grant_date.as_deref(), Some("2026-04-10"));
+        assert_eq!(account.quota_balance, 150);
+        assert_eq!(account.quota_granted_total, 150);
+        assert_eq!(account.quota_used_total, 10);
+        assert_eq!(account.last_quota_grant_date.as_deref(), Some("2026-04-10"));
     }
 
     #[test]
-    fn grant_user_tokens_updates_balance_and_granted_total() {
+    fn grant_user_quota_updates_balance_and_granted_total() {
         let temp = tempdir().expect("tempdir");
-        let db_path = temp.path().join("grant-user-tokens.db");
+        let db_path = temp.path().join("grant-user-quota.db");
         let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
         storage.ensure_initialized().expect("initialize storage");
         storage
@@ -530,7 +537,7 @@ mod tests {
             .expect("insert user");
 
         let status = storage
-            .grant_user_tokens("alice", "2026-04-10", 100, 30, 123.0)
+            .grant_user_quota("alice", "2026-04-10", 100, 30, 123.0)
             .expect("grant tokens")
             .expect("status");
         assert_eq!(status.balance, 137);
@@ -544,10 +551,10 @@ mod tests {
             .get_user_account("alice")
             .expect("load user")
             .expect("user exists");
-        assert_eq!(account.token_balance, 137);
-        assert_eq!(account.token_granted_total, 150);
-        assert_eq!(account.token_used_total, 3);
-        assert_eq!(account.last_token_grant_date.as_deref(), Some("2026-04-10"));
+        assert_eq!(account.quota_balance, 137);
+        assert_eq!(account.quota_granted_total, 150);
+        assert_eq!(account.quota_used_total, 3);
+        assert_eq!(account.last_quota_grant_date.as_deref(), Some("2026-04-10"));
     }
 
     #[test]

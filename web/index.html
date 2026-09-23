@@ -21,6 +21,7 @@
       href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
     />
     <link rel="stylesheet" href="./app.css?v=20260324-06" />
+    <link rel="stylesheet" href="./styles/throughput.css?v=20260923-01" />
   </head>
   <body>
     <div class="app">
@@ -3978,250 +3979,7 @@
             </div>
           </div>
         </section>
-        <section id="throughputPanel" class="panel">
-          <div class="list-header">
-            <h1 data-i18n="panel.throughput">吞吐量测试</h1>
-            <div class="header-actions throughput-header-actions">
-              <button id="throughputToggleBtn" class="btn-with-icon" type="button">
-                <i class="fa-solid fa-play" data-role="icon"></i>
-                <span data-role="label" data-i18n="throughput.action.start">开始压测</span>
-              </button>
-              <button id="throughputRefreshBtn" class="secondary btn-with-icon" type="button">
-                <i class="fa-solid fa-arrows-rotate"></i>
-                <span data-i18n="common.refresh">刷新</span>
-              </button>
-              <button id="throughputHistoryBtn" class="secondary btn-with-icon" type="button">
-                <i class="fa-solid fa-clock-rotate-left"></i>
-                <span data-i18n="throughput.action.history">压测历史</span>
-              </button>
-              <div class="header-input throughput-export-input">
-                <label data-i18n="throughput.export.format">导出格式</label>
-                <select id="throughputExportFormat">
-                  <option value="html" data-i18n="throughput.export.format.html">HTML</option>
-                  <option value="json" data-i18n="throughput.export.format.json">JSON</option>
-                  <option value="csv" data-i18n="throughput.export.format.csv">CSV</option>
-                </select>
-              </div>
-              <button id="throughputExportBtn" class="secondary btn-with-icon" type="button">
-                <i class="fa-solid fa-download"></i>
-                <span data-i18n="throughput.action.export">导出报告</span>
-              </button>
-              <div
-                id="throughputStatusIndicator"
-                class="status-indicator"
-                data-status="idle"
-                aria-live="polite"
-              >
-                <span class="status-dot"></span>
-                <span class="status-text" data-i18n="throughput.status.idle">暂无任务</span>
-              </div>
-            </div>
-          </div>
-          <div class="tips" data-i18n="throughput.tip">
-            服务端从 1 并发开始按步增逐级压测，直到最大并发；步增为 0 时仅压测最大并发，用于绘制性能曲线与稳定性表现。
-          </div>
-          <div class="throughput-layout">
-            <div class="throughput-form">
-              <div class="form-section throughput-form-section">
-                <div class="form-row">
-                  <label for="throughputConcurrencyList" data-i18n="throughput.form.concurrencyList">并发列表</label>
-                  <input
-                    id="throughputConcurrencyList"
-                    type="text"
-                    placeholder="1,2,4,8,16"
-                    data-i18n-placeholder="throughput.form.concurrencyListPlaceholder"
-                  />
-                  <div class="muted" data-i18n="throughput.form.concurrencyListHint">
-                    用逗号分隔，并发数需大于 0 且不超过 500。
-                  </div>
-                </div>
-                <div class="form-row">
-                  <label for="throughputUserPrefix" data-i18n="throughput.form.userPrefix">user_id 前缀</label>
-                  <input
-                    id="throughputUserPrefix"
-                    type="text"
-                    placeholder="throughput_user"
-                    data-i18n-placeholder="throughput.form.userPrefixPlaceholder"
-                  />
-                </div>
-                <div class="form-row">
-                  <label for="throughputModelSelect" data-i18n="throughput.field.model">当前模型</label>
-                  <select id="throughputModelSelect" class="throughput-model-select">
-                    <option value="" data-i18n="llm.default">默认模型</option>
-                  </select>
-                </div>
-                <div class="form-row">
-                  <label for="throughputMaxTokens" data-i18n="throughput.form.maxTokens">最大输出 Token</label>
-                  <input id="throughputMaxTokens" type="number" min="1" step="1" />
-                  <div class="muted" data-i18n="throughput.form.maxTokensHint">
-                    限制单次请求的最大输出 Token 数，默认 256。
-                  </div>
-                </div>
-                <div class="form-row">
-                  <label data-i18n="throughput.form.defaults">默认配置</label>
-                  <div class="muted" data-i18n="throughput.form.defaultsHint">
-                    使用默认模型与管理员启用工具，stream 固定为 true。
-                  </div>
-                </div>
-                <div id="throughputFormStatus" class="muted"></div>
-              </div>
-              <div class="monitor-block throughput-threads">
-                <div class="monitor-block-title">
-                  <i class="fa-solid fa-list-ul"></i>
-                  <span data-i18n="throughput.threads.title">线程监视</span>
-                </div>
-                <div class="monitor-table-wrap">
-                  <div id="throughputThreadBody" class="throughput-thread-stats">
-                    <div class="throughput-thread-stat">
-                      <div class="stat-label" data-i18n="throughput.threads.stat.total">线程总数</div>
-                      <div id="throughputThreadTotal" class="stat-value">-</div>
-                    </div>
-                    <div class="throughput-thread-stat">
-                      <div class="stat-label" data-i18n="throughput.threads.stat.active">活动中</div>
-                      <div id="throughputThreadActive" class="stat-value">-</div>
-                    </div>
-                    <div class="throughput-thread-stat">
-                      <div class="stat-label" data-i18n="throughput.threads.stat.finished">已完成</div>
-                      <div id="throughputThreadFinished" class="stat-value">-</div>
-                    </div>
-                    <div class="throughput-thread-stat">
-                      <div class="stat-label" data-i18n="throughput.threads.stat.failed">已失败</div>
-                      <div id="throughputThreadFailed" class="stat-value">-</div>
-                    </div>
-                    <div class="throughput-thread-stat">
-                      <div class="stat-label" data-i18n="throughput.threads.stat.singleDecodeSpeed">
-                        单解码速度
-                      </div>
-                      <div id="throughputThreadSingleDecodeSpeed" class="stat-value">-</div>
-                    </div>
-                    <div class="throughput-thread-stat">
-                      <div class="stat-label" data-i18n="throughput.threads.stat.singlePrefillSpeed">
-                        单预填充速度
-                      </div>
-                      <div id="throughputThreadSinglePrefillSpeed" class="stat-value">-</div>
-                    </div>
-                  </div>
-                  <div id="throughputThreadEmpty" class="muted" data-i18n="throughput.threads.empty">
-                    暂无线程
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="throughput-results">
-              <div class="monitor-block throughput-summary-block">
-                <div class="monitor-block-title">
-                  <i class="fa-solid fa-gauge-high"></i>
-                  <span data-i18n="throughput.summary.title">压测概览</span>
-                  <span id="throughputStatusBadge" class="monitor-status throughput-status-badge">-</span>
-                  <span id="throughputStatusHint" class="muted throughput-status-hint"></span>
-                </div>
-                <div class="monitor-summary throughput-summary">
-                  <div>
-                      <div class="monitor-section-title" data-i18n="throughput.section.run">任务状态</div>
-                      <table class="monitor-kv-table">
-                        <tbody>
-                          <tr>
-                          <th data-i18n="throughput.field.status">状态</th>
-                          <td><strong id="throughputStatusText">-</strong></td>
-                        </tr>
-                        <tr>
-                          <th data-i18n="throughput.field.startedAt">开始时间</th>
-                          <td><strong id="throughputStartedAt">-</strong></td>
-                        </tr>
-                        <tr>
-                          <th data-i18n="throughput.field.elapsed">已运行</th>
-                          <td><strong id="throughputElapsed">-</strong></td>
-                          </tr>
-                          <tr>
-                            <th data-i18n="throughput.field.maxConcurrency">最大并发</th>
-                            <td><strong id="throughputMaxConcurrencyValue">-</strong></td>
-                          </tr>
-                          <tr>
-                            <th data-i18n="throughput.field.concurrencyList">并发列表</th>
-                            <td><strong id="throughputConcurrencyListValue">-</strong></td>
-                          </tr>
-                          <tr>
-                          <th data-i18n="throughput.field.model">当前模型</th>
-                          <td><strong id="throughputModelValue">-</strong></td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                  <div>
-                    <div class="monitor-section-title" data-i18n="throughput.section.requests">请求指标</div>
-                    <table class="monitor-kv-table">
-                      <tbody>
-                        <tr>
-                          <th data-i18n="throughput.metric.total">总请求</th>
-                          <td><strong id="throughputTotal">-</strong></td>
-                        </tr>
-                        <tr>
-                          <th data-i18n="throughput.metric.success">成功</th>
-                          <td><strong id="throughputSuccess">-</strong></td>
-                        </tr>
-                        <tr>
-                          <th data-i18n="throughput.metric.error">失败</th>
-                          <td><strong id="throughputError">-</strong></td>
-                        </tr>
-                        <tr>
-                          <th data-i18n="throughput.metric.rps">RPS</th>
-                          <td><strong id="throughputRps">-</strong></td>
-                        </tr>
-                        <tr>
-                          <th data-i18n="throughput.metric.avgLatency">平均耗时</th>
-                          <td><strong id="throughputAvgLatency">-</strong></td>
-                        </tr>
-                        <tr>
-                          <th data-i18n="throughput.metric.firstTokenLatency">首字延迟</th>
-                          <td><strong id="throughputFirstTokenLatency">-</strong></td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                  <div>
-                    <div class="monitor-section-title" data-i18n="throughput.section.tokens">Token 统计</div>
-                    <table class="monitor-kv-table">
-                      <tbody>
-                        <tr>
-                          <th data-i18n="throughput.metric.totalPrefillSpeed">总预填充速度</th>
-                          <td><strong id="throughputTotalPrefillSpeed">-</strong></td>
-                        </tr>
-                        <tr>
-                          <th data-i18n="throughput.metric.totalDecodeSpeed">总解码速度</th>
-                          <td><strong id="throughputTotalDecodeSpeed">-</strong></td>
-                        </tr>
-                        <tr>
-                          <th data-i18n="throughput.metric.singlePrefillSpeed">单预填充速度</th>
-                          <td><strong id="throughputSinglePrefillSpeed">-</strong></td>
-                        </tr>
-                        <tr>
-                          <th data-i18n="throughput.metric.singleDecodeSpeed">单解码速度</th>
-                          <td><strong id="throughputSingleDecodeSpeed">-</strong></td>
-                        </tr>
-                        <tr>
-                          <th data-i18n="throughput.metric.totalTokens">总计</th>
-                          <td><strong id="throughputTotalTokens">-</strong></td>
-                        </tr>
-                        <tr>
-                          <th data-i18n="throughput.metric.avgTokens">平均</th>
-                          <td><strong id="throughputAvgTokens">-</strong></td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-              <div class="throughput-charts">
-                <div class="monitor-block throughput-chart-card throughput-chart-wide">
-                  <div class="monitor-block-title" data-i18n="throughput.chart.performance">
-                    性能曲线
-                  </div>
-                  <div id="throughputCurveChart" class="monitor-chart"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+        <section id="throughputPanel" class="panel"></section>
         <section id="performancePanel" class="panel">
           <div class="list-header">
             <h1 data-i18n="panel.performance">性能测试</h1>
@@ -5640,7 +5398,7 @@
             <div id="userAccountSettingsUser" class="muted">-</div>
           </div>
           <div class="form-row">
-            <label for="userAccountQuotaInput" data-i18n="userAccounts.modal.settings.quota.label">Token 余额</label>
+            <label for="userAccountQuotaInput" data-i18n="userAccounts.modal.settings.quota.label">直接设置额度余额</label>
             <div class="form-row-inline">
               <input id="userAccountQuotaInput" type="number" min="0" step="1" />
               <button id="userAccountQuotaSave" class="secondary btn-with-icon" type="button">
@@ -5655,19 +5413,19 @@
             </div>
           </div>
           <div class="form-row">
-            <label for="userAccountTokenAdjustInput" data-i18n="userAccounts.modal.settings.tokenAdjust.label">
-              发放 / 扣除 Token
+            <label for="userAccountQuotaAdjustInput" data-i18n="userAccounts.modal.settings.quotaAdjust.label">
+              发放 / 扣除额度
             </label>
             <div class="form-row-inline">
-              <input id="userAccountTokenAdjustInput" type="number" min="1" step="1" />
-              <button id="userAccountTokenGrantBtn" class="secondary btn-with-icon" type="button">
-                <i class="fa-solid fa-coins"></i><span data-i18n="userAccounts.modal.settings.tokenAdjust.grant">发放</span>
+              <input id="userAccountQuotaAdjustInput" type="number" min="1" step="1" />
+              <button id="userAccountQuotaGrantBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-coins"></i><span data-i18n="userAccounts.modal.settings.quotaAdjust.grant">发放</span>
               </button>
-              <button id="userAccountTokenDeductBtn" class="secondary btn-with-icon" type="button">
-                <i class="fa-solid fa-minus-circle"></i><span data-i18n="userAccounts.modal.settings.tokenAdjust.deduct">扣除</span>
+              <button id="userAccountQuotaDeductBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-minus-circle"></i><span data-i18n="userAccounts.modal.settings.quotaAdjust.deduct">扣除</span>
               </button>
             </div>
-            <div id="userAccountTokenAdjustHint" class="muted" data-i18n="userAccounts.modal.settings.tokenAdjust.hint">
+            <div id="userAccountQuotaAdjustHint" class="muted" data-i18n="userAccounts.modal.settings.quotaAdjust.hint">
               发放会增加累计获得，扣除会减少余额并计入累计消耗。
             </div>
           </div>
@@ -6016,58 +5774,7 @@
         </div>
       </div>
     </div>
-    <div id="throughputHistoryModal" class="modal">
-      <div class="modal-card modal-card-lg">
-        <div class="modal-header">
-          <div>
-            <div class="detail-title" data-i18n="throughput.history.title">压测历史</div>
-            <div id="throughputHistoryMeta" class="muted"></div>
-          </div>
-          <button id="throughputHistoryClose" class="icon-btn" type="button">×</button>
-        </div>
-        <div class="modal-body">
-          <div class="monitor-table-wrap">
-              <table class="monitor-table throughput-history-table">
-                <colgroup>
-                  <col class="col-time" />
-                  <col class="col-status" />
-                  <col class="col-max-concurrency" />
-                  <col class="col-concurrency-list" />
-                  <col class="col-total" />
-                  <col class="col-success-rate" />
-                  <col class="col-avg-latency" />
-                  <col class="col-rps" />
-                  <col class="col-dataset" />
-                  <col class="col-actions" />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th data-i18n="throughput.history.startedAt">开始时间</th>
-                    <th data-i18n="throughput.history.status">状态</th>
-                    <th data-i18n="throughput.history.maxConcurrency">最大并发</th>
-                    <th data-i18n="throughput.history.concurrencyList">并发列表</th>
-                    <th data-i18n="throughput.history.total">总请求</th>
-                    <th data-i18n="throughput.history.successRate">成功率</th>
-                    <th data-i18n="throughput.history.avgLatency">平均延迟</th>
-                    <th data-i18n="throughput.history.rps">RPS</th>
-                    <th data-i18n="throughput.history.dataset">题库</th>
-                    <th data-i18n="throughput.history.action">操作</th>
-                  </tr>
-              </thead>
-              <tbody id="throughputHistoryList"></tbody>
-            </table>
-            <div id="throughputHistoryEmpty" class="muted" data-i18n="throughput.history.empty">
-              暂无压测历史
-            </div>
-          </div>
-        </div>
-        <div class="modal-actions">
-          <button id="throughputHistoryCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
-          </button>
-        </div>
-      </div>
-    </div>
+
     <div id="monitorDetailModal" class="modal">
       <div class="modal-card">
         <div class="modal-header">
@@ -6365,7 +6072,7 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20260710-01"></script>
+    <script type="module" src="./app.js?v=20260923-01"></script>
   </body>
 </html>
 

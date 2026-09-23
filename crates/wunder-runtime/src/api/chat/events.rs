@@ -573,7 +573,7 @@ fn is_workflow_event(event_type: &str) -> bool {
             | "llm_output_delta"
             | "llm_output"
             | "context_usage"
-            | "token_balance"
+            | "quota_balance"
             | "quota_usage"
             | "round_usage"
             | "command_session_start"

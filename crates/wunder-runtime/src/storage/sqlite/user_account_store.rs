@@ -8,6 +8,7 @@ use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, OptionalExtension};
 
 pub(super) trait SqliteUserAccountStorage {
+    fn update_user_account_profile_impl(&self, record: &UserAccountRecord) -> Result<()>;
     fn upsert_user_account_impl(&self, record: &UserAccountRecord) -> Result<()>;
     fn upsert_user_accounts_impl(&self, records: &[UserAccountRecord]) -> Result<()>;
     fn get_user_account_impl(&self, user_id: &str) -> Result<Option<UserAccountRecord>>;
@@ -51,18 +52,26 @@ pub(super) trait SqliteUserAccountStorage {
 }
 
 impl SqliteUserAccountStorage for SqliteStorage {
+    fn update_user_account_profile_impl(&self, record: &UserAccountRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let roles = Self::string_list_to_json(&record.roles);
+        let conn = self.open()?;
+        conn.execute("UPDATE user_accounts SET username = ?, email = ?, password_hash = ?, roles = ?, status = ?, access_level = ?, unit_id = ?, is_demo = ?, updated_at = ?, last_login_at = ? WHERE user_id = ?", params![record.username, record.email, record.password_hash, roles, record.status, record.access_level, record.unit_id, (record.is_demo as i32), record.updated_at, record.last_login_at, record.user_id])?;
+        Ok(())
+    }
+
     fn upsert_user_account_impl(&self, record: &UserAccountRecord) -> Result<()> {
         self.ensure_initialized()?;
         let conn = self.open()?;
         let roles = Self::string_list_to_json(&record.roles);
         conn.execute(
             "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, unit_id, \
-             token_balance, token_granted_total, token_used_total, last_token_grant_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
+             quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, email = excluded.email, password_hash = excluded.password_hash, \
              roles = excluded.roles, status = excluded.status, access_level = excluded.access_level, unit_id = excluded.unit_id, \
-             token_balance = excluded.token_balance, token_granted_total = excluded.token_granted_total, token_used_total = excluded.token_used_total, \
-             last_token_grant_date = excluded.last_token_grant_date, \
+             quota_balance = excluded.quota_balance, quota_granted_total = excluded.quota_granted_total, quota_used_total = excluded.quota_used_total, \
+             last_quota_grant_date = excluded.last_quota_grant_date, \
              experience_total = excluded.experience_total, \
              is_demo = excluded.is_demo, created_at = excluded.created_at, updated_at = excluded.updated_at, last_login_at = excluded.last_login_at",
             params![
@@ -74,10 +83,10 @@ impl SqliteUserAccountStorage for SqliteStorage {
                 record.status,
                 record.access_level,
                 record.unit_id,
-                record.token_balance,
-                record.token_granted_total,
-                record.token_used_total,
-                record.last_token_grant_date,
+                record.quota_balance,
+                record.quota_granted_total,
+                record.quota_used_total,
+                record.last_quota_grant_date,
                 record.experience_total,
                 if record.is_demo { 1 } else { 0 },
                 record.created_at,
@@ -97,7 +106,7 @@ impl SqliteUserAccountStorage for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
+                "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, \
                  experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE user_id = ?",
                 params![cleaned],
                 |row| {
@@ -110,10 +119,10 @@ impl SqliteUserAccountStorage for SqliteStorage {
                         status: row.get(5)?,
                         access_level: row.get(6)?,
                         unit_id: row.get(7)?,
-                        token_balance: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
-                        token_granted_total: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
-                        token_used_total: row.get::<_, Option<i64>>(10)?.unwrap_or(0),
-                        last_token_grant_date: row.get(11)?,
+                        quota_balance: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
+                        quota_granted_total: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
+                        quota_used_total: row.get::<_, Option<i64>>(10)?.unwrap_or(0),
+                        last_quota_grant_date: row.get(11)?,
                         experience_total: row.get::<_, Option<i64>>(12)?.unwrap_or(0),
                         is_demo: row.get::<_, i64>(13)? != 0,
                         created_at: row.get(14)?,
@@ -138,7 +147,7 @@ impl SqliteUserAccountStorage for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
+                "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, \
                  experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE username = ?",
                 params![cleaned],
                 |row| {
@@ -151,10 +160,10 @@ impl SqliteUserAccountStorage for SqliteStorage {
                         status: row.get(5)?,
                         access_level: row.get(6)?,
                         unit_id: row.get(7)?,
-                        token_balance: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
-                        token_granted_total: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
-                        token_used_total: row.get::<_, Option<i64>>(10)?.unwrap_or(0),
-                        last_token_grant_date: row.get(11)?,
+                        quota_balance: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
+                        quota_granted_total: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
+                        quota_used_total: row.get::<_, Option<i64>>(10)?.unwrap_or(0),
+                        last_quota_grant_date: row.get(11)?,
                         experience_total: row.get::<_, Option<i64>>(12)?.unwrap_or(0),
                         is_demo: row.get::<_, i64>(13)? != 0,
                         created_at: row.get(14)?,
@@ -176,7 +185,7 @@ impl SqliteUserAccountStorage for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
+                "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, \
                  experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE email = ?",
                 params![cleaned],
                 |row| {
@@ -189,10 +198,10 @@ impl SqliteUserAccountStorage for SqliteStorage {
                         status: row.get(5)?,
                         access_level: row.get(6)?,
                         unit_id: row.get(7)?,
-                        token_balance: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
-                        token_granted_total: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
-                        token_used_total: row.get::<_, Option<i64>>(10)?.unwrap_or(0),
-                        last_token_grant_date: row.get(11)?,
+                        quota_balance: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
+                        quota_granted_total: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
+                        quota_used_total: row.get::<_, Option<i64>>(10)?.unwrap_or(0),
+                        last_quota_grant_date: row.get(11)?,
                         experience_total: row.get::<_, Option<i64>>(12)?.unwrap_or(0),
                         is_demo: row.get::<_, i64>(13)? != 0,
                         created_at: row.get(14)?,
@@ -245,7 +254,7 @@ impl SqliteUserAccountStorage for SqliteStorage {
             })?;
 
         let mut sql = String::from(
-            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, \
              experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts",
         );
         if !conditions.is_empty() {
@@ -270,10 +279,10 @@ impl SqliteUserAccountStorage for SqliteStorage {
                     status: row.get(5)?,
                     access_level: row.get(6)?,
                     unit_id: row.get(7)?,
-                    token_balance: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
-                    token_granted_total: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
-                    token_used_total: row.get::<_, Option<i64>>(10)?.unwrap_or(0),
-                    last_token_grant_date: row.get(11)?,
+                    quota_balance: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
+                    quota_granted_total: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
+                    quota_used_total: row.get::<_, Option<i64>>(10)?.unwrap_or(0),
+                    last_quota_grant_date: row.get(11)?,
                     experience_total: row.get::<_, Option<i64>>(12)?.unwrap_or(0),
                     is_demo: row.get::<_, i64>(13)? != 0,
                     created_at: row.get(14)?,
@@ -442,12 +451,12 @@ impl SqliteUserAccountStorage for SqliteStorage {
             let roles = Self::string_list_to_json(&record.roles);
             tx.execute(
                 "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, unit_id, \
-                 token_balance, token_granted_total, token_used_total, last_token_grant_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
+                 quota_balance, quota_granted_total, quota_used_total, last_quota_grant_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
                  ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, email = excluded.email, password_hash = excluded.password_hash, \
                  roles = excluded.roles, status = excluded.status, access_level = excluded.access_level, unit_id = excluded.unit_id, \
-                 token_balance = excluded.token_balance, token_granted_total = excluded.token_granted_total, token_used_total = excluded.token_used_total, \
-                 last_token_grant_date = excluded.last_token_grant_date, \
+                 quota_balance = excluded.quota_balance, quota_granted_total = excluded.quota_granted_total, quota_used_total = excluded.quota_used_total, \
+                 last_quota_grant_date = excluded.last_quota_grant_date, \
                  experience_total = excluded.experience_total, \
                  is_demo = excluded.is_demo, created_at = excluded.created_at, updated_at = excluded.updated_at, last_login_at = excluded.last_login_at",
                 params![
@@ -459,10 +468,10 @@ impl SqliteUserAccountStorage for SqliteStorage {
                     record.status,
                     record.access_level,
                     record.unit_id,
-                    record.token_balance,
-                    record.token_granted_total,
-                    record.token_used_total,
-                    record.last_token_grant_date,
+                    record.quota_balance,
+                    record.quota_granted_total,
+                    record.quota_used_total,
+                    record.last_quota_grant_date,
                     record.experience_total,
                     if record.is_demo { 1 } else { 0 },
                     record.created_at,
@@ -717,10 +726,10 @@ mod tests {
             status: "active".to_string(),
             access_level: "1".to_string(),
             unit_id: unit_id.map(str::to_string),
-            token_balance: 10,
-            token_granted_total: 20,
-            token_used_total: 5,
-            last_token_grant_date: Some("2026-01-01".to_string()),
+            quota_balance: 10,
+            quota_granted_total: 20,
+            quota_used_total: 5,
+            last_quota_grant_date: Some("2026-01-01".to_string()),
             experience_total: 0,
             is_demo: false,
             created_at: 1.0,

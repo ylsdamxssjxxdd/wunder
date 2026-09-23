@@ -1,3 +1,5 @@
+import { mergeSessionQuotaUsed } from './chatSessionQuota';
+
 export type ChatSessionLike = Record<string, unknown> & {
   id?: unknown;
 };
@@ -20,6 +22,8 @@ export const mergeSessionRuntimeFields = (
     ...currentRecord,
     ...incomingRecord
   } as ChatSessionLike;
+  const quotaUsed = mergeSessionQuotaUsed(currentRecord, incomingRecord);
+  if (quotaUsed !== null) merged.quota_used = quotaUsed;
 
   const contextKeys = [
     'context_tokens',

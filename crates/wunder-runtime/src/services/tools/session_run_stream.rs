@@ -9,45 +9,58 @@ pub(super) struct SessionRunStreamOutcome {
     pub answer: Option<String>,
 }
 
-pub(super) async fn run_request(
+pub(super) fn run_request(
     orchestrator: Arc<Orchestrator>,
     request: WunderRequest,
-) -> Result<SessionRunStreamOutcome> {
-    let mut stream = Box::pin(orchestrator.stream(request).await?);
-    let mut final_answer: Option<String> = None;
-    while let Some(event) = stream.next().await {
-        let event = match event {
-            Ok(item) => item,
-            Err(_) => continue,
-        };
-        let payload = event
-            .data
-            .get("data")
-            .cloned()
-            .unwrap_or_else(|| event.data.clone());
-        let event_name = event.event.trim().to_ascii_lowercase();
-        if event_name == "error" {
-            return Err(anyhow!(extract_error_text(&payload, &event.data)));
+    cancellation: Option<tokio_util::sync::CancellationToken>,
+) -> futures::future::BoxFuture<'static, Result<SessionRunStreamOutcome>> {
+    // Box the recursive tool -> child -> orchestrator future at this boundary.
+    Box::pin(async move {
+        if cancellation
+            .as_ref()
+            .is_some_and(|token| token.is_cancelled())
+        {
+            return Err(anyhow!("interrupted"));
         }
-        if event_name != "final" {
-            continue;
+        let mut stream = Box::pin(orchestrator.stream(request).await?);
+        let mut outcome = None;
+        let mut failure = None;
+        while let Some(event) = stream.next().await {
+            let event = match event {
+                Ok(item) => item,
+                Err(_) => continue,
+            };
+            let payload = event
+                .data
+                .get("data")
+                .cloned()
+                .unwrap_or_else(|| event.data.clone());
+            let event_name = event.event.trim().to_ascii_lowercase();
+            if event_name == "error" {
+                failure = Some(extract_error_text(&payload, &event.data));
+                continue;
+            }
+            if event_name != "final" {
+                continue;
+            }
+            let answer = payload
+                .get("answer")
+                .or_else(|| payload.get("content"))
+                .or_else(|| payload.get("message"))
+                .or_else(|| event.data.get("answer"))
+                .or_else(|| event.data.get("content"))
+                .or_else(|| event.data.get("message"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string);
+            outcome = Some(SessionRunStreamOutcome { answer });
         }
-        let answer = payload
-            .get("answer")
-            .or_else(|| payload.get("content"))
-            .or_else(|| payload.get("message"))
-            .or_else(|| event.data.get("answer"))
-            .or_else(|| event.data.get("content"))
-            .or_else(|| event.data.get("message"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string);
-        final_answer = answer;
-        break;
-    }
-    Ok(SessionRunStreamOutcome {
-        answer: final_answer,
+        // Drain settlement before releasing ownership of the reusable child session.
+        if let Some(failure) = failure {
+            return Err(anyhow!(failure));
+        }
+        outcome.ok_or_else(|| anyhow!("child stream ended without a final response"))
     })
 }
 
