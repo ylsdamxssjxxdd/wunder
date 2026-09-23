@@ -6,12 +6,21 @@ use crate::workspace::WorkspaceManager;
 use anyhow::Result;
 use chrono::{DateTime, Local, Utc};
 use serde_json::{json, Value};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const CHAT_SESSION_STATUS_ACTIVE: &str = "active";
 const CHAT_SESSION_STATUS_ARCHIVED: &str = "archived";
 const CHAT_CANCEL_MARKER_META_TYPE: &str = "session_cancelled";
 const CHAT_CANCEL_MARKER_STOP_REASON: &str = "user_stop";
+
+// Cancellation can be requested through REST and WebSocket at the same time.
+// Keep the read/check/append sequence atomic so both requests cannot persist a
+// visible marker for the same pending user turn.
+fn cancel_marker_persist_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 pub async fn persist_user_cancelled_turn_marker(
     workspace: std::sync::Arc<WorkspaceManager>,
@@ -47,6 +56,9 @@ pub(crate) fn persist_user_cancelled_turn_marker_sync(
     session_id: &str,
     cancel_source: &str,
 ) -> Result<bool> {
+    let _guard = cancel_marker_persist_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let _ = workspace.flush_writes();
     let history = workspace.load_history(user_id, session_id, 0)?;
     let Some(last_user_index) = history

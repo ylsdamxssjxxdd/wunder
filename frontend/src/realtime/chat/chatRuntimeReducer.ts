@@ -1319,13 +1319,32 @@ const applyTurnTerminal = (
   event: NormalizedRuntimeEvent,
   terminal: 'completed' | 'failed' | 'cancelled'
 ): void => {
-  const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
+  // A cancelled turn can be replayed with a fresh model-turn id by another
+  // transport (for example REST cancellation followed by WS replay). Reuse
+  // the already materialized cancelled turn for that user turn before
+  // creating another assistant projection.
+  const reusableCancelledTurn = terminal === 'cancelled' && event.userTurnId
+    ? resolveReusableModelTurnForUserTurn(session, event.userTurnId, true, ['cancelled'])
+    : null;
+  const modelTurn = reusableCancelledTurn || ensureModelTurn(
+    session,
+    event.modelTurnId,
+    event.userTurnId,
+    event.eventSeq
+  );
+  const terminalEvent = reusableCancelledTurn && reusableCancelledTurn.id !== event.modelTurnId
+    ? {
+        ...event,
+        modelTurnId: reusableCancelledTurn.id,
+        messageId: reusableCancelledTurn.finalMessageId || event.messageId
+      }
+    : event;
   if (
     terminal !== 'completed' &&
     !modelTurn.messageIds.some((messageId) => session.messageById[messageId]?.role === 'assistant') &&
-    (event.content || event.reasoning || event.messageId)
+    (terminalEvent.content || terminalEvent.reasoning || terminalEvent.messageId)
   ) {
-    ensureAssistantMessageForModelTurn(session, event, terminal);
+    ensureAssistantMessageForModelTurn(session, terminalEvent, terminal);
   }
   modelTurn.status = terminal;
   modelTurn.messageIds.forEach((messageId) => {
@@ -1880,18 +1899,23 @@ const applyCanonicalTranscriptSnapshot = (
     .map((raw, index) => buildCanonicalTranscriptPlan(raw, index, snapshotSeq))
     .filter((plan): plan is LegacyMessagePlan => Boolean(plan))
     .sort((left, right) => left.createdSeq - right.createdSeq || left.index - right.index);
-  reconcilePendingLocalUserTurnsWithCanonicalSnapshot(session, plans);
+  // A cancelled turn may be replayed by both the live event stream and the
+  // durable transcript. The transcript identity is authoritative; keep one
+  // terminal cancellation per user turn so replay cannot create duplicate
+  // assistant bubbles with different generated model-turn ids.
+  const canonicalPlans = dedupeCanonicalCancelledPlans(plans);
+  reconcilePendingLocalUserTurnsWithCanonicalSnapshot(session, canonicalPlans);
   const tail = running || preserveCurrent ? captureTranscriptTail(session, messages, preserveCurrent) : [];
   const keepMessageIds = new Set<string>();
   const keepUserTurnIds = new Set<string>();
   const keepModelTurnIds = new Set<string>();
-  const canonicalAssistantCountsByUserTurn = plans.reduce<Map<string, number>>((acc, plan) => {
+  const canonicalAssistantCountsByUserTurn = canonicalPlans.reduce<Map<string, number>>((acc, plan) => {
     if (plan.role !== 'assistant') return acc;
     acc.set(plan.userTurnId, (acc.get(plan.userTurnId) || 0) + 1);
     return acc;
   }, new Map());
 
-  plans.forEach((plan) => {
+  canonicalPlans.forEach((plan) => {
     const userTurn = ensureUserTurn(session, plan.userTurnId, plan.createdSeq);
     userTurn.createdSeq = keepUserTurnIds.has(userTurn.id)
       ? Math.min(userTurn.createdSeq, plan.createdSeq)
@@ -1980,7 +2004,7 @@ const applyCanonicalTranscriptSnapshot = (
   });
 
   session.messages = [
-    ...plans.map((plan) => plan.id),
+    ...canonicalPlans.map((plan) => plan.id),
     ...preservedLocal.messageIds,
     ...preservedTail
   ].filter((id, index, all) => keepMessageIds.has(id) && all.indexOf(id) === index);
@@ -2005,6 +2029,20 @@ const applyCanonicalTranscriptSnapshot = (
   session.snapshotSeq = Math.max(session.snapshotSeq, snapshotSeq);
   session.syncRequired = false;
   return preservedLocal.active;
+};
+
+const dedupeCanonicalCancelledPlans = (plans: LegacyMessagePlan[]): LegacyMessagePlan[] => {
+  const seenCancelledUserTurns = new Set<string>();
+  return plans.filter((plan) => {
+    if (plan.role !== 'assistant' || plan.status !== 'cancelled' || !plan.userTurnId) {
+      return true;
+    }
+    if (seenCancelledUserTurns.has(plan.userTurnId)) {
+      return false;
+    }
+    seenCancelledUserTurns.add(plan.userTurnId);
+    return true;
+  });
 };
 
 const reconcilePendingLocalUserTurnsWithCanonicalSnapshot = (

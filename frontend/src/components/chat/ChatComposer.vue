@@ -380,6 +380,40 @@
             >
               {{ composerContextUsageDisplay }}
             </span>
+            <div class="chat-composer-reasoning-anchor">
+              <button
+                class="messenger-world-tool-btn chat-composer-reasoning-toggle"
+                type="button"
+                :class="{ active: reasoningMenuVisible || reasoningEffort !== 'default' }"
+                :title="reasoningEffortTitle"
+                :aria-label="reasoningEffortTitle"
+                :aria-expanded="reasoningMenuVisible"
+                :disabled="stopButtonActive || composerBusy > 0"
+                @click.stop.prevent="toggleReasoningMenu"
+              >
+                <i class="fa-solid fa-brain messenger-world-tool-fa-icon" aria-hidden="true"></i>
+              </button>
+              <div
+                v-if="reasoningMenuVisible"
+                class="chat-composer-reasoning-menu"
+                role="menu"
+                @click.stop
+              >
+                <div class="chat-composer-reasoning-menu-title">{{ t('desktop.system.reasoningEffort') }}</div>
+                <button
+                  v-for="option in reasoningEffortOptions"
+                  :key="option.value"
+                  class="chat-composer-reasoning-option"
+                  :class="{ active: reasoningEffort === option.value }"
+                  type="button"
+                  role="menuitemradio"
+                  :aria-checked="reasoningEffort === option.value"
+                  @click="selectReasoningEffort(option.value)"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
+            </div>
             <div class="messenger-world-send-group">
               <button
                 class="messenger-world-send-main"
@@ -422,6 +456,40 @@
             <i class="fa-solid fa-camera input-icon" aria-hidden="true"></i>
             <i class="fa-solid fa-chevron-down chat-screenshot-caret" aria-hidden="true"></i>
           </button>
+        </div>
+        <div class="chat-composer-reasoning-anchor">
+          <button
+            class="input-icon-btn chat-composer-reasoning-toggle"
+            type="button"
+            :class="{ active: reasoningMenuVisible || reasoningEffort !== 'default' }"
+            :title="reasoningEffortTitle"
+            :aria-label="reasoningEffortTitle"
+            :aria-expanded="reasoningMenuVisible"
+            :disabled="stopButtonActive || composerBusy > 0"
+            @click.stop.prevent="toggleReasoningMenu"
+          >
+            <i class="fa-solid fa-brain input-icon" aria-hidden="true"></i>
+          </button>
+          <div
+            v-if="reasoningMenuVisible"
+            class="chat-composer-reasoning-menu"
+            role="menu"
+            @click.stop
+          >
+            <div class="chat-composer-reasoning-menu-title">{{ t('desktop.system.reasoningEffort') }}</div>
+            <button
+              v-for="option in reasoningEffortOptions"
+              :key="option.value"
+              class="chat-composer-reasoning-option"
+              :class="{ active: reasoningEffort === option.value }"
+              type="button"
+              role="menuitemradio"
+              :aria-checked="reasoningEffort === option.value"
+              @click="selectReasoningEffort(option.value)"
+            >
+              {{ option.label }}
+            </button>
+          </div>
         </div>
         <button
           class="input-icon-btn send-btn"
@@ -665,6 +733,9 @@ const screenshotMenuAnchorRef = ref<HTMLElement | null>(null);
 const screenshotMenuPanelRef = ref<HTMLElement | null>(null);
 const screenshotMenuVisible = ref(false);
 const screenshotMenuStyle = ref<Record<string, string>>({});
+type ReasoningEffort = 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+const reasoningEffort = ref<ReasoningEffort>('default');
+const reasoningMenuVisible = ref(false);
 const caretPosition = ref(0);
 const commandMenuIndex = ref(0);
 const commandMenuDismissed = ref(false);
@@ -1080,6 +1151,16 @@ const sendShortcutHint = computed(() => {
   if (props.sendKey === 'ctrl_enter') return t('chat.input.sendHintCtrlEnterAlt');
   if (props.sendKey === 'enter') return t('chat.input.sendHintEnterAlt');
   return '';
+});
+const reasoningEffortOptions = computed(() =>
+  (['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as ReasoningEffort[]).map((value) => ({
+    value,
+    label: t(`desktop.system.reasoningEffort.${value}`)
+  }))
+);
+const reasoningEffortTitle = computed(() => {
+  const selected = reasoningEffortOptions.value.find((item) => item.value === reasoningEffort.value);
+  return `${t('desktop.system.reasoningEffort')}: ${selected?.label || reasoningEffort.value}`;
 });
 const goalEditorVisible = computed(() => Boolean(props.goalEditorVisible));
 const inputPlaceholder = computed(() => {
@@ -2354,6 +2435,22 @@ const closeScreenshotMenu = () => {
   screenshotMenuStyle.value = {};
 };
 
+const closeReasoningMenu = () => {
+  reasoningMenuVisible.value = false;
+};
+
+const toggleReasoningMenu = () => {
+  if (stopButtonActive.value) return;
+  closeScreenshotMenu();
+  closeWorldCommandPanel();
+  reasoningMenuVisible.value = !reasoningMenuVisible.value;
+};
+
+const selectReasoningEffort = (value: ReasoningEffort) => {
+  reasoningEffort.value = value;
+  closeReasoningMenu();
+};
+
 const toggleScreenshotMenu = () => {
   if (stopButtonActive.value) return;
   if (composerBusy.value > 0) {
@@ -2583,7 +2680,7 @@ const sendQuickCommand = async (command: string) => {
     ElMessage.warning(chatBusyMessage.value);
     return;
   }
-  emit('send', { content: command, attachments: [] });
+  emit('send', { content: command, attachments: [], reasoningEffort: reasoningEffort.value });
   inputText.value = '';
   commandMenuDismissed.value = false;
   caretPosition.value = 0;
@@ -2639,7 +2736,7 @@ const handleSend = async () => {
     attachmentCount: payloadAttachments.length,
     hasInquirySelection: hasInquirySelection.value
   });
-  emit('send', { content, attachments: payloadAttachments });
+  emit('send', { content, attachments: payloadAttachments, reasoningEffort: reasoningEffort.value });
   inputText.value = '';
   commandMenuDismissed.value = false;
   caretPosition.value = 0;
@@ -2699,6 +2796,10 @@ const handleDocumentPointerDown = (event: PointerEvent) => {
       closeScreenshotMenu();
     }
   }
+  const targetElement = target as HTMLElement | null;
+  if (reasoningMenuVisible.value && !targetElement?.closest('.chat-composer-reasoning-anchor')) {
+    closeReasoningMenu();
+  }
 };
 
 onMounted(async () => {
@@ -2717,6 +2818,7 @@ onBeforeUnmount(() => {
   flushPersistDraftState();
   stopWorldComposerResize();
   clearWorldCommandPanelCloseTimer();
+  closeReasoningMenu();
   if (typeof window !== 'undefined') {
     window.removeEventListener('resize', handleScreenshotMenuViewportChange);
     window.removeEventListener('scroll', handleScreenshotMenuViewportChange, true);

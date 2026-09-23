@@ -69,6 +69,8 @@ struct WsStartPayload {
         alias = "permission_level"
     )]
     approval_mode: Option<String>,
+    #[serde(default, alias = "reasoningEffort", alias = "reasoning_effort")]
+    reasoning_effort: Option<String>,
     #[serde(default)]
     session_id: Option<String>,
     #[serde(default, alias = "orchestrationSource", alias = "orchestration_source")]
@@ -452,6 +454,7 @@ async fn handle_ws(
                             ChatRequestOverrides {
                                 tool_call_mode: payload.tool_call_mode,
                                 approval_mode: payload.approval_mode,
+                                reasoning_effort: payload.reasoning_effort,
                                 debug_payload: payload.debug_payload,
                             },
                         )

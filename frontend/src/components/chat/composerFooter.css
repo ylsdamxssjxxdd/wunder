@@ -40,6 +40,63 @@
   flex-shrink: 0;
 }
 
+.chat-composer-reasoning-anchor {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.chat-composer-reasoning-toggle.active {
+  color: var(--ui-accent);
+}
+
+.chat-composer-reasoning-menu {
+  position: absolute;
+  z-index: 30;
+  right: 0;
+  bottom: calc(100% + 8px);
+  display: flex;
+  flex-direction: column;
+  min-width: 156px;
+  padding: 6px;
+  border: 1px solid var(--messenger-control-border);
+  border-radius: 10px;
+  background: var(--messenger-control-bg);
+  color: var(--messenger-control-text);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+}
+
+.chat-composer-reasoning-menu-title {
+  padding: 5px 8px 6px;
+  color: var(--hula-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.chat-composer-reasoning-option {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 28px;
+  padding: 0 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.chat-composer-reasoning-option:hover,
+.chat-composer-reasoning-option.active {
+  background: rgba(var(--ui-accent-rgb), 0.12);
+  color: var(--ui-accent);
+}
+
+.chat-composer-footer-status .chat-composer-reasoning-menu {
+  right: 0;
+}
+
 .chat-composer-world-toolbar .messenger-world-approval-select-wrap,
 .chat-composer-world-toolbar .chat-composer-approval-label {
   min-width: 0;

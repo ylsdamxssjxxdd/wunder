@@ -5,7 +5,7 @@ use crate::orchestrator::OrchestratorError;
 use crate::schemas::{AttachmentPayload, WunderRequest};
 use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
 use crate::services::chat_cancel_marker::persist_user_cancelled_turn_marker;
-use crate::services::llm::is_llm_model;
+use crate::services::llm::{is_llm_model, normalize_reasoning_effort};
 use crate::services::orchestration_context::{
     build_locked_thread_message, repair_orchestration_session_context,
     session_orchestration_lock_info, ORCHESTRATION_THREAD_LOCKED_CODE,
@@ -98,11 +98,14 @@ struct SendMessageRequest {
         alias = "permission_level"
     )]
     approval_mode: Option<String>,
+    #[serde(default, alias = "reasoningEffort", alias = "reasoning_effort")]
+    reasoning_effort: Option<String>,
 }
 
 pub(crate) struct ChatRequestOverrides {
     pub(crate) tool_call_mode: Option<String>,
     pub(crate) approval_mode: Option<String>,
+    pub(crate) reasoning_effort: Option<String>,
     pub(crate) debug_payload: bool,
 }
 
@@ -299,6 +302,7 @@ async fn send_message(
         ChatRequestOverrides {
             tool_call_mode: payload.tool_call_mode,
             approval_mode: payload.approval_mode,
+            reasoning_effort: payload.reasoning_effort,
             debug_payload: payload.debug_payload,
         },
     )
@@ -523,6 +527,8 @@ pub(crate) async fn build_chat_request(
     let tool_call_mode = normalize_tool_call_mode(request_overrides.tool_call_mode.as_deref())?;
     let request_approval_mode =
         normalize_optional_approval_mode(request_overrides.approval_mode.as_deref());
+    let request_reasoning_effort =
+        normalize_reasoning_effort(request_overrides.reasoning_effort.as_deref());
     let agent_approval_mode = agent_record
         .as_ref()
         .map(|record| normalize_agent_approval_mode(Some(record.approval_mode.as_str())));
@@ -530,19 +536,9 @@ pub(crate) async fn build_chat_request(
     let config = state.config_store.get().await;
     let selected_model_name = resolve_chat_model_name(&config, agent_record.as_ref());
     let mut config_override_map = serde_json::Map::new();
+    let mut selected_model_overrides = serde_json::Map::new();
     if let Some(mode) = tool_call_mode {
-        if let Some(selected_model) = selected_model_name.as_deref() {
-            config_override_map.insert(
-                "llm".to_string(),
-                json!({
-                    "models": {
-                        selected_model: {
-                            "tool_call_mode": mode
-                        }
-                    }
-                }),
-            );
-        }
+        selected_model_overrides.insert("tool_call_mode".to_string(), json!(mode));
     }
     if let Some(mode) = resolved_approval_mode {
         config_override_map.insert(
@@ -551,6 +547,26 @@ pub(crate) async fn build_chat_request(
                 "approval_mode": mode
             }),
         );
+    }
+    if let Some(effort) = request_reasoning_effort {
+        selected_model_overrides.insert("reasoning_effort".to_string(), json!(effort));
+    }
+    if let Some(selected_model) = selected_model_name.as_deref() {
+        if !selected_model_overrides.is_empty() {
+            let mut models = serde_json::Map::new();
+            models.insert(
+                selected_model.to_string(),
+                Value::Object(selected_model_overrides),
+            );
+            config_override_map.insert(
+                "llm".to_string(),
+                Value::Object({
+                    let mut llm = serde_json::Map::new();
+                    llm.insert("models".to_string(), Value::Object(models));
+                    llm
+                }),
+            );
+        }
     }
     let config_overrides = if config_override_map.is_empty() {
         None
@@ -606,6 +622,7 @@ pub async fn build_native_chat_request(
         ChatRequestOverrides {
             tool_call_mode: None,
             approval_mode: None,
+            reasoning_effort: None,
             debug_payload: false,
         },
     )

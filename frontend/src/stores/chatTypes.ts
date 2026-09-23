@@ -275,6 +275,9 @@ export type SendMessageOptions = {
   suppressQueuedNotice?: boolean;
   approvalMode?: string;
   approval_mode?: string;
+  /** Per-request reasoning override; `default`/empty follows the model config. */
+  reasoningEffort?: string;
+  reasoning_effort?: string;
 };
 
 export type AppendLocalMessageOptions = {

@@ -39,6 +39,12 @@ pub fn build_chat_transcript(
     message_feedback: &HashMap<i64, Value>,
 ) -> Vec<Value> {
     let mut cursor = TranscriptCursor::default();
+    // Cancellation is requested through more than one transport in the web
+    // client. Older sessions can therefore contain several identical visible
+    // cancellation rows after one user message. Collapse those rows before
+    // assigning model turn identities; otherwise each duplicate becomes a
+    // separate assistant bubble during refresh/replay.
+    let history = dedupe_cancelled_markers(history);
     let page_user_rounds = collect_explicit_user_rounds(&history);
     let mut transcript = Vec::new();
     for item in history {
@@ -185,6 +191,27 @@ fn map_transcript_message(
         }
     }
     Some(message)
+}
+
+fn dedupe_cancelled_markers(history: Vec<Value>) -> Vec<Value> {
+    let mut result = Vec::with_capacity(history.len());
+    let mut has_visible_user = false;
+    let mut marker_seen_for_user = false;
+    for item in history {
+        let role = item.get("role").and_then(Value::as_str).unwrap_or("");
+        if role == "user" && !is_hidden_internal_history_message(&item) {
+            has_visible_user = true;
+            marker_seen_for_user = false;
+        }
+        if role == "assistant" && has_visible_user && is_cancelled_history_message(&item) {
+            if marker_seen_for_user {
+                continue;
+            }
+            marker_seen_for_user = true;
+        }
+        result.push(item);
+    }
+    result
 }
 
 fn extract_persisted_message_stats(item: &Value) -> Option<Value> {
@@ -559,6 +586,36 @@ mod tests {
         assert_eq!(transcript[1]["status"], json!("cancelled"));
         assert_eq!(transcript[1]["cancelled"], json!(true));
         assert_eq!(transcript[1]["user_turn_index"], json!(1));
+    }
+
+    #[test]
+    fn transcript_collapses_duplicate_cancelled_markers_for_one_user_turn() {
+        let history = vec![
+            json!({"role": "user", "content": "stop me", "timestamp": "2026-04-30T02:14:06Z", "_history_id": 10}),
+            json!({"role": "assistant", "content": "cancelled", "timestamp": "2026-04-30T02:14:07Z", "stop_reason": "user_stop", "_history_id": 11}),
+            json!({"role": "assistant", "content": "cancelled", "timestamp": "2026-04-30T02:14:08Z", "meta": {"type": "session_cancelled"}, "_history_id": 12}),
+            json!({"role": "assistant", "content": "cancelled", "timestamp": "2026-04-30T02:14:09Z", "cancelled": true, "_history_id": 13}),
+        ];
+        let transcript = build_chat_transcript("sess", history, &HashMap::new());
+
+        assert_eq!(transcript.len(), 2);
+        assert_eq!(transcript[1]["status"], json!("cancelled"));
+        assert_eq!(transcript[1]["user_turn_index"], json!(1));
+    }
+
+    #[test]
+    fn transcript_keeps_cancellations_for_distinct_user_turns() {
+        let history = vec![
+            json!({"role": "user", "content": "first", "timestamp": "2026-04-30T02:14:06Z", "_history_id": 20}),
+            json!({"role": "assistant", "content": "cancelled", "timestamp": "2026-04-30T02:14:07Z", "stop_reason": "user_stop", "_history_id": 21}),
+            json!({"role": "user", "content": "second", "timestamp": "2026-04-30T02:14:16Z", "_history_id": 22}),
+            json!({"role": "assistant", "content": "cancelled", "timestamp": "2026-04-30T02:14:17Z", "stop_reason": "user_stop", "_history_id": 23}),
+        ];
+        let transcript = build_chat_transcript("sess", history, &HashMap::new());
+
+        assert_eq!(transcript.len(), 4);
+        assert_eq!(transcript[1]["user_turn_index"], json!(1));
+        assert_eq!(transcript[3]["user_turn_index"], json!(2));
     }
 
     #[test]

@@ -3077,6 +3077,7 @@
 
 - `POST /wunder/chat/sessions/{session_id}/messages`
 - 请求体新增可选字段 `debug_payload`（兼容 `debugPayload`），仅用于调试模式下把本轮实际下发给模型的请求结构体透出到前端调试日志，不影响正常对话行为。
+- 请求体支持可选字段 `reasoning_effort`（兼容 `reasoningEffort`），取值为 `default`、`none`、`minimal`、`low`、`medium`、`high` 或 `xhigh`。除 `default` 外，该值仅覆盖当前请求的模型思考等级，不修改管理员保存的模型配置；非法值会被忽略。WebSocket `/wunder/chat/ws` 的 `start` payload 同样支持该字段。
 - 请求体支持可选字段 `client_message_id`（兼容 `clientMessageId`），语义同 `/wunder` 请求；`/wunder/chat/ws` 与 `/wunder/ws` 的 `start` payload 也支持该字段。服务端会在本轮对象型流事件和队列事件中回带该值，供实时投影按精确键合并用户消息、排队占位和后续模型/工具输出。
 - 现支持“仅附件、无正文”的提交方式：
   - 只要 `attachments[]` 中存在非空 `content` 或 `public_path`，即可不传文本正文。

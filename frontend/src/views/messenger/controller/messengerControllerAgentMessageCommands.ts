@@ -883,6 +883,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
   ctx.sendAgentMessage = async (payload: {
       content?: string;
       attachments?: unknown[];
+      reasoningEffort?: string;
   }) => {
       if (ctx.agentGoalComposerVisible.value) {
           await ctx.submitGoalDialog();
@@ -894,6 +895,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
       }
       const content = String(payload?.content || '').trim();
       const attachments = Array.isArray(payload?.attachments) ? payload.attachments : [];
+      const reasoningEffort = String(payload?.reasoningEffort || '').trim();
       const activeInquiry = ctx.activeAgentInquiryPanel.value;
       const selectedRoutes = ctx.resolveAgentInquirySelectionRoutes(activeInquiry?.panel, ctx.agentInquirySelection.value);
       const hasInquirySelection = selectedRoutes.length > 0;
@@ -977,7 +979,8 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           await ctx.chatStore.sendMessage(finalContent, {
               attachments,
               suppressQueuedNotice: hasInquirySelection,
-              approvalMode: 'full_auto'
+              approvalMode: 'full_auto',
+              ...(reasoningEffort ? { reasoningEffort } : {})
           });
           ctx.setRuntimeStateOverride(targetAgentId, 'idle', 0);
           if (ctx.chatStore.activeSessionId) {

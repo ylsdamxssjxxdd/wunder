@@ -116,6 +116,22 @@ import {
 import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
+const normalizeReasoningEffort = (value: unknown): string => {
+  const raw = String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  switch (raw) {
+    case 'none':
+    case 'minimal':
+    case 'low':
+    case 'medium':
+    case 'high':
+    case 'xhigh':
+    case 'x_high':
+      return raw === 'x_high' ? 'xhigh' : raw;
+    default:
+      return '';
+  }
+};
+
 import { buildWorkflowItem, normalizeInquiryPanelState, safeJsonParse, syncDemoChatCache } from './chatDemoPanels';
 import { applyGoalStreamEvent, persistAgentSession } from './chatPersist';
 import { abortWatchStream, clearDraftSessionBootstrapMarkers, clearDraftSessionBootstrapMessages, clearRuntimeSendStreamState, clearSlowClientResume, markAssistantMessageRequestFailed, markRuntimeSendStreamActivity, markRuntimeSendStreamStarted, resolveMaxStreamRound, setSessionLoading } from './chatRuntimeControls';
@@ -604,6 +620,9 @@ export const chatSendActions = {
         }
         const desktopToolCallMode = getDesktopToolCallModeForRequest();
         const approvalMode = normalizeApprovalMode(options.approvalMode ?? options.approval_mode);
+        const reasoningEffort = normalizeReasoningEffort(
+          options.reasoningEffort ?? options.reasoning_effort
+        );
         const debugPayloadEnabled = isChatDebugEnabled();
         const payload = {
           content,
@@ -612,13 +631,15 @@ export const chatSendActions = {
           ...(debugPayloadEnabled ? { debug_payload: true } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(desktopToolCallMode ? { tool_call_mode: desktopToolCallMode } : {}),
-          ...(approvalMode ? { approval_mode: approvalMode } : {})
+          ...(approvalMode ? { approval_mode: approvalMode } : {}),
+          ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {})
         };
         chatDebugLog('chat.llm.request', 'submit-start', {
           sessionId,
           transportHint: 'ws',
           debugPayloadEnabled,
           approvalMode: approvalMode || null,
+          reasoningEffort: reasoningEffort || null,
           attachmentCount: attachments.length
         });
         const onEvent = (eventType, dataText, eventId) => {

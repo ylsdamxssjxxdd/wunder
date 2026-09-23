@@ -1620,6 +1620,89 @@ test('canonical transcript refresh overwrites stale event-created order', () => 
   assert.ok(visible[1].createdSeq < visible[3].createdSeq);
 });
 
+test('refresh deduplicates replayed cancellation bubbles for one canonical user turn', () => {
+  const projection = createChatRuntimeProjection();
+  const transcript = [
+    {
+      message_id: 'history:user:cancel',
+      role: 'user',
+      content: 'cancel this request',
+      user_turn_id: 'user-turn:session-1:round:1',
+      turn_index: 1
+    },
+    {
+      message_id: 'history:cancel:1',
+      role: 'assistant',
+      content: 'request cancelled',
+      status: 'cancelled',
+      cancelled: true,
+      user_turn_id: 'user-turn:session-1:round:1',
+      model_turn_id: 'model-turn:session-1:user:1:model:1',
+      turn_index: 2
+    },
+    {
+      message_id: 'history:cancel:2',
+      role: 'assistant',
+      content: 'request cancelled',
+      status: 'cancelled',
+      cancelled: true,
+      user_turn_id: 'user-turn:session-1:round:1',
+      model_turn_id: 'model-turn:session-1:user:1:model:2',
+      turn_index: 3
+    },
+    {
+      message_id: 'history:cancel:3',
+      role: 'assistant',
+      content: 'request cancelled',
+      status: 'cancelled',
+      cancelled: true,
+      user_turn_id: 'user-turn:session-1:round:1',
+      model_turn_id: 'model-turn:session-1:user:1:model:3',
+      turn_index: 4
+    }
+  ];
+  const snapshot = (eventId: string): ChatRuntimeEvent => ({
+    event_type: 'session_snapshot',
+    source: 'snapshot',
+    strict: false,
+    session_id: 'session-1',
+    event_id: eventId,
+    payload: { transcript },
+    messages: transcript
+  });
+
+  applyChatRuntimeEvent(projection, snapshot('refresh-1'));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'turn_cancelled',
+    event_id: 'cancel-replay-1',
+    event_seq: 10,
+    user_turn_id: 'user-turn:session-1:round:1',
+    model_turn_id: 'replayed-model-turn-1',
+    message_id: 'replayed-cancel-message-1',
+    content: 'request cancelled'
+  }));
+  applyChatRuntimeEvent(projection, snapshot('refresh-2'));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'turn_cancelled',
+    event_id: 'cancel-replay-2',
+    event_seq: 11,
+    user_turn_id: 'user-turn:session-1:round:1',
+    model_turn_id: 'replayed-model-turn-2',
+    message_id: 'replayed-cancel-message-2',
+    content: 'request cancelled'
+  }));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.deepEqual(
+    visible.map((message) => `${message.role}:${message.content}`),
+    ['user:cancel this request', 'assistant:request cancelled']
+  );
+  assert.equal(
+    visible.filter((message) => message.role === 'assistant' && message.status === 'cancelled').length,
+    1
+  );
+});
+
 test('local optimistic turn stays after hydrated historical rounds', () => {
   const projection = createChatRuntimeProjection();
   const sessionId = 'session-1';
