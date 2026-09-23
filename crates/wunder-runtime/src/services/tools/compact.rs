@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 pub(crate) fn compact_tool_spec_for_model(spec: &ToolSpec) -> ToolSpec {
     ToolSpec {
         name: spec.name.clone(),
-        title: None,
+        title: spec.title.clone(),
         description: compact_tool_description(&spec.name, &spec.description),
         input_schema: compact_schema(&spec.input_schema),
     }
@@ -111,7 +111,18 @@ fn compact_schema(value: &Value) -> Value {
                 "description",
             ] {
                 if let Some(item) = map.get(key) {
-                    output.insert(key.to_string(), compact_schema(item));
+                    let item = if key == "description" {
+                        match item {
+                            Value::String(text) => Value::String(truncate_text(
+                                &text.split_whitespace().collect::<Vec<_>>().join(" "),
+                                160,
+                            )),
+                            _ => compact_schema(item),
+                        }
+                    } else {
+                        compact_schema(item)
+                    };
+                    output.insert(key.to_string(), item);
                 }
             }
             // Unknown structural keys are retained only when they are not prose or examples.
@@ -123,13 +134,10 @@ fn compact_schema(value: &Value) -> Value {
                 }
                 output.insert(key.clone(), compact_schema(item));
             }
-            output
+            Value::Object(output)
         }
         Value::Array(items) => Value::Array(items.iter().map(compact_schema).collect()),
-        Value::String(text) => {
-            // Descriptions are useful for ambiguous fields, but long examples are not.
-            Value::String(truncate_text(&text.split_whitespace().collect::<Vec<_>>().join(" "), 160))
-        }
+        Value::String(text) => Value::String(text.clone()),
         _ => value.clone(),
     }
 }
@@ -149,6 +157,7 @@ mod tests {
     use super::compact_tool_spec_for_model;
     use crate::schemas::ToolSpec;
     use serde_json::json;
+    use std::collections::HashSet;
 
     #[test]
     fn compact_tool_keeps_required_enum_and_limits() {
@@ -180,5 +189,86 @@ mod tests {
             input_schema: json!({"type": "object", "properties": {}}),
         };
         assert!(compact_tool_spec_for_model(&spec).description.chars().count() <= 240);
+    }
+
+    #[test]
+    #[ignore = "explicit prompt budget measurement"]
+    fn write_qwen_prompt_budget_report() {
+        use crate::config::{load_config_from_path, Config};
+        use crate::i18n;
+        use crate::services::tools::catalog::{
+            collect_available_tool_names, collect_prompt_tool_specs_with_language,
+        };
+        use crate::skills::SkillRegistry;
+        use std::path::Path;
+
+        let config_path = Path::new("config/wunder.yaml");
+        let config = if config_path.exists() {
+            load_config_from_path(config_path)
+        } else {
+            Config::default()
+        };
+        i18n::configure_i18n(
+            Some(config.i18n.default_language.clone()),
+            Some(config.i18n.supported_languages.clone()),
+            Some(config.i18n.aliases.clone()),
+        );
+        let skills = SkillRegistry::default();
+        let allowed = collect_available_tool_names(&config, &skills, None);
+        let specs = collect_prompt_tool_specs_with_language(
+            &config,
+            &skills,
+            &allowed,
+            None,
+            "zh-CN",
+        );
+        let compact = specs.iter().map(compact_tool_spec_for_model).collect::<Vec<_>>();
+        let measure = |value: &serde_json::Value| {
+            let text = serde_json::to_string(value).expect("serialize");
+            serde_json::json!({
+                "bytes": text.len(),
+                "chars": text.chars().count(),
+                "approx_tokens_utf8_bytes_div_4": (text.len() as f64 / 4.0).ceil() as u64
+            })
+        };
+        let original_value = serde_json::to_value(&specs).expect("original specs");
+        let compact_value = serde_json::to_value(&compact).expect("compact specs");
+        let mut template_blocks = Vec::new();
+        for name in [
+            "role.txt",
+            "engineering.txt",
+            "inner_visible_protocol.txt",
+            "skills_protocol.txt",
+            "memory.txt",
+            "extra.txt",
+        ] {
+            let path = format!("config/prompts/zh/system/{name}");
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            template_blocks.push(serde_json::json!({
+                "name": name,
+                "bytes": text.len(),
+                "chars": text.chars().count(),
+                "approx_tokens_utf8_bytes_div_4": (text.len() as f64 / 4.0).ceil() as u64
+            }));
+        }
+        let report = serde_json::json!({
+            "model": config.llm.models.get("魔搭").and_then(|m| m.model.clone()).unwrap_or_default(),
+            "tool_call_mode": "function_call",
+            "tokenizer": "Qwen tokenizer unavailable locally; estimates use UTF-8 bytes / 4",
+            "enabled_tool_names": allowed.iter().collect::<Vec<_>>(),
+            "tool_count": specs.len(),
+            "original_tools": measure(&original_value),
+            "compact_tools": measure(&compact_value),
+            "tool_savings_bytes": original_value.to_string().len().saturating_sub(compact_value.to_string().len()),
+            "system_template_blocks": template_blocks,
+            "function_call_system_note": "Function-call mode omits tools_protocol and native tool schemas are sent in the request tools field."
+        });
+        let output = Path::new("docs/性能基线/assets/2026-09-23-qwen-prompt-budget.json");
+        if let Some(parent) = output.parent() {
+            std::fs::create_dir_all(parent).expect("report directory");
+        }
+        std::fs::write(output, serde_json::to_string_pretty(&report).expect("report json"))
+            .expect("write report");
+        let _ = HashSet::<String>::new();
     }
 }

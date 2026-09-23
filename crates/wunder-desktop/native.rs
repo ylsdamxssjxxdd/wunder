@@ -22,7 +22,7 @@ mod workspace;
 #[path = "native_profile.rs"]
 mod profile;
 pub use catalog::{AgentRecord, ToolRecord};
-pub use settings::{DesktopSettings, LanSettings, ModelEdit, ModelRecord};
+pub use settings::{DesktopSettings, LanPeerRecord, LanSettings, ModelEdit, ModelRecord};
 pub use workspace::{Directory, FileRecord};
 pub use profile::NativeProfile;
 

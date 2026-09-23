@@ -2,7 +2,7 @@
 use crate::{AgentCard, MainWindow, ModelCard, ToolCard};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{rc::Rc, sync::Arc};
-use wunder_desktop::{AgentRecord, DesktopSettings, ModelEdit, NativeDesktop, ToolRecord, NativeProfile};
+use wunder_desktop::{AgentRecord, DesktopSettings, LanPeerRecord, ModelEdit, NativeDesktop, ToolRecord, NativeProfile};
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     crate::entity_state::bind_selection(app);
@@ -327,9 +327,9 @@ fn to_agent_card(agent: AgentRecord) -> AgentCard {
 
 fn avatar_tone(color: &str) -> i32 {
     match color.trim().to_ascii_lowercase().as_str() {
+        "#f97316" | "#ef4444" | "#ec4899" | "#8b5cf6" => 1,
         "#3b82f6" => 3,
         "#10b981" => 2,
-        "#8b5cf6" | "#ec4899" => 1,
         _ => 1,
     }
 }
@@ -351,6 +351,7 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     app.set_lan_peer_id(settings.lan.peer_id.into());
     app.set_lan_endpoint(format!("{}:{}", settings.lan.listen_host, settings.lan.listen_port).into());
     app.set_lan_peer_count(settings.lan.peer_count as i32);
+    app.set_lan_peers(model_from(settings.lan.peers.into_iter().map(to_lan_peer_card).collect()));
     app.set_models(model_from(
         settings
             .models
@@ -366,6 +367,10 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
             .collect(),
     ));
     crate::entity_state::restore_model(app, &selected);
+}
+
+fn to_lan_peer_card(peer: LanPeerRecord) -> crate::LanPeerCard {
+    crate::LanPeerCard { peer_id: peer.peer_id.into(), display_name: peer.display_name.into(), address: format!("{}:{}", peer.lan_ip, peer.listen_port).into() }
 }
 
 fn select_model_key(app: &MainWindow, key: &str) {

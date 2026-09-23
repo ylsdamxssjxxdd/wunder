@@ -1,4 +1,4 @@
-import { Theme, Conversation, TextBlock, ChatMessage, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard } from "theme.slint";
+import { Theme, Conversation, TextBlock, ChatMessage, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard } from "theme.slint";
 import { Action, RailButton, Avatar, SearchField, FormField } from "components.slint";
 import { Composer } from "composer.slint";
 import { MessageRow } from "message.slint";
@@ -6,7 +6,7 @@ import { WorkDock } from "dock.slint";
 import { AgentsPage, ToolsPage, SettingsPage } from "entity_pages.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
-export { Theme, Conversation, TextBlock, ChatMessage, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard }
+export { Theme, Conversation, TextBlock, ChatMessage, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard }
 
 export component MainWindow inherits Window {
     title: "心舰 · 蜂巢（Slint 原型）";
@@ -91,6 +91,7 @@ export component MainWindow inherits Window {
     in-out property <string> lan-peer-id;
     in-out property <string> lan-endpoint;
     in-out property <int> lan-peer-count: 0;
+    in-out property <[LanPeerCard]> lan-peers: [];
     in-out property <string> selected-model-key;
     in-out property <string> selected-model-provider;
     in-out property <string> selected-model-name;
@@ -266,7 +267,7 @@ export component MainWindow inherits Window {
                         height: message-row.height + 14px;
                         message-row := MessageRow {
                             x: 22px; y: 14px; width: parent.width - 44px;
-                            message: message; copy => { root.copy-message(index); } author: root.heading;
+                            message: message; copy => { root.copy-message(index); } author: root.selected-agent-name == "" ? root.heading : root.selected-agent-name;
                             avatar: @image-url("../assets/avatar.png");
                         }
                     }
@@ -336,7 +337,7 @@ export component MainWindow inherits Window {
         loading: root.settings-loading; saving: root.saving;
         models: root.models; selected-model: root.selected-model;
         workspace-root <=> root.workspace-root; language <=> root.runtime-language;
-        lan-enabled <=> root.lan-enabled; lan-name <=> root.lan-name; lan-peer-id: root.lan-peer-id; lan-endpoint: root.lan-endpoint; lan-peer-count: root.lan-peer-count;
+        lan-enabled <=> root.lan-enabled; lan-name <=> root.lan-name; lan-peer-id: root.lan-peer-id; lan-endpoint: root.lan-endpoint; lan-peer-count: root.lan-peer-count; lan-peers: root.lan-peers;
         save-runtime(workspace, language) => { root.save-runtime(workspace, language); }
         save-lan(enabled, name) => { root.save-lan(enabled, name); }
         selected-key: root.selected-model-key; selected-provider: root.selected-model-provider;
@@ -357,7 +358,7 @@ export component MainWindow inherits Window {
                 for item in [{label: "会话总数", value: root.profile.sessions}, {label: "近 7 天", value: root.profile.sessions-last-7d}, {label: "工具调用", value: root.profile.tool-calls}, {label: "智能体", value: root.profile.agents}, {label: "Token 使用", value: root.profile.tokens}] : Rectangle { width: 150px; height: 92px; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 12px; Text { height: 18px; text: item.label; color: Theme.muted; font-size: 11px; } Text { height: 34px; text: item.value; color: Theme.text; font-size: 24px; font-weight: 700; } } }
                 Rectangle { horizontal-stretch: 1; }
             }
-            Rectangle { width: parent.width - 40px; height: 176px; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 16px; spacing: 6px; Text { height: 20px; text: "账户信息"; color: Theme.text; font-size: 14px; font-weight: 600; } Text { height: 18px; text: "邮箱：" + root.profile.email; color: Theme.muted; font-size: 12px; } Text { height: 18px; text: "单位：" + root.profile.unit; color: Theme.muted; font-size: 12px; } Text { height: 18px; text: "最近活跃：" + root.profile.last-active; color: Theme.muted; font-size: 12px; } HorizontalLayout { height: 28px; spacing: 8px; Text { width: 48px; text: "头像"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } for color in ["#3b82f6", "#10b981", "#f97316", "#8b5cf6", "#ec4899", "#64748b"] : Rectangle { width: 20px; height: 20px; border-radius: 10px; background: color == "#3b82f6" ? #3b82f6 : color == "#10b981" ? #10b981 : color == "#f97316" ? #f97316 : color == "#8b5cf6" ? #8b5cf6 : color == "#ec4899" ? #ec4899 : #64748b; border-width: root.profile.avatar-color == color ? 2px : 0px; border-color: Theme.text; TouchArea { clicked => { root.save-profile-avatar(root.profile.avatar-glyph, color); } } } Rectangle { horizontal-stretch: 1; } } } }
+            Rectangle { width: parent.width - 40px; height: 176px; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 16px; spacing: 6px; Text { height: 20px; text: "账户信息"; color: Theme.text; font-size: 14px; font-weight: 600; } Text { height: 18px; text: "邮箱：" + root.profile.email; color: Theme.muted; font-size: 12px; } Text { height: 18px; text: "单位：" + root.profile.unit; color: Theme.muted; font-size: 12px; } Text { height: 18px; text: "最近活跃：" + root.profile.last-active; color: Theme.muted; font-size: 12px; } HorizontalLayout { height: 28px; spacing: 8px; Text { width: 48px; text: "头像"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } for color in ["#3b82f6", "#10b981", "#f97316", "#8b5cf6", "#ec4899", "#64748b"] : Rectangle { width: 20px; height: 20px; border-radius: 10px; background: color == "#3b82f6" ? #3b82f6 : color == "#10b981" ? #10b981 : color == "#f97316" ? #f97316 : color == "#8b5cf6" ? #8b5cf6 : color == "#ec4899" ? #ec4899 : #64748b; border-width: root.profile.avatar-color == color ? 2px : 0px; border-color: Theme.text; TouchArea { clicked => { root.save-profile-avatar(root.profile.avatar-icon, color); } } } Rectangle { horizontal-stretch: 1; } } } }
         }
     }
 

@@ -33,6 +33,15 @@ pub struct LanSettings {
     pub listen_port: u16,
     pub discovery_port: u16,
     pub peer_count: usize,
+    pub peers: Vec<LanPeerRecord>,
+}
+
+#[derive(Clone, Debug)]
+pub struct LanPeerRecord {
+    pub peer_id: String,
+    pub display_name: String,
+    pub lan_ip: String,
+    pub listen_port: u16,
 }
 
 pub struct ModelEdit<'a> {
@@ -51,11 +60,7 @@ impl NativeDesktop {
             .lock()
             .map_err(|_| anyhow!("配置锁不可用"))?;
         let config = self.runtime.block_on(self.state().config_store.get());
-        let lan = self.runtime.block_on(async {
-            let settings = wunder_server::desktop_lan::manager().settings().await;
-            let peers = wunder_server::desktop_lan::manager().list_peers().await;
-            LanSettings { enabled: settings.enabled, peer_id: settings.peer_id, display_name: settings.display_name, listen_host: settings.listen_host, listen_port: settings.listen_port, discovery_port: settings.discovery_port, peer_count: peers.len() }
-        });
+        let lan = self.read_lan_settings();
         Ok(project(&config, lan))
     }
 
@@ -69,7 +74,35 @@ impl NativeDesktop {
         save_desktop_settings(&self.desktop.settings_path, &settings)?;
         self.runtime.block_on(wunder_server::desktop_lan::manager().apply_settings(settings.lan_mesh.clone()));
         let config = self.runtime.block_on(self.state().config_store.get());
-        Ok(project(&config, LanSettings { enabled: settings.lan_mesh.enabled, peer_id: settings.lan_mesh.peer_id, display_name: settings.lan_mesh.display_name, listen_host: settings.lan_mesh.listen_host, listen_port: settings.lan_mesh.listen_port, discovery_port: settings.lan_mesh.discovery_port, peer_count: 0 }))
+        Ok(project(&config, self.read_lan_settings()))
+    }
+
+    fn read_lan_settings(&self) -> LanSettings {
+        self.runtime.block_on(async {
+            let manager = wunder_server::desktop_lan::manager();
+            let settings = manager.settings().await;
+            let peers = manager
+                .list_peers()
+                .await
+                .into_iter()
+                .map(|peer| LanPeerRecord {
+                    peer_id: peer.peer_id,
+                    display_name: peer.display_name,
+                    lan_ip: peer.lan_ip,
+                    listen_port: peer.listen_port,
+                })
+                .collect::<Vec<_>>();
+            LanSettings {
+                enabled: settings.enabled,
+                peer_id: settings.peer_id,
+                display_name: settings.display_name,
+                listen_host: settings.listen_host,
+                listen_port: settings.listen_port,
+                discovery_port: settings.discovery_port,
+                peer_count: peers.len(),
+                peers,
+            }
+        })
     }
 
     pub fn save_model(&self, edit: ModelEdit<'_>) -> Result<DesktopSettings> {
@@ -211,11 +244,7 @@ impl NativeDesktop {
         self.state()
             .workspace
             .set_container_roots(config.workspace.container_roots.clone());
-        let lan = self.runtime.block_on(async {
-            let settings = wunder_server::desktop_lan::manager().settings().await;
-            let peers = wunder_server::desktop_lan::manager().list_peers().await;
-            LanSettings { enabled: settings.enabled, peer_id: settings.peer_id, display_name: settings.display_name, listen_host: settings.listen_host, listen_port: settings.listen_port, discovery_port: settings.discovery_port, peer_count: peers.len() }
-        });
+        let lan = self.read_lan_settings();
         Ok(project(&config, lan))
     }
 }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::tools::build_responses_freeform_tool;
+use crate::tools::{build_responses_freeform_tool, compact_tool_spec_for_model};
 
 const MAX_FUNCTION_NAME_LEN: usize = 64;
 const THREAD_AGENTS_MD_FILE_NAME: &str = "AGENTS.md";
@@ -134,6 +134,8 @@ impl Orchestrator {
         let ws_placeholder = "/workspaces/{user_id}/";
         let ws_actual = format!("/workspaces/{workspace_id}/");
         for spec in specs {
+            // Keep full catalog text for administration; bound only model input.
+            let spec = compact_tool_spec_for_model(&spec);
             let runtime_name = name_map
                 .get(&spec.name)
                 .cloned()

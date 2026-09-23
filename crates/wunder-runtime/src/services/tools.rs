@@ -95,6 +95,7 @@ pub(crate) use freeform::{
     build_responses_freeform_tool, extract_freeform_tool_input, is_freeform_tool_name,
     render_prompt_tool_spec,
 };
+pub(crate) use compact::compact_tool_spec_for_model;
 pub(crate) use lsp_tool::touch_lsp_file;
 pub(crate) use mcp_pack::{
     runtime_name as mcp_pack_runtime_name, schema as mcp_pack_schema,
