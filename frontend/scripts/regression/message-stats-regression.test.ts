@@ -127,7 +127,7 @@ test('normalized message stats retain the visible reply decode speed', async () 
 
   assert.equal(stats?.visible_decode_tokens, 84);
   assert.equal(stats?.visible_decode_duration_s, 1.2);
-  assert.equal(findEntryValue(entries, 'Speed'), '70.00 token/s');
+  assert.equal(findEntryValue(entries, 'Speed'), '70.0 token/s');
 });
 
 test('message stats derive visible reply speed from stream timing when explicit speed is absent', () => {
@@ -139,7 +139,7 @@ test('message stats derive visible reply speed from stream timing when explicit 
       stream_timing: { decode_ms: 722 }
     }
   }, createTranslator());
-  assert.equal(findEntryValue(entries, 'Speed'), '113.57 token/s');
+  assert.equal(findEntryValue(entries, 'Speed'), '113.6 token/s');
 });
 
 test('message stats render a legal zero tool count as zero', () => {
@@ -181,7 +181,7 @@ test('message stats keeps persisted aggregate duration after history refresh', (
     t
   );
 
-  assert.equal(findEntryValue(entries, 'Duration'), '3.00 s');
+  assert.equal(findEntryValue(entries, 'Duration'), '3.0s');
 });
 
 test('message stats context ignores final usage and round usage totals without occupancy', () => {
@@ -1001,7 +1001,7 @@ test('message stats show the explicit visible reply speed without frontend clamp
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Speed'), '1800.00 token/s');
+  assert.equal(findEntryValue(entries, 'Speed'), '1800.0 token/s');
 });
 
 test('message stats prefer the explicit visible reply speed for tool turns', () => {
@@ -1024,7 +1024,7 @@ test('message stats prefer the explicit visible reply speed for tool turns', () 
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Speed'), '312.50 token/s');
+  assert.equal(findEntryValue(entries, 'Speed'), '312.5 token/s');
 });
 
 test('message stats hides tool-turn speed when no reliable average exists', () => {

@@ -145,11 +145,15 @@ fn agent_record(
         model: record.model_name.unwrap_or_else(|| default_model.into()),
         status: record.status,
         icon_name: {
-            let (name, _) = wunder_server::worker_card_settings::normalize_preset_icon_parts(record.icon.as_deref());
+            let (name, _) = wunder_server::worker_card_settings::normalize_preset_icon_parts(
+                record.icon.as_deref(),
+            );
             name
         },
         icon_color: {
-            let (_, color) = wunder_server::worker_card_settings::normalize_preset_icon_parts(record.icon.as_deref());
+            let (_, color) = wunder_server::worker_card_settings::normalize_preset_icon_parts(
+                record.icon.as_deref(),
+            );
             color
         },
         icon_glyph: icon_glyph(record.icon.as_deref()),

@@ -11,14 +11,24 @@ use serde_json::{Map, Value};
 pub(crate) fn compact_tool_spec_for_model(spec: &ToolSpec) -> ToolSpec {
     ToolSpec {
         name: spec.name.clone(),
-        title: spec.title.clone(),
+        title: None,
         description: compact_tool_description(&spec.name, &spec.description),
         input_schema: compact_schema(&spec.input_schema),
     }
 }
 
+/// Compact all model-facing specs while preserving names and validation keys.
+pub(crate) fn compact_tool_specs_for_model(specs: &[ToolSpec]) -> Vec<ToolSpec> {
+    specs.iter().map(compact_tool_spec_for_model).collect()
+}
+
 fn compact_tool_description(name: &str, original: &str) -> String {
-    let canonical = name.trim().to_ascii_lowercase();
+    let canonical = name
+        .trim()
+        .rsplit('@')
+        .next()
+        .unwrap_or(name)
+        .to_ascii_lowercase();
     let fixed = match canonical.as_str() {
         "最终回复" | "final_response" => Some("提交最终回复；content 必填。"),
         "定时任务" | "schedule_task" => Some("管理定时任务；action 必填。"),
@@ -56,11 +66,20 @@ fn compact_tool_description(name: &str, original: &str) -> String {
         "用户世界工具" | "user_world" => Some("查询或联系用户；动作和权限由 action 决定。"),
         "频道工具" | "channel" => Some("查询或发送渠道消息；发送动作需明确目标。"),
         "a2ui" => Some("创建或更新界面；消息必须符合 A2UI 结构。"),
-        _ if canonical.starts_with("db_query") => {
+        _ if canonical.contains("数据库导出")
+            || canonical.starts_with("db_export")
+            || (original.contains("导出") && original.contains("SQL")) =>
+        {
+            Some("导出绑定范围内的只读 SQL 结果；路径受限。")
+        }
+        _ if canonical.contains("数据库查询") || original.contains("只读 SQL") => {
             Some("执行绑定范围内的只读 SQL；结果限量，超出需分页。")
         }
-        _ if canonical.starts_with("db_export") => {
-            Some("导出绑定范围内的只读 SQL 结果；默认拒绝 LIMIT/OFFSET，路径受限。")
+        _ if canonical.contains("ppt") || canonical.contains("演示文稿") => {
+            Some("创建、读取、修改或删除 PPTX；内容和路径受限。")
+        }
+        _ if canonical.starts_with("db_query") => {
+            Some("执行绑定范围内的只读 SQL；结果限量，超出需分页。")
         }
         _ if canonical.starts_with("kb_query") || canonical.starts_with("knowledge") => {
             Some("检索知识库并返回紧凑片段；query 或 keywords 必填。")
@@ -90,6 +109,9 @@ fn compact_schema(value: &Value) -> Value {
                 "properties",
                 "required",
                 "items",
+                "$ref",
+                "$defs",
+                "definitions",
                 "additionalProperties",
                 "enum",
                 "const",
@@ -104,35 +126,21 @@ fn compact_schema(value: &Value) -> Value {
                 "maxLength",
                 "pattern",
                 "format",
+                "prefixItems",
+                "contains",
+                "propertyNames",
+                "dependentRequired",
+                "minProperties",
+                "maxProperties",
+                "uniqueItems",
                 "anyOf",
                 "oneOf",
                 "allOf",
                 "not",
-                "description",
             ] {
                 if let Some(item) = map.get(key) {
-                    let item = if key == "description" {
-                        match item {
-                            Value::String(text) => Value::String(truncate_text(
-                                &text.split_whitespace().collect::<Vec<_>>().join(" "),
-                                160,
-                            )),
-                            _ => compact_schema(item),
-                        }
-                    } else {
-                        compact_schema(item)
-                    };
-                    output.insert(key.to_string(), item);
+                    output.insert(key.to_string(), compact_schema(item));
                 }
-            }
-            // Unknown structural keys are retained only when they are not prose or examples.
-            for (key, item) in map {
-                if output.contains_key(key)
-                    || matches!(key.as_str(), "title" | "$schema" | "examples" | "example")
-                {
-                    continue;
-                }
-                output.insert(key.clone(), compact_schema(item));
             }
             Value::Object(output)
         }
@@ -147,7 +155,10 @@ fn truncate_text(text: &str, max_chars: usize) -> String {
     if text.chars().count() <= max_chars {
         return text.to_string();
     }
-    let mut result = text.chars().take(max_chars.saturating_sub(1)).collect::<String>();
+    let mut result = text
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
     result.push('…');
     result
 }
@@ -157,12 +168,11 @@ mod tests {
     use super::compact_tool_spec_for_model;
     use crate::schemas::ToolSpec;
     use serde_json::json;
-    use std::collections::HashSet;
 
     #[test]
     fn compact_tool_keeps_required_enum_and_limits() {
         let spec = ToolSpec {
-            name: "db_export_company_all_personnel".to_string(),
+            name: "db_export".to_string(),
             title: Some("long title".to_string()),
             description: "a very long description with examples".to_string(),
             input_schema: json!({
@@ -176,7 +186,10 @@ mod tests {
         assert!(compact.input_schema.get("title").is_none());
         assert!(compact.input_schema.get("examples").is_none());
         assert_eq!(compact.input_schema["required"], json!(["sql"]));
-        assert_eq!(compact.input_schema["properties"]["format"]["enum"], json!(["csv", "xlsx"]));
+        assert_eq!(
+            compact.input_schema["properties"]["format"]["enum"],
+            json!(["csv", "xlsx"])
+        );
         assert_eq!(compact.input_schema["additionalProperties"], json!(false));
     }
 
@@ -188,7 +201,45 @@ mod tests {
             description: "x ".repeat(500),
             input_schema: json!({"type": "object", "properties": {}}),
         };
-        assert!(compact_tool_spec_for_model(&spec).description.chars().count() <= 240);
+        assert!(
+            compact_tool_spec_for_model(&spec)
+                .description
+                .chars()
+                .count()
+                <= 240
+        );
+    }
+
+    #[test]
+    fn compact_schema_keeps_reference_and_subagent_lifecycle_constraints() {
+        let spec = ToolSpec {
+            name: "subagent_control".to_string(),
+            title: Some("ignored".to_string()),
+            description: "long description".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "$defs": {"target": {"type": "string"}},
+                "properties": {
+                    "action": {"type": "string", "enum": ["send", "resume", "wait", "cancel"]},
+                    "target": {"$ref": "#/$defs/target"}
+                },
+                "required": ["action"],
+                "additionalProperties": false
+            }),
+        };
+        let compact = compact_tool_spec_for_model(&spec);
+        assert!(compact.description.contains("send"));
+        assert_eq!(compact.title, None);
+        assert_eq!(compact.input_schema["required"], json!(["action"]));
+        assert_eq!(
+            compact.input_schema["properties"]["action"]["enum"],
+            json!(["send", "resume", "wait", "cancel"])
+        );
+        assert_eq!(
+            compact.input_schema["properties"]["target"]["$ref"],
+            "#/$defs/target"
+        );
+        assert_eq!(compact.input_schema["$defs"]["target"]["type"], "string");
     }
 
     #[test]
@@ -202,9 +253,20 @@ mod tests {
         use crate::skills::SkillRegistry;
         use std::path::Path;
 
-        let config_path = Path::new("config/wunder.yaml");
+        let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_root
+            .parent()
+            .and_then(Path::parent)
+            .unwrap_or(manifest_root)
+            .to_path_buf();
+        let repo_root = if repo_root.join("config/wunder.yaml").exists() {
+            repo_root
+        } else {
+            manifest_root.to_path_buf()
+        };
+        let config_path = repo_root.join("config/wunder.yaml");
         let config = if config_path.exists() {
-            load_config_from_path(config_path)
+            load_config_from_path(&config_path)
         } else {
             Config::default()
         };
@@ -215,14 +277,12 @@ mod tests {
         );
         let skills = SkillRegistry::default();
         let allowed = collect_available_tool_names(&config, &skills, None);
-        let specs = collect_prompt_tool_specs_with_language(
-            &config,
-            &skills,
-            &allowed,
-            None,
-            "zh-CN",
-        );
-        let compact = specs.iter().map(compact_tool_spec_for_model).collect::<Vec<_>>();
+        let specs =
+            collect_prompt_tool_specs_with_language(&config, &skills, &allowed, None, "zh-CN");
+        let compact = specs
+            .iter()
+            .map(compact_tool_spec_for_model)
+            .collect::<Vec<_>>();
         let measure = |value: &serde_json::Value| {
             let text = serde_json::to_string(value).expect("serialize");
             serde_json::json!({
@@ -233,6 +293,19 @@ mod tests {
         };
         let original_value = serde_json::to_value(&specs).expect("original specs");
         let compact_value = serde_json::to_value(&compact).expect("compact specs");
+        let per_tool = compact
+            .iter()
+            .enumerate()
+            .map(|(index, spec)| {
+                let value = serde_json::to_value(spec).expect("tool spec");
+                let text = serde_json::to_string(&value).expect("tool json");
+                serde_json::json!({
+                    "index": index,
+                    "bytes": text.len(),
+                    "approx_tokens_utf8_bytes_div_4": (text.len() as f64 / 4.0).ceil() as u64
+                })
+            })
+            .collect::<Vec<_>>();
         let mut template_blocks = Vec::new();
         for name in [
             "role.txt",
@@ -242,7 +315,7 @@ mod tests {
             "memory.txt",
             "extra.txt",
         ] {
-            let path = format!("config/prompts/zh/system/{name}");
+            let path = repo_root.join("config/prompts/zh/system").join(name);
             let text = std::fs::read_to_string(&path).unwrap_or_default();
             template_blocks.push(serde_json::json!({
                 "name": name,
@@ -253,22 +326,27 @@ mod tests {
         }
         let report = serde_json::json!({
             "model": config.llm.models.get("魔搭").and_then(|m| m.model.clone()).unwrap_or_default(),
+            "config_exists": config_path.exists(),
+            "builtin_enabled_count": config.tools.builtin.enabled.len(),
+            "mcp_server_count": config.mcp.servers.len(),
             "tool_call_mode": "function_call",
             "tokenizer": "Qwen tokenizer unavailable locally; estimates use UTF-8 bytes / 4",
-            "enabled_tool_names": allowed.iter().collect::<Vec<_>>(),
             "tool_count": specs.len(),
             "original_tools": measure(&original_value),
             "compact_tools": measure(&compact_value),
+            "compact_tools_by_tool": per_tool,
             "tool_savings_bytes": original_value.to_string().len().saturating_sub(compact_value.to_string().len()),
             "system_template_blocks": template_blocks,
             "function_call_system_note": "Function-call mode omits tools_protocol and native tool schemas are sent in the request tools field."
         });
-        let output = Path::new("docs/性能基线/assets/2026-09-23-qwen-prompt-budget.json");
+        let output = repo_root.join("docs/性能基线/assets/2026-09-23-qwen-prompt-budget.json");
         if let Some(parent) = output.parent() {
             std::fs::create_dir_all(parent).expect("report directory");
         }
-        std::fs::write(output, serde_json::to_string_pretty(&report).expect("report json"))
-            .expect("write report");
-        let _ = HashSet::<String>::new();
+        std::fs::write(
+            output,
+            serde_json::to_string_pretty(&report).expect("report json"),
+        )
+        .expect("write report");
     }
 }

@@ -688,6 +688,8 @@ fn persisted_message_stats_include_round_usage_and_decode_speed() {
         Some(80),
         &speed,
         3.0,
+        0,
+        0,
     );
 
     assert_eq!(stats["round_usage"]["total_tokens"], json!(50));

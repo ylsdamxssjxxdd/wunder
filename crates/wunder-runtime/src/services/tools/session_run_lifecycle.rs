@@ -720,7 +720,7 @@ pub(crate) fn cleanup_session(
     workspace.purge_session_data(user_id, session_id);
     let _ = storage.delete_chat_session(user_id, session_id);
     if let Some(monitor) = monitor {
-        let _ = monitor.purge_session(session_id);
+        let _ = monitor.forget_session(session_id);
     }
 }
 

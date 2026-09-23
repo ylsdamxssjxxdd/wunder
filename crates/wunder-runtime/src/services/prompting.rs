@@ -13,7 +13,7 @@ use crate::skills::{SkillRegistry, SkillSpec};
 use crate::storage::USER_PRIVATE_CONTAINER_ID;
 use crate::tools::{
     builtin_aliases, collect_available_tool_names, collect_prompt_tool_specs,
-    compact_tool_spec_for_model, render_prompt_tool_spec, resolve_tool_name,
+    compact_tool_specs_for_model, render_prompt_tool_spec, resolve_tool_name,
 };
 use crate::user_tools::UserToolBindings;
 use crate::workspace::WorkspaceManager;
@@ -271,6 +271,7 @@ impl PromptComposer {
             } else {
                 tool_specs
             };
+            let tool_specs = compact_tool_specs_for_model(&tool_specs);
             let workdir_display = if is_local_runtime_mode(&config.server.mode) {
                 absolute_path_str(workdir)
             } else {
@@ -588,10 +589,7 @@ fn build_system_prompt_skeleton(
         let tools_text = if !tools.is_empty() {
             tools
                 .iter()
-                .map(|spec| {
-                    let compact = compact_tool_spec_for_model(spec);
-                    render_tool_spec(&compact, tool_call_mode == ToolCallMode::FreeformCall)
-                })
+                .map(|spec| render_tool_spec(spec, tool_call_mode == ToolCallMode::FreeformCall))
                 .collect::<Vec<_>>()
                 .join("\n")
         } else {

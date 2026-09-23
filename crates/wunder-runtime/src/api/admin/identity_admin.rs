@@ -703,10 +703,7 @@ async fn admin_user_accounts_list(
                 .as_ref()
                 .and_then(|unit_id| unit_map.get(unit_id));
             let profile = UserStore::to_profile_with_unit(&user, unit);
-            let quota_status = UserStore::effective_quota_status(
-                &user,
-                Some(today.as_str()),
-            );
+            let quota_status = UserStore::effective_quota_status(&user, Some(today.as_str()));
             let active_count = active_map.get(&profile.id).copied().unwrap_or(0);
             let (presence_online, presence_last_seen) = presence_map
                 .get(profile.id.as_str())
@@ -874,10 +871,16 @@ async fn admin_user_accounts_update(
         record.roles = normalize_user_roles(roles);
     }
     if payload.quota_balance.is_some_and(|balance| balance < 0) {
-        return Err(error_response(StatusCode::BAD_REQUEST, "quota balance must be nonnegative".to_string()));
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "quota balance must be nonnegative".to_string(),
+        ));
     }
     if payload.quota_balance.is_some() && UserStore::is_admin(&record) {
-        return Err(error_response(StatusCode::BAD_REQUEST, "admin users do not use quota balance limits".to_string()));
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "admin users do not use quota balance limits".to_string(),
+        ));
     }
     record.updated_at = now_ts();
     state
@@ -885,10 +888,19 @@ async fn admin_user_accounts_update(
         .update_user(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if let Some(balance) = payload.quota_balance {
-        state.storage.set_user_quota_balance(cleaned, &UserStore::today_string(), UserStore::default_daily_quota(), balance)
+        state
+            .storage
+            .set_user_quota_balance(
+                cleaned,
+                &UserStore::today_string(),
+                UserStore::default_daily_quota(),
+                balance,
+            )
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     }
-    let record = state.user_store.get_user_by_id(cleaned)
+    let record = state
+        .user_store
+        .get_user_by_id(cleaned)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found")))?;
     if let Err(err) = state.inner_visible.sync_user_state(&record.user_id).await {
@@ -991,11 +1003,18 @@ async fn admin_user_accounts_quota_adjustment(
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         }
         "deduct" => {
-            let status = state.storage.consume_user_quota(cleaned, today.as_str(), daily_grant, amount)
+            let status = state
+                .storage
+                .consume_user_quota(cleaned, today.as_str(), daily_grant, amount)
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-                .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found")))?;
+                .ok_or_else(|| {
+                    error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found"))
+                })?;
             if !status.allowed {
-                return Err(error_response(StatusCode::BAD_REQUEST, i18n::t("error.user_quota_insufficient")));
+                return Err(error_response(
+                    StatusCode::BAD_REQUEST,
+                    i18n::t("error.user_quota_insufficient"),
+                ));
             }
         }
         _ => {
@@ -1311,10 +1330,15 @@ async fn admin_user_accounts_delete(
     let _ = state.user_store.set_user_tool_access(cleaned, None);
     let _ = state.user_store.set_user_agent_access(cleaned, None, None);
     let monitor_result = state.monitor.purge_user_sessions(cleaned);
-    let purge_result = state.workspace.purge_user_data(cleaned)
+    let purge_result = state
+        .workspace
+        .purge_user_data_with_logs(cleaned)
         .map_err(|err| {
             tracing::warn!(error = %err, "user data purge failed");
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, i18n::t("error.internal_error"))
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                i18n::t("error.internal_error"),
+            )
         })?;
     let tool_root = state.user_tool_store.get_user_dir(cleaned);
     let tool_dir_deleted = std::fs::remove_dir_all(&tool_root).is_ok();
@@ -1495,10 +1519,15 @@ async fn admin_user_delete(
         ));
     }
     let monitor_result = state.monitor.purge_user_sessions(cleaned);
-    let purge_result = state.workspace.purge_user_data(cleaned)
+    let purge_result = state
+        .workspace
+        .purge_user_data_with_logs(cleaned)
         .map_err(|err| {
             tracing::warn!(error = %err, "user data purge failed");
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, i18n::t("error.internal_error"))
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                i18n::t("error.internal_error"),
+            )
         })?;
     Ok(Json(json!({
         "ok": true,

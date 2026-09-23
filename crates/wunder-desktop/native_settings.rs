@@ -65,14 +65,21 @@ impl NativeDesktop {
     }
 
     pub fn save_lan(&self, enabled: bool, display_name: &str) -> Result<DesktopSettings> {
-        if display_name.chars().any(char::is_control) || display_name.chars().count() > 80 { bail!("内网名称无效"); }
-        let _guard = self.settings_lock.lock().map_err(|_| anyhow!("配置锁不可用"))?;
+        if display_name.chars().any(char::is_control) || display_name.chars().count() > 80 {
+            bail!("内网名称无效");
+        }
+        let _guard = self
+            .settings_lock
+            .lock()
+            .map_err(|_| anyhow!("配置锁不可用"))?;
         let mut settings = load_desktop_settings(&self.desktop.settings_path)?;
         settings.lan_mesh.enabled = enabled;
         settings.lan_mesh.display_name = display_name.trim().to_string();
         settings.lan_mesh = settings.lan_mesh.normalized();
         save_desktop_settings(&self.desktop.settings_path, &settings)?;
-        self.runtime.block_on(wunder_server::desktop_lan::manager().apply_settings(settings.lan_mesh.clone()));
+        self.runtime.block_on(
+            wunder_server::desktop_lan::manager().apply_settings(settings.lan_mesh.clone()),
+        );
         let config = self.runtime.block_on(self.state().config_store.get());
         Ok(project(&config, self.read_lan_settings()))
     }

@@ -221,10 +221,11 @@ async fn admin_user_accounts_cleanup(
         let monitor_result = state.monitor.purge_user_sessions(&user_id);
         cancelled_sessions += monitor_result.get("cancelled").copied().unwrap_or(0);
         deleted_sessions += monitor_result.get("deleted").copied().unwrap_or(0);
-        let purge_result = match state.workspace.purge_user_data(&user_id) {
+        let purge_result = match state.workspace.purge_user_data_with_logs(&user_id) {
             Ok(result) => result,
             Err(_) => {
-                failed.push(json!({ "user_id": user_id, "error": i18n::t("error.internal_error") }));
+                failed
+                    .push(json!({ "user_id": user_id, "error": i18n::t("error.internal_error") }));
                 continue;
             }
         };
@@ -289,8 +290,15 @@ async fn admin_users_cleanup_throughput(
         cancelled_sessions += monitor_result.get("cancelled").copied().unwrap_or(0);
         deleted_sessions += monitor_result.get("deleted").copied().unwrap_or(0);
         deleted_storage += monitor_result.get("deleted_storage").copied().unwrap_or(0);
-        let purge_result = state.workspace.purge_user_data(user_id)
-            .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, i18n::t("error.internal_error")))?;
+        let purge_result = state
+            .workspace
+            .purge_user_data_with_logs(user_id)
+            .map_err(|_| {
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    i18n::t("error.internal_error"),
+                )
+            })?;
         deleted_chat_records += purge_result.chat_records;
         deleted_tool_records += purge_result.tool_records;
         if purge_result.workspace_deleted {

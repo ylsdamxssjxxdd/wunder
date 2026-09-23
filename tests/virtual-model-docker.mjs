@@ -24,7 +24,7 @@ async function save() {
 async function benchmark() {
   let started;
   for(let attempt=0;attempt<50;attempt++) {
-    started = await api("/admin/throughput/start",{model_name:modelName,input_tokens:1024,output_tokens:1024});
+    started = await api("/admin/throughput/start",{model_name:modelName,concurrency:2,input_tokens:1024,output_tokens:1024});
     if(started.response.status !== 409) break;
     await new Promise(resolve=>setTimeout(resolve,100));
   }
@@ -95,7 +95,7 @@ try {
 
   const valid = await benchmark();
   assert.equal(valid.status,"finished");
-  assert.deepEqual([valid.metrics.output_tokens,valid.metrics.reasoning_tokens,valid.metrics.target_reached],[1024,0,true]);
+  assert.deepEqual([valid.config.concurrency,valid.metrics.output_tokens,valid.metrics.reasoning_tokens,valid.metrics.target_reached],[2,2048,0,true]);
   assert.ok(Math.abs(valid.metrics.decode_tps-200)<10);
   model.max_output = 512;
   await save();

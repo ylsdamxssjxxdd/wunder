@@ -1,5 +1,7 @@
 //! Transport-independent edits for a user's agent directory.
-use crate::services::{default_agent_protocol, default_agent_sync, user_agent_presets, worker_card_settings};
+use crate::services::{
+    default_agent_protocol, default_agent_sync, user_agent_presets, worker_card_settings,
+};
 use crate::{state::AppState, storage::UserAgentRecord, user_access};
 use anyhow::{anyhow, bail, Result};
 

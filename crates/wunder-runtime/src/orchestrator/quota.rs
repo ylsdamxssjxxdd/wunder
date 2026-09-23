@@ -38,8 +38,10 @@ impl Orchestrator {
                 }
                 // Hidden summaries and adapter fallbacks must update the same thread projection.
                 let session_quota_used = monitor.record_quota_consumption(emitter.session_id(), 1);
+                let turn_quota_used = emitter.record_quota_consumption(1);
                 let mut payload = json!({
                     "consumed": 1,
+                    "turn_quota_used": turn_quota_used,
                     "session_quota_used": session_quota_used,
                     "quota_balance": status.balance,
                     "quota_granted_total": status.granted_total,

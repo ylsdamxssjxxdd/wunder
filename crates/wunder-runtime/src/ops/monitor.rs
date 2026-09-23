@@ -80,7 +80,6 @@ impl MonitorLogProfile {
             Self::Normal
         }
     }
-
 }
 
 #[derive(Debug, Clone)]
@@ -628,8 +627,12 @@ impl SessionRecord {
             .and_then(Value::as_i64)
             .into_iter()
             .chain(
-                events.iter().filter(|event| event.event_type == "quota_usage")
-                    .filter_map(|event| event.data.get("session_quota_used").and_then(Value::as_i64)),
+                events
+                    .iter()
+                    .filter(|event| event.event_type == "quota_usage")
+                    .filter_map(|event| {
+                        event.data.get("session_quota_used").and_then(Value::as_i64)
+                    }),
             )
             .filter(|value| *value >= 0)
             .max();
@@ -1403,7 +1406,10 @@ impl MonitorState {
         parent: &str,
     ) -> anyhow::Result<crate::services::runtime::thread::child_runs::ChildRunGuard> {
         let sessions = self.sessions.lock();
-        if sessions.get(parent).is_some_and(|record| record.cancel_requested) {
+        if sessions
+            .get(parent)
+            .is_some_and(|record| record.cancel_requested)
+        {
             anyhow::bail!("parent run was interrupted");
         }
         self.child_runs.register(session_id, parent)
@@ -1413,7 +1419,10 @@ impl MonitorState {
         self.cancel_with_source(session_id, "monitor_cancel")
     }
 
-    pub(crate) fn child_run_token(&self, session_id: &str) -> Option<tokio_util::sync::CancellationToken> {
+    pub(crate) fn child_run_token(
+        &self,
+        session_id: &str,
+    ) -> Option<tokio_util::sync::CancellationToken> {
         self.child_runs.token(session_id)
     }
 
@@ -1484,6 +1493,22 @@ impl MonitorState {
                 }
                 let deleted = self.storage.delete_monitor_record(cleaned).is_ok();
                 existed || deleted
+            },
+        )
+    }
+
+    /// Remove only the in-process projection. Durable monitor history is kept
+    /// until an administrator explicitly deletes it.
+    pub fn forget_session(&self, session_id: &str) -> bool {
+        self.run_guarded(
+            "monitor.forget_session",
+            || false,
+            || {
+                let cleaned = session_id.trim();
+                if cleaned.is_empty() {
+                    return false;
+                }
+                self.sessions.lock().remove(cleaned).is_some()
             },
         )
     }
@@ -1709,7 +1734,10 @@ impl MonitorState {
 
     /// Return bounded per-session usage summaries without exposing monitor event payloads.
     /// Hot records are read from memory; cold records fall back to the indexed monitor store.
-    pub fn session_usage_summaries(&self, session_ids: &[String]) -> HashMap<String, (i64, i64, Option<i64>)> {
+    pub fn session_usage_summaries(
+        &self,
+        session_ids: &[String],
+    ) -> HashMap<String, (i64, i64, Option<i64>)> {
         let ids = session_ids
             .iter()
             .map(|value| value.trim())
@@ -1726,7 +1754,11 @@ impl MonitorState {
                 if let Some(record) = sessions.get(*session_id) {
                     output.insert(
                         (*session_id).to_string(),
-                        (record.consumed_tokens.max(0), record.tool_calls.max(0), record.quota_used),
+                        (
+                            record.consumed_tokens.max(0),
+                            record.tool_calls.max(0),
+                            record.quota_used,
+                        ),
                     );
                 } else {
                     missing.push((*session_id).to_string());
@@ -1750,7 +1782,11 @@ impl MonitorState {
             if let Some(record) = SessionRecord::from_storage(&payload) {
                 output.insert(
                     session_id,
-                    (record.consumed_tokens.max(0), record.tool_calls.max(0), record.quota_used),
+                    (
+                        record.consumed_tokens.max(0),
+                        record.tool_calls.max(0),
+                        record.quota_used,
+                    ),
                 );
             }
         }
@@ -3802,10 +3838,7 @@ mod tests {
             .expect("user exists");
         assert_eq!(updated.experience_total, 268);
         assert_eq!(updated.quota_balance, 10);
-        assert_eq!(
-            updated.quota_granted_total,
-            10
-        );
+        assert_eq!(updated.quota_granted_total, 10);
         assert_eq!(updated.quota_used_total, 0);
         assert_eq!(
             updated.last_quota_grant_date.as_deref(),

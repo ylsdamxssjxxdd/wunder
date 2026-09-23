@@ -3,6 +3,10 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 const MAX_SAME_NON_RETRYABLE_FAILURES: u32 = 5;
+// Deterministic argument/schema failures cannot be fixed by waiting. Two
+// observations are enough for one reroute hint, without changing the budget
+// for executable failures such as syntax or permission errors.
+const MAX_SAME_ARGUMENT_FAILURES: u32 = 2;
 const MAX_SAME_RETRYABLE_FAILURES: u32 = 5;
 const MAX_SAME_TOOL_FAILURES: u32 = 5;
 const MAX_SAME_APPLY_PATCH_FAILURES: u32 = 5;
@@ -73,15 +77,18 @@ impl RetryGovernor {
             self.same_tool_failures = 1;
         }
 
-        if !fingerprint.retryable
-            && self.same_fingerprint_failures >= MAX_SAME_NON_RETRYABLE_FAILURES
-        {
+        let non_retryable_threshold = if is_argument_failure_code(&fingerprint.code) {
+            MAX_SAME_ARGUMENT_FAILURES
+        } else {
+            MAX_SAME_NON_RETRYABLE_FAILURES
+        };
+        if !fingerprint.retryable && self.same_fingerprint_failures >= non_retryable_threshold {
             return Some(RetryStopDecision {
                 reason: "same_non_retryable_failure",
                 fingerprint: fingerprint.key,
                 repeat_count: self.same_fingerprint_failures,
                 same_tool_failures: self.same_tool_failures,
-                threshold: MAX_SAME_NON_RETRYABLE_FAILURES,
+                threshold: non_retryable_threshold,
                 retryable: false,
                 error_code: fingerprint.code,
                 detail: fingerprint.detail,
@@ -146,6 +153,14 @@ impl RetryGovernor {
 
         None
     }
+}
+
+fn is_argument_failure_code(code: &str) -> bool {
+    let code = code.trim().to_ascii_uppercase();
+    code.contains("ARGS")
+        || code.contains("ARGUMENT")
+        || code.ends_with("_REQUIRED")
+        || code.ends_with("_MISSING_FIELD")
 }
 
 impl ToolFailureFingerprint {
@@ -251,8 +266,8 @@ fn normalize_detail(detail: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        RetryGovernor, ToolResultPayload, MAX_SAME_NON_RETRYABLE_FAILURES,
-        MAX_SAME_RETRYABLE_FAILURES,
+        RetryGovernor, ToolResultPayload, MAX_SAME_ARGUMENT_FAILURES,
+        MAX_SAME_NON_RETRYABLE_FAILURES, MAX_SAME_RETRYABLE_FAILURES,
     };
     use crate::tools::resolve_tool_name;
     use chrono::Utc;
@@ -280,6 +295,27 @@ mod tests {
             .expect("should stop when same non-retryable failures reach the default threshold");
         assert_eq!(stop.reason, "same_non_retryable_failure");
         assert_eq!(stop.threshold, MAX_SAME_NON_RETRYABLE_FAILURES);
+    }
+
+    #[test]
+    fn stops_on_repeated_argument_failure_after_two_observations() {
+        let mut governor = RetryGovernor::new(5);
+        let payload = ToolResultPayload {
+            ok: false,
+            data: json!({}),
+            error: "missing path".to_string(),
+            sandbox: false,
+            timestamp: Utc::now(),
+            meta: Some(json!({
+                "error_code": "TOOL_WRITE_PATH_REQUIRED",
+                "error_retryable": false
+            })),
+        };
+        assert!(governor.record_failure("write_file", &payload).is_none());
+        let stop = governor
+            .record_failure("write_file", &payload)
+            .expect("argument failures should reroute quickly");
+        assert_eq!(stop.threshold, MAX_SAME_ARGUMENT_FAILURES);
     }
 
     #[test]

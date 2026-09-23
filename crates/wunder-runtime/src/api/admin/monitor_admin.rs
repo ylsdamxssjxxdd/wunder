@@ -621,26 +621,48 @@ async fn admin_monitor_delete(
 ) -> Result<Json<Value>, Response> {
     let cleaned = session_id.trim();
     if cleaned.is_empty() {
-        return Err(error_response(StatusCode::BAD_REQUEST, i18n::t("error.param_required")));
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.param_required"),
+        ));
     }
     let session_id = cleaned.to_string();
-    let ok = crate::core::blocking::run_db("api.admin.delete_session", move || -> anyhow::Result<bool> {
-        // The durable catalog owns identity; monitor history may already be evicted.
-        let monitor_user_id = state.monitor.get_record(&session_id).and_then(|record| {
-            record.get("user_id").and_then(Value::as_str).map(str::to_string)
-        });
-        let user_id = state.storage.get_chat_session_owner(&session_id)?.or(monitor_user_id);
-        if let Some(user_id) = user_id {
-            // Never report successful deletion while the user-visible catalog survives.
-            state.user_store.delete_chat_session(&user_id, &session_id)?;
-            state.workspace.purge_session_data(&user_id, &session_id);
-            state.storage.delete_cron_jobs_by_session(&user_id, &session_id)?;
-            state.memory.delete_record(&user_id, &session_id);
-        }
-        Ok(state.monitor.purge_session(&session_id))
-    }).await.map_err(|err| {
+    let ok = crate::core::blocking::run_db(
+        "api.admin.delete_session",
+        move || -> anyhow::Result<bool> {
+            // The durable catalog owns identity; monitor history may already be evicted.
+            let monitor_user_id = state.monitor.get_record(&session_id).and_then(|record| {
+                record
+                    .get("user_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            });
+            let user_id = state
+                .storage
+                .get_chat_session_owner(&session_id)?
+                .or(monitor_user_id);
+            if let Some(user_id) = user_id {
+                // Never report successful deletion while the user-visible catalog survives.
+                state
+                    .user_store
+                    .delete_chat_session(&user_id, &session_id)?;
+                state.workspace.purge_session_data(&user_id, &session_id);
+                state.workspace.purge_session_logs(&user_id, &session_id);
+                state
+                    .storage
+                    .delete_cron_jobs_by_session(&user_id, &session_id)?;
+                state.memory.delete_record(&user_id, &session_id);
+            }
+            Ok(state.monitor.purge_session(&session_id))
+        },
+    )
+    .await
+    .map_err(|err| {
         warn!(error = %err, "admin session deletion failed");
-        error_response(StatusCode::INTERNAL_SERVER_ERROR, i18n::t("error.internal_error"))
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            i18n::t("error.internal_error"),
+        )
     })?;
     if !ok {
         return Ok(Json(json!({
@@ -680,12 +702,18 @@ async fn admin_monitor_logs_cleanup(
     }
     let monitor = state.monitor.clone();
     let deleted = crate::core::blocking::run_db("api.admin.cleanup_logs", move || {
-        monitor.delete_logs_by_time_range(start_time, end_time).map_err(anyhow::Error::msg)
-    }).await
-        .map_err(|err| {
-            warn!(error = %err, "admin log cleanup failed");
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, i18n::t("error.internal_error"))
-        })?;
+        monitor
+            .delete_logs_by_time_range(start_time, end_time)
+            .map_err(anyhow::Error::msg)
+    })
+    .await
+    .map_err(|err| {
+        warn!(error = %err, "admin log cleanup failed");
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            i18n::t("error.internal_error"),
+        )
+    })?;
     let deleted_total: i64 = deleted.values().copied().sum();
     let system = state.monitor.get_system_metrics();
     Ok(Json(json!({

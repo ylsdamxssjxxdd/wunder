@@ -35,8 +35,6 @@
         @activate="(id) => emit('activate-session', id)"
         @detail="(id) => emit('open-session-detail', id)" @rename="(id) => emit('rename-session', id)" @archive="(id) => emit('archive-session', id)" />
 
-      <SessionSubagentPool v-if="!collapsed && activeSessionId" :session-id="activeSessionId"
-        @detail="(id) => emit('open-session-detail', id)" />
     </div>
   </aside>
 
@@ -49,7 +47,6 @@ import { WorkspacePanel } from '@/components/messenger/lazyDockPanels';
 import { isDesktopSafeModeEnabled } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import MessengerTaskList from './MessengerTaskList.vue';
-import SessionSubagentPool from './SessionSubagentPool.vue';
 import type { TaskListItem } from '@/views/messenger/taskList';
 
 type WorkspacePanelViewRef = {

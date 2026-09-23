@@ -24,7 +24,7 @@ try {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   const makeRun = (id, input, speed, status = "finished") => ({
-    id, status, config: { model_name: "model", input_tokens: input, output_tokens: 1024 },
+    id, status, config: { model_name: "model", concurrency: 1, input_tokens: input, output_tokens: 1024 },
     started_at: `2026-01-01T00:0${id}:00Z`, finished_at: "2026-01-01T00:10:00Z", elapsed_s: 12,
     length_control: "best_effort", persistence_error: false, error: null,
     metrics: { input_tokens: input + 10, output_tokens: status === "finished" ? 1024 : 70, reasoning_tokens: null, estimated_output_tokens: 1030,
@@ -61,8 +61,9 @@ try {
     await window.throughput.initThroughputPanel();
   });
   await page.waitForFunction(() => document.querySelectorAll("#tpHistory tr").length === 3);
-  assert.equal(await page.locator("#tpInput option").count(), 10);
-  assert.equal(await page.locator("#tpOutput option").count(), 4);
+  assert.equal(await page.locator("#tpInputPresets option").count(), 10);
+  assert.equal(await page.locator("#tpOutputPresets option").count(), 4);
+  assert.equal(await page.locator("#tpConcurrency").inputValue(), "1");
   assert.equal(await page.locator("#tpHistory input:checked").count(), 2);
   const series = () => page.evaluate(() => window.echarts.getInstanceByDom(document.getElementById("tpChart")).getOption().series);
   assert.equal((await series())[0].data.length, 2);
@@ -76,15 +77,16 @@ try {
   await page.locator("#tpAxis").selectOption("input");
   await page.locator('[data-view="2"]').click();
   assert.match(await page.locator("#tpDetail").innerText(), /8k/);
-  await page.locator("#tpInput").selectOption("1048576");
+  await page.locator("#tpInput").fill("1048576");
   await page.locator("#tpStart").click();
   await page.waitForFunction(() => document.getElementById("tpFeedback").textContent.includes("上下文"));
   assert.equal(starts.length, 0);
-  await page.locator("#tpInput").selectOption("8192");
-  await page.locator("#tpOutput").selectOption("2048");
+  await page.locator("#tpConcurrency").fill("4");
+  await page.locator("#tpInput").fill("8192");
+  await page.locator("#tpOutput").fill("2048");
   await page.locator("#tpStart").click();
   await page.locator("#tpStop").waitFor({ state: "visible" });
-  assert.deepEqual(starts, [{model_name:"model",input_tokens:8192,output_tokens:2048}]);
+  assert.deepEqual(starts, [{model_name:"model",concurrency:4,input_tokens:8192,output_tokens:2048}]);
   assert.equal(await page.locator("#tpModel").isDisabled(), true);
   await page.locator("#tpStop").click();
   await page.locator("#tpStart").waitFor({ state: "visible" });

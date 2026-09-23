@@ -934,6 +934,8 @@ impl Orchestrator {
                             confirmed_context_occupancy_tokens,
                             &turn_decode_speed,
                             goal_turn_started_at.elapsed().as_secs_f64(),
+                            emitter.accumulated_quota_consumption(),
+                            i64::from(tool_budget_usage.total),
                         );
                         self.append_chat(
                             &user_id,
@@ -1011,6 +1013,8 @@ impl Orchestrator {
                         confirmed_context_occupancy_tokens,
                         &turn_decode_speed,
                         goal_turn_started_at.elapsed().as_secs_f64(),
+                        emitter.accumulated_quota_consumption(),
+                        i64::from(tool_budget_usage.total),
                     );
                     self.append_chat(
                         &user_id,
@@ -1586,6 +1590,8 @@ impl Orchestrator {
                                 confirmed_context_occupancy_tokens,
                                 &turn_decode_speed,
                                 goal_turn_started_at.elapsed().as_secs_f64(),
+                                emitter.accumulated_quota_consumption(),
+                                i64::from(tool_budget_usage.total),
                             );
                             let meta = question_panel_meta.as_ref().map(|value| {
                                 merge_persisted_message_stats_meta(value, message_stats)
@@ -1615,6 +1621,8 @@ impl Orchestrator {
                                 confirmed_context_occupancy_tokens,
                                 &turn_decode_speed,
                                 goal_turn_started_at.elapsed().as_secs_f64(),
+                                emitter.accumulated_quota_consumption(),
+                                i64::from(tool_budget_usage.total),
                             );
                             let meta = merge_persisted_message_stats_meta(meta, message_stats);
                             self.append_chat(
@@ -1774,6 +1782,8 @@ impl Orchestrator {
                                             confirmed_context_occupancy_tokens,
                                             &turn_decode_speed,
                                             goal_turn_started_at.elapsed().as_secs_f64(),
+                                            emitter.accumulated_quota_consumption(),
+                                            i64::from(tool_budget_usage.total),
                                         ),
                                     );
                                     self.append_chat(
@@ -1913,6 +1923,8 @@ impl Orchestrator {
                                         confirmed_context_occupancy_tokens,
                                         &turn_decode_speed,
                                         goal_turn_started_at.elapsed().as_secs_f64(),
+                                        emitter.accumulated_quota_consumption(),
+                                        i64::from(tool_budget_usage.total),
                                     );
                                     self.append_chat(
                                         &user_id,
@@ -2002,6 +2014,8 @@ impl Orchestrator {
                                         confirmed_context_occupancy_tokens,
                                         &turn_decode_speed,
                                         goal_turn_started_at.elapsed().as_secs_f64(),
+                                        emitter.accumulated_quota_consumption(),
+                                        i64::from(tool_budget_usage.total),
                                     );
                                     self.append_chat(
                                         &user_id,
@@ -2143,9 +2157,14 @@ impl Orchestrator {
 
         if let Some(inbox) = agent_inbox {
             for message in inbox.close() {
-                emitter.emit("subagent_message", json!({"message_id":message.id,
+                emitter
+                    .emit(
+                        "subagent_message",
+                        json!({"message_id":message.id,
                     "source_session_id":message.source,"session_id":session_id,
-                    "kind":message.kind,"delivery":"not_applied"})).await;
+                    "kind":message.kind,"delivery":"not_applied"}),
+                    )
+                    .await;
             }
         }
 

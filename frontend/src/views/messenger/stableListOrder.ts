@@ -129,8 +129,23 @@ const mergeKeyOrderPreservingMissing = (previousKeys: string[], incomingKeys: st
   }
 
   const previousSet = new Set(normalizedPrevious);
-  const additions = normalizedIncoming.filter((key) => !previousSet.has(key));
-  return [...additions, ...normalizedPrevious];
+  const next = normalizedPrevious.filter((key) => normalizedIncoming.includes(key));
+  const nextSet = new Set(next);
+  // Insert new rows according to the server's current order. This keeps older
+  // pagination pages at the bottom while a newly created thread enters at the top.
+  normalizedIncoming.forEach((key, index) => {
+    if (nextSet.has(key)) return;
+    const following = normalizedIncoming.slice(index + 1).find((candidate) => previousSet.has(candidate));
+    if (following) {
+      next.splice(next.indexOf(following), 0, key);
+    } else {
+      const preceding = [...normalizedIncoming].slice(0, index).reverse().find((candidate) => nextSet.has(candidate));
+      const insertionIndex = preceding ? next.indexOf(preceding) + 1 : next.length;
+      next.splice(insertionIndex, 0, key);
+    }
+    nextSet.add(key);
+  });
+  return next;
 };
 
 export const moveKeyWithinOrder = (

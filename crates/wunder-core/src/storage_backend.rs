@@ -237,7 +237,8 @@ pub trait AgentRuntimeStore {
     ) -> Result<bool>;
     fn insert_agent_task(&self, record: &AgentTaskRecord) -> Result<()>;
     /// Atomic insert-only admission with per-thread backpressure and retry idempotency.
-    fn insert_agent_message_task(&self, record: &AgentTaskRecord, pending_limit: i64) -> Result<()>;
+    fn insert_agent_message_task(&self, record: &AgentTaskRecord, pending_limit: i64)
+        -> Result<()>;
     fn get_agent_task(&self, task_id: &str) -> Result<Option<AgentTaskRecord>>;
     fn list_pending_agent_tasks(&self, limit: i64) -> Result<Vec<AgentTaskRecord>>;
     fn count_pending_agent_tasks(&self) -> Result<i64>;
@@ -483,13 +484,21 @@ pub trait UserAccountStore {
 pub trait ChatSessionStore {
     /// User work catalog: exclude model-created children before counting/pagination.
     fn list_work_chat_sessions(
-        &self, user_id: &str, agent_id: Option<&str>, status: Option<&str>,
-        offset: i64, limit: i64,
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        status: Option<&str>,
+        offset: i64,
+        limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)>;
     /// Global ownership lookup for privileged administration only.
     fn get_chat_session_owner(&self, session_id: &str) -> Result<Option<String>>;
     /// Resolve a bounded set of active catalog entries within one user's scope.
-    fn list_active_chat_session_ids(&self, user_id: &str, session_ids: &[String]) -> Result<Vec<String>>;
+    fn list_active_chat_session_ids(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<Vec<String>>;
     fn upsert_chat_session(&self, record: &ChatSessionRecord) -> Result<()>;
     fn insert_chat_session_if_absent(&self, record: &ChatSessionRecord) -> Result<bool>;
     fn get_chat_session(
@@ -962,7 +971,13 @@ pub trait AgentDirectoryStore {
 /// User quota balance accounting storage.
 pub trait QuotaBalanceStore {
     /// Set the available balance and settle today's grant atomically.
-    fn set_user_quota_balance(&self, user_id: &str, today: &str, daily_grant: i64, balance: i64) -> Result<Option<UserQuotaStatus>>;
+    fn set_user_quota_balance(
+        &self,
+        user_id: &str,
+        today: &str,
+        daily_grant: i64,
+        balance: i64,
+    ) -> Result<Option<UserQuotaStatus>>;
     fn prepare_user_quota(
         &self,
         user_id: &str,

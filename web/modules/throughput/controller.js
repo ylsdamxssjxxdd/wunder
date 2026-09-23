@@ -38,12 +38,12 @@ async function api(path, body, signal) {
   return response.json();
 }
 
-const form = () => ({ model_name: $("tpModel").value, input_tokens: Number($("tpInput").value), output_tokens: Number($("tpOutput").value) });
+const form = () => ({ model_name: $("tpModel").value, concurrency: Number($("tpConcurrency").value), input_tokens: Number($("tpInput").value), output_tokens: Number($("tpOutput").value) });
 function saveForm() { try { localStorage.setItem(KEY, JSON.stringify(form())); } catch { /* Optional preference storage. */ } }
 function restoreForm(config) {
   if (!config) { try { config = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch { config = {}; } }
-  for (const [id, value] of [["tpModel", config.model_name], ["tpInput", config.input_tokens], ["tpOutput", config.output_tokens]]) {
-    if (value != null && [...$(id).options].some((option) => option.value === String(value))) $(id).value = String(value);
+  for (const [id, value] of [["tpModel", config.model_name], ["tpConcurrency", config.concurrency], ["tpInput", config.input_tokens], ["tpOutput", config.output_tokens]]) {
+    if (value != null) $(id).value = String(value);
   }
 }
 
@@ -84,7 +84,7 @@ function render(force = false) {
   $("tpStop").hidden = !running();
   $("tpStop").disabled = busy || data.active?.status === "stopping";
   $("tpStop").textContent = l(data.active?.status === "stopping" ? "stopping" : "stop");
-  for (const id of ["tpModel", "tpInput", "tpOutput"]) $(id).disabled = running() || busy;
+  for (const id of ["tpModel", "tpConcurrency", "tpInput", "tpOutput"]) $(id).disabled = running() || busy;
   const signature = JSON.stringify([data.history, [...selected], viewed]);
   if (force || signature !== historySignature) {
     history($("tpHistory"), data.history, selected, viewed);
@@ -110,7 +110,7 @@ function draw(force = false) {
     legend: { type: "scroll", bottom: 0 }, grid: { top: 25, left: 70, right: 25, bottom: 68 },
     tooltip: { trigger: "item", confine: true, formatter: (point) => {
       const run = point.data.run;
-      return `${escapeHtml(run.config.model_name)}<br>${escapeHtml(formatTimestamp(run.started_at))}<br>${l("input")}: ${tokenLabel(run.config.input_tokens)}<br>${l("target")}: ${tokenLabel(run.config.output_tokens)}<br>${l("actualOutput")}: ${number(run.metrics.output_tokens,0)}<br>${escapeHtml(point.seriesName)}: ${number(point.value[1])}`;
+      return `${escapeHtml(run.config.model_name)}<br>${escapeHtml(formatTimestamp(run.started_at))}<br>${l("concurrency")}: ${number(run.config.concurrency || 1,0)}<br>${l("input")}: ${tokenLabel(run.config.input_tokens)}<br>${l("target")}: ${tokenLabel(run.config.output_tokens)}<br>${l("actualOutput")}: ${number(run.metrics.output_tokens,0)}<br>${escapeHtml(point.seriesName)}: ${number(point.value[1])}`;
     } },
     xAxis: axis === "time" ? { type: "time" } : { type: "log", logBase: 2, min: 1024, axisLabel: { formatter: tokenLabel } },
     yAxis: { type: "value", name: metric === "ttft_ms" ? "ms" : "tok/s", min: 0 }, series,
@@ -174,7 +174,12 @@ async function command(action) {
   try {
     const config = form();
     const limit = state.llm.configs[config.model_name]?.max_context;
-    if (action === "start" && Number(limit) > 0 && config.input_tokens + config.output_tokens > Number(limit)) throw new Error(l("contextError"));
+    if (action === "start") {
+      if (!Number.isSafeInteger(config.concurrency) || config.concurrency < 1 || config.concurrency > 1024) throw new Error(l("concurrencyError"));
+      if (!Number.isSafeInteger(config.input_tokens) || config.input_tokens < 1 || config.input_tokens > 16777216) throw new Error(l("inputError"));
+      if (!Number.isSafeInteger(config.output_tokens) || config.output_tokens < 1 || config.output_tokens > 1048576) throw new Error(l("outputError"));
+      if (Number(limit) > 0 && config.input_tokens + config.output_tokens > Number(limit)) throw new Error(l("contextError"));
+    }
     saveForm();
     const snapshot = await api(action, action === "start" ? config : {});
     if (!visible || epoch !== generation) return;

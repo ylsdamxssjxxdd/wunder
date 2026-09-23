@@ -7,7 +7,7 @@ export function comparisonSeries(items, selected, metric, axis) {
     const value = item.metrics?.[metric];
     if (!selected.has(item.id) || value == null || !Number.isFinite(Number(value))) continue;
     // Invalid measurements remain inspectable without joining a successful curve.
-    const group = `${item.config.model_name}${item.simulated ? ` [sim] ${item.simulation_speed || "legacy"}` : ""} · ${tokenLabel(item.config.output_tokens)}${validResult(item) ? "" : " ⚠"}`;
+    const group = `${item.config.model_name}${item.simulated ? ` [sim] ${item.simulation_speed || "legacy"}` : ""} · c${item.config.concurrency || 1} · ${tokenLabel(item.config.output_tokens)}${validResult(item) ? "" : " ⚠"}`;
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group).push({ value: [axis === "time" ? Date.parse(item.started_at) : item.config.input_tokens, Number(value)], run: item });
   }

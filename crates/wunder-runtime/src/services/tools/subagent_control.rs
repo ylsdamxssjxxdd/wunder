@@ -6,8 +6,8 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 mod flow;
-mod targeting;
 mod messaging;
+mod targeting;
 use flow::*;
 use targeting::*;
 
@@ -441,8 +441,11 @@ async fn list(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let parent_session_id = resolve_subagent_parent_scope(payload.parent_id, context.session_id)?;
     let items = crate::services::subagents::list_parent_subagents(
-        context.storage.as_ref(), context.monitor.as_deref(), context.user_id,
-        &parent_session_id, payload.limit,
+        context.storage.as_ref(),
+        context.monitor.as_deref(),
+        context.user_id,
+        &parent_session_id,
+        payload.limit,
     )?;
     Ok(build_subagent_list_result(
         json!({"items": items, "total": items.len()}),
@@ -469,7 +472,12 @@ async fn send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let session_id = resolve_single_child_session_target(context, &payload.target, "send")?;
     let message = messaging::message(context, args, "guide")?;
     if messaging::steer(context, &session_id, &message)? {
-        return Ok(messaging::receipt("send", &session_id, &message, "queued_current_turn"));
+        return Ok(messaging::receipt(
+            "send",
+            &session_id,
+            &message,
+            "queued_current_turn",
+        ));
     }
     resolve_subagent_parent_scope(payload.announce_parent_session_id, context.session_id)?;
     let scoped_args = json!({
@@ -917,7 +925,11 @@ async fn close(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
 }
 
 async fn resume(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    if args.get("message").and_then(Value::as_str).is_some_and(|message| !message.trim().is_empty()) {
+    if args
+        .get("message")
+        .and_then(Value::as_str)
+        .is_some_and(|message| !message.trim().is_empty())
+    {
         send(context, args).await
     } else {
         session_control(context, args, "active", false, "subagent_resume").await

@@ -154,11 +154,13 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "knowledge_request"
             | "compaction"
             | "tool_call"
+            | "tool_output_delta"
             | "tool_result"
             | "command_session_start"
             | "command_session_status"
             | "command_session_exit"
             | "command_session_summary"
+            | "command_session_delta"
             | "approval_request"
             | "approval_result"
             | "approval_resolved"
@@ -172,6 +174,7 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "quota_balance"
             | "quota_usage"
             | "round_usage"
+            | "token_usage"
             | "team_start"
             | "team_task_dispatch"
             | "team_task_update"
@@ -187,6 +190,8 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "subagent_dispatch_item_update"
             | "subagent_dispatch_finish"
             | "subagent_announce"
+            | "subagent_message"
+            | "a2ui"
             // Queue handoff events are durable boundaries too. In particular,
             // an action-boundary suspension is emitted by the live EventEmitter
             // rather than the thread queue service, so replay must retain it.
@@ -229,6 +234,7 @@ pub(super) struct EventEmitter {
     delta_buffer: Option<Arc<ParkingMutex<StreamDeltaBuffer>>>,
     client_message_id: Option<String>,
     usage: Arc<ParkingMutex<TokenUsage>>,
+    quota_consumed: Arc<ParkingMutex<i64>>,
 }
 
 impl EventEmitter {
@@ -266,6 +272,7 @@ impl EventEmitter {
                 reasoning: Some(0),
                 ..Default::default()
             })),
+            quota_consumed: Arc::new(ParkingMutex::new(0)),
         }
     }
 
@@ -281,6 +288,16 @@ impl EventEmitter {
 
     pub(super) fn accumulated_usage(&self) -> TokenUsage {
         self.usage.lock().clone()
+    }
+
+    pub(super) fn record_quota_consumption(&self, consumed: i64) -> i64 {
+        let mut total = self.quota_consumed.lock();
+        *total = total.saturating_add(consumed.max(0));
+        *total
+    }
+
+    pub(super) fn accumulated_quota_consumption(&self) -> i64 {
+        *self.quota_consumed.lock()
     }
 
     fn close(&self) {
@@ -364,12 +381,7 @@ impl EventEmitter {
         let storage = storage.clone();
         let event_type = event_type.to_string();
         super::stream_persist::enqueue_stream_event_persist(
-            storage,
-            session_id,
-            user_id,
-            event_id,
-            payload,
-            event_type,
+            storage, session_id, user_id, event_id, payload, event_type,
         );
     }
 
@@ -474,7 +486,6 @@ impl EventEmitter {
         }
         self.persist_stream_event(event_id, &event.event, raw_data, timestamp);
     }
-
 }
 
 fn reset_stream_poll_state(
@@ -981,7 +992,9 @@ mod tests {
         assert!(should_persist_stream_event("thread_status"));
         assert!(should_persist_stream_event("thread_closed"));
         assert!(should_persist_stream_event("queue_enter"));
-        assert!(!should_persist_stream_event("command_session_delta"));
+        assert!(should_persist_stream_event("command_session_delta"));
+        assert!(should_persist_stream_event("tool_output_delta"));
+        assert!(should_persist_stream_event("token_usage"));
     }
 
     #[test]

@@ -1623,7 +1623,7 @@ test('chat runtime render adapter materializes projected usage stats for message
   assert.equal(message.stats.quotaConsumed, 150);
   assert.equal(entries.find((item) => item.key === 'contextTokens')?.value, '180');
   assert.equal(entries.find((item) => item.key === 'quota')?.value, '150');
-  assert.equal(entries.find((item) => item.key === 'speed')?.value, '10.00 token/s');
+  assert.equal(entries.find((item) => item.key === 'speed')?.value, '10.0 token/s');
   assert.equal(contextSource.contextTokens, 180);
   assert.equal(contextSource.contextTotalTokens, 1000);
   (message.stats.roundUsage as Record<string, unknown>).total = 1;
@@ -1706,7 +1706,7 @@ test('chat runtime render adapter updates cached materialization when projected 
   assert.equal(second, first);
   assert.equal(second.stats.avg_model_round_speed_tps, 5);
   assert.equal(second.stats.toolCalls, 1);
-  assert.equal(entries.find((item) => item.key === 'speed')?.value, '5.00 token/s');
+  assert.equal(entries.find((item) => item.key === 'speed')?.value, '5.0 token/s');
   assert.equal(entries.find((item) => item.key === 'toolCalls')?.value, '1');
 });
 

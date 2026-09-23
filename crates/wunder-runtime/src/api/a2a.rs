@@ -2087,6 +2087,4 @@ mod tests {
         assert_eq!(status.last_grant_date.as_deref(), Some("2026-04-10"));
         assert!(!status.allowed);
     }
-
-
 }

@@ -38,10 +38,18 @@ const formatDuration = (seconds: unknown): string => {
   if (seconds === null || seconds === undefined || Number.isNaN(Number(seconds))) return '-';
   const value = Number(seconds);
   if (!Number.isFinite(value) || value < 0) return '-';
-  if (value < 1) {
-    return `${Math.max(1, Math.round(value * 1000))} ms`;
-  }
-  return `${value.toFixed(2)} s`;
+  // Keep the bubble compact while retaining enough precision for short turns.
+  // Use the largest useful unit and always render seconds with one decimal.
+  if (value < 60) return `${value.toFixed(1)}s`;
+  const totalMinutes = Math.floor(value / 60);
+  const minutes = totalMinutes % 60;
+  const hours = Math.floor(totalMinutes / 60);
+  const secondsPart = value - totalMinutes * 60;
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0 || hours > 0) parts.push(`${minutes}m`);
+  parts.push(`${secondsPart.toFixed(1)}s`);
+  return parts.join(' ');
 };
 
 const formatCount = (value: unknown): string => {
@@ -55,7 +63,7 @@ const formatSpeed = (value: unknown): string => {
   if (value === null || value === undefined) return '-';
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return '-';
-  return `${parsed.toFixed(2)} token/s`;
+  return `${parsed.toFixed(1)} token/s`;
 };
 
 const formatCompactElapsed = (milliseconds: number): string => {
@@ -358,6 +366,30 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
     return normalizeSpeed(tokens / (durationMs / 1000));
   }
   return null;
+};
+
+const resolveCreditsConsumed = (source: Record<string, any> | null | undefined): number | null => {
+  if (!source || typeof source !== 'object') return null;
+  const value = source.creditsConsumed ?? source.credits_consumed ?? source.turn_quota_used;
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : null;
+};
+
+const resolveAssistantCreditsConsumed = (
+  message: MessageLike,
+  allMessages?: MessageLike[] | null
+): number | null => {
+  const direct = resolveCreditsConsumed(message?.stats) ?? resolveCreditsConsumed(message);
+  if (!Array.isArray(allMessages)) return direct;
+  const index = resolveMessageIndex(message, allMessages);
+  if (index < 0) return direct;
+  let result = direct;
+  for (let cursor = index; cursor >= 0 && allMessages[cursor]?.role !== 'user'; cursor -= 1) {
+    const value = resolveCreditsConsumed(allMessages[cursor]?.stats) ?? resolveCreditsConsumed(allMessages[cursor]);
+    if (value !== null) result = result === null ? value : Math.max(result, value);
+  }
+  return result;
 };
 
 const hasAssistantVisibleOutput = (message: Record<string, any>): boolean =>
@@ -808,13 +840,15 @@ export const buildAssistantMessageStatsEntries = (
   const speed = resolveTokenSpeed(stats);
   const contextTokens = resolveContextTokens(stats);
   const effectiveQuotaConsumedTokens = resolveAssistantConsumedTokens(message, allMessages);
+  const effectiveCreditsConsumed = resolveAssistantCreditsConsumed(message, allMessages);
   const hasUsage = contextTokens !== null && Number.isFinite(Number(contextTokens));
   const hasQuota =
     Number.isFinite(Number(effectiveQuotaConsumedTokens)) && Number(effectiveQuotaConsumedTokens) > 0;
   const hasDuration = Number.isFinite(Number(durationSeconds)) && Number(durationSeconds) > 0;
   const hasSpeed = Number.isFinite(Number(speed)) && Number(speed) > 0;
   const hasToolCalls = stats?.toolCalls !== undefined && Number.isFinite(Number(stats.toolCalls)) && Number(stats.toolCalls) >= 0;
-  if (!hasUsage && !hasQuota && !hasDuration && !hasToolCalls && !hasSpeed) {
+  const hasCredits = effectiveCreditsConsumed !== null;
+  if (!hasUsage && !hasQuota && !hasDuration && !hasToolCalls && !hasSpeed && !hasCredits) {
     return statusEntry ? [statusEntry] : [];
   }
   const entries: MessageStatsEntry[] = [];
@@ -834,17 +868,24 @@ export const buildAssistantMessageStatsEntries = (
       'quota',
       t('chat.stats.quota'),
       formatCount(effectiveQuotaConsumedTokens),
-      'fa-solid fa-coins'
+      'fa-solid fa-bolt'
     ),
     buildMetricEntry(
       'toolCalls',
       t('chat.stats.toolCalls'),
       formatCount(stats?.toolCalls),
       'fa-solid fa-screwdriver-wrench'
+    ),
+    buildMetricEntry(
+      'credits',
+      t('messenger.tasks.quota'),
+      formatCount(effectiveCreditsConsumed),
+      'fa-solid fa-coins'
     )
   );
   for (const entry of entries) {
     if (entry.key === 'quota') entry.hint = tokenUsageDetails(stats, t);
+    if (entry.key === 'credits') entry.hint = t('messenger.tasks.quota');
     if (entry.key === 'speed') entry.hint = t('chat.stats.speedHint');
     if (entry.key === 'contextTokens') entry.hint = t('chat.stats.contextHint');
   }

@@ -1,0 +1,169 @@
+{
+  "builtin_enabled_count": 22,
+  "compact_tools": {
+    "approx_tokens_utf8_bytes_div_4": 1866,
+    "bytes": 7463,
+    "chars": 5411
+  },
+  "compact_tools_by_tool": [
+    {
+      "approx_tokens_utf8_bytes_div_4": 45,
+      "bytes": 179
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 45,
+      "bytes": 177
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 47,
+      "bytes": 186
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 53,
+      "bytes": 212
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 49,
+      "bytes": 195
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 51,
+      "bytes": 202
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 42,
+      "bytes": 166
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 52,
+      "bytes": 208
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 52,
+      "bytes": 207
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 48,
+      "bytes": 192
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 48,
+      "bytes": 189
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 53,
+      "bytes": 210
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 50,
+      "bytes": 198
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 70,
+      "bytes": 278
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 57,
+      "bytes": 227
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 50,
+      "bytes": 200
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 55,
+      "bytes": 217
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 180,
+      "bytes": 719
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 179,
+      "bytes": 714
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 113,
+      "bytes": 451
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 124,
+      "bytes": 493
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 77,
+      "bytes": 307
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 120,
+      "bytes": 478
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 63,
+      "bytes": 252
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 52,
+      "bytes": 208
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 45,
+      "bytes": 177
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 49,
+      "bytes": 193
+    }
+  ],
+  "config_exists": true,
+  "function_call_system_note": "Function-call mode omits tools_protocol and native tool schemas are sent in the request tools field.",
+  "mcp_server_count": 2,
+  "model": "Qwen/Qwen3.8-27B",
+  "original_tools": {
+    "approx_tokens_utf8_bytes_div_4": 9277,
+    "bytes": 37108,
+    "chars": 25998
+  },
+  "system_template_blocks": [
+    {
+      "approx_tokens_utf8_bytes_div_4": 122,
+      "bytes": 487,
+      "chars": 173,
+      "name": "role.txt"
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 882,
+      "bytes": 3526,
+      "chars": 1402,
+      "name": "engineering.txt"
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 391,
+      "bytes": 1562,
+      "chars": 794,
+      "name": "inner_visible_protocol.txt"
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 253,
+      "bytes": 1011,
+      "chars": 411,
+      "name": "skills_protocol.txt"
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 5,
+      "bytes": 20,
+      "chars": 20,
+      "name": "memory.txt"
+    },
+    {
+      "approx_tokens_utf8_bytes_div_4": 9,
+      "bytes": 34,
+      "chars": 26,
+      "name": "extra.txt"
+    }
+  ],
+  "tokenizer": "Qwen tokenizer unavailable locally; estimates use UTF-8 bytes / 4",
+  "tool_call_mode": "function_call",
+  "tool_count": 27,
+  "tool_savings_bytes": 29645
+}

@@ -57,10 +57,20 @@ impl PostgresStorage {
             )?;
         }
         // Retire incompatible token accounting columns after initializing request credits.
-        for column in ["token_balance", "token_granted_total", "token_used_total",
-            "last_token_grant_date", "daily_quota", "daily_quota_used", "daily_quota_date"] {
+        for column in [
+            "token_balance",
+            "token_granted_total",
+            "token_used_total",
+            "last_token_grant_date",
+            "daily_quota",
+            "daily_quota_used",
+            "daily_quota_date",
+        ] {
             if columns.contains(column) {
-                tx.execute(&format!("ALTER TABLE user_accounts DROP COLUMN {column}"), &[])?;
+                tx.execute(
+                    &format!("ALTER TABLE user_accounts DROP COLUMN {column}"),
+                    &[],
+                )?;
             }
         }
         tx.commit()?;

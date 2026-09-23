@@ -1399,7 +1399,7 @@ export default {
   'chat.stats.speed': '正文速度',
   'chat.stats.speedHint': '最后一次有效正文输出的 token / 正文流式时间；不含等待、思考和工具执行。无法可靠分离时显示 -。',
   'chat.stats.contextHint': '最近一次模型请求观测的上下文占用，不是累计消耗；压缩后重新观测，可能下降。',
-  'chat.stats.quotaHint': '本轮所有模型调用的累计 token，包含输入、输出、思考、已返回用量的失败重试和压缩摘要。',
+  'chat.stats.quotaHint': '本轮所有模型调用的累计 Token，包含输入、输出、思考、已返回用量的失败重试和压缩摘要。',
   'chat.stats.usageBreakdown': '本轮累计：输入 {input} · 非思考输出 {output} · 思考 {reasoning} · 总计 {total}（{source}）。未单独报告思考时，其用量可能包含在输出中。',
   'chat.stats.unreported': '未单独报告',
   'chat.stats.estimated': '含本地估算',

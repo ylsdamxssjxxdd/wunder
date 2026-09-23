@@ -1,4 +1,4 @@
-//! Single-request model benchmarks. No users, sessions, prompts or responses are persisted.
+//! Concurrent model throughput benchmarks. No users, sessions, prompts or responses are persisted.
 use crate::config::{Config, LlmModelConfig};
 use crate::llm::{is_llm_configured, is_llm_model, LlmClient};
 use chrono::Utc;
@@ -16,22 +16,31 @@ pub const INPUT_PRESETS: [u32; 10] = [
     1024, 2048, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576,
 ];
 pub const OUTPUT_PRESETS: [u32; 4] = [1024, 2048, 4096, 8192];
+const MAX_CONCURRENCY: u32 = 1024;
+const MAX_INPUT_TOKENS: u32 = 16_777_216;
+const MAX_OUTPUT_TOKENS: u32 = 1_048_576;
 const HISTORY_LIMIT: usize = 50;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ThroughputConfig {
     pub model_name: String,
+    #[serde(default = "default_concurrency")]
+    pub concurrency: u32,
     pub input_tokens: u32,
     pub output_tokens: u32,
 }
 
 impl ThroughputConfig {
     pub fn resolve(&self, config: &Config) -> Result<LlmModelConfig, String> {
-        if !INPUT_PRESETS.contains(&self.input_tokens)
-            || !OUTPUT_PRESETS.contains(&self.output_tokens)
-        {
-            return Err("请选择支持的输入和输出 Token 档位".into());
+        if self.concurrency == 0 || self.concurrency > MAX_CONCURRENCY {
+            return Err(format!("并发数必须在 1 到 {MAX_CONCURRENCY} 之间"));
+        }
+        if self.input_tokens == 0 || self.input_tokens > MAX_INPUT_TOKENS {
+            return Err(format!("输入 Token 必须在 1 到 {MAX_INPUT_TOKENS} 之间"));
+        }
+        if self.output_tokens == 0 || self.output_tokens > MAX_OUTPUT_TOKENS {
+            return Err(format!("输出 Token 必须在 1 到 {MAX_OUTPUT_TOKENS} 之间"));
         }
         let model = config
             .llm
@@ -41,14 +50,18 @@ impl ThroughputConfig {
                 model.enable != Some(false) && is_llm_model(model) && is_llm_configured(model)
             })
             .ok_or("请选择已启用并配置完整的语言模型")?;
-        if model
-            .max_context
-            .is_some_and(|limit| limit > 0 && self.input_tokens + self.output_tokens > limit)
-        {
+        if model.max_context.is_some_and(|limit| {
+            limit > 0
+                && u64::from(self.input_tokens) + u64::from(self.output_tokens) > u64::from(limit)
+        }) {
             return Err("输入与输出 Token 之和超过模型配置的上下文窗口".into());
         }
         Ok(model.clone())
     }
+}
+
+const fn default_concurrency() -> u32 {
+    1
 }
 
 pub use crate::llm::benchmark::BenchmarkMetrics as ThroughputMetrics;
@@ -251,25 +264,72 @@ impl ThroughputManager {
     ) {
         // Build large synthetic inputs off the async executor; never create a thread runtime.
         let input_tokens = config.input_tokens;
-        let messages =
-            tokio::task::spawn_blocking(move || crate::llm::benchmark::messages(input_tokens))
-                .await;
+        let messages = tokio::task::spawn_blocking(move || {
+            std::sync::Arc::new(crate::llm::benchmark::messages(input_tokens))
+        })
+        .await;
         let started = Instant::now();
         let timeout =
             std::time::Duration::from_secs(model.timeout_s.unwrap_or(1800).clamp(1, 3600));
         let client = LlmClient::new(self.http.clone(), model);
         let result = match messages {
             Ok(messages) => {
-                let request = client.benchmark(&messages, config.output_tokens, |metrics| {
-                    if let Some(active) = self.inner.lock().active.as_mut() {
-                        active.metrics = metrics;
-                    }
-                });
-                tokio::select! {
-                    biased;
-                    _ = cancel.wait_for(|value| *value) => Err("stopped".to_string()),
-                    result = tokio::time::timeout(timeout, request) => result.unwrap_or_else(|_| Err("模型请求超时".into())),
+                let slots = Arc::new(Mutex::new(vec![None; config.concurrency as usize]));
+                let mut requests = futures::stream::FuturesUnordered::new();
+                for index in 0..config.concurrency as usize {
+                    let client = client.clone();
+                    let messages = Arc::clone(&messages);
+                    let slots = Arc::clone(&slots);
+                    let manager = self.clone();
+                    let timeout = timeout;
+                    requests.push(async move {
+                        let request =
+                            client.benchmark(&messages, config.output_tokens, |metrics| {
+                                let mut current = slots.lock();
+                                current[index] = Some(metrics);
+                                manager.publish_metrics(aggregate_metrics(
+                                    &current,
+                                    config.output_tokens,
+                                    started.elapsed().as_secs_f64(),
+                                ));
+                            });
+                        let result = tokio::time::timeout(timeout, request)
+                            .await
+                            .unwrap_or_else(|_| Err("模型请求超时".into()));
+                        (index, result)
+                    });
                 }
+                let mut results = vec![None; config.concurrency as usize];
+                let mut first_error = None;
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = cancel.wait_for(|value| *value) => break Err("stopped".to_string()),
+                        next = futures::StreamExt::next(&mut requests) => {
+                            let Some((index, outcome)) = next else { break Ok(()) };
+                            match outcome {
+                                Ok(metrics) => {
+                                    slots.lock()[index] = Some(metrics.clone());
+                                    results[index] = Some(metrics);
+                                }
+                                Err(error) => {
+                                    first_error.get_or_insert(error);
+                                }
+                            }
+                        }
+                    }
+                }
+                .and_then(|_| {
+                    if let Some(error) = first_error {
+                        Err(error)
+                    } else {
+                        Ok(aggregate_metrics(
+                            &results,
+                            config.output_tokens,
+                            started.elapsed().as_secs_f64(),
+                        ))
+                    }
+                })
             }
             Err(_) => Err("无法生成测试输入".into()),
         };
@@ -314,5 +374,79 @@ impl ThroughputManager {
             last.persistence_error = failed;
         }
         state.cancel = None;
+    }
+
+    fn publish_metrics(&self, metrics: ThroughputMetrics) {
+        if let Some(active) = self.inner.lock().active.as_mut() {
+            active.metrics = metrics;
+        }
+    }
+}
+
+fn aggregate_metrics(
+    values: &[Option<ThroughputMetrics>],
+    target: u32,
+    elapsed_s: f64,
+) -> ThroughputMetrics {
+    let completed = values.iter().filter_map(Option::as_ref).collect::<Vec<_>>();
+    let sum = |read: fn(&ThroughputMetrics) -> Option<u64>| {
+        (completed.len() == values.len() && completed.iter().all(|item| read(item).is_some())).then(
+            || {
+                completed
+                    .iter()
+                    .map(|item| read(item).unwrap_or_default())
+                    .sum()
+            },
+        )
+    };
+    let input_tokens = sum(|item| item.input_tokens);
+    let output_tokens = sum(|item| item.output_tokens);
+    let reasoning_tokens = sum(|item| item.reasoning_tokens);
+    let estimated_output_tokens = completed
+        .iter()
+        .map(|item| item.estimated_output_tokens)
+        .sum();
+    let ttft_values = completed
+        .iter()
+        .filter_map(|item| item.ttft_ms)
+        .collect::<Vec<_>>();
+    let ttft_ms = (ttft_values.len() == values.len()).then(|| {
+        ttft_values
+            .into_iter()
+            .min_by(f64::total_cmp)
+            .unwrap_or_default()
+    });
+    let decode_duration = completed
+        .iter()
+        .filter_map(|item| {
+            item.decode_tps
+                .filter(|speed| *speed > 0.0)
+                .map(|speed| item.output_tokens.unwrap_or(1).saturating_sub(1) as f64 / speed)
+        })
+        .max_by(f64::total_cmp);
+    let divide = |tokens: Option<u64>, seconds: Option<f64>| {
+        Some(tokens? as f64 / seconds.filter(|seconds| *seconds > 0.0)?)
+    };
+    let finish_reason = completed
+        .iter()
+        .map(|item| item.finish_reason.as_deref())
+        .reduce(|left, right| (left == right).then_some(left).unwrap_or(Some("mixed")))
+        .flatten()
+        .map(str::to_string);
+    ThroughputMetrics {
+        input_tokens,
+        output_tokens,
+        reasoning_tokens,
+        estimated_output_tokens,
+        ttft_ms,
+        decode_tps: divide(
+            output_tokens.map(|tokens| tokens.saturating_sub(values.len() as u64)),
+            decode_duration,
+        ),
+        prefill_tps: divide(input_tokens, ttft_ms.map(|value| value / 1000.0)),
+        end_to_end_tps: divide(output_tokens, Some(elapsed_s)),
+        finish_reason,
+        target_reached: (completed.len() == values.len())
+            .then(|| output_tokens == Some(u64::from(target) * values.len() as u64)),
     }
 }

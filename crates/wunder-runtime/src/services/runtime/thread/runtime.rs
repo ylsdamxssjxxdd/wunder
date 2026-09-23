@@ -20,10 +20,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 use uuid::Uuid;
 
-#[path = "queue_admin.rs"]
-mod queue_admin;
 #[path = "agent_messages.rs"]
 mod agent_messages;
+#[path = "queue_admin.rs"]
+mod queue_admin;
 
 const DEFAULT_SESSION_TITLE: &str = "新会话";
 
@@ -154,7 +154,9 @@ impl ThreadRuntime {
     }
 
     pub fn start(self: Arc<Self>) {
-        if self.started.swap(true, std::sync::atomic::Ordering::AcqRel) { return; }
+        if self.started.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            return;
+        }
         let runtime = self.clone();
         long_task::spawn("runtime.thread.queue_loop", async move {
             runtime.run_loop().await;
@@ -1141,7 +1143,7 @@ impl ThreadRuntime {
 
     async fn execute_task(&self, task: AgentTaskRecord) {
         match self.agent_message_is_current(&task).await {
-            Ok(true) => {},
+            Ok(true) => {}
             Ok(false) => {
                 if let Err(error) = self.discard_agent_message(&task).await {
                     warn!("discard stale agent message failed: {error}");

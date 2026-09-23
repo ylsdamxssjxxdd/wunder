@@ -136,6 +136,7 @@ export const buildMessageStats = () => ({
   avg_model_round_speed_tps: null,
   avg_model_round_speed_rounds: 0,
   quotaConsumed: 0,
+  creditsConsumed: null,
   partialQuotaConsumed: 0,
   quotaSnapshot: null,
   contextTokens: null,
@@ -1100,6 +1101,14 @@ export const normalizeMessageStats = (stats) => {
         stats.consumedTokens ??
         stats.quota
     ),
+    creditsConsumed:
+      stats.creditsConsumed === undefined &&
+      stats.credits_consumed === undefined &&
+      stats.turn_quota_used === undefined
+        ? null
+        : normalizeQuotaConsumed(
+            stats.creditsConsumed ?? stats.credits_consumed ?? stats.turn_quota_used
+          ),
     partialQuotaConsumed: normalizeQuotaConsumed(
       stats.partialQuotaConsumed ??
         stats.partial_quota_consumed ??
@@ -1225,6 +1234,10 @@ export const mergeMessageStats = (base, incoming) => {
       rightAverageSpeedRounds
     ),
     quotaConsumed: Math.max(left.quotaConsumed, right.quotaConsumed),
+    creditsConsumed:
+      left.creditsConsumed === null && right.creditsConsumed === null
+        ? null
+        : Math.max(left.creditsConsumed ?? 0, right.creditsConsumed ?? 0),
     partialQuotaConsumed: Math.max(left.partialQuotaConsumed, right.partialQuotaConsumed),
     quotaSnapshot,
     contextTokens,

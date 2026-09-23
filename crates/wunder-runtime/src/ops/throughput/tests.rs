@@ -3,6 +3,7 @@ use super::*;
 fn scenario() -> ThroughputConfig {
     ThroughputConfig {
         model_name: "model".into(),
+        concurrency: 1,
         input_tokens: 1024,
         output_tokens: 1024,
     }
@@ -22,11 +23,40 @@ fn rejects_invalid_presets_disabled_models_and_context_overflow() {
     let mut invalid = scenario();
     invalid.input_tokens = 2048;
     assert!(invalid.resolve(&config).is_err());
-    invalid.input_tokens = 3;
+    invalid = scenario();
+    invalid.concurrency = 0;
+    assert!(invalid.resolve(&config).is_err());
+    invalid.concurrency = 2;
+    invalid.input_tokens = 1234;
+    invalid.output_tokens = 345;
+    assert!(invalid.resolve(&config).is_ok());
+    invalid.input_tokens = 0;
     assert!(invalid.resolve(&config).is_err());
     config.llm.models.get_mut("model").unwrap().enable = Some(false);
     assert!(scenario().resolve(&config).is_err());
     assert!(serde_json::from_value::<ThroughputConfig>(serde_json::json!({"concurrency_list":[1],"model_name":"model","input_tokens":1024,"output_tokens":1024})).is_err());
+}
+
+#[test]
+fn aggregates_concurrent_requests_against_batch_target() {
+    let one = ThroughputMetrics {
+        input_tokens: Some(100),
+        output_tokens: Some(20),
+        reasoning_tokens: Some(5),
+        estimated_output_tokens: 20,
+        ttft_ms: Some(100.0),
+        decode_tps: Some(100.0),
+        prefill_tps: Some(1000.0),
+        end_to_end_tps: Some(20.0),
+        finish_reason: Some("stop".into()),
+        target_reached: Some(true),
+    };
+    let batch = super::aggregate_metrics(&[Some(one.clone()), Some(one)], 20, 1.0);
+    assert_eq!(batch.input_tokens, Some(200));
+    assert_eq!(batch.output_tokens, Some(40));
+    assert_eq!(batch.reasoning_tokens, Some(10));
+    assert_eq!(batch.target_reached, Some(true));
+    assert!(batch.end_to_end_tps.is_some_and(|value| value >= 39.0));
 }
 
 #[tokio::test]

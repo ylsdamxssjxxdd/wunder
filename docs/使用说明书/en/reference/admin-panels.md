@@ -51,7 +51,7 @@ If you need to see "how models are configured and exposed", start here.
 
 This group is oriented toward engineering validation:
 
-- Throughput Testing: one model and input/output length combination per run, live metrics on the right, and selectable history curves. Only the latest 50 summaries are retained; tests create no sessions or thread logs.
+- Throughput Testing: choose a model, concurrency, input length and output length for each run. Preset values remain available, while bounded integer values can be entered directly; the selected concurrency is launched in parallel and the right side shows aggregate metrics. History curves are grouped by model, concurrency and output length. Only the latest 50 summaries are retained; tests create no sessions or thread logs.
 - Virtual models have Fast (default), Medium and Slow profiles: prefill at 2000 / 500 / 100 tokens/s and reasoning/answer generation at 200 / 50 / 10 tokens/s. Random replies and throughput simulations emit reasoning before the answer; replay uses recorded reasoning within the configured capability and budget. Benchmark reasoning defaults to one quarter of the total output budget and respects the reasoning switch and budget. History retains the profile and separates curves accordingly.
 - Performance Testing
 - Swarm Testing

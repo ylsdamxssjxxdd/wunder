@@ -23,8 +23,8 @@ pub mod storage_bridge;
 pub mod storage_constants;
 pub mod storage_records;
 pub mod token_utils;
-pub mod virtual_model;
 pub mod tool_args;
+pub mod virtual_model;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]

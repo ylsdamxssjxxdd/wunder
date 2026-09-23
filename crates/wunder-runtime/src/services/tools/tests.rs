@@ -145,6 +145,52 @@ fn parse_list_files_pagination_rejects_invalid_cursor() {
     assert!(err.to_string().contains("cursor"));
 }
 
+#[test]
+fn write_file_validation_reports_path_before_content() {
+    let failure = file_tool::validate_write_file_args(&json!({})).expect("missing path");
+    assert_eq!(failure["error_meta"]["code"], "TOOL_WRITE_PATH_REQUIRED");
+    assert_eq!(failure["error_meta"]["retryable"], false);
+    assert_eq!(failure["data"]["path_required"], true);
+}
+
+#[test]
+fn write_file_validation_reports_missing_content_without_echoing_content() {
+    let failure = file_tool::validate_write_file_args(&json!({"path": "notes.txt"}))
+        .expect("missing content");
+    assert_eq!(failure["error_meta"]["code"], "TOOL_WRITE_CONTENT_REQUIRED");
+    assert_eq!(failure["error_meta"]["retryable"], false);
+    assert_eq!(failure["data"]["path"], "notes.txt");
+    assert!(failure["data"].get("content").is_none());
+}
+
+#[test]
+fn write_file_validation_accepts_empty_content() {
+    assert!(file_tool::validate_write_file_args(&json!({
+        "path": "notes.txt",
+        "content": ""
+    }))
+    .is_none());
+}
+
+#[test]
+fn write_file_validation_recovers_wrapped_arguments() {
+    let args = super::recover_tool_args_value(&json!({
+        "raw": r#"{"path":"notes.txt"}"#
+    }));
+    let failure = file_tool::validate_write_file_args(&args).expect("missing content");
+    assert_eq!(failure["error_meta"]["code"], "TOOL_WRITE_CONTENT_REQUIRED");
+    assert_eq!(failure["data"]["path"], "notes.txt");
+}
+
+#[test]
+fn write_file_validation_compacts_malformed_raw_arguments() {
+    let args = super::recover_tool_args_value(&json!({"raw": "{"}));
+    let failure = file_tool::validate_write_file_args(&args).expect("missing path");
+    assert_eq!(failure["error_meta"]["code"], "TOOL_WRITE_PATH_REQUIRED");
+    assert!(failure["error"].as_str().unwrap_or_default().len() < 64);
+    assert!(failure["data"].get("raw").is_none());
+}
+
 #[tokio::test]
 async fn write_file_uses_orchestration_run_root_for_round_short_paths() {
     let dir = tempdir().expect("tempdir");

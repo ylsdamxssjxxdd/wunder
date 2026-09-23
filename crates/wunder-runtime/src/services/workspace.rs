@@ -1542,6 +1542,21 @@ impl WorkspaceManager {
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
             return;
         }
+        // Removing a thread from the user projection must not destroy its
+        // durable audit history. Administrators remove logs explicitly through
+        // the monitor cleanup endpoint.
+        let _ = self.storage.release_session_lock(cleaned_session);
+        let _ = self.delete_session_context_tokens(cleaned_user, cleaned_session);
+        let _ = self.delete_session_context_overflow(cleaned_user, cleaned_session);
+        let _ = self.delete_session_context_limit_hint(cleaned_user, cleaned_session);
+    }
+
+    pub fn purge_session_logs(&self, user_id: &str, session_id: &str) {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return;
+        }
         let _ = self
             .storage
             .delete_chat_history_by_session(cleaned_user, cleaned_session);
@@ -1554,13 +1569,22 @@ impl WorkspaceManager {
         let _ = self
             .storage
             .delete_stream_events_by_session(cleaned_session);
-        let _ = self.storage.release_session_lock(cleaned_session);
-        let _ = self.delete_session_context_tokens(cleaned_user, cleaned_session);
-        let _ = self.delete_session_context_overflow(cleaned_user, cleaned_session);
-        let _ = self.delete_session_context_limit_hint(cleaned_user, cleaned_session);
     }
 
+    /// Remove a user's durable projection and workspace while preserving audit
+    /// logs. Log retention is an administrator concern; ordinary lifecycle
+    /// operations must not silently erase chat/tool/stream history.
     pub fn purge_user_data(&self, user_id: &str) -> Result<PurgeResult> {
+        self.purge_user_data_inner(user_id, false)
+    }
+
+    /// Explicit destructive variant used by administrator cleanup flows.
+    /// This is the only user-wide workspace entry point that removes logs.
+    pub fn purge_user_data_with_logs(&self, user_id: &str) -> Result<PurgeResult> {
+        self.purge_user_data_inner(user_id, true)
+    }
+
+    fn purge_user_data_inner(&self, user_id: &str, delete_logs: bool) -> Result<PurgeResult> {
         let cleaned = user_id.trim();
         if cleaned.is_empty() {
             return Ok(PurgeResult {
@@ -1573,11 +1597,21 @@ impl WorkspaceManager {
         }
         // Directory deletion must succeed before reporting a successful user purge.
         let chat_sessions = self.storage.delete_chat_sessions_by_user(cleaned)?;
-        let chat_deleted = self.storage.delete_chat_history(cleaned).unwrap_or(0);
-        let tool_deleted = self.storage.delete_tool_logs(cleaned).unwrap_or(0);
+        let chat_deleted = if delete_logs {
+            self.storage.delete_chat_history(cleaned).unwrap_or(0)
+        } else {
+            0
+        };
+        let tool_deleted = if delete_logs {
+            self.storage.delete_tool_logs(cleaned).unwrap_or(0)
+        } else {
+            0
+        };
         let _ = self.storage.delete_memory_records_by_user(cleaned);
         let _ = self.storage.delete_memory_settings_by_user(cleaned);
-        let _ = self.storage.delete_artifact_logs(cleaned);
+        if delete_logs {
+            let _ = self.storage.delete_artifact_logs(cleaned);
+        }
         let workspace_root = self.workspace_root(cleaned);
         let workspace_deleted = if self.single_root && workspace_root == self.root {
             false
@@ -1611,7 +1645,9 @@ impl WorkspaceManager {
             .storage
             .delete_meta_prefix(&format!("session_context_limit_hint:{safe_id}:"));
         let _ = self.storage.delete_session_locks_by_user(cleaned);
-        let _ = self.storage.delete_stream_events_by_user(cleaned);
+        if delete_logs {
+            let _ = self.storage.delete_stream_events_by_user(cleaned);
+        }
         Ok(PurgeResult {
             chat_sessions,
             chat_records: chat_deleted,
@@ -2407,6 +2443,7 @@ mod concurrency_tests;
 mod tests {
     use super::{effective_temp_cleanup_idle_ttl_s, TEMP_FILES_IDLE_TTL_S};
     use crate::storage::{SqliteStorage, StorageBackend};
+    use serde_json::json;
     use std::collections::HashMap;
     use std::fs;
     use std::sync::Arc;
@@ -2550,6 +2587,50 @@ mod tests {
             workspace.load_session_context_limit_hint(user_id, session_id),
             None
         );
+    }
+
+    #[test]
+    fn purge_user_data_preserves_audit_logs_until_explicit_cleanup() {
+        let (workspace, _dir) = build_workspace_manager();
+        let storage = workspace.storage.clone();
+        let user_id = "u-audit";
+        let session_id = "s-audit";
+        storage
+            .append_chat(user_id, &json!({"session_id": session_id, "role": "user"}))
+            .expect("append chat history");
+        storage
+            .append_tool_log(user_id, &json!({"session_id": session_id, "tool": "tool"}))
+            .expect("append tool log");
+        storage
+            .append_stream_event(session_id, user_id, 1, &json!({"event": "progress"}))
+            .expect("append stream event");
+
+        workspace
+            .purge_user_data(user_id)
+            .expect("purge projection");
+        assert_eq!(
+            storage
+                .load_chat_history(user_id, session_id, None)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            storage.load_stream_events(session_id, 0, 10).unwrap().len(),
+            1
+        );
+
+        workspace
+            .purge_user_data_with_logs(user_id)
+            .expect("purge logs");
+        assert!(storage
+            .load_chat_history(user_id, session_id, None)
+            .unwrap()
+            .is_empty());
+        assert!(storage
+            .load_stream_events(session_id, 0, 10)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

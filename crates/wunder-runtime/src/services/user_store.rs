@@ -8,7 +8,7 @@ use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, AgentTaskRecord, BeeroomChatMessageRecord,
     ChatSessionRecord, HiveRecord, OrgUnitRecord, SessionLockRecord, SessionRunRecord,
     StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams, UserAccountRecord,
-    UserAgentAccessRecord, UserAgentRecord, UserSessionScopeRecord, UserQuotaStatus,
+    UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserSessionScopeRecord,
     UserTokenRecord, UserToolAccessRecord, DEFAULT_HIVE_ID, DEFAULT_SANDBOX_CONTAINER_ID,
 };
 use anyhow::{anyhow, Result};
@@ -39,7 +39,8 @@ const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
 const DEFAULT_AGENT_DESCRIPTION: &str =
     "我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~";
 const DEFAULT_AGENT_SYSTEM_PROMPT: &str = "你是一个乐于助人的智能体";
-const DEFAULT_AGENT_PRESET_QUESTION_DRAW_HEART: &str = "绘制一个爱心到本地";
+const DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF: &str = "制作一个骑自行车的鹈鹕gif";
+const LEGACY_AGENT_PRESET_QUESTION_DRAW_HEART: &str = "绘制一个爱心到本地";
 const DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE: &str = "用公文写作技能写一篇广州旅游攻略";
 const SESSION_TIME_EPSILON_MICROS: u64 = 1;
 const DEFAULT_SESSION_SCOPE: &str = "default";
@@ -261,8 +262,7 @@ impl UserStore {
             path_name: unit.path_name.clone(),
             level: unit.level,
         });
-        let quota_status =
-            Self::effective_quota_status(user, None);
+        let quota_status = Self::effective_quota_status(user, None);
         UserProfile {
             id: user.user_id.clone(),
             username: user.username.clone(),
@@ -1257,6 +1257,11 @@ fn normalize_default_agent_record(existing: &mut UserAgentRecord) {
     if existing.preset_questions.is_empty() {
         existing.preset_questions = default_agent_preset_questions();
     }
+    for question in &mut existing.preset_questions {
+        if question == LEGACY_AGENT_PRESET_QUESTION_DRAW_HEART {
+            *question = DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF.to_string();
+        }
+    }
     existing.is_shared = false;
 }
 
@@ -1291,6 +1296,11 @@ fn normalize_default_agent_snapshot(config: &mut DefaultAgentConfigSnapshot) {
     config.preset_questions = crate::services::user_agent_presets::normalize_preset_questions(
         std::mem::take(&mut config.preset_questions),
     );
+    for question in &mut config.preset_questions {
+        if question == LEGACY_AGENT_PRESET_QUESTION_DRAW_HEART {
+            *question = DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF.to_string();
+        }
+    }
     if config.preset_questions.is_empty() {
         config.preset_questions = default_agent_preset_questions();
     }
@@ -1306,7 +1316,7 @@ fn normalize_default_agent_snapshot(config: &mut DefaultAgentConfigSnapshot) {
 
 fn default_agent_preset_questions() -> Vec<String> {
     vec![
-        DEFAULT_AGENT_PRESET_QUESTION_DRAW_HEART.to_string(),
+        DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF.to_string(),
         DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE.to_string(),
     ]
 }

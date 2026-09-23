@@ -62,18 +62,9 @@
               </span>
             </span>
             <span
-              v-if="entry.contextTokensLabel || entry.consumedTokensLabel || entry.durationLabel"
+              v-if="entry.consumedTokensLabel || entry.durationLabel"
               class="tool-workflow-entry-meta"
             >
-              <span
-                :title="t('chat.toolWorkflow.requestContextHint')"
-                :class="[
-                  'tool-workflow-entry-context',
-                  { 'is-empty': !entry.contextTokensLabel }
-                ]"
-              >
-                {{ entry.contextTokensLabel }}
-              </span>
               <span
                 :title="t('chat.toolWorkflow.requestUsageHint')"
                 :class="[

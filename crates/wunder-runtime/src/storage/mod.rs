@@ -1,5 +1,7 @@
 // 存储模块：封装 SQLite/Postgres 持久化读写，提供统一的历史/监控/记忆接口。
 
+#[cfg(test)]
+mod agent_message_tests;
 mod backend;
 mod bridge;
 mod constants;
@@ -8,8 +10,6 @@ mod factory;
 mod postgres;
 #[cfg(test)]
 mod queue_control_tests;
-#[cfg(test)]
-mod agent_message_tests;
 #[cfg(test)]
 mod quota_tests;
 mod records;

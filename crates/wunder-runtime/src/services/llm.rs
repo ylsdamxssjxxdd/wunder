@@ -10,9 +10,9 @@ use std::future::Future;
 use std::time::Duration;
 use tracing::warn;
 
-mod context_probe;
 mod admission;
 pub(crate) mod benchmark;
+mod context_probe;
 mod payload;
 mod provider;
 mod response;
@@ -709,7 +709,11 @@ pub struct LlmClient {
 
 impl LlmClient {
     pub fn new(http: Client, config: LlmModelConfig) -> Self {
-        Self { http, config, request_admission: None }
+        Self {
+            http,
+            config,
+            request_admission: None,
+        }
     }
 
     fn is_anthropic_provider(&self) -> bool {

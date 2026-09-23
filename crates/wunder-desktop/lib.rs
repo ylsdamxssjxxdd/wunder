@@ -8,7 +8,8 @@ pub mod native;
 pub mod runtime;
 
 pub use native::{
-    AgentRecord, DesktopSettings, Directory, FileRecord, LanPeerRecord, LanSettings, ModelEdit, ModelRecord, NativeChatEvent, NativeProfile,
-    NativeChatInput, NativeDesktop, NativeMessage, NativeSession, NativeStream, ToolRecord,
+    AgentRecord, DesktopSettings, Directory, FileRecord, LanPeerRecord, LanSettings, ModelEdit,
+    ModelRecord, NativeChatEvent, NativeChatInput, NativeDesktop, NativeMessage, NativeProfile,
+    NativeSession, NativeStream, ToolRecord,
 };
 pub use runtime::DesktopRuntime;

@@ -31,7 +31,7 @@ async function waitFinished(id, timeoutMs = 180000) {
   throw new Error("Test did not settle");
 }
 async function run(model, input, output = 1024) {
-  const active = await api("start", {model_name:model,input_tokens:input,output_tokens:output});
+  const active = await api("start", {model_name:model,concurrency:2,input_tokens:input,output_tokens:output});
   const result = await waitFinished(active.id);
   results.push(result);
   console.log(JSON.stringify({model,input,output,status:result.status,ttft_ms:result.metrics.ttft_ms,prefill_tps:result.metrics.prefill_tps,decode_tps:result.metrics.decode_tps,actual_output:result.metrics.output_tokens}));
@@ -41,8 +41,8 @@ function validTiming(result, prefill = 2000, generation = 200) {
   const {metrics} = result;
   assert.equal(result.status,"finished");
   assert.equal(metrics.target_reached,true);
-  assert.equal(metrics.output_tokens,result.config.output_tokens);
-  assert.equal(metrics.reasoning_tokens, result.config.output_tokens / 4);
+  assert.equal(metrics.output_tokens,result.config.output_tokens * result.config.concurrency);
+  assert.equal(metrics.reasoning_tokens, result.config.output_tokens * result.config.concurrency / 4);
   const expected = metrics.input_tokens / prefill * 1000;
   assert.ok(metrics.ttft_ms >= expected - 5 && metrics.ttft_ms < expected + 600, `prefill expected ${expected}, got ${metrics.ttft_ms}`);
   assert.ok(Math.abs(metrics.decode_tps / generation - 1) < 0.05, "decode speed");
@@ -69,7 +69,7 @@ if (process.argv.includes("--verify-history")) {
 }
 const before = counts();
 assert.equal((await fetch(`${base}/wunder/admin/throughput/status`)).status,401);
-await api("start",{model_name:"virtual",input_tokens:3,output_tokens:1024},400);
+await api("start",{model_name:"virtual",concurrency:1,input_tokens:3,output_tokens:1024},400);
 await api("report?run_id=..%2Finvalid",undefined,404);
 
 const {ticket} = await api("ticket",{});
@@ -102,9 +102,9 @@ const missing=await run("missing",1024);
 assert.deepEqual([missing.status,missing.metrics.output_tokens,missing.metrics.target_reached],["incomplete",null,null]);
 
 for(const model of ["virtual","api"]) {
-  const active = await api("start",{model_name:model,input_tokens:1048576,output_tokens:1024});
+  const active = await api("start",{model_name:model,concurrency:2,input_tokens:1048576,output_tokens:1024});
   await sleep(200);
-  await api("start",{model_name:model,input_tokens:1024,output_tokens:1024},409);
+  await api("start",{model_name:model,concurrency:2,input_tokens:1024,output_tokens:1024},409);
   const inPrefill=(await api("status")).active;
   assert.equal(inPrefill.metrics.ttft_ms,null);
   const started=Date.now();await api("stop",{});

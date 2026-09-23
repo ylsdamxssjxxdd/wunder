@@ -20,37 +20,6 @@ struct ChatMessageRepairReport {
     repair: Option<Value>,
 }
 
-#[derive(Clone, Debug)]
-struct InvalidToolCallReport {
-    count: usize,
-    reason: &'static str,
-    sample_names: Vec<String>,
-}
-
-impl InvalidToolCallReport {
-    fn retry_payload(&self, attempt: u32, stream: bool) -> Value {
-        let max_attempts = resolve_llm_max_attempts(LlmFailureKind::Unavailable);
-        let will_retry = attempt < max_attempts;
-        // The fallback request is non-streaming, so clients must retain the
-        // recovery state until its output or the authoritative terminal event.
-        json!({
-            "attempt": attempt,
-            "max_attempts": max_attempts,
-            "retry_reason": self.reason,
-            "stream": stream,
-            "next_stream": false,
-            "will_retry": will_retry,
-            "delay_s": if will_retry {
-                resolve_llm_retry_delay(attempt, LlmFailureKind::Unavailable).as_secs_f64()
-            } else {
-                0.0
-            },
-            "invalid_tool_call_count": self.count,
-            "sample_tool_names": self.sample_names,
-        })
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LlmFailureKind {
     Other,
@@ -101,10 +70,18 @@ impl OutputTiming {
         // Match the visible output token numerator with the answer stream only.
         // Reasoning and tool-only chunks must not define its decode interval.
         let decode = self.first_content_at.map(|first| {
-            self.last_content_at
-                .unwrap_or(response_end)
-                .saturating_duration_since(first)
-                .as_secs_f64()
+            // Providers may deliver the complete visible answer in one chunk.
+            // In that case first and last content timestamps are identical;
+            // measure until response completion instead of reporting 0s and
+            // losing the persisted bubble speed.
+            let last = self.last_content_at.unwrap_or(response_end);
+            let duration = last.saturating_duration_since(first);
+            let duration = if duration.is_zero() {
+                response_end.saturating_duration_since(first)
+            } else {
+                duration
+            };
+            duration.as_secs_f64()
         });
         (Some(prefill), decode)
     }
@@ -122,10 +99,16 @@ impl OutputTiming {
         let decode_ms = last_output_at
             .saturating_duration_since(first_output_at)
             .as_millis() as u64;
-        let content_decode_ms = self
-            .first_content_at
-            .zip(self.last_content_at)
-            .map(|(first, last)| last.saturating_duration_since(first).as_millis() as u64);
+        let content_decode_ms = self.first_content_at.map(|first| {
+            let last = self.last_content_at.unwrap_or(response_end);
+            let duration = last.saturating_duration_since(first);
+            let duration = if duration.is_zero() {
+                response_end.saturating_duration_since(first)
+            } else {
+                duration
+            };
+            duration.as_millis() as u64
+        });
         Some(json!({
             "chunk_count": self.output_chunk_count,
             "content_delta_chars": self.content_delta_chars,
@@ -298,78 +281,6 @@ fn json_content_len(value: &Value) -> usize {
         Value::Null => 0,
         other => serde_json::to_string(other).map_or(0, |text| text.chars().count()),
     }
-}
-
-fn detect_invalid_tool_calls(tool_calls: Option<&Value>) -> Option<InvalidToolCallReport> {
-    let Value::Array(items) = tool_calls? else {
-        return None;
-    };
-    let mut sample_names = Vec::new();
-    let mut count = 0usize;
-    for item in items {
-        let Some(function) = item.get("function").and_then(Value::as_object) else {
-            continue;
-        };
-        let name = function
-            .get("name")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty());
-        let arguments = function.get("arguments").and_then(Value::as_str);
-        let invalid = if let Some(name) = name {
-            is_known_bad_tool_call_name(name)
-        } else {
-            true
-        };
-        let invalid = invalid || is_invalid_tool_call_arguments(arguments);
-        if invalid {
-            count = count.saturating_add(1);
-            if let Some(name) = name {
-                if sample_names.len() < 3 {
-                    sample_names.push(name.to_string());
-                }
-            }
-        }
-    }
-    (count > 0).then_some(InvalidToolCallReport {
-        count,
-        reason: "invalid_tool_call_arguments",
-        sample_names,
-    })
-}
-
-fn is_invalid_tool_call_arguments(arguments: Option<&str>) -> bool {
-    let Some(trimmed) = arguments.map(str::trim) else {
-        return true;
-    };
-    if trimmed.is_empty() {
-        return true;
-    }
-    let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
-        return true;
-    };
-    raw_tool_arguments_look_truncated(&value)
-}
-
-fn raw_tool_arguments_look_truncated(value: &Value) -> bool {
-    let Some(raw) = value.get("raw").and_then(Value::as_str).map(str::trim) else {
-        return false;
-    };
-    if raw.is_empty() || matches!(raw, "{" | "[" | "}" | "]") {
-        return true;
-    }
-    let lowered = raw.to_ascii_lowercase();
-    if lowered.contains("\"calls\"") && lowered.contains("\"parameters\"") {
-        return true;
-    }
-    raw.starts_with('{') && serde_json::from_str::<Value>(raw).is_err()
-}
-
-fn is_known_bad_tool_call_name(name: &str) -> bool {
-    matches!(
-        name.trim(),
-        "programmatic_tool_calls" | "tool_calls" | "function_calls"
-    )
 }
 
 impl Orchestrator {
@@ -942,13 +853,12 @@ impl Orchestrator {
         }
         let mut attempt = 0u32;
         let mut last_err: anyhow::Error;
-        let mut force_non_stream_retry = false;
         loop {
             self.ensure_not_cancelled(session_id)?;
             attempt += 1;
             let request_started_at = Instant::now();
             let output_timing = Arc::new(parking_lot::Mutex::new(OutputTiming::default()));
-            let will_stream = initial_will_stream && !force_non_stream_retry;
+            let will_stream = initial_will_stream;
             let result = if will_stream {
                 let emitter_snapshot = emitter.clone();
                 let timing_snapshot = Arc::clone(&output_timing);
@@ -1048,37 +958,6 @@ impl Orchestrator {
                         },
                     )
                     .await?;
-                    if native_tools_attached {
-                        if let Some(invalid_tool_calls) =
-                            detect_invalid_tool_calls(tool_calls.as_ref())
-                        {
-                            force_non_stream_retry = true;
-                            if emit_events {
-                                let mut retry_payload =
-                                    invalid_tool_calls.retry_payload(attempt, will_stream);
-                                if let Value::Object(ref mut map) = retry_payload {
-                                    round_info.insert_into(map);
-                                }
-                                emitter.emit("bad_tool_call_retry", retry_payload).await;
-                            }
-                            last_err = anyhow!(
-                                "LLM returned invalid tool call arguments: reason={} count={}",
-                                invalid_tool_calls.reason,
-                                invalid_tool_calls.count
-                            );
-                            let failure_kind = LlmFailureKind::Unavailable;
-                            let max_attempts = resolve_llm_max_attempts(failure_kind);
-                            let should_retry = attempt < max_attempts;
-                            if !should_retry {
-                                break;
-                            }
-                            let retry_delay = resolve_llm_retry_delay(attempt, failure_kind);
-                            if !retry_delay.is_zero() {
-                                self.sleep_or_cancel(session_id, retry_delay).await?;
-                            }
-                            continue;
-                        }
-                    }
                     let (prefill_duration_s, mut decode_duration_s) = if will_stream {
                         output_timing
                             .lock()
@@ -1449,53 +1328,15 @@ fn parse_context_limit_number(raw: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_context_cache_probe, classify_llm_failure, detect_invalid_tool_calls,
-        extract_context_window_limit_hint, is_context_window_error_text,
-        is_llm_unavailable_error_text, llm_retry_reason, resolve_llm_max_attempts,
-        resolve_llm_retry_delay, LlmFailureKind, DEFAULT_LLM_MAX_ATTEMPTS,
-        LLM_UNAVAILABLE_MIN_RETRIES,
+        build_context_cache_probe, classify_llm_failure, extract_context_window_limit_hint,
+        is_context_window_error_text, is_llm_unavailable_error_text, llm_retry_reason,
+        resolve_llm_max_attempts, resolve_llm_retry_delay, LlmFailureKind,
+        DEFAULT_LLM_MAX_ATTEMPTS, LLM_UNAVAILABLE_MIN_RETRIES,
     };
     use crate::core::config::LlmModelConfig;
     use crate::llm::ChatMessage;
     use serde_json::json;
     use std::time::{Duration, Instant};
-
-    #[test]
-    fn invalid_tool_retry_reports_non_streaming_fallback_and_exhaustion() {
-        let report = detect_invalid_tool_calls(Some(&json!([{
-            "function": {"name": "write_file", "arguments": "{"}
-        }])))
-        .expect("invalid arguments");
-        let max_attempts = resolve_llm_max_attempts(LlmFailureKind::Unavailable);
-        assert_eq!(
-            report.retry_payload(1, true),
-            json!({
-                "attempt": 1,
-                "max_attempts": max_attempts,
-                "retry_reason": "invalid_tool_call_arguments",
-                "stream": true,
-                "next_stream": false,
-                "will_retry": true,
-                "delay_s": resolve_llm_retry_delay(1, LlmFailureKind::Unavailable).as_secs_f64(),
-                "invalid_tool_call_count": 1,
-                "sample_tool_names": ["write_file"],
-            })
-        );
-        assert_eq!(
-            report.retry_payload(max_attempts, false),
-            json!({
-                "attempt": max_attempts,
-                "max_attempts": max_attempts,
-                "retry_reason": "invalid_tool_call_arguments",
-                "stream": false,
-                "next_stream": false,
-                "will_retry": false,
-                "delay_s": 0.0,
-                "invalid_tool_call_count": 1,
-                "sample_tool_names": ["write_file"],
-            })
-        );
-    }
 
     fn test_message(role: &str, content: &str) -> ChatMessage {
         ChatMessage {
@@ -1542,6 +1383,21 @@ mod tests {
             timing.durations(start, start + Duration::from_secs(66)),
             (Some(1.0), Some(2.0))
         );
+    }
+
+    #[test]
+    fn output_timing_measures_single_visible_chunk_until_response_end() {
+        let start = Instant::now();
+        let content = start + Duration::from_secs(1);
+        let end = content + Duration::from_secs(2);
+        let mut timing = super::OutputTiming::default();
+        timing.mark_output(content, 64, 0);
+
+        assert_eq!(timing.durations(start, end), (Some(1.0), Some(2.0)));
+        let payload = timing
+            .stream_timing_payload(start, end)
+            .expect("stream timing payload");
+        assert_eq!(payload["content_decode_ms"], json!(2000));
     }
 
     #[test]
@@ -1751,53 +1607,5 @@ mod tests {
         assert!(!crate::llm::should_disable_streaming_for_native_tools(
             &config, false
         ));
-    }
-
-    #[test]
-    fn detects_invalid_tool_call_arguments_wrapped_as_raw_prefix() {
-        let payload = json!([{
-            "type": "function",
-            "function": {
-                "name": "ptc",
-                "arguments": "{\"raw\":\"{\"}"
-            }
-        }]);
-
-        let report = detect_invalid_tool_calls(Some(&payload)).expect("invalid tool call");
-        assert_eq!(report.count, 1);
-        assert_eq!(report.reason, "invalid_tool_call_arguments");
-        assert_eq!(report.sample_names, vec!["ptc".to_string()]);
-    }
-
-    #[test]
-    fn detects_invalid_tool_call_arguments_wrapped_as_broken_calls_payload() {
-        let payload = json!([{
-            "type": "function",
-            "function": {
-                "name": "programmatic_tool_calls",
-                "arguments": "{\"raw\":\"{\\\"calls\\\": [name\\\": \\\"programmatic_tool_call\\\", \\\"parameters\\\": {}}\"}"
-            }
-        }]);
-
-        let report = detect_invalid_tool_calls(Some(&payload)).expect("invalid tool call");
-        assert_eq!(report.count, 1);
-        assert_eq!(report.reason, "invalid_tool_call_arguments");
-        assert_eq!(
-            report.sample_names,
-            vec!["programmatic_tool_calls".to_string()]
-        );
-    }
-
-    #[test]
-    fn ignores_valid_tool_call_arguments() {
-        let payload = json!([{
-            "type": "function",
-            "function": {
-                "name": "ptc",
-                "arguments": "{\"content\":\"print('ok')\",\"filename\":\"demo.py\"}"
-            }
-        }]);
-
-        assert!(detect_invalid_tool_calls(Some(&payload)).is_none());
     }
 }

@@ -1008,12 +1008,14 @@ const resolveStrictEventQuarantineReason = (event: NormalizedRuntimeEvent): stri
       event.type === 'tool_call_delta' ||
       event.type === 'tool_call_completed' ||
       event.type === 'tool_call_failed' ||
-      event.type === 'workflow_event' ||
-      event.type === 'usage_stats'
+      event.type === 'workflow_event'
     ) &&
     (!event.modelTurnId || !event.messageId)
   ) {
     return 'missing_model_turn_or_message_id';
+  }
+  if (event.type === 'usage_stats' && !event.modelTurnId) {
+    return 'missing_model_turn_id';
   }
   if (
     (event.type === 'turn_completed' || event.type === 'turn_failed' || event.type === 'turn_cancelled') &&
@@ -1292,6 +1294,12 @@ const applyUsageStats = (
   const existing = resolveUsageStatsTargetMessage(session, event);
   if (!existing) {
     if (modelTurn) {
+      // Quota admission is emitted before the first assistant message for a
+      // direct reply. Keep the event on the model turn until that message is
+      // materialized so the visible bubble retains the real value.
+      const pending = modelTurn.pendingUsageStats || {};
+      applyProjectedUsageStatsToStats(pending, event, sourceType);
+      modelTurn.pendingUsageStats = pending;
       updateWorkflowContextSnapshotRecord(modelTurn as unknown as Record<string, unknown>, event);
     }
     return;
@@ -1658,7 +1666,15 @@ const mergeLegacyMessages = (
       createdAt: normalizeCreatedAt(raw.created_at ?? raw.createdAt),
       userTurnId: messageUserTurnId,
       modelTurnId: modelTurn.id
-    });
+  });
+    // Keep persisted bubble metrics when the canonical transcript is merged
+    // with workflow-only replay rows during refresh.
+    if (role === 'assistant') {
+      const persistedStats = asRecord(raw.stats ?? raw.message_stats ?? raw.messageStats);
+      if (Object.keys(persistedStats).length > 0) {
+        mergeUsageStatsIntoMessage(message, persistedStats);
+      }
+    }
     if (seenInBatch || (foldedIntoExisting && canReplaceSnapshot && shouldMergeFoldedLegacyMessage(raw, status))) {
       mergeMessageFromRaw(message, raw, status, options.snapshotSeq);
     } else if (existed === false || canReplaceSnapshot || (foldedIntoExisting && canReplaceSnapshot)) {
@@ -2619,6 +2635,12 @@ const patchMessageFromRaw = (
   message.cancelled = status === 'cancelled';
   patchProjectionRecordsFromRaw(message, 'workflowItems', raw.workflowItems);
   patchProjectionRecordsFromRaw(message, 'subagents', raw.subagents);
+  // History transcripts carry persisted message_stats, while workflow replay
+  // carries the durable tool rows. Merge the two before rendering so a refresh
+  // cannot drop bubble metrics or tool counts.
+  if (message.role === 'assistant') {
+    syncProjectedToolCallStats(message);
+  }
   message.updatedSeq = Math.max(message.updatedSeq, seq);
   markMessageStructureChanged(message);
 };
@@ -2823,6 +2845,9 @@ const PROJECTED_STATS_DISPLAY_FIELDS = [
   'quotaSnapshot',
   'quota',
   'quota_usage',
+  'creditsConsumed',
+  'credits_consumed',
+  'turn_quota_used',
   'quotaUsage',
   'contextTokens',
   'context_tokens',
@@ -3873,6 +3898,11 @@ const mergeModelTurnInto = (
   if (!targetTurn.finalMessageId && sourceTurn.finalMessageId) {
     targetTurn.finalMessageId = sourceTurn.finalMessageId;
   }
+  if (sourceTurn.pendingUsageStats) {
+    const pending = targetTurn.pendingUsageStats || {};
+    const merged = mergeProjectedDisplayMetadata(pending, sourceTurn.pendingUsageStats);
+    if (merged) targetTurn.pendingUsageStats = merged;
+  }
   targetTurn.createdSeq = Math.min(targetTurn.createdSeq, sourceTurn.createdSeq);
   targetTurn.status = mergeModelTurnStatus(targetTurn.status, sourceTurn.status);
   const sourceUserTurn = session.userTurnById[sourceTurn.userTurnId];
@@ -4134,6 +4164,15 @@ const ensureAssistantMessageForModelTurn = (
   }
   message.status = status;
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
+  if (modelTurn.pendingUsageStats) {
+    const display = ensureMessageDisplayProjection(message);
+    const stats = ensureProjectedStatsDisplay(display);
+    const merged = mergeProjectedDisplayMetadata(stats, modelTurn.pendingUsageStats);
+    if (merged) {
+      mirrorProjectedStatsDisplay(display, merged);
+    }
+    delete modelTurn.pendingUsageStats;
+  }
   addUnique(modelTurn.messageIds, message.id);
   addUnique(session.messages, message.id);
   pruneModelTurnAssistantMessages(session, modelTurn, message.id);
@@ -4504,10 +4543,14 @@ const applyProjectedUsageStatsDisplay = (
 ): void => {
   if (message.role !== 'assistant') return;
   const display = ensureMessageDisplayProjection(message);
-  const stats = ensureProjectedStatsDisplay(display);
   const payload = event.payload;
   const data = asRecord(payload.data);
   const source = Object.keys(data).length > 0 ? data : payload;
+  mergeUsageStatsIntoMessage(message, source);
+  // mergeUsageStatsIntoMessage may replace the stats object while preserving
+  // aliases, so resolve it only after the merge to avoid mutating a stale
+  // object that is no longer attached to the display projection.
+  const stats = ensureProjectedStatsDisplay(display);
   const normalizedUsage = normalizeProjectedUsagePayload(source.usage ?? source);
   const normalizedRoundUsage = normalizeProjectedUsagePayload(source.round_usage ?? source.roundUsage ?? source);
   if (sourceType === 'token_usage') {
@@ -4541,6 +4584,34 @@ const applyProjectedUsageStatsDisplay = (
     stats.contextSnapshotSeq = event.eventSeq;
   }
   mirrorProjectedStatsDisplay(display, stats);
+};
+
+const applyProjectedUsageStatsToStats = (
+  stats: Record<string, unknown>,
+  event: NormalizedRuntimeEvent,
+  sourceType: string
+): void => {
+  const payload = event.payload;
+  const data = asRecord(payload.data);
+  const source = Object.keys(data).length > 0 ? data : payload;
+  if (sourceType === 'quota_usage') {
+    applyProjectedQuotaStats(stats, source);
+  } else if (sourceType === 'round_usage' || sourceType === 'model_usage') {
+    const normalizedRoundUsage = normalizeProjectedUsagePayload(source.round_usage ?? source.roundUsage ?? source);
+    if (normalizedRoundUsage) {
+      stats.roundUsage = normalizedRoundUsage;
+      stats.round_usage = normalizedRoundUsage;
+      stats.round_usage_total = normalizedRoundUsage;
+    }
+    applyProjectedConsumedStats(stats, source, normalizedRoundUsage);
+  } else if (sourceType === 'token_usage') {
+    const normalizedUsage = normalizeProjectedUsagePayload(source.usage ?? source);
+    if (normalizedUsage) {
+      stats.usage = normalizedUsage;
+      stats.tokenUsage = normalizedUsage;
+      stats.token_usage = normalizedUsage;
+    }
+  }
 };
 
 const updateWorkflowContextSnapshot = (
@@ -4787,6 +4858,9 @@ const mirrorProjectedStatsDisplay = (
     'quotaSnapshot',
     'quota',
     'quota_usage',
+    'creditsConsumed',
+    'credits_consumed',
+    'turn_quota_used',
     'quotaUsage',
     'contextTokens',
     'context_tokens',
@@ -4861,6 +4935,25 @@ const applyProjectedQuotaStats = (
     stats.quota = snapshot;
     stats.quota_usage = snapshot;
     stats.quotaUsage = snapshot;
+  }
+  const credits = parseNonNegativeInt(source.turn_quota_used ?? source.turnQuotaUsed ?? source.credits_consumed ?? source.creditsConsumed);
+  if (credits !== null) {
+    stats.creditsConsumed = Math.max(normalizeProjectedCount(stats.creditsConsumed), credits);
+    stats.credits_consumed = stats.creditsConsumed;
+  }
+};
+
+const mergeUsageStatsIntoMessage = (
+  message: ChatRuntimeMessageProjection,
+  source: Record<string, unknown>
+): void => {
+  const stats = ensureProjectedStatsDisplay(ensureMessageDisplayProjection(message));
+  const persisted = asRecord(source.message_stats ?? source.messageStats);
+  const usageSource = Object.keys(persisted).length > 0 ? persisted : source;
+  if (Object.keys(usageSource).length === 0) return;
+  const merged = mergeProjectedDisplayMetadata(stats, usageSource);
+  if (merged) {
+    mirrorProjectedStatsDisplay(message.display as Record<string, unknown>, merged);
   }
 };
 
@@ -5001,6 +5094,17 @@ const resolveUsageStatsTargetMessage = (
   session: ChatRuntimeSessionProjection,
   event: NormalizedRuntimeEvent
 ): ChatRuntimeMessageProjection | null => {
+  const sourceType = normalizeText(event.payload.source_event_type);
+  const hasTurnQuota = sourceType === 'quota_usage' && (
+    event.payload.turn_quota_used !== undefined ||
+    asRecord(event.payload.data).turn_quota_used !== undefined ||
+    event.payload.turnQuotaUsed !== undefined ||
+    asRecord(event.payload.data).turnQuotaUsed !== undefined ||
+    event.payload.credits_consumed !== undefined ||
+    asRecord(event.payload.data).credits_consumed !== undefined ||
+    event.payload.creditsConsumed !== undefined ||
+    asRecord(event.payload.data).creditsConsumed !== undefined
+  );
   if (event.messageId) {
     const explicit = session.messageById[event.messageId];
     if (explicit?.role === 'assistant' && !isSyntheticRuntimeMessage(explicit)) return explicit;
@@ -5018,9 +5122,25 @@ const resolveUsageStatsTargetMessage = (
     const message = resolveLatestAssistantMessageForModelTurn(session, turn);
     if (message) return message;
   }
+  if (event.userTurnId) {
+    const turn = resolveReusableModelTurnForUserTurn(session, event.userTurnId, true, [
+      'created',
+      'waiting_first_output',
+      'streaming',
+      'tool_running',
+      'finalizing',
+      'completed'
+    ]);
+    const message = resolveLatestAssistantMessageForModelTurn(session, turn);
+    if (message) return message;
+  }
   const activeTurn = resolveLatestActiveAssistantModelTurn(session);
   const activeMessage = resolveLatestAssistantMessageForModelTurn(session, activeTurn);
+  if (hasTurnQuota) return null;
   if (activeMessage) return activeMessage;
+  // A quota event may precede the first assistant bubble. Do not attach it to
+  // an older completed reply when there is no active turn to own it.
+  if (sourceType === 'quota_usage') return null;
   return Object.values(session.messageById)
     .filter((message) => message.role === 'assistant' && !isSyntheticRuntimeMessage(message))
     .sort((left, right) => right.updatedSeq - left.updatedSeq || right.createdSeq - left.createdSeq)[0] || null;

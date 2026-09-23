@@ -14,7 +14,7 @@ use crate::storage::{
     SessionLockRecord, SessionLockStatus, SessionRunRecord, SpeechJobRecord, TeamRunRecord,
     TeamTaskRecord, UpdateAgentTaskStatusParams, UpdateChannelOutboxStatusParams,
     UpsertMemoryTaskLogParams, UserAccountRecord, UserAgentAccessRecord, UserAgentPresetBinding,
-    UserAgentRecord, UserExperienceUpdateResult, UserSessionScopeRecord, UserQuotaStatus,
+    UserAgentRecord, UserExperienceUpdateResult, UserQuotaStatus, UserSessionScopeRecord,
     UserTokenRecord, UserToolAccessRecord, UserWorldConversationRecord,
     UserWorldConversationSummaryRecord, UserWorldEventRecord, UserWorldGroupRecord,
     UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult, UserWorldSendMessageResult,
@@ -34,6 +34,7 @@ use tokio_postgres::types::ToSql;
 use tokio_postgres::NoTls;
 
 mod agent_directory_store;
+mod agent_message;
 mod agent_runtime_store;
 mod backend_impl;
 mod benchmark_store;
@@ -50,14 +51,13 @@ mod memory_store;
 mod meta_store;
 mod monitor_store;
 mod queue_control;
-mod agent_message;
+mod quota_balance_store;
 mod retention_store;
 mod schema;
-mod session_goal;
 mod session_cleanup;
+mod session_goal;
 mod session_lock_store;
 mod session_run;
-mod quota_balance_store;
 mod user_account_store;
 mod user_world_store;
 mod vector_document_store;
@@ -77,12 +77,12 @@ use media_store::PostgresMediaStorage;
 use memory_store::PostgresMemoryStorage;
 use meta_store::PostgresMetaStorage;
 use monitor_store::PostgresMonitorStorage;
+use quota_balance_store::PostgresQuotaBalanceStorage;
 use retention_store::PostgresRetentionStorage;
 use schema::PostgresSchemaStorage;
 use session_goal::PostgresSessionGoalStorage;
 use session_lock_store::PostgresSessionLockStorage;
 use session_run::PostgresSessionRunStorage;
-use quota_balance_store::PostgresQuotaBalanceStorage;
 use user_account_store::PostgresUserAccountStorage;
 use user_world_store::PostgresUserWorldStorage;
 use vector_document_store::PostgresVectorDocumentStorage;

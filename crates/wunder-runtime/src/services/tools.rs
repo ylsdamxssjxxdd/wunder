@@ -10,11 +10,13 @@ mod apply_patch_update;
 mod browser_tool;
 mod catalog;
 mod channel_tool;
-pub(crate) mod compact;
+#[cfg(all(test, feature = "sqlite-storage"))]
+mod child_pool_tests;
 pub(crate) mod command_options;
 pub(crate) mod command_output_guard;
 pub mod command_sessions;
 mod command_tool;
+pub(crate) mod compact;
 mod context;
 mod desktop_control;
 #[cfg(feature = "desktop-control")]
@@ -39,8 +41,6 @@ mod search_content_tool;
 mod self_status_tool;
 mod session_announce_support;
 mod session_run_lifecycle;
-#[cfg(all(test, feature = "sqlite-storage"))]
-mod child_pool_tests;
 mod session_run_stream;
 mod session_tool;
 mod session_tool_access;
@@ -86,6 +86,7 @@ pub use catalog::{
     is_desktop_control_tool_name, is_read_image_tool_name, is_sleep_tool_name,
     resolve_runtime_tool_display_name, resolve_tool_name,
 };
+pub(crate) use compact::{compact_tool_spec_for_model, compact_tool_specs_for_model};
 pub use context::{build_tool_roots, ToolContext, ToolEventEmitter, ToolRoots};
 pub(crate) use context::{
     collect_allow_roots, collect_read_roots, resolve_tool_path, roots_allow_any_path,
@@ -95,7 +96,6 @@ pub(crate) use freeform::{
     build_responses_freeform_tool, extract_freeform_tool_input, is_freeform_tool_name,
     render_prompt_tool_spec,
 };
-pub(crate) use compact::compact_tool_spec_for_model;
 pub(crate) use lsp_tool::touch_lsp_file;
 pub(crate) use mcp_pack::{
     runtime_name as mcp_pack_runtime_name, schema as mcp_pack_schema,

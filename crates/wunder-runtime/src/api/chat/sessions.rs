@@ -271,10 +271,7 @@ async fn list_sessions(
         )
     })?;
     let agent_id = query.agent_id.as_deref().map(str::trim);
-    let parent_session_id = query
-        .parent_session_id
-        .as_deref()
-        .map(str::trim);
+    let parent_session_id = query.parent_session_id.as_deref().map(str::trim);
     let status_filter = match query.status.as_deref().map(str::trim) {
         Some(value) if value.eq_ignore_ascii_case(CHAT_SESSION_STATUS_ARCHIVED) => {
             Some(CHAT_SESSION_STATUS_ARCHIVED)
@@ -284,7 +281,11 @@ async fn list_sessions(
     };
     let (sessions, total) = if parent_session_id.is_none() {
         state.storage.list_work_chat_sessions(
-            &resolved.user.user_id, agent_id, status_filter, offset, limit,
+            &resolved.user.user_id,
+            agent_id,
+            status_filter,
+            offset,
+            limit,
         )
     } else {
         state.user_store.list_chat_sessions_by_status(
@@ -296,7 +297,7 @@ async fn list_sessions(
             limit,
         )
     }
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let config = state.config_store.get().await;
     let mut agent_record_map: HashMap<String, Option<crate::storage::UserAgentRecord>> =
         HashMap::new();
@@ -322,7 +323,9 @@ async fn list_sessions(
     let usage_by_session = state.monitor.session_usage_summaries(&session_ids);
     for record in &sessions {
         let mut payload = session_payload(record);
-        if let Some((consumed_tokens, tool_calls, quota_used)) = usage_by_session.get(&record.session_id) {
+        if let Some((consumed_tokens, tool_calls, quota_used)) =
+            usage_by_session.get(&record.session_id)
+        {
             if let Value::Object(map) = &mut payload {
                 map.insert("consumed_tokens".to_string(), json!(consumed_tokens));
                 map.insert("tool_calls".to_string(), json!(tool_calls));
@@ -874,7 +877,7 @@ async fn delete_session(
     let _ = state
         .memory
         .delete_record(&resolved.user.user_id, &session_id);
-    let _ = state.monitor.purge_session(&session_id);
+    let _ = state.monitor.forget_session(&session_id);
     let _ = state
         .user_store
         .delete_chat_session(&resolved.user.user_id, &session_id);

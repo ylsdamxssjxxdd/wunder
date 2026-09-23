@@ -250,8 +250,13 @@ impl PostgresLogStatsStorage for PostgresStorage {
         let live = crate::storage::session_cleanup::LIVE_SESSION_PREDICATE.replace(":now", "$1");
         // Freeze the protected set before deleting monitor evidence. Never erase
         // the replay/history of a running, queued or approval-suspended thread.
-        tx.execute(&format!("CREATE TEMP TABLE protected_chat_sessions ON COMMIT DROP AS \
-            SELECT c.session_id FROM chat_sessions c WHERE {live}"), &[&now])?;
+        tx.execute(
+            &format!(
+                "CREATE TEMP TABLE protected_chat_sessions ON COMMIT DROP AS \
+            SELECT c.session_id FROM chat_sessions c WHERE {live}"
+            ),
+            &[&now],
+        )?;
         let mut results = HashMap::new();
         let mut delete_range = |table: &str, time_field: &str| -> Result<i64> {
             let sql =

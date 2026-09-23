@@ -95,10 +95,13 @@ mod tests {
 
         let deleted = storage.cleanup_retention(1).expect("cleanup retention");
         assert!(deleted.is_empty());
-        assert_eq!(storage
-            .load_model_context_entries("regular", "session-a", None)
-            .expect("load regular entries")
-            .len(), 1);
+        assert_eq!(
+            storage
+                .load_model_context_entries("regular", "session-a", None)
+                .expect("load regular entries")
+                .len(),
+            1
+        );
         assert_eq!(
             storage
                 .load_model_context_entries("admin", "session-a", None)

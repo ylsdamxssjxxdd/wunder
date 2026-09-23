@@ -15,16 +15,16 @@ mod stream;
 pub use stream::{NativeChatEvent, NativeStream};
 #[path = "native_catalog.rs"]
 mod catalog;
+#[path = "native_profile.rs"]
+mod profile;
 #[path = "native_settings.rs"]
 mod settings;
 #[path = "native_workspace.rs"]
 mod workspace;
-#[path = "native_profile.rs"]
-mod profile;
 pub use catalog::{AgentRecord, ToolRecord};
+pub use profile::NativeProfile;
 pub use settings::{DesktopSettings, LanPeerRecord, LanSettings, ModelEdit, ModelRecord};
 pub use workspace::{Directory, FileRecord};
-pub use profile::NativeProfile;
 
 #[derive(Debug, Clone)]
 pub struct NativeChatInput {

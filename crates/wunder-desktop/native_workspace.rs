@@ -76,7 +76,12 @@ impl NativeDesktop {
             .state()
             .workspace
             .scoped_user_id_by_container(self.user_id(), container_id);
-        let root = self.state().workspace.ensure_user_root(&scope)?.display().to_string();
+        let root = self
+            .state()
+            .workspace
+            .ensure_user_root(&scope)?
+            .display()
+            .to_string();
         self.confined_path(&scope, path)?;
         let (entries, _, path, parent, total) = self.state().workspace.list_workspace_entries(
             &scope,

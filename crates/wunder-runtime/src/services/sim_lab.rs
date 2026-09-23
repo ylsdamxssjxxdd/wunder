@@ -764,7 +764,7 @@ fn ensure_swarm_sim_user(state: &AppState, user_id: &str) -> Result<()> {
 
 fn reset_swarm_sim_user_runtime(state: &AppState, user_id: &str) -> Result<()> {
     state.monitor.purge_user_sessions(user_id);
-    let _ = state.workspace.purge_user_data(user_id);
+    let _ = state.workspace.purge_user_data_with_logs(user_id);
 
     let (sessions, _) = state
         .user_store

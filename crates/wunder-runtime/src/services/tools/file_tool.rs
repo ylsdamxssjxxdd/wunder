@@ -1299,15 +1299,34 @@ struct WriteFileOutcome {
     previous_bytes: u64,
 }
 
-pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let args = recover_tool_args_value(args);
-    // Validate required input before sandbox dispatch or filesystem resolution.
-    // Missing content must never be interpreted as an intentional empty write.
+/// Validate the small, model-facing part of `write_file` before sandbox or
+/// filesystem work.  Keeping this deterministic makes malformed calls cheap
+/// to recover from and prevents the error payload from echoing file content.
+pub(crate) fn validate_write_file_args(args: &Value) -> Option<Value> {
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let Some(path) = path else {
+        return Some(build_failed_tool_result(
+            "缺少 path",
+            json!({"path_required": true}),
+            ToolErrorMeta::new(
+                "TOOL_WRITE_PATH_REQUIRED",
+                Some("请提供非空字符串 path。".to_string()),
+                false,
+                None,
+            ),
+            false,
+        ));
+    };
+
     if !args.get("content").is_some_and(Value::is_string) {
-        return Ok(build_failed_tool_result(
+        return Some(build_failed_tool_result(
             "缺少 content",
             json!({
-                "path": args.get("path").cloned().unwrap_or(Value::Null),
+                "path": path,
                 "content_required": true,
             }),
             ToolErrorMeta::new(
@@ -1319,6 +1338,17 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
             false,
         ));
     }
+
+    None
+}
+
+pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let args = recover_tool_args_value(args);
+    // Validate required input before sandbox dispatch or filesystem resolution.
+    // Missing content must never be interpreted as an intentional empty write.
+    if let Some(failure) = validate_write_file_args(&args) {
+        return Ok(failure);
+    }
     if let Some(result) = execute_in_sandbox(context, "写入文件", &args).await {
         if !parse_dry_run(&args) {
             context.workspace.mark_tree_dirty(context.workspace_id);
@@ -1328,21 +1358,8 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
     let path = args
         .get("path")
         .and_then(Value::as_str)
-        .unwrap_or("")
+        .expect("write_file arguments were validated")
         .trim();
-    if path.is_empty() {
-        return Ok(build_failed_tool_result(
-            "缺少 path",
-            json!({}),
-            ToolErrorMeta::new(
-                "TOOL_WRITE_PATH_REQUIRED",
-                Some("请提供写入目标路径。".to_string()),
-                false,
-                None,
-            ),
-            false,
-        ));
-    }
     let dry_run = parse_dry_run(&args);
     let content = args
         .get("content")

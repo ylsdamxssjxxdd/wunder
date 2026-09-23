@@ -166,6 +166,8 @@ export type ChatRuntimeModelTurnProjection = {
   messageIds: string[];
   finalMessageId: string;
   status: 'created' | 'waiting_first_output' | 'streaming' | 'tool_running' | 'finalizing' | 'completed' | 'failed' | 'cancelled';
+  /** Usage can arrive at request admission before the assistant bubble exists. */
+  pendingUsageStats?: Record<string, unknown>;
 };
 
 export type ChatRuntimeSessionProjection = {

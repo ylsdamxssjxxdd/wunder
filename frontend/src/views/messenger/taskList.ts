@@ -49,11 +49,23 @@ export function buildTaskList(sessions: Record<string, any>[], agentId: string, 
     runtimeStatus: String(
       item.runtime_status ?? item.runtimeStatus ?? item.thread_status ?? item.threadStatus ?? item.status ?? ''
     ).trim().toLowerCase(),
-    createdAt: typeof item.created_at === 'number' ? item.created_at : Date.parse(item.created_at || '') || 0,
+    createdAt: resolveTaskActivityTimestamp(item),
     consumedTokens: normalizeCount(item.consumed_tokens ?? item.consumedTokens),
     toolCalls: normalizeCount(item.tool_calls ?? item.toolCalls),
     quotaUsed: readSessionQuotaUsed(item)
   })).sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+}
+
+function resolveTaskActivityTimestamp(item: Record<string, any>): number {
+  const candidates = [item.last_message_at, item.lastMessageAt, item.updated_at, item.updatedAt, item.created_at, item.createdAt];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+      return candidate;
+    }
+    const parsed = Date.parse(String(candidate || ''));
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 0;
 }
 
 function normalizeCount(value: unknown): number {

@@ -893,13 +893,17 @@ export const loadSessionWorkflowEventsSnapshot = (
   };
   const fromUserRound = parseRound(options.fromUserRound);
   const toUserRound = parseRound(options.toUserRound);
-  if (fromUserRound === null || toUserRound === null || fromUserRound > toUserRound) {
+  // The events endpoint supports an omitted range and returns all durable
+  // workflow rows. This is required for refreshed transcripts that only carry
+  // generated turn ids and therefore have no numeric round hint.
+  if (fromUserRound !== null && toUserRound !== null && fromUserRound > toUserRound) {
     return Promise.resolve(null);
   }
+  const params: Record<string, string | number | boolean> = { workflow_only: true };
+  if (fromUserRound !== null) params.from_user_round = fromUserRound;
+  if (toUserRound !== null) params.to_user_round = toUserRound;
   return getSessionEventsWithParams(sessionKey, {
-    workflow_only: true,
-    from_user_round: fromUserRound,
-    to_user_round: toUserRound
+    ...params
   }, { signal: options.signal }).then((response) => {
     const payload = response?.data?.data;
     return payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : null;

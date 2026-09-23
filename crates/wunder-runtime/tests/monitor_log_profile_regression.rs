@@ -134,7 +134,11 @@ fn non_admin_debug_payload_still_persists_complete_event_sequence() {
     let monitor = build_monitor(12);
     let session_id = format!("sess_{}", uuid::Uuid::new_v4().simple());
     monitor.register(&session_id, "user_normal", "", "hello", false, true);
-    monitor.record_event(&session_id, "llm_output_delta", &json!({ "delta": "delta" }));
+    monitor.record_event(
+        &session_id,
+        "llm_output_delta",
+        &json!({ "delta": "delta" }),
+    );
     monitor.record_event(
         &session_id,
         "tool_output_delta",

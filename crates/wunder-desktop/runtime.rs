@@ -188,9 +188,7 @@ impl DesktopRuntime {
             // Native desktop has no network control listener or bridge.
             active_lan.enabled = false;
         }
-        desktop_lan::manager()
-            .apply_settings(active_lan)
-            .await;
+        desktop_lan::manager().apply_settings(active_lan).await;
         settings.updated_at = now_ts();
         save_desktop_settings(&settings_path, &settings)?;
         log_startup_segment(

@@ -255,7 +255,7 @@
 - 工具工作流关联语义：`tool_call/tool_output_delta/tool_result/approval_request/approval_result` 现在会尽量附带稳定的 `tool_call_id`；当上游没有原生 call id 时，服务端会补发合成 id，便于前端将命令输出、审批等待与最终结果持续合并到同一张工作流卡片。
 - `execute_command` 实时协议已落地：每条命令拥有独立 `command_session_id/command_index`；生命周期事件与每条命令结果用于拆分子命令工作流条目，在线运行时通过 `command_session_delta` 向客户端推送 stdout/stderr/pty 增量，用于在聊天工具循环内展示小型终端输出区。
 - `execute_command` 在 Windows 本地/桌面运行时优先使用 `powershell.exe` 执行 shell 命令；仅当 PowerShell 不可用时回退 `cmd.exe`，命令会话事件中的 `shell` 字段会记录实际使用的 shell。
-- 命令会话生命周期事件：`command_session_start/command_session_status/command_session_exit/command_session_summary` 继续作为可持久化状态事件，其中 `command_session_summary` 只保留状态、退出码、耗时、输出字节数与 dropped 计数，不持久化 stdout/stderr/pty 正文；`command_session_delta` 只承载当前在线流的一次性增量文本，不写入会话事件库，普通会话刷新恢复仅依赖 Broker 短期快照中的有界预览，避免长命令输出进入热路径列表查询。
+- 命令会话生命周期事件：`command_session_start/command_session_status/command_session_exit/command_session_summary` 继续作为可持久化状态事件，其中 `command_session_summary` 只保留状态、退出码、耗时、输出字节数与 dropped 计数；`command_session_delta` 也会进入持久化流，供完整审计与按轮次回放使用，前端仍通过虚拟窗口和增量合并避免长命令输出进入热路径列表查询。
 - 线程运行态事件：新增 `thread_status`，用于同步 loaded runtime 状态机；`status` 取值包括 `running/waiting_approval/waiting_user_input/idle/not_loaded/system_error`，并附带 `session_id/thread_id/subscriber_count/loaded/active_turn_id`。
 - 会话事件摘要接口：`GET /wunder/chat/sessions/{session_id}/events` 现额外返回 `data.runtime` 快照（包含 `thread_status/loaded/active_turn_id/turn.pending_approval_count/turn.waiting_for_user_input` 等字段）；`data.running` 也会覆盖等待审批、等待用户输入等活跃态，便于刷新后继续保持实时等待视图。
 - 会话事件摘要接口现在同时返回 `data.events[]` 原始持久化事件流，保留既有 `data.rounds[]` 工作流摘要；新前端状态投影应优先消费 `data.events[]`，缺失时再回退到 `data.rounds[]`。
@@ -1334,7 +1334,7 @@
   - 说明：`model_type=asr` 表示声转文模型，按 OpenAI 兼容 `/v1/audio/transcriptions` 发起 multipart 转写；额外支持默认 `asr_language/asr_prompt/asr_response_format/asr_temperature`，请求体同名字段可临时覆盖。
   - 说明：`model_type=tts` 表示文转声模型，聊天页语音播放会经 `/wunder/chat/tts` 转发到 OpenAI 兼容 `/v1/audio/speech`；额外支持默认 `tts_voice/tts_instructions/tts_response_format/tts_speed`，请求体同名字段可临时覆盖。
   - 说明：`model_type=image` 表示图像生成模型，配置层预留 OpenAI 兼容 `/v1/images/generations` 能力；额外支持默认 `image_size/image_output_format/image_negative_prompt/image_num_inference_steps/image_guidance_scale`。
-  - 说明：带原生工具调用的请求默认仍走流式；如果流式返回的工具调用被判定为坏 payload，编排层会在后续自动重试里降级为非流式，以避免工具参数在流式阶段被截断或包裹成不可执行 payload。
+  - 说明：带原生工具调用的请求默认仍走流式；工具参数会先归一化，再进入工具 schema/admission 校验。参数缺失或格式错误直接作为短工具错误回传模型，不切换非流式，也不触发 provider 重试；真实 provider/网络失败仍按 `llm_stream_retry` 恢复。
   - 说明：`history_compaction_ratio` 默认 `0.9`，达到 `max_context * ratio` 后会优先触发预压缩。
   - 说明：当前压缩策略已对齐 Codex，不再支持 `history_compaction_reset`。压缩后统一提交 `replacement_history`，其主体为首尾归一化交互窗口与一条 `[上下文摘要]` 消息，不再依赖前后锚点与 reset mode；运行中压缩还会为当前轮追加临时 `user` 续跑指令，但该指令不会写入 `replacement_history`。压缩摘要会输出 `resume_action=final|continue|retry|ask_user`，用于指导当前轮续跑。
   - 说明：`api_mode` 可选 `chat_completions|responses`（默认 chat_completions；当 provider=openai 且模型为 GPT-5/O 系列时未配置会自动走 responses），`responses` 会改用 `/v1/responses` 协议与流式事件。
@@ -2698,15 +2698,14 @@
 ### 4.1.43 `/wunder/admin/throughput/start`
 
 - 方法：`POST`，管理员鉴权。
-- JSON 必填：`model_name`（已启用的语言模型配置名）、`input_tokens`、`output_tokens`。不接受旧并发列表、用户前缀或其他未知字段。
-- 输入档位：1024、2048、8192、16384、32768、65536、131072、262144、524288、1048576。
-- 输出档位：1024、2048、4096、8192。`1k = 1024`，`1m = 1048576`。
+- JSON 必填：`model_name`（已启用的语言模型配置名）、`concurrency`、`input_tokens`、`output_tokens`。`concurrency` 为同一场景同时发起的请求数，范围 1–1024；为兼容旧客户端，省略时按 1 处理。不接受旧并发列表、用户前缀或其他未知字段。
+- 输入与输出支持快捷档，也允许直接填写整数。输入范围为 1–16777216 Token，输出范围为 1–1048576 Token；页面快捷档仍为输入 1024、2048、8192、16384、32768、65536、131072、262144、524288、1048576，输出 1024、2048、4096、8192。`1k = 1024`，`1m = 1048576`。
 - 输入为包含消息开销的本地估算；随机中性文本避免固定前缀缓存，API usage 才是实测用量。已配置的上下文窗口用于输入与输出之和校验，不静默截短。
-- 每次仅一个模型请求，直接使用共享 LLM 适配层；不创建用户、任务线程、会话、工具调用或线程日志，不写入长期记忆。
+- 每次测试固定一个模型、输入长度和输出长度，并按 `concurrency` 同时发起请求；结果聚合所有请求的输入、输出、推理 Token 与端到端吞吐，首字延迟取批次首个响应，生成速度按批次完成时间计算。不创建用户、任务线程、会话、工具调用或线程日志，不写入长期记忆。
 - 支持 `virtual_replay` 模型进行合成测量：使用模型 `simulation_speed` 的预处理和生成速度，不读取回放日志。先输出思考增量，再输出正文；思考占目标输出的 1/4，计入输出总数，`reasoning_tokens` 单列，不额外增加预算。结果带 `simulated: true` 与当次 `simulation_speed`，曲线按模型、速度档位及输出长度分组。普通虚拟调用共用速度配置、取消与超时。
 - 输出使用对应协议的输出上限；明确标记为 `vllm`、`vllm_omni`、`sglang` 且使用 Chat Completions 的引擎额外传 `min_tokens` 和 `ignore_eos`。其他 API 不能保证不提前停止，使用连续生成指令并核验实际用量；不重复请求凑数，不将目标数冒充用量。
 - 不自动重试，不降级为非流式。请求超时取模型配置，默认 1800 秒，限制在 1–3600 秒。
-- 返回：`ThroughputSnapshot`；参数错误 400，已有运行中或保存中的测试 409。
+- 返回：`ThroughputSnapshot`；参数错误 400，已有运行中或保存中的测试 409。快照的 `config` 包含 `concurrency`，历史曲线按模型、并发数和输出长度分组。
 
 ### 4.1.44 `/wunder/admin/throughput/stop`
 
@@ -2723,7 +2722,7 @@
 
 - 方法：`GET`，管理员鉴权。
 - Query：可选 `run_id`，缺省返回当前或最近记录。仅查找已知记录 ID，不将输入拼接为文件路径；不存在或已淘汰返回 404。
-- 返回：`ThroughputSnapshot`；历史曲线根据多个摘要绘制，按模型和输出长度分组，横轴可为输入长度或测试时间。未达标数据与达标曲线分开。
+- 返回：`ThroughputSnapshot`；历史曲线根据多个摘要绘制，按模型、并发数和输出长度分组，横轴可为输入长度或测试时间。未达标数据与达标曲线分开。
 - 新摘要写入 `config/data/throughput/scenarios-v2.json`，最多 50 条，临时文件替换保存。仅记录配置、时间、指标和脱敏错误，不保存注入内容、模型回复、API 密钥或地址。旧版并发报告不混入新口径，不自动删除既有业务数据。
 
 #### 实时快照
@@ -2922,9 +2921,11 @@
 
 - `GET /wunder/chat/sessions/{session_id}`
 - `GET /wunder/chat/sessions/{session_id}/history`
+- `DELETE /wunder/chat/sessions/{session_id}`：仅删除当前用户可见的线程目录、上下文派生状态、定时任务与运行时投影；聊天正文、工具日志、产物日志、流事件和监控历史不会被删除。线程日志由管理员通过 `/wunder/admin/monitor/logs/cleanup` 或管理员线程删除接口显式维护。
 - `GET /wunder/chat/sessions/{session_id}` 新增 `data.agent_name`（智能体名称，默认智能体同样返回名称）。
 - `GET /wunder/chat/sessions/{session_id}` 新增 `data.context_occupancy_tokens`，作为 `data.context_tokens` 的显式语义别名；新接入优先使用该字段表达当前线程上下文占用。
 - `GET /wunder/chat/sessions/{session_id}` 与 `GET /wunder/chat/sessions/{session_id}/history` 的历史消息视图统一返回 `data.transcript[]`，不再返回 `data.messages[]`。`transcript` 是刷新页面的唯一权威消息序列，前端必须按数组顺序与 `turn_index` 渲染，不得再使用 `stream_round`、正文或时间戳推断用户/模型轮次身份。
+- `GET /wunder/chat/sessions/{session_id}/events` 未传 `limit` 时会从持久化流事件库按递增事件序号完整读取历史；用户侧工作流日志按用户轮次分组并使用虚拟窗口渲染，切换线程或刷新不会截断旧轮次。需要渐进补水时可使用 `workflow_only=true&from_user_round={n}&to_user_round={n}`，导出或管理员审计应读取完整事件范围。
 - 两个历史接口均接受可选 `summary=true`：服务端保留消息身份、轮次、状态和附件元数据，但会截断超长 `content/reasoning`，并移除 `workflowItems/subagents` 详情；被截断字段分别带 `content_truncated/content_length`、`reasoning_truncated/reasoning_length` 与 `workflowItems_truncated/subagents_truncated`。用户展开时应调用单条消息详情接口补全，不得重新拉取整页历史。
 - `data.transcript[]` 单项常用字段：
   - `role`：`user` / `assistant`
@@ -3358,8 +3359,8 @@
 
 ### 模型工具调用恢复事件
 
-- `bad_tool_call_retry`：模型返回不可解析或无效的工具调用时发送，工具尚未执行。保留 `attempt/max_attempts/retry_reason/invalid_tool_call_count/sample_tool_names`，新增 `delay_s`（下次请求前的退避秒数）和 `next_stream=false`（恢复请求采用非流式响应）。`stream` 表示刚失败的请求是否流式；`will_retry=false` 时 `delay_s=0`，表示尝试已耗尽，最终轮次状态仍以 `error/turn_terminal` 为准。
-- `llm_stream_retry` 与 `bad_tool_call_retry` 都进入统一持久化事件流，沿用会话归属、轮次、稳定事件序号和 replay 机制；刷新或重连可恢复重试状态。仅上线后的普通模型重试新增持久化，既有日志不回填。
+- `bad_tool_call_retry`：历史兼容事件。当前运行时不会为 native 工具参数错误发起模型重试，也不会发送该事件；调用直接进入工具 schema/admission 校验，错误结果回传模型。真实 provider/网络失败仍使用 `llm_stream_retry`。
+- `llm_stream_retry` 进入统一持久化事件流，沿用会话归属、轮次、稳定事件序号和 replay 机制；刷新或重连可恢复重试状态。`bad_tool_call_retry` 仅作为历史兼容事件保留，不再由当前 native 参数校验路径产生。仅上线后的普通模型重试新增持久化，既有日志不回填。
 - `progress.stage=invalid_tool_call_reroute/empty_final_answer_reroute` 表示模型正在修复不可执行的调用或空回复，前端将其投影为恢复状态，跨随后的 `llm_request` 保留，直到有效输出、工具执行或终态到达。恢复不是整轮失败，不得据此提前终止会话；终态后的迟到重试不能重新激活消息。
 
 ### 上下文本地精简事件

@@ -3694,6 +3694,45 @@ test('canonical usage and context events project assistant stats display state',
   assert.equal(assistant.display?.stats?.avg_model_round_speed_tps, 5);
 });
 
+test('quota usage arriving before a direct assistant reply is retained on the reply bubble', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'user_message_created',
+    event_id: 'evt-direct-user',
+    event_seq: 1,
+    user_turn_id: 'ut-direct',
+    message_id: 'um-direct',
+    content: 'request'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'usage_stats',
+    event_id: 'evt-direct-quota',
+    event_seq: 2,
+    user_turn_id: 'ut-direct',
+    model_turn_id: 'mt-direct',
+    payload: {
+      source_event_type: 'quota_usage',
+      data: { turn_quota_used: 1, consumed: 1 }
+    }
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_final',
+    event_id: 'evt-direct-final',
+    event_seq: 3,
+    user_turn_id: 'ut-direct',
+    model_turn_id: 'mt-direct',
+    message_id: 'am-direct',
+    content: 'done'
+  }));
+
+  const assistant = selectVisibleMessageProjections(projection, 'session-1')
+    .find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  assert.equal(assistant.display?.stats?.creditsConsumed, 1);
+  assert.equal(assistant.display?.creditsConsumed, 1);
+});
+
 test('tool failure remains workflow-local until the turn terminal confirms failure', () => {
   const projection = createChatRuntimeProjection();
 

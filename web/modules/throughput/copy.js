@@ -2,8 +2,12 @@ import { getCurrentLanguage } from "../i18n.js?v=20260710-01";
 
 const copy = {
   title: ["吞吐量测试", "Model throughput"],
-  subtitle: ["一次测试一个模型与长度组合，积累结果，比较性能变化。", "Test one model and length combination, then compare results over time."],
-  scenario: ["测试配置", "Test configuration"],
+  subtitle: ["一次测试一个模型、并发数与长度组合，积累结果，比较性能变化。", "Test one model, concurrency and length combination, then compare results over time."],
+  scenario: ["测试配置", "Test configuration"], concurrency: ["并发数", "Concurrency"],
+  concurrencyHint: ["同一模型同时发起的请求数，支持自定义。", "Number of simultaneous requests; custom values are supported."],
+  concurrencyError: ["并发数必须是 1 到 1024 的整数", "Concurrency must be an integer from 1 to 1024"],
+  inputError: ["输入 Token 必须是 1 到 16,777,216 的整数", "Input tokens must be an integer from 1 to 16,777,216"],
+  outputError: ["输出 Token 必须是 1 到 1,048,576 的整数", "Output tokens must be an integer from 1 to 1,048,576"],
   model: ["选择模型", "Model"], input: ["注入的上文", "Input context"], output: ["输出 Token", "Output tokens"],
   inputHint: ["1k = 1,024 Token。输入为预估长度，实测以 API 用量为准。", "1k = 1,024 tokens. Input length is estimated; API usage provides actual counts."],
   outputHint: ["支持的推理引擎强制定长输出；其他 API 设置输出上限并检查是否达标。", "Supported engines enforce fixed output. Other APIs receive a limit; actual output is checked."],
@@ -24,7 +28,7 @@ const copy = {
   warning: ["本次输出未达到目标，或 API 未提供用量；不会自动加入有效结果对比。", "Output did not match the target, or usage is unavailable. This result is not selected automatically."],
   persistError: ["摘要保存失败；当前结果仍可导出，重启后可能丢失。", "Summary could not be saved. Export it now; it may be lost after restart."],
   comparison: ["历史性能对比", "Historical performance"],
-  comparisonHint: ["勾选历史数据加入曲线。同一模型与输出长度分别成组，悬停查看实测值。", "Select history rows to compare. Curves are grouped by model and output length; hover for measurements."],
+  comparisonHint: ["勾选历史数据加入曲线。同一模型、并发数与输出长度分别成组，悬停查看实测值。", "Select history rows to compare. Curves are grouped by model, concurrency and output length; hover for measurements."],
   metric: ["指标", "Metric"], axis: ["横轴", "X axis"], axisInput: ["输入长度", "Input length"], axisTime: ["测试时间", "Test time"],
   history: ["测试历史", "Test history"], select: ["加入对比", "Compare"], view: ["详情", "Details"], reuse: ["复用配置", "Reuse"],
   selectValid: ["选择已达标", "Select valid"], clear: ["清空选择", "Clear selection"], none: ["暂无历史数据", "No history yet"],

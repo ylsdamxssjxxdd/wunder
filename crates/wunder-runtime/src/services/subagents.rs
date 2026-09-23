@@ -35,7 +35,8 @@ pub struct ParentTurnRef {
 
 #[derive(Debug, Clone)]
 pub struct ParentDispatchConfig {
-    pub(crate) cancellation_guard: Option<Arc<crate::services::runtime::thread::child_runs::ChildRunGuard>>,
+    pub(crate) cancellation_guard:
+        Option<Arc<crate::services::runtime::thread::child_runs::ChildRunGuard>>,
     pub parent_session_id: String,
     pub dispatch_id: Option<String>,
     pub strategy: Option<String>,
@@ -850,7 +851,10 @@ fn schedule_parent_auto_wake(
         // Retain the original run cancellation through delayed wake-up; a new
         // parent turn must not revive a completion from an interrupted run.
         let _cancellation_guard = dispatch.cancellation_guard;
-        if _cancellation_guard.as_ref().is_some_and(|guard| guard.token.is_cancelled()) {
+        if _cancellation_guard
+            .as_ref()
+            .is_some_and(|guard| guard.token.is_cancelled())
+        {
             return;
         }
         match parent_session_blocks_auto_wake(
@@ -878,16 +882,26 @@ fn schedule_parent_auto_wake(
             return;
         }
         let message = crate::services::runtime::thread::mailbox::AgentMessage {
-            id: auto_wake_run_id.clone().map(|id| format!("completion_{id}"))
+            id: auto_wake_run_id
+                .clone()
+                .map(|id| format!("completion_{id}"))
                 .unwrap_or_else(|| format!("completion_{}", uuid::Uuid::new_v4().simple())),
-            source: _cancellation_guard.as_ref().map(|guard| guard.session_id().to_string())
+            source: _cancellation_guard
+                .as_ref()
+                .map(|guard| guard.session_id().to_string())
                 .unwrap_or_default(),
-            kind: "completion".into(), text: request.question.clone(),
-            cancellation: _cancellation_guard.as_ref().map(|guard| guard.token.clone()),
+            kind: "completion".into(),
+            text: request.question.clone(),
+            cancellation: _cancellation_guard
+                .as_ref()
+                .map(|guard| guard.token.clone()),
         };
         let runtime = orchestrator.task_runtime.read().upgrade();
         let result = match runtime {
-            Some(runtime) => runtime.submit_agent_message(request, &message).await.map(|_| ()),
+            Some(runtime) => runtime
+                .submit_agent_message(request, &message)
+                .await
+                .map(|_| ()),
             None => Err(anyhow!("thread runtime unavailable")),
         };
         if let Err(err) = result {

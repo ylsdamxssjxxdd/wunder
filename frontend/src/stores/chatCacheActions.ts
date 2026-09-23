@@ -134,16 +134,28 @@ const workflowHistoryHydrationInFlight = new Map<string, Promise<void>>();
 const resolveWorkflowHistoryRoundRange = (messages: unknown): { from: number; to: number } | null => {
   if (!Array.isArray(messages)) return null;
   const rounds = messages
-    .map((message) => Number.parseInt(
-      String(
-        (message as Record<string, unknown>)?.user_round ??
-        (message as Record<string, unknown>)?.user_turn_index ??
-        (message as Record<string, unknown>)?.stream_round ??
-        ''
-      ),
-      10
-    ))
-    .filter((value) => Number.isFinite(value) && value > 0);
+    .map((message) => {
+      const record = message as Record<string, unknown>;
+      const explicit = Number.parseInt(
+        String(record?.user_round ?? record?.userRound ?? record?.user_turn_index ??
+          record?.userTurnIndex ?? record?.stream_round ?? record?.streamRound ?? ''),
+        10
+      );
+      if (Number.isFinite(explicit) && explicit > 0) return explicit;
+      // Canonical projections use generated ids after hydration. Preserve the
+      // numeric round encoded in those ids so refresh can still scope replay.
+      const ids = [record?.user_turn_id, record?.userTurnId, record?.user_turn, record?.userTurn,
+        record?.model_turn_id, record?.modelTurnId];
+      for (const value of ids) {
+        const match = String(value ?? '').match(/(?:user-turn:[^:]+:round:|:user:)(\d+)/i);
+        if (match) {
+          const parsed = Number.parseInt(match[1], 10);
+          if (Number.isFinite(parsed) && parsed > 0) return parsed;
+        }
+      }
+      return null;
+    })
+    .filter((value): value is number => Number.isFinite(value) && value > 0);
   if (rounds.length === 0) return null;
   return { from: Math.min(...rounds), to: Math.max(...rounds) };
 };
@@ -229,18 +241,26 @@ export const chatCacheActions = {
     },
     async hydrateSessionWorkflowHistory(sessionId, sourceMessages = null) {
       const targetId = resolveSessionKey(sessionId);
-      const transcript = getSessionMessages(targetId);
+      // Prefer the foreground snapshot when supplied; a warm session cache
+      // can lag behind the transcript that just finished loading.
+      const cachedTranscript = getSessionMessages(targetId);
+      const transcript = Array.isArray(sourceMessages) && sourceMessages.length > 0
+        ? sourceMessages
+        : cachedTranscript;
       const range = resolveWorkflowHistoryRoundRange(
         Array.isArray(sourceMessages) ? sourceMessages : transcript
       );
-      if (!targetId || !range) return;
-      const key = `${targetId}:${range.from}:${range.to}`;
+      if (!targetId) return;
+      const key = range
+        ? `${targetId}:${range.from}:${range.to}`
+        : `${targetId}:all`;
       const existing = workflowHistoryHydrationInFlight.get(key);
       if (existing) return existing;
       // The API excludes output deltas and is scoped to the visible history rounds.
       const task = loadSessionWorkflowEventsSnapshot(targetId, {
-        fromUserRound: range.from,
-        toUserRound: range.to
+        ...(range
+          ? { fromUserRound: range.from, toUserRound: range.to }
+          : {})
       }).then((payload) => {
         if (!payload || !Array.isArray(payload.rounds) || payload.rounds.length === 0) return;
         // A prefetched session has no projection until workflow hydration starts.
