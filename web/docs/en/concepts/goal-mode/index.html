@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Goal Mode | 使用说明书</title>
+  <meta name="description" content="Set a goal so the agent keeps working until the task is complete or the budget runs out. Ideal for complex tasks that need multiple rounds.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/concepts/goal-mode","language":"en","title":"Goal Mode","summary":"Set a goal so the agent keeps working until the task is complete or the budget runs out. Ideal for complex tasks that need multiple rounds.","updated_at":"2026-09-25","read_when":[],"source_docs":[],"tab":"Reference","group":"Deep Dives","group_path":["Deep Dives"],"url":"/docs/en/concepts/goal-mode/","headings":[{"id":"section-1","level":1,"text":"Goal Mode"},{"id":"section-2","level":2,"text":"When to Use"},{"id":"section-3","level":2,"text":"Starting Goal Mode"},{"id":"section-4","level":3,"text":"Option 1: Use a Command"},{"id":"section-5","level":3,"text":"Option 2: Use the Goal Editor"},{"id":"section-6","level":3,"text":"Option 3: Let the Agent Create It"},{"id":"section-7","level":2,"text":"Goal Status"},{"id":"section-8","level":3,"text":"Active"},{"id":"section-9","level":3,"text":"Paused"},{"id":"section-10","level":3,"text":"Budget Limited"},{"id":"section-11","level":3,"text":"Complete"},{"id":"section-12","level":2,"text":"Token Budget"},{"id":"section-13","level":3,"text":"Setting a Budget"},{"id":"section-14","level":3,"text":"Budget Consumption"},{"id":"section-15","level":3,"text":"Budget Suggestions"},{"id":"section-16","level":2,"text":"Execution Flow"},{"id":"section-17","level":3,"text":"Automatic Continuation"},{"id":"section-18","level":3,"text":"Waiting for User Input"},{"id":"section-19","level":3,"text":"Completion"},{"id":"section-20","level":2,"text":"Leaving Goal Mode"},{"id":"section-21","level":3,"text":"Normal Exit"},{"id":"section-22","level":3,"text":"Manual Exit"},{"id":"section-23","level":3,"text":"Notes"},{"id":"section-24","level":2,"text":"Frontend Display"},{"id":"section-25","level":3,"text":"Goal Divider"},{"id":"section-26","level":3,"text":"Status Badge"},{"id":"section-27","level":3,"text":"Goal Lock"},{"id":"section-28","level":2,"text":"Command Reference"},{"id":"section-29","level":2,"text":"Best Practices"},{"id":"section-30","level":3,"text":"Clear Goal Descriptions"},{"id":"section-31","level":3,"text":"Reasonable Budgets"},{"id":"section-32","level":3,"text":"Intervene in Time"},{"id":"section-33","level":2,"text":"FAQ"},{"id":"section-34","level":3,"text":"The goal never completes"},{"id":"section-35","level":3,"text":"Budget exhausted but task unfinished"},{"id":"section-36","level":3,"text":"Goal execution interrupted"},{"id":"section-37","level":2,"text":"Relationship to Other Features"},{"id":"section-38","level":2,"text":"Next Steps"}],"prev_slug":"en/concepts/quota-and-token-usage","next_slug":"en/concepts/companion","markdown":"# Goal Mode\n\nGoal mode is a task-driven mode. Once you set a goal, the agent keeps working until the goal is complete, automatically handling waiting, retries, budget checks, and other edge cases along the way.\n\n## When to Use\n\nGoal mode fits:\n\n- **Complex tasks**: work that needs multiple rounds, such as \"develop a complete user authentication module\"\n- **Long-running tasks**: the agent must keep working and cannot finish in one reply\n- **Clear completion criteria**: the task has a well-defined \"done\"\n- **Budget control**: you want to cap the tokens the agent can spend\n\n**Poor fit for goal mode:**\n\n- Simple Q&A (one reply solves it)\n- Open-ended exploration (no clear completion criteria)\n- Tasks needing frequent human intervention\n\n## Starting Goal Mode\n\n### Option 1: Use a Command\n\nType in the chat input:\n\n```\n/goal Develop the user authentication module\n```\n\n### Option 2: Use the Goal Editor\n\n1. Click the target icon above the chat panel (bullseye icon)\n2. Enter the goal description in the dialog\n3. Optional: set a token budget\n4. Click \"Start\"\n\n### Option 3: Let the Agent Create It\n\nThe agent can create a goal through the `goal` tool (action=create). This usually happens when the agent decides the task needs sustained execution.\n\n## Goal Status\n\n| Status | Meaning | Color |\n|--------|---------|-------|\n| Active | Executing | Green |\n| Paused | Paused by the user | Yellow |\n| Budget limited | Token budget exhausted | Red |\n| Complete | Goal finished | Gray |\n\n### Active\n\nWhile the goal is active:\n\n- The agent keeps executing\n- Each round automatically continues to the next\n- The companion shows the \"running\" animation\n- The message list shows a goal divider\n\n### Paused\n\nAfter pausing:\n\n- The agent stops executing\n- Resume with `/goal resume`\n- Or resume from the goal editor\n\n### Budget Limited\n\nWhen a token budget was set and is exhausted:\n\n- The goal automatically enters budget-limited status\n- The agent stops executing\n- User intervention is required (raise the budget or clear the goal)\n\n### Complete\n\nAfter the agent marks completion via the `goal` tool (action=update):\n\n- The goal is marked complete\n- Automatic execution stops\n- The completion time is shown\n\n## Token Budget\n\n### Setting a Budget\n\nSet a token budget in the goal editor:\n\n```\nGoal: Develop the user authentication module\nBudget: 100000 tokens\n```\n\n### Budget Consumption\n\nAfter each round, the system accumulates:\n\n- Input tokens\n- Output tokens\n- Tool call tokens\n\nWhen total consumption reaches the budget, the goal automatically enters \"budget limited\" status.\n\n### Budget Suggestions\n\nPick a reasonable budget based on complexity:\n\n| Task type | Suggested budget |\n|-----------|------------------|\n| Simple feature | 10,000 - 30,000 |\n| Medium feature | 30,000 - 100,000 |\n| Complex feature | 100,000 - 500,000 |\n| Large project | 500,000+ |\n\n## Execution Flow\n\n### Automatic Continuation\n\nWhile the goal is active, execution continues automatically:\n\n1. A round finishes\n2. Goal status and budget are checked\n3. A 1-second cooldown is observed\n4. The continuation prompt is injected\n5. The next round starts\n\n### Waiting for User Input\n\nIf the agent needs your input to continue:\n\n- The goal does not auto-continue\n- It resumes after you reply\n\n### Completion\n\nWhen the agent judges the goal complete, it marks completion via the `goal` tool (action=update), and automatic execution stops.\n\n## Leaving Goal Mode\n\n### Normal Exit\n\nThe agent exits automatically after completing the task.\n\n### Manual Exit\n\nClick the stop button on the chat panel, or use:\n\n```\n/stop\n```\n\nor\n\n```\n/cancel\n```\n\n### Notes\n\n- Leaving goal mode clears the current goal\n- Actions already taken are not rolled back\n- You can set a new goal afterwards\n\n## Frontend Display\n\n### Goal Divider\n\nThe start of a goal shows a divider in the message list:\n\n```\n────────── Goal started: Develop the user authentication module ──────────\n```\n\n### Status Badge\n\nThe top of the chat panel shows the current goal status:\n\n- Active: 🟢 goal in progress\n- Paused: 🟡 goal paused\n- Budget limited: 🔴 budget exhausted\n- Complete: ⚪ goal completed\n\n### Goal Lock\n\nWhile goal mode is active:\n\n- You cannot switch to another session\n- You cannot switch agents\n- The companion shows the running state\n\n## Command Reference\n\n| Command | Purpose |\n|---------|---------|\n| `/goal` | Open the goal editor |\n| `/goal <description>` | Set a goal directly |\n| `/goal --tokens 100000 <description>` | Set a goal with a budget |\n| `/goal pause` | Pause the goal (command only) |\n| `/goal resume` | Resume the goal (command only) |\n| `/goal clear` | Clear the goal (command only) |\n| `/stop` or `/cancel` | Leave goal mode |\n\n## Best Practices\n\n### Clear Goal Descriptions\n\nA good goal description:\n\n```\nDevelop the user authentication module, including:\n1. Registration (email verification)\n2. Login (with remember-me)\n3. Password reset (email link)\n4. Session management (auto expiry)\n```\n\nA poor goal description:\n\n```\nWrite some code\n```\n\n### Reasonable Budgets\n\n- Not too low: the task may not finish\n- Not too high: budget control loses meaning\n- Adjust based on complexity\n\n### Intervene in Time\n\n- Watch the agent's progress\n- Correct course early when it drifts\n- Pause the goal to adjust direction when needed\n\n## FAQ\n\n### The goal never completes\n\nPossible causes:\n\n- The goal description is not specific enough\n- The agent judges there is still work to do\n- A blocking problem was hit\n\nFixes:\n\n- Review the agent's output\n- Provide more context\n- Exit manually and set a more specific goal\n\n### Budget exhausted but task unfinished\n\nFixes:\n\n- Set the goal again with a higher budget\n- Narrow the task scope\n- Complete it in stages\n\n### Goal execution interrupted\n\nPossible causes:\n\n- Network issues\n- Service restart\n- System error\n\nFixes:\n\n- Check the network connection\n- Refresh the page\n- Set the goal again\n\n## Relationship to Other Features\n\n| Feature | Relationship |\n|---------|--------------|\n| Companion system | The companion shows the running state during execution |\n| Context compression | The goal description is preserved as important context |\n| Swarm collaboration | A goal can trigger sub-agent collaboration |\n| Tool system | The agent operates goals through the `goal` tool |\n\n## Next Steps\n\n- [Companion System](/docs/en/concepts/companion/) — give agents an animated companion\n- [Agent Loop](/docs/en/concepts/core-agent-loop/) — how agents execute tasks\n- [Context Compression](/docs/en/concepts/core-context-compression/) — how long conversations stay efficient\n","source_path":"使用说明书/en/concepts/goal-mode.md"}</script>
+</body>
+</html>

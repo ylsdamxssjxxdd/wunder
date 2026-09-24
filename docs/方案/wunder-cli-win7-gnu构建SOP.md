@@ -55,6 +55,12 @@ npm run build:cli:win7:gnu:fast
 
 等价于传入 `-SkipBootstrap`，会跳过 rustup 与 fetch 初始化。
 
+package.json 中另有架构别名：`build:cli:win7:gnu:ia32(:fast)` 与 `build:cli:win7:gnu:x64(:fast)`，分别显式指定 32/64 位产物。
+
+## 与 builders/ 的关系
+
+仓库级统一构建入口在 `builders/`（如 `builders/build-win7-offline.ps1`、`builders/build-win7-slint.ps1`，服务 Slint 桌面端离线 SDK 与分发）。本 SOP 的 CLI GNU 链是与 builders/ 并存的独立链路，二者工具链与产物不同，不要混用。
+
 ## 常用参数
 
 ```powershell
@@ -80,7 +86,7 @@ powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gn
 - Win7 legacy console 使用 crossterm WinAPI backend 时不支持 `SetUnderlineColor`；workspace `ratatui` 必须显式关闭 default features，只开启 `crossterm` 和 `unstable-rendered-line-info`，避免每帧 reset underline color 时退出。
 - 产物检查必须确认没有 `api-ms-*` 与 `winrt` 导入。
 - GNU release 未 strip 时可能保留 `HAS_SYMS/HAS_LOCALS`，体积会明显偏大；正式分发默认 strip。
-- 当前 32 位 Win7 CLI 仍静态链接完整 runtime，strip 后约 80 MiB。要进入 30 MiB 内，需要另拆 `cli-lite`/runtime feature，不能只靠 strip、TLS provider 或 UI 依赖裁剪达成。
+- 当前 32 位 Win7 CLI 仍静态链接完整 runtime，strip 后体积以当次构建输出为准（历史上约 80 MiB 量级）。要显著缩小体积，需要另拆 `cli-lite`/runtime feature，不能只靠 strip、TLS provider 或 UI 依赖裁剪达成。
 
 ## 手工复查命令
 

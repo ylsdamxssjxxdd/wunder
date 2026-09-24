@@ -21,13 +21,13 @@ wunder 是一个面向组织与个人的智能体调度系统，统一承载三�
 
 | 特色能力 | 设计含义 | 关键代码域 |
 | --- | --- | --- |
-| 智能体核心 | 线程、turn、prompt、context、tool、recovery 拥有稳定语义 | `src/orchestrator` `src/services/runtime` |
-| 实时事件系统 | 前端和外部系统只消费公开事件流，不直接定义后端真相 | `src/services/stream_events.rs` `src/services/beeroom_realtime.rs` `src/api/*_ws.rs` |
-| 蜂群协作与资产化 | hive、mission、WorkerCard、SkillPack 可编排、可导入、可导出 | `src/services/swarm` `src/services/hive_pack` |
-| 工具化运行时 | 对开发者来说一切都是接口，对大模型来说一切皆工具 | `src/services/tools` `src/services/skills.rs` `src/services/mcp.rs` |
-| 长会话能力 | 冻结 prompt、上下文压缩、一次性记忆注入、恢复链统一治理 | `src/orchestrator/prompt.rs` `src/orchestrator/context.rs` |
-| 多入口共核 | HTTP、WS、gateway、channels、desktop、cli 共享同一运行时主链 | `src/api` `src/gateway` `src/channels` `desktop` `wunder-cli` |
-| 双存储形态 | 服务端 PostgreSQL，桌面端 SQLite，共享统一存储抽象 | `src/storage` |
+| 智能体核心 | 线程、turn、prompt、context、tool、recovery 拥有稳定语义 | `crates/wunder-runtime/src/orchestrator` `crates/wunder-runtime/src/services/runtime` |
+| 实时事件系统 | 前端和外部系统只消费公开事件流，不直接定义后端真相 | `crates/wunder-runtime/src/services/stream_events.rs` `services/beeroom_realtime.rs` `api/*_ws.rs` |
+| 蜂群协作与资产化 | hive、mission、WorkerCard、SkillPack 可编排、可导入、可导出 | `crates/wunder-runtime/src/services/swarm` `services/hive_pack.rs` |
+| 工具化运行时 | 对开发者来说一切都是接口，对大模型来说一切皆工具 | `crates/wunder-runtime/src/services/tools` `services/skills.rs` `services/mcp.rs` |
+| 长会话能力 | 冻结 prompt、上下文压缩、一次性记忆注入、恢复链统一治理 | `crates/wunder-runtime/src/orchestrator/prompt.rs` `orchestrator/context.rs` |
+| 多入口共核 | HTTP、WS、gateway、channels、desktop、cli 共享同一运行时主链 | `crates/wunder-runtime/src/api` `gateway/` `channels/`、`crates/wunder-desktop` + `frontend-slint/`、`crates/wunder-cli` |
+| 双存储形态 | 服务端 PostgreSQL，桌面端 SQLite，共享统一存储抽象 | `crates/wunder-runtime/src/storage` |
 
 ## 3. 设计基线
 
@@ -68,6 +68,14 @@ wunder 是一个面向组织与个人的智能体调度系统，统一承载三�
 - [蜂巢广场设计](./蜂巢广场设计.md)：说明用户侧蜂群包、工蜂卡、技能包的发布、共享、引入流程，以及权限、缓存、异常归档和回归测试边界。
 - [编排态系统设计](./编排态系统设计.md)：聚焦母蜂为准的蜂群级编排态、编排线程保护、历史恢复、态势注入、轮次目录与编排工作台投影语义。
 - [目标态系统设计](./目标态系统设计.md)：聚焦 `/goal` 命令进入目标态后的会话级持久目标、自动续跑、预算治理、模型工具边界与实时事件契约。
+- [蜂群行为设计](./蜂群行为设计.md)：蜂群成员行为边界与协作约定。
+- [蜂巢协议设计](./蜂巢协议设计.md)：蜂巢协议历史设计，协议部分已并入 04 册。
+- [上下文压缩设计](./上下文压缩设计.md)：长会话上下文压缩、微压缩与记忆压缩窗口的现行设计。
+- [记忆系统设计](./记忆系统设计.md)：记忆片段协议、召回注入与管理工具边界。
+- [实时同步设计](./实时同步设计.md)：前端实时状态同步、reducer 与断线恢复实践。
+- [工具设计](./工具设计.md)：工具分层、返回骨架与工具族概览（现行细节以 05 册为准）。
+- [应用补丁工具重构方案](./应用补丁工具重构方案.md)：apply_patch 工具的重构设计。
+- [编排注入消息梳理](./编排注入消息梳理.md)：编排态注入消息的类型与语义梳理。
 
 ## 5. 推荐阅读顺序
 

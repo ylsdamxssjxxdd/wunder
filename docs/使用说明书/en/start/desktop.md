@@ -6,7 +6,8 @@ read_when:
   - You care more about Hive's desktop form than deploying a full server
 source_docs:
   - docs/API文档.md
-updated_at: 2026-04-10
+  - frontend/src/components/messenger/DesktopRuntimeSettingsPanel.vue
+  - frontend/src/components/messenger/MessengerSettingsPanel.vue
 ---
 
 # Desktop Guide
@@ -41,7 +42,7 @@ Get the installer for your system from Releases, install and launch.
 
 ### 2. First Launch
 
-It automatically creates local working and config directories. No manual setup needed.
+After launching, a lightweight splash screen appears first while local working directories, configuration, and sessions are prepared. The window appearing does not mean sessions are ready yet; you can start working once the workbench opens. First launches and slower devices may need more preparation time. If the splash screen reports a failure, click retry or reload.
 
 ### 3. Configure Model
 

@@ -9,7 +9,7 @@ param(
 $ErrorActionPreference = "Stop"
 if (-not $RepoRoot) { $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path }
 else { $RepoRoot = (Resolve-Path $RepoRoot).Path }
-if (-not $BuilderRoot) { $BuilderRoot = Join-Path (Split-Path $RepoRoot -Parent) "Rust-builder\kylin2" }
+if (-not $BuilderRoot) { $BuilderRoot = Join-Path (Split-Path $RepoRoot -Parent) "Rust-builder\kylin-arm" }
 if (-not $AppImageRuntime -and $env:WUNDER_APPIMAGE_RUNTIME) { $AppImageRuntime = $env:WUNDER_APPIMAGE_RUNTIME }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $RepoRoot "target\slint\dist\linux-arm64" }
 elseif (-not [System.IO.Path]::IsPathRooted($OutputDirectory)) { $OutputDirectory = Join-Path $RepoRoot $OutputDirectory }
@@ -31,15 +31,15 @@ $logPath = Join-Path $targetRoot "appimage-build.log"
 $dockerArgs = @(
   "run", "--rm", "--platform", "linux/arm64",
   "-e", "WUNDER_REPO_ROOT=/workspace",
-  "-e", "WUNDER_BUILDER_ROOT=/builder/kylin2",
-  "-e", "WUNDER_OFFLINE_ROOT=/builder/kylin2/offline",
+  "-e", "WUNDER_BUILDER_ROOT=/builder/kylin-arm",
+  "-e", "WUNDER_OFFLINE_ROOT=/builder/kylin-arm/offline",
   "-e", "WUNDER_APPIMAGE_RUNTIME=/builder/appimage-runtime/rcho-arm64.AppImage",
   "-e", "WUNDER_OUTPUT_DIR=/workspace/target/slint/dist/linux-arm64",
   "-e", "CARGO_HOME=/workspace/target/linux-arm64-ubuntu18-slint/cargo-home",
   "-e", "CARGO_TARGET_DIR=/workspace/target/linux-arm64-ubuntu18-slint/cargo",
   "-e", "WUNDER_SLINT_LINUX_MAX_GLIBC=2.27",
   "-v", "${RepoRoot}:/workspace",
-  "-v", "${BuilderRoot}:/builder/kylin2:ro",
+  "-v", "${BuilderRoot}:/builder/kylin-arm:ro",
   "-v", "${AppImageRuntime}:/builder/appimage-runtime/rcho-arm64.AppImage:ro",
   "-w", "/workspace",
   $Image,

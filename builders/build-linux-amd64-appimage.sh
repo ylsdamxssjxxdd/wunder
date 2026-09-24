@@ -6,7 +6,7 @@
 set -euo pipefail
 
 repo_root="${WUNDER_REPO_ROOT:-$(cd -- "$(dirname -- "$0")/.." && pwd)}"
-offline_root="${WUNDER_OFFLINE_ROOT:-${WUNDER_BUILDER_ROOT:-$repo_root/../Rust-builder/kylin2}/offline}"
+offline_root="${WUNDER_OFFLINE_ROOT:-${WUNDER_BUILDER_ROOT:-$repo_root/../Rust-builder/kylin-arm}/offline}"
 sdk="$offline_root/linux-amd64-ubuntu18/root"
 target_dir="${CARGO_TARGET_DIR:-$repo_root/target/linux-amd64-ubuntu18-slint/cargo}"
 output_dir="${WUNDER_OUTPUT_DIR:-$repo_root/target/slint/dist/linux-amd64}"

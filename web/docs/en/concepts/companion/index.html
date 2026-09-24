@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Companion System | 使用说明书</title>
+  <meta name="description" content="Use sprite-animated companions on desktop and web so agents accompany your work in a livelier way.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/concepts/companion","language":"en","title":"Companion System","summary":"Use sprite-animated companions on desktop and web so agents accompany your work in a livelier way.","updated_at":"2026-09-25","read_when":[],"source_docs":[],"tab":"Reference","group":"Deep Dives","group_path":["Deep Dives"],"url":"/docs/en/concepts/companion/","headings":[{"id":"section-1","level":1,"text":"Companion System"},{"id":"section-2","level":2,"text":"When It Helps"},{"id":"section-3","level":2,"text":"Enabling Companions"},{"id":"section-4","level":3,"text":"Desktop"},{"id":"section-5","level":3,"text":"Web"},{"id":"section-6","level":2,"text":"Where Companions Come From"},{"id":"section-7","level":3,"text":"Global companions"},{"id":"section-8","level":3,"text":"Private companions"},{"id":"section-9","level":2,"text":"Companion Package Format"},{"id":"section-10","level":3,"text":"File structure"},{"id":"section-11","level":3,"text":"Manifest (pet.json)"},{"id":"section-12","level":3,"text":"Sprite sheet requirements"},{"id":"section-13","level":3,"text":"Sprite sheet layout"},{"id":"section-14","level":2,"text":"Interacting with Companions"},{"id":"section-15","level":3,"text":"Click"},{"id":"section-16","level":3,"text":"Drag"},{"id":"section-17","level":3,"text":"Context menu"},{"id":"section-18","level":2,"text":"Message Bubbles"},{"id":"section-19","level":2,"text":"Setting a Companion for an Agent"},{"id":"section-20","level":3,"text":"Option 1: Agent settings panel"},{"id":"section-21","level":3,"text":"Option 2: Edit agent configuration"},{"id":"section-22","level":2,"text":"FAQ"},{"id":"section-23","level":3,"text":"The companion does not show"},{"id":"section-24","level":3,"text":"Import fails"},{"id":"section-25","level":3,"text":"Companion position resets"},{"id":"section-26","level":2,"text":"Admin Operations"},{"id":"section-27","level":2,"text":"Next Steps"}],"prev_slug":"en/concepts/goal-mode","next_slug":"en/concepts/swarm","markdown":"# Companion System\n\nThe companion system lets you give an agent a cute sprite-animated character. The companion floats on screen, plays different animations based on the agent's state, and can display message bubbles.\n\n## When It Helps\n\nCompanions fit these scenarios:\n\n- **Long-running tasks**: while the agent works on something complex, the companion shows a \"running\" animation so you know it is busy\n- **Desktop company**: on the desktop app the companion stays visible, like a little assistant beside your work\n- **Telling agents apart**: different agents can have different companions, easy to distinguish at a glance\n\n## Enabling Companions\n\n### Desktop\n\n1. Open the settings panel\n2. Find the \"Companion\" setting\n3. Turn on \"Enable companion\"\n4. Pick a companion from the list\n\n### Web\n\n1. Click your avatar in the top-right corner\n2. Go to \"Preferences\"\n3. Find the \"Companion\" section\n4. Enable and pick a companion\n\n## Where Companions Come From\n\n### Global companions\n\nUploaded by system administrators, visible to all users. These are usually reviewed and of reliable quality.\n\n### Private companions\n\nCompanions you import yourself, available only in your browser.\n\n**How to import:**\n\n1. Prepare a companion package (ZIP file)\n2. Click \"Import companion\" in the companion settings\n3. Choose the ZIP file\n4. It is selected automatically after a successful import\n\n## Companion Package Format\n\nTo create your own companion, prepare:\n\n### File structure\n\n```\nmy-companion.zip\n├── pet.json        # manifest\n└── spritesheet.webp # sprite sheet image\n```\n\n### Manifest (pet.json)\n\n```json\n{\n  \"id\": \"my-companion\",\n  \"displayName\": \"My Companion\",\n  \"description\": \"A custom sprite companion\",\n  \"spritesheetPath\": \"spritesheet.webp\"\n}\n```\n\n### Sprite sheet requirements\n\n- **Formats**: WebP, PNG, GIF, or JPEG\n- **Size**: max 18MB per file\n- **Package**: max 24MB for the whole ZIP\n\n### Sprite sheet layout\n\nThe sprite sheet is a vertically stacked frame sequence; the system picks rows by state:\n\n- Row 1: idle\n- Row 2: running\n- Row 3: waving\n- Row 4: jumping\n- Row 5: failed\n- Row 6: waiting\n- Row 7: review\n\n## Interacting with Companions\n\n### Click\n\nClicking a companion plays the waving animation and shows its name.\n\n### Drag\n\nDragging moves the companion around the screen. The position is saved automatically.\n\n### Context menu\n\nRight-clicking opens a menu:\n\n- **Open conversation**: jump to that agent's chat\n- **Show/hide**: toggle companion visibility\n- **Scale**: adjust size (0.5x - 1.6x)\n\n## Message Bubbles\n\nWhen an agent replies, a bubble appears above its companion:\n\n- The bubble shows a summary of the latest reply\n- It disappears automatically\n- Bubbles can be turned off in settings\n\n## Setting a Companion for an Agent\n\n### Option 1: Agent settings panel\n\n1. Open the agent details\n2. Find the \"Icon / companion\" setting\n3. Choose \"Use companion\"\n4. Pick a companion from the dropdown\n5. Adjust display options (show/hide, scale)\n\n### Option 2: Edit agent configuration\n\nSet the `icon` field in the agent's configuration:\n\n```json\n{\n  \"icon\": {\n    \"kind\": \"companion\",\n    \"scope\": \"global\",\n    \"id\": \"cat-assistant\",\n    \"show\": true,\n    \"scale\": 1.0,\n    \"messageHints\": true\n  }\n}\n```\n\n## FAQ\n\n### The companion does not show\n\nCheck:\n\n1. Is the companion feature enabled?\n2. Is a companion selected?\n3. Is the companion hidden for that agent?\n4. Does the browser support WebGL (some older browsers may not)?\n\n### Import fails\n\nCommon causes:\n\n- ZIP file exceeds 24MB\n- Sprite sheet image exceeds 18MB\n- `pet.json` is malformed\n- Required fields are missing (id, displayName, spritesheetPath)\n\n### Companion position resets\n\nThe position is stored in browser local storage. Clearing browser data resets it to the default position.\n\n## Admin Operations\n\nIf you are a system administrator, upload global companions through the admin console:\n\n1. Go to \"System settings\" → \"Companion management\"\n2. Click \"Upload companion\"\n3. Choose the companion ZIP package\n4. After upload it is visible to all users\n\nYou can also edit a companion's display name and description, or delete ones you no longer need.\n\n## Next Steps\n\n- [Goal Mode](/docs/en/concepts/goal-mode/) — keep agents working until the goal is done\n- [Agent Loop](/docs/en/concepts/core-agent-loop/) — how agents execute tasks\n","source_path":"使用说明书/en/concepts/companion.md"}</script>
+</body>
+</html>

@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D 爱心</title>
+<style>
+html,body{width:100%;height:100%;margin:0;padding:0;overflow:hidden;background:#04040f;color:#f5e6e0;font-family:Arial,"Microsoft YaHei",sans-serif}
+*{box-sizing:border-box}
+canvas{position:fixed;left:0;top:0;width:100%;height:100%;display:block;z-index:0}
+#flatcanvas{display:none}
+#hud{position:fixed;left:0;top:0;right:0;bottom:0;z-index:2;pointer-events:none}
+#title{position:absolute;left:26px;top:22px}
+#title h1{margin:0;font-size:26px;letter-spacing:.14em;color:#ffd9dd;text-shadow:0 2px 14px rgba(255,60,90,.25)}
+#title p{margin:8px 0 0;font-size:12px;letter-spacing:.18em;color:#c98f98}
+#panel{position:absolute;left:26px;bottom:24px;pointer-events:auto}
+#panel button{display:block;width:128px;margin-top:8px;padding:8px 0;font-size:12px;letter-spacing:.16em;color:#ffd9dd;background:rgba(60,12,22,.82);border:1px solid rgba(255,120,140,.35);border-radius:6px;cursor:pointer;text-align:center}
+#panel button:hover{background:rgba(90,18,32,.9)}
+#panel button:focus{outline:2px solid rgba(255,140,160,.75);outline-offset:1px}
+#hint{position:absolute;right:26px;bottom:24px;font-size:12px;letter-spacing:.12em;color:#b97f88;text-align:right}
+#note{position:fixed;left:0;right:0;top:0;z-index:3;display:none;margin:0;padding:10px 16px;font-size:13px;color:#ffd9dd;background:rgba(60,12,22,.92);border-bottom:1px solid rgba(255,120,140,.35);text-align:center}
+@media (max-width:560px){
+  #title h1{font-size:20px}
+  #title p{display:none}
+  #hint{display:none}
+}
+</style>
+</head>
+<body>
+<canvas id="glcanvas" aria-label="3D 爱心展示区域，可用方向键旋转，加号减号缩放"></canvas>
+<canvas id="flatcanvas" aria-label="2D 爱心示意"></canvas>
+<div id="hud">
+  <div id="title">
+    <h1>3D 爱心</h1>
+    <p>BEATING HEART · 3D</p>
+  </div>
+  <div id="panel">
+    <button id="btn-beat" type="button" aria-pressed="true">暂停跳动</button>
+    <button id="btn-spin" type="button" aria-pressed="true">关闭自转</button>
+    <button id="btn-reset" type="button">重置视角</button>
+  </div>
+  <div id="hint">拖拽旋转 · 滚轮/双指缩放 · 空格暂停 · R 复位</div>
+</div>
+<p id="note" role="status"></p>
+<script src="../assets/three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var glCanvas = document.getElementById('glcanvas');
+  var flatCanvas = document.getElementById('flatcanvas');
+  var noteEl = document.getElementById('note');
+  var btnBeat = document.getElementById('btn-beat');
+  var btnSpin = document.getElementById('btn-spin');
+  var btnReset = document.getElementById('btn-reset');
+
+  function showNote(text) {
+    noteEl.textContent = text;
+    noteEl.style.display = 'block';
+  }
+
+  // ---------- 2D fallback (no WebGL / init failure / context lost) ----------
+  function draw2DHeart() {
+    var w = flatCanvas.width = window.innerWidth || 800;
+    var h = flatCanvas.height = window.innerHeight || 600;
+    var ctx = flatCanvas.getContext('2d');
+    if (!ctx) { return; }
+    var bg = ctx.createLinearGradient(0, 0, 0, h);
+    bg.addColorStop(0, '#0b0e22');
+    bg.addColorStop(1, '#04040f');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
+
+    // Soft nebula washes, matching the 3D scene mood
+    function glowBlob(x, y, r, inner) {
+      var g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, inner);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+    glowBlob(w * 0.24, h * 0.3, Math.min(w, h) * 0.5, 'rgba(255,80,120,0.14)');
+    glowBlob(w * 0.78, h * 0.62, Math.min(w, h) * 0.45, 'rgba(110,80,220,0.12)');
+
+    // Star dots behind the heart
+    var starCount = Math.floor(w * h / 4200);
+    for (var s = 0; s < starCount; s++) {
+      var sx = Math.random() * w;
+      var sy = Math.random() * h;
+      var rad = Math.random() * 1.1 + 0.3;
+      ctx.globalAlpha = 0.22 + Math.random() * 0.55;
+      ctx.fillStyle = Math.random() < 0.82 ? '#cfe0ff' : '#ffe3ec';
+      ctx.beginPath();
+      ctx.arc(sx, sy, rad, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Same bezier heart outline as the 3D mesh, flipped for canvas coords
+    var scale = Math.min(w, h) / 3.2;
+    var cx = w / 2;
+    var cy = h / 2 + scale * 0.15;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 0.58 * scale);
+    ctx.bezierCurveTo(cx - 0.14 * scale, cy - 0.92 * scale, cx - 0.38 * scale, cy - 1.1 * scale, cx - 0.6 * scale, cy - 1.0 * scale);
+    ctx.bezierCurveTo(cx - 1.04 * scale, cy - 0.88 * scale, cx - 1.14 * scale, cy - 0.4 * scale, cx - 0.98 * scale, cy - 0.08 * scale);
+    ctx.bezierCurveTo(cx - 0.86 * scale, cy + 0.22 * scale, cx - 0.4 * scale, cy + 0.55 * scale, cx, cy + 1.05 * scale);
+    ctx.bezierCurveTo(cx + 0.4 * scale, cy + 0.55 * scale, cx + 0.86 * scale, cy + 0.22 * scale, cx + 0.98 * scale, cy - 0.08 * scale);
+    ctx.bezierCurveTo(cx + 1.14 * scale, cy - 0.4 * scale, cx + 1.04 * scale, cy - 0.88 * scale, cx + 0.6 * scale, cy - 1.0 * scale);
+    ctx.bezierCurveTo(cx + 0.38 * scale, cy - 1.1 * scale, cx + 0.14 * scale, cy - 0.92 * scale, cx, cy - 0.58 * scale);
+    ctx.closePath();
+    var grad = ctx.createRadialGradient(cx - scale * 5, cy - scale * 6, scale * 2, cx, cy, scale * 22);
+    grad.addColorStop(0, '#ff7d8e');
+    grad.addColorStop(0.55, '#e03050');
+    grad.addColorStop(1, '#8f0f2b');
+    ctx.fillStyle = grad;
+    ctx.shadowColor = 'rgba(255,70,100,0.45)';
+    ctx.shadowBlur = 30;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    flatCanvas.style.display = 'block';
+    glCanvas.style.display = 'none';
+  }
+
+  function useFallback(reason) {
+    draw2DHeart();
+    showNote(reason + ' 已切换为 2D 静态示意。');
+    btnBeat.disabled = true;
+    btnSpin.disabled = true;
+    btnReset.disabled = true;
+  }
+
+  window.addEventListener('resize', function () {
+    if (glCanvas.style.display === 'none') { draw2DHeart(); }
+  }, false);
+
+  // ---------- WebGL support detection ----------
+  var gl = null;
+  try {
+    gl = glCanvas.getContext('webgl') || glCanvas.getContext('experimental-webgl');
+  } catch (err) { gl = null; }
+  if (!gl || typeof THREE === 'undefined') {
+    useFallback('当前环境不支持 WebGL。');
+    return;
+  }
+
+  var renderer = null;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas: glCanvas, antialias: true, alpha: false });
+  } catch (err) {
+    useFallback('WebGL 初始化失败。');
+    return;
+  }
+  renderer.setClearColor(0x04040f, 1);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+
+  var scene = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(42, 1, 0.1, 200);
+  var camDist = 4.8;
+  var camDistTarget = 4.8;
+  // Narrow viewports need a larger minimum distance so the heart stays fully visible
+  var minDist = 2.6;
+  camera.position.set(0, 0, camDist);
+
+  // Lights: warm key + cool-ish fill + soft point glint, no shadows (low cost)
+  scene.add(new THREE.AmbientLight(0xffe8dd, 0.5));
+  var keyLight = new THREE.DirectionalLight(0xfff1e0, 0.95);
+  keyLight.position.set(2.5, 3.2, 4);
+  scene.add(keyLight);
+  var rimLight = new THREE.DirectionalLight(0x8fb2ff, 0.32);
+  rimLight.position.set(-3, -1.2, -2.5);
+  scene.add(rimLight);
+  var glint = new THREE.PointLight(0xffd9c2, 0.35, 20);
+  glint.position.set(-2, 2.4, 3);
+  scene.add(glint);
+
+  // ---------- Starfield (same recipe as the bundled example) ----------
+  // Procedural soft-glow sprite so points look like glowing stars, not squares
+  function glowTexture(inner, mid, size) {
+    var c = document.createElement('canvas');
+    c.width = c.height = size || 128;
+    var g = c.getContext('2d');
+    var grad = g.createRadialGradient(c.width / 2, c.height / 2, 0, c.width / 2, c.height / 2, c.width / 2);
+    grad.addColorStop(0, inner);
+    grad.addColorStop(0.3, mid);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, c.width, c.height);
+    return new THREE.CanvasTexture(c);
+  }
+  var starTex = glowTexture('rgba(255,255,255,1)', 'rgba(190,215,255,0.45)', 128);
+  var STAR_COUNT = 900;
+  var starGeo = new THREE.BufferGeometry();
+  var starVerts = new Float32Array(STAR_COUNT * 3);
+  for (var si = 0; si < STAR_COUNT; si++) {
+    var sa = Math.random() * Math.PI * 2;
+    var sb = Math.acos(2 * Math.random() - 1);
+    var sr = 22 + Math.random() * 48;
+    starVerts[si * 3] = Math.sin(sb) * Math.cos(sa) * sr;
+    starVerts[si * 3 + 1] = Math.cos(sb) * sr;
+    starVerts[si * 3 + 2] = Math.sin(sb) * Math.sin(sa) * sr;
+  }
+  starGeo.setAttribute('position', new THREE.BufferAttribute(starVerts, 3));
+  var stars = new THREE.Points(starGeo, new THREE.PointsMaterial({
+    color: 0xcfe4ff,
+    size: 0.42,
+    sizeAttenuation: true,
+    map: starTex,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    opacity: 0.9
+  }));
+  scene.add(stars);
+
+  // Distant nebula washes behind the heart for depth
+  function addNebula(tex, x, y, z, s) {
+    var sp = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: tex, transparent: true, depthWrite: false,
+      blending: THREE.AdditiveBlending, opacity: 0.65
+    }));
+    sp.position.set(x, y, z);
+    sp.scale.set(s, s, 1);
+    scene.add(sp);
+  }
+  var nebulaRose = glowTexture('rgba(255,80,120,0.4)', 'rgba(130,30,90,0.16)', 256);
+  var nebulaViolet = glowTexture('rgba(110,80,220,0.36)', 'rgba(60,40,140,0.14)', 256);
+  addNebula(nebulaRose, -9, 6, -22, 26);
+  addNebula(nebulaViolet, 10, -5, -26, 30);
+
+  // Heart geometry: bezier outline (rounded bottom tip, unlike the sharp cusp of
+  // the sin^3 parametric curve whose curvature radius is smaller than the bevel
+  // and causes self-intersecting bevel folds), then extruded with a small bevel
+  var heartShape = new THREE.Shape();
+  heartShape.moveTo(0, 0.58);
+  heartShape.bezierCurveTo(-0.14, 0.92, -0.38, 1.1, -0.6, 1.0);
+  heartShape.bezierCurveTo(-1.04, 0.88, -1.14, 0.4, -0.98, 0.08);
+  heartShape.bezierCurveTo(-0.86, -0.22, -0.4, -0.55, 0, -1.05);
+  heartShape.bezierCurveTo(0.4, -0.55, 0.86, -0.22, 0.98, 0.08);
+  heartShape.bezierCurveTo(1.14, 0.4, 1.04, 0.88, 0.6, 1.0);
+  heartShape.bezierCurveTo(0.38, 1.1, 0.14, 0.92, 0, 0.58);
+  var heartGeo = new THREE.ExtrudeBufferGeometry(heartShape, {
+    depth: 0.5,
+    bevelEnabled: true,
+    bevelThickness: 0.22,
+    bevelSize: 0.12,
+    bevelSegments: 6,
+    curveSegments: 48
+  });
+
+  // Extrude output is non-indexed with per-face normals, which shows as hard
+  // ring seams where bevel rings meet the side wall (worst at the bottom tip).
+  // Weld vertices that share a position into an indexed geometry, then rebuild
+  // area-averaged smooth normals for a seamless puffy-candy surface.
+  function weldGeometry(geo) {
+    var pos = geo.attributes.position;
+    var seen = {};
+    var unique = [];
+    var index = [];
+    var EPS = 1e-4;
+    for (var i = 0; i < pos.count; i++) {
+      var x = pos.getX(i);
+      var y = pos.getY(i);
+      var z = pos.getZ(i);
+      var key = Math.round(x / EPS) + ',' + Math.round(y / EPS) + ',' + Math.round(z / EPS);
+      if (seen[key] === undefined) {
+        seen[key] = unique.length / 3;
+        unique.push(x, y, z);
+      }
+      index.push(seen[key]);
+    }
+    var welded = new THREE.BufferGeometry();
+    welded.setAttribute('position', new THREE.BufferAttribute(new Float32Array(unique), 3));
+    welded.setIndex(index);
+    welded.computeVertexNormals();
+    return welded;
+  }
+  var heartMeshGeo = weldGeometry(heartGeo);
+  heartMeshGeo.center();
+
+  var heartMat = new THREE.MeshPhysicalMaterial({
+    color: 0xd92040,
+    emissive: 0x2a040c,
+    roughness: 0.34,
+    metalness: 0.04,
+    clearcoat: 0.55,
+    clearcoatRoughness: 0.3
+  });
+  var heartGroup = new THREE.Group();
+  var heartMesh = new THREE.Mesh(heartMeshGeo, heartMat);
+  heartMesh.userData.kind = 'heart';
+  heartGroup.add(heartMesh);
+  scene.add(heartGroup);
+
+  // ---------- Interaction state ----------
+  var rotX = 0;
+  var rotY = 0;
+  var velX = 0;
+  var velY = 0;
+  var dragging = false;
+  var lastX = 0;
+  var lastY = 0;
+  var pinchDist = 0;
+  var beatPlaying = true;
+  var autoSpin = true;
+  var curScale = 1;
+
+  function clampRotX(v) {
+    if (v > 1.1) { return 1.1; }
+    if (v < -1.1) { return -1.1; }
+    return v;
+  }
+  function clampDist(v) {
+    if (v > 8) { return 8; }
+    if (v < minDist) { return minDist; }
+    return v;
+  }
+
+  function onPointerDown(x, y) {
+    dragging = true;
+    lastX = x;
+    lastY = y;
+    velX = 0;
+    velY = 0;
+  }
+  function onPointerMove(x, y) {
+    if (!dragging) { return; }
+    var dx = x - lastX;
+    var dy = y - lastY;
+    lastX = x;
+    lastY = y;
+    velY = dx * 0.006;
+    velX = dy * 0.006;
+    rotY += velY;
+    rotX = clampRotX(rotX + velX);
+  }
+  function onPointerUp() {
+    dragging = false;
+  }
+
+  glCanvas.addEventListener('mousedown', function (e) {
+    onPointerDown(e.clientX, e.clientY);
+  }, false);
+  window.addEventListener('mousemove', function (e) {
+    onPointerMove(e.clientX, e.clientY);
+  }, false);
+  window.addEventListener('mouseup', onPointerUp, false);
+
+  // Touch: single finger rotates, two fingers pinch-zoom
+  glCanvas.addEventListener('touchstart', function (e) {
+    if (e.touches.length === 1) {
+      onPointerDown(e.touches[0].clientX, e.touches[0].clientY);
+    } else if (e.touches.length === 2) {
+      dragging = false;
+      pinchDist = Math.abs(e.touches[0].clientX - e.touches[1].clientX) +
+                  Math.abs(e.touches[0].clientY - e.touches[1].clientY);
+    }
+    e.preventDefault();
+  }, false);
+  glCanvas.addEventListener('touchmove', function (e) {
+    if (e.touches.length === 1 && dragging) {
+      onPointerMove(e.touches[0].clientX, e.touches[0].clientY);
+    } else if (e.touches.length === 2) {
+      var d = Math.abs(e.touches[0].clientX - e.touches[1].clientX) +
+              Math.abs(e.touches[0].clientY - e.touches[1].clientY);
+      if (pinchDist > 0) {
+        camDistTarget = clampDist(camDistTarget * (pinchDist / Math.max(d, 1)));
+      }
+      pinchDist = d;
+    }
+    e.preventDefault();
+  }, false);
+  glCanvas.addEventListener('touchend', function (e) {
+    if (e.touches.length === 0) { onPointerUp(); pinchDist = 0; }
+    e.preventDefault();
+  }, false);
+
+  function onWheel(delta) {
+    camDistTarget = clampDist(camDistTarget + (delta > 0 ? 0.4 : -0.4));
+  }
+  glCanvas.addEventListener('wheel', function (e) {
+    onWheel(e.deltaY);
+    e.preventDefault();
+  }, false);
+  glCanvas.addEventListener('mousewheel', function (e) {
+    onWheel(e.wheelDelta);
+    e.preventDefault();
+  }, false);
+
+  // Keyboard: arrows rotate, +/- zoom, space toggles beat, R resets
+  document.addEventListener('keydown', function (e) {
+    var tag = e.target && e.target.tagName ? e.target.tagName : '';
+    if (tag === 'BUTTON' && (e.key === ' ' || e.key === 'Enter')) { return; }
+    var k = e.key;
+    if (k === 'ArrowLeft') { rotY -= 0.14; e.preventDefault(); }
+    else if (k === 'ArrowRight') { rotY += 0.14; e.preventDefault(); }
+    else if (k === 'ArrowUp') { rotX = clampRotX(rotX - 0.12); e.preventDefault(); }
+    else if (k === 'ArrowDown') { rotX = clampRotX(rotX + 0.12); e.preventDefault(); }
+    else if (k === '+' || k === '=') { camDistTarget = clampDist(camDistTarget - 0.4); e.preventDefault(); }
+    else if (k === '-' || k === '_') { camDistTarget = clampDist(camDistTarget + 0.4); e.preventDefault(); }
+    else if (k === ' ' || k === 'Spacebar') { toggleBeat(); e.preventDefault(); }
+    else if (k === 'r' || k === 'R') { resetView(); }
+  }, false);
+
+  function toggleBeat() {
+    beatPlaying = !beatPlaying;
+    btnBeat.textContent = beatPlaying ? '暂停跳动' : '继续跳动';
+    btnBeat.setAttribute('aria-pressed', beatPlaying ? 'true' : 'false');
+  }
+  function toggleSpin() {
+    autoSpin = !autoSpin;
+    btnSpin.textContent = autoSpin ? '关闭自转' : '开启自转';
+    btnSpin.setAttribute('aria-pressed', autoSpin ? 'true' : 'false');
+  }
+  function resetView() {
+    rotX = 0;
+    rotY = 0;
+    velX = 0;
+    velY = 0;
+    camDistTarget = 4.8;
+  }
+  btnBeat.addEventListener('click', toggleBeat, false);
+  btnSpin.addEventListener('click', toggleSpin, false);
+  btnReset.addEventListener('click', resetView, false);
+
+  // ---------- Resize ----------
+  function applySize() {
+    var w = window.innerWidth || 1;
+    var h = window.innerHeight || 1;
+    if (w < 2 || h < 2) { return; }
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    // Fit the whole heart even when tilted by drag rotation (half extents ~1.45 x 1.26,
+    // tilted projection grows to ~1.4 wide), with a little margin
+    var halfTan = Math.tan(camera.fov * Math.PI / 360);
+    minDist = Math.max(2.6, 1.75 / halfTan, 1.58 / (halfTan * camera.aspect));
+    if (camDistTarget < minDist) { camDistTarget = minDist; }
+  }
+  applySize();
+  window.addEventListener('resize', applySize, false);
+  // WebGL context loss: stop the loop and fall back instead of spinning errors
+  glCanvas.addEventListener('webglcontextlost', function (e) {
+    e.preventDefault();
+    running = false;
+    useFallback('WebGL 上下文已丢失。');
+  }, false);
+
+  // ---------- Animation ----------
+  // Heartbeat: lub-dub double pulse per cycle
+  function gauss(x, mu, sigma) {
+    var d = x - mu;
+    return Math.exp(-(d * d) / (2 * sigma * sigma));
+  }
+  function beatValue(phase) {
+    return gauss(phase, 0.12, 0.05) + 0.5 * gauss(phase, 0.34, 0.06);
+  }
+  var BEAT_PERIOD = 1.15;
+  var beatClock = 0;
+  var running = true;
+  var lastTime = Date.now();
+  var hidden = false;
+  // Some embedded WebViews change viewport size without firing a resize event,
+  // so poll the cheap innerWidth/innerHeight pair every frame as a safety net
+  var lastW = window.innerWidth || 0;
+  var lastH = window.innerHeight || 0;
+
+  document.addEventListener('visibilitychange', function () {
+    hidden = document.hidden;
+    lastTime = Date.now();
+  }, false);
+
+  function frame() {
+    if (!running) { return; }
+    window.requestAnimationFrame(frame);
+    var now = Date.now();
+    var dt = (now - lastTime) / 1000;
+    lastTime = now;
+    if (hidden || dt <= 0) { return; }
+    if (dt > 0.05) { dt = 0.05; }
+
+    var iw = window.innerWidth || 0;
+    var ih = window.innerHeight || 0;
+    if (iw !== lastW || ih !== lastH) {
+      lastW = iw;
+      lastH = ih;
+      applySize();
+    }
+
+    // Heartbeat scale with smooth release when paused
+    if (beatPlaying) {
+      beatClock = (beatClock + dt / BEAT_PERIOD) % 1;
+      var target = 1 + 0.085 * beatValue(beatClock);
+      curScale += (target - curScale) * Math.min(1, dt * 22);
+    } else {
+      curScale += (1 - curScale) * Math.min(1, dt * 6);
+    }
+    heartMesh.scale.setScalar(curScale);
+
+    // Idle motion: gentle bob + sway; stars drift very slowly for parallax
+    heartGroup.position.y = 0.05 * Math.sin(now * 0.0013);
+    heartGroup.rotation.z = 0.02 * Math.sin(now * 0.0009);
+    stars.rotation.y = now * 0.00002;
+
+    // Drag inertia, then slow auto spin
+    if (!dragging) {
+      rotY += velY;
+      rotX = clampRotX(rotX + velX);
+      velX *= 0.9;
+      velY *= 0.9;
+      if (autoSpin && Math.abs(velY) < 0.0004) { rotY += dt * 0.3; }
+    }
+    heartGroup.rotation.x = rotX;
+    heartGroup.rotation.y = rotY;
+
+    // Camera dolly towards target distance
+    camDist += (camDistTarget - camDist) * Math.min(1, dt * 8);
+    camera.position.z = camDist;
+
+    renderer.render(scene, camera);
+  }
+  window.requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

@@ -1,135 +1,127 @@
 ---
 title: Swarm Collaboration
-summary: wunder's swarm capability is for multi-agent collaboration, centered on queen orchestration, worker execution, and subagents only when needed.
-read_when:
-  - You need to understand wunder's multi-agent model
-  - You need to distinguish queens, workers, and subagents
-source_docs:
-  - docs/API文档.md
-  - frontend/src/components/beeroom/canvas/swarmCanvasModel.ts
-  - frontend/src/components/beeroom/canvas/BeeroomSwarmNodeCard.vue
-updated_at: 2026-04-10
+summary: How a swarm actually works: how the queen bee decomposes tasks, how worker bees execute, how results merge, and how status is displayed.
 ---
 
 # Swarm Collaboration
 
-In wunder, a swarm is not just "open several chat windows." It is a formal multi-agent collaboration structure.
+## How It Works
 
-## What problem a swarm solves
+A swarm is Wunder's multi-agent collaboration mechanism. When a task is too complex for a single agent, the swarm turns collaboration into a first-class capability that is trackable, repeatable, and recoverable inside the system.
 
-A single agent is good at completing one task independently, but many tasks naturally need to be split, for example:
+### Core Concepts
 
-- one agent collects information
-- one agent generates the output
-- one agent reviews it
-- one agent packages the final delivery
+| Role | Description | Analogy |
+|------|-------------|---------|
+| **Queen bee** | The primary agent hosting the collaboration | Project manager |
+| **Worker bee** | An existing agent scheduled to participate | Team member |
+| **Mission** | One concrete collaboration task | Work assignment |
+| **Task** | A concrete subtask assigned to a worker bee | To-do item |
 
-The swarm turns that collaboration pattern into a first-class system capability that can be traced, repeated, and recovered.
+### Workflow
 
-## First distinguish the three roles
+```
+User request: complex task that needs division of labor
+         ↓
+    Queen bee receives and analyzes
+         ↓
+    Decomposes into subtasks
+         ↓
+    ┌────┼────┐
+    ↓    ↓    ↓
+  Bee A  Bee B  Bee C
+  gather analyze write
+    ↓    ↓    ↓
+    └────┼────┘
+         ↓
+    Queen bee merges results
+         ↓
+    Final deliverable
+```
 
-### Queen
+## Why It Matters
 
-The queen is the main agent currently coordinating the collaboration.
+### Collaboration Benefits
 
-It is responsible for:
+- **Parallel execution**: multiple agents work simultaneously, which is more efficient
+- **Specialized division of labor**: different agents have different strengths
+- **Visible process**: users can see each worker bee's progress and trace
+- **Reliable results**: worker results merge back into the queen bee instead of scattering
 
-- breaking down the task
-- dispatching work to workers
-- combining results
-- deciding whether collaboration should continue
+### Swarm vs Subagents
 
-### Worker
+| | Swarm | Subagents |
+|--|-------|-----------|
+| **What is scheduled** | Existing agents | Temporary derived child sessions |
+| **Threads** | Worker bees reuse their task threads by default | Derived within the current session |
+| **Best for** | Complex division-of-labor collaboration | Lightweight temporary tasks |
+| **Resources** | Agents must be created in advance | No extra preparation needed |
 
-Workers are other already-existing agents inside the swarm.
+## Worker Bee Thread Convention
 
-They execute the concrete tasks that are assigned to them.
+When a worker bee is assigned a task, by default it reuses the worker bee's task thread within the scope of the originating task. Why?
 
-### Subagent
+- **Clean context**: not disturbed by old conversations
+- **Focus on the current task**: only sees what the queen bee dispatched
+- **No cross-contamination**: different tasks do not interfere with each other
 
-A subagent is not itself a swarm member. It is a temporary child run created by a queen or worker during execution.
+You can also explicitly reuse a worker bee's existing thread, or force a brand-new thread.
 
-So remember:
+## In Practice
 
-- a worker is an **existing agent**
-- a subagent is a **temporary derived run**
+### Viewing Swarms in the UI
 
-## Difference from subagent control
+**Middle column list**:
+- Shows all swarm tasks
+- Swarms with running tasks get a breathing highlight
+- Quickly see what is running
 
-Both support collaboration, but their boundaries differ:
+**Canvas view**:
+- Visualizes the collaboration relationships
+- Lines between queen bee and worker bees represent dispatch relationships
+- Each node shows its current status
 
-- swarm: dispatch existing agents
-- subagent control: derive temporary child runs from the current session
+**Tool traces**:
+- Each node shows which tools were called
+- Shows the current step
+- Traces remain available after completion
 
-If the goal is "bring in other agents that already exist," prefer the swarm.
+### Status Reference
 
-If the goal is "fork a small temporary child task from the current session," prefer subagent control.
+| Status | Meaning |
+|--------|---------|
+| Running | The worker bee is executing its task |
+| Completed | The worker bee finished its task |
+| Failed | The worker bee hit an error |
+| Waiting | Waiting to be scheduled |
 
-## Why workers start in a new thread by default
+### When to Use
 
-The current swarm system has one very important convention:
+**Good fit**:
+- The task can be clearly split into subtasks
+- Different subtasks need different specialties
+- Parallelism improves efficiency
 
-- when a worker receives a task, it starts in a new thread by default
-- that new thread becomes the worker's new task thread
+**Poor fit**:
+- Simple tasks one agent can handle alone
+- Just forking a small temporary errand
 
-The purpose is to keep the worker's context clean and avoid dragging dirty history from an older conversation directly into the new assignment.
+### Task Thread Protection
 
-By default, the system reuses the worker's task thread scoped to the calling task, creating and binding one first when needed. You can still pass `threadStrategy=task_thread` (or `reuseThread=true`) to make that intent explicit; `threadStrategy=new_thread` forces a clean new thread instead. Only an explicit `sessionKey` in `send` / `batch_send` pins the run to a specific existing thread.
+The UI blocks switching threads while an agent is running. This protection avoids:
+- Leaving a running task thread before it finishes
+- Session state and workflows getting out of sync
 
-## Why the task thread matters
+If you need a new thread, wait for the current run to finish or stop it first.
 
-In wunder, an agent's task thread is its first-class runtime reality.
+## Common Misconceptions
 
-This means:
+- **Is a swarm just parallel requests?** No. The point is the collaboration relationship and result merging.
+- **More worker bees are always better?** No. Coarse or overly fine granularity both hurt efficiency.
+- **Can worker bees see the queen bee's context?** No. Worker bees only see the dispatched task content.
 
-- new tasks should land on the task thread first
-- once a worker switches to a new task thread, later collaboration continues around that new thread
+## Further Reading
 
-This is also why the frontend protects thread switching very strictly while a run is active.
-
-## How the frontend displays swarm state right now
-
-The swarm page currently exposes several stable state signals:
-
-- as long as a swarm still has running missions, its item in the middle column keeps a pulsing highlight
-- running nodes on the canvas show pulsing borders or active highlights
-- the workflow area for worker and subagent nodes follows the latest progress automatically
-
-So the user now sees not just who is busy, but how far each node has progressed.
-
-## What the workflow area emphasizes now
-
-The workflow area in the swarm canvas now focuses primarily on tool traces.
-
-In particular:
-
-- queen nodes preserve the real tool workflow instead of collapsing to a summary
-- worker nodes keep showing their own tool steps
-- subagent nodes keep their tool traces even after completion instead of only showing a terminal state label
-
-In other words, the workflow area now prioritizes:
-
-- which tools were called
-- which step the node is currently on
-- which nodes are still active
-
-rather than just piling up status labels, session IDs, or summaries.
-
-## When to use a swarm
-
-Good fit:
-
-- research, writing, and review in parallel
-- assigning different roles to different aspects of the same problem
-- dividing labor across multiple existing agents
-
-Poor fit:
-
-- small tasks that one agent can finish alone
-- a very small temporary child task that only needs a quick fork
-
-## Further reading
-
-- [Agent Swarm](/docs/en/tools/agent-swarm/)
-- [Subagent Control](/docs/en/tools/subagent-control/)
-- [Thread Control](/docs/en/tools/thread-control/)
+- [Swarm (Core)](/docs/en/concepts/core-swarm/) — design principles of the swarm
+- [Agent Swarm Tool](/docs/en/tools/agent-swarm/) — tool usage
+- [Subagent Control](/docs/en/tools/subagent-control/) — working with subagents

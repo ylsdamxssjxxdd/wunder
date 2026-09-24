@@ -7,13 +7,13 @@ summary: 外部渠道（飞书、微信等）的接入与日常运维。渠道�
 
 ## 原理
 
-渠道是 Wunder 与外部平台的桥梁。通过渠道，用户可以在飞书、企业微信等熟悉的平台直接与智能体对话。
+渠道是 Wunder 与外部平台的桥梁。通过渠道，用户可以在飞书、企业微信、Telegram 等熟悉的平台直接与智能体对话。渠道适配分 specialized 适配器与 generic webhook 两类，新增渠道优先登记 `channels/catalog.rs`。
 
 ### 渠道架构
 
 ```
-外部平台（飞书/微信/QQ/WhatsApp/XMPP）
-        ↓ Webhook / 长连接
+外部平台（飞书/微信/QQ/WhatsApp/XMPP/Telegram/Discord/Slack/LINE/DingTalk 等）
+        ↓ Webhook / 长连接 / 通用 webhook 路由
     统一接入层（ChannelHub）
         ↓
     入站队列（快速接收）

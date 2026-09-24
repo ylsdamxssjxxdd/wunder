@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>目标态系统 | 使用说明书</title>
+  <meta name="description" content="设定目标让智能体持续工作，直到任务完成或预算耗尽。适合需要多轮执行的复杂任务。">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/goal-mode","language":"zh-CN","title":"目标态系统","summary":"设定目标让智能体持续工作，直到任务完成或预算耗尽。适合需要多轮执行的复杂任务。","updated_at":"2026-09-25","read_when":[],"source_docs":[],"tab":"参考","group":"深入了解","group_path":["深入了解"],"url":"/docs/zh-CN/concepts/goal-mode/","headings":[{"id":"section-1","level":1,"text":"目标态系统"},{"id":"section-2","level":2,"text":"适用场景"},{"id":"section-3","level":2,"text":"启动目标态"},{"id":"section-4","level":3,"text":"方法一：使用命令"},{"id":"section-5","level":3,"text":"方法二：使用目标编辑器"},{"id":"section-6","level":3,"text":"方法三：让智能体创建"},{"id":"section-7","level":2,"text":"目标状态"},{"id":"section-8","level":3,"text":"活跃状态"},{"id":"section-9","level":3,"text":"暂停状态"},{"id":"section-10","level":3,"text":"预算受限"},{"id":"section-11","level":3,"text":"已完成"},{"id":"section-12","level":2,"text":"Token 预算"},{"id":"section-13","level":3,"text":"设置预算"},{"id":"section-14","level":3,"text":"预算消耗"},{"id":"section-15","level":3,"text":"预算建议"},{"id":"section-16","level":2,"text":"目标执行过程"},{"id":"section-17","level":3,"text":"自动延续"},{"id":"section-18","level":3,"text":"等待用户输入"},{"id":"section-19","level":3,"text":"完成判定"},{"id":"section-20","level":2,"text":"退出目标态"},{"id":"section-21","level":3,"text":"正常退出"},{"id":"section-22","level":3,"text":"手动退出"},{"id":"section-23","level":3,"text":"注意事项"},{"id":"section-24","level":2,"text":"前端显示"},{"id":"section-25","level":3,"text":"目标分隔线"},{"id":"section-26","level":3,"text":"目标状态徽章"},{"id":"section-27","level":3,"text":"目标锁定"},{"id":"section-28","level":2,"text":"命令参考"},{"id":"section-29","level":2,"text":"最佳实践"},{"id":"section-30","level":3,"text":"明确的目标描述"},{"id":"section-31","level":3,"text":"合理的预算"},{"id":"section-32","level":3,"text":"及时干预"},{"id":"section-33","level":2,"text":"常见问题"},{"id":"section-34","level":3,"text":"目标一直不完成"},{"id":"section-35","level":3,"text":"预算耗尽但任务未完成"},{"id":"section-36","level":3,"text":"目标执行中断"},{"id":"section-37","level":2,"text":"与其他功能的关系"},{"id":"section-38","level":2,"text":"下一步"}],"prev_slug":"zh-CN/concepts/quota-and-token-usage","next_slug":"zh-CN/concepts/companion","markdown":"# 目标态系统\n\n目标态是一种任务驱动模式。当用户设定目标后，智能体会持续工作直到目标完成，期间自动处理等待、重试、预算检查等边界情况。\n\n## 适用场景\n\n目标态适合以下场景：\n\n- **复杂任务**：需要多轮执行才能完成的任务，如\"开发一个完整的用户认证模块\"\n- **长时间任务**：智能体需要持续工作，不能一次性完成\n- **有明确完成条件**：任务有清晰的\"完成\"定义\n- **需要预算控制**：限制智能体使用的 Token 数量\n\n**不适合目标态的场景：**\n\n- 简单问答（一次回复就能解决）\n- 开放式探索（没有明确完成条件）\n- 需要频繁人工干预的任务\n\n## 启动目标态\n\n### 方法一：使用命令\n\n在聊天输入框中输入：\n\n```\n/goal 完成用户认证模块的开发\n```\n\n### 方法二：使用目标编辑器\n\n1. 点击聊天面板上方的目标图标（靶心图标）\n2. 在弹出的对话框中输入目标描述\n3. 可选：设置 Token 预算\n4. 点击\"开始\"\n\n### 方法三：让智能体创建\n\n智能体可以通过 `goal` 工具（action=create）创建目标。这通常发生在智能体判断任务需要持续执行时。\n\n## 目标状态\n\n目标有以下几种状态：\n\n| 状态 | 含义 | 颜色标识 |\n|------|------|----------|\n| 活跃 | 正在执行中 | 绿色 |\n| 暂停 | 用户暂停了目标 | 黄色 |\n| 预算受限 | Token 预算耗尽 | 红色 |\n| 已完成 | 目标已完成 | 灰色 |\n\n### 活跃状态\n\n目标处于活跃状态时：\n\n- 智能体会持续执行\n- 每轮执行后会自动继续下一轮\n- 形象显示\"运行中\"动画\n- 消息列表显示目标分隔线\n\n### 暂停状态\n\n目标暂停后：\n\n- 智能体停止执行\n- 可以通过 `/goal resume` 恢复\n- 或通过目标编辑器恢复\n\n### 预算受限\n\n当设置了 Token 预算且已耗尽时：\n\n- 目标自动进入预算受限状态\n- 智能体停止执行\n- 需要用户干预（提高预算或清除目标）\n\n### 已完成\n\n智能体通过 `goal` 工具（action=update）标记完成后：\n\n- 目标标记为已完成\n- 停止自动执行\n- 显示完成时间\n\n## Token 预算\n\n### 设置预算\n\n在目标编辑器中可以设置 Token 预算：\n\n```\n目标：完成用户认证模块\n预算：100000 tokens\n```\n\n### 预算消耗\n\n每轮执行后，系统会累加：\n\n- 输入 Token 数\n- 输出 Token 数\n- 工具调用 Token 数\n\n当累计消耗达到预算时，目标自动进入\"预算受限\"状态。\n\n### 预算建议\n\n根据任务复杂度设置合理的预算：\n\n| 任务类型 | 建议预算 |\n|----------|----------|\n| 简单功能 | 10,000 - 30,000 |\n| 中等功能 | 30,000 - 100,000 |\n| 复杂功能 | 100,000 - 500,000 |\n| 大型项目 | 500,000+ |\n\n## 目标执行过程\n\n### 自动延续\n\n目标处于活跃状态时，智能体会自动延续执行：\n\n1. 完成一轮执行\n2. 检查目标状态和预算\n3. 等待 1 秒冷却期\n4. 注入延续提示词\n5. 开始下一轮执行\n\n### 等待用户输入\n\n如果智能体需要用户输入才能继续：\n\n- 目标不会自动延续\n- 等待用户回复后继续\n\n### 完成判定\n\n智能体判断目标完成时，会通过 `goal` 工具（action=update）标记完成：\n\n```\n智能体：我已经完成了用户认证模块的开发，包括：\n1. 用户注册功能\n2. 用户登录功能\n3. 密码重置功能\n\n调用 goal 工具 action=update 标记完成\n```\n\n## 退出目标态\n\n### 正常退出\n\n智能体完成任务后自动退出。\n\n### 手动退出\n\n点击聊天面板的停止按钮，或使用命令：\n\n```\n/stop\n```\n\n或\n\n```\n/cancel\n```\n\n### 注意事项\n\n- 退出目标态会清除当前目标\n- 已执行的操作不会回滚\n- 可以重新设定新的目标\n\n## 前端显示\n\n### 目标分隔线\n\n在消息列表中，目标开始位置会显示分隔线：\n\n```\n────────── 目标已开始：完成用户认证模块的开发 ──────────\n```\n\n### 目标状态徽章\n\n聊天面板顶部显示当前目标状态：\n\n- 活跃：🟢 目标进行中\n- 暂停：🟡 目标已暂停\n- 预算受限：🔴 预算已耗尽\n- 已完成：⚪ 目标已完成\n\n### 目标锁定\n\n目标态期间：\n\n- 不能切换到其他会话\n- 不能切换智能体\n- 形象显示运行状态\n\n## 命令参考\n\n| 命令 | 作用 |\n|------|------|\n| `/goal` | 打开目标编辑器 |\n| `/goal 目标描述` | 直接设置目标 |\n| `/goal --tokens 100000 目标描述` | 设置目标并指定预算 |\n| `/goal pause` | 暂停目标（仅命令行） |\n| `/goal resume` | 恢复目标（仅命令行） |\n| `/goal clear` | 清除目标（仅命令行） |\n| `/stop` 或 `/cancel` | 退出目标态 |\n\n## 最佳实践\n\n### 明确的目标描述\n\n好的目标描述：\n\n```\n完成用户认证模块的开发，包括：\n1. 用户注册（邮箱验证）\n2. 用户登录（支持记住我）\n3. 密码重置（邮件链接）\n4. 会话管理（自动过期）\n```\n\n不好的目标描述：\n\n```\n帮我写代码\n```\n\n### 合理的预算\n\n- 不要设置过低：可能导致任务无法完成\n- 不要设置过高：失去预算控制的意义\n- 根据任务复杂度调整\n\n### 及时干预\n\n- 监控智能体执行进度\n- 发现偏离时及时纠正\n- 必要时暂停目标调整方向\n\n## 常见问题\n\n### 目标一直不完成\n\n可能原因：\n\n- 目标描述不够明确\n- 智能体判断还有工作要做\n- 遇到了阻塞问题\n\n解决方法：\n\n- 检查智能体的输出\n- 提供更多上下文\n- 手动退出并重新设定更具体的目标\n\n### 预算耗尽但任务未完成\n\n解决方法：\n\n- 重新设定目标，提高预算\n- 简化任务范围\n- 分阶段完成\n\n### 目标执行中断\n\n可能原因：\n\n- 网络问题\n- 服务重启\n- 系统错误\n\n解决方法：\n\n- 检查网络连接\n- 刷新页面\n- 重新设定目标\n\n## 与其他功能的关系\n\n| 功能 | 关系 |\n|------|------|\n| 形象系统 | 目标执行时形象显示运行状态 |\n| 上下文压缩 | 目标描述作为重要上下文保留 |\n| 蜂群协作 | 目标可以触发子智能体协作 |\n| 工具系统 | 智能体通过工具操作目标 |\n\n## 下一步\n\n- [形象系统](/docs/zh-CN/concepts/companion/) — 为智能体设置动画形象\n- [智能体循环](/docs/zh-CN/concepts/core-agent-loop/) — 理解智能体如何执行任务\n- [上下文压缩](/docs/zh-CN/concepts/core-context-compression/) — 长对话如何保持高效\n","source_path":"使用说明书/zh-CN/concepts/goal-mode.md"}</script>
+</body>
+</html>

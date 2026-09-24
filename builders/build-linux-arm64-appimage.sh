@@ -6,7 +6,15 @@ set -euo pipefail
 # AppDir; durable desktop state is kept outside the read-only image by AppRun.
 
 repo_root="${WUNDER_REPO_ROOT:-$(cd -- "$(dirname -- "$0")/.." && pwd)}"
-builder_root="${WUNDER_BUILDER_ROOT:-/builder/kylin2}"
+# A native ARM64 Linux checkout keeps the reusable SDK beside the repository.
+# Docker mounts it at /builder/kylin-arm, so retain that location as fallback.
+if [[ -n "${WUNDER_BUILDER_ROOT:-}" ]]; then
+  builder_root="$WUNDER_BUILDER_ROOT"
+elif [[ -d "$repo_root/../Rust-builder/kylin-arm" ]]; then
+  builder_root="$repo_root/../Rust-builder/kylin-arm"
+else
+  builder_root="/builder/kylin-arm"
+fi
 offline_root="${WUNDER_OFFLINE_ROOT:-$builder_root/offline}"
 vendor_root="${WUNDER_CARGO_VENDOR:-$offline_root/cargo-vendor-slint}"
 cargo_home="${CARGO_HOME:-$repo_root/target/linux-arm64-ubuntu18-slint/cargo-home}"
@@ -59,8 +67,9 @@ version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$mani
 [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]] || fail "invalid package version: $version"
 
 mkdir -p "$cargo_home" "$target_dir" "$output_dir"
-if [[ -d "$vendor_root/axum" ]]; then
-  cat > "$cargo_home/config.toml" <<EOF
+# kylin-arm contains the complete union vendor for both shared Slint projects.
+# Always force Cargo offline so a release cannot silently depend on the host cache.
+cat > "$cargo_home/config.toml" <<EOF
 [source.crates-io]
 replace-with = "vendored-sources"
 [source.vendored-sources]
@@ -68,24 +77,15 @@ directory = "$vendor_root"
 [net]
 offline = true
 EOF
-else
-  if [[ "${WUNDER_ALLOW_ONLINE:-0}" != "1" ]]; then
-    fail "offline Cargo vendor is incomplete (runtime dependencies are missing): $vendor_root; pass WUNDER_ALLOW_ONLINE=1 only for an intentional online build"
-  fi
-  echo "[wunder-slint-appimage] WUNDER_ALLOW_ONLINE=1; using the configured online Cargo registry"
-  rm -f "$cargo_home/config.toml"
-fi
 
 export CARGO_HOME="$cargo_home"
 export CARGO_TARGET_DIR="$target_dir"
-if [[ -f "$cargo_home/config.toml" ]]; then export CARGO_NET_OFFLINE=true; else unset CARGO_NET_OFFLINE; fi
+export CARGO_NET_OFFLINE=true
 
 echo "[wunder-slint-appimage] cargo: $(cargo --version)"
 echo "[wunder-slint-appimage] rustc: $(rustc --version)"
 echo "[wunder-slint-appimage] baseline: $(ldd --version | head -n 1)"
-cargo_args=(build --locked --release --manifest-path "$manifest" --bin wunder-frontend-slint)
-if [[ -f "$cargo_home/config.toml" ]]; then cargo_args+=(--offline); fi
-cargo "${cargo_args[@]}"
+cargo build --locked --offline --release --manifest-path "$manifest" --bin wunder-frontend-slint
 
 phase=validation
 binary="$target_dir/release/wunder-frontend-slint"

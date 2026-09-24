@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>形象系统 | 使用说明书</title>
+  <meta name="description" content="在桌面端和网页端使用精灵动画形象，让智能体以更生动的方式陪伴用户的工作。">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/companion","language":"zh-CN","title":"形象系统","summary":"在桌面端和网页端使用精灵动画形象，让智能体以更生动的方式陪伴用户的工作。","updated_at":"2026-06-29","read_when":[],"source_docs":[],"tab":"参考","group":"深入了解","group_path":["深入了解"],"url":"/docs/zh-CN/concepts/companion/","headings":[{"id":"section-1","level":1,"text":"形象系统"},{"id":"section-2","level":2,"text":"适用场景"},{"id":"section-3","level":2,"text":"启用形象"},{"id":"section-4","level":3,"text":"桌面端"},{"id":"section-5","level":3,"text":"网页端"},{"id":"section-6","level":2,"text":"形象来源"},{"id":"section-7","level":3,"text":"全局形象"},{"id":"section-8","level":3,"text":"私有形象"},{"id":"section-9","level":2,"text":"形象包格式"},{"id":"section-10","level":3,"text":"文件结构"},{"id":"section-11","level":3,"text":"清单文件 (pet.json)"},{"id":"section-12","level":3,"text":"精灵表要求"},{"id":"section-13","level":3,"text":"精灵表布局"},{"id":"section-14","level":2,"text":"形象交互"},{"id":"section-15","level":3,"text":"点击"},{"id":"section-16","level":3,"text":"拖拽"},{"id":"section-17","level":3,"text":"右键菜单"},{"id":"section-18","level":2,"text":"消息气泡"},{"id":"section-19","level":2,"text":"为智能体设置形象"},{"id":"section-20","level":3,"text":"方法一：智能体设置面板"},{"id":"section-21","level":3,"text":"方法二：编辑智能体配置"},{"id":"section-22","level":2,"text":"常见问题"},{"id":"section-23","level":3,"text":"形象不显示"},{"id":"section-24","level":3,"text":"导入失败"},{"id":"section-25","level":3,"text":"形象位置重置"},{"id":"section-26","level":2,"text":"管理员操作"},{"id":"section-27","level":2,"text":"下一步"}],"prev_slug":"zh-CN/concepts/goal-mode","next_slug":"zh-CN/concepts/swarm","markdown":"# 形象系统\n\n形象系统让用户可以为智能体设置一个可爱的精灵动画形象。形象会漂浮在屏幕上，根据智能体的状态播放不同的动画，还能显示消息气泡。\n\n## 适用场景\n\n形象适合以下场景：\n\n- **长时间任务**：智能体在执行复杂任务时，形象会显示\"运行中\"动画，让用户知道它正在工作\n- **桌面陪伴**：在桌面端，形象始终可见，像一个小助手陪伴用户的工作\n- **多智能体区分**：不同智能体可以设置不同形象，一眼就能区分\n\n## 启用形象\n\n### 桌面端\n\n1. 打开设置面板\n2. 找到\"形象\"设置项\n3. 开启\"启用形象\"开关\n4. 从列表中选择一个形象\n\n### 网页端\n\n1. 点击右上角用户头像\n2. 进入\"偏好设置\"\n3. 找到\"形象\"部分\n4. 启用并选择形象\n\n## 形象来源\n\n### 全局形象\n\n由系统管理员上传，所有用户可见。这些形象通常经过审核，质量有保证。\n\n### 私有形象\n\n用户自己导入的形象，仅在用户的浏览器中可用。\n\n**导入方法：**\n\n1. 准备一个形象包（ZIP 文件）\n2. 在形象设置中点击\"导入形象\"\n3. 选择 ZIP 文件\n4. 导入成功后自动选中\n\n## 形象包格式\n\n如果用户想创建自己的形象，需要准备以下内容：\n\n### 文件结构\n\n```\nmy-companion.zip\n├── pet.json        # 清单文件\n└── spritesheet.webp # 精灵表图片\n```\n\n### 清单文件 (pet.json)\n\n```json\n{\n  \"id\": \"my-companion\",\n  \"displayName\": \"我的形象\",\n  \"description\": \"一个自定义的精灵形象\",\n  \"spritesheetPath\": \"spritesheet.webp\"\n}\n```\n\n### 精灵表要求\n\n- **格式**：WebP、PNG、GIF 或 JPEG\n- **大小**：单个文件最大 18MB\n- **包大小**：整个 ZIP 最大 24MB\n\n### 精灵表布局\n\n精灵表应该是一个垂直排列的帧序列，系统会根据状态自动选择帧：\n\n- 第 1 行：idle（静止）\n- 第 2 行：running（运行中）\n- 第 3 行：waving（挥手）\n- 第 4 行：jumping（跳跃）\n- 第 5 行：failed（失败）\n- 第 6 行：waiting（等待）\n- 第 7 行：review（展示）\n\n## 形象交互\n\n### 点击\n\n点击形象会播放挥手动画，并显示形象名称。\n\n### 拖拽\n\n拖拽形象可以改变它在屏幕上的位置。位置会自动保存。\n\n### 右键菜单\n\n右键点击形象打开菜单：\n\n- **打开对话**：跳转到该智能体的聊天\n- **隐藏/显示**：切换形象可见性\n- **缩放**：调整形象大小（0.5x ~ 1.6x）\n\n## 消息气泡\n\n当智能体回复消息时，形象上方会显示消息气泡：\n\n- 气泡内容是智能体最新回复的摘要\n- 气泡会自动消失\n- 可以在设置中关闭气泡功能\n\n## 为智能体设置形象\n\n### 方法一：智能体设置面板\n\n1. 打开智能体详情\n2. 找到\"图标/形象\"设置\n3. 选择\"使用形象\"\n4. 从下拉列表选择形象\n5. 调整显示选项（显示/隐藏、缩放）\n\n### 方法二：编辑智能体配置\n\n在智能体的配置中设置 `icon` 字段：\n\n```json\n{\n  \"icon\": {\n    \"kind\": \"companion\",\n    \"scope\": \"global\",\n    \"id\": \"cat-assistant\",\n    \"show\": true,\n    \"scale\": 1.0,\n    \"messageHints\": true\n  }\n}\n```\n\n## 常见问题\n\n### 形象不显示\n\n检查以下几点：\n\n1. 形象功能是否已启用\n2. 是否选择了形象\n3. 该智能体的形象是否被设置为隐藏\n4. 浏览器是否支持 WebGL（某些旧浏览器可能有问题）\n\n### 导入失败\n\n常见原因：\n\n- ZIP 文件超过 24MB\n- 精灵表图片超过 18MB\n- `pet.json` 格式错误\n- 缺少必需字段（id、displayName、spritesheetPath）\n\n### 形象位置重置\n\n形象位置保存在浏览器本地存储中。如果清除浏览器数据，位置会重置到默认位置。\n\n## 管理员操作\n\n如果用户是系统管理员，可以通过管理后台上传全局形象：\n\n1. 进入\"系统设置\" → \"形象管理\"\n2. 点击\"上传形象\"\n3. 选择形象包 ZIP 文件\n4. 上传后所有用户可见\n\n也可以编辑形象的显示名称和描述，或删除不需要的形象。\n\n## 下一步\n\n- [目标态系统](/docs/zh-CN/concepts/goal-mode/) — 让智能体持续工作直到目标完成\n- [智能体循环](/docs/zh-CN/concepts/core-agent-loop/) — 理解智能体如何执行任务\n","source_path":"使用说明书/zh-CN/concepts/companion.md"}</script>
+</body>
+</html>

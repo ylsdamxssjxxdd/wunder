@@ -10,7 +10,7 @@ param(
 $ErrorActionPreference = "Stop"
 if (-not $RepoRoot) { $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path }
 else { $RepoRoot = (Resolve-Path $RepoRoot).Path }
-if (-not $BuilderRoot) { $BuilderRoot = Join-Path (Split-Path $RepoRoot -Parent) "Rust-builder\kylin2" }
+if (-not $BuilderRoot) { $BuilderRoot = Join-Path (Split-Path $RepoRoot -Parent) "Rust-builder\kylin-arm" }
 $scriptName = if ($AppImage) { "build-linux-amd64-appimage.sh" } else { "build-linux-amd64-offline.sh" }
 $containerScript = "/workspace/builders/$scriptName"
 if ($AppImage -and -not $AppImageRuntime -and $env:WUNDER_APPIMAGE_RUNTIME) { $AppImageRuntime = $env:WUNDER_APPIMAGE_RUNTIME }
@@ -33,10 +33,10 @@ if ($LASTEXITCODE -ne 0) { throw "Build image is unavailable: $Image" }
 $args = @(
   "run", "--rm", "--network", "none", "--platform", "linux/arm64",
   "-e", "WUNDER_REPO_ROOT=/workspace",
-  "-e", "WUNDER_BUILDER_ROOT=/builder/kylin2",
-  "-e", "WUNDER_OFFLINE_ROOT=/builder/kylin2/offline",
+  "-e", "WUNDER_BUILDER_ROOT=/builder/kylin-arm",
+  "-e", "WUNDER_OFFLINE_ROOT=/builder/kylin-arm/offline",
   "-v", "${RepoRoot}:/workspace",
-  "-v", "${BuilderRoot}:/builder/kylin2:ro",
+  "-v", "${BuilderRoot}:/builder/kylin-arm:ro",
   "-w", "/workspace", $Image, "bash", $containerScript
 )
 if ($AppImage -and $AppImageRuntime) {
@@ -44,11 +44,11 @@ if ($AppImage -and $AppImageRuntime) {
   $args = @(
     "run", "--rm", "--network", "none", "--platform", "linux/arm64",
     "-e", "WUNDER_REPO_ROOT=/workspace",
-    "-e", "WUNDER_BUILDER_ROOT=/builder/kylin2",
-    "-e", "WUNDER_OFFLINE_ROOT=/builder/kylin2/offline",
+    "-e", "WUNDER_BUILDER_ROOT=/builder/kylin-arm",
+    "-e", "WUNDER_OFFLINE_ROOT=/builder/kylin-arm/offline",
     "-e", "WUNDER_APPIMAGE_RUNTIME=/builder/appimage-runtime/runtime.AppImage",
     "-v", "${RepoRoot}:/workspace",
-    "-v", "${BuilderRoot}:/builder/kylin2:ro",
+    "-v", "${BuilderRoot}:/builder/kylin-arm:ro",
     "-v", "${runtime}:/builder/appimage-runtime/runtime.AppImage:ro",
     "-w", "/workspace", $Image, "bash", $containerScript
   )

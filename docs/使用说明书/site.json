@@ -233,6 +233,8 @@
                   "zh-CN/concepts/prompt-and-skills",
                   "zh-CN/concepts/memory",
                   "zh-CN/concepts/quota-and-token-usage",
+                  "zh-CN/concepts/goal-mode",
+                  "zh-CN/concepts/companion",
                   "zh-CN/concepts/swarm",
                   "zh-CN/concepts/boundary-handling"
                 ]
@@ -479,6 +481,8 @@
                   "en/concepts/prompt-and-skills",
                   "en/concepts/memory",
                   "en/concepts/quota-and-token-usage",
+                  "en/concepts/goal-mode",
+                  "en/concepts/companion",
                   "en/concepts/swarm",
                   "en/concepts/boundary-handling"
                 ]

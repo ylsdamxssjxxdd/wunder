@@ -92,7 +92,7 @@ powershell -ExecutionPolicy Bypass -File builders/build-linux-arm64-appimage.ps1
 
 脚本默认使用同级 `rcho/target/electron/release/` 中已有 ARM64 AppImage 作为
 type-2 runtime；也可以显式传入 `-AppImageRuntime <路径>`。Rust 1.92 和 Cargo
-vendor 从同级 `Rust-builder/kylin2` 挂载，构建完成后产物位于
+vendor 从同级 `Rust-builder/kylin-arm` 挂载，构建完成后产物位于
 `target/slint/dist/linux-arm64/`。检查产物可运行：
 
 ```bash
@@ -102,6 +102,8 @@ bash frontend-slint/scripts/check-linux-arm64-appimage.sh \
 
 AppImage 启动时把 `WUNDER_TEMPD` 和 `WUNDER_WORK` 放到用户数据目录，不会写入只读的
 AppImage 挂载目录；也可通过 `--temp-root`、`--workspace` 或对应环境变量覆盖。
+
+Win7 本机构建继续使用相邻的 `Rust-builder/win7/offline`；Linux ARM64 开发机及 Windows Docker 交叉构建使用相邻的 `Rust-builder/kylin-arm/offline`。
 
 构建入口集中在仓库根 `builders/`；`frontend-slint/scripts/` 只保留原生联调、启动回归和
 AppImage 结构检查。参考 rcho 的离线 SDK 组织，ARM64 Ubuntu 18.04 主机（或 Docker 中

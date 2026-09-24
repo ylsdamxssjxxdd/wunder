@@ -6,8 +6,16 @@
 
 - 站点源：`docs/使用说明书/`
 - 中文主文档：`docs/使用说明书/zh-CN/`
+- 英文版：`docs/使用说明书/en/`（跟随 zh-CN 同步翻译，zh-CN 为权威版本）
 - 站点导航：`docs/使用说明书/site.json`
 - 站点构建：`python scripts/build_docs_site.py`
+
+## 双语同步
+
+新增或修改 zh-CN 页面时，需同步：
+
+1. en/ 下对应页面（翻译或标注待翻译）。
+2. `site.json` 中两个语言标签页的导航条目，避免孤儿页面或死链。
 
 以下内容不要放进静态站源目录：
 
@@ -71,4 +79,5 @@
 
 1. 运行 `python scripts/build_docs_site.py`
 2. 抽查入口页、接入页、FAQ 是否可读
-3. 通过 `python scripts/update_feature_log.py --type 文档 ...` 记录本次迭代
+3. 通过 `python scripts/update_feature_log.py --type 文档 ...` 记录本次迭代
+

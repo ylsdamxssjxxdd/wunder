@@ -40,6 +40,7 @@ powershell -ExecutionPolicy Bypass -File scripts\benchmark.ps1 `
 
 - 新增后端性能项，优先接入 `scripts/run_backend_sim_workflow.py`
 - 新增运行时边界项，优先接入 `scripts/runtime_boundary_stress.py`
+- 新增模型调用/子智能体消息类性能项，使用 `scripts/benchmark_subagent_messages.py`（报告归档于 `docs/性能基线/`）
 - 模型能力质量仍使用 `WunderBench`，不要混入这个基准入口
 
 ## 备注
