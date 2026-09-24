@@ -3,8 +3,8 @@ import { getWunderBase } from "../api.js";
 import { ensureLlmConfigLoaded } from "../llm.js";
 import { escapeHtml, formatTimestamp } from "../utils.js?v=20251229-02";
 import { resolveApiErrorMessage } from "../api-error.js";
-import { label as l } from "./copy.js?v=20260924-01";
-import { mount, details, history, number, durationMs } from "./view.js?v=20260924-02";
+import { label as l } from "./copy.js?v=20260924-03";
+import { mount, details, history, number, durationMs } from "./view.js?v=20260924-03";
 import { comparisonSeries, selectableResult, tokenLabel } from "./chart.js?v=20260924-02";
 
 const KEY = "wunder_throughput_scenario_v2";
@@ -28,6 +28,8 @@ const selected = new Set();
 const known = new Set();
 const $ = (id) => document.getElementById(id);
 const running = () => ["running", "stopping"].includes(data.active?.status);
+// Keep the legacy API field stable while the page no longer exposes an injected-context control.
+const DEFAULT_INPUT_TOKENS = 8192;
 
 async function api(path, body, signal) {
   const response = await fetch(`${getWunderBase()}/admin/throughput/${path}`, {
@@ -38,11 +40,11 @@ async function api(path, body, signal) {
   return response.json();
 }
 
-const form = () => ({ model_name: $("tpModel").value, concurrency: Number($("tpConcurrency").value), input_tokens: Number($("tpInput").value), output_tokens: Number($("tpOutput").value) });
+const form = () => ({ model_name: $("tpModel").value, concurrency: Number($("tpConcurrency").value), input_tokens: DEFAULT_INPUT_TOKENS, output_tokens: Number($("tpOutput").value) });
 function saveForm() { try { localStorage.setItem(KEY, JSON.stringify(form())); } catch { /* Optional preference storage. */ } }
 function restoreForm(config) {
   if (!config) { try { config = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch { config = {}; } }
-  for (const [id, value] of [["tpModel", config.model_name], ["tpConcurrency", config.concurrency], ["tpInput", config.input_tokens], ["tpOutput", config.output_tokens]]) {
+  for (const [id, value] of [["tpModel", config.model_name], ["tpConcurrency", config.concurrency], ["tpOutput", config.output_tokens]]) {
     if (value != null) $(id).value = String(value);
   }
 }
@@ -84,7 +86,7 @@ function render(force = false) {
   $("tpStop").hidden = !running();
   $("tpStop").disabled = busy || data.active?.status === "stopping";
   $("tpStop").textContent = l(data.active?.status === "stopping" ? "stopping" : "stop");
-  for (const id of ["tpModel", "tpConcurrency", "tpInput", "tpOutput"]) $(id).disabled = running() || busy;
+  for (const id of ["tpModel", "tpConcurrency", "tpOutput"]) $(id).disabled = running() || busy;
   const signature = JSON.stringify([data.history, [...selected], viewed]);
   if (force || signature !== historySignature) {
     history($("tpHistory"), data.history, selected, viewed);
@@ -111,7 +113,7 @@ function draw(force = false) {
     tooltip: { trigger: "item", confine: true, formatter: (point) => {
       const run = point.data.run;
       const value = metric === "ttft_ms" ? durationMs(point.value[1]) : `${number(point.value[1])} tok/s`;
-      return `${escapeHtml(run.config.model_name)}<br>${escapeHtml(formatTimestamp(run.started_at))}<br>${l("concurrency")}: ${number(run.config.concurrency || 1,0)}<br>${l("input")}: ${tokenLabel(run.config.input_tokens)}<br>${l("target")}: ${tokenLabel(run.config.output_tokens)}<br>${l("actualOutput")}: ${number(run.metrics.output_tokens,0)}<br>${escapeHtml(point.seriesName)}: ${value}`;
+      return `${escapeHtml(run.config.model_name)}<br>${escapeHtml(formatTimestamp(run.started_at))}<br>${l("concurrency")}: ${number(run.config.concurrency || 1,0)}<br>${l("context")}: ${tokenLabel(run.config.input_tokens)}<br>${l("target")}: ${tokenLabel(run.config.output_tokens)}<br>${l("actualOutput")}: ${number(run.metrics.output_tokens,0)}<br>${escapeHtml(point.seriesName)}: ${value}`;
     } },
     xAxis: axis === "time" ? { type: "time" } : { type: "log", logBase: 2, min: 1, axisLabel: { formatter: tokenLabel } },
     yAxis: { type: "value", name: metric === "ttft_ms" ? "ms" : "tok/s", min: 0 }, series,
@@ -177,7 +179,6 @@ async function command(action) {
     const limit = state.llm.configs[config.model_name]?.max_context;
     if (action === "start") {
       if (!Number.isSafeInteger(config.concurrency) || config.concurrency < 1 || config.concurrency > 1024) throw new Error(l("concurrencyError"));
-      if (!Number.isSafeInteger(config.input_tokens) || config.input_tokens < 1 || config.input_tokens > 16777216) throw new Error(l("inputError"));
       if (!Number.isSafeInteger(config.output_tokens) || config.output_tokens < 1 || config.output_tokens > 1048576) throw new Error(l("outputError"));
       if (Number(limit) > 0 && config.input_tokens + config.output_tokens > Number(limit)) throw new Error(l("contextError"));
     }

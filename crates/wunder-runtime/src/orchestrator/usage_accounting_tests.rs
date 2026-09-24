@@ -101,7 +101,9 @@ async fn usage_accounting_includes_rejected_calls_empty_responses_and_compaction
     };
     let tools = [json!({"type":"function","function":{"name":"tool_1",
         "parameters":{"type":"object","properties":{}}}})];
-    for (round, visible) in [(1, true), (2, false)] {
+    // A completed empty output is accounted once and returned to the turn guard.
+    // The next explicit call represents its bounded recovery, not a hidden retry.
+    for (round, visible) in [(1, true), (2, false), (3, true), (4, true)] {
         state
             .kernel
             .orchestrator

@@ -5,7 +5,6 @@ export const tokenLabel = (value) => {
   if (tokens >= 1024) return `${(tokens / 1024).toFixed(tokens % 1024 ? 1 : 0)}k`;
   return `${Math.round(tokens)}`;
 };
-export const validResult = (item) => item.status === "finished" && item.metrics?.target_reached === true;
 export const selectableResult = (item) => ["finished", "incomplete"].includes(item.status);
 
 export function comparisonSeries(items, selected, metric, axis) {

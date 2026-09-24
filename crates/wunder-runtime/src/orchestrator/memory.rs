@@ -461,7 +461,7 @@ impl Orchestrator {
             )
             .await
         {
-            Ok((content, _, _, _, _)) => self.resolve_final_answer(&content),
+            Ok((content, _, _, _, _, _)) => self.resolve_final_answer(&content),
             Err(err) => {
                 if matches!(
                     err.code(),

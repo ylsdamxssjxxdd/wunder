@@ -264,6 +264,14 @@ fn default_meta_for_code(code: &str) -> OrchestratorErrorMeta {
             ErrorSourceStage::Llm,
             RecoveryAction::RetryLater,
         ),
+        "LLM_OUTPUT_LOOP" => OrchestratorErrorMeta::new(
+            ErrorCategory::Provider,
+            ErrorSeverity::Warning,
+            true,
+            None,
+            ErrorSourceStage::Llm,
+            RecoveryAction::RetryNextTurn,
+        ),
         "CONTEXT_WINDOW_EXCEEDED" => OrchestratorErrorMeta::new(
             ErrorCategory::Context,
             ErrorSeverity::Warning,

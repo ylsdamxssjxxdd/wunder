@@ -38,7 +38,7 @@ description: "创建或修改以单个 HTML 文件交付的轻量 3D 网页。�
 - 需要核对浏览器 API、渲染性能和事件细节时，读取 [references/browser-and-3d.md](references/browser-and-3d.md)。
 - 需要把 Three.js 和其许可自动嵌入现有 HTML 时，运行 `python scripts/inline_three.py 输入.html 输出.html`；输入文件应包含唯一标记 `<!-- INLINE:three.min.js -->`，且标记位于一个 `<script>` 内。
 - 运行时依赖与许可文件在 `assets/three.min.js`、`assets/LICENSE-THREE.txt`。这些文件是生成 HTML 时使用的资源，不要把它们作为最终独立交付物。
-- 需要一个完整参考时，读取并直接打开 [examples/重型星舰演示.html](examples/重型星舰演示.html)。它展示了程序化重型星舰、轨道相机、拾取高亮、展开动画、控制面板和 WebGL/2D 降级；可复制为用户任务的起点，再替换模型与文案。
+- 需要一个完整参考时，读取并直接打开 [examples/水滴演示.html](examples/水滴演示.html)。它展示了连续金属曲面水滴、轨道相机、材质灯光、曲率航行和控制面板和 WebGL/2D 降级；可复制为用户任务的起点，再替换模型与文案。
 
 ## 输出前检查清单
 

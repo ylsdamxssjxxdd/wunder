@@ -130,6 +130,7 @@ export const buildMessageStats = () => ({
   visible_decode_tokens: null,
   visible_decode_duration_s: null,
   visible_decode_speed_tps: null,
+  decode_tokens: null,
   decode_output_tokens: null,
   decode_speed_tps: null,
   stream_timing: null,
@@ -1087,6 +1088,7 @@ export const normalizeMessageStats = (stats) => {
     visible_decode_speed_tps: normalizeSpeedValue(
       stats.visible_decode_speed_tps ?? stats.visibleDecodeSpeedTps
     ),
+    decode_tokens: parseOptionalCount(stats.decode_tokens ?? stats.decodeTokens),
     decode_output_tokens: parseOptionalCount(
       stats.decode_output_tokens ?? stats.decodeOutputTokens
     ),
@@ -1231,6 +1233,10 @@ export const mergeMessageStats = (base, incoming) => {
         : left.decode_output_tokens === null && right.decode_output_tokens === null
           ? null
           : Math.max(left.decode_output_tokens || 0, right.decode_output_tokens || 0),
+    decode_tokens:
+      incoming.decode_tokens === undefined && incoming.decodeTokens === undefined
+        ? left.decode_tokens
+        : right.decode_tokens ?? left.decode_tokens,
     decode_speed_tps:
       incoming.decode_speed_tps === undefined && incoming.decodeSpeedTps === undefined
         ? left.decode_speed_tps

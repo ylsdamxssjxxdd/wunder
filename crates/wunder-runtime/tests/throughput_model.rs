@@ -101,6 +101,6 @@ async fn fast_profile_concurrency_preserves_per_request_rates_and_reasoning() {
         let mean_ttft = samples.iter().map(|sample| sample.0).sum::<f64>() / concurrency as f64;
         let mean_decode = samples.iter().map(|sample| sample.1).sum::<f64>() / concurrency as f64;
         let aggregate = concurrency as f64 * 1024.0 / batch_started.elapsed().as_secs_f64();
-        println!("fast concurrency={concurrency}, mean_ttft_ms={mean_ttft:.2}, mean_decode_tps={mean_decode:.2}, aggregate_e2e_tps={aggregate:.2}");
+        println!("fast concurrency={concurrency}, mean_ttft_ms={mean_ttft:.2}, mean_decode_tps={mean_decode:.2}, aggregate_decode_tps={aggregate:.2}");
     }
 }

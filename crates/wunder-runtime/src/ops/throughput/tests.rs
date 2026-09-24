@@ -50,7 +50,6 @@ fn aggregates_concurrent_requests_against_batch_target() {
         avg_decode_tps: Some(100.0),
         prefill_tps: Some(1000.0),
         avg_prefill_tps: Some(1000.0),
-        end_to_end_tps: Some(20.0),
         finish_reason: Some("stop".into()),
         target_reached: Some(true),
         ..Default::default()
@@ -62,7 +61,7 @@ fn aggregates_concurrent_requests_against_batch_target() {
     two.avg_decode_tps = Some(200.0);
     two.prefill_tps = Some(2000.0);
     two.avg_prefill_tps = Some(2000.0);
-    let batch = super::aggregate_metrics(&[Some(one), Some(two)], 20, 1.0);
+    let batch = super::aggregate_metrics(&[Some(one), Some(two)]);
     assert_eq!(batch.input_tokens, Some(200));
     assert_eq!(batch.output_tokens, Some(40));
     assert_eq!(batch.reasoning_tokens, Some(10));

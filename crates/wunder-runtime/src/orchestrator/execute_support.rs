@@ -128,7 +128,6 @@ pub(super) const DEFAULT_MEMORY_RECALL_BUDGET_PER_TURN: u32 = 2_000;
 const TOOL_FAILURE_SIGNATURE_MAX_CHARS: usize = 240;
 pub(super) const INVALID_TOOL_CALL_REROUTE_MAX_PER_TURN: u32 = 2;
 const INVALID_TOOL_CALL_ARGUMENT_PREVIEW_CHARS: usize = 320;
-pub(super) const EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN: u32 = 3;
 const WORKSPACE_UPDATE_MAX_CHANGED_PATHS: usize = 24;
 const CHANNEL_DISPLAY_QUESTION_OVERRIDE_KEY: &str = "_channel_display_question";
 const WORKSPACE_PATH_HINT_KEYS: [&str; 26] = [
@@ -210,6 +209,15 @@ pub(super) fn build_planned_tool_calls(
                 name: name.to_string(),
                 resolved_name: resolved,
                 reason: "tool_not_allowed_or_unknown",
+                arguments_preview: tool_call_arguments_preview(&call.arguments),
+            });
+            continue;
+        }
+        if super::empty_output_guard::has_incomplete_arguments(&call.arguments) {
+            rejected.push(RejectedToolCall {
+                name: name.to_string(),
+                resolved_name: resolved,
+                reason: "TOOL_ARGUMENTS_INCOMPLETE",
                 arguments_preview: tool_call_arguments_preview(&call.arguments),
             });
             continue;
@@ -737,36 +745,6 @@ pub(super) fn resolve_tool_failure_guard_threshold(config: &Config) -> u32 {
     let threshold = u32::try_from(config.server.tool_failure_guard_threshold)
         .unwrap_or(DEFAULT_REPEATED_TOOL_FAILURE_THRESHOLD);
     threshold.max(1)
-}
-
-pub(super) fn build_empty_final_answer_model_notice(
-    attempt: u32,
-    max_attempts: u32,
-    had_content: bool,
-    had_reasoning: bool,
-    had_tool_payload: bool,
-    allow_tool_calls: bool,
-) -> Value {
-    let instruction = if allow_tool_calls {
-        "Continue the task now. Do not end this turn with an empty assistant message. Either emit one valid allowed tool call with valid JSON arguments, or call final_response with a concise final answer."
-    } else {
-        "Continue the task now. Do not end this turn with an empty assistant message. Respond directly with a concise final answer."
-    };
-    json!({
-        "type": "empty_final_answer_notice",
-        "ok": false,
-        "reason": "model_returned_no_final_content",
-        "attempt": attempt,
-        "max_attempts": max_attempts,
-        "had_content": had_content,
-        "had_reasoning": had_reasoning,
-        "had_tool_payload": had_tool_payload,
-        "instruction": instruction,
-    })
-}
-
-pub(super) fn build_empty_final_answer_retry_exhausted_error(max_attempts: u32) -> String {
-    format!("LLM unavailable after {max_attempts} automatic recovery attempts.")
 }
 
 pub(super) fn build_tool_failure_signature(tool_name: &str, result: &ToolResultPayload) -> String {

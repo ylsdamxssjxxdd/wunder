@@ -148,11 +148,11 @@
 - 会话事件快照：`GET /wunder/chat/sessions/{session_id}/events` 会区分纯排队与真实运行态；纯排队时返回 `queued=true`，并在缺少运行时快照时补充 `runtime.thread_status/status=queued`，但 `running=false`。客户端应使用 `queued`/`runtime.status=queued` 恢复排队气泡，不应把纯排队当作模型轮次已开始。
 - 慢客户端恢复：当 WS 出站队列接近满载时，服务端会发送 `slow_client(reason=queue_full_resume_required)`，调用方应改走 `resume/watch` 补齐，而不是假设增量仍会持续直推。 实时请求随后停止向该订阅直推，继续排空后台执行流；恢复回放保持有序、无损，不能静默丢弃增量并前移游标。满队列投递最多等待 1 秒，连接不可用时通过重连或会话快照补水。
 - 模型轮次输出事件 `llm_output`：除 `content/reasoning/tool_calls/usage/prefill_duration_s/decode_duration_s` 等既有字段外，流式请求会尽量附带 `stream_timing` 诊断对象；非流式、无可见增量或旧事件回放中该字段可能为 `null` 或缺失，客户端必须兼容。
-- 解码统计：`llm_output/token_usage.decode_output_tokens` 使用归一化后的 `usage.output`（上游提供 reasoning token 明细时剔除思考 token），`decode_duration_s` 取首个正文增量到最后一个正文增量，思考与空工具分片不计入该区间；只有一个正文分片或缺少计时时，速度为 `null`。`stream_timing` 仍描述全部正文/思考分片，供诊断使用。
+- 生成统计：`llm_output/token_usage.decode_output_tokens` 使用归一化后的 `usage.output`（上游提供 reasoning token 明细时剔除思考 token），`decode_duration_s` 取首个生成内容增量到最后一个生成内容增量，思考与空工具分片不计入该区间；只有一个生成内容分片或缺少计时时，速度为 `null`。`stream_timing` 仍描述全部生成内容/思考分片，供诊断使用。
 - 用量口径：模型服务返回的 `usage.input_tokens` 为输入，`usage.output_tokens` 为已知正文输出，`usage.reasoning_tokens` 仅在服务明确报告时出现；`total_tokens` 包含思考。服务未报告思考分项时不会由系统猜测。每次模型响应产生一个 `model_usage` 累计快照，用户轮次的 `round_usage` 只作为兼容汇总，客户端重放应覆盖同轮快照而不能重复相加；`context_occupancy_tokens` 是当前上下文观测值，可因压缩下降，与消耗 Token 分开。
 - 工具指标：`tool_call` / `tool_result` 的 `request_context_tokens` 固定为触发该工具的模型请求输入 Token（含缓存输入），未知/估算时为 `null`；`request_usage` 是该次模型请求消耗，同次请求的并行工具共享快照，不能逐工具相加。`meta.duration_ms` 是本次工具处理的单调时钟耗时，包含处理期间的审批和执行锁等待，允许为 `0`；缓存命中重新计时，取消亦发送终态指标。历史记录缺少耗时时，客户端可按该调用服务端开始/结束事件的时间间隔回退，但不得使用整个用户轮次耗时或业务结果中的同名字段。
 - `context_usage.context_usage_source=provider_input` 表示供应商报告的本次请求输入占用（不含当次生成输出/思考）；压缩后明确归零，下一次有效输入观测可重新增长。流式正文增量不估算上下文，也不以累计消耗推进上下文动画。
-- `final` 与历史消息 `stats` 增加 `visible_decode_tokens/visible_decode_duration_s/visible_decode_speed_tps`，表示最后一次模型响应的正文解码指标。前端速度优先使用该明确指标，不用累计 token 或 `avg_model_round_speed_tps` 推算当前回复速度；旧历史缺失指标时显示空缺。`avg_model_round_speed_*` 继续保留作用户轮次聚合诊断。
+- `final` 与历史消息 `stats` 增加 `visible_decode_tokens/visible_decode_duration_s/visible_decode_speed_tps`，表示最后一次模型响应的生成指标。前端生成速度优先使用该明确指标，不用累计 token 或 `avg_model_round_speed_tps` 推算当前回复速度；旧历史缺失指标时显示空缺。`avg_model_round_speed_*` 继续保留作用户轮次聚合诊断。
 - 模型 `timeout_s` 对流式调用表示首个输出及相邻有效模型分片的最大等待时间，正文、思考和工具参数分片均刷新活跃时间；持续思考不会因整次调用达到该时长而被中断。非流式调用继续使用整体超时，取消语义保持不变。
 - `llm_output` 的 `finish_reason/stop_reason=tool_calls/function_call/tool_use` 或非空 `tool_calls` 只结束模型动作，不结束用户请求；客户端继续接收工具与后续模型事件。连接关闭、本地 AbortError 或 loading 清理不等同于任务终态。
 - `/events` 的 `runtime` 是当前状态快照，其状态可在相同 `last_event_id` 下变化。客户端不得按历史游标对状态快照去重；并发补水应拒绝晚到旧响应覆盖更新的实时状态，先建立 transcript 顺序再恢复活跃尾部。
@@ -1319,10 +1319,10 @@
 - `llm.models`：模型配置映射；所有类型通用字段为 `model_type/provider/base_url/api_key/model/enable/mock_if_unconfigured`。
   - 说明：模型调用失败重试与流式断线恢复已收敛为服务端内部固定策略，不再暴露单模型 `retry` 参数。
   - 说明：当检测到模型连接失败、`503 Loading model`、连接拒绝/重置、请求发送失败或超时等 LLM 不可用错误时，编排层会至少按长退避重试 5 次；若最终仍失败，错误码统一返回 `LLM_UNAVAILABLE`。
-  - 说明：若流式响应在没有任何可用内容、推理或 `tool_calls` 的情况下结束，服务端会先自动补拉一次非流式请求；若补拉仍为空，则同样按 `LLM_UNAVAILABLE` 处理并进入重试。
+  - 说明：已完成的空响应（包含仅有 reasoning 的响应）直接交给用户轮次恢复守卫，底层不因空内容自动补拉非流式请求或重试；传输中断和服务不可用仍走原有故障恢复。
   - 说明：`provider` 支持预置（`virtual_replay/openai_compatible/openai/anthropic/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`）；`openai_compatible` 需显式填写 `base_url`，其余 provider 可省略 `base_url` 自动补齐。
   - 说明：`provider=virtual_replay` 表示虚拟模型回放，`model` 可填已上传回放日志的 `id`，不需要 `base_url/api_key`；执行时按当前用户轮次与模型轮次严格匹配 JSONL 中的 `llm_output` 与 `tool_calls`，轮次缺失或耗尽会返回错误，不会循环复用旧输出。省略 `model` 时才使用轻量随机虚拟回复，便于本地连通性测试；回放用量仅作统计，不扣减用户额度。
-  - `simulation_speed`：仅虚拟模型生效，`fast/medium/slow`，缺省或 null 为 `fast`；非法值拒绝。预处理速度分别为 2000/500/100 Token/s，思考与正文生成速度分别为 200/50/10 Token/s。管理员模型配置可选择档位。随机虚拟回复先发送明确标识的模拟思考，再发送正文；回放在能力和预算范围内使用日志思考内容，非流式调用也等待生成时长。三种运行形态共用此配置。
+  - `simulation_speed`：仅虚拟模型生效，`fast/medium/slow`，缺省或 null 为 `fast`；非法值拒绝。预填充速度分别为 2000/500/100 Token/s，思考与生成速度分别为 200/50/10 Token/s。管理员模型配置可选择档位。随机虚拟回复先发送明确标识的模拟思考，再发送生成内容；回放在能力和预算范围内使用日志思考内容，非流式调用也等待生成时长。三种运行形态共用此配置。
   - `simulation`：虚拟模型能力对象，支持 `support_tools` / `support_reasoning`（默认 true）、`image_tokens`（每张图片默认 256）、`audio_tokens`（每段音频默认 1024），媒体 token 必须为正整数。复用 `max_context`（缺省 131072）、`max_output`（缺省 4096）、`support_vision` / `support_hearing`（缺省 false）、`thinking_token_budget` 和 `reasoning_effort`。文本按 UTF-8 字节数 / 4 向上估算；消息开销、工具定义、思考历史与工具结果均计入输入。媒体只模拟能力和用量，不读取、识别或下载内容。
   - 虚拟请求在预处理前验证“输入 + 请求输出预算 <= 最大上下文”；等于上限允许，超过返回模拟 HTTP 400 的 `invalid_request_error`，含 `code/param/message`。错误码包括 `context_length_exceeded`、`max_tokens_exceeded`、`unsupported_image`、`unsupported_audio`、`unsupported_tools`、`tool_not_available`。线程流仍使用现有错误事件封装，上下文错误映射 `CONTEXT_WINDOW_EXCEEDED` 并走现有压缩恢复；其他参数或能力错误映射不可重试的 `INVALID_REQUEST`。吞吐失败通过快照的 `error` 展示；开始前的上下文校验仍可直接返回 400。
   - 虚拟回放直接使用 `tool_call_mode`（工具调用方式）：`function_call` 返回原生 `tool_calls`；`tool_call` 返回 `<tool_call>` 文本块；`freeform_call` 在 Responses 模式使用原生通道，其他模式使用文本回退。日志中的结构化或文本调用复用现有解析器归一，保留调用 ID、参数与轮次，不额外生成工具场景。原生工具必须在请求提供的 schema 中，文本协议由现有执行器校验允许工具；权限、审批和实际执行不变。没有日志的合成回复不发起调用。已存量配置中的旧 `simulation.tool_call` 被忽略并在保存时移除，管理端不再提供工具名称或参数输入框。线程仍遵守初始化时冻结的调用协议。
@@ -1339,11 +1339,13 @@
   - 说明：当前压缩策略已对齐 Codex，不再支持 `history_compaction_reset`。压缩后统一提交 `replacement_history`，其主体为首尾归一化交互窗口与一条 `[上下文摘要]` 消息，不再依赖前后锚点与 reset mode；运行中压缩还会为当前轮追加临时 `user` 续跑指令，但该指令不会写入 `replacement_history`。压缩摘要会输出 `resume_action=final|continue|retry|ask_user`，用于指导当前轮续跑。
   - 说明：`api_mode` 可选 `chat_completions|responses`（默认 chat_completions；当 provider=openai 且模型为 GPT-5/O 系列时未配置会自动走 responses），`responses` 会改用 `/v1/responses` 协议与流式事件。
   - 说明：`max_output` 为单次请求的统一输出上限；未配置时服务端默认按 `8192` 下发，避免模型循环无限输出。
-  - 说明：`thinking_token_budget` 为 reasoning/thinking 通道的单次思考 Token 上限；未配置时服务端默认按 `16384` 下发；若 `reasoning_effort=none` 则不下发该预算。
+  - 说明：`thinking_token_budget` 为 reasoning/thinking 通道的单次思考 Token 上限；未配置时服务端默认按 `2048` 下发；若 `reasoning_effort=none` 则不下发该预算。
   - 说明：服务端当前会同时下发 `thinking_token_budget`（对齐 vLLM / OpenAI-compatible 扩展）与 `thinking_budget_tokens`（对齐 `llama.cpp` server 请求体）；Anthropic `messages` 协议不下发这两个非标准字段。
   - 说明：`reasoning_effort` 可选 `none|minimal|low|medium|high|xhigh`；留空表示跟随模型默认思考等级。
   - 说明：`max_rounds` 缺省为 1000；非管理员会话在未配置或过低时会提升到至少 2（含工具调用），管理员与 desktop 模式不受该限制。
-  - 说明：当模型返回空正文、空 reasoning 且未给出可执行工具调用时，编排层会先写入内部恢复提示并继续下一轮；达到次数上限后返回 `LLM_UNAVAILABLE`，不会再把“未返回可展示最终答复”当作 completed 兜底文案。
+  - 说明：空最终答复、仅思考而无可用输出、`final_response` 空答复及不完整 JSON 工具参数共享每用户轮次最多一次恢复。恢复请求将 `reasoning_effort` 设为 `none` 并移除思考预算，在兼容提供方下发 `enable_thinking=false`；此覆盖持续到当前用户轮次结束，不改持久化配置或冻结 system prompt。再次无可用输出返回 `LLM_OUTPUT_LOOP`（HTTP 502，`recovery_action=retry_next_turn`），不再误报 `LLM_UNAVAILABLE`。
+  - 说明：参数回退包装中的 JSON 在末尾截断时，执行前标记 `TOOL_ARGUMENTS_INCOMPLETE`；该批调用暂停执行，要求重新生成完整参数，不自动补全后执行。
+  - 说明：真实模型 `llm_output` 增加 `finish_reason`、`output_limit_reached`、`max_output`、`thinking_token_budget`、`thinking_disabled`。输出触顶依据提供方停止原因或非估算的正文与思考合计用量判断；预算和关闭思考字段描述请求设置，提供方是否支持须另行核验。
 - `POST` 入参：
   - `llm.default`：默认对话模型配置名称
   - `llm.default_embedding/default_asr/default_tts/default_image/default_video`：默认嵌入/声转文/语音/绘图/视频模型配置名称（可选）
@@ -2699,9 +2701,9 @@
 
 - 方法：`POST`，管理员鉴权。
 - JSON 必填：`model_name`（已启用的语言模型配置名）、`concurrency`、`input_tokens`、`output_tokens`。`concurrency` 为同一场景同时发起的请求数，范围 1–1024；为兼容旧客户端，省略时按 1 处理。不接受旧并发列表、用户前缀或其他未知字段。
-- 输入与输出支持快捷档，也允许直接填写整数。输入范围为 1–16777216 Token，输出范围为 1–1048576 Token；页面快捷档仍为输入 1024、2048、8192、16384、32768、65536、131072、262144、524288、1048576，输出 1024、2048、4096、8192。`1k = 1024`，`1m = 1048576`。
+- API 接受输入与输出 Token 的正整数配置：输入范围为 1–16777216，输出范围为 1–1048576；`1k = 1024`，`1m = 1048576`。管理员吞吐页面不再展示注入上文输入框，使用固定默认输入长度发起新测试，历史快照仍保留 `input_tokens`。
 - 输入为包含消息开销的本地估算；随机中性文本避免固定前缀缓存，API usage 才是实测用量。已配置的上下文窗口用于输入与输出之和校验，不静默截短。
-- 每次测试固定一个模型、输入长度和输出长度，并按 `concurrency` 同时发起请求；结果聚合所有请求的输入、输出、推理 Token 与端到端吞吐。`ttft_ms` 是并发请求首字延迟的算术平均，`max_ttft_ms` 是最慢请求的首字延迟；`decode_tps` / `prefill_tps` 是并发批次整体速度，`avg_decode_tps` / `avg_prefill_tps` 是单请求速度的算术平均。不创建用户、任务线程、会话、工具调用或线程日志，不写入长期记忆。
+- 每次测试固定一个模型、输入长度和输出长度，并按 `concurrency` 同时发起请求；结果聚合所有请求的输入、输出与推理 Token。`ttft_ms` 是并发请求首字延迟的算术平均，`max_ttft_ms` 是最慢请求的首字延迟；`decode_tps` / `prefill_tps` 是并发批次整体速度，`avg_decode_tps` / `avg_prefill_tps` 是单请求速度的算术平均。不创建用户、任务线程、会话、工具调用或线程日志，不写入长期记忆。
 - 支持 `virtual_replay` 模型进行合成测量：使用模型 `simulation_speed` 的预处理和生成速度，不读取回放日志。先输出思考增量，再输出正文；思考占目标输出的 1/4，计入输出总数，`reasoning_tokens` 单列，不额外增加预算。结果带 `simulated: true` 与当次 `simulation_speed`，曲线按模型、速度档位及输出长度分组。普通虚拟调用共用速度配置、取消与超时。
 - 输出使用对应协议的输出上限；明确标记为 `vllm`、`vllm_omni`、`sglang` 且使用 Chat Completions 的引擎额外传 `min_tokens` 和 `ignore_eos`。其他 API 不能保证不提前停止，使用连续生成指令并核验实际用量；不重复请求凑数，不将目标数冒充用量。
 - 不自动重试，不降级为非流式。请求超时取模型配置，默认 1800 秒，限制在 1–3600 秒。
@@ -2722,7 +2724,7 @@
 
 - 方法：`GET`，管理员鉴权。
 - Query：可选 `run_id`，缺省返回当前或最近记录。仅查找已知记录 ID，不将输入拼接为文件路径；不存在或已淘汰返回 404。
-- 返回：`ThroughputSnapshot`；历史曲线根据多个摘要绘制，按模型、并发数和输出长度分组，横轴可为输入长度或测试时间。未达标数据与达标曲线分开。
+- 返回：`ThroughputSnapshot`；历史曲线根据多个摘要绘制，按模型、并发数和输出长度分组，横轴可为输入长度或测试时间。
 - 新摘要写入 `config/data/throughput/scenarios-v2.json`，最多 50 条，临时文件替换保存。仅记录配置、时间、指标和脱敏错误，不保存注入内容、模型回复、API 密钥或地址。旧版并发报告不混入新口径，不自动删除既有业务数据。
 
 #### 实时快照
@@ -2742,10 +2744,9 @@
 - `metrics.input_tokens/output_tokens/reasoning_tokens`：API 实测；输出包含推理 Token，推理子项单列。未知值为 null。
 - `metrics.estimated_output_tokens`：按累计 UTF-8 字节 / 4 向上取整，仅作实时估算，不用于确认目标或替代实测曲线。
 - `metrics.ttft_ms`：每个请求从发出到首个非空文本/推理片段的平均值；不以角色或 usage 事件作为首字。
-- `metrics.max_ttft_ms`：同一并发批次中最慢请求的首字延迟，用于整体预处理速度的分母。
-- `metrics.decode_tps`：并发批次实际输出总量 / 批次解码墙钟区间；`avg_decode_tps` 为每请求解码速度算术平均。缺用量或无生成间隔为 null。
+- `metrics.max_ttft_ms`：同一并发批次中最慢请求的首字延迟，用于整体预填充速度的分母。
+- `metrics.decode_tps`：并发批次实际生成总量 / 批次生成墙钟区间；`avg_decode_tps` 为每请求生成速度算术平均。缺用量或无生成间隔为 null。
 - `metrics.prefill_tps`：并发批次实际输入总量 / 最慢首字延迟；`avg_prefill_tps` 为每请求输入 / 首字耗时的算术平均。两者均含网络等待，不等同引擎纯预填充速度。
-- `metrics.end_to_end_tps`：实际输出 / 完整请求时间。
 - `metrics.target_reached`：true / false / null（无法确认）；`finish_reason` 为安全枚举。
 - `error`：脱敏失败说明；`persistence_error`：摘要保存失败，内存结果仍可导出。
 

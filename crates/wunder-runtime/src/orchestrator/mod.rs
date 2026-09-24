@@ -70,6 +70,9 @@ mod compaction_policy;
 mod config;
 pub mod constants;
 mod context;
+mod empty_output_guard;
+#[cfg(all(test, feature = "sqlite-storage"))]
+mod empty_output_tests;
 mod error;
 mod event_stream;
 mod execute;

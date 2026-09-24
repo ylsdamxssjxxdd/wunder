@@ -1,6 +1,7 @@
 use super::stream_timeout::StreamActivity;
 use super::*;
 use crate::core::llm_speed::LlmSpeedSummary;
+use crate::services::llm::output::OutputDiagnostics;
 use sha2::{Digest, Sha256};
 
 #[derive(Default)]
@@ -496,8 +497,17 @@ impl Orchestrator {
         log_payload: bool,
         tools: Option<&[Value]>,
         llm_config_override: Option<LlmModelConfig>,
-    ) -> Result<(String, String, TokenUsage, Option<Value>, LlmSpeedSummary), OrchestratorError>
-    {
+    ) -> Result<
+        (
+            String,
+            String,
+            TokenUsage,
+            Option<Value>,
+            LlmSpeedSummary,
+            OutputDiagnostics,
+        ),
+        OrchestratorError,
+    > {
         self.ensure_not_cancelled(session_id)?;
         let mut effective_config = llm_config_override.unwrap_or_else(|| llm_config.clone());
         if !is_llm_configured(&effective_config) {
@@ -539,7 +549,8 @@ impl Orchestrator {
                 }
                 self.account_model_usage(&usage, emitter, user_id, true, round_info, false, "mock")
                     .await?;
-                return Ok((content, String::new(), usage, None, round_speed));
+                let output = OutputDiagnostics::new(&effective_config, None, &usage);
+                return Ok((content, String::new(), usage, None, round_speed, output));
             }
             let detail = i18n::t("error.llm_config_missing");
             return Err(OrchestratorError::llm_unavailable(i18n::t_with_params(
@@ -807,6 +818,7 @@ impl Orchestrator {
                 prefill_duration_s,
                 decode_duration_s,
             );
+            let output = OutputDiagnostics::new(&effective_config, None, &usage);
             if emit_events {
                 let mut output_payload = json!({
                     "content": content,
@@ -849,7 +861,7 @@ impl Orchestrator {
             self.account_model_usage(&usage, emitter, user_id, true, round_info, false, "replay")
                 .await?;
             // Recorded/estimated usage is diagnostic only; replay never spends user quota.
-            return Ok((content, reasoning, usage, tool_calls, round_speed));
+            return Ok((content, reasoning, usage, tool_calls, round_speed, output));
         }
         let mut attempt = 0u32;
         let mut last_err: anyhow::Error;
@@ -921,6 +933,7 @@ impl Orchestrator {
 
             match result {
                 Ok(response) => {
+                    let finish_reason = response.finish_reason;
                     let response_finished_at = Instant::now();
                     let content = response.content;
                     let reasoning = response.reasoning;
@@ -992,6 +1005,7 @@ impl Orchestrator {
                         prefill_duration_s,
                         decode_duration_s,
                     );
+                    let output = OutputDiagnostics::new(&effective_config, finish_reason, &usage);
                     if emit_events {
                         let tool_calls_snapshot = tool_calls.clone();
                         let mut output_payload = json!({
@@ -1008,6 +1022,7 @@ impl Orchestrator {
                             round_info.insert_into(map);
                             round_speed.insert_into_map(map);
                         }
+                        output.insert_into(&mut output_payload);
                         emitter.emit("llm_output", output_payload).await;
                         let mut usage_payload = json!({
                             "input_tokens": usage.input,
@@ -1025,7 +1040,7 @@ impl Orchestrator {
                         }
                         emitter.emit("token_usage", usage_payload).await;
                     }
-                    return Ok((content, reasoning, usage, tool_calls, round_speed));
+                    return Ok((content, reasoning, usage, tool_calls, round_speed, output));
                 }
                 Err(err) => {
                     // Admission failures are terminal, not provider errors eligible for retry.
@@ -1033,22 +1048,6 @@ impl Orchestrator {
                         return Err(err
                             .downcast::<OrchestratorError>()
                             .expect("admission error"));
-                    }
-                    if let Some(usage) = crate::services::llm::failed_response_usage(&err) {
-                        self.account_model_usage(
-                            usage,
-                            emitter,
-                            user_id,
-                            is_admin,
-                            round_info,
-                            emit_quota_events,
-                            if emit_events {
-                                "failed_response"
-                            } else {
-                                "compaction"
-                            },
-                        )
-                        .await?;
                     }
                     let failure_kind = classify_llm_error(&err);
                     let max_attempts = resolve_llm_max_attempts(failure_kind);

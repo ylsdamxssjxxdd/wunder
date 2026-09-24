@@ -7,7 +7,7 @@ const names = { fast: ["快", "Fast"], medium: ["中", "Medium"], slow: ["慢", 
 export function simulationSpeedLabel(speed) {
   const key = normalizeSimulationSpeed(speed);
   const [prefill, generation] = simulationProfiles[key];
-  return `${names[key][zh() ? 0 : 1]} · ${zh() ? "预处理" : "Prefill"} ${prefill} / ${zh() ? "生成" : "Generation"} ${generation} tok/s`;
+  return `${names[key][zh() ? 0 : 1]} · ${zh() ? "预填充" : "Prefill"} ${prefill} / ${zh() ? "生成" : "Generation"} ${generation} tok/s`;
 }
 
 function mount() {

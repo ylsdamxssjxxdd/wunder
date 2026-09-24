@@ -425,7 +425,16 @@ fn resolve_temp_root(temp_root: Option<&Path>, app_dir: &Path) -> PathBuf {
     match temp_root {
         Some(path) if path.is_absolute() => path.to_path_buf(),
         Some(path) => app_dir.join(path),
-        None => app_dir.join("WUNDER_TEMPD"),
+        None => std::env::var_os("WUNDER_DESKTOP_TEMP_ROOT")
+            .map(PathBuf::from)
+            .map(|path| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    app_dir.join(path)
+                }
+            })
+            .unwrap_or_else(|| app_dir.join("WUNDER_TEMPD")),
     }
 }
 
@@ -444,7 +453,16 @@ fn resolve_workspace_root(
 
     let raw = settings_workspace.trim();
     if raw.is_empty() {
-        return app_dir.join("WUNDER_WORK");
+        return std::env::var_os("WUNDER_DESKTOP_WORKSPACE_ROOT")
+            .map(PathBuf::from)
+            .map(|path| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    app_dir.join(path)
+                }
+            })
+            .unwrap_or_else(|| app_dir.join("WUNDER_WORK"));
     }
 
     let path = PathBuf::from(raw);

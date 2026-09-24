@@ -143,6 +143,19 @@ test('message stats derive visible reply speed from stream timing when explicit 
   assert.equal(findEntryValue(entries, 'Speed'), '113.6 token/s');
 });
 
+test('message stats restore generation speed from persisted tokens and duration', () => {
+  const entries = buildAssistantMessageStatsEntries({
+    role: 'assistant',
+    stats: {
+      decode_tokens: 90,
+      decode_duration_s: 1.5,
+      decode_speed_tps: null,
+      visible_decode_speed_tps: null
+    }
+  }, createTranslator());
+  assert.equal(findEntryValue(entries, 'Speed'), '60.0 token/s');
+});
+
 test('message stats render a legal zero tool count as zero', () => {
   const entries = buildAssistantMessageStatsEntries({
     role: 'assistant',

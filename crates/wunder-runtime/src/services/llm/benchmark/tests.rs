@@ -130,7 +130,7 @@ fn stream_metrics_use_provider_usage_and_actual_generation_interval() {
     stats.event("data: {\"choices\":[{\"delta\":{\"content\":\" two\"},\"finish_reason\":\"length\"}],\"usage\":{\"prompt_tokens\":2048,\"completion_tokens\":1024}}", 2.5).unwrap();
     assert!(stats.event("data: [DONE]", 3.0).unwrap());
     assert_eq!(
-        stats.metrics(1024, 4.0, true),
+        stats.metrics(1024, true),
         BenchmarkMetrics {
             input_tokens: Some(2048),
             output_tokens: Some(1024),
@@ -142,13 +142,12 @@ fn stream_metrics_use_provider_usage_and_actual_generation_interval() {
             avg_decode_tps: Some(511.5),
             prefill_tps: Some(4096.0),
             avg_prefill_tps: Some(4096.0),
-            end_to_end_tps: Some(256.0),
             finish_reason: Some("length".into()),
             target_reached: Some(true),
             ..Default::default()
         }
     );
-    assert_eq!(stats.metrics(2048, 4.0, true).target_reached, Some(false));
+    assert_eq!(stats.metrics(2048, true).target_reached, Some(false));
 }
 
 #[test]
@@ -163,7 +162,7 @@ fn missing_usage_is_unverified_and_provider_errors_are_redacted() {
     stats
         .event("data: {\"type\":\"response.completed\"}", 0.2)
         .unwrap();
-    assert_eq!(stats.metrics(1024, 0.2, true).target_reached, None);
+    assert_eq!(stats.metrics(1024, true).target_reached, None);
     assert_eq!(
         stats.event("data: {\"error\":{\"message\":\"private\"}}", 0.3),
         Err("模型 API 在生成期间报告错误".into())
@@ -176,7 +175,7 @@ fn input_only_usage_does_not_invent_an_output_measurement() {
     stats
         .event("data: {\"usage\":{\"input_tokens\":1024}}", 0.1)
         .unwrap();
-    let metrics = stats.metrics(1024, 1.0, true);
+    let metrics = stats.metrics(1024, true);
     assert_eq!(
         (
             metrics.input_tokens,
@@ -198,7 +197,7 @@ fn anthropic_usage_deltas_preserve_input_and_count_cache() {
         )
         .unwrap();
     stats.event("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\"},\"usage\":{\"output_tokens\":1024}}", 0.4).unwrap();
-    let metrics = stats.metrics(1024, 0.5, true);
+    let metrics = stats.metrics(1024, true);
     assert_eq!(
         (
             metrics.input_tokens,

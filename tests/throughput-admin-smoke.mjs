@@ -28,7 +28,7 @@ try {
     started_at: `2026-01-01T00:0${id}:00Z`, finished_at: "2026-01-01T00:10:00Z", elapsed_s: 12,
     length_control: "best_effort", persistence_error: false, error: null,
     metrics: { input_tokens: input + 10, output_tokens: status === "finished" ? 1024 : 70, reasoning_tokens: null, estimated_output_tokens: 1030,
-      ttft_ms: 240, decode_tps: speed, prefill_tps: input / 0.24, end_to_end_tps: 85, target_reached: status === "finished", finish_reason: "stop" },
+      ttft_ms: 240, max_ttft_ms: 240, decode_tps: speed, avg_decode_tps: speed, prefill_tps: input / 0.24, avg_prefill_tps: input / 0.24, target_reached: status === "finished", finish_reason: "stop" },
   });
   let snapshot = { schema_version: 2, active: null, history: [makeRun("1",1024,94),makeRun("2",8192,82),makeRun("3",16384,75,"incomplete")] };
   let ws = null;
@@ -61,7 +61,7 @@ try {
     await window.throughput.initThroughputPanel();
   });
   await page.waitForFunction(() => document.querySelectorAll("#tpHistory tr").length === 3);
-  assert.equal(await page.locator("#tpInputPresets option").count(), 10);
+  assert.equal(await page.locator("#tpInput").count(), 0);
   assert.equal(await page.locator("#tpOutputPresets option").count(), 4);
   assert.equal(await page.locator("#tpConcurrency").inputValue(), "1");
   assert.equal(await page.locator("#tpHistory input:checked").count(), 3);
@@ -77,12 +77,11 @@ try {
   await page.locator("#tpAxis").selectOption("input");
   await page.locator('[data-view="2"]').click();
   assert.match(await page.locator("#tpDetail").innerText(), /8k/);
-  await page.locator("#tpInput").fill("1048576");
+  await page.locator("#tpOutput").fill("30000");
   await page.locator("#tpStart").click();
   await page.waitForFunction(() => document.getElementById("tpFeedback").textContent.includes("上下文"));
   assert.equal(starts.length, 0);
   await page.locator("#tpConcurrency").fill("4");
-  await page.locator("#tpInput").fill("8192");
   await page.locator("#tpOutput").fill("2048");
   await page.locator("#tpStart").click();
   await page.locator("#tpStop").waitFor({ state: "visible" });

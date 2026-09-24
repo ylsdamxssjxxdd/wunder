@@ -377,6 +377,29 @@ fn build_planned_tool_calls_filters_disallowed_name() {
 }
 
 #[test]
+fn build_planned_tool_calls_rejects_incomplete_arguments_before_execution() {
+    let allowed = HashSet::from([resolve_tool_name("read_file")]);
+    let result = build_planned_tool_calls(
+        vec![ToolCall {
+            id: None,
+            name: "read_file".into(),
+            function_name: None,
+            arguments: json!({"raw":"{\"path\":\""}),
+        }],
+        &allowed,
+    );
+    assert!(result.planned.is_empty());
+    assert_eq!(
+        result
+            .rejected
+            .iter()
+            .map(|call| call.reason)
+            .collect::<Vec<_>>(),
+        vec!["TOOL_ARGUMENTS_INCOMPLETE"]
+    );
+}
+
+#[test]
 fn build_planned_tool_calls_accepts_allowed_alias() {
     let allowed = HashSet::from([resolve_tool_name("final_response")]);
     let calls = vec![ToolCall {
@@ -432,35 +455,6 @@ fn invalid_tool_call_notice_instructs_repair_or_final_response() {
         .unwrap_or("");
     assert!(instruction.contains("final_response"));
     assert!(instruction.contains("valid JSON arguments"));
-}
-
-#[test]
-fn empty_final_answer_notice_instructs_continue_not_empty_stop() {
-    let notice = build_empty_final_answer_model_notice(1, 3, false, true, false, true);
-
-    assert_eq!(
-        notice.get("type"),
-        Some(&json!("empty_final_answer_notice"))
-    );
-    assert_eq!(notice.get("had_reasoning"), Some(&json!(true)));
-    let instruction = notice
-        .get("instruction")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    assert!(instruction.contains("Continue the task now"));
-    assert!(instruction.contains("final_response"));
-}
-
-#[test]
-fn empty_final_answer_notice_without_tools_requests_direct_answer() {
-    let notice = build_empty_final_answer_model_notice(2, 3, true, false, true, false);
-
-    let instruction = notice
-        .get("instruction")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    assert!(instruction.contains("Respond directly"));
-    assert!(!instruction.contains("final_response"));
 }
 
 #[test]

@@ -1,0 +1,43 @@
+FROM rcho-slint-arm64-ubuntu18:latest
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Keep the existing rcho Ubuntu 18.04 ARM64 image as the base. This layer only
+# adds the complete Winit/X11 runtime closure and the SquashFS libraries used
+# by the AppImage packer; Rust and the offline Cargo SDK are mounted at build
+# time so the image remains small and relocatable.
+RUN apt-get update -o Acquire::Check-Valid-Until=false \
+    && apt-get install -y --no-install-recommends \
+       bash \
+       squashfs-tools \
+       liblzo2-2 \
+       libxcb-render0 \
+       libxcb-shape0 \
+       libxcb-xfixes0 \
+       libxcb-randr0 \
+       libxcb-image0 \
+       libxcb-keysyms1 \
+       libxcb-icccm4 \
+       libxcb-util1 \
+       libxcb-shm0 \
+       libxcb-sync1 \
+       libxcb-present0 \
+       libxcb-glx0 \
+       libxcb-dri2-0 \
+       libxcb-dri3-0 \
+       libxext6 \
+       libxfixes3 \
+       libxrender1 \
+       libxi6 \
+       libxrandr2 \
+       libxcursor1 \
+       libxinerama1 \
+       libxau6 \
+       libxdmcp6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# The official ARM64 AppImage runtime is mounted from the build host. Keeping
+# it outside the image makes this layer usable in offline environments and
+# allows reuse of an existing rcho ARM64 AppImage runtime.
+
+WORKDIR /workspace

@@ -228,6 +228,14 @@ test('workspace preview reload detection treats empty path hints as affected', (
   );
 });
 
+test('large HTML workspace files use a full document iframe preview', () => {
+  const source = readSource('src/components/chat/WorkspacePanel.vue');
+  assert.ok(source.includes("const HTML_PREVIEW_EXTENSIONS = new Set(['html', 'htm', 'xhtml']);"));
+  assert.ok(source.includes('if (isTextPreview && !canPreviewText && HTML_PREVIEW_EXTENSIONS.has(extension))'));
+  assert.ok(source.includes("state.preview.type = 'html';"));
+  assert.ok(source.includes("preview.type === 'html' || preview.type === 'pdf'"));
+});
+
 test('workspace tree version gating only skips versions that are already applied', () => {
   assert.equal(shouldAcceptWorkspaceTreeVersion(null, 5), true);
   assert.equal(shouldAcceptWorkspaceTreeVersion(5, 5), false);

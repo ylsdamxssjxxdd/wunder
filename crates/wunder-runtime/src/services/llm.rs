@@ -13,6 +13,7 @@ use tracing::warn;
 mod admission;
 pub(crate) mod benchmark;
 mod context_probe;
+pub(crate) mod output;
 mod payload;
 mod provider;
 mod response;
@@ -68,7 +69,7 @@ const DEFAULT_WHISPER_CPP_BASE_URL: &str = "http://127.0.0.1:8080";
 const DEFAULT_OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434/v1";
 const DEFAULT_LMSTUDIO_BASE_URL: &str = "http://127.0.0.1:1234/v1";
 const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 8_192;
-const DEFAULT_THINKING_TOKEN_BUDGET: u32 = 16_384;
+const DEFAULT_THINKING_TOKEN_BUDGET: u32 = 2_048;
 const CHAT_COMPLETIONS_RESOURCE: &str = "chat/completions";
 const RESPONSES_RESOURCE: &str = "responses";
 const MESSAGES_RESOURCE: &str = "messages";
@@ -261,18 +262,6 @@ fn resolved_thinking_token_budget(config: &LlmModelConfig) -> Option<u32> {
     )
 }
 
-fn resolved_responses_thinking_token_budget(config: &LlmModelConfig) -> Option<u32> {
-    if !should_emit_thinking_token_budget(config) {
-        return None;
-    }
-    Some(
-        config
-            .thinking_token_budget
-            .filter(|value| *value > 0)
-            .unwrap_or(DEFAULT_THINKING_TOKEN_BUDGET),
-    )
-}
-
 fn insert_chat_template_kwarg(payload: &mut Value, key: &str, value: Value) {
     let mut kwargs = payload
         .get("chat_template_kwargs")
@@ -337,19 +326,11 @@ pub struct ChatMessage {
 
 #[derive(Debug, Clone)]
 pub struct LlmResponse {
+    pub finish_reason: Option<String>,
     pub content: String,
     pub reasoning: String,
     pub usage: Option<TokenUsage>,
     pub tool_calls: Option<Value>,
-}
-
-const EMPTY_LLM_RESPONSE_ERROR: &str =
-    "LLM returned empty response without content, reasoning, or tool calls";
-
-pub(crate) fn failed_response_usage(error: &anyhow::Error) -> Option<&TokenUsage> {
-    error
-        .downcast_ref::<usage::FailedResponseUsage>()
-        .map(|failure| &failure.usage)
 }
 
 fn llm_response_has_payload(content: &str, reasoning: &str, tool_calls: Option<&Value>) -> bool {
@@ -360,12 +341,13 @@ fn llm_response_has_payload(content: &str, reasoning: &str, tool_calls: Option<&
 }
 
 #[derive(Debug, Default)]
-struct FinalResponseToolPreview {
+struct StreamOutputState {
+    finish_reason: Option<String>,
     displayed: String,
     displayed_tail: String,
 }
 
-impl FinalResponseToolPreview {
+impl StreamOutputState {
     fn active(&self) -> bool {
         !self.displayed.is_empty()
     }
@@ -399,7 +381,7 @@ fn tool_call_payload_has_items(payload: &Value) -> bool {
 fn sync_visible_final_response_tool_delta(
     combined: &str,
     reasoning: &str,
-    preview: &mut FinalResponseToolPreview,
+    preview: &mut StreamOutputState,
     tool_calls: &[StreamToolCall],
 ) -> Option<String> {
     if !preview.active() && (!combined.trim().is_empty() || !reasoning.trim().is_empty()) {
@@ -810,17 +792,8 @@ impl LlmClient {
             body.get("response")
                 .and_then(|value| normalize_usage(value.get("usage")))
         });
-        if !llm_response_has_payload(&content, &reasoning, tool_calls.as_ref()) {
-            if let Some(usage) = usage {
-                return Err(usage::FailedResponseUsage {
-                    usage,
-                    message: EMPTY_LLM_RESPONSE_ERROR,
-                }
-                .into());
-            }
-            return Err(anyhow!(EMPTY_LLM_RESPONSE_ERROR));
-        }
         Ok(LlmResponse {
+            finish_reason: output::finish_reason(&body),
             content,
             reasoning,
             usage,
@@ -911,7 +884,7 @@ impl LlmClient {
             let mut reasoning_combined = String::new();
             let mut usage: Option<TokenUsage> = None;
             let mut tool_calls_accumulator: Vec<StreamToolCall> = Vec::new();
-            let mut final_response_preview = FinalResponseToolPreview::default();
+            let mut final_response_preview = StreamOutputState::default();
             let mut saw_done = false;
             while let Some(item) = stream.next().await {
                 let bytes = item?;
@@ -979,37 +952,15 @@ impl LlmClient {
             let tool_calls = finalize_stream_tool_calls(&tool_calls_accumulator);
             let stream_payload_empty =
                 !llm_response_has_payload(&combined, &reasoning_combined, tool_calls.as_ref());
-            if stream_payload_empty {
-                // Let the orchestrator account this completed response before retrying.
-                if let Some(usage) = usage {
-                    return Err(usage::FailedResponseUsage {
-                        usage,
-                        message: EMPTY_LLM_RESPONSE_ERROR,
-                    }
-                    .into());
-                }
-                let empty_reason = if saw_done {
-                    "LLM stream finished with [DONE] but without payload"
-                } else {
-                    "LLM stream ended without [DONE] and without payload"
-                };
-                warn!("{empty_reason}, fallback to non-stream request");
-                match self.complete_with_tools(messages, tools).await {
-                    Ok(fallback) => {
-                        if !fallback.content.is_empty() || !fallback.reasoning.is_empty() {
-                            on_delta(fallback.content.clone(), fallback.reasoning.clone()).await?;
-                        }
-                        return Ok(fallback);
-                    }
-                    Err(err) => {
-                        if err.downcast_ref::<usage::FailedResponseUsage>().is_some() {
-                            return Err(err);
-                        }
-                        return Err(err.context(format!("{empty_reason}; fallback request failed")));
-                    }
-                }
+            if stream_payload_empty
+                && !saw_done
+                && usage.is_none()
+                && final_response_preview.finish_reason.is_none()
+            {
+                return Err(anyhow!("LLM stream ended without a completed response"));
             }
             return Ok(LlmResponse {
+                finish_reason: final_response_preview.finish_reason,
                 content: combined,
                 reasoning: reasoning_combined,
                 usage,
@@ -1240,8 +1191,7 @@ impl LlmClient {
             payload["stream_options"] = json!({ "include_usage": true });
         }
         payload["max_output_tokens"] = json!(resolved_max_output(&self.config));
-        if let Some(thinking_token_budget) = resolved_responses_thinking_token_budget(&self.config)
-        {
+        if let Some(thinking_token_budget) = resolved_thinking_token_budget(&self.config) {
             payload["thinking_token_budget"] = json!(thinking_token_budget);
             payload["thinking_budget_tokens"] = json!(thinking_token_budget);
         }
@@ -1490,7 +1440,7 @@ async fn process_sse_event_block_with_preview<F, Fut>(
     reasoning_combined: &mut String,
     usage: &mut Option<TokenUsage>,
     tool_calls_accumulator: &mut Vec<StreamToolCall>,
-    final_response_preview: &mut FinalResponseToolPreview,
+    final_response_preview: &mut StreamOutputState,
     on_delta: &mut F,
 ) -> Result<bool>
 where
@@ -1584,7 +1534,7 @@ where
     F: FnMut(String, String) -> Fut,
     Fut: Future<Output = Result<()>>,
 {
-    let mut final_response_preview = FinalResponseToolPreview::default();
+    let mut final_response_preview = StreamOutputState::default();
     process_sse_event_block_with_preview(
         block,
         combined,
@@ -1603,7 +1553,7 @@ async fn process_stream_payload<F, Fut>(
     reasoning_combined: &mut String,
     usage: &mut Option<TokenUsage>,
     tool_calls_accumulator: &mut Vec<StreamToolCall>,
-    final_response_preview: &mut FinalResponseToolPreview,
+    final_response_preview: &mut StreamOutputState,
     on_delta: &mut F,
 ) -> Result<bool>
 where
@@ -1619,6 +1569,9 @@ where
 
     match serde_json::from_str::<Value>(data) {
         Ok(payload) => {
+            if let Some(reason) = output::finish_reason(&payload) {
+                final_response_preview.finish_reason = Some(reason);
+            }
             if let Some(error_message) = extract_stream_error_message(&payload) {
                 return Err(anyhow!(error_message));
             }
@@ -1768,7 +1721,7 @@ async fn process_anthropic_stream_payload<F, Fut>(
     reasoning_combined: &mut String,
     usage: &mut Option<TokenUsage>,
     tool_calls_accumulator: &mut Vec<StreamToolCall>,
-    final_response_preview: &mut FinalResponseToolPreview,
+    final_response_preview: &mut StreamOutputState,
     on_delta: &mut F,
 ) -> Result<bool>
 where
@@ -1959,7 +1912,7 @@ async fn process_responses_stream_payload<F, Fut>(
     reasoning_combined: &mut String,
     usage: &mut Option<TokenUsage>,
     tool_calls_accumulator: &mut Vec<StreamToolCall>,
-    final_response_preview: &mut FinalResponseToolPreview,
+    final_response_preview: &mut StreamOutputState,
     on_delta: &mut F,
 ) -> Result<bool>
 where
@@ -2043,7 +1996,7 @@ where
                 on_delta(String::new(), String::new()).await?;
             }
         }
-        "response.completed" => {
+        "response.completed" | "response.incomplete" => {
             if let Some(response) = payload.get("response") {
                 if let Some(new_usage) = normalize_usage(response.get("usage")) {
                     *usage = Some(new_usage);
@@ -3150,7 +3103,7 @@ mod tests {
         let mut reasoning = String::new();
         let mut usage: Option<TokenUsage> = None;
         let mut tool_calls = Vec::new();
-        let mut final_response_preview = FinalResponseToolPreview::default();
+        let mut final_response_preview = StreamOutputState::default();
         let callbacks = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
         let callbacks_for_closure = std::sync::Arc::clone(&callbacks);
         let mut on_delta = move |content: String, reasoning: String| {
@@ -3216,7 +3169,7 @@ mod tests {
         let mut reasoning = String::new();
         let mut usage: Option<TokenUsage> = None;
         let mut tool_calls = Vec::new();
-        let mut final_response_preview = FinalResponseToolPreview::default();
+        let mut final_response_preview = StreamOutputState::default();
         let callbacks = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
         let callbacks_for_closure = std::sync::Arc::clone(&callbacks);
         let mut on_delta = move |content: String, reasoning: String| {
@@ -3270,7 +3223,7 @@ mod tests {
         let mut reasoning = String::new();
         let mut usage: Option<TokenUsage> = None;
         let mut tool_calls = Vec::new();
-        let mut final_response_preview = FinalResponseToolPreview::default();
+        let mut final_response_preview = StreamOutputState::default();
         let callbacks = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
         let callbacks_for_closure = std::sync::Arc::clone(&callbacks);
         let mut on_delta = move |content: String, reasoning: String| {
@@ -3346,7 +3299,7 @@ mod tests {
         let mut reasoning = String::new();
         let mut usage: Option<TokenUsage> = None;
         let mut tool_calls = Vec::new();
-        let mut final_response_preview = FinalResponseToolPreview::default();
+        let mut final_response_preview = StreamOutputState::default();
         let callbacks = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
         let callbacks_for_closure = std::sync::Arc::clone(&callbacks);
         let mut on_delta = move |content: String, reasoning: String| {
@@ -3644,7 +3597,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn complete_with_tools_rejects_empty_success_body() {
+    async fn complete_with_tools_returns_empty_success_for_turn_recovery() {
         use axum::http::StatusCode;
         use axum::routing::post;
         use axum::{Json, Router};
@@ -3702,16 +3655,17 @@ mod tests {
             tool_call_id: None,
         }];
 
-        let err = client
+        let response = client
             .complete_with_tools(&messages, None)
             .await
-            .expect_err("empty success body should be rejected");
+            .expect("completed empty response");
 
-        assert!(err.to_string().contains(EMPTY_LLM_RESPONSE_ERROR));
+        assert!(response.content.is_empty());
+        assert_eq!(response.usage.unwrap().input, 12);
     }
 
     #[tokio::test]
-    async fn stream_complete_falls_back_and_rejects_when_fallback_is_empty() {
+    async fn stream_complete_returns_empty_done_without_hidden_retry() {
         use axum::extract::State;
         use axum::http::StatusCode;
         use axum::routing::post;
@@ -3792,16 +3746,14 @@ mod tests {
             tool_call_id: None,
         }];
 
-        let err = client
+        let response = client
             .stream_complete_with_callback(&messages, |_delta, _reasoning| async { Ok(()) })
             .await
-            .expect_err("empty stream and empty fallback should be rejected");
+            .expect("completed empty stream");
 
-        let message = err.to_string();
-        assert!(message.contains("without payload"));
-        assert!(message.contains(EMPTY_LLM_RESPONSE_ERROR));
+        assert!(response.content.is_empty());
         assert_eq!(state.stream_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(state.non_stream_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(state.non_stream_calls.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -3956,8 +3908,8 @@ mod tests {
             Some(&Value::String("xhigh".to_string()))
         );
         assert_eq!(payload["max_tokens"], 256);
-        assert_eq!(payload["thinking_token_budget"], 16_384);
-        assert_eq!(payload["thinking_budget_tokens"], 16_384);
+        assert_eq!(payload["thinking_token_budget"], 2_048);
+        assert_eq!(payload["thinking_budget_tokens"], 2_048);
     }
 
     #[test]
@@ -4254,8 +4206,8 @@ mod tests {
         );
         assert_eq!(payload["reasoning"]["effort"], "high");
         assert_eq!(payload["max_output_tokens"], 256);
-        assert_eq!(payload["thinking_token_budget"], 16_384);
-        assert_eq!(payload["thinking_budget_tokens"], 16_384);
+        assert_eq!(payload["thinking_token_budget"], 2_048);
+        assert_eq!(payload["thinking_budget_tokens"], 2_048);
     }
 
     #[test]
@@ -4483,8 +4435,8 @@ mod tests {
         assert_eq!(payload["reasoning"]["effort"], "none");
         assert!(payload.get("enable_thinking").is_none());
         assert!(payload.get("chat_template_kwargs").is_none());
-        assert_eq!(payload["thinking_token_budget"], 16_384);
-        assert_eq!(payload["thinking_budget_tokens"], 16_384);
+        assert!(payload.get("thinking_token_budget").is_none());
+        assert!(payload.get("thinking_budget_tokens").is_none());
     }
 
     #[test]
@@ -4527,8 +4479,8 @@ mod tests {
         );
 
         assert_eq!(payload["max_tokens"], 8_192);
-        assert_eq!(payload["thinking_token_budget"], 16_384);
-        assert_eq!(payload["thinking_budget_tokens"], 16_384);
+        assert_eq!(payload["thinking_token_budget"], 2_048);
+        assert_eq!(payload["thinking_budget_tokens"], 2_048);
     }
 
     #[test]

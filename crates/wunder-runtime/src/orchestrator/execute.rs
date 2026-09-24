@@ -1,4 +1,5 @@
 use super::context::normalize_model_context_message;
+use super::empty_output_guard::EmptyOutputGuard;
 use super::retry_governor::{RetryGovernor, SuccessProgressGovernor};
 use super::tool_calls::ToolCall;
 use super::*;
@@ -418,7 +419,7 @@ impl Orchestrator {
             let mut reroute_notice_count = 0_u32;
             let mut reroute_notice_fingerprints: HashSet<String> = HashSet::new();
             let mut invalid_tool_call_reroute_count = 0_u32;
-            let mut empty_final_answer_reroute_count = 0_u32;
+            let mut empty_output_guard = EmptyOutputGuard::default();
             let memory_manager_tool_name = resolve_tool_name("memory_manager");
             let tool_budget_limits = ToolBudgetLimits {
                 total: DEFAULT_TOOL_CALL_BUDGET_PER_TURN,
@@ -579,7 +580,7 @@ impl Orchestrator {
                 let mut overflow_recovery_attempts = 0_u32;
                 self.apply_agent_messages(agent_inbox.as_ref().expect("active inbox"),
                     &user_id, &session_id, &mut messages, &emitter, round_info, false).await?;
-                let (content, reasoning, usage, tool_calls_payload, round_speed) = loop {
+                let (content, reasoning, usage, tool_calls_payload, round_speed, output) = loop {
                     match self
                         .call_llm(
                             &llm_config,
@@ -594,7 +595,7 @@ impl Orchestrator {
                             true,
                             log_payload,
                             tools_payload,
-                            None,
+                            empty_output_guard.config_override(&llm_config),
                         )
                         .await
                     {
@@ -766,6 +767,7 @@ impl Orchestrator {
                         }
                     }
                 };
+                empty_output_guard.observe(output);
                 last_response = Some((content.clone(), reasoning.clone()));
                 turn_decode_speed.record_summary(&round_speed);
                 round_usage = emitter.accumulated_usage();
@@ -812,6 +814,13 @@ impl Orchestrator {
                 if !planned_calls.is_empty() {
                     self.yield_queue_slot(&session_id, &emitter, round_info).await?;
                 }
+                if planning_result.rejected.iter().any(|call| call.reason == "TOOL_ARGUMENTS_INCOMPLETE") {
+                    empty_output_guard.recover_or_stop(
+                        self, &mut messages, &user_id, &session_id, &emitter,
+                        round_info, true, "TOOL_ARGUMENTS_INCOMPLETE",
+                    ).await?;
+                    continue;
+                }
                 if planned_calls.is_empty()
                     && !planning_result.rejected.is_empty()
                     && !prepared.skip_tool_calls
@@ -855,46 +864,11 @@ impl Orchestrator {
                         answer = self.resolve_final_answer(&content);
                     }
                     if answer.trim().is_empty() {
-                        if empty_final_answer_reroute_count
-                            < EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN
-                        {
-                            empty_final_answer_reroute_count =
-                                empty_final_answer_reroute_count.saturating_add(1);
-                            let model_notice = build_empty_final_answer_model_notice(
-                                empty_final_answer_reroute_count,
-                                EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN,
-                                !content.trim().is_empty(),
-                                !reasoning.trim().is_empty(),
-                                tool_calls_payload.is_some(),
-                                !prepared.skip_tool_calls,
-                            );
-                            let mut reroute_payload = json!({
-                                "stage": "empty_final_answer_reroute",
-                                "summary": "Model returned no usable final content; model instructed to continue instead of ending the turn.",
-                                "attempt": empty_final_answer_reroute_count,
-                                "max_attempts": EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN,
-                            });
-                            if let Value::Object(ref mut map) = reroute_payload {
-                                round_info.insert_into(map);
-                            }
-                            emitter.emit("progress", reroute_payload).await;
-                            let model_notice_message = json!({
-                                "role": "user",
-                                "content": encode_observation_prefixed_json(&model_notice),
-                            });
-                            messages.push(model_notice_message.clone());
-                            self.append_model_context_entry(
-                                &user_id,
-                                &session_id,
-                                &model_notice_message,
-                            );
-                            continue;
-                        }
-                        return Err(OrchestratorError::llm_unavailable(
-                            build_empty_final_answer_retry_exhausted_error(
-                                EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN,
-                            ),
-                        ));
+                        empty_output_guard.recover_or_stop(
+                            self, &mut messages, &user_id, &session_id, &emitter,
+                            round_info, !prepared.skip_tool_calls, "empty_output",
+                        ).await?;
+                        continue;
                     }
                     if !answer.trim().is_empty() {
                         answer = self.reconcile_final_answer_workspace_images(
@@ -2000,46 +1974,11 @@ impl Orchestrator {
                                     log_payload,
                                 );
                                 if answer.trim().is_empty() {
-                                    if empty_final_answer_reroute_count
-                                        < EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN
-                                    {
-                                        empty_final_answer_reroute_count = empty_final_answer_reroute_count
-                                            .saturating_add(1);
-                                        let model_notice = build_empty_final_answer_model_notice(
-                                            empty_final_answer_reroute_count,
-                                            EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN,
-                                            !args.is_null(),
-                                            false,
-                                            true,
-                                            true,
-                                        );
-                                        let mut reroute_payload = json!({
-                                            "stage": "empty_final_answer_reroute",
-                                            "summary": "Model returned no usable final content from final_response; model instructed to continue instead of ending the turn.",
-                                            "attempt": empty_final_answer_reroute_count,
-                                            "max_attempts": EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN,
-                                        });
-                                        if let Value::Object(ref mut map) = reroute_payload {
-                                            round_info.insert_into(map);
-                                        }
-                                        emitter.emit("progress", reroute_payload).await;
-                                        let model_notice_message = json!({
-                                            "role": "user",
-                                            "content": encode_observation_prefixed_json(&model_notice),
-                                        });
-                                        messages.push(model_notice_message.clone());
-                                        self.append_model_context_entry(
-                                            &user_id,
-                                            &session_id,
-                                            &model_notice_message,
-                                        );
-                                        continue;
-                                    }
-                                    return Err(OrchestratorError::llm_unavailable(
-                                        build_empty_final_answer_retry_exhausted_error(
-                                            EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN,
-                                        ),
-                                    ));
+                                    empty_output_guard.recover_or_stop(
+                                        self, &mut messages, &user_id, &session_id, &emitter,
+                                        round_info, true, "empty_final_tool_output",
+                                    ).await?;
+                                    continue;
                                 }
                                 stop_reason = Some("final_tool".to_string());
                                 if !answer.trim().is_empty() {
@@ -2105,11 +2044,7 @@ impl Orchestrator {
                 }
             }
             if answer.is_empty() {
-                return Err(OrchestratorError::llm_unavailable(
-                    build_empty_final_answer_retry_exhausted_error(
-                        EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN,
-                    ),
-                ));
+                return Err(empty_output_guard.exhausted_error());
             }
 
             let stop_reason = stop_reason.unwrap_or_else(|| "unknown".to_string());

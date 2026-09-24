@@ -383,10 +383,17 @@ pub fn build_llm_speed_summary(events: &[LlmSpeedEvent<'_>]) -> LlmSpeedSummary 
                         entry.prefill_duration_s =
                             parse_f64_value(event.data.get("prefill_duration_s"));
                     }
-                    if event.data.get("decode_duration_s").is_some() {
+                    // Providers commonly include `decode_duration_s: null` when they
+                    // cannot measure generation time. Null is an unavailable value,
+                    // not an explicit timing decision: retain any measured value and
+                    // allow the visible stream timestamps to provide a fallback.
+                    if let Some(value) = event
+                        .data
+                        .get("decode_duration_s")
+                        .filter(|value| !value.is_null())
+                    {
                         entry.explicit_decode_timing = true;
-                        entry.decode_duration_s =
-                            parse_f64_value(event.data.get("decode_duration_s"));
+                        entry.decode_duration_s = parse_f64_value(Some(value));
                     }
                 }
             }
@@ -409,10 +416,13 @@ pub fn build_llm_speed_summary(events: &[LlmSpeedEvent<'_>]) -> LlmSpeedSummary 
                         entry.prefill_duration_s =
                             parse_f64_value(event.data.get("prefill_duration_s"));
                     }
-                    if event.data.get("decode_duration_s").is_some() {
+                    if let Some(value) = event
+                        .data
+                        .get("decode_duration_s")
+                        .filter(|value| !value.is_null())
+                    {
                         entry.explicit_decode_timing = true;
-                        entry.decode_duration_s =
-                            parse_f64_value(event.data.get("decode_duration_s"));
+                        entry.decode_duration_s = parse_f64_value(Some(value));
                     }
                 }
             }
@@ -793,7 +803,7 @@ mod tests {
         assert_eq!(map.get("visible_decode_speed_tps"), Some(&Value::Null));
     }
     #[test]
-    fn summary_pairs_only_measured_tokens_and_preserves_explicit_unknown_timing() {
+    fn summary_uses_visible_stream_timing_when_decode_duration_is_null() {
         let events = [
             json!({"type":"llm_output", "timestamp":1, "data":{"model_round":1,
                 "usage":{"input_tokens":100,"output_tokens":100}, "decode_duration_s":2}}),
@@ -810,7 +820,7 @@ mod tests {
                 result.decode_duration_s,
                 result.decode_speed_tps
             ),
-            (Some(500), Some(2.0), Some(50.0))
+            (Some(500), Some(12.0), Some(500.0 / 12.0))
         );
         let usage = crate::schemas::TokenUsage {
             input: 100,

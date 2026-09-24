@@ -78,7 +78,6 @@ pub struct BenchmarkMetrics {
     /// Arithmetic mean of each request's prefill speed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avg_prefill_tps: Option<f64>,
-    pub end_to_end_tps: Option<f64>,
     pub finish_reason: Option<String>,
     pub target_reached: Option<bool>,
 }
@@ -176,7 +175,7 @@ impl LlmClient {
                 return Err("模型流式事件过大".into());
             }
             if last_publish.elapsed().as_millis() >= 100 || done {
-                progress(stats.metrics(output_tokens, started.elapsed().as_secs_f64(), false));
+                progress(stats.metrics(output_tokens, false));
                 last_publish = Instant::now();
             }
             if done {
@@ -193,7 +192,7 @@ impl LlmClient {
         if stats.bytes == 0 {
             return Err("模型未输出可测量内容".into());
         }
-        Ok(stats.metrics(output_tokens, started.elapsed().as_secs_f64(), true))
+        Ok(stats.metrics(output_tokens, true))
     }
 }
 
@@ -312,7 +311,7 @@ impl StreamStats {
         Ok(kind == "message_stop")
     }
 
-    fn metrics(&self, target: u32, elapsed: f64, finished: bool) -> BenchmarkMetrics {
+    fn metrics(&self, target: u32, finished: bool) -> BenchmarkMetrics {
         let input = self
             .usage
             .as_ref()
@@ -348,7 +347,6 @@ impl StreamStats {
             ),
             prefill_tps: divide(input, self.first_s),
             avg_prefill_tps: divide(input, self.first_s),
-            end_to_end_tps: divide(output, Some(elapsed)),
             finish_reason: self.finish_reason.clone(),
             target_reached: finished
                 .then(|| output.map(|tokens| tokens == u64::from(target)))

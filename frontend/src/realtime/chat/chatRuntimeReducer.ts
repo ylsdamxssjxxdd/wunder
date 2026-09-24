@@ -2910,6 +2910,8 @@ const PROJECTED_STATS_DISPLAY_FIELDS = [
   'visibleDecodeDurationS',
   'visible_decode_speed_tps',
   'visibleDecodeSpeedTps',
+  'decode_tokens',
+  'decodeTokens',
   'decode_output_tokens',
   'decodeOutputTokens',
   'decode_speed_tps',
@@ -4923,6 +4925,8 @@ const mirrorProjectedStatsDisplay = (
     'visibleDecodeDurationS',
     'visible_decode_speed_tps',
     'visibleDecodeSpeedTps',
+    'decode_tokens',
+    'decodeTokens',
     'decode_output_tokens',
     'decodeOutputTokens',
     'decode_speed_tps',
@@ -5070,6 +5074,11 @@ const applyProjectedTimingStats = (
     stats,
     'visible_decode_tokens',
     source.visible_decode_tokens ?? source.visibleDecodeTokens
+  );
+  copyProjectedPositiveNumber(
+    stats,
+    'decode_tokens',
+    source.decode_tokens ?? source.decodeTokens
   );
   const timingMs = parsePositiveNumber(
     streamTiming?.content_decode_ms ?? streamTiming?.contentDecodeMs ?? streamTiming?.decode_ms ?? streamTiming?.decodeMs

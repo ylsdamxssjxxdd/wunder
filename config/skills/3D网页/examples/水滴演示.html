@@ -4,81 +4,42 @@
 <meta charset="utf-8">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>重型星舰 3D 交互示例</title>
+<title>水滴 · 连续曲面与曲率航行演示</title>
 <style>
-html, body { margin: 0; min-height: 100%; background: #050b14; color: #e8f1ff; font-family: Arial, "Microsoft YaHei", sans-serif; }
-body { padding: 18px; box-sizing: border-box; }
-.app { max-width: 1180px; margin: 0 auto; }
-.topbar { display: table; width: 100%; margin-bottom: 14px; }
-.heading, .metrics { display: table-cell; vertical-align: top; }
-.heading h1 { margin: 0 0 5px; font-size: 25px; letter-spacing: 1px; }
-.heading p { margin: 0; color: #9eb2ca; font-size: 13px; }
-.metrics { text-align: right; white-space: nowrap; }
-.metric { display: inline-block; min-width: 84px; margin-left: 8px; padding: 8px 10px; border: 1px solid #203954; background: #0d1b2d; }
-.metric strong { display: block; color: #7ce8c1; font-size: 16px; }
-.metric span { color: #89a0bb; font-size: 11px; }
-.stage { position: relative; height: 610px; overflow: hidden; border: 1px solid #23425e; background: #07111e; }
-#scene { display: block; width: 100%; height: 100%; outline: none; cursor: grab; }
-#scene.dragging { cursor: grabbing; }
-.fallback { display: none; position: absolute; top: 0; right: 0; bottom: 0; left: 0; padding: 22px; box-sizing: border-box; background: #0b1727; color: #dcecff; }
-.fallback h2 { margin: 0 0 10px; font-size: 20px; }
-.fallback p { max-width: 560px; color: #a6bad0; line-height: 1.6; }
-#fallback-drawing { width: 100%; max-width: 700px; height: 310px; border: 1px solid #23425e; background: #08111d; }
-.hud { position: absolute; left: 14px; top: 14px; width: 225px; padding: 12px; background: #0b1a2d; border: 1px solid #2a4f6c; pointer-events: none; }
-.hud h2 { margin: 0 0 9px; font-size: 14px; color: #7ce8c1; }
-.hud p { margin: 5px 0; color: #a7bbd0; font-size: 12px; line-height: 1.45; }
-.hud b { color: #f6d681; font-weight: normal; }
-.controls { padding: 11px 0 0; color: #91a8c0; font-size: 12px; }
-button { padding: 8px 12px; margin-right: 7px; color: #e9f4ff; border: 1px solid #376282; background: #12283e; cursor: pointer; }
-button:hover, button:focus { border-color: #7ce8c1; background: #183952; outline: none; }
-.legend { float: right; color: #7992ad; line-height: 31px; }
-.legend i { display: inline-block; width: 9px; height: 9px; margin: 0 5px 0 12px; background: #7ce8c1; }
-.legend i:first-child { margin-left: 0; }
-.legend .amber { background: #f6d681; }
-@media (max-width: 700px) {
-  body { padding: 10px; }
-  .heading, .metrics { display: block; text-align: left; }
-  .metrics { margin-top: 10px; }
-  .metric { margin: 0 5px 0 0; }
-  .stage { height: 500px; }
-  .hud { width: 190px; }
-  .legend { float: none; display: block; }
-}
+html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#02040a;color:#e8eef5;font-family:Arial,"Microsoft YaHei",sans-serif}
+*{box-sizing:border-box}
+#scene{position:fixed;left:0;top:0;width:100%;height:100%;display:block;z-index:0}
+#vignette{position:fixed;left:0;top:0;right:0;bottom:0;z-index:1;pointer-events:none;background:linear-gradient(180deg,rgba(2,4,10,.6),transparent 24%,transparent 76%,rgba(0,0,5,.8)),radial-gradient(ellipse at center,transparent 52%,rgba(0,0,5,.66) 100%)}
+.panel{position:fixed;z-index:3;background:rgba(9,14,23,.9);border:1px solid rgba(125,159,196,.3);border-radius:8px;padding:15px 17px;box-shadow:0 12px 38px rgba(0,0,0,.28)}
+#header{position:fixed;left:30px;top:27px;z-index:3;pointer-events:none}
+#header .kicker{font:11px Consolas,"Courier New",monospace;letter-spacing:.3em;color:#00c7ff;opacity:.9}
+#header h1{margin:10px 0 0;font-size:43px;line-height:1.04;letter-spacing:.04em;color:#f2f6fb;text-shadow:0 0 25px rgba(0,170,255,.28)}
+#header h1 em{font-style:normal;color:#00b9ff}
+#header .sub{margin-top:9px;font-size:12px;letter-spacing:.34em;color:#8c98a7}
+#panel{right:30px;top:27px;width:236px}
+.ptitle{font:10px Consolas,"Courier New",monospace;letter-spacing:.28em;color:#8c98a7;margin-bottom:11px}
+.ptitle b{float:right;width:7px;height:7px;border-radius:50%;background:#37e08b;box-shadow:0 0 9px #37e08b}
+.ctl{display:block;min-height:38px;padding:9px 0;border-top:1px solid rgba(125,159,196,.15);font-size:12px;letter-spacing:.12em}
+.switch{float:right;position:relative;width:38px;height:20px;border-radius:20px;background:rgba(125,159,196,.2);border:1px solid rgba(125,159,196,.34);cursor:pointer}
+.switch:after{content:"";position:absolute;left:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#aeb8c6}
+.switch.on{background:rgba(0,170,255,.38);border-color:#00aaff}.switch.on:after{left:20px;background:#00c7ff;box-shadow:0 0 10px #00c7ff}
+#speedBox{margin-top:8px;padding-top:11px;border-top:1px solid rgba(125,159,196,.15);font-family:Consolas,"Courier New",monospace}
+#speedBox .sl{font-size:10px;letter-spacing:.25em;color:#8c98a7}#speedVal{margin-top:3px;color:#00c7ff;font-size:27px;font-weight:bold;text-shadow:0 0 15px rgba(0,170,255,.55)}#speedMode{margin-top:2px;color:#8c98a7;font-size:10px;letter-spacing:.12em}
+#specs{position:fixed;left:30px;bottom:25px;z-index:3;line-height:1.9;pointer-events:none;font:11px Consolas,"Courier New",monospace;color:#8c98a7;letter-spacing:.08em}#specs b{color:#e8eef5;font-weight:normal}#specs .k{display:inline-block;width:92px;color:#5b6575}
+#hint{position:fixed;right:30px;bottom:25px;z-index:3;text-align:right;line-height:2;font:11px Consolas,"Courier New",monospace;color:#5b6575;letter-spacing:.1em;pointer-events:none}#hint em{font-style:normal;color:#00c7ff}
+#loader{position:fixed;left:0;top:0;right:0;bottom:0;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#02040a;transition:opacity .8s ease}#loader.done{opacity:0;pointer-events:none}#loader .lk{font:11px Consolas,"Courier New",monospace;letter-spacing:.4em;color:#00aaff}#loader .lt{margin-top:14px;font-size:28px;font-weight:bold;letter-spacing:.12em}#loader .bar{width:220px;height:2px;margin-top:26px;overflow:hidden;background:rgba(125,159,196,.15)}#loader .bar i{display:block;width:0;height:100%;background:#00aaff;box-shadow:0 0 12px #00aaff;animation:load 1.2s ease forwards}@keyframes load{to{width:100%}}
+#fallback{display:none;position:fixed;left:0;top:0;right:0;bottom:0;z-index:8;padding:90px 30px 30px;background:#02040a;color:#dbe8f4}#fallback h2{font-size:25px;color:#00c7ff}#fallback p{max-width:680px;color:#8c98a7;line-height:1.7}#fallbackCanvas{width:100%;max-width:900px;height:340px;border:1px solid #21405b;background:#050912}
+@media(max-width:700px){#header{left:18px;top:18px}#header h1{font-size:28px}#header .sub{letter-spacing:.13em}#panel{right:18px;top:auto;bottom:18px;width:205px}#specs,#hint{display:none}}
 </style>
 </head>
 <body>
-<div class="app">
-  <div class="topbar">
-    <div class="heading">
-      <h1>重型星舰 · 深空无畏舰交互演示</h1>
-      <p>程序化舰体 / 分层装甲 / 巨型引擎 / 老浏览器降级</p>
-    </div>
-    <div class="metrics">
-      <div class="metric"><strong id="fps">--</strong><span>帧率</span></div>
-      <div class="metric"><strong id="parts">--</strong><span>模型部件</span></div>
-      <div class="metric"><strong id="mode">准备中</strong><span>渲染模式</span></div>
-    </div>
-  </div>
-  <div class="stage">
-    <canvas id="scene" tabindex="0" aria-label="可交互的重型星舰三维模型"></canvas>
-    <div class="hud" id="hud">
-      <h2 id="selected-title">当前焦点：舰体主装甲</h2>
-      <p id="selected-text">拖拽旋转舰体，滚轮调整距离。点击舰体部件查看说明。</p>
-      <p>状态：<b id="station-state">巡航中</b></p>
-    </div>
-    <div class="fallback" id="fallback">
-      <h2>已切换到兼容示意模式</h2>
-      <p>当前浏览器没有可用的 WebGL。页面仍保留结构示意和模块说明；在支持 WebGL 的浏览器中可恢复完整三维交互。</p>
-      <canvas id="fallback-drawing" width="700" height="310" aria-label="重型星舰二维结构示意"></canvas>
-    </div>
-  </div>
-  <div class="controls">
-    <button id="reset" type="button" aria-label="重置星舰视角">重置视角</button>
-    <button id="pause" type="button" aria-label="暂停或继续星舰动画">暂停动画</button>
-    <button id="power" type="button" aria-label="切换节能显示">节能显示</button>
-    <span class="legend"><i></i>可选模块 <i class="amber"></i>当前选中</span>
-  </div>
-</div>
+<canvas id="scene" aria-label="可交互的连续金属曲面水滴模型"></canvas><div id="vignette"></div>
+<div id="header"><div class="kicker">DEEP SPACE // CONTINUOUS SURFACE</div><h1>水滴 <em>DRIP-01</em></h1><div class="sub">连续金属曲面 · 曲率航行实验体</div></div>
+<div id="panel" class="panel"><div class="ptitle">FLIGHT SYSTEMS <b></b></div><div class="ctl">自动旋转 <span id="rotateSwitch" class="switch on" role="button" tabindex="0" aria-label="切换自动旋转"></span></div><div class="ctl">曲率引擎 <span id="warpSwitch" class="switch" role="button" tabindex="0" aria-label="切换曲率引擎"></span></div><div id="speedBox"><div class="sl">VELOCITY</div><div id="speedVal">000.0 c</div><div id="speedMode">IMPULSE · 巡航模式</div></div></div>
+<div id="specs"><div><span class="k">LENGTH</span><b>18.4 m</b></div><div><span class="k">SURFACE</span><b>CONTINUOUS</b></div><div><span class="k">MATERIAL</span><b>LIQUID METAL</b></div><div><span class="k">STATUS</span><b id="statusText">READY</b></div></div>
+<div id="hint"><em>拖拽</em> 旋转视角 · <em>滚轮</em> 缩放<br>按住 <em>W</em> 进入曲率航行</div>
+<div id="loader"><div class="lk">INITIALIZING</div><div class="lt">水滴 DRIP-01</div><div class="bar"><i></i></div></div>
+<div id="fallback"><h2>已切换到兼容示意模式</h2><p>当前浏览器无法启用 WebGL。页面仍保留连续曲面水滴的结构示意；在支持 WebGL 的浏览器中可恢复完整金属反射、引擎辉光和曲率拖影。</p><canvas id="fallbackCanvas" width="900" height="340" aria-label="水滴二维结构示意"></canvas></div>
 <script>
 /* Bundled Three.js license:
 The MIT License
@@ -108,516 +69,74 @@ THE SOFTWARE.
 
 </script>
 <script>
-(function () {
+(function(){
   'use strict';
-  var canvas = document.getElementById('scene');
-  var fallback = document.getElementById('fallback');
-  var fallbackCanvas = document.getElementById('fallback-drawing');
-  var fpsNode = document.getElementById('fps');
-  var modeNode = document.getElementById('mode');
-  var partsNode = document.getElementById('parts');
-  var selectedTitle = document.getElementById('selected-title');
-  var selectedText = document.getElementById('selected-text');
-  var stationState = document.getElementById('station-state');
-  var resetButton = document.getElementById('reset');
-  var pauseButton = document.getElementById('pause');
-  var powerButton = document.getElementById('power');
-  var gl = null;
-  var renderer = null;
-  var scene = null;
-  var camera = null;
-  var station = null;
-  var ring = null;
-  var ringParts = [];
-  var selectable = [];
-  var raycaster = null;
-  var pointer = null;
-  var selected = null;
-  var dragging = false;
-  var lastX = 0;
-  var lastY = 0;
-  var yaw = 0.65;
-  var pitch = 0.3;
-  var distance = 10.5;
-  var paused = false;
-  var energySave = false;
-  var animationId = 0;
-  var lastTime = 0;
-  var frameCount = 0;
-  var fpsTime = 0;
-  var resizeQueued = false;
-  var materials = {};
-  var labels = {
-    core: ['舰体主装甲', '多层楔形装甲构成的主舰体，承担舰桥、武器与机库模块。'],
-    ring: ['主推进环', '尾部环形主推进器持续点火，利用层级动画制造深度与尺度感。'],
-    panel: ['侧翼装甲', '两侧分层装甲与散热脊，使用重复构件表现重型舰体的工业细节。'],
-    pod: ['机库与推进舱', '腹部机库门与尾部引擎舱，点击可查看关键模块。'],
-    antenna: ['舰桥与天线', '抬高舰桥与指挥天线构成视觉制高点，展示父子层级关系。']
-  };
+  var canvas=document.getElementById('scene'),fallback=document.getElementById('fallback'),fallbackCanvas=document.getElementById('fallbackCanvas');
+  var renderer,scene,camera,raycaster,drop,stars,dust,warpLines,warpMaterial,warpGeometry,warpPositions,warpDirections,warpRadii,softGlow,engineLight;
+  var engineGlow=[],rotateSwitch=document.getElementById('rotateSwitch'),warpSwitch=document.getElementById('warpSwitch'),speedVal=document.getElementById('speedVal'),speedMode=document.getElementById('speedMode'),statusText=document.getElementById('statusText');
+  var autoRotate=true,warpToggle=false,warpHeld=false,warpAmount=0,dragging=false,lastX=0,lastY=0,yaw=.42,pitch=.18,distance=11.5,lastTime=0;
 
-  function showFallback() {
-    if (canvas) { canvas.style.display = 'none'; }
-    if (fallback) { fallback.style.display = 'block'; }
-    if (modeNode) { modeNode.textContent = '2D 兼容'; }
-    drawFallback();
-  }
-
-  function drawFallback() {
-    var ctx;
-    var w;
-    var h;
-    if (!fallbackCanvas || !fallbackCanvas.getContext) { return; }
-    ctx = fallbackCanvas.getContext('2d');
-    if (!ctx) { return; }
-    w = fallbackCanvas.width;
-    h = fallbackCanvas.height;
-    ctx.fillStyle = '#08111d';
-    ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = '#23425e';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(50, 184); ctx.lineTo(650, 184);
-    ctx.stroke();
-    ctx.strokeStyle = '#7ce8c1';
-    ctx.lineWidth = 8;
-    ctx.beginPath();
-    ctx.moveTo(170, 184); ctx.lineTo(520, 184);
-    ctx.stroke();
-    ctx.strokeStyle = '#f6d681';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(110, 184); ctx.lineTo(188, 142); ctx.lineTo(500, 142); ctx.lineTo(590, 184); ctx.lineTo(500, 226); ctx.lineTo(188, 226); ctx.closePath();
-    ctx.stroke();
-    ctx.strokeStyle = '#8eb9ee';
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.moveTo(350, 122); ctx.lineTo(350, 246);
-    ctx.moveTo(245, 140); ctx.lineTo(455, 140);
-    ctx.stroke();
-    ctx.fillStyle = '#a9bfd7';
-    ctx.font = '14px Arial';
-    ctx.fillText('舰体主装甲', 310, 140);
-    ctx.fillText('主推进环', 303, 280);
-    ctx.fillText('侧翼装甲', 74, 145);
-  }
-
-  function makeMaterial(color, emissive) {
-    return new THREE.MeshLambertMaterial({ color: color, emissive: emissive || 0x000000 });
-  }
-
-  function addPart(object, type) {
-    object.userData = { type: type };
-    selectable.push(object);
-    station.add(object);
-    return object;
-  }
-
-  function addBox(parent, size, position, material, type) {
-    var mesh = new THREE.Mesh(new THREE.BoxGeometry(size[0], size[1], size[2]), material);
-    mesh.position.set(position[0], position[1], position[2]);
-    mesh.userData = { type: type || 'panel' };
-    parent.add(mesh);
-    if (type) { selectable.push(mesh); }
-    return mesh;
-  }
-
-  function createSolarWing(x, z, rotation) {
-    var wing = new THREE.Group();
-    var frame = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.06, 2.45), materials.panel);
-    var cells = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.035, 2.28), materials.cell);
-    var bar1 = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.045, 0.035), materials.frame);
-    var bar2 = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.045, 0.035), materials.frame);
-    wing.add(frame); wing.add(cells); wing.add(bar1); wing.add(bar2);
-    bar1.position.z = -0.76; bar2.position.z = 0.76;
-    wing.position.set(x, 0, z);
-    wing.rotation.y = rotation;
-    wing.userData = { type: 'panel' };
-    station.add(wing);
-    selectable.push(wing);
-    return wing;
-  }
-
-  function makeWedgeGeometry(length, width, height) {
-    // Sectioned faceted hull: a continuous mesh gives the vessel a readable silhouette.
-    var geometry = new THREE.BufferGeometry();
-    var halfWidth = width / 2;
-    var halfLength = length / 2;
-    var ridge = height * 0.20;
-    var sections = [
-      { z: halfLength, w: halfWidth * 0.06, h: height * 0.18, y: height * 0.04 },
-      { z: halfLength * 0.78, w: halfWidth * 0.34, h: height * 0.48, y: height * 0.02 },
-      { z: halfLength * 0.43, w: halfWidth * 0.72, h: height * 0.82, y: 0 },
-      { z: halfLength * 0.02, w: halfWidth, h: height, y: 0 },
-      { z: -halfLength * 0.48, w: halfWidth * 0.95, h: height * 0.96, y: -height * 0.02 },
-      { z: -halfLength * 0.82, w: halfWidth * 0.84, h: height * 0.86, y: -height * 0.04 },
-      { z: -halfLength, w: halfWidth * 0.68, h: height * 0.78, y: -height * 0.05 }
-    ];
-    var ring = [
-      [-0.62, -0.50], [0.62, -0.50], [1.00, -0.24], [0.84, 0.30],
-      [0.00, 0.50], [-0.84, 0.30], [-1.00, -0.24]
-    ];
-    var vertices = [];
-    var indices = [];
-    var i;
-    var j;
-    for (i = 0; i < sections.length; i += 1) {
-      for (j = 0; j < ring.length; j += 1) {
-        vertices.push(sections[i].w * ring[j][0]);
-        vertices.push(sections[i].y + sections[i].h * ring[j][1] + (ring[j][1] > 0.4 ? ridge * (1 - Math.abs(ring[j][0])) : 0));
-        vertices.push(sections[i].z);
+  function mat(color,metal,rough,emissive,intensity){return new THREE.MeshStandardMaterial({color:color,metalness:metal,roughness:rough,emissive:emissive||0,emissiveIntensity:intensity||0});}
+  function glowTexture(a,b,size){var c=document.createElement('canvas'),g,t;c.width=c.height=size||128;g=c.getContext('2d');t=g.createRadialGradient(c.width/2,c.height/2,0,c.width/2,c.height/2,c.width/2);t.addColorStop(0,a);t.addColorStop(.3,b);t.addColorStop(1,'rgba(0,0,0,0)');g.fillStyle=t;g.fillRect(0,0,c.width,c.height);return new THREE.CanvasTexture(c);}
+  function dropGeometry(){
+    var points=[],i,t,y,r;
+    // Analytic asymmetric profile: a fine nose on the left, a broad spherical cap on the right.
+    for(i=0;i<=160;i++){
+      t=i/160;
+      y=-3.85+t*7.7;
+      if(t<.46){
+        var left=t/.46;
+        r=1.72*Math.pow(Math.sin(Math.PI*left/2),.55);
+      }else{
+        var right=(t-.46)/.54;
+        // The rounded end approaches the axis with zero slope, avoiding a second sharp tip.
+        r=1.72*Math.pow(Math.cos(Math.PI*right/2),1.8);
       }
+      points.push(new THREE.Vector2(r,y));
     }
-    for (i = 0; i < sections.length - 1; i += 1) {
-      for (j = 0; j < ring.length; j += 1) {
-        var next = (j + 1) % ring.length;
-        var a0 = i * ring.length + j;
-        var b0 = i * ring.length + next;
-        var a1 = (i + 1) * ring.length + j;
-        var b1 = (i + 1) * ring.length + next;
-        indices.push(a0, b0, b1, a0, b1, a1);
-      }
-    }
-    for (j = 1; j < ring.length - 1; j += 1) {
-      indices.push(0, j + 1, j);
-      var last = (sections.length - 1) * ring.length;
-      indices.push(last, last + j, last + j + 1);
-    }
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-    geometry.setIndex(indices);
-    geometry.computeVertexNormals();
-    return geometry;
+    return new THREE.LatheGeometry(points,96);
+  }  function createDrop(){
+    var geometry=dropGeometry();
+    drop=new THREE.Group();
+    // The longitudinal axis runs left-to-right in the viewing plane.
+    drop.rotation.z=-Math.PI/2;
+    drop.rotation.y=.18;
+    scene.add(drop);
+    var liquid=mat(0xb9c7d0,.94,.31,0x080e16,.06);
+    liquid.flatShading=false;
+    drop.add(new THREE.Mesh(geometry,liquid));
+    return drop;
   }
-
-  function addShipMesh(parent, geometry, material, position, scale, type) {
-    var mesh = new THREE.Mesh(geometry, material);
-    mesh.position.set(position[0], position[1], position[2]);
-    if (scale) { mesh.scale.set(scale[0], scale[1], scale[2]); }
-    mesh.userData = { type: type || 'core' };
-    parent.add(mesh);
-    selectable.push(mesh);
-    return mesh;
+  function createSpace(){
+    var n=1800,i,g,v,a,b,r,nebulaPurple,nebulaTeal;
+    softGlow=glowTexture('rgba(255,255,255,1)','rgba(255,255,255,.42)',128);
+    scene.add(new THREE.AmbientLight(0x203142,.32));
+    var warm=new THREE.DirectionalLight(0xfff1dc,1.1);warm.position.set(5,7,6);scene.add(warm);
+    var cyan=new THREE.PointLight(0x00ffcc,5,65);cyan.position.set(-6,4,-6);scene.add(cyan);
+    var amber=new THREE.PointLight(0xff8830,4,60);amber.position.set(7,-4,-3);scene.add(amber);
+    var magenta=new THREE.PointLight(0xff4dd2,2.4,60);magenta.position.set(-7,2,6);scene.add(magenta);
+    g=new THREE.BufferGeometry();v=new Float32Array(n*3);for(i=0;i<n;i++){a=Math.random()*Math.PI*2;b=Math.acos(2*Math.random()-1);r=75+Math.random()*620;v[i*3]=Math.sin(b)*Math.cos(a)*r;v[i*3+1]=Math.cos(b)*r;v[i*3+2]=Math.sin(b)*Math.sin(a)*r;}g.setAttribute('position',new THREE.BufferAttribute(v,3));stars=new THREE.Points(g,new THREE.PointsMaterial({color:0xcfe4ff,size:1.4,sizeAttenuation:true,map:softGlow,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,opacity:.86}));scene.add(stars);
+    g=new THREE.BufferGeometry();v=new Float32Array(500*3);for(i=0;i<500;i++){a=Math.random()*Math.PI*2;r=35+Math.random()*82;v[i*3]=Math.cos(a)*r;v[i*3+1]=(Math.random()-.5)*r*.75;v[i*3+2]=Math.sin(a)*r;}g.setAttribute('position',new THREE.BufferAttribute(v,3));dust=new THREE.Points(g,new THREE.PointsMaterial({color:0x88aaff,size:.55,map:softGlow,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,opacity:.32}));scene.add(dust);
+    nebulaPurple=glowTexture('rgba(120,60,200,.48)','rgba(70,30,140,.18)',256);nebulaTeal=glowTexture('rgba(20,140,150,.44)','rgba(15,70,110,.16)',256);addNebula(nebulaPurple,-25,10,-48,35);addNebula(nebulaTeal,25,-10,-42,30);
+    warpDirections=new Float32Array(700*3);warpRadii=new Float32Array(700);warpPositions=new Float32Array(700*6);g=new THREE.BufferGeometry();for(i=0;i<700;i++){var q=new THREE.Vector3(Math.random()-.5,Math.random()-.5,Math.random()-.5).normalize();warpDirections[i*3]=q.x;warpDirections[i*3+1]=q.y;warpDirections[i*3+2]=q.z;warpRadii[i]=45+Math.random()*500;}g.setAttribute('position',new THREE.BufferAttribute(warpPositions,3));warpGeometry=g;warpMaterial=new THREE.LineBasicMaterial({color:0x9fd8ff,transparent:true,opacity:0,blending:THREE.AdditiveBlending,depthWrite:false});warpLines=new THREE.LineSegments(g,warpMaterial);warpLines.frustumCulled=false;scene.add(warpLines);
   }
-
-  function addLongBox(parent, size, position, material, type) {
-    return addShipMesh(parent, new THREE.BoxGeometry(size[0], size[1], size[2]), material, position, null, type);
-  }
-
-  function addEngine(parent, x, y, z, scale) {
-    var nacelle = new THREE.Group();
-    var body = new THREE.Mesh(new THREE.CylinderGeometry(0.34 * scale, 0.5 * scale, 2.7 * scale, 10), materials.engine);
-    var collar = new THREE.Mesh(new THREE.TorusGeometry(0.44 * scale, 0.07 * scale, 6, 16), materials.trim);
-    var nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.45 * scale, 0.28 * scale, 0.42 * scale, 10), materials.nozzle);
-    var glow = new THREE.Mesh(new THREE.CylinderGeometry(0.26 * scale, 0.16 * scale, 0.08 * scale, 10), materials.glow);
-    body.rotation.x = Math.PI / 2; collar.rotation.x = Math.PI / 2; nozzle.rotation.x = Math.PI / 2; glow.rotation.x = Math.PI / 2;
-    body.position.z = 0.1 * scale; collar.position.z = -1.15 * scale; nozzle.position.z = -1.38 * scale; glow.position.z = -1.61 * scale;
-    nacelle.add(body); nacelle.add(collar); nacelle.add(nozzle); nacelle.add(glow);
-    nacelle.position.set(x, y, z);
-    nacelle.userData = { type: 'engine' };
-    parent.add(nacelle); selectable.push(nacelle);
-    ringParts.push(glow);
-  }
-
-  function createStation() {
-    var i;
-    var z;
-    var plate;
-    var window;
-    var turret;
-    var starGeometry;
-    var starMaterial;
-    var stars;
-    var planet;
-    var atmosphere;
-    var hull;
-    var tower;
-    station = new THREE.Group();
-    station.name = 'dreadnought-root';
-    station.rotation.y = 0;
-    station.scale.set(0.82, 0.82, 0.82);
-    scene.add(station);
-    selectable = [];
-    ringParts = [];
-    materials.hull = makeMaterial(0x263645, 0x050c14);
-    materials.hullTop = makeMaterial(0x4c5f70, 0x091727);
-    materials.hullDark = makeMaterial(0x111c28, 0x02050a);
-    materials.armor = makeMaterial(0x657789, 0x0a1824);
-    materials.trim = makeMaterial(0xd0a75b, 0x49310a);
-    materials.engine = makeMaterial(0x233b52, 0x071d30);
-    materials.nozzle = makeMaterial(0x111a25, 0x010308);
-    materials.glow = makeMaterial(0x5bd7ff, 0x168ac0);
-    materials.window = makeMaterial(0x132a43, 0x0a5b8b);
-    materials.red = makeMaterial(0x9e302f, 0x3d0808);
-    hull = addShipMesh(station, makeWedgeGeometry(9.6, 5.2, 2.05), materials.hull, [0, 0, 0], null, 'hull');
-    addShipMesh(station, makeWedgeGeometry(8.55, 4.40, 0.92), materials.hullTop, [0, 0.66, 0.05], null, 'core');
-    addShipMesh(station, makeWedgeGeometry(8.10, 4.18, 0.45), materials.hullDark, [0, -0.74, -0.18], null, 'core');
-    addLongBox(station, [4.2, 0.10, 0.20], [0, 1.10, 0.05], materials.trim, 'core');
-    addLongBox(station, [3.4, 0.08, 0.15], [0, -1.08, -0.55], materials.trim, 'core');
-    addShipMesh(station, makeWedgeGeometry(5.8, 2.65, 0.36), materials.armor, [0, 1.12, 0.86], null, 'armor');
-    for (i = -3; i <= 3; i += 1) {
-      z = i * 0.78 - 0.55;
-      plate = addLongBox(station, [2.1 - Math.abs(i) * 0.12, 0.06, 0.055], [0, 0.76, z], materials.armor, 'hull');
-      plate.rotation.z = i * 0.018;
-      addLongBox(station, [0.09, 0.46 - Math.abs(i) * 0.025, 0.10], [-1.93 + Math.abs(i) * 0.12, 0.02, z], materials.armor, 'hull');
-      addLongBox(station, [0.09, 0.46 - Math.abs(i) * 0.025, 0.10], [1.93 - Math.abs(i) * 0.12, 0.02, z], materials.armor, 'hull');
-    }
-    for (i = -4; i <= 4; i += 1) {
-      window = addLongBox(station, [0.10, 0.08, 0.22], [-0.76 + (i + 4) * 0.19, 0.89, 1.15], materials.window, 'window');
-      window.rotation.y = (i - 2) * 0.08;
-    }
-    tower = new THREE.Group();
-    tower.position.set(0, 1.36, 0.58);
-    tower.userData = { type: 'bridge' };
-    tower.add(new THREE.Mesh(new THREE.CylinderGeometry(0.74, 0.96, 0.32, 6), materials.hullDark));
-    var bridgeGlass = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.70, 0.20, 6), materials.window);
-    bridgeGlass.position.y = 0.24; tower.add(bridgeGlass);
-    var bridgeTop = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.46, 0.25, 6), materials.hullTop);
-    bridgeTop.position.y = 0.47; tower.add(bridgeTop);
-    var mast = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 0.85, 6), materials.trim);
-    mast.position.y = 0.92; tower.add(mast);
-    station.add(tower); selectable.push(tower);
-    turret = new THREE.Group();
-    turret.position.set(0, 1.30, -0.35); turret.userData = { type: 'weapon' };
-    turret.add(new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.39, 0.15, 8), materials.hullDark));
-    var barrel = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 1.15), materials.trim);
-    barrel.position.z = 0.56; turret.add(barrel);
-    station.add(turret); selectable.push(turret);
-    addLongBox(station, [0.24, 0.20, 1.18], [-1.22, 0.14, 1.42], materials.hullDark, 'weapon');
-    addLongBox(station, [0.24, 0.20, 1.18], [1.22, 0.14, 1.42], materials.hullDark, 'weapon');
-    addLongBox(station, [0.34, 0.24, 2.05], [-1.67, 0.02, -0.55], materials.armor, 'armor');
-    addLongBox(station, [0.34, 0.24, 2.05], [1.67, 0.02, -0.55], materials.armor, 'armor');
-    addLongBox(station, [0.42, 0.44, 1.25], [0, -0.77, -0.95], materials.hullDark, 'hangar');
-    addLongBox(station, [1.18, 0.06, 0.06], [0, -0.57, -1.58], materials.glow, 'hangar');
-    addLongBox(station, [0.06, 0.22, 0.08], [-0.53, -0.69, -1.56], materials.trim, 'hangar');
-    addLongBox(station, [0.06, 0.22, 0.08], [0.53, -0.69, -1.56], materials.trim, 'hangar');
-    addEngine(station, -1.42, 0.38, -1.95, 1.05);
-    addEngine(station, 1.42, 0.38, -1.95, 1.05);
-    addEngine(station, -1.12, -0.37, -2.45, 0.72);
-    addEngine(station, 1.12, -0.37, -2.45, 0.72);
-    // Dense but bounded greebles: repeated service ribs make the hull read as a huge engineered vessel.
-    for (i = -5; i <= 5; i += 1) {
-      z = i * 0.53 - 0.35;
-      addLongBox(station, [0.12, 0.18, 0.28], [-2.08, 0.34, z], materials.armor, 'armor');
-      addLongBox(station, [0.12, 0.18, 0.28], [2.08, 0.34, z], materials.armor, 'armor');
-      if (i % 2 === 0) {
-        addLongBox(station, [0.08, 0.07, 0.14], [-2.16, 0.58, z], materials.red, 'weapon');
-        addLongBox(station, [0.08, 0.07, 0.14], [2.16, 0.58, z], materials.red, 'weapon');
-      }
-    }
-    for (i = -3; i <= 3; i += 1) {
-      z = i * 0.48 - 0.35;
-      addLongBox(station, [0.44, 0.10, 0.12], [0, 1.08, z], materials.hullTop, 'armor');
-      addLongBox(station, [0.16, 0.12, 0.22], [0, 1.16, z], materials.trim, 'bridge');
-    }
-    addLongBox(station, [0.28, 0.30, 1.6], [-1.80, 0.82, 0.75], materials.hullDark, 'armor');
-    addLongBox(station, [0.28, 0.30, 1.6], [1.80, 0.82, 0.75], materials.hullDark, 'armor');
-    addLongBox(station, [0.10, 0.10, 1.4], [-1.98, 0.83, 0.75], materials.glow, 'window');
-    addLongBox(station, [0.10, 0.10, 1.4], [1.98, 0.83, 0.75], materials.glow, 'window');
-    ring = new THREE.Group();
-    ring.position.set(0, 0, -4.38);
-    ring.userData = { type: 'engine' };
-    ring.add(new THREE.Mesh(new THREE.TorusGeometry(0.86, 0.12, 6, 18), materials.trim));
-    ring.add(new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.08, 6, 18), materials.glow));
-    var mainGlow = new THREE.Mesh(new THREE.CylinderGeometry(0.47, 0.20, 0.10, 12), materials.glow);
-    mainGlow.rotation.x = Math.PI / 2; mainGlow.position.z = -0.10; ring.add(mainGlow);
-    station.add(ring); selectable.push(ring); ringParts.push(mainGlow);
-    starGeometry = new THREE.BufferGeometry();
-    var starVertices = new Float32Array(720);
-    for (i = 0; i < 240; i += 1) {
-      starVertices[i * 3] = (Math.random() - 0.5) * 42;
-      starVertices[i * 3 + 1] = (Math.random() - 0.5) * 25;
-      starVertices[i * 3 + 2] = -8 - Math.random() * 28;
-    }
-    starGeometry.setAttribute('position', new THREE.BufferAttribute(starVertices, 3));
-    starMaterial = new THREE.PointsMaterial({ color: 0x8dbbe8, size: 0.055, transparent: true, opacity: 0.75 });
-    stars = new THREE.Points(starGeometry, starMaterial); scene.add(stars);
-    planet = new THREE.Mesh(new THREE.SphereGeometry(2.65, 18, 12), new THREE.MeshLambertMaterial({ color: 0x183a58, emissive: 0x061322 }));
-    planet.position.set(5.5, -4.6, -23); scene.add(planet);
-    atmosphere = new THREE.Mesh(new THREE.SphereGeometry(2.71, 18, 12), new THREE.MeshBasicMaterial({ color: 0x4d9bd2, transparent: true, opacity: 0.14, side: THREE.BackSide }));
-    atmosphere.position.copy(planet.position); scene.add(atmosphere);
-    partsNode.textContent = String(selectable.length);
-  }
-
-  function updateCamera() {
-    var cp = Math.cos(pitch);
-    camera.position.set(Math.sin(yaw) * cp * distance, Math.sin(pitch) * distance, Math.cos(yaw) * cp * distance);
-    camera.lookAt(new THREE.Vector3(0, 0, 0));
-  }
-
-  function resize() {
-    var width = canvas.clientWidth || canvas.parentNode.clientWidth || 640;
-    var height = canvas.clientHeight || canvas.parentNode.clientHeight || 480;
-    if (!renderer || width < 1 || height < 1) { return; }
-    renderer.setSize(width, height, false);
-    camera.aspect = width / height;
-    camera.updateProjectionMatrix();
-    render();
-  }
-
-  function requestResize() {
-    if (resizeQueued) { return; }
-    resizeQueued = true;
-    setTimeout(function () { resizeQueued = false; resize(); }, 30);
-  }
-
-  function render() {
-    if (renderer && scene && camera) { renderer.render(scene, camera); }
-  }
-
-  function setSelected(object) {
-    var i;
-    var type;
-    var data;
-    if (selected && selected.material && selected.material.emissive) {
-      selected.material.emissive.setHex(selected.userData.originalEmissive || 0x000000);
-    }
-    selected = object;
-    if (!selected) {
-      selectedTitle.textContent = '当前焦点：舰体主装甲';
-      selectedText.textContent = '拖拽旋转舰体，滚轮调整距离。点击舰体部件查看说明。';
-      return;
-    }
-    type = selected.userData.type || 'core';
-    data = labels[type] || labels.core;
-    selectedTitle.textContent = '当前焦点：' + data[0];
-    selectedText.textContent = data[1];
-    if (selected.material && selected.material.emissive) {
-      selected.userData.originalEmissive = selected.material.emissive.getHex();
-      selected.material.emissive.setHex(0x5d4420);
-    }
-    for (i = 0; i < selectable.length; i += 1) {
-      if (selectable[i] === selected) { break; }
-    }
-  }
-
-  function pointerPosition(event) {
-    var rect = canvas.getBoundingClientRect();
-    var x = event.clientX;
-    var y = event.clientY;
-    if (event.touches && event.touches.length) { x = event.touches[0].clientX; y = event.touches[0].clientY; }
-    pointer.x = ((x - rect.left) / rect.width) * 2 - 1;
-    pointer.y = -((y - rect.top) / rect.height) * 2 + 1;
-    return { x: x, y: y };
-  }
-
-  function pick(event) {
-    var hit;
-    pointerPosition(event);
-    raycaster.setFromCamera(pointer, camera);
-    hit = raycaster.intersectObjects(selectable, true);
-    setSelected(hit.length ? hit[0].object : null);
-    render();
-  }
-
-  function beginDrag(event) {
-    var point;
-    if (event.touches && event.touches.length > 1) { return; }
-    point = pointerPosition(event);
-    dragging = true; lastX = point.x; lastY = point.y;
-    canvas.className = 'dragging';
-    if (event.preventDefault) { event.preventDefault(); }
-  }
-
-  function moveDrag(event) {
-    var point;
-    if (!dragging) { return; }
-    point = pointerPosition(event);
-    yaw -= (point.x - lastX) * 0.008;
-    pitch += (point.y - lastY) * 0.008;
-    pitch = Math.max(-1.2, Math.min(1.2, pitch));
-    lastX = point.x; lastY = point.y;
-    updateCamera(); render();
-    if (event.preventDefault) { event.preventDefault(); }
-  }
-
-  function endDrag() {
-    dragging = false; canvas.className = '';
-  }
-
-  function wheel(event) {
-    var delta = event.wheelDelta ? -event.wheelDelta / 120 : event.detail ? event.detail / 3 : event.deltaY / 100;
-    distance += delta * 0.35;
-    distance = Math.max(6.5, Math.min(18, distance));
-    updateCamera(); render();
-    if (event.preventDefault) { event.preventDefault(); }
-  }
-
-  function resetView() {
-    yaw = 0.46; pitch = 0.22; distance = 10.5; updateCamera(); render();
-  }
-
-  function togglePause() {
-    paused = !paused;
-    pauseButton.textContent = paused ? '继续动画' : '暂停动画';
-    stationState.textContent = paused ? '已暂停' : '巡航中';
-  }
-
-  function togglePower() {
-    var i;
-    energySave = !energySave;
-    powerButton.textContent = energySave ? '标准显示' : '节能显示';
-    renderer.setPixelRatio(energySave ? 1 : Math.min(window.devicePixelRatio || 1, 1.5));
-    for (i = 0; i < ringParts.length; i += 1) { ringParts[i].visible = !energySave || i % 2 === 0; }
-    render();
-  }
-
-  function animate(time) {
-    var delta = Math.min(0.05, (time - lastTime) / 1000 || 0);
-    lastTime = time;
-    frameCount += 1;
-    if (time - fpsTime > 800) {
-      fpsNode.textContent = String(Math.round(frameCount * 1000 / Math.max(1, time - fpsTime)));
-      frameCount = 0; fpsTime = time;
-    }
-    if (!paused && ring) { ring.rotation.y += delta * (energySave ? 0.12 : 0.28); render(); }
-    animationId = (window.requestAnimationFrame || function (fn) { return window.setTimeout(function () { fn(new Date().getTime()); }, 33); })(animate);
-  }
-
-  function init() {
-    try {
-      gl = canvas && (canvas.getContext('webgl') || canvas.getContext('experimental-webgl'));
-      if (!gl || typeof THREE === 'undefined') { showFallback(); return; }
-      scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x07111e);
-      camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
-      renderer = new THREE.WebGLRenderer({ canvas: canvas, context: gl, antialias: false });
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
-      scene.add(new THREE.AmbientLight(0x5f7488, 0.85));
-      var key = new THREE.DirectionalLight(0xffffff, 1.3);
-      key.position.set(4, 7, 5); key.intensity = 0.95; scene.add(key);
-      var rim = new THREE.DirectionalLight(0x5a9dd0, 0.7);
-      rim.position.set(-5, 1, -6); rim.intensity = 1.0; scene.add(rim);
-      raycaster = new THREE.Raycaster(); pointer = new THREE.Vector2();
-      createStation(); updateCamera(); resize();
-      modeNode.textContent = 'WebGL';
-      canvas.addEventListener('mousedown', beginDrag, false);
-      canvas.addEventListener('mousemove', moveDrag, false);
-      canvas.addEventListener('mouseup', function (event) { if (dragging) { endDrag(); } else { pick(event); } }, false);
-      canvas.addEventListener('mouseleave', endDrag, false);
-      canvas.addEventListener('touchstart', beginDrag, false);
-      canvas.addEventListener('touchmove', moveDrag, false);
-      canvas.addEventListener('touchend', function (event) { if (dragging) { endDrag(); } else { pick(event); } }, false);
-      canvas.addEventListener('wheel', wheel, false);
-      canvas.addEventListener('mousewheel', wheel, false);
-      canvas.addEventListener('DOMMouseScroll', wheel, false);
-      resetButton.addEventListener('click', resetView, false);
-      pauseButton.addEventListener('click', togglePause, false);
-      powerButton.addEventListener('click', togglePower, false);
-      window.addEventListener('resize', requestResize, false);
-      canvas.addEventListener('keydown', function (event) {
-        if (event.keyCode === 32) { togglePause(); if (event.preventDefault) { event.preventDefault(); } }
-        if (event.keyCode === 82) { resetView(); }
-      }, false);
-      animationId = (window.requestAnimationFrame || function (fn) { return window.setTimeout(function () { fn(new Date().getTime()); }, 33); })(animate);
-    } catch (error) {
-      if (window.console && console.warn) { console.warn('3D initialization failed'); }
-      if (animationId && window.cancelAnimationFrame) { window.cancelAnimationFrame(animationId); }
-      showFallback();
-    }
-  }
-
-  if (!canvas || !fallback) { return; }
-  if (document.addEventListener) { document.addEventListener('DOMContentLoaded', init, false); }
-  else { window.attachEvent('onload', init); }
+  function addNebula(texture,x,y,z,size){var s=new THREE.Sprite(new THREE.SpriteMaterial({map:texture,transparent:true,opacity:.4,blending:THREE.AdditiveBlending,depthWrite:false}));s.position.set(x,y,z);s.scale.set(size,size,size);scene.add(s);}
+  function cameraUpdate(){var c=Math.cos(pitch);camera.position.set(Math.sin(yaw)*c*distance,Math.sin(pitch)*distance,Math.cos(yaw)*c*distance);camera.lookAt(new THREE.Vector3(0,0,0));}
+  function render(){if(renderer)renderer.render(scene,camera);}
+  function resize(){var w=window.innerWidth||640,h=window.innerHeight||480;if(!renderer)return;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();render();}
+  function fallbackDraw(){var c=fallbackCanvas,ctx;if(!c||!c.getContext)return;ctx=c.getContext('2d');if(!ctx)return;ctx.fillStyle='#050912';ctx.fillRect(0,0,c.width,c.height);var grad=ctx.createLinearGradient(250,80,650,270);grad.addColorStop(0,'#eef6fa');grad.addColorStop(.45,'#8798a6');grad.addColorStop(1,'#273746');ctx.fillStyle=grad;ctx.beginPath();ctx.moveTo(80,170);ctx.bezierCurveTo(190,70,420,64,700,170);ctx.bezierCurveTo(530,270,220,270,80,170);ctx.fill();ctx.strokeStyle='#54d8ff';ctx.lineWidth=4;ctx.stroke();ctx.fillStyle='#ff9d4a';ctx.fillRect(392,83,16,24);ctx.font='15px Arial';ctx.fillStyle='#dbe8f4';ctx.fillText('连续金属曲面 · 水滴 DRIP-01',330,305);}
+  function showFallback(){if(canvas)canvas.style.display='none';if(fallback)fallback.style.display='block';fallbackDraw();}
+  function point(event){var rect=canvas.getBoundingClientRect(),x=event.clientX,y=event.clientY;if(event.touches&&event.touches.length){x=event.touches[0].clientX;y=event.touches[0].clientY;}return{x:x,y:y,px:((x-rect.left)/rect.width)*2-1,py:-((y-rect.top)/rect.height)*2+1};}
+  function begin(event){var p=point(event);dragging=true;lastX=p.x;lastY=p.y;if(event.preventDefault)event.preventDefault();}
+  function move(event){var p;if(!dragging)return;p=point(event);yaw-=(p.x-lastX)*.008;pitch+=(p.y-lastY)*.008;pitch=Math.max(-1.2,Math.min(1.2,pitch));lastX=p.x;lastY=p.y;cameraUpdate();render();if(event.preventDefault)event.preventDefault();}
+  function end(){dragging=false;}
+  function wheel(event){var d=event.wheelDelta?-event.wheelDelta/120:event.detail?event.detail/3:event.deltaY/100;distance=Math.max(6,Math.min(22,distance+d*.38));cameraUpdate();render();if(event.preventDefault)event.preventDefault();}
+  function switchClass(el,on){el.className=on?'switch on':'switch';}
+  function toggleRotate(){autoRotate=!autoRotate;switchClass(rotateSwitch,autoRotate);}
+  function toggleWarp(){warpToggle=!warpToggle;switchClass(warpSwitch,warpToggle);}
+  function animate(time){var dt=Math.min(.05,(time-lastTime)/1000||0),i,target,speed,len,dx,dy,dz,r;lastTime=time;if(autoRotate&&!dragging)yaw+=dt*.13;target=(warpToggle||warpHeld)?1:0;warpAmount+=(target-warpAmount)*Math.min(dt*3,1);if(drop){drop.position.y=Math.sin(time*.0008)*.12;drop.rotation.z=-Math.PI/2+Math.sin(time*.0005)*.018+Math.sin(time*.04)*.004*warpAmount;}for(i=0;i<engineGlow.length;i++){if(engineGlow[i].material)engineGlow[i].material.opacity=.62+.26*(.5+.5*Math.sin(time*.008+i));}if(engineLight)engineLight.intensity=8+warpAmount*24+Math.sin(time*.007)*1.4;if(warpAmount>.015){warpMaterial.opacity=warpAmount*.82;speed=145*warpAmount;for(i=0;i<700;i++){r=warpRadii[i]-speed*dt*(.45+warpRadii[i]*.003);if(r<5)r=440+Math.random()*100;warpRadii[i]=r;dx=warpDirections[i*3];dy=warpDirections[i*3+1];dz=warpDirections[i*3+2];len=2+warpAmount*28;warpPositions[i*6]=dx*r;warpPositions[i*6+1]=dy*r;warpPositions[i*6+2]=dz*r;warpPositions[i*6+3]=dx*(r+len);warpPositions[i*6+4]=dy*(r+len);warpPositions[i*6+5]=dz*(r+len);}warpGeometry.attributes.position.needsUpdate=true;}else warpMaterial.opacity*=.9;var fov=48+warpAmount*19;if(Math.abs(camera.fov-fov)>.01){camera.fov+=(fov-camera.fov)*Math.min(dt*4,1);camera.updateProjectionMatrix();}speedVal.textContent=warpAmount>.02?(12+warpAmount*87).toFixed(1)+' c':'000.0 c';speedMode.textContent=warpAmount>.02?'CURVATURE · 加速航行':'IMPULSE · 巡航模式';statusText.textContent=warpAmount>.02?'CURVATURE ENGAGED':'READY';cameraUpdate();render();requestAnimationFrame(animate);}
+  function init(){try{var gl=canvas.getContext('webgl')||canvas.getContext('experimental-webgl');if(!gl||typeof THREE==='undefined'){showFallback();return;}renderer=new THREE.WebGLRenderer({canvas:canvas,context:gl,antialias:true});renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));renderer.setSize(window.innerWidth,window.innerHeight,false);if(renderer.toneMapping!==undefined){renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;}if(renderer.outputEncoding!==undefined)renderer.outputEncoding=THREE.sRGBEncoding;scene=new THREE.Scene();scene.background=new THREE.Color(0x02040a);scene.fog=new THREE.FogExp2(0x02040a,.0016);camera=new THREE.PerspectiveCamera(48,window.innerWidth/window.innerHeight,.1,3000);raycaster=new THREE.Raycaster();createSpace();createDrop();cameraUpdate();resize();rotateSwitch.onclick=toggleRotate;warpSwitch.onclick=toggleWarp;rotateSwitch.onkeydown=function(e){if(e.keyCode===13||e.keyCode===32)toggleRotate();};warpSwitch.onkeydown=function(e){if(e.keyCode===13||e.keyCode===32)toggleWarp();};canvas.addEventListener('mousedown',begin,false);canvas.addEventListener('mousemove',move,false);canvas.addEventListener('mouseup',end,false);canvas.addEventListener('mouseleave',end,false);canvas.addEventListener('touchstart',begin,false);canvas.addEventListener('touchmove',move,false);canvas.addEventListener('touchend',end,false);canvas.addEventListener('wheel',wheel,false);canvas.addEventListener('mousewheel',wheel,false);canvas.addEventListener('DOMMouseScroll',wheel,false);window.addEventListener('resize',resize,false);window.addEventListener('keydown',function(e){if(e.keyCode===87)warpHeld=true;},false);window.addEventListener('keyup',function(e){if(e.keyCode===87)warpHeld=false;},false);setTimeout(function(){document.getElementById('loader').className='done';},900);requestAnimationFrame(animate);}catch(e){if(window.console&&console.warn)console.warn('3D initialization failed',e&&(e.stack||e.message||e));showFallback();}}
+  if(document.addEventListener)document.addEventListener('DOMContentLoaded',init,false);else window.attachEvent('onload',init);
 }());
 </script>
 </body>

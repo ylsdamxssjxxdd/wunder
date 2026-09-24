@@ -293,11 +293,7 @@ impl ThroughputManager {
                             client.benchmark(&messages, config.output_tokens, |metrics| {
                                 let mut current = slots.lock();
                                 current[index] = Some(metrics);
-                                manager.publish_metrics(aggregate_metrics(
-                                    &current,
-                                    config.output_tokens,
-                                    started.elapsed().as_secs_f64(),
-                                ));
+                                manager.publish_metrics(aggregate_metrics(&current));
                             });
                         let result = tokio::time::timeout(timeout, request)
                             .await
@@ -329,11 +325,7 @@ impl ThroughputManager {
                     if let Some(error) = first_error {
                         Err(error)
                     } else {
-                        Ok(aggregate_metrics(
-                            &results,
-                            config.output_tokens,
-                            started.elapsed().as_secs_f64(),
-                        ))
+                        Ok(aggregate_metrics(&results))
                     }
                 })
             }
@@ -389,11 +381,7 @@ impl ThroughputManager {
     }
 }
 
-fn aggregate_metrics(
-    values: &[Option<ThroughputMetrics>],
-    _target: u32,
-    elapsed_s: f64,
-) -> ThroughputMetrics {
+fn aggregate_metrics(values: &[Option<ThroughputMetrics>]) -> ThroughputMetrics {
     let completed = values.iter().filter_map(Option::as_ref).collect::<Vec<_>>();
     let sum = |read: fn(&ThroughputMetrics) -> Option<u64>| {
         (completed.len() == values.len() && completed.iter().all(|item| read(item).is_some())).then(
@@ -478,7 +466,6 @@ fn aggregate_metrics(
         avg_decode_tps: mean(|item| item.decode_tps),
         prefill_tps: divide(input_tokens, max_ttft_ms.map(|value| value / 1000.0)),
         avg_prefill_tps: mean(|item| item.prefill_tps),
-        end_to_end_tps: divide(output_tokens, Some(elapsed_s)),
         finish_reason,
         target_reached: (completed.len() == values.len() && !values.is_empty())
             .then_some(())

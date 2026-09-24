@@ -361,11 +361,13 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
       ((Number.isFinite(visibleChars) && visibleChars > 0 &&
         (!Number.isFinite(reasoningChars) || reasoningChars <= 0)) ||
         (!Number.isFinite(visibleChars) && !Number.isFinite(reasoningChars))
-        ? stats?.decode_output_tokens
+        ? stats?.decode_output_tokens ?? stats?.decodeOutputTokens ??
+          stats?.decode_tokens ?? stats?.decodeTokens
         : undefined)
   );
   const durationSeconds = Number(
-    stats?.visible_decode_duration_s ?? stats?.visibleDecodeDurationS ?? stats?.decode_duration_s
+    stats?.visible_decode_duration_s ?? stats?.visibleDecodeDurationS ??
+      stats?.decode_duration_s ?? stats?.decodeDurationS
   );
   const timingMs = Number(timing?.content_decode_ms ?? timing?.decode_ms);
   const durationMs = Number.isFinite(durationSeconds) && durationSeconds > 0

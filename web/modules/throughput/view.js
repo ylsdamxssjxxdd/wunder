@@ -1,5 +1,5 @@
 import { escapeHtml, formatTimestamp } from "../utils.js?v=20251229-02";
-import { label as l } from "./copy.js?v=20260924-02";
+import { label as l } from "./copy.js?v=20260924-03";
 import { tokenLabel } from "./chart.js?v=20260924-02";
 import { simulationSpeedLabel } from "../llm-simulation.js?v=20260923-02";
 
@@ -23,7 +23,6 @@ export function mount(panel) {
         <form id="tpForm">
           <div class="form-row"><label for="tpModel">${l("model")}</label><select id="tpModel" required></select></div>
           ${numberField("tpConcurrency", l("concurrency"), 1, [1,2,4,8,16,32], l("concurrencyHint"))}
-          ${numberField("tpInput", l("input"), 8192, [1024,2048,8192,16384,32768,65536,131072,262144,524288,1048576], l("inputHint"))}
           ${numberField("tpOutput", l("output"), 2048, [1024,2048,4096,8192], l("outputHint"))}
           <button id="tpStart" type="submit">${l("start")}</button>
           <button id="tpStop" type="button" class="secondary" hidden>${l("stop")}</button>
@@ -38,7 +37,7 @@ export function mount(panel) {
         </section>
         <section class="monitor-block tp-comparison">
           <div class="tp-section-header"><h2>${l("comparison")}</h2>
-            <label>${l("metric")} <select id="tpMetric"><option value="decode_tps">${l("decode")}</option><option value="avg_decode_tps">${l("avgDecode")}</option><option value="ttft_ms">${l("ttft")}</option><option value="end_to_end_tps">${l("e2e")}</option><option value="prefill_tps">${l("prefill")}</option><option value="avg_prefill_tps">${l("avgPrefill")}</option></select></label>
+            <label>${l("metric")} <select id="tpMetric"><option value="decode_tps">${l("decode")}</option><option value="avg_decode_tps">${l("avgDecode")}</option><option value="ttft_ms">${l("ttft")}</option><option value="prefill_tps">${l("prefill")}</option><option value="avg_prefill_tps">${l("avgPrefill")}</option></select></label>
             <label>${l("axis")} <select id="tpAxis"><option value="input">${l("axisInput")}</option><option value="time">${l("axisTime")}</option></select></label>
           </div>
           <p class="muted">${l("comparisonHint")}</p>
@@ -59,11 +58,10 @@ export function details(element, item) {
   if (!item) { element.innerHTML = `<div class="tp-empty">${l("empty")}</div>`; return; }
   const m = item.metrics;
   const stats = [["ttft", durationMs(m.ttft_ms)], ["decode", `${number(m.decode_tps)} tok/s`], ["elapsed", `${number(item.elapsed_s, 2)} s`]];
-  const fields = [["concurrency", number(item.config.concurrency || 1,0)], ["input", tokenLabel(item.config.input_tokens)], ["target", number(item.config.output_tokens,0)],
+  const fields = [["concurrency", number(item.config.concurrency || 1,0)], ["context", tokenLabel(item.config.input_tokens)], ["target", number(item.config.output_tokens,0)],
     ["actualInput", number(m.input_tokens,0)], ["actualOutput", number(m.output_tokens,0)], ["reasoning", number(m.reasoning_tokens,0)],
     ["ttftMax", durationMs(m.max_ttft_ms)], ["avgDecode", `${number(m.avg_decode_tps)} tok/s`],
-    ["prefill", `${number(m.prefill_tps)} tok/s`], ["avgPrefill", `${number(m.avg_prefill_tps)} tok/s`],
-    ["e2e", `${number(m.end_to_end_tps)} tok/s`]];
+    ["prefill", `${number(m.prefill_tps)} tok/s`], ["avgPrefill", `${number(m.avg_prefill_tps)} tok/s`]];
   if (item.simulated && item.simulation_speed) fields.push(["simulationSpeed", simulationSpeedLabel(item.simulation_speed)]);
   element.innerHTML = `<div class="tp-run-heading"><strong>${escape(item.config.model_name)}</strong><span class="tp-badge tp-${escape(item.status)}">${l(item.status)}</span>${item.simulated ? `<span class="tp-badge">${l("simulated")}</span>` : ""}</div>
     <div class="tp-stats">${stats.map(([key,value])=>`<div><span class="muted">${l(key)}</span><strong>${escape(value)}</strong></div>`).join("")}</div>

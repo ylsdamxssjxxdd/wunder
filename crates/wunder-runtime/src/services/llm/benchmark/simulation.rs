@@ -56,12 +56,12 @@ where
         };
         let event = json!({"choices":[{"delta":delta}],"usage":{"prompt_tokens":input,"completion_tokens":next,"completion_tokens_details":{"reasoning_tokens":next.min(reasoning_target)}}});
         stats.event(&format!("data: {event}"), started.elapsed().as_secs_f64())?;
-        progress(stats.metrics(output_tokens, started.elapsed().as_secs_f64(), false));
+        progress(stats.metrics(output_tokens, false));
         emitted = next;
     }
     stats.event(
         "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}",
         started.elapsed().as_secs_f64(),
     )?;
-    Ok(stats.metrics(output_tokens, started.elapsed().as_secs_f64(), true))
+    Ok(stats.metrics(output_tokens, true))
 }

@@ -96,20 +96,6 @@ pub(super) fn merge_anthropic_usage(target: &mut Option<TokenUsage>, raw: Option
     *target = Some(next);
 }
 
-#[derive(Debug)]
-pub(super) struct FailedResponseUsage {
-    pub usage: TokenUsage,
-    pub message: &'static str,
-}
-
-impl std::fmt::Display for FailedResponseUsage {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.message)
-    }
-}
-
-impl std::error::Error for FailedResponseUsage {}
-
 #[cfg(test)]
 mod tests {
     use super::*;

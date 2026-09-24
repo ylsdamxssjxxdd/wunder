@@ -80,6 +80,7 @@ pub(crate) fn status_for_error_code(code: &str) -> StatusCode {
         "SWARM_POLICY_BLOCKED" => StatusCode::TOO_MANY_REQUESTS,
         "SWARM_RUN_TIMEOUT" => StatusCode::REQUEST_TIMEOUT,
         "LLM_UNAVAILABLE" => StatusCode::SERVICE_UNAVAILABLE,
+        "LLM_OUTPUT_LOOP" => StatusCode::BAD_GATEWAY,
         "SERVICE_UNAVAILABLE" | "CONNECTION_CLOSED" => StatusCode::SERVICE_UNAVAILABLE,
         "UPSTREAM_TIMEOUT" => StatusCode::GATEWAY_TIMEOUT,
         "INTERNAL_ERROR" => StatusCode::INTERNAL_SERVER_ERROR,
@@ -110,6 +111,9 @@ pub(crate) fn hint_for_error_code(code: &str) -> Option<&'static str> {
         }
         "CANCELLED" => Some("Start a new turn if you still want the task to continue."),
         "LLM_UNAVAILABLE" => Some("Retry later or switch to another available model/provider."),
+        "LLM_OUTPUT_LOOP" => {
+            Some("Retry the turn or adjust the model reasoning/output configuration.")
+        }
         "CONTEXT_WINDOW_EXCEEDED" => {
             Some("Reduce context size or let the session compact history before retrying.")
         }

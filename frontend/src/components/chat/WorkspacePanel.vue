@@ -292,7 +292,11 @@
             :alt="preview.entry?.name || t('workspace.preview.dialogTitle')"
             :active="preview.visible"
           />
-          <iframe v-else-if="preview.embed && (preview.type === 'pdf' || preview.type === 'svg')" :src="preview.url" />
+          <iframe
+            v-else-if="preview.embed && (preview.type === 'html' || preview.type === 'pdf' || preview.type === 'svg')"
+            :src="preview.url"
+            :title="preview.entry?.name || t('workspace.preview.dialogTitle')"
+          />
           <audio
             v-else-if="preview.embed && preview.type === 'audio'"
             class="workspace-preview-audio"
@@ -775,6 +779,7 @@ const TEXT_EXTENSIONS = new Set([
   'dockerfile',
   'gitignore'
 ]);
+const HTML_PREVIEW_EXTENSIONS = new Set(['html', 'htm', 'xhtml']);
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'wmf', 'emf']);
 const METAFILE_IMAGE_EXTENSIONS = new Set(['wmf', 'emf']);
 const IMAGE_MIME_TYPES = {
@@ -3790,10 +3795,14 @@ const handleUpDrop = async (event) => {
   clearWorkspaceDragPaths();
 };
 
+let previewHtmlObjectUrls: string[] = [];
+
 const clearPreviewUrl = () => {
   if (state.preview.url) {
     URL.revokeObjectURL(state.preview.url);
   }
+  previewHtmlObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+  previewHtmlObjectUrls = [];
   state.preview.url = '';
 };
 
@@ -3838,6 +3847,42 @@ const openPreviewWithoutOnlyOffice = async (entry) => {
     state.preview.loading = false;
     return;
   }
+  const loadHtmlPreview = async () => {
+    const response = await activeFileSystem.value.downloadFile(
+      withFsParams(withWorkspacePreviewParams(entry))
+    );
+    const sourceBlob = response.data instanceof Blob ? response.data : new Blob([response.data]);
+    const previewDocument = await buildWorkspaceHtmlPreviewDocument({
+      rawHtml: await sourceBlob.text(),
+      entryPath: normalizeWorkspacePath(entry.path || ''),
+      fetchResource: async (relativePath) => {
+        const resourceResponse = await activeFileSystem.value.downloadFile(
+          withFsParams({ path: normalizeWorkspacePath(relativePath) })
+        );
+        const resourceBlob = resourceResponse.data;
+        return resourceBlob instanceof Blob ? resourceBlob : new Blob([resourceBlob]);
+      }
+    });
+    const blob = new Blob([previewDocument.html], { type: 'text/html; charset=utf-8' });
+    previewHtmlObjectUrls = previewDocument.objectUrls;
+    state.preview.embed = true;
+    state.preview.type = 'html';
+    state.preview.url = URL.createObjectURL(blob);
+  };
+  // Large HTML is still a renderable document. Download the full stream and let
+  // the browser render it in an iframe instead of putting the source into the
+  // text preview (which is intentionally capped for ordinary text files).
+  if (isTextPreview && !canPreviewText && HTML_PREVIEW_EXTENSIONS.has(extension)) {
+    try {
+      await loadHtmlPreview();
+    } catch {
+      state.preview.hint = t('workspace.preview.loadFailedHint');
+      state.preview.content = t('workspace.preview.empty');
+    } finally {
+      state.preview.loading = false;
+    }
+    return;
+  }
   if (isTextPreview) {
     if (!canPreviewText) {
       state.preview.hint = resolvePreviewTooLargeHint();
@@ -3853,6 +3898,16 @@ const openPreviewWithoutOnlyOffice = async (entry) => {
       }));
       const payload = response.data || {};
       if (payload.truncated) {
+        if (HTML_PREVIEW_EXTENSIONS.has(extension)) {
+          try {
+            await loadHtmlPreview();
+          } catch {
+            state.preview.hint = t('workspace.preview.loadFailedHint');
+            state.preview.content = t('workspace.preview.empty');
+          }
+          state.preview.loading = false;
+          return;
+        }
         state.preview.hint = t('workspace.preview.truncatedHint');
       }
       state.preview.embed = false;
