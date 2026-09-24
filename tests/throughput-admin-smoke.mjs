@@ -64,11 +64,11 @@ try {
   assert.equal(await page.locator("#tpInputPresets option").count(), 10);
   assert.equal(await page.locator("#tpOutputPresets option").count(), 4);
   assert.equal(await page.locator("#tpConcurrency").inputValue(), "1");
-  assert.equal(await page.locator("#tpHistory input:checked").count(), 2);
+  assert.equal(await page.locator("#tpHistory input:checked").count(), 3);
   const series = () => page.evaluate(() => window.echarts.getInstanceByDom(document.getElementById("tpChart")).getOption().series);
-  assert.equal((await series())[0].data.length, 2);
+  assert.equal((await series())[0].data.length, 3);
   await page.locator('#tpHistory input[data-select="3"]').check();
-  assert.equal((await series()).length, 2);
+  assert.equal((await series()).length, 1);
   await page.locator("#tpClear").click();
   assert.equal(await page.locator("#tpHistory input:checked").count(), 0);
   await page.locator("#tpSelectValid").click();
@@ -96,9 +96,9 @@ try {
   snapshot.active = makeRun("4",16384,73);
   snapshot.history.push(snapshot.active); publish();
   await page.waitForFunction(() => document.querySelectorAll("#tpHistory tr").length === 4);
-  assert.equal(await page.locator("#tpHistory input:checked").count(), 3);
+  assert.equal(await page.locator("#tpHistory input:checked").count(), 4);
   await page.locator('[data-view="3"]').click();
-  assert.match(await page.locator("#tpDetail").innerText(), /未达到目标/);
+  assert.match(await page.locator("#tpDetail").innerText(), /已记录/);
   await page.locator("#tpCurrent").click();
   await mkdir("temp_dir", { recursive: true });
   await page.screenshot({ path: "temp_dir/throughput-admin-desktop.png", fullPage: true });

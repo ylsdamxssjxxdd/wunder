@@ -810,6 +810,33 @@ pub(super) fn build_tool_failure_guard_answer(
     i18n::t_with_params("error.tool_failure_guard_user_guidance_with_error", &params)
 }
 
+pub(super) fn build_tool_no_progress_guard_answer(
+    tool_name: &str,
+    repeat_count: u32,
+    threshold: u32,
+    detail: &str,
+) -> String {
+    let mut params = HashMap::new();
+    params.insert("tool_name".to_string(), tool_name.to_string());
+    params.insert("repeat_count".to_string(), repeat_count.to_string());
+    params.insert("threshold".to_string(), threshold.to_string());
+    let clipped = detail
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(TOOL_FAILURE_SIGNATURE_MAX_CHARS)
+        .collect::<String>();
+    if clipped.is_empty() {
+        return i18n::t_with_params("error.tool_no_progress_guard_user_guidance", &params);
+    }
+    params.insert("detail".to_string(), clipped);
+    i18n::t_with_params(
+        "error.tool_no_progress_guard_user_guidance_with_detail",
+        &params,
+    )
+}
+
 pub(super) fn should_request_tool_failure_reroute(
     reason: &str,
     reroute_notice_count: u32,

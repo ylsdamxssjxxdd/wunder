@@ -348,6 +348,7 @@ export const applyChatRuntimeEvent = (
     ignored: false,
     quarantined: false,
     contentOnly: drained === 0 && Boolean(contentOnlyMessageId),
+    cursorOnly: event.type === 'cursor_only',
     reasoningOnly:
       drained === 0 && Boolean(contentOnlyMessageId) && isReasoningOnlyRuntimeEvent(event),
     reasoningChanged:
@@ -582,6 +583,9 @@ const applyNormalizedRuntimeEvent = (
       break;
     case 'workflow_event':
       applyWorkflowEvent(session, event);
+      break;
+    case 'cursor_only':
+      // Keep replay/deduplication state while leaving chat state untouched.
       break;
     case 'usage_stats':
       applyUsageStats(session, event);
@@ -5039,7 +5043,7 @@ const applyProjectedTimingStats = (
   source: Record<string, unknown>
 ): void => {
   const streamTiming = asRecord(source.stream_timing ?? source.streamTiming);
-  if (streamTiming) {
+  if (Object.keys(streamTiming).length > 0) {
     stats.stream_timing = cloneProjectedDisplayValue(streamTiming);
   }
   copyProjectedPositiveNumber(stats, 'prefill_duration_s', source.prefill_duration_s ?? source.prefillDurationS ?? source.prefillDuration);
@@ -5055,7 +5059,11 @@ const applyProjectedTimingStats = (
     streamTiming?.content_decode_ms ?? streamTiming?.contentDecodeMs ?? streamTiming?.decode_ms ?? streamTiming?.decodeMs
   );
   const bodyTokens = parsePositiveInt(
-    source.decode_output_tokens ?? source.decodeOutputTokens ?? source.visible_decode_tokens ?? source.visibleDecodeTokens
+    source.visible_decode_tokens ?? source.visibleDecodeTokens ??
+      (parsePositiveNumber(streamTiming?.content_delta_chars ?? streamTiming?.contentDeltaChars) > 0 &&
+        parsePositiveNumber(streamTiming?.reasoning_delta_chars ?? streamTiming?.reasoningDeltaChars) === null
+        ? source.decode_output_tokens ?? source.decodeOutputTokens
+        : undefined)
   );
   if (bodyTokens !== null && timingMs !== null) {
     stats.visible_decode_tokens = bodyTokens;

@@ -143,7 +143,8 @@ import {
   hasActiveBlockingSwarmAfterLatestUser,
   hasActiveSubagentsAfterLatestUser,
   hasRunningAssistantMessage,
-  hasStreamingAssistantMessage
+  hasStreamingAssistantMessage,
+  isThreadRuntimeBusy
 } from '@/utils/chatSessionRuntime';
 import { hasActiveSubagentItems } from '@/utils/subagentRuntime';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
@@ -619,6 +620,13 @@ export function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerCon
       const loadingBefore = Boolean(ctx.chatStore.loadingBySession?.[targetSessionId]);
       const busyBefore = Boolean(ctx.chatStore.isSessionBusy?.(targetSessionId) || ctx.chatStore.isSessionLoading?.(targetSessionId));
       const hasControllerBefore = Boolean(runtimeBefore?.sendController || runtimeBefore?.resumeController || runtimeBefore?.compactController);
+      // A stale aggregate poll may report idle while the canonical session is
+      // already rendering the current turn. Never settle that turn from the
+      // aggregate response; its terminal stream event is authoritative.
+      if (hasRunningAssistantMessage(messages) || hasStreamingAssistantMessage(messages) ||
+          isThreadRuntimeBusy(statusBefore)) {
+          return;
+      }
       if (!loadingBefore && !busyBefore && !hasControllerBefore) {
           return;
       }

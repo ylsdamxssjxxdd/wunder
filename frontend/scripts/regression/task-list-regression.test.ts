@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildTaskList, isArchivedTaskRecord, isRootWorkThread } from '../../src/views/messenger/taskList';
-import { moveKeyWithinOrder } from '../../src/views/messenger/stableListOrder';
+import { moveKeyWithinOrder, prependFreshKeys } from '../../src/views/messenger/stableListOrder';
 import { resolveTaskRuntimeState } from '../../src/views/messenger/taskRuntimeState';
 import { applySessionQuotaUsage } from '../../src/stores/chatSessionQuota';
 import { mergeSessionRuntimeFields } from '../../src/stores/chatSessionMerge';
@@ -37,6 +37,24 @@ test('work catalog preserves explicit forks and swarm threads', () => {
   for (const source of ['thread_control', 'agent_swarm']) {
     assert.equal(isRootWorkThread({ parent_session_id: 'parent', spawned_by: source }), true);
   }
+});
+
+test('newer threads are promoted above a manually ordered older thread', () => {
+  const timestamps = new Map([
+    ['a', 100],
+    ['b', 200],
+    ['n', 300]
+  ]);
+  assert.deepEqual(
+    prependFreshKeys(['a', 'n', 'b'], ['a', 'b'], ['a', 'n', 'b'], timestamps),
+    ['n', 'a', 'b']
+  );
+  assert.deepEqual(
+    prependFreshKeys(['a', 'old', 'b'], ['a', 'b'], ['a', 'old', 'b'], new Map([
+      ['a', 100], ['b', 200], ['old', 50]
+    ])),
+    ['a', 'old', 'b']
+  );
 });
 
 test('thread quota uses server totals independently of tokens, message history and replay', () => {

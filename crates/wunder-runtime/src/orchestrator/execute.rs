@@ -1,5 +1,5 @@
 use super::context::normalize_model_context_message;
-use super::retry_governor::RetryGovernor;
+use super::retry_governor::{RetryGovernor, SuccessProgressGovernor};
 use super::tool_calls::ToolCall;
 use super::*;
 use crate::core::llm_speed::TurnDecodeSpeedAccumulator;
@@ -414,6 +414,7 @@ impl Orchestrator {
             let repeated_tool_failure_threshold =
                 resolve_tool_failure_guard_threshold(&request_config);
             let mut retry_governor = RetryGovernor::new(repeated_tool_failure_threshold);
+            let mut success_progress_governor = SuccessProgressGovernor::default();
             let mut reroute_notice_count = 0_u32;
             let mut reroute_notice_fingerprints: HashSet<String> = HashSet::new();
             let mut invalid_tool_call_reroute_count = 0_u32;
@@ -1641,7 +1642,41 @@ impl Orchestrator {
 
                         if failure_reroute_notice.is_none() {
                             if result.ok {
-                                retry_governor.record_success();
+                                if let Some(stop) =
+                                    success_progress_governor.record(&name, args, &result)
+                                {
+                                    let detail = stop.detail.clone();
+                                    let guard_answer = build_tool_no_progress_guard_answer(
+                                        &stop.tool,
+                                        stop.repeat_count,
+                                        stop.threshold,
+                                        &detail,
+                                    );
+                                    stop_reason = Some("tool_no_progress_guard".to_string());
+                                    stop_meta = Some(json!({
+                                        "type": "tool_no_progress_guard",
+                                        "tool": stop.tool.clone(),
+                                        "repeat_count": stop.repeat_count,
+                                        "threshold": stop.threshold,
+                                        "detail": detail,
+                                    }));
+                                    let mut guard_payload = json!({
+                                        "stage": "tool_no_progress_guard",
+                                        "summary": "Repeated successful tool observations produced no new progress; stopped the loop.",
+                                        "tool": stop.tool,
+                                        "repeat_count": stop.repeat_count,
+                                        "threshold": stop.threshold,
+                                        "detail": stop.detail,
+                                    });
+                                    if let Value::Object(ref mut map) = guard_payload {
+                                        round_info.insert_into(map);
+                                    }
+                                    emitter.emit("progress", guard_payload).await;
+                                    answer = guard_answer;
+                                    should_finish = true;
+                                } else {
+                                    retry_governor.record_success();
+                                }
                             } else if let Some(stop) =
                                 retry_governor.record_failure(&name, &result)
                             {

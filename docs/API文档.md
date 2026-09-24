@@ -2701,7 +2701,7 @@
 - JSON 必填：`model_name`（已启用的语言模型配置名）、`concurrency`、`input_tokens`、`output_tokens`。`concurrency` 为同一场景同时发起的请求数，范围 1–1024；为兼容旧客户端，省略时按 1 处理。不接受旧并发列表、用户前缀或其他未知字段。
 - 输入与输出支持快捷档，也允许直接填写整数。输入范围为 1–16777216 Token，输出范围为 1–1048576 Token；页面快捷档仍为输入 1024、2048、8192、16384、32768、65536、131072、262144、524288、1048576，输出 1024、2048、4096、8192。`1k = 1024`，`1m = 1048576`。
 - 输入为包含消息开销的本地估算；随机中性文本避免固定前缀缓存，API usage 才是实测用量。已配置的上下文窗口用于输入与输出之和校验，不静默截短。
-- 每次测试固定一个模型、输入长度和输出长度，并按 `concurrency` 同时发起请求；结果聚合所有请求的输入、输出、推理 Token 与端到端吞吐，首字延迟取批次首个响应，生成速度按批次完成时间计算。不创建用户、任务线程、会话、工具调用或线程日志，不写入长期记忆。
+- 每次测试固定一个模型、输入长度和输出长度，并按 `concurrency` 同时发起请求；结果聚合所有请求的输入、输出、推理 Token 与端到端吞吐。`ttft_ms` 是并发请求首字延迟的算术平均，`max_ttft_ms` 是最慢请求的首字延迟；`decode_tps` / `prefill_tps` 是并发批次整体速度，`avg_decode_tps` / `avg_prefill_tps` 是单请求速度的算术平均。不创建用户、任务线程、会话、工具调用或线程日志，不写入长期记忆。
 - 支持 `virtual_replay` 模型进行合成测量：使用模型 `simulation_speed` 的预处理和生成速度，不读取回放日志。先输出思考增量，再输出正文；思考占目标输出的 1/4，计入输出总数，`reasoning_tokens` 单列，不额外增加预算。结果带 `simulated: true` 与当次 `simulation_speed`，曲线按模型、速度档位及输出长度分组。普通虚拟调用共用速度配置、取消与超时。
 - 输出使用对应协议的输出上限；明确标记为 `vllm`、`vllm_omni`、`sglang` 且使用 Chat Completions 的引擎额外传 `min_tokens` 和 `ignore_eos`。其他 API 不能保证不提前停止，使用连续生成指令并核验实际用量；不重复请求凑数，不将目标数冒充用量。
 - 不自动重试，不降级为非流式。请求超时取模型配置，默认 1800 秒，限制在 1–3600 秒。
@@ -2734,16 +2734,17 @@
 
 #### ThroughputSnapshot（v2）
 
-- `id`、`config`（提交的三个字段）、`started_at`、`finished_at`、`elapsed_s`。
+- `id`、`config`（模型、并发数、输入 Token、输出 Token）、`started_at`、`finished_at`、`elapsed_s`。
 - `simulated`：是否为内置虚拟模型产生的合成测量；旧摘要缺省为 false。
 - `simulation_speed`：内置虚拟模型当次 `fast/medium/slow` 档位；真实 API 与旧摘要省略。旧模拟摘要归入 legacy 曲线，不按新默认速度追认。
 - `status`：`running/stopping/finished/incomplete/error/stopped`；仅 API 用量精确等于目标时为 `finished`，缺失用量或长度不符为 `incomplete`。
 - `length_control`：`fixed`（已提交定长参数）或 `best_effort`（上限与提示词）。是否实际达标始终单独校验。
 - `metrics.input_tokens/output_tokens/reasoning_tokens`：API 实测；输出包含推理 Token，推理子项单列。未知值为 null。
 - `metrics.estimated_output_tokens`：按累计 UTF-8 字节 / 4 向上取整，仅作实时估算，不用于确认目标或替代实测曲线。
-- `metrics.ttft_ms`：发出请求至首个非空文本/推理片段；不以角色或 usage 事件作为首字。
-- `metrics.decode_tps`：`(实际输出 - 1) / (最后文本片段时间 - 首文本片段时间)`；缺用量或无生成间隔为 null。
-- `metrics.prefill_tps`：实际输入 / 首字耗时，是含网络等待的观测指标，不等同引擎纯预填充速度。
+- `metrics.ttft_ms`：每个请求从发出到首个非空文本/推理片段的平均值；不以角色或 usage 事件作为首字。
+- `metrics.max_ttft_ms`：同一并发批次中最慢请求的首字延迟，用于整体预处理速度的分母。
+- `metrics.decode_tps`：并发批次实际输出总量 / 批次解码墙钟区间；`avg_decode_tps` 为每请求解码速度算术平均。缺用量或无生成间隔为 null。
+- `metrics.prefill_tps`：并发批次实际输入总量 / 最慢首字延迟；`avg_prefill_tps` 为每请求输入 / 首字耗时的算术平均。两者均含网络等待，不等同引擎纯预填充速度。
 - `metrics.end_to_end_tps`：实际输出 / 完整请求时间。
 - `metrics.target_reached`：true / false / null（无法确认）；`finish_reason` 为安全枚举。
 - `error`：脱敏失败说明；`persistence_error`：摘要保存失败，内存结果仍可导出。
@@ -3361,6 +3362,7 @@
 ### 模型工具调用恢复事件
 
 - `bad_tool_call_retry`：历史兼容事件。当前运行时不会为 native 工具参数错误发起模型重试，也不会发送该事件；调用直接进入工具 schema/admission 校验，错误结果回传模型。真实 provider/网络失败仍使用 `llm_stream_retry`。
+- `tool_no_progress_guard`：命令/脚本工具连续 4 次以相同参数返回相同非空观察结果时触发的循环保护。终止元数据包含 `tool/repeat_count/threshold/detail`；不同命令或新的有效输出会重置计数。
 - `llm_stream_retry` 进入统一持久化事件流，沿用会话归属、轮次、稳定事件序号和 replay 机制；刷新或重连可恢复重试状态。`bad_tool_call_retry` 仅作为历史兼容事件保留，不再由当前 native 参数校验路径产生。仅上线后的普通模型重试新增持久化，既有日志不回填。
 - `progress.stage=invalid_tool_call_reroute/empty_final_answer_reroute` 表示模型正在修复不可执行的调用或空回复，前端将其投影为恢复状态，跨随后的 `llm_request` 保留，直到有效输出、工具执行或终态到达。恢复不是整轮失败，不得据此提前终止会话；终态后的迟到重试不能重新激活消息。
 

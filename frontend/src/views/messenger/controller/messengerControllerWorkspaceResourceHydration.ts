@@ -1157,8 +1157,10 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       const clearedCount = ctx.clearWorkspaceResourceCacheByPaths(changedPaths);
       const resetCount = ctx.resetWorkspaceResourceCards(changedPaths);
       if (clearedCount === 0 && resetCount === 0) {
-          rememberWorkspaceResourceInvalidation([]);
-          ctx.clearWorkspaceResourceCache();
+          // A path that is not currently visible needs no global cache reset.
+          // Clearing every resource here made unrelated images and GIFs reload
+          // on each workspace write.
+          rememberWorkspaceResourceInvalidation(changedPaths);
       }
       ctx.scheduleWorkspaceResourceHydration('workspace-refresh');
   };

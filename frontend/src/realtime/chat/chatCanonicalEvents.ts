@@ -617,6 +617,11 @@ export const buildCanonicalChatRuntimeEvents = (
     return [buildBaseEvent(options, failed ? 'tool_call_failed' : 'tool_call_completed')];
   }
 
+  // Workspace mutations share the stream cursor but must not create chat work.
+  if (eventType === 'workspace_update') {
+    return [buildBaseEvent(options, 'cursor_only')];
+  }
+
   if (GENERIC_WORKFLOW_EVENT_TYPES.has(eventType) || WORKFLOW_EVENT_PREFIXES.some((prefix) => eventType.startsWith(prefix))) {
     return [buildBaseEvent(options, 'workflow_event')];
   }

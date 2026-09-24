@@ -3,9 +3,9 @@ import { getWunderBase } from "../api.js";
 import { ensureLlmConfigLoaded } from "../llm.js";
 import { escapeHtml, formatTimestamp } from "../utils.js?v=20251229-02";
 import { resolveApiErrorMessage } from "../api-error.js";
-import { label as l } from "./copy.js?v=20260923-01";
-import { mount, details, history, number } from "./view.js?v=20260923-01";
-import { comparisonSeries, validResult, tokenLabel } from "./chart.js?v=20260923-01";
+import { label as l } from "./copy.js?v=20260924-01";
+import { mount, details, history, number, durationMs } from "./view.js?v=20260924-02";
+import { comparisonSeries, selectableResult, tokenLabel } from "./chart.js?v=20260924-02";
 
 const KEY = "wunder_throughput_scenario_v2";
 let initialized = false;
@@ -67,7 +67,7 @@ function apply(snapshot, sequence) {
   const ids = new Set(data.history.map((item) => item.id));
   for (const id of selected) if (!ids.has(id)) selected.delete(id);
   for (const item of data.history) {
-    if (!known.has(item.id) && validResult(item)) selected.add(item.id);
+    if (!known.has(item.id) && selectableResult(item)) selected.add(item.id);
     known.add(item.id);
   }
   for (const id of known) if (!ids.has(id)) known.delete(id);
@@ -110,9 +110,10 @@ function draw(force = false) {
     legend: { type: "scroll", bottom: 0 }, grid: { top: 25, left: 70, right: 25, bottom: 68 },
     tooltip: { trigger: "item", confine: true, formatter: (point) => {
       const run = point.data.run;
-      return `${escapeHtml(run.config.model_name)}<br>${escapeHtml(formatTimestamp(run.started_at))}<br>${l("concurrency")}: ${number(run.config.concurrency || 1,0)}<br>${l("input")}: ${tokenLabel(run.config.input_tokens)}<br>${l("target")}: ${tokenLabel(run.config.output_tokens)}<br>${l("actualOutput")}: ${number(run.metrics.output_tokens,0)}<br>${escapeHtml(point.seriesName)}: ${number(point.value[1])}`;
+      const value = metric === "ttft_ms" ? durationMs(point.value[1]) : `${number(point.value[1])} tok/s`;
+      return `${escapeHtml(run.config.model_name)}<br>${escapeHtml(formatTimestamp(run.started_at))}<br>${l("concurrency")}: ${number(run.config.concurrency || 1,0)}<br>${l("input")}: ${tokenLabel(run.config.input_tokens)}<br>${l("target")}: ${tokenLabel(run.config.output_tokens)}<br>${l("actualOutput")}: ${number(run.metrics.output_tokens,0)}<br>${escapeHtml(point.seriesName)}: ${value}`;
     } },
-    xAxis: axis === "time" ? { type: "time" } : { type: "log", logBase: 2, min: 1024, axisLabel: { formatter: tokenLabel } },
+    xAxis: axis === "time" ? { type: "time" } : { type: "log", logBase: 2, min: 1, axisLabel: { formatter: tokenLabel } },
     yAxis: { type: "value", name: metric === "ttft_ms" ? "ms" : "tok/s", min: 0 }, series,
   }, true);
   chart.resize();
@@ -216,7 +217,7 @@ function bind() {
   $("tpCurrent").addEventListener("click", () => { viewed = ""; render(); });
   $("tpMetric").addEventListener("change", () => draw());
   $("tpAxis").addEventListener("change", () => draw());
-  $("tpSelectValid").addEventListener("click", () => { selected.clear(); data.history.filter(validResult).forEach((item) => selected.add(item.id)); render(); });
+  $("tpSelectValid").addEventListener("click", () => { selected.clear(); data.history.filter(selectableResult).forEach((item) => selected.add(item.id)); render(); });
   $("tpClear").addEventListener("click", () => { selected.clear(); render(); });
   $("tpExport").addEventListener("click", exportSelected);
   $("tpHistory").addEventListener("change", (event) => {

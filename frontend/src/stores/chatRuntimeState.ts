@@ -2212,6 +2212,11 @@ export const applyCanonicalStreamRuntimeEvent = (
   const key = resolveSessionKey(sessionId);
   const projection = ensureChatRuntimeProjectionForStore(store);
   if (!key || !projection) return [];
+  const normalizedEventType = String(eventType || '').trim().toLowerCase();
+  // Workspace mutations update the file panel cache only. They must not enter
+  // the chat projection, otherwise every file write invalidates the message
+  // list and can trigger a session-detail reload while a turn is still live.
+  const workspaceSideEffectOnly = normalizedEventType === 'workspace_update';
   touchDesktopChatSession(key);
   projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
   const events = buildCanonicalStreamRuntimeEvents({
@@ -2229,7 +2234,7 @@ export const applyCanonicalStreamRuntimeEvent = (
     phase: options.phase
   });
   const projectionEvents =
-    !isCommandStreamVisualizationEnabled() && isCommandStreamRuntimeEvent(eventType)
+    (!workspaceSideEffectOnly && !isCommandStreamVisualizationEnabled() && isCommandStreamRuntimeEvent(eventType))
       ? []
       : events;
   const results = applyChatRuntimeEventsWithInvalidation(store, projection, projectionEvents, {
@@ -2247,11 +2252,14 @@ export const applyCanonicalStreamRuntimeEvent = (
     }
     syncDemoChatCache({ sessions: store.sessions });
   }
-  if (results.some((result) => result.applied)) {
+  const visibleResults = results.filter((result) =>
+    result.applied && (!result.cursorOnly || (result.drained ?? 0) > 0)
+  );
+  if (visibleResults.length > 0) {
     const runtime = ensureRuntime(key);
     runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
   }
-  if (results.some((result) => result.applied) && (
+  if (visibleResults.length > 0 && (
     isUsageContextStreamEvent(eventType) ||
     ['llm_output', 'tool_call', 'tool_result', 'tool_call_completed', 'tool_call_failed', 'final', 'turn_completed'].includes(String(eventType).toLowerCase())
   )) {
@@ -2261,6 +2269,7 @@ export const applyCanonicalStreamRuntimeEvent = (
     !isCommandStreamVisualizationEnabled() && isCommandStreamRuntimeEvent(eventType);
   if (
     options.sideEffects === true ||
+    (workspaceSideEffectOnly && results.some((result) => result.applied)) ||
     isCommandProjectionOnlyEvent ||
     (
       (options.phase === 'watch' || options.phase === 'snapshot') &&

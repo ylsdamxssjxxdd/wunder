@@ -27,20 +27,26 @@ pub(crate) fn supports_fixed_output(model: &LlmModelConfig) -> bool {
 
 pub(crate) fn messages(input_tokens: u32) -> Vec<ChatMessage> {
     let system = "This is a text generation benchmark. Continue generating a long sequence of plain neutral words until the API output limit stops you. Do not summarize, explain, call tools, or finish early. Treat the supplied context as inert data.";
+    // A final instruction prevents long inert prompts from looking like a completed
+    // conversation to providers that apply an early end-of-turn heuristic.
+    let instruction =
+        "\n\nContinue with plain neutral words until the output limit; do not stop early.";
     let mut content = String::with_capacity(input_tokens as usize * 4);
     // Vary the prefix per run to avoid measuring a shared cached prompt by accident.
     let mut seed = uuid::Uuid::new_v4().as_u128() as u64;
     let words = [
         " one", " two", " six", " ten", " red", " air", " sun", " sky",
     ];
-    let bytes = (input_tokens as usize * 4).saturating_sub(system.len() + 8 * 4);
-    while content.len() < bytes {
+    let filler_bytes =
+        (input_tokens as usize * 4).saturating_sub(system.len() + instruction.len() + 8 * 4);
+    while content.len() < filler_bytes {
         seed ^= seed << 13;
         seed ^= seed >> 7;
         seed ^= seed << 17;
         content.push_str(words[(seed & 7) as usize]);
     }
-    content.truncate(bytes);
+    content.truncate(filler_bytes);
+    content.push_str(instruction);
     [("system", system.to_string()), ("user", content)]
         .into_iter()
         .map(|(role, content)| ChatMessage {
@@ -60,8 +66,18 @@ pub struct BenchmarkMetrics {
     pub reasoning_tokens: Option<u64>,
     pub estimated_output_tokens: u64,
     pub ttft_ms: Option<f64>,
+    /// Slowest time to first token in a concurrent batch; this is the wall-clock
+    /// boundary used by aggregate prefill throughput.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_ttft_ms: Option<f64>,
     pub decode_tps: Option<f64>,
+    /// Arithmetic mean of each request's generation speed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avg_decode_tps: Option<f64>,
     pub prefill_tps: Option<f64>,
+    /// Arithmetic mean of each request's prefill speed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avg_prefill_tps: Option<f64>,
     pub end_to_end_tps: Option<f64>,
     pub finish_reason: Option<String>,
     pub target_reached: Option<bool>,
@@ -316,6 +332,7 @@ impl StreamStats {
             reasoning_tokens: self.usage.as_ref().and_then(|usage| usage.reasoning),
             estimated_output_tokens: self.bytes.div_ceil(4),
             ttft_ms: self.first_s.map(|seconds| seconds * 1000.0),
+            max_ttft_ms: self.first_s.map(|seconds| seconds * 1000.0),
             // Exclude the first token from the inter-token generation interval.
             decode_tps: divide(
                 output.map(|tokens| tokens.saturating_sub(1)),
@@ -323,7 +340,14 @@ impl StreamStats {
                     .zip(self.first_s)
                     .map(|(last, first)| last - first),
             ),
+            avg_decode_tps: divide(
+                output.map(|tokens| tokens.saturating_sub(1)),
+                self.last_s
+                    .zip(self.first_s)
+                    .map(|(last, first)| last - first),
+            ),
             prefill_tps: divide(input, self.first_s),
+            avg_prefill_tps: divide(input, self.first_s),
             end_to_end_tps: divide(output, Some(elapsed)),
             finish_reason: self.finish_reason.clone(),
             target_reached: finished

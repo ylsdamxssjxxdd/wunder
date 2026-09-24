@@ -216,7 +216,8 @@ import {
 } from '@/views/messenger/messengerOrderSync';
 import {
   resolveAgentRuntimeStateFromSignals,
-  shouldNotifyAgentTaskCompletion
+  shouldNotifyAgentTaskCompletion,
+  shouldPreserveMissingAgentRuntimeState
 } from '@/views/messenger/agentRuntimeState';
 import { clearBeeroomMissionCanvasState } from '@/components/beeroom/beeroomMissionCanvasStateCache';
 import { clearBeeroomMissionChatState } from '@/components/beeroom/beeroomMissionChatStateCache';
@@ -638,6 +639,7 @@ export function installMessengerControllerAgentRuntimeSignals(ctx: MessengerCont
   };
 
   ctx.handleAgentRuntimeStateUpdate = (stateMap: Map<string, AgentRuntimeState>) => {
+      const reconciledStateMap = new Map(stateMap);
       if (ctx.agentRuntimeStateHydrated) {
           const keys = new Set<string>([
               ...Array.from(ctx.agentRuntimeStateSnapshot.keys()),
@@ -645,7 +647,25 @@ export function installMessengerControllerAgentRuntimeSignals(ctx: MessengerCont
           ]);
           keys.forEach((agentId) => {
               const previousState = ctx.agentRuntimeStateSnapshot.get(agentId) ?? 'idle';
-              const nextState = stateMap.get(agentId) ?? 'idle';
+              // A polling gap is not evidence that a task completed.
+              const preserveMissing = shouldPreserveMissingAgentRuntimeState({
+                  previousState,
+                  remoteHasRow: stateMap.has(agentId)
+              }) && Boolean(
+                  ctx.streamingAgentIdSet?.value?.has(agentId) ||
+                  ctx.waitingAgentIdSet?.value?.has(agentId)
+              );
+              const remoteState = stateMap.get(agentId) ?? 'idle';
+              const localTurnStillActive = Boolean(
+                  ctx.streamingAgentIdSet?.value?.has(agentId) ||
+                  ctx.waitingAgentIdSet?.value?.has(agentId)
+              );
+              const preserveActiveTurn = shouldNotifyAgentTaskCompletion({
+                  previousState,
+                  nextState: remoteState
+              }) && localTurnStillActive;
+              const nextState = preserveMissing || preserveActiveTurn ? previousState : remoteState;
+              if (preserveMissing || preserveActiveTurn) reconciledStateMap.set(agentId, previousState);
               if (previousState === nextState)
                   return;
               if (ctx.shouldNotifyAgentCompletion(previousState, nextState)) {
@@ -653,8 +673,8 @@ export function installMessengerControllerAgentRuntimeSignals(ctx: MessengerCont
               }
           });
       }
-      ctx.agentRuntimeStateSnapshot = new Map(stateMap);
+      ctx.agentRuntimeStateSnapshot = new Map(reconciledStateMap);
       ctx.agentRuntimeStateHydrated = true;
-      ctx.agentRuntimeStateMap.value = stateMap;
+      ctx.agentRuntimeStateMap.value = reconciledStateMap;
   };
 }

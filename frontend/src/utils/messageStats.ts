@@ -349,12 +349,21 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
     )
   );
   if (averageSpeed !== null) return averageSpeed;
-  const tokens = Number(
-    stats?.visible_decode_tokens ?? stats?.visibleDecodeTokens ?? stats?.decode_output_tokens
-  );
+  // `decode_output_tokens` may include reasoning/tool output. It is safe as a
+  // fallback only when stream timing confirms visible body characters.
   const timing = stats?.stream_timing && typeof stats.stream_timing === 'object'
     ? stats.stream_timing
     : null;
+  const visibleChars = Number(timing?.content_delta_chars ?? timing?.contentDeltaChars);
+  const reasoningChars = Number(timing?.reasoning_delta_chars ?? timing?.reasoningDeltaChars);
+  const tokens = Number(
+    stats?.visible_decode_tokens ?? stats?.visibleDecodeTokens ??
+      ((Number.isFinite(visibleChars) && visibleChars > 0 &&
+        (!Number.isFinite(reasoningChars) || reasoningChars <= 0)) ||
+        (!Number.isFinite(visibleChars) && !Number.isFinite(reasoningChars))
+        ? stats?.decode_output_tokens
+        : undefined)
+  );
   const durationSeconds = Number(
     stats?.visible_decode_duration_s ?? stats?.visibleDecodeDurationS ?? stats?.decode_duration_s
   );

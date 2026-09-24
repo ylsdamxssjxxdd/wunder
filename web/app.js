@@ -74,7 +74,7 @@ import { initSettingsPanel, loadAdminDefaults } from "./modules/settings.js?v=20
 
 import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260215-01";
 import { initApiDocsPanel } from "./modules/api-docs.js?v=20260215-01";
-import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260923-01";
+import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260924-02";
 import { initPerformancePanel } from "./modules/performance.js?v=20260215-01";
 import { initSimLabPanel } from "./modules/sim-lab.js?v=20260215-01";
 import { initEvaluationPanel } from "./modules/evaluation.js?v=20260802-03";

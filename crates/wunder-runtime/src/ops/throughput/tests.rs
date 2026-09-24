@@ -45,18 +45,38 @@ fn aggregates_concurrent_requests_against_batch_target() {
         reasoning_tokens: Some(5),
         estimated_output_tokens: 20,
         ttft_ms: Some(100.0),
+        max_ttft_ms: Some(100.0),
         decode_tps: Some(100.0),
+        avg_decode_tps: Some(100.0),
         prefill_tps: Some(1000.0),
+        avg_prefill_tps: Some(1000.0),
         end_to_end_tps: Some(20.0),
         finish_reason: Some("stop".into()),
         target_reached: Some(true),
+        ..Default::default()
     };
-    let batch = super::aggregate_metrics(&[Some(one.clone()), Some(one)], 20, 1.0);
+    let mut two = one.clone();
+    two.ttft_ms = Some(300.0);
+    two.max_ttft_ms = Some(300.0);
+    two.decode_tps = Some(200.0);
+    two.avg_decode_tps = Some(200.0);
+    two.prefill_tps = Some(2000.0);
+    two.avg_prefill_tps = Some(2000.0);
+    let batch = super::aggregate_metrics(&[Some(one), Some(two)], 20, 1.0);
     assert_eq!(batch.input_tokens, Some(200));
     assert_eq!(batch.output_tokens, Some(40));
     assert_eq!(batch.reasoning_tokens, Some(10));
     assert_eq!(batch.target_reached, Some(true));
-    assert!(batch.end_to_end_tps.is_some_and(|value| value >= 39.0));
+    assert_eq!(batch.ttft_ms, Some(200.0));
+    assert_eq!(batch.max_ttft_ms, Some(300.0));
+    assert_eq!(batch.avg_decode_tps, Some(150.0));
+    assert_eq!(batch.avg_prefill_tps, Some(1500.0));
+    assert!(batch
+        .decode_tps
+        .is_some_and(|value| value > 128.0 && value < 130.0));
+    assert!(batch
+        .prefill_tps
+        .is_some_and(|value| value > 666.0 && value < 667.0));
 }
 
 #[tokio::test]

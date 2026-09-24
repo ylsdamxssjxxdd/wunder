@@ -99,55 +99,116 @@ fn compact_tool_description(name: &str, original: &str) -> String {
     })
 }
 
+const SCHEMA_KEYS: &[&str] = &[
+    "type",
+    "properties",
+    "required",
+    "items",
+    "additionalItems",
+    "$ref",
+    "$defs",
+    "definitions",
+    "additionalProperties",
+    "enum",
+    "const",
+    "default",
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "minItems",
+    "maxItems",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "format",
+    "prefixItems",
+    "patternProperties",
+    "contains",
+    "propertyNames",
+    "dependentRequired",
+    "dependentSchemas",
+    "minProperties",
+    "maxProperties",
+    "uniqueItems",
+    "anyOf",
+    "oneOf",
+    "allOf",
+    "not",
+];
+
+/// Compact a schema while preserving the map keys that carry parameter names.
+/// `properties`/`$defs`/`definitions` are registries, not schemas themselves;
+/// filtering their keys as if they were JSON Schema keywords silently removes
+/// the arguments presented to the model.
 fn compact_schema(value: &Value) -> Value {
+    compact_schema_value(value, false)
+}
+
+fn compact_schema_value(value: &Value, registry: bool) -> Value {
     match value {
+        Value::Object(map) if registry => Value::Object(
+            map.iter()
+                .map(|(name, schema)| (name.clone(), compact_schema_value(schema, false)))
+                .collect(),
+        ),
         Value::Object(map) => {
             let mut output = Map::new();
             // Keep validation and dispatch semantics; omit presentation-only JSON Schema fields.
-            for key in [
-                "type",
-                "properties",
-                "required",
-                "items",
-                "$ref",
-                "$defs",
-                "definitions",
-                "additionalProperties",
-                "enum",
-                "const",
-                "default",
-                "minimum",
-                "maximum",
-                "exclusiveMinimum",
-                "exclusiveMaximum",
-                "minItems",
-                "maxItems",
-                "minLength",
-                "maxLength",
-                "pattern",
-                "format",
-                "prefixItems",
-                "contains",
-                "propertyNames",
-                "dependentRequired",
-                "minProperties",
-                "maxProperties",
-                "uniqueItems",
-                "anyOf",
-                "oneOf",
-                "allOf",
-                "not",
-            ] {
-                if let Some(item) = map.get(key) {
-                    output.insert(key.to_string(), compact_schema(item));
+            for key in SCHEMA_KEYS {
+                if let Some(item) = map.get(*key) {
+                    let child_is_registry = matches!(
+                        *key,
+                        "properties"
+                            | "$defs"
+                            | "definitions"
+                            | "patternProperties"
+                            | "dependentSchemas"
+                    );
+                    let compacted = if is_literal_schema_keyword(*key) {
+                        // These keywords carry literal values, not nested schemas.
+                        item.clone()
+                    } else {
+                        compact_schema_value(item, child_is_registry)
+                    };
+                    output.insert((*key).to_string(), compacted);
                 }
             }
             Value::Object(output)
         }
-        Value::Array(items) => Value::Array(items.iter().map(compact_schema).collect()),
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| compact_schema_value(item, false))
+                .collect(),
+        ),
         Value::String(text) => Value::String(text.clone()),
         _ => value.clone(),
     }
+}
+
+fn is_literal_schema_keyword(key: &str) -> bool {
+    matches!(
+        key,
+        "type"
+            | "required"
+            | "dependentRequired"
+            | "$ref"
+            | "enum"
+            | "const"
+            | "default"
+            | "minimum"
+            | "maximum"
+            | "exclusiveMinimum"
+            | "exclusiveMaximum"
+            | "minItems"
+            | "maxItems"
+            | "minLength"
+            | "maxLength"
+            | "pattern"
+            | "format"
+            | "uniqueItems"
+    )
 }
 
 fn truncate_text(text: &str, max_chars: usize) -> String {
@@ -240,6 +301,48 @@ mod tests {
             "#/$defs/target"
         );
         assert_eq!(compact.input_schema["$defs"]["target"]["type"], "string");
+    }
+
+    #[test]
+    fn compact_schema_preserves_argument_names_and_nested_definition_names() {
+        let spec = ToolSpec {
+            name: "write_file".to_string(),
+            title: None,
+            description: "write".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "ignored"},
+                    "content": {"type": "string"},
+                    "options": {
+                        "type": "object",
+                        "properties": {"dry_run": {"type": "boolean"}},
+                        "required": ["dry_run"]
+                    }
+                },
+                "required": ["path", "content"],
+                "$defs": {
+                    "write_options": {
+                        "type": "object",
+                        "properties": {"encoding": {"type": "string"}}
+                    }
+                }
+            }),
+        };
+        let compact = compact_tool_spec_for_model(&spec);
+        assert_eq!(compact.input_schema["properties"]["path"]["type"], "string");
+        assert_eq!(
+            compact.input_schema["properties"]["content"]["type"],
+            "string"
+        );
+        assert_eq!(
+            compact.input_schema["properties"]["options"]["properties"]["dry_run"]["type"],
+            "boolean"
+        );
+        assert_eq!(
+            compact.input_schema["$defs"]["write_options"]["properties"]["encoding"]["type"],
+            "string"
+        );
     }
 
     #[test]

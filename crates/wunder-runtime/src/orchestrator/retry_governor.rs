@@ -10,6 +10,7 @@ const MAX_SAME_ARGUMENT_FAILURES: u32 = 2;
 const MAX_SAME_RETRYABLE_FAILURES: u32 = 5;
 const MAX_SAME_TOOL_FAILURES: u32 = 5;
 const MAX_SAME_APPLY_PATCH_FAILURES: u32 = 5;
+const MAX_SAME_SUCCESS_NO_PROGRESS: u32 = 4;
 const FINGERPRINT_DETAIL_MAX_CHARS: usize = 240;
 
 #[derive(Clone, Debug)]
@@ -31,6 +32,147 @@ pub(super) struct RetryGovernor {
     same_fingerprint_failures: u32,
     last_tool: String,
     same_tool_failures: u32,
+}
+
+/// Detect a successful tool loop separately from failure retries. A command
+/// can return `ok=true` forever while producing the same observation; failure
+/// guards cannot see that case. Keep the detector narrow to command-like tools
+/// and require several identical non-empty observations to avoid stopping
+/// ordinary polling or idempotent writes.
+#[derive(Clone, Debug, Default)]
+pub(super) struct SuccessProgressGovernor {
+    last_tool: String,
+    last_fingerprint: String,
+    repeat_count: u32,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct SuccessProgressStop {
+    pub(super) tool: String,
+    pub(super) repeat_count: u32,
+    pub(super) threshold: u32,
+    pub(super) detail: String,
+}
+
+impl SuccessProgressGovernor {
+    pub(super) fn reset(&mut self) {
+        self.last_tool.clear();
+        self.last_fingerprint.clear();
+        self.repeat_count = 0;
+    }
+
+    pub(super) fn record(
+        &mut self,
+        tool_name: &str,
+        args: &Value,
+        result: &ToolResultPayload,
+    ) -> Option<SuccessProgressStop> {
+        if !result.ok {
+            self.reset();
+            return None;
+        }
+        let Some((fingerprint, detail)) = success_progress_fingerprint(tool_name, args, result)
+        else {
+            self.reset();
+            return None;
+        };
+        if self.last_tool == tool_name && self.last_fingerprint == fingerprint {
+            self.repeat_count = self.repeat_count.saturating_add(1);
+        } else {
+            self.last_tool = tool_name.to_string();
+            self.last_fingerprint = fingerprint;
+            self.repeat_count = 1;
+        }
+        (self.repeat_count >= MAX_SAME_SUCCESS_NO_PROGRESS).then(|| SuccessProgressStop {
+            tool: tool_name.to_string(),
+            repeat_count: self.repeat_count,
+            threshold: MAX_SAME_SUCCESS_NO_PROGRESS,
+            detail,
+        })
+    }
+}
+
+fn success_progress_fingerprint(
+    tool_name: &str,
+    args: &Value,
+    result: &ToolResultPayload,
+) -> Option<(String, String)> {
+    let canonical = resolve_tool_name(tool_name);
+    if !matches!(
+        canonical.as_str(),
+        "执行命令" | "execute_command" | "ptc" | "程序化工具调用"
+    ) {
+        return None;
+    }
+    let mut fingerprint_fragments = Vec::new();
+    let mut observation_fragments = Vec::new();
+    // Include the requested command/script in the fingerprint. Different
+    // probes often share an empty or short stdout; comparing output alone
+    // would stop legitimate progress after four unrelated calls.
+    if let Some(command) = args.as_object().and_then(|object| {
+        ["content", "command", "cmd"]
+            .iter()
+            .find_map(|key| object.get(*key).and_then(Value::as_str))
+    }) {
+        let command = command.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !command.is_empty() {
+            let mut hasher = DefaultHasher::new();
+            command.hash(&mut hasher);
+            fingerprint_fragments.push(format!("command_hash:{:016x}", hasher.finish()));
+        }
+    }
+    if let Some(stdout) = result.data.get("stdout").and_then(Value::as_str) {
+        if !stdout.trim().is_empty() {
+            let fragment = format!("stdout:{}", compact_progress_text(stdout));
+            fingerprint_fragments.push(fragment.clone());
+            observation_fragments.push(fragment);
+        }
+    }
+    if let Some(stderr) = result.data.get("stderr").and_then(Value::as_str) {
+        if !stderr.trim().is_empty() {
+            let fragment = format!("stderr:{}", compact_progress_text(stderr));
+            fingerprint_fragments.push(fragment.clone());
+            observation_fragments.push(fragment);
+        }
+    }
+    if let Some(rows) = result.data.get("results").and_then(Value::as_array) {
+        for row in rows {
+            let Some(row) = row.as_object() else { continue };
+            if let Some(code) = row.get("returncode") {
+                let fragment = format!("returncode:{code}");
+                fingerprint_fragments.push(fragment.clone());
+                observation_fragments.push(fragment);
+            }
+            for key in ["stdout", "stderr"] {
+                if let Some(text) = row.get(key).and_then(Value::as_str) {
+                    if !text.trim().is_empty() {
+                        let fragment = format!("{key}:{}", compact_progress_text(text));
+                        fingerprint_fragments.push(fragment.clone());
+                        observation_fragments.push(fragment);
+                    }
+                }
+            }
+        }
+    }
+    if observation_fragments.is_empty() {
+        return None;
+    }
+    let detail = observation_fragments.join(" | ");
+    let fingerprint = normalize_detail(&fingerprint_fragments.join(" | "));
+    Some((
+        fingerprint,
+        detail.chars().take(FINGERPRINT_DETAIL_MAX_CHARS).collect(),
+    ))
+}
+
+fn compact_progress_text(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(FINGERPRINT_DETAIL_MAX_CHARS)
+        .collect()
 }
 
 #[derive(Clone, Debug)]
@@ -266,7 +408,7 @@ fn normalize_detail(detail: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        RetryGovernor, ToolResultPayload, MAX_SAME_ARGUMENT_FAILURES,
+        RetryGovernor, SuccessProgressGovernor, ToolResultPayload, MAX_SAME_ARGUMENT_FAILURES,
         MAX_SAME_NON_RETRYABLE_FAILURES, MAX_SAME_RETRYABLE_FAILURES,
     };
     use crate::tools::resolve_tool_name;
@@ -368,5 +510,59 @@ mod tests {
         assert_eq!(stop.reason, "tool_failure_reroute_required");
         assert_eq!(stop.threshold, 5);
         assert_eq!(stop.same_tool_failures, 5);
+    }
+
+    #[test]
+    fn stops_on_repeated_successful_command_observation() {
+        let mut governor = SuccessProgressGovernor::default();
+        let payload = ToolResultPayload {
+            ok: true,
+            data: json!({
+                "results": [{"returncode": 0, "stdout": "n_frames: 1 is_animated: False\n"}]
+            }),
+            error: String::new(),
+            sandbox: true,
+            timestamp: Utc::now(),
+            meta: None,
+        };
+        for _ in 0..3 {
+            assert!(governor
+                .record(
+                    "execute_command",
+                    &json!({"command": "inspect-gif"}),
+                    &payload
+                )
+                .is_none());
+        }
+        let stop = governor
+            .record(
+                "execute_command",
+                &json!({"command": "inspect-gif"}),
+                &payload,
+            )
+            .expect("identical successful command observations should stop the loop");
+        assert_eq!(stop.repeat_count, 4);
+        assert!(stop.detail.contains("n_frames: 1"));
+    }
+
+    #[test]
+    fn different_successful_commands_reset_no_progress_counter() {
+        let mut governor = SuccessProgressGovernor::default();
+        let payload = ToolResultPayload {
+            ok: true,
+            data: json!({
+                "results": [{"returncode": 0, "stdout": "same probe result"}]
+            }),
+            error: String::new(),
+            sandbox: true,
+            timestamp: Utc::now(),
+            meta: None,
+        };
+        for index in 0..8 {
+            let args = json!({"command": format!("probe-{index}")});
+            assert!(governor
+                .record("execute_command", &args, &payload)
+                .is_none());
+        }
     }
 }

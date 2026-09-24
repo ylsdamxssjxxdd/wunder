@@ -49,23 +49,31 @@ export function buildTaskList(sessions: Record<string, any>[], agentId: string, 
     runtimeStatus: String(
       item.runtime_status ?? item.runtimeStatus ?? item.thread_status ?? item.threadStatus ?? item.status ?? ''
     ).trim().toLowerCase(),
-    createdAt: resolveTaskActivityTimestamp(item),
+    createdAt: resolveTaskCreationTimestamp(item),
     consumedTokens: normalizeCount(item.consumed_tokens ?? item.consumedTokens),
     toolCalls: normalizeCount(item.tool_calls ?? item.toolCalls),
     quotaUsed: readSessionQuotaUsed(item)
-  })).sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+  })).sort((a, b) => normalizeTimestamp(b.createdAt) - normalizeTimestamp(a.createdAt) || a.id.localeCompare(b.id));
 }
 
-function resolveTaskActivityTimestamp(item: Record<string, any>): number {
-  const candidates = [item.last_message_at, item.lastMessageAt, item.updated_at, item.updatedAt, item.created_at, item.createdAt];
+function resolveTaskCreationTimestamp(item: Record<string, any>): number {
+  // Creation time is immutable. Activity time must not reorder a manually
+  // arranged list whenever an older thread receives a new event.
+  const candidates = [item.created_at, item.createdAt, item.last_message_at, item.lastMessageAt, item.updated_at, item.updatedAt];
   for (const candidate of candidates) {
     if (typeof candidate === 'number' && Number.isFinite(candidate)) {
-      return candidate;
+      return normalizeTimestamp(candidate);
     }
     const parsed = Date.parse(String(candidate || ''));
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
   return 0;
+}
+
+function normalizeTimestamp(value: number): number {
+  // Keep small fixture/local counters intact; normalize real Unix-second
+  // timestamps so numeric and ISO creation fields sort on one scale.
+  return value > 100_000_000 && value < 1_000_000_000_000 ? value * 1000 : value;
 }
 
 function normalizeCount(value: unknown): number {

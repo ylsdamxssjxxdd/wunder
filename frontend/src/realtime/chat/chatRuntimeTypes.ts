@@ -55,6 +55,7 @@ export type ChatRuntimeEventType =
   | 'tool_call_completed'
   | 'tool_call_failed'
   | 'workflow_event'
+  | 'cursor_only'
   | 'usage_stats'
   | 'queue_status'
   | 'turn_completed'
@@ -217,6 +218,7 @@ export type ChatRuntimeApplyResult = {
   quarantined: boolean;
   pending?: boolean;
   contentOnly?: boolean;
+  cursorOnly?: boolean;
   /** True when the event only extends hidden reasoning text. */
   reasoningOnly?: boolean;
   /** True when the event extends reasoning, including mixed visible output. */

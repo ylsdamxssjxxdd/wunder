@@ -45,6 +45,8 @@
 
 - Rust edition 明确使用 2021；工具链最低版本以根 `Cargo.toml` 的 `rust-version` 为准，当前为 1.92。
 - 不要构建debug版本
+- 日常开发、`cargo check`、定向测试和 `clippy` 默认使用匹配的 64 位 Rust/C 编译链；Windows 可显式指定已安装的 `x86_64-pc-windows-msvc`（当前本机示例为 `cargo +1.95.0-x86_64-pc-windows-msvc ...`），不要因默认 toolchain 是 i686 就用 32 位链路做常规验证。32 位工具链只用于最终 Desktop/CLI 分发构建及对应的 Win7/PE 验收。
+- 常规验证命令应显式带 64 位 toolchain，例如 `cargo +1.95.0-x86_64-pc-windows-msvc check --release -j 8`、`cargo +1.95.0-x86_64-pc-windows-msvc test --release -p <crate> -j 8`；版本按本机已安装且与仓库要求兼容的 64 位 toolchain 调整。若没有 64 位工具链，应先安装或切换，不要回退到 i686。
 - format! 中可以内联变量时使用 `{var}`，避免额外参数。
 - 能合并的 if 语句请合并（clippy::collapsible_if）。
 - 能用方法引用时优先用方法引用，减少多余闭包（clippy::redundant_closure_for_method_calls）。
@@ -205,7 +207,7 @@
 
 ## 测试与验收标准
 
-- 后端 Rust 改动完成后，至少运行相关 crate 的 `cargo check -j 8`；触及共享逻辑、存储、运行时或工具执行时，继续运行定向 `cargo test -j 8` 或 `cargo clippy -j 8`。
+- 后端 Rust 改动完成后，至少用 64 位 toolchain 运行相关 crate 的 `cargo check --release -j 8`；触及共享逻辑、存储、运行时或工具执行时，继续用同一 64 位 toolchain 运行定向 `cargo test --release -j 8` 或 `cargo clippy --release -j 8`。只有最终 Desktop/CLI 分发或 Win7/PE 验收才切换 32 位目标和对应 C 工具链。
 - 服务器用户前端 TypeScript/Vue 改动完成后，至少运行 `npm run typecheck` 或相关回归脚本；触及构建、路由、样式主链或依赖时运行 `npm run build:check`。
 - Slint 改动按范围运行界面编译检查、`cargo check --release -j 8` 和相关原生冒烟；涉及构建链或依赖时验证 Win7 x86 Release 与 PE 导入门禁。渲染改动需查看实际截图，构建通过不能代替 Win7 真机运行验收。
 - 实时消息、聊天运行时、watch/replay、断线恢复、发送保护等改动，服务器用户端优先运行 `frontend` 中对应 `test:chat-*`、`test:chat-realtime` 或 Playwright e2e；桌面端运行 Slint 对应回归与隔离 bridge 联调。Slint 流式验收需覆盖长消息、连续增量、输出期间输入/滚动、断线恢复和最终文本完整性，并记录 UI 更新耗时、积压和内存表现，不能仅凭静态截图判断流畅。

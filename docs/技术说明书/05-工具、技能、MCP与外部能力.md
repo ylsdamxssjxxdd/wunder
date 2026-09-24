@@ -217,14 +217,16 @@ MCP 负责把外部资源、外部工具或外部服务纳入统一能力治理�
 
 命令流超时覆盖整个响应，收到 `final` 即结束读取，无须等待连接关闭。连接中断返回 `SANDBOX_EXECUTION_INTERRUPTED`，执行结果可能已经产生，调用方应先检查结果，不能自动重复执行。PTC 的返回路径包含每次调用的独立目录，同名脚本不会互相覆盖。
 
-回归命令（均使用 release，最多 8 个编译/测试线程）：
+回归命令（默认使用 64 位 toolchain，均使用 release，最多 8 个编译/测试线程）：
 
 ```text
-cargo check --release -p wunder-runtime --features postgres-storage,sqlite-storage -j 8
-cargo test --release -p wunder-runtime --features postgres-storage,sqlite-storage --lib sandbox:: -j 8 -- --test-threads=8
-cargo test --release -p wunder-runtime --features postgres-storage,sqlite-storage --lib ptc_script:: -j 8 -- --test-threads=8
-cargo test --release -p wunder-runtime --features postgres-storage,sqlite-storage --lib workspace::concurrency_tests:: -j 8 -- --test-threads=8
+cargo +1.95.0-x86_64-pc-windows-msvc check --release -p wunder-runtime --features postgres-storage,sqlite-storage -j 8
+cargo +1.95.0-x86_64-pc-windows-msvc test --release -p wunder-runtime --features postgres-storage,sqlite-storage --lib sandbox:: -j 8 -- --test-threads=8
+cargo +1.95.0-x86_64-pc-windows-msvc test --release -p wunder-runtime --features postgres-storage,sqlite-storage --lib ptc_script:: -j 8 -- --test-threads=8
+cargo +1.95.0-x86_64-pc-windows-msvc test --release -p wunder-runtime --features postgres-storage,sqlite-storage --lib workspace::concurrency_tests:: -j 8 -- --test-threads=8
 ```
+
+Linux/Docker 按镜像提供的 x86_64 toolchain 执行同一组命令；只有最终 Desktop/CLI Win7 包另行使用 i686 发布链路。
 
 PostgreSQL 并发测试需先将 `WUNDER_TEST_SANDBOX_POSTGRES_DSN` 指向一次性的隔离数据库，再运行上述测试命令并将过滤器改为 `postgres_cold_start_is_shared`、追加 `--ignored`。该测试会初始化完整 schema，不得指向生产数据库。Linux 额外覆盖命令流断线后直接子进程退出；Windows 覆盖输出捕获任务取消。
 

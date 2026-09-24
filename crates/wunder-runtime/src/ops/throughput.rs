@@ -50,6 +50,12 @@ impl ThroughputConfig {
                 model.enable != Some(false) && is_llm_model(model) && is_llm_configured(model)
             })
             .ok_or("请选择已启用并配置完整的语言模型")?;
+        if model
+            .max_output
+            .is_some_and(|limit| limit > 0 && self.output_tokens > limit)
+        {
+            return Err("输出 Token 超过该模型配置的最大输出长度".into());
+        }
         if model.max_context.is_some_and(|limit| {
             limit > 0
                 && u64::from(self.input_tokens) + u64::from(self.output_tokens) > u64::from(limit)
@@ -385,7 +391,7 @@ impl ThroughputManager {
 
 fn aggregate_metrics(
     values: &[Option<ThroughputMetrics>],
-    target: u32,
+    _target: u32,
     elapsed_s: f64,
 ) -> ThroughputMetrics {
     let completed = values.iter().filter_map(Option::as_ref).collect::<Vec<_>>();
@@ -410,22 +416,47 @@ fn aggregate_metrics(
         .iter()
         .filter_map(|item| item.ttft_ms)
         .collect::<Vec<_>>();
-    let ttft_ms = (ttft_values.len() == values.len()).then(|| {
-        ttft_values
-            .into_iter()
-            .min_by(f64::total_cmp)
-            .unwrap_or_default()
-    });
-    let decode_duration = completed
+    let ttft_ms = (ttft_values.len() == values.len())
+        .then(|| ttft_values.iter().sum::<f64>() / ttft_values.len().max(1) as f64);
+    let max_ttft_ms = ttft_values.into_iter().max_by(f64::total_cmp);
+    let decode_intervals = completed
         .iter()
         .filter_map(|item| {
             item.decode_tps
                 .filter(|speed| *speed > 0.0)
                 .map(|speed| item.output_tokens.unwrap_or(1).saturating_sub(1) as f64 / speed)
         })
-        .max_by(f64::total_cmp);
+        .collect::<Vec<_>>();
+    let decode_duration = if decode_intervals.len() == completed.len() && !completed.is_empty() {
+        // Each request starts together, so the batch decode wall interval is the
+        // latest request end relative to the earliest first token.
+        match (
+            completed
+                .iter()
+                .filter_map(|item| item.ttft_ms)
+                .min_by(f64::total_cmp),
+            completed
+                .iter()
+                .zip(decode_intervals.iter())
+                .filter_map(|(item, interval)| item.ttft_ms.map(|ttft| ttft + interval * 1000.0))
+                .max_by(f64::total_cmp),
+        ) {
+            (Some(first), Some(last)) if last > first => Some((last - first) / 1000.0),
+            _ => None,
+        }
+    } else {
+        None
+    };
     let divide = |tokens: Option<u64>, seconds: Option<f64>| {
         Some(tokens? as f64 / seconds.filter(|seconds| *seconds > 0.0)?)
+    };
+    let mean = |read: fn(&ThroughputMetrics) -> Option<f64>| {
+        let values = completed
+            .iter()
+            .filter_map(|item| read(item))
+            .collect::<Vec<_>>();
+        (values.len() == completed.len() && !values.is_empty())
+            .then(|| values.iter().sum::<f64>() / values.len() as f64)
     };
     let finish_reason = completed
         .iter()
@@ -439,14 +470,34 @@ fn aggregate_metrics(
         reasoning_tokens,
         estimated_output_tokens,
         ttft_ms,
+        max_ttft_ms,
         decode_tps: divide(
             output_tokens.map(|tokens| tokens.saturating_sub(values.len() as u64)),
             decode_duration,
         ),
-        prefill_tps: divide(input_tokens, ttft_ms.map(|value| value / 1000.0)),
+        avg_decode_tps: mean(|item| item.decode_tps),
+        prefill_tps: divide(input_tokens, max_ttft_ms.map(|value| value / 1000.0)),
+        avg_prefill_tps: mean(|item| item.prefill_tps),
         end_to_end_tps: divide(output_tokens, Some(elapsed_s)),
         finish_reason,
-        target_reached: (completed.len() == values.len())
-            .then(|| output_tokens == Some(u64::from(target) * values.len() as u64)),
+        target_reached: (completed.len() == values.len() && !values.is_empty())
+            .then_some(())
+            .and_then(|_| {
+                if completed
+                    .iter()
+                    .all(|item| item.target_reached == Some(true))
+                {
+                    Some(true)
+                } else if completed
+                    .iter()
+                    .any(|item| item.target_reached == Some(false))
+                {
+                    Some(false)
+                } else {
+                    // A provider omitted usage or completion metadata; this is not
+                    // evidence that the requested length was reached.
+                    return None;
+                }
+            }),
     }
 }

@@ -285,13 +285,16 @@ export const applyChatRuntimeEventsWithInvalidation = (
   let changed = false;
   const results = events.map((event) => {
     const result = applyChatRuntimeEvent(projection, event);
-    if (result.applied) {
+    if (result.applied && (!result.cursorOnly || (result.drained ?? 0) > 0)) {
       changed = true;
     }
     return result;
   });
   if (changed) {
-    const appliedResults = results.filter((result) => result.applied);
+    const appliedResults = results.filter((result) =>
+      result.applied && (!result.cursorOnly || (result.drained ?? 0) > 0)
+    );
+    if (appliedResults.length === 0) return results;
     if (store) {
       const foreground = store.foregroundChatSessionId ?? store.activeSessionId;
       const background = appliedResults.every(result => result.sessionId !== String(foreground || ''));

@@ -8,6 +8,7 @@ import {
   resolveAgentRuntimeTerminalStateFromSessionStatus,
   resolveAgentRuntimeStateFromSignals,
   shouldNotifyAgentTaskCompletion,
+  shouldPreserveMissingAgentRuntimeState,
   shouldSettleAgentRuntimeFromTerminalSession,
   shouldSettleAgentSessionsFromRuntimeState
 } from '../../src/views/messenger/agentRuntimeState';
@@ -192,4 +193,11 @@ test('task completion notification also recognizes a direct running-to-idle term
     shouldNotifyAgentTaskCompletion({ previousState: 'running', nextState: 'idle' }),
     true
   );
+});
+
+test('missing polling rows preserve a hot runtime state', () => {
+  assert.equal(shouldPreserveMissingAgentRuntimeState({ previousState: 'running', remoteHasRow: false }), true);
+  assert.equal(shouldPreserveMissingAgentRuntimeState({ previousState: 'pending', remoteHasRow: false }), true);
+  assert.equal(shouldPreserveMissingAgentRuntimeState({ previousState: 'done', remoteHasRow: false }), false);
+  assert.equal(shouldPreserveMissingAgentRuntimeState({ previousState: 'running', remoteHasRow: true }), false);
 });

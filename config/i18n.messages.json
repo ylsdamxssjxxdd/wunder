@@ -299,6 +299,14 @@
     "en-US": "Tool `{tool_name}` failed repeatedly ({repeat_count}/{threshold}): {detail}. This step was paused so the conversation does not stay stuck on the same error. You can keep chatting, for example: ask the model to inspect the error first, stop repeating the same step, try a different approach, switch tools, or continue in smaller steps.",
     "zh-CN": "工具 `{tool_name}` 连续失败（{repeat_count}/{threshold}）：{detail}。这一步已先暂停，避免会话一直卡在同一个错误上。你可以直接继续对话，例如让模型先分析刚才的报错、不要再重复这一步、换一种方法完成、改用其他工具，或拆成更小的步骤继续。"
   },
+  "error.tool_no_progress_guard_user_guidance": {
+    "en-US": "Tool `{tool_name}` returned the same successful observation repeatedly ({repeat_count}/{threshold}) without visible progress. The loop was stopped; inspect the current artifact or choose a different verification step.",
+    "zh-CN": "工具 `{tool_name}` 连续返回相同的成功结果（{repeat_count}/{threshold}），没有观察到新进展。已停止循环；请检查当前产物或改用不同的验证步骤。"
+  },
+  "error.tool_no_progress_guard_user_guidance_with_detail": {
+    "en-US": "Tool `{tool_name}` returned the same successful observation repeatedly ({repeat_count}/{threshold}): {detail}. The loop was stopped; inspect the current artifact or choose a different verification step.",
+    "zh-CN": "工具 `{tool_name}` 连续返回相同的成功结果（{repeat_count}/{threshold}）：{detail}。已停止循环；请检查当前产物或改用不同的验证步骤。"
+  },
   "error.empty_no_final_answer": {
     "en-US": "LLM unavailable after automatic recovery attempts reached the configured limit.",
     "zh-CN": "模型在自动恢复达到次数限制后仍不可用。"

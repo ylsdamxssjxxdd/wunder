@@ -137,11 +137,15 @@ fn stream_metrics_use_provider_usage_and_actual_generation_interval() {
             reasoning_tokens: None,
             estimated_output_tokens: 2,
             ttft_ms: Some(500.0),
+            max_ttft_ms: Some(500.0),
             decode_tps: Some(511.5),
+            avg_decode_tps: Some(511.5),
             prefill_tps: Some(4096.0),
+            avg_prefill_tps: Some(4096.0),
             end_to_end_tps: Some(256.0),
             finish_reason: Some("length".into()),
             target_reached: Some(true),
+            ..Default::default()
         }
     );
     assert_eq!(stats.metrics(2048, 4.0, true).target_reached, Some(false));

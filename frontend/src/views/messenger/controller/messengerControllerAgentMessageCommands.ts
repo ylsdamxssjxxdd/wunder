@@ -982,7 +982,6 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
               approvalMode: 'full_auto',
               ...(reasoningEffort ? { reasoningEffort } : {})
           });
-          ctx.setRuntimeStateOverride(targetAgentId, 'idle', 0);
           if (ctx.chatStore.activeSessionId) {
               ctx.sessionHub.setActiveConversation({
                   kind: 'agent',

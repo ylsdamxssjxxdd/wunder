@@ -124,6 +124,12 @@ export const shouldNotifyAgentTaskCompletion = (options: {
     (nextState === 'done' || nextState === 'idle');
 };
 
+/** A missing row in a polling response is an unknown state, never a terminal state. */
+export const shouldPreserveMissingAgentRuntimeState = (options: {
+  previousState?: AgentRuntimeState | null;
+  remoteHasRow?: boolean;
+}): boolean => !options.remoteHasRow && isHotAgentRuntimeState(options.previousState);
+
 export const resolveAgentRuntimeStateFromSignals = (options: {
   pendingApproval?: boolean;
   pendingInquiry?: boolean;

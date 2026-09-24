@@ -148,6 +148,27 @@ const mergeKeyOrderPreservingMissing = (previousKeys: string[], incomingKeys: st
   return next;
 };
 
+export const prependFreshKeys = (
+  order: string[],
+  previousKeys: string[],
+  incomingKeys: string[],
+  timestamps: Map<string, number>
+): string[] => {
+  if (!previousKeys.length || !timestamps.size) return order;
+  const previousSet = new Set(previousKeys);
+  const additions = incomingKeys.filter((key) => !previousSet.has(key));
+  if (!additions.length) return order;
+  const existingTimestamps = previousKeys
+    .map((key) => timestamps.get(key) ?? 0)
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (!existingTimestamps.length) return order;
+  const newestExisting = Math.max(...existingTimestamps);
+  const fresh = additions.filter((key) => (timestamps.get(key) ?? 0) > newestExisting);
+  if (!fresh.length) return order;
+  const freshSet = new Set(fresh);
+  return [...fresh, ...order.filter((key) => !freshSet.has(key))];
+};
+
 export const moveKeyWithinOrder = (
   order: string[],
   draggedKey: string,
@@ -215,22 +236,39 @@ export function usePersistentStableListOrder<T>(
   source: Readonly<Ref<T[]>> | ComputedRef<T[]>,
   options: {
     getKey: (item: T) => string;
+    getTimestamp?: (item: T) => number;
     storageKey: KeySource;
     storageFallbackKeys?: KeyListSource;
   }
 ) {
   const orderedKeys = shallowRef<string[]>([]);
   const activeStorageKey = shallowRef('');
+  const knownTimestamps = new Map<string, number>();
 
   const syncFromSource = (items: T[], storageKey: string) => {
     const incomingKeys = normalizeKeyList((Array.isArray(items) ? items : []).map((item) => options.getKey(item)));
-    const nextOrder = mergeKeyOrderPreservingMissing(orderedKeys.value, incomingKeys);
+    const previousKeys = orderedKeys.value.slice();
+    const incomingTimestamps = new Map(knownTimestamps);
+    if (options.getTimestamp) {
+      items.forEach((item) => {
+        const key = normalizeKey(options.getKey(item));
+        const value = Number(options.getTimestamp?.(item));
+        if (key && Number.isFinite(value) && value > 0) incomingTimestamps.set(key, value);
+      });
+    }
+    const nextOrder = prependFreshKeys(
+      mergeKeyOrderPreservingMissing(previousKeys, incomingKeys),
+      previousKeys,
+      incomingKeys,
+      incomingTimestamps
+    );
     if (!sameKeyList(nextOrder, orderedKeys.value)) {
       orderedKeys.value = nextOrder;
     }
     if (storageKey) {
       writeStoredKeys(storageKey, orderedKeys.value);
     }
+    incomingTimestamps.forEach((value, key) => knownTimestamps.set(key, value));
   };
 
   watch(
@@ -238,6 +276,7 @@ export function usePersistentStableListOrder<T>(
     ([items, storageKey, fallbackStorageKeys]) => {
       if (storageKey !== activeStorageKey.value) {
         activeStorageKey.value = storageKey;
+        knownTimestamps.clear();
         const { keys, matchedKey } = readStoredKeysFromCandidates(storageKey, fallbackStorageKeys);
         orderedKeys.value = keys;
         if (storageKey && matchedKey && matchedKey !== storageKey && keys.length > 0) {
@@ -245,6 +284,9 @@ export function usePersistentStableListOrder<T>(
         }
       }
       syncFromSource(Array.isArray(items) ? items : [], storageKey);
+      for (const key of [...knownTimestamps.keys()]) {
+        if (!orderedKeys.value.includes(key)) knownTimestamps.delete(key);
+      }
     },
     {
       immediate: true,

@@ -536,6 +536,7 @@ test('canonical projection-only side effects preserve workspace update semantics
     runtimeProjectionVersion: 0
   } as Record<string, any>;
   const workspaceEvents: Array<Record<string, unknown>> = [];
+  const initialRevision = store.runtimeProjectionVersion;
   const previousDispatch = globalThis.window.dispatchEvent;
   globalThis.window.dispatchEvent = ((event: Event) => {
     if (event instanceof CustomEvent && event.type === 'wunder:workspace-refresh') {
@@ -570,6 +571,9 @@ test('canonical projection-only side effects preserve workspace update semantics
       path: 'output.txt',
       paths: ['output.txt']
     });
+    assert.equal(store.runtimeProjectionVersion, initialRevision);
+    assert.equal(store.runtimeProjection.sessions['session-1']?.appliedSeq, 5);
+    assert.equal(store.runtimeProjection.sessions['session-1']?.messages.length ?? 0, 0);
   } finally {
     globalThis.window.dispatchEvent = previousDispatch;
   }

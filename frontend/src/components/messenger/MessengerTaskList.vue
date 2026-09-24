@@ -70,6 +70,7 @@ const scrollTop = ref(0);
 const height = ref(400);
 const ordered = usePersistentStableListOrder(toRef(props, 'items'), {
   getKey: (item) => item.id,
+  getTimestamp: (item) => item.createdAt,
   storageKey: computed(() => `messenger:threads:${String((authStore.user as Record<string, unknown> | null)?.id || (authStore.user as Record<string, unknown> | null)?.user_id || 'guest')}:${props.agentId || 'default'}`)
 });
 const range = computed(() => taskWindow(ordered.orderedItems.value.length, scrollTop.value, height.value, ROW_HEIGHT));
