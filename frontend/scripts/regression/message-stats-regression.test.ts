@@ -20,6 +20,7 @@ const createTranslator = () => {
     'chat.stats.contextTokens': 'Context',
     'chat.stats.quota': 'Quota',
     'chat.stats.toolCalls': 'Tools',
+    'messenger.tasks.quota': 'Credits',
     'chat.stats.userRoundStatus': 'User round {round}',
     'messenger.messageStatus.compacting': 'Compacting',
     'messenger.messageStatus.requesting': 'Requesting',
@@ -148,6 +149,14 @@ test('message stats render a legal zero tool count as zero', () => {
     stats: { toolCalls: 0, contextTokens: 12 }
   }, createTranslator());
   assert.equal(findEntryValue(entries, 'Tools'), '0');
+});
+
+test('message stats expose quota charges carried as consumed', () => {
+  const entries = buildAssistantMessageStatsEntries({
+    role: 'assistant',
+    stats: { creditsConsumed: 0, consumed: 1 }
+  }, createTranslator());
+  assert.equal(findEntryValue(entries, 'Credits'), '1');
 });
 
 test('message stats hide speed when only the aggregate field is available', () => {

@@ -20,6 +20,7 @@ import {
   buildTerminalSnapshotDeltaPayload,
   resolveStreamEventTextStats
 } from '../../src/stores/chatTerminalSnapshotSmoothing';
+import { materializeChatRuntimeMessage } from '../../src/realtime/chat/chatRuntimeRenderAdapter';
 
 const baseEvent = (overrides: ChatRuntimeEvent): ChatRuntimeEvent => ({
   source: 'test',
@@ -3814,6 +3815,78 @@ test('quota usage arriving before a direct assistant reply is retained on the re
   assert.ok(assistant);
   assert.equal(assistant.display?.stats?.creditsConsumed, 1);
   assert.equal(assistant.display?.creditsConsumed, 1);
+});
+
+test('quota usage with the legacy consumed field reaches the bubble credits metric', () => {
+  const projection = createChatRuntimeProjection();
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'user_message_created',
+    event_id: 'evt-consumed-user',
+    event_seq: 1,
+    user_turn_id: 'ut-consumed',
+    message_id: 'um-consumed',
+    content: 'request'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'usage_stats',
+    event_id: 'evt-consumed-quota',
+    event_seq: 2,
+    user_turn_id: 'ut-consumed',
+    model_turn_id: 'mt-consumed',
+    payload: {
+      source_event_type: 'quota_usage',
+      // The server may retain a zero canonical counter while the admission
+      // envelope carries the actual request charge under the legacy alias.
+      data: { turn_quota_used: 0, creditsConsumed: 0, consumed: 1, session_quota_used: 1 }
+    }
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_final',
+    event_id: 'evt-consumed-final',
+    event_seq: 3,
+    user_turn_id: 'ut-consumed',
+    model_turn_id: 'mt-consumed',
+    message_id: 'am-consumed',
+    content: 'done'
+  }));
+  const assistant = selectVisibleMessageProjections(projection, 'session-1')
+    .find((message) => message.role === 'assistant');
+  assert.equal(assistant?.display?.stats?.creditsConsumed, 1);
+  const materialized = materializeChatRuntimeMessage(assistant);
+  assert.equal(materialized?.creditsConsumed, 1);
+});
+
+test('quota admission without a model round follows the later canonical reply', () => {
+  const projection = createChatRuntimeProjection();
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'quota_usage',
+    eventId: 1,
+    payload: {
+      data: {
+        user_round: 1,
+        consumed: 1,
+        session_quota_used: 1
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'llm_output',
+    eventId: 2,
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        content: 'done',
+        is_terminal: true,
+        usage: { input_tokens: 2, output_tokens: 1, total_tokens: 3 }
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+  const assistant = selectVisibleMessageProjections(projection, 'session-1')
+    .find((message) => message.role === 'assistant');
+  assert.equal(assistant?.display?.stats?.creditsConsumed, 1);
 });
 
 test('tool failure remains workflow-local until the turn terminal confirms failure', () => {

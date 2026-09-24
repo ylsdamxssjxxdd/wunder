@@ -379,10 +379,17 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
 
 const resolveCreditsConsumed = (source: Record<string, any> | null | undefined): number | null => {
   if (!source || typeof source !== 'object') return null;
-  const value = source.creditsConsumed ?? source.credits_consumed ?? source.turn_quota_used;
-  if (value === null || value === undefined) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : null;
+  const candidates = [
+    source.creditsConsumed,
+    source.credits_consumed,
+    source.turn_quota_used,
+    source.turnQuotaUsed,
+    source.consumed,
+    source.count
+  ]
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  return candidates.length > 0 ? Math.trunc(Math.max(...candidates)) : null;
 };
 
 const resolveAssistantCreditsConsumed = (

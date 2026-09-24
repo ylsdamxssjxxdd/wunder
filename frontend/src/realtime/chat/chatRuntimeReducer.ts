@@ -4978,8 +4978,24 @@ const applyProjectedQuotaStats = (
     stats.quota_usage = snapshot;
     stats.quotaUsage = snapshot;
   }
-  const credits = parseNonNegativeInt(source.turn_quota_used ?? source.turnQuotaUsed ?? source.credits_consumed ?? source.creditsConsumed);
-  if (credits !== null) {
+  // Older stream envelopes expose the request charge as `consumed` instead
+  // of `turn_quota_used`. It is still a per-turn quota count for quota_usage
+  // events and must reach the assistant bubble.
+  // Providers and older persisted events can include a zero-valued canonical
+  // alias together with the real charge under `consumed`. Always use the
+  // largest valid alias so a placeholder zero cannot mask the charge.
+  const credits = [
+    source.turn_quota_used,
+    source.turnQuotaUsed,
+    source.credits_consumed,
+    source.creditsConsumed,
+    source.consumed,
+    source.count
+  ]
+    .map(parseNonNegativeInt)
+    .filter((value): value is number => value !== null)
+    .reduce((maximum, value) => Math.max(maximum, value), -1);
+  if (credits >= 0) {
     stats.creditsConsumed = Math.max(normalizeProjectedCount(stats.creditsConsumed), credits);
     stats.credits_consumed = stats.creditsConsumed;
   }
@@ -5149,7 +5165,11 @@ const resolveUsageStatsTargetMessage = (
     event.payload.credits_consumed !== undefined ||
     asRecord(event.payload.data).credits_consumed !== undefined ||
     event.payload.creditsConsumed !== undefined ||
-    asRecord(event.payload.data).creditsConsumed !== undefined
+    asRecord(event.payload.data).creditsConsumed !== undefined ||
+    event.payload.consumed !== undefined ||
+    asRecord(event.payload.data).consumed !== undefined ||
+    event.payload.count !== undefined ||
+    asRecord(event.payload.data).count !== undefined
   );
   if (event.messageId) {
     const explicit = session.messageById[event.messageId];
@@ -5182,8 +5202,11 @@ const resolveUsageStatsTargetMessage = (
   }
   const activeTurn = resolveLatestActiveAssistantModelTurn(session);
   const activeMessage = resolveLatestAssistantMessageForModelTurn(session, activeTurn);
-  if (hasTurnQuota) return null;
   if (activeMessage) return activeMessage;
+  // A live assistant placeholder is the safest owner even when the quota
+  // envelope has weak or generated turn ids. Only defer a quota-only event
+  // when no assistant is active, so it cannot overwrite an older reply.
+  if (hasTurnQuota) return null;
   // A quota event may precede the first assistant bubble. Do not attach it to
   // an older completed reply when there is no active turn to own it.
   if (sourceType === 'quota_usage') return null;

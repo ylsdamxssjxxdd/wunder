@@ -521,6 +521,22 @@ export const normalizeQuotaConsumed = (value) => {
   return normalizeStatsCount(value);
 };
 
+const normalizeCreditsConsumed = (stats) => {
+  if (!stats || typeof stats !== 'object' || Array.isArray(stats)) return null;
+  const values = [
+    stats.creditsConsumed,
+    stats.credits_consumed,
+    stats.turn_quota_used,
+    stats.turnQuotaUsed,
+    stats.consumed,
+    stats.count
+  ]
+    .filter((value) => value !== null && value !== undefined && value !== '')
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  return values.length > 0 ? Math.trunc(Math.max(...values)) : null;
+};
+
 export const resolveUsageConsumedTokensFromPayload = (value) => {
   const usage = normalizeUsagePayload(value);
   if (!usage) return 0;
@@ -1101,14 +1117,9 @@ export const normalizeMessageStats = (stats) => {
         stats.consumedTokens ??
         stats.quota
     ),
-    creditsConsumed:
-      stats.creditsConsumed === undefined &&
-      stats.credits_consumed === undefined &&
-      stats.turn_quota_used === undefined
-        ? null
-        : normalizeQuotaConsumed(
-            stats.creditsConsumed ?? stats.credits_consumed ?? stats.turn_quota_used
-          ),
+    // Do not let a persisted `creditsConsumed: 0` mask the non-zero
+    // `consumed`/`turn_quota_used` alias emitted by quota admission.
+    creditsConsumed: normalizeCreditsConsumed(stats),
     partialQuotaConsumed: normalizeQuotaConsumed(
       stats.partialQuotaConsumed ??
         stats.partial_quota_consumed ??
