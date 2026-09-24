@@ -1643,7 +1643,7 @@ impl Orchestrator {
                         if failure_reroute_notice.is_none() {
                             if result.ok {
                                 if let Some(stop) =
-                                    success_progress_governor.record(&name, args, &result)
+                                    success_progress_governor.record(&name, &args, &result)
                                 {
                                     let detail = stop.detail.clone();
                                     let guard_answer = build_tool_no_progress_guard_answer(
