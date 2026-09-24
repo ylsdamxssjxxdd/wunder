@@ -34,7 +34,7 @@ python frontend-slint/scripts/check-native.py --ui frontend-slint/target/release
 
 脚本准备独立 SQLite、工作目录和本机测试模型，检查智能体创建/编辑/归属、工具目录、模型密钥保留/默认项、工作目录设置/预览/越界拒绝，以及未知实体拒绝、启动前停止、同线程排队、订阅释放后的后端完成、长流完整性、历史回读、停止、输出期间输入/导航/停止自动滚动、退出，以及没有本机监听和 bridge 子进程。输出包含 `smoke.txt`、`stream-metrics.json` 与截图。UI 更新耗时不包含全部渲染/排版时间，Win7 真机流畅性仍需单独验证。`--native-smoke` 只接受已准备配置的隔离目录。
 
-`build-win7.ps1` / `build-offline.ps1` 始终构建完整原生依赖，不再需要 `-NativeRuntime`；旧的仅前端离线 SDK 缺少 runtime 依赖，需补齐相应依赖包。桌面局部 `html2md` 补丁只构建 `rlib`，避免上游额外 Rust dylib 与 `panic=abort` 冲突。
+`builders/build-win7-slint.ps1` / `builders/build-win7-offline.ps1` 始终构建完整原生依赖，不再需要 `-NativeRuntime`；旧的仅前端离线 SDK 缺少 runtime 依赖，需补齐相应依赖包。桌面局部 `html2md` 补丁只构建 `rlib`，避免上游额外 Rust dylib 与 `panic=abort` 冲突。
 
 2026-09-23 默认原生 x64 Release 联调通过（`target/frontend-slint/native-check-20260923-f/`）：聊天、停止与排队、智能体/工具/配置/文件页面操作及跨进程重启后回读均通过；50,999 字节、175 次 UI 刷新，最大 UI 应用耗时 1.722 ms，最大积压 6/128，峰值工作集 86,974,464 字节。无 bridge 子进程及监听端口。无参数启动、重启和提前关闭另经 `native-launch-20260923-a/` 验证。指标不包含全部布局绘制耗时，也不代表 Win7 真机验收。
 
@@ -45,10 +45,10 @@ python frontend-slint/scripts/check-native.py --ui frontend-slint/target/release
 有离线 SDK 时运行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File frontend-slint/scripts/build-offline.ps1 -Check
-powershell -ExecutionPolicy Bypass -File frontend-slint/scripts/build-offline.ps1
+powershell -ExecutionPolicy Bypass -File builders/build-win7-offline.ps1 -Check
+powershell -ExecutionPolicy Bypass -File builders/build-win7-offline.ps1
 # 旧 SDK 可使用已经缓存完整原生依赖的 Cargo 目录，仍然强制离线：
-powershell -ExecutionPolicy Bypass -File frontend-slint/scripts/build-offline.ps1 -CargoCacheRoot $env:USERPROFILE\.cargo
+powershell -ExecutionPolicy Bypass -File builders/build-win7-offline.ps1 -CargoCacheRoot $env:USERPROFILE\.cargo
 ```
 
 2026-09-23 完整原生 Win7 x86 Release 构建与 PE 门禁通过，产物约 76.6 MiB。该 32 位产物在当前 Windows 主机的隔离回归通过（`target/frontend-slint/native-win7-check-20260923-a/`）：聊天与全部已接入页面、配置重启回读，50,999 字节、184 次刷新、最大 UI 投影应用 1.010 ms、积压 30/128、峰值工作集约 70.6 MiB。无参数启动、重启及启动中关闭另经 `target/frontend-slint/native-win7-launch-20260923-a/` 验证，未创建 bridge 子进程或本机监听。**尚未在 Win7 真机执行**；编译、导入门禁及当前系统运行结果不能替代真机验证。
@@ -70,3 +70,71 @@ python frontend-slint/scripts/check-launch.py --ui frontend-slint/target/release
 ```
 
 脚本把 EXE 复制到隔离目录，验证不带参数即可启动、无子进程及监听、正常关闭、重启和启动中关闭。即使遗留配置启用了 LAN 发现，原生 UI 也不会启动本地控制监听。
+
+## Linux AppImage 与交叉构建
+
+Linux x86_64 与 ARM64 桌面版使用 Ubuntu 18.04/glibc 2.27 作为构建基线，AppImage 内携带
+Slint 软件渲染所需的 XCB/X11/XKB 动态库，并使用 gzip SquashFS 兼容老旧发行版。
+已有的 `rcho-slint-arm64-ubuntu18:latest` 作为基础镜像即可，无需重做；仓库提供的
+wunder 派生镜像只补充 XCB 运行库和 SquashFS 工具：
+
+```bash
+docker build --platform linux/arm64 \
+  -t wunder-slint-arm64-ubuntu18:latest \
+  -f packaging/docker/Dockerfile.ubuntu18-arm64-slint .
+```
+
+ARM64 的本地构建脚本（Windows 主机）使用：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File builders/build-linux-arm64-appimage.ps1
+```
+
+脚本默认使用同级 `rcho/target/electron/release/` 中已有 ARM64 AppImage 作为
+type-2 runtime；也可以显式传入 `-AppImageRuntime <路径>`。Rust 1.92 和 Cargo
+vendor 从同级 `Rust-builder/kylin2` 挂载，构建完成后产物位于
+`target/slint/dist/linux-arm64/`。检查产物可运行：
+
+```bash
+bash frontend-slint/scripts/check-linux-arm64-appimage.sh \
+  target/slint/dist/linux-arm64/wunder-slint-0.4.0-linux-arm64.AppImage
+```
+
+AppImage 启动时把 `WUNDER_TEMPD` 和 `WUNDER_WORK` 放到用户数据目录，不会写入只读的
+AppImage 挂载目录；也可通过 `--temp-root`、`--workspace` 或对应环境变量覆盖。
+
+构建入口集中在仓库根 `builders/`；`frontend-slint/scripts/` 只保留原生联调、启动回归和
+AppImage 结构检查。参考 rcho 的离线 SDK 组织，ARM64 Ubuntu 18.04 主机（或 Docker 中
+的 ARM64 Ubuntu 18.04 镜像）可交叉生成 Linux amd64 与 Win32 i686 原生 Slint 产物：
+
+```bash
+# ARM64 Linux -> Ubuntu 18.04 x86_64 ELF
+bash build-linux-amd64-offline.sh --native
+
+# ARM64 Linux -> type-2 x86_64 AppImage
+WUNDER_APPIMAGE_RUNTIME=/path/to/x86_64-runtime.AppImage \
+  bash build-linux-amd64-offline.sh --docker --appimage
+
+# ARM64 Linux -> Win32 i686 PE
+bash build-win32-arm64-offline.sh --native
+
+# 统一入口
+bash build-linux-arm64-offline.sh -t amd64 --docker
+bash build-linux-arm64-offline.sh -t win32 --docker
+```
+
+Windows 主机使用对应 PowerShell 包装器：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File builders/build-linux-amd64-offline.ps1 -Docker
+powershell -ExecutionPolicy Bypass -File builders/build-linux-amd64-offline.ps1 -Docker -AppImage -AppImageRuntime <x86_64-AppImage>
+powershell -ExecutionPolicy Bypass -File builders/build-win32-arm64-offline.ps1 -Docker
+```
+
+Linux AppImage 必须提供同架构 type-2 runtime（`WUNDER_APPIMAGE_RUNTIME` 或
+`-AppImageRuntime`），不会再依赖固定版本的参考工程产物。ARM64 打包、amd64 交叉打包
+都在输出目录创建唯一私有临时目录，完成后原子发布；失败会清理临时文件并保留已有版本。
+构建缓存分别位于 `target/linux-arm64-ubuntu18-slint`、
+`target/linux-amd64-ubuntu18-slint` 和 `target/win32-x86-arm64`，与旧桌面壳产物隔离。
+
+CI 发布只保留三个桌面程序：Win7 32 位 EXE、Ubuntu 18.04 x86_64 AppImage 和 Ubuntu 18.04 ARM64 AppImage。

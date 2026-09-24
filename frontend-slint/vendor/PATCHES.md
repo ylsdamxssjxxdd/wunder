@@ -294,7 +294,7 @@ The patches
 are intentionally narrow for the Win7 software-rendering baseline.
 When any upstream dependency is updated, re-evaluate and reapply only the
 equivalent behavior rather than copying these files blindly. Run
-`scripts/build-win7.ps1` afterwards; its PE import gate must continue to pass.
+`../../builders/build-win7-slint.ps1` afterwards; its PE import gate must continue to pass.
 
 ## Patch archives and upgrading Slint
 
@@ -342,7 +342,7 @@ bundle, or ask an operator to install `combase.dll`. Remove the feature or
 dependency that imports it instead.
 
 The final distribution executable, not merely a debug build or a previous
-release, must pass `scripts/build-win7.ps1`. In addition to `combase.dll`, the
+release, must pass `../../builders/build-win7-slint.ps1`. In addition to `combase.dll`, the
 gate rejects `api-ms-win-*`, `ext-ms-win-*`, `SystemParametersInfoForDpi`,
 `CreateWaitableTimerEx`, and `GetDpiForWindow` strong imports. Before changing
 the text stack, inspect `cargo tree -e features -i fontique`: Fontique/Parley

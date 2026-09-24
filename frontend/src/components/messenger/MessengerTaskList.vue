@@ -2,44 +2,58 @@
   <section class="messenger-right-panel messenger-right-panel--tasks">
     <div class="messenger-right-section-title">
       <span class="messenger-right-section-title-main"><i class="fa-solid fa-list-check" aria-hidden="true"></i>{{ t('messenger.tasks.title') }}</span>
-      <span class="messenger-right-section-count">{{ items.length }}</span>
-    </div>
-    <div v-if="!items.length" class="messenger-list-empty">
-      <span>{{ t('messenger.tasks.empty') }}</span>
-      <button v-if="pageError" class="messenger-task-load-more" type="button" :disabled="loading" @click="loadMore">{{ t('messenger.tasks.retry') }}</button>
-    </div>
-    <div v-else ref="viewport" class="messenger-task-list" @dragover="handleDragOver" @dragleave="handleDragLeave" @drop="handleDrop" @scroll.passive="syncViewport">
-      <div :style="{ height: `${range.start * ROW_HEIGHT}px`, flexShrink: 0 }" aria-hidden="true"></div>
-      <div v-for="item in visibleItems" :key="item.id" class="messenger-task-item" :class="{ active: activeSessionId === item.id, 'is-running': item.state === 'running', 'is-dragging': dragState.key === item.id, 'is-drop-before': dragState.targetKey === item.id && dragState.position === 'before', 'is-drop-after': dragState.targetKey === item.id && dragState.position === 'after' }"
-        draggable="true" @dragstart="handleDragStart($event, item.id)">
-        <button class="messenger-task-select" type="button" :aria-current="activeSessionId === item.id ? 'true' : undefined" :title="item.title" @click="emit('activate', item.id)">
-          <AgentAvatar
-            size="sm"
-            status-only
-            :state="item.state"
-            :animated="item.state === 'running'"
-            :title="item.title"
-          />
-          <span class="messenger-task-item-main">
-            <span class="messenger-task-item-title">{{ item.title }}</span>
-            <span class="messenger-task-item-meta">
-              <span :title="t('messenger.tasks.tokens')"><i class="fa-solid fa-bolt" aria-hidden="true"></i>{{ formatCompactCount(item.consumedTokens) }}</span>
-              <span :title="t('messenger.tasks.tools')"><i class="fa-solid fa-screwdriver-wrench" aria-hidden="true"></i>{{ formatCompactCount(item.toolCalls) }}</span>
-              <span :title="`${t('messenger.tasks.quota')}: ${item.quotaUsed ?? '--'}`" :aria-label="`${t('messenger.tasks.quota')}: ${item.quotaUsed ?? '--'}`"><i class="fa-solid fa-coins" aria-hidden="true"></i>{{ item.quotaUsed === null ? '--' : formatCompactCount(item.quotaUsed) }}</span>
-            </span>
-          </span>
+      <span class="messenger-task-header-actions">
+        <button
+          class="messenger-task-activity-toggle"
+          :class="{ 'is-active': showActiveOnly, 'is-idle': !activeCount }"
+          type="button"
+          :title="activityFilterTitle"
+          :aria-label="activityFilterTitle"
+          :aria-pressed="showActiveOnly"
+          @click="toggleActivityFilter"
+        >
+          <AgentAvatar size="sm" status-only :state="activeCount ? activityState : 'idle'" :animated="activityState === 'running'" />
+          <span>{{ activeCount }}</span>
         </button>
-        <el-dropdown trigger="click" :teleported="true" placement="bottom-end" popper-class="messenger-task-dropdown" @command="(action) => handleAction(action, item.id)">
-          <button class="messenger-task-menu" type="button" :title="t('common.more')" :aria-label="t('common.more')"><i class="fa-solid fa-ellipsis" aria-hidden="true"></i></button>
-          <template #dropdown><el-dropdown-menu>
-            <el-dropdown-item command="detail">{{ t('messenger.timeline.detail.open') }}</el-dropdown-item>
-            <el-dropdown-item command="rename">{{ t('chat.history.rename') }}</el-dropdown-item>
-            <el-dropdown-item command="archive" :disabled="item.state === 'running' || item.state === 'pending' || item.locked">{{ t('chat.history.archive') }}</el-dropdown-item>
-          </el-dropdown-menu></template>
-        </el-dropdown>
+      </span>
+    </div>
+    <div class="messenger-task-body">
+      <div ref="viewport" class="messenger-task-list" @dragover="handleDragOver" @dragleave="handleDragLeave" @drop="handleDrop" @scroll.passive="syncViewport">
+        <div v-if="!displayItems.length" class="messenger-task-empty" role="status">
+          {{ t(showActiveOnly ? 'messenger.tasks.emptyActive' : 'messenger.tasks.empty') }}
+        </div>
+        <div :style="{ height: `${range.start * ROW_HEIGHT}px`, flexShrink: 0 }" aria-hidden="true"></div>
+        <div v-for="item in visibleItems" :key="item.id" class="messenger-task-item" :class="{ active: activeSessionId === item.id, 'is-running': item.state === 'running', 'is-dragging': dragState.key === item.id, 'is-drop-before': dragState.targetKey === item.id && dragState.position === 'before', 'is-drop-after': dragState.targetKey === item.id && dragState.position === 'after' }"
+          draggable="true" @dragstart="handleDragStart($event, item.id)">
+          <button class="messenger-task-select" type="button" :aria-current="activeSessionId === item.id ? 'true' : undefined" :title="item.title" @click="emit('activate', item.id)">
+            <AgentAvatar
+              size="sm"
+              status-only
+              :state="item.state"
+              :animated="item.state === 'running'"
+              :title="item.title"
+            />
+            <span class="messenger-task-item-main">
+              <span class="messenger-task-item-title">{{ item.title }}</span>
+              <span class="messenger-task-item-meta">
+                <span :title="t('messenger.tasks.tokens')"><i class="fa-solid fa-bolt" aria-hidden="true"></i>{{ formatCompactCount(item.consumedTokens) }}</span>
+                <span :title="t('messenger.tasks.tools')"><i class="fa-solid fa-screwdriver-wrench" aria-hidden="true"></i>{{ formatCompactCount(item.toolCalls) }}</span>
+                <span :title="`${t('messenger.tasks.quota')}: ${item.quotaUsed ?? '--'}`" :aria-label="`${t('messenger.tasks.quota')}: ${item.quotaUsed ?? '--'}`"><i class="fa-solid fa-coins" aria-hidden="true"></i>{{ item.quotaUsed === null ? '--' : formatCompactCount(item.quotaUsed) }}</span>
+              </span>
+            </span>
+          </button>
+          <el-dropdown trigger="click" :teleported="true" placement="bottom-end" popper-class="messenger-task-dropdown" @command="(action) => handleAction(action, item.id)">
+            <button class="messenger-task-menu" type="button" :title="t('common.more')" :aria-label="t('common.more')"><i class="fa-solid fa-ellipsis" aria-hidden="true"></i></button>
+            <template #dropdown><el-dropdown-menu>
+              <el-dropdown-item command="rename">{{ t('messenger.tasks.rename') }}</el-dropdown-item>
+              <el-dropdown-item command="detail">{{ t('messenger.timeline.detail.open') }}</el-dropdown-item>
+              <el-dropdown-item command="archive" :disabled="item.state === 'running' || item.state === 'pending' || item.locked">{{ t('messenger.tasks.archive') }}</el-dropdown-item>
+            </el-dropdown-menu></template>
+          </el-dropdown>
+        </div>
+        <div :style="{ height: `${(displayItems.length - range.end) * ROW_HEIGHT}px`, flexShrink: 0 }" aria-hidden="true"></div>
+        <button v-if="hasMore" class="messenger-task-load-more" type="button" :disabled="loading" @click="loadMore">{{ loading ? t('common.loading') : pageError ? t('messenger.tasks.retry') : t('messenger.tasks.loadMore') }}</button>
       </div>
-      <div :style="{ height: `${(items.length - range.end) * ROW_HEIGHT}px`, flexShrink: 0 }" aria-hidden="true"></div>
-      <button v-if="hasMore" class="messenger-task-load-more" type="button" :disabled="loading" @click="loadMore">{{ loading ? t('common.loading') : pageError ? t('messenger.tasks.retry') : t('messenger.tasks.loadMore') }}</button>
     </div>
   </section>
 </template>
@@ -54,6 +68,7 @@ import { taskWindow, type TaskListItem } from '@/views/messenger/taskList';
 import { resolveTaskRuntimeState } from '@/views/messenger/taskRuntimeState';
 import { useTaskListDrag } from '@/views/messenger/useTaskListDrag';
 import { useTaskListPages } from '@/views/messenger/useTaskListPages';
+import { useTaskListActivity } from '@/views/messenger/useTaskListActivity';
 import { usePersistentStableListOrder } from '@/views/messenger/stableListOrder';
 import { formatCompactCount } from '@/utils/compactNumber';
 import AgentAvatar from './AgentAvatar.vue';
@@ -73,18 +88,36 @@ const ordered = usePersistentStableListOrder(toRef(props, 'items'), {
   getTimestamp: (item) => item.createdAt,
   storageKey: computed(() => `messenger:threads:${String((authStore.user as Record<string, unknown> | null)?.id || (authStore.user as Record<string, unknown> | null)?.user_id || 'guest')}:${props.agentId || 'default'}`)
 });
-const range = computed(() => taskWindow(ordered.orderedItems.value.length, scrollTop.value, height.value, ROW_HEIGHT));
-// Subscribe only inside this small component. Streaming must not invalidate the page shell or sort all tasks.
-const visibleItems = computed(() => ordered.orderedItems.value.slice(range.value.start, range.value.end).map((item) => {
+const resolveItemState = (item: TaskListItem) => {
   void store.runtimeProjectionVersionBySession[item.id];
-  return { ...item, state: resolveTaskRuntimeState(
+  return resolveTaskRuntimeState(
     selectSessionRuntimeStatus(store.runtimeProjection, item.id), item.runtimeStatus, Boolean(store.loadingBySession[item.id])
-  ) };
-}));
+  );
+};
+const { showActiveOnly, activeCount, activityState, displayItems } = useTaskListActivity(ordered.orderedItems, resolveItemState);
+const activityFilterTitle = computed(() => t(
+  showActiveOnly.value ? 'messenger.tasks.showAll' : 'messenger.tasks.showActive', { count: activeCount.value }
+));
+const range = computed(() => taskWindow(displayItems.value.length, scrollTop.value, height.value, ROW_HEIGHT));
+// Subscribe inside this small component; text streaming must not invalidate the page shell.
+const visibleItems = computed(() => displayItems.value.slice(range.value.start, range.value.end).map((item) => ({
+  ...item, state: resolveItemState(item)
+})));
 const syncViewport = () => { scrollTop.value = viewport.value?.scrollTop || 0; height.value = viewport.value?.clientHeight || 400; };
 const { dragState, resetDrag, handleDragStart, handleDragOver, handleDragLeave, handleDrop } = useTaskListDrag({
-  viewport, items: ordered.orderedItems, rowHeight: ROW_HEIGHT, syncViewport, moveItem: ordered.moveItem
+  // Hit testing follows the displayed rows; moves still use stable IDs in the full order.
+  viewport, items: displayItems, rowHeight: ROW_HEIGHT, syncViewport, moveItem: ordered.moveItem
 });
+let allItemsScrollTop = 0;
+const toggleActivityFilter = () => {
+  if (!showActiveOnly.value) allItemsScrollTop = viewport.value?.scrollTop || 0;
+  showActiveOnly.value = !showActiveOnly.value;
+};
+watch(showActiveOnly, () => {
+  resetDrag();
+  if (viewport.value) viewport.value.scrollTop = showActiveOnly.value ? 0 : allItemsScrollTop;
+  syncViewport();
+}, { flush: 'post' });
 const handleAction = (action: string, id: string) => {
   if (action === 'detail') emit('detail', id);
   else if (action === 'rename') emit('rename', id);
@@ -101,18 +134,33 @@ watch(viewport, (element) => {
   if (typeof ResizeObserver !== 'undefined' && element) { observer = new ResizeObserver(syncViewport); observer.observe(element); }
   syncViewport();
 });
-watch(() => props.agentId, () => { resetDrag(); if (viewport.value) viewport.value.scrollTop = 0; syncViewport(); });
-watch(() => props.items.length, () => void nextTick(syncViewport));
+watch(() => props.agentId, () => {
+  resetDrag(); allItemsScrollTop = 0; showActiveOnly.value = false;
+  if (viewport.value) viewport.value.scrollTop = 0;
+  syncViewport();
+});
+watch(displayItems, (items) => {
+  if (dragState.value.key && !items.some((item) => item.id === dragState.value.key)) resetDrag();
+  void nextTick(syncViewport);
+});
 onBeforeUnmount(() => {
   observer?.disconnect();
 });
 </script>
 
 <style scoped>
-.messenger-right-panel--tasks { padding: 10px; background: #ffffff; }
-.messenger-task-list { display: block; overflow-x: hidden; background: #ffffff; }
+.messenger-right-panel--tasks { padding: 14px; border-radius: 18px; background: var(--messenger-polish-panel-bg, var(--messenger-panel-bg, #fff)); }
+.messenger-task-body { display: flex; flex: 1; min-height: 0; padding: 4px; overflow: hidden; border-radius: 14px; background: linear-gradient(180deg, rgba(255, 255, 255, .82), rgba(249, 250, 251, .92)); box-shadow: inset 0 0 0 1px var(--messenger-polish-panel-outline, rgba(15, 23, 42, .05)); }
+.messenger-task-list { display: block; width: 100%; overflow-x: hidden; }
+.messenger-task-empty { padding: 18px 10px; color: var(--messenger-polish-muted); font-size: 12px; text-align: center; }
 .messenger-task-load-more { width: 100%; padding: 8px; color: inherit; background: none; border: 0; cursor: pointer; }
-.messenger-right-section-title { margin-bottom: 6px; padding-bottom: 6px; gap: 6px; }
+.messenger-right-section-title { flex-shrink: 0; min-height: 28px; margin-bottom: 10px; padding-bottom: 0; border-bottom: 0; gap: 6px; }
+.messenger-task-header-actions { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
+.messenger-task-activity-toggle { display: inline-flex; align-items: center; gap: 2px; min-height: 28px; padding: 0 6px 0 2px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ui-accent-deep); font: inherit; font-variant-numeric: tabular-nums; letter-spacing: normal; cursor: pointer; }
+.messenger-task-activity-toggle:hover, .messenger-task-activity-toggle.is-active { border-color: rgba(var(--ui-accent-rgb), .24); background: rgba(var(--ui-accent-rgb), .1); }
+.messenger-task-activity-toggle.is-idle { color: var(--messenger-polish-subtle-muted, #6b7280); }
+/* Header icon decorations must not override the shared runtime status glyph. */
+.messenger-task-activity-toggle :deep(i) { width: auto; height: auto; background: none; box-shadow: none; border-radius: 0; color: inherit; font-size: inherit; }
 .messenger-task-item { position: relative; height: 46px; min-height: 46px; margin-bottom: 8px; padding: 0; border-radius: 7px; }
 .messenger-task-select { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; height: 100%; background: none; border: 0; color: inherit; text-align: left; cursor: pointer; padding: 4px 6px; }
 .messenger-task-menu { background: none; border: 0; color: inherit; cursor: pointer; padding: 4px 6px; }
@@ -127,5 +175,5 @@ onBeforeUnmount(() => {
 :global(.messenger-task-dropdown.el-popper) { box-sizing: border-box; max-width: min(180px, calc(100vw - 24px)); overflow: hidden; }
 :global(.messenger-task-dropdown .el-dropdown-menu) { min-width: 118px; max-width: 180px; overflow-x: hidden; }
 :global(.messenger-task-dropdown .el-dropdown-menu__item) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.messenger-task-select:focus-visible, .messenger-task-menu:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: -2px; }
+.messenger-task-select:focus-visible, .messenger-task-menu:focus-visible, .messenger-task-activity-toggle:focus-visible, .messenger-task-load-more:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: -2px; }
 </style>

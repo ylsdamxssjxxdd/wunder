@@ -38,6 +38,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2026-03-14-x86_64-pc-windows-gnu
+          components: rust-src
       - uses: msys2/setup-msys2@v2
         id: msys2
         with:
@@ -49,6 +50,13 @@ jobs:
             mingw-w64-i686-binutils
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-binutils
+      - name: Ensure Win7 Rust source component
+        shell: pwsh
+        run: |
+          rustup toolchain install nightly-2026-03-14-x86_64-pc-windows-gnu --profile minimal --component rust-src
+          rustup component add rust-src --toolchain nightly-2026-03-14-x86_64-pc-windows-gnu
+          $components = rustup component list --installed --toolchain nightly-2026-03-14-x86_64-pc-windows-gnu
+          if (-not ($components -match '^rust-src')) { throw 'rust-src was not installed for the Win7 build toolchain' }
       - name: Build and validate native Win7 executable
         shell: pwsh
         run: |
@@ -80,9 +88,11 @@ jobs:
           - arch: x86_64
             platform: linux/amd64
             image: wunder-desktop-ubuntu1804-x86_64
+            tool_arch: x86_64
           - arch: arm64
             platform: linux/arm64
             image: wunder-desktop-ubuntu1804-arm64
+            tool_arch: aarch64
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
@@ -90,12 +100,13 @@ jobs:
       - uses: docker/setup-qemu-action@v3
         if: matrix.arch == 'arm64'
       - uses: docker/setup-buildx-action@v3
-      - name: Build Ubuntu 18.04 native desktop binary
+      - name: Build Ubuntu 18.04 native desktop AppImage
         shell: bash
         run: |
           set -euo pipefail
           docker build --platform "${{ matrix.platform }}" \
             --build-arg RUST_TOOLCHAIN="${RUST_TOOLCHAIN}" \
+            --build-arg APPIMAGE_TOOL_URL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.tool_arch }}.AppImage" \
             -f packaging/docker/Dockerfile.ubuntu18-desktop \
             -t "${{ matrix.image }}" .
           mkdir -p release-assets
@@ -103,12 +114,12 @@ jobs:
             -v "$GITHUB_WORKSPACE:/app" \
             -w /app \
             "${{ matrix.image }}" \
-            bash -lc 'cargo build --release --locked --manifest-path frontend-slint/Cargo.toml --bin wunder-frontend-slint -j 8 && cp frontend-slint/target/release/wunder-frontend-slint /app/release-assets/wunder-frontend-slint-linux-${{ matrix.arch }}-ubuntu18.04'
-          test -x "release-assets/wunder-frontend-slint-linux-${{ matrix.arch }}-ubuntu18.04"
+            bash -lc 'ARCH=${{ matrix.arch }} OUTPUT_DIR=/app/release-assets bash frontend-slint/scripts/build-linux-appimage.sh'
+          test -x "release-assets/wunder-frontend-slint-linux-${{ matrix.arch }}-ubuntu18.04.AppImage"
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-linux-${{ matrix.arch }}
-          path: release-assets/wunder-frontend-slint-linux-${{ matrix.arch }}-ubuntu18.04
+          path: release-assets/wunder-frontend-slint-linux-${{ matrix.arch }}-ubuntu18.04.AppImage
           if-no-files-found: error
           retention-days: 7
 

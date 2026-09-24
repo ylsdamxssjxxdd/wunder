@@ -60,6 +60,7 @@
 - 默认复用现有框架、协议、状态模型和设计 token；只有在现有边界无法表达新能力时，才新增模块或抽象。
 - 面向百万行级代码演进：新增能力尽量小文件、小模块、清晰公开面；超过 2000 行的文件只做维护性修复，新功能拆到新文件后接回入口。
 - 保持“三形态同核”：server、desktop、cli 可以有接入差异，但线程、工具、存储、实时事件和权限语义必须共享同一套核心。
+- 如果用户没有强调要改哪个前端，默认以服务端网页前端为对象。
 - 区分 durable state、实时投影、进程内临时态和 UI 派生态。不要让前端、管理端或渠道适配层成为后端真相来源。
 - 所有外部可见行为变更必须同步考虑：API 文档、设计文档、技术说明书、使用说明书、功能迭代记录和回归测试。
 - 性能是默认要求：避免无界队列、无界缓存、无分页查询、全量重算、深层 watch、大对象复制和长时间持锁。
@@ -88,7 +89,7 @@
 - `crates/wunder-server/`：server 入口、middleware、静态资源挂载、启动装配与服务端协议壳。
 - `crates/wunder-cli/`：CLI/TUI 运行形态源码，复用 runtime 核心，不另造平行运行时。
 - `crates/wunder-desktop/`：桌面本地运行时、bridge、系统能力与启动装配，供 Slint 前端复用；其中遗留 Tauri 壳不再作为维护目标，公共运行时与 bridge 继续维护。
-- `frontend-slint/`：桌面端默认用户前端（Rust + Slint）；`ui/` 放界面，`src/` 放接入与 UI 状态投影，`scripts/` 放构建和验收脚本；复用现有 Win7 x86 兼容方案与完整内嵌字体。
+- `frontend-slint/`：桌面端默认用户前端（Rust + Slint）；`ui/` 放界面，`src/` 放接入与 UI 状态投影，`scripts/` 只放运行验收与回归脚本；构建、交叉编译和打包入口统一在仓库根 `builders/`，复用现有 Win7 x86 兼容方案与完整内嵌字体。
 - `frontend/`：服务器版本用户侧前端（Vue3 + TypeScript）；主要代码在 `frontend/src/`，按 `api/`、`components/`、`realtime/`、`router/`、`stores/`、`views/`、`styles/` 等分层。
 - `web/`：管理端/调试端前端（原生 HTML + JS 模块）；`modules/` 放业务模块，`styles/` 放样式，`shared/` 放共享前端工具，`docs/` 与 `simple-chat/` 放独立页面，`third/` 放第三方资源。
 - `desktop/electron/`：遗留 Electron 桌面壳及其分发资源，停止日常维护，不向此目录落入新的桌面功能。

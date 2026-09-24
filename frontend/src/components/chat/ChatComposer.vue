@@ -391,7 +391,7 @@
                 :disabled="stopButtonActive || composerBusy > 0"
                 @click.stop.prevent="toggleReasoningMenu"
               >
-                <i class="fa-solid fa-brain messenger-world-tool-fa-icon" aria-hidden="true"></i>
+                <ReasoningEffortIcon :effort="reasoningEffort" />
               </button>
               <div
                 v-if="reasoningMenuVisible"
@@ -468,7 +468,7 @@
             :disabled="stopButtonActive || composerBusy > 0"
             @click.stop.prevent="toggleReasoningMenu"
           >
-            <i class="fa-solid fa-brain input-icon" aria-hidden="true"></i>
+            <ReasoningEffortIcon :effort="reasoningEffort" />
           </button>
           <div
             v-if="reasoningMenuVisible"
@@ -540,6 +540,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import ChatGoalComposer from '@/components/chat/ChatGoalComposer.vue';
+import ReasoningEffortIcon from '@/components/chat/ReasoningEffortIcon.vue';
 
 import { processChatMediaAttachment } from '@/api/chat';
 import { uploadWunderWorkspace } from '@/api/workspace';

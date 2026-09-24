@@ -1,113 +1,69 @@
-﻿# wunder Xinjian
+# wunder Xinjian
 
-> One-liner: Xinjian is an agent system that executes tasks, not just chats. You provide the goal; it plans, calls tools, and delivers results.
+An agent orchestration system. You give it a goal; it breaks the task down, calls tools, and delivers results.
 
 The frontend is a warm hive, the backend is a massive starship.
 
-## What This README Solves
+## Current Status
 
-- You are new to wunder and want a practical overview first
-- You want to run it in 3 steps before reading deep architecture docs
-- You want to understand the hierarchy: `Xinjian -> User -> Swarm -> Agent -> Thread`
+The project is in prototype stage. APIs and structure may change at any time.
 
-## System Hierarchy Diagram
+The three runtime forms are at different stages:
+
+- **server**: the core of the project, most complete, and the main focus of daily development
+- **desktop**: under development, not feature-complete yet; a local desktop app built on Slint, intended as the main form for individual users
+- **cli**: under development, not feature-complete yet; a command-line form sharing the server kernel
+
+For a full experience today, start with server. Desktop and cli run, but don't expect them to cover everything server does.
+
+## Core Concepts
 
 ```text
 Xinjian (wunder platform)
-├─ User 1
-│  ├─ Swarm 1
-│  │  ├─ Agent 1
-│  │  │  ├─ Thread 1
-│  │  │  └─ Thread 2
-│  │  └─ Agent 2
-│  └─ Swarm 2
-│     └─ ...
-├─ User 2
-│  └─ ...
+├─ User
+│  └─ Swarm
+│     └─ Agent
+│        └─ Thread
 └─ ...
 ```
 
-- `User`: top-level isolation boundary for sessions, workspace, and ownership.
-- `Swarm`: a collaboration unit that groups agents around one goal.
-- `Agent`: an execution role that plans, calls models/tools, and produces output.
-- `Thread`: the continuous execution context inside an agent.
+- User: the top-level boundary for isolation and resource ownership
+- Swarm: a group of agents organized around one goal
+- Agent: the role that does the work — planning, calling models, calling tools
+- Thread: the continuous execution context inside an agent
 
-In short: **requests enter a user scope, are split in swarms, and are executed by agents through threads.**
-
-## Start in 3 Steps
-
-1. Open Releases and download the `wunder-desktop` package for your OS (release page is source of truth).
-2. Install/unzip and launch `wunder-desktop`.
-3. Type your task in the input box and press Enter.
-
-Tip: if you only want to try it once, this is enough.
-
-## Choose by Goal
-
-| Your Goal | Recommended Entry | Why |
-| --- | --- | --- |
-| I just want to use it now | `wunder-desktop` | Lowest setup cost, local-first experience |
-| I need team collaboration and governance | `wunder-server` | Multi-user, multi-tenant, unified access and control |
-| I need scripted automation | `wunder-cli` | Terminal workflows and pipeline-friendly execution |
-
-## What You Can Ask Xinjian to Do
-
-- Office work: docs, proposals, summaries, meeting notes, tables, slides
-- Engineering work: coding, refactoring, script generation, troubleshooting
-- Integration work: combine MCP + Skills to build repeatable workflows
-- Ongoing automation: scheduled tasks, periodic checks, channel-based handling
-- Bootstrap: use wunder to build wunder (code, docs, and operations)
-
-## Capability Snapshot (Current Real Features)
-
-| Capability | Description | Common Uses |
-| --- | --- | --- |
-| Desktop control and automation | Local desktop can operate apps, files, and web after authorization | Organize files, batch processing, generate documents |
-| MCP tool ecosystem | Supports `/wunder/mcp`, self-hosted and cross-system tool access | Connect external services, call tools across systems |
-| Skills workflows | Skills package repeatable steps and workflows | Reports, one-click standard processes |
-| Multi-agent parallel collaboration | Multiple agents work in parallel and hand off tasks | One researches, one writes, one reviews |
-| Scheduling and orchestration | Gateway/channel/scheduler for long-running automation | Recurring cleanups, reminders, periodic jobs |
-| Long-session continuity | Context compaction plus long-term memory | Ongoing projects, iterative refinement |
-| Multi-channel | Every agent can connect to QQ, Feishu, and other messaging platforms | Consistent cross-client experience, stable access |
+A goal lands on a user, gets divided inside a swarm, and is executed by agents in their own threads.
 
 ## Three Runtime Forms
 
-| Form | Best for | One-liner |
-| --- | --- | --- |
-| **wunder-desktop (Recommended)** | Individuals / general users | Download-and-use local desktop agent |
-| `wunder-server` | Teams / organizations | Unified access, permission management, multi-tenant collaboration |
-| `wunder-cli` | Developers / automation | Command-line driven and script-oriented execution |
+**wunder-server** is the core. Multi-user, multi-tenant, agent app building and publishing, unified gateway access, with a built-in toolchain, knowledge base, and long-term memory. Deploy on Linux for best performance.
 
-> Fastest path: desktop. Team governance and integration: server. Script automation: cli.
+**wunder-desktop** (in development) is the local desktop form. The default frontend is Rust + Slint; on launch it calls the backend natively in the same process, with no local HTTP involved. The compatibility target is 32-bit Windows 7.
 
-## Common Misunderstandings
+**wunder-cli** (in development) is the command-line form. It reuses the runtime core instead of building a separate execution chain.
 
-- `user_id` in `/wunder` does not have to be a registered account.
-- Token stats represent **context occupancy**, not total billed consumption.
-- Sessions are split into user rounds and model rounds.
-- WebSocket is preferred; SSE is fallback.
+All three forms share one core: threads, tools, storage, realtime events, and permission semantics are the same code; only the access layers differ.
 
-## FAQ
+## Capabilities
 
-**Q: Do I need to deploy server first?**  
-A: No. Most users can start directly with `wunder-desktop`. Use server when team-level governance and deep integrations are required.
+- Multi-agent parallel collaboration and task handoff
+- MCP tool integration, Skills for repeatable workflows
+- Scheduled tasks, gateway, and multi-channel access
+- Context compaction and long-term memory for long sessions
+- Knowledge base
 
-**Q: Do I need technical skills?**  
-A: No. Describe the objective and the agent handles the execution path.
+## Documentation
 
-**Q: How do I trigger multi-agent mode?**  
-A: Just provide the objective. The system can split work automatically, or you can explicitly ask for parallel execution.
-
-## Documentation Entry Points
-
-- Static docs homepage: `docs/使用说明书/zh-CN/index.md`
-- System overview: `docs/系统介绍.md`
-- Design doc: `docs/设计方案.md`
-- API doc: `docs/API文档.md`
+- User/admin/developer manual: `docs/使用说明书/zh-CN/index.md`
+- System overview: `docs/wunder系统简介.md`
+- Overall design: `docs/总体设计.md`
+- API reference: `docs/API文档.md`
 
 ## Projects Absorbed by wunder
 
-| Absorbed | Project Name | GitHub URL |
+wunder absorbed code and ideas from quite a few open-source projects along the way:
+
+| Absorbed | Project | URL |
 | :--- | :--- | :--- |
 | Agent Foundation | EVA | https://github.com/ylsdamxssjxxdd/eva |
 | Rust Foundation | OpenAI Codex | https://github.com/openai/codex |

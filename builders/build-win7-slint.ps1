@@ -10,8 +10,8 @@
 
 $ErrorActionPreference = "Stop"
 
-$frontendRoot = Split-Path -Parent $PSScriptRoot
-$repoRoot = Split-Path -Parent $frontendRoot
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$frontendRoot = Join-Path $repoRoot "frontend-slint"
 $manifest = Join-Path $frontendRoot "Cargo.toml"
 $target = "i686-win7-windows-gnu"
 . (Join-Path $PSScriptRoot 'win7_host_tools.ps1')

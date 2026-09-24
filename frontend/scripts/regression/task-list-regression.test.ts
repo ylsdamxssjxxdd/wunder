@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { ref } from 'vue';
 
-import { buildTaskList, isArchivedTaskRecord, isRootWorkThread } from '../../src/views/messenger/taskList';
+import { buildTaskList, isArchivedTaskRecord, isRootWorkThread, taskWindow } from '../../src/views/messenger/taskList';
+import { useTaskListActivity } from '../../src/views/messenger/useTaskListActivity';
 import { moveKeyWithinOrder, prependFreshKeys } from '../../src/views/messenger/stableListOrder';
 import { resolveTaskRuntimeState } from '../../src/views/messenger/taskRuntimeState';
 import { applySessionQuotaUsage } from '../../src/stores/chatSessionQuota';
@@ -81,4 +83,50 @@ test('thread icons honor live settlement, queue priority and terminal state over
     resolveTaskRuntimeState('finalizing', 'idle', false),
     resolveTaskRuntimeState('not_loaded', 'active', true)
   ], ['idle', 'pending', 'pending', 'done', 'error', 'done', 'running', 'running']);
+});
+
+test('activity filter finds offscreen threads and follows settlement without losing the full order', () => {
+  const items = ref(Array.from({ length: 100 }, (_, index) => ({ id: `thread-${index}`, status: 'idle' })));
+  items.value[90].status = 'running';
+  items.value[95].status = 'queued';
+  items.value[96].status = 'waiting_approval';
+  items.value[97].status = 'waiting_user_input';
+  const list = useTaskListActivity(items, (item) => resolveTaskRuntimeState(item.status, '', false));
+  assert.equal(list.activeCount.value, 4);
+  assert.equal(list.activityState.value, 'running');
+  assert.equal(list.displayItems.value, items.value);
+  list.showActiveOnly.value = true;
+  assert.deepEqual(list.displayItems.value.map(item => item.id), ['thread-90', 'thread-95', 'thread-96', 'thread-97']);
+  assert.deepEqual(taskWindow(list.displayItems.value.length, 4000, 300, 54), { start: 0, end: 4 });
+
+  items.value[90].status = 'completed';
+  assert.equal(list.activeCount.value, 3);
+  assert.equal(list.activityState.value, 'pending');
+  items.value[95].status = 'failed';
+  items.value[96].status = 'cancelled';
+  items.value[97].status = 'idle';
+  assert.equal(list.activeCount.value, 0);
+  assert.deepEqual(list.displayItems.value, []);
+  // Keep the filter explicit even after the final active thread settles.
+  assert.equal(list.showActiveOnly.value, true);
+  items.value[99].status = 'resuming';
+  assert.deepEqual(list.displayItems.value.map(item => item.id), ['thread-99']);
+  list.showActiveOnly.value = false;
+  assert.equal(list.displayItems.value, items.value);
+});
+
+test('dragging between filtered rows moves stable IDs in the full thread order', () => {
+  const items = ref([
+    { id: 'a', status: 'idle' }, { id: 'b', status: 'running' },
+    { id: 'c', status: 'idle' }, { id: 'd', status: 'running' }
+  ]);
+  const list = useTaskListActivity(items, (item) => resolveTaskRuntimeState(item.status, '', false));
+  list.showActiveOnly.value = true;
+  const [target, dragged] = list.displayItems.value;
+  const order = moveKeyWithinOrder(items.value.map(item => item.id), dragged.id, target.id, 'before');
+  assert.deepEqual(order, ['a', 'd', 'b', 'c']);
+  items.value = order.map(id => items.value.find(item => item.id === id)!);
+  assert.deepEqual(list.displayItems.value.map(item => item.id), ['d', 'b']);
+  list.showActiveOnly.value = false;
+  assert.deepEqual(list.displayItems.value.map(item => item.id), ['a', 'd', 'b', 'c']);
 });

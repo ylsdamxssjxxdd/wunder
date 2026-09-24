@@ -5,7 +5,7 @@ param(
     [switch]$Check
 )
 $ErrorActionPreference = "Stop"
-$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$repoRoot = Split-Path -Parent $PSScriptRoot
 if (!$BuilderRoot) {
     $BuilderRoot = if ($env:WUNDER_BUILDER_ROOT) { $env:WUNDER_BUILDER_ROOT } else { Join-Path (Split-Path -Parent $repoRoot) "Rust-builder\win7" }
 }
@@ -47,4 +47,4 @@ foreach ($nativeTool in @("cmake64\bin", "nasm64")) {
 $env:CARGO_NET_OFFLINE = "true"
 $env:RUSTC = Join-Path $toolchainBin "rustc.exe"
 $env:PATH = "$toolchainBin;$env:PATH"
-& (Join-Path $PSScriptRoot "build-win7.ps1") -CargoExe (Join-Path $toolchainBin "cargo.exe") -MingwBin (Join-Path $offline "mingw32\bin") -HostMingwBin (Join-Path $offline "mingw64\bin") -Jobs $Jobs -Check:$Check
+  & (Join-Path $PSScriptRoot "build-win7-slint.ps1") -CargoExe (Join-Path $toolchainBin "cargo.exe") -MingwBin (Join-Path $offline "mingw32\bin") -HostMingwBin (Join-Path $offline "mingw64\bin") -Jobs $Jobs -Check:$Check
