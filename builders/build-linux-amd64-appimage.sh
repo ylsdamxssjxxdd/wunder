@@ -75,7 +75,7 @@ cp -f "$appdir/wunder.desktop" "$appdir/usr/share/applications/wunder.desktop"
 
 # Cross-built binaries cannot be passed to host ldd. Resolve the known Winit
 # X11/XCB closure from the x86_64 sysroot instead; glibc stays system-owned.
-libraries=(libX11.so.6 libX11-xcb.so.1 libXext.so.6 libXfixes.so.3 libXrender.so.1 libXi.so.6 libXrandr.so.2 libXcursor.so.1 libXinerama.so.1 libXau.so.6 libXdmcp.so.6 libxcb.so.1 libxcb-render.so.0 libxcb-shape.so.0 libxcb-xfixes.so.0 libxcb-randr.so.0 libxcb-xkb.so.1 libxcb-image.so.0 libxcb-keysyms.so.1 libxcb-icccm.so.4 libxcb-util.so.1 libxcb-shm.so.0 libxcb-sync.so.1 libxcb-present.so.0 libxcb-glx.so.0 libxcb-dri2.so.0 libxcb-dri3.so.0 libxkbcommon.so.0 libxkbcommon-x11.so.0)
+libraries=(libX11.so.6 libX11-xcb.so.1 libXext.so.6 libXfixes.so.3 libXrender.so.1 libXi.so.6 libXrandr.so.2 libXcursor.so.1 libXinerama.so.1 libXtst.so.6 libXau.so.6 libXdmcp.so.6 libxcb.so.1 libxcb-render.so.0 libxcb-shape.so.0 libxcb-xfixes.so.0 libxcb-randr.so.0 libxcb-xkb.so.1 libxcb-image.so.0 libxcb-keysyms.so.1 libxcb-icccm.so.4 libxcb-util.so.1 libxcb-shm.so.0 libxcb-sync.so.1 libxcb-present.so.0 libxcb-glx.so.0 libxcb-dri2.so.0 libxcb-dri3.so.0 libxkbcommon.so.0 libxkbcommon-x11.so.0 libasound.so.2)
 for library in "${libraries[@]}"; do
   found=""
   for candidate in "$sdk/usr/x86_64-linux-gnu/lib/$library" "$sdk/lib/x86_64-linux-gnu/$library" "$sdk/usr/lib/x86_64-linux-gnu/$library"; do
@@ -83,7 +83,7 @@ for library in "${libraries[@]}"; do
   done
   [[ -n "$found" ]] && cp -L -f "$found" "$appdir/usr/lib/$library"
 done
-for library in libX11.so.6 libxcb.so.1 libxcb-xkb.so.1 libxkbcommon.so.0 libxkbcommon-x11.so.0; do
+for library in libX11.so.6 libXtst.so.6 libxcb.so.1 libxcb-xkb.so.1 libxkbcommon.so.0 libxkbcommon-x11.so.0 libasound.so.2; do
   [[ -f "$appdir/usr/lib/$library" ]] || fail "required bundled X11/XCB library is missing from the amd64 sysroot: $library"
 done
 cat > "$appdir/AppRun" <<'EOF'

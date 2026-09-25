@@ -1794,18 +1794,20 @@
 ### 4.1.9 `/wunder/admin/monitor/{session_id}`
 
 - 方法：`GET`
+- 查询参数：`offset`（可选，默认 `0`）、`limit`（可选，默认 `100`，最大 `100`）。线程日志按事件序号稳定分页，每页最多返回 100 条；响应同时返回 `event_offset/event_limit/event_total/events_has_more`。显式 `export_all=true` 仅供下载完整日志时使用。
 - 返回（JSON）：
-  - `session`：线程详情（start_time/session_id/user_id/question/status/token_usage/elapsed_s/stage/summary
+  - `session`：线程日志（start_time/session_id/user_id/question/status/token_usage/elapsed_s/stage/summary
     + ttft_ms
     + prefill_tokens/prefill_duration_s/prefill_speed_tps/prefill_speed_lower_bound
     + decode_tokens/decode_duration_s/decode_speed_tps）
   - `events`：事件详情列表
+- 分页响应字段：`event_offset`、`event_limit`、`event_total`、`events_has_more`。
 - 说明：
 - `session` 详情新增 `log_profile`（`normal`/`debug`）与 `trace_id`，用于跨模块追踪。
-- `session` 详情新增 `agent_name`（智能体名称），用于在线程详情中快速辨认线程归属。
+- `session` 详情新增 `agent_name`（智能体名称），用于在线程日志中快速辨认线程归属。
 - `events` 每条记录新增 `event_id`（线程内递增）。
-- 每轮用户提问会额外写入 `user_input` 事件，`data.message/question` 保存原始用户消息，便于在线程详情中快速定位上下文。
-- 线程日志事件按事件序号完整持久化，服务重启、切换线程和刷新页面不会自动删除历史轮次；前端通过虚拟窗口按需渲染高频事件。
+- 每轮用户提问会额外写入 `user_input` 事件，`data.message/question` 保存原始用户消息，便于在线程日志中快速定位上下文。
+- 线程日志事件按事件序号完整持久化，服务重启、切换线程和刷新页面不会自动删除历史轮次；用户侧与管理端详情窗口使用最多 100 条的稳定分页和紧凑原生条目渲染，完整日志仅在显式导出时读取。
 - `observability.monitor_event_limit` 与 `observability.monitor_drop_event_types` 仅为旧配置兼容保留，不再触发线程日志裁剪或丢弃。
 - `observability.monitor_payload_max_chars` 仍可限制单字段大小；需要完整字段时设为 `0`。
 - `llm_request` 事件仅保存 `payload_summary` 与 `message_count`，不保留完整请求体。
@@ -2124,7 +2126,7 @@
 
 ### 4.1.24.3 管理端前端页面与接口
 
-- 内部状态/线程详情：`/wunder/admin/monitor`、`/wunder/admin/monitor/tool_usage`、`/wunder/admin/monitor/{session_id}`、`/wunder/admin/monitor/{session_id}/cancel`、`/wunder/admin/monitor/{session_id}/compaction`。
+- 内部状态/线程日志：`/wunder/admin/monitor`、`/wunder/admin/monitor/tool_usage`、`/wunder/admin/monitor/{session_id}`、`/wunder/admin/monitor/{session_id}/cancel`、`/wunder/admin/monitor/{session_id}/compaction`。
 - 线程管理：`/wunder/admin/users`、`/wunder/admin/users/{user_id}/sessions`、`/wunder/admin/users/{user_id}`、`/wunder/admin/users/throughput/cleanup`。
 - 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/import`、`/wunder/admin/user_accounts/test/seed`、`/wunder/admin/user_accounts/test/cleanup`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/quota_adjustment`、`/wunder/admin/user_accounts/{user_id}/logout`、`/wunder/admin/user_accounts/{user_id}/login_token`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
 - 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/multimodal/transcription`、`/wunder/admin/multimodal/speech`、`/wunder/admin/multimodal/image`、`/wunder/admin/multimodal/video`、`/wunder/admin/system`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
@@ -2700,14 +2702,14 @@
 ### 4.1.43 `/wunder/admin/throughput/start`
 
 - 方法：`POST`，管理员鉴权。
-- JSON 必填：`model_name`（已启用的语言模型配置名）、`concurrency`、`input_tokens`、`output_tokens`。`concurrency` 为同一场景同时发起的请求数，范围 1–1024；为兼容旧客户端，省略时按 1 处理。不接受旧并发列表、用户前缀或其他未知字段。
-- API 接受输入与输出 Token 的正整数配置：输入范围为 1–16777216，输出范围为 1–1048576；`1k = 1024`，`1m = 1048576`。管理员吞吐页面不再展示注入上文输入框，使用固定默认输入长度发起新测试，历史快照仍保留 `input_tokens`。
+- JSON 必填：`model_name`（已启用的语言模型配置名）、`concurrency_list`、`input_tokens`、`output_tokens`。`concurrency_list` 是按顺序测试的并发数列表，每项范围 1–1024，重复项会去重；为兼容旧客户端，也接受单个 `concurrency` 并将其规范化为单项列表。不接受用户前缀或其他未知字段。
+- API 接受输入与输出 Token 的正整数配置：输入范围为 1–16777216，输出范围为 1–1048576。管理员吞吐页面提供输入 Token 与输出 Token 两个可自由填写、带常用档位的字段；展示值从 1,000 起使用 `k`，从 100,000 起使用 `m`，历史快照仍保留原始整数 `input_tokens`。
 - 输入为包含消息开销的本地估算；随机中性文本避免固定前缀缓存，API usage 才是实测用量。已配置的上下文窗口用于输入与输出之和校验，不静默截短。
-- 每次测试固定一个模型、输入长度和输出长度，并按 `concurrency` 同时发起请求；结果聚合所有请求的输入、输出与推理 Token。`ttft_ms` 是并发请求首字延迟的算术平均，`max_ttft_ms` 是最慢请求的首字延迟；`decode_tps` / `prefill_tps` 是并发批次整体速度，`avg_decode_tps` / `avg_prefill_tps` 是单请求速度的算术平均。不创建用户、任务线程、会话、工具调用或线程日志，不写入长期记忆。
+- 每次测试固定一个模型、输入长度和输出长度，按 `concurrency_list` 顺序逐项发起并发请求；结果聚合每个并发档的输入、输出与推理 Token，`samples` 保存各档的四项速度指标。`ttft_ms` 是并发请求首字延迟的算术平均，`max_ttft_ms` 是最慢请求的首字延迟；`decode_tps` / `prefill_tps` 是并发批次整体速度，`avg_decode_tps` / `avg_prefill_tps` 在管理端分别显示为“单生成速度”和“单预填充速度”。页面速度从 1,000 起使用 `k tok/s`，从 100,000 起使用 `m tok/s`。不创建用户、任务线程、会话、工具调用或线程日志，不写入长期记忆。
 - 支持 `virtual_replay` 模型进行合成测量：使用模型 `simulation_speed` 的预处理和生成速度，不读取回放日志。先输出思考增量，再输出正文；思考占目标输出的 1/4，计入输出总数，`reasoning_tokens` 单列，不额外增加预算。结果带 `simulated: true` 与当次 `simulation_speed`，曲线按模型、速度档位及输出长度分组。普通虚拟调用共用速度配置、取消与超时。
 - 输出使用对应协议的输出上限；明确标记为 `vllm`、`vllm_omni`、`sglang` 且使用 Chat Completions 的引擎额外传 `min_tokens` 和 `ignore_eos`。其他 API 不能保证不提前停止，使用连续生成指令并核验实际用量；不重复请求凑数，不将目标数冒充用量。
 - 不自动重试，不降级为非流式。请求超时取模型配置，默认 1800 秒，限制在 1–3600 秒。
-- 返回：`ThroughputSnapshot`；参数错误 400，已有运行中或保存中的测试 409。快照的 `config` 包含 `concurrency`，历史曲线按模型、并发数和输出长度分组。
+- 返回：`ThroughputSnapshot`；参数错误 400，已有运行中或保存中的测试 409。快照的 `config` 包含 `concurrency_list`，`samples` 按并发数记录历史曲线点。
 
 ### 4.1.44 `/wunder/admin/throughput/stop`
 
@@ -2724,7 +2726,7 @@
 
 - 方法：`GET`，管理员鉴权。
 - Query：可选 `run_id`，缺省返回当前或最近记录。仅查找已知记录 ID，不将输入拼接为文件路径；不存在或已淘汰返回 404。
-- 返回：`ThroughputSnapshot`；历史曲线根据多个摘要绘制，按模型、并发数和输出长度分组，横轴可为输入长度或测试时间。
+- 返回：`ThroughputSnapshot`；历史曲线从每份摘要的 `samples` 绘制，以并发数为横轴。纵轴不显示绝对速度，而是以同一测试中并发 1 的指标为 0%，展示后续并发档相对基线的百分比变化；悬停时同时显示实测 tok/s。
 - 新摘要写入 `config/data/throughput/scenarios-v2.json`，最多 50 条，临时文件替换保存。仅记录配置、时间、指标和脱敏错误，不保存注入内容、模型回复、API 密钥或地址。旧版并发报告不混入新口径，不自动删除既有业务数据。
 
 #### 实时快照
@@ -2736,7 +2738,7 @@
 
 #### ThroughputSnapshot（v2）
 
-- `id`、`config`（模型、并发数、输入 Token、输出 Token）、`started_at`、`finished_at`、`elapsed_s`。
+- `id`、`config`（模型、并发列表、输入 Token、输出 Token）、`samples`（每个并发档的状态、耗时和指标）、`started_at`、`finished_at`、`elapsed_s`。
 - `simulated`：是否为内置虚拟模型产生的合成测量；旧摘要缺省为 false。
 - `simulation_speed`：内置虚拟模型当次 `fast/medium/slow` 档位；真实 API 与旧摘要省略。旧模拟摘要归入 legacy 曲线，不按新默认速度追认。
 - `status`：`running/stopping/finished/incomplete/error/stopped`；仅 API 用量精确等于目标时为 `finished`，缺失用量或长度不符为 `incomplete`。
@@ -2913,9 +2915,9 @@
 
 ### 会话消息返回体补充（用户侧聊天接口）
 
-`GET /wunder/chat/sessions` 的 `data.items[]` 返回 `consumed_tokens`、`tool_calls`、`quota_used` 三个会话累计摘要字段，供线程列表直接展示；接口不会把消息正文或监控事件明细嵌入列表响应。`quota_used` 表示该线程实际扣减的额度（每次获准的模型请求扣 1，包含重试和压缩摘要）；与 Token 消耗和用户全部线程的 `quota_used_total` 分开。无可靠历史基线时为 `null` 或缺失，客户端显示未知而非伪造为 0。
+`GET /wunder/chat/sessions` 的 `data.items[]` 返回 `consumed_tokens`、`tool_calls`、`quota_used` 三个会话累计摘要字段，供线程列表直接展示；接口不会把消息正文或监控事件明细嵌入列表响应。`quota_used` 表示该线程的模型请求额度消耗（每次获准的模型请求计 1，包含重试和压缩摘要）；普通用户的该计数对应账户扣减，管理员请求只计入线程用量而不扣账户余额。它与 Token 消耗和用户全部线程的 `quota_used_total` 分开。无可靠历史基线时为 `null` 或缺失，客户端显示未知而非伪造为 0。
 
-`quota_usage` 流式事件新增 `session_quota_used`，与列表的 `quota_used` 使用相同的线程累计口径。消费者取累计最大值并同步列表缓存，不能将累计值再次相加；隐藏摘要请求也发送额度元数据。虚拟回放、不存在可扣额度的账户或被额度限制拒绝的请求不增加该累计值。摘要随现有监控 JSON 在 PostgreSQL/SQLite 持久化，不依赖前端历史消息或已裁剪事件数量。
+`quota_usage` 流式事件新增 `session_quota_used`，与列表的 `quota_used` 使用相同的线程累计口径。消费者取累计最大值并同步列表缓存，不能将累计值再次相加；隐藏摘要请求也发送额度元数据。管理员请求会带 `billable=false`，只更新线程用量，不携带账户余额快照且不扣款；虚拟回放和被额度限制拒绝的请求不增加该累计值。摘要随现有监控 JSON 在 PostgreSQL/SQLite 持久化，不依赖前端历史消息或已裁剪事件数量。
 
 列表可带 `known_session_ids`（逗号分隔，最多 100 个 ID，每个不超过 128 字节），响应 `data.unavailable_session_ids[]` 返回其中不属于当前用户活动会话目录的 ID（已删除、归档或不属于该用户）。核对独立于本次分页和智能体筛选；不能将部分分页未返回的条目直接视为删除。客户端轮换核对已缓存 ID，收到明确失效结果后清理列表、详情和关联缓存，并拒绝迟到响应重新加入该条目。若 `offset=0` 且返回条目数等于 `data.total`，则可按完整目录清理请求开始前已知但缺失的同查询范围条目；不得影响其他查询范围或请求期间新建的线程。详情失效与列表核对共用客户端失效标记。
 
@@ -2925,9 +2927,10 @@
 - `GET /wunder/chat/sessions/{session_id}/history`
 - `DELETE /wunder/chat/sessions/{session_id}`：仅删除当前用户可见的线程目录、上下文派生状态、定时任务与运行时投影；聊天正文、工具日志、产物日志、流事件和监控历史不会被删除。线程日志由管理员通过 `/wunder/admin/monitor/logs/cleanup` 或管理员线程删除接口显式维护。
 - `GET /wunder/chat/sessions/{session_id}` 新增 `data.agent_name`（智能体名称，默认智能体同样返回名称）。
+- `GET /wunder/chat/sessions/{session_id}` 新增受权限保护的 `data.log_overview` 聚合投影，包含线程日志概览所需的 `session_id/agent_id/status/elapsed_s/user_rounds/tool_calls/quota_used/consumed_tokens/event_total/ttft_ms/prefill_speed_tps/prefill_speed_lower_bound/decode_speed_tps`；不包含追踪 ID、用户 ID、管理员标记或原始事件。
 - `GET /wunder/chat/sessions/{session_id}` 新增 `data.context_occupancy_tokens`，作为 `data.context_tokens` 的显式语义别名；新接入优先使用该字段表达当前线程上下文占用。
 - `GET /wunder/chat/sessions/{session_id}` 与 `GET /wunder/chat/sessions/{session_id}/history` 的历史消息视图统一返回 `data.transcript[]`，不再返回 `data.messages[]`。`transcript` 是刷新页面的唯一权威消息序列，前端必须按数组顺序与 `turn_index` 渲染，不得再使用 `stream_round`、正文或时间戳推断用户/模型轮次身份。
-- `GET /wunder/chat/sessions/{session_id}/events` 未传 `limit` 时会从持久化流事件库按递增事件序号完整读取历史；用户侧工作流日志按用户轮次分组并使用虚拟窗口渲染，切换线程或刷新不会截断旧轮次。需要渐进补水时可使用 `workflow_only=true&from_user_round={n}&to_user_round={n}`，导出或管理员审计应读取完整事件范围。
+- `GET /wunder/chat/sessions/{session_id}/events` 未传 `limit` 时会从持久化流事件库按递增事件序号完整读取历史；用户侧线程日志窗口使用 `workflow_only=true&offset={n}&page_size={m}` 分页，`page_size` 最大 100，响应通过 `event_offset/event_limit/event_total/events_has_more` 指示当前页范围、总数和下一页。需要渐进补水时可使用 `workflow_only=true&from_user_round={n}&to_user_round={n}`，导出或管理员审计应读取完整事件范围。
 - 两个历史接口均接受可选 `summary=true`：服务端保留消息身份、轮次、状态和附件元数据，但会截断超长 `content/reasoning`，并移除 `workflowItems/subagents` 详情；被截断字段分别带 `content_truncated/content_length`、`reasoning_truncated/reasoning_length` 与 `workflowItems_truncated/subagents_truncated`。用户展开时应调用单条消息详情接口补全，不得重新拉取整页历史。
 - `data.transcript[]` 单项常用字段：
   - `role`：`user` / `assistant`
@@ -3385,7 +3388,7 @@
 
 - PostgreSQL / SQLite 在首次升级时为既有账户初始化 1000 额度，并删除旧 Token 账户字段；历史 Token 数字不换算为请求额度。迁移具有事务边界，重复启动不会补回已花完的额度。
 - 新接口只返回 `quota_balance/quota_granted_total/quota_used_total/daily_quota_grant/last_quota_grant_date`；移除旧 Token 字段、旧资料接口 `daily_quota*` 别名和 `/token_adjustment` 路由。
-- 每次成功准入通过既有 `quota_usage` 事件发布扣减快照：`consumed=1`、上述额度字段以及事件快照 `daily_quota/used/remaining/date`（分别表示累计发放、累计使用、余额、发放日期）。事件仅用于额度投影，不计入 Token 消耗。
+- 每次真实模型请求通过既有 `quota_usage` 事件发布线程用量：`consumed=1`、`turn_quota_used`、`session_quota_used`。普通用户事件还带账户扣减快照（上述额度字段和 `daily_quota/used/remaining/date`，分别表示累计发放、累计使用、余额、发放日期）；管理员事件带 `billable=false`，不扣账户额度。事件仅用于额度投影，不计入 Token 消耗。
 - 真实 Token 用量通过 `model_usage/token_usage/round_usage` 保留，供上下文、速度与消耗统计使用。
 
 

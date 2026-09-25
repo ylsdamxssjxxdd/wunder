@@ -25,17 +25,42 @@ const HISTORY_LIMIT: usize = 50;
 #[serde(deny_unknown_fields)]
 pub struct ThroughputConfig {
     pub model_name: String,
-    #[serde(default = "default_concurrency")]
-    pub concurrency: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub concurrency_list: Vec<u32>,
+    // Read older single-concurrency summaries and clients, then normalize them
+    // into concurrency_list before a new run starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub concurrency: Option<u32>,
     pub input_tokens: u32,
     pub output_tokens: u32,
 }
 
 impl ThroughputConfig {
-    pub fn resolve(&self, config: &Config) -> Result<LlmModelConfig, String> {
-        if self.concurrency == 0 || self.concurrency > MAX_CONCURRENCY {
-            return Err(format!("并发数必须在 1 到 {MAX_CONCURRENCY} 之间"));
+    pub fn normalize(mut self) -> Result<Self, String> {
+        let source = if self.concurrency_list.is_empty() {
+            self.concurrency.map_or_else(Vec::new, |value| vec![value])
+        } else {
+            self.concurrency_list.clone()
+        };
+        let mut values = Vec::with_capacity(source.len());
+        for value in source {
+            if value == 0 || value > MAX_CONCURRENCY {
+                return Err(format!("并发数必须在 1 到 {MAX_CONCURRENCY} 之间"));
+            }
+            if !values.contains(&value) {
+                values.push(value);
+            }
         }
+        if values.is_empty() {
+            return Err("并发列表不能为空".into());
+        }
+        self.concurrency_list = values;
+        self.concurrency = None;
+        Ok(self)
+    }
+
+    pub fn resolve(&self, config: &Config) -> Result<LlmModelConfig, String> {
+        self.clone().normalize()?;
         if self.input_tokens == 0 || self.input_tokens > MAX_INPUT_TOKENS {
             return Err(format!("输入 Token 必须在 1 到 {MAX_INPUT_TOKENS} 之间"));
         }
@@ -66,11 +91,17 @@ impl ThroughputConfig {
     }
 }
 
-const fn default_concurrency() -> u32 {
-    1
-}
-
 pub use crate::llm::benchmark::BenchmarkMetrics as ThroughputMetrics;
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ThroughputSample {
+    pub concurrency: u32,
+    pub status: String,
+    pub elapsed_s: f64,
+    pub metrics: ThroughputMetrics,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ThroughputSnapshot {
@@ -86,6 +117,8 @@ pub struct ThroughputSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub simulation_speed: Option<wunder_core::virtual_model::VirtualModelSpeed>,
     pub metrics: ThroughputMetrics,
+    #[serde(default)]
+    pub samples: Vec<ThroughputSample>,
     pub error: Option<String>,
     pub persistence_error: bool,
 }
@@ -151,6 +184,7 @@ impl ThroughputManager {
         config: ThroughputConfig,
         model: LlmModelConfig,
     ) -> Result<ThroughputSnapshot, String> {
+        let config = config.normalize()?;
         let mut state = self.inner.lock();
         if state.cancel.is_some() {
             return Err("已有运行中或正在保存的测试，请等待完成".into());
@@ -177,6 +211,7 @@ impl ThroughputManager {
             )
             .then(|| model.simulation_speed.unwrap_or_default()),
             metrics: ThroughputMetrics::default(),
+            samples: Vec::new(),
             error: None,
             persistence_error: false,
         };
@@ -280,54 +315,71 @@ impl ThroughputManager {
         let client = LlmClient::new(self.http.clone(), model);
         let result = match messages {
             Ok(messages) => {
-                let slots = Arc::new(Mutex::new(vec![None; config.concurrency as usize]));
-                let mut requests = futures::stream::FuturesUnordered::new();
-                for index in 0..config.concurrency as usize {
-                    let client = client.clone();
-                    let messages = Arc::clone(&messages);
-                    let slots = Arc::clone(&slots);
-                    let manager = self.clone();
-                    let timeout = timeout;
-                    requests.push(async move {
-                        let request =
-                            client.benchmark(&messages, config.output_tokens, |metrics| {
-                                let mut current = slots.lock();
-                                current[index] = Some(metrics);
-                                manager.publish_metrics(aggregate_metrics(&current));
-                            });
-                        let result = tokio::time::timeout(timeout, request)
-                            .await
-                            .unwrap_or_else(|_| Err("模型请求超时".into()));
-                        (index, result)
-                    });
-                }
-                let mut results = vec![None; config.concurrency as usize];
-                let mut first_error = None;
-                loop {
-                    tokio::select! {
-                        biased;
-                        _ = cancel.wait_for(|value| *value) => break Err("stopped".to_string()),
-                        next = futures::StreamExt::next(&mut requests) => {
-                            let Some((index, outcome)) = next else { break Ok(()) };
-                            match outcome {
-                                Ok(metrics) => {
-                                    slots.lock()[index] = Some(metrics.clone());
-                                    results[index] = Some(metrics);
-                                }
-                                Err(error) => {
-                                    first_error.get_or_insert(error);
+                let mut samples = Vec::with_capacity(config.concurrency_list.len());
+                let mut final_metrics = ThroughputMetrics::default();
+                let mut batch_error = None;
+                for concurrency in &config.concurrency_list {
+                    let batch_started = Instant::now();
+                    let slots = Arc::new(Mutex::new(vec![None; *concurrency as usize]));
+                    let mut requests = futures::stream::FuturesUnordered::new();
+                    for index in 0..*concurrency as usize {
+                        let client = client.clone();
+                        let messages = Arc::clone(&messages);
+                        let slots = Arc::clone(&slots);
+                        let manager = self.clone();
+                        let timeout = timeout;
+                        requests.push(async move {
+                            let request =
+                                client.benchmark(&messages, config.output_tokens, |metrics| {
+                                    let mut current = slots.lock();
+                                    current[index] = Some(metrics);
+                                    manager.publish_metrics(aggregate_metrics(&current));
+                                });
+                            let result = tokio::time::timeout(timeout, request)
+                                .await
+                                .unwrap_or_else(|_| Err("模型请求超时".into()));
+                            (index, result)
+                        });
+                    }
+                    let mut results = vec![None; *concurrency as usize];
+                    let mut failure = None;
+                    let batch_result = loop {
+                        tokio::select! {
+                            biased;
+                            _ = cancel.wait_for(|value| *value) => break Err("stopped".to_string()),
+                            next = futures::StreamExt::next(&mut requests) => {
+                                let Some((index, outcome)) = next else { break Ok(()) };
+                                match outcome {
+                                    Ok(metrics) => { slots.lock()[index] = Some(metrics.clone()); results[index] = Some(metrics); }
+                                    Err(error) => { failure.get_or_insert(error); }
                                 }
                             }
                         }
+                    };
+                    if let Err(error) = batch_result {
+                        batch_error = Some(error);
+                        break;
                     }
-                }
-                .and_then(|_| {
-                    if let Some(error) = first_error {
-                        Err(error)
+                    let metrics = aggregate_metrics(&results);
+                    let error = failure.take();
+                    let status = if error.is_some() {
+                        "error"
+                    } else if metrics.target_reached == Some(true) {
+                        "finished"
                     } else {
-                        Ok(aggregate_metrics(&results))
-                    }
-                })
+                        "incomplete"
+                    };
+                    samples.push(ThroughputSample {
+                        concurrency: *concurrency,
+                        status: status.into(),
+                        elapsed_s: batch_started.elapsed().as_secs_f64(),
+                        metrics: metrics.clone(),
+                        error,
+                    });
+                    final_metrics = metrics;
+                    self.publish_sample(samples.clone(), final_metrics.clone());
+                }
+                batch_error.map_or_else(|| Ok((final_metrics, samples)), Err)
             }
             Err(_) => Err("无法生成测试输入".into()),
         };
@@ -339,14 +391,18 @@ impl ThroughputManager {
             active.elapsed_s = started.elapsed().as_secs_f64();
             active.finished_at = Some(Utc::now().to_rfc3339());
             match result {
-                Ok(metrics) => {
-                    active.status = if metrics.target_reached == Some(true) {
+                Ok((metrics, samples)) => {
+                    active.status = if samples.iter().any(|sample| sample.status == "error") {
+                        "error"
+                    } else if samples.iter().all(|sample| sample.status == "finished") {
                         "finished"
                     } else {
                         "incomplete"
                     }
                     .into();
                     active.metrics = metrics;
+                    active.error = samples.iter().find_map(|sample| sample.error.clone());
+                    active.samples = samples;
                 }
                 Err(error) if error == "stopped" => {
                     active.status = "stopped".into();
@@ -377,6 +433,13 @@ impl ThroughputManager {
     fn publish_metrics(&self, metrics: ThroughputMetrics) {
         if let Some(active) = self.inner.lock().active.as_mut() {
             active.metrics = metrics;
+        }
+    }
+
+    fn publish_sample(&self, samples: Vec<ThroughputSample>, metrics: ThroughputMetrics) {
+        if let Some(active) = self.inner.lock().active.as_mut() {
+            active.metrics = metrics;
+            active.samples = samples;
         }
     }
 }

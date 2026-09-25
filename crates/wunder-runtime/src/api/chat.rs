@@ -608,6 +608,7 @@ pub async fn build_native_chat_request(
     session_id: &str,
     content: String,
     client_message_id: Option<String>,
+    attachments: Vec<AttachmentPayload>,
 ) -> anyhow::Result<WunderRequest> {
     reject_locked_orchestration_session(state, &user.user_id, session_id)
         .map_err(|_| anyhow::anyhow!("chat session is locked"))?;
@@ -618,7 +619,17 @@ pub async fn build_native_chat_request(
         content,
         client_message_id,
         true,
-        None,
+        Some(
+            attachments
+                .into_iter()
+                .map(|attachment| ChatAttachment {
+                    name: attachment.name,
+                    content: attachment.content,
+                    mime_type: attachment.content_type,
+                    public_path: attachment.public_path,
+                })
+                .collect(),
+        ),
         ChatRequestOverrides {
             tool_call_mode: None,
             approval_mode: None,

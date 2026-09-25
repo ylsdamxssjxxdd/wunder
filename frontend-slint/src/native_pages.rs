@@ -2,7 +2,10 @@
 use crate::{AgentCard, MainWindow, ModelCard, ToolCard};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{rc::Rc, sync::Arc};
-use wunder_desktop::{AgentRecord, DesktopSettings, LanPeerRecord, ModelEdit, NativeDesktop, ToolRecord, NativeProfile};
+use wunder_desktop::{
+    AgentRecord, DesktopSettings, LanPeerRecord, ModelEdit, NativeDesktop, NativeProfile,
+    ToolRecord,
+};
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     crate::entity_state::bind_selection(app);
@@ -22,7 +25,9 @@ fn bind_profile(app: &MainWindow, api: Arc<NativeDesktop>) {
     let refresh_api = api.clone();
     app.on_refresh_profile(move || {
         let Some(app) = weak.upgrade() else { return };
-        if app.get_profile_loading() { return; }
+        if app.get_profile_loading() {
+            return;
+        }
         app.set_profile_loading(true);
         let weak = weak.clone();
         let api = refresh_api.clone();
@@ -45,21 +50,39 @@ fn bind_profile(app: &MainWindow, api: Arc<NativeDesktop>) {
         let api = avatar_api.clone();
         run_background(move || {
             let result = api.save_profile_avatar(&icon, &color);
-            let _ = weak.upgrade_in_event_loop(move |app| match result { Ok(profile) => apply_profile(&app, profile), Err(error) => show_error(&app, format!("无法保存头像：{error}")) });
+            let _ = weak.upgrade_in_event_loop(move |app| match result {
+                Ok(profile) => apply_profile(&app, profile),
+                Err(error) => show_error(&app, format!("无法保存头像：{error}")),
+            });
         });
     });
 }
 
 fn apply_profile(app: &MainWindow, profile: NativeProfile) {
     app.set_profile(crate::ProfileCard {
-        user_id: profile.user_id.into(), username: profile.username.into(), email: profile.email.into(), unit: profile.unit.into(),
-        sessions: profile.sessions.to_string().into(), sessions_last_7d: profile.sessions_last_7d.to_string().into(), tool_calls: profile.tool_calls.to_string().into(),
-        tokens: profile.consumed_tokens.to_string().into(), agents: profile.agents.to_string().into(), last_active: profile.last_active_at.into(), avatar_icon: profile.avatar_icon.clone().into(), avatar_glyph: profile_glyph(&profile.avatar_icon).into(), avatar_color: profile.avatar_color.into(),
+        user_id: profile.user_id.into(),
+        username: profile.username.into(),
+        email: profile.email.into(),
+        unit: profile.unit.into(),
+        sessions: profile.sessions.to_string().into(),
+        sessions_last_7d: profile.sessions_last_7d.to_string().into(),
+        tool_calls: profile.tool_calls.to_string().into(),
+        tokens: profile.consumed_tokens.to_string().into(),
+        agents: profile.agents.to_string().into(),
+        last_active: profile.last_active_at.into(),
+        avatar_icon: profile.avatar_icon.clone().into(),
+        avatar_glyph: profile_glyph(&profile.avatar_icon).into(),
+        avatar_color: profile.avatar_color.into(),
     });
 }
 
 fn profile_glyph(icon: &str) -> &'static str {
-    match icon.trim() { "initial" => "✦", "qq-avatar-0001" => "◉", "qq-avatar-0002" => "❖", _ => "✦" }
+    match icon.trim() {
+        "initial" => "✦",
+        "qq-avatar-0001" => "◉",
+        "qq-avatar-0002" => "❖",
+        _ => "✦",
+    }
 }
 
 fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
@@ -128,42 +151,52 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
         });
     });
     let weak = app.as_weak();
-    app.on_save_agent(move |name, description, system_prompt, model, icon_name, icon_color| {
-        let Some(app) = weak.upgrade() else { return };
-        let Some(agent) = usize::try_from(app.get_selected_agent())
-            .ok()
-            .and_then(|index| app.get_agents().row_data(index))
-        else {
-            return;
-        };
-        if app.get_saving() || app.get_agents_loading() || agent.id.is_empty() {
-            return;
-        }
-        app.set_saving(true);
-        let weak = weak.clone();
-        let api = api.clone();
-        let id = agent.id.to_string();
-        run_background(move || {
-            let result = api.update_agent(&id, &name, &description, &system_prompt, &model, &icon_name, &icon_color);
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_saving(false);
-                match result {
-                    Ok(updated) => {
-                        let selected = app.get_selected_agent();
-                        let rows = app.get_agents();
-                        if let Some(index) = rows.iter().position(|row| row.id == id) {
-                            rows.set_row_data(index, to_agent_card(updated));
-                            if selected == index as i32 {
-                                app.invoke_select_agent(selected);
+    app.on_save_agent(
+        move |name, description, system_prompt, model, icon_name, icon_color| {
+            let Some(app) = weak.upgrade() else { return };
+            let Some(agent) = usize::try_from(app.get_selected_agent())
+                .ok()
+                .and_then(|index| app.get_agents().row_data(index))
+            else {
+                return;
+            };
+            if app.get_saving() || app.get_agents_loading() || agent.id.is_empty() {
+                return;
+            }
+            app.set_saving(true);
+            let weak = weak.clone();
+            let api = api.clone();
+            let id = agent.id.to_string();
+            run_background(move || {
+                let result = api.update_agent(
+                    &id,
+                    &name,
+                    &description,
+                    &system_prompt,
+                    &model,
+                    &icon_name,
+                    &icon_color,
+                );
+                let _ = weak.upgrade_in_event_loop(move |app| {
+                    app.set_saving(false);
+                    match result {
+                        Ok(updated) => {
+                            let selected = app.get_selected_agent();
+                            let rows = app.get_agents();
+                            if let Some(index) = rows.iter().position(|row| row.id == id) {
+                                rows.set_row_data(index, to_agent_card(updated));
+                                if selected == index as i32 {
+                                    app.invoke_select_agent(selected);
+                                }
                             }
+                            app.set_status("智能体配置已保存".into());
                         }
-                        app.set_status("智能体配置已保存".into());
+                        Err(error) => show_error(&app, format!("无法保存智能体配置：{error}")),
                     }
-                    Err(error) => show_error(&app, format!("无法保存智能体配置：{error}")),
-                }
+                });
             });
-        });
-    });
+        },
+    );
 }
 
 fn bind_tools(app: &MainWindow, api: Arc<NativeDesktop>) {
@@ -285,7 +318,9 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
     let lan_api = api.clone();
     app.on_save_lan(move |enabled, name| {
         let Some(app) = weak.upgrade() else { return };
-        if app.get_saving() || app.get_settings_loading() { return; }
+        if app.get_saving() || app.get_settings_loading() {
+            return;
+        }
         app.set_saving(true);
         let weak = weak.clone();
         let api = lan_api.clone();
@@ -293,7 +328,13 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
             let result = api.save_lan(enabled, &name);
             let _ = weak.upgrade_in_event_loop(move |app| {
                 app.set_saving(false);
-                match result { Ok(settings) => { apply_settings(&app, settings); app.set_status("内网通信设置已保存".into()); }, Err(error) => show_error(&app, format!("无法保存内网通信设置：{error}")) }
+                match result {
+                    Ok(settings) => {
+                        apply_settings(&app, settings);
+                        app.set_status("内网通信设置已保存".into());
+                    }
+                    Err(error) => show_error(&app, format!("无法保存内网通信设置：{error}")),
+                }
             });
         });
     });
@@ -349,9 +390,18 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     app.set_lan_enabled(settings.lan.enabled);
     app.set_lan_name(settings.lan.display_name.into());
     app.set_lan_peer_id(settings.lan.peer_id.into());
-    app.set_lan_endpoint(format!("{}:{}", settings.lan.listen_host, settings.lan.listen_port).into());
+    app.set_lan_endpoint(
+        format!("{}:{}", settings.lan.listen_host, settings.lan.listen_port).into(),
+    );
     app.set_lan_peer_count(settings.lan.peer_count as i32);
-    app.set_lan_peers(model_from(settings.lan.peers.into_iter().map(to_lan_peer_card).collect()));
+    app.set_lan_peers(model_from(
+        settings
+            .lan
+            .peers
+            .into_iter()
+            .map(to_lan_peer_card)
+            .collect(),
+    ));
     app.set_models(model_from(
         settings
             .models
@@ -370,7 +420,11 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
 }
 
 fn to_lan_peer_card(peer: LanPeerRecord) -> crate::LanPeerCard {
-    crate::LanPeerCard { peer_id: peer.peer_id.into(), display_name: peer.display_name.into(), address: format!("{}:{}", peer.lan_ip, peer.listen_port).into() }
+    crate::LanPeerCard {
+        peer_id: peer.peer_id.into(),
+        display_name: peer.display_name.into(),
+        address: format!("{}:{}", peer.lan_ip, peer.listen_port).into(),
+    }
 }
 
 fn select_model_key(app: &MainWindow, key: &str) {

@@ -1,4 +1,4 @@
-import { Theme, Conversation, TextBlock, ChatMessage, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard } from "theme.slint";
+import { Theme, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard } from "theme.slint";
 import { Action, RailButton, Avatar, SearchField, FormField } from "components.slint";
 import { Composer } from "composer.slint";
 import { MessageRow } from "message.slint";
@@ -6,13 +6,15 @@ import { WorkDock } from "dock.slint";
 import { AgentsPage, ToolsPage, SettingsPage } from "entity_pages.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
-export { Theme, Conversation, TextBlock, ChatMessage, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard }
+export { Theme, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard }
+export { AppTray } from "tray.slint";
+export { ScreenshotOverlay } from "screenshot_overlay.slint";
 
 export component MainWindow inherits Window {
     title: "心舰 · 蜂巢（Slint 原型）";
     preferred-width: 1360px; preferred-height: 820px;
     min-width: 760px; min-height: 580px;
-    default-font-family: "Microsoft YaHei"; default-font-size: 13px;
+    default-font-family: "SimSun"; default-font-size: 13px;
     icon: @image-url("../assets/hive.png");
     background: Theme.panel;
     in-out property <bool> right-open: true;
@@ -51,6 +53,7 @@ export component MainWindow inherits Window {
     in-out property <bool> settings-loading: false;
     in-out property <bool> saving: false;
     in-out property <string> draft;
+    in-out property <[ChatAttachment]> pending-attachments: [];
     in-out property <string> status: "本地演示 · 未连接后端";
     in-out property <string> dialog-title;
     in-out property <string> dialog-text;
@@ -110,6 +113,9 @@ export component MainWindow inherits Window {
     in-out property <string> model-type-draft: "llm";
     private property <string> keyword;
     in-out property <bool> stopping: false;
+    in-out property <bool> recording: false;
+    in-out property <bool> transcribing: false;
+    in-out property <string> recording-elapsed: "";
     in-out property <bool> follow-output: true;
     in-out property <int> stream-updates;
     in-out property <int> stream-bytes;
@@ -121,6 +127,9 @@ export component MainWindow inherits Window {
     copy-buffer := TextInput { width: 0px; height: 0px; }
     copy-raw(raw) => { copy-buffer.text = raw; copy-buffer.select-all(); copy-buffer.copy(); copy-buffer.text = ""; }
     callback send-message();
+    callback capture-screenshot();
+    callback record-voice();
+    callback remove-attachment(int);
     callback select-conversation(int);
     callback new-thread();
     callback select-task(int);
@@ -275,9 +284,13 @@ export component MainWindow inherits Window {
                 if !root.follow-output : Action { height: 26px; label: "回到最新消息"; show-label: true; clicked => { root.follow-output = true; root.scroll-revision += 1; } }
                 Composer {
                     draft <=> root.draft; status: root.status; busy: root.busy || root.session-loading || root.creating-session || root.chat-loading;
+                    attachments: root.pending-attachments;
                     generating: root.busy; stopping: root.stopping; stop => { root.stop-generation(); }
+                    recording: root.recording; transcribing: root.transcribing; recording-elapsed: root.recording-elapsed;
                     send => { root.send-message(); }
-                    attach => { root.open-info("添加附件", "附件上传尚未连接。本地预览不会读取或上传你的文件。"); }
+                    attach => { root.capture-screenshot(); }
+                    record-voice => { root.record-voice(); }
+                    remove-attachment(index) => { root.remove-attachment(index); }
                 }
             }
         }

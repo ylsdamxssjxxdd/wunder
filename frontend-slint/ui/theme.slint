@@ -19,6 +19,9 @@ export global Theme {
 export struct Conversation { id: string, title: string, preview: string, time: string }
 export struct TextBlock { text: string, kind: int }
 export struct ChatMessage { text: string, mine: bool, time: string, workflow: bool, state: string, blocks: [TextBlock], avatar-glyph: string, avatar-tone: int }
+// Screenshot attachment state remains in the UI projection until send. The
+// data URL is forwarded through the native Rust façade without an HTTP hop.
+export struct ChatAttachment { name: string, mime-type: string, data-url: string }
 export struct FileCard { name: string, path: string, entry-type: string, size: string }
 export struct AgentCard { id: string, name: string, description: string, model: string, system-prompt: string, status: string, icon-name: string, icon-color: string, icon-glyph: string, icon-tone: int }
 export struct ToolCard { name: string, description: string, category: string }

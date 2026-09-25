@@ -33,9 +33,14 @@ pub fn run(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::erro
 }
 
 fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    app.set_subagents(slint::ModelRc::new(slint::VecModel::from(vec![crate::Conversation {
-        id: "child".into(), title: "子智能体".into(), preview: "已中断 · 可复用".into(), time: "".into(),
-    }])));
+    app.set_subagents(slint::ModelRc::new(slint::VecModel::from(vec![
+        crate::Conversation {
+            id: "child".into(),
+            title: "子智能体".into(),
+            preview: "已中断 · 可复用".into(),
+            time: "".into(),
+        },
+    ])));
     app.set_subagents_status("保留历史，可由主智能体继续分派".into());
     snapshot(app, &directory.join("native-preview.png"))?;
     // Dispatch pointer events through Slint hit testing. Invoking callbacks

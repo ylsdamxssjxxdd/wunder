@@ -10,7 +10,6 @@
 .tp-config select { width: 100%; min-height: 38px; }
 .tp-config p { margin: 0; font-size: 12px; }
 .tp-config #tpFeedback { margin-top: 14px; overflow-wrap: anywhere; }
-.tp-config .tp-retention { border-top: 1px solid #e2e8f0; padding-top: 18px; margin-top: 20px; }
 .tp-results { min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding-right: 4px; }
 .tp-results > section { padding: 18px; flex: 0 0 auto; }
 .tp-section-header { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }

@@ -3,7 +3,8 @@ use super::*;
 fn scenario() -> ThroughputConfig {
     ThroughputConfig {
         model_name: "model".into(),
-        concurrency: 1,
+        concurrency_list: vec![1],
+        concurrency: None,
         input_tokens: 1024,
         output_tokens: 1024,
     }
@@ -24,9 +25,9 @@ fn rejects_invalid_presets_disabled_models_and_context_overflow() {
     invalid.input_tokens = 2048;
     assert!(invalid.resolve(&config).is_err());
     invalid = scenario();
-    invalid.concurrency = 0;
+    invalid.concurrency_list = vec![0];
     assert!(invalid.resolve(&config).is_err());
-    invalid.concurrency = 2;
+    invalid.concurrency_list = vec![2];
     invalid.input_tokens = 1234;
     invalid.output_tokens = 345;
     assert!(invalid.resolve(&config).is_ok());
@@ -34,7 +35,7 @@ fn rejects_invalid_presets_disabled_models_and_context_overflow() {
     assert!(invalid.resolve(&config).is_err());
     config.llm.models.get_mut("model").unwrap().enable = Some(false);
     assert!(scenario().resolve(&config).is_err());
-    assert!(serde_json::from_value::<ThroughputConfig>(serde_json::json!({"concurrency_list":[1],"model_name":"model","input_tokens":1024,"output_tokens":1024})).is_err());
+    assert_eq!(serde_json::from_value::<ThroughputConfig>(serde_json::json!({"concurrency_list":[1,1,4],"model_name":"model","input_tokens":1024,"output_tokens":1024})).unwrap().normalize().unwrap().concurrency_list, vec![1,4]);
 }
 
 #[test]
@@ -146,6 +147,7 @@ async fn history_is_bounded_and_replaces_previous_summary() {
         simulated: false,
         simulation_speed: None,
         metrics: ThroughputMetrics::default(),
+        samples: Vec::new(),
         error: None,
         persistence_error: false,
     };

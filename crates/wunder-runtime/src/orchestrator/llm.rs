@@ -574,10 +574,10 @@ impl Orchestrator {
         }
 
         let client = build_llm_client(&effective_config, self.http.clone());
-        let client = if is_admin || virtual_replay {
+        let client = if virtual_replay {
             client
         } else {
-            self.with_user_quota_admission(client, user_id, emitter, round_info)
+            self.with_quota_tracking_admission(client, user_id, is_admin, emitter, round_info)
         };
         let context_manager = ContextManager;
         let request_messages = context_manager.normalize_messages(messages.to_vec());

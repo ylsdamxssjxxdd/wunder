@@ -23,6 +23,7 @@ const TOKEN_TREND_MAX_BUCKETS = 24;
 const TOKEN_TREND_RETENTION_BUCKETS = 96;
 // 用户管理线程列表分页尺寸，避免一次渲染过多行
 const DEFAULT_MONITOR_SESSION_PAGE_SIZE = 100;
+const MONITOR_DETAIL_EVENT_PAGE_SIZE = 100;
 let tokenTrendChart = null;
 let statusChart = null;
 let statusChartClickBound = false;
@@ -86,6 +87,20 @@ const MONITOR_DETAIL_TEXT_FALLBACKS = {
     zh: "显示 {visible}/{total} 条",
     en: "Showing {visible}/{total}",
   },
+  "monitor.detail.pagination.previous": {
+    zh: "上一页",
+    en: "Previous",
+  },
+  "monitor.detail.pagination.first": { zh: "首页", en: "First page" },
+  "monitor.detail.pagination.last": { zh: "尾页", en: "Last page" },
+  "monitor.detail.pagination.next": {
+    zh: "下一页",
+    en: "Next",
+  },
+  "monitor.detail.pagination.info": {
+    zh: "第 {page} 页 · {start}-{end}/{total} 条",
+    en: "Page {page} · {start}-{end}/{total}",
+  },
   "monitor.detail.filter.profile.normal": {
     zh: "普通日志",
     en: "Normal logs",
@@ -93,10 +108,6 @@ const MONITOR_DETAIL_TEXT_FALLBACKS = {
   "monitor.detail.filter.profile.debug": {
     zh: "调试日志",
     en: "Debug logs",
-  },
-  "monitor.detail.meta.trace": {
-    zh: "追踪 {traceId}",
-    en: "Trace {traceId}",
   },
   "monitor.detail.repair.badge": {
     zh: "已修复",
@@ -560,14 +571,8 @@ const formatTokenRate = (value, options = {}) => {
   const base = useMillion ? 1_000_000 : useThousand ? 1_000 : 1;
   const unit = useMillion ? "m" : useThousand ? "k" : "";
   const scaled = tokens / base;
-  let decimals = 2;
-  if (scaled >= 100) {
-    decimals = 0;
-  } else if (scaled >= 10) {
-    decimals = 1;
-  }
   const prefix = options.lowerBound ? ">=" : "";
-  return `${prefix}${scaled.toFixed(decimals)}${unit} ${t("monitor.detail.tokenRate.unit")}`;
+  return `${prefix}${scaled.toFixed(1)}${unit} ${t("monitor.detail.tokenRate.unit")}`;
 };
 
 const formatDurationPrecise = (seconds) => {
@@ -592,7 +597,18 @@ const formatDurationSeconds = (seconds) => {
     return "-";
   }
   const value = Math.max(0, Number(seconds));
-  return `${value.toFixed(2)}s`;
+  const hours = Math.floor(value / 3600);
+  const minutes = Math.floor((value % 3600) / 60);
+  const remaining = value - hours * 3600 - minutes * 60;
+  const parts = [];
+  if (hours > 0) {
+    parts.push(`${hours}h`);
+  }
+  if (minutes > 0 || hours > 0) {
+    parts.push(`${minutes}m`);
+  }
+  parts.push(`${remaining.toFixed(1)}s`);
+  return parts.join(" ");
 };
 
 const parseMetricNumber = (value) => {
@@ -619,7 +635,7 @@ const resolveSessionContextTokens = (session) => {
 // Cumulative consumed tokens for billing/cost tracking
 const resolveSessionConsumedTokens = (session) => {
   const consumed = parseMetricNumber(session?.consumed_tokens);
-  if (Number.isFinite(consumed) && consumed > 0) {
+  if (Number.isFinite(consumed) && consumed >= 0) {
     return consumed;
   }
   // Fallback: estimate from context tokens peak (legacy sessions)
@@ -1007,13 +1023,21 @@ const resolveToolIcon = (name, category, runtimeName = "") => {
   return "fa-toolbox";
 };
 
-// 规范化工具调用次数，避免使用 k 单位
+// Compact overview counters while keeping zero explicit.  Detailed event rows
+// remain unabridged; this formatter is only for the dense metadata grid.
 const formatHeatmapCount = (value) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
     return "0";
   }
-  return String(Math.max(0, Math.round(parsed)));
+  const count = Math.max(0, Math.round(parsed));
+  if (count < 1000) {
+    return String(count);
+  }
+  const unit = count >= 1_000_000 ? "m" : "k";
+  const divisor = unit === "m" ? 1_000_000 : 1_000;
+  const scaled = count / divisor;
+  return `${scaled.toFixed(scaled >= 100 ? 0 : 1).replace(/\.0$/, "")}${unit}`;
 };
 
 // 规整工具统计结构，避免缺字段导致渲染异常
@@ -1580,6 +1604,10 @@ const normalizeMonitorDetailCount = (value) => {
 };
 
 const resolveMonitorDetailToolCalls = (session, events) => {
+  const sessionCalls = parseMetricNumber(session?.tool_calls);
+  if (Number.isFinite(sessionCalls) && sessionCalls >= 0) {
+    return Math.round(sessionCalls);
+  }
   let calls = 0;
   (Array.isArray(events) ? events : []).forEach((event) => {
     if (event?.type === "tool_call") {
@@ -1596,6 +1624,10 @@ const resolveMonitorDetailToolCalls = (session, events) => {
 };
 
 const resolveMonitorDetailQuota = (session, events) => {
+  const sessionQuota = parseMetricNumber(session?.quota_used);
+  if (Number.isFinite(sessionQuota) && sessionQuota >= 0) {
+    return Math.round(sessionQuota);
+  }
   let consumed = 0;
   (Array.isArray(events) ? events : []).forEach((event) => {
     if (event?.type !== "quota_usage") {
@@ -1664,31 +1696,6 @@ const resolveMonitorDetailBillingUsage = (session, events) => {
   return usage;
 };
 
-const buildMonitorDetailSpeedSummary = (
-  labelKey,
-  speed,
-  tokens,
-  duration,
-  options = {}
-) => {
-  if (!Number.isFinite(speed) || speed <= 0) {
-    return "";
-  }
-  const speedText = formatTokenRate(speed, { lowerBound: options.lowerBound });
-  if (!speedText || speedText === "-") {
-    return "";
-  }
-  let summary = t(labelKey, { speed: speedText });
-  const meta = buildSpeedMeta(tokens, duration, {
-    cached: options.lowerBound,
-    variant: options.variant,
-  });
-  if (meta) {
-    summary = `${summary} (${meta})`;
-  }
-  return summary;
-};
-
 const buildMonitorDetailTtftSummary = (ttftMs) => {
   if (!Number.isFinite(ttftMs) || ttftMs <= 0) {
     return "";
@@ -1700,96 +1707,89 @@ const buildMonitorDetailTtftSummary = (ttftMs) => {
   });
 };
 
-const resolveMonitorSessionAgentDisplay = (session) => {
-  const agentName = String(session?.agent_name || "").trim();
-  const agentId = String(session?.agent_id || "").trim();
-  if (agentName && agentId && agentName !== agentId) {
-    return `${agentName} (${agentId})`;
-  }
-  if (agentName) {
-    return agentName;
-  }
-  if (agentId) {
-    return agentId;
-  }
-  return "-";
-};
+const escapeMonitorDetailHtml = (value) =>
+  String(value ?? "-")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 
-const buildMonitorDetailMeta = (session, events) => {
-  const metaParts = [];
-  metaParts.push(session?.user_id || "-");
-  metaParts.push(
-    t("monitor.session.agent", { agent: resolveMonitorSessionAgentDisplay(session) })
-  );
-  metaParts.push(getSessionStatusLabel(session?.status));
-  const logProfile = String(session?.log_profile || "").trim().toLowerCase();
-  if (logProfile) {
-    const profileKey =
-      logProfile === "debug"
-        ? "monitor.detail.filter.profile.debug"
-        : "monitor.detail.filter.profile.normal";
-    metaParts.push(resolveMonitorDetailText(profileKey));
-  }
-  const traceId = String(session?.trace_id || "").trim();
-  if (traceId) {
-    metaParts.push(resolveMonitorDetailText("monitor.detail.meta.trace", { traceId }));
-  }
+const resolveMonitorDetailAgentName = (session) =>
+  String(session?.agent_name || session?.agent_id || "-").trim() || "-";
+
+const buildMonitorDetailMeta = (session, events, eventTotal) => {
+  const items = [];
+  const add = (icon, label, value) => {
+    const text = String(value ?? "-").trim() || "-";
+    items.push(
+      `<div class="monitor-detail-overview-item"><i class="${icon}" aria-hidden="true"></i><div><span>${escapeMonitorDetailHtml(label)}</span><strong title="${escapeMonitorDetailHtml(text)}">${escapeMonitorDetailHtml(text)}</strong></div></div>`
+    );
+  };
+  add("fa-solid fa-robot", t("monitor.detail.meta.agent"), resolveMonitorDetailAgentName(session));
+  add("fa-solid fa-circle-info", t("monitor.detail.meta.status"), getSessionStatusLabel(session?.status));
+
   const elapsedSeconds = resolveMonitorDetailElapsedSeconds(session, events);
-  if (Number.isFinite(elapsedSeconds)) {
-    metaParts.push(
-      t("monitor.session.elapsed", { elapsed: formatDurationSeconds(elapsedSeconds) })
-    );
-  }
-  const toolCalls = resolveMonitorDetailToolCalls(session, events);
-  if (toolCalls > 0) {
-    metaParts.push(t("monitor.tool.calls", { count: formatHeatmapCount(toolCalls) }));
-  }
-  const quotaConsumed = resolveMonitorDetailQuota(session, events);
-  if (quotaConsumed > 0) {
-    metaParts.push(
-      t("monitor.session.quota", { count: formatHeatmapCount(quotaConsumed) })
-    );
-  }
+  add(
+    "fa-regular fa-clock",
+    t("monitor.detail.meta.elapsed"),
+    Number.isFinite(elapsedSeconds) ? formatDurationSeconds(elapsedSeconds) : "-"
+  );
+  add(
+    "fa-solid fa-arrow-rotate-right",
+    t("monitor.detail.meta.rounds"),
+    formatHeatmapCount(session?.user_rounds)
+  );
+  add(
+    "fa-solid fa-screwdriver-wrench",
+    t("monitor.detail.meta.tools"),
+    formatHeatmapCount(resolveMonitorDetailToolCalls(session, events))
+  );
+  add(
+    "fa-solid fa-coins",
+    t("monitor.detail.meta.quota"),
+    formatHeatmapCount(resolveMonitorDetailQuota(session, events))
+  );
+
   const consumedTokens = resolveSessionConsumedTokens(session);
-  if (Number.isFinite(consumedTokens) && consumedTokens > 0) {
-    const tokenText = formatTokenCount(consumedTokens);
-    if (tokenText && tokenText !== "-") {
-      metaParts.push(t("monitor.session.consumedTokens", { token: tokenText }));
-    }
-  }
-  const prefillSpeed = parseMetricNumber(session?.prefill_speed_tps);
-  const prefillTokens = parseMetricNumber(session?.prefill_tokens);
-  const prefillDuration = parseMetricNumber(session?.prefill_duration_s);
+  add(
+    "fa-solid fa-bolt",
+    t("monitor.detail.meta.tokens"),
+    Number.isFinite(consumedTokens) ? formatHeatmapCount(consumedTokens) : "0"
+  );
+
   const ttftMs = parseMetricNumber(session?.ttft_ms);
-  const ttftSummary = buildMonitorDetailTtftSummary(ttftMs);
-  if (ttftSummary) {
-    metaParts.push(ttftSummary);
-  }
-  const prefillLowerBound = Boolean(session?.prefill_speed_lower_bound);
-  const prefillSummary = buildMonitorDetailSpeedSummary(
-    "monitor.session.prefillSpeed",
-    prefillSpeed,
-    prefillTokens,
-    prefillDuration,
-    { lowerBound: prefillLowerBound }
+  add(
+    "fa-solid fa-bolt-lightning",
+    t("monitor.detail.meta.ttft"),
+    Number.isFinite(ttftMs) && ttftMs > 0
+      ? formatDurationSeconds(ttftMs / 1000)
+      : "-"
   );
-  if (prefillSummary) {
-    metaParts.push(prefillSummary);
-  }
+
+  const prefillSpeed = parseMetricNumber(session?.prefill_speed_tps);
+  add(
+    "fa-solid fa-arrow-up",
+    t("monitor.detail.meta.prefill"),
+    Number.isFinite(prefillSpeed) && prefillSpeed > 0
+      ? formatTokenRate(prefillSpeed, { lowerBound: Boolean(session?.prefill_speed_lower_bound) })
+      : "-"
+  );
+
   const decodeSpeed = parseMetricNumber(session?.decode_speed_tps);
-  const decodeTokens = parseMetricNumber(session?.decode_tokens);
-  const decodeDuration = parseMetricNumber(session?.decode_duration_s);
-  const decodeSummary = buildMonitorDetailSpeedSummary(
-    "monitor.session.decodeSpeed",
-    decodeSpeed,
-    decodeTokens,
-    decodeDuration,
-    { variant: "output" }
+  add(
+    "fa-solid fa-arrow-down",
+    t("monitor.detail.meta.decode"),
+    Number.isFinite(decodeSpeed) && decodeSpeed > 0 ? formatTokenRate(decodeSpeed) : "-"
   );
-  if (decodeSummary) {
-    metaParts.push(decodeSummary);
-  }
-  return metaParts.filter(Boolean).join(" · ");
+  add(
+    "fa-solid fa-list",
+    t("monitor.detail.meta.events"),
+    formatHeatmapCount(Number.isFinite(eventTotal) ? eventTotal : events.length)
+  );
+  add("fa-solid fa-fingerprint", t("monitor.detail.meta.sessionId"), session?.session_id);
+
+  return `<div class="monitor-detail-overview-title"><i class="fa-solid fa-chart-simple" aria-hidden="true"></i>${escapeMonitorDetailHtml(t("monitor.detail.overview"))}</div><div class="monitor-detail-overview-grid">${items.join("")}</div>`;
 };
 
 // 鑾峰彇浼氳瘽鐨勫彲姣旇緝鏃堕棿鎴?
@@ -3659,7 +3659,16 @@ const renderMonitorDetailEvents = (events, options = {}) => {
     }
     const detailNode = document.createElement("div");
     detailNode.className = "log-detail";
-    detailNode.innerHTML = highlightMonitorTimestamps(lineText);
+    item.addEventListener(
+      "toggle",
+      () => {
+        if (item.open && !detailNode.dataset.rendered) {
+          detailNode.innerHTML = highlightMonitorTimestamps(lineText);
+          detailNode.dataset.rendered = "true";
+        }
+      },
+      { once: true }
+    );
     item.appendChild(detailNode);
     const eventTool = resolveMonitorEventToolName(event);
     const matchesToolName =
@@ -3856,6 +3865,35 @@ const normalizeMonitorExportTimestamp = (value) => {
   return "";
 };
 
+const syncMonitorDetailPagination = () => {
+  const detail = state.monitor?.detail;
+  const offset = Number(detail?.offset) || 0;
+  const limit = Number(detail?.limit) || MONITOR_DETAIL_EVENT_PAGE_SIZE;
+  const total = Number(detail?.total) || 0;
+  const count = Array.isArray(detail?.events) ? detail.events.length : 0;
+  const page = Math.floor(offset / limit) + 1;
+  const start = count > 0 ? offset + 1 : 0;
+  const end = count > 0 ? offset + count : 0;
+  const lastOffset = total > 0 ? Math.floor((total - 1) / limit) * limit : 0;
+  if (elements.monitorDetailPageInfo) {
+    elements.monitorDetailPageInfo.textContent = resolveMonitorDetailText("monitor.detail.pagination.info", {
+      page, start, end, total,
+    });
+  }
+  if (elements.monitorDetailPageFirst) {
+    elements.monitorDetailPageFirst.disabled = offset <= 0 || Boolean(detail?.loading);
+  }
+  if (elements.monitorDetailPagePrev) {
+    elements.monitorDetailPagePrev.disabled = offset <= 0 || Boolean(detail?.loading);
+  }
+  if (elements.monitorDetailPageNext) {
+    elements.monitorDetailPageNext.disabled = !detail?.hasMore || Boolean(detail?.loading);
+  }
+  if (elements.monitorDetailPageLast) {
+    elements.monitorDetailPageLast.disabled = offset >= lastOffset || Boolean(detail?.loading);
+  }
+};
+
 const resolveMonitorEventType = (event) =>
   String(event?.type || event?.event || "unknown").trim() || "unknown";
 
@@ -4007,7 +4045,7 @@ const summarizeMonitorExportEvents = (events) => {
   return summary;
 };
 
-const buildMonitorDetailExportLines = () => {
+const buildMonitorDetailExportLines = (eventsOverride = null) => {
   const detail = state.monitor?.detail;
   if (!detail) {
     return null;
@@ -4016,7 +4054,11 @@ const buildMonitorDetailExportLines = () => {
     detail.session && typeof detail.session === "object" && !Array.isArray(detail.session)
       ? detail.session
       : {};
-  const events = Array.isArray(detail.events) ? detail.events : [];
+  const events = Array.isArray(eventsOverride)
+    ? eventsOverride
+    : Array.isArray(detail.events)
+      ? detail.events
+      : [];
   const feedback = Array.isArray(detail.feedback) ? detail.feedback : [];
   const exportSummary = summarizeMonitorExportEvents(events);
   const eventTypes = Array.from(
@@ -4080,8 +4122,8 @@ const buildMonitorDetailExportLines = () => {
   return lines;
 };
 
-const buildMonitorDetailExportPayload = () => {
-  const lines = buildMonitorDetailExportLines();
+const buildMonitorDetailExportPayload = (eventsOverride = null) => {
+  const lines = buildMonitorDetailExportLines(eventsOverride);
   if (!lines || !lines.length) {
     return null;
   }
@@ -4091,9 +4133,23 @@ const buildMonitorDetailExportPayload = () => {
   };
 };
 
-const exportMonitorDetailLogs = () => {
+const exportMonitorDetailLogs = async () => {
   try {
-    const payload = buildMonitorDetailExportPayload();
+    const detail = state.monitor?.detail;
+    const sessionId = String(detail?.session?.session_id || "").trim();
+    if (!detail || !sessionId) {
+      notify(t("monitor.detail.exportEmpty"), "warning");
+      return;
+    }
+    const wunderBase = getWunderBase();
+    const response = await fetch(
+      `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}?export_all=true`
+    );
+    if (!response.ok) {
+      throw new Error(t("common.requestFailed", { status: response.status }));
+    }
+    const result = await response.json();
+    const payload = buildMonitorDetailExportPayload(normalizeMonitorDetailEvents(result.events));
     if (!payload) {
       notify(t("monitor.detail.exportEmpty"), "warning");
       return;
@@ -4112,13 +4168,26 @@ const exportMonitorDetailLogs = () => {
 };
 
 export const openMonitorDetail = async (sessionId, options = {}) => {
+  return loadMonitorDetailPage(sessionId, 0, { ...options, resetFilters: true });
+};
+
+const loadMonitorDetailPage = async (sessionId, offset = 0, options = {}) => {
   const wunderBase = getWunderBase();
-  const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}`;
+  const safeOffset = Math.max(0, Number.parseInt(String(offset), 10) || 0);
+  const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}?offset=${safeOffset}&limit=${MONITOR_DETAIL_EVENT_PAGE_SIZE}`;
   setMonitorDetailExportEnabled(false);
-  state.monitor.detail = null;
+  if (state.monitor?.detail) {
+    state.monitor.detail.loading = true;
+    syncMonitorDetailPagination();
+  } else {
+    state.monitor.detail = null;
+  }
   try {
     const response = await fetch(endpoint);
     if (response.status === 404) {
+      if (state.monitor?.detail) {
+        state.monitor.detail.loading = false;
+      }
       const deletedMessage = t("monitor.detailLoadFailed", { message: t("monitor.deleted") });
       appendLog(deletedMessage);
       notify(deletedMessage, "warning");
@@ -4130,6 +4199,9 @@ export const openMonitorDetail = async (sessionId, options = {}) => {
     const result = await response.json();
     const session = result.session || {};
     if (!session.session_id) {
+      if (state.monitor?.detail) {
+        state.monitor.detail.loading = false;
+      }
       const deletedMessage = t("monitor.detailLoadFailed", { message: t("monitor.deleted") });
       appendLog(deletedMessage);
       notify(deletedMessage, "warning");
@@ -4147,15 +4219,23 @@ export const openMonitorDetail = async (sessionId, options = {}) => {
       session.question
     );
     const feedback = normalizeMonitorDetailFeedbackList(result.feedback);
-    elements.monitorDetailMeta.textContent = buildMonitorDetailMeta(session, events);
+    const eventTotal = Number(result.event_total) || events.length;
+    elements.monitorDetailMeta.innerHTML = buildMonitorDetailMeta(session, events, eventTotal);
     state.monitor.detail = {
       session,
       events,
       roundOptions,
       roundQuestions,
       feedback,
+      offset: safeOffset,
+      limit: MONITOR_DETAIL_EVENT_PAGE_SIZE,
+      total: eventTotal,
+      hasMore: Boolean(result.events_has_more),
+      loading: false,
     };
-    resetMonitorDetailFilters();
+    if (options.resetFilters) {
+      resetMonitorDetailFilters();
+    }
     syncMonitorDetailRoundFilter();
     renderMonitorDetailQuestion();
     setMonitorDetailExportEnabled(true);
@@ -4165,8 +4245,16 @@ export const openMonitorDetail = async (sessionId, options = {}) => {
       focusTool,
       focusRound: state.monitor.detailFilters.round,
     });
+    syncMonitorDetailPagination();
+    if (elements.monitorDetailEvents) {
+      elements.monitorDetailEvents.scrollTop = 0;
+    }
     elements.monitorDetailModal.classList.add("active");
   } catch (error) {
+    if (state.monitor?.detail) {
+      state.monitor.detail.loading = false;
+      syncMonitorDetailPagination();
+    }
     const message = t("monitor.detailLoadFailed", { message: error.message });
     appendLog(message);
     notify(message, "error");
@@ -4311,8 +4399,46 @@ export const initMonitorPanel = () => {
       });
     });
   }
+  if (elements.monitorDetailPagePrev) {
+    elements.monitorDetailPagePrev.addEventListener("click", () => {
+      const detail = state.monitor?.detail;
+      if (!detail || detail.loading) return;
+      void loadMonitorDetailPage(
+        detail.session?.session_id,
+        Math.max(0, (Number(detail.offset) || 0) - MONITOR_DETAIL_EVENT_PAGE_SIZE)
+      );
+    });
+  }
+  if (elements.monitorDetailPageFirst) {
+    elements.monitorDetailPageFirst.addEventListener("click", () => {
+      const detail = state.monitor?.detail;
+      if (!detail || detail.loading || Number(detail.offset) <= 0) return;
+      void loadMonitorDetailPage(detail.session?.session_id, 0);
+    });
+  }
+  if (elements.monitorDetailPageNext) {
+    elements.monitorDetailPageNext.addEventListener("click", () => {
+      const detail = state.monitor?.detail;
+      if (!detail || detail.loading || !detail.hasMore) return;
+      void loadMonitorDetailPage(
+        detail.session?.session_id,
+        (Number(detail.offset) || 0) + MONITOR_DETAIL_EVENT_PAGE_SIZE
+      );
+    });
+  }
+  if (elements.monitorDetailPageLast) {
+    elements.monitorDetailPageLast.addEventListener("click", () => {
+      const detail = state.monitor?.detail;
+      if (!detail || detail.loading || !detail.hasMore) return;
+      const limit = Number(detail.limit) || MONITOR_DETAIL_EVENT_PAGE_SIZE;
+      const total = Number(detail.total) || 0;
+      void loadMonitorDetailPage(
+        detail.session?.session_id,
+        total > 0 ? Math.floor((total - 1) / limit) * limit : 0
+      );
+    });
+  }
   elements.monitorDetailClose.addEventListener("click", closeMonitorDetail);
-  elements.monitorDetailCloseBtn.addEventListener("click", closeMonitorDetail);
   elements.monitorDetailModal.addEventListener("click", (event) => {
     if (event.target === elements.monitorDetailModal) {
       closeMonitorDetail();

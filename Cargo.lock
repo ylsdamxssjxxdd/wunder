@@ -7938,6 +7938,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum",
+ "bytes",
  "chrono",
  "clap",
  "futures",
@@ -8033,6 +8034,7 @@ dependencies = [
  "webpki-roots 0.26.11",
  "windows-sys 0.52.0",
  "wunder-core",
+ "x11-dl",
  "zip 0.6.6",
 ]
 

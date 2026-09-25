@@ -96,6 +96,16 @@ async fn run(
         &session,
         input.content,
         input.client_message_id,
+        input
+            .attachments
+            .into_iter()
+            .map(|attachment| wunder_server::schemas::AttachmentPayload {
+                name: Some(attachment.name),
+                content: Some(attachment.content),
+                content_type: Some(attachment.content_type),
+                public_path: None,
+            })
+            .collect(),
     )
     .await?;
     if cancel.is_cancelled() {

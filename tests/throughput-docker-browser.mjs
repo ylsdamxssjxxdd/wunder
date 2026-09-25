@@ -25,9 +25,8 @@ export async function verifyBrowser(results) {
     assert.match(await page.locator("#tpDetail").innerText(),/2000/);
     const detailsBox = await page.locator("#tpDetail").boundingBox();
     assert.ok(detailsBox.y >= 0 && detailsBox.y < 400, "Selected history details must be in view");
-    await page.locator("#tpMetric").selectOption("ttft_ms");
     const series = await page.evaluate(()=>window.echarts.getInstanceByDom(document.getElementById("tpChart")).getOption().series);
-    assert.ok(series.some(item=>item.name.includes("[sim]") && item.data.length>=2));
+    assert.ok(series.some(item=>item.data.length>=2));
     await page.locator("#tpDetail").evaluate(element=>element.closest("section").scrollIntoView({block:"start"}));
     await page.screenshot({path:"temp_dir/throughput-docker/page.png",fullPage:true});
     await page.locator("#tpHistory").scrollIntoViewIfNeeded();

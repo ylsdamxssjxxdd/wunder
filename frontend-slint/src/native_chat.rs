@@ -7,12 +7,14 @@ use std::{
     cell::RefCell,
     rc::Rc,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     time::{Duration, Instant},
 };
-use wunder_desktop::{NativeChatEvent, NativeChatInput, NativeDesktop, NativeStream};
+use wunder_desktop::{
+    NativeChatAttachment, NativeChatEvent, NativeChatInput, NativeDesktop, NativeStream,
+};
 
 struct Active {
     stream: NativeStream,
@@ -30,6 +32,24 @@ struct State {
     active: Option<Active>,
     history_generation: Arc<AtomicU64>,
     drafts: std::collections::HashMap<String, String>,
+    recording: Option<Recording>,
+}
+
+struct Recording {
+    stop: Arc<AtomicBool>,
+    worker: Option<std::thread::JoinHandle<Result<crate::audio_recording::RecordedAudio, String>>>,
+    generation: u64,
+    session: String,
+    started: Instant,
+}
+
+impl Drop for Recording {
+    fn drop(&mut self) {
+        // Dropping the window must release the microphone promptly even when
+        // the user did not press Stop first. The worker observes this flag and
+        // closes its native capture handle before exiting.
+        self.stop.store(true, Ordering::Release);
+    }
 }
 
 pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
@@ -48,11 +68,14 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         active: None,
         history_generation: Arc::new(AtomicU64::new(0)),
         drafts: std::collections::HashMap::new(),
+        recording: None,
     }));
     bind_refresh(app, state.clone());
     bind_selection(app, state.clone());
     bind_new_thread(app, state.clone());
     bind_send(app, state.clone());
+    bind_attachments(app);
+    bind_voice_recording(app, state.clone());
     bind_stop(app, state.clone());
     let weak = app.as_weak();
     app.on_select_task(move |index| {
@@ -146,7 +169,8 @@ fn agent_avatar_tone(app: &MainWindow) -> i32 {
 }
 
 fn agent_avatar_glyph_from_row(row: Option<ChatMessage>) -> slint::SharedString {
-    row.map(|message| message.avatar_glyph).unwrap_or_else(|| "✦".into())
+    row.map(|message| message.avatar_glyph)
+        .unwrap_or_else(|| "✦".into())
 }
 
 fn agent_avatar_tone_from_row(row: Option<ChatMessage>) -> i32 {
@@ -289,17 +313,32 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         }
         let session = app.get_active_session_id().to_string();
         let content = app.get_draft().trim().to_string();
-        if session.is_empty() || content.is_empty() {
+        let attachments = app
+            .get_pending_attachments()
+            .iter()
+            .map(|attachment| NativeChatAttachment {
+                name: attachment.name.to_string(),
+                content: attachment.data_url.to_string(),
+                content_type: attachment.mime_type.to_string(),
+            })
+            .collect::<Vec<_>>();
+        if session.is_empty() || (content.is_empty() && attachments.is_empty()) {
             return;
         }
         if content.len() > 16_384 {
             app.set_status("输入过长，请分段发送".into());
             return;
         }
+        let display_content = if content.is_empty() {
+            "[图片附件]".to_string()
+        } else {
+            content.clone()
+        };
         let stream = match state.borrow().desktop.send_chat(NativeChatInput {
             session_id: session.clone(),
             content: content.clone(),
             client_message_id: None,
+            attachments,
         }) {
             Ok(stream) => stream,
             Err(error) => {
@@ -312,10 +351,10 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             rows.drain(..rows.len() - 98);
         }
         rows.push(ChatMessage {
-            text: content.clone().into(),
+            text: display_content.clone().into(),
             mine: true,
             time: "刚刚".into(),
-            blocks: crate::message_blocks::from_text(&content),
+            blocks: crate::message_blocks::from_text(&display_content),
             avatar_glyph: "".into(),
             avatar_tone: 0,
             ..Default::default()
@@ -333,6 +372,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         let model = Rc::new(VecModel::from(rows));
         app.set_messages(ModelRc::from(model.clone()));
         app.set_draft("".into());
+        app.set_pending_attachments(ModelRc::default());
         app.set_busy(true);
         app.set_follow_output(true);
         app.set_stopping(false);
@@ -350,6 +390,156 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             round: 0,
         });
         start_timer(&app, state.clone());
+    });
+}
+
+fn bind_attachments(app: &MainWindow) {
+    let weak = app.as_weak();
+    app.on_capture_screenshot(move || {
+        crate::screenshot::capture(weak.clone());
+    });
+    let weak = app.as_weak();
+    app.on_remove_attachment(move |index| {
+        let Some(app) = weak.upgrade() else { return };
+        let Ok(index) = usize::try_from(index) else {
+            return;
+        };
+        let mut attachments = app.get_pending_attachments().iter().collect::<Vec<_>>();
+        if index < attachments.len() {
+            attachments.remove(index);
+            app.set_pending_attachments(ModelRc::new(VecModel::from(attachments)));
+        }
+    });
+}
+
+fn bind_voice_recording(app: &MainWindow, state: Rc<RefCell<State>>) {
+    let weak = app.as_weak();
+    app.on_record_voice(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_busy() || app.get_transcribing() {
+            return;
+        }
+        let recording = { state.borrow_mut().recording.take() };
+        if let Some(recording) = recording {
+            let mut recording = recording;
+            recording.stop.store(true, Ordering::Release);
+            let session = std::mem::take(&mut recording.session);
+            let generation = recording.generation;
+            let worker = recording.worker.take();
+            app.set_recording(false);
+            app.set_transcribing(true);
+            app.set_recording_elapsed("".into());
+            app.set_status("正在识别录音…".into());
+            let (generation_counter, desktop) = {
+                let current = state.borrow();
+                (current.history_generation.clone(), current.desktop.clone())
+            };
+            if let Some(worker) = worker {
+                finish_voice_recording(weak.clone(), generation_counter, desktop, session, generation, worker);
+            }
+            return;
+        }
+        if app.get_active_session_id().is_empty() {
+            app.set_status("请先创建或选择一个会话".into());
+            return;
+        }
+        let desktop = state.borrow().desktop.clone();
+        if !desktop.has_asr_model() {
+            app.set_status("请先在系统设置中配置默认语音识别模型".into());
+            return;
+        }
+        let generation = state
+            .borrow()
+            .history_generation
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1);
+        let session = app.get_active_session_id().to_string();
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker = crate::audio_recording::spawn(stop.clone());
+        state.borrow_mut().recording = Some(Recording {
+            stop: stop.clone(),
+            worker: Some(worker),
+            generation,
+            session,
+            started: Instant::now(),
+        });
+        app.set_recording(true);
+        app.set_recording_elapsed("00:00".into());
+        app.set_status("正在录音，再次点击停止".into());
+        start_recording_clock(weak.clone(), state.clone());
+        // Device I/O starts after the UI state changes so a slow driver cannot
+        // block the first visual feedback.
+    });
+}
+
+fn start_recording_clock(app: slint::Weak<MainWindow>, state: Rc<RefCell<State>>) {
+    slint::Timer::single_shot(Duration::from_millis(250), move || {
+        let Some(app) = app.upgrade() else { return };
+        let (stop, elapsed) = {
+            let current = state.borrow();
+            let Some(recording) = current.recording.as_ref() else {
+                return;
+            };
+            (
+                recording.stop.clone(),
+                recording
+                    .started
+                    .elapsed()
+                    .as_secs()
+                    .min(crate::audio_recording::MAX_RECORDING_SECONDS),
+            )
+        };
+        app.set_recording_elapsed(format!("{:02}:{:02}", elapsed / 60, elapsed % 60).into());
+        if elapsed >= crate::audio_recording::MAX_RECORDING_SECONDS {
+            stop.store(true, Ordering::Release);
+            app.invoke_record_voice();
+            return;
+        }
+        start_recording_clock(app.as_weak(), state.clone());
+    });
+}
+
+fn finish_voice_recording(
+    app: slint::Weak<MainWindow>,
+    generation_counter: Arc<AtomicU64>,
+    desktop: Arc<NativeDesktop>,
+    session: String,
+    generation: u64,
+    worker: std::thread::JoinHandle<Result<crate::audio_recording::RecordedAudio, String>>,
+) {
+    // The recorder owns device cleanup. Join it on a worker before invoking
+    // ASR so both operations remain off Slint's event loop.
+    std::thread::spawn(move || {
+        let result = worker
+            .join()
+            .map_err(|_| "录音线程异常退出".to_string())
+            .and_then(|result| result)
+            .and_then(|audio| {
+                desktop
+                    .transcribe_audio(audio.filename, audio.content_type, audio.bytes)
+                    .map_err(|error| error.to_string())
+            });
+        let _ = app.upgrade_in_event_loop(move |app| {
+            app.set_transcribing(false);
+            if app.get_active_session_id() != session
+                || generation_counter.load(Ordering::Relaxed) != generation
+            {
+                return;
+            }
+            match result {
+                Ok(text) => {
+                    let separator = if app.get_draft().trim().is_empty() {
+                        ""
+                    } else {
+                        "\n"
+                    };
+                    let next = format!("{}{}{}", app.get_draft(), separator, text.trim());
+                    app.set_draft(next.into());
+                    app.set_status("语音已转写到输入区，可编辑后发送".into());
+                }
+                Err(error) => app.set_status(format!("语音识别失败：{error}").into()),
+            }
+        });
     });
 }
 

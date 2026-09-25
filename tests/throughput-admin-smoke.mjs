@@ -24,7 +24,7 @@ try {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   const makeRun = (id, input, speed, status = "finished") => ({
-    id, status, config: { model_name: "model", concurrency: 1, input_tokens: input, output_tokens: 1024 },
+    id, status, config: { model_name: "model", concurrency: 1, input_tokens: input, output_tokens: 1024 }, samples: [],
     started_at: `2026-01-01T00:0${id}:00Z`, finished_at: "2026-01-01T00:10:00Z", elapsed_s: 12,
     length_control: "best_effort", persistence_error: false, error: null,
     metrics: { input_tokens: input + 10, output_tokens: status === "finished" ? 1024 : 70, reasoning_tokens: null, estimated_output_tokens: 1030,
@@ -57,44 +57,56 @@ try {
     const { state } = await import("/modules/state.js");
     state.llm = { ...state.llm, loaded: true, order: ["model"], defaultName: "model", configs: { model: { enable: true, model_type: "llm", max_context: 32768 } } };
     state.runtime.activePanel = "throughput";
-    window.throughput = await import("/modules/throughput.js?v=20260923-01");
+    window.throughput = await import("/modules/throughput.js?v=20260925-07");
     await window.throughput.initThroughputPanel();
   });
   await page.waitForFunction(() => document.querySelectorAll("#tpHistory tr").length === 3);
-  assert.equal(await page.locator("#tpInput").count(), 0);
+  assert.equal(await page.locator("#tpInputPresets option").count(), 10);
   assert.equal(await page.locator("#tpOutputPresets option").count(), 4);
-  assert.equal(await page.locator("#tpConcurrency").inputValue(), "1");
+  assert.equal(await page.locator("#tpConcurrencyList").inputValue(), "1,2,4,8");
+  assert.equal(await page.locator("#tpInput").inputValue(), "8192");
+  assert.equal(await page.locator("#tpOutput").inputValue(), "128");
+  assert.equal(await page.locator("#tpForm .muted").count(), 0);
+  assert.match(await page.locator('#tpInput').locator('..').getAttribute("title"), /1,000/);
+  assert.equal(await page.locator(".tp-help, .tp-retention").count(), 0);
   assert.equal(await page.locator("#tpHistory input:checked").count(), 3);
   const series = () => page.evaluate(() => window.echarts.getInstanceByDom(document.getElementById("tpChart")).getOption().series);
-  assert.equal((await series())[0].data.length, 3);
+  assert.equal((await series()).length, 4);
   await page.locator('#tpHistory input[data-select="3"]').check();
-  assert.equal((await series()).length, 1);
+  assert.equal((await series()).length, 4);
   await page.locator("#tpClear").click();
   assert.equal(await page.locator("#tpHistory input:checked").count(), 0);
   await page.locator("#tpSelectValid").click();
-  await page.locator("#tpAxis").selectOption("time");
-  assert.equal(await page.evaluate(() => window.echarts.getInstanceByDom(document.getElementById("tpChart")).getOption().xAxis[0].type), "time");
-  await page.locator("#tpAxis").selectOption("input");
+  assert.equal(await page.evaluate(() => window.echarts.getInstanceByDom(document.getElementById("tpChart")).getOption().xAxis[0].name), "并发数");
+  assert.equal(await page.evaluate(() => window.echarts.getInstanceByDom(document.getElementById("tpChart")).getOption().yAxis[0].axisLabel.formatter(25)), "+25%");
   await page.locator('[data-view="2"]').click();
-  assert.match(await page.locator("#tpDetail").innerText(), /8k/);
-  await page.locator("#tpOutput").fill("30000");
+  assert.match(await page.locator("#tpDetail").innerText(), /8.2k/);
+  assert.match(await page.locator("#tpDetail").innerText(), /单预填充速度/);
+  assert.match(await page.locator("#tpDetail").innerText(), /单生成速度/);
+  await page.locator("#tpInput").fill("1048576");
   await page.locator("#tpStart").click();
   await page.waitForFunction(() => document.getElementById("tpFeedback").textContent.includes("上下文"));
   assert.equal(starts.length, 0);
-  await page.locator("#tpConcurrency").fill("4");
+  await page.locator("#tpConcurrencyList").fill("1, 4, 4");
+  await page.locator("#tpInput").fill("8192");
   await page.locator("#tpOutput").fill("2048");
   await page.locator("#tpStart").click();
   await page.locator("#tpStop").waitFor({ state: "visible" });
-  assert.deepEqual(starts, [{model_name:"model",concurrency:4,input_tokens:8192,output_tokens:2048}]);
+  assert.deepEqual(starts, [{model_name:"model",concurrency_list:[1,4],input_tokens:8192,output_tokens:2048}]);
   assert.equal(await page.locator("#tpModel").isDisabled(), true);
-  await page.locator("#tpStop").click();
+  snapshot.active.status = "finished";
+  snapshot.active.finished_at = "2026-01-01T00:10:00Z";
+  snapshot.active.samples = [
+    { concurrency: 1, status: "finished", elapsed_s: 1, metrics: snapshot.active.metrics },
+    { concurrency: 4, status: "finished", elapsed_s: 1, metrics: { ...snapshot.active.metrics, decode_tps: 300, avg_decode_tps: 80 } },
+  ];
+  snapshot.history.push(snapshot.active); publish();
+  await page.waitForFunction(() => document.querySelectorAll("#tpHistory tr").length === 4);
+  assert.equal(starts.length, 1);
   await page.locator("#tpStart").waitFor({ state: "visible" });
   failStart = true;
   await page.locator("#tpStart").click();
   await page.waitForFunction(() => document.getElementById("tpFeedback").textContent.includes("长度配置无效"));
-  snapshot.active = makeRun("4",16384,73);
-  snapshot.history.push(snapshot.active); publish();
-  await page.waitForFunction(() => document.querySelectorAll("#tpHistory tr").length === 4);
   assert.equal(await page.locator("#tpHistory input:checked").count(), 4);
   await page.locator('[data-view="3"]').click();
   assert.match(await page.locator("#tpDetail").innerText(), /已记录/);
@@ -113,7 +125,7 @@ try {
   await page.screenshot({ path: "temp_dir/throughput-admin-narrow.png", fullPage: true });
   await page.evaluate(() => window.throughput.toggleThroughputPolling(false));
   assert.deepEqual(errors, []);
-  console.log("PASS: presets, payload, context validation, stop, API errors, live snapshots, history selection, curves, export, locale and narrow layout");
+  console.log("PASS: presets, concurrency-list payload and sequencing, context validation, stop, API errors, live snapshots, curves, export, locale and narrow layout");
 } finally {
   await browser.close(); await new Promise((resolve) => server.close(resolve));
 }

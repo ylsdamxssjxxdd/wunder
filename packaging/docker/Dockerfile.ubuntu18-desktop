@@ -21,7 +21,7 @@ RUN printf '%s\n' \
       build-essential ca-certificates curl git pkg-config python3 nasm cmake \
       libssl-dev libgtk-3-dev libxkbcommon-dev libfontconfig1-dev \
       libfreetype6-dev libudev-dev libx11-dev libxi-dev libxcursor-dev \
-      libxrandr-dev libxinerama-dev libwayland-dev squashfs-tools \
+      libxrandr-dev libxinerama-dev libxtst-dev libwayland-dev libasound2 libasound2-dev squashfs-tools \
  && rm -rf /var/lib/apt/lists/* \
  && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
  && rustup component add rust-src --toolchain "${RUST_TOOLCHAIN}" \

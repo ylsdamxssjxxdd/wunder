@@ -1,0 +1,24 @@
+// A tray icon is a top-level Slint component. It must not be nested in the
+// application Window because the native backend owns its message window.
+export component AppTray inherits SystemTrayIcon {
+    in property <image> tray-icon;
+    in property <string> tray-tooltip: "心舰 · 蜂巢";
+    icon: tray-icon;
+    tooltip: tray-tooltip;
+    title: "心舰";
+
+    callback show-main-requested();
+    callback screenshot-requested();
+    callback fullscreen-screenshot-requested();
+    callback quit-requested();
+
+    clicked => { root.show-main-requested(); }
+
+    Menu {
+        MenuItem { title: "显示主窗口"; activated => { root.show-main-requested(); } }
+        MenuItem { title: "截图 (Ctrl+F1)"; activated => { root.screenshot-requested(); } }
+        MenuItem { title: "全屏截图"; activated => { root.fullscreen-screenshot-requested(); } }
+        MenuSeparator {}
+        MenuItem { title: "退出"; activated => { root.quit-requested(); } }
+    }
+}

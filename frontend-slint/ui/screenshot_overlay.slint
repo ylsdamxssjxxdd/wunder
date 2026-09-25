@@ -1,0 +1,94 @@
+// Frozen-screen region selector. Rust owns the captured frame and receives
+// only the final logical selection rectangle.
+
+component OverlayButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> primary: false;
+    callback triggered();
+
+    width: 58px;
+    height: 28px;
+    border-radius: 5px;
+    border-width: 1px;
+    border-color: root.primary ? #f08b43 : #ffffff70;
+    background: button.has-hover ? (root.primary ? #ff9d55 : #4b4b4b) : (root.primary ? #e5792e : #333333);
+    Text { text: root.label; color: #ffffff; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+    button := TouchArea { mouse-cursor: pointer; clicked => { root.triggered(); } }
+}
+
+export component ScreenshotOverlay inherits Window {
+    in property <image> screen-image;
+    in property <length> screen-width;
+    in property <length> screen-height;
+    in-out property <float> sel-x: 0;
+    in-out property <float> sel-y: 0;
+    in-out property <float> sel-w: 0;
+    in-out property <float> sel-h: 0;
+    callback confirmed(int, int, int, int);
+    callback canceled();
+
+    no-frame: true;
+    always-on-top: true;
+    background: transparent;
+    forward-focus: keys;
+    property <bool> dragging: false;
+    property <float> anchor-x: 0;
+    property <float> anchor-y: 0;
+    property <bool> has-selection: root.sel-w >= 4 && root.sel-h >= 4;
+
+    function reset-selection() { root.sel-x = 0; root.sel-y = 0; root.sel-w = 0; root.sel-h = 0; }
+    function finish() { if root.has-selection { root.confirmed(round(root.sel-x), round(root.sel-y), round(root.sel-w), round(root.sel-h)); } }
+    function select-all() { root.sel-x = 0; root.sel-y = 0; root.sel-w = root.screen-width / 1px; root.sel-h = root.screen-height / 1px; root.finish(); }
+
+    Image { width: parent.width; height: parent.height; source: root.screen-image; image-fit: fill; }
+    Rectangle { background: #00000092; }
+    // Restore original pixels inside the selection for a faithful preview.
+    if root.has-selection : Rectangle {
+        x: root.sel-x * 1px; y: root.sel-y * 1px; width: root.sel-w * 1px; height: root.sel-h * 1px; clip: true;
+        Image { x: -(root.sel-x * 1px); y: -(root.sel-y * 1px); width: root.width; height: root.height; source: root.screen-image; image-fit: fill; }
+        Rectangle { background: transparent; border-width: 2px; border-color: #ff9448; }
+    }
+    touch := TouchArea {
+        mouse-cursor: crosshair;
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                root.anchor-x = (self.mouse-x / 1px).clamp(0, root.screen-width / 1px);
+                root.anchor-y = (self.mouse-y / 1px).clamp(0, root.screen-height / 1px);
+                root.reset-selection(); root.dragging = true;
+            } else if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+                root.dragging = false;
+            } else if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                root.canceled();
+            }
+        }
+        moved => {
+            if root.dragging {
+                let x = (self.mouse-x / 1px).clamp(0, root.screen-width / 1px);
+                let y = (self.mouse-y / 1px).clamp(0, root.screen-height / 1px);
+                root.sel-x = min(root.anchor-x, x); root.sel-y = min(root.anchor-y, y);
+                root.sel-w = abs(root.anchor-x - x); root.sel-h = abs(root.anchor-y - y);
+            }
+        }
+    }
+    if !root.has-selection && !root.dragging : Rectangle {
+        x: (parent.width - 392px) / 2; y: 24px; width: 392px; height: 32px; border-radius: 6px; background: #000000b8;
+        Text { text: "拖动选择截图区域 · 右键或 Esc 取消"; color: #ffffff; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+    }
+    if root.has-selection && !root.dragging : Rectangle {
+        x: ((root.sel-x + root.sel-w) * 1px - 198px).clamp(4px, root.screen-width - 202px);
+        y: ((root.sel-y + root.sel-h) * 1px + 8px).clamp(4px, root.screen-height - 38px);
+        width: 198px; height: 34px; border-radius: 7px; background: #282828ee;
+        HorizontalLayout { padding-left: 4px; padding-right: 4px; padding-top: 3px; padding-bottom: 3px; spacing: 5px;
+            OverlayButton { label: "全屏"; triggered => { root.select-all(); } }
+            OverlayButton { label: "完成"; primary: true; triggered => { root.finish(); } }
+            OverlayButton { label: "取消"; triggered => { root.canceled(); } }
+        }
+    }
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.canceled(); accept }
+            else if event.text == Key.Return && root.has-selection { root.finish(); accept }
+            else { reject }
+        }
+    }
+}

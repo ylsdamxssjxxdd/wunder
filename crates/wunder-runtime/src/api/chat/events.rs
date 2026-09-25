@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 const SESSION_EVENTS_MAX_LIMIT: i64 = 500;
+const WORKFLOW_EVENTS_PAGE_MAX_LIMIT: i64 = 100;
 
 pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -42,6 +43,16 @@ struct SessionEventsQuery {
     from_user_round: Option<i64>,
     #[serde(default)]
     to_user_round: Option<i64>,
+    #[serde(default)]
+    offset: Option<i64>,
+    #[serde(default)]
+    page_size: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WorkflowEventsPage {
+    offset: i64,
+    limit: i64,
 }
 
 async fn get_session_events(
@@ -64,17 +75,17 @@ async fn get_session_events(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
     let requested_limit = normalize_session_events_limit(query.limit);
-    let (stream_events, rounds) = if query.workflow_only {
-        (
-            Vec::new(),
-            load_session_workflow_rounds(
-                &state,
-                &session_id,
-                query.from_user_round,
-                query.to_user_round,
-            )
-            .await,
+    let workflow_page = normalize_workflow_events_page(query.offset, query.page_size);
+    let (stream_events, rounds, events_has_more, event_total) = if query.workflow_only {
+        let (rounds, has_more, total) = load_session_workflow_rounds(
+            &state,
+            &session_id,
+            query.from_user_round,
+            query.to_user_round,
+            workflow_page,
         )
+        .await;
+        (Vec::new(), rounds, has_more, total)
     } else {
         let stream_events = load_session_stream_events(&state, &session_id, requested_limit).await;
         let rounds = if stream_events.is_empty() {
@@ -82,7 +93,7 @@ async fn get_session_events(
         } else {
             collect_session_event_rounds(&json!({ "events": stream_events.clone() }))
         };
-        (stream_events, rounds)
+        (stream_events, rounds, false, None)
     };
     let command_sessions = state
         .control
@@ -136,6 +147,10 @@ async fn get_session_events(
             "limit": requested_limit,
             "events_limited": !query.workflow_only && requested_limit > 0,
             "workflow_only": query.workflow_only,
+            "event_offset": workflow_page.map(|page| page.offset),
+            "event_limit": workflow_page.map(|page| page.limit),
+            "event_total": event_total,
+            "events_has_more": workflow_page.is_some() && events_has_more,
             "running": running,
             "queued": queued,
             "last_event_id": last_event_id,
@@ -435,20 +450,65 @@ async fn load_session_workflow_rounds(
     session_id: &str,
     from_user_round: Option<i64>,
     to_user_round: Option<i64>,
-) -> Vec<Value> {
+    page: Option<WorkflowEventsPage>,
+) -> (Vec<Value>, bool, Option<i64>) {
     let Some((from_user_round, to_user_round)) =
         normalize_workflow_round_range(from_user_round, to_user_round)
     else {
-        return Vec::new();
+        return (Vec::new(), false, page.map(|_| 0));
     };
     let storage = state.storage.clone();
     let session_id = session_id.trim().to_string();
     blocking::run_db("api.chat.events.load_workflow", move || {
-        storage.load_session_workflow_events(&session_id, from_user_round, to_user_round)
+        if let Some(page) = page {
+            let query_limit = page.limit.saturating_add(1);
+            let events = storage.load_session_workflow_events_page(
+                &session_id,
+                from_user_round,
+                to_user_round,
+                page.offset,
+                query_limit,
+            )?;
+            let total = storage.count_session_workflow_events(
+                &session_id,
+                from_user_round,
+                to_user_round,
+            )?;
+            Ok((events, Some(total)))
+        } else {
+            storage
+                .load_session_workflow_events(&session_id, from_user_round, to_user_round)
+                .map(|events| (events, None))
+        }
     })
     .await
-    .map(|events| collect_session_event_rounds(&json!({ "events": events })))
+    .map(|(mut events, total)| {
+        let has_more = page.is_some_and(|page| events.len() > page.limit as usize);
+        if has_more {
+            events.pop();
+        }
+        (
+            collect_session_event_rounds(&json!({ "events": events })),
+            has_more,
+            total,
+        )
+    })
     .unwrap_or_default()
+}
+
+fn normalize_workflow_events_page(
+    offset: Option<i64>,
+    page_size: Option<i64>,
+) -> Option<WorkflowEventsPage> {
+    if offset.is_none() && page_size.is_none() {
+        return None;
+    }
+    Some(WorkflowEventsPage {
+        offset: offset.unwrap_or(0).max(0),
+        limit: page_size
+            .unwrap_or(WORKFLOW_EVENTS_PAGE_MAX_LIMIT)
+            .clamp(1, WORKFLOW_EVENTS_PAGE_MAX_LIMIT),
+    })
 }
 
 fn normalize_workflow_round_range(

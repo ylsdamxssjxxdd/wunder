@@ -385,6 +385,31 @@
   min-height: 0;
 }
 
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-overview,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-question,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-empty,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-events {
+  border-color: var(--tech-blue-border);
+  background: var(--tech-blue-surface-2);
+  color: var(--tech-blue-text);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-overview-title,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-overview-item strong,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-label {
+  color: var(--tech-blue-text);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-overview-item {
+  border-color: var(--tech-blue-border);
+  background: rgba(12, 27, 48, 0.84);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-overview-item span,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-empty {
+  color: var(--tech-blue-muted);
+}
+
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-markdown .markdown-body .ai-rich-table td {
   border-color: var(--tech-blue-border);
   background: var(--tech-blue-surface-2);
@@ -3001,7 +3026,6 @@
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-chat-settings-block .messenger-archived-thread-time,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-chat-settings-block .messenger-archived-thread-preview,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-loading,
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-meta,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-event-time,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-event-round,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-round-picker-label,

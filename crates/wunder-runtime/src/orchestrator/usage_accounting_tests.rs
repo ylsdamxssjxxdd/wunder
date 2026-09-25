@@ -253,3 +253,126 @@ async fn usage_accounting_includes_rejected_calls_empty_responses_and_compaction
     }
     server.abort();
 }
+
+#[tokio::test]
+async fn administrator_requests_track_thread_quota_without_debiting_account() {
+    let requests = Arc::new(AtomicUsize::new(0));
+    let counter = requests.clone();
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            async {
+                Json(json!({
+                    "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 8, "completion_tokens": 2, "total_tokens": 10}
+                }))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let root = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.storage.backend = "sqlite".into();
+    config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+    config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
+    let store = ConfigStore::new(root.path().join("config.yaml"));
+    store
+        .update(|current| *current = config.clone())
+        .await
+        .unwrap();
+    let state =
+        AppState::new_with_options(store, config, AppStateInitOptions::cli_default()).unwrap();
+    let mut user = state
+        .user_store
+        .create_user(
+            "user_1",
+            None,
+            "test-password",
+            None,
+            None,
+            vec!["user".into()],
+            "active",
+            false,
+        )
+        .unwrap();
+    user.quota_balance = 0;
+    user.last_quota_grant_date = Some(UserStore::today_string());
+    state.storage.upsert_user_account(&user).unwrap();
+    let before = state
+        .storage
+        .get_user_account(&user.user_id)
+        .unwrap()
+        .unwrap();
+    state
+        .monitor
+        .register("session_1", &user.user_id, "agent_1", "input", true, false);
+    let emitter = EventEmitter::new(
+        "session_1".into(),
+        user.user_id.clone(),
+        None,
+        None,
+        state.monitor.clone(),
+        true,
+        0,
+        None,
+    );
+    let model = LlmModelConfig {
+        provider: Some("openai".into()),
+        model: Some("model_1".into()),
+        base_url: Some(format!("http://{address}/v1")),
+        ..Default::default()
+    };
+
+    state
+        .kernel
+        .orchestrator
+        .call_llm(
+            &model,
+            &[json!({"role": "user", "content": "input"})],
+            &user.user_id,
+            true,
+            &emitter,
+            "session_1",
+            false,
+            RoundInfo::new(1, 1),
+            true,
+            true,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let after = state
+        .storage
+        .get_user_account(&user.user_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            after.quota_balance,
+            after.quota_granted_total,
+            after.quota_used_total
+        ),
+        (
+            before.quota_balance,
+            before.quota_granted_total,
+            before.quota_used_total
+        )
+    );
+    let detail = state.monitor.get_detail("session_1").unwrap();
+    assert_eq!(detail["session"]["quota_used"], json!(1));
+    assert!(detail["events"].as_array().is_some_and(|events| {
+        events.iter().any(|event| {
+            event["event"] == "quota_usage"
+                && event["data"]["consumed"] == json!(1)
+                && event["data"]["billable"] == json!(false)
+        })
+    }));
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+    server.abort();
+}

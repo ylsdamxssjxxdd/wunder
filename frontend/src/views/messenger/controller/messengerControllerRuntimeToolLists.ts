@@ -40,10 +40,6 @@ import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlocker';
 import { useMessengerRightDockResize } from '@/views/messenger/rightDockResize';
-import {
-  settleAgentSessionBusyAfterRefresh,
-  type SessionBusyRecoveryStatus
-} from '@/views/messenger/chatRefreshRecovery';
 import { buildDefaultAgentOverviewSource } from '@/views/messenger/agentOverviewCards';
 import { resolveAgentConfiguredAbilityNames, resolveAgentOverviewAbilityCounts } from '@/views/messenger/agentOverviewAbilities';
 import MessengerHivePlazaPanel from '@/components/messenger/MessengerHivePlazaPanel.vue';

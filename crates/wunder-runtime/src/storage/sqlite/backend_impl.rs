@@ -301,6 +301,30 @@ impl AgentRuntimeStore for SqliteStorage {
     ) -> Result<Vec<Value>> {
         self.load_session_workflow_events_impl(session_id, from_user_round, to_user_round)
     }
+    fn load_session_workflow_events_page(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        self.load_session_workflow_events_page_impl(
+            session_id,
+            from_user_round,
+            to_user_round,
+            offset,
+            limit,
+        )
+    }
+    fn count_session_workflow_events(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+    ) -> Result<i64> {
+        self.count_session_workflow_events_impl(session_id, from_user_round, to_user_round)
+    }
     fn delete_stream_events_before(&self, before_time: f64) -> Result<i64> {
         self.delete_stream_events_before_impl(before_time)
     }

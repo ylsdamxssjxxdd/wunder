@@ -44,6 +44,21 @@ A goal lands on a user, gets divided inside a swarm, and is executed by agents i
 
 All three forms share one core: threads, tools, storage, realtime events, and permission semantics are the same code; only the access layers differ.
 
+## Tech Stack
+
+The backend is a single Rust workspace (tokio async runtime) across all forms:
+
+| | server | desktop | cli |
+| :--- | :--- | :--- | :--- |
+| Backend | Rust + axum 0.8 | Rust, reuses the runtime core, native in-process calls | Rust, reuses the runtime core |
+| UI | Vue 3 + TypeScript (built with Vite) | Slint 1.18 native UI, software rendering | Terminal TUI (ratatui + crossterm) |
+| Admin console | Plain HTML + JS (web/) | — | — |
+| Database | PostgreSQL | SQLite (rusqlite) | SQLite (rusqlite) |
+| Access | HTTP / WebSocket | In-process calls, no local networking | Local process |
+| Compatibility target | Linux / Docker | Windows 7 x86 and up, plus Linux AppImage | Windows 7 and up (built with the GNU toolchain) |
+
+CLI argument parsing uses clap; TLS uses rustls (ring provider). The legacy Electron / Tauri desktop shells are no longer maintained.
+
 ## Capabilities
 
 - Multi-agent parallel collaboration and task handoff
@@ -65,10 +80,8 @@ wunder absorbed code and ideas from quite a few open-source projects along the w
 
 | Absorbed | Project | URL |
 | :--- | :--- | :--- |
-| Agent Foundation | EVA | https://github.com/ylsdamxssjxxdd/eva |
-| Rust Foundation | OpenAI Codex | https://github.com/openai/codex |
+| Project Prototype | EVA | https://github.com/ylsdamxssjxxdd/eva |
+| Agent Foundation | OpenAI Codex | https://github.com/openai/codex |
 | Frontend Foundation | HuLa | https://github.com/HuLaSpark/HuLa |
-| MCP/SKILLS | Claude Code | https://github.com/anthropics/claude-code |
-| Gateway/Channel/Scheduled Tasks | OpenClaw | https://github.com/openclaw/openclaw |
-| Agent LSP | OpenCode | https://github.com/anomalyco/opencode |
-| Swarm Canvas | clawport-ui | https://github.com/JohnRiceML/clawport-ui |
+| Protocol Foundation | Claude Code | https://github.com/anthropics/claude-code |
+| User Foundation | OpenClaw | https://github.com/openclaw/openclaw |

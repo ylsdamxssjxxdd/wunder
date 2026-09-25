@@ -1,4 +1,4 @@
-import { Theme } from "theme.slint";
+import { Theme, ChatAttachment } from "theme.slint";
 import { Action } from "components.slint";
 import { TextEditBase } from "textedit-base.slint";
 
@@ -8,14 +8,30 @@ export component Composer inherits Rectangle {
     in property <bool> busy: false;
     in property <bool> generating;
     in property <bool> stopping;
+    in property <bool> recording: false;
+    in property <bool> transcribing: false;
+    in property <string> recording-elapsed: "";
+    in property <[ChatAttachment]> attachments: [];
     callback stop();
     callback send();
     callback attach();
-    height: 180px;
+    callback remove-attachment(int);
+    callback record-voice();
+    height: root.attachments.length > 0 ? 222px : 180px;
     background: Theme.composer;
     Rectangle { y: 0px; height: 1px; background: Theme.border; }
     VerticalLayout {
         padding: 14px; padding-top: 8px; spacing: 6px;
+        if root.attachments.length > 0 : HorizontalLayout {
+            height: 30px; spacing: 6px;
+            for attachment[index] in root.attachments : Rectangle {
+                width: 220px; height: 28px;
+                border-radius: 7px; background: Theme.accent-soft; border-width: 1px; border-color: Theme.border;
+                Text { x: 8px; width: parent.width - 34px; height: parent.height; text: "图片 · " + attachment.name; color: Theme.text; font-size: 11px; vertical-alignment: center; overflow: elide; }
+                Action { x: parent.width - 27px; y: 2px; width: 24px; height: 24px; icon: @image-url("../assets/icons/xmark.svg"); label: "移除附件"; clicked => { root.remove-attachment(index); } }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
         editor := TextEditBase {
             accessible-role: text-input;
             accessible-value <=> self.text;
@@ -31,7 +47,7 @@ export component Composer inherits Rectangle {
             placeholder-color: Theme.muted;
             selection-background-color: Theme.accent-soft;
             selection-foreground-color: Theme.text;
-            font-size: 15px; font-family: "Microsoft YaHei";
+            font-size: 15px; font-family: "SimSun";
             wrap: word-wrap;
             key-pressed(event) => {
                 if event.text == "\n" && !event.modifiers.shift {
@@ -44,14 +60,20 @@ export component Composer inherits Rectangle {
         HorizontalLayout {
             height: 30px; spacing: 8px;
             Action { icon: @image-url("../assets/icons/plus.svg"); label: "预设问题"; clicked => { root.draft = "你好，请介绍一下你的能力。"; editor.focus(); } }
-            Action { icon: @image-url("../assets/icons/paperclip.svg"); label: "添加附件"; clicked => { root.attach(); } }
+            Action { icon: @image-url("../assets/icons/paperclip.svg"); label: "截图"; clicked => { root.attach(); } }
+            Action {
+                icon: @image-url("../assets/icons/microphone.svg");
+                label: root.recording ? ("停止录音 " + root.recording-elapsed) : (root.transcribing ? "识别中" : "录音");
+                show-label: true; enabled: !root.transcribing && !root.busy;
+                selected: root.recording;
+                clicked => { root.record-voice(); }
+            }
             Action { icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "快捷输入"; clicked => { root.draft = "请帮我整理当前内容。"; editor.focus(); } }
             Text { text: root.status; color: Theme.muted; font-size: 10px; overflow: elide; }
             Rectangle { horizontal-stretch: 1; }
             Text { text: "Enter 发送 / Shift+Enter 换行"; color: Theme.muted; font-size: 10px; }
             if root.generating : Action { width: 88px; label: root.stopping ? "正在停止" : "停止生成"; show-label: true; enabled: !root.stopping; clicked => { root.stop(); } }
-            if !root.generating : Action { width: 66px; icon: @image-url("../assets/icons/arrow-up.svg"); label: root.busy ? "发送中" : "发送"; show-label: true; primary: true; enabled: root.draft != "" && !root.busy; clicked => { root.send(); } }
+            if !root.generating : Action { width: 66px; icon: @image-url("../assets/icons/arrow-up.svg"); label: root.busy ? "发送中" : "发送"; show-label: true; primary: true; enabled: (root.draft != "" || root.attachments.length > 0) && !root.busy; clicked => { root.send(); } }
         }
     }
 }
-

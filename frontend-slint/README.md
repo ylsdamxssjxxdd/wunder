@@ -14,7 +14,7 @@ slint-viewer --screenshot frontend-slint/artifacts/preview.png --size 1360x820 f
 
 界面包含聊天、专家、工具、系统设置/模型配置，沿用 TS 浅色蜂巢配色；没有蜂群、独立文件页和深色切换入口。工作目录固定显示在聊天右侧顶部，包含容器编号与本地根路径。
 
-- 聊天：加载最近 100 个会话及当前会话最近 100 条记录，支持新建、切换、草稿隔离、刷新、原生内存通道流式输出、停止和排队事件回读。消息以轻量文本块每 33 ms 合并更新，复制保留原文。单条气泡最多展示前 16 KiB/160 行，避免老系统软件渲染坐标溢出；原文缓冲最多 8 MiB，超过时提示从历史查看。发送过程中禁止重复提交和会话切换；若请求超时，请先刷新确认结果再重发。
+- 聊天：加载最近 100 个会话及当前会话最近 100 条记录，支持新建、切换、草稿隔离、刷新、原生内存通道流式输出、停止和排队事件回读。输入栏可区域截图、全屏截图以及录音转写；录音在 Windows 使用 Win7 兼容的 WinMM、Linux 使用 ALSA，最多 120 秒，生成 WAV 后直接调用同进程 ASR runtime，并将结果放回当前会话草稿。消息以轻量文本块每 33 ms 合并更新，复制保留原文。单条气泡最多展示前 16 KiB/160 行，避免老系统软件渲染坐标溢出；原文缓冲最多 8 MiB，超过时提示从历史查看。发送过程中禁止重复提交和会话切换；若请求超时，请先刷新确认结果再重发。
 - 智能体：读取默认智能体和已有智能体，支持复制默认配置创建智能体；消息页新建会话时使用当前选中的智能体；支持保存名称、描述、多行系统提示词和模型配置键。留空模型键继承默认值，默认专家模型在系统设置中调整。已开始线程的提示词仍由后端保持冻结。
 - 工具：读取现有工具目录，提供分类切换和前缀搜索，当前仅展示，不修改工具权限。
 - 工作目录：位于聊天右侧顶部，与网页端工作区一致，显示容器编号和本地路径，支持搜索、刷新、子目录、文本预览和复制。预览最多 32 KiB，二进制降级提示；加载错误直接显示。
@@ -40,7 +40,7 @@ python frontend-slint/scripts/check-native.py --ui frontend-slint/target/release
 
 ## Win7 32 位
 
-工程复用了参考项目的 Slint 实现及已验证的 Slint 1.18 software renderer、Winit 0.30.2 和 Win7 兼容 vendor patch。完整的 `config/fonts/msyh.ttc` 与 `config/fonts/msyhbd.ttc` 会在启动前从 EXE 内存注册，UI 不依赖目标机器安装字体。
+工程复用了参考项目的 Slint 实现及已验证的 Slint 1.18 software renderer、Winit 0.30.2 和 Win7 兼容 vendor patch。`assets/fonts/simsun.ttf` 是参考 rcho 生成的完整 SimSun 宋体，构建时以 LZ4 压缩后嵌入 EXE，启动时只解压并注册一次；UI 不依赖目标机器安装字体，也不再嵌入两份完整微软雅黑 TTC。
 
 有离线 SDK 时运行：
 
@@ -74,7 +74,7 @@ python frontend-slint/scripts/check-launch.py --ui frontend-slint/target/release
 ## Linux AppImage 与交叉构建
 
 Linux x86_64 与 ARM64 桌面版使用 Ubuntu 18.04/glibc 2.27 作为构建基线，AppImage 内携带
-Slint 软件渲染所需的 XCB/X11/XKB 动态库，并使用 gzip SquashFS 兼容老旧发行版。
+Slint 软件渲染所需的 XCB/X11/XKB 动态库和 `libasound.so.2`，并使用 gzip SquashFS 兼容老旧发行版。
 已有的 `rcho-slint-arm64-ubuntu18:latest` 作为基础镜像即可，无需重做；仓库提供的
 wunder 派生镜像只补充 XCB 运行库和 SquashFS 工具：
 
@@ -84,15 +84,13 @@ docker build --platform linux/arm64 \
   -f packaging/docker/Dockerfile.ubuntu18-arm64-slint .
 ```
 
-ARM64 的本地构建脚本（Windows 主机）使用：
+ARM64 的 Desktop AppImage 从 Windows 主机使用统一入口：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File builders/build-linux-arm64-appimage.ps1
+.\build.bat -Target desktop -Arch linux-arm64 -AppImageRuntimeArm64 <ARM64-AppImage-runtime>
 ```
 
-脚本默认使用同级 `rcho/target/electron/release/` 中已有 ARM64 AppImage 作为
-type-2 runtime；也可以显式传入 `-AppImageRuntime <路径>`。Rust 1.92 和 Cargo
-vendor 从同级 `Rust-builder/kylin-arm` 挂载，构建完成后产物位于
+Rust 1.92 和 Cargo vendor 从同级 `Rust-builder/kylin-arm` 挂载，构建完成后产物位于
 `target/slint/dist/linux-arm64/`。检查产物可运行：
 
 ```bash
@@ -110,33 +108,39 @@ AppImage 结构检查。参考 rcho 的离线 SDK 组织，ARM64 Ubuntu 18.04 �
 的 ARM64 Ubuntu 18.04 镜像）可交叉生成 Linux amd64 与 Win32 i686 原生 Slint 产物：
 
 ```bash
-# ARM64 Linux -> Ubuntu 18.04 x86_64 ELF
-bash build-linux-amd64-offline.sh --native
+# ARM64 Linux -> Ubuntu 18.04 x86_64 Desktop ELF / CLI ELF
+bash build.sh -t desktop -a linux-amd64
+bash build.sh -t cli -a linux-amd64
 
-# ARM64 Linux -> type-2 x86_64 AppImage
-WUNDER_APPIMAGE_RUNTIME=/path/to/x86_64-runtime.AppImage \
-  bash build-linux-amd64-offline.sh --docker --appimage
+# ARM64 Linux -> x86_64 Desktop AppImage（CLI 永远不打包 AppImage）
+WUNDER_APPIMAGE_RUNTIME_AMD64=/path/to/x86_64-runtime.AppImage \
+  bash build.sh -t desktop -a linux-amd64 --appimage
 
-# ARM64 Linux -> Win32 i686 PE
-bash build-win32-arm64-offline.sh --native
+# ARM64 Linux -> Win32 i686 Desktop PE / CLI PE
+bash build.sh -t desktop -a win32-x86
+bash build.sh -t cli -a win32-x86
 
-# 统一入口
-bash build-linux-arm64-offline.sh -t amd64 --docker
-bash build-linux-arm64-offline.sh -t win32 --docker
+# 全量发布：三个 Linux ARM64 主机可构建的架构 × Desktop/CLI。
+WUNDER_APPIMAGE_RUNTIME_ARM64=/path/to/arm64-runtime.AppImage \
+WUNDER_APPIMAGE_RUNTIME_AMD64=/path/to/amd64-runtime.AppImage \
+  bash build.sh -all
 ```
 
-Windows 主机使用对应 PowerShell 包装器：
+Windows 主机使用同一个 `build.bat`，Linux/Win32 走 Docker，Win7 留在本地 SDK：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File builders/build-linux-amd64-offline.ps1 -Docker
-powershell -ExecutionPolicy Bypass -File builders/build-linux-amd64-offline.ps1 -Docker -AppImage -AppImageRuntime <x86_64-AppImage>
-powershell -ExecutionPolicy Bypass -File builders/build-win32-arm64-offline.ps1 -Docker
+.\build.bat -Target cli -Arch linux-amd64
+.\build.bat -Target desktop -Arch linux-amd64 -AppImage -AppImageRuntimeAmd64 <x86_64-AppImage-runtime>
+.\build.bat -Target cli -Arch win7-x86
 ```
 
-Linux AppImage 必须提供同架构 type-2 runtime（`WUNDER_APPIMAGE_RUNTIME` 或
-`-AppImageRuntime`），不会再依赖固定版本的参考工程产物。ARM64 打包、amd64 交叉打包
+`build.bat -All` 同时使用 `Rust-builder/kylin-arm` 与 `Rust-builder/win7`；可分别通过 `-KylinBuilderRoot`、`-Win7BuilderRoot` 覆盖，不能用同一目录替代两套工具链。
+
+Linux AppImage 必须提供同架构 type-2 runtime（Linux 命令使用
+`WUNDER_APPIMAGE_RUNTIME_ARM64` / `WUNDER_APPIMAGE_RUNTIME_AMD64`，Windows 使用
+`-AppImageRuntimeArm64` / `-AppImageRuntimeAmd64`），不会再依赖固定版本的参考工程产物。ARM64 打包、amd64 交叉打包
 都在输出目录创建唯一私有临时目录，完成后原子发布；失败会清理临时文件并保留已有版本。
 构建缓存分别位于 `target/linux-arm64-ubuntu18-slint`、
 `target/linux-amd64-ubuntu18-slint` 和 `target/win32-x86-arm64`，与旧桌面壳产物隔离。
 
-CI 发布只保留三个桌面程序：Win7 32 位 EXE、Ubuntu 18.04 x86_64 AppImage 和 Ubuntu 18.04 ARM64 AppImage。
+Desktop CI 发布保留 Win7 32 位 EXE、Ubuntu 18.04 x86_64 AppImage 和 Ubuntu 18.04 ARM64 AppImage。CLI 发布为各目标的普通可执行文件，不生成 AppImage。

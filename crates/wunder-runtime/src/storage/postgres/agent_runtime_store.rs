@@ -42,6 +42,20 @@ pub(super) trait PostgresAgentRuntimeStorage {
         from_user_round: i64,
         to_user_round: i64,
     ) -> Result<Vec<Value>>;
+    fn load_session_workflow_events_page_impl(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>>;
+    fn count_session_workflow_events_impl(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+    ) -> Result<i64>;
     fn delete_stream_events_before_impl(&self, before_time: f64) -> Result<i64>;
     fn delete_stream_events_by_user_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_stream_events_by_session_impl(&self, session_id: &str) -> Result<i64>;
@@ -400,6 +414,64 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
         Ok(stream_event_rows_to_values(rows.into_iter().map(|row| {
             (row.get::<_, i64>(0), row.get::<_, String>(1))
         })))
+    }
+
+    fn load_session_workflow_events_page_impl(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty()
+            || from_user_round <= 0
+            || to_user_round < from_user_round
+            || offset < 0
+            || limit <= 0
+        {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT event_id, payload FROM stream_events \
+             WHERE session_id = $1 AND user_round BETWEEN $2 AND $3 \
+             AND event_type NOT IN ('llm_output_delta', 'llm_output', 'final', 'thread_closed') \
+             ORDER BY event_id ASC LIMIT $4 OFFSET $5",
+            &[
+                &cleaned_session,
+                &from_user_round,
+                &to_user_round,
+                &limit,
+                &offset,
+            ],
+        )?;
+        Ok(stream_event_rows_to_values(rows.into_iter().map(|row| {
+            (row.get::<_, i64>(0), row.get::<_, String>(1))
+        })))
+    }
+
+    fn count_session_workflow_events_impl(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+    ) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty() || from_user_round <= 0 || to_user_round < from_user_round {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query_one(
+            "SELECT COUNT(*) FROM stream_events \
+             WHERE session_id = $1 AND user_round BETWEEN $2 AND $3 \
+             AND event_type NOT IN ('llm_output_delta', 'llm_output', 'final', 'thread_closed')",
+            &[&cleaned_session, &from_user_round, &to_user_round],
+        )?;
+        Ok(rows.get::<_, i64>(0))
     }
 
     fn delete_stream_events_before_impl(&self, _before_time: f64) -> Result<i64> {

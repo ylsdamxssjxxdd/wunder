@@ -3,9 +3,9 @@ import { getWunderBase } from "../api.js";
 import { ensureLlmConfigLoaded } from "../llm.js";
 import { escapeHtml, formatTimestamp } from "../utils.js?v=20251229-02";
 import { resolveApiErrorMessage } from "../api-error.js";
-import { label as l } from "./copy.js?v=20260924-03";
-import { mount, details, history, number, durationMs } from "./view.js?v=20260924-03";
-import { comparisonSeries, selectableResult, tokenLabel } from "./chart.js?v=20260924-02";
+import { label as l } from "./copy.js?v=20260925-06";
+import { mount, details, history, number, durationMs } from "./view.js?v=20260925-06";
+import { concurrencySeries, selectableResult, speedLabel } from "./chart.js?v=20260925-07";
 
 const KEY = "wunder_throughput_scenario_v2";
 let initialized = false;
@@ -28,8 +28,6 @@ const selected = new Set();
 const known = new Set();
 const $ = (id) => document.getElementById(id);
 const running = () => ["running", "stopping"].includes(data.active?.status);
-// Keep the legacy API field stable while the page no longer exposes an injected-context control.
-const DEFAULT_INPUT_TOKENS = 8192;
 
 async function api(path, body, signal) {
   const response = await fetch(`${getWunderBase()}/admin/throughput/${path}`, {
@@ -40,11 +38,22 @@ async function api(path, body, signal) {
   return response.json();
 }
 
-const form = () => ({ model_name: $("tpModel").value, concurrency: Number($("tpConcurrency").value), input_tokens: DEFAULT_INPUT_TOKENS, output_tokens: Number($("tpOutput").value) });
+const parseConcurrencyList = (value) => {
+  const seen = new Set();
+  const list = [];
+  for (const part of String(value || "").split(/[,，\s]+/).filter(Boolean)) {
+    const concurrency = Number(part);
+    if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 1024) return null;
+    if (!seen.has(concurrency)) { seen.add(concurrency); list.push(concurrency); }
+  }
+  return list.length ? list : null;
+};
+const form = () => ({ model_name: $("tpModel").value, concurrency_list: parseConcurrencyList($("tpConcurrencyList").value), input_tokens: Number($("tpInput").value), output_tokens: Number($("tpOutput").value) });
 function saveForm() { try { localStorage.setItem(KEY, JSON.stringify(form())); } catch { /* Optional preference storage. */ } }
 function restoreForm(config) {
   if (!config) { try { config = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch { config = {}; } }
-  for (const [id, value] of [["tpModel", config.model_name], ["tpConcurrency", config.concurrency], ["tpOutput", config.output_tokens]]) {
+  const list = Array.isArray(config.concurrency_list) ? config.concurrency_list : config.concurrency == null ? null : [config.concurrency];
+  for (const [id, value] of [["tpModel", config.model_name], ["tpConcurrencyList", list?.join(",")], ["tpInput", config.input_tokens], ["tpOutput", config.output_tokens]]) {
     if (value != null) $(id).value = String(value);
   }
 }
@@ -80,13 +89,18 @@ function apply(snapshot, sequence) {
 function render(force = false) {
   const item = viewed ? data.history.find((item) => item.id === viewed) : data.active || data.history.at(-1);
   details($("tpDetail"), item);
+  if (running() && data.active?.config?.concurrency_list?.length) {
+    const total = data.active.config.concurrency_list.length;
+    const current = Math.min(data.active.samples?.length || 0, total);
+    $("tpFeedback").textContent = l("batchProgress").replace("{current}", String(current)).replace("{total}", String(total));
+  }
   $("tpCurrent").hidden = !viewed;
   $("tpStart").hidden = running();
   $("tpStart").disabled = busy || !$("tpModel").value;
   $("tpStop").hidden = !running();
   $("tpStop").disabled = busy || data.active?.status === "stopping";
   $("tpStop").textContent = l(data.active?.status === "stopping" ? "stopping" : "stop");
-  for (const id of ["tpModel", "tpConcurrency", "tpOutput"]) $(id).disabled = running() || busy;
+  for (const id of ["tpModel", "tpConcurrencyList", "tpInput", "tpOutput"]) $(id).disabled = running() || busy;
   const signature = JSON.stringify([data.history, [...selected], viewed]);
   if (force || signature !== historySignature) {
     history($("tpHistory"), data.history, selected, viewed);
@@ -98,25 +112,29 @@ function render(force = false) {
 }
 
 function draw(force = false) {
-  const metric = $("tpMetric").value;
-  const axis = $("tpAxis").value;
-  const signature = JSON.stringify([historySignature, metric, axis]);
+  const signature = JSON.stringify([historySignature]);
   if (!force && signature === chartSignature) return;
   chartSignature = signature;
-  const series = comparisonSeries(data.history, selected, metric, axis);
+  const series = concurrencySeries(data.history, selected, l);
   $("tpChartEmpty").textContent = !window.echarts ? l("chartUnavailable") : series.length ? "" : l("chartEmpty");
   if (!window.echarts) return;
   chart ||= window.echarts.init($("tpChart"));
   chart.setOption({
     animation: false, color: ["#2563eb", "#16a34a", "#d97706", "#7c3aed", "#dc2626", "#0891b2"],
-    legend: { type: "scroll", bottom: 0 }, grid: { top: 25, left: 70, right: 25, bottom: 68 },
-    tooltip: { trigger: "item", confine: true, formatter: (point) => {
-      const run = point.data.run;
-      const value = metric === "ttft_ms" ? durationMs(point.value[1]) : `${number(point.value[1])} tok/s`;
-      return `${escapeHtml(run.config.model_name)}<br>${escapeHtml(formatTimestamp(run.started_at))}<br>${l("concurrency")}: ${number(run.config.concurrency || 1,0)}<br>${l("context")}: ${tokenLabel(run.config.input_tokens)}<br>${l("target")}: ${tokenLabel(run.config.output_tokens)}<br>${l("actualOutput")}: ${number(run.metrics.output_tokens,0)}<br>${escapeHtml(point.seriesName)}: ${value}`;
+    tooltip: { trigger: "axis", confine: true, formatter: (points) => {
+      const concurrency = points?.[0]?.value?.[0];
+      const header = `${l("concurrency")}: ${number(concurrency, 0)}`;
+      const rows = (points || []).map((point) => {
+        const change = Number(point.value[1]);
+        const changeText = `${change > 0 ? "+" : ""}${number(change)}%`;
+        const raw = point.data?.raw;
+        return `${point.marker}${escapeHtml(point.seriesName)}: ${changeText}<br>${l("measured")}: ${speedLabel(raw)}`;
+      });
+      return [header, ...rows].join("<br>");
     } },
-    xAxis: axis === "time" ? { type: "time" } : { type: "log", logBase: 2, min: 1, axisLabel: { formatter: tokenLabel } },
-    yAxis: { type: "value", name: metric === "ttft_ms" ? "ms" : "tok/s", min: 0 }, series,
+    legend: { type: "scroll", bottom: 0 }, grid: { top: 48, left: 82, right: 25, bottom: 68 },
+    xAxis: { type: "value", name: l("concurrency"), minInterval: 1, axisLabel: { formatter: (value) => number(value, 0) } },
+    yAxis: { type: "value", name: l("relativeChange"), axisLabel: { formatter: (value) => `${value > 0 ? "+" : ""}${number(value)}%` } }, series,
   }, true);
   chart.resize();
 }
@@ -170,20 +188,39 @@ async function connect(epoch) {
 
 async function command(action) {
   if (busy) return;
+  if (action === "start") {
+    const config = form();
+    const limit = state.llm.configs[config.model_name]?.max_context;
+    if (!config.concurrency_list) { $("tpFeedback").textContent = l("concurrencyError"); return; }
+    if (!Number.isSafeInteger(config.input_tokens) || config.input_tokens < 1 || config.input_tokens > 16777216) { $("tpFeedback").textContent = l("inputError"); return; }
+    if (!Number.isSafeInteger(config.output_tokens) || config.output_tokens < 1 || config.output_tokens > 1048576) { $("tpFeedback").textContent = l("outputError"); return; }
+    if (Number(limit) > 0 && config.input_tokens + config.output_tokens > Number(limit)) { $("tpFeedback").textContent = l("contextError"); return; }
+    saveForm();
+    const epoch = generation;
+    busy = true;
+    $("tpFeedback").textContent = l("batchProgress").replace("{current}", "0").replace("{total}", String(config.concurrency_list.length));
+    render();
+    try {
+      const snapshot = await api("start", config);
+      if (!visible || epoch !== generation) return;
+      viewed = "";
+      appliedSequence = ++requestSequence;
+      data.active = snapshot;
+      $("tpFeedback").textContent = l("batchProgress").replace("{current}", "1").replace("{total}", String(config.concurrency_list.length));
+    } catch (error) {
+      if (visible && epoch === generation) $("tpFeedback").textContent = error.message;
+    } finally {
+      busy = false;
+      if (visible && epoch === generation) { render(); await refresh(); }
+    }
+    return;
+  }
   const epoch = generation;
   busy = true;
   $("tpFeedback").textContent = l("busy");
   render();
   try {
-    const config = form();
-    const limit = state.llm.configs[config.model_name]?.max_context;
-    if (action === "start") {
-      if (!Number.isSafeInteger(config.concurrency) || config.concurrency < 1 || config.concurrency > 1024) throw new Error(l("concurrencyError"));
-      if (!Number.isSafeInteger(config.output_tokens) || config.output_tokens < 1 || config.output_tokens > 1048576) throw new Error(l("outputError"));
-      if (Number(limit) > 0 && config.input_tokens + config.output_tokens > Number(limit)) throw new Error(l("contextError"));
-    }
-    saveForm();
-    const snapshot = await api(action, action === "start" ? config : {});
+    const snapshot = await api(action, {});
     if (!visible || epoch !== generation) return;
     viewed = "";
     // Invalidate an older HTTP hydration response already in flight.
@@ -216,8 +253,6 @@ function bind() {
     catch (error) { if (visible && epoch === generation) $("tpFeedback").textContent = error.message; }
   });
   $("tpCurrent").addEventListener("click", () => { viewed = ""; render(); });
-  $("tpMetric").addEventListener("change", () => draw());
-  $("tpAxis").addEventListener("change", () => draw());
   $("tpSelectValid").addEventListener("click", () => { selected.clear(); data.history.filter(selectableResult).forEach((item) => selected.add(item.id)); render(); });
   $("tpClear").addEventListener("click", () => { selected.clear(); render(); });
   $("tpExport").addEventListener("click", exportSelected);

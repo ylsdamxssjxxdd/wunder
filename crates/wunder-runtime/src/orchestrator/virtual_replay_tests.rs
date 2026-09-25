@@ -206,6 +206,9 @@ async fn virtual_replay_works_at_zero_balance_without_spending_or_granting_token
         provider: Some("virtual_replay".into()),
         ..Default::default()
     };
+    state
+        .monitor
+        .register("session_1", &user.user_id, "agent_1", "input", false, false);
     let emitter = EventEmitter::new(
         "session_1".into(),
         user.user_id.clone(),
@@ -247,4 +250,9 @@ async fn virtual_replay_works_at_zero_balance_without_spending_or_granting_token
     assert_eq!(after.quota_granted_total, before.quota_granted_total);
     assert_eq!(after.quota_used_total, before.quota_used_total);
     assert_eq!(after.last_quota_grant_date, before.last_quota_grant_date);
+    assert_eq!(emitter.accumulated_quota_consumption(), 0);
+    assert_eq!(
+        state.monitor.get_detail("session_1").unwrap()["session"]["quota_used"],
+        json!(0)
+    );
 }

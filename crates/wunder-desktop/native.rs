@@ -6,6 +6,7 @@
 
 use crate::{args::DesktopArgs, runtime::DesktopRuntime};
 use anyhow::{anyhow, Result};
+use bytes::Bytes;
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -31,6 +32,16 @@ pub struct NativeChatInput {
     pub session_id: String,
     pub content: String,
     pub client_message_id: Option<String>,
+    /// Local UI attachments retain their original data URL until the shared
+    /// runtime persists them into the workspace attachment store.
+    pub attachments: Vec<NativeChatAttachment>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NativeChatAttachment {
+    pub name: String,
+    pub content: String,
+    pub content_type: String,
 }
 
 #[derive(Debug, Clone)]
@@ -166,8 +177,12 @@ impl NativeDesktop {
     }
 
     pub fn send_chat(&self, input: NativeChatInput) -> Result<NativeStream> {
-        if input.session_id.trim().is_empty() || input.content.trim().is_empty() {
-            return Err(anyhow!("chat session and content are required"));
+        if input.session_id.trim().is_empty()
+            || (input.content.trim().is_empty() && input.attachments.is_empty())
+        {
+            return Err(anyhow!(
+                "chat session and content or attachment are required"
+            ));
         }
         Ok(stream::start(
             &self.runtime,
@@ -175,6 +190,49 @@ impl NativeDesktop {
             self.desktop.user_id.clone(),
             input,
         ))
+    }
+
+    /// Returns whether the desktop runtime has a configured default ASR model.
+    /// The check is deliberately synchronous at this façade boundary so UI code
+    /// can reject an empty recording before starting device capture.
+    pub fn has_asr_model(&self) -> bool {
+        let config = self.runtime.block_on(self.state().config_store.get());
+        wunder_server::multimodal_models::resolve_asr_model(&config, None).is_some()
+    }
+
+    /// Transcribe an in-memory recording through the shared multimodal runtime.
+    /// No local HTTP or bridge transport is involved; the model provider call,
+    /// when configured remotely, remains inside the existing runtime service.
+    pub fn transcribe_audio(
+        &self,
+        filename: String,
+        content_type: String,
+        audio_bytes: Vec<u8>,
+    ) -> Result<String> {
+        if audio_bytes.is_empty() {
+            return Err(anyhow!("录音为空"));
+        }
+        let config = self.runtime.block_on(self.state().config_store.get());
+        let response =
+            self.runtime
+                .block_on(wunder_server::multimodal_models::transcribe_audio(
+                    &config,
+                    wunder_server::multimodal_models::AudioTranscriptionRequest {
+                        audio_bytes: Bytes::from(audio_bytes),
+                        filename,
+                        content_type,
+                        model_name: None,
+                        language: None,
+                        prompt: None,
+                        response_format: None,
+                        temperature: None,
+                    },
+                ))?;
+        let text = response.text.trim().to_string();
+        if text.is_empty() {
+            return Err(anyhow!("语音识别没有返回文字"));
+        }
+        Ok(text)
     }
 }
 

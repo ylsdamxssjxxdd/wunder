@@ -362,27 +362,6 @@
             <i class="fa-solid fa-plus" aria-hidden="true"></i>
             {{ t('chat.newConversation') }}
           </button>
-          <button
-            v-if="!showChatSettingsView && resolvedMessageConversationKind === 'agent'"
-            class="messenger-header-btn"
-            type="button"
-            :disabled="isMessengerInteractionBlocked"
-            :title="t('common.refresh')"
-            :aria-label="t('common.refresh')"
-            @click="handleChatPageRefresh"
-          >
-            <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
-          </button>
-          <button
-            v-if="!showChatSettingsView && resolvedMessageConversationKind === 'agent'"
-            class="messenger-header-btn"
-            type="button"
-            :title="t('common.setting')"
-            :aria-label="t('common.setting')"
-            @click="openActiveAgentSettings"
-          >
-            <i class="fa-solid fa-gear" aria-hidden="true"></i>
-          </button>
         </div>
         <button
           v-if="showScrollTopButton"
@@ -1764,7 +1743,6 @@ const handleAgentSettingsFocusConsumed = controller.handleAgentSettingsFocusCons
 const handleAgentSettingsSaved = controller.handleAgentSettingsSaved;
 const handleArchivedSessionRemoved = controller.handleArchivedSessionRemoved;
 const handleBeeroomMoveAgents = controller.handleBeeroomMoveAgents;
-const handleChatPageRefresh = controller.handleChatPageRefresh;
 const handleContactVirtualScroll = controller.handleContactVirtualScroll;
 const handleCronPanelChanged = controller.handleCronPanelChanged;
 const handleDeleteBeeroomGroup = controller.handleDeleteBeeroomGroup;
@@ -2060,7 +2038,6 @@ const onMounted = controller.onMounted;
 const onUpdated = controller.onUpdated;
 const onUserToolsUpdated = controller.onUserToolsUpdated;
 const onWorkspaceRefresh = controller.onWorkspaceRefresh;
-const openActiveAgentSettings = controller.openActiveAgentSettings;
 const openAgentById = controller.openAgentById;
 const openAgentDraftSession = controller.openAgentDraftSession;
 const openAgentDraftSessionWithScroll = controller.openAgentDraftSessionWithScroll;
@@ -2149,7 +2126,6 @@ const readWorldDraft = controller.readWorldDraft;
 const REALTIME_CONTACT_REFRESH_MIN_MS = controller.REALTIME_CONTACT_REFRESH_MIN_MS;
 const redirectToLoginAfterLogout = controller.redirectToLoginAfterLogout;
 const ref = controller.ref;
-const refreshActiveAgentConversation = controller.refreshActiveAgentConversation;
 const refreshActiveBeeroom = controller.refreshActiveBeeroom;
 const refreshActiveOrchestration = controller.refreshActiveOrchestration;
 const refreshAgentMainUnreadCount = controller.refreshAgentMainUnreadCount;
@@ -2271,7 +2247,6 @@ const resolveRouteHelperWorkspaceEnabled = controller.resolveRouteHelperWorkspac
 const resolveRouteSettingsPanelMode = controller.resolveRouteSettingsPanelMode;
 const resolveSectionFromRoute = controller.resolveSectionFromRoute;
 const resolveSessionActivityTimestamp = controller.resolveSessionActivityTimestamp;
-const resolveSessionBusyRecoveryMessage = controller.resolveSessionBusyRecoveryMessage;
 const resolveSessionLoadingFlag = controller.resolveSessionLoadingFlag;
 const resolveSessionPreviewFromFields = controller.resolveSessionPreviewFromFields;
 const resolveSessionRuntimeStatus = controller.resolveSessionRuntimeStatus;
@@ -2409,7 +2384,6 @@ const serverDefaultModelCheckedAt = controller.serverDefaultModelCheckedAt;
 const serverDefaultModelDisplayName = controller.serverDefaultModelDisplayName;
 const serverDefaultModelFetchPromise = controller.serverDefaultModelFetchPromise;
 const SESSION_DETAIL_PREFETCH_DELAY_MS = controller.SESSION_DETAIL_PREFETCH_DELAY_MS;
-const SESSION_OPEN_RECOVERY_ATTEMPTS = controller.SESSION_OPEN_RECOVERY_ATTEMPTS;
 const sessionDetailPrefetchTimer = controller.sessionDetailPrefetchTimer;
 const sessionHub = controller.sessionHub;
 const setAgentMainReadAt = controller.setAgentMainReadAt;
@@ -2428,7 +2402,6 @@ const selectedDesktopModelKey = controller.selectedDesktopModelKey;
 const desktopModelCreateRequest = controller.desktopModelCreateRequest;
 const settingsPanelRenderKey = controller.settingsPanelRenderKey;
 const settingsRuntimeAgentIdForApi = controller.settingsRuntimeAgentIdForApi;
-const settleAgentSessionBusyAfterRefresh = controller.settleAgentSessionBusyAfterRefresh;
 const settleMessengerBootstrapTasks = controller.settleMessengerBootstrapTasks;
 const setUserAttachmentResourceState = controller.setUserAttachmentResourceState;
 const setWorkerCardImportCreatingOverlay = controller.setWorkerCardImportCreatingOverlay;

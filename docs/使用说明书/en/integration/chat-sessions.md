@@ -39,7 +39,7 @@ When you need session-level capabilities, use `/wunder/chat/sessions/*` as the p
 3. Audio/video attachments go through `POST /wunder/chat/attachments/media/process` first
 4. `POST /wunder/chat/sessions/{session_id}/messages` to send body text and/or attachments
 5. Use [Chat WebSocket](/docs/en/integration/chat-ws/) `start / resume / watch` to consume real-time events
-6. Use `GET /wunder/chat/sessions/{session_id}` to render session details
+6. Use `GET /wunder/chat/sessions/{session_id}` to render thread logs
 7. Call `cancel` or `compaction` when needed
 
 ## Recommended Attachment Flow

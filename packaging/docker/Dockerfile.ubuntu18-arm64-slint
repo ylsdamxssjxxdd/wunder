@@ -11,6 +11,8 @@ RUN apt-get update -o Acquire::Check-Valid-Until=false \
        bash \
        squashfs-tools \
        liblzo2-2 \
+       libasound2 \
+       libasound2-dev \
        libxcb-render0 \
        libxcb-shape0 \
        libxcb-xfixes0 \
@@ -32,6 +34,7 @@ RUN apt-get update -o Acquire::Check-Valid-Until=false \
        libxrandr2 \
        libxcursor1 \
        libxinerama1 \
+       libxtst6 \
        libxau6 \
        libxdmcp6 \
     && rm -rf /var/lib/apt/lists/*

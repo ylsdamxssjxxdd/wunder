@@ -42,10 +42,6 @@ import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlocker';
 import { useMessengerRightDockResize } from '@/views/messenger/rightDockResize';
 import { isAgentAlreadyOpen } from '@/views/messenger/agentOpenState';
-import {
-  settleAgentSessionBusyAfterRefresh,
-  type SessionBusyRecoveryStatus
-} from '@/views/messenger/chatRefreshRecovery';
 import { resolveAgentConfiguredAbilityNames, resolveAgentOverviewAbilityCounts } from '@/views/messenger/agentOverviewAbilities';
 import MessengerHivePlazaPanel from '@/components/messenger/MessengerHivePlazaPanel.vue';
 import {
@@ -1028,13 +1024,6 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
       if (ctx.sessionHub.activeSection === 'tools') {
           void ctx.loadToolsCatalog({ silent: true });
       }
-  };
-
-  ctx.handleChatPageRefresh = () => {
-      if (ctx.isMessengerInteractionBlocked.value) {
-          return;
-      }
-      void ctx.refreshActiveAgentConversation();
   };
 
   ctx.handleRightDockSkillArchiveUpload = async (file: File) => {

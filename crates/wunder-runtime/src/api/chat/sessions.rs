@@ -465,6 +465,17 @@ async fn get_session(
             .await
             .ok()
             .flatten();
+    let log_overview = state
+        .monitor
+        .get_log_overview(&session_id)
+        .map(|mut overview| {
+            if let Value::Object(map) = &mut overview {
+                if let Some(agent_name) = agent_name.as_ref() {
+                    map.insert("agent_name".to_string(), json!(agent_name));
+                }
+            }
+            overview
+        });
     Ok(Json(json!({
         "data": {
             "id": record.session_id,
@@ -484,6 +495,7 @@ async fn get_session(
             "goal": goal.as_ref().map(crate::services::goal::goal_payload),
             "context_tokens": context_tokens,
             "context_occupancy_tokens": context_tokens,
+            "log_overview": log_overview,
             "history_has_more": transcript_page.history_has_more,
             "history_before_id": transcript_page.history_before_id
         }

@@ -3,15 +3,27 @@
     v-model="dialogVisible"
     class="messenger-dialog messenger-timeline-detail-dialog"
     :title="dialogTitle"
-    width="760px"
+    width="1040px"
     destroy-on-close
   >
     <div v-if="loading" class="messenger-timeline-detail-loading">
       {{ t('common.loading') }}
     </div>
-    <div v-else class="messenger-timeline-detail-panel">
-      <div class="messenger-timeline-detail-toolbar">
-        <div class="messenger-timeline-detail-meta">{{ detailMeta }}</div>
+    <div v-else class="messenger-timeline-detail-layout">
+      <aside class="messenger-timeline-detail-overview">
+        <div class="messenger-timeline-detail-overview-title">
+          <i class="fa-solid fa-chart-simple" aria-hidden="true"></i>
+          {{ t('messenger.timeline.detail.overview') }}
+        </div>
+        <div class="messenger-timeline-detail-overview-grid">
+          <div v-for="item in overviewItems" :key="item.label" class="messenger-timeline-detail-overview-item">
+            <i :class="item.icon" aria-hidden="true"></i>
+            <div>
+              <span>{{ item.label }}</span>
+              <strong :title="item.value">{{ item.value }}</strong>
+            </div>
+          </div>
+        </div>
         <button
           class="messenger-inline-btn messenger-timeline-detail-export-btn"
           type="button"
@@ -23,92 +35,92 @@
           <i class="fa-solid fa-download" aria-hidden="true"></i>
           <span>{{ t('messenger.timeline.detail.export') }}</span>
         </button>
-      </div>
+      </aside>
 
-      <div class="messenger-timeline-detail-section">
-        <div class="messenger-timeline-detail-label-row">
-          <label class="messenger-timeline-detail-label">{{ t('messenger.timeline.detail.question') }}</label>
-          <div v-if="roundOptions.length" class="messenger-timeline-detail-round-picker">
-            <span class="messenger-timeline-detail-round-picker-label">
-              {{ t('messenger.timeline.detail.userRound') }}
-            </span>
-            <select v-model.number="selectedRound" class="messenger-timeline-detail-round-select">
-              <option v-for="item in roundOptions" :key="item.value" :value="item.value">
-                {{ item.label }}
+      <div class="messenger-timeline-detail-panel">
+        <div class="messenger-timeline-detail-section">
+          <div class="messenger-timeline-detail-label-row">
+            <label class="messenger-timeline-detail-label">{{ t('messenger.timeline.detail.question') }}</label>
+            <div v-if="roundOptions.length" class="messenger-timeline-detail-round-picker">
+              <span class="messenger-timeline-detail-round-picker-label">
+                {{ t('messenger.timeline.detail.userRound') }}
+              </span>
+              <select v-model.number="selectedRound" class="messenger-timeline-detail-round-select">
+                <option v-for="item in roundOptions" :key="item.value" :value="item.value">
+                  {{ item.label }}
+                </option>
+              </select>
+            </div>
+          </div>
+          <div class="messenger-timeline-detail-question">{{ detailQuestion }}</div>
+        </div>
+
+        <div class="messenger-timeline-detail-section messenger-timeline-detail-section-events">
+          <label class="messenger-timeline-detail-label">{{ t('messenger.timeline.detail.events') }}</label>
+          <div class="messenger-timeline-detail-filters">
+            <select v-model="eventTypeFilter" class="messenger-timeline-detail-filter-select">
+              <option value="">{{ t('messenger.timeline.detail.filterAllTypes') }}</option>
+              <option v-for="item in eventTypeOptions" :key="item" :value="item">
+                {{ item }}
               </option>
             </select>
+            <input
+              v-model.trim="keywordInput"
+              class="messenger-timeline-detail-filter-input"
+              type="text"
+              :placeholder="t('messenger.timeline.detail.filterKeyword')"
+            />
+            <div class="messenger-timeline-detail-filter-stats">{{ filterStats }}</div>
           </div>
-        </div>
-        <div class="messenger-timeline-detail-question">{{ detailQuestion }}</div>
-      </div>
 
-      <div class="messenger-timeline-detail-section messenger-timeline-detail-section-events">
-        <label class="messenger-timeline-detail-label">{{ t('messenger.timeline.detail.events') }}</label>
-        <div class="messenger-timeline-detail-filters">
-          <select v-model="eventTypeFilter" class="messenger-timeline-detail-filter-select">
-            <option value="">{{ t('messenger.timeline.detail.filterAllTypes') }}</option>
-            <option v-for="item in eventTypeOptions" :key="item" :value="item">
-              {{ item }}
-            </option>
-          </select>
-          <input
-            v-model.trim="keywordInput"
-            class="messenger-timeline-detail-filter-input"
-            type="text"
-            :placeholder="t('messenger.timeline.detail.filterKeyword')"
-          />
-          <div class="messenger-timeline-detail-filter-stats">{{ filterStats }}</div>
-        </div>
-
-        <div v-if="!filteredEvents.length" class="messenger-timeline-detail-empty">
-          {{ t('messenger.timeline.detail.noEvents') }}
-        </div>
-        <div
-          v-else
-          ref="eventsContainerRef"
-          class="messenger-timeline-detail-events"
-          @scroll.passive="scheduleEventViewportSync"
-        >
+          <div v-if="!filteredEvents.length" class="messenger-timeline-detail-empty">
+            {{ t('messenger.timeline.detail.noEvents') }}
+          </div>
           <div
-            v-if="eventTopSpacer"
-            class="messenger-timeline-detail-events-spacer"
-            :style="{ height: `${eventTopSpacer}px` }"
-            aria-hidden="true"
-          ></div>
-          <details
-            v-for="item in visibleFilteredEvents"
-            :key="item.key"
-            class="messenger-timeline-detail-event-item"
-            :data-round="item.round"
-            :open="expandedEventKeys.has(item.key)"
-            @toggle="handleEventToggle(item.key, $event)"
+            v-else
+            ref="eventsContainerRef"
+            class="messenger-timeline-detail-events"
           >
-            <summary class="messenger-timeline-detail-event-summary">
-              <span class="messenger-timeline-detail-event-time">[{{ item.timestampLabel }}]</span>
-              <span class="messenger-timeline-detail-event-type">#{{ item.order }} {{ item.eventType }}</span>
-              <span class="messenger-timeline-detail-event-title">{{ item.title }}</span>
-              <span class="messenger-timeline-detail-event-round">
-                {{ t('messenger.timeline.detail.round', { round: item.round }) }}
-              </span>
-            </summary>
-            <pre
-              v-if="expandedEventKeys.has(item.key)"
-              class="messenger-timeline-detail-event-raw"
-            >{{ resolveEventRaw(item) }}</pre>
-          </details>
-          <div
-            v-if="eventBottomSpacer"
-            class="messenger-timeline-detail-events-spacer"
-            :style="{ height: `${eventBottomSpacer}px` }"
-            aria-hidden="true"
-          ></div>
+            <details
+              v-for="item in filteredEvents"
+              :key="item.key"
+              class="messenger-timeline-detail-event-item"
+              :data-round="item.round"
+              :open="expandedEventKeys.has(item.key)"
+              @toggle="handleEventToggle(item.key, $event)"
+            >
+              <summary class="messenger-timeline-detail-event-summary">
+                <span class="messenger-timeline-detail-event-time">[{{ item.timestampLabel }}]</span>
+                <span class="messenger-timeline-detail-event-type">#{{ item.order }} {{ item.eventType }}</span>
+                <span class="messenger-timeline-detail-event-title">{{ item.title }}</span>
+                <span class="messenger-timeline-detail-event-round">
+                  {{ t('messenger.timeline.detail.round', { round: item.round }) }}
+                </span>
+              </summary>
+              <pre
+                v-if="expandedEventKeys.has(item.key)"
+                class="messenger-timeline-detail-event-raw"
+              >{{ resolveEventRaw(item) }}</pre>
+            </details>
+          </div>
+          <div class="messenger-timeline-detail-pagination">
+            <button type="button" class="messenger-inline-btn messenger-timeline-detail-page-icon" :disabled="eventPage === 0 || loadingEvents" :title="t('messenger.timeline.detail.firstPage')" :aria-label="t('messenger.timeline.detail.firstPage')" @click="loadTimelineEventPage(0)">
+              <i class="fa-solid fa-angles-left" aria-hidden="true"></i>
+            </button>
+            <button type="button" class="messenger-inline-btn messenger-timeline-detail-page-icon" :disabled="eventPage === 0 || loadingEvents" :title="t('messenger.timeline.detail.previousPage')" :aria-label="t('messenger.timeline.detail.previousPage')" @click="loadTimelineEventPage(eventPage - 1)">
+              <i class="fa-solid fa-angle-left" aria-hidden="true"></i>
+            </button>
+            <span class="messenger-timeline-detail-page-info">{{ eventPageInfo }}</span>
+            <button type="button" class="messenger-inline-btn messenger-timeline-detail-page-icon" :disabled="!eventHasMore || loadingEvents" :title="t('messenger.timeline.detail.nextPage')" :aria-label="t('messenger.timeline.detail.nextPage')" @click="loadTimelineEventPage(eventPage + 1)">
+              <i class="fa-solid fa-angle-right" aria-hidden="true"></i>
+            </button>
+            <button type="button" class="messenger-inline-btn messenger-timeline-detail-page-icon" :disabled="!eventHasMore || loadingEvents" :title="t('messenger.timeline.detail.lastPage')" :aria-label="t('messenger.timeline.detail.lastPage')" @click="loadTimelineEventPage(lastEventPage)">
+              <i class="fa-solid fa-angles-right" aria-hidden="true"></i>
+            </button>
+          </div>
         </div>
       </div>
     </div>
-
-    <template #footer>
-      <el-button @click="dialogVisible = false">{{ t('common.close') }}</el-button>
-    </template>
   </el-dialog>
 </template>
 
@@ -123,6 +135,7 @@ import {
 import { getCurrentLanguage, useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
 import { downloadSessionLogLines } from '@/utils/sessionLogExport';
+import { formatCompactCount } from '@/utils/compactNumber';
 
 type TimelineDetailRoundEvent = {
   event?: unknown;
@@ -164,17 +177,16 @@ type TimelineDetailSession = {
   messageCount: number;
   historyIncomplete: boolean;
   messages: Record<string, unknown>[];
+  logOverview: Record<string, unknown> | null;
 };
 
 type TimelineExportLine = Record<string, unknown>;
 
 const TIMELINE_DETAIL_EVENT_TITLE_MAX_LENGTH = 120;
-const TIMELINE_DETAIL_EVENT_FETCH_LIMIT = 0;
+const TIMELINE_DETAIL_EVENT_PAGE_SIZE = 100;
 const TIMELINE_DETAIL_SESSION_MESSAGE_LIMIT = 32;
 const TIMELINE_DETAIL_EXPANDED_EVENT_LIMIT = 3;
 const TIMELINE_DETAIL_RAW_CACHE_LIMIT = 12;
-const TIMELINE_DETAIL_EVENT_ROW_HEIGHT = 38;
-const TIMELINE_DETAIL_EVENT_OVERSCAN = 10;
 
 const props = defineProps<{
   visible: boolean;
@@ -204,12 +216,13 @@ const selectedRound = ref(0);
 const eventsContainerRef = ref<HTMLElement | null>(null);
 const expandedEventKeys = ref<Set<string>>(new Set());
 const eventRawCache = new Map<string, string>();
-const eventScrollTop = ref(0);
-const eventViewportHeight = ref(0);
+const eventPage = ref(0);
+const eventHasMore = ref(false);
+const eventTotal = ref(0);
+const loadingEvents = ref(false);
 
 let requestToken = 0;
 let keywordFilterTimer: ReturnType<typeof setTimeout> | null = null;
-let eventViewportFrame: number | null = null;
 
 const resetFilters = () => {
   eventTypeFilter.value = '';
@@ -230,8 +243,10 @@ const resetDetailState = () => {
   selectedRound.value = 0;
   expandedEventKeys.value = new Set();
   eventRawCache.clear();
-  eventScrollTop.value = 0;
-  eventViewportHeight.value = 0;
+  eventPage.value = 0;
+  eventHasMore.value = false;
+  eventTotal.value = 0;
+  loadingEvents.value = false;
   resetFilters();
 };
 
@@ -569,7 +584,11 @@ const normalizeSession = (sessionId: string, value: unknown): TimelineDetailSess
     lastMessageAt: source.last_message_at,
     messageCount: messages.length,
     historyIncomplete: Boolean(source.history_incomplete),
-    messages
+    messages,
+    logOverview:
+      source.log_overview && typeof source.log_overview === 'object' && !Array.isArray(source.log_overview)
+        ? (source.log_overview as Record<string, unknown>)
+        : null
   };
 };
 
@@ -741,52 +760,6 @@ const filteredEvents = computed(() => {
   return filterTimelineEvents(events.value);
 });
 
-const eventVisibleRange = computed(() => {
-  const count = filteredEvents.value.length;
-  if (!count) return { start: 0, end: 0 };
-  const viewportHeight = Math.max(TIMELINE_DETAIL_EVENT_ROW_HEIGHT * 8, eventViewportHeight.value);
-  const start = Math.max(
-    0,
-    Math.floor(eventScrollTop.value / TIMELINE_DETAIL_EVENT_ROW_HEIGHT) - TIMELINE_DETAIL_EVENT_OVERSCAN
-  );
-  const end = Math.min(
-    count,
-    Math.ceil((eventScrollTop.value + viewportHeight) / TIMELINE_DETAIL_EVENT_ROW_HEIGHT) + TIMELINE_DETAIL_EVENT_OVERSCAN
-  );
-  return { start, end: Math.max(start + 1, end) };
-});
-
-const visibleFilteredEvents = computed(() =>
-  filteredEvents.value.slice(eventVisibleRange.value.start, eventVisibleRange.value.end)
-);
-const eventTopSpacer = computed(() => eventVisibleRange.value.start * TIMELINE_DETAIL_EVENT_ROW_HEIGHT);
-const eventBottomSpacer = computed(() =>
-  Math.max(0, (filteredEvents.value.length - eventVisibleRange.value.end) * TIMELINE_DETAIL_EVENT_ROW_HEIGHT)
-);
-
-const syncEventViewport = () => {
-  const container = eventsContainerRef.value;
-  if (!container) {
-    eventScrollTop.value = 0;
-    eventViewportHeight.value = 0;
-    return;
-  }
-  eventScrollTop.value = container.scrollTop;
-  eventViewportHeight.value = container.clientHeight;
-};
-
-const scheduleEventViewportSync = () => {
-  if (typeof window === 'undefined') {
-    syncEventViewport();
-    return;
-  }
-  if (eventViewportFrame !== null) return;
-  eventViewportFrame = window.requestAnimationFrame(() => {
-    eventViewportFrame = null;
-    syncEventViewport();
-  });
-};
-
 const resolveEventRaw = (item: TimelineDetailEventItem): string => {
   const cached = eventRawCache.get(item.key);
   if (cached !== undefined) {
@@ -838,9 +811,9 @@ const exportEvents = computed(() => {
 });
 
 const dialogTitle = computed(() => {
-  const sessionId = String(sessionDetail.value?.id || props.sessionId || '').trim();
-  return sessionId
-    ? t('messenger.timeline.detail.titleWithId', { id: sessionId })
+  const name = String(sessionDetail.value?.title || '').trim();
+  return name
+    ? t('messenger.timeline.detail.titleWithName', { name })
     : t('messenger.timeline.detail.title');
 });
 
@@ -857,9 +830,6 @@ const detailQuestion = computed(() => {
 const resolveSessionAgentDisplay = (session: TimelineDetailSession): string => {
   const name = String(session.agentName || '').trim();
   const id = String(session.agentId || '').trim();
-  if (name && id && name !== id) {
-    return `${name} (${id})`;
-  }
   if (name) {
     return name;
   }
@@ -869,32 +839,73 @@ const resolveSessionAgentDisplay = (session: TimelineDetailSession): string => {
   return '-';
 };
 
-const detailMeta = computed(() => {
+const overviewValue = (value: unknown): string => {
+  if (value === null || value === undefined || String(value).trim() === '') return '-';
+  return String(value);
+};
+
+const overviewCount = (value: unknown): string => {
+  if (value === null || value === undefined || value === '') return '0';
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? formatCompactCount(parsed) : '0';
+};
+
+const overviewDuration = (value: unknown): string => {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0) return '-';
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = seconds - hours * 3600 - minutes * 60;
+  const parts: string[] = [];
+  if (hours) parts.push(`${hours}h`);
+  if (minutes || hours) parts.push(`${minutes}m`);
+  parts.push(`${rest.toFixed(1)}s`);
+  return parts.join(' ');
+};
+
+const overviewSpeed = (value: unknown, lowerBound = false): string => {
+  const speed = Number(value);
+  if (!Number.isFinite(speed) || speed <= 0) return '-';
+  const unit = speed >= 1_000_000 ? 'm' : speed >= 1_000 ? 'k' : '';
+  const divisor = unit === 'm' ? 1_000_000 : unit === 'k' ? 1_000 : 1;
+  return `${lowerBound ? '>=' : ''}${(speed / divisor).toFixed(1)}${unit} ${t('messenger.timeline.detail.tokenRateUnit')}`;
+};
+
+const overviewStatus = (value: unknown): string => {
+  const status = String(value || '').trim().toLowerCase();
+  const statusKeys: Record<string, string> = {
+    running: 'messenger.timeline.detail.running',
+    waiting: 'messenger.timeline.detail.queued',
+    queued: 'messenger.timeline.detail.queued',
+    cancelling: 'messenger.timeline.detail.cancelling',
+    finished: 'messenger.timeline.detail.completed',
+    error: 'messenger.timeline.detail.failed',
+    cancelled: 'messenger.timeline.detail.cancelled'
+  };
+  const key = statusKeys[status];
+  return key ? t(key) : overviewValue(value);
+};
+
+const overviewItems = computed(() => {
   const session = sessionDetail.value;
   if (!session) {
-    return '';
+    return [];
   }
-  const parts = [
-    t('messenger.timeline.detail.metaSessionId', { id: session.id || '-' }),
-    t('messenger.timeline.detail.metaAgent', { agent: resolveSessionAgentDisplay(session) }),
-    t('messenger.timeline.detail.metaCreatedAt', { time: formatMetaTime(session.createdAt) }),
-    t('messenger.timeline.detail.metaUpdatedAt', {
-      time: formatMetaTime(session.updatedAt || session.lastMessageAt)
-    }),
-    t('messenger.timeline.detail.metaMessageCount', { count: session.messageCount }),
-    t('messenger.timeline.detail.metaRoundCount', { count: rounds.value.length }),
-    t('messenger.timeline.detail.metaEventCount', { count: events.value.length })
+  const metrics = session.logOverview || {};
+  return [
+    { icon: 'fa-solid fa-robot', label: t('messenger.timeline.detail.metaAgentLabel'), value: overviewValue(metrics.agent_name || resolveSessionAgentDisplay(session)) },
+    { icon: 'fa-solid fa-circle-info', label: t('messenger.timeline.detail.metaStatusLabel'), value: overviewStatus(metrics.status || (running.value ? 'running' : 'finished')) },
+    { icon: 'fa-regular fa-clock', label: t('messenger.timeline.detail.metaElapsedLabel'), value: overviewDuration(metrics.elapsed_s) },
+    { icon: 'fa-solid fa-arrow-rotate-right', label: t('messenger.timeline.detail.metaRoundCountLabel'), value: overviewCount(metrics.user_rounds ?? roundOptions.value.length) },
+    { icon: 'fa-solid fa-screwdriver-wrench', label: t('messenger.timeline.detail.metaToolsLabel'), value: overviewCount(metrics.tool_calls) },
+    { icon: 'fa-solid fa-coins', label: t('messenger.timeline.detail.metaQuotaLabel'), value: overviewCount(metrics.quota_used) },
+    { icon: 'fa-solid fa-bolt', label: t('messenger.timeline.detail.metaTokensLabel'), value: overviewCount(metrics.consumed_tokens) },
+    { icon: 'fa-solid fa-bolt-lightning', label: t('messenger.timeline.detail.metaTtftLabel'), value: overviewDuration(Number(metrics.ttft_ms) / 1000) },
+    { icon: 'fa-solid fa-arrow-up', label: t('messenger.timeline.detail.metaPrefillLabel'), value: overviewSpeed(metrics.prefill_speed_tps, Boolean(metrics.prefill_speed_lower_bound)) },
+    { icon: 'fa-solid fa-arrow-down', label: t('messenger.timeline.detail.metaDecodeLabel'), value: overviewSpeed(metrics.decode_speed_tps) },
+    { icon: 'fa-solid fa-list', label: t('messenger.timeline.detail.metaEventCountLabel'), value: overviewCount(metrics.event_total ?? eventTotal.value) },
+    { icon: 'fa-solid fa-fingerprint', label: t('messenger.timeline.detail.metaSessionIdLabel'), value: overviewValue(metrics.session_id || session.id) }
   ];
-  if (running.value) {
-    parts.push(t('messenger.timeline.detail.running'));
-  }
-  if (session.historyIncomplete) {
-    parts.push(t('messenger.timeline.detail.historyIncomplete'));
-  }
-  if (lastEventId.value > 0) {
-    parts.push(t('messenger.timeline.detail.metaLastEventId', { id: lastEventId.value }));
-  }
-  return parts.join(' · ');
 });
 
 const filterStats = computed(() =>
@@ -902,6 +913,23 @@ const filterStats = computed(() =>
     visible: filteredEvents.value.length,
     total: events.value.length
   })
+);
+
+const eventPageInfo = computed(() =>
+  t('messenger.timeline.detail.pageInfo', {
+    page: eventPage.value + 1,
+    start: events.value.length ? eventPage.value * TIMELINE_DETAIL_EVENT_PAGE_SIZE + 1 : 0,
+    end: events.value.length
+      ? eventPage.value * TIMELINE_DETAIL_EVENT_PAGE_SIZE + events.value.length
+      : 0,
+    total: eventTotal.value
+  })
+);
+
+const lastEventPage = computed(() =>
+  eventTotal.value > 0
+    ? Math.max(0, Math.ceil(eventTotal.value / TIMELINE_DETAIL_EVENT_PAGE_SIZE) - 1)
+    : eventPage.value
 );
 
 const buildEventSummary = (eventType: string, payload: unknown): Record<string, unknown> => {
@@ -1010,6 +1038,8 @@ const loadTimelineDetail = async (sessionId: string) => {
   lastEventId.value = 0;
   expandedEventKeys.value = new Set();
   eventRawCache.clear();
+  eventPage.value = 0;
+  eventHasMore.value = false;
   resetFilters();
   try {
     const [sessionRes, eventsRes] = await Promise.all([
@@ -1018,8 +1048,9 @@ const loadTimelineDetail = async (sessionId: string) => {
         summary: true
       }),
       getChatSessionEventsWithParams(targetId, {
-        limit: TIMELINE_DETAIL_EVENT_FETCH_LIMIT,
-        workflow_only: true
+        workflow_only: true,
+        offset: 0,
+        page_size: TIMELINE_DETAIL_EVENT_PAGE_SIZE
       }).catch(() => null)
     ]);
     if (currentToken !== requestToken) {
@@ -1029,6 +1060,11 @@ const loadTimelineDetail = async (sessionId: string) => {
     sessionDetail.value = normalizeSession(targetId, sessionData);
     const eventPayload = (eventsRes?.data as { data?: Record<string, unknown> } | undefined)?.data;
     rounds.value = normalizeRounds(eventPayload?.rounds);
+    eventHasMore.value = Boolean(eventPayload?.events_has_more);
+    eventTotal.value = Number(eventPayload?.event_total) || rounds.value.reduce(
+      (total, round) => total + (Array.isArray(round.events) ? round.events.length : 0),
+      0
+    );
     running.value = Boolean(eventPayload?.running);
     const parsedLastEventId = Number.parseInt(String(eventPayload?.last_event_id ?? 0), 10);
     lastEventId.value = Number.isFinite(parsedLastEventId) && parsedLastEventId > 0 ? parsedLastEventId : 0;
@@ -1041,6 +1077,43 @@ const loadTimelineDetail = async (sessionId: string) => {
   } finally {
     if (currentToken === requestToken) {
       loading.value = false;
+    }
+  }
+};
+
+const loadTimelineEventPage = async (page: number) => {
+  const session = sessionDetail.value;
+  const nextPage = Math.max(0, Math.trunc(page));
+  if (!session || loadingEvents.value || nextPage === eventPage.value) {
+    return;
+  }
+  const currentToken = requestToken;
+  loadingEvents.value = true;
+  try {
+    const response = await getChatSessionEventsWithParams(session.id, {
+      workflow_only: true,
+      offset: nextPage * TIMELINE_DETAIL_EVENT_PAGE_SIZE,
+      page_size: TIMELINE_DETAIL_EVENT_PAGE_SIZE
+    });
+    if (currentToken !== requestToken) {
+      return;
+    }
+    const payload = (response?.data as { data?: Record<string, unknown> } | undefined)?.data;
+    rounds.value = normalizeRounds(payload?.rounds);
+    eventPage.value = nextPage;
+    eventHasMore.value = Boolean(payload?.events_has_more);
+    eventTotal.value = Number(payload?.event_total) || eventTotal.value;
+    expandedEventKeys.value = new Set();
+    eventRawCache.clear();
+    await nextTick();
+    eventsContainerRef.value?.scrollTo({ top: 0 });
+  } catch (error) {
+    if (currentToken === requestToken) {
+      showApiError(error, t('messenger.timeline.detail.loadFailed'));
+    }
+  } finally {
+    if (currentToken === requestToken) {
+      loadingEvents.value = false;
     }
   }
 };
@@ -1080,10 +1153,6 @@ const scrollToSelectedRound = () => {
   const container = eventsContainerRef.value;
   if (!container) {
     return;
-  }
-  const selectedIndex = filteredEvents.value.findIndex((item) => item.round === selectedRound.value);
-  if (selectedIndex >= 0) {
-    container.scrollTop = selectedIndex * TIMELINE_DETAIL_EVENT_ROW_HEIGHT;
   }
   const selector = `.messenger-timeline-detail-event-item[data-round="${selectedRound.value}"]`;
   const target = container.querySelector<HTMLElement>(selector);
@@ -1137,15 +1206,6 @@ watch(
   { flush: 'post' }
 );
 
-watch(
-  () => [dialogVisible.value, filteredEvents.value.length] as const,
-  ([visible]) => {
-    if (!visible) return;
-    void nextTick(scheduleEventViewportSync);
-  },
-  { flush: 'post' }
-);
-
 watch(keywordInput, (value) => {
   if (keywordFilterTimer !== null) {
     clearTimeout(keywordFilterTimer);
@@ -1171,10 +1231,6 @@ onBeforeUnmount(() => {
   if (keywordFilterTimer !== null) {
     clearTimeout(keywordFilterTimer);
     keywordFilterTimer = null;
-  }
-  if (typeof window !== 'undefined' && eventViewportFrame !== null) {
-    window.cancelAnimationFrame(eventViewportFrame);
-    eventViewportFrame = null;
   }
 });
 </script>

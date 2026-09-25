@@ -5398,7 +5398,7 @@
 }
 
 #monitorDetailModal .modal-card {
-  width: min(620px, 100%);
+  width: min(1020px, 100%);
   max-height: calc(100vh - 32px);
   height: auto;
 }
@@ -5416,8 +5416,108 @@
   margin-bottom: 0;
 }
 
-#monitorDetailModal .modal-body .form-row:last-child {
+#monitorDetailModal .monitor-detail-main .monitor-detail-events-row {
   flex: 1 1 auto;
+  min-height: 0;
+}
+
+#monitorDetailModal .monitor-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.3fr) minmax(0, 1fr);
+  gap: 14px;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+#monitorDetailModal .monitor-detail-overview {
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  background: #f8fafc;
+  padding: 10px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#monitorDetailModal .monitor-detail-overview-content {
+  min-width: 0;
+}
+
+#monitorDetailModal .monitor-detail-export-btn {
+  align-self: stretch;
+  justify-content: center;
+  margin-top: auto;
+}
+
+#monitorDetailModal .monitor-detail-overview-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 9px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+#monitorDetailModal .monitor-detail-overview-title i,
+#monitorDetailModal .monitor-detail-overview-item > i {
+  color: #2563eb;
+}
+
+#monitorDetailModal .monitor-detail-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+#monitorDetailModal .monitor-detail-overview-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #fff;
+}
+
+#monitorDetailModal .monitor-detail-overview-item > i {
+  width: 15px;
+  margin-top: 2px;
+  text-align: center;
+}
+
+#monitorDetailModal .monitor-detail-overview-item > div {
+  min-width: 0;
+}
+
+#monitorDetailModal .monitor-detail-overview-item span,
+#monitorDetailModal .monitor-detail-overview-item strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#monitorDetailModal .monitor-detail-overview-item span {
+  color: #64748b;
+  font-size: 10px;
+}
+
+#monitorDetailModal .monitor-detail-overview-item strong {
+  margin-top: 2px;
+  color: #1f2937;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#monitorDetailModal .monitor-detail-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -5455,9 +5555,41 @@
   padding-right: 4px;
 }
 
+#monitorDetailModal .monitor-detail-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-height: 28px;
+  margin-top: auto;
+}
+
+#monitorDetailModal .monitor-detail-pagination .btn-compact {
+  min-height: 26px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+#monitorDetailModal .monitor-detail-pagination .icon-only {
+  width: 28px;
+  min-width: 28px;
+  padding: 3px;
+}
+
 #monitorDetailModal #monitorDetailQuestion {
   max-height: 120px;
   overflow-y: auto;
+}
+
+@media (max-width: 760px) {
+  #monitorDetailModal .monitor-detail-layout {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+
+  #monitorDetailModal .monitor-detail-overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 #skillModal {

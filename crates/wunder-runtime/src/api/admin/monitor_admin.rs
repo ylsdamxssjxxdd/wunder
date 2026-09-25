@@ -24,6 +24,7 @@ use tracing::{info, warn};
 
 const ADMIN_MONITOR_TIMING_INFO_MS: u128 = 200;
 const ADMIN_MONITOR_TIMING_WARN_MS: u128 = 1000;
+const ADMIN_MONITOR_DETAIL_EVENT_PAGE_MAX_LIMIT: i64 = 100;
 
 #[cfg(test)]
 #[path = "session_catalog_tests.rs"]
@@ -455,10 +456,20 @@ async fn admin_monitor_tool_usage(
 async fn admin_monitor_detail(
     State(state): State<Arc<AppState>>,
     AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<MonitorDetailQuery>,
 ) -> Result<Json<Value>, Response> {
+    let offset = query.offset.unwrap_or(0).max(0) as usize;
+    let limit = if query.export_all {
+        usize::MAX
+    } else {
+        query
+            .limit
+            .unwrap_or(ADMIN_MONITOR_DETAIL_EVENT_PAGE_MAX_LIMIT)
+            .clamp(1, ADMIN_MONITOR_DETAIL_EVENT_PAGE_MAX_LIMIT) as usize
+    };
     let mut detail = state
         .monitor
-        .get_detail(&session_id)
+        .get_detail_page(&session_id, offset, limit)
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
     if let Some(session) = detail.get_mut("session").and_then(Value::as_object_mut) {
         let user_id = session
@@ -478,6 +489,16 @@ async fn admin_monitor_detail(
         }
     }
     Ok(Json(detail))
+}
+
+#[derive(Debug, Deserialize)]
+struct MonitorDetailQuery {
+    #[serde(default)]
+    offset: Option<i64>,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    export_all: bool,
 }
 
 async fn admin_monitor_cancel(

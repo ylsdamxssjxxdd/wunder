@@ -276,6 +276,21 @@ pub trait AgentRuntimeStore {
         from_user_round: i64,
         to_user_round: i64,
     ) -> Result<Vec<Value>>;
+    /// Load a bounded, stable event-id ordered page of workflow events.
+    fn load_session_workflow_events_page(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>>;
+    fn count_session_workflow_events(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+    ) -> Result<i64>;
     fn delete_stream_events_before(&self, before_time: f64) -> Result<i64>;
     fn delete_stream_events_by_user(&self, user_id: &str) -> Result<i64>;
     fn delete_stream_events_by_session(&self, session_id: &str) -> Result<i64>;

@@ -136,12 +136,13 @@ cp -f "$appdir/wunder.desktop" "$appdir/usr/share/applications/wunder.desktop"
 # sufficient detector. Copy the known closure when present; glibc stays system-owned.
 x11_libraries=(
   libX11.so.6 libX11-xcb.so.1 libXext.so.6 libXfixes.so.3 libXrender.so.1
-  libXi.so.6 libXrandr.so.2 libXcursor.so.1 libXinerama.so.1 libXau.so.6
+  libXi.so.6 libXrandr.so.2 libXcursor.so.1 libXinerama.so.1 libXtst.so.6 libXau.so.6
   libXdmcp.so.6 libxcb.so.1 libxcb-render.so.0 libxcb-shape.so.0
   libxcb-xfixes.so.0 libxcb-randr.so.0 libxcb-xkb.so.1 libxcb-image.so.0
   libxcb-keysyms.so.1 libxcb-icccm.so.4 libxcb-util.so.1 libxcb-shm.so.0
   libxcb-sync.so.1 libxcb-present.so.0 libxcb-glx.so.0 libxcb-dri2.so.0
   libxcb-dri3.so.0 libxkbcommon.so.0 libxkbcommon-x11.so.0
+  libasound.so.2
 )
 library_cache="$(ldconfig -p 2>/dev/null || true)"
 for library in "${x11_libraries[@]}"; do
@@ -150,7 +151,7 @@ for library in "${x11_libraries[@]}"; do
   library_path="$(printf '%s\n' "$library_cache" | LC_ALL=C awk -v name="$library" '$1 == name { if (!first) first=$NF; if (/AArch64/) arm=$NF } END { if (arm) print arm; else if (first) print first }')"
   if [[ -n "$library_path" && -f "$library_path" ]]; then cp -L -f "$library_path" "$appdir/usr/lib/$library"; fi
 done
-for library in libX11.so.6 libxcb.so.1 libxcb-xkb.so.1 libxkbcommon.so.0 libxkbcommon-x11.so.0; do
+for library in libX11.so.6 libXtst.so.6 libxcb.so.1 libxcb-xkb.so.1 libxkbcommon.so.0 libxkbcommon-x11.so.0 libasound.so.2; do
   [[ -f "$appdir/usr/lib/$library" ]] || fail "required bundled X11/XCB library is missing: $library"
 done
 

@@ -6627,6 +6627,7 @@ pub(crate) async fn build_wunder_request(
         preview_skill,
         attachments,
         allow_queue: true,
+        enforce_runtime_queue: true,
         is_admin: false,
         approval_tx: None,
     })

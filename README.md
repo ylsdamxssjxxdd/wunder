@@ -44,6 +44,21 @@
 
 三种形态共享同一个核心：线程、工具、存储、实时事件和权限语义是同一套代码，只有接入层不同。
 
+## 技术栈
+
+后端统一是 Rust workspace（tokio 异步运行时），按形态分：
+
+| | server | desktop | cli |
+| :--- | :--- | :--- | :--- |
+| 后端 | Rust + axum 0.8 | Rust，复用 runtime 内核，同进程原生调用 | Rust，复用 runtime 内核 |
+| 界面 | Vue 3 + TypeScript（Vite 构建） | Slint 1.18 原生界面，软件渲染 | 终端 TUI（ratatui + crossterm） |
+| 管理端 | 原生 HTML + JS（web/） | — | — |
+| 数据库 | PostgreSQL | SQLite（rusqlite） | SQLite（rusqlite） |
+| 接入方式 | HTTP / WebSocket | 进程内直调，不经本机网络 | 本地进程 |
+| 兼容目标 | Linux / Docker | Windows 7 x86 起，另出 Linux AppImage | Windows 7 及以上（GNU 工具链构建） |
+
+CLI 参数解析用 clap，TLS 用 rustls（ring provider）。desktop 的遗留 Electron / Tauri 壳已停止维护。
+
 ## 能力概况
 
 - 多智能体并行协作与任务交接
@@ -65,10 +80,8 @@ wunder 在开发过程中吸收了不少开源项目的代码和思路：
 
 | 吞噬 | 项目 | 地址 |
 | :--- | :--- | :--- |
-| 智能体基础 | EVA | https://github.com/ylsdamxssjxxdd/eva |
-| rust 基础 | OpenAI Codex | https://github.com/openai/codex |
+| 项目原型 | EVA | https://github.com/ylsdamxssjxxdd/eva |
+| 智能体基础 | OpenAI Codex | https://github.com/openai/codex |
 | 前端基础 | HuLa | https://github.com/HuLaSpark/HuLa |
-| MCP/SKILLS | Claude Code | https://github.com/anthropics/claude-code |
-| 网关/渠道/定时任务 | OpenClaw | https://github.com/openclaw/openclaw |
-| 智能体 LSP | OpenCode | https://github.com/anomalyco/opencode |
-| 蜂群画布 | clawport-ui | https://github.com/JohnRiceML/clawport-ui |
+| 协议基础 | Claude Code | https://github.com/anthropics/claude-code |
+| 用户基础 | OpenClaw | https://github.com/openclaw/openclaw |

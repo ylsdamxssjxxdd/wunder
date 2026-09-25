@@ -43,6 +43,20 @@ pub(super) trait SqliteAgentRuntimeStorage {
         from_user_round: i64,
         to_user_round: i64,
     ) -> Result<Vec<Value>>;
+    fn load_session_workflow_events_page_impl(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>>;
+    fn count_session_workflow_events_impl(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+    ) -> Result<i64>;
     fn delete_stream_events_before_impl(&self, before_time: f64) -> Result<i64>;
     fn delete_stream_events_by_user_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_stream_events_by_session_impl(&self, session_id: &str) -> Result<i64>;
@@ -420,6 +434,68 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         Ok(stream_event_rows_to_values(rows))
     }
 
+    fn load_session_workflow_events_page_impl(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty()
+            || from_user_round <= 0
+            || to_user_round < from_user_round
+            || offset < 0
+            || limit <= 0
+        {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT event_id, payload FROM stream_events \
+             WHERE session_id = ? AND user_round BETWEEN ? AND ? \
+             AND event_type NOT IN ('llm_output_delta', 'llm_output', 'final', 'thread_closed') \
+             ORDER BY event_id ASC LIMIT ? OFFSET ?",
+        )?;
+        let rows = stmt
+            .query_map(
+                params![
+                    cleaned_session,
+                    from_user_round,
+                    to_user_round,
+                    limit,
+                    offset
+                ],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )?
+            .collect::<std::result::Result<Vec<(i64, String)>, _>>()?;
+        Ok(stream_event_rows_to_values(rows))
+    }
+
+    fn count_session_workflow_events_impl(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+    ) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty() || from_user_round <= 0 || to_user_round < from_user_round {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let count = conn.query_row(
+            "SELECT COUNT(*) FROM stream_events \
+             WHERE session_id = ? AND user_round BETWEEN ? AND ? \
+             AND event_type NOT IN ('llm_output_delta', 'llm_output', 'final', 'thread_closed')",
+            params![cleaned_session, from_user_round, to_user_round],
+            |row| row.get::<_, i64>(0),
+        )?;
+        Ok(count)
+    }
+
     fn delete_stream_events_before_impl(&self, before_time: f64) -> Result<i64> {
         self.ensure_initialized()?;
         if before_time <= 0.0 {
@@ -585,5 +661,31 @@ mod tests {
         assert_eq!(events[2]["event_id"], json!(5));
         assert_eq!(events[3]["event"], json!("thread_status"));
         assert_eq!(events[3]["event_id"], json!(6));
+    }
+
+    #[test]
+    fn workflow_event_page_uses_stable_offset_and_limit() {
+        let (storage, _dir) = build_storage();
+        for event_id in 1..=4 {
+            storage
+                .append_stream_event(
+                    "session-1",
+                    "user-1",
+                    event_id,
+                    &json!({
+                        "event": "tool_call",
+                        "data": { "data": { "user_round": 1, "tool": "tool_a" } }
+                    }),
+                )
+                .expect("append workflow event");
+        }
+
+        let events = storage
+            .load_session_workflow_events_page("session-1", 1, 1, 1, 2)
+            .expect("load workflow event page");
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["event_id"], json!(2));
+        assert_eq!(events[1]["event_id"], json!(3));
     }
 }

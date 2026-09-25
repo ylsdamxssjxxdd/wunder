@@ -16,7 +16,15 @@ pub fn check_runtime(
     assert!(agents.iter().any(|a| a.id == "__default__"));
     assert!(!runtime.list_tools()?.is_empty());
     assert!(runtime
-        .update_agent("missing-agent", "test-agent", "", "", "", "spark", "#94a3b8")
+        .update_agent(
+            "missing-agent",
+            "test-agent",
+            "",
+            "",
+            "",
+            "spark",
+            "#94a3b8"
+        )
         .is_err());
     assert!(runtime.create_agent("\n").is_err());
     let created = runtime.create_agent("test-agent")?;

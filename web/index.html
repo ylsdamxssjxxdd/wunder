@@ -21,7 +21,7 @@
       href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
     />
     <link rel="stylesheet" href="./app.css?v=20260324-06" />
-    <link rel="stylesheet" href="./styles/throughput.css?v=20260923-01" />
+    <link rel="stylesheet" href="./styles/throughput.css?v=20260925-07" />
   </head>
   <body>
     <div class="app">
@@ -5777,52 +5777,59 @@
 
     <div id="monitorDetailModal" class="modal">
       <div class="modal-card">
-        <div class="modal-header">
-          <div id="monitorDetailTitle" class="detail-title">线程详情</div>
+          <div class="modal-header">
+          <div id="monitorDetailTitle" class="detail-title">线程日志</div>
           <div class="modal-header-actions">
-            <button id="monitorDetailExport" class="secondary btn-with-icon btn-compact" type="button">
-              <i class="fa-solid fa-download"></i>
-              <span data-i18n="monitor.detail.export">导出日志</span>
-            </button>
             <button id="monitorDetailClose" class="icon-btn" type="button">×</button>
           </div>
         </div>
         <div class="modal-body">
-          <div id="monitorDetailMeta" class="muted"></div>
-          <div class="form-row">
-            <div class="monitor-detail-question-head">
-              <label data-i18n="monitor.detail.question">问题</label>
-              <div class="monitor-detail-round-filter-wrap">
-                <span data-i18n="monitor.detail.userRound">用户轮次</span>
-                <select id="monitorDetailRoundFilter" class="select"></select>
+          <div class="monitor-detail-layout">
+            <aside class="monitor-detail-overview">
+              <div id="monitorDetailMeta" class="monitor-detail-overview-content"></div>
+              <button id="monitorDetailExport" class="secondary btn-with-icon btn-compact monitor-detail-export-btn" type="button">
+                <i class="fa-solid fa-download" aria-hidden="true"></i>
+                <span data-i18n="monitor.detail.export">导出日志</span>
+              </button>
+            </aside>
+            <div class="monitor-detail-main">
+              <div class="form-row">
+                <div class="monitor-detail-question-head">
+                  <label data-i18n="monitor.detail.question">问题</label>
+                  <div class="monitor-detail-round-filter-wrap">
+                    <span data-i18n="monitor.detail.userRound">用户轮次</span>
+                    <select id="monitorDetailRoundFilter" class="select"></select>
+                  </div>
+                </div>
+                <div id="monitorDetailQuestion" class="log"></div>
               </div>
-            </div>
-            <div id="monitorDetailQuestion" class="log"></div>
-          </div>
-          <div class="form-row">
-            <label data-i18n="monitor.detail.events">事件详情</label>
-            <div class="monitor-detail-events-panel">
-              <div class="monitor-detail-filters">
-                <select id="monitorDetailTypeFilter" class="select">
-                  <option value="" data-i18n="monitor.detail.filter.allTypes">全部类型</option>
-                </select>
-                <input
-                  id="monitorDetailKeyword"
-                  class="input"
-                  type="text"
-                  data-i18n-placeholder="monitor.detail.filter.keywordPlaceholder"
-                  placeholder="输入事件关键词"
-                />
-                <div id="monitorDetailFilterStats" class="muted"></div>
+              <div class="form-row monitor-detail-events-row">
+                <label data-i18n="monitor.detail.events">事件详情</label>
+                <div class="monitor-detail-events-panel">
+                  <div class="monitor-detail-filters">
+                    <select id="monitorDetailTypeFilter" class="select">
+                      <option value="" data-i18n="monitor.detail.filter.allTypes">全部类型</option>
+                    </select>
+                    <input
+                      id="monitorDetailKeyword"
+                      class="input"
+                      type="text"
+                      data-i18n-placeholder="monitor.detail.filter.keywordPlaceholder"
+                      placeholder="输入事件关键词"
+                    />
+                    <div id="monitorDetailFilterStats" class="muted"></div>
+                  </div>
+                  <div id="monitorDetailEvents" class="log log-collapsible"></div>
+                </div>
               </div>
-              <div id="monitorDetailEvents" class="log log-collapsible"></div>
+              <div id="monitorDetailPagination" class="monitor-detail-pagination">
+                <button id="monitorDetailPageFirst" class="secondary btn-compact icon-only" type="button" data-i18n-title="monitor.detail.pagination.first" data-i18n-aria-label="monitor.detail.pagination.first"><i class="fa-solid fa-angles-left" aria-hidden="true"></i></button>
+                <button id="monitorDetailPagePrev" class="secondary btn-compact icon-only" type="button" data-i18n-title="monitor.detail.pagination.previous" data-i18n-aria-label="monitor.detail.pagination.previous"><i class="fa-solid fa-angle-left" aria-hidden="true"></i></button>
+                <span id="monitorDetailPageInfo" class="muted"></span>
+                <button id="monitorDetailPageNext" class="secondary btn-compact icon-only" type="button" data-i18n-title="monitor.detail.pagination.next" data-i18n-aria-label="monitor.detail.pagination.next"><i class="fa-solid fa-angle-right" aria-hidden="true"></i></button>
+                <button id="monitorDetailPageLast" class="secondary btn-compact icon-only" type="button" data-i18n-title="monitor.detail.pagination.last" data-i18n-aria-label="monitor.detail.pagination.last"><i class="fa-solid fa-angles-right" aria-hidden="true"></i></button>
             </div>
           </div>
-        </div>
-        <div class="modal-actions">
-          <button id="monitorDetailCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
-          </button>
         </div>
       </div>
     </div>

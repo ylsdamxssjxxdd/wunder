@@ -37,7 +37,7 @@ const DEFAULT_WORKSPACE_USAGE_FULL_SCAN_INTERVAL_S: f64 = 300.0;
 const DEFAULT_WORKSPACE_USAGE_SCAN_BATCH_USERS: usize = 2;
 const MONITOR_WRITE_QUEUE_SIZE: usize = 1024;
 const MONITOR_WRITE_BATCH_SIZE: usize = 64;
-// Keep startup bounded. Cold session details are hydrated directly from durable
+// Keep startup bounded. Cold session logs are hydrated directly from durable
 // storage when requested, so this cache limit never deletes historical logs.
 const MONITOR_HISTORY_LOAD_LIMIT: i64 = 5000;
 const MONITOR_ROUND_HYDRATE_STREAM_EVENT_LIMIT: i64 = 1000;
@@ -1794,38 +1794,59 @@ impl MonitorState {
     }
 
     pub fn get_detail(&self, session_id: &str) -> Option<Value> {
+        self.get_detail_page(session_id, 0, usize::MAX)
+    }
+
+    /// Serialize only one compact page so a long session cannot stall the admin UI.
+    pub fn get_detail_page(&self, session_id: &str, offset: usize, limit: usize) -> Option<Value> {
         self.run_guarded(
-            "monitor.get_detail",
+            "monitor.get_detail_page",
             || None,
             || {
-                let record = {
+                let active_detail = {
                     let sessions = self.sessions.lock();
-                    sessions.get(session_id).cloned()
+                    sessions
+                        .get(session_id)
+                        .map(|record| Self::build_detail_page(record, offset, limit))
+                };
+                if let Some(detail) = active_detail {
+                    return Some(detail);
                 }
-                .or_else(|| {
-                    self.storage
-                        .get_monitor_record(session_id)
-                        .ok()
-                        .flatten()
-                        .and_then(|payload| SessionRecord::from_storage(&payload))
-                })?;
-                let events = record
-                    .events
-                    .iter()
-                    .map(|event| event.to_dict())
-                    .collect::<Vec<_>>();
-                let mut session = record.to_summary();
-                let speed = llm_speed_summary_from_monitor_events(&record.events);
-                if let Value::Object(ref mut map) = session {
-                    speed.insert_into_map(map);
-                }
-                Some(json!({
-                    "session": session,
-                    "events": events,
-                    "feedback": record.feedback_list(),
-                }))
+                let record = self
+                    .storage
+                    .get_monitor_record(session_id)
+                    .ok()
+                    .flatten()
+                    .and_then(|payload| SessionRecord::from_storage(&payload))?;
+                Some(Self::build_detail_page(&record, offset, limit))
             },
         )
+    }
+
+    fn build_detail_page(record: &SessionRecord, offset: usize, limit: usize) -> Value {
+        let event_total = record.events.len();
+        let events = record
+            .events
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .map(|event| event.to_dict())
+            .collect::<Vec<_>>();
+        let events_has_more = offset.saturating_add(events.len()) < event_total;
+        let mut session = record.to_summary();
+        let speed = llm_speed_summary_from_monitor_events(&record.events);
+        if let Value::Object(ref mut map) = session {
+            speed.insert_into_map(map);
+        }
+        json!({
+            "session": session,
+            "events": events,
+            "feedback": record.feedback_list(),
+            "event_offset": offset,
+            "event_limit": limit.min(event_total),
+            "event_total": event_total,
+            "events_has_more": events_has_more,
+        })
     }
 
     pub fn get_record(&self, session_id: &str) -> Option<Value> {
@@ -1841,6 +1862,63 @@ impl MonitorState {
                     return Some(record.to_storage());
                 }
                 self.storage.get_monitor_record(cleaned).ok().flatten()
+            },
+        )
+    }
+
+    /// Return the bounded, presentation-neutral metrics shared by user and admin log views.
+    /// Keep trace IDs and raw event payloads out of this projection.
+    pub fn get_log_overview(&self, session_id: &str) -> Option<Value> {
+        self.run_guarded(
+            "monitor.get_log_overview",
+            || None,
+            || {
+                let record = self
+                    .sessions
+                    .lock()
+                    .get(session_id.trim())
+                    .cloned()
+                    .or_else(|| {
+                        self.storage
+                            .get_monitor_record(session_id.trim())
+                            .ok()
+                            .flatten()
+                            .and_then(|payload| SessionRecord::from_storage(&payload))
+                    })?;
+                // Keep the user-facing projection deliberately small.  The monitor summary
+                // also contains trace/user/admin fields that are useful to operators but must
+                // never be copied into a regular user's session response.
+                let speed = llm_speed_summary_from_monitor_events(&record.events);
+                let mut overview = serde_json::Map::new();
+                overview.insert("session_id".to_string(), json!(record.session_id.clone()));
+                overview.insert("agent_id".to_string(), json!(record.agent_id.clone()));
+                overview.insert("status".to_string(), json!(record.status.clone()));
+                overview.insert("elapsed_s".to_string(), json!(round2(record.elapsed_s())));
+                overview.insert("user_rounds".to_string(), json!(record.user_rounds.max(0)));
+                overview.insert("tool_calls".to_string(), json!(record.tool_calls.max(0)));
+                overview.insert(
+                    "quota_used".to_string(),
+                    json!(record.quota_used.unwrap_or(0).max(0)),
+                );
+                overview.insert(
+                    "consumed_tokens".to_string(),
+                    json!(record.consumed_tokens.max(0)),
+                );
+                overview.insert("event_total".to_string(), json!(record.events.len()));
+                overview.insert("ttft_ms".to_string(), json!(speed.ttft_ms));
+                overview.insert(
+                    "prefill_speed_tps".to_string(),
+                    json!(speed.prefill_speed_tps),
+                );
+                overview.insert(
+                    "prefill_speed_lower_bound".to_string(),
+                    json!(speed.prefill_speed_lower_bound),
+                );
+                overview.insert(
+                    "decode_speed_tps".to_string(),
+                    json!(speed.decode_speed_tps),
+                );
+                Some(Value::Object(overview))
             },
         )
     }
@@ -3744,6 +3822,80 @@ mod tests {
         assert_eq!(summary.decode_tokens, Some(120));
         assert_eq!(summary.decode_duration_s, Some(2.0));
         assert_eq!(summary.decode_speed_tps, Some(60.0));
+    }
+
+    #[test]
+    fn log_overview_is_a_safe_metrics_only_projection() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("monitor-log-overview.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("initialize storage");
+        let monitor = MonitorState::new(
+            storage,
+            ObservabilityConfig::default(),
+            temp.path().to_string_lossy().to_string(),
+        );
+        monitor.register(
+            "sess-log-overview",
+            "private-user",
+            "agent-id",
+            "question",
+            true,
+            false,
+        );
+        monitor.record_event("sess-log-overview", "tool_call", &json!({ "tool": "read" }));
+        monitor.record_event(
+            "sess-log-overview",
+            "quota_usage",
+            &json!({ "session_quota_used": 3 }),
+        );
+        monitor.record_event(
+            "sess-log-overview",
+            "llm_request",
+            &json!({ "model_round": 1 }),
+        );
+        monitor.record_event(
+            "sess-log-overview",
+            "llm_output",
+            &json!({
+                "model_round": 1,
+                "usage": {
+                    "input_tokens": 120,
+                    "output_tokens": 30
+                },
+                "decode_output_tokens": 30,
+                "prefill_duration_s": 0.5,
+                "decode_duration_s": 1.5
+            }),
+        );
+        let detail = monitor
+            .get_detail("sess-log-overview")
+            .expect("monitor detail");
+        assert_eq!(
+            detail["session"]["prefill_speed_tps"],
+            json!(240.0),
+            "monitor events must retain one measured request"
+        );
+
+        let overview = monitor
+            .get_log_overview("sess-log-overview")
+            .expect("log overview");
+        let object = overview.as_object().expect("overview object");
+        assert_eq!(object["session_id"], json!("sess-log-overview"));
+        assert_eq!(object["agent_id"], json!("agent-id"));
+        assert_eq!(object["tool_calls"], json!(1));
+        assert_eq!(object["quota_used"], json!(3));
+        assert!(object["event_total"]
+            .as_u64()
+            .is_some_and(|total| total >= 4));
+        assert_eq!(object["prefill_speed_tps"], json!(240.0));
+        assert_eq!(object["decode_speed_tps"], json!(20.0));
+        assert!(!object.contains_key("trace_id"));
+        assert!(!object.contains_key("user_id"));
+        assert!(!object.contains_key("events"));
+        assert!(!object.contains_key("is_admin"));
+        assert!(!object.contains_key("log_profile"));
     }
 
     #[test]

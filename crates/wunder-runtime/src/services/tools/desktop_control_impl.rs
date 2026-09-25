@@ -929,7 +929,17 @@ fn screen_metrics() -> Result<(i32, i32)> {
     Ok((width, height))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn screen_metrics() -> Result<(i32, i32)> {
+    with_x11(|xlib, display, screen| unsafe {
+        Ok((
+            (xlib.XDisplayWidth)(display, screen),
+            (xlib.XDisplayHeight)(display, screen),
+        ))
+    })
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn screen_metrics() -> Result<(i32, i32)> {
     Err(anyhow!(crate::i18n::t(
         "tool.desktop_controller.unsupported_platform"
@@ -1051,7 +1061,136 @@ fn capture_screen_rgba() -> Result<(i32, i32, Vec<u8>)> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn capture_screen_rgba() -> Result<(i32, i32, Vec<u8>)> {
+    with_x11(|xlib, display, screen| unsafe {
+        let width = (xlib.XDisplayWidth)(display, screen);
+        let height = (xlib.XDisplayHeight)(display, screen);
+        if width <= 0 || height <= 0 {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        let root = (xlib.XRootWindow)(display, screen);
+        let visual = (xlib.XDefaultVisual)(display, screen);
+        if visual.is_null() {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        let image = (xlib.XGetImage)(
+            display,
+            root,
+            0,
+            0,
+            width as u32,
+            height as u32,
+            !0 as std::ffi::c_ulong,
+            x11_dl::xlib::ZPixmap,
+        );
+        if image.is_null() {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        let image_ref = &*image;
+        let bytes_per_pixel = (image_ref.bits_per_pixel / 8) as usize;
+        if bytes_per_pixel != 3 && bytes_per_pixel != 4 {
+            (xlib.XDestroyImage)(image);
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        let bytes = std::slice::from_raw_parts(
+            image_ref.data as *const u8,
+            image_ref.bytes_per_line as usize * height as usize,
+        );
+        let little_endian = image_ref.byte_order == x11_dl::xlib::LSBFirst;
+        let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+        for row in 0..height as usize {
+            let line_start = row * image_ref.bytes_per_line as usize;
+            for pixel in bytes[line_start..line_start + width as usize * bytes_per_pixel]
+                .chunks_exact(bytes_per_pixel)
+            {
+                let value = if bytes_per_pixel == 4 {
+                    if little_endian {
+                        u32::from_le_bytes([pixel[0], pixel[1], pixel[2], pixel[3]])
+                    } else {
+                        u32::from_be_bytes([pixel[0], pixel[1], pixel[2], pixel[3]])
+                    }
+                } else if little_endian {
+                    u32::from(pixel[0]) | u32::from(pixel[1]) << 8 | u32::from(pixel[2]) << 16
+                } else {
+                    u32::from(pixel[2]) | u32::from(pixel[1]) << 8 | u32::from(pixel[0]) << 16
+                };
+                rgba.push(x11_color(value, (*visual).red_mask));
+                rgba.push(x11_color(value, (*visual).green_mask));
+                rgba.push(x11_color(value, (*visual).blue_mask));
+                rgba.push(255);
+            }
+        }
+        (xlib.XDestroyImage)(image);
+        Ok((width, height, rgba))
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn with_x11<T>(
+    operation: impl FnOnce(&x11_dl::xlib::Xlib, *mut x11_dl::xlib::Display, i32) -> Result<T>,
+) -> Result<T> {
+    let xlib = x11_dl::xlib::Xlib::open().map_err(|error| anyhow!("无法加载 X11：{error}"))?;
+    unsafe {
+        let display = (xlib.XOpenDisplay)(std::ptr::null());
+        if display.is_null() {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.unsupported_platform"
+            )));
+        }
+        let screen = (xlib.XDefaultScreen)(display);
+        let result = operation(&xlib, display, screen);
+        (xlib.XCloseDisplay)(display);
+        result
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn with_xtest<T>(
+    operation: impl FnOnce(
+        &x11_dl::xlib::Xlib,
+        &x11_dl::xtest::Xf86vmode,
+        *mut x11_dl::xlib::Display,
+        i32,
+    ) -> Result<T>,
+) -> Result<T> {
+    let xlib = x11_dl::xlib::Xlib::open().map_err(|error| anyhow!("无法加载 X11：{error}"))?;
+    let xtest = x11_dl::xtest::Xf86vmode::open()
+        .map_err(|error| anyhow!("当前 X11 会话没有 XTest 扩展：{error}"))?;
+    unsafe {
+        let display = (xlib.XOpenDisplay)(std::ptr::null());
+        if display.is_null() {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.unsupported_platform"
+            )));
+        }
+        let screen = (xlib.XDefaultScreen)(display);
+        let result = operation(&xlib, &xtest, display, screen);
+        (xlib.XCloseDisplay)(display);
+        result
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn x11_color(value: u32, mask: std::ffi::c_ulong) -> u8 {
+    if mask == 0 {
+        return 0;
+    }
+    let shift = mask.trailing_zeros();
+    let field = (value as u64 & mask) >> shift;
+    let max = mask >> shift;
+    ((field * 255 + max / 2) / max) as u8
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn capture_screen_rgba() -> Result<(i32, i32, Vec<u8>)> {
     Err(anyhow!(crate::i18n::t(
         "tool.desktop_controller.unsupported_platform"
@@ -1283,7 +1422,28 @@ fn send_unicode_char(ch: char) -> Result<()> {
         }
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        let name = std::ffi::CString::new(ch.to_string()).map_err(|_| anyhow!("无效字符"))?;
+        with_xtest(|xlib, xtest, display, _| unsafe {
+            let keysym = (xlib.XStringToKeysym)(name.as_ptr());
+            if keysym == 0 {
+                return Err(anyhow!("当前 X11 键盘布局不支持该字符"));
+            }
+            let keycode = (xlib.XKeysymToKeycode)(display, keysym);
+            if keycode == 0
+                || (xtest.XTestFakeKeyEvent)(display, keycode as u32, 1, 0) == 0
+                || (xtest.XTestFakeKeyEvent)(display, keycode as u32, 0, 0) == 0
+            {
+                return Err(anyhow!(crate::i18n::t(
+                    "tool.desktop_controller.capture_failed"
+                )));
+            }
+            (xlib.XFlush)(display);
+            Ok(())
+        })
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = ch;
         Err(anyhow!(crate::i18n::t(
@@ -1339,7 +1499,63 @@ fn send_key_event(key: VkCode, key_up: bool) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn send_key_event(key: VkCode, key_up: bool) -> Result<()> {
+    let name = match key {
+        VkCode::Control => "Control_L".to_string(),
+        VkCode::Shift => "Shift_L".to_string(),
+        VkCode::Alt => "Alt_L".to_string(),
+        VkCode::LWin => "Super_L".to_string(),
+        VkCode::Raw(value) => x11_key_name(value)
+            .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.key_required")))?,
+    };
+    let name = std::ffi::CString::new(name)
+        .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_controller.key_required")))?;
+    with_xtest(|xlib, xtest, display, _| unsafe {
+        let keysym = (xlib.XStringToKeysym)(name.as_ptr());
+        let keycode = (xlib.XKeysymToKeycode)(display, keysym);
+        if keysym == 0
+            || keycode == 0
+            || (xtest.XTestFakeKeyEvent)(display, keycode as u32, i32::from(!key_up), 0) == 0
+        {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        (xlib.XFlush)(display);
+        Ok(())
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn x11_key_name(value: u16) -> Option<String> {
+    let name = match value {
+        0x0D => "Return".to_string(),
+        0x09 => "Tab".to_string(),
+        0x1B => "Escape".to_string(),
+        0x08 => "BackSpace".to_string(),
+        0x2E => "Delete".to_string(),
+        0x2D => "Insert".to_string(),
+        0x24 => "Home".to_string(),
+        0x23 => "End".to_string(),
+        0x21 => "Page_Up".to_string(),
+        0x22 => "Page_Down".to_string(),
+        0x25 => "Left".to_string(),
+        0x27 => "Right".to_string(),
+        0x26 => "Up".to_string(),
+        0x28 => "Down".to_string(),
+        0x20 => "space".to_string(),
+        0x5B => "Super_L".to_string(),
+        value if (0x70..=0x87).contains(&value) => format!("F{}", value - 0x70 + 1),
+        value if value.is_ascii_alphanumeric() => {
+            char::from_u32(u32::from(value)).map(|ch| ch.to_string())?
+        }
+        _ => return None,
+    };
+    Some(name)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn send_key_event(key: VkCode, _key_up: bool) -> Result<()> {
     let _ = match key {
         VkCode::Raw(value) => value,
@@ -1382,7 +1598,20 @@ fn set_cursor_pos(x: i32, y: i32) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn set_cursor_pos(x: i32, y: i32) -> Result<()> {
+    with_xtest(|xlib, xtest, display, screen| unsafe {
+        if (xtest.XTestFakeMotionEvent)(display, screen, x, y, 0) == 0 {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        (xlib.XFlush)(display);
+        Ok(())
+    })
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn set_cursor_pos(_x: i32, _y: i32) -> Result<()> {
     Err(anyhow!(crate::i18n::t(
         "tool.desktop_controller.unsupported_platform"
@@ -1400,7 +1629,37 @@ fn cursor_pos() -> Option<(i32, i32)> {
     Some((point.x, point.y))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn cursor_pos() -> Option<(i32, i32)> {
+    with_x11(|xlib, display, screen| unsafe {
+        let root = (xlib.XRootWindow)(display, screen);
+        let mut root_return = 0;
+        let mut child_return = 0;
+        let mut root_x = 0;
+        let mut root_y = 0;
+        let mut win_x = 0;
+        let mut win_y = 0;
+        let mut mask = 0;
+        if (xlib.XQueryPointer)(
+            display,
+            root,
+            &mut root_return,
+            &mut child_return,
+            &mut root_x,
+            &mut root_y,
+            &mut win_x,
+            &mut win_y,
+            &mut mask,
+        ) == 0
+        {
+            return Err(anyhow!("X11 cursor unavailable"));
+        }
+        Ok((root_x, root_y))
+    })
+    .ok()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn cursor_pos() -> Option<(i32, i32)> {
     None
 }
@@ -1451,7 +1710,29 @@ fn send_mouse_event(event: MouseEvent) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn send_mouse_event(event: MouseEvent) -> Result<()> {
+    let button = match event {
+        MouseEvent::LeftDown | MouseEvent::LeftUp => 1,
+        MouseEvent::MiddleDown | MouseEvent::MiddleUp => 2,
+        MouseEvent::RightDown | MouseEvent::RightUp => 3,
+    };
+    let press = matches!(
+        event,
+        MouseEvent::LeftDown | MouseEvent::MiddleDown | MouseEvent::RightDown
+    );
+    with_xtest(|xlib, xtest, display, _| unsafe {
+        if (xtest.XTestFakeButtonEvent)(display, button, i32::from(press), 0) == 0 {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        (xlib.XFlush)(display);
+        Ok(())
+    })
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn send_mouse_event(_event: MouseEvent) -> Result<()> {
     Err(anyhow!(crate::i18n::t(
         "tool.desktop_controller.unsupported_platform"
@@ -1486,7 +1767,28 @@ fn send_mouse_wheel(steps: i32) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn send_mouse_wheel(steps: i32) -> Result<()> {
+    if steps == 0 {
+        return Ok(());
+    }
+    let button = if steps > 0 { 4 } else { 5 };
+    with_xtest(|xlib, xtest, display, _| unsafe {
+        for _ in 0..steps.unsigned_abs() {
+            if (xtest.XTestFakeButtonEvent)(display, button, 1, 0) == 0
+                || (xtest.XTestFakeButtonEvent)(display, button, 0, 0) == 0
+            {
+                return Err(anyhow!(crate::i18n::t(
+                    "tool.desktop_controller.capture_failed"
+                )));
+            }
+        }
+        (xlib.XFlush)(display);
+        Ok(())
+    })
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn send_mouse_wheel(_steps: i32) -> Result<()> {
     Err(anyhow!(crate::i18n::t(
         "tool.desktop_controller.unsupported_platform"

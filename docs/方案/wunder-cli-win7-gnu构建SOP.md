@@ -1,80 +1,60 @@
 # wunder-cli Win7 GNU 构建 SOP
 
-本文记录 Win7 兼容版 `wunder-cli.exe` 的固定构建流程。CLI 构建复用桌面端 Electron Win7 GNU 工具链配置，不另起一套 MinGW、Rust nightly、隔离 lockfile 或 target 目录规则。
+本文记录 Win7 兼容版 `wunder-cli.exe` 的固定构建流程。构建入口使用根目录统一脚本，CLI 与 Slint Desktop 复用 `Rust-builder/win7` 的离线 Rust、MinGW 和 Cargo vendor。
 
 ## 目标
 
 - 默认产物：Win7 32 位 CLI，`target=i686-win7-windows-gnu`。
-- 默认工具链：读取 `desktop/electron/scripts/win7-gnu-toolchain.json`。
-- 默认实验目录：`temp_dir/win7-gnu-lab/`。
-- 最终交付目录：`temp_dir/win7-gnu-lab/cli-win7-ia32/dist/wunder-cli.exe`。
+- 默认工具链：相邻 `Rust-builder/win7/offline`。
+- Cargo 构建缓存：`target/cli-win7-x86/cargo/`。
+- 最终交付目录：`target/cli/dist/win7-x86/`。
 
 ## 首次检查
 
 ```powershell
-npm run doctor:cli:win7:gnu
+.\build.bat -Target cli -Arch win7-x86 -Check
 ```
 
 该命令会检查：
 
-- Rust/Cargo/Rustup 是否可用。
-- 桌面端 Win7 GNU profile 是否存在。
-- `C:\mingw32\bin` 中的 GNU 工具链是否齐全。
-- 隔离 lockfile 与最终输出目录位置。
+- `Rust-builder/win7/offline` 的 Rust、MinGW、Cargo vendor 是否齐全。
+- CLI 完整运行时依赖是否包含在离线 vendor。
+- 自定义 Win7 target 的 Rust、链接器和预编译 Windows import library 是否可用。
 
 ## 正式构建
 
 ```powershell
-npm run build:cli:win7:gnu
-```
-
-等价底层命令：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch ia32
+.\build.bat -Target cli -Arch win7-x86
 ```
 
 脚本会执行：
 
-1. 复用 `desktop/electron/scripts/win7-gnu.common.ps1` 初始化 Win7 GNU 环境。
-2. 使用隔离 lockfile：`temp_dir/win7-gnu-lab/cargo-win7.lock`。
-3. 使用 release 构建和 `-Zbuild-std=std,panic_abort`。
-4. 以 `-j 8` 限制 Rust 编译并发。
-5. 默认对产物执行 `strip`，去除 COFF 符号，降低分发体积。
-6. 运行 PE/DLL 静态检查，阻止 `api-ms-*` 或 `winrt` 导入进入 Win7 产物。
-7. 运行 `wunder-cli.exe --help` 冒烟测试。
-8. 复制产物到 `temp_dir/win7-gnu-lab/cli-win7-ia32/dist/` 并输出 SHA256。
+1. 使用 release 构建和 `-Zbuild-std=std,panic_abort`。
+2. 以 `-j 8` 限制 Rust 编译并发。
+3. 默认对产物执行 `strip`，去除 COFF 符号，降低分发体积。
+4. 运行 PE/DLL 静态检查，阻止 Win7 不支持的 DLL 与符号导入。
+5. 复制产物到 `target/cli/dist/win7-x86/`。
 
 ## 快速重建
 
-工具链和 cargo 缓存已初始化后：
+离线 SDK 和目标缓存可重用，重复执行同一命令即可增量构建：
 
 ```powershell
-npm run build:cli:win7:gnu:fast
+.\build.bat -Target cli -Arch win7-x86
 ```
-
-等价于传入 `-SkipBootstrap`，会跳过 rustup 与 fetch 初始化。
-
-package.json 中另有架构别名：`build:cli:win7:gnu:ia32(:fast)` 与 `build:cli:win7:gnu:x64(:fast)`，分别显式指定 32/64 位产物。
 
 ## 与 builders/ 的关系
 
-仓库级统一构建入口在 `builders/`（如 `builders/build-win7-offline.ps1`、`builders/build-win7-slint.ps1`，服务 Slint 桌面端离线 SDK 与分发）。本 SOP 的 CLI GNU 链是与 builders/ 并存的独立链路，二者工具链与产物不同，不要混用。
+根目录仅保留 `build.sh` 和 `build.bat` 两个发布入口；具体实现位于 `builders/`。`builders/build-win7-cli.ps1` 是 Win7 CLI 的底层构建器，`builders/build-win7-offline.ps1` 是 Slint Desktop 的底层构建器。不要再使用旧的 Electron 构建脚本或 package.json 构建别名。
 
 ## 常用参数
 
 ```powershell
-# 只诊断，不构建
-powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch ia32 -Doctor
+# 从非标准 SDK 目录构建
+.\build.bat -Target cli -Arch win7-x86 -Win7BuilderRoot X:\Rust-builder\win7
 
-# 构建但不 strip，便于排查符号
-powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch ia32 -NoStrip
-
-# 跳过 help 冒烟测试
-powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch ia32 -SkipSmoke
-
-# 显式构建 x64 实验产物
-powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch x64
+# 构建 Desktop 与 CLI 的完整发布矩阵
+.\build.bat -All -AppImageRuntimeArm64 X:\runtime-arm64.AppImage -AppImageRuntimeAmd64 X:\runtime-amd64.AppImage
 ```
 
 ## 兼容性要点
@@ -91,9 +71,9 @@ powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gn
 ## 手工复查命令
 
 ```powershell
-$exe = "temp_dir\win7-gnu-lab\cli-win7-ia32\dist\wunder-cli.exe"
-& "C:\mingw32\bin\objdump.exe" -f $exe
-& "C:\mingw32\bin\objdump.exe" -p $exe | Select-String -Pattern "DLL Name|api-ms|winrt"
+$exe = "target\cli\dist\win7-x86\wunder-cli-<version>-win7-x86.exe"
+& "..\Rust-builder\win7\offline\mingw32\bin\objdump.exe" -f $exe
+& "..\Rust-builder\win7\offline\mingw32\bin\objdump.exe" -p $exe | Select-String -Pattern "DLL Name|api-ms|winrt"
 Get-FileHash -Algorithm SHA256 $exe
 ```
 

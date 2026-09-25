@@ -42,6 +42,7 @@ pub fn check_runtime(desktop: &NativeDesktop) -> Result<(), Box<dyn std::error::
         session_id: session.id,
         content: "native-cancel".into(),
         client_message_id: Some("native-cancel-before-start".into()),
+        attachments: Vec::new(),
     })?;
     stream.cancel();
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -68,6 +69,7 @@ fn check_queue_and_detach(desktop: &NativeDesktop) -> Result<(), Box<dyn std::er
         session_id: session.id.clone(),
         content: "native-queue-first".into(),
         client_message_id: None,
+        attachments: Vec::new(),
     })?;
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
@@ -82,6 +84,7 @@ fn check_queue_and_detach(desktop: &NativeDesktop) -> Result<(), Box<dyn std::er
         session_id: session.id.clone(),
         content: "native-queue-second".into(),
         client_message_id: None,
+        attachments: Vec::new(),
     })?;
     let mut queued = false;
     let mut answer = String::new();

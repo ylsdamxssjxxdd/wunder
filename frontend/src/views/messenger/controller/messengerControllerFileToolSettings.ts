@@ -40,10 +40,6 @@ import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlocker';
 import { useMessengerRightDockResize } from '@/views/messenger/rightDockResize';
-import {
-  settleAgentSessionBusyAfterRefresh,
-  type SessionBusyRecoveryStatus
-} from '@/views/messenger/chatRefreshRecovery';
 import { resolveAgentConfiguredAbilityNames, resolveAgentOverviewAbilityCounts } from '@/views/messenger/agentOverviewAbilities';
 import MessengerHivePlazaPanel from '@/components/messenger/MessengerHivePlazaPanel.vue';
 import {
@@ -528,53 +524,6 @@ export function installMessengerControllerFileToolSettings(ctx: MessengerControl
           ownerId: String(source.owner_id || source.ownerId || '').trim(),
           source
       };
-  };
-
-  ctx.SESSION_OPEN_RECOVERY_ATTEMPTS = 2;
-
-  ctx.resolveSessionBusyRecoveryMessage = (status: SessionBusyRecoveryStatus): string => {
-      if (status === 'runtime_busy') {
-          return ctx.t('chat.session.running');
-      }
-      if (status === 'unsettled') {
-          return ctx.t('common.requestFailed');
-      }
-      return ctx.t('common.refreshSuccess');
-  };
-
-  ctx.refreshActiveAgentConversation = async () => {
-      if (!ctx.isAgentConversationActive.value)
-          return;
-      const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
-      if (!sessionId)
-          return;
-      const activeAgent = ctx.normalizeAgentId(ctx.activeAgentId.value || ctx.selectedAgentId.value || ctx.chatStore.draftAgentId);
-      try {
-          const runResult = await ctx.runWithMessengerInteractionBlock('refresh', async () => {
-              await ctx.openAgentSession(sessionId, activeAgent || DEFAULT_AGENT_KEY);
-              const recoveryStatus = await settleAgentSessionBusyAfterRefresh({
-                  sessionId,
-                  isSessionBusy: (targetSessionId) => ctx.resolveEffectiveSessionBusy(targetSessionId),
-                  resolveRuntimeStatus: (targetSessionId) => ctx.resolveSessionRuntimeStatus(String(targetSessionId || '').trim()),
-                  loadSessionDetail: (targetSessionId, options) => ctx.chatStore.loadSessionDetail(String(targetSessionId || '').trim(), options),
-                  attempts: ctx.SESSION_OPEN_RECOVERY_ATTEMPTS
-              });
-              return recoveryStatus;
-          });
-          const status = runResult || 'settled';
-          if (status === 'runtime_busy') {
-              ElMessage.info(ctx.resolveSessionBusyRecoveryMessage(status));
-              return;
-          }
-          if (status === 'unsettled') {
-              ElMessage.warning(ctx.resolveSessionBusyRecoveryMessage(status));
-              return;
-          }
-          ElMessage.success(ctx.resolveSessionBusyRecoveryMessage(status));
-      }
-      catch (error) {
-          showApiError(error, ctx.t('common.requestFailed'));
-      }
   };
 
   ctx.loadToolsCatalog = async (options: {

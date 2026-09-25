@@ -1,9 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 slint::include_modules!();
+mod audio_recording;
 mod demo;
 mod demo_entities;
 mod entity_state;
+mod hotkey;
 mod message_blocks;
 mod native_chat;
 mod native_pages;
@@ -11,22 +13,30 @@ mod native_pages_smoke;
 mod native_runtime;
 mod native_smoke;
 mod runtime_settings;
+mod screen_capture;
+mod screenshot;
+mod shutdown;
 mod smoke;
 mod subagent_pool;
+mod tray;
 mod workspace_ui;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     install_slint_platform()?;
-    register_complete_font()?;
+    register_bundled_font()?;
 
     let mut arguments = std::env::args_os().skip(1);
     let first_argument = arguments.next();
     let app = MainWindow::new()?;
-    app.window().on_close_requested(|| {
-        // Hiding the native window alone can leave the event loop running.
-        // Return from main so the embedded runtime is released on normal close.
-        let _ = slint::quit_event_loop();
-        slint::CloseRequestResponse::HideWindow
+    let close_weak = app.as_weak();
+    app.window().on_close_requested(move || {
+        if let Some(app) = close_weak.upgrade() {
+            if crate::tray::hide(&app) {
+                return slint::CloseRequestResponse::KeepWindowShown;
+            }
+        }
+        crate::shutdown::request_exit();
+        slint::CloseRequestResponse::KeepWindowShown
     });
     if first_argument.as_deref() == Some(std::ffi::OsStr::new("--smoke-check")) {
         demo::install(&app);
@@ -67,28 +77,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None | Some("--native") => native_runtime::install(&app),
         Some(_) => return Err("旧 bridge 参数已移除；请直接启动桌面程序".into()),
     }
+    tray::install(&app);
     app.show()?;
     app.run()?;
     Ok(())
 }
 
-/// Register the complete Windows TS font before the first text layout.
-/// Keeping the font in the executable avoids relying on the target machine's
-/// installed fonts, which is required for deterministic Win7 rendering.
-fn register_complete_font() -> Result<(), Box<dyn std::error::Error>> {
+/// Register the compressed SimSun before the first text layout.
+/// Keeping one compressed face avoids the complete TTC pair and target font drift.
+fn register_bundled_font() -> Result<(), Box<dyn std::error::Error>> {
     use slint::fontique_011::fontique;
 
     let mut collection = slint::fontique_011::shared_collection();
-    let bytes: &'static [u8] = include_bytes!("../../config/fonts/msyh.ttc");
+    let bytes = bundled_font::simsun_ttf();
     let registered =
         collection.register_fonts(fontique::Blob::new(std::sync::Arc::new(bytes)), None);
-    // Register the complete bold face too; the software renderer must not
-    // depend on a host font or synthetic weight for TS-equivalent headings.
-    let bold: &'static [u8] = include_bytes!("../../config/fonts/msyhbd.ttc");
-    collection.register_fonts(fontique::Blob::new(std::sync::Arc::new(bold)), None);
     let families: Vec<_> = registered.iter().map(|(family, _)| *family).collect();
     if families.is_empty() {
-        return Err("内嵌字体注册失败".into());
+        return Err("内嵌 SimSun注册失败".into());
     }
     for generic in [
         fontique::GenericFamily::SansSerif,
@@ -102,6 +108,19 @@ fn register_complete_font() -> Result<(), Box<dyn std::error::Error>> {
         families.iter().copied(),
     );
     Ok(())
+}
+
+mod bundled_font {
+    static SIMSUN_LZ4: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/simsun.ttf.lz4"));
+
+    pub fn simsun_ttf() -> &'static [u8] {
+        static DECOMPRESSED: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+        DECOMPRESSED
+            .get_or_init(|| {
+                lz4_flex::decompress_size_prepended(SIMSUN_LZ4).expect("内嵌 SimSun解压失败")
+            })
+            .as_slice()
+    }
 }
 
 fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
