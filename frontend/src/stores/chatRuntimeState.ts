@@ -1779,7 +1779,8 @@ const isUsageContextStreamEvent = (eventType) => {
     normalized === 'token_usage' ||
     normalized === 'round_usage' ||
     normalized === 'context_usage' ||
-    normalized === 'quota_usage'
+    normalized === 'quota_usage' ||
+    normalized === 'model_request_usage'
   );
 };
 
@@ -2242,13 +2243,19 @@ export const applyCanonicalStreamRuntimeEvent = (
     reason: `stream:${options.phase || 'ws'}`
   });
   // Quota can precede the assistant message; absolute totals remain replay-safe.
-  if (eventType === 'quota_usage' && applySessionQuotaUsage(
+  if ((eventType === 'quota_usage' || eventType === 'model_request_usage') && applySessionQuotaUsage(
     store.sessions, key, extractCanonicalStreamData(payload)
   )) {
     const next = store.sessions.find((item) => resolveSessionKey(item?.id) === key);
     for (const entry of sessionListCache.values()) {
       const index = entry.sessions.findIndex((item) => resolveSessionKey(item?.id) === key);
-      if (index >= 0) entry.sessions[index] = { ...entry.sessions[index], quota_used: next.quota_used };
+      if (index >= 0) {
+        entry.sessions[index] = {
+          ...entry.sessions[index],
+          model_request_count: next.model_request_count,
+          quota_used: next.quota_used
+        };
+      }
     }
     syncDemoChatCache({ sessions: store.sessions });
   }

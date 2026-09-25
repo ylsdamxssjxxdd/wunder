@@ -14,4 +14,5 @@ fi
 exec "$sdk/usr/bin/$compiler" \
   "--sysroot=$sdk" \
   "-I$sdk/usr/x86_64-linux-gnu/include" \
-  "-L$sdk/usr/x86_64-linux-gnu/lib" "$@"
+  "-L$sdk/usr/x86_64-linux-gnu/lib" \
+  "-L$sdk/usr/lib/x86_64-linux-gnu" "$@"

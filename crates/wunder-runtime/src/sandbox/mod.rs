@@ -562,6 +562,136 @@ where
     }))
 }
 
+/// Start a sandbox command without holding the HTTP request open. The returned
+/// id is owned by the sandbox worker and can be polled through the control API.
+pub async fn launch_command_session(
+    config: &Config,
+    workspace: &WorkspaceManager,
+    user_id: &str,
+    workspace_id: &str,
+    session_id: &str,
+    args: &Value,
+    user_tool_bindings: Option<&UserToolBindings>,
+) -> Option<Value> {
+    if !sandbox_enabled(config) {
+        return None;
+    }
+    let endpoints = sandbox_endpoint_candidates(config);
+    if endpoints.is_empty() || workspace.ensure_user_root(workspace_id).is_err() {
+        return None;
+    }
+    let public_root = workspace
+        .public_root(workspace_id)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let container_workspace_root =
+        resolve_container_workspace_root(config, workspace, workspace_id);
+    let mut mapped_args = if args.is_object() {
+        args.clone()
+    } else {
+        json!({"raw": args})
+    };
+    if let Value::Object(ref mut map) = mapped_args {
+        if let Some(Value::String(content)) = map.get("content").cloned() {
+            let rewritten = replace_root_in_text(&content, &public_root, &container_workspace_root);
+            if rewritten != content {
+                map.insert("content".to_string(), Value::String(rewritten));
+            }
+        }
+    }
+    let payload = json!({
+        "user_id": user_id,
+        "session_id": session_id,
+        "language": i18n::get_language(),
+        "args": mapped_args,
+        "workspace_root": container_workspace_root,
+        "allow_paths": collect_allow_paths(config, user_tool_bindings),
+        "deny_globs": config.security.deny_globs.clone(),
+        "allow_commands": config.security.allow_commands.clone(),
+        "container_root": sandbox_container_root(),
+        "resources": {"cpu": sandbox_cpu_limit(), "memory_mb": sandbox_memory_mb(), "pids": sandbox_pids_limit()}
+    });
+    for endpoint in endpoints {
+        let url = format!("{endpoint}/sandboxes/command-sessions/launch");
+        let response = match http_client()
+            .post(url)
+            .timeout(Duration::from_secs(10))
+            .json(&payload)
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => response.json::<Value>().await.ok(),
+            _ => None,
+        };
+        if let Some(response) = response {
+            return Some(response);
+        }
+    }
+    None
+}
+
+pub async fn control_command_session(
+    config: &Config,
+    user_id: &str,
+    session_id: &str,
+    command_session_id: &str,
+    input: &str,
+    after_seq: u64,
+    yield_time_ms: u64,
+    write_stdin: bool,
+) -> Option<Value> {
+    let endpoints = sandbox_endpoint_candidates(config);
+    let payload = json!({"user_id": user_id, "session_id": session_id, "command_session_id": command_session_id, "input": input, "after_seq": after_seq, "yield_time_ms": yield_time_ms});
+    let route = if write_stdin { "stdin" } else { "poll" };
+    for endpoint in endpoints {
+        let response = http_client()
+            .post(format!("{endpoint}/sandboxes/command-sessions/{route}"))
+            .timeout(Duration::from_secs(15))
+            .json(&payload)
+            .send()
+            .await;
+        let Ok(response) = response else {
+            continue;
+        };
+        if response.status().is_success() {
+            if let Ok(value) = response.json::<Value>().await {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+pub async fn cancel_command_session(
+    config: &Config,
+    user_id: &str,
+    session_id: &str,
+    command_session_id: &str,
+) -> bool {
+    let payload = json!({"user_id": user_id, "session_id": session_id, "command_session_id": command_session_id});
+    for endpoint in sandbox_endpoint_candidates(config) {
+        let response = http_client()
+            .post(format!("{endpoint}/sandboxes/command-sessions/cancel"))
+            .timeout(Duration::from_secs(5))
+            .json(&payload)
+            .send()
+            .await;
+        if let Ok(response) = response {
+            if response.status().is_success()
+                && response
+                    .json::<Value>()
+                    .await
+                    .ok()
+                    .and_then(|value| value.get("ok").and_then(Value::as_bool))
+                    .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn command_stream_failure(error: &str) -> Value {
     json!({
         "ok": false,

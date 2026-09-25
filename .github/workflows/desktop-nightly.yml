@@ -65,7 +65,7 @@ jobs:
           $hostMingw = Join-Path $msysRoot 'mingw64\bin'
           $out = Join-Path $env:GITHUB_WORKSPACE 'release-assets'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          & .\frontend-slint\scripts\build-win7.ps1 `
+          & .\builders\build-win7-slint.ps1 `
             -Toolchain 'nightly-2026-03-14-x86_64-pc-windows-gnu' `
             -MingwBin $targetMingw `
             -HostMingwBin $hostMingw `
@@ -88,11 +88,11 @@ jobs:
           - arch: x86_64
             platform: linux/amd64
             image: wunder-desktop-ubuntu1804-x86_64
-            tool_arch: x86_64
+            appimage_runtime: x86_64
           - arch: arm64
             platform: linux/arm64
             image: wunder-desktop-ubuntu1804-arm64
-            tool_arch: aarch64
+            appimage_runtime: aarch64
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
@@ -106,20 +106,34 @@ jobs:
           set -euo pipefail
           docker build --platform "${{ matrix.platform }}" \
             --build-arg RUST_TOOLCHAIN="${RUST_TOOLCHAIN}" \
-            --build-arg APPIMAGE_TOOL_URL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.tool_arch }}.AppImage" \
+            --build-arg APPIMAGE_RUNTIME_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/runtime-${{ matrix.appimage_runtime }}" \
             -f packaging/docker/Dockerfile.ubuntu18-desktop \
             -t "${{ matrix.image }}" .
           mkdir -p release-assets
           docker run --rm --platform "${{ matrix.platform }}" \
             -v "$GITHUB_WORKSPACE:/app" \
             -w /app \
+            -e ARCH="${{ matrix.arch }}" \
+            -e WUNDER_OUTPUT_DIR=/app/release-assets \
+            -e WUNDER_APPIMAGE_RUNTIME=/usr/local/lib/wunder/appimage-runtime \
             "${{ matrix.image }}" \
-            bash -lc 'ARCH=${{ matrix.arch }} OUTPUT_DIR=/app/release-assets bash frontend-slint/scripts/build-linux-appimage.sh'
-          test -x "release-assets/wunder-frontend-slint-linux-${{ matrix.arch }}-ubuntu18.04.AppImage"
+            bash builders/build-linux-appimage-native.sh
+          test -n "$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.AppImage" -print -quit)"
+      - name: Verify AppImage payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset_name="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.AppImage" -printf '%f' -quit)"
+          test -n "$asset_name"
+          docker run --rm --platform "${{ matrix.platform }}" \
+            -v "$GITHUB_WORKSPACE:/app" \
+            -w /app \
+            "${{ matrix.image }}" \
+            bash frontend-slint/scripts/check-linux-arm64-appimage.sh "/app/release-assets/$asset_name"
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-linux-${{ matrix.arch }}
-          path: release-assets/wunder-frontend-slint-linux-${{ matrix.arch }}-ubuntu18.04.AppImage
+          path: release-assets/wunder-slint-*-linux-${{ matrix.arch }}.AppImage
           if-no-files-found: error
           retention-days: 7
 

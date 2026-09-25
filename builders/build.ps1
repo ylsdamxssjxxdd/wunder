@@ -37,27 +37,43 @@ function Invoke-LinuxBuild {
     [switch]$Package
   )
 
-  $bash = Get-Command bash.exe -ErrorAction SilentlyContinue
-  if (-not $bash) { throw "bash.exe is required for the Docker build dispatcher." }
-  $args = @((Join-Path $repoRoot "build.sh"), "-t", $SelectedTarget, "-a", $SelectedArch, "--docker")
-  if ($Package) { $args += "--appimage" }
-  $oldArm64 = $env:WUNDER_APPIMAGE_RUNTIME_ARM64
-  $oldAmd64 = $env:WUNDER_APPIMAGE_RUNTIME_AMD64
-  $oldBuilderRoot = $env:WUNDER_BUILDER_ROOT
-  $oldImage = $env:WUNDER_SLINT_LINUX_DOCKER_IMAGE
-  try {
-    $env:WUNDER_BUILDER_ROOT = $KylinBuilderRoot
-    $env:WUNDER_SLINT_LINUX_DOCKER_IMAGE = $Image
-    if ($AppImageRuntimeArm64) { $env:WUNDER_APPIMAGE_RUNTIME_ARM64 = [IO.Path]::GetFullPath($AppImageRuntimeArm64) }
-    if ($AppImageRuntimeAmd64) { $env:WUNDER_APPIMAGE_RUNTIME_AMD64 = [IO.Path]::GetFullPath($AppImageRuntimeAmd64) }
-    & bash.exe @args
-    if ($LASTEXITCODE -ne 0) { throw "Docker build failed with exit code $LASTEXITCODE" }
-  } finally {
-    $env:WUNDER_APPIMAGE_RUNTIME_ARM64 = $oldArm64
-    $env:WUNDER_APPIMAGE_RUNTIME_AMD64 = $oldAmd64
-    $env:WUNDER_BUILDER_ROOT = $oldBuilderRoot
-    $env:WUNDER_SLINT_LINUX_DOCKER_IMAGE = $oldImage
+  if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+    throw "docker.exe is required for the Linux/Win32 Docker build dispatcher."
   }
+  $needsRuntime = $SelectedTarget -eq "desktop" -and ($SelectedArch -eq "linux-arm64" -or $Package)
+  $runtime = if ($SelectedArch -eq "linux-arm64") { $AppImageRuntimeArm64 } else { $AppImageRuntimeAmd64 }
+  if ($needsRuntime -and -not $runtime) {
+    throw "An AppImage runtime is required for $SelectedArch Desktop packaging."
+  }
+  $dockerArgs = @(
+    "run", "--rm", "--network", "none", "--platform", "linux/arm64",
+    "-e", "WUNDER_IN_DOCKER=1",
+    "-e", "WUNDER_REPO_ROOT=/workspace",
+    "-e", "WUNDER_BUILDER_ROOT=/builder/kylin-arm",
+    "-e", "WUNDER_OFFLINE_ROOT=/builder/kylin-arm/offline",
+    "-v", "${repoRoot}:/workspace",
+    "-v", "${KylinBuilderRoot}:/builder/kylin-arm:ro"
+  )
+  if ($needsRuntime) {
+    $runtimePath = [IO.Path]::GetFullPath($runtime)
+    if (-not (Test-Path -LiteralPath $runtimePath -PathType Leaf)) {
+      throw "AppImage runtime does not exist: $runtimePath"
+    }
+    $runtimeName = if ($SelectedArch -eq "linux-arm64") { "linux-arm64.AppImage" } else { "linux-amd64.AppImage" }
+    $runtimeVariable = if ($SelectedArch -eq "linux-arm64") { "WUNDER_APPIMAGE_RUNTIME_ARM64" } else { "WUNDER_APPIMAGE_RUNTIME_AMD64" }
+    $dockerArgs += @(
+      "-e", ("{0}=/builder/appimage-runtime/{1}" -f $runtimeVariable, $runtimeName),
+      "-v", "${runtimePath}:/builder/appimage-runtime/${runtimeName}:ro"
+    )
+  }
+  $dockerArgs += @(
+    "-w", "/workspace",
+    $Image,
+    "bash", "/workspace/build.sh", "-t", $SelectedTarget, "-a", $SelectedArch, "--native"
+  )
+  if ($Package) { $dockerArgs += "--appimage" }
+  & docker @dockerArgs
+  if ($LASTEXITCODE -ne 0) { throw "Docker build failed with exit code $LASTEXITCODE" }
 }
 
 function Invoke-Win7Build {

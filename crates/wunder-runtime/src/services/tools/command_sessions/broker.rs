@@ -5,13 +5,19 @@ use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
+use tokio::process::ChildStdin;
+use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 const DEFAULT_SESSION_RING_BUFFER_BYTES: usize = 256 * 1024;
 const FINISHED_SESSION_RETENTION_MINUTES: i64 = 5;
 const SESSION_RING_HEAD_RATIO_NUMERATOR: usize = 3;
 const SESSION_RING_HEAD_RATIO_DENOMINATOR: usize = 8;
+const MAX_ACTIVE_COMMAND_PROCESSES: usize = 16;
 
 #[derive(Default)]
 struct OutputTailState {
@@ -223,14 +229,55 @@ impl CommandSessionRecord {
 #[derive(Default)]
 pub struct CommandSessionBroker {
     sessions: DashMap<String, Arc<Mutex<CommandSessionRecord>>>,
+    processes: DashMap<String, Arc<CommandProcessHandle>>,
+    changed: Notify,
     ring_buffer_bytes: usize,
+    active_processes: AtomicUsize,
+}
+
+/// Runtime-only controls for a detached command. The durable/session snapshot
+/// remains separate so polling never needs to hold a child-process lock.
+pub(crate) struct CommandProcessHandle {
+    stdin: tokio::sync::Mutex<Option<ChildStdin>>,
+    cancel: CancellationToken,
+}
+
+impl CommandProcessHandle {
+    pub(crate) fn new(stdin: Option<ChildStdin>) -> Self {
+        Self {
+            stdin: tokio::sync::Mutex::new(stdin),
+            cancel: CancellationToken::new(),
+        }
+    }
+
+    pub(crate) fn cancellation_token(&self) -> CancellationToken {
+        self.cancel.clone()
+    }
+
+    pub(crate) async fn write_stdin(&self, input: &[u8]) -> Result<(), String> {
+        let mut guard = self.stdin.lock().await;
+        let Some(stdin) = guard.as_mut() else {
+            return Err("command stdin is unavailable".to_string());
+        };
+        stdin
+            .write_all(input)
+            .await
+            .map_err(|error| format!("failed to write command stdin: {error}"))
+    }
+
+    pub(crate) fn cancel(&self) {
+        self.cancel.cancel();
+    }
 }
 
 impl CommandSessionBroker {
     pub(crate) fn new() -> Self {
         Self {
             sessions: DashMap::new(),
+            processes: DashMap::new(),
+            changed: Notify::new(),
             ring_buffer_bytes: DEFAULT_SESSION_RING_BUFFER_BYTES,
+            active_processes: AtomicUsize::new(0),
         }
     }
 
@@ -240,6 +287,18 @@ impl CommandSessionBroker {
 
     pub(crate) fn start_session(&self, spec: CommandSessionStartSpec) -> CommandSessionSnapshot {
         self.prune_expired();
+        if let Some(command_session_id) = spec
+            .command_session_id
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            if let Some(existing) = self.sessions.get(command_session_id) {
+                let snapshot = existing.value().lock().snapshot();
+                if snapshot.user_id == spec.user_id && snapshot.session_id == spec.session_id {
+                    return snapshot;
+                }
+            }
+        }
         let command_session_id = spec
             .command_session_id
             .clone()
@@ -251,6 +310,7 @@ impl CommandSessionBroker {
         )));
         let snapshot = record.lock().snapshot();
         self.sessions.insert(command_session_id, record);
+        self.changed.notify_waiters();
         snapshot
     }
 
@@ -270,6 +330,7 @@ impl CommandSessionBroker {
         record
             .stream_mut(stream)
             .push(chunk, self.ring_buffer_bytes);
+        self.changed.notify_waiters();
         Some(record.seq)
     }
 
@@ -287,6 +348,7 @@ impl CommandSessionBroker {
         record.expires_at =
             Some(record.updated_at + Duration::minutes(FINISHED_SESSION_RETENTION_MINUTES));
         record.error = Some(error.into());
+        self.changed.notify_waiters();
         Some(record.snapshot())
     }
 
@@ -308,7 +370,139 @@ impl CommandSessionBroker {
         record.exit_code = exit_code;
         record.timed_out = timed_out;
         record.error = error;
+        self.changed.notify_waiters();
         Some(record.snapshot())
+    }
+
+    pub(crate) fn register_process(
+        &self,
+        command_session_id: &str,
+        process: Arc<CommandProcessHandle>,
+    ) -> bool {
+        if self.snapshot(command_session_id).is_none() {
+            return false;
+        }
+        match self.processes.entry(command_session_id.to_string()) {
+            dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                // A retry may re-register the same session. Cancel the stale
+                // handle before replacing it so the old child cannot leak.
+                let stale = entry.insert(process);
+                stale.cancel();
+                true
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                // Holding the vacant entry prevents a same-ID concurrent
+                // launch from bypassing this capacity reservation.
+                let mut current = self.active_processes.load(Ordering::Acquire);
+                loop {
+                    if current >= MAX_ACTIVE_COMMAND_PROCESSES {
+                        return false;
+                    }
+                    match self.active_processes.compare_exchange_weak(
+                        current,
+                        current + 1,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(_) => break,
+                        Err(observed) => current = observed,
+                    }
+                }
+                entry.insert(process);
+                true
+            }
+        }
+    }
+
+    pub(crate) fn remove_process(&self, command_session_id: &str) {
+        if self.processes.remove(command_session_id).is_some() {
+            self.active_processes.fetch_sub(1, Ordering::AcqRel);
+        }
+        self.changed.notify_waiters();
+    }
+
+    pub(crate) async fn write_stdin(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        command_session_id: &str,
+        input: &[u8],
+    ) -> Result<(), String> {
+        let snapshot = self
+            .snapshot_for_scope(user_id, session_id, command_session_id)
+            .ok_or_else(|| "unknown command session".to_string())?;
+        if snapshot.status != CommandSessionStatus::Running {
+            return Err("command session has exited".to_string());
+        }
+        let process = self
+            .processes
+            .get(command_session_id)
+            .map(|entry| Arc::clone(entry.value()))
+            .ok_or_else(|| "command process is no longer active".to_string())?;
+        process.write_stdin(input).await
+    }
+
+    pub(crate) async fn poll(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        command_session_id: &str,
+        yield_time: std::time::Duration,
+    ) -> Result<CommandSessionSnapshot, String> {
+        // Register first so an exit/delta between the snapshot and wait is
+        // retained by Notify instead of making this poll wait unnecessarily.
+        let notified = self.changed.notified();
+        let initial = self
+            .snapshot_for_scope(user_id, session_id, command_session_id)
+            .ok_or_else(|| "unknown command session".to_string())?;
+        if initial.status != CommandSessionStatus::Running || yield_time.is_zero() {
+            return Ok(initial);
+        }
+        let _ = tokio::time::timeout(yield_time, notified).await;
+        self.snapshot_for_scope(user_id, session_id, command_session_id)
+            .ok_or_else(|| "command session expired".to_string())
+    }
+
+    pub(crate) fn terminate_scope(&self, user_id: &str, session_id: &str) -> usize {
+        let ids = self
+            .sessions
+            .iter()
+            .filter_map(|entry| {
+                let snapshot = entry.value().lock().snapshot();
+                (snapshot.user_id == user_id
+                    && snapshot.session_id == session_id
+                    && snapshot.status == CommandSessionStatus::Running)
+                    .then(|| snapshot.command_session_id)
+            })
+            .collect::<Vec<_>>();
+        let mut cancelled = 0;
+        for id in ids {
+            if let Some(process) = self
+                .processes
+                .get(&id)
+                .map(|entry| Arc::clone(entry.value()))
+            {
+                // Keep the reservation until the detached watcher observes
+                // process exit. Removing it here would permit a short-lived
+                // oversubscription while the operating system reaps the child.
+                process.cancel();
+                cancelled += 1;
+            }
+        }
+        cancelled
+    }
+
+    pub(crate) fn running_session_ids(&self, user_id: &str, session_id: &str) -> Vec<String> {
+        self.sessions
+            .iter()
+            .filter_map(|entry| {
+                let snapshot = entry.value().lock().snapshot();
+                (snapshot.user_id == user_id
+                    && snapshot.session_id == session_id
+                    && snapshot.status == CommandSessionStatus::Running)
+                    .then_some(snapshot.command_session_id)
+            })
+            .collect()
     }
 
     pub(crate) fn snapshot(&self, command_session_id: &str) -> Option<CommandSessionSnapshot> {
@@ -470,5 +664,78 @@ mod tests {
         assert!(broker
             .snapshot_for_scope("user_a", "sess_1", "cmd_other")
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn poll_returns_updated_exit_snapshot_without_cross_scope_access() {
+        let broker = CommandSessionBroker::new();
+        broker.start_session(build_start_spec());
+        broker.append_delta("cmd_test", CommandSessionStream::Stdout, b"ready\n");
+        broker.finish_session("cmd_test", Some(0), false, None);
+
+        let snapshot = broker
+            .poll("user_a", "sess_1", "cmd_test", std::time::Duration::ZERO)
+            .await
+            .expect("scoped snapshot");
+        assert_eq!(snapshot.status, CommandSessionStatus::Exited);
+        assert_eq!(snapshot.exit_code, Some(0));
+        assert_eq!(snapshot.stdout_tail, "ready\n");
+        assert!(broker
+            .poll("user_b", "sess_1", "cmd_test", std::time::Duration::ZERO)
+            .await
+            .is_err());
+    }
+
+    #[test]
+    fn terminate_scope_only_cancels_matching_live_processes() {
+        let broker = CommandSessionBroker::new();
+        broker.start_session(build_start_spec());
+        broker.start_session(CommandSessionStartSpec {
+            command_session_id: Some("cmd_other".to_string()),
+            tool_call_id: None,
+            user_id: "user_b".to_string(),
+            session_id: "sess_1".to_string(),
+            workspace_id: "ws_1".to_string(),
+            command_index: 0,
+            command: "sleep".to_string(),
+            cwd: "/tmp".to_string(),
+            shell: None,
+            launch_mode: CommandSessionLaunchMode::Direct,
+            tty: false,
+            interactive: false,
+        });
+        let own = Arc::new(CommandProcessHandle::new(None));
+        let other = Arc::new(CommandProcessHandle::new(None));
+        assert!(broker.register_process("cmd_test", Arc::clone(&own)));
+        assert!(broker.register_process("cmd_other", Arc::clone(&other)));
+
+        assert_eq!(broker.terminate_scope("user_a", "sess_1"), 1);
+        assert!(own.cancellation_token().is_cancelled());
+        assert!(!other.cancellation_token().is_cancelled());
+    }
+
+    #[test]
+    fn broker_enforces_active_process_limit_under_parallel_registration() {
+        let broker = Arc::new(CommandSessionBroker::new());
+        let accepted = std::thread::scope(|scope| {
+            let handles = (0..MAX_ACTIVE_COMMAND_PROCESSES * 2)
+                .map(|index| {
+                    let broker = Arc::clone(&broker);
+                    scope.spawn(move || {
+                        let id = format!("cmd_parallel_{index}");
+                        let mut spec = build_start_spec();
+                        spec.command_session_id = Some(id.clone());
+                        broker.start_session(spec);
+                        broker.register_process(&id, Arc::new(CommandProcessHandle::new(None)))
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .filter_map(|handle| handle.join().ok())
+                .filter(|accepted| *accepted)
+                .count()
+        });
+        assert_eq!(accepted, MAX_ACTIVE_COMMAND_PROCESSES);
     }
 }

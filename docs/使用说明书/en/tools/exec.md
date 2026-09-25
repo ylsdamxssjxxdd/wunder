@@ -29,6 +29,7 @@ updated_at: 2026-04-10
 - `content`
 - `workdir`
 - `timeout_s`
+- `yield_time_ms`
 - `budget`
 - `dry_run`
 
@@ -89,6 +90,16 @@ If output was trimmed by the guard, the result may also include:
   "next_step_hint": "Command output was truncated by the output guard..."
 }
 ```
+
+## Background command sessions
+
+Local runtimes and the server sandbox wait 750ms by default. A command that is still running returns `state: "running"` and a `command_session_id`, so the agent can keep working. Poll it with `command_session`:
+
+```json
+{"command_session_id":"cmd_xxx","yield_time_ms":500}
+```
+
+For interactive commands, use `action: "write_stdin"` with `input`. Output previews are bounded, and cancelling a thread terminates its active commands and those of its child threads.
 
 ## `dry_run`
 

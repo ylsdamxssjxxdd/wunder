@@ -173,6 +173,7 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "context_usage"
             | "quota_balance"
             | "quota_usage"
+            | "model_request_usage"
             | "round_usage"
             | "token_usage"
             | "team_start"
@@ -234,7 +235,8 @@ pub(super) struct EventEmitter {
     delta_buffer: Option<Arc<ParkingMutex<StreamDeltaBuffer>>>,
     client_message_id: Option<String>,
     usage: Arc<ParkingMutex<TokenUsage>>,
-    quota_consumed: Arc<ParkingMutex<i64>>,
+    model_requests: Arc<ParkingMutex<i64>>,
+    account_credits_consumed: Arc<ParkingMutex<i64>>,
 }
 
 impl EventEmitter {
@@ -272,7 +274,8 @@ impl EventEmitter {
                 reasoning: Some(0),
                 ..Default::default()
             })),
-            quota_consumed: Arc::new(ParkingMutex::new(0)),
+            model_requests: Arc::new(ParkingMutex::new(0)),
+            account_credits_consumed: Arc::new(ParkingMutex::new(0)),
         }
     }
 
@@ -290,14 +293,40 @@ impl EventEmitter {
         self.usage.lock().clone()
     }
 
-    pub(super) fn record_quota_consumption(&self, consumed: i64) -> i64 {
-        let mut total = self.quota_consumed.lock();
-        *total = total.saturating_add(consumed.max(0));
+    pub(super) fn record_model_request(&self, count: i64) -> i64 {
+        let mut total = self.model_requests.lock();
+        *total = total.saturating_add(count.max(0));
         *total
     }
 
-    pub(super) fn accumulated_quota_consumption(&self) -> i64 {
-        *self.quota_consumed.lock()
+    pub(super) fn record_account_credit_consumption(&self, count: i64) -> i64 {
+        let mut total = self.account_credits_consumed.lock();
+        *total = total.saturating_add(count.max(0));
+        *total
+    }
+
+    pub(super) fn accumulated_model_requests(&self) -> i64 {
+        *self.model_requests.lock()
+    }
+
+    pub(super) fn accumulated_account_credit_consumption(&self) -> i64 {
+        *self.account_credits_consumed.lock()
+    }
+
+    /// Return the billable request count used by persisted assistant stats.
+    ///
+    /// Account debit is recorded after quota admission. A few completion and
+    /// recovery paths can persist stats before the debit counter is observed;
+    /// for normal users the dispatched model request count is the safe lower
+    /// bound because every admitted request consumes one credit. Administrators
+    /// are explicitly exempt from account billing.
+    pub(super) fn accumulated_billable_account_credits(&self, is_admin: bool) -> i64 {
+        if is_admin {
+            0
+        } else {
+            self.accumulated_account_credit_consumption()
+                .max(self.accumulated_model_requests())
+        }
     }
 
     fn close(&self) {

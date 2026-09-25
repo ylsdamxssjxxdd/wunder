@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-09-25T06:37:49.669012+00:00",
+  "generated_at": "2026-09-25T13:48:23.685962+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -3795,20 +3795,25 @@
         {
           "id": "section-5",
           "level": 2,
-          "text": "dryrun"
+          "text": "后台命令会话"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "失败返回"
+          "text": "dryrun"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "特殊行为：误把 patch 文本传进来"
+          "text": "失败返回"
         },
         {
           "id": "section-8",
+          "level": 2,
+          "text": "特殊行为：误把 patch 文本传进来"
+        },
+        {
+          "id": "section-9",
           "level": 2,
           "text": "不适用场景"
         }
@@ -9384,7 +9389,7 @@
       "language": "zh-CN",
       "title": "额度与 Token 用量",
       "summary": "每次模型请求消耗 1 额度，每日发放 1000；Token 用量用于运行观测。",
-      "updated_at": "2026-09-23",
+      "updated_at": "2026-09-25",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -12346,20 +12351,25 @@
         {
           "id": "section-5",
           "level": 2,
-          "text": "dryrun"
+          "text": "Background command sessions"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "Failure results"
+          "text": "dryrun"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "Special behavior: patch text sent by mistake"
+          "text": "Failure results"
         },
         {
           "id": "section-8",
+          "level": 2,
+          "text": "Special behavior: patch text sent by mistake"
+        },
+        {
+          "id": "section-9",
           "level": 2,
           "text": "When not to use it"
         }
@@ -17243,7 +17253,7 @@
       "language": "en",
       "title": "Quota and Token Usage",
       "summary": "Each model request costs 1 credit; regular users receive 1000 credits daily. Token usage remains diagnostic.",
-      "updated_at": "2026-09-23",
+      "updated_at": "2026-09-25",
       "read_when": [],
       "source_docs": [],
       "tab": "Reference",

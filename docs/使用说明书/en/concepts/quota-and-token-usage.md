@@ -30,6 +30,8 @@ Input, output, reasoning and context tokens remain available for runtime diagnos
 - `context_occupancy_tokens`: latest observed context occupancy.
 - `request_consumed_tokens` / `round_usage.total_tokens`: cumulative model tokens for a user request.
 - `token_usage` / `model_usage`: model usage events.
-- `quota_usage`: credit account snapshot.
+- `model_request_usage`: emitted for every real model request, with separate request-count, billing, per-turn credit, and account-snapshot fields.
+
+Thread model requests and credit consumption are separate metrics. A billable regular-user request normally increments both by one. An exempt request such as an administrator request still increments the thread request count, while its credit consumption remains zero. In `model_request_usage`, `session_request_count` is the absolute thread total, `account_credits_consumed` is the current user-turn debit, and `account` is only an account balance snapshot. Legacy `quota_usage` is retained only to read historical records.
 
 [User management](/docs/en/concepts/core-multi-user-management/) · [Admin panels](/docs/en/reference/admin-panels/)

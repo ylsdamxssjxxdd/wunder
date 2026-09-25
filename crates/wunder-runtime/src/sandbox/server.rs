@@ -15,13 +15,16 @@ use std::fs::OpenOptions;
 use std::hash::{Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
-use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex as AsyncMutex, Notify};
 use tokio::time::{timeout, Duration};
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use crate::command_utils;
 use crate::core::python_runtime;
@@ -53,6 +56,9 @@ const RULES_CACHE_CAPACITY: usize = 512;
 const RULES_CACHE_TTL: Duration = Duration::from_secs(600);
 const STREAM_READ_CHUNK_SIZE: usize = 4096;
 const STREAM_DRAIN_TIMEOUT_MS: u64 = 2000;
+const COMMAND_SESSION_RETENTION: Duration = Duration::from_secs(5 * 60);
+const MAX_ACTIVE_COMMAND_SESSIONS: usize = 16;
+const COMMAND_SESSION_DELTA_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Deserialize)]
 struct SandboxToolRequest {
@@ -61,6 +67,7 @@ struct SandboxToolRequest {
     session_id: String,
     #[serde(default)]
     language: String,
+    #[serde(default)]
     tool: String,
     #[serde(default)]
     args: Value,
@@ -78,6 +85,188 @@ struct SandboxToolRequest {
     idle_ttl_s: u64,
     #[serde(default)]
     resources: SandboxResources,
+}
+
+#[derive(Debug, Deserialize)]
+struct SandboxCommandSessionControlRequest {
+    user_id: String,
+    session_id: String,
+    command_session_id: String,
+    #[serde(default)]
+    input: String,
+    #[serde(default)]
+    after_seq: u64,
+    #[serde(default)]
+    yield_time_ms: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct SandboxCommandSessionSnapshot {
+    command_session_id: String,
+    status: &'static str,
+    seq: u64,
+    exit_code: Option<i32>,
+    timed_out: bool,
+    error: Option<String>,
+    #[serde(default)]
+    deltas: Vec<SandboxCommandSessionDelta>,
+    stdout: String,
+    stderr: String,
+    dropped: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SandboxCommandSessionDelta {
+    seq: u64,
+    stream: &'static str,
+    delta: String,
+}
+
+struct SandboxCommandSessionState {
+    running: bool,
+    seq: u64,
+    exit_code: Option<i32>,
+    timed_out: bool,
+    error: Option<String>,
+    deltas: VecDeque<SandboxCommandSessionDelta>,
+    delta_bytes: usize,
+    first_seq: u64,
+    expires_at: Option<Instant>,
+}
+
+struct SandboxCommandSession {
+    user_id: String,
+    session_id: String,
+    stdin: AsyncMutex<Option<tokio::process::ChildStdin>>,
+    cancel: CancellationToken,
+    changed: Notify,
+    state: Mutex<SandboxCommandSessionState>,
+}
+
+impl SandboxCommandSession {
+    fn snapshot(&self, after_seq: u64) -> SandboxCommandSessionSnapshot {
+        let state = self.state.lock();
+        let stdout = state
+            .deltas
+            .iter()
+            .filter(|item| item.stream == "stdout")
+            .map(|item| item.delta.as_str())
+            .collect::<String>();
+        let stderr = state
+            .deltas
+            .iter()
+            .filter(|item| item.stream == "stderr")
+            .map(|item| item.delta.as_str())
+            .collect::<String>();
+        SandboxCommandSessionSnapshot {
+            command_session_id: String::new(),
+            status: if state.running { "running" } else { "exited" },
+            seq: state.seq,
+            exit_code: state.exit_code,
+            timed_out: state.timed_out,
+            error: state.error.clone(),
+            deltas: state
+                .deltas
+                .iter()
+                .filter(|item| item.seq > after_seq)
+                .cloned()
+                .collect(),
+            stdout,
+            stderr,
+            dropped: after_seq > 0 && after_seq.saturating_add(1) < state.first_seq,
+        }
+    }
+
+    fn append_delta(&self, stream: &'static str, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        let delta = String::from_utf8_lossy(bytes).into_owned();
+        if delta.is_empty() {
+            return;
+        }
+        let mut state = self.state.lock();
+        state.seq = state.seq.saturating_add(1);
+        let seq = state.seq;
+        state.delta_bytes = state.delta_bytes.saturating_add(delta.len());
+        state
+            .deltas
+            .push_back(SandboxCommandSessionDelta { seq, stream, delta });
+        while state.delta_bytes > COMMAND_SESSION_DELTA_BYTES {
+            let Some(removed) = state.deltas.pop_front() else {
+                break;
+            };
+            state.delta_bytes = state.delta_bytes.saturating_sub(removed.delta.len());
+            state.first_seq = removed.seq.saturating_add(1);
+        }
+        drop(state);
+        self.changed.notify_waiters();
+    }
+
+    fn finish(&self, exit_code: Option<i32>, timed_out: bool, error: Option<String>) {
+        let mut state = self.state.lock();
+        state.running = false;
+        state.seq = state.seq.saturating_add(1);
+        state.exit_code = exit_code;
+        state.timed_out = timed_out;
+        state.error = error;
+        state.expires_at = Some(Instant::now() + COMMAND_SESSION_RETENTION);
+        drop(state);
+        self.changed.notify_waiters();
+    }
+}
+
+#[derive(Default)]
+struct SandboxCommandSessionManager {
+    sessions: dashmap::DashMap<String, Arc<SandboxCommandSession>>,
+    active_sessions: AtomicUsize,
+}
+
+impl SandboxCommandSessionManager {
+    fn prune_expired(&self) {
+        let now = Instant::now();
+        let expired = self
+            .sessions
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .state
+                    .lock()
+                    .expires_at
+                    .filter(|deadline| *deadline <= now)
+                    .map(|_| entry.key().clone())
+            })
+            .collect::<Vec<_>>();
+        for id in expired {
+            self.sessions.remove(&id);
+        }
+    }
+
+    fn try_reserve_active(&self) -> bool {
+        let mut current = self.active_sessions.load(Ordering::Acquire);
+        loop {
+            if current >= MAX_ACTIVE_COMMAND_SESSIONS {
+                return false;
+            }
+            match self.active_sessions.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    fn release_active(&self) {
+        let previous = self.active_sessions.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(
+            previous > 0,
+            "sandbox command session reservation underflow"
+        );
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -221,9 +410,14 @@ impl SandboxRulesCache {
 }
 
 static SANDBOX_RULES_CACHE: OnceLock<Mutex<SandboxRulesCache>> = OnceLock::new();
+static COMMAND_SESSIONS: OnceLock<SandboxCommandSessionManager> = OnceLock::new();
 
 fn rules_cache() -> &'static Mutex<SandboxRulesCache> {
     SANDBOX_RULES_CACHE.get_or_init(|| Mutex::new(SandboxRulesCache::new()))
+}
+
+fn command_sessions() -> &'static SandboxCommandSessionManager {
+    COMMAND_SESSIONS.get_or_init(SandboxCommandSessionManager::default)
 }
 
 pub fn build_router() -> Router {
@@ -233,6 +427,22 @@ pub fn build_router() -> Router {
         .route(
             "/sandboxes/execute_command_stream",
             post(execute_command_stream),
+        )
+        .route(
+            "/sandboxes/command-sessions/launch",
+            post(launch_command_session),
+        )
+        .route(
+            "/sandboxes/command-sessions/poll",
+            post(poll_command_session),
+        )
+        .route(
+            "/sandboxes/command-sessions/stdin",
+            post(write_command_session_stdin),
+        )
+        .route(
+            "/sandboxes/command-sessions/cancel",
+            post(cancel_command_session),
         )
         .route("/sandboxes/release", post(release_sandbox))
 }
@@ -365,6 +575,247 @@ async fn execute_command_stream(Json(request): Json<SandboxToolRequest>) -> impl
         ],
         Body::from_stream(ReceiverStream::new(rx)),
     )
+}
+
+async fn launch_command_session(Json(request): Json<SandboxToolRequest>) -> impl IntoResponse {
+    let language = i18n::resolve_language([request.language.as_str()]);
+    i18n::with_language(language, async move {
+        let response = launch_command_session_inner(request).await;
+        (StatusCode::OK, Json(response))
+    })
+    .await
+}
+
+async fn poll_command_session(
+    Json(request): Json<SandboxCommandSessionControlRequest>,
+) -> impl IntoResponse {
+    let response = poll_command_session_inner(request, false).await;
+    (StatusCode::OK, Json(response))
+}
+
+async fn write_command_session_stdin(
+    Json(request): Json<SandboxCommandSessionControlRequest>,
+) -> impl IntoResponse {
+    let response = poll_command_session_inner(request, true).await;
+    (StatusCode::OK, Json(response))
+}
+
+async fn cancel_command_session(
+    Json(request): Json<SandboxCommandSessionControlRequest>,
+) -> impl IntoResponse {
+    command_sessions().prune_expired();
+    let response = command_sessions()
+        .sessions
+        .get(request.command_session_id.trim())
+        .filter(|entry| entry.user_id == request.user_id && entry.session_id == request.session_id)
+        .map(|entry| {
+            entry.cancel.cancel();
+            json!({"ok": true})
+        })
+        .unwrap_or_else(|| json!({"ok": false, "error": "unknown command session"}));
+    (StatusCode::OK, Json(response))
+}
+
+async fn poll_command_session_inner(
+    request: SandboxCommandSessionControlRequest,
+    write_stdin: bool,
+) -> Value {
+    command_sessions().prune_expired();
+    let Some(session) = command_sessions()
+        .sessions
+        .get(request.command_session_id.trim())
+        .filter(|entry| entry.user_id == request.user_id && entry.session_id == request.session_id)
+        .map(|entry| Arc::clone(entry.value()))
+    else {
+        return json!({"ok": false, "error": "unknown command session"});
+    };
+    if write_stdin && !request.input.is_empty() {
+        let mut stdin = session.stdin.lock().await;
+        let Some(stdin) = stdin.as_mut() else {
+            return json!({"ok": false, "error": "command stdin is unavailable"});
+        };
+        if let Err(error) = stdin.write_all(request.input.as_bytes()).await {
+            return json!({"ok": false, "error": format!("failed to write command stdin: {error}")});
+        }
+    }
+    // Register the waiter before the snapshot so a concurrently appended
+    // delta or exit cannot be missed between observing `running` and waiting.
+    let notified = session.changed.notified();
+    let initial = session.snapshot(request.after_seq);
+    if initial.status == "running" && request.yield_time_ms > 0 {
+        let _ = timeout(
+            Duration::from_millis(request.yield_time_ms.clamp(1, 10_000)),
+            notified,
+        )
+        .await;
+    }
+    let mut snapshot = session.snapshot(request.after_seq);
+    snapshot.command_session_id = request.command_session_id;
+    json!({"ok": true, "data": snapshot})
+}
+
+async fn launch_command_session_inner(request: SandboxToolRequest) -> Value {
+    command_sessions().prune_expired();
+    let args = recover_tool_args_value(&request.args);
+    let command_budget = parse_command_budget(&args);
+    let content = args
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if content.is_empty() {
+        return json!({"ok": false, "error": i18n::t("tool.exec.command_required")});
+    }
+    let workdir = args.get("workdir").and_then(Value::as_str).unwrap_or("");
+    let container_root = if request.container_root.trim().is_empty() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(request.container_root.trim())
+    };
+    let workspace_root = if request.workspace_root.trim().is_empty() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(request.workspace_root.trim())
+    };
+    let rules = resolve_cached_rules(
+        &workspace_root,
+        &container_root,
+        &["*".to_string()],
+        &[],
+        &request.allow_commands,
+    );
+    let context = SandboxContext {
+        workspace_root,
+        container_root,
+        allow_commands: rules.allow_commands,
+    };
+    let cwd = match resolve_path(
+        &context,
+        if workdir.trim().is_empty() {
+            "."
+        } else {
+            workdir
+        },
+    ) {
+        Ok(path) if path.is_dir() => path,
+        Ok(_) => return json!({"ok": false, "error": i18n::t("tool.exec.workdir_not_dir")}),
+        Err(error) => return json!({"ok": false, "error": error}),
+    };
+    let allow_all = context.allow_commands.contains("*");
+    let commands = if allow_all {
+        vec![content.clone()]
+    } else {
+        content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    };
+    if commands.len() != 1 {
+        return json!({"ok": false, "error": "background command sessions accept exactly one command"});
+    }
+    if let Some(max_commands) = command_budget.max_commands {
+        if commands.len() > max_commands {
+            return json!({
+                "ok": false,
+                "error": format!("command count {} exceeds budget limit {max_commands}", commands.len()),
+            });
+        }
+    }
+    let command_text = commands.into_iter().next().unwrap_or_default();
+    if !allow_all
+        && !context
+            .allow_commands
+            .iter()
+            .any(|allowed| command_text.to_lowercase().starts_with(allowed))
+    {
+        return json!({"ok": false, "error": i18n::t("tool.exec.not_allowed")});
+    }
+    let timeout_s = apply_time_budget_secs(
+        parse_timeout_secs(args.get("timeout_s")).unwrap_or(DEFAULT_COMMAND_TIMEOUT_S),
+        &command_budget,
+    );
+    let command_env = python_runtime::resolve_desktop_command_env();
+    let overrides = command_utils::CommandProgramOverrides {
+        pip_bin: command_env.command_overrides.pip_bin.clone(),
+        git_bin: command_env.command_overrides.git_bin.clone(),
+        rg_bin: command_env.command_overrides.rg_bin.clone(),
+    };
+    let mut command = command_utils::build_direct_command_with_overrides(
+        &command_text,
+        &cwd,
+        command_env
+            .python_runtime
+            .as_ref()
+            .map(|runtime| runtime.bin.as_path()),
+        overrides,
+    )
+    .or_else(|| command_utils::build_direct_command(&command_text, &cwd))
+    .unwrap_or_else(|| command_utils::build_shell_command(&command_text, &cwd));
+    python_runtime::apply_desktop_command_env(&mut command, &command_env);
+    apply_streaming_command_env(&mut command);
+    command
+        .kill_on_drop(true)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if !command_sessions().try_reserve_active() {
+        return json!({"ok": false, "error": "active command session limit reached"});
+    }
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            command_sessions().release_active();
+            return json!({"ok": false, "error": error.to_string()});
+        }
+    };
+    let id = format!("sandcmd_{}", Uuid::new_v4().simple());
+    let session = Arc::new(SandboxCommandSession {
+        user_id: request.user_id,
+        session_id: request.session_id,
+        stdin: AsyncMutex::new(child.stdin.take()),
+        cancel: CancellationToken::new(),
+        changed: Notify::new(),
+        state: Mutex::new(SandboxCommandSessionState {
+            running: true,
+            seq: 0,
+            exit_code: None,
+            timed_out: false,
+            error: None,
+            deltas: VecDeque::new(),
+            delta_bytes: 0,
+            first_seq: 1,
+            expires_at: None,
+        }),
+    });
+    command_sessions()
+        .sessions
+        .insert(id.clone(), Arc::clone(&session));
+    let yield_time_ms = args
+        .get("yield_time_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(750)
+        .clamp(50, 10_000);
+    spawn_sandbox_command_session(child, Arc::clone(&session), timeout_s);
+    let initial = timeout(Duration::from_millis(yield_time_ms), async {
+        loop {
+            let notified = session.changed.notified();
+            let snapshot = session.snapshot(0);
+            if snapshot.status != "running" {
+                break snapshot;
+            }
+            notified.await;
+        }
+    })
+    .await
+    .ok();
+    if let Some(mut snapshot) = initial {
+        snapshot.command_session_id = id.clone();
+        return json!({"ok": true, "data": snapshot});
+    }
+    json!({"ok": true, "data": {"command_session_id": id, "status": "running"}})
 }
 
 async fn release_sandbox(Json(request): Json<SandboxReleaseRequest>) -> impl IntoResponse {
@@ -1548,6 +1999,83 @@ async fn run_command_output(
         stdout_capture: stdout_capture.meta,
         stderr_capture: stderr_capture.meta,
     })
+}
+
+fn spawn_sandbox_command_session(
+    mut child: tokio::process::Child,
+    session: Arc<SandboxCommandSession>,
+    timeout_s: f64,
+) {
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    tokio::spawn(async move {
+        let stdout_task = stdout.map(|reader| {
+            let session = Arc::clone(&session);
+            tokio::spawn(async move {
+                read_sandbox_command_session_stream(reader, session, "stdout").await
+            })
+        });
+        let stderr_task = stderr.map(|reader| {
+            let session = Arc::clone(&session);
+            tokio::spawn(async move {
+                read_sandbox_command_session_stream(reader, session, "stderr").await
+            })
+        });
+        let (status, timed_out, error) = if timeout_s > 0.0 {
+            tokio::select! {
+                _ = session.cancel.cancelled() => {
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    (None, false, Some("command cancelled".to_string()))
+                }
+                result = timeout(Duration::from_secs_f64(timeout_s), child.wait()) => match result {
+                    Ok(Ok(status)) => (Some(status), false, None),
+                    Ok(Err(error)) => (None, false, Some(error.to_string())),
+                    Err(_) => {
+                        let _ = child.kill().await;
+                        let _ = child.wait().await;
+                        (None, true, None)
+                    }
+                }
+            }
+        } else {
+            tokio::select! {
+                _ = session.cancel.cancelled() => {
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    (None, false, Some("command cancelled".to_string()))
+                }
+                result = child.wait() => match result {
+                    Ok(status) => (Some(status), false, None),
+                    Err(error) => (None, false, Some(error.to_string())),
+                }
+            }
+        };
+        if let Some(handle) = stdout_task {
+            let _ = handle.await;
+        }
+        if let Some(handle) = stderr_task {
+            let _ = handle.await;
+        }
+        session.finish(status.and_then(|item| item.code()), timed_out, error);
+        command_sessions().release_active();
+    });
+}
+
+async fn read_sandbox_command_session_stream<R>(
+    mut reader: R,
+    session: Arc<SandboxCommandSession>,
+    stream: &'static str,
+) where
+    R: AsyncRead + Unpin,
+{
+    let mut chunk = vec![0u8; STREAM_READ_CHUNK_SIZE];
+    loop {
+        match reader.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(read) => session.append_delta(stream, &chunk[..read]),
+        }
+    }
 }
 
 struct CaptureTask(tokio::task::JoinHandle<Result<CommandOutputCapture, CommandError>>);

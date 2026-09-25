@@ -6,7 +6,9 @@ use super::{
         CommandOutputCaptureMeta, CommandOutputCollector, CommandOutputPolicy,
         DEFAULT_CAPTURE_TOTAL_BYTES, STDERR_CAPTURE_POLICY, STDOUT_CAPTURE_POLICY,
     },
-    command_sessions::{CommandSessionLaunchMode, CommandSessionStream, CommandSessionTracker},
+    command_sessions::{
+        CommandProcessHandle, CommandSessionLaunchMode, CommandSessionStream, CommandSessionTracker,
+    },
     execute_in_sandbox, recover_tool_args_value, resolve_tool_name,
     tool_error::{
         build_execute_command_failure_data, build_execute_command_failure_message,
@@ -26,8 +28,10 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
+use tokio::process::Child;
 fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
     match value {
         Some(Value::Number(num)) => num.as_f64(),
@@ -35,6 +39,18 @@ fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
         Some(Value::Bool(flag)) => Some(if *flag { 1.0 } else { 0.0 }),
         _ => None,
     }
+}
+
+const DEFAULT_COMMAND_YIELD_MS: u64 = 750;
+const MAX_COMMAND_YIELD_MS: u64 = 10_000;
+
+fn parse_command_yield_time(args: &Value) -> Duration {
+    let value = args
+        .get("yield_time_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(DEFAULT_COMMAND_YIELD_MS)
+        .clamp(50, MAX_COMMAND_YIELD_MS);
+    Duration::from_millis(value)
 }
 
 pub(crate) fn extract_direct_patch_from_command(content: &str) -> Option<String> {
@@ -469,6 +485,7 @@ struct CommandRunResult {
     stdout_capture: CommandOutputCaptureMeta,
     stderr_capture: CommandOutputCaptureMeta,
     command_session_id: Option<String>,
+    running: bool,
 }
 
 pub(crate) fn compact_command_result_for_model(item: &Value) -> Value {
@@ -746,6 +763,147 @@ async fn run_spawned_child_streaming(
         stdout_capture: stdout_capture.meta,
         stderr_capture: stderr_capture.meta,
         command_session_id: command_session.map(|item| item.command_session_id().to_string()),
+        running: false,
+    })
+}
+
+/// Detach a local child after a short initial wait. The process and its bounded
+/// session transcript remain owned by the broker while the model continues.
+async fn detach_spawned_child(
+    broker: Arc<super::command_sessions::CommandSessionBroker>,
+    mut child: Child,
+    timeout: Option<Duration>,
+    command_session: CommandSessionTracker,
+    stdout_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
+    stderr_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
+) -> Result<CommandRunResult> {
+    let session_id = command_session.command_session_id().to_string();
+    let cleanup_session_id = session_id.clone();
+    let process = Arc::new(CommandProcessHandle::new(child.stdin.take()));
+    if !broker.register_process(&session_id, Arc::clone(&process)) {
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        command_session.emit_exit(
+            None,
+            false,
+            Some("active command session limit reached".to_string()),
+        );
+        return Err(anyhow!("active command session limit reached"));
+    }
+    let tracker = command_session.clone();
+    let cancel = process.cancellation_token();
+    long_task::spawn("tools.command.detached", async move {
+        let (wait_result, timed_out, error) = if let Some(timeout) = timeout {
+            tokio::select! {
+                _ = cancel.cancelled() => { let _ = child.kill().await; let _ = child.wait().await; (None, false, Some("command cancelled".to_string())) }
+                result = tokio::time::timeout(timeout, child.wait()) => match result {
+                    Ok(Ok(status)) => (Some(status), false, None),
+                    Ok(Err(error)) => (None, false, Some(error.to_string())),
+                    Err(_) => { let _ = child.kill().await; let _ = child.wait().await; (None, true, None) }
+                }
+            }
+        } else {
+            tokio::select! {
+                _ = cancel.cancelled() => { let _ = child.kill().await; let _ = child.wait().await; (None, false, Some("command cancelled".to_string())) }
+                result = child.wait() => match result {
+                    Ok(status) => (Some(status), false, None),
+                    Err(error) => (None, false, Some(error.to_string()))
+                }
+            }
+        };
+        let _ = join_output_task(stdout_task).await;
+        let _ = join_output_task(stderr_task).await;
+        let exit_code = wait_result.and_then(|status| status.code());
+        tracker.emit_exit(exit_code, timed_out, error);
+        broker.remove_process(&cleanup_session_id);
+    });
+    Ok(CommandRunResult {
+        returncode: -1,
+        stdout: String::new(),
+        stderr: String::new(),
+        timed_out: false,
+        stdout_capture: CommandOutputCaptureMeta::empty(),
+        stderr_capture: CommandOutputCaptureMeta::empty(),
+        command_session_id: Some(session_id),
+        running: true,
+    })
+}
+
+fn start_command_output_readers(
+    context: &ToolContext<'_>,
+    child: &mut Child,
+    tool_name: &str,
+    command_text: &str,
+    stdout_policy: CommandOutputPolicy,
+    stderr_policy: CommandOutputPolicy,
+    command_session: CommandSessionTracker,
+) -> (
+    Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
+    Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
+) {
+    let chunk_size = resolve_stream_chunk_size(context.config);
+    let stdout_task = child.stdout.take().map(|stdout| {
+        let emitter = context.event_emitter.clone();
+        let tool_name = tool_name.to_string();
+        let command_text = command_text.to_string();
+        let command_session = command_session.clone();
+        long_task::spawn("tools.command.stdout_reader", async move {
+            read_stream_output(
+                stdout,
+                emitter,
+                tool_name,
+                command_text,
+                "stdout",
+                chunk_size,
+                stdout_policy,
+                Some(command_session),
+            )
+            .await
+        })
+    });
+    let stderr_task = child.stderr.take().map(|stderr| {
+        let emitter = context.event_emitter.clone();
+        let tool_name = tool_name.to_string();
+        let command_text = command_text.to_string();
+        long_task::spawn("tools.command.stderr_reader", async move {
+            read_stream_output(
+                stderr,
+                emitter,
+                tool_name,
+                command_text,
+                "stderr",
+                chunk_size,
+                stderr_policy,
+                Some(command_session),
+            )
+            .await
+        })
+    });
+    (stdout_task, stderr_task)
+}
+
+async fn complete_detachable_child(
+    status: Option<std::process::ExitStatus>,
+    timed_out: bool,
+    stdout_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
+    stderr_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
+    command_session: CommandSessionTracker,
+) -> Result<CommandRunResult> {
+    let stdout_capture = join_output_task(stdout_task).await?;
+    let stderr_capture = join_output_task(stderr_task).await?;
+    let stdout = render_command_output(&stdout_capture, decode_command_output);
+    let stderr = render_command_output(&stderr_capture, decode_command_output);
+    let exit_code = status.and_then(|value| value.code());
+    command_session.emit_exit(exit_code, timed_out, None);
+    Ok(CommandRunResult {
+        returncode: exit_code.unwrap_or(-1),
+        stdout,
+        stderr,
+        timed_out,
+        stdout_capture: stdout_capture.meta,
+        stderr_capture: stderr_capture.meta,
+        command_session_id: Some(command_session.command_session_id().to_string()),
+        running: false,
     })
 }
 
@@ -759,6 +917,7 @@ async fn run_command_streaming(
     stdout_policy: CommandOutputPolicy,
     stderr_policy: CommandOutputPolicy,
     command_index: usize,
+    yield_time: Option<Duration>,
 ) -> Result<CommandRunResult> {
     let command_text = command.to_string();
     let command_env = python_runtime::resolve_desktop_command_env();
@@ -793,8 +952,10 @@ async fn run_command_streaming(
     let initial_shell_name =
         (!used_direct).then(|| command_utils::resolve_shell_name(command).to_string());
     cmd.kill_on_drop(true);
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let (child, launch_mode, shell_name) = match cmd.spawn() {
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let (mut child, launch_mode, shell_name) = match cmd.spawn() {
         Ok(child) => (
             child,
             if used_direct {
@@ -809,7 +970,9 @@ async fn run_command_streaming(
             python_runtime::apply_desktop_command_env(&mut cmd, &command_env);
             apply_streaming_command_env(&mut cmd);
             cmd.kill_on_drop(true);
-            cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+            cmd.stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
             let fallback_shell_name = command_utils::resolve_shell_name(command).to_string();
             match cmd.spawn() {
                 Ok(child) => (
@@ -860,17 +1023,242 @@ async fn run_command_streaming(
         false,
         false,
     );
-    run_spawned_child_streaming(
+    let Some(command_session) = command_session else {
+        return run_spawned_child_streaming(
+            context,
+            child,
+            tool_name,
+            &command_text,
+            timeout,
+            stdout_policy,
+            stderr_policy,
+            None,
+        )
+        .await;
+    };
+    let Some(wait) = yield_time.filter(|wait| *wait > Duration::ZERO) else {
+        return run_spawned_child_streaming(
+            context,
+            child,
+            tool_name,
+            &command_text,
+            timeout,
+            stdout_policy,
+            stderr_policy,
+            Some(command_session),
+        )
+        .await;
+    };
+    // Start readers before the initial wait so a chatty process cannot block
+    // on a full pipe while the model is doing other work.
+    let (stdout_task, stderr_task) = start_command_output_readers(
         context,
-        child,
+        &mut child,
         tool_name,
         &command_text,
-        timeout,
         stdout_policy,
         stderr_policy,
+        command_session.clone(),
+    );
+    tokio::time::sleep(wait).await;
+    if let Some(status) = child.try_wait()? {
+        return complete_detachable_child(
+            Some(status),
+            false,
+            stdout_task,
+            stderr_task,
+            command_session,
+        )
+        .await;
+    }
+    let Some(broker) = context.command_sessions.as_ref().cloned() else {
+        let (status, timed_out) = if let Some(timeout) = timeout {
+            match tokio::time::timeout(timeout, child.wait()).await {
+                Ok(status) => (Some(status?), false),
+                Err(_) => {
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    (None, true)
+                }
+            }
+        } else {
+            (Some(child.wait().await?), false)
+        };
+        return complete_detachable_child(
+            status,
+            timed_out,
+            stdout_task,
+            stderr_task,
+            command_session,
+        )
+        .await;
+    };
+    detach_spawned_child(
+        broker,
+        child,
+        timeout,
         command_session,
+        stdout_task,
+        stderr_task,
     )
     .await
+}
+
+pub(crate) async fn command_session_control(
+    context: &ToolContext<'_>,
+    args: &Value,
+) -> Result<Value> {
+    let session_id = args
+        .get("command_session_id")
+        .or_else(|| args.get("session_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if session_id.is_empty() {
+        return Ok(build_failed_tool_result(
+            "command_session_id is required",
+            json!({}),
+            ToolErrorMeta::new("TOOL_COMMAND_SESSION_ID_REQUIRED", None, false, None),
+            false,
+        ));
+    }
+    let action = args.get("action").and_then(Value::as_str).unwrap_or("poll");
+    let input = args.get("input").and_then(Value::as_str).unwrap_or("");
+    let yield_time_ms = args
+        .get("yield_time_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(500)
+        .clamp(0, MAX_COMMAND_YIELD_MS);
+    if session_id.starts_with("sandcmd_") {
+        let after_seq = args.get("after_seq").and_then(Value::as_u64).unwrap_or(0);
+        let Some(result) = crate::sandbox::control_command_session(
+            context.config,
+            context.user_id,
+            context.session_id,
+            session_id,
+            input,
+            after_seq,
+            yield_time_ms,
+            action.eq_ignore_ascii_case("write_stdin"),
+        )
+        .await
+        else {
+            return Ok(build_failed_tool_result(
+                "sandbox command session is unavailable",
+                json!({"command_session_id": session_id}),
+                ToolErrorMeta::new("TOOL_COMMAND_SESSION_UNAVAILABLE", None, true, Some(200)),
+                false,
+            ));
+        };
+        let data = result.get("data").cloned().unwrap_or_else(|| json!({}));
+        let status = data
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let tracker = CommandSessionTracker::start_with_id(
+            context,
+            Some(session_id.to_string()),
+            "sandbox command",
+            "",
+            0,
+            Some("sandbox".to_string()),
+            CommandSessionLaunchMode::Shell,
+            false,
+            false,
+        );
+        if let Some(tracker) = tracker {
+            let after_seq = args.get("after_seq").and_then(Value::as_u64).unwrap_or(0);
+            for delta in data
+                .get("deltas")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let seq = delta.get("seq").and_then(Value::as_u64).unwrap_or(0);
+                if seq <= after_seq {
+                    continue;
+                }
+                let stream =
+                    command_session_stream_from_value(delta.get("stream").unwrap_or(&Value::Null));
+                if let Some(text) = delta.get("delta").and_then(Value::as_str) {
+                    tracker.emit_delta(stream, text.as_bytes());
+                }
+            }
+            if status.eq_ignore_ascii_case("exited") {
+                tracker.emit_exit(
+                    data.get("exit_code")
+                        .and_then(Value::as_i64)
+                        .and_then(|value| i32::try_from(value).ok()),
+                    data.get("timed_out")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    data.get("error")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
+                );
+            }
+        }
+        return Ok(build_model_tool_success(
+            "command_session",
+            if status.eq_ignore_ascii_case("running") {
+                "running"
+            } else {
+                "completed"
+            },
+            "Sandbox command session status and bounded output preview.",
+            data,
+        ));
+    }
+    let Some(broker) = context.command_sessions.as_ref() else {
+        return Ok(build_failed_tool_result(
+            "command sessions are unavailable in this runtime",
+            json!({}),
+            ToolErrorMeta::new("TOOL_COMMAND_SESSION_UNAVAILABLE", None, false, None),
+            false,
+        ));
+    };
+    if action.eq_ignore_ascii_case("write_stdin") {
+        broker
+            .write_stdin(
+                context.user_id,
+                context.session_id,
+                session_id,
+                input.as_bytes(),
+            )
+            .await
+            .map_err(|error| anyhow!(error))?;
+    }
+    let snapshot = broker
+        .poll(
+            context.user_id,
+            context.session_id,
+            session_id,
+            Duration::from_millis(yield_time_ms),
+        )
+        .await
+        .map_err(|error| anyhow!(error))?;
+    Ok(build_model_tool_success(
+        "command_session",
+        if snapshot.status == super::command_sessions::CommandSessionStatus::Running {
+            "running"
+        } else {
+            "completed"
+        },
+        "Command session status and bounded output preview.",
+        json!({
+            "command_session_id": snapshot.command_session_id,
+            "status": snapshot.status,
+            "exit_code": snapshot.exit_code,
+            "timed_out": snapshot.timed_out,
+            "seq": snapshot.seq,
+            "stdout": snapshot.stdout_tail,
+            "stderr": snapshot.stderr_tail,
+            "pty": snapshot.pty_tail,
+            "stdout_bytes": snapshot.stdout_bytes,
+            "stderr_bytes": snapshot.stderr_bytes,
+            "output_truncated": snapshot.stdout_dropped_bytes > 0 || snapshot.stderr_dropped_bytes > 0,
+        }),
+    ))
 }
 
 async fn run_ptc_python_script_streaming(
@@ -998,12 +1386,76 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
         }
         return Ok(result);
     }
-    if let Some(result) = execute_command_in_sandbox_streaming_auto(context, &args, &content).await
-    {
-        if !dry_run {
-            context.workspace.mark_tree_dirty(context.workspace_id);
+    if crate::sandbox::sandbox_enabled(context.config) && !dry_run && !content.is_empty() {
+        if let Some(result) = crate::sandbox::launch_command_session(
+            context.config,
+            context.workspace.as_ref(),
+            context.user_id,
+            context.workspace_id,
+            context.session_id,
+            &args,
+            context.user_tool_bindings,
+        )
+        .await
+        {
+            if result.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+                context.workspace.mark_tree_dirty(context.workspace_id);
+                let data = result.get("data").cloned().unwrap_or_else(|| json!({}));
+                let command_session_id = data
+                    .get("command_session_id")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string);
+                let tracker = command_session_id.as_ref().and_then(|command_session_id| {
+                    CommandSessionTracker::start_with_id(
+                        context,
+                        Some(command_session_id.clone()),
+                        &content,
+                        args.get("workdir").and_then(Value::as_str).unwrap_or(""),
+                        0,
+                        Some("sandbox".to_string()),
+                        CommandSessionLaunchMode::Shell,
+                        false,
+                        false,
+                    )
+                });
+                let completed = data
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| status.eq_ignore_ascii_case("exited"));
+                if completed {
+                    if let Some(tracker) = tracker {
+                        if let Some(stderr) = data.get("stderr").and_then(Value::as_str) {
+                            tracker.emit_delta(CommandSessionStream::Stderr, stderr.as_bytes());
+                        }
+                        if let Some(stdout) = data.get("stdout").and_then(Value::as_str) {
+                            tracker.emit_delta(CommandSessionStream::Stdout, stdout.as_bytes());
+                        }
+                        tracker.emit_exit(
+                            data.get("exit_code")
+                                .and_then(Value::as_i64)
+                                .and_then(|value| i32::try_from(value).ok()),
+                            data.get("timed_out")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false),
+                            data.get("error")
+                                .and_then(Value::as_str)
+                                .map(ToString::to_string),
+                        );
+                    }
+                }
+                return Ok(build_model_tool_success(
+                    "execute_command",
+                    if completed { "completed" } else { "running" },
+                    if completed {
+                        "Sandbox command completed."
+                    } else {
+                        "Sandbox command started in the background; poll command_session with the returned ID."
+                    },
+                    data,
+                ));
+            }
+            return Ok(result);
         }
-        return Ok(result);
     }
     if let Some(result) = execute_in_sandbox(context, "执行命令", &args).await {
         if !dry_run {
@@ -1194,6 +1646,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             stdout_policy,
             stderr_policy,
             command_index,
+            Some(parse_command_yield_time(&args)),
         )
         .await?;
         let command_total_bytes = run
@@ -1226,6 +1679,20 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                 "stderr": run.stderr_capture.to_json(),
             },
         }));
+        if run.running {
+            context.workspace.mark_tree_dirty(context.workspace_id);
+            return Ok(build_model_tool_success(
+                "execute_command",
+                "running",
+                "Command started in the background; poll command_session with the returned ID.",
+                json!({
+                    "command_session_id": run.command_session_id,
+                    "status": "running",
+                    "results": compact_command_results_for_model(&results),
+                    "yield_time_ms": parse_command_yield_time(&args).as_millis(),
+                }),
+            ));
+        }
         if run.timed_out {
             let detail = if timeout_s > 0.0 {
                 format!("timeout after {timeout_s}s")

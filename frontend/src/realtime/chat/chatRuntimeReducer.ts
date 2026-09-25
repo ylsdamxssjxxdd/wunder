@@ -2885,10 +2885,14 @@ const PROJECTED_STATS_DISPLAY_FIELDS = [
   'toolCalls',
   'tool_calls',
   'quotaSnapshot',
+  'accountSnapshot',
   'quota',
   'quota_usage',
-  'creditsConsumed',
-  'credits_consumed',
+    'creditsConsumed',
+    'credits_consumed',
+    'account_credits_consumed',
+    'modelRequestCount',
+    'model_request_count',
   'turn_quota_used',
   'quotaUsage',
   'contextTokens',
@@ -4621,8 +4625,8 @@ const applyProjectedUsageStatsDisplay = (
     applyProjectedContextUsageStats(stats, source);
   } else if (sourceType === 'context_usage') {
     applyProjectedContextUsageStats(stats, source);
-  } else if (sourceType === 'quota_usage') {
-    applyProjectedQuotaStats(stats, source);
+  } else if (sourceType === 'quota_usage' || sourceType === 'model_request_usage') {
+    applyProjectedModelRequestUsageStats(stats, source, sourceType === 'quota_usage');
   }
   if (resolveProjectedContextTokensForEvent(source, event, payload) !== null) {
     stats.contextSnapshotSeq = event.eventSeq;
@@ -4638,8 +4642,8 @@ const applyProjectedUsageStatsToStats = (
   const payload = event.payload;
   const data = asRecord(payload.data);
   const source = Object.keys(data).length > 0 ? data : payload;
-  if (sourceType === 'quota_usage') {
-    applyProjectedQuotaStats(stats, source);
+  if (sourceType === 'quota_usage' || sourceType === 'model_request_usage') {
+    applyProjectedModelRequestUsageStats(stats, source, sourceType === 'quota_usage');
   } else if (sourceType === 'round_usage' || sourceType === 'model_usage') {
     const normalizedRoundUsage = normalizeProjectedUsagePayload(source.round_usage ?? source.roundUsage ?? source);
     if (normalizedRoundUsage) {
@@ -4900,10 +4904,14 @@ const mirrorProjectedStatsDisplay = (
     'toolCalls',
     'tool_calls',
     'quotaSnapshot',
+    'accountSnapshot',
     'quota',
     'quota_usage',
-    'creditsConsumed',
-    'credits_consumed',
+  'creditsConsumed',
+  'credits_consumed',
+  'account_credits_consumed',
+  'modelRequestCount',
+    'model_request_count',
     'turn_quota_used',
     'quotaUsage',
     'contextTokens',
@@ -4970,38 +4978,72 @@ const applyProjectedConsumedStats = (
   stats.consumedTokens = stats.quotaConsumed;
 };
 
-const applyProjectedQuotaStats = (
+const applyProjectedModelRequestUsageStats = (
   stats: Record<string, unknown>,
-  source: Record<string, unknown>
+  source: Record<string, unknown>,
+  legacy = false
 ): void => {
-  // Quota counts provider requests; token usage is projected only from model usage events.
-  const snapshot = normalizeProjectedQuotaSnapshot(source);
+  // Token usage is projected only from model usage events. This event carries
+  // request counts and, for billable calls, an independent account snapshot.
+  const account = asRecord(source.account);
+  const snapshot = normalizeProjectedQuotaSnapshot(
+    Object.keys(account).length > 0 ? account : source
+  );
   if (snapshot) {
+    stats.accountSnapshot = snapshot;
     stats.quotaSnapshot = snapshot;
     stats.quota = snapshot;
     stats.quota_usage = snapshot;
     stats.quotaUsage = snapshot;
   }
-  // Older stream envelopes expose the request charge as `consumed` instead
-  // of `turn_quota_used`. It is still a per-turn quota count for quota_usage
-  // events and must reach the assistant bubble.
-  // Providers and older persisted events can include a zero-valued canonical
-  // alias together with the real charge under `consumed`. Always use the
-  // largest valid alias so a placeholder zero cannot mask the charge.
+  const requestCount = [
+    source.turn_request_count,
+    source.turnRequestCount,
+    legacy ? source.turn_quota_used : undefined,
+    legacy ? source.turnQuotaUsed : undefined,
+    legacy ? source.consumed : undefined,
+    legacy ? source.count : undefined
+  ]
+    .map(parseNonNegativeInt)
+    .filter((value): value is number => value !== null)
+    .reduce((maximum, value) => Math.max(maximum, value), -1);
+  if (requestCount >= 0) {
+    stats.modelRequestCount = Math.max(
+      normalizeProjectedCount(stats.modelRequestCount),
+      requestCount
+    );
+    stats.model_request_count = stats.modelRequestCount;
+  }
   const credits = [
-    source.turn_quota_used,
-    source.turnQuotaUsed,
-    source.credits_consumed,
-    source.creditsConsumed,
-    source.consumed,
-    source.count
+    source.account_credits_consumed,
+    source.accountCreditsConsumed,
+    legacy ? source.credits_consumed : undefined,
+    legacy ? source.creditsConsumed : undefined,
+    legacy ? source.turn_quota_used : undefined,
+    legacy ? source.turnQuotaUsed : undefined,
+    legacy ? source.consumed : undefined,
+    legacy ? source.count : undefined,
+    // Persisted/replayed model-request events expose the per-turn request
+    // counter even when an account snapshot is omitted. Each admitted request
+    // consumes one user credit, so it is a safe compatibility fallback.
+    source.turn_request_count,
+    source.turnRequestCount
   ]
     .map(parseNonNegativeInt)
     .filter((value): value is number => value !== null)
     .reduce((maximum, value) => Math.max(maximum, value), -1);
   if (credits >= 0) {
-    stats.creditsConsumed = Math.max(normalizeProjectedCount(stats.creditsConsumed), credits);
+    // A legacy zero must not hide the known per-turn request count. New
+    // events provide account_credits_consumed directly; old persisted events
+    // only carry turn_request_count.
+    const billable = source.billable === false || source.is_billable === false;
+    const effectiveCredits = billable ? credits : Math.max(
+      credits,
+      Number.isFinite(requestCount) && requestCount > 0 ? requestCount : 0
+    );
+    stats.creditsConsumed = Math.max(normalizeProjectedCount(stats.creditsConsumed), effectiveCredits);
     stats.credits_consumed = stats.creditsConsumed;
+    stats.account_credits_consumed = stats.creditsConsumed;
   }
 };
 
@@ -5166,7 +5208,11 @@ const resolveUsageStatsTargetMessage = (
   event: NormalizedRuntimeEvent
 ): ChatRuntimeMessageProjection | null => {
   const sourceType = normalizeText(event.payload.source_event_type);
-  const hasTurnQuota = sourceType === 'quota_usage' && (
+  const hasTurnModelRequest = (sourceType === 'quota_usage' || sourceType === 'model_request_usage') && (
+    event.payload.turn_request_count !== undefined ||
+    asRecord(event.payload.data).turn_request_count !== undefined ||
+    event.payload.turnRequestCount !== undefined ||
+    asRecord(event.payload.data).turnRequestCount !== undefined ||
     event.payload.turn_quota_used !== undefined ||
     asRecord(event.payload.data).turn_quota_used !== undefined ||
     event.payload.turnQuotaUsed !== undefined ||
@@ -5212,13 +5258,13 @@ const resolveUsageStatsTargetMessage = (
   const activeTurn = resolveLatestActiveAssistantModelTurn(session);
   const activeMessage = resolveLatestAssistantMessageForModelTurn(session, activeTurn);
   if (activeMessage) return activeMessage;
-  // A live assistant placeholder is the safest owner even when the quota
-  // envelope has weak or generated turn ids. Only defer a quota-only event
+  // A live assistant placeholder is the safest owner even when the request
+  // envelope has weak or generated turn ids. Only defer a usage-only event
   // when no assistant is active, so it cannot overwrite an older reply.
-  if (hasTurnQuota) return null;
-  // A quota event may precede the first assistant bubble. Do not attach it to
+  if (hasTurnModelRequest) return null;
+  // A request-usage event may precede the first assistant bubble. Do not attach it to
   // an older completed reply when there is no active turn to own it.
-  if (sourceType === 'quota_usage') return null;
+  if (sourceType === 'quota_usage' || sourceType === 'model_request_usage') return null;
   return Object.values(session.messageById)
     .filter((message) => message.role === 'assistant' && !isSyntheticRuntimeMessage(message))
     .sort((left, right) => right.updatedSeq - left.updatedSeq || right.createdSeq - left.createdSeq)[0] || null;
@@ -5256,10 +5302,26 @@ const normalizeProjectedUsageConsumedTokens = (
 const normalizeProjectedQuotaSnapshot = (
   value: Record<string, unknown>
 ): Record<string, unknown> | null => {
-  const daily = parseNonNegativeInt(value.daily_quota ?? value.dailyQuota ?? value.daily ?? value.quota ?? value.total);
-  const used = parseNonNegativeInt(value.used ?? value.consumed ?? value.count ?? value.usage);
-  const remaining = parseNonNegativeInt(value.remaining ?? value.left ?? value.quota_remaining ?? value.remain);
-  const date = firstText(value.date, value.quota_date, value.quotaDate);
+  // `model_request_usage.account` uses account-domain names so its values
+  // cannot be mistaken for per-turn request counters. Keep the old aliases
+  // below for replaying streams written before the protocol split.
+  const daily = parseNonNegativeInt(
+    value.granted_total ?? value.grantedTotal ?? value.daily_grant ?? value.dailyGrant ??
+      value.daily_quota ?? value.dailyQuota ?? value.daily ?? value.quota ?? value.total
+  );
+  const used = parseNonNegativeInt(
+    value.used_total ?? value.usedTotal ?? value.used ?? value.consumed ?? value.count ?? value.usage
+  );
+  const remaining = parseNonNegativeInt(
+    value.balance ?? value.remaining ?? value.left ?? value.quota_remaining ?? value.remain
+  );
+  const date = firstText(
+    value.last_grant_date,
+    value.lastGrantDate,
+    value.date,
+    value.quota_date,
+    value.quotaDate
+  );
   if (daily === null && used === null && remaining === null && !date) return null;
   return {
     daily,

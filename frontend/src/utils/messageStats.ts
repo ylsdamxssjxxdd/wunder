@@ -381,7 +381,12 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
 
 const resolveCreditsConsumed = (source: Record<string, any> | null | undefined): number | null => {
   if (!source || typeof source !== 'object') return null;
-  const candidates = [
+  const accountValue = source.account_credits_consumed ?? source.accountCreditsConsumed;
+  if (accountValue !== undefined && accountValue !== null && accountValue !== '') {
+    const parsed = Number(accountValue);
+    return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : null;
+  }
+  const explicitCandidates = [
     source.creditsConsumed,
     source.credits_consumed,
     source.turn_quota_used,
@@ -391,7 +396,28 @@ const resolveCreditsConsumed = (source: Record<string, any> | null | undefined):
   ]
     .map((value) => Number(value))
     .filter((value) => Number.isFinite(value) && value >= 0);
-  return candidates.length > 0 ? Math.trunc(Math.max(...candidates)) : null;
+  if (explicitCandidates.length > 0 && Math.max(...explicitCandidates) > 0) {
+    return Math.trunc(Math.max(...explicitCandidates));
+  }
+  // A persisted zero from the old account-debit field was common even though
+  // the thread monitor already had the admitted request count. For a normal
+  // user, one admitted model request equals one consumed credit.
+  const requestCandidates = [
+    source.model_request_count,
+    source.modelRequestCount,
+    source.turn_request_count,
+    source.turnRequestCount
+  ]
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  const legacyUsage = Number(
+    source.quotaConsumed ?? source.quota_consumed ?? source.request_consumed_tokens
+  );
+  if (requestCandidates.length > 0 && Math.max(...requestCandidates) > 0 &&
+      Number.isFinite(legacyUsage) && legacyUsage > 0) {
+    return Math.trunc(Math.max(...requestCandidates));
+  }
+  return explicitCandidates.length > 0 ? Math.trunc(Math.max(...explicitCandidates)) : null;
 };
 
 const resolveAssistantCreditsConsumed = (

@@ -172,6 +172,23 @@ test('message stats expose quota charges carried as consumed', () => {
   assert.equal(findEntryValue(entries, 'Credits'), '1');
 });
 
+test('message stats retain a zero account charge for an exempt model request', () => {
+  const entries = buildAssistantMessageStatsEntries({
+    role: 'assistant',
+    stats: { modelRequestCount: 1, creditsConsumed: 0, toolCalls: 0 }
+  }, createTranslator());
+  assert.equal(findEntryValue(entries, 'Credits'), '0');
+  assert.equal(findEntryValue(entries, 'Tools'), '0');
+});
+
+test('message stats recover a legacy zero account charge from request count', () => {
+  const entries = buildAssistantMessageStatsEntries({
+    role: 'assistant',
+    stats: { model_request_count: 1, creditsConsumed: 0, quotaConsumed: 5927, toolCalls: 0 }
+  }, createTranslator());
+  assert.equal(findEntryValue(entries, 'Credits'), '1');
+});
+
 test('message stats hide speed when only the aggregate field is available', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(

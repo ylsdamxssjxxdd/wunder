@@ -26,7 +26,7 @@ use tracing::{error, warn};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
-mod quota_usage;
+mod model_request_usage;
 
 const MIN_PAYLOAD_LIMIT: usize = 256;
 const DEFAULT_PERSIST_INTERVAL_S: f64 = 15.0;
@@ -290,7 +290,7 @@ struct SessionRecord {
     context_tokens_peak: i64,
     consumed_tokens: i64,
     tool_calls: i64,
-    quota_used: Option<i64>,
+    model_request_count: Option<i64>,
     message_feedback: BTreeMap<i64, MessageFeedbackItem>,
     next_event_id: i64,
     events: VecDeque<MonitorEvent>,
@@ -343,7 +343,7 @@ impl SessionRecord {
             context_tokens_peak: 0,
             consumed_tokens: 0,
             tool_calls: 0,
-            quota_used: Some(0),
+            model_request_count: Some(0),
             message_feedback: BTreeMap::new(),
             next_event_id: 1,
             events: VecDeque::new(),
@@ -426,7 +426,8 @@ impl SessionRecord {
             "context_occupancy_tokens_peak": context_tokens_peak,
             "consumed_tokens": self.consumed_tokens,
             "tool_calls": self.tool_calls,
-            "quota_used": self.quota_used,
+            "model_request_count": self.model_request_count,
+            "quota_used": self.model_request_count,
             "feedback_up_count": feedback_up_count,
             "feedback_down_count": feedback_down_count,
             "feedback_total_count": feedback_total_count,
@@ -463,7 +464,8 @@ impl SessionRecord {
             "context_tokens_peak": self.context_tokens_peak,
             "consumed_tokens": self.consumed_tokens,
             "tool_calls": self.tool_calls,
-            "quota_used": self.quota_used,
+            "model_request_count": self.model_request_count,
+            "quota_used": self.model_request_count,
             "message_feedback": message_feedback,
             "next_event_id": self.next_event_id,
             "events": self
@@ -621,17 +623,26 @@ impl SessionRecord {
             .iter()
             .filter(|event| event.event_type == "tool_call")
             .count() as i64;
-        // Only explicit thread totals can recover quota; legacy quota fields counted tokens.
-        let quota_used = payload
-            .get("quota_used")
+        // Only explicit request totals can recover this projection; old generic
+        // quota fields may have represented Token counts and are not inferred.
+        let model_request_count = payload
+            .get("model_request_count")
+            .or_else(|| payload.get("quota_used"))
             .and_then(Value::as_i64)
             .into_iter()
             .chain(
                 events
                     .iter()
-                    .filter(|event| event.event_type == "quota_usage")
+                    .filter(|event| {
+                        event.event_type == "quota_usage"
+                            || event.event_type == "model_request_usage"
+                    })
                     .filter_map(|event| {
-                        event.data.get("session_quota_used").and_then(Value::as_i64)
+                        event
+                            .data
+                            .get("session_request_count")
+                            .or_else(|| event.data.get("session_quota_used"))
+                            .and_then(Value::as_i64)
                     }),
             )
             .filter(|value| *value >= 0)
@@ -671,7 +682,7 @@ impl SessionRecord {
             context_tokens_peak: context_tokens_peak.max(context_tokens),
             consumed_tokens,
             tool_calls,
-            quota_used,
+            model_request_count,
             message_feedback,
             next_event_id,
             events,
@@ -1072,13 +1083,15 @@ impl MonitorState {
                     };
                     let mut pending_award = None;
                     record.updated_time = now;
-                    if event_type == "quota_usage" {
+                    if event_type == "quota_usage" || event_type == "model_request_usage" {
                         if let Some(total) = data
-                            .get("session_quota_used")
+                            .get("session_request_count")
+                            .or_else(|| data.get("session_quota_used"))
                             .and_then(Value::as_i64)
                             .filter(|value| *value >= 0)
                         {
-                            record.quota_used = Some(record.quota_used.unwrap_or(0).max(total));
+                            record.model_request_count =
+                                Some(record.model_request_count.unwrap_or(0).max(total));
                         }
                     }
                     if event_type == "context_usage" && has_context_occupancy(data) {
@@ -1757,7 +1770,7 @@ impl MonitorState {
                         (
                             record.consumed_tokens.max(0),
                             record.tool_calls.max(0),
-                            record.quota_used,
+                            record.model_request_count,
                         ),
                     );
                 } else {
@@ -1785,7 +1798,7 @@ impl MonitorState {
                     (
                         record.consumed_tokens.max(0),
                         record.tool_calls.max(0),
-                        record.quota_used,
+                        record.model_request_count,
                     ),
                 );
             }
@@ -1897,8 +1910,8 @@ impl MonitorState {
                 overview.insert("user_rounds".to_string(), json!(record.user_rounds.max(0)));
                 overview.insert("tool_calls".to_string(), json!(record.tool_calls.max(0)));
                 overview.insert(
-                    "quota_used".to_string(),
-                    json!(record.quota_used.unwrap_or(0).max(0)),
+                    "model_request_count".to_string(),
+                    json!(record.model_request_count.unwrap_or(0).max(0)),
                 );
                 overview.insert(
                     "consumed_tokens".to_string(),
@@ -3847,8 +3860,8 @@ mod tests {
         monitor.record_event("sess-log-overview", "tool_call", &json!({ "tool": "read" }));
         monitor.record_event(
             "sess-log-overview",
-            "quota_usage",
-            &json!({ "session_quota_used": 3 }),
+            "model_request_usage",
+            &json!({ "session_request_count": 3 }),
         );
         monitor.record_event(
             "sess-log-overview",

@@ -17,6 +17,7 @@
 - 反复出现的问题，解决后记得把经验写为一条记录到docs\经验教训.md里，避免下次再犯同样的错误
 - 测试、代码、日志和文档记录中不要出现具体业务名称、真实身份、真实密钥、真实路径或暴露场景意图的示例值
 - 我的智能体额度有限，请你尽量高效完成任务
+- 解决问题时应当从源头从后端或深层彻底重构修复，既是为了解决问题也是为了未来发展，不要一直在前端或表层缝缝补补
 
 # 系统设计准则
 
@@ -85,7 +86,6 @@
 - `frontend-slint/`：桌面端默认用户前端（Rust + Slint）；`ui/` 放界面，`src/` 放接入与 UI 状态投影，`scripts/` 只放运行验收与回归脚本；构建、交叉编译和打包入口统一在仓库根 `builders/`，复用现有 Win7 x86 兼容方案与完整内嵌字体。
 - `frontend/`：服务器版本用户侧前端（Vue3 + TypeScript）；主要代码在 `frontend/src/`，按 `api/`、`components/`、`realtime/`、`router/`、`stores/`、`views/`、`styles/` 等分层。
 - `web/`：管理端/调试端前端（原生 HTML + JS 模块）；`modules/` 放业务模块，`styles/` 放样式，`shared/` 放共享前端工具，`docs/` 与 `simple-chat/` 放独立页面，`third/` 放第三方资源。
-- `desktop/electron/`：遗留 Electron 桌面壳及其分发资源，停止日常维护，不向此目录落入新的桌面功能。
 - `config/`：运行配置与内置资源；`prompts/`、`knowledge/`、`skills/`、`fonts/`、`preset_worker_cards/` 等统一放这里，不放仓库根目录。
 - `docs/`：API 文档、设计文档、技术说明书、使用说明书、功能迭代、经验教训等；`docs/方案/归档/` 收纳已完成或历史方案，过时方案移入归档而不是留在原处。
 - `scripts/`：仓库级脚本；包含 `update_feature_log.py`、`build_docs_site.py`、回归、压测、备份脚本等。
@@ -96,7 +96,7 @@
 - `patches/`：依赖补丁与兼容性补丁资源。
 - `images/`：共享图片资源。
 - `.cargo/`、`.github/`：构建工具链配置与仓库自动化配置。
-- `target/`、`node_modules/`、`temp_dir/`、`crates/*/target/`、`desktop/electron/node_modules/`：构建或临时产物目录，不放业务源码与长期资料。
+- `target/`、`node_modules/`、`temp_dir/`、`crates/*/target/`：构建或临时产物目录，不放业务源码与长期资料。
 
 ## 后端分层标准
 
@@ -181,29 +181,3 @@
 - CLI/TUI 能力优先放 `crates/wunder-cli/`，复用 runtime 的 AppState、配置、工具和存储语义，不另起一套执行链路。
 - Desktop 和 CLI 默认本地 SQLite，必须考虑离线、启动速度、路径权限、配置迁移和本地文件安全。
 - 本地 bridge、LAN overlay、系统能力调用要最小权限、显式能力声明、可观测错误，不把系统能力默默暴露给远端。
-
-## 常见开发落点规则
-
-- 新增 HTTP/WS 接口：优先在 `crates/wunder-runtime/src/api/` 新增或扩展对应领域文件，业务逻辑放 `crates/wunder-runtime/src/services/`、`orchestrator/` 或 `storage/`；涉及外部可见行为时同步更新 `docs/API文档.md`。
-- 新增模型编排、工具执行链路、上下文压缩、回合状态管理：优先放 `crates/wunder-runtime/src/orchestrator/`。
-- 新增线程调度、任务排队、lease、dispatch：优先放 `crates/wunder-runtime/src/services/runtime/thread/` 或 `runtime/mission/`。
-- 新增实时投影、watch、replay、presence：优先放 `crates/wunder-runtime/src/services/stream_events*`、`beeroom_realtime*`、`presence/` 或对应 WS API。
-- 新增渠道接入或渠道收发链路：优先放 `crates/wunder-runtime/src/channels/`，路由暴露由 `api/` 接住。
-- 新增 gateway 能力：优先放 `crates/wunder-runtime/src/gateway/`，不要和普通渠道或工具混淆。
-- 新增存储读写或数据库适配：优先放 `crates/wunder-runtime/src/storage/`，并同时考虑 PostgreSQL 与 SQLite。
-- 新增工具、技能、浏览器、运行时能力：优先拆到 `crates/wunder-runtime/src/services/tools/`、`services/browser/`、`services/runtime/`、`services/abilities/` 等现有子目录；公共注册或汇总逻辑再接回对应 `mod.rs` 或聚合文件。
-- 新增服务器用户端页面能力：优先按职责放到 `frontend/src/views/`、`frontend/src/components/`、`frontend/src/stores/`、`frontend/src/api/`、`frontend/src/realtime/`；消息器主链路相关改动优先落到 `frontend/src/views/messenger/` 及其配套组件。
-- 管理端页面改动：业务逻辑放 `web/modules/`，样式放 `web/styles/`，独立文档或演示页放 `web/docs/` 或 `web/simple-chat/`。
-- CLI/TUI 改动：优先放 `crates/wunder-cli/`。
-- 桌面端改动：界面与 UI 投影放 `frontend-slint/`，本地运行时、bridge 和系统能力放 `crates/wunder-desktop/`，共享业务能力放 `crates/wunder-runtime/`；不再向 Electron/Tauri 前端壳同步功能。
-- 内置提示词、知识、技能、字体、预设卡片等资源统一放 `config/` 对应子目录，不要放回仓库根目录。
-
-## 测试与验收标准
-
-- 后端 Rust 改动完成后，至少运行相关 crate 的 `cargo check --release -j 8` 并消除所有错误与告警；触及共享逻辑、存储、运行时或工具执行时，运行定向 `cargo test --release -j 8` 或 `cargo clippy --release -j 8`。只有最终 Desktop/CLI 分发或 Win7/PE 验收才切换 32 位目标和对应 C 工具链。
-- 服务器用户前端 TypeScript/Vue 改动完成后，至少运行 `npm run typecheck` 或相关回归脚本；触及构建、路由、样式主链或依赖时运行 `npm run build:check`。
-- Slint 改动按范围运行界面编译检查、`cargo check --release -j 8` 和相关原生冒烟；涉及构建链或依赖时验证 Win7 x86 Release 与 PE 导入门禁。渲染改动需查看实际截图，构建通过不能代替 Win7 真机运行验收。
-- 实时消息、聊天运行时、watch/replay、断线恢复、发送保护等改动，服务器用户端优先运行 `frontend` 中对应 `test:chat-*`、`test:chat-realtime` 或 Playwright e2e；桌面端运行 Slint 对应回归与隔离 bridge 联调。Slint 流式验收需覆盖长消息、连续增量、输出期间输入/滚动、断线恢复和最终文本完整性，并记录 UI 更新耗时、积压和内存表现，不能仅凭静态截图判断流畅。
-- 管理端原生 JS 改动至少做浏览器手工验证或已有脚本验证；涉及 API 结构时同步验证后端响应。
-- 存储改动必须覆盖 PostgreSQL 和 SQLite 的行为差异；无法同时实测时，要在最终说明中明确未覆盖的后端。
-- 任务收尾遵循仓库指南：用脚本更新 `docs/功能迭代.md`（不手写破坏分类结构）；改过 `docs/使用说明书` 就执行 `python scripts/build_docs_site.py`。

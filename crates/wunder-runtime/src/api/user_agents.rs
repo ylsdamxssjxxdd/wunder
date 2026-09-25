@@ -947,8 +947,12 @@ async fn get_agent_runtime_records(
                         let entry = token_usage_by_day.entry(day_key).or_default();
                         *entry = entry.saturating_add(total_tokens);
                     }
-                    "quota_usage" => {
-                        let consumed = parse_i64_value(data.get("consumed")).unwrap_or(1).max(0);
+                    "quota_usage" | "model_request_usage" => {
+                        let consumed = parse_i64_value(
+                            data.get("request_count").or_else(|| data.get("consumed")),
+                        )
+                        .unwrap_or(1)
+                        .max(0);
                         if consumed <= 0 {
                             continue;
                         }

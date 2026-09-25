@@ -646,6 +646,7 @@ fn is_workflow_event(event_type: &str) -> bool {
             | "context_usage"
             | "quota_balance"
             | "quota_usage"
+            | "model_request_usage"
             | "round_usage"
             | "command_session_start"
             | "command_session_status"

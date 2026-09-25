@@ -8,6 +8,7 @@ export type TaskListItem = {
   createdAt: number;
   consumedTokens: number;
   toolCalls: number;
+  modelRequestCount: number | null;
   quotaUsed: number | null;
 };
 
@@ -52,6 +53,7 @@ export function buildTaskList(sessions: Record<string, any>[], agentId: string, 
     createdAt: resolveTaskCreationTimestamp(item),
     consumedTokens: normalizeCount(item.consumed_tokens ?? item.consumedTokens),
     toolCalls: normalizeCount(item.tool_calls ?? item.toolCalls),
+    modelRequestCount: readSessionQuotaUsed(item),
     quotaUsed: readSessionQuotaUsed(item)
   })).sort((a, b) => normalizeTimestamp(b.createdAt) - normalizeTimestamp(a.createdAt) || a.id.localeCompare(b.id));
 }

@@ -1077,7 +1077,8 @@ pub(super) fn build_persisted_message_stats(
     context_occupancy_tokens: Option<i64>,
     turn_decode_speed: &TurnDecodeSpeedAccumulator,
     interaction_duration_s: f64,
-    credits_consumed: i64,
+    model_request_count: i64,
+    account_credits_consumed: i64,
     tool_calls: i64,
 ) -> Value {
     let mut stats = serde_json::Map::new();
@@ -1088,16 +1089,12 @@ pub(super) fn build_persisted_message_stats(
     stats.insert("usage".to_string(), json!(usage));
     stats.insert("round_usage".to_string(), json!(round_usage));
     stats.insert(
-        "quotaConsumed".to_string(),
-        json!(round_usage.total.max(usage.total)),
+        "model_request_count".to_string(),
+        json!(model_request_count.max(0)),
     );
     stats.insert(
-        "creditsConsumed".to_string(),
-        json!(credits_consumed.max(0)),
-    );
-    stats.insert(
-        "credits_consumed".to_string(),
-        json!(credits_consumed.max(0)),
+        "account_credits_consumed".to_string(),
+        json!(account_credits_consumed.max(0)),
     );
     stats.insert("toolCalls".to_string(), json!(tool_calls.max(0)));
     stats.insert("tool_calls".to_string(), json!(tool_calls.max(0)));

@@ -329,6 +329,8 @@ async fn list_sessions(
             if let Value::Object(map) = &mut payload {
                 map.insert("consumed_tokens".to_string(), json!(consumed_tokens));
                 map.insert("tool_calls".to_string(), json!(tool_calls));
+                map.insert("model_request_count".to_string(), json!(quota_used));
+                // Legacy alias retained for older clients during the protocol migration.
                 map.insert("quota_used".to_string(), json!(quota_used));
             }
         }

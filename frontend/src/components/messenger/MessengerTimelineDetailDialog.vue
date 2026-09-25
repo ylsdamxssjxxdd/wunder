@@ -898,7 +898,7 @@ const overviewItems = computed(() => {
     { icon: 'fa-regular fa-clock', label: t('messenger.timeline.detail.metaElapsedLabel'), value: overviewDuration(metrics.elapsed_s) },
     { icon: 'fa-solid fa-arrow-rotate-right', label: t('messenger.timeline.detail.metaRoundCountLabel'), value: overviewCount(metrics.user_rounds ?? roundOptions.value.length) },
     { icon: 'fa-solid fa-screwdriver-wrench', label: t('messenger.timeline.detail.metaToolsLabel'), value: overviewCount(metrics.tool_calls) },
-    { icon: 'fa-solid fa-coins', label: t('messenger.timeline.detail.metaQuotaLabel'), value: overviewCount(metrics.quota_used) },
+    { icon: 'fa-solid fa-coins', label: t('messenger.timeline.detail.metaQuotaLabel'), value: overviewCount(metrics.model_request_count ?? metrics.quota_used) },
     { icon: 'fa-solid fa-bolt', label: t('messenger.timeline.detail.metaTokensLabel'), value: overviewCount(metrics.consumed_tokens) },
     { icon: 'fa-solid fa-bolt-lightning', label: t('messenger.timeline.detail.metaTtftLabel'), value: overviewDuration(Number(metrics.ttft_ms) / 1000) },
     { icon: 'fa-solid fa-arrow-up', label: t('messenger.timeline.detail.metaPrefillLabel'), value: overviewSpeed(metrics.prefill_speed_tps, Boolean(metrics.prefill_speed_lower_bound)) },

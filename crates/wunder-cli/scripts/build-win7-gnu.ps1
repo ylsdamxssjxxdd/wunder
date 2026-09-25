@@ -16,7 +16,7 @@ $ErrorActionPreference = 'Stop'
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..\..')).Path
-$commonScript = Join-Path $repoRoot 'desktop\electron\scripts\win7-gnu.common.ps1'
+$commonScript = Join-Path $repoRoot 'crates\wunder-cli\scripts\win7-gnu.common.ps1'
 if (-not (Test-Path $commonScript)) {
   throw "Win7 GNU common script missing: $commonScript"
 }

@@ -12,7 +12,7 @@
 
 - Win7 `setup.exe` 安装包默认不再内置 Python、Git 与 ripgrep。
 - 如需 Python/Git/ripgrep，请单独分发并解压 `wunder补充包-win7-*.zip` 到安装目录根部。
-- Electron 运行时会自动识别安装目录中的 `opt/python`、`opt/git` 与 `opt/rg`。
+- 原生桌面运行时会自动识别安装目录中的 `opt/python`、`opt/git` 与 `opt/rg`。
 
 ## 版本选择
 
@@ -90,7 +90,7 @@ wunder-win7-supplement.json
    - `opt/rg`
 4. 重新启动桌面端。
 
-Electron Win7 包启动时会自动：
+原生 Win7 桌面程序启动时会自动：
 
 - 把安装目录写入 `WUNDER_DESKTOP_APP_DIR`
 - 将 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin`、`opt/rg`、`opt/rg/bin` 追加到 `PATH` 前部

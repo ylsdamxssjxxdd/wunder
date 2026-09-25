@@ -501,9 +501,27 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "content": {"type": "string", "description": t("tool.spec.exec.args.content")},
                     "workdir": {"type": "string", "description": t("tool.spec.exec.args.workdir")},
                     "timeout_s": {"type": "number", "description": t("tool.spec.exec.args.timeout")},
+                    "yield_time_ms": {"type": "integer", "minimum": 50, "maximum": 10000, "description": "Wait briefly before returning a running command session; default 750ms. Continue other work, then poll before reporting command success."},
                     "dry_run": {"type": "boolean", "description": "Validate command only without execution."}
                 },
                 "required": ["content"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            name: "命令会话".to_string(),
+            title: None,
+            description: "Poll a background command or write its stdin. Use the command_session_id returned by execute_command. Continue independent work while it runs, but poll it before reporting completion. Pass after_seq from the prior poll to receive only newer sandbox output.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["poll", "write_stdin"], "description": "poll reads status/output; write_stdin sends input then reads status/output."},
+                    "command_session_id": {"type": "string", "description": "Background command session ID."},
+                    "input": {"type": "string", "description": "Text sent to stdin only with write_stdin."},
+                    "after_seq": {"type": "integer", "minimum": 0, "description": "Last sandbox output sequence already consumed; omit on the first poll."},
+                    "yield_time_ms": {"type": "integer", "minimum": 0, "maximum": 10000, "description": "Maximum poll wait; default 500ms."}
+                },
+                "required": ["command_session_id"],
                 "additionalProperties": false
             }),
         },
@@ -1264,6 +1282,8 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("a2a_observe".to_string(), "a2a观察".to_string());
     map.insert("a2a_wait".to_string(), "a2a等待".to_string());
     map.insert("execute_command".to_string(), "执行命令".to_string());
+    map.insert("command_session".to_string(), "命令会话".to_string());
+    map.insert("write_command_stdin".to_string(), "命令会话".to_string());
     map.insert("programmatic_tool_call".to_string(), "ptc".to_string());
     map.insert("list_files".to_string(), "列出文件".to_string());
     map.insert("search_content".to_string(), "搜索内容".to_string());

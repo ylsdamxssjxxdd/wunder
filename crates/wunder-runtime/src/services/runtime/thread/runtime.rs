@@ -7,6 +7,7 @@ use crate::orchestrator::{Orchestrator, OrchestratorError};
 use crate::schemas::WunderRequest;
 use crate::services::goal;
 use crate::services::stream_events::StreamEventService;
+use crate::services::tools::command_sessions::CommandSessionBroker;
 use crate::storage::{AgentTaskRecord, ChatSessionRecord, UpdateAgentTaskStatusParams};
 use crate::user_store::UserStore;
 use anyhow::{anyhow, Result};
@@ -112,6 +113,7 @@ pub struct ThreadRuntime {
     user_store: Arc<UserStore>,
     monitor: Arc<MonitorState>,
     orchestrator: Arc<Orchestrator>,
+    command_sessions: Arc<CommandSessionBroker>,
     stream_events: StreamEventService,
     queue_tx: mpsc::Sender<()>,
     queue_rx: Arc<Mutex<Option<mpsc::Receiver<()>>>>,
@@ -128,6 +130,7 @@ impl ThreadRuntime {
         user_store: Arc<UserStore>,
         monitor: Arc<MonitorState>,
         orchestrator: Arc<Orchestrator>,
+        command_sessions: Arc<CommandSessionBroker>,
     ) -> Arc<Self> {
         let stream_events = StreamEventService::new(user_store.storage_backend());
         let (queue_tx, queue_rx) = mpsc::channel(64);
@@ -136,6 +139,7 @@ impl ThreadRuntime {
             user_store,
             monitor,
             orchestrator,
+            command_sessions,
             stream_events,
             queue_tx,
             queue_rx: Arc::new(Mutex::new(Some(queue_rx))),
@@ -452,6 +456,11 @@ impl ThreadRuntime {
         };
 
         let monitor_cancelled = self.monitor.cancel_with_source(cleaned_session, source);
+        self.cancel_remote_command_sessions(cleaned_user, cleaned_session)
+            .await;
+        let cancelled_commands = self
+            .command_sessions
+            .terminate_scope(cleaned_user, cleaned_session);
         self.cancel_pending_goal_continuation(cleaned_session);
         self.orchestrator.scheduling.cancel(cleaned_session);
 
@@ -465,7 +474,14 @@ impl ThreadRuntime {
         })
         .await?;
         let mut child_sessions_cancelled = 0usize;
+        let mut child_commands_cancelled = 0usize;
         for child_session_id in &descendant_session_ids {
+            self.cancel_remote_command_sessions(cleaned_user, child_session_id)
+                .await;
+            child_commands_cancelled = child_commands_cancelled.saturating_add(
+                self.command_sessions
+                    .terminate_scope(cleaned_user, child_session_id),
+            );
             if self.monitor.cancel_with_source(child_session_id, source) {
                 child_sessions_cancelled = child_sessions_cancelled.saturating_add(1);
                 self.emit_thread_status_event(
@@ -548,6 +564,14 @@ impl ThreadRuntime {
             .await;
         let _ = self.queue_tx.try_send(());
 
+        tracing::info!(
+            user_id = cleaned_user,
+            session_id = cleaned_session,
+            cancelled_commands,
+            child_commands_cancelled,
+            "terminated active command sessions for interrupted thread tree"
+        );
+
         Ok(ThreadCancelSettlement {
             monitor_cancelled,
             child_sessions_cancelled,
@@ -556,6 +580,27 @@ impl ThreadRuntime {
             thread_status_reset,
             settlement_event_id,
         })
+    }
+
+    async fn cancel_remote_command_sessions(&self, user_id: &str, session_id: &str) {
+        let config = self.config_store.get().await;
+        if !crate::sandbox::sandbox_enabled(&config) {
+            return;
+        }
+        for command_session_id in self
+            .command_sessions
+            .running_session_ids(user_id, session_id)
+        {
+            if command_session_id.starts_with("sandcmd_") {
+                let _ = crate::sandbox::cancel_command_session(
+                    &config,
+                    user_id,
+                    session_id,
+                    &command_session_id,
+                )
+                .await;
+            }
+        }
     }
 
     pub fn create_task_session_id(&self, user_id: &str, agent_id: &str) -> Result<String> {

@@ -30,6 +30,31 @@ impl CommandSessionTracker {
         tty: bool,
         interactive: bool,
     ) -> Option<Self> {
+        Self::start_with_id(
+            context,
+            None,
+            command,
+            cwd,
+            command_index,
+            shell,
+            launch_mode,
+            tty,
+            interactive,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn start_with_id(
+        context: &ToolContext<'_>,
+        command_session_id: Option<String>,
+        command: &str,
+        cwd: &str,
+        command_index: usize,
+        shell: Option<String>,
+        launch_mode: CommandSessionLaunchMode,
+        tty: bool,
+        interactive: bool,
+    ) -> Option<Self> {
         let broker = context.command_sessions.as_ref().map(Arc::clone);
         let emitter = context.event_emitter.clone();
         if broker.is_none() && emitter.is_none() {
@@ -40,7 +65,7 @@ impl CommandSessionTracker {
             .as_ref()
             .and_then(|item| item.default_string_field("tool_call_id"));
         let start_spec = CommandSessionStartSpec {
-            command_session_id: None,
+            command_session_id,
             tool_call_id,
             user_id: context.user_id.to_string(),
             session_id: context.session_id.to_string(),
@@ -53,6 +78,13 @@ impl CommandSessionTracker {
             tty,
             interactive,
         };
+        let existed = broker.as_ref().is_some_and(|broker| {
+            start_spec
+                .command_session_id
+                .as_deref()
+                .and_then(|id| broker.snapshot_for_scope(context.user_id, context.session_id, id))
+                .is_some()
+        });
         let snapshot = if let Some(broker) = broker.as_ref() {
             broker.start_session(start_spec)
         } else {
@@ -91,8 +123,10 @@ impl CommandSessionTracker {
                 pty_tail: String::new(),
             }
         };
-        if let Some(emitter) = emitter.as_ref() {
-            emitter.emit("command_session_start", snapshot.start_event_payload());
+        if !existed {
+            if let Some(emitter) = emitter.as_ref() {
+                emitter.emit("command_session_start", snapshot.start_event_payload());
+            }
         }
         Some(Self {
             broker,

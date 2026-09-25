@@ -170,7 +170,7 @@ MCP 负责把外部资源、外部工具或外部服务纳入统一能力治理�
 | 能力 | 说明 |
 | --- | --- |
 | 浏览器控制 | Puppeteer-based 浏览器操控（`src/services/browser/`） |
-| 桌面控制 | Tauri / Electron 桥接的桌面操作 |
+| 桌面控制 | 原生 Desktop 运行时桥接的桌面操作 |
 | 文件与补丁 | 读写、搜索、diff、patch |
 | 命令执行 | Shell 命令（含 guard 和 output 检查） |
 | 渠道消息 | 通过 channels 收发外部消息 |

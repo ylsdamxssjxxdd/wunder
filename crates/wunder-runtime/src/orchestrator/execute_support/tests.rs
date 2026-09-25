@@ -682,12 +682,14 @@ fn persisted_message_stats_include_round_usage_and_decode_speed() {
         Some(80),
         &speed,
         3.0,
+        2,
         0,
         0,
     );
 
     assert_eq!(stats["round_usage"]["total_tokens"], json!(50));
-    assert_eq!(stats["quotaConsumed"], json!(50));
+    assert_eq!(stats["model_request_count"], json!(2));
+    assert_eq!(stats["account_credits_consumed"], json!(0));
     assert_eq!(stats["contextTokens"], json!(80));
     assert_eq!(stats["decode_duration_total_s"], json!(0.5));
     assert_eq!(stats["avg_model_round_speed_tps"], json!(40.0));

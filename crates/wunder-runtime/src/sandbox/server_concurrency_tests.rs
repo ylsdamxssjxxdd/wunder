@@ -72,3 +72,140 @@ async fn disconnected_stream_stops_running_command() {
     server.abort();
     assert!(stopped.is_ok(), "command must stop after client disconnect");
 }
+
+#[tokio::test]
+async fn background_command_session_can_be_polled_only_in_its_scope() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, build_router()).await.unwrap() });
+    let client = reqwest::Client::new();
+    let command = if cfg!(windows) {
+        "cmd.exe /C echo background-ready"
+    } else {
+        "printf background-ready"
+    };
+    let launch = client
+        .post(format!(
+            "http://{address}/sandboxes/command-sessions/launch"
+        ))
+        .json(&json!({
+            "user_id": "user_a", "session_id": "thread_a", "workspace_root": "/",
+            "container_root": "/", "allow_commands": ["*"],
+            "args": {"content": command, "yield_time_ms": 50}
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(
+        launch.get("ok").and_then(Value::as_bool),
+        Some(true),
+        "launch response: {launch}"
+    );
+    let command_session_id = launch
+        .pointer("/data/command_session_id")
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_string();
+    let poll = client
+        .post(format!("http://{address}/sandboxes/command-sessions/poll"))
+        .json(&json!({
+            "user_id": "user_a", "session_id": "thread_a",
+            "command_session_id": command_session_id, "yield_time_ms": 500
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(
+        poll.pointer("/data/status").and_then(Value::as_str),
+        Some("exited")
+    );
+    assert!(poll
+        .pointer("/data/stdout")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.contains("background-ready")));
+    let foreign = client
+        .post(format!("http://{address}/sandboxes/command-sessions/poll"))
+        .json(&json!({
+            "user_id": "user_b", "session_id": "thread_a",
+            "command_session_id": poll.pointer("/data/command_session_id").cloned().unwrap_or(Value::Null)
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    server.abort();
+    assert_eq!(foreign.get("ok").and_then(Value::as_bool), Some(false));
+}
+
+#[tokio::test]
+async fn background_command_session_can_be_cancelled() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, build_router()).await.unwrap() });
+    let client = reqwest::Client::new();
+    let command = if cfg!(windows) {
+        "ping 127.0.0.1 -n 30 > NUL"
+    } else {
+        "sleep 30"
+    };
+    let launch = client
+        .post(format!(
+            "http://{address}/sandboxes/command-sessions/launch"
+        ))
+        .json(&json!({
+            "user_id": "user_cancel", "session_id": "thread_cancel",
+            "workspace_root": "/", "container_root": "/", "allow_commands": ["*"],
+            "args": {"content": command, "yield_time_ms": 50}
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(launch.get("ok").and_then(Value::as_bool), Some(true));
+    let id = launch
+        .pointer("/data/command_session_id")
+        .and_then(Value::as_str)
+        .unwrap();
+    let cancel = client
+        .post(format!(
+            "http://{address}/sandboxes/command-sessions/cancel"
+        ))
+        .json(&json!({
+            "user_id": "user_cancel", "session_id": "thread_cancel",
+            "command_session_id": id
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(cancel.get("ok").and_then(Value::as_bool), Some(true));
+    let poll = client
+        .post(format!("http://{address}/sandboxes/command-sessions/poll"))
+        .json(&json!({
+            "user_id": "user_cancel", "session_id": "thread_cancel",
+            "command_session_id": id, "yield_time_ms": 500
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(
+        poll.pointer("/data/status").and_then(Value::as_str),
+        Some("exited")
+    );
+    server.abort();
+}

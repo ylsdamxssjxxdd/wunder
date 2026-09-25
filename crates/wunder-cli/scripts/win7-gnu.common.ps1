@@ -2,7 +2,7 @@ Set-StrictMode -Version Latest
 
 function Write-Win7GnuStep {
   param([string]$Message)
-  Write-Host "[win7-electron-gnu] $Message"
+  Write-Host "[win7-cli-gnu] $Message"
 }
 
 function Ensure-Win7GnuDirectory {
@@ -18,7 +18,7 @@ function Resolve-Win7GnuRepoRoot {
 function Read-Win7GnuToolchainProfile {
   param([string]$RepoRoot)
 
-  $profilePath = Join-Path $RepoRoot 'desktop\electron\scripts\win7-gnu-toolchain.json'
+  $profilePath = Join-Path $RepoRoot 'crates\wunder-cli\scripts\win7-gnu-toolchain.json'
   if (-not (Test-Path $profilePath)) {
     throw "missing Win7 GNU toolchain profile: $profilePath"
   }
@@ -73,8 +73,6 @@ function New-Win7GnuBuildContext {
     Gxx = $archProfile.gxx
     Ar = $archProfile.ar
     Ranlib = $archProfile.ranlib
-    ElectronVersion = $data.electronVersion
-    ElectronBuilderVersion = $data.electronBuilderVersion
     CargoHome = Join-Path $resolvedLabRoot $data.paths.cargoHome
     CargoPatchConfigPath = Join-Path $resolvedLabRoot $data.paths.cargoPatchConfig
     ToolchainManifestPath = Join-Path $resolvedLabRoot $data.paths.toolchainManifest
@@ -395,8 +393,6 @@ function Write-Win7GnuToolchainManifest {
     arch = $Context.Arch
     target = $Context.Target
     rustToolchain = $Context.RustToolchain
-    electronVersion = $Context.ElectronVersion
-    electronBuilderVersion = $Context.ElectronBuilderVersion
     staticRuntime = [bool]$StaticRuntime
     repoRoot = $Context.RepoRoot
     profilePath = $Context.ProfilePath
@@ -408,9 +404,8 @@ function Write-Win7GnuToolchainManifest {
     mingwBin = $Context.MinGwBin
     tokioRustlsPatchDir = $Context.TokioRustlsPatchDir
     quickStart = [ordered]@{
-      setup = "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/setup-win7-gnu-toolchain.ps1 -Arch $($Context.Arch)"
-      build = "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch $($Context.Arch) -BuildSupplement -SupplementPythonProfile common"
-      fastBuild = "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch $($Context.Arch) -BuildSupplement -SupplementPythonProfile common -SkipBootstrap"
+      build = "powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch $($Context.Arch)"
+      fastBuild = "powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch $($Context.Arch) -SkipBootstrap"
     }
   }
 
@@ -422,8 +417,6 @@ function Test-Win7GnuPrerequisites {
 
   Assert-Win7GnuCommand -Name 'cargo'
   Assert-Win7GnuCommand -Name 'rustup'
-  Assert-Win7GnuCommand -Name 'node'
-  Assert-Win7GnuCommand -Name 'npm.cmd'
   Assert-Win7GnuPath -Path $Context.MinGwBin -Label 'MinGW bin directory'
   Assert-Win7GnuPath -Path $Context.TokioRustlsPatchDir -Label 'Win7 tokio-rustls patch directory'
   foreach ($tool in @($Context.Gcc, $Context.Gxx, $Context.Ar, $Context.Ranlib)) {

@@ -23,7 +23,10 @@ export const mergeSessionRuntimeFields = (
     ...incomingRecord
   } as ChatSessionLike;
   const quotaUsed = mergeSessionQuotaUsed(currentRecord, incomingRecord);
-  if (quotaUsed !== null) merged.quota_used = quotaUsed;
+  if (quotaUsed !== null) {
+    merged.model_request_count = quotaUsed;
+    merged.quota_used = quotaUsed;
+  }
 
   const contextKeys = [
     'context_tokens',

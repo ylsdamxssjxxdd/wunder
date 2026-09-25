@@ -32,4 +32,17 @@ build.bat -All -AppImageRuntimeArm64 X:\runtime-arm64.AppImage -AppImageRuntimeA
 
 `-all` 为完整发布构建 Linux ARM64、Linux amd64、Win32 x86 与 Win7 x86 的 Desktop/CLI；Linux Desktop 产物均为 AppImage，CLI 在所有目标都只产生普通 ELF/EXE，绝不打包 AppImage。Windows 的 `-All` 默认分别使用相邻的 `Rust-builder/kylin-arm` 和 `Rust-builder/win7`；如需覆盖，使用 `-KylinBuilderRoot` 与 `-Win7BuilderRoot`，不要把两套 SDK 指到同一目录。
 
-底层实现包括 `build-linux-*-*.sh`、`build-cli-*.sh`、`build-win7-*.ps1` 和链接器辅助脚本。Win7 Windows 本机构建固定使用相邻的 `Rust-builder/win7/offline`；Linux ARM64 开发机与 Windows Docker 的 Linux/Win32 交叉构建固定使用相邻的 `Rust-builder/kylin-arm/offline`。Linux 可通过 `WUNDER_BUILDER_ROOT` 覆盖 kylin-arm 根目录；Windows 分别通过 `-KylinBuilderRoot`、`-Win7BuilderRoot` 覆盖两套 SDK。脚本不探测或回退到旧 SDK 目录。
+底层实现包括 `build-linux-*-*.sh`、`build-cli-*.sh`、`build-win7-*.ps1` 和链接器辅助脚本。其中 `build-linux-appimage-native.sh` 是 CI 专用入口：在已预装 Ubuntu 18.04 工具链的容器内在线原生构建并打包 AppImage，不依赖 kylin-arm 离线 SDK，打包语义与 `build-linux-arm64-appimage.sh` 保持同步。Win7 Windows 本机构建固定使用相邻的 `Rust-builder/win7/offline`；Linux ARM64 开发机与 Windows Docker 的 Linux/Win32 交叉构建固定使用相邻的 `Rust-builder/kylin-arm/offline`。Linux 可通过 `WUNDER_BUILDER_ROOT` 覆盖 kylin-arm 根目录；Windows 分别通过 `-KylinBuilderRoot`、`-Win7BuilderRoot` 覆盖两套 SDK。脚本不探测或回退到旧 SDK 目录。
+
+`prepare-linux-amd64-runtime-sysroot.sh` 是 `kylin-arm` 的一次性维护脚本，用于补齐 Linux amd64 Desktop AppImage 的 X11、XTest 与 ALSA 运行库。它不是日常构建步骤，必须在 **x86_64 Ubuntu 18.04** 环境执行，且只能将 SDK 挂载为可写；脚本固定使用 Ubuntu Bionic 归档源，下载完成后会把校验清单写入 SDK。常规 `build.sh`、`build.bat` 构建始终离线，不会调用它。例如：
+
+```bash
+docker run --rm --network host \
+  -v /path/to/kylin-arm:/builder/kylin-arm \
+  -v /path/to/wunder:/workspace:ro \
+  -w /workspace ubuntu:18.04 \
+  env WUNDER_BUILDER_ROOT=/builder/kylin-arm \
+  bash builders/prepare-linux-amd64-runtime-sysroot.sh
+```
+
+准备完成后，`linux-amd64-ubuntu18/root` 必须包含 `libX11.so.6`、`libXtst.so.6`、`libasound.so.2`、`libasound.so`、`libxcb.so.1`、`libxcb-xkb.so.1`、`libxkbcommon.so.0` 和 `libxkbcommon-x11.so.0`；其中 `libasound.so` 只用于交叉链接，AppImage 内容门禁验证其余运行库。

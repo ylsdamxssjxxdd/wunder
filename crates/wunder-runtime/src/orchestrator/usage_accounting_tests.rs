@@ -368,8 +368,8 @@ async fn administrator_requests_track_thread_quota_without_debiting_account() {
     assert_eq!(detail["session"]["quota_used"], json!(1));
     assert!(detail["events"].as_array().is_some_and(|events| {
         events.iter().any(|event| {
-            event["event"] == "quota_usage"
-                && event["data"]["consumed"] == json!(1)
+            event["type"] == "model_request_usage"
+                && event["data"]["request_count"] == json!(1)
                 && event["data"]["billable"] == json!(false)
         })
     }));

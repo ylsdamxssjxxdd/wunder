@@ -1,7 +1,8 @@
 type SessionRecord = Record<string, unknown>;
 
 export function readSessionQuotaUsed(record: SessionRecord | null | undefined): number | null {
-  const value = record?.quota_used ?? record?.quotaUsed;
+  const value = record?.model_request_count ?? record?.modelRequestCount ??
+    record?.quota_used ?? record?.quotaUsed;
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : null;
@@ -15,12 +16,18 @@ export function mergeSessionQuotaUsed(current: SessionRecord, incoming: SessionR
 }
 
 export function applySessionQuotaUsage(sessions: SessionRecord[], id: string, payload: SessionRecord): boolean {
-  const total = readSessionQuotaUsed({ quota_used: payload.session_quota_used });
+  const total = readSessionQuotaUsed({
+    quota_used: payload.session_request_count ?? payload.session_quota_used
+  });
   if (total === null) return false;
   const index = sessions.findIndex(session => String(session.id || '') === id);
   if (index < 0) return false;
   const current = readSessionQuotaUsed(sessions[index]);
   if (current !== null && total <= current) return false;
-  sessions[index] = { ...sessions[index], quota_used: total };
+  sessions[index] = {
+    ...sessions[index],
+    model_request_count: total,
+    quota_used: total
+  };
   return true;
 }

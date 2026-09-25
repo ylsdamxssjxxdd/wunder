@@ -381,6 +381,7 @@ impl AppState {
             user_store.clone(),
             monitor.clone(),
             orchestrator.clone(),
+            command_sessions.clone(),
         );
         if options.resolved_start_thread_runtime() {
             thread_runtime.clone().start();

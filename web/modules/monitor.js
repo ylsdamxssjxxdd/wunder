@@ -525,20 +525,25 @@ const handleStatusChartClick = (params) => {
   if (!label || label === STATUS_CHART_EMPTY_NAME) {
     return;
   }
-  const statusKey = getStatusLabelToKey()[label];
+  // Keep the machine status on each slice. Translated labels are presentation
+  // data and are not a reliable event key when the locale changes.
+  const statusKey = String(params?.data?.statusKey || resolveStatusKey(label));
   if (!statusKey) {
     return;
   }
-  openMonitorStatusModal(label);
+  openMonitorStatusModal(statusKey, label);
 };
 
 // 仅绑定一次点击事件，避免重复注册导致多次弹窗
 const bindStatusChartClick = () => {
-  if (!statusChart || statusChartClickBound) {
+  if (!statusChart) {
     return;
   }
-  statusChartClickBound = true;
+  // ECharts can retain handlers when an instance is reused after a resize or
+  // hot reload. Rebinding is idempotent and prevents stale closures.
+  statusChart.off("click", handleStatusChartClick);
   statusChart.on("click", handleStatusChartClick);
+  statusChartClickBound = true;
 };
 
 const bindTokenTrendZoom = () => {
@@ -1624,18 +1629,20 @@ const resolveMonitorDetailToolCalls = (session, events) => {
 };
 
 const resolveMonitorDetailQuota = (session, events) => {
-  const sessionQuota = parseMetricNumber(session?.quota_used);
+  const sessionQuota = parseMetricNumber(session?.model_request_count ?? session?.quota_used);
   if (Number.isFinite(sessionQuota) && sessionQuota >= 0) {
     return Math.round(sessionQuota);
   }
   let consumed = 0;
   (Array.isArray(events) ? events : []).forEach((event) => {
-    if (event?.type !== "quota_usage") {
+    if (event?.type !== "quota_usage" && event?.type !== "model_request_usage") {
       return;
     }
     const data = event?.data;
     const rawIncrement =
-      data && typeof data === "object" ? data.consumed ?? data.count ?? data.used : null;
+      data && typeof data === "object"
+        ? data.request_count ?? data.consumed ?? data.count ?? data.used
+        : null;
     const increment = normalizeMonitorDetailCount(rawIncrement);
     consumed += increment > 0 ? increment : 1;
   });
@@ -1965,11 +1972,11 @@ const buildStatusChartData = (counts) => {
   const [activeLabel, queuedLabel, finishedLabel, failedLabel, cancelledLabel] =
     getStatusLegend();
   const raw = [
-    { value: counts.active, name: activeLabel },
-    { value: counts.queued, name: queuedLabel },
-    { value: counts.finished, name: finishedLabel },
-    { value: counts.error, name: failedLabel },
-    { value: counts.cancelled, name: cancelledLabel },
+    { value: counts.active, name: activeLabel, statusKey: "active" },
+    { value: counts.queued, name: queuedLabel, statusKey: "queued" },
+    { value: counts.finished, name: finishedLabel, statusKey: "finished" },
+    { value: counts.error, name: failedLabel, statusKey: "error" },
+    { value: counts.cancelled, name: cancelledLabel, statusKey: "cancelled" },
   ];
   const total = raw.reduce((sum, item) => sum + item.value, 0);
   const visibleCount = raw.filter((item) => item.value > 0).length;
@@ -2686,6 +2693,8 @@ const openMonitorToolModal = async (toolName) => {
   if (!cleaned) {
     return;
   }
+  closeMonitorDetail();
+  closeMonitorStatusModal();
   if (elements.monitorToolTitle) {
     elements.monitorToolTitle.textContent = t("monitor.toolModal.title", { tool: cleaned });
   }
@@ -2723,18 +2732,23 @@ const closeMonitorToolModal = () => {
 };
 
 // 鎵撳紑绾跨▼鐘舵€佹槑缁嗗脊绐楋紝鏄剧ず瀵瑰簲鐘舵€佺殑浼氳瘽璁板綍
-const openMonitorStatusModal = (label) => {
+const openMonitorStatusModal = (statusKey, label = "") => {
   if (!elements.monitorStatusModal) {
     return;
   }
-  const key = resolveStatusKey(label);
+  const key = String(statusKey || "").trim();
   if (!key) {
     return;
   }
+  closeMonitorDetail();
+  closeMonitorToolModal();
+  const displayLabel = label || getStatusLegend()[
+    ["active", "queued", "finished", "error", "cancelled"].indexOf(key)
+  ] || key;
   const scopedSessions = filterSessionsByInterval(state.monitor.sessions || []);
   const matchedSessions = scopedSessions.filter((session) => matchSessionByStatusKey(session, key));
   if (elements.monitorStatusTitle) {
-    elements.monitorStatusTitle.textContent = t("monitor.statusModal.title", { status: label });
+    elements.monitorStatusTitle.textContent = t("monitor.statusModal.title", { status: displayLabel });
   }
   if (elements.monitorStatusMeta) {
     const windowLabel = getMonitorTimeWindowLabel();
@@ -4172,6 +4186,10 @@ export const openMonitorDetail = async (sessionId, options = {}) => {
 };
 
 const loadMonitorDetailPage = async (sessionId, offset = 0, options = {}) => {
+  // Modal state is mutually exclusive. A status chart selection must not
+  // survive into the session log view (and vice versa).
+  closeMonitorStatusModal();
+  closeMonitorToolModal();
   const wunderBase = getWunderBase();
   const safeOffset = Math.max(0, Number.parseInt(String(offset), 10) || 0);
   const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}?offset=${safeOffset}&limit=${MONITOR_DETAIL_EVENT_PAGE_SIZE}`;

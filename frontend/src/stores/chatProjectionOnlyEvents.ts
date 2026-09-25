@@ -23,6 +23,7 @@ const CHAT_RENDER_EVENT_TYPES = new Set([
   'round_usage',
   'context_usage',
   'quota_usage',
+  'model_request_usage',
   'plan_update',
   'question_panel',
   'final',

@@ -481,10 +481,10 @@ function Write-SupplementReadme {
     '1. Close Wunder Desktop.',
     '2. Extract this zip directly into the desktop install directory.',
     '3. Ensure the install directory now contains opt\python, opt\git, and opt\rg.',
-    '4. Start Wunder Desktop again; the Electron runtime will prepend opt\python, opt\git, and opt\rg to PATH automatically.',
+    '4. Start Wunder Desktop again; the native runtime will prepend opt\python, opt\git, and opt\rg to PATH automatically.',
     '',
     'Notes:',
-    '- This supplement package is intended for the Win7 Electron desktop build.',
+    '- This supplement package is intended for the Win7 native desktop build.',
     '- Python 3.8 is the last official CPython line with Windows 7 support.',
     '- Git for Windows 2.46.2 is the last official line supporting Windows 7 / 8 / 8.1.',
     '- Python 3.8 embeddable package works best on Windows 7 with KB2533623 and the Universal CRT update installed.'

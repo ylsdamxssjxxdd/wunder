@@ -29,6 +29,7 @@ updated_at: 2026-04-10
 - `content`
 - `workdir`
 - `timeout_s`
+- `yield_time_ms`
 - `budget`
 - `dry_run`
 
@@ -81,6 +82,32 @@ updated_at: 2026-04-10
   }
 }
 ```
+
+## 后台命令会话
+
+本地运行时和服务端 sandbox 默认先等待 750ms。命令仍在运行时会立刻返回，智能体可继续读取文件、编辑代码或处理其他任务：
+
+```json
+{
+  "state": "running",
+  "data": {
+    "command_session_id": "cmd_xxx",
+    "status": "running"
+  }
+}
+```
+
+随后用 `command_session` 查询结果；空输入只轮询，有交互需求时用 `write_stdin` 写入：
+
+```json
+{"command_session_id":"cmd_xxx","yield_time_ms":500}
+```
+
+```json
+{"action":"write_stdin","command_session_id":"cmd_xxx","input":"yes\n"}
+```
+
+结果只保留有界的 stdout/stderr 预览。取消当前线程会终止该线程及其子线程的活动命令。
 
 如果输出被守卫裁剪，还会出现：
 

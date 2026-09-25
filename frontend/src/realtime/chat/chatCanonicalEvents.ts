@@ -54,7 +54,8 @@ const USAGE_EVENT_TYPES = new Set([
   'token_usage',
   'round_usage',
   'context_usage',
-  'quota_usage'
+  'quota_usage',
+  'model_request_usage'
 ]);
 
 const normalizeId = (value: unknown): string => String(value ?? '').trim();

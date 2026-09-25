@@ -1,9 +1,12 @@
 ARG RUST_TOOLCHAIN=1.92.0
-ARG APPIMAGE_TOOL_URL
+# URL of the AppImageKit type-2 runtime blob (runtime-x86_64 / runtime-aarch64).
+# The packaging scripts concatenate it with the SquashFS payload; appimagetool
+# itself is not used by the offline-style builders.
+ARG APPIMAGE_RUNTIME_URL
 FROM ubuntu:18.04
 
 ARG RUST_TOOLCHAIN
-ARG APPIMAGE_TOOL_URL
+ARG APPIMAGE_RUNTIME_URL
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CARGO_HOME=/usr/local/cargo
@@ -11,24 +14,27 @@ ENV RUSTUP_HOME=/usr/local/rustup
 ENV PATH=/usr/local/cargo/bin:$PATH
 
 RUN printf '%s\n' \
-      'deb [trusted=yes] http://old-releases.ubuntu.com/ubuntu bionic main universe multiverse restricted' \
-      'deb [trusted=yes] http://old-releases.ubuntu.com/ubuntu bionic-updates main universe multiverse restricted' \
-      'deb [trusted=yes] http://old-releases.ubuntu.com/ubuntu bionic-security main universe multiverse restricted' \
+      'deb [trusted=yes] http://archive.ubuntu.com/ubuntu bionic main universe multiverse restricted' \
+      'deb [trusted=yes] http://archive.ubuntu.com/ubuntu bionic-updates main universe multiverse restricted' \
+      'deb [trusted=yes] http://archive.ubuntu.com/ubuntu bionic-security main universe multiverse restricted' \
       > /etc/apt/sources.list \
  && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99no-check-valid \
  && apt-get -o Acquire::Check-Valid-Until=false update \
  && apt-get install -y --no-install-recommends \
-      build-essential ca-certificates curl git pkg-config python3 nasm cmake \
+      build-essential ca-certificates curl file git pkg-config python3 nasm cmake \
       libssl-dev libgtk-3-dev libxkbcommon-dev libfontconfig1-dev \
       libfreetype6-dev libudev-dev libx11-dev libxi-dev libxcursor-dev \
       libxrandr-dev libxinerama-dev libxtst-dev libwayland-dev libasound2 libasound2-dev squashfs-tools \
  && rm -rf /var/lib/apt/lists/* \
  && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
  && rustup component add rust-src --toolchain "${RUST_TOOLCHAIN}" \
- && if [ -n "${APPIMAGE_TOOL_URL}" ]; then \
-      curl -fL --retry 5 "${APPIMAGE_TOOL_URL}" -o /usr/local/bin/appimagetool; \
-      chmod +x /usr/local/bin/appimagetool; \
+ && if [ -z "${APPIMAGE_RUNTIME_URL}" ]; then \
+      echo "APPIMAGE_RUNTIME_URL is required (AppImageKit type-2 runtime blob)"; \
+      exit 1; \
     fi \
+ && mkdir -p /usr/local/lib/wunder \
+ && curl -fL --retry 5 "${APPIMAGE_RUNTIME_URL}" -o /usr/local/lib/wunder/appimage-runtime \
+ && chmod 0644 /usr/local/lib/wunder/appimage-runtime \
  && rustc --version \
  && cargo --version
 

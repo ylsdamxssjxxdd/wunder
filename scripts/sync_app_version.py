@@ -71,7 +71,6 @@ def main() -> int:
 
     json_targets = [
         ROOT / "frontend" / "package.json",
-        ROOT / "desktop" / "electron" / "package.json",
         ROOT / "crates" / "wunder-desktop" / "tauri.conf.json",
     ]
     for target in json_targets:

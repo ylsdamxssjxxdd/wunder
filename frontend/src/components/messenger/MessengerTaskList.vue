@@ -38,7 +38,7 @@
               <span class="messenger-task-item-meta">
                 <span :title="t('messenger.tasks.tokens')"><i class="fa-solid fa-bolt" aria-hidden="true"></i>{{ formatCompactCount(item.consumedTokens) }}</span>
                 <span :title="t('messenger.tasks.tools')"><i class="fa-solid fa-screwdriver-wrench" aria-hidden="true"></i>{{ formatCompactCount(item.toolCalls) }}</span>
-                <span :title="`${t('messenger.tasks.quota')}: ${item.quotaUsed ?? '--'}`" :aria-label="`${t('messenger.tasks.quota')}: ${item.quotaUsed ?? '--'}`"><i class="fa-solid fa-coins" aria-hidden="true"></i>{{ item.quotaUsed === null ? '--' : formatCompactCount(item.quotaUsed) }}</span>
+                <span :title="`${t('messenger.tasks.quota')}: ${item.modelRequestCount ?? '--'}`" :aria-label="`${t('messenger.tasks.quota')}: ${item.modelRequestCount ?? '--'}`"><i class="fa-solid fa-coins" aria-hidden="true"></i>{{ item.modelRequestCount === null ? '--' : formatCompactCount(item.modelRequestCount) }}</span>
               </span>
             </span>
           </button>

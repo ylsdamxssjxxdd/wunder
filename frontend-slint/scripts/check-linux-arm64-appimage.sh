@@ -15,10 +15,14 @@ unsquashfs -l "$tmp/payload.squashfs" > "$tmp/list.txt"
 for required in \
   "squashfs-root/AppRun" \
   "squashfs-root/usr/bin/wunder-frontend-slint" \
+  "squashfs-root/usr/lib/libX11.so.6" \
+  "squashfs-root/usr/lib/libXtst.so.6" \
   "squashfs-root/usr/lib/libxcb.so.1" \
   "squashfs-root/usr/lib/libxcb-xkb.so.1" \
+  "squashfs-root/usr/lib/libxkbcommon.so.0" \
   "squashfs-root/usr/lib/libxkbcommon-x11.so.0" \
+  "squashfs-root/usr/lib/libasound.so.2" \
   "squashfs-root/config/wunder.yaml"; do
   grep -Fq "$required" "$tmp/list.txt" || { echo "missing bundled file: $required" >&2; exit 1; }
 done
-echo "[check] AppImage payload and required XCB/XKB libraries are present"
+echo "[check] AppImage payload and required X11/XTest/XCB/XKB/ALSA libraries are present"

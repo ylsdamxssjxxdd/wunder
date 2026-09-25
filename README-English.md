@@ -57,7 +57,7 @@ The backend is a single Rust workspace (tokio async runtime) across all forms:
 | Access | HTTP / WebSocket | In-process calls, no local networking | Local process |
 | Compatibility target | Linux / Docker | Windows 7 x86 and up, plus Linux AppImage | Windows 7 and up (built with the GNU toolchain) |
 
-CLI argument parsing uses clap; TLS uses rustls (ring provider). The legacy Electron / Tauri desktop shells are no longer maintained.
+CLI argument parsing uses clap; TLS uses rustls (ring provider). Desktop uses the native Slint frontend and shared Rust runtime.
 
 ## Capabilities
 

@@ -57,7 +57,7 @@
 | 接入方式 | HTTP / WebSocket | 进程内直调，不经本机网络 | 本地进程 |
 | 兼容目标 | Linux / Docker | Windows 7 x86 起，另出 Linux AppImage | Windows 7 及以上（GNU 工具链构建） |
 
-CLI 参数解析用 clap，TLS 用 rustls（ring provider）。desktop 的遗留 Electron / Tauri 壳已停止维护。
+CLI 参数解析用 clap，TLS 用 rustls（ring provider）。桌面端使用原生 Slint 前端与共享的 Rust 运行时。
 
 ## 能力概况
 

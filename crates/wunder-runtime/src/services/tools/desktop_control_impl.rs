@@ -1382,32 +1382,28 @@ fn send_unicode_char(ch: char) -> Result<()> {
         use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
             SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
         };
-        let mut inputs = [
-            INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: 0,
-                        wScan: ch as u16,
-                        dwFlags: KEYEVENTF_UNICODE,
-                        time: 0,
-                        dwExtraInfo: 0,
+        // SendInput accepts UTF-16 code units. A scalar above U+FFFF therefore
+        // needs two press/release pairs; casting directly to u16 used to lose
+        // the upper surrogate and broke emoji and supplementary CJK text.
+        let mut units = [0u16; 2];
+        let units = ch.encode_utf16(&mut units);
+        let mut inputs = Vec::with_capacity(units.len() * 2);
+        for unit in units.iter().copied() {
+            for flags in [KEYEVENTF_UNICODE, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP] {
+                inputs.push(INPUT {
+                    r#type: INPUT_KEYBOARD,
+                    Anonymous: windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
+                        ki: KEYBDINPUT {
+                            wVk: 0,
+                            wScan: unit,
+                            dwFlags: flags,
+                            time: 0,
+                            dwExtraInfo: 0,
+                        },
                     },
-                },
-            },
-            INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: 0,
-                        wScan: ch as u16,
-                        dwFlags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            },
-        ];
+                });
+            }
+        }
         let sent = unsafe {
             SendInput(
                 inputs.len() as u32,
@@ -1415,7 +1411,7 @@ fn send_unicode_char(ch: char) -> Result<()> {
                 std::mem::size_of::<INPUT>() as i32,
             )
         };
-        if sent == 0 {
+        if sent != inputs.len() as u32 {
             return Err(anyhow!(crate::i18n::t(
                 "tool.desktop_controller.capture_failed"
             )));
@@ -1424,6 +1420,12 @@ fn send_unicode_char(ch: char) -> Result<()> {
     }
     #[cfg(target_os = "linux")]
     {
+        // XStringToKeysym is a direct mapping only for characters represented
+        // by the active XKB layout. It must not receive a UTF-8 Chinese or
+        // emoji string and then pretend the result is a usable key symbol.
+        if !ch.is_ascii() {
+            return send_linux_unicode_input(ch);
+        }
         let name = std::ffi::CString::new(ch.to_string()).map_err(|_| anyhow!("无效字符"))?;
         with_xtest(|xlib, xtest, display, _| unsafe {
             let keysym = (xlib.XStringToKeysym)(name.as_ptr());
@@ -1449,6 +1451,73 @@ fn send_unicode_char(ch: char) -> Result<()> {
         Err(anyhow!(crate::i18n::t(
             "tool.desktop_controller.unsupported_platform"
         )))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn send_linux_unicode_input(ch: char) -> Result<()> {
+    // GTK, Qt and common X11 input methods accept Ctrl+Shift+U followed by a
+    // hexadecimal Unicode codepoint and Enter. XTest can synthesize that
+    // sequence without a clipboard or an input-method dependency.
+    let codepoint = unicode_input_codepoint(ch);
+    with_xtest(|xlib, xtest, display, _| unsafe {
+        let send_named = |name: &str, pressed: bool| -> Result<()> {
+            let name = std::ffi::CString::new(name)
+                .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_controller.key_required")))?;
+            let keysym = (xlib.XStringToKeysym)(name.as_ptr());
+            let keycode = (xlib.XKeysymToKeycode)(display, keysym);
+            if keysym == 0
+                || keycode == 0
+                || (xtest.XTestFakeKeyEvent)(display, keycode as u32, i32::from(pressed), 0) == 0
+            {
+                return Err(anyhow!(crate::i18n::t(
+                    "tool.desktop_controller.capture_failed"
+                )));
+            }
+            Ok(())
+        };
+
+        send_named("Control_L", true)?;
+        send_named("Shift_L", true)?;
+        send_named("u", true)?;
+        send_named("u", false)?;
+        send_named("Shift_L", false)?;
+        send_named("Control_L", false)?;
+        for digit in codepoint.chars() {
+            let name = std::ffi::CString::new(digit.to_string())
+                .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_controller.key_required")))?;
+            let keysym = (xlib.XStringToKeysym)(name.as_ptr());
+            let keycode = (xlib.XKeysymToKeycode)(display, keysym);
+            if keysym == 0
+                || keycode == 0
+                || (xtest.XTestFakeKeyEvent)(display, keycode as u32, 1, 0) == 0
+                || (xtest.XTestFakeKeyEvent)(display, keycode as u32, 0, 0) == 0
+            {
+                return Err(anyhow!(crate::i18n::t(
+                    "tool.desktop_controller.capture_failed"
+                )));
+            }
+        }
+        send_named("Return", true)?;
+        send_named("Return", false)?;
+        (xlib.XFlush)(display);
+        Ok(())
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn unicode_input_codepoint(ch: char) -> String {
+    format!("{:x}", ch as u32)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod unicode_input_tests {
+    use super::unicode_input_codepoint;
+
+    #[test]
+    fn unicode_codepoint_uses_lowercase_hex_without_prefix() {
+        assert_eq!(unicode_input_codepoint('中'), "4e2d");
+        assert_eq!(unicode_input_codepoint('😀'), "1f600");
     }
 }
 

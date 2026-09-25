@@ -15,7 +15,6 @@ DOCS_SOURCE_DIR = REPO_ROOT / "docs" / "使用说明书"
 SITE_CONFIG_PATH = DOCS_SOURCE_DIR / "site.json"
 SITE_ASSET_DIR = Path(__file__).resolve().parent / "docs_site"
 OUTPUT_DIR = REPO_ROOT / "web" / "docs"
-DESKTOP_ELECTRON_DOCS_OUTPUT_DIR = REPO_ROOT / "desktop" / "electron" / "resources" / "frontend-dist" / "docs"
 GENERATOR_NAME = "wunder-static-docs-v1"
 ROOT_GENERATED_FILES = [
     "index.html",
@@ -491,13 +490,6 @@ def copy_docs_assets() -> None:
         shutil.copy2(source_path, target_path)
 
 
-def sync_desktop_docs_output() -> None:
-    if not OUTPUT_DIR.exists():
-        return
-    DESKTOP_ELECTRON_DOCS_OUTPUT_DIR.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(OUTPUT_DIR, DESKTOP_ELECTRON_DOCS_OUTPUT_DIR, dirs_exist_ok=True)
-
-
 def build() -> None:
     site_config = load_json(SITE_CONFIG_PATH)
     pages, page_order, resolved_languages = load_pages(site_config)
@@ -569,7 +561,6 @@ def build() -> None:
 
     write_text(OUTPUT_DIR / "manifest.json", pretty_json(manifest))
     write_text(OUTPUT_DIR / "search.json", pretty_json(search_entries))
-    sync_desktop_docs_output()
     print(f"Built docs site: {len(pages)} pages -> {OUTPUT_DIR}")
 
 

@@ -20,7 +20,7 @@ impl Orchestrator {
             let emitter = emitter.clone();
             let monitor = monitor.clone();
             async move {
-                let status = if is_admin {
+                let account = if is_admin {
                     None
                 } else {
                     let status = tokio::task::spawn_blocking(move || {
@@ -43,37 +43,39 @@ impl Orchestrator {
                     Some(status)
                 };
 
-                // Administrators bypass account debiting, but their model requests still
-                // contribute to the thread-level usage projection. This keeps the user
-                // bubble, thread list, and log overview consistent for every real request.
-                let session_quota_used = monitor.record_quota_consumption(emitter.session_id(), 1);
-                let turn_quota_used = emitter.record_quota_consumption(1);
+                // A dispatched provider request is always observable, even when it is exempt
+                // from account billing. Keeping request count and account debit separate makes
+                // administrator sessions, retries, and compaction requests unambiguous.
+                let session_model_requests = monitor.record_model_request(emitter.session_id(), 1);
+                let turn_model_requests = emitter.record_model_request(1);
+                let account_credits_consumed = if account.is_some() {
+                    emitter.record_account_credit_consumption(1)
+                } else {
+                    emitter.accumulated_account_credit_consumption()
+                };
                 let mut payload = json!({
-                    "consumed": 1,
+                    "request_count": 1,
+                    "turn_request_count": turn_model_requests,
+                    "session_request_count": session_model_requests,
                     "billable": !is_admin,
-                    "turn_quota_used": turn_quota_used,
-                    "session_quota_used": session_quota_used,
+                    "account_credits_consumed": account_credits_consumed,
                 });
-                if let Some(status) = status {
-                    let fields = payload.as_object_mut().expect("quota object");
-                    fields.insert("quota_balance".to_string(), json!(status.balance));
+                if let Some(status) = account {
+                    let fields = payload.as_object_mut().expect("model request usage object");
                     fields.insert(
-                        "quota_granted_total".to_string(),
-                        json!(status.granted_total),
+                        "account".to_string(),
+                        json!({
+                            "balance": status.balance,
+                            "granted_total": status.granted_total,
+                            "used_total": status.used_total,
+                            "daily_grant": status.daily_grant,
+                            "last_grant_date": status.last_grant_date,
+                        }),
                     );
-                    fields.insert("quota_used_total".to_string(), json!(status.used_total));
-                    fields.insert("daily_quota_grant".to_string(), json!(status.daily_grant));
-                    fields.insert(
-                        "last_quota_grant_date".to_string(),
-                        json!(status.last_grant_date),
-                    );
-                    fields.insert("remaining".to_string(), json!(status.balance));
-                    fields.insert("used".to_string(), json!(status.used_total));
-                    fields.insert("daily_quota".to_string(), json!(status.granted_total));
-                    fields.insert("date".to_string(), json!(status.last_grant_date));
                 }
-                round_info.insert_into(payload.as_object_mut().expect("quota object"));
-                emitter.emit("quota_usage", payload).await;
+                round_info
+                    .insert_into(payload.as_object_mut().expect("model request usage object"));
+                emitter.emit("model_request_usage", payload).await;
                 Ok(())
             }
         })

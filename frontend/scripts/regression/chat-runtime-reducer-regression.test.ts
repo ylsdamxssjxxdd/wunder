@@ -3889,6 +3889,60 @@ test('quota admission without a model round follows the later canonical reply', 
   assert.equal(assistant?.display?.stats?.creditsConsumed, 1);
 });
 
+test('model request usage keeps account credits, request counts, and tokens separate', () => {
+  const projection = createChatRuntimeProjection();
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'model_request_usage',
+    eventId: 1,
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        request_count: 1,
+        turn_request_count: 2,
+        session_request_count: 9,
+        billable: true,
+        account_credits_consumed: 2,
+        account: {
+          balance: 998,
+          granted_total: 1000,
+          used_total: 2,
+          daily_grant: 1000,
+          last_grant_date: '2026-09-25'
+        }
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'llm_output',
+    eventId: 2,
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        content: 'done',
+        is_terminal: true,
+        usage: { input_tokens: 120, output_tokens: 30, total_tokens: 150 }
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const assistant = selectVisibleMessageProjections(projection, 'session-1')
+    .find((message) => message.role === 'assistant');
+  assert.equal(assistant?.display?.stats?.modelRequestCount, 2);
+  assert.equal(assistant?.display?.stats?.creditsConsumed, 2);
+  assert.equal(assistant?.display?.stats?.quotaConsumed, undefined);
+  assert.deepEqual(assistant?.display?.stats?.accountSnapshot, {
+    daily: 1000,
+    used: 2,
+    remaining: 998,
+    date: '2026-09-25'
+  });
+  assert.deepEqual(assistant?.display?.stats?.usage, { input: 120, output: 30, total: 150 });
+});
+
 test('tool failure remains workflow-local until the turn terminal confirms failure', () => {
   const projection = createChatRuntimeProjection();
 

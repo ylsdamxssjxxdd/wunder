@@ -23,16 +23,21 @@ require_file "$manifest"
 [[ -d "$sdk" ]] || fail "Ubuntu 18.04 amd64 SDK is missing: $sdk"
 [[ -x "$rust/bin/cargo" ]] || fail "ARM64 Rust toolchain is missing: $rust/bin/cargo"
 [[ -d "$rust/lib/rustlib/$target/lib" ]] || fail "Rust std for $target is missing: $rust/lib/rustlib/$target/lib"
-for tool in cc x86_64-linux-gnu-gcc-7 x86_64-linux-gnu-readelf x86_64-linux-gnu-strip awk grep sed sort tail; do
-  require_command "$tool"
-done
-
 vendor_root="${WUNDER_CARGO_VENDOR:-$offline_root/cargo-vendor-slint}"
 [[ -d "$vendor_root" ]] || fail "offline Cargo vendor is missing: $vendor_root"
 export PATH="$rust/bin:$sdk/usr/bin:$PATH"
 export LD_LIBRARY_PATH="$sdk/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export WUNDER_AMD64_SDK_ROOT="$sdk"
 unset GCC_EXEC_PREFIX COMPILER_PATH LIBRARY_PATH
+alsa_linker=""
+for candidate in "$sdk/usr/x86_64-linux-gnu/lib/libasound.so" "$sdk/usr/lib/x86_64-linux-gnu/libasound.so" "$sdk/lib/x86_64-linux-gnu/libasound.so"; do
+  if [[ -e "$candidate" ]]; then alsa_linker="$candidate"; break; fi
+done
+[[ -n "$alsa_linker" ]] || fail "ALSA linker library is missing from the amd64 SDK; run builders/prepare-linux-amd64-runtime-sysroot.sh once in x86_64 Ubuntu 18.04"
+for tool in cc x86_64-linux-gnu-gcc-7 x86_64-linux-gnu-readelf x86_64-linux-gnu-strip awk grep sed sort tail; do
+  require_command "$tool"
+done
+
 export CARGO_HOME="${CARGO_HOME:-$repo_root/target/linux-amd64-ubuntu18-slint/cargo-home}"
 export CARGO_TARGET_DIR="$target_dir"
 export CARGO_NET_OFFLINE=true

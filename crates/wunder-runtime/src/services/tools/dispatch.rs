@@ -71,6 +71,7 @@ pub async fn execute_builtin_tool(
             "answer": args.get("content").and_then(Value::as_str).unwrap_or("").to_string()
         })),
         "执行命令" => command_tool::execute_command(context, args).await,
+        "命令会话" => command_tool::command_session_control(context, args).await,
         "ptc" => command_tool::execute_ptc(context, args).await,
         "列出文件" => file_tool::list_files(context, args).await,
         "搜索内容" => search_content(context, args).await,

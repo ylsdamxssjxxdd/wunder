@@ -30,6 +30,8 @@ Token 用量继续用于观察模型输入、输出、思考以及上下文大�
 - `context_occupancy_tokens`：最近一次实际观测的上下文占用。
 - `request_consumed_tokens` / `round_usage.total_tokens`：一次用户请求内的累计模型 Token 消耗。
 - `token_usage` / `model_usage`：模型用量事件。
-- `quota_usage`：额度账户快照事件。
+- `model_request_usage`：每次真实模型请求的事件，分别给出请求次数、是否扣款、当轮累计额度消耗和账户快照。
+
+线程中的“模型请求次数”与“额度消耗”是不同指标：普通用户的一次可计费模型请求通常各增加 1；管理员等免额度场景仍会增加模型请求次数，但额度消耗为 0。`model_request_usage` 的 `session_request_count` 是线程累计值，`account_credits_consumed` 是当前用户轮次累计扣款，`account` 只表示账户余额快照。旧版 `quota_usage` 只用于读取历史记录。
 
 [多用户管理](/docs/zh-CN/concepts/core-multi-user-management/) · [管理端面板指南](/docs/zh-CN/reference/admin-panels/)

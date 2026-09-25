@@ -1,6 +1,6 @@
 # Desktop / CLI 本地形态设计
 
-> 本册于 2026-09-25 按 0.4.x 现状重写：桌面默认形态已切换为 `frontend-slint/`（Rust + Slint）同进程原生架构；Electron / Tauri 前端壳停止日常维护，仅作遗留兼容。
+> 本册于 2026-09-25 按 0.4.x 现状重写：桌面默认形态为 `frontend-slint/`（Rust + Slint）同进程原生架构；遗留 WebView 前端壳已移除。
 
 ## 1. 设计目标
 
@@ -23,7 +23,6 @@ Desktop 与 CLI 是 wunder 的两种本地运行形态。它们的意义不是"�
 | 桌面本地运行时 | 原生桌面运行时、bridge、系统能力与启动装配 | `crates/wunder-desktop` |
 | NativeDesktop | 无参数启动时的同进程原生调用入口，不经本机 HTTP/WS、不拉起 bridge 子进程 | `crates/wunder-desktop::NativeDesktop`（`native.rs`、`native_catalog.rs` 等） |
 | 遗留 bridge | 仅为已有兼容客户端保留的独立桥接入口 | `crates/wunder-desktop/src/bridge.rs`、`crates/wunder-runtime/src/api/desktop.rs` `desktop_lan.rs` |
-| 遗留前端壳 | Electron / Tauri 壳，停止日常维护，不落新功能 | `desktop/electron/` 等 |
 | CLI 程序 | 命令行入口与 TUI | `crates/wunder-cli` |
 | 构建入口 | 构建、交叉编译与打包统一入口 | `builders/` |
 
@@ -36,7 +35,7 @@ Desktop 当前稳定为"Slint 前端 + 进程内原生运行时 + 本地 SQLite"
 - 执行、工具与存储语义复用 runtime 核心，不另造平行运行时。
 - 数据库采用 SQLite；本地路径、备份、迁移与并发访问保守设计，避免长事务阻塞 UI。
 - 桌面控制、浏览器控制、工作区与本地文件能力通过授权后接入。
-- 独立 bridge 仅服务已有兼容客户端；遗留 Electron/Tauri 壳不再同步新功能，也不把"停止维护前端壳"理解为停止维护桌面后端。
+- 独立 bridge 仅服务已有兼容客户端，不影响原生桌面后端的持续维护。
 
 ### 4.1 渲染与流式约束
 

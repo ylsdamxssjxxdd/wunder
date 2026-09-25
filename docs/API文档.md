@@ -20,7 +20,7 @@
 - 知识库 MCP：按 `knowledge.targets` 动态注册 `kb_query_*` 工具；最细粒度 `knowledge.targets[*].name` 用作对外展示名和工具名后缀，未配置时默认使用目标 `key`。向量知识库检索不依赖 RAGFlow MCP。
 - 向量知识库使用主存储后端保存文档、切片与 embedding 向量：server 默认写入 PostgreSQL，desktop/SQLite 形态写入 SQLite；不再依赖 Weaviate 服务。
 - RAGFlow 知识库通过 `ragflow.*` 接入，知识库可按 `literal/vector/ragflow` 运行；RAGFlow 文档管理与检索由后端直连远端 Dataset。
-- docker compose 默认将运行态持久化统一落在仓库 `config/data/`：`./config/data/workspaces` 挂载到 `/workspaces`（用户工作区）、`./config/data/postgres` 挂载到 PostgreSQL 数据目录；向量知识库 embedding 随主存储后端持久化。服务内部的 SQLite fallback、用户提示词模板、`temp_dir`、`vector_knowledge`、吞吐报告与 monitor 历史默认路径也统一收口到 `config/data/`，避免在仓库根目录再生成 `data/`、`temp_dir/`、`vector_knowledge/`。主配置文件直接使用仓库 `config/wunder.yaml`（容器内默认 `/app/config/wunder.yaml`，可通过 `WUNDER_CONFIG_PATH` 改到其他单文件路径）；`WUNDER_USER_TOOLS_ROOT` / `WUNDER_VECTOR_KNOWLEDGE_ROOT` / `WUNDER_TEMP_DIR_ROOT` 默认也已对齐到 `/app/config/data/*`。构建/依赖缓存（`target/`、`.cargo/`、根 `node_modules/`）保持写入仓库目录便于管理；Ubuntu20 Desktop 打包服务默认额外挂载并复用 `target/x86-20/.cache` / `target/arm64-20/.cache` 里的 npm、Electron 与 electron-builder 缓存，便于首次在线构建后迁入内网继续复构；前端开发容器不再额外挂载 `frontend/node_modules` 与 `desktop/electron/node_modules` 的遮罩卷，两处目录应保持为空或不存在；同时前端开发容器仅安装 `wunder-frontend` workspace 依赖，避免在前端调试阶段触发 `desktop/electron` 的 `electron` 下载脚本。`docker-compose-win.yml` 额外用 `wunder_win_data` 兜底整个 `/app/config/data`，并对 `workspaces/browser/user_tools/vector_knowledge/temp_dir` 等热点目录继续做子卷覆盖。
+- docker compose 默认将运行态持久化统一落在仓库 `config/data/`：`./config/data/workspaces` 挂载到 `/workspaces`（用户工作区）、`./config/data/postgres` 挂载到 PostgreSQL 数据目录；向量知识库 embedding 随主存储后端持久化。服务内部的 SQLite fallback、用户提示词模板、`temp_dir`、`vector_knowledge`、吞吐报告与 monitor 历史默认路径也统一收口到 `config/data/`，避免在仓库根目录再生成 `data/`、`temp_dir/`、`vector_knowledge/`。主配置文件直接使用仓库 `config/wunder.yaml`（容器内默认 `/app/config/wunder.yaml`，可通过 `WUNDER_CONFIG_PATH` 改到其他单文件路径）；`WUNDER_USER_TOOLS_ROOT` / `WUNDER_VECTOR_KNOWLEDGE_ROOT` / `WUNDER_TEMP_DIR_ROOT` 默认也已对齐到 `/app/config/data/*`。构建/依赖缓存（`target/`、`.cargo/`、根 `node_modules/`）保持写入仓库目录便于管理；原生 Slint Desktop 的发布链由 `builders/` 和 `frontend-slint/` 维护，不依赖 Node 或 WebView 壳。`docker-compose-win.yml` 额外用 `wunder_win_data` 兜底整个 `/app/config/data`，并对 `workspaces/browser/user_tools/vector_knowledge/temp_dir` 等热点目录继续做子卷覆盖。
 - 前端多平台依赖目录约定：仓库根使用并行 profile 保存不同系统的依赖树，当前默认包括 `node_modules-win-x86/`、`node_modules-linux-x86/`、`node_modules-linux-arm/`；根 `node_modules/` 只作为当前宿主平台的活动入口（链接/联接点），宿主机可通过 `python scripts/node_modules_profile.py status|use|adopt ...` 管理。`docker-compose-x86.yml` 会把 `./node_modules-linux-x86` 挂到 `/workspace/node_modules`，`docker-compose-arm.yml` 会把 `./node_modules-linux-arm` 挂到 `/workspace/node_modules`，从而避免 Linux 容器内的 `npm ci` 改写宿主机 Windows 依赖目录。`wunder-frontend` 启动时还会比对当前 `package-lock.json` 与已挂载依赖树的指纹，若发现 ARM profile 过旧或跨平台污染，会自动重装对应 workspace 依赖。
 - `wunder-frontend` 在 docker compose 中是一次性静态构建任务：先构建到临时目录 `frontend/dist.__docker_tmp`，再按“资源文件优先、`index.html` 最后切换”的顺序同步到 `frontend/dist`，成功后容器退出并由 `wunder-nginx` 提供静态站点，避免 Vite dev server 常驻占用 CPU；如需调试 Vite，可显式设置 `FRONTEND_RUN_DEV_SERVER=1` 并按需暴露 `FRONTEND_PORT`。构建阶段直接调用 `vite/bin/vite.js`，并按真实文件标记校验 Linux 容器内的 `rollup`/`esbuild` 平台原生依赖，避免目录存在但实际为空壳时误判为可用；ARM compose 默认关闭 `FRONTEND_ALLOW_PREBUILT_DIST`，优先要求真实 ARM `node_modules` 与真实构建产物，只有显式设为 `1` 时才允许复用现有静态产物兜底。
 - `docker-compose-arm.yml` 的 `wunder-server` 与 `wunder-sandbox` 默认注入 `WUNDER_PREFER_PREBUILT_BIN=0`：ARM 环境默认按源码/产物时间关系正常判定是否需要重新构建；如需显式优先复用既有 ARM release 二进制，可在 `.env` 中设置 `WUNDER_PREFER_PREBUILT_BIN=1`。
@@ -62,8 +62,8 @@
 - Desktop 本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
 - Desktop 现仅保留本地模式，不再提供 desktop 内部的服务端连接切换与端云协同入口；需要服务端能力时请直接使用浏览器访问 server 形态。Desktop 本地模式固定优先使用安装包附带的 Python 运行时，不再通过 `/wunder/desktop/settings` 配置自定义解释器，也不再提供 `/wunder/desktop/python/interpreters` 本机探测接口；`GET /wunder/desktop/fs/list` 仍保留用于本地目录浏览等通用场景。
 - Desktop 本地模式新增 `POST /wunder/desktop/reset_work_state`：统一中止当前 desktop 用户的运行中会话、队列任务与蜂群任务，为默认智能体和全部用户智能体切换到新的任务线程，并清空各自工作目录内容，供系统设置页执行“一键重置工作状态”。
-- 智能体形象能力统一复用智能体 `icon` 字段：静态头像保存为 `{"kind":"static","name":"avatar-046","color":"#94a3b8"}`，动态形象保存为 `{"kind":"companion","scope":"global|private","id":"...","color":"#94a3b8","show":true,"messageHints":true,"scale":1}`。标准形象包为 zip，根目录包含 `pet.json` 与 `spritesheetPath` 指向的帧图；用户私有形象保存在浏览器 IndexedDB，并在 Electron 桌面端同步到 userData 下的 `desktop-companion-library-state.json` 作为重启恢复兜底；管理员全局形象由 `/wunder/admin/companions*` 管理并通过 `/wunder/companions/global*` 供用户侧读取。Electron 桌面壳通过 `window.wunderDesktop.showCompanion/updateCompanion/hideCompanion/getCompanionState/onCompanionStateChanged` 同步透明桌面浮窗状态，`getCompanionState` 兼容返回 `runtimes[]` 多形象状态；Web/Tauri 不支持独立桌面浮窗时回退为浏览器内可拖动浮层。
-- Desktop GUI 启动新增本地 Tauri IPC `desktop_startup_ready`：启动页首帧后至少 10ms 调用，无参数；幂等初始化 DesktopBridge 并返回本地 web base，失败返回可重试的通用错误。`desktop_runtime_info` 在初始化前返回 `desktop runtime is starting`，成功时 payload 保持不变。这不是 HTTP/WS 对外接口；Electron 使用内部首帧门槛，不新增远程 API。
+  - 智能体形象能力统一复用智能体 icon 字段；用户私有形象保存在浏览器 IndexedDB，管理员全局形象由 /wunder/admin/companions* 管理并通过 /wunder/companions/global* 供用户侧读取；当前桌面端回退为界面内形象展示。
+- Desktop GUI 使用 frontend-slint 与 NativeDesktop 同进程运行，不新增远程 API。
 - Desktop 引导接口 `GET /config.json` 与 `GET /wunder/desktop/bootstrap` 现补充 `runtime_profile` 与 `runtime_capabilities`：前者用于标识 `desktop_embedded` / 其他运行形态，后者用于下发 `embedded_mode/thread_runtime_active/mission_runtime_active/cron_active/channels_enabled/channel_outbox_worker_enabled/lan_overlay_supported` 等能力位，供前端按实际运行能力启用订阅、恢复与降级策略。
 - 控制平面实时状态已收敛到 `state.control.presence`：当前主要负责连接在线态与最近活跃时间，为在线列表与连接恢复提供基础数据。
 - Desktop 本地模式默认开启 `channels.outbox.worker_enabled=true`，保障 `channel_tool.send_message` 入队后自动投递，无需管理员侧手工启用出站 worker。
@@ -254,6 +254,7 @@
 - 审批闭环事件：新增 `approval_resolved`，表示待审批请求已进入终态；`approval_result` 保持兼容，但新接入方应优先消费 `approval_resolved`。
 - 工具工作流关联语义：`tool_call/tool_output_delta/tool_result/approval_request/approval_result` 现在会尽量附带稳定的 `tool_call_id`；当上游没有原生 call id 时，服务端会补发合成 id，便于前端将命令输出、审批等待与最终结果持续合并到同一张工作流卡片。
 - `execute_command` 实时协议已落地：每条命令拥有独立 `command_session_id/command_index`；生命周期事件与每条命令结果用于拆分子命令工作流条目，在线运行时通过 `command_session_delta` 向客户端推送 stdout/stderr/pty 增量，用于在聊天工具循环内展示小型终端输出区。
+- `execute_command` 默认只等待 750ms；仍在执行的命令会返回 `state=running` 与 `command_session_id`，模型可继续调用其他工具。模型通过 `command_session`（别名 `write_command_stdin`）以 `action=poll` 获取有界输出与终态，或以 `action=write_stdin` 写入 stdin 后轮询。会话按 `user_id + session_id` 隔离，默认每个运行时最多保留 16 个活动进程；线程取消会级联终止本线程及后代线程的活动命令。桌面端由本地运行时托管，服务端由 sandbox 会话服务托管，两者使用相同的模型侧控制语义。
 - `execute_command` 在 Windows 本地/桌面运行时优先使用 `powershell.exe` 执行 shell 命令；仅当 PowerShell 不可用时回退 `cmd.exe`，命令会话事件中的 `shell` 字段会记录实际使用的 shell。
 - 命令会话生命周期事件：`command_session_start/command_session_status/command_session_exit/command_session_summary` 继续作为可持久化状态事件，其中 `command_session_summary` 只保留状态、退出码、耗时、输出字节数与 dropped 计数；`command_session_delta` 也会进入持久化流，供完整审计与按轮次回放使用，前端仍通过虚拟窗口和增量合并避免长命令输出进入热路径列表查询。
 - 线程运行态事件：新增 `thread_status`，用于同步 loaded runtime 状态机；`status` 取值包括 `running/waiting_approval/waiting_user_input/idle/not_loaded/system_error`，并附带 `session_id/thread_id/subscriber_count/loaded/active_turn_id`。
@@ -2915,9 +2916,9 @@
 
 ### 会话消息返回体补充（用户侧聊天接口）
 
-`GET /wunder/chat/sessions` 的 `data.items[]` 返回 `consumed_tokens`、`tool_calls`、`quota_used` 三个会话累计摘要字段，供线程列表直接展示；接口不会把消息正文或监控事件明细嵌入列表响应。`quota_used` 表示该线程的模型请求额度消耗（每次获准的模型请求计 1，包含重试和压缩摘要）；普通用户的该计数对应账户扣减，管理员请求只计入线程用量而不扣账户余额。它与 Token 消耗和用户全部线程的 `quota_used_total` 分开。无可靠历史基线时为 `null` 或缺失，客户端显示未知而非伪造为 0。
+`GET /wunder/chat/sessions` 的 `data.items[]` 返回 `consumed_tokens`、`tool_calls`、`model_request_count` 三个会话累计摘要字段，供线程列表直接展示；`quota_used` 暂时保留为 `model_request_count` 的兼容别名。接口不会把消息正文或监控事件明细嵌入列表响应。`model_request_count` 表示该线程实际分派的模型请求数（每次获准的供应商请求计 1，包含重试和压缩摘要）；普通用户通常同时扣除 1 个账户额度，管理员请求只计入线程请求数而不扣账户余额。它与 Token 消耗和用户账户的 `quota_used_total` 分开。无可靠历史基线时为 `null` 或缺失，客户端显示未知而非伪造为 0。
 
-`quota_usage` 流式事件新增 `session_quota_used`，与列表的 `quota_used` 使用相同的线程累计口径。消费者取累计最大值并同步列表缓存，不能将累计值再次相加；隐藏摘要请求也发送额度元数据。管理员请求会带 `billable=false`，只更新线程用量，不携带账户余额快照且不扣款；虚拟回放和被额度限制拒绝的请求不增加该累计值。摘要随现有监控 JSON 在 PostgreSQL/SQLite 持久化，不依赖前端历史消息或已裁剪事件数量。
+新的 `model_request_usage` 流式事件是模型请求和账户额度的权威实时投影，字段为 `request_count`、`turn_request_count`、`session_request_count`、`billable`、`account_credits_consumed`，普通用户还会携带 `account { balance, granted_total, used_total, daily_grant, last_grant_date }` 快照。`session_request_count` 与列表的 `model_request_count` 使用相同的绝对累计口径；消费者取累计最大值并同步列表缓存，不能将累计值再次相加。管理员事件明确携带 `billable=false` 与 `account_credits_consumed=0`，不会包含账户快照；虚拟回放和被额度限制拒绝的请求不增加该累计值。旧 `quota_usage` 仅用于历史重放兼容，新的执行链不再生产它。摘要随现有监控 JSON 在 PostgreSQL/SQLite 持久化，不依赖前端历史消息或已裁剪事件数量。
 
 列表可带 `known_session_ids`（逗号分隔，最多 100 个 ID，每个不超过 128 字节），响应 `data.unavailable_session_ids[]` 返回其中不属于当前用户活动会话目录的 ID（已删除、归档或不属于该用户）。核对独立于本次分页和智能体筛选；不能将部分分页未返回的条目直接视为删除。客户端轮换核对已缓存 ID，收到明确失效结果后清理列表、详情和关联缓存，并拒绝迟到响应重新加入该条目。若 `offset=0` 且返回条目数等于 `data.total`，则可按完整目录清理请求开始前已知但缺失的同查询范围条目；不得影响其他查询范围或请求期间新建的线程。详情失效与列表核对共用客户端失效标记。
 
@@ -2927,7 +2928,7 @@
 - `GET /wunder/chat/sessions/{session_id}/history`
 - `DELETE /wunder/chat/sessions/{session_id}`：仅删除当前用户可见的线程目录、上下文派生状态、定时任务与运行时投影；聊天正文、工具日志、产物日志、流事件和监控历史不会被删除。线程日志由管理员通过 `/wunder/admin/monitor/logs/cleanup` 或管理员线程删除接口显式维护。
 - `GET /wunder/chat/sessions/{session_id}` 新增 `data.agent_name`（智能体名称，默认智能体同样返回名称）。
-- `GET /wunder/chat/sessions/{session_id}` 新增受权限保护的 `data.log_overview` 聚合投影，包含线程日志概览所需的 `session_id/agent_id/status/elapsed_s/user_rounds/tool_calls/quota_used/consumed_tokens/event_total/ttft_ms/prefill_speed_tps/prefill_speed_lower_bound/decode_speed_tps`；不包含追踪 ID、用户 ID、管理员标记或原始事件。
+- `GET /wunder/chat/sessions/{session_id}` 新增受权限保护的 `data.log_overview` 聚合投影，包含线程日志概览所需的 `session_id/agent_id/status/elapsed_s/user_rounds/tool_calls/model_request_count/consumed_tokens/event_total/ttft_ms/prefill_speed_tps/prefill_speed_lower_bound/decode_speed_tps`；不包含追踪 ID、用户 ID、管理员标记或原始事件。
 - `GET /wunder/chat/sessions/{session_id}` 新增 `data.context_occupancy_tokens`，作为 `data.context_tokens` 的显式语义别名；新接入优先使用该字段表达当前线程上下文占用。
 - `GET /wunder/chat/sessions/{session_id}` 与 `GET /wunder/chat/sessions/{session_id}/history` 的历史消息视图统一返回 `data.transcript[]`，不再返回 `data.messages[]`。`transcript` 是刷新页面的唯一权威消息序列，前端必须按数组顺序与 `turn_index` 渲染，不得再使用 `stream_round`、正文或时间戳推断用户/模型轮次身份。
 - `GET /wunder/chat/sessions/{session_id}/events` 未传 `limit` 时会从持久化流事件库按递增事件序号完整读取历史；用户侧线程日志窗口使用 `workflow_only=true&offset={n}&page_size={m}` 分页，`page_size` 最大 100，响应通过 `event_offset/event_limit/event_total/events_has_more` 指示当前页范围、总数和下一页。需要渐进补水时可使用 `workflow_only=true&from_user_round={n}&to_user_round={n}`，导出或管理员审计应读取完整事件范围。
@@ -3388,7 +3389,7 @@
 
 - PostgreSQL / SQLite 在首次升级时为既有账户初始化 1000 额度，并删除旧 Token 账户字段；历史 Token 数字不换算为请求额度。迁移具有事务边界，重复启动不会补回已花完的额度。
 - 新接口只返回 `quota_balance/quota_granted_total/quota_used_total/daily_quota_grant/last_quota_grant_date`；移除旧 Token 字段、旧资料接口 `daily_quota*` 别名和 `/token_adjustment` 路由。
-- 每次真实模型请求通过既有 `quota_usage` 事件发布线程用量：`consumed=1`、`turn_quota_used`、`session_quota_used`。普通用户事件还带账户扣减快照（上述额度字段和 `daily_quota/used/remaining/date`，分别表示累计发放、累计使用、余额、发放日期）；管理员事件带 `billable=false`，不扣账户额度。事件仅用于额度投影，不计入 Token 消耗。
+- 每次真实模型请求通过 `model_request_usage` 事件发布线程请求计数和账户额度投影：`request_count=1`、`turn_request_count`、`session_request_count`、`billable`、`account_credits_consumed`。普通用户事件还带 `account` 快照（`balance/granted_total/used_total/daily_grant/last_grant_date`）；管理员事件带 `billable=false` 与零扣款。事件仅用于请求次数和额度投影，不计入 Token 消耗。历史 `quota_usage` 事件仍可读取，但不再由新执行链生成。
 - 真实 Token 用量通过 `model_usage/token_usage/round_usage` 保留，供上下文、速度与消耗统计使用。
 
 
@@ -3415,3 +3416,6 @@ Slint 程序默认链接 `wunder-desktop` library；不拉起 bridge，不通过
 - accepted 表示已接收而非执行完成。运行中收件箱不承诺进程崩溃恢复；已应用上下文和空闲持久队列可恢复。主线程停止后的旧消息不能唤醒新一轮。
 - `wait.poll_interval_seconds` 保留兼容；本地事件即时唤醒，跨进程回查间隔不低于 5 秒，最终截止由 wait_seconds 决定。收件箱有未消费消息时提前返回 `completed_reason=message_received`，`completion_reached=false`，不标记任务完成或抑制后续完成回流。
 - 超长完成通知压缩为摘要及 session/run/dispatch 引用，并标记 `truncated=true`；批量通知最多保留三个结果引用并给出 `items_omitted`，完整内容通过 `status/history` 查询。
+
+
+\n

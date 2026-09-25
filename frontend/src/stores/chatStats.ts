@@ -138,7 +138,9 @@ export const buildMessageStats = () => ({
   avg_model_round_speed_rounds: 0,
   quotaConsumed: 0,
   creditsConsumed: null,
+  modelRequestCount: null,
   partialQuotaConsumed: 0,
+  accountSnapshot: null,
   quotaSnapshot: null,
   contextTokens: null,
   contextPreviewTokens: null,
@@ -525,12 +527,31 @@ export const normalizeQuotaConsumed = (value) => {
 const normalizeCreditsConsumed = (stats) => {
   if (!stats || typeof stats !== 'object' || Array.isArray(stats)) return null;
   const values = [
+    stats.account_credits_consumed,
+    stats.accountCreditsConsumed,
     stats.creditsConsumed,
     stats.credits_consumed,
     stats.turn_quota_used,
     stats.turnQuotaUsed,
     stats.consumed,
     stats.count
+  ]
+    .filter((value) => value !== null && value !== undefined && value !== '')
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  return values.length > 0 ? Math.trunc(Math.max(...values)) : null;
+};
+
+const normalizeModelRequestCount = (stats) => {
+  if (!stats || typeof stats !== 'object' || Array.isArray(stats)) return null;
+  const values = [
+    stats.modelRequestCount,
+    stats.model_request_count,
+    stats.turn_request_count,
+    stats.turnRequestCount,
+    // Legacy persisted messages counted requests under quota aliases.
+    stats.turn_quota_used,
+    stats.turnQuotaUsed
   ]
     .filter((value) => value !== null && value !== undefined && value !== '')
     .map((value) => Number(value))
@@ -547,15 +568,17 @@ export const resolveUsageConsumedTokensFromPayload = (value) => {
 export const normalizeQuotaSnapshot = (value) => {
   if (!value || typeof value !== 'object') return null;
   const daily = parseOptionalCount(
-    value.daily_quota ?? value.dailyQuota ?? value.daily ?? value.quota ?? value.total
+    value.granted_total ?? value.grantedTotal ?? value.daily_grant ?? value.dailyGrant ??
+      value.daily_quota ?? value.dailyQuota ?? value.daily ?? value.quota ?? value.total
   );
   const used = parseOptionalCount(
-    value.used ?? value.consumed ?? value.count ?? value.usage
+    value.used_total ?? value.usedTotal ?? value.used ?? value.consumed ?? value.count ?? value.usage
   );
   const remaining = parseOptionalCount(
-    value.remaining ?? value.left ?? value.quota_remaining ?? value.remain
+    value.balance ?? value.remaining ?? value.left ?? value.quota_remaining ?? value.remain
   );
-  const date = value.date ?? value.quota_date ?? value.quotaDate ?? '';
+  const date = value.last_grant_date ?? value.lastGrantDate ??
+    value.date ?? value.quota_date ?? value.quotaDate ?? '';
   if (daily === null && used === null && remaining === null && !date) return null;
   return {
     daily,
@@ -1044,8 +1067,9 @@ export const normalizeMessageStats = (stats) => {
   );
   const explicitContextTokens = resolveExplicitContextTokens(stats);
   const contextPreviewTokens = resolveContextPreviewTokens(stats);
-  const quotaSnapshot = normalizeQuotaSnapshot(
-    stats.quotaSnapshot ?? stats.quota ?? stats.quota_usage ?? stats.quotaUsage
+  const accountSnapshot = normalizeQuotaSnapshot(
+    stats.accountSnapshot ?? stats.account_snapshot ??
+      stats.quotaSnapshot ?? stats.quota ?? stats.quota_usage ?? stats.quotaUsage
   );
   const contextTokens = explicitContextTokens;
   const contextTotalTokens = resolveExplicitContextTotalTokens(stats);
@@ -1122,13 +1146,15 @@ export const normalizeMessageStats = (stats) => {
     // Do not let a persisted `creditsConsumed: 0` mask the non-zero
     // `consumed`/`turn_quota_used` alias emitted by quota admission.
     creditsConsumed: normalizeCreditsConsumed(stats),
+    modelRequestCount: normalizeModelRequestCount(stats),
     partialQuotaConsumed: normalizeQuotaConsumed(
       stats.partialQuotaConsumed ??
         stats.partial_quota_consumed ??
         stats.partialConsumedTokens ??
         stats.partial_consumed_tokens
     ),
-    quotaSnapshot,
+    accountSnapshot,
+    quotaSnapshot: accountSnapshot,
     contextTokens,
     contextPreviewTokens,
     contextTotalTokens,
@@ -1181,7 +1207,8 @@ export const mergeMessageStats = (base, incoming) => {
     normalizeDurationValue(
       right.interaction_duration_s ?? left.interaction_duration_s
     );
-  const quotaSnapshot = right.quotaSnapshot || left.quotaSnapshot;
+  const accountSnapshot = right.accountSnapshot || left.accountSnapshot ||
+    right.quotaSnapshot || left.quotaSnapshot;
   const incomingExplicitContextTokens = resolveExplicitContextTokens(incoming);
   const incomingPreviewContextTokens = resolveContextPreviewTokens(incoming);
   const contextTokens =
@@ -1255,8 +1282,13 @@ export const mergeMessageStats = (base, incoming) => {
       left.creditsConsumed === null && right.creditsConsumed === null
         ? null
         : Math.max(left.creditsConsumed ?? 0, right.creditsConsumed ?? 0),
+    modelRequestCount:
+      left.modelRequestCount === null && right.modelRequestCount === null
+        ? null
+        : Math.max(left.modelRequestCount ?? 0, right.modelRequestCount ?? 0),
     partialQuotaConsumed: Math.max(left.partialQuotaConsumed, right.partialQuotaConsumed),
-    quotaSnapshot,
+    accountSnapshot,
+    quotaSnapshot: accountSnapshot,
     contextTokens,
     contextPreviewTokens:
       incomingPreviewContextTokens === null || incomingPreviewContextTokens === undefined
