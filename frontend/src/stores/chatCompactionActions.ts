@@ -191,6 +191,25 @@ export const chatCompactionActions = {
           const { data } = await compactSessionApi(targetId, requestPayload, {
             signal: compactControllerForManual?.signal
           });
+          const acceptedRound = Number(
+            data?.data?.user_round ?? data?.user_round ?? data?.data?.userRound ?? data?.userRound
+          );
+          if (Number.isFinite(acceptedRound) && acceptedRound > 0 && compactionMessage) {
+            compactionMessage.stream_round = Math.trunc(acceptedRound);
+            const firstWorkflow = Array.isArray(compactionMessage.workflowItems)
+              ? compactionMessage.workflowItems[0]
+              : null;
+            if (firstWorkflow && typeof firstWorkflow === 'object') {
+              const detail = buildDetail({
+                user_round: Math.trunc(acceptedRound),
+                trigger_mode: 'manual',
+                stage: 'compacting',
+                status: 'loading',
+                summary: t('chat.workflow.compactionRunning')
+              });
+              firstWorkflow.detail = detail;
+            }
+          }
           chatDebugLog('chat.compaction.manual', 'accepted', {
             sessionId: targetId,
             response:

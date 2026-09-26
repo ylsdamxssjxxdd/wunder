@@ -709,6 +709,22 @@ export const buildManualCompactionMarkerMessage = (roundNumber, events) =>
   buildCompactionMarkerMessage(roundNumber, events, true);
 
 export const insertMessageByTimestamp = (messages, message) => {
+  // A manual compaction assistant belongs to the immediately preceding
+  // `/compact` user turn. Event timestamps can precede the durable command
+  // row, so keep the pair together even when replay order is reconstructed.
+  if (message?.manual_compaction_marker === true || message?.manualCompactionMarker === true) {
+    let commandIndex = -1;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role === 'user' && messages[index]?.manual_compaction_command === true) {
+        commandIndex = index;
+        break;
+      }
+    }
+    if (commandIndex >= 0) {
+      messages.splice(commandIndex + 1, 0, message);
+      return commandIndex + 1;
+    }
+  }
   const markerTime = resolveTimestampMs(message?.created_at);
   if (markerTime === null) {
     messages.push(message);
@@ -824,6 +840,17 @@ export const attachWorkflowEvents = (messages, rounds) => {
     const manualCompactionRound = isManualCompactionRoundEvents(events);
     const compactionSummary = summarizeCompactionRoundEvents(events);
     if (manualCompactionRound) {
+      const canonical = hydratedMessages[lastAssistantIndex];
+      if (canonical && canonical.role === 'assistant' && canonical.manual_compaction_marker === true) {
+        const workflowItems = buildCompactionWorkflowItems(roundNumber, events);
+        if (workflowItems.length > 0) {
+          canonical.workflowItems = workflowItems;
+          canonical.workflowStreaming = false;
+          canonical.stream_incomplete = false;
+          canonical.stream_round = roundNumber;
+        }
+        assignedRounds.add(roundNumber);
+      }
       if (compactionSummary) {
         chatDebugLog('chat.compaction.hydrate', 'defer-manual-round-marker', {
           round: roundNumber,

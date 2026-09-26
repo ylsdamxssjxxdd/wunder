@@ -1249,29 +1249,28 @@ impl Orchestrator {
         });
         let manual_round_info = RoundInfo::user_only(manual_user_round.max(1));
 
-        // `/compact` is a real user turn in the visible transcript. Persist a
-        // lightweight command row before the compaction worker starts; the
-        // history loader filters this metadata from model context while the
-        // chat transcript keeps it as the durable turn anchor.
-        if manage_runtime_turn {
-            self.append_chat(
-                user_id,
-                session_id,
-                "user",
-                Some(&Value::String("/compact".to_string())),
-                None,
-                Some(&json!({
-                    "type": "manual_compaction_command",
-                    "manual_compaction": true,
-                })),
-                None,
-                None,
-                None,
-                manual_round_info,
-            );
-        }
+        let persist_manual_command = |orchestrator: &Orchestrator| {
+            if manage_runtime_turn {
+                orchestrator.append_chat(
+                    user_id,
+                    session_id,
+                    "user",
+                    Some(&Value::String("/compact".to_string())),
+                    None,
+                    Some(&json!({
+                        "type": "manual_compaction_command",
+                        "manual_compaction": true,
+                    })),
+                    None,
+                    None,
+                    None,
+                    manual_round_info,
+                );
+            }
+        };
 
         if let Err(err) = self.ensure_not_cancelled(session_id) {
+            persist_manual_command(self);
             if manage_runtime_turn {
                 self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
                     .await;
@@ -1311,6 +1310,7 @@ impl Orchestrator {
         {
             Ok(result) => result.messages,
             Err(err) => {
+                persist_manual_command(self);
                 self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
                     .await;
                 if manage_runtime_turn {
@@ -1394,6 +1394,23 @@ impl Orchestrator {
         // the next model context by `HistoryManager`, but remains in the
         // durable transcript after refresh and thread switching.
         if manage_runtime_turn {
+            // Write the visible command after the replacement-history summary
+            // so materializing that snapshot cannot erase the `/compact` row.
+            self.append_chat(
+                user_id,
+                session_id,
+                "user",
+                Some(&Value::String("/compact".to_string())),
+                None,
+                Some(&json!({
+                    "type": "manual_compaction_command",
+                    "manual_compaction": true,
+                })),
+                None,
+                None,
+                None,
+                manual_round_info,
+            );
             if let Some(compaction) = compaction_payload.as_ref().and_then(Value::as_object) {
                 let summary = compaction
                     .get("summary_text")
@@ -1408,10 +1425,20 @@ impl Orchestrator {
                     Value::String("manual_compaction_marker".to_string()),
                 );
                 marker_meta.insert("manual_compaction".to_string(), Value::Bool(true));
-                marker_meta.insert("trigger_mode".to_string(), Value::String("manual".to_string()));
-                marker_meta.insert("status".to_string(), Value::String(
-                    compaction.get("status").and_then(Value::as_str).unwrap_or("done").to_string(),
-                ));
+                marker_meta.insert(
+                    "trigger_mode".to_string(),
+                    Value::String("manual".to_string()),
+                );
+                marker_meta.insert(
+                    "status".to_string(),
+                    Value::String(
+                        compaction
+                            .get("status")
+                            .and_then(Value::as_str)
+                            .unwrap_or("done")
+                            .to_string(),
+                    ),
+                );
                 if let Some(compaction_id) = compaction.get("compaction_id") {
                     marker_meta.insert("compaction_id".to_string(), compaction_id.clone());
                 }
@@ -1422,6 +1449,25 @@ impl Orchestrator {
                     Some(&Value::String(summary.to_string())),
                     None,
                     Some(&Value::Object(marker_meta)),
+                    None,
+                    None,
+                    None,
+                    manual_round_info,
+                );
+                let _ = self.workspace.flush_writes_async().await;
+            } else {
+                self.append_chat(
+                    user_id,
+                    session_id,
+                    "assistant",
+                    Some(&Value::String("Context compaction failed.".to_string())),
+                    None,
+                    Some(&json!({
+                        "type": "manual_compaction_marker",
+                        "manual_compaction": true,
+                        "trigger_mode": "manual",
+                        "status": "failed",
+                    })),
                     None,
                     None,
                     None,

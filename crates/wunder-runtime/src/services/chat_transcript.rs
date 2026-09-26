@@ -182,6 +182,13 @@ fn map_transcript_message(
         if let Some(attachments) = normalized_attachments(&item) {
             map.insert("attachments".to_string(), attachments);
         }
+        if role == "user" {
+            if let Some(meta) = item.get("meta").and_then(Value::as_object) {
+                if meta.get("type").and_then(Value::as_str) == Some("manual_compaction_command") {
+                    map.insert("manual_compaction_command".to_string(), Value::Bool(true));
+                }
+            }
+        }
         if role == "assistant" {
             if let Some(meta) = item.get("meta").and_then(Value::as_object) {
                 if meta.get("type").and_then(Value::as_str) == Some("manual_compaction_marker") {

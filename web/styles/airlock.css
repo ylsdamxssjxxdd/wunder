@@ -122,6 +122,68 @@
   filter: drop-shadow(0 0 10px rgba(220, 38, 38, 0.7));
 }
 
+/* ---- 认证命中：树被深深刻入门体 ---- */
+
+/* 亮刃层：平时隐藏，命中后沿枝干描切一圈再淡去。 */
+.airlock-tree-cut {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  opacity: 0;
+}
+
+.airlock-tree-groove {
+  transition: stroke-width 400ms ease;
+}
+
+.airlock.airlock--carving .airlock-tree-cut {
+  animation: airlock-carve-draw 1000ms ease-in-out forwards;
+}
+
+@keyframes airlock-carve-draw {
+  0% {
+    stroke-dashoffset: 1;
+    opacity: 0.9;
+  }
+  70% {
+    stroke-dashoffset: 0;
+    opacity: 0.95;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0.4;
+  }
+}
+
+/* 刻入定型：凹槽加深，亮刃余晖散去。 */
+.airlock.airlock--carved .airlock-tree-cut {
+  animation: airlock-carve-fade 500ms ease forwards;
+}
+
+@keyframes airlock-carve-fade {
+  from {
+    stroke-dashoffset: 0;
+    opacity: 0.4;
+  }
+  to {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+}
+
+.airlock.airlock--carved .airlock-tree-groove {
+  stroke-width: 7;
+}
+
+.airlock.airlock--carving .airlock-node.lit .airlock-node-ring {
+  animation: airlock-node-pulse 480ms ease-in-out 2;
+}
+
+@keyframes airlock-node-pulse {
+  50% {
+    filter: drop-shadow(0 0 18px rgba(255, 161, 22, 1));
+  }
+}
+
 .airlock-strip {
   position: absolute;
   left: 0;
@@ -233,5 +295,14 @@
   .airlock-door {
     transition: none !important;
     animation: none !important;
+  }
+
+  .airlock-tree-cut {
+    animation: none !important;
+    opacity: 0 !important;
+  }
+
+  .airlock-tree-groove {
+    transition: none !important;
   }
 }

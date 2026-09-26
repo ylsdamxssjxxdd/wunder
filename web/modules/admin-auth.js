@@ -148,6 +148,8 @@ let loginResolve = null;
 const AIRLOCK_OPEN_TOTAL_MS = 1600;
 const AIRLOCK_CLOSE_TOTAL_MS = 1450;
 const AIRLOCK_REDUCED_MOTION_MS = 150;
+const AIRLOCK_CARVE_DRAW_MS = 1050;
+const AIRLOCK_CARVE_SETTLE_MS = 520;
 
 // 图案锁口令：左侧第2个(Geburah) → 右侧第2个(Chesed) → 中间第1个(Kether) → 中间第4个(Malkuth)。
 const TREE_UNLOCK_SEQUENCE = [5, 4, 1, 10];
@@ -166,7 +168,7 @@ const setLoginVisible = (visible) => {
     return;
   }
   if (visible) {
-    modal.classList.remove("airlock--opening", "airlock--open");
+    modal.classList.remove("airlock--opening", "airlock--open", "airlock--carved");
     modal.classList.add("active");
     modal.setAttribute("aria-hidden", "false");
     return;
@@ -209,6 +211,25 @@ const playAirlockOpenSequence = async (grantBeatMs) => {
   modal.setAttribute("aria-hidden", "true");
 };
 
+// 口令命中：亮刃沿树描切一圈、凹槽加深定型，随后开门。
+const playCarveSequence = async () => {
+  const modal = elements.adminLoginModal;
+  if (!modal) {
+    return;
+  }
+  const reducedMotion = prefersReducedMotion();
+  if (reducedMotion) {
+    modal.classList.add("airlock--carved");
+    await wait(120);
+    return;
+  }
+  modal.classList.add("airlock--carving");
+  await wait(AIRLOCK_CARVE_DRAW_MS);
+  modal.classList.remove("airlock--carving");
+  modal.classList.add("airlock--carved");
+  await wait(AIRLOCK_CARVE_SETTLE_MS);
+};
+
 // Unblock the app boot immediately; the door animation runs on its own and
 // hides the overlay when finished.
 const completeLogin = ({ grantBeatMs = 0 } = {}) => {
@@ -230,7 +251,7 @@ export const logoutAdmin = async () => {
     return;
   }
   const reducedMotion = prefersReducedMotion();
-  modal.classList.remove("airlock--open", "airlock--opening");
+  modal.classList.remove("airlock--open", "airlock--opening", "airlock--carved");
   modal.classList.add("active", "airlock--closing", "airlock--open-doors", "airlock--instant");
   modal.setAttribute("aria-hidden", "false");
   // Jump the doors to the open position without a transition, then re-arm
@@ -308,7 +329,9 @@ const performLogin = async (username, password) => {
       return;
     }
     writeStoredAuth({ token, user, scope });
-    completeLogin({ grantBeatMs: 600 });
+    // 先播树深刻入门的动画，再沿树中线开门。
+    await playCarveSequence();
+    completeLogin({ grantBeatMs: 0 });
   } catch (error) {
     failLogin();
   }

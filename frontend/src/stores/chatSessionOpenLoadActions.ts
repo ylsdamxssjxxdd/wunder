@@ -268,6 +268,9 @@ export const chatSessionOpenLoadActions = {
       if (options.manualGoalMarker === true && normalizedRole === 'assistant') {
         message.manual_goal_marker = true;
       }
+      if (options.manualCompactionCommand === true && normalizedRole === 'user') {
+        message.manual_compaction_command = true;
+      }
       this.messages.push(message);
       const targetSessionId = String(options.sessionId ?? this.activeSessionId ?? '').trim();
       if (targetSessionId) {
@@ -281,7 +284,8 @@ export const chatSessionOpenLoadActions = {
           modelTurnId: localModelTurnId,
           display: {
             client_message_id: localId,
-            ...(options.manualGoalMarker === true ? { manual_goal_marker: true, manualGoalMarker: true } : {})
+            ...(options.manualGoalMarker === true ? { manual_goal_marker: true, manualGoalMarker: true } : {}),
+            ...(options.manualCompactionCommand === true ? { manual_compaction_command: true } : {})
           }
         });
         cacheSessionMessages(targetSessionId, this.messages);

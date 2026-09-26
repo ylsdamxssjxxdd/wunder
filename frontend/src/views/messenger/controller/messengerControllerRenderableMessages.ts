@@ -1022,6 +1022,9 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       if (panelStatus === 'pending')
           return false;
       if (message?.manual_compaction_marker === true || message?.manualCompactionMarker === true) {
+          if (ctx.hasMessageContent(message?.content) || ctx.hasMessageContent(message?.reasoning)) {
+              return false;
+          }
           return true;
       }
       if (!isCompactionOnlyWorkflowItems(message?.workflowItems))
