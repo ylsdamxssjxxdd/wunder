@@ -85,7 +85,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: x86_64
+          # arch uses the release naming (amd64/arm64) shared with the offline
+          # builders, matching the AppImage file names the packager emits.
+          - arch: amd64
             platform: linux/amd64
             image: wunder-desktop-ubuntu1804-x86_64
             appimage_runtime: x86_64

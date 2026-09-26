@@ -24,8 +24,9 @@ fn main() {
     .expect("failed to compile Slint UI");
 }
 
-/// Embed the app icon (`assets/app-icon.ico`) as the exe's icon resource plus
-/// a VERSIONINFO block built from the crate version so Explorer's file
+/// Embed the app icon (`images/eva01-head.ico`, multi-size BMP-style entries
+/// that old binutils windres handles) as the exe's icon resource plus a
+/// VERSIONINFO block built from the crate version so Explorer's file
 /// properties show the release number. Resource-only COFF objects from
 /// windres link cleanly into the GNU (Win7 i686) binary. This must key off
 /// the *target* OS, not the host: cross builds (ARM64 Linux -> i686 Win7) run
@@ -40,8 +41,9 @@ fn embed_windows_exe_icon() {
     println!("cargo:rerun-if-env-changed=WUNDER_WIN7_MINGW_BIN");
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("manifest dir");
     let ico = std::path::Path::new(&manifest_dir)
-        .join("assets")
-        .join("app-icon.ico");
+        .join("..")
+        .join("images")
+        .join("eva01-head.ico");
     println!("cargo:rerun-if-changed={}", ico.display());
 
     // windres -F takes a BFD target name; the "pei-*" names are PE *image*
