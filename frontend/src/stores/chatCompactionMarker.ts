@@ -118,11 +118,21 @@ const isCompactionOnlyWorkflowItems = (items: unknown): boolean => {
 
 export const isCompactionMarkerAssistantMessage = (message: ChatMessage | null | undefined): boolean => {
   if (!message || message.role !== 'assistant') return false;
+  // Durable manual compaction rows carry the summary text in `content` so
+  // they render as a normal assistant bubble after refresh. The explicit
+  // marker flag is authoritative for identifying that special row.
+  if (
+    hasManualCompactionMarkerFlag(message) &&
+    isManualCompactionMessage(message) &&
+    !hasTextContent(message.content) &&
+    !hasTextContent(message.reasoning)
+  ) {
+    return true;
+  }
   if (hasTextContent(message.content) || hasTextContent(message.reasoning)) return false;
   if (hasPlanSteps(message.plan)) return false;
   const panelStatus = normalizeText((message.questionPanel as Record<string, unknown> | null)?.status);
   if (panelStatus === 'pending') return false;
-  if (hasManualCompactionMarkerFlag(message)) return true;
   if (!isCompactionOnlyWorkflowItems(message.workflowItems)) return false;
   if (!isStreamingAssistantMessage(message)) return true;
   return isManualCompactionMessage(message);

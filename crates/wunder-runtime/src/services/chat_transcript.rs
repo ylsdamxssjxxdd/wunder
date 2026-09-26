@@ -183,6 +183,27 @@ fn map_transcript_message(
             map.insert("attachments".to_string(), attachments);
         }
         if role == "assistant" {
+            if let Some(meta) = item.get("meta").and_then(Value::as_object) {
+                if meta.get("type").and_then(Value::as_str) == Some("manual_compaction_marker") {
+                    map.insert("manual_compaction_marker".to_string(), Value::Bool(true));
+                    map.insert("workflowStreaming".to_string(), Value::Bool(false));
+                    map.insert("stream_incomplete".to_string(), Value::Bool(false));
+                    let detail = Value::Object(meta.clone());
+                    map.insert(
+                        "workflowItems".to_string(),
+                        json!([{
+                            "id": format!("compaction:{}", history_id.unwrap_or(turn_index)),
+                            "eventType": "compaction",
+                            "toolName": "context_compaction",
+                            "status": meta.get("status").and_then(Value::as_str).unwrap_or("completed"),
+                            "detail": detail.to_string(),
+                            "toolCallId": meta.get("compaction_id").and_then(Value::as_str).unwrap_or("")
+                        }]),
+                    );
+                }
+            }
+        }
+        if role == "assistant" {
             if let Some(history_id) = history_id {
                 if let Some(feedback) = message_feedback.get(&history_id) {
                     map.insert("feedback".to_string(), feedback.clone());

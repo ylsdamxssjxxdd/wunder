@@ -1249,6 +1249,28 @@ impl Orchestrator {
         });
         let manual_round_info = RoundInfo::user_only(manual_user_round.max(1));
 
+        // `/compact` is a real user turn in the visible transcript. Persist a
+        // lightweight command row before the compaction worker starts; the
+        // history loader filters this metadata from model context while the
+        // chat transcript keeps it as the durable turn anchor.
+        if manage_runtime_turn {
+            self.append_chat(
+                user_id,
+                session_id,
+                "user",
+                Some(&Value::String("/compact".to_string())),
+                None,
+                Some(&json!({
+                    "type": "manual_compaction_command",
+                    "manual_compaction": true,
+                })),
+                None,
+                None,
+                None,
+                manual_round_info,
+            );
+        }
+
         if let Err(err) = self.ensure_not_cancelled(session_id) {
             if manage_runtime_turn {
                 self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
@@ -1364,6 +1386,48 @@ impl Orchestrator {
                 "compaction" => compaction_payload = Some(payload),
                 "context_usage" => final_context_payload = Some(payload),
                 _ => {}
+            }
+        }
+
+        // Materialize the compaction result as an assistant bubble belonging
+        // to the same `/compact` user round. It is intentionally excluded from
+        // the next model context by `HistoryManager`, but remains in the
+        // durable transcript after refresh and thread switching.
+        if manage_runtime_turn {
+            if let Some(compaction) = compaction_payload.as_ref().and_then(Value::as_object) {
+                let summary = compaction
+                    .get("summary_text")
+                    .or_else(|| compaction.get("summary_model_output"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("Context compaction completed.");
+                let mut marker_meta = serde_json::Map::new();
+                marker_meta.insert(
+                    "type".to_string(),
+                    Value::String("manual_compaction_marker".to_string()),
+                );
+                marker_meta.insert("manual_compaction".to_string(), Value::Bool(true));
+                marker_meta.insert("trigger_mode".to_string(), Value::String("manual".to_string()));
+                marker_meta.insert("status".to_string(), Value::String(
+                    compaction.get("status").and_then(Value::as_str).unwrap_or("done").to_string(),
+                ));
+                if let Some(compaction_id) = compaction.get("compaction_id") {
+                    marker_meta.insert("compaction_id".to_string(), compaction_id.clone());
+                }
+                self.append_chat(
+                    user_id,
+                    session_id,
+                    "assistant",
+                    Some(&Value::String(summary.to_string())),
+                    None,
+                    Some(&Value::Object(marker_meta)),
+                    None,
+                    None,
+                    None,
+                    manual_round_info,
+                );
+                let _ = self.workspace.flush_writes_async().await;
             }
         }
 

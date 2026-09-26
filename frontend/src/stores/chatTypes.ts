@@ -285,6 +285,7 @@ export type AppendLocalMessageOptions = {
   sessionId?: unknown;
   immediate?: boolean;
   manualGoalMarker?: boolean;
+  manualCompactionCommand?: boolean;
   localTurnId?: string;
   localModelTurnId?: string;
 };

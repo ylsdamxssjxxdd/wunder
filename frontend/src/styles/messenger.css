@@ -3363,17 +3363,19 @@ button.messenger-chat-header-model {
 
 .messenger-nav-toggle,
 .messenger-right-dock-toggle {
-  width: 18px;
-  height: 74px;
+  width: 30px;
+  height: 48px;
+  padding: 0;
   border: 0;
-  border-radius: 999px;
-  background: linear-gradient(180deg, var(--ui-accent-soft-2), var(--ui-accent-soft-4));
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   color: var(--ui-accent-deep);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
+  transition: opacity 0.15s ease, color 0.15s ease, transform 0.15s ease;
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
@@ -3425,8 +3427,9 @@ button.messenger-chat-header-model {
 .messenger-nav-toggle:focus-visible {
   opacity: 1;
   color: var(--ui-accent);
-  background: linear-gradient(180deg, var(--ui-accent-soft-2), var(--ui-accent-soft-5));
-  transform: translateY(-50%) scale(1.02);
+  background: transparent;
+  box-shadow: none;
+  transform: translateY(-50%);
 }
 
 .messenger-right-dock-toggle {
@@ -3446,7 +3449,8 @@ button.messenger-chat-header-model {
 }
 
 .messenger-right-dock.messenger-right-dock--collapsed .messenger-right-dock-toggle {
-  left: -28px;
+  /* The collapsed handle sits 30px inside the viewport edge in every layout. */
+  left: -30px;
   opacity: 0;
   pointer-events: none;
 }
@@ -3475,8 +3479,21 @@ button.messenger-chat-header-model {
 
 .messenger-right-dock-toggle:hover {
   color: var(--ui-accent);
-  background: linear-gradient(180deg, var(--ui-accent-soft-2), var(--ui-accent-soft-5));
-  transform: translateY(-50%) scale(1.02);
+  background: transparent;
+  box-shadow: none;
+  transform: translateY(-50%);
+}
+
+.messenger-nav-toggle > i,
+.messenger-right-dock-toggle > i {
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.messenger-nav-toggle:hover > i,
+.messenger-nav-toggle:focus-visible > i,
+.messenger-right-dock-toggle:hover > i,
+.messenger-right-dock-toggle:focus-visible > i {
+  transform: scale(1.12);
 }
 
 .messenger-right-content {
@@ -8900,7 +8917,7 @@ body.desktop-shell-active .workspace-editor-shell {
   }
 
   .messenger-right-dock.messenger-right-dock--collapsed .messenger-right-dock-toggle {
-    left: -18px;
+    left: -30px;
   }
 }
 
@@ -9125,7 +9142,7 @@ body.desktop-shell-active .workspace-editor-shell {
 }
 
 .messenger-view.messenger-view--host-medium .messenger-right-dock.messenger-right-dock--collapsed .messenger-right-dock-toggle {
-  left: -18px;
+  left: -30px;
 }
 
 .messenger-view.messenger-view--host-small,

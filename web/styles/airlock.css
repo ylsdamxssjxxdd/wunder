@@ -26,7 +26,7 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 50.4%;
+  width: 50%;
   overflow: hidden;
   transition: transform 1250ms cubic-bezier(0.72, 0, 0.28, 1) 120ms;
   will-change: transform;
@@ -34,6 +34,8 @@
 
 .airlock-door--left {
   left: 0;
+  /* 左门多压 1px，消除双门间的亚像素缝隙。 */
+  width: calc(50% + 1px);
 }
 
 .airlock-door--right {
@@ -43,30 +45,8 @@
 .airlock-hull {
   position: absolute;
   inset: 0;
-  /* 大块明暗过渡代替旧拉丝细线，门面交由雕刻元素表达。 */
-  background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0) 30%, rgba(0, 0, 0, 0.18) 80%),
-    linear-gradient(180deg, #243044 0%, #141d2d 46%, #0d1522 54%, #18212f 100%);
-  box-shadow:
-    inset 0 26px 52px -26px rgba(0, 0, 0, 0.9),
-    inset 0 -26px 52px -26px rgba(0, 0, 0, 0.9);
-}
-
-/* 中缝侧的厚重门缘与外侧微光，制造金属门的体积感。 */
-.airlock-door--left .airlock-hull {
-  box-shadow:
-    inset -26px 0 34px -22px rgba(0, 0, 0, 0.92),
-    inset -2px 0 0 rgba(148, 163, 184, 0.18),
-    inset 0 26px 52px -26px rgba(0, 0, 0, 0.9),
-    inset 0 -26px 52px -26px rgba(0, 0, 0, 0.9);
-}
-
-.airlock-door--right .airlock-hull {
-  box-shadow:
-    inset 26px 0 34px -22px rgba(0, 0, 0, 0.92),
-    inset 2px 0 0 rgba(148, 163, 184, 0.18),
-    inset 0 26px 52px -26px rgba(0, 0, 0, 0.9),
-    inset 0 -26px 52px -26px rgba(0, 0, 0, 0.9);
+  /* 纯色一整块：两门完全同色、无边框阴影，闭门时看不到门缝。 */
+  background: #1e293b;
 }
 
 /* 外侧甲板边框：随门滑动，像舰体开出的门洞。 */
@@ -88,82 +68,58 @@
   border-left: 1px solid rgba(148, 163, 184, 0.22);
 }
 
-/* 中缝咬合齿：重型防爆门的锯齿门缘，双层错位形成倒角。 */
-.airlock-teeth {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 38px;
-}
-
-.airlock-door--left .airlock-teeth {
-  right: 0;
-  background:
-    conic-gradient(from 225deg at 100% 50%, rgba(255, 255, 255, 0.1) 0deg 90deg, transparent 90deg 360deg)
-      0 -6px / 38px 38px repeat-y,
-    conic-gradient(from 225deg at 100% 50%, rgba(0, 0, 0, 0.55) 0deg 90deg, transparent 90deg 360deg)
-      0 6px / 38px 38px repeat-y,
-    conic-gradient(from 225deg at 100% 50%, #202c40 0deg 90deg, transparent 90deg 360deg)
-      0 0 / 38px 38px repeat-y,
-    linear-gradient(270deg, #070d18 0 22px, transparent 22px);
-}
-
-.airlock-door--right .airlock-teeth {
-  left: 0;
-  background:
-    conic-gradient(from 45deg at 0% 50%, rgba(255, 255, 255, 0.1) 0deg 90deg, transparent 90deg 360deg)
-      0 -6px / 38px 38px repeat-y,
-    conic-gradient(from 45deg at 0% 50%, rgba(0, 0, 0, 0.55) 0deg 90deg, transparent 90deg 360deg)
-      0 6px / 38px 38px repeat-y,
-    conic-gradient(from 45deg at 0% 50%, #202c40 0deg 90deg, transparent 90deg 360deg)
-      0 0 / 38px 38px repeat-y,
-    linear-gradient(90deg, #070d18 0 22px, transparent 22px);
-}
-
-/* 中缝侧螺栓列：钉在门缘暗带上。 */
-.airlock-bolts {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 12px;
-  height: min(62vh, 460px);
-  background-image: radial-gradient(
-    circle at 42% 38%,
-    #3d5070 2.4px,
-    #131d2e 3.2px,
-    rgba(0, 0, 0, 0.6) 3.8px,
-    transparent 4.2px
-  );
-  background-size: 12px 52px;
-}
-
-.airlock-door--left .airlock-bolts {
-  right: 13px;
-}
-
-.airlock-door--right .airlock-bolts {
-  left: 13px;
-}
-
 /* 门面雕刻：卡巴拉生命之树（SEELE 徽记），沿门缝剖成两半，
-   双门闭合时在齿牙中线拼回完整图案。 */
+   双门闭合时中柱质点在门缝处拼回整圆。质点可点击点亮。 */
 .airlock-tree {
   position: absolute;
-  top: 50%;
+  top: 46%;
   transform: translateY(-50%);
-  height: min(58vh, 470px);
+  height: min(70vh, 560px);
   aspect-ratio: 400 / 640;
+  pointer-events: none;
 }
 
 .airlock-door--left .airlock-tree {
-  right: 54px;
-  /* 保留图案左半，剖切面正对门缝。 */
+  right: 0;
+  /* 把图案中线（剖切面）推到门缝上：可见右缘 = 门缝。 */
+  transform: translateY(-50%) translateX(50%);
   clip-path: inset(0 50% 0 0);
 }
 
 .airlock-door--right .airlock-tree {
-  left: 54px;
+  left: 0;
+  transform: translateY(-50%) translateX(-50%);
   clip-path: inset(0 0 0 50%);
+}
+
+.airlock-node {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.airlock-node-hit {
+  fill: transparent;
+}
+
+.airlock-node-ring {
+  fill: rgba(3, 8, 15, 0.55);
+  stroke: rgba(2, 6, 12, 0.66);
+  stroke-width: 4;
+  transition: fill 200ms ease, stroke 200ms ease, filter 200ms ease;
+}
+
+/* 点亮：琥珀色发光，模拟回路接通。 */
+.airlock-node.lit .airlock-node-ring {
+  fill: rgba(255, 161, 22, 0.95);
+  stroke: #ffd08a;
+  filter: drop-shadow(0 0 10px rgba(255, 161, 22, 0.75));
+}
+
+/* 点错：红色警示后重置。 */
+.airlock-node.wrong .airlock-node-ring {
+  fill: rgba(220, 38, 38, 0.88);
+  stroke: #f87171;
+  filter: drop-shadow(0 0 10px rgba(220, 38, 38, 0.7));
 }
 
 .airlock-strip {
@@ -227,204 +183,15 @@
   bottom: 48px;
 }
 
-.airlock-plate {
-  position: absolute;
-  bottom: 92px;
-  padding: 6px 12px;
-  border: 1px solid rgba(148, 163, 184, 0.24);
-  border-radius: 4px;
-  background: rgba(8, 13, 23, 0.6);
-  color: rgba(226, 232, 240, 0.68);
-  font-size: 11px;
-  letter-spacing: 0.3em;
-}
-
-.airlock-door--left .airlock-plate {
-  left: 36px;
-}
-
-.airlock-door--right .airlock-plate {
-  right: 36px;
-}
 
 /* ---------- 状态读出 ---------- */
 
-.airlock-statusbar {
-  position: absolute;
-  top: 26px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  padding: 7px 15px;
-  border: 1px solid rgba(148, 163, 184, 0.24);
-  border-radius: 999px;
-  background: rgba(8, 13, 23, 0.8);
-  color: #b7c3d4;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.16em;
-  white-space: nowrap;
-  pointer-events: none;
-  z-index: 3;
-  /* 闭锁/失效态不展示顶部读出条，仅流程态（验证中/通过/开关门）出现。 */
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 300ms ease, visibility 300ms ease;
-}
 
-.airlock.airlock--status-on .airlock-statusbar {
-  opacity: 1;
-  visibility: visible;
-}
+/* 解锁口令错误提示。 */
 
-.airlock-status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #ffa116;
-  box-shadow: 0 0 8px rgba(255, 161, 22, 0.8);
-  animation: airlock-dot-blink 1.6s ease-in-out infinite;
-}
 
-@keyframes airlock-dot-blink {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-
-/* ---------- 登录控制台 ---------- */
-
-.airlock-console {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  pointer-events: none;
-  z-index: 2;
-  transition: opacity 320ms ease, transform 320ms ease;
-}
-
-.auth-card {
-  pointer-events: auto;
-  width: 380px;
-  max-width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 26px 30px 24px;
-  border: 1px solid #2c3c56;
-  border-radius: 16px;
-  background: rgba(11, 17, 29, 0.94);
-  box-shadow: 0 24px 60px rgba(2, 6, 16, 0.55);
-}
-
-.auth-brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.auth-emblem {
-  width: 46px;
-  height: 46px;
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(255, 161, 22, 0.4);
-  border-radius: 50%;
-  background: radial-gradient(circle at 36% 30%, rgba(255, 161, 22, 0.18), transparent 62%),
-    #0d1626;
-  color: #ffa116;
-  font-size: 19px;
-}
-
-.auth-card h2 {
-  margin: 0;
-  font-size: 20px;
-  color: #e8edf6;
-}
-
-.auth-form {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.auth-form label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #b7c3d4;
-}
-
-.auth-form input {
-  border: 1px solid #2c3c56;
-  border-radius: 10px;
-  padding: 10px 12px;
-  font-size: 14px;
-  background: #0d1626;
-  color: #e8edf6;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.auth-form input::placeholder {
-  color: #5b6b84;
-}
-
-.auth-form input:focus {
-  outline: none;
-  border-color: #4d8bff;
-  box-shadow: 0 0 0 3px rgba(77, 139, 255, 0.22);
-}
-
-.auth-error {
-  min-height: 18px;
-  font-size: 12px;
-  color: #f87171;
-}
-
-.airlock .auth-card .btn-with-icon {
-  width: 100%;
-  justify-content: center;
-}
-
-/* 登录加载态：隐藏箭头字形，用同一元素的描边圆环旋转。 */
-.airlock .auth-card #adminLoginBtn.is-loading i,
-.airlock .auth-card #adminLoginBtn[aria-busy="true"] i {
-  animation: auth-spinner 0.8s linear infinite;
-  display: inline-block;
-  box-sizing: border-box;
-  width: 14px;
-  height: 14px;
-  font-size: 0;
-  border: 2px solid rgba(255, 255, 255, 0.35);
-  border-top-color: #ffffff;
-  border-radius: 50%;
-}
-
-@keyframes auth-spinner {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
 
 /* ---------- 开启时序 ---------- */
-
-.airlock.airlock--opening .airlock-console {
-  opacity: 0;
-  transform: translateY(-14px) scale(0.985);
-}
 
 .airlock.airlock--opening .airlock-door--left {
   transform: translateX(calc(-100% - 48px));
@@ -434,17 +201,6 @@
   transform: translateX(calc(100% + 48px));
 }
 
-
-.airlock.airlock--opening .airlock-statusbar {
-  transition: opacity 380ms ease 860ms;
-  opacity: 0;
-}
-
-.airlock.airlock--opening .airlock-status-dot {
-  background: #34d399;
-  box-shadow: 0 0 8px rgba(52, 211, 153, 0.85);
-  animation: none;
-}
 
 /* ---------- 退出关舱时序 ---------- */
 
@@ -458,14 +214,8 @@
 }
 
 /* airlock--closing：双门合拢过程中隐藏控制台与状态条，合拢后再淡入。 */
-.airlock.airlock--closing .airlock-console,
-.airlock.airlock--closing .airlock-statusbar {
-  opacity: 0;
-}
 
-.airlock.airlock--instant .airlock-door,
-.airlock.airlock--instant .airlock-console,
-.airlock.airlock--instant .airlock-statusbar {
+.airlock.airlock--instant .airlock-door {
   transition: none !important;
   animation: none !important;
 }
@@ -474,23 +224,13 @@
 
 @media (max-width: 760px) {
   .airlock-rivets,
-  .airlock-plate,
-  .airlock-bolts,
-  .airlock-strip--side,
-  .airlock-tree {
+  .airlock-strip--side {
     display: none;
-  }
-
-  .auth-card {
-    padding: 22px 22px 20px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .airlock-door,
-  .airlock-console,
-  .airlock-statusbar,
-  .airlock-status-dot {
+  .airlock-door {
     transition: none !important;
     animation: none !important;
   }

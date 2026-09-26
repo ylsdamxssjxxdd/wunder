@@ -5976,47 +5976,29 @@
     </div>
     <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
       <g id="airlockTreeLines" fill="none" stroke-linecap="round">
-        <line x1="200" y1="42" x2="318" y2="138"/>
-        <line x1="200" y1="42" x2="82" y2="138"/>
+        <line x1="200" y1="42" x2="360" y2="138"/>
+        <line x1="200" y1="42" x2="40" y2="138"/>
         <line x1="200" y1="42" x2="200" y2="352"/>
-        <line x1="318" y1="138" x2="82" y2="138"/>
-        <line x1="318" y1="138" x2="318" y2="276"/>
-        <line x1="318" y1="138" x2="200" y2="352"/>
-        <line x1="82" y1="138" x2="82" y2="276"/>
-        <line x1="82" y1="138" x2="200" y2="352"/>
-        <line x1="318" y1="276" x2="82" y2="276"/>
-        <line x1="318" y1="276" x2="200" y2="352"/>
-        <line x1="318" y1="276" x2="318" y2="432"/>
-        <line x1="82" y1="276" x2="200" y2="352"/>
-        <line x1="82" y1="276" x2="82" y2="432"/>
-        <line x1="200" y1="352" x2="318" y2="432"/>
-        <line x1="200" y1="352" x2="82" y2="432"/>
+        <line x1="360" y1="138" x2="40" y2="138"/>
+        <line x1="360" y1="138" x2="360" y2="276"/>
+        <line x1="360" y1="138" x2="200" y2="352"/>
+        <line x1="40" y1="138" x2="40" y2="276"/>
+        <line x1="40" y1="138" x2="200" y2="352"/>
+        <line x1="360" y1="276" x2="40" y2="276"/>
+        <line x1="360" y1="276" x2="200" y2="352"/>
+        <line x1="360" y1="276" x2="360" y2="432"/>
+        <line x1="40" y1="276" x2="200" y2="352"/>
+        <line x1="40" y1="276" x2="40" y2="432"/>
+        <line x1="200" y1="352" x2="360" y2="432"/>
+        <line x1="200" y1="352" x2="40" y2="432"/>
         <line x1="200" y1="352" x2="200" y2="506"/>
-        <line x1="318" y1="432" x2="82" y2="432"/>
-        <line x1="318" y1="432" x2="200" y2="506"/>
-        <line x1="318" y1="432" x2="200" y2="596"/>
-        <line x1="82" y1="432" x2="200" y2="506"/>
-        <line x1="82" y1="432" x2="200" y2="596"/>
+        <line x1="360" y1="432" x2="40" y2="432"/>
+        <line x1="360" y1="432" x2="200" y2="506"/>
+        <line x1="360" y1="432" x2="200" y2="596"/>
+        <line x1="40" y1="432" x2="200" y2="506"/>
+        <line x1="40" y1="432" x2="200" y2="596"/>
         <line x1="200" y1="506" x2="200" y2="596"/>
       </g>
-      <g id="airlockTreeNodes">
-        <circle cx="200" cy="42" r="21"/>
-        <circle cx="318" cy="138" r="21"/>
-        <circle cx="82" cy="138" r="21"/>
-        <circle cx="318" cy="276" r="21"/>
-        <circle cx="82" cy="276" r="21"/>
-        <circle cx="200" cy="352" r="21"/>
-        <circle cx="318" cy="432" r="21"/>
-        <circle cx="82" cy="432" r="21"/>
-        <circle cx="200" cy="506" r="21"/>
-        <circle cx="200" cy="596" r="21"/>
-      </g>
-      <symbol id="airlockTree" viewBox="0 0 400 640">
-        <use href="#airlockTreeLines" transform="translate(0,2.5)" stroke="rgba(148,163,184,0.13)" stroke-width="5"/>
-        <use href="#airlockTreeLines" stroke="rgba(2,6,12,0.66)" stroke-width="5"/>
-        <use href="#airlockTreeNodes" transform="translate(0,2)" fill="none" stroke="rgba(148,163,184,0.12)" stroke-width="4"/>
-        <use href="#airlockTreeNodes" fill="rgba(3,8,15,0.55)" stroke="rgba(2,6,12,0.66)" stroke-width="4"/>
-      </symbol>
     </svg>
     <div id="adminLoginModal" class="airlock active" aria-hidden="false">
       <div class="airlock-door airlock-door--left" aria-hidden="true">
@@ -6027,10 +6009,22 @@
           <div class="airlock-strip airlock-strip--bottom"></div>
           <div class="airlock-rivets airlock-rivets--top"></div>
           <div class="airlock-rivets airlock-rivets--bottom"></div>
-          <svg class="airlock-tree" aria-hidden="true" focusable="false"><use href="#airlockTree"/></svg>
-          <div class="airlock-bolts"></div>
-          <div class="airlock-teeth"></div>
-          <div class="airlock-plate">AIRLOCK-01</div>
+          <svg class="airlock-tree" viewBox="0 0 400 640" focusable="false">
+            <use href="#airlockTreeLines" transform="translate(0,2.5)" stroke="rgba(148,163,184,0.13)" stroke-width="5"/>
+            <use href="#airlockTreeLines" stroke="rgba(2,6,12,0.66)" stroke-width="5"/>
+            <g class="airlock-nodes">
+              <g class="airlock-node" data-node="1"><circle class="airlock-node-hit" cx="200" cy="42" r="34"/><circle class="airlock-node-ring" cx="200" cy="42" r="21"/></g>
+              <g class="airlock-node" data-node="2"><circle class="airlock-node-hit" cx="360" cy="138" r="34"/><circle class="airlock-node-ring" cx="360" cy="138" r="21"/></g>
+              <g class="airlock-node" data-node="3"><circle class="airlock-node-hit" cx="40" cy="138" r="34"/><circle class="airlock-node-ring" cx="40" cy="138" r="21"/></g>
+              <g class="airlock-node" data-node="4"><circle class="airlock-node-hit" cx="360" cy="276" r="34"/><circle class="airlock-node-ring" cx="360" cy="276" r="21"/></g>
+              <g class="airlock-node" data-node="5"><circle class="airlock-node-hit" cx="40" cy="276" r="34"/><circle class="airlock-node-ring" cx="40" cy="276" r="21"/></g>
+              <g class="airlock-node" data-node="6"><circle class="airlock-node-hit" cx="200" cy="352" r="34"/><circle class="airlock-node-ring" cx="200" cy="352" r="21"/></g>
+              <g class="airlock-node" data-node="7"><circle class="airlock-node-hit" cx="360" cy="432" r="34"/><circle class="airlock-node-ring" cx="360" cy="432" r="21"/></g>
+              <g class="airlock-node" data-node="8"><circle class="airlock-node-hit" cx="40" cy="432" r="34"/><circle class="airlock-node-ring" cx="40" cy="432" r="21"/></g>
+              <g class="airlock-node" data-node="9"><circle class="airlock-node-hit" cx="200" cy="506" r="34"/><circle class="airlock-node-ring" cx="200" cy="506" r="21"/></g>
+              <g class="airlock-node" data-node="10"><circle class="airlock-node-hit" cx="200" cy="596" r="34"/><circle class="airlock-node-ring" cx="200" cy="596" r="21"/></g>
+            </g>
+          </svg>
         </div>
       </div>
       <div class="airlock-door airlock-door--right" aria-hidden="true">
@@ -6041,43 +6035,22 @@
           <div class="airlock-strip airlock-strip--bottom"></div>
           <div class="airlock-rivets airlock-rivets--top"></div>
           <div class="airlock-rivets airlock-rivets--bottom"></div>
-          <svg class="airlock-tree" aria-hidden="true" focusable="false"><use href="#airlockTree"/></svg>
-          <div class="airlock-bolts"></div>
-          <div class="airlock-teeth"></div>
-          <div class="airlock-plate">AIRLOCK-02</div>
-        </div>
-      </div>
-      <div class="airlock-statusbar" aria-live="polite">
-        <span class="airlock-status-dot" aria-hidden="true"></span>
-        <span id="airlockStatus" data-i18n="auth.airlock.status.locked">舱门闭锁 · 等待认证</span>
-      </div>
-      <div class="airlock-console">
-        <div class="auth-card">
-          <div class="auth-brand">
-            <div class="auth-emblem" aria-hidden="true"><i class="fa-solid fa-shield-halved"></i></div>
-            <h2 data-i18n="auth.login.title">管理员登录</h2>
-          </div>
-          <form id="adminLoginForm" class="auth-form">
-            <label for="adminLoginUsername" data-i18n="auth.login.username">账号</label>
-            <input
-              id="adminLoginUsername"
-              type="text"
-              autocomplete="username"
-              placeholder="admin"
-            />
-            <label for="adminLoginPassword" data-i18n="auth.login.password">密码</label>
-            <input
-              id="adminLoginPassword"
-              type="password"
-              autocomplete="current-password"
-              placeholder="admin"
-            />
-            <div id="adminLoginError" class="auth-error" role="alert"></div>
-            <button id="adminLoginBtn" class="btn-with-icon" type="submit">
-              <i class="fa-solid fa-right-to-bracket"></i>
-              <span data-i18n="auth.login.action">登录</span>
-            </button>
-          </form>
+          <svg class="airlock-tree" viewBox="0 0 400 640" focusable="false">
+            <use href="#airlockTreeLines" transform="translate(0,2.5)" stroke="rgba(148,163,184,0.13)" stroke-width="5"/>
+            <use href="#airlockTreeLines" stroke="rgba(2,6,12,0.66)" stroke-width="5"/>
+            <g class="airlock-nodes">
+              <g class="airlock-node" data-node="1"><circle class="airlock-node-hit" cx="200" cy="42" r="34"/><circle class="airlock-node-ring" cx="200" cy="42" r="21"/></g>
+              <g class="airlock-node" data-node="2"><circle class="airlock-node-hit" cx="360" cy="138" r="34"/><circle class="airlock-node-ring" cx="360" cy="138" r="21"/></g>
+              <g class="airlock-node" data-node="3"><circle class="airlock-node-hit" cx="40" cy="138" r="34"/><circle class="airlock-node-ring" cx="40" cy="138" r="21"/></g>
+              <g class="airlock-node" data-node="4"><circle class="airlock-node-hit" cx="360" cy="276" r="34"/><circle class="airlock-node-ring" cx="360" cy="276" r="21"/></g>
+              <g class="airlock-node" data-node="5"><circle class="airlock-node-hit" cx="40" cy="276" r="34"/><circle class="airlock-node-ring" cx="40" cy="276" r="21"/></g>
+              <g class="airlock-node" data-node="6"><circle class="airlock-node-hit" cx="200" cy="352" r="34"/><circle class="airlock-node-ring" cx="200" cy="352" r="21"/></g>
+              <g class="airlock-node" data-node="7"><circle class="airlock-node-hit" cx="360" cy="432" r="34"/><circle class="airlock-node-ring" cx="360" cy="432" r="21"/></g>
+              <g class="airlock-node" data-node="8"><circle class="airlock-node-hit" cx="40" cy="432" r="34"/><circle class="airlock-node-ring" cx="40" cy="432" r="21"/></g>
+              <g class="airlock-node" data-node="9"><circle class="airlock-node-hit" cx="200" cy="506" r="34"/><circle class="airlock-node-ring" cx="200" cy="506" r="21"/></g>
+              <g class="airlock-node" data-node="10"><circle class="airlock-node-hit" cx="200" cy="596" r="34"/><circle class="airlock-node-ring" cx="200" cy="596" r="21"/></g>
+            </g>
+          </svg>
         </div>
       </div>
     </div>

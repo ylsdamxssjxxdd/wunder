@@ -18,12 +18,12 @@
       </span>
     </div>
     <div class="messenger-task-body">
-      <div ref="viewport" class="messenger-task-list" @dragover="handleDragOver" @dragleave="handleDragLeave" @drop="handleDrop" @scroll.passive="syncViewport">
+      <div ref="viewport" class="messenger-task-list" :class="{ 'is-drop-top': isDropAtTop }" @dragover="handleDragOver" @dragleave="handleDragLeave" @drop="handleDrop" @scroll.passive="syncViewport">
         <div v-if="!displayItems.length" class="messenger-task-empty" role="status">
           {{ t(showActiveOnly ? 'messenger.tasks.emptyActive' : 'messenger.tasks.empty') }}
         </div>
         <div :style="{ height: `${range.start * ROW_HEIGHT}px`, flexShrink: 0 }" aria-hidden="true"></div>
-        <div v-for="item in visibleItems" :key="item.id" class="messenger-task-item" :class="{ active: activeSessionId === item.id, 'is-running': item.state === 'running', 'is-dragging': dragState.key === item.id, 'is-drop-before': dragState.targetKey === item.id && dragState.position === 'before', 'is-drop-after': dragState.targetKey === item.id && dragState.position === 'after' }"
+        <div v-for="item in visibleItems" :key="item.id" class="messenger-task-item" :class="{ active: activeSessionId === item.id, 'is-running': item.state === 'running', 'is-dragging': dragState.key === item.id, 'is-drop-before': dragState.targetKey === item.id && dragState.position === 'before', 'is-drop-after': dragState.targetKey === item.id && dragState.position === 'after', 'is-drop-start': dragState.targetKey === item.id && dragState.position === 'before' && item.id === displayItems[0]?.id }"
           draggable="true" @dragstart="handleDragStart($event, item.id)">
           <button class="messenger-task-select" type="button" :aria-current="activeSessionId === item.id ? 'true' : undefined" :title="item.title" @click="emit('activate', item.id)">
             <AgentAvatar
@@ -99,6 +99,14 @@ const activityFilterTitle = computed(() => t(
   showActiveOnly.value ? 'messenger.tasks.showAll' : 'messenger.tasks.showActive', { count: activeCount.value }
 ));
 const range = computed(() => taskWindow(displayItems.value.length, scrollTop.value, height.value, ROW_HEIGHT));
+const isDropAtTop = computed(() => {
+  const firstItem = displayItems.value[0];
+  return Boolean(
+    firstItem &&
+      dragState.value.targetKey === firstItem.id &&
+      dragState.value.position === 'before'
+  );
+});
 // Subscribe inside this small component; text streaming must not invalidate the page shell.
 const visibleItems = computed(() => displayItems.value.slice(range.value.start, range.value.end).map((item) => ({
   ...item, state: resolveItemState(item)
@@ -151,7 +159,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .messenger-right-panel--tasks { padding: 14px; border-radius: 18px; background: var(--messenger-polish-panel-bg, var(--messenger-panel-bg, #fff)); }
 .messenger-task-body { display: flex; flex: 1; min-height: 0; padding: 4px; overflow: hidden; border-radius: 14px; background: linear-gradient(180deg, rgba(255, 255, 255, .82), rgba(249, 250, 251, .92)); box-shadow: inset 0 0 0 1px var(--messenger-polish-panel-outline, rgba(15, 23, 42, .05)); }
-.messenger-task-list { display: block; width: 100%; overflow-x: hidden; }
+.messenger-task-list { position: relative; display: block; width: 100%; overflow-x: hidden; }
+.messenger-task-list.is-drop-top::before { content: ''; position: sticky; top: 1px; z-index: 8; display: block; height: 3px; margin: 0 8px -3px; border-radius: 999px; background: var(--ui-accent); box-shadow: 0 0 0 1px rgba(var(--ui-accent-rgb), .16), 0 0 0 5px rgba(var(--ui-accent-rgb), .1), 0 2px 10px rgba(var(--ui-accent-rgb), .26); pointer-events: none; }
 .messenger-task-empty { padding: 18px 10px; color: var(--messenger-polish-muted); font-size: 12px; text-align: center; }
 .messenger-task-load-more { width: 100%; padding: 8px; color: inherit; background: none; border: 0; cursor: pointer; }
 .messenger-right-section-title { flex-shrink: 0; min-height: 28px; margin-bottom: 10px; padding-bottom: 0; border-bottom: 0; gap: 6px; }
@@ -172,6 +181,8 @@ onBeforeUnmount(() => {
 .messenger-task-item.is-drop-before::before, .messenger-task-item.is-drop-after::after { content: ''; position: absolute; left: 4px; right: 4px; height: 2px; border-radius: 999px; background: var(--ui-accent); pointer-events: none; z-index: 2; }
 .messenger-task-item.is-drop-before::before { top: -4px; }
 .messenger-task-item.is-drop-after::after { bottom: -4px; }
+.messenger-task-item.is-drop-start { background: rgba(var(--ui-accent-rgb), .08); box-shadow: inset 0 3px 0 var(--ui-accent); }
+.messenger-task-item.is-drop-start::before { top: 1px; height: 3px; box-shadow: 0 0 0 1px rgba(var(--ui-accent-rgb), .14), 0 0 0 4px rgba(var(--ui-accent-rgb), .08); }
 :global(.messenger-task-dropdown.el-popper) { box-sizing: border-box; max-width: min(180px, calc(100vw - 24px)); overflow: hidden; }
 :global(.messenger-task-dropdown .el-dropdown-menu) { min-width: 118px; max-width: 180px; overflow-x: hidden; }
 :global(.messenger-task-dropdown .el-dropdown-menu__item) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

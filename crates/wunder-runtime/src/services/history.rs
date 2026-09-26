@@ -396,6 +396,17 @@ fn parse_timestamp(value: Option<&Value>) -> Option<f64> {
 
 fn build_message_from_item(item: &Value, include_reasoning: bool) -> Option<Value> {
     let role = item.get("role").and_then(Value::as_str)?;
+    // Manual compaction command/summary rows are durable UI transcript entries.
+    // They must not be replayed into the next model request as a new user task.
+    let meta_type = item
+        .get("meta")
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get("type"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if meta_type == "manual_compaction_command" || meta_type == "manual_compaction_marker" {
+        return None;
+    }
     let content = item.get("content")?.clone();
     if role == "tool" {
         let content_text = match &content {

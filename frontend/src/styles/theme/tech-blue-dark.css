@@ -2313,6 +2313,37 @@
   transform: none;
 }
 
+/* Dock handles are arrow-only controls, including in the high-contrast tech-blue theme. */
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-nav-toggle,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-right-dock-toggle {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-nav-toggle::before,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-right-dock-toggle::before {
+  content: none;
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-nav-toggle:hover,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-nav-toggle:focus-visible,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-right-dock-toggle:hover,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-right-dock-toggle:focus-visible {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: #ecf7ff;
+  transform: translateY(-50%);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-nav-toggle:hover > i,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-nav-toggle:focus-visible > i,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-right-dock-toggle:hover > i,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-right-dock-toggle:focus-visible > i {
+  transform: scale(1.12);
+}
+
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-entity-value {
   color: var(--tech-blue-text);
 }
