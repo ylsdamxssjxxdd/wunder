@@ -72,7 +72,6 @@ const elements = {
   deleteBtn: document.getElementById("skillWorkspaceDeleteBtn"),
   editorModal: document.getElementById("skillEditorModal"),
   editorClose: document.getElementById("skillEditorModalClose"),
-  editorCloseBtn: document.getElementById("skillEditorModalCloseBtn"),
   editorPath: document.getElementById("skillEditorPath"),
   editorSave: document.getElementById("skillFileSaveBtn"),
   editorContent: document.getElementById("skillFileContent"),
@@ -1135,7 +1134,6 @@ export const initAdminSkillWorkspace = (options = {}) => {
   });
   elements.editorSave?.addEventListener("click", saveEditor);
   elements.editorClose?.addEventListener("click", closeEditor);
-  elements.editorCloseBtn?.addEventListener("click", closeEditor);
   elements.editorModal?.addEventListener("click", (event) => {
     if (event.target === elements.editorModal) closeEditor();
   });

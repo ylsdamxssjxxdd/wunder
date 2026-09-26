@@ -668,6 +668,7 @@
 .benchmark-history-modal-card,
 .benchmark-detail-modal-card {
   width: min(920px, 100%);
+  height: min(620px, calc(100vh - 32px));
   max-height: calc(100vh - 32px);
 }
 

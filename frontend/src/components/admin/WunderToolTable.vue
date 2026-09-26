@@ -55,9 +55,6 @@
         }}</pre>
         <div v-else class="tool-schema-empty">{{ t('common.none') }}</div>
       </div>
-      <template #footer>
-        <el-button @click="dialogVisible = false">{{ t('common.close') }}</el-button>
-      </template>
     </el-dialog>
   </div>
 </template>

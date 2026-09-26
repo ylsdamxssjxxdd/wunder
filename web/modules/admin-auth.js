@@ -148,15 +148,51 @@ const validateToken = async (token) => {
 let loginPromise = null;
 let loginResolve = null;
 
-const setLoginVisible = (visible) => {
-  if (!elements.adminLoginModal) {
+// Keep in sync with the door slide duration in styles/airlock.css.
+const AIRLOCK_OPEN_TOTAL_MS = 1600;
+const AIRLOCK_CLOSE_TOTAL_MS = 1450;
+const AIRLOCK_REDUCED_MOTION_MS = 150;
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const prefersReducedMotion = () =>
+  typeof window !== "undefined" &&
+  typeof window.matchMedia === "function" &&
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// 闭锁/失效属于静止状态，不展示顶部读出条；仅在流程态给出反馈。
+const AIRLOCK_STATUS_HIDDEN_KEYS = new Set([
+  "auth.airlock.status.locked",
+  "auth.airlock.status.invalid",
+]);
+
+const setAirlockStatus = (key) => {
+  const el = elements.airlockStatus;
+  if (el) {
+    el.textContent = t(key);
+  }
+  elements.adminLoginModal?.classList.toggle(
+    "airlock--status-on",
+    !AIRLOCK_STATUS_HIDDEN_KEYS.has(key),
+  );
+};
+
+const setLoginVisible = (visible, { focus = true } = {}) => {
+  const modal = elements.adminLoginModal;
+  if (!modal) {
     return;
   }
-  elements.adminLoginModal.classList.toggle("active", visible);
-  elements.adminLoginModal.setAttribute("aria-hidden", visible ? "false" : "true");
   if (visible) {
-    elements.adminLoginUsername?.focus();
+    modal.classList.remove("airlock--opening", "airlock--open");
+    modal.classList.add("active");
+    modal.setAttribute("aria-hidden", "false");
+    if (focus) {
+      elements.adminLoginUsername?.focus();
+    }
+    return;
   }
+  modal.classList.remove("active", "airlock--opening");
+  modal.setAttribute("aria-hidden", "true");
 };
 
 const setLoginError = (message) => {
@@ -174,25 +210,85 @@ const setLoginLoading = (loading) => {
   }
 };
 
+const startLoginWait = () => {
+  loginPromise = new Promise((resolve) => {
+    loginResolve = resolve;
+  });
+  return loginPromise;
+};
+
 const waitForLogin = () => {
   if (loginPromise) {
     return loginPromise;
   }
-  loginPromise = new Promise((resolve) => {
-    loginResolve = resolve;
-  });
+  startLoginWait();
+  setAirlockStatus("auth.airlock.status.locked");
   setLoginVisible(true);
   return loginPromise;
 };
 
-const completeLogin = () => {
-  setLoginVisible(false);
+// Play the hatch opening on top of the overlay, then hide it once the doors
+// have fully slid apart so the admin shell underneath becomes interactive.
+const playAirlockOpenSequence = async (grantBeatMs) => {
+  const modal = elements.adminLoginModal;
+  if (!modal) {
+    return;
+  }
+  setAirlockStatus("auth.airlock.status.opening");
+  const reducedMotion = prefersReducedMotion();
+  if (grantBeatMs > 0 && !reducedMotion) {
+    await wait(grantBeatMs);
+  }
+  modal.classList.add("airlock--opening");
+  await wait(reducedMotion ? AIRLOCK_REDUCED_MOTION_MS : AIRLOCK_OPEN_TOTAL_MS);
+  modal.classList.remove("airlock--opening");
+  modal.classList.add("airlock--open");
+  modal.setAttribute("aria-hidden", "true");
+};
+
+// Unblock the app boot immediately; the door animation runs on its own and
+// hides the overlay when finished.
+const completeLogin = ({ grantBeatMs = 0 } = {}) => {
   setLoginError("");
   if (loginResolve) {
     loginResolve();
   }
   loginPromise = null;
   loginResolve = null;
+  void playAirlockOpenSequence(grantBeatMs);
+};
+
+// Sign out: seal the doors over the console, then reload behind them so
+// panels and auth scope rebuild from a clean state.
+export const logoutAdmin = async () => {
+  clearStoredAuth();
+  const modal = elements.adminLoginModal;
+  if (!modal) {
+    location.reload();
+    return;
+  }
+  setLoginError("");
+  setLoginLoading(false);
+  setAirlockStatus("auth.airlock.status.closing");
+  const reducedMotion = prefersReducedMotion();
+  modal.classList.remove("airlock--open", "airlock--opening");
+  modal.classList.add("active", "airlock--closing", "airlock--open-doors", "airlock--instant");
+  modal.setAttribute("aria-hidden", "false");
+  // Jump the doors to the open position without a transition, then re-arm
+  // transitions and let them slide shut.
+  void modal.offsetWidth;
+  modal.classList.remove("airlock--instant");
+  void modal.offsetWidth;
+  if (reducedMotion) {
+    modal.classList.remove("airlock--open-doors", "airlock--closing");
+    await wait(120);
+  } else {
+    modal.classList.remove("airlock--open-doors");
+    await wait(AIRLOCK_CLOSE_TOTAL_MS);
+    modal.classList.remove("airlock--closing");
+    await wait(420);
+  }
+  location.reload();
 };
 
 const performLogin = async () => {
@@ -209,6 +305,7 @@ const performLogin = async () => {
   }
   setLoginLoading(true);
   setLoginError("");
+  setAirlockStatus("auth.airlock.status.authenticating");
   try {
     const response = await fetch(`${wunderBase}/auth/login`, {
       method: "POST",
@@ -221,6 +318,7 @@ const performLogin = async () => {
     if (!response.ok) {
       const message = await parseErrorMessage(response);
       setLoginError(t("auth.login.error", { message }));
+      setAirlockStatus("auth.airlock.status.locked");
       return;
     }
     const data = await response.json();
@@ -228,19 +326,23 @@ const performLogin = async () => {
     const user = data?.data?.user || null;
     if (!token) {
       setLoginError(t("auth.login.error", { message: t("auth.login.error.generic") }));
+      setAirlockStatus("auth.airlock.status.locked");
       return;
     }
     const scope = await resolveAuthScope(token, user);
     if (!scope) {
       clearStoredAuth();
       setLoginError(t("auth.login.notAdmin"));
+      setAirlockStatus("auth.airlock.status.locked");
       return;
     }
     writeStoredAuth({ token, user, scope });
-    completeLogin();
+    setAirlockStatus("auth.airlock.status.granted");
+    completeLogin({ grantBeatMs: 600 });
   } catch (error) {
     const message = error?.message || t("auth.login.error.generic");
     setLoginError(t("auth.login.error", { message }));
+    setAirlockStatus("auth.airlock.status.locked");
   } finally {
     setLoginLoading(false);
   }
@@ -259,15 +361,29 @@ export const initAdminAuth = async () => {
       performLogin();
     });
   }
+  if (elements.adminLogoutBtn) {
+    elements.adminLogoutBtn.addEventListener("click", () => {
+      void logoutAdmin();
+    });
+  }
+  // Doors are closed from first paint: greet the user before touching storage.
+  setLoginVisible(true, { focus: false });
   const stored = readStoredAuth();
   const token = typeof stored.token === "string" ? stored.token.trim() : "";
   if (token) {
+    setAirlockStatus("auth.airlock.status.checking");
     const valid = await validateToken(token);
     if (valid) {
-      completeLogin();
+      // Refresh with a live session still plays the hatch opening once.
+      setAirlockStatus("auth.airlock.status.granted");
+      completeLogin({ grantBeatMs: 350 });
       return;
     }
     clearStoredAuth();
+    setLoginError(t("auth.airlock.status.invalid"));
+    setAirlockStatus("auth.airlock.status.invalid");
+    elements.adminLoginUsername?.focus();
+    return;
   }
   await waitForLogin();
 };

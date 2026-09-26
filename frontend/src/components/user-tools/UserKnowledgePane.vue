@@ -591,11 +591,6 @@
           </div>
         </div>
       </div>
-      <template #footer>
-        <button class="user-tools-btn secondary" type="button" @click="closeTestModal">
-          {{ t('common.close') }}
-        </button>
-      </template>
     </el-dialog>
 
     <el-dialog

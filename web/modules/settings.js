@@ -1105,9 +1105,6 @@ export const initSettingsPanel = () => {
   if (elements.settingsAdvancedModalClose) {
     elements.settingsAdvancedModalClose.addEventListener("click", closeAdvancedModal);
   }
-  if (elements.settingsAdvancedCancel) {
-    elements.settingsAdvancedCancel.addEventListener("click", closeAdvancedModal);
-  }
   if (elements.settingsAdvancedSave) {
     elements.settingsAdvancedSave.addEventListener("click", () => {
       handleSaveSettings()

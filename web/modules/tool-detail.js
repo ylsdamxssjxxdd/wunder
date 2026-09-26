@@ -29,9 +29,8 @@ export const closeToolDetailModal = () => {
 
 // 初始化工具详情弹窗交互
 export const initToolDetailModal = () => {
-  elements.toolDetailClose.addEventListener("click", closeToolDetailModal);
-  elements.toolDetailCloseBtn.addEventListener("click", closeToolDetailModal);
-  elements.toolDetailModal.addEventListener("click", (event) => {
+  elements.toolDetailClose?.addEventListener("click", closeToolDetailModal);
+  elements.toolDetailModal?.addEventListener("click", (event) => {
     if (event.target === elements.toolDetailModal) {
       closeToolDetailModal();
     }

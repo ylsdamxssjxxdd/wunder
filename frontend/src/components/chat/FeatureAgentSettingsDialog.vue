@@ -11,7 +11,10 @@
     <template #header>
       <div class="user-tools-header">
         <div class="user-tools-title">{{ t('chat.features.agentSettings') }}</div>
-        <button class="icon-btn" type="button" @click="visible = false">&times;</button>
+        <div class="messenger-dialog-header-actions">
+          <el-button :disabled="saving" @click="exportWorkerCard">{{ t('portal.agent.exportWorkerCard') }}</el-button>
+          <button class="icon-btn" type="button" :aria-label="t('common.close')" @click="visible = false">&times;</button>
+        </div>
       </div>
     </template>
     <div class="agent-editor-body">
@@ -157,7 +160,6 @@
       <el-button type="primary" :loading="saving" :disabled="!canEdit" @click="saveAgent">
         {{ saving ? t('common.saving') : t('portal.agent.save') }}
       </el-button>
-      <el-button :disabled="saving" @click="exportWorkerCard">{{ t('portal.agent.exportWorkerCard') }}</el-button>
     </template>
   </el-dialog>
 </template>

@@ -11,7 +11,6 @@ const getElements = () => ({
   list: document.getElementById("workspacePropertiesList"),
   hint: document.getElementById("workspacePropertiesHint"),
   close: document.getElementById("workspacePropertiesClose"),
-  closeBtn: document.getElementById("workspacePropertiesCloseBtn"),
 });
 
 const normalizePath = (path) => String(path || "").replace(/\\/g, "/").replace(/^\/+/, "");
@@ -280,7 +279,6 @@ export const initWorkspacePropertiesModal = () => {
   initialized = true;
   const elements = getElements();
   elements.close?.addEventListener("click", closeWorkspacePropertiesModal);
-  elements.closeBtn?.addEventListener("click", closeWorkspacePropertiesModal);
   elements.modal?.addEventListener("click", (event) => {
     if (event.target === elements.modal) {
       closeWorkspacePropertiesModal();

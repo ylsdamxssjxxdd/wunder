@@ -223,9 +223,18 @@
       width="560px"
       top="clamp(10px, 5vh, 44px)"
       class="workspace-dialog workspace-dialog--properties"
+      :show-close="false"
       append-to-body
       @closed="state.properties.entry = null"
     >
+      <template #header>
+        <div class="messenger-dialog-header">
+          <div class="messenger-dialog-header-copy"><strong>{{ t('workspace.properties.title') }}</strong></div>
+          <button class="messenger-dialog-close" type="button" :aria-label="t('common.close')" @click="closePropertiesDialog">
+            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+          </button>
+        </div>
+      </template>
       <div v-if="properties.entry" class="workspace-properties">
         <div class="workspace-properties-head">
           <span :class="['workspace-properties-icon', propertiesIcon.className]" :title="propertiesIcon.label">
@@ -250,11 +259,6 @@
         </dl>
         <div v-if="propertiesHint" class="workspace-properties-hint">{{ propertiesHint }}</div>
       </div>
-      <template #footer>
-        <button class="workspace-btn secondary" type="button" @click="closePropertiesDialog">
-          {{ t('common.close') }}
-        </button>
-      </template>
     </el-dialog>
 
     <el-dialog
@@ -263,14 +267,26 @@
       width="720px"
       top="clamp(10px, 4vh, 36px)"
       class="workspace-dialog workspace-dialog--file-preview"
+      :show-close="false"
       append-to-body
     >
-      <div class="workspace-preview-head">
-        <div class="workspace-preview-title">
-          {{ preview.entry?.name || t('workspace.preview.dialogTitle') }}
+      <template #header>
+        <div class="messenger-dialog-header">
+          <div class="messenger-dialog-header-copy">
+            <strong>{{ t('workspace.preview.dialogTitle') }}</strong>
+            <span :title="previewMeta">{{ preview.entry?.name || t('workspace.preview.dialogTitle') }}</span>
+          </div>
+          <div class="messenger-dialog-header-actions">
+            <button class="workspace-btn secondary" type="button" @click="downloadPreview">
+              <i class="fa-solid fa-download" aria-hidden="true"></i>
+              {{ resourceActionLabel }}
+            </button>
+            <button class="messenger-dialog-close" type="button" :aria-label="t('common.close')" @click="closePreview">
+              <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+            </button>
+          </div>
         </div>
-        <div class="workspace-preview-meta" :title="previewMeta">{{ previewMeta }}</div>
-      </div>
+      </template>
       <div v-if="preview.hint" class="workspace-preview-hint">{{ preview.hint }}</div>
       <div
         class="workspace-preview"
@@ -320,14 +336,6 @@
           <pre v-else class="workspace-preview-text">{{ preview.content }}</pre>
         </template>
       </div>
-      <template #footer>
-        <button class="workspace-btn secondary" @click="downloadPreview">
-          {{ resourceActionLabel }}
-        </button>
-        <button class="workspace-btn secondary" @click="closePreview">
-          {{ t('common.close') }}
-        </button>
-      </template>
     </el-dialog>
 
     <Teleport v-if="editor.visible && editor.fullscreen" to=".messenger-view">

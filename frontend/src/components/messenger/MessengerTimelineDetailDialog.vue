@@ -2,10 +2,34 @@
   <el-dialog
     v-model="dialogVisible"
     class="messenger-dialog messenger-timeline-detail-dialog"
-    :title="dialogTitle"
+    :show-close="false"
     width="1040px"
     destroy-on-close
   >
+    <template #header>
+      <div class="messenger-dialog-header">
+        <div class="messenger-dialog-header-copy">
+          <strong>{{ t('messenger.timeline.detail.title') }}</strong>
+          <span :title="dialogTitle">{{ dialogTitle }}</span>
+        </div>
+        <div class="messenger-dialog-header-actions">
+          <button
+            class="messenger-inline-btn"
+            type="button"
+            :disabled="!sessionDetail"
+            :title="t('messenger.timeline.detail.export')"
+            :aria-label="t('messenger.timeline.detail.export')"
+            @click="exportTimelineDetail"
+          >
+            <i class="fa-solid fa-download" aria-hidden="true"></i>
+            <span>{{ t('messenger.timeline.detail.export') }}</span>
+          </button>
+          <button class="messenger-dialog-close" type="button" :aria-label="t('common.close')" @click="dialogVisible = false">
+            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+          </button>
+        </div>
+      </div>
+    </template>
     <div v-if="loading" class="messenger-timeline-detail-loading">
       {{ t('common.loading') }}
     </div>
@@ -24,17 +48,6 @@
             </div>
           </div>
         </div>
-        <button
-          class="messenger-inline-btn messenger-timeline-detail-export-btn"
-          type="button"
-          :disabled="!sessionDetail"
-          :title="t('messenger.timeline.detail.export')"
-          :aria-label="t('messenger.timeline.detail.export')"
-          @click="exportTimelineDetail"
-        >
-          <i class="fa-solid fa-download" aria-hidden="true"></i>
-          <span>{{ t('messenger.timeline.detail.export') }}</span>
-        </button>
       </aside>
 
       <div class="messenger-timeline-detail-panel">

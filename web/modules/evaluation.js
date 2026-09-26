@@ -982,7 +982,6 @@ function bindEvents() {
   });
 
   refs.historyModalClose?.addEventListener("click", closeHistoryModal);
-  refs.historyModalOk?.addEventListener("click", closeHistoryModal);
   refs.historyModal?.addEventListener("click", (event) => {
     if (event.target === refs.historyModal) {
       closeHistoryModal();
@@ -1008,7 +1007,6 @@ function bindEvents() {
   });
 
   refs.detailModalClose?.addEventListener("click", closeDetailModal);
-  refs.detailModalOk?.addEventListener("click", closeDetailModal);
   refs.detailModal?.addEventListener("click", (event) => {
     if (event.target === refs.detailModal) {
       closeDetailModal();

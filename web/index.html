@@ -156,6 +156,12 @@
             </div>
           </div>
         </div>
+        <div class="sidebar-footer">
+          <button id="adminLogoutBtn" class="sidebar-logout" type="button">
+            <i class="fa-solid fa-door-closed"></i>
+            <span data-i18n="auth.logout.action">退出登录</span>
+          </button>
+        </div>
       </aside>
       <main class="content">
         <section id="monitorPanel" class="panel active">
@@ -3231,7 +3237,12 @@
                     未选择文件
                   </div>
                 </div>
-                <button id="skillEditorModalClose" class="icon-btn" type="button">×</button>
+                <div class="modal-header-actions">
+                  <button id="skillFileSaveBtn" class="btn-with-icon btn-compact" type="button">
+                    <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
+                  </button>
+                  <button id="skillEditorModalClose" class="icon-btn" type="button">×</button>
+                </div>
               </div>
               <div class="modal-body skill-editor-modal-body">
                 <div id="skillEditorBody" class="skill-editor-body">
@@ -3247,16 +3258,6 @@
                     autocapitalize="off"
                   ></textarea>
                 </div>
-              </div>
-              <div class="modal-actions">
-                <button id="skillEditorModalCloseBtn" class="secondary btn-with-icon" type="button">
-                  <i class="fa-solid fa-xmark"></i>
-                  <span data-i18n="common.cancel">取消</span>
-                </button>
-                <button id="skillFileSaveBtn" class="btn-with-icon" type="button">
-                  <i class="fa-solid fa-floppy-disk"></i>
-                  <span data-i18n="common.save">保存</span>
-                </button>
               </div>
             </div>
           </div>
@@ -4243,9 +4244,6 @@
                 </div>
                 <div id="benchmarkHistoryEmpty" class="muted">暂无历史运行</div>
               </div>
-              <div class="modal-actions">
-                <button id="benchmarkHistoryModalOk" class="primary" type="button">关闭</button>
-              </div>
             </div>
           </div>
           <div id="benchmarkDetailModal" class="modal">
@@ -4256,9 +4254,6 @@
               </div>
               <div class="modal-body">
                 <pre id="benchmarkDetailPre" class="benchmark-detail-pre">暂无明细</pre>
-              </div>
-              <div class="modal-actions">
-                <button id="benchmarkDetailModalOk" class="primary" type="button">关闭</button>
               </div>
             </div>
           </div>
@@ -4334,15 +4329,12 @@
       <div class="modal-card">
         <div class="modal-header">
           <div class="detail-title" data-i18n="settings.advanced.title">高级设置</div>
-          <button
-            id="settingsAdvancedModalClose"
-            class="icon-btn"
-            type="button"
-            aria-label="关闭"
-            data-i18n-aria-label="common.close"
-          >
-            ×
-          </button>
+          <div class="modal-header-actions">
+            <button id="settingsAdvancedSave" class="btn-with-icon btn-compact" type="button">
+              <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
+            </button>
+            <button id="settingsAdvancedModalClose" class="icon-btn" type="button" aria-label="关闭" data-i18n-aria-label="common.close">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div class="settings-advanced-layout">
@@ -4477,14 +4469,6 @@
               </div>
             </div>
           </div>
-        </div>
-        <div class="modal-actions">
-          <button id="settingsAdvancedCancel" class="secondary btn-with-icon" type="button">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
-          </button>
-          <button id="settingsAdvancedSave" class="btn-with-icon" type="button">
-            <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
-          </button>
         </div>
       </div>
     </div>
@@ -4671,11 +4655,6 @@
         <div class="modal-body">
           <div id="skillModalMeta" class="muted"></div>
           <pre id="skillModalContent" class="skill-content"></pre>
-        </div>
-        <div class="modal-actions">
-          <button id="skillModalCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
-          </button>
         </div>
       </div>
     </div>
@@ -4936,11 +4915,6 @@
           <div id="knowledgeDocModalMeta" class="muted"></div>
           <div id="knowledgeDocModalContent" class="knowledge-doc-modal-content"></div>
         </div>
-        <div class="modal-actions">
-          <button id="knowledgeDocModalCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
-          </button>
-        </div>
       </div>
     </div>
     <div id="knowledgeTestModal" class="modal">
@@ -4971,11 +4945,6 @@
               <div id="knowledgeTestResult" class="knowledge-test-result-list"></div>
             </div>
           </div>
-        </div>
-        <div class="modal-actions">
-          <button id="knowledgeTestModalCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
-          </button>
         </div>
       </div>
     </div>
@@ -5189,11 +5158,6 @@
               <div id="userToolSaveStatus" class="muted"></div>
             </div>
           </div>
-        </div>
-        <div class="modal-actions">
-          <button id="userToolModalCloseBtn" class="secondary btn-with-icon" type="button">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
-          </button>
         </div>
       </div>
     </div>
@@ -5657,32 +5621,23 @@
             </div>
           </div>
         </div>
-        <div class="modal-actions">
-          <button id="toolDetailCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i>
-            <span data-i18n="tool.detail.close">关闭</span>
-          </button>
-        </div>
       </div>
     </div>
     <div id="workspacePreviewModal" class="modal">
-      <div class="modal-card">
+      <div class="modal-card modal-card-preview">
         <div class="modal-header">
           <div id="workspacePreviewTitle" class="detail-title" data-i18n="workspace.preview.title">文件预览</div>
-          <button id="workspacePreviewClose" class="icon-btn" type="button">×</button>
+          <div class="modal-header-actions">
+            <button id="workspacePreviewDownload" class="secondary btn-with-icon btn-compact" type="button">
+              <i class="fa-solid fa-download"></i><span data-i18n="workspace.action.download">下载</span>
+            </button>
+            <button id="workspacePreviewClose" class="icon-btn" type="button">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div id="workspacePreviewMeta" class="muted"></div>
           <div id="workspacePreviewHint" class="muted"></div>
           <div id="workspacePreviewContainer" class="workspace-preview"></div>
-        </div>
-        <div class="modal-actions">
-          <button id="workspacePreviewDownload" class="secondary btn-with-icon">
-            <i class="fa-solid fa-download"></i><span data-i18n="workspace.action.download">下载</span>
-          </button>
-          <button id="workspacePreviewCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
-          </button>
         </div>
       </div>
     </div>
@@ -5706,11 +5661,6 @@
             <dl id="workspacePropertiesList" class="workspace-properties-list"></dl>
             <div id="workspacePropertiesHint" class="workspace-properties-hint"></div>
           </div>
-        </div>
-        <div class="modal-actions">
-          <button id="workspacePropertiesCloseBtn" class="secondary btn-with-icon" type="button">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">Close</span>
-          </button>
         </div>
       </div>
     </div>
@@ -5767,16 +5717,11 @@
           </div>
           <div id="debugHistoryList" class="list-body"></div>
         </div>
-        <div class="modal-actions">
-          <button id="debugHistoryCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
-          </button>
-        </div>
       </div>
     </div>
 
     <div id="monitorDetailModal" class="modal">
-      <div class="modal-card">
+      <div class="modal-card modal-card-monitor-detail">
           <div class="modal-header">
           <div id="monitorDetailTitle" class="detail-title">线程日志</div>
           <div class="modal-header-actions">
@@ -5829,12 +5774,11 @@
               </div>
             </div>
           </div>
-          </div>
         </div>
       </div>
     </div>
     <div id="monitorStatusModal" class="modal">
-      <div class="modal-card">
+      <div class="modal-card modal-card-list">
         <div class="modal-header">
           <div>
             <div id="monitorStatusTitle" class="detail-title">线程状态</div>
@@ -5848,15 +5792,10 @@
           </div>
           <div id="monitorStatusList" class="list-body monitor-status-list"></div>
         </div>
-        <div class="modal-actions">
-          <button id="monitorStatusCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
-          </button>
-        </div>
       </div>
     </div>
     <div id="monitorToolModal" class="modal">
-      <div class="modal-card">
+      <div class="modal-card modal-card-list">
         <div class="modal-header">
           <div>
             <div id="monitorToolTitle" class="detail-title">工具调用</div>
@@ -5869,11 +5808,6 @@
             <label data-i18n="monitor.toolModal.list.title">调用线程</label>
           </div>
           <div id="monitorToolList" class="list-body monitor-status-list"></div>
-        </div>
-        <div class="modal-actions">
-          <button id="monitorToolCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
-          </button>
         </div>
       </div>
     </div>
@@ -5949,18 +5883,15 @@
             <div id="workspaceEditorTitle" class="detail-title">编辑文件</div>
             <div id="workspaceEditorPath" class="muted"></div>
           </div>
-          <button id="workspaceEditorClose" class="icon-btn" type="button">×</button>
+          <div class="modal-header-actions">
+            <button id="workspaceEditorSave" class="btn-with-icon btn-compact" type="button">
+              <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
+            </button>
+            <button id="workspaceEditorClose" class="icon-btn" type="button">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <textarea id="workspaceEditorContent" class="workspace-editor-text"></textarea>
-        </div>
-        <div class="modal-actions">
-          <button id="workspaceEditorCloseBtn" class="secondary btn-with-icon">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
-          </button>
-          <button id="workspaceEditorSave" class="btn-with-icon">
-            <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
-          </button>
         </div>
       </div>
     </div>
@@ -5971,7 +5902,12 @@
       <div class="modal-card modal-card-lg">
         <div class="modal-header">
           <div class="detail-title" data-i18n="lsp.config.title">LSP 配置</div>
-          <button id="lspConfigModalClose" class="icon-btn" type="button">&times;</button>
+          <div class="modal-header-actions">
+            <button id="lspSaveBtn" class="btn-with-icon btn-compact" type="button">
+              <i class="fa-solid fa-check"></i><span data-i18n="common.save">保存</span>
+            </button>
+            <button id="lspConfigModalClose" class="icon-btn" type="button">&times;</button>
+          </div>
         </div>
         <div class="modal-body">
           <div class="settings-grid">
@@ -6020,65 +5956,133 @@
             </div>
           </div>
         </div>
-        <div class="modal-actions">
-          <button id="lspConfigModalCloseBtn" class="secondary btn-with-icon" type="button">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
-          </button>
-          <button id="lspSaveBtn" class="btn-with-icon" type="button">
-            <i class="fa-solid fa-check"></i><span data-i18n="common.save">保存</span>
-          </button>
-        </div>
       </div>
     </div>
     <div id="lspStatusModal" class="modal">
       <div class="modal-card">
         <div class="modal-header">
           <div class="detail-title" data-i18n="lsp.status.title">连接状态</div>
-          <button id="lspStatusModalClose" class="icon-btn" type="button">&times;</button>
+          <div class="modal-header-actions">
+            <button id="lspRefreshBtn" class="secondary btn-with-icon btn-compact" type="button">
+              <i class="fa-solid fa-arrows-rotate"></i><span data-i18n="common.refresh">刷新</span>
+            </button>
+            <button id="lspStatusModalClose" class="icon-btn" type="button">&times;</button>
+          </div>
         </div>
         <div class="modal-body">
           <div id="lspStatusList" class="list-body"></div>
         </div>
-        <div class="modal-actions">
-          <button id="lspRefreshBtn" class="secondary btn-with-icon" type="button">
-            <i class="fa-solid fa-arrows-rotate"></i><span data-i18n="common.refresh">刷新</span>
-          </button>
-          <button id="lspStatusModalCloseBtn" class="btn-with-icon" type="button">
-            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
-          </button>
-        </div>
       </div>
     </div>
-    <div id="adminLoginModal" class="auth-overlay" aria-hidden="true">
-      <div class="auth-card">
-        <h2 data-i18n="auth.login.title">管理员登录</h2>
-        <p class="auth-subtitle" data-i18n="auth.login.subtitle">首次进入请使用管理员账号</p>
-        <form id="adminLoginForm" class="auth-form">
-          <label for="adminLoginUsername" data-i18n="auth.login.username">账号</label>
-          <input
-            id="adminLoginUsername"
-            type="text"
-            autocomplete="username"
-            placeholder="admin"
-          />
-          <label for="adminLoginPassword" data-i18n="auth.login.password">密码</label>
-          <input
-            id="adminLoginPassword"
-            type="password"
-            autocomplete="current-password"
-            placeholder="admin"
-          />
-          <div id="adminLoginError" class="auth-error" role="alert"></div>
-          <button id="adminLoginBtn" class="btn-with-icon" type="submit">
-            <i class="fa-solid fa-right-to-bracket"></i>
-            <span data-i18n="auth.login.action">登录</span>
-          </button>
-          <div class="auth-hint" data-i18n="auth.login.hint">默认账号：admin / admin</div>
-        </form>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+      <g id="airlockTreeLines" fill="none" stroke-linecap="round">
+        <line x1="200" y1="42" x2="318" y2="138"/>
+        <line x1="200" y1="42" x2="82" y2="138"/>
+        <line x1="200" y1="42" x2="200" y2="352"/>
+        <line x1="318" y1="138" x2="82" y2="138"/>
+        <line x1="318" y1="138" x2="318" y2="276"/>
+        <line x1="318" y1="138" x2="200" y2="352"/>
+        <line x1="82" y1="138" x2="82" y2="276"/>
+        <line x1="82" y1="138" x2="200" y2="352"/>
+        <line x1="318" y1="276" x2="82" y2="276"/>
+        <line x1="318" y1="276" x2="200" y2="352"/>
+        <line x1="318" y1="276" x2="318" y2="432"/>
+        <line x1="82" y1="276" x2="200" y2="352"/>
+        <line x1="82" y1="276" x2="82" y2="432"/>
+        <line x1="200" y1="352" x2="318" y2="432"/>
+        <line x1="200" y1="352" x2="82" y2="432"/>
+        <line x1="200" y1="352" x2="200" y2="506"/>
+        <line x1="318" y1="432" x2="82" y2="432"/>
+        <line x1="318" y1="432" x2="200" y2="506"/>
+        <line x1="318" y1="432" x2="200" y2="596"/>
+        <line x1="82" y1="432" x2="200" y2="506"/>
+        <line x1="82" y1="432" x2="200" y2="596"/>
+        <line x1="200" y1="506" x2="200" y2="596"/>
+      </g>
+      <g id="airlockTreeNodes">
+        <circle cx="200" cy="42" r="21"/>
+        <circle cx="318" cy="138" r="21"/>
+        <circle cx="82" cy="138" r="21"/>
+        <circle cx="318" cy="276" r="21"/>
+        <circle cx="82" cy="276" r="21"/>
+        <circle cx="200" cy="352" r="21"/>
+        <circle cx="318" cy="432" r="21"/>
+        <circle cx="82" cy="432" r="21"/>
+        <circle cx="200" cy="506" r="21"/>
+        <circle cx="200" cy="596" r="21"/>
+      </g>
+      <symbol id="airlockTree" viewBox="0 0 400 640">
+        <use href="#airlockTreeLines" transform="translate(0,2.5)" stroke="rgba(148,163,184,0.13)" stroke-width="5"/>
+        <use href="#airlockTreeLines" stroke="rgba(2,6,12,0.66)" stroke-width="5"/>
+        <use href="#airlockTreeNodes" transform="translate(0,2)" fill="none" stroke="rgba(148,163,184,0.12)" stroke-width="4"/>
+        <use href="#airlockTreeNodes" fill="rgba(3,8,15,0.55)" stroke="rgba(2,6,12,0.66)" stroke-width="4"/>
+      </symbol>
+    </svg>
+    <div id="adminLoginModal" class="airlock active" aria-hidden="false">
+      <div class="airlock-door airlock-door--left" aria-hidden="true">
+        <div class="airlock-hull">
+          <div class="airlock-deck"></div>
+          <div class="airlock-strip airlock-strip--side airlock-strip--side-left"></div>
+          <div class="airlock-strip airlock-strip--top"></div>
+          <div class="airlock-strip airlock-strip--bottom"></div>
+          <div class="airlock-rivets airlock-rivets--top"></div>
+          <div class="airlock-rivets airlock-rivets--bottom"></div>
+          <svg class="airlock-tree" aria-hidden="true" focusable="false"><use href="#airlockTree"/></svg>
+          <div class="airlock-bolts"></div>
+          <div class="airlock-teeth"></div>
+          <div class="airlock-plate">AIRLOCK-01</div>
+        </div>
+      </div>
+      <div class="airlock-door airlock-door--right" aria-hidden="true">
+        <div class="airlock-hull">
+          <div class="airlock-deck"></div>
+          <div class="airlock-strip airlock-strip--side airlock-strip--side-right"></div>
+          <div class="airlock-strip airlock-strip--top"></div>
+          <div class="airlock-strip airlock-strip--bottom"></div>
+          <div class="airlock-rivets airlock-rivets--top"></div>
+          <div class="airlock-rivets airlock-rivets--bottom"></div>
+          <svg class="airlock-tree" aria-hidden="true" focusable="false"><use href="#airlockTree"/></svg>
+          <div class="airlock-bolts"></div>
+          <div class="airlock-teeth"></div>
+          <div class="airlock-plate">AIRLOCK-02</div>
+        </div>
+      </div>
+      <div class="airlock-statusbar" aria-live="polite">
+        <span class="airlock-status-dot" aria-hidden="true"></span>
+        <span id="airlockStatus" data-i18n="auth.airlock.status.locked">舱门闭锁 · 等待认证</span>
+      </div>
+      <div class="airlock-console">
+        <div class="auth-card">
+          <div class="auth-brand">
+            <div class="auth-emblem" aria-hidden="true"><i class="fa-solid fa-shield-halved"></i></div>
+            <h2 data-i18n="auth.login.title">管理员登录</h2>
+          </div>
+          <form id="adminLoginForm" class="auth-form">
+            <label for="adminLoginUsername" data-i18n="auth.login.username">账号</label>
+            <input
+              id="adminLoginUsername"
+              type="text"
+              autocomplete="username"
+              placeholder="admin"
+            />
+            <label for="adminLoginPassword" data-i18n="auth.login.password">密码</label>
+            <input
+              id="adminLoginPassword"
+              type="password"
+              autocomplete="current-password"
+              placeholder="admin"
+            />
+            <div id="adminLoginError" class="auth-error" role="alert"></div>
+            <button id="adminLoginBtn" class="btn-with-icon" type="submit">
+              <i class="fa-solid fa-right-to-bracket"></i>
+              <span data-i18n="auth.login.action">登录</span>
+            </button>
+          </form>
+        </div>
       </div>
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20260923-01"></script>
+    <script type="module" src="./app.js?v=20260926-01"></script>
   </body>
 </html>

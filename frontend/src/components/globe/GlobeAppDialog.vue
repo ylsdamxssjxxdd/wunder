@@ -8,13 +8,6 @@
     @update:model-value="handleVisibleChange"
   >
     <GlobeAppPanel />
-    <template #footer>
-      <span class="dialog-footer">
-        <button class="user-world-dialog-btn muted" type="button" @click="handleVisibleChange(false)">
-          {{ t('common.close') }}
-        </button>
-      </span>
-    </template>
   </el-dialog>
 </template>
 

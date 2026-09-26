@@ -7052,8 +7052,82 @@ button.messenger-chat-header-model {
   flex-direction: column;
 }
 
+/* Dialog chrome is shared by previews and timeline logs so the frame stays stable
+   while only the body scrolls. Actions live beside the close control to reclaim
+   vertical space and keep the primary affordances visible. */
+.messenger-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.messenger-dialog-header-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.messenger-dialog-header-copy strong,
+.messenger-dialog-header-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messenger-dialog-header-copy strong {
+  color: #1f2937;
+  font-size: 14px;
+}
+
+.messenger-dialog-header-copy span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.messenger-dialog-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.messenger-dialog-close {
+  width: 30px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  background: #fff;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.messenger-dialog-close:hover,
+.messenger-dialog-close:focus-visible {
+  border-color: rgba(var(--ui-accent-rgb), 0.45);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-deep);
+  outline: none;
+}
+
 .workspace-dialog--file-preview.el-dialog {
   width: min(92vw, 980px) !important;
+  height: min(760px, calc(var(--app-viewport-height, 100vh) - 24px));
+}
+
+.workspace-dialog.el-dialog.messenger-image-preview-dialog {
+  height: min(760px, calc(var(--app-viewport-height, 100vh) - 24px));
+}
+
+.messenger-image-preview-dialog .messenger-image-preview-body {
+  height: auto;
+  max-height: none;
+  flex: 1 1 auto;
 }
 
 .workspace-dialog--file-editor.is-fullscreen.el-dialog {
@@ -7270,12 +7344,11 @@ body.desktop-shell-active .workspace-editor-shell {
   max-height: none;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .workspace-dialog--file-preview .workspace-preview.embed.is-image {
-  height: clamp(280px, 70vh, 820px);
-  max-height: calc(var(--app-viewport-height, 100vh) - 180px);
+  overflow: hidden;
 }
 
 .workspace-dialog--file-preview .workspace-preview.embed.is-image .zoomable-image-preview,
@@ -7287,16 +7360,16 @@ body.desktop-shell-active .workspace-editor-shell {
 }
 
 .workspace-dialog--file-preview .workspace-preview iframe {
-  min-height: 280px;
+  min-height: 0;
   height: 100%;
 }
 
 .workspace-dialog--file-preview .workspace-preview.is-audio {
-  min-height: 120px;
+  justify-content: center;
 }
 
 .workspace-dialog--file-preview .workspace-preview.is-video {
-  min-height: 280px;
+  justify-content: center;
 }
 
 .workspace-dialog--file-preview .workspace-preview-video {
@@ -7572,6 +7645,10 @@ body.desktop-shell-active .workspace-editor-shell {
 
 .workspace-dialog--properties.el-dialog {
   width: min(560px, calc(100vw - 24px)) !important;
+  height: min(460px, calc(var(--app-viewport-height, 100vh) - 24px));
+  max-height: calc(var(--app-viewport-height, 100vh) - 24px);
+  display: flex;
+  flex-direction: column;
   --workspace-properties-text: #1f2937;
   --workspace-properties-muted: #64748b;
   background: #ffffff !important;
@@ -7588,6 +7665,9 @@ body.desktop-shell-active .workspace-editor-shell {
 }
 
 .workspace-dialog--properties .el-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
   padding: 18px 20px 8px;
   background: #ffffff !important;
   color: var(--workspace-properties-text) !important;
@@ -7966,6 +8046,8 @@ body.desktop-shell-active .workspace-editor-shell {
   color: #202020;
   box-shadow: 0 16px 44px rgba(0, 0, 0, 0.12);
   margin-top: 8vh !important;
+  height: min(560px, calc(var(--app-viewport-height, 100vh) - 48px));
+  min-height: min(360px, calc(var(--app-viewport-height, 100vh) - 48px));
   max-height: 84vh;
   display: flex;
   flex-direction: column;
@@ -8027,15 +8109,17 @@ body.desktop-shell-active .workspace-editor-shell {
   gap: 8px;
 }
 
-.messenger-timeline-detail-dialog {
+.messenger-dialog.el-dialog.messenger-timeline-detail-dialog {
   width: min(1040px, calc(100vw - 24px)) !important;
+  height: min(760px, calc(var(--app-viewport-height, 100vh) - 24px));
+  min-height: min(620px, calc(var(--app-viewport-height, 100vh) - 24px));
   max-height: calc(var(--app-viewport-height, 100vh) - 24px);
   margin: 12px auto !important;
   display: flex;
   flex-direction: column;
 }
 
-.messenger-timeline-detail-dialog .el-dialog__body {
+.messenger-dialog.el-dialog.messenger-timeline-detail-dialog .el-dialog__body {
   flex: 1 1 auto;
   min-height: 0;
   max-height: none;
@@ -8047,7 +8131,7 @@ body.desktop-shell-active .workspace-editor-shell {
   grid-template-columns: minmax(286px, 0.36fr) minmax(0, 1fr);
   gap: 14px;
   min-height: 0;
-  max-height: calc(var(--app-viewport-height, 100vh) - 220px);
+  height: 100%;
 }
 
 .messenger-timeline-detail-overview {
@@ -8213,6 +8297,10 @@ body.desktop-shell-active .workspace-editor-shell {
   overflow: auto;
 }
 
+.messenger-timeline-detail-dialog .el-dialog__header {
+  flex: 0 0 auto;
+}
+
 @media (max-width: 760px) {
   .messenger-timeline-detail-label-row {
     align-items: stretch;
@@ -8270,8 +8358,7 @@ body.desktop-shell-active .workspace-editor-shell {
 
 .messenger-timeline-detail-events {
   flex: 1 1 auto;
-  min-height: 180px;
-  max-height: min(480px, calc(var(--app-viewport-height, 100vh) - 430px));
+  min-height: 0;
   overflow: auto;
   border: 1px solid #e4e8ef;
   border-radius: 10px;
@@ -8281,6 +8368,19 @@ body.desktop-shell-active .workspace-editor-shell {
   flex-direction: column;
   gap: 6px;
   scroll-behavior: smooth;
+}
+
+@media (max-width: 680px) {
+  .messenger-dialog.el-dialog {
+    height: calc(var(--app-viewport-height, 100vh) - 24px);
+    min-height: 0;
+    max-height: calc(var(--app-viewport-height, 100vh) - 24px);
+    margin: 12px auto !important;
+  }
+
+  .messenger-dialog.el-dialog.messenger-timeline-detail-dialog {
+    min-height: 0;
+  }
 }
 
 @media (max-width: 680px) {

@@ -277,11 +277,6 @@
         </div>
         <pre class="detail-schema">{{ toolDetail?.schema || t('userTools.mcp.tool.schemaEmpty') }}</pre>
       </div>
-      <template #footer>
-        <el-button class="user-tools-footer-btn" @click="toolDetailVisible = false">
-          {{ t('common.close') }}
-        </el-button>
-      </template>
     </el-dialog>
   </div>
 </template>

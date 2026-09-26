@@ -32,15 +32,29 @@
 }
 
 .user-tools-dialog.el-dialog:not(.user-tools-subdialog) {
-  height: 90vh;
+  height: min(760px, calc(100vh - 32px));
+  max-height: calc(100vh - 32px);
 }
 
 .user-tools-dialog.user-tools-quick {
-  height: 72vh;
+  height: min(620px, calc(100vh - 32px));
 }
 
 .user-tools-dialog.user-tools-subdialog.el-dialog {
+  height: min(560px, calc(100vh - 48px));
+  min-height: min(360px, calc(100vh - 48px));
   max-height: 90vh;
+}
+
+@media (max-width: 680px) {
+  .user-tools-dialog.el-dialog,
+  .user-tools-dialog.el-dialog:not(.user-tools-subdialog),
+  .user-tools-dialog.user-tools-quick,
+  .user-tools-dialog.user-tools-subdialog.el-dialog {
+    height: calc(100vh - 24px);
+    min-height: 0;
+    max-height: calc(100vh - 24px);
+  }
 }
 
 .user-tools-dialog.user-tools-subdialog .el-dialog__body {

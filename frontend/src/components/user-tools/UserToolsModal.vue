@@ -69,9 +69,6 @@
       </div>
     </div>
 
-    <template #footer>
-      <el-button class="user-tools-footer-btn" @click="close">{{ t('common.close') }}</el-button>
-    </template>
   </el-dialog>
 </template>
 

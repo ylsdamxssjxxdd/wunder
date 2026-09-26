@@ -1878,7 +1878,6 @@ export const initUserTools = () => {
     elements.promptUserToolAdd.addEventListener("click", openUserToolModal);
   }
   elements.userToolModalClose.addEventListener("click", closeUserToolModal);
-  elements.userToolModalCloseBtn.addEventListener("click", closeUserToolModal);
   elements.userToolModal.addEventListener("click", (event) => {
     if (event.target === elements.userToolModal) {
       closeUserToolModal();

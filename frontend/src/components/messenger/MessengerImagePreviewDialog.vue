@@ -1,34 +1,33 @@
 <template>
   <el-dialog
     :model-value="visible"
-    :title="t('workspace.preview.dialogTitle')"
     :width="dialogWidth"
     top="clamp(10px, 4vh, 36px)"
     class="workspace-dialog messenger-image-preview-dialog"
+    :show-close="false"
     append-to-body
     @update:model-value="handleDialogVisibleChange"
   >
-    <div class="messenger-image-preview-head">
-      <div class="workspace-preview-title">
-        {{ resolvedTitle }}
+    <template #header>
+      <div class="messenger-dialog-header">
+        <div class="messenger-dialog-header-copy">
+          <strong>{{ t('workspace.preview.dialogTitle') }}</strong>
+          <span :title="resolvedWorkspacePath">{{ resolvedTitle }}</span>
+        </div>
+        <div class="messenger-dialog-header-actions">
+          <button class="workspace-btn secondary" type="button" @click="emit('download')">
+            <i class="fa-solid fa-download" aria-hidden="true"></i>
+            {{ actionLabel }}
+          </button>
+          <button class="messenger-dialog-close" type="button" :aria-label="t('common.close')" @click="emit('close')">
+            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+          </button>
+        </div>
       </div>
-      <div class="workspace-preview-meta" :title="resolvedWorkspacePath">{{ resolvedWorkspacePath }}</div>
-    </div>
+    </template>
     <div class="workspace-preview embed messenger-image-preview-body">
       <ZoomableImagePreview :image-url="imageUrl" :alt="resolvedTitle" :active="visible" />
     </div>
-    <template #footer>
-      <button
-        class="workspace-btn secondary"
-        type="button"
-        @click="emit('download')"
-      >
-        {{ actionLabel }}
-      </button>
-      <button class="workspace-btn secondary" type="button" @click="emit('close')">
-        {{ t('common.close') }}
-      </button>
-    </template>
   </el-dialog>
 </template>
 
@@ -69,34 +68,9 @@ const handleDialogVisibleChange = (nextVisible: boolean) => {
 </script>
 
 <style scoped>
-.messenger-image-preview-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
-}
-
-.messenger-image-preview-head .workspace-preview-title {
-  margin-bottom: 0;
-}
-
-.messenger-image-preview-head .workspace-preview-meta {
-  margin-bottom: 0;
-  flex: 1 1 240px;
-  min-width: 0;
-  text-align: right;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .messenger-image-preview-body {
+  flex: 1 1 auto;
   min-height: 0;
-  height: clamp(280px, 70vh, 820px);
-  max-height: calc(var(--app-viewport-height, 100vh) - 180px);
   overflow: hidden;
 }
 
@@ -128,10 +102,4 @@ const handleDialogVisibleChange = (nextVisible: boolean) => {
   max-height: none;
 }
 
-@media (max-width: 960px) {
-  .messenger-image-preview-body {
-    height: clamp(220px, 64vh, 700px);
-    max-height: calc(var(--app-viewport-height, 100vh) - 160px);
-  }
-}
 </style>

@@ -768,9 +768,6 @@ export const initLspPanel = () => {
   if (elements.lspStatusModalClose) {
     elements.lspStatusModalClose.addEventListener("click", closeLspStatusModal);
   }
-  if (elements.lspStatusModalCloseBtn) {
-    elements.lspStatusModalCloseBtn.addEventListener("click", closeLspStatusModal);
-  }
   if (elements.lspStatusModal) {
     elements.lspStatusModal.addEventListener("click", (event) => {
       if (event.target === elements.lspStatusModal) {

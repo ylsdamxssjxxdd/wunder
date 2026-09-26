@@ -58,11 +58,9 @@ const knowledgeDocModalTitle = document.getElementById("knowledgeDocModalTitle")
 const knowledgeDocModalMeta = document.getElementById("knowledgeDocModalMeta");
 const knowledgeDocModalContent = document.getElementById("knowledgeDocModalContent");
 const knowledgeDocModalClose = document.getElementById("knowledgeDocModalClose");
-const knowledgeDocModalCloseBtn = document.getElementById("knowledgeDocModalCloseBtn");
 const knowledgeTestModal = document.getElementById("knowledgeTestModal");
 const knowledgeTestModalTitle = document.getElementById("knowledgeTestModalTitle");
 const knowledgeTestModalClose = document.getElementById("knowledgeTestModalClose");
-const knowledgeTestModalCloseBtn = document.getElementById("knowledgeTestModalCloseBtn");
 const knowledgeTestQuestion = document.getElementById("knowledgeTestQuestion");
 const knowledgeTestRunBtn = document.getElementById("knowledgeTestRunBtn");
 const knowledgeTestStatus = document.getElementById("knowledgeTestStatus");
@@ -2773,14 +2771,12 @@ export const initKnowledgePanel = () => {
     openKnowledgeTestModal();
   });
   knowledgeDocModalClose?.addEventListener("click", closeDocModal);
-  knowledgeDocModalCloseBtn?.addEventListener("click", closeDocModal);
   knowledgeDocModal?.addEventListener("click", (event) => {
     if (event.target === knowledgeDocModal) {
       closeDocModal();
     }
   });
   knowledgeTestModalClose?.addEventListener("click", closeKnowledgeTestModal);
-  knowledgeTestModalCloseBtn?.addEventListener("click", closeKnowledgeTestModal);
   knowledgeTestModal?.addEventListener("click", (event) => {
     if (event.target === knowledgeTestModal) {
       closeKnowledgeTestModal();

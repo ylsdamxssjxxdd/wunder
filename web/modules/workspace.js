@@ -2652,7 +2652,6 @@ export const initWorkspace = () => {
     createWorkspaceFile();
   });
   elements.workspacePreviewClose.addEventListener("click", closeWorkspacePreview);
-  elements.workspacePreviewCloseBtn.addEventListener("click", closeWorkspacePreview);
   elements.workspacePreviewModal.addEventListener("click", (event) => {
     if (event.target === elements.workspacePreviewModal) {
       closeWorkspacePreview();
@@ -2662,7 +2661,6 @@ export const initWorkspace = () => {
     downloadWorkspaceEntry(state.workspace.previewEntry);
   });
   elements.workspaceEditorClose.addEventListener("click", closeWorkspaceEditor);
-  elements.workspaceEditorCloseBtn.addEventListener("click", closeWorkspaceEditor);
   elements.workspaceEditorSave.addEventListener("click", saveWorkspaceEditor);
   elements.workspaceEditorModal.addEventListener("click", (event) => {
     if (event.target === elements.workspaceEditorModal) {
