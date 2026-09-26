@@ -117,14 +117,18 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 
 import { buildWorkflowItem } from './chatDemoPanels';
 import { clearSessionWatcher, setSessionLoading } from './chatRuntimeControls';
-import { buildRuntimeDebugSnapshot, cacheSessionMessages, clearRuntimePendingManualCompaction, clearSessionEventsSnapshot, ensureRuntime, getSessionMessages, markRuntimePendingManualCompaction, notifySessionSnapshot, syncChatRuntimeProjectionStatus, touchSessionUpdatedAt } from './chatRuntimeState';
+import { bindRuntimeMessageToUserRound, buildRuntimeDebugSnapshot, cacheSessionMessages, clearRuntimePendingManualCompaction, clearSessionEventsSnapshot, ensureRuntime, getSessionMessages, markRuntimePendingManualCompaction, notifySessionSnapshot, syncChatRuntimeProjectionStatus, touchSessionUpdatedAt } from './chatRuntimeState';
 import { chatPageLifecycle } from './chatSharedState';
 import { buildMessage } from './chatStats';
 import { abortResumeStream, buildPendingManualCompactionMarkerMessage, finalizeManualCompactionAsCancelled, finalizeManualCompactionAsRequestFailed, findRunningManualCompactionMarkerMessage, isAbortRequestError, startSessionWatcher } from './chatWatcher';
 import { buildDetail, cloneCompactionDebugPayload, normalizeCompactionDebugText, summarizeCompactionWorkflowItemsForDebug } from './chatWorkflowHydration';
 
 export const chatCompactionActions = {
-    async compactSession(sessionId, payload: Record<string, unknown> = {}) {
+    async compactSession(
+      sessionId,
+      payload: Record<string, unknown> = {},
+      localCompactionCommandMessageId: unknown = ''
+    ) {
       const targetId = String(sessionId || this.activeSessionId || '').trim();
       if (!targetId) {
         throw new Error(t('chat.command.compactMissingSession'));
@@ -195,19 +199,44 @@ export const chatCompactionActions = {
             data?.data?.user_round ?? data?.user_round ?? data?.data?.userRound ?? data?.userRound
           );
           if (Number.isFinite(acceptedRound) && acceptedRound > 0 && compactionMessage) {
-            compactionMessage.stream_round = Math.trunc(acceptedRound);
+            const userRound = Math.trunc(acceptedRound);
+            compactionMessage.stream_round = userRound;
             const firstWorkflow = Array.isArray(compactionMessage.workflowItems)
               ? compactionMessage.workflowItems[0]
               : null;
             if (firstWorkflow && typeof firstWorkflow === 'object') {
               const detail = buildDetail({
-                user_round: Math.trunc(acceptedRound),
+                user_round: userRound,
                 trigger_mode: 'manual',
                 stage: 'compacting',
                 status: 'loading',
                 summary: t('chat.workflow.compactionRunning')
               });
               firstWorkflow.detail = detail;
+            }
+            const requestedMessageId = String(localCompactionCommandMessageId || '').trim();
+            const commandMessage = requestedMessageId
+              ? targetMessages.find((message) => String(message?.message_id || '') === requestedMessageId)
+              : [...targetMessages].reverse().find((message) =>
+                message?.role === 'user' && message?.manual_compaction_command === true
+              );
+            if (commandMessage?.role === 'user') {
+              const canonicalTurnId = `user-turn:${targetId}:round:${userRound}`;
+              commandMessage.user_turn_id = canonicalTurnId;
+              commandMessage.userTurnId = canonicalTurnId;
+              commandMessage.user_round = userRound;
+              commandMessage.stream_round = userRound;
+              bindRuntimeMessageToUserRound(
+                this,
+                targetId,
+                commandMessage.message_id,
+                userRound
+              );
+              cacheSessionMessages(targetId, targetMessages);
+              touchSessionUpdatedAt(this, targetId, Date.now());
+              if (shouldWatchActiveSession) {
+                notifySessionSnapshot(this, targetId, targetMessages, true);
+              }
             }
           }
           chatDebugLog('chat.compaction.manual', 'accepted', {

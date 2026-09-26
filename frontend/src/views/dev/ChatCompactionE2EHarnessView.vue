@@ -236,11 +236,11 @@ const buildPendingAssistantShell = (): HarnessMessage => ({
 
 const shouldRenderDivider = (message: HarnessMessage): boolean => {
   if (!isCompactionMarkerAssistantMessage(message)) return false;
-  if (
-    (message?.manual_compaction_marker === true || message?.manualCompactionMarker === true) &&
-    Boolean(message?.workflowStreaming || message?.reasoningStreaming || message?.stream_incomplete)
-  ) {
-    return true;
+  // Manual compaction is rendered as an ordinary assistant turn. Keep this
+  // harness aligned with the production message panel: only automatic or
+  // legacy compaction records use a divider.
+  if (message?.manual_compaction_marker === true || message?.manualCompactionMarker === true) {
+    return false;
   }
   const snapshot = resolveLatestCompactionSnapshot(message?.workflowItems);
   if (!snapshot) return false;

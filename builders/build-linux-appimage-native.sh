@@ -56,7 +56,7 @@ for tool in cargo rustc mksquashfs dd grep awk sort sed tail mktemp stat readelf
   require_command "$tool"
 done
 
-runtime_machine="$(LC_ALL=C readelf -h "$runtime_source" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[[:space:]]+/, "", $2); print $2}')"
+runtime_machine="$(LC_ALL=C readelf -h "$runtime_source" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[ \t]+/, "", $2); print $2}')"
 [[ "$runtime_machine" == "$elf_machine" ]] || fail "AppImage runtime must be $arch, got: ${runtime_machine:-unknown}"
 
 echo "[wunder-slint-native-appimage] cargo: $(cargo --version)"
@@ -72,7 +72,7 @@ cargo build --locked --release --manifest-path "$manifest" --bin wunder-frontend
 phase=validation
 binary="$target_dir/release/wunder-frontend-slint"
 require_file "$binary"
-machine="$(LC_ALL=C readelf -h "$binary" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[[:space:]]+/, "", $2); print $2}')"
+machine="$(LC_ALL=C readelf -h "$binary" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[ \t]+/, "", $2); print $2}')"
 [[ "$machine" == "$elf_machine" ]] || fail "expected $arch ELF, got: ${machine:-unknown}"
 required_glibc="$(LC_ALL=C readelf --version-info "$binary" 2>/dev/null | LC_ALL=C grep -oE 'GLIBC_[0-9.]+' | LC_ALL=C sed 's/GLIBC_//' | LC_ALL=C sort -Vu | LC_ALL=C tail -n 1 || true)"
 [[ -n "$required_glibc" ]] || fail "could not determine executable GLIBC requirement"

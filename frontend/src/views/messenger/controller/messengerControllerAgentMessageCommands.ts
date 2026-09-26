@@ -868,12 +868,16 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           await ctx.scrollMessagesToBottom();
           return;
       }
-      ctx.chatStore.appendLocalMessage('user', rawText, {
+      const commandMessage = ctx.chatStore.appendLocalMessage('user', rawText, {
           sessionId,
           manualCompactionCommand: true
       });
       try {
-          await ctx.chatStore.compactSession(sessionId);
+          await ctx.chatStore.compactSession(
+              sessionId,
+              {},
+              String(commandMessage?.message_id || '')
+          );
       }
       catch { }
       await ctx.scrollMessagesToBottom();

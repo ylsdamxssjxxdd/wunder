@@ -1010,6 +1010,10 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
   ctx.isCompactionMarkerMessage = (message: Record<string, unknown>): boolean => {
       if (String(message?.role || '') !== 'assistant')
           return false;
+      // Manual compaction is a normal assistant turn. Its workflow can remain
+      // visible while running, but it must never switch to the divider layout.
+      if (message?.manual_compaction_marker === true || message?.manualCompactionMarker === true)
+          return false;
       if (ctx.hasMessageContent(message?.content))
           return false;
       if (ctx.hasMessageContent(message?.reasoning))
@@ -1021,12 +1025,6 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           .toLowerCase();
       if (panelStatus === 'pending')
           return false;
-      if (message?.manual_compaction_marker === true || message?.manualCompactionMarker === true) {
-          if (ctx.hasMessageContent(message?.content) || ctx.hasMessageContent(message?.reasoning)) {
-              return false;
-          }
-          return true;
-      }
       if (!isCompactionOnlyWorkflowItems(message?.workflowItems))
           return false;
       const isStreaming = Boolean(message?.workflowStreaming ||
@@ -1046,14 +1044,10 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       (message?.manual_goal_marker === true || message?.manualGoalMarker === true));
 
   ctx.shouldShowCompactionDivider = (message: Record<string, unknown>): boolean => {
+      if (message?.manual_compaction_marker === true || message?.manualCompactionMarker === true)
+          return false;
       if (!ctx.isCompactionMarkerMessage(message))
           return false;
-      if ((message?.manual_compaction_marker === true || message?.manualCompactionMarker === true) &&
-          Boolean(message?.workflowStreaming ||
-              message?.reasoningStreaming ||
-              message?.stream_incomplete)) {
-          return true;
-      }
       const snapshot = resolveLatestCompactionSnapshot(message?.workflowItems);
       if (!snapshot)
           return false;

@@ -60,7 +60,7 @@ for command_name in cargo rustc readelf strip file ldd mksquashfs dd awk grep so
   require_command "$command_name"
 done
 
-runtime_machine="$(LC_ALL=C readelf -h "$runtime_source" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[[:space:]]+/, "", $2); print $2}')"
+runtime_machine="$(LC_ALL=C readelf -h "$runtime_source" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[ \t]+/, "", $2); print $2}')"
 [[ "$runtime_machine" == "AArch64" ]] || fail "AppImage runtime must be AArch64, got: ${runtime_machine:-unknown}"
 
 version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" | head -n 1)"
@@ -90,7 +90,7 @@ cargo build --locked --offline --release --manifest-path "$manifest" --bin wunde
 phase=validation
 binary="$target_dir/release/wunder-frontend-slint"
 require_file "$binary"
-machine="$(LC_ALL=C readelf -h "$binary" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[[:space:]]+/, "", $2); print $2}')"
+machine="$(LC_ALL=C readelf -h "$binary" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[ \t]+/, "", $2); print $2}')"
 [[ "$machine" == "AArch64" ]] || fail "expected AArch64 ELF, got: ${machine:-unknown}"
 required_glibc="$(LC_ALL=C readelf --version-info "$binary" 2>/dev/null | LC_ALL=C grep -oE 'GLIBC_[0-9.]+' | LC_ALL=C sed 's/GLIBC_//' | LC_ALL=C sort -Vu | LC_ALL=C tail -n 1 || true)"
 [[ -n "$required_glibc" ]] || fail "could not determine executable GLIBC requirement"

@@ -7,64 +7,60 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('chat-compaction-e2e-harness')).toBeVisible();
 });
 
-test('manual compaction divider stays completed during the next busy turn', async ({ page }) => {
+test('manual compaction uses an assistant bubble and never renders a divider', async ({ page }) => {
   await page.getByTestId('scenario-manual-running').click();
 
   const divider = page.getByTestId('chat-compaction-divider');
-  await expect(divider).toHaveCount(1);
-  await expect(divider).toHaveAttribute('data-compaction-status', 'running');
+  await expect(divider).toHaveCount(0);
+  await expect(page.locator('[data-role="assistant"]').last()).toBeVisible();
 
   await page.getByTestId('hydrate-manual-terminal').click();
-  await expect(divider).toHaveCount(1);
-  await expect(divider).toHaveAttribute('data-compaction-status', 'completed');
-  await expect(divider).toContainText('16,249');
-  await expect(divider).toContainText('5,670');
+  await expect(divider).toHaveCount(0);
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText('cmp-terminal');
 
   await page.getByTestId('append-next-turn-busy').click();
-  await expect(divider).toHaveCount(1);
-  await expect(divider).toHaveAttribute('data-compaction-status', 'completed');
+  await expect(divider).toHaveCount(0);
 });
 
-test('rehydration after a new turn does not create a duplicate compaction divider', async ({ page }) => {
+test('rehydration after a new turn keeps manual compaction out of divider layout', async ({ page }) => {
   await page.getByTestId('scenario-manual-running').click();
   await page.getByTestId('hydrate-manual-terminal').click();
   await page.getByTestId('append-next-turn-busy').click();
   await page.getByTestId('rehydrate-after-next-turn').click();
 
   const dividers = page.getByTestId('chat-compaction-divider');
-  await expect(dividers).toHaveCount(1);
-  await expect(dividers.first()).toHaveAttribute('data-compaction-status', 'completed');
+  await expect(dividers).toHaveCount(0);
 });
 
-test('failed compaction remains failed and shows the failure details', async ({ page }) => {
+test('failed manual compaction remains terminal and shows failure details', async ({ page }) => {
   await page.getByTestId('scenario-failed').click();
 
   const divider = page.getByTestId('chat-compaction-divider');
   const detail = page.getByTestId('chat-compaction-detail');
-  await expect(divider).toHaveAttribute('data-compaction-status', 'failed');
+  await expect(divider).toHaveCount(0);
   await expect(detail).toHaveAttribute('data-compaction-detail-status', 'failed');
   await expect(detail).toContainText('CONTEXT_WINDOW_EXCEEDED');
   await expect(detail).toContainText('still exceeds the context limit');
 });
 
-test('cancelled compaction remains terminal while a later turn is busy', async ({ page }) => {
+test('cancelled manual compaction remains terminal while a later turn is busy', async ({ page }) => {
   await page.getByTestId('scenario-cancelled').click();
 
   const divider = page.getByTestId('chat-compaction-divider');
   const detail = page.getByTestId('chat-compaction-detail');
-  await expect(divider).toHaveAttribute('data-compaction-status', 'cancelled');
+  await expect(divider).toHaveCount(0);
   await expect(detail).toHaveAttribute('data-compaction-detail-status', 'cancelled');
 
   await page.getByTestId('append-next-turn-busy').click();
-  await expect(divider).toHaveAttribute('data-compaction-status', 'cancelled');
+  await expect(divider).toHaveCount(0);
 });
 
-test('legacy events display their persisted injected summary', async ({ page }) => {
+test('legacy manual compaction displays its persisted injected summary without a divider', async ({ page }) => {
   await page.getByTestId('scenario-legacy-summary').click();
 
   const divider = page.getByTestId('chat-compaction-divider');
   const detail = page.getByTestId('chat-compaction-detail');
-  await expect(divider).toHaveAttribute('data-compaction-status', 'completed');
+  await expect(divider).toHaveCount(0);
   await expect(detail).toHaveAttribute('data-compaction-detail-status', 'completed');
   await expect(detail).toContainText('Persisted summary text from an older event.');
 });

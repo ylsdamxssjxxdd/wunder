@@ -919,6 +919,46 @@ const mergeUserTurnInto = (
   markVisibleMessageTopologyChanged(session);
 };
 
+/**
+ * Promotes an optimistic user row after an HTTP command receives its durable
+ * user-round identity. Stream events can arrive before that response, so this
+ * merges the local turn instead of waiting for the next transcript reload.
+ */
+export const bindChatRuntimeMessageToUserRound = (
+  projection: ChatRuntimeProjection,
+  sessionId: unknown,
+  messageId: unknown,
+  userRound: unknown
+): boolean => {
+  const sessionKey = normalizeId(sessionId);
+  const id = normalizeId(messageId);
+  const round = normalizeSeq(userRound);
+  const session = sessionKey ? projection.sessions[sessionKey] : null;
+  const message = session && id ? session.messageById[id] : null;
+  if (!session || !message || message.role !== 'user' || round === null) return false;
+
+  const canonicalTurnId = `user-turn:${session.sessionId}:round:${round}`;
+  const sourceTurnId = message.userTurnId;
+  if (sourceTurnId && sourceTurnId !== canonicalTurnId) {
+    mergeUserTurnInto(session, sourceTurnId, canonicalTurnId);
+  } else {
+    ensureUserTurn(session, canonicalTurnId, message.createdSeq);
+  }
+
+  const canonicalTurn = ensureUserTurn(session, canonicalTurnId, message.createdSeq);
+  message.userTurnId = canonicalTurn.id;
+  addUnique(canonicalTurn.messageIds, message.id);
+  if (canonicalTurn.status === 'created') {
+    canonicalTurn.status = 'accepted';
+  }
+  const display = ensureMessageDisplayProjection(message);
+  display.user_turn_id = canonicalTurn.id;
+  display.userTurnId = canonicalTurn.id;
+  display.user_round = round;
+  markVisibleMessageTopologyChanged(session);
+  return true;
+};
+
 const mergeUserTurnStatus = (
   current: ChatRuntimeUserTurnProjection['status'],
   incoming: ChatRuntimeUserTurnProjection['status']
@@ -1240,6 +1280,30 @@ const applyWorkflowEvent = (
   const sourceType = normalizeText(event.payload.source_event_type);
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
   const source = asRecord(event.payload.data);
+  const terminalManualCompaction = resolveTerminalManualCompactionMessage(session, modelTurn);
+  if (terminalManualCompaction && isManualCompactionWorkflowEvent(sourceType, source, event.payload)) {
+    // Persisted event snapshots retain progress records that predate the
+    // terminal transcript row. Keep them for inspection, but do not reopen a
+    // completed manual compaction while a thread is being restored.
+    const status = resolveProjectedWorkflowStatus(sourceType, event.payload);
+    upsertProjectedWorkflowEventItem(
+      terminalManualCompaction,
+      event,
+      sourceType,
+      status,
+      modelTurn
+    );
+    applyProjectedWorkflowDisplay(terminalManualCompaction, event, sourceType, status);
+    syncProjectedToolCallStats(terminalManualCompaction);
+    settleProjectedWorkflowItems(
+      terminalManualCompaction,
+      terminalManualCompaction.status === 'final' ? 'completed' : 'failed',
+      event.payload.timestamp ?? event.created_at
+    );
+    terminalManualCompaction.updatedSeq = event.eventSeq ?? terminalManualCompaction.updatedSeq;
+    markMessageStructureChanged(terminalManualCompaction);
+    return;
+  }
   const retry = resolveChatRetryEvent(sourceType, Object.keys(source).length ? source : event.payload);
   // Late recovery events cannot reopen a turn already closed by the server.
   if (retry && isTerminalModelTurnStatus(modelTurn.status)) return;
@@ -1285,6 +1349,62 @@ const applyWorkflowEvent = (
     // confirms whether the whole model turn actually failed.
     setSessionBusy(session, 'running', status === 'completed' ? 'streaming' : 'tool_running');
   }
+};
+
+const resolveTerminalManualCompactionMessage = (
+  session: ChatRuntimeSessionProjection,
+  modelTurn: ChatRuntimeModelTurnProjection
+): ChatRuntimeMessageProjection | null => {
+  for (const messageId of modelTurn.messageIds) {
+    const message = session.messageById[messageId];
+    if (!message || message.role !== 'assistant') continue;
+    const display = isPlainRecord(message.display) ? message.display : {};
+    const raw = isPlainRecord(message.raw) ? message.raw : {};
+    const manualMarker =
+      display.manual_compaction_marker === true ||
+      display.manualCompactionMarker === true ||
+      raw.manual_compaction_marker === true ||
+      raw.manualCompactionMarker === true;
+    if (manualMarker && !isActiveMessageStatus(message.status)) return message;
+  }
+  // Historic progress events contain only user_round; before their generated
+  // model turn exists, locate the durable marker by the shared user turn.
+  const userTurn = session.userTurnById[modelTurn.userTurnId];
+  for (const siblingModelTurnId of userTurn?.modelTurnIds || []) {
+    const siblingModelTurn = session.modelTurnById[siblingModelTurnId];
+    if (!siblingModelTurn) continue;
+    for (const messageId of siblingModelTurn.messageIds) {
+      const message = session.messageById[messageId];
+      if (!message || message.role !== 'assistant' || isActiveMessageStatus(message.status)) continue;
+      const display = isPlainRecord(message.display) ? message.display : {};
+      const raw = isPlainRecord(message.raw) ? message.raw : {};
+      if (
+        display.manual_compaction_marker === true ||
+        display.manualCompactionMarker === true ||
+        raw.manual_compaction_marker === true ||
+        raw.manualCompactionMarker === true
+      ) {
+        return message;
+      }
+    }
+  }
+  return null;
+};
+
+const isManualCompactionWorkflowEvent = (
+  sourceType: string,
+  source: Record<string, unknown>,
+  payload: Record<string, unknown>
+): boolean => {
+  if (
+    sourceType === 'compaction' ||
+    sourceType === 'compaction_progress' ||
+    sourceType === 'compaction_notice'
+  ) {
+    return true;
+  }
+  return sourceType === 'progress' &&
+    (isProjectedCompactionProgress(source) || isProjectedCompactionProgress(payload));
 };
 
 const applyUsageStats = (

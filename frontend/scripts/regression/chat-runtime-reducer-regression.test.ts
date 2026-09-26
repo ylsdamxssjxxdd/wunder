@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createChatRuntimeProjection, applyChatRuntimeEvent } from '../../src/realtime/chat/chatRuntimeReducer';
+import {
+  bindChatRuntimeMessageToUserRound,
+  createChatRuntimeProjection,
+  applyChatRuntimeEvent
+} from '../../src/realtime/chat/chatRuntimeReducer';
 import { buildCanonicalChatRuntimeEvents } from '../../src/realtime/chat/chatCanonicalEvents';
 import {
   buildCanonicalClientMessageSubmittedEvent,
@@ -171,6 +175,116 @@ test('beeroom dispatch stream events promote the optimistic turn to canonical ro
   assert.equal(assistantMessages[0]?.modelTurnId, `model-turn:${sessionId}:user:2:model:1`);
   assert.equal(session.userTurnById[userTurnId], undefined);
   assert.notEqual(session.userTurnById[`user-turn:${sessionId}:round:2`], undefined);
+});
+
+test('manual compact command binds to its accepted user round before the terminal summary arrives', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-manual-compact';
+  const localMessageId = 'local-ui:compact-command';
+  const localTurnId = 'local-ui-turn:compact-command';
+  const canonicalTurnId = `user-turn:${sessionId}:round:3`;
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'user_message_created',
+    source: 'local',
+    strict: false,
+    session_id: sessionId,
+    event_id: 'local-compact-command',
+    user_turn_id: localTurnId,
+    message_id: localMessageId,
+    content: '/compact',
+    payload: { manual_compaction_command: true }
+  });
+  assert.equal(
+    bindChatRuntimeMessageToUserRound(projection, sessionId, localMessageId, 3),
+    true
+  );
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_final',
+    source: 'test',
+    strict: true,
+    session_id: sessionId,
+    event_id: 'manual-compact-summary',
+    event_seq: 1,
+    user_turn_id: canonicalTurnId,
+    model_turn_id: `model-turn:${sessionId}:user:3:model:1`,
+    message_id: 'history:compact-summary',
+    content: 'Compaction completed.',
+    payload: { manual_compaction_marker: true }
+  });
+
+  const visible = selectVisibleMessageProjections(projection, sessionId);
+  assert.deepEqual(
+    visible.map((message) => `${message.role}:${message.content}`),
+    ['user:/compact', 'assistant:Compaction completed.']
+  );
+  assert.equal(visible[0]?.userTurnId, canonicalTurnId);
+  assert.equal(visible[1]?.userTurnId, canonicalTurnId);
+});
+
+test('manual compaction transcript terminal state survives historical progress replay', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-manual-replay';
+  const userTurnId = `user-turn:${sessionId}:round:2`;
+  const modelTurnId = `model-turn:${sessionId}:user:2:model:1`;
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'session_snapshot',
+    source: 'snapshot',
+    strict: false,
+    session_id: sessionId,
+    messages: [
+      {
+        role: 'user',
+        content: '/compact',
+        message_id: 'history:compact-command',
+        user_turn_id: userTurnId,
+        turn_index: 1,
+        manual_compaction_command: true
+      },
+      {
+        role: 'assistant',
+        content: 'Compaction completed.',
+        message_id: 'history:compact-summary',
+        user_turn_id: userTurnId,
+        model_turn_id: modelTurnId,
+        turn_index: 2,
+        manual_compaction_marker: true,
+        workflowStreaming: false,
+        stream_incomplete: false,
+        workflowItems: [{
+          eventType: 'compaction',
+          status: 'completed',
+          toolName: 'context_compaction',
+          detail: JSON.stringify({ status: 'done', trigger_mode: 'manual', user_round: 2 })
+        }]
+      }
+    ],
+    payload: { transcript: [], runtime_status: 'idle' }
+  });
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'progress',
+    eventId: 1,
+    phase: 'detail',
+    source: 'snapshot',
+    payload: {
+      user_round: 2,
+      stage: 'compacting',
+      status: 'loading',
+      trigger_mode: 'manual'
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const assistant = selectVisibleMessageProjections(projection, sessionId)
+    .find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  assert.equal(assistant.status, 'final');
+  assert.equal(projection.sessions[sessionId]?.modelTurnById[modelTurnId]?.status, 'completed');
+  assert.equal(selectSessionBusy(projection, sessionId), false);
+  assert.ok(assistant.workflowItems?.every((item) => item.status !== 'loading'));
 });
 
 test('swarm lifecycle updates do not replace the originating tool call status', () => {

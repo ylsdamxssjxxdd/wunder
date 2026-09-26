@@ -39,7 +39,7 @@ require_file "$runtime_source"
 require_file "$manifest"
 [[ -d "$sdk" ]] || fail "amd64 sysroot is missing: $sdk"
 for tool in mksquashfs dd grep awk sort sed tail mktemp stat find cut x86_64-linux-gnu-readelf; do require_command "$tool"; done
-runtime_machine="$(LC_ALL=C x86_64-linux-gnu-readelf -h "$runtime_source" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[[:space:]]+/, "", $2); print $2}')"
+runtime_machine="$(LC_ALL=C x86_64-linux-gnu-readelf -h "$runtime_source" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[ \t]+/, "", $2); print $2}')"
 [[ "$runtime_machine" == "Advanced Micro Devices X86-64" ]] || fail "AppImage runtime must be x86_64, got: ${runtime_machine:-unknown}"
 
 # Build first. The child script also validates the x86_64 ELF and glibc floor.

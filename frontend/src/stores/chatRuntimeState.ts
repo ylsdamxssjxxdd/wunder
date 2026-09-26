@@ -82,7 +82,8 @@ import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config
 import { resolveAccessToken } from '@/api/requestAuth';
 import {
   createChatRuntimeProjection,
-  applyChatRuntimeEvent
+  applyChatRuntimeEvent,
+  bindChatRuntimeMessageToUserRound
 } from '@/realtime/chat/chatRuntimeReducer';
 import {
   applyChatRuntimeEventsWithInvalidation,
@@ -2434,6 +2435,29 @@ export const applyLocalChatMessageRuntimeEvent = (
   }
   pruneDesktopChatMemoryForStore(store);
   return event;
+};
+
+/** Binds an optimistic command row to the durable user round returned by HTTP. */
+export const bindRuntimeMessageToUserRound = (
+  store,
+  sessionId: unknown,
+  messageId: unknown,
+  userRound: unknown
+): boolean => {
+  const key = resolveSessionKey(sessionId);
+  const projection = ensureChatRuntimeProjectionForStore(store);
+  if (!key || !projection) return false;
+  const bound = bindChatRuntimeMessageToUserRound(projection, key, messageId, userRound);
+  if (!bound) return false;
+  const runtime = ensureRuntime(key);
+  runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
+  markRuntimeProjectionChanged(store, {
+    immediate: true,
+    sessionId: key,
+    reason: 'bind-user-round'
+  });
+  pruneDesktopChatMemoryForStore(store);
+  return true;
 };
 
 export const applyLocalAssistantTurnTerminalRuntimeEvent = (
