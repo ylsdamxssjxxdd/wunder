@@ -2559,11 +2559,22 @@ export const applyCanonicalSessionEventsSnapshot = (
         const { runtime: _runtime, running: _running, queued: _queued, ...workflowPayload } = snapshotPayload;
         return workflowPayload;
       })();
-  const events = buildCanonicalSessionEventsSnapshot({
+  const snapshotEvents = buildCanonicalSessionEventsSnapshot({
     sessionId: key,
     payload: projectionPayload,
     phase: options.phase
   });
+  // A history-only restoration must retain durable workflow cards but omit
+  // historical runtime transitions. Otherwise an old `thread_status: running`
+  // record can revive a thread that the detail endpoint has already declared
+  // finished.
+  const events = includeRuntime
+    ? snapshotEvents
+    : snapshotEvents.filter((event) =>
+      event.event_type !== 'session_runtime' &&
+      event.event_type !== 'session_idle' &&
+      event.event_type !== 'queue_status'
+    );
   const sessionBefore = projection.sessions[key];
   const runtimeBefore = sessionBefore && !includeRuntime
     ? { runtimeStatus: sessionBefore.runtimeStatus, busyReason: sessionBefore.busyReason }
@@ -2598,6 +2609,12 @@ export const shouldApplySessionEventsSnapshotToProjection = (
   }
   if (payload.queued === true) {
     return true;
+  }
+  // The session detail endpoint is authoritative for restoration. A false
+  // running flag means the durable turn is over; stale local controllers or
+  // an old thread_status event must not briefly revive its spinner.
+  if (payload.running === false) {
+    return false;
   }
   if (hasRuntimeControllers(runtime)) {
     return true;
@@ -2641,40 +2658,16 @@ export const shouldPreferCachedMessages = (cached, server) => {
 
 export const MANUAL_COMPACTION_PENDING_MARKER_TTL_MS = 30_000;
 
-export const isFreshPendingManualCompactionMarker = (message, now = Date.now()): boolean => {
-  if (!message || message.role !== 'assistant') return false;
-  if (!isCompactionMarkerAssistantMessage(message)) return false;
-  if (!normalizeFlag(message.manual_compaction_marker ?? message.manualCompactionMarker)) {
-    return false;
-  }
-  if (
-    !normalizeFlag(message.workflowStreaming) &&
-    !normalizeFlag(message.stream_incomplete) &&
-    !normalizeFlag(message.reasoningStreaming)
-  ) {
-    return false;
-  }
-  const createdAtMs = resolveTimestampMs(message.created_at);
-  if (createdAtMs === null) {
-    return true;
-  }
-  return Math.max(0, now - createdAtMs) <= MANUAL_COMPACTION_PENDING_MARKER_TTL_MS;
-};
-
-export const clearCompletedAssistantStreamingState = (
-  messages,
-  options: { preservePendingManualCompaction?: boolean } = {}
-) => {
-  const preservePendingManualCompaction = options.preservePendingManualCompaction !== false;
-  const now = Date.now();
+export const clearCompletedAssistantStreamingState = (messages) => {
+  // Only called after idle hydration. A local marker's age cannot override
+  // the server's terminal state, including immediately after manual compaction.
   if (!Array.isArray(messages)) return;
   messages.forEach((message) => {
     if (!message || message.role !== 'assistant') return;
-    if (
-      preservePendingManualCompaction &&
-      isFreshPendingManualCompactionMarker(message, now)
-    ) {
-      return;
+    if (isCompactionMarkerAssistantMessage(message)) {
+      // The optimistic progress card may outlive its terminal stream event.
+      // Settle it with the bubble; active workflow items also imply tooling.
+      settleTerminalAssistantArtifacts([message]);
     }
     if (!stopPendingAssistantMessage(message)) {
       message.workflowStreaming = false;

@@ -40,10 +40,7 @@ mod media;
 mod prompt;
 mod sessions;
 
-use sessions::{
-    has_active_queue_task, is_session_runtime_active, is_session_stream_active,
-    is_session_stream_active_or_queued,
-};
+use sessions::{has_active_queue_task, is_session_stream_active_or_queued};
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()

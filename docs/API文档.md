@@ -3109,7 +3109,9 @@
   - `data.user_round`：本次手动压缩对应的用户轮次
   - `data.session_id`：当前会话 ID
 - 说明：
-  - 压缩事件会带上 `trigger_mode`：目前包括 `manual`、`auto_loop`、`overflow_recovery`。前端只应将 `manual` 视为用户手动压缩分割线，其它模式属于智能体运行中的自动压缩/溢出恢复。
+  - 压缩事件会带上 `trigger_mode`：目前包括 `manual`、`auto_loop`、`overflow_recovery`。`manual` 对应独立的 `/compact` 用户轮次，结果在其后的普通助手气泡与智能体循环中呈现，不生成分隔线；`compaction.summary_text` 实时写入气泡正文，其它模式属于智能体运行中的自动压缩/溢出恢复。
+  - 会话详情与事件快照共用运行态判定：优先使用线程 runtime；runtime 缺失且 monitor 仍活跃时，仅查询最近 32 条持久化事件，以最新终态校正滞后 monitor。后续活动事件、新用户轮次或更晚的运行开始时间会保留活跃态；读取失败或缺少证据时不强制置为空闲。
+  - 客户端接受 `running=false` 后立即清除旧 streaming 标记，历史工作流补水不得重新激活终态气泡，包括仅回放到摘要模型请求的分页。
   - 压缩事件会带上 `current_user_replay_mode`、`compaction_resume_action` 与 `current_turn_progress_state`：`pending` 会保留当前用户消息，`tool_succeeded` 会按摘要动作选择 `final_continuation` 或 `tool_success_continuation` 临时 `user` continuation note，`tool_failed/in_progress` 会使用修复/继续 note 承接当前轮，避免连续 assistant 尾消息、重复执行工具，或把一次工具成功误判为用户任务完成。
 
 - 工具结果现在采用“双通道”：

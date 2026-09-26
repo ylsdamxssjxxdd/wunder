@@ -1280,34 +1280,59 @@ const applyWorkflowEvent = (
   const sourceType = normalizeText(event.payload.source_event_type);
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
   const source = asRecord(event.payload.data);
-  const terminalManualCompaction = resolveTerminalManualCompactionMessage(session, modelTurn);
-  if (terminalManualCompaction && isManualCompactionWorkflowEvent(sourceType, source, event.payload)) {
+  const terminalMessage = isTerminalModelTurnStatus(modelTurn.status)
+    ? modelTurn.messageIds.map((id) => session.messageById[id])
+      .find((message) => message?.role === 'assistant' && !isActiveMessageStatus(message.status))
+    : null;
+  const settledMessage = terminalMessage ||
+    (isManualCompactionWorkflowEvent(sourceType, source, event.payload)
+      ? resolveTerminalManualCompactionMessage(session, modelTurn) : null);
+  if (settledMessage) {
     // Persisted event snapshots retain progress records that predate the
     // terminal transcript row. Keep them for inspection, but do not reopen a
-    // completed manual compaction while a thread is being restored.
+    // completed turn while a thread is being restored. This also covers the
+    // summary model request, which otherwise resets the bubble to `tooling`.
     const status = resolveProjectedWorkflowStatus(sourceType, event.payload);
+    const compactionSummary = resolveManualCompactionSummary(source, event.payload);
+    if (compactionSummary && isManualCompactionEvent(sourceType, source, event.payload, settledMessage)) {
+      settledMessage.content = compactionSummary;
+      ensureMessageDisplayProjection(settledMessage).manual_compaction_marker = true;
+    }
     upsertProjectedWorkflowEventItem(
-      terminalManualCompaction,
+      settledMessage,
       event,
       sourceType,
       status,
       modelTurn
     );
-    applyProjectedWorkflowDisplay(terminalManualCompaction, event, sourceType, status);
-    syncProjectedToolCallStats(terminalManualCompaction);
+    applyProjectedWorkflowDisplay(settledMessage, event, sourceType, status);
+    if (SUBAGENT_WORKFLOW_EVENT_TYPES.has(sourceType)) {
+      upsertProjectedSubagents(settledMessage, event, sourceType, status);
+    }
+    if (settledMessage.display) clearProjectedRetryDisplay(settledMessage.display);
+    syncProjectedToolCallStats(settledMessage);
     settleProjectedWorkflowItems(
-      terminalManualCompaction,
-      terminalManualCompaction.status === 'final' ? 'completed' : 'failed',
+      settledMessage,
+      settledMessage.status === 'final' ? 'completed' : 'failed',
       event.payload.timestamp ?? event.created_at
     );
-    terminalManualCompaction.updatedSeq = event.eventSeq ?? terminalManualCompaction.updatedSeq;
-    markMessageStructureChanged(terminalManualCompaction);
+    settledMessage.updatedSeq = event.eventSeq ?? settledMessage.updatedSeq;
+    markMessageStructureChanged(settledMessage);
     return;
   }
   const retry = resolveChatRetryEvent(sourceType, Object.keys(source).length ? source : event.payload);
   // Late recovery events cannot reopen a turn already closed by the server.
   if (retry && isTerminalModelTurnStatus(modelTurn.status)) return;
   const message = ensureAssistantMessageForModelTurn(session, event, 'tooling');
+  // Manual compaction is represented by a normal assistant turn. The terminal
+  // compaction event carries the durable summary, so project it into the live
+  // bubble immediately instead of waiting for transcript hydration on refresh.
+  const compactionSummary = resolveManualCompactionSummary(source, event.payload);
+  if (compactionSummary && isManualCompactionEvent(sourceType, source, event.payload, message)) {
+    message.content = compactionSummary;
+    ensureMessageDisplayProjection(message).manual_compaction_marker = true;
+    markMessageStructureChanged(message);
+  }
   const status = resolveProjectedWorkflowStatus(sourceType, event.payload);
   if (retry || (sourceType === 'llm_request' &&
     !continuesRecoveryOnModelRequest(message.display?.retry_reason))) {
@@ -1403,8 +1428,73 @@ const isManualCompactionWorkflowEvent = (
   ) {
     return true;
   }
+  if (
+    (sourceType === 'llm_request' || sourceType === 'llm_response') &&
+    normalizeText(firstText(source.purpose, payload.purpose)) === 'compaction_summary'
+  ) {
+    return true;
+  }
   return sourceType === 'progress' &&
     (isProjectedCompactionProgress(source) || isProjectedCompactionProgress(payload));
+};
+
+const isManualCompactionEvent = (
+  sourceType: string,
+  source: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  message: ChatRuntimeMessageProjection
+): boolean => {
+  const triggerMode = normalizeText(firstText(
+    source.trigger_mode,
+    source.triggerMode,
+    source.compaction_run_mode,
+    source.compactionRunMode,
+    payload.trigger_mode,
+    payload.triggerMode,
+    payload.compaction_run_mode,
+    payload.compactionRunMode
+  ));
+  if (triggerMode === 'manual') return true;
+  // The summary response does not repeat trigger_mode. Its assistant turn was
+  // already marked by the preceding manual progress event.
+  const purpose = normalizeText(firstText(source.purpose, source.intent, payload.purpose, payload.intent));
+  return (sourceType === 'llm_response' || sourceType === 'llm_output') &&
+    purpose === 'compaction_summary' &&
+    isManualCompactionMessage(message);
+};
+
+const isManualCompactionMessage = (message: ChatRuntimeMessageProjection): boolean => {
+  const display = isPlainRecord(message.display) ? message.display : {};
+  const raw = isPlainRecord(message.raw) ? message.raw : {};
+  return display.manual_compaction_marker === true ||
+    display.manualCompactionMarker === true ||
+    raw.manual_compaction_marker === true ||
+    raw.manualCompactionMarker === true;
+};
+
+const resolveManualCompactionSummary = (
+  source: Record<string, unknown>,
+  payload: Record<string, unknown>
+): string => {
+  const purpose = normalizeText(firstText(source.purpose, source.intent, payload.purpose, payload.intent));
+  const summary = firstText(
+    source.summary_text,
+    source.summaryText,
+    payload.summary_text,
+    payload.summaryText
+  );
+  if (summary) return summary;
+  if (purpose !== 'compaction_summary') return '';
+  return firstText(
+    source.content,
+    source.answer,
+    source.summary_model_output,
+    source.summaryModelOutput,
+    payload.content,
+    payload.answer,
+    payload.summary_model_output,
+    payload.summaryModelOutput
+  );
 };
 
 const applyUsageStats = (

@@ -7,19 +7,27 @@ FROM ubuntu:18.04
 
 ARG RUST_TOOLCHAIN
 ARG APPIMAGE_RUNTIME_URL
+# archive.ubuntu.com only serves the amd64/i386 archive; the arm64 indexes live
+# on ports.ubuntu.com, so pick the apt mirror from the build platform.
+ARG TARGETARCH
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CARGO_HOME=/usr/local/cargo
 ENV RUSTUP_HOME=/usr/local/rustup
 ENV PATH=/usr/local/cargo/bin:$PATH
 
-RUN printf '%s\n' \
-      'deb [trusted=yes] http://archive.ubuntu.com/ubuntu bionic main universe multiverse restricted' \
-      'deb [trusted=yes] http://archive.ubuntu.com/ubuntu bionic-updates main universe multiverse restricted' \
-      'deb [trusted=yes] http://archive.ubuntu.com/ubuntu bionic-security main universe multiverse restricted' \
+RUN if [ "${TARGETARCH}" = "arm64" ]; then \
+      apt_mirror="http://ports.ubuntu.com/ubuntu-ports"; \
+    else \
+      apt_mirror="http://archive.ubuntu.com/ubuntu"; \
+    fi \
+ && printf '%s\n' \
+      "deb [trusted=yes] ${apt_mirror} bionic main universe multiverse restricted" \
+      "deb [trusted=yes] ${apt_mirror} bionic-updates main universe multiverse restricted" \
+      "deb [trusted=yes] ${apt_mirror} bionic-security main universe multiverse restricted" \
       > /etc/apt/sources.list \
  && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99no-check-valid \
- && apt-get -o Acquire::Check-Valid-Until=false update \
+ && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=5 update \
  && apt-get install -y --no-install-recommends \
       build-essential ca-certificates curl file git pkg-config python3 nasm cmake \
       libssl-dev libgtk-3-dev libxkbcommon-dev libfontconfig1-dev \

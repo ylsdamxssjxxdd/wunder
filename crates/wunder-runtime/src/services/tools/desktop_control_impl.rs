@@ -1616,7 +1616,7 @@ fn x11_key_name(value: u16) -> Option<String> {
         0x20 => "space".to_string(),
         0x5B => "Super_L".to_string(),
         value if (0x70..=0x87).contains(&value) => format!("F{}", value - 0x70 + 1),
-        value if value.is_ascii_alphanumeric() => {
+        value if matches!(value, 0x30..=0x39 | 0x41..=0x5A | 0x61..=0x7A) => {
             char::from_u32(u32::from(value)).map(|ch| ch.to_string())?
         }
         _ => return None,

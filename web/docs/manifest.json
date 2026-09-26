@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-09-25T23:49:48.914624+00:00",
+  "generated_at": "2026-09-26T11:20:33.354476+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -6192,7 +6192,7 @@
       "language": "zh-CN",
       "title": "蜂巢界面",
       "summary": "蜂巢是用户的工作台。左栏导航、中栏列表、右栏工作区，所有日常工作都在这里完成。",
-      "updated_at": "2026-09-24",
+      "updated_at": "2026-09-26",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -14738,7 +14738,7 @@
       "language": "en",
       "title": "Hive Interface",
       "summary": "Hive is your workbench. Left navigation, middle list, right workspace — all daily work happens here.",
-      "updated_at": "2026-09-25",
+      "updated_at": "2026-09-26",
       "read_when": [],
       "source_docs": [],
       "tab": "Surfaces",

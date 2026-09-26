@@ -116,3 +116,8 @@ incremental = false
 
 [patch.crates-io]
 tokio-xmpp = { path = "patches/tokio-xmpp" }
+# Use the rlib-only fork for every workspace member. The kylin-arm vendor's
+# old-layout html2md declares crate-type dylib/staticlib, which makes CLI
+# builds emit a DLL whose link fails on missing DW2 unwind symbols with
+# rust-lld, and desktop/CLI would otherwise compile different html2md code.
+html2md = { path = "frontend-slint/vendor/html2md-0.2.15" }

@@ -1,8 +1,9 @@
-use super::{error_response, format_ts, is_session_runtime_active, is_session_stream_active};
+use super::{error_response, format_ts};
 use crate::api::user_context::resolve_user;
 use crate::core::blocking;
 use crate::i18n;
 use crate::orchestrator_constants::STREAM_EVENT_FETCH_LIMIT;
+use crate::services::chat_runtime_projection::load_chat_session_activity;
 use crate::state::AppState;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -99,33 +100,16 @@ async fn get_session_events(
         .control
         .command_sessions
         .list_session_snapshots(&resolved.user.user_id, &session_id);
-    let monitor_status = state.monitor.get_record(&session_id).and_then(|record| {
-        record
-            .get("status")
-            .and_then(Value::as_str)
-            .map(ToString::to_string)
-    });
+    let monitor_record = state.monitor.get_record(&session_id);
     let goal =
         crate::services::goal::get_goal(state.storage.clone(), &resolved.user.user_id, &session_id)
             .await
             .ok()
             .flatten();
-    let runtime = state
-        .kernel
-        .orchestrator
-        .get_tool_session_runtime_snapshot(&session_id);
+    let activity = load_chat_session_activity(&state, &session_id, monitor_record.as_ref()).await;
+    let runtime = activity.runtime;
     let queued = super::has_active_queue_task(&state.user_store, &session_id);
-    // The in-process thread runtime is the terminal-state authority. A
-    // monitor row may remain `running` for a short time after compaction has
-    // emitted its terminal event, so do not let that stale row revive a
-    // spinner when the client reopens the thread.
-    let running = match runtime.as_ref() {
-        Some(snapshot) => is_session_runtime_active(Some(snapshot)),
-        None => monitor_status
-            .as_deref()
-            .map(is_session_stream_active)
-            .unwrap_or(false),
-    };
+    let running = activity.running;
     let runtime_payload = runtime.or_else(|| {
         queued.then(|| {
             json!({

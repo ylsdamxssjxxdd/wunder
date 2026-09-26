@@ -50,6 +50,45 @@ test('runtime snapshot can change status at the same persisted event cursor', as
   store.resetState();
 });
 
+test('explicitly idle session snapshot does not replay stale runtime controllers', async () => {
+  const { shouldApplySessionEventsSnapshotToProjection } = await import('../../src/stores/chatRuntimeState');
+  assert.equal(
+    shouldApplySessionEventsSnapshotToProjection(
+      { running: false, queued: false },
+      { threadStatus: 'running', sendController: {} }
+    ),
+    false
+  );
+  assert.equal(
+    shouldApplySessionEventsSnapshotToProjection(
+      { running: true },
+      { threadStatus: 'idle' }
+    ),
+    true
+  );
+});
+
+test('idle hydration immediately clears a fresh manual compaction marker', async () => {
+  const { clearCompletedAssistantStreamingState, syncChatRuntimeProjectionFromSnapshot } =
+    await import('../../src/stores/chatRuntimeState');
+  const store = await setup();
+  const messages = [{ role: 'assistant', content: '[Context summary] retained',
+    created_at: new Date().toISOString(), manual_compaction_marker: true,
+    workflowStreaming: true, stream_incomplete: true, reasoningStreaming: true,
+    workflowItems: [{ eventType: 'compaction_progress', status: 'loading',
+      detail: JSON.stringify({ trigger_mode: 'manual', status: 'loading' }) }] }];
+  clearCompletedAssistantStreamingState(messages);
+  assert.deepEqual([messages[0].workflowStreaming, messages[0].stream_incomplete,
+    messages[0].reasoningStreaming], [false, false, false]);
+  syncChatRuntimeProjectionFromSnapshot(store, 'session-1', messages, {
+    running: false, loading: false, authoritative: true
+  });
+  assert.deepEqual(selectVisibleMessageProjections(store.runtimeProjection, 'session-1')
+    .map(message => [message.content, message.status]), [['[Context summary] retained', 'final']]);
+  assert.equal(store.isSessionBusy('session-1'), false);
+  store.resetState();
+});
+
 test('overlapping snapshots reject the older request even without an intervening delta', async () => {
   const store = await setup();
   const { default: api } = await import('../../src/api/http');
@@ -199,6 +238,46 @@ test('detail response racing live output seeds history without rolling back cont
     store.resetState();
   }
 });
+
+for (const preload of [false, true]) {
+  test(`completed compaction stays idle during ${preload ? 'preload' : 'detail'} hydration with partial workflow history`, async () => {
+    const store = await setup();
+    const { default: api } = await import('../../src/api/http');
+    const originalAdapter = api.defaults.adapter;
+    const userTurn = 'user-turn:session-1:round:1';
+    const modelTurn = 'model-turn:session-1:user:1:model:1';
+    const messages = [
+      { role: 'user', content: '/compact', message_id: 'history:1', turn_index: 1,
+        user_turn_id: userTurn, user_round: 1, manual_compaction_command: true },
+      { role: 'assistant', content: '[Context summary] retained', message_id: 'history:2',
+        turn_index: 2, user_turn_id: userTurn, model_turn_id: modelTurn, user_round: 1,
+        model_round: 1, created_at: new Date().toISOString(), manual_compaction_marker: true,
+        workflowStreaming: true, stream_incomplete: true, reasoningStreaming: true,
+        workflowItems: [{ eventType: 'compaction_progress', status: 'loading',
+          detail: JSON.stringify({ trigger_mode: 'manual', status: 'loading' }) }] }
+    ];
+    api.defaults.adapter = async config => ({ status: 200, statusText: 'OK', headers: {}, config,
+      data: { data: config.url?.endsWith('/events')
+        ? { running: false, runtime: { thread_status: 'idle' }, last_event_id: 20,
+            events: [{ event: 'thread_status', event_id: 1, data: { status: 'running' } },
+              { event: 'progress', event_id: 2, data: { user_round: 1, stage: 'compacting', trigger_mode: 'manual' } },
+              { event: 'llm_request', event_id: 3, data: { user_round: 1,
+                trigger_mode: 'manual', purpose: 'compaction_summary' } }] }
+        : { id: 'session-1', transcript: messages } }
+    });
+    try {
+      if (preload) await store.preloadSessionDetail('session-1', { force: true, syncActive: true });
+      else await store.loadSessionDetail('session-1', { startWatcherAfterHydration: false });
+      assert.deepEqual(selectVisibleMessageProjections(store.runtimeProjection, 'session-1')
+        .map(message => [message.role, message.content, message.status]),
+      [['user', '/compact', 'final'], ['assistant', '[Context summary] retained', 'final']]);
+      assert.equal(store.isSessionBusy('session-1'), false);
+    } finally {
+      api.defaults.adapter = originalAdapter;
+      store.resetState();
+    }
+  });
+}
 
 test('model tool-call completion never ends the request or clears its busy state', async () => {
   const store = await setup();

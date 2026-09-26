@@ -17,6 +17,7 @@ pub mod chat_attachments;
 pub mod chat_cancel_marker;
 pub mod chat_media;
 pub mod chat_payload_sanitizer;
+pub mod chat_runtime_projection;
 pub mod chat_transcript;
 pub mod companions;
 pub mod cron;

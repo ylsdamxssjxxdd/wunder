@@ -6,6 +6,7 @@ use super::{
 use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::monitor::MonitorState;
+use crate::services::chat_runtime_projection::load_chat_session_activity;
 use crate::services::chat_transcript::build_chat_transcript;
 use crate::services::llm::is_llm_model;
 use crate::services::orchestration_context::{
@@ -392,12 +393,6 @@ async fn get_session(
         .map(str::to_string);
 
     let monitor_record = state.monitor.get_record(&session_id);
-    let session_status = monitor_record.as_ref().and_then(|record| {
-        record
-            .get("status")
-            .and_then(Value::as_str)
-            .map(ToString::to_string)
-    });
     let message_feedback = extract_monitor_message_feedback_map(monitor_record.as_ref());
     let limit = normalize_session_detail_limit(
         query.limit,
@@ -426,22 +421,9 @@ async fn get_session(
             }
         }
     };
-    let monitor_active = session_status
-        .as_deref()
-        .map(is_session_stream_active)
-        .unwrap_or(false);
-    // The monitor row can briefly remain running while the compaction worker
-    // has already emitted its terminal event. Prefer the authoritative thread
-    // runtime snapshot when it is available so switching back never revives a
-    // completed compaction spinner.
-    let runtime_snapshot = state
-        .kernel
-        .orchestrator
-        .get_tool_session_runtime_snapshot(&session_id);
-    let monitor_active = match runtime_snapshot.as_ref() {
-        Some(snapshot) => is_session_runtime_active(Some(snapshot)),
-        None => monitor_active,
-    };
+    let monitor_active = load_chat_session_activity(&state, &session_id, monitor_record.as_ref())
+        .await
+        .running;
     let active_queue_tasks = list_active_queue_tasks(&state.user_store, &session_id);
     let pure_queue_phase = !monitor_active && !active_queue_tasks.is_empty();
     let mut transcript = std::mem::take(&mut transcript_page.transcript);
@@ -1178,15 +1160,6 @@ pub(super) fn is_session_stream_active_or_queued(
         .map(is_session_stream_active)
         .unwrap_or(false)
         || has_active_queue_task(user_store, session_id)
-}
-
-pub(super) fn is_session_runtime_active(runtime: Option<&Value>) -> bool {
-    matches!(
-        runtime
-            .and_then(|snapshot| snapshot.get("thread_status"))
-            .and_then(Value::as_str),
-        Some("running" | "waiting_approval" | "waiting_user_input")
-    )
 }
 
 fn normalize_queue_task_attachments(value: Option<&Value>) -> Option<Value> {

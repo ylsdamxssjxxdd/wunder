@@ -46,6 +46,8 @@ In the agent loop, the context and token usage belong to the model request that 
 | `/compact` | Manually compress conversation |
 | `/help` | Open help docs |
 
+`/compact` counts as a user turn. Its summary appears immediately in the following assistant bubble, with progress in the agent loop and no separate divider. Switching threads or refreshing preserves the summary and completed status.
+
 ### Protection mechanisms
 
 - **Attachment processing**: send button disabled until processing completes

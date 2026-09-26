@@ -2225,8 +2225,6 @@ dependencies = [
 [[package]]
 name = "html2md"
 version = "0.2.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cff9891f2e0d9048927fbdfc28b11bf378f6a93c7ba70b23d0fbee9af6071b4"
 dependencies = [
  "html5ever 0.27.0",
  "jni 0.19.0",

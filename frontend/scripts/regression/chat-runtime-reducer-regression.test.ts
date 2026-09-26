@@ -285,6 +285,16 @@ test('manual compaction transcript terminal state survives historical progress r
   assert.equal(projection.sessions[sessionId]?.modelTurnById[modelTurnId]?.status, 'completed');
   assert.equal(selectSessionBusy(projection, sessionId), false);
   assert.ok(assistant.workflowItems?.every((item) => item.status !== 'loading'));
+
+  // Workflow pages can stop at the historical model request, before the
+  // terminal event. The durable transcript must stay terminal throughout.
+  buildCanonicalChatRuntimeEvents({
+    sessionId, eventType: 'llm_request', eventId: 2, phase: 'detail', source: 'snapshot',
+    payload: { user_round: 2, model_round: 1, purpose: 'compaction_summary', trigger_mode: 'manual' }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+  assert.equal(assistant.status, 'final');
+  assert.equal(selectSessionBusy(projection, sessionId), false);
+  assert.ok(assistant.workflowItems?.every((item) => item.status !== 'loading'));
 });
 
 test('swarm lifecycle updates do not replace the originating tool call status', () => {
@@ -3240,6 +3250,58 @@ test('canonical visible workflow events project retry slow-client and compaction
   assert.equal(assistant.display?.slow_client, true);
   assert.equal(assistant.display?.resume_available, true);
   assert.equal(selectSessionBusy(projection, 'session-1'), false);
+});
+
+test('manual compaction terminal event fills the assistant bubble before refresh', () => {
+  const projection = createChatRuntimeProjection();
+  const common = {
+    sessionId: 'session-manual-live',
+    requestId: 'request-manual-live',
+    payload: {
+      data: {
+        user_round: 4,
+        model_round: 1,
+        trigger_mode: 'manual'
+      }
+    }
+  };
+
+  buildCanonicalChatRuntimeEvents({
+    ...common,
+    eventType: 'progress',
+    eventId: 1,
+    payload: {
+      ...common.payload,
+      data: { ...common.payload.data, stage: 'compacting', status: 'loading' }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+  buildCanonicalChatRuntimeEvents({
+    ...common,
+    eventType: 'compaction',
+    eventId: 2,
+    payload: {
+      ...common.payload,
+      data: {
+        ...common.payload.data,
+        status: 'done',
+        summary_text: '[Context summary] preserved live summary'
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+  buildCanonicalChatRuntimeEvents({
+    ...common,
+    eventType: 'turn_terminal',
+    eventId: 3,
+    payload: { ...common.payload, data: { ...common.payload.data, status: 'completed' } }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const assistant = selectVisibleMessageProjections(projection, 'session-manual-live')
+    .find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  assert.equal(assistant.content, '[Context summary] preserved live summary');
+  assert.equal(assistant.status, 'final');
+  assert.equal(assistant.display?.manual_compaction_marker, true);
+  assert.equal(selectSessionBusy(projection, 'session-manual-live'), false);
 });
 
 test('canonical command session events project into execute command workflow item', () => {
