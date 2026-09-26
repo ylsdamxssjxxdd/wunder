@@ -40,7 +40,6 @@
       <div class="messenger-timeline-detail-panel">
         <div class="messenger-timeline-detail-section">
           <div class="messenger-timeline-detail-label-row">
-            <label class="messenger-timeline-detail-label">{{ t('messenger.timeline.detail.question') }}</label>
             <div v-if="roundOptions.length" class="messenger-timeline-detail-round-picker">
               <span class="messenger-timeline-detail-round-picker-label">
                 {{ t('messenger.timeline.detail.userRound') }}
@@ -51,8 +50,8 @@
                 </option>
               </select>
             </div>
+            <div class="messenger-timeline-detail-question">{{ detailQuestion }}</div>
           </div>
-          <div class="messenger-timeline-detail-question">{{ detailQuestion }}</div>
         </div>
 
         <div class="messenger-timeline-detail-section messenger-timeline-detail-section-events">
@@ -70,7 +69,6 @@
               type="text"
               :placeholder="t('messenger.timeline.detail.filterKeyword')"
             />
-            <div class="messenger-timeline-detail-filter-stats">{{ filterStats }}</div>
           </div>
 
           <div v-if="!filteredEvents.length" class="messenger-timeline-detail-empty">
@@ -907,13 +905,6 @@ const overviewItems = computed(() => {
     { icon: 'fa-solid fa-fingerprint', label: t('messenger.timeline.detail.metaSessionIdLabel'), value: overviewValue(metrics.session_id || session.id) }
   ];
 });
-
-const filterStats = computed(() =>
-  t('messenger.timeline.detail.filterStats', {
-    visible: filteredEvents.value.length,
-    total: events.value.length
-  })
-);
 
 const eventPageInfo = computed(() =>
   t('messenger.timeline.detail.pageInfo', {

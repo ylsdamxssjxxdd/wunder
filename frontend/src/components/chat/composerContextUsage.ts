@@ -1,5 +1,9 @@
 import { formatCompactCount } from '@/utils/compactNumber';
 
+// Occupancy tone thresholds shared by the composer liquid icon and its hover panel.
+export const CONTEXT_WARNING_RATIO = 0.7;
+export const CONTEXT_DANGER_RATIO = 0.9;
+
 export type ComposerContextStatsSource = Record<string, unknown> | null | undefined;
 
 export type ComposerContextSessionSource = Record<string, unknown> | null | undefined;

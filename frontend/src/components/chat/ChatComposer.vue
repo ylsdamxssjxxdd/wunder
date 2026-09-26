@@ -13,17 +13,7 @@
       @stop="emit('stop')"
       @cancel="emit('cancel-goal-editor')"
     />
-    <div
-      v-if="goalEditorVisible && composerContextUsageDisplay"
-      class="chat-goal-context-usage"
-      :class="composerContextUsageClass"
-      :style="composerContextUsageStyle"
-      :title="composerContextUsageTooltip"
-      :aria-label="composerContextUsageTooltip"
-    >
-      {{ composerContextUsageDisplay }}
-    </div>
-    <template v-else>
+    <template v-if="!goalEditorVisible">
     <div v-if="showUploadArea" class="upload-preview">
       <div class="upload-preview-list">
         <div
@@ -356,7 +346,7 @@
               v-if="composerModelDisplayName && composerModelActionable"
               class="chat-composer-world-model chat-composer-world-model--action"
               type="button"
-              :title="composerModelWithContextTooltip"
+              :title="composerModelDisplayName"
               :aria-label="composerModelAriaLabel"
               @click="emit('open-model-settings')"
             >
@@ -365,53 +355,56 @@
             <div
               v-else-if="composerModelDisplayName"
               class="chat-composer-world-model"
-              :title="composerModelWithContextTooltip"
+              :title="composerModelDisplayName"
               :aria-label="composerModelAriaLabel"
             >
               <span class="chat-composer-world-model-text">{{ composerModelDisplayName }}</span>
             </div>
-            <span
-              v-if="composerContextUsageDisplay"
-              class="chat-composer-world-context-usage"
-              :class="composerContextUsageClass"
-              :style="composerContextUsageStyle"
-              :title="composerContextUsageTooltip"
-              :aria-label="composerContextUsageTooltip"
+            <div
+              class="chat-composer-context-anchor"
+              @keydown.escape="closeContextPanel"
             >
-              {{ composerContextUsageDisplay }}
-            </span>
-            <div class="chat-composer-reasoning-anchor">
               <button
-                class="messenger-world-tool-btn chat-composer-reasoning-toggle"
+                class="messenger-world-tool-btn chat-composer-context-toggle"
                 type="button"
-                :class="{ active: reasoningMenuVisible || reasoningEffort !== 'default' }"
-                :title="reasoningEffortTitle"
-                :aria-label="reasoningEffortTitle"
-                :aria-expanded="reasoningMenuVisible"
-                :disabled="stopButtonActive || composerBusy > 0"
-                @click.stop.prevent="toggleReasoningMenu"
+                :class="{ active: contextPanelVisible }"
+                :aria-label="contextAnchorAriaLabel"
+                :aria-expanded="contextPanelVisible"
+                @mouseenter="openContextPanel"
+                @mouseleave="scheduleContextPanelClose"
+                @click.stop.prevent="toggleContextPanel"
               >
-                <ReasoningEffortIcon :effort="reasoningEffort" />
+                <ContextUsageIcon :ratio="composerContextUsageRatio" />
               </button>
               <div
-                v-if="reasoningMenuVisible"
-                class="chat-composer-reasoning-menu"
-                role="menu"
+                v-if="contextPanelVisible"
+                class="chat-composer-context-panel"
+                @mouseenter="cancelContextPanelClose"
+                @mouseleave="scheduleContextPanelClose"
                 @click.stop
               >
-                <div class="chat-composer-reasoning-menu-title">{{ t('desktop.system.reasoningEffort') }}</div>
-                <button
-                  v-for="option in reasoningEffortOptions"
-                  :key="option.value"
-                  class="chat-composer-reasoning-option"
-                  :class="{ active: reasoningEffort === option.value }"
-                  type="button"
-                  role="menuitemradio"
-                  :aria-checked="reasoningEffort === option.value"
-                  @click="selectReasoningEffort(option.value)"
-                >
-                  {{ option.label }}
-                </button>
+                <div class="chat-composer-context-panel-usage" :class="composerContextUsageClass">
+                  <div class="chat-composer-context-usage-head">
+                    <span class="chat-composer-context-usage-label">{{ t('profile.stats.contextTokens') }}</span>
+                    <span class="chat-composer-context-usage-percent">{{ composerContextUsagePercentText }}</span>
+                  </div>
+                  <div class="chat-composer-context-usage-counts">{{ composerContextUsageCounts }}</div>
+                </div>
+                <div class="chat-composer-context-panel-title">{{ t('desktop.system.reasoningEffort') }}</div>
+                <div class="chat-composer-context-panel-options" role="menu">
+                  <button
+                    v-for="option in reasoningEffortOptions"
+                    :key="option.value"
+                    class="chat-composer-context-option"
+                    :class="{ active: reasoningEffort === option.value }"
+                    type="button"
+                    role="menuitemradio"
+                    :aria-checked="reasoningEffort === option.value"
+                    @click="selectReasoningEffort(option.value)"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
               </div>
             </div>
             <div class="messenger-world-send-group">
@@ -457,38 +450,51 @@
             <i class="fa-solid fa-chevron-down chat-screenshot-caret" aria-hidden="true"></i>
           </button>
         </div>
-        <div class="chat-composer-reasoning-anchor">
+        <div
+          class="chat-composer-context-anchor"
+          @keydown.escape="closeContextPanel"
+        >
           <button
-            class="input-icon-btn chat-composer-reasoning-toggle"
+            class="input-icon-btn chat-composer-context-toggle"
             type="button"
-            :class="{ active: reasoningMenuVisible || reasoningEffort !== 'default' }"
-            :title="reasoningEffortTitle"
-            :aria-label="reasoningEffortTitle"
-            :aria-expanded="reasoningMenuVisible"
-            :disabled="stopButtonActive || composerBusy > 0"
-            @click.stop.prevent="toggleReasoningMenu"
+            :class="{ active: contextPanelVisible }"
+            :aria-label="contextAnchorAriaLabel"
+            :aria-expanded="contextPanelVisible"
+            @mouseenter="openContextPanel"
+            @mouseleave="scheduleContextPanelClose"
+            @click.stop.prevent="toggleContextPanel"
           >
-            <ReasoningEffortIcon :effort="reasoningEffort" />
+            <ContextUsageIcon :ratio="composerContextUsageRatio" />
           </button>
           <div
-            v-if="reasoningMenuVisible"
-            class="chat-composer-reasoning-menu"
-            role="menu"
+            v-if="contextPanelVisible"
+            class="chat-composer-context-panel"
+            @mouseenter="cancelContextPanelClose"
+            @mouseleave="scheduleContextPanelClose"
             @click.stop
           >
-            <div class="chat-composer-reasoning-menu-title">{{ t('desktop.system.reasoningEffort') }}</div>
-            <button
-              v-for="option in reasoningEffortOptions"
-              :key="option.value"
-              class="chat-composer-reasoning-option"
-              :class="{ active: reasoningEffort === option.value }"
-              type="button"
-              role="menuitemradio"
-              :aria-checked="reasoningEffort === option.value"
-              @click="selectReasoningEffort(option.value)"
-            >
-              {{ option.label }}
-            </button>
+            <div class="chat-composer-context-panel-usage" :class="composerContextUsageClass">
+              <div class="chat-composer-context-usage-head">
+                <span class="chat-composer-context-usage-label">{{ t('profile.stats.contextTokens') }}</span>
+                <span class="chat-composer-context-usage-percent">{{ composerContextUsagePercentText }}</span>
+              </div>
+              <div class="chat-composer-context-usage-counts">{{ composerContextUsageCounts }}</div>
+            </div>
+            <div class="chat-composer-context-panel-title">{{ t('desktop.system.reasoningEffort') }}</div>
+            <div class="chat-composer-context-panel-options" role="menu">
+              <button
+                v-for="option in reasoningEffortOptions"
+                :key="option.value"
+                class="chat-composer-context-option"
+                :class="{ active: reasoningEffort === option.value }"
+                type="button"
+                role="menuitemradio"
+                :aria-checked="reasoningEffort === option.value"
+                @click="selectReasoningEffort(option.value)"
+              >
+                {{ option.label }}
+              </button>
+            </div>
           </div>
         </div>
         <button
@@ -540,7 +546,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import ChatGoalComposer from '@/components/chat/ChatGoalComposer.vue';
-import ReasoningEffortIcon from '@/components/chat/ReasoningEffortIcon.vue';
+import ContextUsageIcon from '@/components/chat/ContextUsageIcon.vue';
 
 import { processChatMediaAttachment } from '@/api/chat';
 import { uploadWunderWorkspace } from '@/api/workspace';
@@ -559,6 +565,8 @@ import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { resolveAnyProviderModelPresetMaxContext } from '@/views/messenger/providerModelPresets';
 import { clearWorkspaceDragPaths, hasWorkspaceDragPaths, readWorkspaceDragPaths } from '@/components/chat/workspaceDrag';
 import {
+  CONTEXT_DANGER_RATIO,
+  CONTEXT_WARNING_RATIO,
   formatContextTokenCount,
   resolveStableComposerContextPair,
   resolveComposerContextUsageSource
@@ -736,7 +744,7 @@ const screenshotMenuVisible = ref(false);
 const screenshotMenuStyle = ref<Record<string, string>>({});
 type ReasoningEffort = 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 const reasoningEffort = ref<ReasoningEffort>('default');
-const reasoningMenuVisible = ref(false);
+const contextPanelVisible = ref(false);
 const caretPosition = ref(0);
 const commandMenuIndex = ref(0);
 const commandMenuDismissed = ref(false);
@@ -746,6 +754,7 @@ const gifFrameStepDrafts = ref<Record<string, string>>({});
 const attachmentProcessingIds = ref<string[]>([]);
 let worldComposerResizeRuntime: { startY: number; startHeight: number } | null = null;
 let worldCommandPanelCloseTimer: ReturnType<typeof setTimeout> | null = null;
+let contextPanelCloseTimer: ReturnType<typeof setTimeout> | null = null;
 const DRAFT_PERSIST_DEBOUNCE_MS = 240;
 let draftPersistTimer: ReturnType<typeof setTimeout> | null = null;
 const { t } = useI18n();
@@ -861,6 +870,7 @@ type SlashCommandDefinition = {
 const INPUT_MAX_HEIGHT = 180;
 const WORLD_COMPOSER_HEIGHT_STORAGE_KEY = 'wunder_world_composer_height';
 const WORLD_COMMAND_PANEL_CLOSE_DELAY_MS = 160;
+const CONTEXT_PANEL_CLOSE_DELAY_MS = 160;
 const MAX_WORKSPACE_UPLOAD_BYTES = 1024 * 1024 * 1024;
 const resolveDraftKey = (): string => String(props.draftKey || '').trim();
 const clampWorldComposerHeight = (value: unknown): number => {
@@ -1007,13 +1017,21 @@ const composerContextPair = computed(() => resolveStableComposerContextPair(
 ));
 const composerContextUsedTokens = computed(() => composerContextPair.value.used);
 const composerContextTotalTokens = computed(() => composerContextPair.value.total);
-const CONTEXT_WARNING_RATIO = 0.7;
-const CONTEXT_DANGER_RATIO = 0.9;
 const composerContextUsageRatio = computed(() => {
   const used = composerContextUsedTokens.value;
   const total = composerContextTotalTokens.value;
   if (used === null || total === null || total <= 0) return null;
   return Math.max(0, used) / total;
+});
+const composerContextUsageCounts = computed(() => {
+  const used = composerContextUsedTokens.value;
+  const total = composerContextTotalTokens.value;
+  return `${formatContextTokenCount(used)} / ${formatContextTokenCount(total)}`;
+});
+const composerContextUsagePercentText = computed(() => {
+  const ratio = composerContextUsageRatio.value;
+  if (ratio === null) return '--';
+  return `${Math.min(999, Math.round(ratio * 100))}%`;
 });
 const composerContextUsageClass = computed(() => {
   const ratio = composerContextUsageRatio.value;
@@ -1021,44 +1039,6 @@ const composerContextUsageClass = computed(() => {
   if (ratio >= CONTEXT_DANGER_RATIO) return 'is-danger';
   if (ratio >= CONTEXT_WARNING_RATIO) return 'is-warning';
   return '';
-});
-const composerContextUsageStyle = computed<Record<string, string>>(() => {
-  const ratio = composerContextUsageRatio.value;
-  if (ratio === null || ratio < CONTEXT_WARNING_RATIO) {
-    return {};
-  }
-  // Lerp from amber to red as context usage approaches the hard limit.
-  const ratioSpan = Math.max(0.01, CONTEXT_DANGER_RATIO - CONTEXT_WARNING_RATIO);
-  const progress = Math.min(Math.max((ratio - CONTEXT_WARNING_RATIO) / ratioSpan, 0), 1);
-  const red = Math.round(217 + (220 - 217) * progress);
-  const green = Math.round(119 + (38 - 119) * progress);
-  const blue = Math.round(6 + (38 - 6) * progress);
-  return { color: `rgb(${red}, ${green}, ${blue})` };
-});
-const composerContextUsageDisplay = computed(() => {
-  if (!props.worldStyle) return '';
-  const used = composerContextUsedTokens.value;
-  const total = composerContextTotalTokens.value;
-  if (used === null && total === null) return '';
-  const usedText = formatContextTokenCount(used);
-  const totalText = formatContextTokenCount(total);
-  return `${usedText}/${totalText}`;
-});
-const composerContextUsageTooltip = computed(() => {
-  const usage = composerContextUsageDisplay.value;
-  if (!usage) return '';
-  const ratio = composerContextUsageRatio.value;
-  if (ratio !== null) {
-    const percent = Math.min(999, Math.round(ratio * 100));
-    return `${t('profile.stats.contextTokens')}: ${usage} (${percent}%)`;
-  }
-  return `${t('profile.stats.contextTokens')}: ${usage}`;
-});
-const composerModelWithContextTooltip = computed(() => {
-  if (!composerContextUsageDisplay.value) {
-    return composerModelDisplayName.value;
-  }
-  return `${composerModelDisplayName.value} | ${composerContextUsageDisplay.value}`;
 });
 const getDesktopScreenshotBridge = (): DesktopScreenshotBridge | null => {
   if (typeof window === 'undefined') return null;
@@ -1159,10 +1139,9 @@ const reasoningEffortOptions = computed(() =>
     label: t(`desktop.system.reasoningEffort.${value}`)
   }))
 );
-const reasoningEffortTitle = computed(() => {
-  const selected = reasoningEffortOptions.value.find((item) => item.value === reasoningEffort.value);
-  return `${t('desktop.system.reasoningEffort')}: ${selected?.label || reasoningEffort.value}`;
-});
+const contextAnchorAriaLabel = computed(() =>
+  `${t('profile.stats.contextTokens')} · ${t('desktop.system.reasoningEffort')}`
+);
 const goalEditorVisible = computed(() => Boolean(props.goalEditorVisible));
 const inputPlaceholder = computed(() => {
   const base = props.inquiryActive
@@ -1724,6 +1703,11 @@ const handleInputKeydown = async (event) => {
   if (event.key === 'Escape' && screenshotMenuVisible.value) {
     event.preventDefault();
     closeScreenshotMenu();
+    return;
+  }
+  if (event.key === 'Escape' && contextPanelVisible.value) {
+    event.preventDefault();
+    closeContextPanel();
     return;
   }
   if (props.worldStyle) {
@@ -2436,20 +2420,51 @@ const closeScreenshotMenu = () => {
   screenshotMenuStyle.value = {};
 };
 
-const closeReasoningMenu = () => {
-  reasoningMenuVisible.value = false;
+const clearContextPanelCloseTimer = () => {
+  if (contextPanelCloseTimer) {
+    clearTimeout(contextPanelCloseTimer);
+    contextPanelCloseTimer = null;
+  }
 };
 
-const toggleReasoningMenu = () => {
-  if (stopButtonActive.value) return;
+const closeContextPanel = () => {
+  clearContextPanelCloseTimer();
+  contextPanelVisible.value = false;
+};
+
+// The brain icon doubles as a hover anchor: the panel stays open while the
+// pointer is over the icon or the panel itself, and closes after a short delay.
+const openContextPanel = () => {
+  clearContextPanelCloseTimer();
+  if (contextPanelVisible.value) return;
   closeScreenshotMenu();
   closeWorldCommandPanel();
-  reasoningMenuVisible.value = !reasoningMenuVisible.value;
+  contextPanelVisible.value = true;
+};
+
+const scheduleContextPanelClose = () => {
+  clearContextPanelCloseTimer();
+  contextPanelCloseTimer = setTimeout(() => {
+    contextPanelCloseTimer = null;
+    contextPanelVisible.value = false;
+  }, CONTEXT_PANEL_CLOSE_DELAY_MS);
+};
+
+const cancelContextPanelClose = () => {
+  clearContextPanelCloseTimer();
+};
+
+const toggleContextPanel = () => {
+  if (contextPanelVisible.value) {
+    closeContextPanel();
+    return;
+  }
+  openContextPanel();
 };
 
 const selectReasoningEffort = (value: ReasoningEffort) => {
   reasoningEffort.value = value;
-  closeReasoningMenu();
+  closeContextPanel();
 };
 
 const toggleScreenshotMenu = () => {
@@ -2798,8 +2813,8 @@ const handleDocumentPointerDown = (event: PointerEvent) => {
     }
   }
   const targetElement = target as HTMLElement | null;
-  if (reasoningMenuVisible.value && !targetElement?.closest('.chat-composer-reasoning-anchor')) {
-    closeReasoningMenu();
+  if (contextPanelVisible.value && !targetElement?.closest('.chat-composer-context-anchor')) {
+    closeContextPanel();
   }
 };
 
@@ -2819,7 +2834,8 @@ onBeforeUnmount(() => {
   flushPersistDraftState();
   stopWorldComposerResize();
   clearWorldCommandPanelCloseTimer();
-  closeReasoningMenu();
+  clearContextPanelCloseTimer();
+  closeContextPanel();
   if (typeof window !== 'undefined') {
     window.removeEventListener('resize', handleScreenshotMenuViewportChange);
     window.removeEventListener('scroll', handleScreenshotMenuViewportChange, true);
@@ -2979,15 +2995,3 @@ defineExpose({
 </script>
 
 <style scoped src="./composerFooter.css"></style>
-
-<style scoped>
-.chat-goal-context-usage {
-  display: inline-flex;
-  align-items: center;
-  align-self: flex-end;
-  min-height: 20px;
-  margin: 2px 4px 0 0;
-  font-size: 12px;
-  font-weight: 600;
-}
-</style>

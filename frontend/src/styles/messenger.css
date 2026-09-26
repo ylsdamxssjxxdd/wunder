@@ -3071,22 +3071,6 @@ button.messenger-chat-header-model {
   text-overflow: ellipsis;
 }
 
-.chat-composer-world-context-usage {
-  flex-shrink: 0;
-  color: var(--hula-muted);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.01em;
-  transition: color 0.15s ease;
-}
-
-.chat-composer-world-context-usage.is-warning {
-  font-weight: 700;
-}
-
-.chat-composer-world-context-usage.is-danger {
-  font-weight: 800;
-}
-
 .chat-composer-world-model--action {
   cursor: pointer;
   transition: color 0.15s ease;
@@ -8174,9 +8158,8 @@ body.desktop-shell-active .workspace-editor-shell {
 .messenger-timeline-detail-label-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
-  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .messenger-timeline-detail-label {
@@ -8186,7 +8169,7 @@ body.desktop-shell-active .workspace-editor-shell {
 }
 
 .messenger-timeline-detail-round-picker {
-  margin-left: auto;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -8215,6 +8198,8 @@ body.desktop-shell-active .workspace-editor-shell {
 }
 
 .messenger-timeline-detail-question {
+  flex: 1 1 auto;
+  min-width: 0;
   border: 1px solid #e4e8ef;
   border-radius: 10px;
   background: #f8fafc;
@@ -8224,8 +8209,19 @@ body.desktop-shell-active .workspace-editor-shell {
   white-space: pre-wrap;
   word-break: break-word;
   padding: 10px 12px;
-  max-height: min(180px, calc(var(--app-viewport-height, 100vh) - 460px));
+  max-height: 72px;
   overflow: auto;
+}
+
+@media (max-width: 760px) {
+  .messenger-timeline-detail-label-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .messenger-timeline-detail-question {
+    width: 100%;
+  }
 }
 
 .messenger-timeline-detail-filters {
@@ -8260,12 +8256,6 @@ body.desktop-shell-active .workspace-editor-shell {
 .messenger-timeline-detail-filter-input:focus {
   border-color: rgba(var(--ui-accent-rgb), 0.4);
   box-shadow: 0 0 0 1px rgba(var(--ui-accent-rgb), 0.2);
-}
-
-.messenger-timeline-detail-filter-stats {
-  margin-left: auto;
-  font-size: 12px;
-  color: #64748b;
 }
 
 .messenger-timeline-detail-empty {

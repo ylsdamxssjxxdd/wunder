@@ -2649,7 +2649,6 @@ export default {
   'messenger.timeline.detail.overview': 'Overview',
   'messenger.timeline.detail.filterAllTypes': 'All types',
   'messenger.timeline.detail.filterKeyword': 'Filter by event keyword',
-  'messenger.timeline.detail.filterStats': 'Showing {visible}/{total}',
   'messenger.timeline.detail.previousPage': 'Previous',
   'messenger.timeline.detail.nextPage': 'Next',
   'messenger.timeline.detail.firstPage': 'First page',

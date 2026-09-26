@@ -5529,13 +5529,12 @@
 #monitorDetailModal .monitor-detail-question-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 12px;
+  min-width: 0;
 }
 
 #monitorDetailModal .monitor-detail-round-filter-wrap {
-  margin-left: auto;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -5577,7 +5576,9 @@
 }
 
 #monitorDetailModal #monitorDetailQuestion {
-  max-height: 120px;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-height: 72px;
   overflow-y: auto;
 }
 
@@ -5585,6 +5586,11 @@
   #monitorDetailModal .monitor-detail-layout {
     grid-template-columns: 1fr;
     overflow: auto;
+  }
+
+  #monitorDetailModal .monitor-detail-question-head {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   #monitorDetailModal .monitor-detail-overview-grid {

@@ -32,11 +32,18 @@ fn compact_tool_description(name: &str, original: &str) -> String {
     let fixed = match canonical.as_str() {
         "最终回复" | "final_response" => Some("提交最终回复；content 必填。"),
         "定时任务" | "schedule_task" => Some("管理定时任务；action 必填。"),
-        "休眠等待" | "sleep_wait" | "sleep" => Some("等待指定秒数；可被新消息唤醒。"),
+        "休眠等待" | "sleep_wait" | "sleep" => {
+            Some("主动等待指定秒数；仅用于确实需要延迟的流程，不用于等待命令完成。")
+        }
         "记忆管理" | "memory_manager" => {
             Some("管理长期记忆；系统提示词只放索引，详情按需读取。")
         }
-        "执行命令" | "execute_command" => Some("执行命令；受工作区、审批和超时限制。"),
+        "执行命令" | "execute_command" => Some(
+            "执行命令；短命令直接返回，仍在运行时返回 command_session_id；继续其他工作后用命令会话轮询，不要用休眠等待命令。",
+        ),
+        "命令会话" | "command_session" | "write_command_stdin" => Some(
+            "轮询后台命令或写入 stdin；使用 execute_command 返回的 command_session_id，直到 status=completed。",
+        ),
         "ptc" => Some("执行 PTC 脚本；受权限、工作区和超时限制。"),
         "列出文件" | "list_files" => Some("列出允许范围内的文件；结果限量。"),
         "搜索内容" | "search_content" => Some("搜索允许路径中的文本；结果限量，优先缩小范围。"),
@@ -269,6 +276,31 @@ mod tests {
                 .count()
                 <= 240
         );
+    }
+
+    #[test]
+    fn compact_command_tools_distinguish_polling_from_sleep() {
+        let exec = compact_tool_spec_for_model(&ToolSpec {
+            name: "执行命令".to_string(),
+            title: None,
+            description: String::new(),
+            input_schema: json!({"type": "object"}),
+        });
+        let session = compact_tool_spec_for_model(&ToolSpec {
+            name: "命令会话".to_string(),
+            title: None,
+            description: String::new(),
+            input_schema: json!({"type": "object"}),
+        });
+        let sleep = compact_tool_spec_for_model(&ToolSpec {
+            name: "休眠等待".to_string(),
+            title: None,
+            description: String::new(),
+            input_schema: json!({"type": "object"}),
+        });
+        assert!(exec.description.contains("command_session_id"));
+        assert!(session.description.contains("轮询后台命令"));
+        assert!(sleep.description.contains("不用于等待命令完成"));
     }
 
     #[test]

@@ -2607,7 +2607,6 @@ export default {
   'messenger.timeline.detail.overview': '概览',
   'messenger.timeline.detail.filterAllTypes': '全部类型',
   'messenger.timeline.detail.filterKeyword': '按关键词筛选事件',
-  'messenger.timeline.detail.filterStats': '显示 {visible}/{total} 条',
   'messenger.timeline.detail.previousPage': '上一页',
   'messenger.timeline.detail.nextPage': '下一页',
   'messenger.timeline.detail.firstPage': '首页',

@@ -6,6 +6,7 @@ const DEFAULT_BUILTIN_TOOL_NAMES: &[&str] = &[
     "休眠等待",
     "记忆管理",
     "执行命令",
+    "命令会话",
     "ptc",
     "列出文件",
     "搜索内容",
@@ -95,5 +96,15 @@ mod tests {
         allowed.insert(canonical.clone());
         let selected = curated_default_tool_names(&allowed);
         assert!(!selected.contains(&canonical));
+    }
+
+    #[test]
+    fn curated_default_selection_includes_command_session_for_background_exec() {
+        let allowed = curated_default_tool_candidates()
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let selected = curated_default_tool_names(&allowed);
+        assert!(selected.iter().any(|name| name == "执行命令"));
+        assert!(selected.iter().any(|name| name == "命令会话"));
     }
 }

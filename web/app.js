@@ -40,7 +40,12 @@ import {
 } from "./modules/prompt.js?v=20260215-01";
 
 import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260215-01";
-import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260710-01";
+import {
+  initMonitorPanel,
+  loadMonitorData,
+  refreshMonitorPanelLayout,
+  toggleMonitorPolling,
+} from "./modules/monitor.js?v=20260710-01";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260215-01";
 import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260518-01";
 import { initExternalLinksPanel, loadExternalLinks } from "./modules/external-links.js?v=20260215-01";
@@ -360,6 +365,10 @@ const switchPanel = (panel) => {
   }
 
   toggleMonitorPolling(panel === "monitor", { mode: "full" });
+
+  if (panel === "monitor") {
+    refreshMonitorPanelLayout();
+  }
 
   toggleDebugPolling(panel === "debug");
 

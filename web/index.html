@@ -5795,13 +5795,12 @@
             <div class="monitor-detail-main">
               <div class="form-row">
                 <div class="monitor-detail-question-head">
-                  <label data-i18n="monitor.detail.question">问题</label>
                   <div class="monitor-detail-round-filter-wrap">
                     <span data-i18n="monitor.detail.userRound">用户轮次</span>
                     <select id="monitorDetailRoundFilter" class="select"></select>
                   </div>
+                  <div id="monitorDetailQuestion" class="log"></div>
                 </div>
-                <div id="monitorDetailQuestion" class="log"></div>
               </div>
               <div class="form-row monitor-detail-events-row">
                 <label data-i18n="monitor.detail.events">事件详情</label>
@@ -5817,7 +5816,6 @@
                       data-i18n-placeholder="monitor.detail.filter.keywordPlaceholder"
                       placeholder="输入事件关键词"
                     />
-                    <div id="monitorDetailFilterStats" class="muted"></div>
                   </div>
                   <div id="monitorDetailEvents" class="log log-collapsible"></div>
                 </div>
@@ -5828,7 +5826,9 @@
                 <span id="monitorDetailPageInfo" class="muted"></span>
                 <button id="monitorDetailPageNext" class="secondary btn-compact icon-only" type="button" data-i18n-title="monitor.detail.pagination.next" data-i18n-aria-label="monitor.detail.pagination.next"><i class="fa-solid fa-angle-right" aria-hidden="true"></i></button>
                 <button id="monitorDetailPageLast" class="secondary btn-compact icon-only" type="button" data-i18n-title="monitor.detail.pagination.last" data-i18n-aria-label="monitor.detail.pagination.last"><i class="fa-solid fa-angles-right" aria-hidden="true"></i></button>
+              </div>
             </div>
+          </div>
           </div>
         </div>
       </div>

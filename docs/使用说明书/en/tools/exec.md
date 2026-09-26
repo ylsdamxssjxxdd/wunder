@@ -93,7 +93,7 @@ If output was trimmed by the guard, the result may also include:
 
 ## Background command sessions
 
-Local runtimes and the server sandbox wait 750ms by default. A command that is still running returns `state: "running"` and a `command_session_id`, so the agent can keep working. Poll it with `command_session`:
+Local runtimes and the server sandbox wait 750ms by default. A command that is still running returns `state: "running"` and a `command_session_id`, so the agent can keep working. Poll it with `command_session`; do not use the generic sleep tool to wait for command completion:
 
 ```json
 {"command_session_id":"cmd_xxx","yield_time_ms":500}

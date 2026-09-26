@@ -27,6 +27,8 @@ const MONITOR_DETAIL_EVENT_PAGE_SIZE = 100;
 let tokenTrendChart = null;
 let statusChart = null;
 let statusChartClickBound = false;
+let statusChartDomClickBound = false;
+let statusChartZrClickBound = false;
 let tokenTrendZoomBound = false;
 let mcpToolNameSet = new Set();
 let userDashboardLoading = false;
@@ -64,6 +66,7 @@ const getStatusLegend = () => [
   t("monitor.status.cancelled"),
 ];
 const STATUS_CHART_EMPTY_NAME = "__empty__";
+let latestStatusChartData = null;
 // 线程状态图例与后端状态字段映射，便于点击后过滤记录
 const getStatusLabelToKey = () => ({
   [t("monitor.status.active")]: "active",
@@ -82,10 +85,6 @@ const MONITOR_DETAIL_TEXT_FALLBACKS = {
   "monitor.detail.filter.keywordPlaceholder": {
     zh: "输入事件关键词",
     en: "Search event payload",
-  },
-  "monitor.detail.filter.stats": {
-    zh: "显示 {visible}/{total} 条",
-    en: "Showing {visible}/{total}",
   },
   "monitor.detail.pagination.previous": {
     zh: "上一页",
@@ -521,6 +520,7 @@ const ensureMonitorCharts = () => {
 
 // 鐐瑰嚮绾跨▼鐘舵€佺幆鍥炬椂鎵撳紑瀵瑰簲璁板綍鍒楄〃
 const handleStatusChartClick = (params) => {
+  if (params?.seriesType && params.seriesType !== "pie") return;
   const label = String(params?.name || "");
   if (!label || label === STATUS_CHART_EMPTY_NAME) {
     return;
@@ -534,6 +534,54 @@ const handleStatusChartClick = (params) => {
   openMonitorStatusModal(statusKey, label);
 };
 
+// Resolve a pie slice from viewport coordinates. ECharts renders the pie on a
+// canvas and some browser/ECharts combinations stop the bubbling click before
+// it reaches the chart container, so this small geometry fallback is kept
+// independent from the renderer event payload.
+const resolveStatusAtPoint = (clientX, clientY) => {
+  if (elements.monitorStatusModal?.classList.contains("active")) return;
+  const chart = latestStatusChartData;
+  const chartDom = elements.serviceStatusChart;
+  if (!chart || chart.isEmpty || !chart.data?.length || !chartDom) return;
+  const rect = chartDom.getBoundingClientRect();
+  const width = chartDom.clientWidth || rect.width;
+  const height = chartDom.clientHeight || rect.height;
+  if (!(width > 0 && height > 0)) return;
+
+  const option = statusChart?.getOption?.()?.series?.[0] || {};
+  const center = Array.isArray(option.center) ? option.center : ["50%", "45%"];
+  const resolvePercent = (value, base, fallback) => {
+    const numeric = Number.parseFloat(String(value));
+    if (!Number.isFinite(numeric)) return fallback;
+    return String(value).includes("%") ? (numeric / 100) * base : numeric;
+  };
+  const centerX = resolvePercent(center[0], width, width * 0.5);
+  const centerY = resolvePercent(center[1], height, height * 0.45);
+  const radiusValues = Array.isArray(option.radius) ? option.radius : ["52%", "78%"];
+  const innerRadius = resolvePercent(radiusValues[0], Math.min(width, height) / 2, Math.min(width, height) * 0.26);
+  const outerRadius = resolvePercent(radiusValues[1], Math.min(width, height) / 2, Math.min(width, height) * 0.39);
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+  const dx = x - centerX;
+  const dy = y - centerY;
+  const distance = Math.hypot(dx, dy);
+  if (distance < innerRadius || distance > outerRadius) return;
+  let angle = Math.atan2(dx, -dy);
+  if (angle < 0) angle += Math.PI * 2;
+  const total = chart.data.reduce((sum, item) => sum + Math.max(0, Number(item.value) || 0), 0);
+  if (total <= 0) return;
+  let cursor = 0;
+  for (const item of chart.data) {
+    const value = Math.max(0, Number(item.value) || 0);
+    const end = cursor + (value / total) * Math.PI * 2;
+    if (value > 0 && angle >= cursor && angle <= end) {
+      handleStatusChartClick({ name: item.name, data: item, seriesType: "pie" });
+      return;
+    }
+    cursor = end;
+  }
+};
+
 // 仅绑定一次点击事件，避免重复注册导致多次弹窗
 const bindStatusChartClick = () => {
   if (!statusChart) {
@@ -544,6 +592,35 @@ const bindStatusChartClick = () => {
   statusChart.off("click", handleStatusChartClick);
   statusChart.on("click", handleStatusChartClick);
   statusChartClickBound = true;
+  const chartDom = elements.serviceStatusChart;
+  if (chartDom && !statusChartDomClickBound) {
+    // Keep a DOM fallback for browsers/ECharts builds that do not deliver a
+    // pie click after a canvas is resized or replaced. The modal check makes
+    // this idempotent when the normal ECharts event already handled the click.
+    statusChartDomClickBound = true;
+    // Capture phase runs before ECharts can stop propagation on its canvas.
+    chartDom.addEventListener("click", (event) => {
+      // Let ECharts process its own event first. The delayed fallback only
+      // runs when no modal was opened by the renderer handler.
+      window.setTimeout(() => {
+        if (!elements.monitorStatusModal?.classList.contains("active")) {
+          resolveStatusAtPoint(event.clientX, event.clientY);
+        }
+      }, 0);
+    }, true);
+    const zr = statusChart.getZr?.();
+    if (zr && !statusChartZrClickBound) {
+      statusChartZrClickBound = true;
+      zr.on("click", (event) => {
+        const rect = chartDom.getBoundingClientRect();
+        const x = Number(event.zrX ?? event.offsetX);
+        const y = Number(event.zrY ?? event.offsetY);
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+          resolveStatusAtPoint(rect.left + x, rect.top + y);
+        }
+      });
+    }
+  }
 };
 
 const bindTokenTrendZoom = () => {
@@ -1134,6 +1211,25 @@ const restoreHorizontalScrollState = (container, snapshot) => {
 
 const bindToolHeatmapScrollPersistence = () => {
   if (!elements.toolHeatmapWrap || elements.toolHeatmapWrap.dataset.boundScroll === "1") {
+    if (!elements.toolHeatmapGrid || elements.toolHeatmapGrid.dataset.boundClick === "1") return;
+  }
+  if (elements.toolHeatmapGrid && elements.toolHeatmapGrid.dataset.boundClick !== "1") {
+    elements.toolHeatmapGrid.dataset.boundClick = "1";
+    elements.toolHeatmapGrid.addEventListener("click", (event) => {
+      const tile = event.target?.closest?.(".tool-heatmap-item");
+      const toolName = String(tile?.dataset?.toolName || "").trim();
+      if (toolName) openMonitorToolModal(toolName);
+    });
+    elements.toolHeatmapGrid.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const tile = event.target?.closest?.(".tool-heatmap-item");
+      const toolName = String(tile?.dataset?.toolName || "").trim();
+      if (!toolName) return;
+      event.preventDefault();
+      openMonitorToolModal(toolName);
+    });
+  }
+  if (!elements.toolHeatmapWrap || elements.toolHeatmapWrap.dataset.boundScroll === "1") {
     return;
   }
   elements.toolHeatmapWrap.dataset.boundScroll = "1";
@@ -1168,6 +1264,9 @@ const renderToolHeatmap = (toolStats) => {
     const { color, rgb } = resolveHeatmapColor(item.calls);
     const tile = document.createElement("div");
     tile.className = "tool-heatmap-item";
+    tile.dataset.toolName = item.runtimeName || item.name;
+    tile.setAttribute("role", "button");
+    tile.tabIndex = 0;
     tile.style.backgroundColor = color;
     tile.style.color = resolveHeatmapTextColor(rgb);
     tile.title = t("monitor.toolHeatmap.tileTitle", {
@@ -1182,9 +1281,6 @@ const renderToolHeatmap = (toolStats) => {
     name.textContent = item.name;
     tile.appendChild(icon);
     tile.appendChild(name);
-    tile.addEventListener("click", () => {
-      openMonitorToolModal(item.runtimeName || item.name);
-    });
     elements.toolHeatmapGrid.appendChild(tile);
   });
   restoreHorizontalScrollState(elements.toolHeatmapWrap, scrollSnapshot);
@@ -2029,6 +2125,7 @@ const renderServiceStatusChart = (service, sessions) => {
         cancelled: Number(service?.cancelled_sessions) || 0,
       };
   const { data, isEmpty, visibleCount } = buildStatusChartData(counts);
+  latestStatusChartData = { data, isEmpty };
   const padAngle = isEmpty || visibleCount <= 1 ? 0 : 1;
   const ringStyle = isEmpty
     ? {
@@ -3515,9 +3612,6 @@ const resetMonitorDetailFilters = () => {
     elements.monitorDetailRoundFilter.value = "0";
     elements.monitorDetailRoundFilter.disabled = true;
   }
-  if (elements.monitorDetailFilterStats) {
-    elements.monitorDetailFilterStats.textContent = "";
-  }
 };
 
 const syncMonitorDetailFilterControls = (events) => {
@@ -3570,20 +3664,9 @@ const resolveMonitorDetailFilteredEvents = (events) => {
   });
 };
 
-const renderMonitorDetailFilterStats = (visibleCount, totalCount) => {
-  if (!elements.monitorDetailFilterStats) {
-    return;
-  }
-  elements.monitorDetailFilterStats.textContent = resolveMonitorDetailText("monitor.detail.filter.stats", {
-    visible: visibleCount,
-    total: totalCount,
-  });
-};
-
 const renderMonitorDetailWithFilters = (events, options = {}) => {
   syncMonitorDetailFilterControls(events);
   const filtered = resolveMonitorDetailFilteredEvents(events);
-  renderMonitorDetailFilterStats(filtered.length, Array.isArray(events) ? events.length : 0);
   const focusTool = typeof options?.focusTool === "string" ? options.focusTool.trim() : "";
   const selectedRound = parseMonitorDetailRound(
     options?.focusRound ?? state.monitor?.detailFilters?.round
@@ -3877,6 +3960,16 @@ const normalizeMonitorExportTimestamp = (value) => {
     return new Date(parsed).toISOString();
   }
   return "";
+};
+
+// Panel navigation can reveal a chart that was initialized while its panel
+// was hidden. Resize and repaint on the next frame so the canvas and heatmap
+// hit targets match the visible layout before the user clicks them.
+export const refreshMonitorPanelLayout = () => {
+  ensureMonitorCharts();
+  requestAnimationFrame(() => {
+    resizeMonitorCharts();
+  });
 };
 
 const syncMonitorDetailPagination = () => {

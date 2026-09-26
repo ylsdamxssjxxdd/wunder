@@ -564,7 +564,6 @@ export const elements = {
   monitorDetailRoundFilter: document.getElementById("monitorDetailRoundFilter"),
   monitorDetailTypeFilter: document.getElementById("monitorDetailTypeFilter"),
   monitorDetailKeyword: document.getElementById("monitorDetailKeyword"),
-  monitorDetailFilterStats: document.getElementById("monitorDetailFilterStats"),
   monitorDetailEvents: document.getElementById("monitorDetailEvents"),
   monitorDetailPagination: document.getElementById("monitorDetailPagination"),
   monitorDetailPageFirst: document.getElementById("monitorDetailPageFirst"),

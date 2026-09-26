@@ -40,26 +40,28 @@
   flex-shrink: 0;
 }
 
-.chat-composer-reasoning-anchor {
+.chat-composer-context-anchor {
   position: relative;
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
 }
 
-.chat-composer-reasoning-toggle.active {
+.chat-composer-context-toggle.active {
   color: var(--ui-accent);
 }
 
-.chat-composer-reasoning-menu {
+/* Hover popover anchored to the context (brain) icon: occupancy details on top,
+   reasoning effort options below. */
+.chat-composer-context-panel {
   position: absolute;
   z-index: 30;
   right: 0;
   bottom: calc(100% + 8px);
   display: flex;
   flex-direction: column;
-  min-width: 156px;
-  padding: 6px;
+  min-width: 210px;
+  padding: 8px;
   border: 1px solid var(--messenger-control-border);
   border-radius: 10px;
   background: var(--messenger-control-bg);
@@ -67,14 +69,59 @@
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
 }
 
-.chat-composer-reasoning-menu-title {
-  padding: 5px 8px 6px;
+.chat-composer-context-panel-usage {
+  padding: 2px 8px 8px;
+}
+
+.chat-composer-context-usage-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chat-composer-context-usage-label {
   color: var(--hula-muted);
   font-size: 11px;
   font-weight: 700;
 }
 
-.chat-composer-reasoning-option {
+.chat-composer-context-usage-percent {
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-composer-context-panel-usage.is-warning .chat-composer-context-usage-percent {
+  color: #f59e0b;
+}
+
+.chat-composer-context-panel-usage.is-danger .chat-composer-context-usage-percent {
+  color: #dc2626;
+}
+
+.chat-composer-context-usage-counts {
+  margin-top: 3px;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chat-composer-context-panel-title {
+  border-top: 1px solid var(--messenger-control-border);
+  padding: 8px 8px 6px;
+  color: var(--hula-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.chat-composer-context-panel-options {
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-composer-context-option {
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -87,13 +134,13 @@
   white-space: nowrap;
 }
 
-.chat-composer-reasoning-option:hover,
-.chat-composer-reasoning-option.active {
+.chat-composer-context-option:hover,
+.chat-composer-context-option.active {
   background: rgba(var(--ui-accent-rgb), 0.12);
   color: var(--ui-accent);
 }
 
-.chat-composer-footer-status .chat-composer-reasoning-menu {
+.chat-composer-footer-status .chat-composer-context-panel {
   right: 0;
 }
 

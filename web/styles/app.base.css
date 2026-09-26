@@ -1212,11 +1212,6 @@ button.btn-with-icon[aria-busy="true"] i {
   flex: 1 1 280px;
 }
 
-#monitorDetailFilterStats {
-  margin-left: auto;
-  font-size: 12px;
-}
-
 .monitor-detail-feedback-list {
   display: flex;
   flex-direction: column;
