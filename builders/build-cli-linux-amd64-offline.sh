@@ -61,7 +61,8 @@ version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$repo
 release_binary="$output_dir/wunder-cli-$version-linux-amd64"
 cp -f "$binary" "$release_binary"
 x86_64-linux-gnu-strip --strip-all --strip-unneeded "$release_binary"
-machine="$(LC_ALL=C x86_64-linux-gnu-readelf -h "$release_binary" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[[:space:]]+/, "", $2); print $2}')"
+# The SDK image ships mawk, whose regex lacks [[:space:]]; trim with sed.
+machine="$(LC_ALL=C x86_64-linux-gnu-readelf -h "$release_binary" | LC_ALL=C awk -F: '/Machine:/{print $2}' | LC_ALL=C sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
 [[ "$machine" == "Advanced Micro Devices X86-64" ]] || fail "expected x86-64 ELF, got: ${machine:-unknown}"
 required_glibc="$(LC_ALL=C x86_64-linux-gnu-readelf --version-info "$release_binary" | LC_ALL=C grep -oE 'GLIBC_[0-9.]+' | LC_ALL=C sed 's/GLIBC_//' | LC_ALL=C sort -Vu | LC_ALL=C tail -n 1 || true)"
 [[ -n "$required_glibc" ]] || fail "could not determine executable GLIBC requirement"

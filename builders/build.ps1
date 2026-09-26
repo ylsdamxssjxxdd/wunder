@@ -1,6 +1,6 @@
 param(
   [Alias("t")][ValidateSet("desktop", "cli")][string]$Target = "",
-  [Alias("a")][ValidateSet("linux-arm64", "linux-amd64", "win32-x86", "win7-x86")][string]$Arch = "",
+  [Alias("a")][ValidateSet("linux-arm64", "linux-amd64", "win7-x86")][string]$Arch = "",
   [switch]$All,
   [switch]$AppImage,
   [string]$KylinBuilderRoot = "",
@@ -12,8 +12,10 @@ param(
   [switch]$Check
 )
 
-# Public Windows build dispatcher. Linux/Win32 cross work runs in the kylin-arm
-# Docker image; the Win7 x86 target stays on the local win7 offline SDK.
+# Public Windows build dispatcher. Linux cross work runs in the kylin-arm
+# Docker image; the Win7 x86 target stays on the local win7 offline SDK, which
+# covers the full 32-bit Windows range (a Win7-compatible binary also runs on
+# Win10/11 x86), so no separate Win32 Docker cross is needed.
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if (-not $KylinBuilderRoot) { $KylinBuilderRoot = if ($env:WUNDER_KYLIN_BUILDER_ROOT) { $env:WUNDER_KYLIN_BUILDER_ROOT } else { Join-Path (Split-Path $repoRoot -Parent) "Rust-builder\kylin-arm" } }
@@ -24,7 +26,7 @@ $Win7BuilderRoot = [IO.Path]::GetFullPath($Win7BuilderRoot)
 if ($All) {
   if ($Target -or $Arch -or $AppImage) { throw "-All selects every distribution; do not combine it with -Target, -Arch, or -AppImage." }
 } elseif (-not $Target -or -not $Arch) {
-  throw "Specify both -Target desktop|cli and -Arch linux-arm64|linux-amd64|win32-x86|win7-x86, or use -All."
+  throw "Specify both -Target desktop|cli and -Arch linux-arm64|linux-amd64|win7-x86, or use -All."
 }
 if ($AppImage -and ($Target -ne "desktop" -or $Arch -ne "linux-amd64")) {
   throw "-AppImage is only valid for -Target desktop -Arch linux-amd64. CLI never uses AppImage."
@@ -33,7 +35,7 @@ if ($AppImage -and ($Target -ne "desktop" -or $Arch -ne "linux-amd64")) {
 function Invoke-LinuxBuild {
   param(
     [ValidateSet("desktop", "cli")][string]$SelectedTarget,
-    [ValidateSet("linux-arm64", "linux-amd64", "win32-x86")][string]$SelectedArch,
+    [ValidateSet("linux-arm64", "linux-amd64")][string]$SelectedArch,
     [switch]$Package
   )
 
@@ -88,7 +90,7 @@ if ($All) {
   if (-not $AppImageRuntimeArm64 -or -not $AppImageRuntimeAmd64) {
     throw "-All packages both Linux Desktop AppImages. Provide -AppImageRuntimeArm64 and -AppImageRuntimeAmd64."
   }
-  foreach ($selectedArch in @("linux-arm64", "linux-amd64", "win32-x86")) {
+  foreach ($selectedArch in @("linux-arm64", "linux-amd64")) {
     Invoke-LinuxBuild -SelectedTarget desktop -SelectedArch $selectedArch -Package:($selectedArch -eq "linux-amd64")
     Invoke-LinuxBuild -SelectedTarget cli -SelectedArch $selectedArch
   }

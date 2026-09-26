@@ -476,7 +476,7 @@ export const dedupeTerminalCompactionMarkersInPlace = (
   if (!Array.isArray(messages) || messages.length <= 1) {
     return Array.isArray(messages) ? messages : [];
   }
-  const seen = new Set<string>();
+  const seen = new Map<string, ChatMessage>();
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (!isCompactionMarkerAssistantMessage(message) || isStreamingAssistantMessage(message)) {
@@ -487,11 +487,27 @@ export const dedupeTerminalCompactionMarkersInPlace = (
     if (!signature) {
       continue;
     }
-    if (seen.has(signature)) {
-      messages.splice(index, 1);
+    const existing = seen.get(signature);
+    if (existing !== undefined) {
+      // A durable manual-compaction assistant contains the summary text. If
+      // replay also produced an empty divider for the same round, retain the
+      // durable bubble and discard only the empty projection.
+      const currentHasSummary = hasTextContent(message.content) || hasTextContent(message.reasoning);
+      const existingHasSummary = hasTextContent(existing?.content) || hasTextContent(existing?.reasoning);
+      if (currentHasSummary && !existingHasSummary) {
+        const existingIndex = messages.indexOf(existing);
+        if (existingIndex < 0) {
+          seen.set(signature, message);
+          continue;
+        }
+        messages.splice(existingIndex, 1);
+        seen.set(signature, message);
+      } else {
+        messages.splice(index, 1);
+      }
       continue;
     }
-    seen.add(signature);
+    seen.set(signature, message);
   }
   return messages;
 };

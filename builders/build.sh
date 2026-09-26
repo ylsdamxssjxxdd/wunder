@@ -15,7 +15,7 @@ package=0
 usage() {
   cat <<'EOF'
 Usage:
-  build.sh -t desktop|cli -a linux-arm64|linux-amd64|win32-x86 [--appimage] [--native|--docker]
+  build.sh -t desktop|cli -a linux-arm64|linux-amd64|win7-x86 [--appimage] [--native|--docker]
   build.sh -all [--native|--docker]
 
 Options:
@@ -23,9 +23,10 @@ Options:
   -a, --arch       Select one distribution architecture.
                   linux-arm64: Desktop AppImage or CLI ELF.
                   linux-amd64: Desktop ELF (or AppImage with --appimage) or CLI ELF.
-                  win32-x86:   Win7-import-gated Desktop or CLI PE built by kylin-arm.
+                  win7-x86:    Win7-compatible Desktop or CLI PE built by kylin-arm
+                              (i686-win7-windows-gnu with -Z build-std).
   -all, --all      Build every distribution available on this host: both programs for
-                  Linux ARM64, Linux amd64 and Win32 x86. Linux Desktop outputs are AppImages.
+                  Linux ARM64, Linux amd64 and Win7 x86. Linux Desktop outputs are AppImages.
   --appimage       Package a linux-amd64 Desktop build as an AppImage. CLI never uses AppImage.
   --native         Build on an ARM64 Linux host (default).
   --docker         Run the ARM64 Ubuntu 18.04 build image. Useful from non-ARM Linux hosts.
@@ -38,8 +39,7 @@ normalize_arch() {
   case "$1" in
     linux-arm64|arm64) printf '%s\n' linux-arm64 ;;
     linux-amd64|amd64|linux-x86_64) printf '%s\n' linux-amd64 ;;
-    win32-x86|win32|windows-x86) printf '%s\n' win32-x86 ;;
-    win7-x86|win7) printf '%s\n' win7-x86 ;;
+    win7-x86|win7|win32-x86|win32|windows-x86) printf '%s\n' win7-x86 ;;
     *) return 1 ;;
   esac
 }
@@ -77,7 +77,6 @@ if [[ "$build_all" == 1 ]]; then
 else
   [[ "$target" == desktop || "$target" == cli ]] || fail "--target must be desktop or cli"
   [[ -n "$arch" ]] || fail "--arch is required unless -all is used"
-  [[ "$arch" != win7-x86 ]] || fail "win7-x86 is a Windows-host target; run build.bat -t $target -a win7-x86"
 fi
 
 if [[ "$package" == 1 && "$target" != desktop ]]; then
@@ -186,11 +185,11 @@ build_one() {
     linux-amd64:cli)
       run_builder "$repo_root/builders/build-cli-linux-amd64-offline.sh" env
       ;;
-    win32-x86:desktop)
-      run_builder "$repo_root/builders/build-win32-arm64-offline.sh" env
+    win7-x86:desktop)
+      run_builder "$repo_root/builders/build-win7-arm64-offline.sh" env
       ;;
-    win32-x86:cli)
-      run_builder "$repo_root/builders/build-cli-win32-arm64-offline.sh" env
+    win7-x86:cli)
+      run_builder "$repo_root/builders/build-cli-win7-arm64-offline.sh" env
       ;;
     *) fail "unsupported build matrix entry: $selected_target/$selected_arch" ;;
   esac
@@ -205,8 +204,8 @@ if [[ "$build_all" == 1 ]]; then
   build_one cli linux-arm64 0
   build_one desktop linux-amd64 1
   build_one cli linux-amd64 0
-  build_one desktop win32-x86 0
-  build_one cli win32-x86 0
+  build_one desktop win7-x86 0
+  build_one cli win7-x86 0
 else
   build_one "$target" "$arch" "$package"
 fi

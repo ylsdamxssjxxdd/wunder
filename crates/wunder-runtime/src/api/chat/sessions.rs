@@ -430,6 +430,18 @@ async fn get_session(
         .as_deref()
         .map(is_session_stream_active)
         .unwrap_or(false);
+    // The monitor row can briefly remain running while the compaction worker
+    // has already emitted its terminal event. Prefer the authoritative thread
+    // runtime snapshot when it is available so switching back never revives a
+    // completed compaction spinner.
+    let runtime_snapshot = state
+        .kernel
+        .orchestrator
+        .get_tool_session_runtime_snapshot(&session_id);
+    let monitor_active = match runtime_snapshot.as_ref() {
+        Some(snapshot) => is_session_runtime_active(Some(snapshot)),
+        None => monitor_active,
+    };
     let active_queue_tasks = list_active_queue_tasks(&state.user_store, &session_id);
     let pure_queue_phase = !monitor_active && !active_queue_tasks.is_empty();
     let mut transcript = std::mem::take(&mut transcript_page.transcript);

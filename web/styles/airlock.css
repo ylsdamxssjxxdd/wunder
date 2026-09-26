@@ -104,7 +104,7 @@
 .airlock-node-ring {
   fill: rgba(3, 8, 15, 0.55);
   stroke: rgba(2, 6, 12, 0.66);
-  stroke-width: 4;
+  stroke-width: 3.5;
   transition: fill 200ms ease, stroke 200ms ease, filter 200ms ease;
 }
 
@@ -171,7 +171,7 @@
 }
 
 .airlock.airlock--carved .airlock-tree-groove {
-  stroke-width: 7;
+  stroke-width: 5.5;
 }
 
 .airlock.airlock--carving .airlock-node.lit .airlock-node-ring {

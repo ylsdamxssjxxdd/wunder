@@ -1161,6 +1161,15 @@ impl Orchestrator {
             Ok(value) => value,
             Err(err) => {
                 if manage_runtime_turn {
+                    self.append_manual_compaction_transcript(
+                        user_id,
+                        session_id,
+                        lifecycle_round_info,
+                        "failed",
+                        None,
+                        None,
+                    );
+                    let _ = self.workspace.flush_writes_async().await;
                     self.emit_manual_compaction_failure(&emitter, lifecycle_round_info, &err)
                         .await;
                     self.finish_manual_compaction_turn(
@@ -1251,19 +1260,9 @@ impl Orchestrator {
 
         let persist_manual_command = |orchestrator: &Orchestrator| {
             if manage_runtime_turn {
-                orchestrator.append_chat(
+                orchestrator.append_manual_compaction_command(
                     user_id,
                     session_id,
-                    "user",
-                    Some(&Value::String("/compact".to_string())),
-                    None,
-                    Some(&json!({
-                        "type": "manual_compaction_command",
-                        "manual_compaction": true,
-                    })),
-                    None,
-                    None,
-                    None,
                     manual_round_info,
                 );
             }
@@ -1272,6 +1271,15 @@ impl Orchestrator {
         if let Err(err) = self.ensure_not_cancelled(session_id) {
             persist_manual_command(self);
             if manage_runtime_turn {
+                self.append_manual_compaction_result(
+                    user_id,
+                    session_id,
+                    manual_round_info,
+                    "cancelled",
+                    None,
+                    None,
+                );
+                let _ = self.workspace.flush_writes_async().await;
                 self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
                     .await;
                 self.finish_manual_compaction_turn(
@@ -1311,6 +1319,21 @@ impl Orchestrator {
             Ok(result) => result.messages,
             Err(err) => {
                 persist_manual_command(self);
+                if manage_runtime_turn {
+                    self.append_manual_compaction_result(
+                        user_id,
+                        session_id,
+                        manual_round_info,
+                        if err.code() == "CANCELLED" {
+                            "cancelled"
+                        } else {
+                            "failed"
+                        },
+                        None,
+                        None,
+                    );
+                    let _ = self.workspace.flush_writes_async().await;
+                }
                 self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
                     .await;
                 if manage_runtime_turn {
@@ -1328,6 +1351,18 @@ impl Orchestrator {
             }
         };
         if let Err(err) = self.ensure_not_cancelled(session_id) {
+            if manage_runtime_turn {
+                self.append_manual_compaction_command(user_id, session_id, manual_round_info);
+                self.append_manual_compaction_result(
+                    user_id,
+                    session_id,
+                    manual_round_info,
+                    "cancelled",
+                    None,
+                    None,
+                );
+                let _ = self.workspace.flush_writes_async().await;
+            }
             self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
                 .await;
             if manage_runtime_turn {
@@ -1396,21 +1431,7 @@ impl Orchestrator {
         if manage_runtime_turn {
             // Write the visible command after the replacement-history summary
             // so materializing that snapshot cannot erase the `/compact` row.
-            self.append_chat(
-                user_id,
-                session_id,
-                "user",
-                Some(&Value::String("/compact".to_string())),
-                None,
-                Some(&json!({
-                    "type": "manual_compaction_command",
-                    "manual_compaction": true,
-                })),
-                None,
-                None,
-                None,
-                manual_round_info,
-            );
+            self.append_manual_compaction_command(user_id, session_id, manual_round_info);
             if let Some(compaction) = compaction_payload.as_ref().and_then(Value::as_object) {
                 let summary = compaction
                     .get("summary_text")
@@ -1419,59 +1440,26 @@ impl Orchestrator {
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .unwrap_or("Context compaction completed.");
-                let mut marker_meta = serde_json::Map::new();
-                marker_meta.insert(
-                    "type".to_string(),
-                    Value::String("manual_compaction_marker".to_string()),
-                );
-                marker_meta.insert("manual_compaction".to_string(), Value::Bool(true));
-                marker_meta.insert(
-                    "trigger_mode".to_string(),
-                    Value::String("manual".to_string()),
-                );
-                marker_meta.insert(
-                    "status".to_string(),
-                    Value::String(
-                        compaction
-                            .get("status")
-                            .and_then(Value::as_str)
-                            .unwrap_or("done")
-                            .to_string(),
-                    ),
-                );
-                if let Some(compaction_id) = compaction.get("compaction_id") {
-                    marker_meta.insert("compaction_id".to_string(), compaction_id.clone());
-                }
-                self.append_chat(
+                self.append_manual_compaction_result(
                     user_id,
                     session_id,
-                    "assistant",
-                    Some(&Value::String(summary.to_string())),
-                    None,
-                    Some(&Value::Object(marker_meta)),
-                    None,
-                    None,
-                    None,
                     manual_round_info,
+                    compaction
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("done"),
+                    Some(summary),
+                    compaction.get("compaction_id"),
                 );
                 let _ = self.workspace.flush_writes_async().await;
             } else {
-                self.append_chat(
+                self.append_manual_compaction_result(
                     user_id,
                     session_id,
-                    "assistant",
-                    Some(&Value::String("Context compaction failed.".to_string())),
-                    None,
-                    Some(&json!({
-                        "type": "manual_compaction_marker",
-                        "manual_compaction": true,
-                        "trigger_mode": "manual",
-                        "status": "failed",
-                    })),
-                    None,
-                    None,
-                    None,
                     manual_round_info,
+                    "failed",
+                    None,
+                    None,
                 );
                 let _ = self.workspace.flush_writes_async().await;
             }
@@ -1499,6 +1487,103 @@ impl Orchestrator {
         }
 
         Ok(response_payload)
+    }
+
+    /// Persist the manual command and its terminal assistant projection as one
+    /// user round. The rows are durable transcript entries, while history
+    /// replay filters their metadata before constructing the next model input.
+    fn append_manual_compaction_command(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        round_info: RoundInfo,
+    ) {
+        self.append_chat(
+            user_id,
+            session_id,
+            "user",
+            Some(&Value::String("/compact".to_string())),
+            None,
+            Some(&json!({
+                "type": "manual_compaction_command",
+                "manual_compaction": true,
+            })),
+            None,
+            None,
+            None,
+            round_info,
+        );
+    }
+
+    fn append_manual_compaction_result(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        round_info: RoundInfo,
+        status: &str,
+        summary: Option<&str>,
+        compaction_id: Option<&Value>,
+    ) {
+        let status = match status.trim() {
+            "cancelled" | "canceled" => "cancelled",
+            "failed" | "error" => "failed",
+            _ => "done",
+        };
+        let content = summary
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(match status {
+                "cancelled" => "Context compaction cancelled.",
+                "failed" => "Context compaction failed.",
+                _ => "Context compaction completed.",
+            });
+        let mut marker_meta = serde_json::Map::new();
+        marker_meta.insert(
+            "type".to_string(),
+            Value::String("manual_compaction_marker".to_string()),
+        );
+        marker_meta.insert("manual_compaction".to_string(), Value::Bool(true));
+        marker_meta.insert(
+            "trigger_mode".to_string(),
+            Value::String("manual".to_string()),
+        );
+        marker_meta.insert("status".to_string(), Value::String(status.to_string()));
+        if let Some(compaction_id) = compaction_id {
+            marker_meta.insert("compaction_id".to_string(), compaction_id.clone());
+        }
+        round_info.insert_into(&mut marker_meta);
+        self.append_chat(
+            user_id,
+            session_id,
+            "assistant",
+            Some(&Value::String(content.to_string())),
+            None,
+            Some(&Value::Object(marker_meta)),
+            None,
+            None,
+            None,
+            round_info,
+        );
+    }
+
+    fn append_manual_compaction_transcript(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        round_info: RoundInfo,
+        status: &str,
+        summary: Option<&str>,
+        compaction_id: Option<&Value>,
+    ) {
+        self.append_manual_compaction_command(user_id, session_id, round_info);
+        self.append_manual_compaction_result(
+            user_id,
+            session_id,
+            round_info,
+            status,
+            summary,
+            compaction_id,
+        );
     }
 
     async fn emit_manual_compaction_failure(

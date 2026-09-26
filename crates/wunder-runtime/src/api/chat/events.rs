@@ -115,11 +115,17 @@ async fn get_session_events(
         .orchestrator
         .get_tool_session_runtime_snapshot(&session_id);
     let queued = super::has_active_queue_task(&state.user_store, &session_id);
-    let running = monitor_status
-        .as_deref()
-        .map(is_session_stream_active)
-        .unwrap_or(false)
-        || is_session_runtime_active(runtime.as_ref());
+    // The in-process thread runtime is the terminal-state authority. A
+    // monitor row may remain `running` for a short time after compaction has
+    // emitted its terminal event, so do not let that stale row revive a
+    // spinner when the client reopens the thread.
+    let running = match runtime.as_ref() {
+        Some(snapshot) => is_session_runtime_active(Some(snapshot)),
+        None => monitor_status
+            .as_deref()
+            .map(is_session_stream_active)
+            .unwrap_or(false),
+    };
     let runtime_payload = runtime.or_else(|| {
         queued.then(|| {
             json!({

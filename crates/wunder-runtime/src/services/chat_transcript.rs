@@ -702,6 +702,50 @@ mod tests {
     }
 
     #[test]
+    fn transcript_keeps_manual_compaction_command_and_summary_in_one_round() {
+        let history = vec![
+            json!({
+                "role": "user",
+                "content": "/compact",
+                "timestamp": "2026-04-30T02:14:16Z",
+                "user_round": 2,
+                "round_info_source": "orchestrator",
+                "meta": {"type": "manual_compaction_command", "manual_compaction": true},
+                "_history_id": 21
+            }),
+            json!({
+                "role": "assistant",
+                "content": "Compaction summary",
+                "timestamp": "2026-04-30T02:14:17Z",
+                "user_round": 2,
+                "round_info_source": "orchestrator",
+                "meta": {
+                    "type": "manual_compaction_marker",
+                    "manual_compaction": true,
+                    "trigger_mode": "manual",
+                    "status": "done",
+                    "compaction_id": "compact-test"
+                },
+                "_history_id": 22
+            }),
+        ];
+
+        let transcript = build_chat_transcript("sess", history, &HashMap::new());
+
+        assert_eq!(transcript.len(), 2);
+        assert_eq!(transcript[0]["content"], json!("/compact"));
+        assert_eq!(transcript[0]["manual_compaction_command"], json!(true));
+        assert_eq!(transcript[1]["content"], json!("Compaction summary"));
+        assert_eq!(transcript[1]["manual_compaction_marker"], json!(true));
+        assert_eq!(transcript[1]["user_round"], json!(2));
+        assert_eq!(transcript[1]["workflowStreaming"], json!(false));
+        assert_eq!(
+            transcript[1]["workflowItems"][0]["toolCallId"],
+            json!("compact-test")
+        );
+    }
+
+    #[test]
     fn transcript_preserves_legacy_history_order_without_trusted_rounds() {
         let history = vec![
             json!({"role": "user", "content": "first", "timestamp": "2026-04-30T02:14:06Z", "_history_id": 40}),

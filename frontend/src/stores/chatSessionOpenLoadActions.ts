@@ -870,6 +870,20 @@ export const chatSessionOpenLoadActions = {
           createdAt: sessionCreatedAt,
           greeting: this.greetingOverride
         });
+        // The command is optimistically rendered before the async compaction
+        // request. Once the server transcript catches up, keep the durable
+        // `/compact` row and drop the temporary duplicate.
+        const durableCompactCommand = nextMessages.find(
+          (message) => message?.role === 'user' &&
+            message?.manual_compaction_command === true &&
+            (message?.history_id || message?.message_id?.startsWith('history:'))
+        );
+        if (durableCompactCommand) {
+          nextMessages = nextMessages.filter(
+            (message) => message === durableCompactCommand ||
+              !(message?.role === 'user' && message?.manual_compaction_command === true)
+          );
+        }
         if (!remoteRunning) {
           clearCompletedAssistantStreamingState(nextMessages);
         }

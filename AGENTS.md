@@ -38,8 +38,6 @@
 
 # Rust 开发提示
 
-- Rust edition 明确使用 2021；工具链最低版本以根 `Cargo.toml` 的 `rust-version` 为准，当前为 1.92。
-- 不要构建debug版本
 - 日常开发、`cargo check`、定向测试和 `clippy` 直接使用默认 64 位工具链（当前本机为 `x86_64-pc-windows-msvc`，裸 `cargo` 即可，无需 `+toolchain` 前缀）；32 位工具链只用于最终 Desktop/CLI 分发构建及对应的 Win7/PE 验收，不要回退到 i686 做常规验证。
 - 常规验证命令示例：`cargo check --release -j 8`、`cargo test --release -p <crate> -j 8`。
 - format! 中可以内联变量时使用 `{var}`，避免额外参数。
