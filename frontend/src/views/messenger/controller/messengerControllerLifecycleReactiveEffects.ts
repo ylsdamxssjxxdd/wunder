@@ -441,54 +441,6 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       desktopRealtimePulseStartTimer = null;
   };
 
-  watch(() => String(ctx.chatStore.activeSessionId || '').trim(), (sessionId) => {
-      if (!sessionId) {
-          ctx.agentGoalComposerRequested.value = false;
-          ctx.agentGoalComposerVisible.value = false;
-          ctx.agentGoalComposerObjective.value = '';
-          ctx.goalDialogObjective.value = '';
-          return;
-      }
-      const goal = typeof ctx.chatStore.sessionGoal === 'function'
-          ? ctx.chatStore.sessionGoal(sessionId)
-          : null;
-      const objective = String(goal?.objective || '').trim();
-      if (objective) {
-          ctx.goalDialogSessionId.value = sessionId;
-          ctx.goalDialogObjective.value = objective;
-          if (!ctx.goalDialogSubmitting.value) {
-              ctx.agentGoalComposerObjective.value = objective;
-          }
-          ctx.agentGoalComposerRequested.value = false;
-          ctx.agentGoalComposerVisible.value = true;
-          return;
-      }
-      if (!ctx.goalDialogSubmitting.value && !ctx.agentGoalComposerRequested.value) {
-          ctx.agentGoalComposerVisible.value = false;
-          ctx.agentGoalComposerObjective.value = '';
-          ctx.goalDialogObjective.value = '';
-      }
-  }, { immediate: true });
-
-  watch(() => ctx.activeSessionGoal.value, (goal) => {
-      const status = String(goal?.status || '').trim().toLowerCase();
-      const objective = String(goal?.objective || '').trim();
-      if (objective) {
-          ctx.goalDialogObjective.value = objective;
-          if (!ctx.goalDialogSubmitting.value) {
-              ctx.agentGoalComposerObjective.value = objective;
-          }
-          ctx.agentGoalComposerRequested.value = false;
-          ctx.agentGoalComposerVisible.value = status !== 'complete';
-          return;
-      }
-      if (!ctx.goalDialogSubmitting.value && !ctx.agentGoalComposerRequested.value) {
-          ctx.agentGoalComposerVisible.value = false;
-          ctx.agentGoalComposerObjective.value = '';
-          ctx.goalDialogObjective.value = '';
-      }
-  }, { immediate: true });
-
   watch(() => ctx.currentUserId.value, (value, previousValue) => {
       const changed = String(value || '') !== String(previousValue || '');
       const shouldClearConversationState = changed && ctx.currentUserContextInitialized && !ctx.bootLoading.value;

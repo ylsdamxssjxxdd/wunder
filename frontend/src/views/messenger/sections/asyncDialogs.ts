@@ -6,9 +6,6 @@ const lazy = <T extends object>(loader: () => Promise<T>) =>
 export const MessengerGroupCreateDialog = lazy(
   () => import('@/components/messenger/MessengerGroupCreateDialog.vue')
 );
-export const MessengerGoalDialog = lazy(
-  () => import('@/components/messenger/MessengerGoalDialog.vue')
-);
 export const MessengerResourcePreviewDialog = lazy(
   () => import('@/components/messenger/MessengerResourcePreviewDialog.vue')
 );

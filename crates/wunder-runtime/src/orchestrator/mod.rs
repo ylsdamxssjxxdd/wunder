@@ -283,7 +283,11 @@ impl Orchestrator {
             TOOL_OVERRIDE_NONE,
         );
         let mut output = allowed.into_iter().collect::<Vec<_>>();
+        // Goal is a runtime-level capability; keep it available regardless of
+        // session or agent tool restrictions (mirrors resolve_allowed_tool_names).
+        output.push(crate::services::goal::goal_tool_name().to_string());
         output.sort();
+        output.dedup();
         output
     }
 }

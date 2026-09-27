@@ -279,7 +279,8 @@ export const chatSessionMutationActions = {
       }
       return {
         goal,
-        continuation: data?.data?.continuation ?? null
+        continuation: data?.data?.continuation ?? null,
+        user_round: data?.data?.user_round ?? data?.user_round ?? null
       };
     },
 };

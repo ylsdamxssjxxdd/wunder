@@ -277,16 +277,18 @@
 
 - 目标态绑定 `session_id`，当前每个会话最多保留一个目标；目标状态包括 `active / paused / budget_limited / complete`，与线程运行态分离。
 - 用户侧 `/goal` 命令已支持：
-  - 网页端 Messenger：`/goal` 打开目标编辑器并预填当前目标；`/goal <objective>` 打开目标编辑器并预填传入目标，用户点击开始后才创建或替换目标并进入 `active`。
+  - 网页端 Messenger：`/goal <objective>` 作为一条用户轮次气泡发送并持久化（transcript 行带 `goal_command` 标志），同时创建或替换目标并进入 `active`；`/goal` 查看当前目标状态；`/goal resume` 恢复目标；目标态期间输入不锁定，可随时正常聊天或通过 `/goal <新目标>` 直接替换。
   - CLI / TUI：`/goal` 查看当前目标，`/goal <objective>` 创建或替换当前目标并进入 `active`，`/goal --tokens <n> <objective>` 可设置可选 token 预算。
-- 网页端 Messenger 不再由 `/goal` 直接触发智能体动作；退出统一通过聊天页终止按钮完成，终止会调用会话 cancel 并清除目标。
+- 网页端退出目标态统一通过聊天页停止按钮完成，终止会调用会话 cancel 并清除目标。
 - 模型侧暴露单一内置工具 `goal`；支持 `action=get/create/update`，其中 `action=update` 只允许 `status=complete`，模型不能暂停、恢复或清除目标。
-- `/goal` 进入目标态前会校验当前智能体线程已实际挂载 `goal` 工具；未挂载时接口会拒绝进入。
-- 网页端 Messenger 支持 `/goal` 命令；目标态中的智能体会在中栏条目显示“目标”标识，并仅锁定该智能体聊天页内的新建/切换/发送等线程操作，其他智能体、联系人、群聊、设置与资料页仍可正常使用；退出统一通过聊天页终止按钮完成。
+- `goal` 工具是运行时系统能力，始终注入模型可用工具列表，不受会话或智能体卡片工具配置影响。
+- 网页端 Messenger 支持 `/goal` 命令；目标态中的智能体会在中栏条目显示“目标”标识，目标态不再锁定发送等线程操作；退出统一通过聊天页停止按钮完成。
+- 目标续跑提示词将 objective 作为数据包裹注入（不改写 frozen system prompt），包含跨轮次保持、证据校验、完成审计与预算汇报要求。
+- `/goal` 命令用户轮次在模型上下文中会被改写为自然语言描述（如 "The user set a session goal: ..."），避免把原始斜杠命令当作字面任务重放。
 - `GET /wunder/chat/sessions/{session_id}/events` 返回 `data.goal` 目标快照，便于 watch / resume / reload 恢复。
 - 目标管理接口：
   - `GET /wunder/chat/sessions/{session_id}/goal`：返回 `{ data: { goal } }`，无目标时 `goal=null`。
-  - `PUT /wunder/chat/sessions/{session_id}/goal`：请求体支持 `objective/token_budget/status`；设置或恢复 active 时会尝试启动续跑。
+  - `PUT /wunder/chat/sessions/{session_id}/goal`：请求体支持 `objective/token_budget/status`；设置或恢复 active 时会尝试启动续跑；响应 `data` 额外包含 `user_round`（/goal 命令用户轮次号，Set/Resume 时有值），供前端把本地命令气泡对齐到持久化轮次。
   - `DELETE /wunder/chat/sessions/{session_id}/goal`：清除当前目标。
 - `chat/ws` 新增 `goal.get / goal.set / goal` 消息类型；响应类型为 `goal`。
 - `POST /wunder/chat/sessions/{session_id}/cancel` 在终止当前会话运行时会同步清除目标态，并返回 `goal_cleared`。若最近一轮用户消息之后尚无可见智能体回复，服务端会追加一条可恢复的 assistant 取消标记，刷新后仍能看到该轮次已被用户终止；响应会返回 `marker_persisted` 表示本次是否新写入该标记。取消结算会同时收敛 monitor、目标续跑、队列任务、运行中任务和 `agent_thread` 状态，响应额外包含 `queued_tasks_cancelled`、`running_tasks_marked_cancelled`、`thread_status_reset`、`settlement_event_id`。

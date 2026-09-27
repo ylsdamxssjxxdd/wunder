@@ -52,6 +52,11 @@ impl Orchestrator {
                 user_tool_bindings,
             )
         };
+        // The goal tool is a runtime-level capability, not a per-agent tool:
+        // keep it available even when a session or agent card restricts its
+        // tool list, otherwise a /goal session could never report completion.
+        let mut allowed = allowed;
+        allowed.insert(crate::services::goal::goal_tool_name().to_string());
         self.apply_a2ui_tool_policy(allowed, is_default)
     }
 

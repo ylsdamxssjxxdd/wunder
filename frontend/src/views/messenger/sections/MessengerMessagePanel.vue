@@ -100,9 +100,6 @@
                     :session-busy="activeMessengerSessionBusy"
                   />
                 </template>
-                <template v-else-if="isGoalMarkerMessage(item.message)">
-                  <MessageGoalDivider :objective="String(item.message.content || '')" />
-                </template>
                 <template v-else>
                 <MessageCompactionDivider
                   v-if="
@@ -600,7 +597,6 @@ const hasMessageContent = props.controller.hasMessageContent;
 const hasUserAudioAttachments = props.controller.hasUserAudioAttachments;
 const hasUserImageAttachments = props.controller.hasUserImageAttachments;
 const isCompactionMarkerMessage = props.controller.isCompactionMarkerMessage;
-const isGoalMarkerMessage = props.controller.isGoalMarkerMessage;
 const isGreetingMessage = props.controller.isGreetingMessage;
 const isHiddenInternalMessage = props.controller.isHiddenInternalMessage;
 const isOwnMessage = props.controller.isOwnMessage;
@@ -610,7 +606,6 @@ const isWorldVoicePlaying = props.controller.isWorldVoicePlaying;
 const latestVisibleAgentAssistantMessage = props.controller.latestVisibleAgentAssistantMessage;
 const MARKDOWN_STREAM_THROTTLE_MS = props.controller.MARKDOWN_STREAM_THROTTLE_MS;
 const MessageCompactionDivider = props.controller.MessageCompactionDivider;
-const MessageGoalDivider = props.controller.MessageGoalDivider;
 const MessageFeedbackActions = props.controller.MessageFeedbackActions;
 const MessageKnowledgeCitation = props.controller.MessageKnowledgeCitation;
 const MessageSubagentPanel = props.controller.MessageSubagentPanel;

@@ -309,14 +309,6 @@ export const isGoalCompletedForNotice = (goal): boolean => {
   return status === 'complete';
 };
 
-export const isGoalMarkerMessage = (message): boolean =>
-  Boolean(
-    message &&
-      message.role === 'assistant' &&
-      String(message.content || '').trim() &&
-      (message.manual_goal_marker === true || message.manualGoalMarker === true)
-  );
-
 export const goalSessionIdFromPayload = (value, fallback = ''): string => {
   const source =
     value && typeof value === 'object' && !Array.isArray(value)
@@ -382,14 +374,6 @@ export const syncGoalFromSessionRecord = (store, session): SessionGoal | null =>
   }
   return null;
 };
-
-export const hasManualGoalMarkerMessage = (messages: unknown[]): boolean =>
-  Array.isArray(messages) &&
-  messages.some((message) => {
-    if (!message || typeof message !== 'object' || Array.isArray(message)) return false;
-    const record = message as Record<string, unknown>;
-    return record.manual_goal_marker === true || record.manualGoalMarker === true;
-  });
 
 export const syncGoalsFromSessionList = (store, sessions) => {
   (Array.isArray(sessions) ? sessions : []).forEach((session) => {

@@ -102,7 +102,9 @@ impl DesktopRuntime {
         let mut step_start = Instant::now();
         let app_dir = resolve_app_dir()?;
         let repo_root = resolve_repo_root(&app_dir);
-        let temp_root = resolve_temp_root(args.temp_root.as_deref(), &app_dir);
+        let wunder_home = resolve_wunder_home_dir();
+        fs::create_dir_all(&wunder_home)?;
+        let temp_root = resolve_temp_root(args.temp_root.as_deref(), &app_dir, &wunder_home)?;
         let user_id = normalize_user_id(args.user.as_deref());
         log_startup_segment(
             startup_enabled,
@@ -138,7 +140,8 @@ impl DesktopRuntime {
             args.workspace.as_deref(),
             &settings.workspace_root,
             &app_dir,
-        );
+            &wunder_home,
+        )?;
         fs::create_dir_all(&workspace_root).with_context(|| {
             format!(
                 "create workspace root failed: {}",
@@ -245,6 +248,7 @@ impl DesktopRuntime {
             &repo_assets::builtin_skills_root(&repo_root),
         );
         std::env::set_var("WUNDER_DESKTOP_USER_ID", user_id.clone());
+        set_env_path("WUNDER_HOME", &wunder_home);
         std::env::set_var("WUNDER_WORKSPACE_SINGLE_ROOT", "1");
         log_startup_segment(
             startup_enabled,
@@ -421,20 +425,25 @@ fn resolve_repo_root(app_dir: &Path) -> PathBuf {
     app_dir.to_path_buf()
 }
 
-fn resolve_temp_root(temp_root: Option<&Path>, app_dir: &Path) -> PathBuf {
+fn resolve_temp_root(
+    temp_root: Option<&Path>,
+    app_dir: &Path,
+    wunder_home: &Path,
+) -> Result<PathBuf> {
     match temp_root {
-        Some(path) if path.is_absolute() => path.to_path_buf(),
-        Some(path) => app_dir.join(path),
+        Some(path) if path.is_absolute() => Ok(path.to_path_buf()),
+        Some(path) => Ok(wunder_home.join(path)),
         None => std::env::var_os("WUNDER_DESKTOP_TEMP_ROOT")
             .map(PathBuf::from)
             .map(|path| {
                 if path.is_absolute() {
                     path
                 } else {
-                    app_dir.join(path)
+                    wunder_home.join(path)
                 }
             })
-            .unwrap_or_else(|| app_dir.join("WUNDER_TEMPD")),
+            .map(Ok)
+            .unwrap_or_else(|| migrate_legacy_runtime_dir(app_dir, &wunder_home.join("desktop"), "WUNDER_TEMPD")),
     }
 }
 
@@ -442,35 +451,74 @@ fn resolve_workspace_root(
     arg_workspace: Option<&Path>,
     settings_workspace: &str,
     app_dir: &Path,
-) -> PathBuf {
+    wunder_home: &Path,
+) -> Result<PathBuf> {
     if let Some(path) = arg_workspace {
-        return if path.is_absolute() {
+        return Ok(if path.is_absolute() {
             path.to_path_buf()
         } else {
-            app_dir.join(path)
-        };
+            wunder_home.join(path)
+        });
     }
 
     let raw = settings_workspace.trim();
     if raw.is_empty() {
-        return std::env::var_os("WUNDER_DESKTOP_WORKSPACE_ROOT")
+        return Ok(std::env::var_os("WUNDER_DESKTOP_WORKSPACE_ROOT")
             .map(PathBuf::from)
             .map(|path| {
                 if path.is_absolute() {
                     path
                 } else {
-                    app_dir.join(path)
+                    wunder_home.join(path)
                 }
             })
-            .unwrap_or_else(|| app_dir.join("WUNDER_WORK"));
+            .unwrap_or_else(|| migrate_legacy_runtime_dir(app_dir, &wunder_home.join("desktop/workspace"), "WUNDER_WORK").unwrap_or_else(|_| wunder_home.join("desktop/workspace"))));
     }
 
     let path = PathBuf::from(raw);
     if path.is_absolute() {
-        path
+        Ok(path)
+    } else if raw.eq_ignore_ascii_case("WUNDER_WORK")
+        || raw.eq_ignore_ascii_case("WUNDER_TEMPD")
+        || raw.eq_ignore_ascii_case("workspace")
+    {
+        Ok(wunder_home.join("desktop/workspace"))
     } else {
-        app_dir.join(path)
+        Ok(wunder_home.join(path))
     }
+}
+
+fn resolve_wunder_home_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os("WUNDER_HOME")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        return path;
+    }
+    #[cfg(windows)]
+    let home = std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .or_else(|| {
+            let drive = std::env::var_os("HOMEDRIVE")?;
+            let path = std::env::var_os("HOMEPATH")?;
+            Some(PathBuf::from(drive).join(path))
+        });
+    #[cfg(not(windows))]
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    home.unwrap_or_else(|| std::env::temp_dir()).join(".wunder")
+}
+
+fn migrate_legacy_runtime_dir(app_dir: &Path, target: &Path, legacy_name: &str) -> Result<PathBuf> {
+    let legacy = app_dir.join(legacy_name);
+    if !target.exists() && legacy.exists() && legacy != target {
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        if let Err(error) = fs::rename(&legacy, target) {
+            warn!(%error, source = %legacy.display(), target = %target.display(), "legacy desktop runtime directory migration failed; using new path");
+        }
+    }
+    Ok(target.to_path_buf())
 }
 
 fn resolve_frontend_root(

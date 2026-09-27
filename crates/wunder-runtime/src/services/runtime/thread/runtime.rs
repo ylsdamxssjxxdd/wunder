@@ -253,9 +253,6 @@ impl ThreadRuntime {
             .orchestrator
             .resolve_session_effective_tool_names(&user, &session)
             .await;
-        if !goal::tool_names_contain_goal_tool(&tool_names) {
-            return Ok(GoalContinuationSubmission::Skipped);
-        }
         let Some(mut continuation) = goal::build_continuation_request_from_session(
             self.user_store.storage_backend(),
             user_id,

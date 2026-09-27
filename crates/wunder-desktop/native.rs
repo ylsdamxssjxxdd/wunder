@@ -22,7 +22,7 @@ mod profile;
 mod settings;
 #[path = "native_workspace.rs"]
 mod workspace;
-pub use catalog::{AgentRecord, ToolRecord};
+pub use catalog::{AgentRecord, AgentSettingsEdit, ToolRecord};
 pub use profile::NativeProfile;
 pub use settings::{DesktopSettings, LanPeerRecord, LanSettings, ModelEdit, ModelRecord};
 pub use workspace::{Directory, FileRecord};
@@ -50,6 +50,12 @@ pub struct NativeSession {
     pub title: String,
     pub updated_at: f64,
     pub agent_id: Option<String>,
+    pub consumed_tokens: i64,
+    pub tool_calls: i64,
+    pub model_request_count: i64,
+    pub quota_used: i64,
+    pub runtime_status: String,
+    pub locked: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +64,13 @@ pub struct NativeMessage {
     pub mine: bool,
     pub created_at: f64,
     pub state: String,
+    pub stats_status: String,
+    pub stats_duration: String,
+    pub stats_speed: String,
+    pub stats_context: String,
+    pub stats_quota: String,
+    pub stats_tools: String,
+    pub stats_credits: String,
 }
 
 pub struct NativeDesktop {
@@ -104,7 +117,23 @@ impl NativeDesktop {
             0,
             100,
         )?;
-        Ok(records.into_iter().map(session_from_record).collect())
+        Ok(records.into_iter().map(|record| self.session_with_stats(record)).collect())
+    }
+
+    fn session_with_stats(&self, record: wunder_server::storage::ChatSessionRecord) -> NativeSession {
+        let overview = self.desktop.state.monitor.get_log_overview(&record.session_id);
+        NativeSession {
+            id: record.session_id,
+            title: record.title,
+            updated_at: record.updated_at,
+            agent_id: record.agent_id,
+            consumed_tokens: overview.as_ref().and_then(|v| v.get("consumed_tokens")).and_then(Value::as_i64).unwrap_or(0),
+            tool_calls: overview.as_ref().and_then(|v| v.get("tool_calls")).and_then(Value::as_i64).unwrap_or(0),
+            model_request_count: overview.as_ref().and_then(|v| v.get("model_request_count")).and_then(Value::as_i64).unwrap_or(0),
+            quota_used: overview.as_ref().and_then(|v| v.get("quota_used").or_else(|| v.get("model_request_count"))).and_then(Value::as_i64).unwrap_or(0),
+            runtime_status: overview.as_ref().and_then(|v| v.get("status")).and_then(Value::as_str).unwrap_or("done").to_string(),
+            locked: false,
+        }
     }
 
     pub fn list_subagents(&self, session_id: &str) -> std::result::Result<Value, String> {
@@ -134,7 +163,7 @@ impl NativeDesktop {
             100,
         )?;
         let messages = history.into_iter().filter_map(message_from_value).collect();
-        Ok((session_from_record(record), messages))
+        Ok((self.session_with_stats(record), messages))
     }
 
     pub fn create_session_for_agent(&self, agent_id: Option<&str>) -> Result<NativeSession> {
@@ -165,7 +194,24 @@ impl NativeDesktop {
             spawned_by: None,
         };
         self.desktop.state.user_store.upsert_chat_session(&record)?;
-        Ok(session_from_record(record))
+        Ok(self.session_with_stats(record))
+    }
+
+    pub fn rename_session(&self, session_id: &str, title: &str) -> Result<()> {
+        let title = title.trim();
+        if title.is_empty() || title.chars().count() > 120 || title.chars().any(char::is_control) { return Err(anyhow!("线程名称无效")); }
+        self.desktop.state.user_store.update_chat_session_title(&self.desktop.user_id, session_id.trim(), title, now_ts())
+    }
+
+    pub fn archive_session(&self, session_id: &str) -> Result<()> {
+        let mut record = self.desktop.state.user_store.get_chat_session(&self.desktop.user_id, session_id.trim())?.ok_or_else(|| anyhow!("线程不存在"))?;
+        record.status = "archived".into();
+        record.updated_at = now_ts();
+        self.desktop.state.user_store.upsert_chat_session(&record)
+    }
+
+    pub fn session_detail_page(&self, session_id: &str, offset: usize, limit: usize) -> Result<Value> {
+        self.desktop.state.monitor.get_detail_page(session_id.trim(), offset, limit).ok_or_else(|| anyhow!("线程日志不存在"))
     }
 
     pub fn cancel_chat(&self, session_id: &str) -> Result<()> {
@@ -236,15 +282,6 @@ impl NativeDesktop {
     }
 }
 
-fn session_from_record(record: wunder_server::storage::ChatSessionRecord) -> NativeSession {
-    NativeSession {
-        id: record.session_id,
-        title: record.title,
-        updated_at: record.updated_at,
-        agent_id: record.agent_id,
-    }
-}
-
 fn message_from_value(value: Value) -> Option<NativeMessage> {
     if value.pointer("/meta/type").and_then(Value::as_str) == Some("model_context_internal") {
         return None;
@@ -253,6 +290,14 @@ fn message_from_value(value: Value) -> Option<NativeMessage> {
     if role != "user" && role != "assistant" {
         return None;
     }
+    // Desktop history reads the storage record directly (rather than the web
+    // transcript mapper), so accept all persisted locations used by older
+    // records and by the current message_stats metadata.
+    let stats = value
+        .get("stats")
+        .or_else(|| value.get("message_stats"))
+        .or_else(|| value.pointer("/meta/message_stats"))
+        .unwrap_or(&Value::Null);
     Some(NativeMessage {
         text: value.get("content").and_then(Value::as_str)?.to_string(),
         mine: role == "user",
@@ -265,7 +310,57 @@ fn message_from_value(value: Value) -> Option<NativeMessage> {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
+        stats_status: if role == "assistant" {
+            value
+                .get("status")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("完成")
+                .to_string()
+        } else {
+            String::new()
+        },
+        stats_duration: format_duration(stats_value(stats, &["interaction_duration_s", "duration_s", "elapsed_s"])),
+        stats_speed: format_speed(stats_value(stats, &["visible_decode_speed_tps", "decode_speed_tps"])),
+        stats_context: format_count(stats_value(stats, &["contextTokens", "context_occupancy_tokens", "context_tokens"]))
+            .unwrap_or_default(),
+        stats_quota: format_count(stats_value(stats, &["request_consumed_tokens", "consumed_tokens"]))
+            .or_else(|| format_count(stats.get("round_usage").and_then(|value| stats_value(value, &["total_tokens", "total"]))))
+            .unwrap_or_default(),
+        stats_tools: format_count(stats_value(stats, &["toolCalls", "tool_calls"])).unwrap_or_default(),
+        stats_credits: format_count(stats_value(stats, &["account_credits_consumed", "creditsConsumed"])).unwrap_or_default(),
     })
+}
+
+fn stats_value<'a>(stats: &'a Value, keys: &[&str]) -> Option<&'a Value> {
+    keys.iter().find_map(|key| stats.get(*key))
+}
+
+fn format_count(value: Option<&Value>) -> Option<String> {
+    let number = value.and_then(|value| value.as_i64().or_else(|| value.as_f64().map(|value| value as i64)))?;
+    (number >= 0).then(|| {
+        if number >= 1_000_000 {
+            format!("{:.1}m", number as f64 / 1_000_000.0)
+        } else if number >= 1_000 {
+            format!("{:.1}k", number as f64 / 1_000.0)
+        } else {
+            number.to_string()
+        }
+    })
+}
+
+fn format_duration(value: Option<&Value>) -> String {
+    let Some(seconds) = value.and_then(Value::as_f64).filter(|value| value.is_finite() && *value > 0.0) else {
+        return String::new();
+    };
+    if seconds < 60.0 { format!("{seconds:.1}s") } else { format!("{}m {:.0}s", (seconds / 60.0).floor(), seconds % 60.0) }
+}
+
+fn format_speed(value: Option<&Value>) -> String {
+    let Some(speed) = value.and_then(Value::as_f64).filter(|value| value.is_finite() && *value > 0.0) else {
+        return String::new();
+    };
+    format!("{speed:.1}/s")
 }
 
 fn now_ts() -> f64 {

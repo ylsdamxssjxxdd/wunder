@@ -101,6 +101,7 @@ fn install_source(app: &MainWindow, api: Source) {
                             preview: status_label(item["status"].as_str().unwrap_or_default())
                                 .into(),
                             time: "".into(),
+                            consumed_tokens: "".into(), tool_calls: "".into(), quota_used: "".into(), runtime_status: "".into(), locked: false,
                         })
                         .collect();
                     app.set_subagents_status(

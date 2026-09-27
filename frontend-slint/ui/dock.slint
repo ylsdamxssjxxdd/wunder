@@ -6,6 +6,7 @@ export component WorkDock inherits Rectangle {
     callback activate-task(int);
     callback preview-file(string);
     callback refresh-files();
+    callback open-workspace-binding();
     in property <int> active-task;
     in property <bool> files-loading;
     in property <string> files-error;
@@ -14,18 +15,26 @@ export component WorkDock inherits Rectangle {
     in property <int> directory-container-id: 1;
     in property <bool> tasks-enabled: true;
     in property <[Conversation]> conversations;
-    in property <[Conversation]> subagents;
-    in property <string> subagents-status;
-    callback refresh-subagents();
-    callback inspect-subagent(int);
     in property <[FileCard]> files;
+    in-out property <bool> workspace-binding-open: false;
+    in-out property <int> workspace-binding-container: 1;
+    in-out property <string> workspace-binding-path;
+    callback save-workspace-binding(int, string);
+    callback thread-menu(int, int);
+    callback thread-drop(int, int);
+    callback rename-thread(int, string);
+    callback archive-thread(int);
     background: Theme.dock;
     private property <string> keyword;
+    private property <int> menu-index: -1;
+    private property <int> rename-index: -1;
+    private property <string> rename-value;
+    private property <int> dragging-index: -1;
     VerticalLayout {
         padding: 10px; spacing: 10px;
         Rectangle {
             border-radius: 12px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
-            vertical-stretch: 1;
+            vertical-stretch: 3;
             VerticalLayout {
                 padding: 12px; spacing: 10px;
                 HorizontalLayout {
@@ -33,6 +42,7 @@ export component WorkDock inherits Rectangle {
                     Image { width: 14px; height: 14px; source: @image-url("../assets/icons/box-archive.svg"); colorize: Theme.accent-deep; }
                     Text { text: "工作目录"; font-size: 13px; font-weight: 600; color: Theme.text; }
                     Rectangle { horizontal-stretch: 1; }
+                    Action { icon: @image-url("../assets/icons/folder-open.svg"); label: "切换目录"; show-label: true; clicked => { root.workspace-binding-container = root.directory-container-id; root.workspace-binding-path = root.directory-root; root.workspace-binding-open = true; } }
                     Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.files-loading; clicked => { root.keyword = ""; root.refresh-files(); } }
                 }
                 SearchField { icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索文件"; text <=> root.keyword; }
@@ -54,40 +64,14 @@ export component WorkDock inherits Rectangle {
             }
         }
         Rectangle {
-            min-height: 110px; max-height: 200px; vertical-stretch: 1;
             border-radius: 12px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
-            VerticalLayout {
-                padding: 12px; spacing: 6px;
-                HorizontalLayout {
-                    height: 26px;
-                    Text { text: "子智能体 · " + root.subagents.length; color: Theme.text; font-size: 13px; font-weight: 600; }
-                    Rectangle { horizontal-stretch: 1; }
-                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新子智能体"; clicked => { root.refresh-subagents(); } }
-                }
-                ScrollView {
-                    horizontal-scrollbar-policy: always-off;
-                    VerticalLayout {
-                        alignment: start; spacing: 4px;
-                        for child[index] in root.subagents : Rectangle {
-                            height: 44px;
-                            Action { width: parent.width; height: parent.height; label: child.title; clicked => { root.inspect-subagent(index); } }
-                            Text { x: 8px; y: 3px; width: parent.width - 16px; text: child.title; color: Theme.text; font-size: 12px; overflow: elide; }
-                            Text { x: 8px; y: 23px; width: parent.width - 16px; text: child.preview; color: Theme.muted; font-size: 11px; overflow: elide; }
-                        }
-                    }
-                }
-                Text { text: root.subagents-status; height: 16px; color: Theme.muted; font-size: 10px; overflow: elide; }
-            }
-        }
-        Rectangle {
-            border-radius: 12px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
-            vertical-stretch: 1;
+            vertical-stretch: 2;
             VerticalLayout {
                 padding: 12px; spacing: 10px;
                 HorizontalLayout {
                     height: 24px; spacing: 8px;
                     Image { width: 14px; height: 14px; source: @image-url("../assets/icons/list-check.svg"); colorize: Theme.accent-deep; }
-                    Text { text: "任务列表"; font-size: 13px; font-weight: 600; color: Theme.text; }
+                    Text { text: "工作线程"; font-size: 13px; font-weight: 600; color: Theme.text; }
                     Rectangle { horizontal-stretch: 1; }
                     Text { text: root.conversations.length; color: Theme.accent-deep; font-size: 11px; }
                 }
@@ -98,15 +82,55 @@ export component WorkDock inherits Rectangle {
                         for conversation[index] in root.conversations : Rectangle {
                             height: 56px; border-radius: 10px;
                             background: index == root.active-task ? Theme.accent-soft : transparent;
-                            Action { width: parent.width; height: parent.height; label: conversation.title; enabled: root.tasks-enabled; clicked => { root.activate-task(index); } }
+                            Action { width: parent.width - 30px; height: parent.height; label: conversation.title; enabled: root.tasks-enabled; clicked => { root.activate-task(index); } }
                             Image { x: 9px; y: 16px; width: 16px; height: 16px; source: @image-url("../assets/icons/comments.svg"); colorize: Theme.accent; }
                             Text { x: 36px; y: 8px; width: parent.width - 44px; height: 18px; text: conversation.title; color: Theme.text; font-size: 12px; overflow: elide; }
-                            Text { x: 36px; y: 30px; width: parent.width - 44px; height: 16px; text: conversation.time == "" ? conversation.preview : conversation.time; color: Theme.muted; font-size: 11px; overflow: elide; }
+                            Text { x: 36px; y: 29px; width: parent.width - 76px; height: 14px; text: conversation.consumed-tokens + " tokens · 工具 " + conversation.tool-calls + " · 额度 " + conversation.quota-used; color: Theme.muted; font-size: 10px; overflow: elide; }
+                            Action { x: parent.width - 30px; y: 13px; width: 26px; height: 26px; icon: @image-url("../assets/icons/ellipsis.svg"); label: "线程操作"; clicked => { root.menu-index = index; } }
+                            TouchArea {
+                                x: 0px; y: 0px; width: 26px; height: parent.height;
+                                pointer-event(event) => {
+                                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { root.dragging-index = index; }
+                                    else if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { if root.dragging-index >= 0 { root.thread-drop(root.dragging-index, index); root.dragging-index = -1; } }
+                                }
+                                moved => { if root.dragging-index >= 0 && self.mouse-y < -18px && index > 0 { root.thread-drop(root.dragging-index, index - 1); root.dragging-index = index - 1; } else if root.dragging-index >= 0 && self.mouse-y > parent.height + 18px && index + 1 < root.conversations.length { root.thread-drop(root.dragging-index, index + 1); root.dragging-index = index + 1; } }
+                            }
+                            if root.menu-index == index : Rectangle {
+                                x: parent.width - 132px; y: 34px; z: 10; width: 124px; height: 94px; border-radius: 8px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                                VerticalLayout { padding: 5px; spacing: 2px;
+                                    Action { height: 26px; label: "详情"; show-label: true; clicked => { root.menu-index = -1; root.thread-menu(index, 0); } }
+                                    Action { height: 26px; label: "重命名"; show-label: true; clicked => { root.menu-index = -1; root.rename-index = index; root.rename-value = conversation.title; } }
+                                    Action { height: 26px; label: "归档"; show-label: true; clicked => { root.menu-index = -1; root.archive-thread(index); } }
+                                }
+                            }
+                            if root.rename-index == index : Rectangle {
+                                x: 8px; y: 8px; z: 11; width: parent.width - 16px; height: 88px; border-radius: 8px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                                VerticalLayout { padding: 7px; spacing: 4px;
+                                    TextInput { height: 28px; text <=> root.rename-value; color: Theme.text; font-size: 11px; }
+                                    HorizontalLayout { height: 25px; Rectangle { horizontal-stretch: 1; } Action { width: 52px; height: 24px; label: "取消"; show-label: true; clicked => { root.rename-index = -1; } } Action { width: 52px; height: 24px; label: "保存"; show-label: true; primary: true; enabled: root.rename-value != ""; clicked => { root.rename-thread(index, root.rename-value); root.rename-index = -1; } } }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
     }
+    if root.workspace-binding-open : Rectangle {
+        z: 20; background: #00000035;
+        TouchArea { clicked => { root.workspace-binding-open = false; } }
+        Rectangle {
+            width: min(360px, parent.width - 28px); height: 292px; border-radius: 14px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+            TouchArea { }
+            VerticalLayout {
+                padding: 18px; spacing: 10px;
+                Text { height: 24px; text: "切换工作目录"; color: Theme.text; font-size: 16px; font-weight: 600; }
+                Text { height: 18px; text: "选择目录序号"; color: Theme.muted; font-size: 11px; }
+                HorizontalLayout { height: 30px; spacing: 5px; for id in [1,2,3,4,5,6,7,8,9,10] : Rectangle { width: 28px; height: 28px; border-radius: 7px; background: id == root.workspace-binding-container ? Theme.accent : Theme.accent-soft; Text { width: parent.width; height: parent.height; text: id; color: id == root.workspace-binding-container ? white : Theme.text; horizontal-alignment: center; vertical-alignment: center; } TouchArea { clicked => { root.workspace-binding-container = id; } } } }
+                Text { height: 18px; text: "本地目录路径"; color: Theme.muted; font-size: 11px; }
+                TextInput { height: 34px; text <=> root.workspace-binding-path; color: Theme.text; font-size: 12px; }
+                HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; } Action { label: "取消"; show-label: true; clicked => { root.workspace-binding-open = false; } } Action { label: "保存"; show-label: true; primary: true; enabled: root.workspace-binding-path != ""; clicked => { root.save-workspace-binding(root.workspace-binding-container, root.workspace-binding-path); root.workspace-binding-open = false; } } }
+            }
+        }
+    }
 }
-

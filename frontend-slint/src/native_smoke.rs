@@ -1,6 +1,6 @@
 //! Opt-in integration driver; the caller must provide an isolated runtime root.
 use crate::MainWindow;
-use slint::{ComponentHandle, Model, Timer, TimerMode};
+use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 use std::{
     cell::RefCell,
     path::PathBuf,
@@ -280,6 +280,13 @@ fn advance(
                 "".into(),
                 "spark".into(),
                 "#f97316".into(),
+                ModelRc::new(VecModel::from(Vec::<slint::SharedString>::new())),
+                ModelRc::new(VecModel::from(Vec::<slint::SharedString>::new())),
+                1,
+                "suggest".into(),
+                false,
+                false,
+                false,
             );
         }
         9 => {

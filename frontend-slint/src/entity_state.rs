@@ -61,6 +61,32 @@ fn apply_agent(app: &MainWindow, agent: AgentCard) {
     app.set_selected_agent_icon_name(agent.icon_name);
     app.set_selected_agent_icon_color(agent.icon_color);
     app.set_selected_agent_icon_glyph(agent.icon_glyph);
+    app.set_selected_agent_tool_names(agent.tool_names);
+    app.set_selected_agent_preset_questions(agent.preset_questions);
+    app.set_selected_agent_sandbox_container_id(agent.sandbox_container_id);
+    app.set_selected_agent_approval_mode(agent.approval_mode);
+    app.set_selected_agent_preview_skill(agent.preview_skill);
+    app.set_selected_agent_silent(agent.silent);
+    app.set_selected_agent_prefer_mother(agent.prefer_mother);
+    sync_tool_selection(app);
+}
+
+pub(crate) fn sync_tool_selection(app: &MainWindow) {
+    let selected = app
+        .get_selected_agent_tool_names()
+        .iter()
+        .map(|name| name.to_string())
+        .collect::<std::collections::HashSet<_>>();
+    let tools = app.get_tools();
+    for index in 0..tools.row_count() {
+        if let Some(mut tool) = tools.row_data(index) {
+            let enabled = selected.contains(tool.name.as_str());
+            if tool.enabled != enabled {
+                tool.enabled = enabled;
+                tools.set_row_data(index, tool);
+            }
+        }
+    }
 }
 
 fn apply_model(app: &MainWindow, model: ModelCard) {

@@ -149,7 +149,7 @@ export type SnapshotAssistantMessage = {
   subagents?: unknown[];
   hiddenInternal?: boolean;
   manual_compaction_marker?: boolean;
-  manual_goal_marker?: boolean;
+  goal_command?: boolean;
   realtime_protected?: boolean;
 };
 
@@ -284,7 +284,7 @@ export type AppendLocalMessageOptions = {
   createdAt?: unknown;
   sessionId?: unknown;
   immediate?: boolean;
-  manualGoalMarker?: boolean;
+  goalCommand?: boolean;
   manualCompactionCommand?: boolean;
   localTurnId?: string;
   localModelTurnId?: string;

@@ -1,12 +1,12 @@
-import { Theme, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard } from "theme.slint";
-import { Action, RailButton, Avatar, SearchField, FormField } from "components.slint";
+import { Theme, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent } from "theme.slint";
+import { Action, EdgeToggle, RailButton, Avatar, SearchField, FormField } from "components.slint";
 import { Composer } from "composer.slint";
 import { MessageRow } from "message.slint";
 import { WorkDock } from "dock.slint";
 import { AgentsPage, ToolsPage, SettingsPage } from "entity_pages.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
-export { Theme, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard }
+export { Theme, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent }
 export { AppTray } from "tray.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
 
@@ -58,6 +58,15 @@ export component MainWindow inherits Window {
     in-out property <string> dialog-title;
     in-out property <string> dialog-text;
     in-out property <bool> dialog-open: false;
+    in-out property <bool> thread-log-open: false;
+    in-out property <string> thread-log-status;
+    in-out property <string> thread-log-elapsed;
+    in-out property <string> thread-log-rounds;
+    in-out property <string> thread-log-tools;
+    in-out property <string> thread-log-tokens;
+    in-out property <string> thread-log-speed;
+    in-out property <[ThreadLogEvent]> thread-log-events: [];
+    in-out property <string> thread-log-title;
     private property <bool> dock-overlay-open: false;
     private property <bool> more-open: false;
     in-out property <int> scroll-revision: 0;
@@ -68,23 +77,23 @@ export component MainWindow inherits Window {
     ];
     in-out property <[FileCard]> files: [];
     in-out property <[ChatMessage]> messages: [
-        { text: "你好，我是你的默认智能体。有什么可以帮助你的吗？", mine: false, time: "09:41", workflow: false, state: "任务完成  ·  演示消息", avatar-glyph: "✦", avatar-tone: 1 },
-        { text: "请帮我整理一下当前内容。", mine: true, time: "09:42", workflow: false, state: "", avatar-glyph: "", avatar-tone: 0 },
-        { text: "已经整理好了。\n\n• 内容已按顺序归纳，便于继续查看。\n• 相关文件可在右侧工作目录中预览。\n• 你可以继续提问，或新建一个任务。\n\n如果需要进一步调整，可以直接告诉我。", mine: false, time: "09:42", workflow: true, state: "任务完成  ·  演示消息", avatar-glyph: "✦", avatar-tone: 1 }
+        { text: "你好，我是你的默认智能体。有什么可以帮助你的吗？", mine: false, time: "09:41", workflow: false, state: "任务完成  ·  演示消息", stats-status: "完成", stats-duration: "1.2s", stats-speed: "42.0/s", stats-context: "2.4k", stats-quota: "320", stats-tools: "2", stats-credits: "1", avatar-glyph: "✦", avatar-tone: 1 },
+        { text: "请帮我整理一下当前内容。", mine: true, time: "09:42", workflow: false, state: "", stats-status: "", stats-duration: "", stats-speed: "", stats-context: "", stats-quota: "", stats-tools: "", stats-credits: "", avatar-glyph: "", avatar-tone: 0 },
+        { text: "已经整理好了。\n\n• 内容已按顺序归纳，便于继续查看。\n• 相关文件可在右侧工作目录中预览。\n• 你可以继续提问，或新建一个任务。\n\n如果需要进一步调整，可以直接告诉我。", mine: false, time: "09:42", workflow: true, state: "任务完成  ·  演示消息", stats-status: "完成", stats-duration: "3.4s", stats-speed: "38.0/s", stats-context: "4.1k", stats-quota: "680", stats-tools: "3", stats-credits: "1", avatar-glyph: "✦", avatar-tone: 1 }
     ];
     in-out property <[AgentCard]> agents: [
-        { id: "demo-agent", name: "默认智能体", description: "帮助你处理日常任务。", model: "默认模型", system-prompt: "", status: "active", icon-name: "spark", icon-color: "#f97316", icon-glyph: "✦", icon-tone: 1 }
+        { id: "demo-agent", name: "默认智能体", description: "帮助你处理日常任务。", model: "默认模型", system-prompt: "", status: "active", icon-name: "spark", icon-color: "#f97316", icon-glyph: "✦", icon-tone: 1, tool-count: 2, tool-names: ["文件操作"], preset-questions: [], sandbox-container-id: 1, approval-mode: "suggest", preview-skill: false, silent: false, prefer-mother: false, preset-question-count: 0, is-shared: false, group-name: "默认蜂房" }
     ];
     in-out property <[ToolCard]> tools: [
-        { name: "文件操作", description: "读取和整理本地工作目录中的内容", category: "内置工具" },
-        { name: "技能调用", description: "按权限使用已安装的技能", category: "技能" }
+        { name: "文件操作", description: "读取和整理本地工作目录中的内容", category: "内置工具", enabled: false },
+        { name: "技能调用", description: "按权限使用已安装的技能", category: "技能", enabled: false }
     ];
     in-out property <[ModelCard]> models: [
         { key: "默认模型", provider: "", model: "未连接", base-url: "", model-type: "llm", is-default: true }
     ];
     in-out property <string> selected-agent-name;
     in-out property <string> selected-agent-description;
-    in-out property <string> selected-agent-model;
+    in-out property <string> selected-agent-model: "默认模型";
     in-out property <string> selected-agent-system-prompt;
     in-out property <string> selected-agent-status;
     in-out property <string> workspace-root;
@@ -121,13 +130,14 @@ export component MainWindow inherits Window {
     in-out property <int> stream-bytes;
     in-out property <float> stream-max-ui-ms;
     in-out property <int> stream-max-backlog;
+    in-out property <float> context-usage: 0.0;
     callback stop-generation();
     callback copy-message(int);
     callback copy-raw(string);
     copy-buffer := TextInput { width: 0px; height: 0px; }
     copy-raw(raw) => { copy-buffer.text = raw; copy-buffer.select-all(); copy-buffer.copy(); copy-buffer.text = ""; }
     callback send-message();
-    callback capture-screenshot();
+    callback capture-screenshot(bool, bool);
     callback record-voice();
     callback remove-attachment(int);
     callback select-conversation(int);
@@ -137,16 +147,32 @@ export component MainWindow inherits Window {
     callback refresh-agents();
     callback select-agent(int);
     callback create-agent(string);
-    callback save-agent(string, string, string, string, string, string);
+    callback save-agent(string, string, string, string, string, string, [string], [string], int, string, bool, bool, bool);
+    callback toggle-agent-tool(string);
+    callback add-agent-question();
+    callback remove-agent-question(int);
     in-out property <string> selected-agent-icon-name;
     in-out property <string> selected-agent-icon-color;
     in-out property <string> selected-agent-icon-glyph;
+    in-out property <[string]> selected-agent-tool-names: [];
+    in-out property <[string]> selected-agent-preset-questions: [];
+    in-out property <int> selected-agent-sandbox-container-id: 1;
+    in-out property <string> selected-agent-approval-mode: "suggest";
+    in-out property <bool> selected-agent-preview-skill: false;
+    in-out property <bool> selected-agent-silent: false;
+    in-out property <bool> selected-agent-prefer-mother: false;
+    in-out property <string> agent-question-draft;
     in-out property <ProfileCard> profile: { user-id: "", username: "", email: "", unit: "", sessions: "0", sessions-last-7d: "0", tool-calls: "0", tokens: "0", agents: "0", last-active: "", avatar-icon: "initial", avatar-glyph: "✦", avatar-color: "#3b82f6" };
     in-out property <bool> profile-loading: false;
     callback refresh-profile();
     callback save-profile-avatar(string, string);
     callback refresh-tools();
     callback refresh-files();
+    callback save-workspace-binding(int, string);
+    callback thread-menu(int, int);
+    callback thread-drop(int, int);
+    callback rename-thread(int, string);
+    callback archive-thread(int);
     callback navigate-directory(string);
     callback open-file(string);
     callback save-runtime(string, string);
@@ -159,10 +185,6 @@ export component MainWindow inherits Window {
 
     function open-info(title: string, text: string) {
         root.dialog-title = title; root.dialog-text = text; root.dialog-open = true;
-    }
-    function toggle-dock() {
-        if root.width >= 1100px { root.right-open = !root.right-open; }
-        else { root.dock-overlay-open = !root.dock-overlay-open; }
     }
     function open-agent-creator() {
         root.agent-name-draft = "";
@@ -260,13 +282,9 @@ export component MainWindow inherits Window {
                 spacing: 0px;
                 HorizontalLayout {
                     height: 62px; padding-left: 14px; padding-right: 14px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
-                    Action { icon: @image-url("../assets/icons/bars.svg"); label: "切换导航"; clicked => { root.navigation-open = !root.navigation-open; } }
                     Text { text: root.heading; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
-                    Action { icon: @image-url("../assets/icons/plus.svg"); label: "新建线程"; enabled: !root.busy && !root.creating-session && !root.session-loading && !root.chat-loading && !root.agents-loading; clicked => { root.new-thread(); } }
-                    Action { icon: @image-url("../assets/icons/clock-rotate-left.svg"); label: "历史线程"; clicked => { root.toggle-dock(); } }
-                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.busy && !root.session-loading && !root.chat-loading && !root.creating-session; clicked => { root.refresh-chat(); } }
-                    dock-toggle := Action { icon: @image-url("../assets/icons/chevron-right.svg"); label: "切换工作目录"; selected: root.width >= 1100px ? root.right-open : root.dock-overlay-open; clicked => { root.toggle-dock(); } }
+                    Action { width: 104px; icon: @image-url("../assets/icons/plus.svg"); label: "新建线程"; show-label: true; enabled: !root.busy && !root.creating-session && !root.session-loading && !root.chat-loading && !root.agents-loading; clicked => { root.new-thread(); } }
                 }
                 Rectangle { height: 1px; background: Theme.border; }
                 messages-view := ListView {
@@ -284,11 +302,14 @@ export component MainWindow inherits Window {
                 if !root.follow-output : Action { height: 26px; label: "回到最新消息"; show-label: true; clicked => { root.follow-output = true; root.scroll-revision += 1; } }
                 Composer {
                     draft <=> root.draft; status: root.status; busy: root.busy || root.session-loading || root.creating-session || root.chat-loading;
+                    context-usage: root.context-usage;
+                    model-name: root.selected-model-name != "" ? root.selected-model-name : root.selected-agent-model;
                     attachments: root.pending-attachments;
                     generating: root.busy; stopping: root.stopping; stop => { root.stop-generation(); }
                     recording: root.recording; transcribing: root.transcribing; recording-elapsed: root.recording-elapsed;
                     send => { root.send-message(); }
-                    attach => { root.capture-screenshot(); }
+                    attach => { root.capture-screenshot(false, false); }
+                    screenshot(hide-window, region) => { root.capture-screenshot(hide-window, region); }
                     record-voice => { root.record-voice(); }
                     remove-attachment(index) => { root.remove-attachment(index); }
                 }
@@ -299,14 +320,34 @@ export component MainWindow inherits Window {
             files-loading: root.files-loading; files-error: root.files-error; directory-path: root.directory-path; directory-root: root.directory-root; directory-container-id: root.directory-container-id;
             tasks-enabled: !root.busy && !root.session-loading && !root.chat-loading && !root.creating-session;
             conversations: root.conversations;
-            subagents: root.subagents; subagents-status: root.subagents-status;
-            refresh-subagents => { root.refresh-subagents(); }
-            inspect-subagent(index) => { root.inspect-subagent(index); }
             files: root.files;
             x: root.width - 284px; y: 0px; width: 284px; height: parent.height; active-task: root.connected ? root.selected-conversation : root.active-task;
             activate-task(index) => { root.select-task(index); }
             preview-file(path) => { root.open-file(path); }
             refresh-files => { root.refresh-files(); }
+            save-workspace-binding(container, path) => { root.save-workspace-binding(container, path); }
+            thread-menu(index, action) => { root.thread-menu(index, action); }
+            thread-drop(from, to) => { root.thread-drop(from, to); }
+            rename-thread(index, title) => { root.rename-thread(index, title); }
+            archive-thread(index) => { root.archive-thread(index); }
+        }
+
+        // These transparent hitboxes match the web client's divider controls:
+        // the circular affordance appears only while the pointer is near a
+        // sidebar edge, centred vertically on the divider.
+        if root.section == 0 : EdgeToggle {
+            x: (root.navigation-open ? 276px : 56px) - 26px;
+            y: 0px;
+            open: root.navigation-open;
+            opens-left: true;
+            toggled => { root.navigation-open = !root.navigation-open; }
+        }
+        if root.section == 0 && root.width >= 1100px : EdgeToggle {
+            x: root.right-open ? root.width - 310px : root.width - 52px;
+            y: 0px;
+            open: root.right-open;
+            opens-left: false;
+            toggled => { root.right-open = !root.right-open; }
         }
     }
 
@@ -317,16 +358,29 @@ export component MainWindow inherits Window {
             files-loading: root.files-loading; files-error: root.files-error; directory-path: root.directory-path; directory-root: root.directory-root; directory-container-id: root.directory-container-id;
             tasks-enabled: !root.busy && !root.session-loading && !root.chat-loading && !root.creating-session;
             conversations: root.conversations;
-            subagents: root.subagents; subagents-status: root.subagents-status;
-            refresh-subagents => { root.refresh-subagents(); }
-            inspect-subagent(index) => { root.inspect-subagent(index); }
             files: root.files;
             x: parent.width - 284px; y: 0px; width: 284px; height: parent.height;
             active-task: root.connected ? root.selected-conversation : root.active-task;
             activate-task(index) => { root.select-task(index); root.dock-overlay-open = false; }
             preview-file(path) => { root.open-file(path); }
             refresh-files => { root.refresh-files(); }
+            save-workspace-binding(container, path) => { root.save-workspace-binding(container, path); }
+            thread-menu(index, action) => { root.thread-menu(index, action); }
+            thread-drop(from, to) => { root.thread-drop(from, to); }
+            rename-thread(index, title) => { root.rename-thread(index, title); }
+            archive-thread(index) => { root.archive-thread(index); }
         }
+        EdgeToggle {
+            x: parent.width - 310px; y: 0px;
+            open: true; opens-left: false;
+            toggled => { root.dock-overlay-open = false; }
+        }
+    }
+
+    if root.section == 0 && root.width < 1100px && !root.dock-overlay-open : EdgeToggle {
+        x: parent.width - 52px; y: 0px;
+        open: false; opens-left: false;
+        toggled => { root.dock-overlay-open = true; }
     }
 
     if root.section == 2 : AgentsPage {
@@ -336,10 +390,18 @@ export component MainWindow inherits Window {
         selected-name <=> root.selected-agent-name; selected-description <=> root.selected-agent-description;
         selected-model <=> root.selected-agent-model; selected-system-prompt <=> root.selected-agent-system-prompt; selected-status: root.selected-agent-status;
         selected-icon-name <=> root.selected-agent-icon-name; selected-icon-color <=> root.selected-agent-icon-color; selected-icon-glyph: root.selected-agent-icon-glyph;
+        selected-tool-names <=> root.selected-agent-tool-names; selected-preset-questions <=> root.selected-agent-preset-questions;
+        selected-sandbox-container-id <=> root.selected-agent-sandbox-container-id; selected-approval-mode <=> root.selected-agent-approval-mode;
+        selected-preview-skill <=> root.selected-agent-preview-skill; selected-silent <=> root.selected-agent-silent; selected-prefer-mother <=> root.selected-agent-prefer-mother;
+        question-draft <=> root.agent-question-draft;
+        tools: root.tools;
         select-agent(index) => { root.select-agent(index); }
         create-agent => { root.open-agent-creator(); }
         refresh => { root.refresh-agents(); }
-        save-agent(name, description, system_prompt, model, icon_name, icon_color) => { root.save-agent(name, description, system_prompt, model, icon_name, icon_color); }
+        save-agent(name, description, system_prompt, model, icon_name, icon_color, tool_names, preset_questions, sandbox_container_id, approval_mode, preview_skill, silent, prefer_mother) => { root.save-agent(name, description, system_prompt, model, icon_name, icon_color, tool_names, preset_questions, sandbox_container_id, approval_mode, preview_skill, silent, prefer_mother); }
+        toggle-tool(name) => { root.toggle-agent-tool(name); }
+        add-question => { root.add-agent-question(); }
+        remove-question(index) => { root.remove-agent-question(index); }
     }
     if root.section == 3 : ToolsPage {
         x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px;
@@ -439,11 +501,56 @@ export component MainWindow inherits Window {
             }
         }
     }
+    if root.thread-log-open : Rectangle {
+        background: #00000040;
+        TouchArea { clicked => { root.thread-log-open = false; } }
+        Rectangle {
+            width: min(900px, parent.width - 56px); height: min(680px, parent.height - 56px);
+            border-radius: 14px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+            TouchArea { }
+            VerticalLayout { padding: 20px; spacing: 12px;
+                HorizontalLayout { height: 32px;
+                    Text { text: root.thread-log-title; color: Theme.text; font-size: 18px; font-weight: 600; horizontal-stretch: 1; }
+                    Action { icon: @image-url("../assets/icons/xmark.svg"); label: "关闭"; clicked => { root.thread-log-open = false; } }
+                }
+                HorizontalLayout { height: 74px; spacing: 8px;
+                    for metric in [{label: "状态", value: root.thread-log-status}, {label: "耗时", value: root.thread-log-elapsed}, {label: "轮次", value: root.thread-log-rounds}, {label: "工具调用", value: root.thread-log-tools}, {label: "Token", value: root.thread-log-tokens}, {label: "解码速度", value: root.thread-log-speed}] : Rectangle {
+                        horizontal-stretch: 1; border-radius: 9px; background: Theme.accent-soft;
+                        VerticalLayout { padding: 10px; spacing: 3px;
+                            Text { text: metric.label; color: Theme.muted; font-size: 10px; }
+                            Text { text: metric.value; color: Theme.text; font-size: 14px; font-weight: 600; overflow: elide; }
+                        }
+                    }
+                }
+                HorizontalLayout { height: 22px;
+                    Text { text: "事件日志"; color: Theme.text; font-size: 13px; font-weight: 600; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text { text: root.thread-log-events.length + " 条（当前页）"; color: Theme.muted; font-size: 11px; }
+                }
+                ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { spacing: 6px;
+                        for event in root.thread-log-events : Rectangle {
+                            height: 88px; border-radius: 8px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+                            VerticalLayout { padding: 9px; spacing: 3px;
+                                HorizontalLayout { height: 18px;
+                                    Text { text: event.event-type; color: Theme.accent-deep; font-size: 11px; font-weight: 600; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Text { text: event.time; color: Theme.muted; font-size: 10px; overflow: elide; }
+                                }
+                                Text { height: 17px; text: event.summary; color: Theme.text; font-size: 11px; overflow: elide; }
+                                Text { height: 27px; text: event.raw; color: Theme.muted; font-size: 10px; wrap: word-wrap; overflow: elide; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     if root.dialog-open : Rectangle {
         background: #00000040;
         TouchArea { clicked => { root.dialog-open = false; } }
         Rectangle {
-            width: min(440px, parent.width - 48px); height: 246px;
+            width: min(720px, parent.width - 48px); height: min(620px, parent.height - 48px);
             border-radius: 14px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
             TouchArea { }
             VerticalLayout {

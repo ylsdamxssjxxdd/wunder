@@ -425,16 +425,10 @@ const isCompactionMarkerAssistantMessage = (message: Record<string, unknown>): b
   });
 };
 
-const isGoalMarkerAssistantMessage = (message: Record<string, unknown>): boolean =>
-  String(message.role || '').trim().toLowerCase() === 'assistant' &&
-  hasMessageContent(message.content) &&
-  (message.manual_goal_marker === true || message.manualGoalMarker === true);
-
 const shouldSkipComposerContextAssistant = (message: Record<string, unknown>): boolean =>
   Boolean(
     message.isGreeting ||
-      isCompactionMarkerAssistantMessage(message) ||
-      isGoalMarkerAssistantMessage(message)
+      isCompactionMarkerAssistantMessage(message)
   );
 
 export const resolveComposerContextUsageSource = (

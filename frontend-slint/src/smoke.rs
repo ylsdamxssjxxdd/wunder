@@ -1,6 +1,6 @@
 //! Opt-in native smoke check: validate callbacks and render with embedded fonts.
 use crate::MainWindow;
-use slint::{ComponentHandle, Model};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 pub fn run(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
@@ -39,6 +39,7 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
             title: "子智能体".into(),
             preview: "已中断 · 可复用".into(),
             time: "".into(),
+            consumed_tokens: "".into(), tool_calls: "".into(), quota_used: "".into(), runtime_status: "".into(), locked: false,
         },
     ])));
     app.set_subagents_status("保留历史，可由主智能体继续分派".into());
@@ -121,6 +122,13 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         "".into(),
         "spark".into(),
         "#f97316".into(),
+        ModelRc::new(VecModel::from(Vec::<slint::SharedString>::new())),
+        ModelRc::new(VecModel::from(Vec::<slint::SharedString>::new())),
+        1,
+        "suggest".into(),
+        false,
+        false,
+        false,
     );
     require(
         app.get_selected_agent_system_prompt() == "  测试提示词\n第二行\n",

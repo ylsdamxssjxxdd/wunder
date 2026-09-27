@@ -1039,10 +1039,6 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       return triggerMode === 'manual';
   };
 
-  ctx.isGoalMarkerMessage = (message: Record<string, unknown>): boolean => Boolean(message &&
-      String(message?.role || '') === 'assistant' &&
-      (message?.manual_goal_marker === true || message?.manualGoalMarker === true));
-
   ctx.shouldShowCompactionDivider = (message: Record<string, unknown>): boolean => {
       if (message?.manual_compaction_marker === true || message?.manualCompactionMarker === true)
           return false;

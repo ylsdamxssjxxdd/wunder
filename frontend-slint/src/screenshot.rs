@@ -24,7 +24,7 @@ thread_local! {
 
 /// Start an interactive primary-screen capture. Repeated hotkey presses while
 /// the selector is visible are ignored to keep the in-memory frame bounded.
-pub fn capture(app: slint::Weak<MainWindow>) {
+pub fn capture(app: slint::Weak<MainWindow>, hide_window: bool) {
     if OVERLAY.with(|slot| {
         slot.borrow()
             .as_ref()
@@ -35,9 +35,16 @@ pub fn capture(app: slint::Weak<MainWindow>) {
     if CAPTURE_IN_FLIGHT.swap(true, Ordering::AcqRel) {
         return;
     }
+    let hidden = hide_window && app.upgrade().is_some_and(|window| window.hide().is_ok());
     std::thread::spawn(move || {
+        if hidden {
+            std::thread::sleep(std::time::Duration::from_millis(120));
+        }
         let result = screen_capture::capture_screen();
         let _ = slint::invoke_from_event_loop(move || {
+            if hidden {
+                if let Some(window) = app.upgrade() { let _ = window.show(); }
+            }
             CAPTURE_IN_FLIGHT.store(false, Ordering::Release);
             match result {
                 Ok(frame) => show_selector(app, frame),
@@ -50,7 +57,7 @@ pub fn capture(app: slint::Weak<MainWindow>) {
 /// Capture the complete primary screen without opening the selector. This is
 /// used by the tray menu and follows the same attachment path as a region
 /// capture, so the result is immediately visible in the composer.
-pub fn capture_fullscreen(app: slint::Weak<MainWindow>) {
+pub fn capture_fullscreen(app: slint::Weak<MainWindow>, hide_window: bool) {
     if OVERLAY.with(|slot| {
         slot.borrow()
             .as_ref()
@@ -61,10 +68,17 @@ pub fn capture_fullscreen(app: slint::Weak<MainWindow>) {
     if CAPTURE_IN_FLIGHT.swap(true, Ordering::AcqRel) {
         return;
     }
+    let hidden = hide_window && app.upgrade().is_some_and(|window| window.hide().is_ok());
     std::thread::spawn(move || {
+        if hidden {
+            std::thread::sleep(std::time::Duration::from_millis(120));
+        }
         let result = screen_capture::capture_screen()
             .and_then(|frame| save_attachment(frame.width, frame.height, &frame.rgba));
         let _ = slint::invoke_from_event_loop(move || {
+            if hidden {
+                if let Some(window) = app.upgrade() { let _ = window.show(); }
+            }
             CAPTURE_IN_FLIGHT.store(false, Ordering::Release);
             match result {
                 Ok((name, data_url)) => add_attachment(&app, name, data_url, "全屏截图"),

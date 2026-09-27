@@ -62,6 +62,7 @@ impl CliRuntime {
         let launch_dir = std::env::current_dir().context("read current directory failed")?;
         let repo_root = resolve_repo_root(&launch_dir);
         let wunder_home = resolve_wunder_home_dir(&launch_dir);
+        migrate_legacy_cli_temp_root(&wunder_home)?;
         let temp_root = global
             .temp_root
             .clone()
@@ -357,7 +358,31 @@ fn ensure_runtime_dirs(
 }
 
 fn default_cli_temp_root(wunder_home: &Path) -> PathBuf {
-    wunder_home.join("cli").join("WUNDER_TEMP")
+    wunder_home.join("cli")
+}
+
+/// Older CLI builds placed mutable state one level below `cli/WUNDER_TEMP`.
+/// Merge only files that do not already exist at the canonical destination so
+/// an interrupted migration never overwrites newer state.
+fn migrate_legacy_cli_temp_root(wunder_home: &Path) -> Result<()> {
+    let target = wunder_home.join("cli");
+    let legacy = target.join("WUNDER_TEMP");
+    if !legacy.is_dir() {
+        return Ok(());
+    }
+    fs::create_dir_all(&target)?;
+    for entry in fs::read_dir(&legacy)? {
+        let entry = entry?;
+        let destination = target.join(entry.file_name());
+        if destination.exists() {
+            continue;
+        }
+        fs::rename(entry.path(), destination)?;
+    }
+    if fs::read_dir(&legacy)?.next().is_none() {
+        fs::remove_dir(&legacy)?;
+    }
+    Ok(())
 }
 
 fn set_env_path(key: &str, value: &Path) {
@@ -448,7 +473,13 @@ fn apply_cli_defaults(
         .join("wunder_cli.sqlite3")
         .to_string_lossy()
         .to_string();
-    config.workspace.root = launch_dir.to_string_lossy().to_string();
+    // Runtime-owned data belongs under the user's single Wunder home. The
+    // launch directory remains an input workspace only when explicitly
+    // selected by the caller; it is never used as a storage root.
+    config.workspace.root = wunder_home
+        .join("cli/workspace")
+        .to_string_lossy()
+        .to_string();
 
     config.channels.enabled = false;
     config.gateway.enabled = false;
@@ -467,13 +498,9 @@ fn apply_cli_defaults(
     }
 
     let user_skills = wunder_home.join("skills");
-    let project_wunder_skills = launch_dir.join(".wunder").join("skills");
-    let launch_skills = launch_dir.join("skills");
     let repo_skills = repo_assets::builtin_skills_root(repo_root);
     let mut skill_paths = vec![
         user_skills,
-        project_wunder_skills,
-        launch_skills,
         repo_skills,
     ];
     for existing in &config.skills.paths {
@@ -506,14 +533,17 @@ fn apply_cli_defaults(
     config.security.allow_paths = dedupe_strings(allow_paths);
 }
 
-fn resolve_wunder_home_dir(launch_dir: &Path) -> PathBuf {
+fn resolve_wunder_home_dir(_launch_dir: &Path) -> PathBuf {
     if let Some(path) = read_non_empty_env_path("WUNDER_HOME") {
         return path;
     }
     if let Some(home) = resolve_user_home_dir() {
         return home.join(".wunder");
     }
-    launch_dir.join(".wunder")
+    // A missing OS home is exceptional (for example a restricted service
+    // account); keep the fallback inside the platform temp directory rather
+    // than polluting the launch directory.
+    std::env::temp_dir().join("wunder-user")
 }
 
 fn resolve_user_home_dir() -> Option<PathBuf> {

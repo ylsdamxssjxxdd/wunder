@@ -22,6 +22,7 @@ export component AgentsPage inherits Rectangle {
     in property <bool> loading: false;
     in property <bool> saving: false;
     in property <[AgentCard]> agents;
+    in property <[ToolCard]> tools;
     in property <int> selected-agent: -1;
     in-out property <string> selected-name;
     in-out property <string> selected-description;
@@ -34,67 +35,73 @@ export component AgentsPage inherits Rectangle {
     callback select-agent(int);
     callback create-agent();
     callback refresh();
-    callback save-agent(string, string, string, string, string, string);
+    in-out property <[string]> selected-tool-names: [];
+    in-out property <[string]> selected-preset-questions: [];
+    in-out property <int> selected-sandbox-container-id: 1;
+    in-out property <string> selected-approval-mode: "suggest";
+    in-out property <bool> selected-preview-skill: false;
+    in-out property <bool> selected-silent: false;
+    in-out property <bool> selected-prefer-mother: false;
+    private property <string> keyword;
+    private property <string> tool-keyword;
+    private property <int> tool-tab: 0;
+    in-out property <string> question-draft;
+    callback toggle-tool(string);
+    callback add-question();
+    callback remove-question(int);
+    callback save-agent(string, string, string, string, string, string, [string], [string], int, string, bool, bool, bool);
     background: Theme.chat;
     VerticalLayout {
         spacing: 0px;
-        PageHeader { title: "专家"; subtitle: "管理可用于新会话的智能体"; icon: @image-url("../assets/icons/robot.svg"); enabled: !root.loading && !root.saving; action-label: "新建智能体"; action => { root.create-agent(); } }
         HorizontalLayout {
-            vertical-stretch: 1; padding: 16px; spacing: 14px;
-            Rectangle {
-                width: min(300px, parent.width * 0.42); border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
-                VerticalLayout {
-                    padding: 10px; spacing: 8px;
-                    HorizontalLayout { height: 26px; Text { text: "智能体列表"; color: Theme.text; font-size: 13px; font-weight: 600; } Rectangle { horizontal-stretch: 1; } Action { icon: @image-url("../assets/icons/rotate-right.svg"); enabled: !root.loading; label: "刷新"; clicked => { root.refresh(); } } }
-                    ScrollView {
-                        vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
-                        VerticalLayout { alignment: start; spacing: 4px;
+            height: 64px; padding-left: 18px; padding-right: 16px; spacing: 8px;
+            VerticalLayout { spacing: 1px; Text { height: 25px; text: "专家"; color: Theme.text; font-size: 18px; font-weight: 700; } Text { height: 17px; text: "管理可用于新会话的智能体"; color: Theme.muted; font-size: 11px; } }
+            Rectangle { horizontal-stretch: 1; }
+            Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.loading; clicked => { root.refresh(); } }
+            Action { icon: @image-url("../assets/icons/plus.svg"); label: "新建专家"; show-label: true; primary: true; enabled: !root.loading && !root.saving; clicked => { root.create-agent(); } }
+        }
+        Rectangle { height: 1px; background: Theme.border; }
+        HorizontalLayout {
+            vertical-stretch: 1; padding-top: 14px; padding-right: 16px; padding-bottom: 16px; padding-left: 16px; spacing: 14px;
+            Rectangle { width: min(340px, parent.width * 0.36); border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                VerticalLayout { padding: 12px; spacing: 10px;
+                    SearchField { icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索专家"; text <=> root.keyword; }
+                    Text { height: 19px; text: "我的专家  ·  " + root.agents.length; color: Theme.text; font-size: 12px; font-weight: 600; }
+                    ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                        VerticalLayout { alignment: start; spacing: 5px;
                             for agent[index] in root.agents : Rectangle {
-                                height: 66px; border-radius: 9px; background: root.selected-agent == index ? Theme.accent-soft : transparent;
+                                height: root.keyword == "" || agent.name.to-lowercase().starts-with(root.keyword.to-lowercase()) ? 76px : 0px; visible: self.height > 0px; border-radius: 11px; background: root.selected-agent == index ? Theme.accent : transparent;
                                 Action { width: parent.width; height: parent.height; label: agent.name; enabled: !root.saving; clicked => { root.select-agent(index); } }
-                                Avatar { x: 8px; y: 15px; mine: false; glyph: agent.icon-glyph; tone: agent.icon-tone; source: @image-url("../assets/avatar.png"); }
-                                Text { x: 50px; y: 10px; width: parent.width - 60px; height: 18px; text: agent.name; color: Theme.text; font-size: 12px; font-weight: 600; overflow: elide; }
-                                Text { x: 50px; y: 32px; width: parent.width - 60px; height: 17px; text: agent.model == "" ? "使用默认模型" : agent.model; color: Theme.muted; font-size: 10px; overflow: elide; }
+                                Avatar { x: 10px; y: 17px; mine: false; glyph: agent.icon-glyph; tone: agent.icon-tone; source: @image-url("../assets/avatar.png"); }
+                                Text { x: 54px; y: 10px; width: parent.width - 65px; height: 20px; text: agent.name; color: root.selected-agent == index ? white : Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
+                                Text { x: 54px; y: 33px; width: parent.width - 65px; height: 16px; text: (agent.model == "" ? "默认模型" : agent.model) + "  ·  " + agent.tool-count + " 项工具"; color: root.selected-agent == index ? #ffffffe0 : Theme.muted; font-size: 10px; overflow: elide; }
+                                Text { x: 54px; y: 52px; width: parent.width - 65px; height: 14px; text: agent.status == "active" ? "可用" : agent.status; color: root.selected-agent == index ? #ffffffe0 : Theme.muted; font-size: 10px; overflow: elide; }
                             }
-                            if root.agents.length == 0 : Text { height: 48px; text: root.loading ? "正在加载智能体…" : "未加载到智能体"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
+                            if root.agents.length == 0 : Text { height: 48px; text: root.loading ? "正在加载专家…" : "未加载到专家"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
                         }
                     }
                 }
             }
-            Rectangle {
-                horizontal-stretch: 1; max-width: 100000px; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+            Rectangle { horizontal-stretch: 1; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
                 ScrollView { horizontal-scrollbar-policy: always-off;
-                    VerticalLayout { padding: 20px; spacing: 12px; alignment: start;
-                        HorizontalLayout { height: 52px; spacing: 12px;
-                            Avatar { width: 48px; height: 48px; glyph: root.selected-icon-glyph; tone: 1; }
-                            VerticalLayout { spacing: 2px; Text { height: 24px; text: "专家配置"; color: Theme.text; font-size: 18px; font-weight: 700; } Text { height: 18px; text: "头像：" + root.selected-icon-name + "  ·  " + root.selected-icon-color; color: Theme.muted; font-size: 11px; } }
-                        }
-                        HorizontalLayout { height: 34px; spacing: 8px;
-                            Text { width: 40px; text: "头像"; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
-                            for icon in ["spark", "robot", "leaf", "heart", "bolt", "book"] : Action { width: 34px; icon: @image-url("../assets/icons/robot.svg"); label: icon; selected: root.selected-icon-name == icon; clicked => { root.selected-icon-name = icon; } }
-                            Rectangle { horizontal-stretch: 1; }
-                        }
-                        HorizontalLayout { height: 34px; spacing: 8px;
-                            Text { width: 40px; text: "颜色"; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
-                            for color in ["#f97316", "#3b82f6", "#10b981", "#8b5cf6", "#ec4899", "#64748b"] : Rectangle { width: 24px; height: 24px; border-radius: 12px; background: color == "#f97316" ? #f97316 : color == "#3b82f6" ? #3b82f6 : color == "#10b981" ? #10b981 : color == "#8b5cf6" ? #8b5cf6 : color == "#ec4899" ? #ec4899 : #64748b; border-width: root.selected-icon-color == color ? 3px : 0px; border-color: Theme.text; TouchArea { clicked => { root.selected-icon-color = color; } } }
-                            Rectangle { horizontal-stretch: 1; }
-                        }
-                        FormField { label: "名称"; placeholder: "智能体名称"; text <=> root.selected-name; read-only: root.saving; }
-                        FormField { label: "描述"; placeholder: "简要描述用途"; text <=> root.selected-description; read-only: root.saving; }
-                        FormField { label: "模型配置键（留空继承默认）"; placeholder: "在系统设置中查看模型配置键"; text <=> root.selected-model; read-only: root.saving || root.agents[root.selected-agent].id == "__default__"; }
+                    VerticalLayout { padding-top: 18px; padding-right: 22px; padding-bottom: 24px; padding-left: 22px; spacing: 13px; alignment: start;
+                        HorizontalLayout { height: 44px; spacing: 10px; Avatar { width: 42px; height: 42px; glyph: root.selected-icon-glyph; tone: 1; } VerticalLayout { spacing: 1px; Text { height: 23px; text: root.selected-name == "" ? "专家设置" : root.selected-name; color: Theme.text; font-size: 17px; font-weight: 700; } Text { height: 17px; text: root.selected-status == "" ? "编辑专家能力和运行策略" : root.selected-status; color: Theme.muted; font-size: 11px; } } Rectangle { horizontal-stretch: 1; } }
+                        FormField { label: "名称"; placeholder: "专家名称"; text <=> root.selected-name; read-only: root.saving; }
+                        FormField { label: "问候语 / 描述"; placeholder: "告诉用户这个专家能做什么"; text <=> root.selected-description; read-only: root.saving; }
                         Text { height: 18px; text: "系统提示词"; color: Theme.muted; font-size: 11px; }
-                        TextEditBase { height: 170px; text <=> root.selected-system-prompt;
-                            read-only: root.saving; wrap: word-wrap; scroll-view-padding: 10px; foreground: Theme.text;
-                            font-size: 13px; background: Theme.panel; border-width: 1px; border-color: Theme.border; border-radius: 8px;
-                            selection-background-color: Theme.accent-soft; selection-foreground-color: Theme.text;
-                        }
-                        Text { text: "提示词更改用于新线程；已开始的线程保持原有提示词。默认专家的模型在系统设置中调整。"; color: Theme.muted; font-size: 11px; wrap: word-wrap; }
-                        HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; }
-                            Action { width: 92px; icon: @image-url("../assets/icons/check.svg"); label: root.saving ? "保存中" : "保存配置"; show-label: true; primary: true;
-                                enabled: !root.saving && !root.loading && root.selected-agent >= 0 && root.selected-name != "";
-                                clicked => { root.save-agent(root.selected-name, root.selected-description, root.selected-system-prompt, root.selected-model, root.selected-icon-name, root.selected-icon-color); }
-                            }
-                        }
+                        TextEditBase { height: 130px; text <=> root.selected-system-prompt; read-only: root.saving; wrap: word-wrap; scroll-view-padding: 10px; foreground: Theme.text; font-size: 12px; background: Theme.panel; border-width: 1px; border-color: Theme.border; border-radius: 8px; selection-background-color: Theme.accent-soft; selection-foreground-color: Theme.text; }
+                        Rectangle { height: 1px; background: Theme.border; }
+                        HorizontalLayout { height: 28px; Text { text: "工具能力"; color: Theme.text; font-size: 14px; font-weight: 600; } Rectangle { horizontal-stretch: 1; } Text { text: root.tools.length + " 项可用"; color: Theme.muted; font-size: 11px; } }
+                        HorizontalLayout { height: 32px; spacing: 7px; SearchField { horizontal-stretch: 1; icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索工具"; text <=> root.tool-keyword; } for category in ["全部", "内置工具", "MCP 工具", "技能"] : Action { width: 58px; label: category; show-label: true; selected: root.tool-tab == (category == "全部" ? 0 : category == "内置工具" ? 1 : category == "MCP 工具" ? 2 : 3); clicked => { root.tool-tab = category == "全部" ? 0 : category == "内置工具" ? 1 : category == "MCP 工具" ? 2 : 3; } } }
+                        VerticalLayout { spacing: 5px; for tool in root.tools : Rectangle { visible: (root.tool-keyword == "" || tool.name.to-lowercase().starts-with(root.tool-keyword.to-lowercase())) && (root.tool-tab == 0 || (root.tool-tab == 1 && tool.category == "内置工具") || (root.tool-tab == 2 && tool.category == "MCP 工具") || (root.tool-tab == 3 && tool.category == "技能")); height: self.visible ? 48px : 0px; border-radius: 8px; background: tool.enabled ? Theme.accent-soft : Theme.panel; border-width: 1px; border-color: tool.enabled ? Theme.accent : Theme.border; Action { width: parent.width; height: parent.height; label: tool.name; enabled: !root.saving; clicked => { root.toggle-tool(tool.name); } } Text { x: 12px; y: 6px; width: parent.width - 56px; height: 17px; text: tool.name; color: Theme.text; font-size: 11px; font-weight: 600; overflow: elide; } Text { x: 12px; y: 25px; width: parent.width - 56px; height: 15px; text: tool.description; color: Theme.muted; font-size: 10px; overflow: elide; } Text { x: parent.width - 38px; y: 13px; width: 24px; height: 20px; text: tool.enabled ? "✓" : "＋"; color: tool.enabled ? Theme.accent-deep : Theme.muted; font-size: 14px; horizontal-alignment: center; } } }
+                        HorizontalLayout { height: 30px; spacing: 8px; Text { text: "运行策略"; color: Theme.text; font-size: 14px; font-weight: 600; } Rectangle { horizontal-stretch: 1; } }
+                        HorizontalLayout { height: 60px; spacing: 8px; FormField { horizontal-stretch: 1; label: "模型配置键"; placeholder: "留空继承默认"; text <=> root.selected-model; read-only: root.saving; } Rectangle { width: 122px; } }
+                        HorizontalLayout { height: 62px; spacing: 8px; Rectangle { horizontal-stretch: 1; background: Theme.panel; border-radius: 8px; VerticalLayout { padding: 8px; Text { text: "工作目录容器"; color: Theme.muted; font-size: 10px; } Text { text: "容器 #" + root.selected-sandbox-container-id; color: Theme.text; font-size: 12px; font-weight: 600; } } TouchArea { clicked => { root.selected-sandbox-container-id = root.selected-sandbox-container-id >= 10 ? 1 : root.selected-sandbox-container-id + 1; } } } Rectangle { horizontal-stretch: 1; background: Theme.panel; border-radius: 8px; VerticalLayout { padding: 8px; Text { text: "权限模式"; color: Theme.muted; font-size: 10px; } Text { text: root.selected-approval-mode; color: Theme.text; font-size: 12px; font-weight: 600; } } TouchArea { clicked => { root.selected-approval-mode = root.selected-approval-mode == "suggest" ? "auto_edit" : root.selected-approval-mode == "auto_edit" ? "full_auto" : "suggest"; } } } }
+                        HorizontalLayout { height: 58px; spacing: 8px; for item in [{title: "预览技能", value: root.selected-preview-skill}, {title: "静默运行", value: root.selected-silent}, {title: "偏好母智能体", value: root.selected-prefer-mother}] : Rectangle { horizontal-stretch: 1; background: Theme.panel; border-radius: 8px; VerticalLayout { padding: 8px; Text { text: item.title; color: Theme.muted; font-size: 10px; } Text { text: item.value ? "已开启" : "已关闭"; color: item.value ? Theme.accent-deep : Theme.muted; font-size: 11px; } } TouchArea { clicked => { if item.title == "预览技能" { root.selected-preview-skill = !root.selected-preview-skill; } else if item.title == "静默运行" { root.selected-silent = !root.selected-silent; } else { root.selected-prefer-mother = !root.selected-prefer-mother; } } } } }
+                        Text { height: 18px; text: "预设问题"; color: Theme.text; font-size: 14px; font-weight: 600; }
+                        VerticalLayout { spacing: 5px; for question[index] in root.selected-preset-questions : Rectangle { height: 34px; border-radius: 7px; background: Theme.panel; Text { x: 10px; width: parent.width - 42px; height: parent.height; text: question; color: Theme.text; font-size: 11px; vertical-alignment: center; overflow: elide; } Action { x: parent.width - 30px; width: 26px; height: 26px; y: 4px; label: "×"; clicked => { root.remove-question(index); } } } }
+                        HorizontalLayout { height: 32px; spacing: 6px; TextInput { horizontal-stretch: 1; text <=> root.question-draft; color: Theme.text; font-size: 11px; } Action { width: 58px; label: "添加"; show-label: true; enabled: root.question-draft != ""; clicked => { root.add-question(); } } }
+                        HorizontalLayout { height: 34px; Rectangle { horizontal-stretch: 1; } Action { label: root.saving ? "保存中" : "保存设置"; show-label: true; primary: true; enabled: !root.saving && !root.loading && root.selected-agent >= 0 && root.selected-name != ""; clicked => { root.save-agent(root.selected-name, root.selected-description, root.selected-system-prompt, root.selected-model, root.selected-icon-name, root.selected-icon-color, root.selected-tool-names, root.selected-preset-questions, root.selected-sandbox-container-id, root.selected-approval-mode, root.selected-preview-skill, root.selected-silent, root.selected-prefer-mother); } } }
                     }
                 }
             }

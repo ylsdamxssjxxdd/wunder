@@ -17,11 +17,11 @@ pub struct DesktopArgs {
     #[arg(long, default_value_t = 18123)]
     pub port: u16,
 
-    /// Workspace root. Defaults to <app_dir>/WUNDER_WORK.
+    /// Workspace root. Defaults to <user_home>/.wunder/desktop/workspace.
     #[arg(long)]
     pub workspace: Option<PathBuf>,
 
-    /// Runtime temp root. Defaults to <app_dir>/WUNDER_TEMPD.
+    /// Runtime data root. Defaults to <user_home>/.wunder/desktop.
     #[arg(long)]
     pub temp_root: Option<PathBuf>,
 

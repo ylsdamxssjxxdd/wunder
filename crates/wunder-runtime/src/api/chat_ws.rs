@@ -1034,11 +1034,11 @@ async fn handle_ws(
                             &session_id,
                             command,
                             session_record.agent_id.as_deref(),
-                            None,
+                            crate::user_store::UserStore::is_admin(&user),
                         )
                         .await;
                         match result {
-                            Ok((goal_record, continuation)) => {
+                            Ok((goal_record, continuation, command_user_round)) => {
                                 let _ = crate::api::ws_helpers::send_ws_message(
                                     &ws_tx,
                                     "goal",
@@ -1046,7 +1046,8 @@ async fn handle_ws(
                                     Some(json!({
                                         "data": {
                                             "goal": goal_record.as_ref().map(goal::goal_payload),
-                                            "continuation": continuation
+                                            "continuation": continuation,
+                                            "user_round": command_user_round
                                         }
                                     })),
                                 )

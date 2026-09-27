@@ -462,11 +462,7 @@ const isSpecialAssistantProjection = (
     display.manual_compaction_marker === true ||
       display.manualCompactionMarker === true ||
       raw.manual_compaction_marker === true ||
-      raw.manualCompactionMarker === true ||
-      display.manual_goal_marker === true ||
-      display.manualGoalMarker === true ||
-      raw.manual_goal_marker === true ||
-      raw.manualGoalMarker === true
+      raw.manualCompactionMarker === true
   );
 };
 

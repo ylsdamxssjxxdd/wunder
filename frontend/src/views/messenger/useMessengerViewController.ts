@@ -50,7 +50,6 @@ import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHos
 import MessengerToolsSection from '@/views/messenger/sections/MessengerToolsSection.vue';
 import { useMiddlePaneOverlayPreview } from '@/views/messenger/middlePaneOverlayPreview';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
-import MessageGoalDivider from '@/components/chat/MessageGoalDivider.vue';
 import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import {
   InquiryPanel,
@@ -381,7 +380,6 @@ export function useMessengerViewController(): Record<string, any> {
     loadUserToolsCatalogCache,
     loadUserToolsSummaryCache,
     MessageCompactionDivider,
-    MessageGoalDivider,
     MessageFeedbackActions,
     MessageKnowledgeCitation,
     MessageSubagentPanel,

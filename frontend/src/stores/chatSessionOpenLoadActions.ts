@@ -265,8 +265,9 @@ export const chatSessionOpenLoadActions = {
         user_turn_id: localTurnId,
         ...(localModelTurnId ? { model_turn_id: localModelTurnId } : {})
       });
-      if (options.manualGoalMarker === true && normalizedRole === 'assistant') {
-        message.manual_goal_marker = true;
+      if (options.goalCommand === true && normalizedRole === 'user') {
+        message.goal_command = true;
+        message.goalCommand = true;
       }
       if (options.manualCompactionCommand === true && normalizedRole === 'user') {
         message.manual_compaction_command = true;
@@ -284,7 +285,7 @@ export const chatSessionOpenLoadActions = {
           modelTurnId: localModelTurnId,
           display: {
             client_message_id: localId,
-            ...(options.manualGoalMarker === true ? { manual_goal_marker: true, manualGoalMarker: true } : {}),
+            ...(options.goalCommand === true ? { goal_command: true, goalCommand: true } : {}),
             ...(options.manualCompactionCommand === true ? { manual_compaction_command: true } : {})
           }
         });
@@ -883,6 +884,25 @@ export const chatSessionOpenLoadActions = {
             (message) => message === durableCompactCommand ||
               !(message?.role === 'user' && message?.manual_compaction_command === true)
           );
+        }
+        // The `/goal` command bubble is optimistically rendered before the
+        // async goal request. Once the server transcript carries the durable
+        // row for the same round, drop the temporary local duplicate.
+        const durableGoalCommandRounds = new Set(
+          nextMessages
+            .filter((message) => message?.role === 'user' &&
+              message?.goal_command === true &&
+              (message?.history_id || String(message?.message_id || '').startsWith('history:')))
+            .map((message) => Number(message?.user_round))
+            .filter((round) => Number.isFinite(round) && round > 0)
+        );
+        if (durableGoalCommandRounds.size > 0) {
+          nextMessages = nextMessages.filter((message) => {
+            if (!(message?.role === 'user' && message?.goal_command === true)) return true;
+            if (message?.history_id || String(message?.message_id || '').startsWith('history:')) return true;
+            const round = Number(message?.user_round);
+            return !(Number.isFinite(round) && durableGoalCommandRounds.has(round));
+          });
         }
         if (!remoteRunning) {
           clearCompletedAssistantStreamingState(nextMessages);

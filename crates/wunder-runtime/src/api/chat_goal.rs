@@ -47,25 +47,21 @@ async fn upsert_session_goal(
     let resolved = resolve_user(&state, &headers, None).await?;
     let session_id = normalize_session_id(session_id)?;
     let session = ensure_session_owner(&state, &resolved.user.user_id, &session_id)?;
-    let allowed_goal_tools = state
-        .kernel
-        .orchestrator
-        .resolve_session_effective_tool_names(&resolved.user, &session)
-        .await;
     let command = goal_command_from_payload(payload)?;
-    let (goal, continuation) = apply_goal_command(
+    let (goal, continuation, command_user_round) = apply_goal_command(
         &state,
         &resolved.user.user_id,
         &session_id,
         command,
         session.agent_id.as_deref(),
-        Some(allowed_goal_tools),
+        crate::user_store::UserStore::is_admin(&resolved.user),
     )
     .await?;
     Ok(Json(json!({
         "data": {
             "goal": goal.as_ref().map(goal::goal_payload),
-            "continuation": continuation
+            "continuation": continuation,
+            "user_round": command_user_round
         }
     }))
     .into_response())
@@ -93,38 +89,24 @@ pub(crate) async fn apply_goal_command(
     session_id: &str,
     command: GoalCommand,
     agent_id: Option<&str>,
-    precomputed_tool_names: Option<Vec<String>>,
+    is_admin: bool,
 ) -> Result<
     (
         Option<crate::storage::SessionGoalRecord>,
         GoalContinuationPlan,
+        Option<i64>,
     ),
     Response,
 > {
     let session = goal::ensure_session(state.storage.clone(), user_id, session_id, agent_id)
         .await
         .map_err(bad_request)?;
-    if matches!(command, GoalCommand::Set { .. } | GoalCommand::Resume) {
-        let configured = match precomputed_tool_names {
-            Some(names) => names,
-            None => {
-                let user = state
-                    .user_store
-                    .get_user_by_id(user_id)
-                    .map_err(bad_request)?
-                    .ok_or_else(|| {
-                        error_response(StatusCode::NOT_FOUND, i18n::t("error.permission_denied"))
-                    })?;
-                state
-                    .kernel
-                    .orchestrator
-                    .resolve_session_effective_tool_names(&user, &session)
-                    .await
-            }
-        };
-        ensure_goal_tool_enabled(&configured)?;
-    }
     let mut should_schedule = false;
+    let command_echo = match &command {
+        GoalCommand::Set { objective, .. } => Some(format!("/goal {objective}")),
+        GoalCommand::Resume => Some("/goal resume".to_string()),
+        _ => None,
+    };
     let record = match command {
         GoalCommand::Show => goal::get_goal(state.storage.clone(), user_id, session_id)
             .await
@@ -172,6 +154,27 @@ pub(crate) async fn apply_goal_command(
             ));
         }
     };
+    // Persist the /goal command as a durable user round in the transcript so
+    // the chat bubble survives reloads, mirroring the /compact command flow.
+    let command_user_round = if let Some(echo) = command_echo.as_deref() {
+        let user_round = state.monitor.register(
+            &session.session_id,
+            user_id,
+            session.agent_id.as_deref().unwrap_or(""),
+            echo,
+            is_admin,
+            false,
+        );
+        state.kernel.orchestrator.append_goal_command_message(
+            user_id,
+            &session.session_id,
+            echo,
+            user_round,
+        );
+        Some(user_round)
+    } else {
+        None
+    };
     let continuation = if should_schedule {
         schedule_goal_continuation(state, user_id, session_id).await
     } else {
@@ -182,7 +185,7 @@ pub(crate) async fn apply_goal_command(
             goal_id: record.as_ref().map(|item| item.goal_id.clone()),
         }
     };
-    Ok((record, continuation))
+    Ok((record, continuation, command_user_round))
 }
 
 pub(crate) async fn schedule_goal_continuation(
@@ -270,16 +273,6 @@ fn goal_command_from_payload(payload: GoalUpsertPayload) -> Result<GoalCommand, 
         objective,
         token_budget: payload.token_budget.filter(|value| *value > 0),
     })
-}
-
-fn ensure_goal_tool_enabled(configured: &[String]) -> Result<(), Response> {
-    if goal::tool_names_contain_goal_tool(&configured) {
-        return Ok(());
-    }
-    Err(error_response(
-        StatusCode::BAD_REQUEST,
-        i18n::t("error.goal_tool_required"),
-    ))
 }
 
 fn ensure_session_owner(

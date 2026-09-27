@@ -24,6 +24,12 @@ struct Active {
     model: Rc<VecModel<ChatMessage>>,
     state: String,
     round: i64,
+    stats_duration: String,
+    stats_speed: String,
+    stats_context: String,
+    stats_quota: String,
+    stats_tools: String,
+    stats_credits: String,
 }
 
 struct State {
@@ -134,6 +140,11 @@ fn bind_refresh(app: &MainWindow, state: Rc<RefCell<State>>) {
                                 id: item.id.into(),
                                 title: item.title.into(),
                                 time: format_time(item.updated_at).into(),
+                                consumed_tokens: format_count_i64(item.consumed_tokens).into(),
+                                tool_calls: item.tool_calls.to_string().into(),
+                                quota_used: format_count_i64(item.quota_used).into(),
+                                runtime_status: item.runtime_status.into(),
+                                locked: item.locked,
                                 ..Default::default()
                             })
                             .collect::<Vec<_>>();
@@ -239,6 +250,13 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                                     mine: message.mine,
                                     time: format_time(message.created_at).into(),
                                     state: message.state.into(),
+                                    stats_status: message.stats_status.into(),
+                                    stats_duration: message.stats_duration.into(),
+                                    stats_speed: message.stats_speed.into(),
+                                    stats_context: message.stats_context.into(),
+                                    stats_quota: message.stats_quota.into(),
+                                    stats_tools: message.stats_tools.into(),
+                                    stats_credits: message.stats_credits.into(),
                                     blocks: crate::message_blocks::from_text(&message.text),
                                     avatar_glyph: agent_avatar_glyph(&app),
                                     avatar_tone: agent_avatar_tone(&app),
@@ -284,6 +302,11 @@ fn bind_new_thread(app: &MainWindow, state: Rc<RefCell<State>>) {
                             id: session.id.clone().into(),
                             title: session.title.into(),
                             time: format_time(session.updated_at).into(),
+                            consumed_tokens: format_count_i64(session.consumed_tokens).into(),
+                            tool_calls: session.tool_calls.to_string().into(),
+                            quota_used: format_count_i64(session.quota_used).into(),
+                            runtime_status: session.runtime_status.into(),
+                            locked: session.locked,
                             ..Default::default()
                         };
                         let mut rows = app.get_conversations().iter().collect::<Vec<_>>();
@@ -380,6 +403,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         app.set_stream_updates(0);
         app.set_stream_max_ui_ms(0.0);
         app.set_stream_max_backlog(0);
+        app.set_context_usage(0.0);
         state.borrow_mut().active = Some(Active {
             stream,
             session,
@@ -388,6 +412,12 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             model,
             state: "正在生成…".into(),
             round: 0,
+            stats_duration: String::new(),
+            stats_speed: String::new(),
+            stats_context: String::new(),
+            stats_quota: String::new(),
+            stats_tools: String::new(),
+            stats_credits: String::new(),
         });
         start_timer(&app, state.clone());
     });
@@ -395,8 +425,12 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
 
 fn bind_attachments(app: &MainWindow) {
     let weak = app.as_weak();
-    app.on_capture_screenshot(move || {
-        crate::screenshot::capture(weak.clone());
+    app.on_capture_screenshot(move |hide_window, region| {
+        if region {
+            crate::screenshot::capture(weak.clone(), hide_window);
+        } else {
+            crate::screenshot::capture_fullscreen(weak.clone(), hide_window);
+        }
     });
     let weak = app.as_weak();
     app.on_remove_attachment(move |index| {
@@ -593,6 +627,10 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 };
                 match event {
                     NativeChatEvent::Event(event) => {
+                        update_active_stats(active, &event);
+                        if let Some(ratio) = context_usage_ratio(&event) {
+                            app.set_context_usage(ratio);
+                        }
                         if event["event"]
                             .as_str()
                             .is_some_and(|kind| kind.starts_with("subagent_"))
@@ -621,12 +659,13 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                     break;
                 }
             }
-            if dirty || done {
+                if dirty || done {
                 // Flush once per frame, never once per token.
                 active.blocks.flush();
                 app.set_stream_bytes(active.blocks.raw.len().min(i32::MAX as usize) as i32);
                 app.set_stream_updates(app.get_stream_updates().wrapping_add(1));
                 app.set_status(active.state.as_str().into());
+                update_message_stats_row(active);
                 if app.get_follow_output() {
                     app.set_scroll_revision(app.get_scroll_revision().wrapping_add(1));
                 }
@@ -639,6 +678,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 message.text = active.blocks.raw.as_str().into();
                 message.state = active.state.as_str().into();
                 active.model.set_row_data(active.row, message);
+                update_message_stats_row(active);
                 app.set_busy(false);
                 app.set_stopping(false);
                 app.set_status(active.state.as_str().into());
@@ -722,10 +762,113 @@ fn apply_event(active: &mut Active, event: &Value) -> Result<bool, String> {
     Ok(true)
 }
 
+fn event_data(event: &Value) -> &Value {
+    let envelope = event.get("data").unwrap_or(event);
+    envelope.get("data").unwrap_or(envelope)
+}
+
+fn stat_number(value: &Value, keys: &[&str]) -> Option<f64> {
+    keys.iter().find_map(|key| value.get(*key).and_then(Value::as_f64))
+}
+
+fn stats_source(data: &Value) -> Vec<&Value> {
+    let mut sources = vec![data];
+    for key in ["stats", "usage", "round_usage", "context_usage"] {
+        if let Some(value) = data.get(key) { sources.push(value); }
+    }
+    sources
+}
+
+fn update_active_stats(active: &mut Active, event: &Value) {
+    let data = event_data(event);
+    let sources = stats_source(data);
+    let number = |keys: &[&str]| sources.iter().find_map(|source| stat_number(source, keys));
+    if let Some(seconds) = number(&["interaction_duration_s", "duration_s", "elapsed_s"]).filter(|value| *value > 0.0) {
+        active.stats_duration = format_duration_value(seconds);
+    }
+    if let Some(speed) = number(&["visible_decode_speed_tps", "decode_speed_tps"]).filter(|value| *value > 0.0) {
+        active.stats_speed = format!("{speed:.1}/s");
+    }
+    if let Some(tokens) = number(&["contextTokens", "context_occupancy_tokens", "context_tokens"]).filter(|value| *value >= 0.0) {
+        active.stats_context = format_count_value(tokens);
+    }
+    if let Some(tokens) = number(&["request_consumed_tokens", "consumed_tokens", "total_tokens"]).filter(|value| *value > 0.0) {
+        active.stats_quota = format_count_value(tokens);
+    }
+    if let Some(calls) = number(&["toolCalls", "tool_calls"]).filter(|value| *value >= 0.0) {
+        active.stats_tools = format_count_value(calls);
+    }
+    if let Some(credits) = number(&["account_credits_consumed", "creditsConsumed"]).filter(|value| *value >= 0.0) {
+        active.stats_credits = format_count_value(credits);
+    }
+}
+
+fn update_message_stats_row(active: &mut Active) {
+    let mut message = active.model.row_data(active.row).unwrap_or_default();
+    message.stats_status = active.state.as_str().into();
+    message.stats_duration = active.stats_duration.as_str().into();
+    message.stats_speed = active.stats_speed.as_str().into();
+    message.stats_context = active.stats_context.as_str().into();
+    message.stats_quota = active.stats_quota.as_str().into();
+    message.stats_tools = active.stats_tools.as_str().into();
+    message.stats_credits = active.stats_credits.as_str().into();
+    active.model.set_row_data(active.row, message);
+}
+
+fn format_count_value(value: f64) -> String {
+    if value >= 1_000_000.0 { format!("{:.1}m", value / 1_000_000.0) }
+    else if value >= 1_000.0 { format!("{:.1}k", value / 1_000.0) }
+    else { format!("{:.0}", value) }
+}
+
+fn format_duration_value(seconds: f64) -> String {
+    if seconds < 60.0 { format!("{seconds:.1}s") }
+    else { format!("{}m {:.0}s", (seconds / 60.0).floor(), seconds % 60.0) }
+}
+
+/// Read the latest context occupancy from a runtime event without coupling
+/// the UI to one provider's usage payload shape. The runtime may report a
+/// direct ratio or token counts under the event data/context_usage object.
+fn context_usage_ratio(event: &Value) -> Option<f32> {
+    let envelope = event.get("data").unwrap_or(event);
+    let data = envelope.get("data").unwrap_or(envelope);
+    let usage = data.get("context_usage").unwrap_or(data);
+    if let Some(ratio) = usage
+        .get("ratio")
+        .or_else(|| usage.get("occupancy_ratio"))
+        .and_then(Value::as_f64)
+    {
+        if ratio.is_finite() {
+            return Some(ratio.clamp(0.0, 1.0) as f32);
+        }
+    }
+    let used = usage
+        .get("context_tokens")
+        .or_else(|| usage.get("context_occupancy_tokens"))
+        .or_else(|| usage.get("prompt_tokens"))
+        .and_then(Value::as_f64)?;
+    let total = usage
+        .get("context_window_tokens")
+        .or_else(|| usage.get("context_limit"))
+        .or_else(|| usage.get("max_context_tokens"))
+        .and_then(Value::as_f64)?;
+    if used.is_finite() && total.is_finite() && total > 0.0 {
+        Some((used / total).clamp(0.0, 1.0) as f32)
+    } else {
+        None
+    }
+}
+
 fn format_time(value: f64) -> String {
     if value > 0.0 {
         "刚刚".to_string()
     } else {
         String::new()
     }
+}
+
+fn format_count_i64(value: i64) -> String {
+    if value >= 1_000_000 { format!("{:.1}m", value as f64 / 1_000_000.0) }
+    else if value >= 1_000 { format!("{:.1}k", value as f64 / 1_000.0) }
+    else { value.max(0).to_string() }
 }

@@ -1515,6 +1515,34 @@ impl Orchestrator {
         );
     }
 
+    /// Persist a `/goal ...` command as a durable user round so the chat
+    /// bubble survives reloads, mirroring the manual compaction command flow.
+    /// The row stays visible to the user; history replay rewords it for the
+    /// model (see history.rs) so the raw command is not replayed verbatim.
+    pub(crate) fn append_goal_command_message(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        command_text: &str,
+        user_round: i64,
+    ) {
+        self.append_chat(
+            user_id,
+            session_id,
+            "user",
+            Some(&Value::String(command_text.to_string())),
+            None,
+            Some(&json!({
+                "type": "goal_command",
+                "goal_command": true,
+            })),
+            None,
+            None,
+            None,
+            RoundInfo::user_only(user_round.max(1)),
+        );
+    }
+
     fn append_manual_compaction_result(
         &self,
         user_id: &str,

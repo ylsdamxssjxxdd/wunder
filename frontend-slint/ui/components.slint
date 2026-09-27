@@ -51,6 +51,39 @@ export component Action inherits Rectangle {
         clicked => { focus.focus(); root.clicked(); }
     }
 }
+
+// The web client exposes sidebar controls only when the pointer reaches the
+// divider. Keep the hitbox transparent so the control does not take space in
+// the layout, and reveal the circular affordance while it is hovered.
+export component EdgeToggle inherits Rectangle {
+    in property <bool> open: false;
+    in property <bool> opens-left: false;
+    callback toggled();
+    width: 52px;
+    height: 100%;
+    background: transparent;
+    accessible-role: button;
+    accessible-label: root.open ? "收起侧栏" : "展开侧栏";
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.toggled(); }
+    }
+    if touch.has-hover : Rectangle {
+        x: 11px; y: (root.height - 48px) / 2; width: 30px; height: 48px;
+        background: transparent;
+        Image {
+            x: 9px; y: 18px; width: 12px; height: 12px;
+            source: root.opens-left
+                ? (root.open ? @image-url("../assets/icons/chevron-left.svg") : @image-url("../assets/icons/chevron-right.svg"))
+                : (root.open ? @image-url("../assets/icons/chevron-right.svg") : @image-url("../assets/icons/chevron-left.svg"));
+            image-fit: contain; colorize: Theme.muted;
+        }
+    }
+}
+
+export component TerminalAction inherits Action {
+    icon: @image-url("../assets/icons/terminal.svg");
+}
 export component RailButton inherits Rectangle {
     in property <image> icon;
     in property <string> label;

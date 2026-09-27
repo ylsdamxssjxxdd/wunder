@@ -4,7 +4,7 @@ export global Theme {
     out property <color> muted: #8d6248;
     out property <color> panel: #fffaf6;
     out property <color> surface: #ffffff;
-    out property <color> border: #efdfd3;
+    out property <color> border: #f0dfd2;
     out property <color> accent: #ff9448;
     out property <color> accent-deep: #e5792e;
     out property <color> accent-soft: #fff0e3;
@@ -12,19 +12,61 @@ export global Theme {
     out property <color> mine: #ffe9d7;
     out property <brush> rail: @linear-gradient(180deg, #ffb26f 0%, #e5792e 100%);
     out property <brush> middle: @linear-gradient(180deg, #fffaf6 0%, #fff6ef 100%);
-    out property <brush> chat: @linear-gradient(150deg, #ffecd9 0%, #fffbf8 32%, #fff2e8 100%);
+    out property <brush> chat: @linear-gradient(180deg, #fffbf8 0%, #fff2e8 100%);
     out property <brush> dock: @linear-gradient(180deg, #fff8f3 0%, #fff0e5 100%);
     out property <brush> composer: @linear-gradient(180deg, #fff8f3 0%, #fff2e9 100%);
 }
-export struct Conversation { id: string, title: string, preview: string, time: string }
+export struct Conversation { id: string, title: string, preview: string, time: string, consumed-tokens: string, tool-calls: string, quota-used: string, runtime-status: string, locked: bool }
+export struct ThreadLogEvent { event-type: string, time: string, summary: string, raw: string }
 export struct TextBlock { text: string, kind: int }
-export struct ChatMessage { text: string, mine: bool, time: string, workflow: bool, state: string, blocks: [TextBlock], avatar-glyph: string, avatar-tone: int }
+// Message statistics are kept as already formatted strings. Formatting stays
+// in the native projection so the Slint thread only lays out a small, stable
+// row while a stream is active.
+export struct ChatMessage {
+    text: string,
+    mine: bool,
+    time: string,
+    workflow: bool,
+    state: string,
+    stats-status: string,
+    stats-duration: string,
+    stats-speed: string,
+    stats-context: string,
+    stats-quota: string,
+    stats-tools: string,
+    stats-credits: string,
+    blocks: [TextBlock],
+    avatar-glyph: string,
+    avatar-tone: int
+}
 // Screenshot attachment state remains in the UI projection until send. The
 // data URL is forwarded through the native Rust façade without an HTTP hop.
 export struct ChatAttachment { name: string, mime-type: string, data-url: string }
 export struct FileCard { name: string, path: string, entry-type: string, size: string }
-export struct AgentCard { id: string, name: string, description: string, model: string, system-prompt: string, status: string, icon-name: string, icon-color: string, icon-glyph: string, icon-tone: int }
-export struct ToolCard { name: string, description: string, category: string }
+export struct AgentCard {
+    id: string,
+    name: string,
+    description: string,
+    model: string,
+    system-prompt: string,
+    status: string,
+    icon-name: string,
+    icon-color: string,
+    icon-glyph: string,
+    icon-tone: int,
+    tool-count: int,
+    tool-names: [string],
+    preset-questions: [string],
+    sandbox-container-id: int,
+    approval-mode: string,
+    preview-skill: bool,
+    silent: bool,
+    prefer-mother: bool,
+    preset-question-count: int,
+    is-shared: bool,
+    group-name: string
+}
+export struct ToolCard { name: string, description: string, category: string, enabled: bool }
 export struct ModelCard { key: string, provider: string, model: string, base-url: string, model-type: string, is-default: bool }
 export struct ProfileCard { user-id: string, username: string, email: string, unit: string, sessions: string, sessions-last-7d: string, tool-calls: string, tokens: string, agents: string, last-active: string, avatar-icon: string, avatar-glyph: string, avatar-color: string }
 export struct LanPeerCard { peer-id: string, display-name: string, address: string }

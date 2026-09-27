@@ -13,6 +13,32 @@ pub struct AgentRecord {
     pub icon_name: String,
     pub icon_color: String,
     pub icon_glyph: String,
+    pub tool_names: Vec<String>,
+    pub preset_questions: Vec<String>,
+    pub sandbox_container_id: i32,
+    pub approval_mode: String,
+    pub preview_skill: bool,
+    pub silent: bool,
+    pub prefer_mother: bool,
+    pub is_shared: bool,
+    pub hive_id: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct AgentSettingsEdit {
+    pub name: String,
+    pub description: String,
+    pub system_prompt: String,
+    pub model_name: String,
+    pub icon_name: String,
+    pub icon_color: String,
+    pub tool_names: Vec<String>,
+    pub preset_questions: Vec<String>,
+    pub sandbox_container_id: i32,
+    pub approval_mode: String,
+    pub preview_skill: bool,
+    pub silent: bool,
+    pub prefer_mother: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +91,33 @@ impl NativeDesktop {
                 icon_color,
             )
             .await?;
+            let config = self.state().config_store.get().await;
+            Ok(agent_record(record, &config.llm.default))
+        })
+    }
+
+    pub fn update_agent_settings(
+        &self,
+        id: &str,
+        input: AgentSettingsEdit,
+    ) -> Result<AgentRecord> {
+        self.runtime.block_on(async {
+            let input = agent_management::AgentSettingsUpdate {
+                name: input.name,
+                description: input.description,
+                system_prompt: input.system_prompt,
+                model_name: input.model_name,
+                icon_name: input.icon_name,
+                icon_color: input.icon_color,
+                tool_names: input.tool_names,
+                preset_questions: input.preset_questions,
+                sandbox_container_id: input.sandbox_container_id,
+                approval_mode: input.approval_mode,
+                preview_skill: input.preview_skill,
+                silent: input.silent,
+                prefer_mother: input.prefer_mother,
+            };
+            let record = agent_management::update_settings(self.state(), self.user_id(), id, input).await?;
             let config = self.state().config_store.get().await;
             Ok(agent_record(record, &config.llm.default))
         })
@@ -137,7 +190,7 @@ fn agent_record(
     record: wunder_server::storage::UserAgentRecord,
     default_model: &str,
 ) -> AgentRecord {
-    AgentRecord {
+        AgentRecord {
         id: record.agent_id,
         name: record.name,
         description: record.description,
@@ -157,6 +210,15 @@ fn agent_record(
             color
         },
         icon_glyph: icon_glyph(record.icon.as_deref()),
+        tool_names: record.tool_names,
+        preset_questions: record.preset_questions,
+        sandbox_container_id: record.sandbox_container_id,
+        approval_mode: record.approval_mode,
+        preview_skill: record.preview_skill,
+        silent: record.silent,
+        prefer_mother: record.prefer_mother,
+        is_shared: record.is_shared,
+        hive_id: record.hive_id,
     }
 }
 

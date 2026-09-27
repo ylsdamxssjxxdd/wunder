@@ -1,6 +1,60 @@
 import { Theme, ChatAttachment } from "theme.slint";
-import { Action } from "components.slint";
+import { Action, TerminalAction } from "components.slint";
 import { TextEditBase } from "textedit-base.slint";
+
+component ContextUsageIcon inherits Rectangle {
+    in property <float> usage: 0.0;
+    in-out property <bool> open: false;
+    in-out property <string> thinking-level: "自动";
+    width: 24px; height: 30px;
+    accessible-role: image;
+    accessible-label: "上下文占用";
+    clip: false;
+    Image {
+        x: 3px; y: 3px; width: 18px; height: 18px;
+        source: @image-url("../assets/icons/brain.svg");
+        colorize: Theme.muted;
+        opacity: 0.78;
+    }
+    Rectangle {
+        x: 3px; y: 21px - 18px * min(1.0, max(0.0, root.usage));
+        width: 18px; height: 18px * min(1.0, max(0.0, root.usage));
+        clip: true;
+        Image {
+            width: 18px; height: 18px;
+            source: @image-url("../assets/icons/brain.svg");
+            colorize: Theme.accent;
+        }
+    }
+    touch := TouchArea {
+        width: 24px; height: 30px;
+        mouse-cursor: pointer;
+        clicked => { root.open = !root.open; }
+    }
+    panel-hover := TouchArea {
+        x: -188px; y: -138px; width: 214px; height: 142px;
+        enabled: true; mouse-cursor: pointer;
+    }
+    if root.open || touch.has-hover || panel-hover.has-hover : Rectangle {
+        x: -188px; y: -138px; width: 214px; height: 142px;
+        z: 20; border-radius: 10px; background: Theme.surface;
+        border-width: 1px; border-color: Theme.border;
+        VerticalLayout {
+            padding: 10px; spacing: 5px;
+            Text { text: "上下文占用"; color: Theme.text; font-size: 12px; font-weight: 600; }
+            Text { text: root.usage <= 0.0 ? "暂无最近一次请求数据" : "当前请求上下文占用：" + round(root.usage * 100.0) + "%"; color: Theme.muted; font-size: 11px; }
+            Text { text: "思考等级"; color: Theme.text; font-size: 11px; font-weight: 600; }
+            HorizontalLayout {
+                height: 28px; spacing: 4px;
+                for level in ["自动", "低", "中", "高"] : Rectangle {
+                    border-radius: 6px; background: root.thinking-level == level ? Theme.accent : (level-touch.has-hover ? Theme.accent-soft : transparent);
+                    Text { text: level; color: root.thinking-level == level ? white : Theme.text; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                    level-touch := TouchArea { mouse-cursor: pointer; clicked => { root.thinking-level = level; } }
+                }
+            }
+        }
+    }
+}
 
 export component Composer inherits Rectangle {
     in-out property <string> draft <=> editor.text;
@@ -11,12 +65,19 @@ export component Composer inherits Rectangle {
     in property <bool> recording: false;
     in property <bool> transcribing: false;
     in property <string> recording-elapsed: "";
+    in property <float> context-usage: 0.0;
+    in property <string> model-name: "";
     in property <[ChatAttachment]> attachments: [];
     callback stop();
     callback send();
     callback attach();
     callback remove-attachment(int);
     callback record-voice();
+    callback command();
+    callback screenshot(bool, bool);
+    private property <bool> preset-open: false;
+    private property <bool> command-open: false;
+    private property <bool> screenshot-open: false;
     height: root.attachments.length > 0 ? 222px : 180px;
     background: Theme.composer;
     Rectangle { y: 0px; height: 1px; background: Theme.border; }
@@ -59,21 +120,69 @@ export component Composer inherits Rectangle {
         }
         HorizontalLayout {
             height: 30px; spacing: 8px;
-            Action { icon: @image-url("../assets/icons/plus.svg"); label: "预设问题"; clicked => { root.draft = "你好，请介绍一下你的能力。"; editor.focus(); } }
-            Action { icon: @image-url("../assets/icons/paperclip.svg"); label: "截图"; clicked => { root.attach(); } }
+            Rectangle {
+                width: 30px; height: 30px;
+                Action { width: parent.width; height: parent.height; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "预设问题"; selected: root.preset-open; clicked => { root.preset-open = !root.preset-open; root.command-open = false; root.screenshot-open = false; } }
+                if root.preset-open : Rectangle {
+                    x: 0px; y: -106px; width: 206px; height: 96px; z: 20;
+                    border-radius: 9px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                    VerticalLayout { padding: 8px; spacing: 4px;
+                        Text { text: "预设问题"; color: Theme.text; font-size: 11px; font-weight: 600; }
+                        for preset in ["你好，请介绍一下你的能力。", "请帮我整理当前内容。"] : Rectangle {
+                            height: 28px; border-radius: 5px; background: preset-touch.has-hover ? Theme.accent-soft : transparent;
+                            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: preset; color: Theme.text; font-size: 10px; vertical-alignment: center; overflow: elide; }
+                            preset-touch := TouchArea { mouse-cursor: pointer; clicked => { root.draft = preset; root.preset-open = false; editor.focus(); } }
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                width: 30px; height: 30px;
+                TerminalAction { width: parent.width; height: parent.height; label: "命令"; selected: root.command-open; clicked => { root.command-open = !root.command-open; root.preset-open = false; root.screenshot-open = false; root.command(); } }
+                if root.command-open : Rectangle {
+                    x: 0px; y: -106px; width: 214px; height: 96px; z: 20;
+                    border-radius: 9px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                    VerticalLayout { padding: 8px; spacing: 4px;
+                        Text { text: "命令"; color: Theme.text; font-size: 11px; font-weight: 600; }
+                        for command in ["/help  查看可用命令", "/compact  压缩上下文"] : Rectangle {
+                            height: 28px; border-radius: 5px; background: command-touch.has-hover ? Theme.accent-soft : transparent;
+                            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: command; color: Theme.text; font-size: 10px; vertical-alignment: center; overflow: elide; }
+                            command-touch := TouchArea { mouse-cursor: pointer; clicked => { root.draft = command.starts-with("/help") ? "/help" : "/compact"; root.command-open = false; editor.focus(); } }
+                        }
+                    }
+                }
+            }
             Action {
                 icon: @image-url("../assets/icons/microphone.svg");
-                label: root.recording ? ("停止录音 " + root.recording-elapsed) : (root.transcribing ? "识别中" : "录音");
-                show-label: true; enabled: !root.transcribing && !root.busy;
+                label: root.recording ? "停止录音" : (root.transcribing ? "识别中" : "录音");
+                enabled: !root.transcribing && !root.busy;
                 selected: root.recording;
                 clicked => { root.record-voice(); }
             }
-            Action { icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "快捷输入"; clicked => { root.draft = "请帮我整理当前内容。"; editor.focus(); } }
-            Text { text: root.status; color: Theme.muted; font-size: 10px; overflow: elide; }
+            Rectangle {
+                width: 30px; height: 30px;
+                Action { width: parent.width; height: parent.height; icon: @image-url("../assets/icons/camera.svg"); label: "截图"; selected: root.screenshot-open; clicked => { root.screenshot-open = !root.screenshot-open; root.preset-open = false; root.command-open = false; } }
+                if root.screenshot-open : Rectangle {
+                    x: 0px; y: -130px; width: 220px; height: 120px; z: 20;
+                    border-radius: 9px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                    VerticalLayout { padding: 8px; spacing: 4px;
+                        Text { text: "截图方式（默认隐藏窗口）"; color: Theme.text; font-size: 11px; font-weight: 600; }
+                        for option in [{label: "全屏截图（隐藏窗口）", hide: true, region: false}, {label: "区域截图（隐藏窗口）", hide: true, region: true}, {label: "全屏截图（保留窗口）", hide: false, region: false}, {label: "区域截图（保留窗口）", hide: false, region: true}] : Rectangle {
+                            height: 22px; border-radius: 5px; background: option-touch.has-hover ? Theme.accent-soft : transparent;
+                            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: option.label; color: Theme.text; font-size: 10px; vertical-alignment: center; }
+                            option-touch := TouchArea { mouse-cursor: pointer; clicked => { root.screenshot-open = false; root.screenshot(option.hide, option.region); } }
+                        }
+                    }
+                }
+            }
             Rectangle { horizontal-stretch: 1; }
-            Text { text: "Enter 发送 / Shift+Enter 换行"; color: Theme.muted; font-size: 10px; }
             if root.generating : Action { width: 88px; label: root.stopping ? "正在停止" : "停止生成"; show-label: true; enabled: !root.stopping; clicked => { root.stop(); } }
-            if !root.generating : Action { width: 66px; icon: @image-url("../assets/icons/arrow-up.svg"); label: root.busy ? "发送中" : "发送"; show-label: true; primary: true; enabled: (root.draft != "" || root.attachments.length > 0) && !root.busy; clicked => { root.send(); } }
+            // The web composer keeps this context indicator immediately beside
+            // the send control. Its fill is driven by the native context
+            // projection when available and remains an empty muted glyph at 0.
+            Text { text: root.model-name; color: Theme.muted; font-size: 10px; overflow: elide; max-width: 180px; }
+            if !root.generating : ContextUsageIcon { usage: root.context-usage; }
+            if !root.generating : Action { width: 40px; icon: @image-url("../assets/icons/paper-plane.svg"); label: root.busy ? "发送中" : "发送"; primary: true; enabled: (root.draft != "" || root.attachments.length > 0) && !root.busy; clicked => { root.send(); } }
         }
     }
 }

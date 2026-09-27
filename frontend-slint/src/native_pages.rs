@@ -3,7 +3,7 @@ use crate::{AgentCard, MainWindow, ModelCard, ToolCard};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{rc::Rc, sync::Arc};
 use wunder_desktop::{
-    AgentRecord, DesktopSettings, LanPeerRecord, ModelEdit, NativeDesktop, NativeProfile,
+    AgentRecord, AgentSettingsEdit, DesktopSettings, LanPeerRecord, ModelEdit, NativeDesktop, NativeProfile,
     ToolRecord,
 };
 
@@ -87,6 +87,26 @@ fn profile_glyph(icon: &str) -> &'static str {
 
 fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
+    app.on_toggle_agent_tool(move |name| {
+        let Some(app) = weak.upgrade() else { return };
+        let mut names = app.get_selected_agent_tool_names().iter().map(|v| v.to_string()).collect::<Vec<_>>();
+        if let Some(pos) = names.iter().position(|value| value == name.as_str()) { names.remove(pos); } else { names.push(name.to_string()); }
+        app.set_selected_agent_tool_names(string_model(names));
+        crate::entity_state::sync_tool_selection(&app);
+    });
+    let weak = app.as_weak();
+    app.on_add_agent_question(move || {
+        let Some(app) = weak.upgrade() else { return };
+        let mut questions = app.get_selected_agent_preset_questions().iter().map(|v| v.to_string()).collect::<Vec<_>>();
+        if questions.len() < 12 && !app.get_agent_question_draft().trim().is_empty() { questions.push(app.get_agent_question_draft().trim().to_string()); app.set_selected_agent_preset_questions(string_model(questions)); app.set_agent_question_draft("".into()); }
+    });
+    let weak = app.as_weak();
+    app.on_remove_agent_question(move |index| {
+        let Some(app) = weak.upgrade() else { return };
+        let mut questions = app.get_selected_agent_preset_questions().iter().map(|v| v.to_string()).collect::<Vec<_>>();
+        if let Ok(index) = usize::try_from(index) { if index < questions.len() { questions.remove(index); app.set_selected_agent_preset_questions(string_model(questions)); } }
+    });
+    let weak = app.as_weak();
     let refresh_api = api.clone();
     app.on_refresh_agents(move || {
         let Some(app) = weak.upgrade() else { return };
@@ -152,7 +172,7 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
     });
     let weak = app.as_weak();
     app.on_save_agent(
-        move |name, description, system_prompt, model, icon_name, icon_color| {
+        move |name, description, system_prompt, model, icon_name, icon_color, tool_names, preset_questions, sandbox_container_id, approval_mode, preview_skill, silent, prefer_mother| {
             let Some(app) = weak.upgrade() else { return };
             let Some(agent) = usize::try_from(app.get_selected_agent())
                 .ok()
@@ -167,15 +187,26 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
             let weak = weak.clone();
             let api = api.clone();
             let id = agent.id.to_string();
+            let tool_names = tool_names.iter().map(|v| v.to_string()).collect::<Vec<_>>();
+            let preset_questions = preset_questions.iter().map(|v| v.to_string()).collect::<Vec<_>>();
             run_background(move || {
-                let result = api.update_agent(
+            let result = api.update_agent_settings(
                     &id,
-                    &name,
-                    &description,
-                    &system_prompt,
-                    &model,
-                    &icon_name,
-                    &icon_color,
+                    AgentSettingsEdit {
+                        name: name.to_string(),
+                        description: description.to_string(),
+                        system_prompt: system_prompt.to_string(),
+                        model_name: model.to_string(),
+                        icon_name: icon_name.to_string(),
+                        icon_color: icon_color.to_string(),
+                        tool_names,
+                        preset_questions,
+                        sandbox_container_id,
+                        approval_mode: approval_mode.to_string(),
+                        preview_skill,
+                        silent,
+                        prefer_mother,
+                    },
                 );
                 let _ = weak.upgrade_in_event_loop(move |app| {
                     app.set_saving(false);
@@ -363,6 +394,17 @@ fn to_agent_card(agent: AgentRecord) -> AgentCard {
         icon_color: agent.icon_color.into(),
         icon_glyph: agent.icon_glyph.into(),
         icon_tone: tone,
+        tool_count: agent.tool_names.len() as i32,
+        tool_names: string_model(agent.tool_names.clone()),
+        preset_questions: string_model(agent.preset_questions.clone()),
+        sandbox_container_id: agent.sandbox_container_id,
+        approval_mode: agent.approval_mode.into(),
+        preview_skill: agent.preview_skill,
+        silent: agent.silent,
+        prefer_mother: agent.prefer_mother,
+        preset_question_count: agent.preset_questions.len() as i32,
+        is_shared: agent.is_shared,
+        group_name: agent.hive_id.into(),
     }
 }
 
@@ -380,6 +422,7 @@ fn to_tool_card(tool: ToolRecord) -> ToolCard {
         name: tool.name.into(),
         description: tool.description.into(),
         category: tool.category.into(),
+        enabled: false,
     }
 }
 
@@ -435,6 +478,10 @@ fn select_model_key(app: &MainWindow, key: &str) {
 
 fn model_from<T: Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
     ModelRc::from(Rc::new(VecModel::from(rows)))
+}
+
+fn string_model(rows: Vec<String>) -> ModelRc<slint::SharedString> {
+    model_from(rows.into_iter().map(Into::into).collect())
 }
 
 fn run_background(task: impl FnOnce() + Send + 'static) {

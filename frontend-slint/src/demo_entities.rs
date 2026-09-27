@@ -30,6 +30,17 @@ pub fn install(app: &MainWindow) {
                 icon_color: "#f97316".into(),
                 icon_glyph: "✦".into(),
                 icon_tone: 1,
+                tool_count: 2,
+                tool_names: ModelRc::new(VecModel::from(vec!["文件操作".into()])),
+                preset_questions: ModelRc::new(VecModel::from(Vec::<slint::SharedString>::new())),
+                sandbox_container_id: 1,
+                approval_mode: "suggest".into(),
+                preview_skill: false,
+                silent: false,
+                prefer_mother: false,
+                preset_question_count: 0,
+                is_shared: false,
+                group_name: "默认蜂房".into(),
                 ..Default::default()
             },
         );
@@ -41,7 +52,7 @@ pub fn install(app: &MainWindow) {
     });
     let weak = app.as_weak();
     app.on_save_agent(
-        move |name, description, system_prompt, model, _icon_name, _icon_color| {
+        move |name, description, system_prompt, model, _icon_name, _icon_color, tool_names, preset_questions, sandbox_container_id, approval_mode, preview_skill, silent, prefer_mother| {
             let Some(app) = weak.upgrade() else { return };
             let Ok(index) = usize::try_from(app.get_selected_agent()) else {
                 return;
@@ -56,11 +67,40 @@ pub fn install(app: &MainWindow) {
             agent.description = description;
             agent.system_prompt = system_prompt;
             agent.model = model;
+            agent.tool_names = tool_names;
+            agent.tool_count = agent.tool_names.row_count() as i32;
+            agent.preset_questions = preset_questions;
+            agent.preset_question_count = agent.preset_questions.row_count() as i32;
+            agent.sandbox_container_id = sandbox_container_id;
+            agent.approval_mode = approval_mode;
+            agent.preview_skill = preview_skill;
+            agent.silent = silent;
+            agent.prefer_mother = prefer_mother;
             app.get_agents().set_row_data(index, agent);
             app.invoke_select_agent(index as i32);
             app.set_status("配置已保存 · 仅本次演示有效".into());
         },
     );
+    let weak = app.as_weak();
+    app.on_toggle_agent_tool(move |name| {
+        if let Some(app) = weak.upgrade() {
+            let mut names = app.get_selected_agent_tool_names().iter().map(|v| v.to_string()).collect::<Vec<_>>();
+            if let Some(index) = names.iter().position(|value| value == name.as_str()) { names.remove(index); } else { names.push(name.to_string()); }
+            app.set_selected_agent_tool_names(ModelRc::new(VecModel::from(names.into_iter().map(Into::into).collect::<Vec<slint::SharedString>>())));
+            crate::entity_state::sync_tool_selection(&app);
+        }
+    });
+    let weak = app.as_weak();
+    app.on_add_agent_question(move || {
+        if let Some(app) = weak.upgrade() {
+            let draft = app.get_agent_question_draft().trim().to_string();
+            if !draft.is_empty() { let mut values = app.get_selected_agent_preset_questions().iter().map(|v| v.to_string()).collect::<Vec<_>>(); values.push(draft); app.set_selected_agent_preset_questions(ModelRc::new(VecModel::from(values.into_iter().map(Into::into).collect::<Vec<slint::SharedString>>()))); app.set_agent_question_draft("".into()); }
+        }
+    });
+    let weak = app.as_weak();
+    app.on_remove_agent_question(move |index| {
+        if let Some(app) = weak.upgrade() { let mut values = app.get_selected_agent_preset_questions().iter().map(|v| v.to_string()).collect::<Vec<_>>(); if let Ok(index) = usize::try_from(index) { if index < values.len() { values.remove(index); app.set_selected_agent_preset_questions(ModelRc::new(VecModel::from(values.into_iter().map(Into::into).collect::<Vec<slint::SharedString>>()))); } } }
+    });
     let weak = app.as_weak();
     app.on_save_runtime(move |workspace, language| {
         if let Some(app) = weak.upgrade() {

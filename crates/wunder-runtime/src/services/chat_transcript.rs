@@ -187,6 +187,9 @@ fn map_transcript_message(
                 if meta.get("type").and_then(Value::as_str) == Some("manual_compaction_command") {
                     map.insert("manual_compaction_command".to_string(), Value::Bool(true));
                 }
+                if meta.get("type").and_then(Value::as_str) == Some("goal_command") {
+                    map.insert("goal_command".to_string(), Value::Bool(true));
+                }
             }
         }
         if role == "assistant" {

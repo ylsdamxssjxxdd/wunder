@@ -5,6 +5,23 @@ use crate::services::{
 use crate::{state::AppState, storage::UserAgentRecord, user_access};
 use anyhow::{anyhow, bail, Result};
 
+#[derive(Debug, Clone)]
+pub struct AgentSettingsUpdate {
+    pub name: String,
+    pub description: String,
+    pub system_prompt: String,
+    pub model_name: String,
+    pub icon_name: String,
+    pub icon_color: String,
+    pub tool_names: Vec<String>,
+    pub preset_questions: Vec<String>,
+    pub sandbox_container_id: i32,
+    pub approval_mode: String,
+    pub preview_skill: bool,
+    pub silent: bool,
+    pub prefer_mother: bool,
+}
+
 pub async fn list(state: &AppState, user_id: &str) -> Result<Vec<UserAgentRecord>> {
     let user = state
         .user_store
@@ -123,6 +140,56 @@ pub async fn update(
     ));
     record.updated_at = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
     // Only the agent template changes. Existing thread prompts remain frozen.
+    if record.agent_id == "__default__" {
+        let value = default_agent_protocol::default_agent_config_from_record(&record);
+        state.user_store.set_meta(
+            &default_agent_protocol::default_agent_meta_key(user_id),
+            &serde_json::to_string(&value)?,
+        )?;
+    } else {
+        state.user_store.upsert_user_agent(&record)?;
+    }
+    materialize(state, user_id).await;
+    Ok(record)
+}
+
+/// Applies the complete agent editor payload used by native clients.  The
+/// basic update above remains the compatibility path for older callers; this
+/// method owns validation, permission filtering and persistence of the
+/// runtime fields that the web editor exposes.
+pub async fn update_settings(
+    state: &AppState,
+    user_id: &str,
+    agent_id: &str,
+    input: AgentSettingsUpdate,
+) -> Result<UserAgentRecord> {
+    let mut record = update(
+        state,
+        user_id,
+        agent_id,
+        &input.name,
+        &input.description,
+        &input.system_prompt,
+        &input.model_name,
+        &input.icon_name,
+        &input.icon_color,
+    )
+    .await?;
+    let user = state
+        .user_store
+        .get_user_by_id(user_id)?
+        .ok_or_else(|| anyhow!("用户不存在"))?;
+    let context = user_access::build_user_tool_context(state, user_id).await;
+    let allowed = user_access::compute_allowed_tool_names(&user, &context);
+    let container = input.sandbox_container_id.clamp(1, 10);
+    record.tool_names = user_agent_presets::filter_allowed_tools(&input.tool_names, &allowed);
+    record.preset_questions = user_agent_presets::normalize_preset_questions(input.preset_questions);
+    record.approval_mode = user_agent_presets::normalize_agent_approval_mode(Some(&input.approval_mode));
+    record.sandbox_container_id = container;
+    record.preview_skill = input.preview_skill;
+    record.silent = input.silent;
+    record.prefer_mother = input.prefer_mother;
+    record.updated_at = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
     if record.agent_id == "__default__" {
         let value = default_agent_protocol::default_agent_config_from_record(&record);
         state.user_store.set_meta(

@@ -407,6 +407,22 @@ fn build_message_from_item(item: &Value, include_reasoning: bool) -> Option<Valu
     if meta_type == "manual_compaction_command" || meta_type == "manual_compaction_marker" {
         return None;
     }
+    // Goal command rows are durable UI transcript entries. Reword them for the
+    // model so the raw slash command is not replayed as a literal user task.
+    if meta_type == "goal_command" {
+        let raw = item
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let objective = raw.trim_start_matches("/goal").trim();
+        let text = if objective.is_empty() || objective.eq_ignore_ascii_case("resume") {
+            "The user resumed the session goal.".to_string()
+        } else {
+            format!("The user set a session goal: {objective}")
+        };
+        return Some(json!({ "role": "user", "content": text }));
+    }
     let content = item.get("content")?.clone();
     if role == "tool" {
         let content_text = match &content {
@@ -897,6 +913,37 @@ mod tests {
                 language.to_string(),
                 async move { f() },
             ))
+    }
+
+    #[test]
+    fn build_message_rewords_goal_command_for_model_input() {
+        let item = json!({
+            "role": "user",
+            "content": "/goal finish the migration",
+            "meta": {"type": "goal_command", "goal_command": true},
+        });
+        let message = build_message_from_item(&item, false).expect("goal command kept");
+        assert_eq!(
+            message,
+            json!({
+                "role": "user",
+                "content": "The user set a session goal: finish the migration",
+            })
+        );
+
+        let resume = json!({
+            "role": "user",
+            "content": "/goal resume",
+            "meta": {"type": "goal_command", "goal_command": true},
+        });
+        let message = build_message_from_item(&resume, false).expect("goal resume kept");
+        assert_eq!(
+            message,
+            json!({
+                "role": "user",
+                "content": "The user resumed the session goal.",
+            })
+        );
     }
 
     #[test]

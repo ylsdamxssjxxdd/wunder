@@ -37,7 +37,7 @@ pub fn install(app: &MainWindow) {
         // tray menu itself never becomes part of the user attachment.
         slint::Timer::single_shot(std::time::Duration::from_millis(240), {
             let weak = weak.clone();
-            move || crate::screenshot::capture(weak)
+            move || crate::screenshot::capture(weak, false)
         });
     });
     let weak = app.as_weak();
@@ -46,7 +46,7 @@ pub fn install(app: &MainWindow) {
         // longer part of the captured frame after TrackPopupMenu returns.
         slint::Timer::single_shot(std::time::Duration::from_millis(240), {
             let weak = weak.clone();
-            move || crate::screenshot::capture_fullscreen(weak)
+            move || crate::screenshot::capture_fullscreen(weak, false)
         });
     });
     tray.on_quit_requested(|| {
@@ -71,7 +71,7 @@ pub fn install(app: &MainWindow) {
     let weak = app.as_weak();
     crate::hotkey::install(move || {
         let weak = weak.clone();
-        let _ = slint::invoke_from_event_loop(move || crate::screenshot::capture(weak));
+        let _ = slint::invoke_from_event_loop(move || crate::screenshot::capture(weak, false));
     });
 }
 

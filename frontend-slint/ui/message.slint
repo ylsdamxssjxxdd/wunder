@@ -1,11 +1,23 @@
 import { Theme, ChatMessage } from "theme.slint";
 import { Action, Avatar } from "components.slint";
 
+component MessageStat inherits HorizontalLayout {
+    in property <image> icon;
+    in property <string> value;
+    visible: root.value != "";
+    width: self.preferred-width;
+    height: 16px;
+    spacing: 3px;
+    Image { width: 11px; height: 11px; source: root.icon; image-fit: contain; colorize: Theme.muted; }
+    Text { text: root.value; color: Theme.muted; font-size: 10px; vertical-alignment: center; }
+}
+
 export component MessageRow inherits Rectangle {
     in property <ChatMessage> message;
     in property <string> author;
     in property <image> avatar;
     in-out property <bool> expanded: false;
+    private property <bool> stats-visible: !root.message.mine && (root.message.stats-status != "" || root.message.stats-duration != "" || root.message.stats-speed != "" || root.message.stats-context != "" || root.message.stats-quota != "" || root.message.stats-tools != "" || root.message.stats-credits != "");
     callback copy();
     private property <length> bubble-width: root.message.mine ? min(root.width - 58px, max(180px, root.width * 0.8)) : root.width - 58px;
     height: column.height + 22px;
@@ -58,10 +70,23 @@ export component MessageRow inherits Rectangle {
             }
         }
         HorizontalLayout {
-            height: 20px; spacing: 6px;
-            Text { text: root.message.state; font-size: 10px; color: Theme.muted; overflow: elide; }
+            height: root.message.mine ? 20px : (root.stats-visible ? 38px : 20px); spacing: 6px;
+            if !root.message.mine : HorizontalLayout {
+                y: 0px; height: 16px; spacing: 8px;
+                stats-row := HorizontalLayout {
+                    height: 16px; spacing: 8px;
+                    MessageStat { icon: @image-url("../assets/icons/comment-dots.svg"); value: root.message.stats-status; }
+                    MessageStat { icon: @image-url("../assets/icons/clock-rotate-left.svg"); value: root.message.stats-duration; }
+                    MessageStat { icon: @image-url("../assets/icons/comments.svg"); value: root.message.stats-speed; }
+                    MessageStat { icon: @image-url("../assets/icons/brain.svg"); value: root.message.stats-context; }
+                    MessageStat { icon: @image-url("../assets/icons/arrow-up.svg"); value: root.message.stats-quota; }
+                    MessageStat { icon: @image-url("../assets/icons/list-check.svg"); value: root.message.stats-tools; }
+                    MessageStat { icon: @image-url("../assets/icons/cubes.svg"); value: root.message.stats-credits; }
+                }
+            }
+            Text { y: root.message.mine ? 0px : 18px; text: root.message.state; font-size: 10px; color: Theme.muted; overflow: elide; }
             Rectangle { horizontal-stretch: 1; }
-            Action { width: 42px; height: 20px; label: "复制"; show-label: true; clicked => { root.copy(); } }
+            Action { y: root.message.mine ? 0px : 18px; width: 42px; height: 20px; label: "复制"; show-label: true; clicked => { root.copy(); } }
         }
     }
 }
