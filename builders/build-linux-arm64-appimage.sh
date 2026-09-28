@@ -144,15 +144,36 @@ x11_libraries=(
   libxcb-dri3.so.0 libxkbcommon.so.0 libxkbcommon-x11.so.0
   libasound.so.2
 )
+# The ARM64 host may not carry these libraries in ldconfig (minimal images,
+# or a multi-arch host whose ARM64 entries are absent). Prefer the offline
+# SDK's runtime library directory or an explicit override, then fall back to
+# ldconfig per library for the rest of the closure.
+runtime_lib_root="${WUNDER_SLINT_RUNTIME_LIB_DIR:-}"
+if [[ -z "$runtime_lib_root" ]]; then
+  for candidate in \
+    "$offline_root/linux-arm64-ubuntu18/root/usr/lib/aarch64-linux-gnu" \
+    "$offline_root/runtime-libs/aarch64-linux-gnu"; do
+    if [[ -d "$candidate" ]]; then
+      runtime_lib_root="$candidate"
+      break
+    fi
+  done
+fi
 library_cache="$(ldconfig -p 2>/dev/null || true)"
 for library in "${x11_libraries[@]}"; do
-  # Consume the complete ldconfig output before selecting a path. An early
-  # awk exit can SIGPIPE ldconfig under pipefail on large multi-arch caches.
-  library_path="$(printf '%s\n' "$library_cache" | LC_ALL=C awk -v name="$library" '$1 == name { if (!first) first=$NF; if (/AArch64/) arm=$NF } END { if (arm) print arm; else if (first) print first }')"
+  if [[ -n "$runtime_lib_root" && -f "$runtime_lib_root/$library" ]]; then
+    library_path="$runtime_lib_root/$library"
+    library_machine="$(LC_ALL=C readelf -h "$library_path" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[ \t]+/, "", $2); print $2}')"
+    [[ "$library_machine" == "AArch64" ]] || fail "runtime library is not AArch64: $library_path (got ${library_machine:-unknown}); fix WUNDER_SLINT_RUNTIME_LIB_DIR or the SDK runtime-libs directory"
+  else
+    # Consume the complete ldconfig output before selecting a path. An early
+    # awk exit can SIGPIPE ldconfig under pipefail on large multi-arch caches.
+    library_path="$(printf '%s\n' "$library_cache" | LC_ALL=C awk -v name="$library" '$1 == name { if (!first) first=$NF; if (/AArch64/) arm=$NF } END { if (arm) print arm; else if (first) print first }')"
+  fi
   if [[ -n "$library_path" && -f "$library_path" ]]; then cp -L -f "$library_path" "$appdir/usr/lib/$library"; fi
 done
 for library in libX11.so.6 libXtst.so.6 libxcb.so.1 libxcb-xkb.so.1 libxkbcommon.so.0 libxkbcommon-x11.so.0 libasound.so.2; do
-  [[ -f "$appdir/usr/lib/$library" ]] || fail "required bundled X11/XCB library is missing: $library"
+  [[ -f "$appdir/usr/lib/$library" ]] || fail "required bundled ARM64 X11/XCB library is missing: $library; install the ARM64 packages on the host, use --docker, or set WUNDER_SLINT_RUNTIME_LIB_DIR=/path/to/libs"
 done
 
 # Bundle non-glibc direct dependencies reported by ldd, such as fontconfig and
