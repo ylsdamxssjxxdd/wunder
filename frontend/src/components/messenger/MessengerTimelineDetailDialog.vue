@@ -897,12 +897,42 @@ const overviewStatus = (value: unknown): string => {
   return key ? t(key) : overviewValue(value);
 };
 
+const resolvePersistedDecodeSpeed = (
+  messages: Record<string, unknown>[] | undefined
+): number | null => {
+  if (!Array.isArray(messages)) return null;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (String(message?.role || '').trim() !== 'assistant') continue;
+    const stats =
+      message?.stats && typeof message.stats === 'object' && !Array.isArray(message.stats)
+        ? message.stats as Record<string, unknown>
+        : null;
+    if (!stats) continue;
+    for (const key of [
+      'visible_decode_speed_tps',
+      'decode_speed_tps',
+      'avg_model_round_speed_tps',
+      'avg_model_round_decode_speed_tps'
+    ]) {
+      const value = Number(stats[key]);
+      if (Number.isFinite(value) && value > 0) return value;
+    }
+  }
+  return null;
+};
+
 const overviewItems = computed(() => {
   const session = sessionDetail.value;
   if (!session) {
     return [];
   }
   const metrics = session.logOverview || {};
+  const persistedDecodeSpeed = resolvePersistedDecodeSpeed(session.messages);
+  const overviewDecodeSpeed = Number(metrics.decode_speed_tps);
+  const decodeSpeed = Number.isFinite(overviewDecodeSpeed) && overviewDecodeSpeed > 0
+    ? overviewDecodeSpeed
+    : persistedDecodeSpeed;
   return [
     { icon: 'fa-solid fa-robot', label: t('messenger.timeline.detail.metaAgentLabel'), value: overviewValue(metrics.agent_name || resolveSessionAgentDisplay(session)) },
     { icon: 'fa-solid fa-circle-info', label: t('messenger.timeline.detail.metaStatusLabel'), value: overviewStatus(metrics.status || (running.value ? 'running' : 'finished')) },
@@ -913,7 +943,7 @@ const overviewItems = computed(() => {
     { icon: 'fa-solid fa-bolt', label: t('messenger.timeline.detail.metaTokensLabel'), value: overviewCount(metrics.consumed_tokens) },
     { icon: 'fa-solid fa-bolt-lightning', label: t('messenger.timeline.detail.metaTtftLabel'), value: overviewDuration(Number(metrics.ttft_ms) / 1000) },
     { icon: 'fa-solid fa-arrow-up', label: t('messenger.timeline.detail.metaPrefillLabel'), value: overviewSpeed(metrics.prefill_speed_tps, Boolean(metrics.prefill_speed_lower_bound)) },
-    { icon: 'fa-solid fa-arrow-down', label: t('messenger.timeline.detail.metaDecodeLabel'), value: overviewSpeed(metrics.decode_speed_tps) },
+    { icon: 'fa-solid fa-arrow-down', label: t('messenger.timeline.detail.metaDecodeLabel'), value: overviewSpeed(decodeSpeed) },
     { icon: 'fa-solid fa-list', label: t('messenger.timeline.detail.metaEventCountLabel'), value: overviewCount(metrics.event_total ?? eventTotal.value) },
     { icon: 'fa-solid fa-fingerprint', label: t('messenger.timeline.detail.metaSessionIdLabel'), value: overviewValue(metrics.session_id || session.id) }
   ];

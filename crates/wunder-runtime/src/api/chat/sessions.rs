@@ -472,6 +472,12 @@ async fn get_session(
             }
             overview
         });
+    let log_overview = merge_persisted_transcript_metrics(
+        log_overview,
+        &transcript,
+        &session_id,
+        agent_name.as_deref(),
+    );
     Ok(Json(json!({
         "data": {
             "id": record.session_id,
@@ -496,6 +502,112 @@ async fn get_session(
             "history_before_id": transcript_page.history_before_id
         }
     })))
+}
+
+/// Monitor events are intentionally bounded and older sessions may not retain
+/// the output timing events needed to calculate a decode speed. The assistant
+/// transcript stores the final, user-visible timing snapshot, so use it to
+/// complete the presentation projection when the monitor value is unavailable.
+fn merge_persisted_transcript_metrics(
+    overview: Option<Value>,
+    transcript: &[Value],
+    session_id: &str,
+    agent_name: Option<&str>,
+) -> Option<Value> {
+    let metric = |stats: &serde_json::Map<String, Value>, keys: &[&str]| -> Option<f64> {
+        keys.iter().find_map(|key| {
+            let value = stats.get(*key)?;
+            value
+                .as_f64()
+                .or_else(|| value.as_i64().map(|number| number as f64))
+                .filter(|number| number.is_finite() && *number > 0.0)
+        })
+    };
+    let persisted_stats = transcript.iter().rev().find_map(|message| {
+        if message.get("role").and_then(Value::as_str) != Some("assistant") {
+            return None;
+        }
+        let stats = message.get("stats").and_then(Value::as_object)?;
+        let direct_speed = metric(
+            stats,
+            &[
+                "visible_decode_speed_tps",
+                "decode_speed_tps",
+                "avg_model_round_speed_tps",
+                "avg_model_round_decode_speed_tps",
+            ],
+        );
+        let derived_speed = metric(stats, &["visible_decode_tokens", "decode_tokens"])
+            .zip(metric(
+                stats,
+                &[
+                    "visible_decode_duration_s",
+                    "decode_duration_s",
+                    "decode_duration_total_s",
+                ],
+            ))
+            .filter(|(_, duration)| *duration > 0.0);
+        (direct_speed.is_some() || derived_speed.is_some()).then_some(stats)
+    });
+    let Some(stats) = persisted_stats else {
+        return overview;
+    };
+    let decode_speed = metric(
+        stats,
+        &[
+            "visible_decode_speed_tps",
+            "decode_speed_tps",
+            "avg_model_round_speed_tps",
+            "avg_model_round_decode_speed_tps",
+        ],
+    );
+    let decode_speed = decode_speed.or_else(|| {
+        let tokens = metric(stats, &["visible_decode_tokens", "decode_tokens"])?;
+        let duration = metric(
+            stats,
+            &[
+                "visible_decode_duration_s",
+                "decode_duration_s",
+                "decode_duration_total_s",
+            ],
+        )?;
+        (duration > 0.0).then_some(tokens / duration)
+    });
+    let Some(decode_speed) = decode_speed.filter(|value| value.is_finite() && *value > 0.0) else {
+        return overview;
+    };
+
+    let mut map = match overview {
+        Some(Value::Object(map)) => map,
+        Some(_) => serde_json::Map::new(),
+        None => serde_json::Map::new(),
+    };
+    map.entry("session_id".to_string())
+        .or_insert_with(|| json!(session_id));
+    if let Some(agent_name) = agent_name.filter(|value| !value.trim().is_empty()) {
+        map.entry("agent_name".to_string())
+            .or_insert_with(|| json!(agent_name));
+    }
+    let overview_speed_missing = map
+        .get("decode_speed_tps")
+        .and_then(Value::as_f64)
+        .is_none_or(|value| !value.is_finite() || value <= 0.0);
+    if overview_speed_missing {
+        map.insert("decode_speed_tps".to_string(), json!(decode_speed));
+    }
+    if map.get("decode_duration_s").is_none_or(Value::is_null) {
+        if let Some(duration) = metric(
+            stats,
+            &[
+                "visible_decode_duration_s",
+                "decode_duration_s",
+                "decode_duration_total_s",
+            ],
+        ) {
+            map.insert("decode_duration_s".to_string(), json!(duration));
+        }
+    }
+    Some(Value::Object(map))
 }
 
 fn normalize_session_detail_limit(raw: Option<i64>, fallback: i64) -> i64 {
@@ -1816,9 +1928,10 @@ mod tests {
     use super::{
         apply_session_running_state, build_projected_queue_assistant_message,
         build_projected_queue_user_message, has_active_queue_task, history_page_cursor_after_merge,
-        is_session_stream_active_or_queued, merge_visible_transcript_page,
-        normalize_history_before_id, project_queued_session_messages,
-        raw_history_page_from_loaded_history, summarize_transcript_messages, RunningTurnHint,
+        is_session_stream_active_or_queued, merge_persisted_transcript_metrics,
+        merge_visible_transcript_page, normalize_history_before_id,
+        project_queued_session_messages, raw_history_page_from_loaded_history,
+        summarize_transcript_messages, RunningTurnHint,
     };
     use crate::storage::{AgentTaskRecord, SqliteStorage, StorageBackend};
     use crate::user_store::UserStore;
@@ -1878,6 +1991,33 @@ mod tests {
         assert_eq!(message["subagents_truncated"], json!(true));
         assert!(message.get("workflowItems").is_none());
         assert!(message.get("subagents").is_none());
+    }
+
+    #[test]
+    fn log_overview_falls_back_to_persisted_assistant_decode_speed() {
+        let overview = Some(json!({
+            "session_id": "session-speed",
+            "decode_speed_tps": null,
+            "ttft_ms": null
+        }));
+        let transcript = vec![json!({
+            "role": "assistant",
+            "stats": {
+                "visible_decode_speed_tps": 44.1259,
+                "visible_decode_duration_s": 3.82
+            }
+        })];
+        let merged = merge_persisted_transcript_metrics(
+            overview,
+            &transcript,
+            "session-speed",
+            Some("Default agent"),
+        )
+        .expect("overview");
+
+        assert_eq!(merged["decode_speed_tps"], json!(44.1259));
+        assert_eq!(merged["decode_duration_s"], json!(3.82));
+        assert_eq!(merged["agent_name"], json!("Default agent"));
     }
 
     #[test]

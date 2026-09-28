@@ -1631,6 +1631,76 @@ test('chat runtime render adapter materializes projected usage stats for message
   assert.equal(second.stats.roundUsage.total, 150);
 });
 
+test('chat runtime render adapter keeps persisted speed when workflow history replays after transcript', () => {
+  const sessionId = 'session-persisted-speed-history';
+  const projection = apply([
+    {
+      event_type: 'session_snapshot',
+      source: 'snapshot',
+      strict: false,
+      session_id: sessionId,
+      messages: [
+        {
+          message_id: 'user-persisted-speed',
+          user_turn_id: 'turn-persisted-speed',
+          turn_index: 1,
+          role: 'user',
+          content: 'draw'
+        },
+        {
+          message_id: 'assistant-persisted-speed',
+          user_turn_id: 'turn-persisted-speed',
+          model_turn_id: 'model-persisted-speed',
+          turn_index: 2,
+          role: 'assistant',
+          content: 'done',
+          status: 'final',
+          stats: {
+            visible_decode_tokens: 169,
+            visible_decode_duration_s: 3.829948949,
+            visible_decode_speed_tps: 44.12591453578667,
+            visible_decode_measured: true,
+            avg_model_round_speed_tps: 44.12591453578667
+          }
+        }
+      ],
+      loading: false,
+      running: false,
+      authoritative: true
+    },
+    {
+      event_type: 'workflow_event',
+      source: 'history',
+      strict: false,
+      session_id: sessionId,
+      event_id: 'workflow-persisted-speed',
+      event_seq: 10,
+      user_turn_id: 'turn-persisted-speed',
+      model_turn_id: 'model-persisted-speed',
+      message_id: 'assistant-persisted-speed',
+      payload: {
+        source_event_type: 'tool_result',
+        data: { tool_call_id: 'tool-persisted-speed', tool: 'draw', status: 'completed' }
+      }
+    },
+    {
+      event_type: 'turn_completed',
+      source: 'history',
+      strict: false,
+      session_id: sessionId,
+      event_id: 'terminal-persisted-speed',
+      event_seq: 11,
+      user_turn_id: 'turn-persisted-speed',
+      model_turn_id: 'model-persisted-speed'
+    }
+  ]);
+
+  const message = materializeChatRuntimeMessages(projection, sessionId)[1] as Record<string, any>;
+  const entries = buildAssistantMessageStatsEntries(message, t, [message]);
+  assert.equal(message.stats.visible_decode_speed_tps, 44.12591453578667);
+  assert.equal(entries.find((item) => item.key === 'speed')?.value, '44.1 token/s');
+});
+
 test('chat runtime render adapter updates cached materialization when projected stats mutate in place', () => {
   const projection = createChatRuntimeProjection();
   applyChatRuntimeEvent(projection, {
