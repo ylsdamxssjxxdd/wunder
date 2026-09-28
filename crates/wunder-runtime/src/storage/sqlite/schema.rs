@@ -127,6 +127,29 @@ impl SqliteStorage {
         Ok(())
     }
 
+    fn ensure_chat_history_columns(&self, conn: &Connection) -> Result<()> {
+        let columns = load_table_columns(conn, "chat_history")?;
+        if columns.is_empty() {
+            return Ok(());
+        }
+        // Retire the duplicated content/timestamp/meta columns: they were only
+        // written on insert while every reader parses the payload JSON.
+        for column in ["content", "timestamp", "meta"] {
+            if columns.contains(column) {
+                conn.execute(
+                    &format!("ALTER TABLE chat_history DROP COLUMN {column}"),
+                    [],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn ensure_model_context_table_retired(&self, conn: &Connection) -> Result<()> {
+        conn.execute("DROP TABLE IF EXISTS model_context_entries", [])?;
+        Ok(())
+    }
+
     fn ensure_stream_event_workflow_columns(&self, conn: &Connection) -> Result<()> {
         let columns = load_table_columns(conn, "stream_events")?;
         if columns.is_empty() {
@@ -457,24 +480,17 @@ impl SqliteSchemaStorage for SqliteStorage {
               user_id TEXT NOT NULL,
               session_id TEXT NOT NULL,
               role TEXT NOT NULL,
-              content TEXT,
-              timestamp TEXT,
-              meta TEXT,
               payload TEXT NOT NULL,
               created_time REAL NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_chat_history_session
               ON chat_history (user_id, session_id, id);
-            CREATE TABLE IF NOT EXISTS model_context_entries (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
+            CREATE TABLE IF NOT EXISTS deleted_session_log_grace (
               user_id TEXT NOT NULL,
               session_id TEXT NOT NULL,
-              role TEXT NOT NULL,
-              payload TEXT NOT NULL,
-              created_time REAL NOT NULL
+              deleted_at REAL NOT NULL,
+              PRIMARY KEY (user_id, session_id)
             );
-            CREATE INDEX IF NOT EXISTS idx_model_context_entries_session
-              ON model_context_entries (user_id, session_id, id);
             CREATE TABLE IF NOT EXISTS tool_logs (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               user_id TEXT NOT NULL,
@@ -1457,6 +1473,8 @@ impl SqliteSchemaStorage for SqliteStorage {
         self.ensure_user_token_columns(&conn)?;
         self.ensure_user_tool_access_columns(&conn)?;
         self.ensure_chat_session_columns(&conn)?;
+        self.ensure_chat_history_columns(&conn)?;
+        self.ensure_model_context_table_retired(&conn)?;
         self.ensure_stream_event_workflow_columns(&conn)?;
         self.ensure_channel_columns(&conn)?;
         self.ensure_session_lock_columns(&conn)?;
@@ -1468,6 +1486,15 @@ impl SqliteSchemaStorage for SqliteStorage {
         self.ensure_user_world_group_columns(&conn)?;
         self.ensure_cron_columns(&conn)?;
         self.ensure_memory_fragment_columns(&conn)?;
+        if self
+            .auto_vacuum_upgrade_pending
+            .swap(false, Ordering::SeqCst)
+        {
+            // One-time full VACUUM persists the incremental auto-vacuum header
+            // for databases created before this upgrade; on a fresh database it
+            // finishes instantly.
+            conn.execute_batch("VACUUM")?;
+        }
         self.initialized.store(true, Ordering::SeqCst);
         Ok(())
     }

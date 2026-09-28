@@ -533,7 +533,6 @@ pub async fn build_continuation_request_from_session(
         tool_names,
         skip_tool_calls: false,
         stream: true,
-        debug_payload: false,
         session_id: Some(session.session_id.clone()),
         agent_id: session.agent_id.clone(),
         workspace_container_id: None,

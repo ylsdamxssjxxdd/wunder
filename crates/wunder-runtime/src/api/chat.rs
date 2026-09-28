@@ -81,7 +81,10 @@ struct SendMessageRequest {
     client_message_id: Option<String>,
     #[serde(default)]
     stream: Option<bool>,
+    // Deprecated compatibility field: parsed for older clients but ignored;
+    // request logging is unified to the compact profile.
     #[serde(default, alias = "debugPayload", alias = "debug_payload")]
+    #[allow(dead_code)]
     debug_payload: bool,
     #[serde(default)]
     attachments: Option<Vec<ChatAttachment>>,
@@ -103,7 +106,6 @@ pub(crate) struct ChatRequestOverrides {
     pub(crate) tool_call_mode: Option<String>,
     pub(crate) approval_mode: Option<String>,
     pub(crate) reasoning_effort: Option<String>,
-    pub(crate) debug_payload: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,7 +171,10 @@ struct SessionToolsUpdateRequest {
 struct SessionCompactionRequest {
     #[serde(default)]
     model_name: Option<String>,
+    // Deprecated compatibility field: parsed for older clients but ignored;
+    // compaction logging is unified to the compact profile.
     #[serde(default, alias = "debugPayload", alias = "debug_payload")]
+    #[allow(dead_code)]
     debug_payload: bool,
 }
 
@@ -300,7 +305,6 @@ async fn send_message(
             tool_call_mode: payload.tool_call_mode,
             approval_mode: payload.approval_mode,
             reasoning_effort: payload.reasoning_effort,
-            debug_payload: payload.debug_payload,
         },
     )
     .await?;
@@ -578,7 +582,6 @@ pub(crate) async fn build_chat_request(
         tool_names,
         skip_tool_calls: false,
         stream,
-        debug_payload: request_overrides.debug_payload,
         session_id: Some(session_id),
         agent_id: record.agent_id.clone(),
         workspace_container_id: None,
@@ -631,7 +634,6 @@ pub async fn build_native_chat_request(
             tool_call_mode: None,
             approval_mode: None,
             reasoning_effort: None,
-            debug_payload: false,
         },
     )
     .await
@@ -780,7 +782,6 @@ async fn compact_session(
         agent_id.as_deref().unwrap_or(""),
         "",
         is_admin,
-        payload.debug_payload,
     );
     let orchestrator = state.kernel.orchestrator.clone();
     let session_id_for_task = session_id.clone();
@@ -788,7 +789,6 @@ async fn compact_session(
     let model_name = payload.model_name.clone();
     let agent_id_for_task = agent_id.clone();
     let agent_prompt_for_task = agent_prompt.clone();
-    let debug_payload = payload.debug_payload;
     long_task::spawn("api.chat.force_compact_session", async move {
         let result = orchestrator
             .force_compact_session(
@@ -800,7 +800,6 @@ async fn compact_session(
                 agent_prompt_for_task.as_deref(),
                 Some(preview_skill),
                 Some(manual_user_round),
-                debug_payload,
                 true,
             )
             .await;

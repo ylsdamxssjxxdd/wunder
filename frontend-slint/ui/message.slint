@@ -6,10 +6,10 @@ component MessageStat inherits HorizontalLayout {
     in property <string> value;
     visible: root.value != "";
     width: self.preferred-width;
-    height: 16px;
+    height: 18px;
     spacing: 3px;
-    Image { width: 11px; height: 11px; source: root.icon; image-fit: contain; colorize: Theme.muted; }
-    Text { text: root.value; color: Theme.muted; font-size: 10px; vertical-alignment: center; }
+    Image { width: 12px; height: 12px; source: root.icon; image-fit: contain; colorize: Theme.muted; }
+    Text { text: root.value; color: Theme.muted; font-size: 11px; vertical-alignment: center; y: -1px; }
 }
 
 export component MessageRow inherits Rectangle {
@@ -28,7 +28,7 @@ export component MessageRow inherits Rectangle {
         height: self.preferred-height;
         spacing: 6px;
         Text {
-            height: 16px; font-size: 11px; color: Theme.muted;
+            height: 18px; font-size: 11px; color: Theme.muted;
             text: (root.message.mine ? "你" : root.author) + "   " + root.message.time;
             horizontal-alignment: root.message.mine ? right : left;
         }
@@ -70,23 +70,23 @@ export component MessageRow inherits Rectangle {
             }
         }
         HorizontalLayout {
-            height: root.message.mine ? 20px : (root.stats-visible ? 38px : 20px); spacing: 6px;
+            height: root.message.mine ? 20px : (root.stats-visible ? 24px : 20px); spacing: 6px;
             if !root.message.mine : HorizontalLayout {
-                y: 0px; height: 16px; spacing: 8px;
+                y: 0px; height: 18px; spacing: 8px;
                 stats-row := HorizontalLayout {
-                    height: 16px; spacing: 8px;
-                    MessageStat { icon: @image-url("../assets/icons/comment-dots.svg"); value: root.message.stats-status; }
-                    MessageStat { icon: @image-url("../assets/icons/clock-rotate-left.svg"); value: root.message.stats-duration; }
-                    MessageStat { icon: @image-url("../assets/icons/comments.svg"); value: root.message.stats-speed; }
-                    MessageStat { icon: @image-url("../assets/icons/brain.svg"); value: root.message.stats-context; }
-                    MessageStat { icon: @image-url("../assets/icons/arrow-up.svg"); value: root.message.stats-quota; }
-                    MessageStat { icon: @image-url("../assets/icons/list-check.svg"); value: root.message.stats-tools; }
-                    MessageStat { icon: @image-url("../assets/icons/cubes.svg"); value: root.message.stats-credits; }
+                    height: 18px; spacing: 8px;
+                    if root.message.stats-status == "任务完成" || root.message.stats-status == "完成" : MessageStat { icon: @image-url("../assets/icons/hashtag.svg"); value: root.message.stats-status; }
+                    if root.message.stats-status != "任务完成" && root.message.stats-status != "完成" : MessageStat { icon: @image-url("../assets/icons/comment-dots.svg"); value: root.message.stats-status; }
+                    MessageStat { icon: @image-url("../assets/icons/stopwatch.svg"); value: root.message.stats-duration; }
+                    MessageStat { icon: @image-url("../assets/icons/gauge-high.svg"); value: root.message.stats-speed; }
+                    MessageStat { icon: @image-url("../assets/icons/layer-group.svg"); value: root.message.stats-context; }
+                    MessageStat { icon: @image-url("../assets/icons/bolt.svg"); value: root.message.stats-quota; }
+                    MessageStat { icon: @image-url("../assets/icons/screwdriver-wrench.svg"); value: root.message.stats-tools; }
+                    MessageStat { icon: @image-url("../assets/icons/coins.svg"); value: root.message.stats-credits; }
                 }
             }
-            Text { y: root.message.mine ? 0px : 18px; text: root.message.state; font-size: 10px; color: Theme.muted; overflow: elide; }
             Rectangle { horizontal-stretch: 1; }
-            Action { y: root.message.mine ? 0px : 18px; width: 42px; height: 20px; label: "复制"; show-label: true; clicked => { root.copy(); } }
+            Action { width: 42px; height: 20px; label: "复制"; show-label: true; clicked => { root.copy(); } }
         }
     }
 }

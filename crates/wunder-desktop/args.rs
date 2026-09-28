@@ -17,7 +17,7 @@ pub struct DesktopArgs {
     #[arg(long, default_value_t = 18123)]
     pub port: u16,
 
-    /// Workspace root. Defaults to <user_home>/.wunder/desktop/workspace.
+    /// Workspace root. Defaults to <user_home>/.wunder/workspace.
     #[arg(long)]
     pub workspace: Option<PathBuf>,
 

@@ -270,9 +270,12 @@ impl AppState {
         let workspace = Arc::new(WorkspaceManager::new(
             &config.workspace.root,
             storage.clone(),
-            config.workspace.retention_days,
+            config.observability.stream_event_retention_hours.min(i64::MAX as u64) as i64,
             &config.workspace.container_roots,
         ));
+        workspace.set_deleted_session_log_grace_hours(
+            config.observability.deleted_session_log_grace_hours,
+        );
         let lsp_manager = LspManager::new(workspace.clone());
         info!(
             "[startup][app-state] point=workspace_lsp_done total_ms={:.1}",

@@ -273,7 +273,6 @@ async fn main() -> Result<()> {
         tool_names: vec!["agent_swarm".to_string()],
         skip_tool_calls: false,
         stream: false,
-        debug_payload: false,
         session_id: Some(mother_session_id.clone()),
         agent_id: Some(mother_agent_id),
         workspace_container_id: None,

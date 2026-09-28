@@ -59,6 +59,12 @@ pub(super) trait PostgresAgentRuntimeStorage {
     fn delete_stream_events_before_impl(&self, before_time: f64) -> Result<i64>;
     fn delete_stream_events_by_user_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_stream_events_by_session_impl(&self, session_id: &str) -> Result<i64>;
+    fn delete_stream_events_by_round_impl(
+        &self,
+        session_id: &str,
+        user_round: i64,
+        event_types: &[&str],
+    ) -> Result<i64>;
 }
 
 impl PostgresAgentRuntimeStorage for PostgresStorage {
@@ -509,6 +515,40 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
             "DELETE FROM stream_events WHERE session_id = $1",
             &[&cleaned],
         )?;
+        Ok(affected as i64)
+    }
+
+    fn delete_stream_events_by_round_impl(
+        &self,
+        session_id: &str,
+        user_round: i64,
+        event_types: &[&str],
+    ) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned = session_id.trim();
+        if cleaned.is_empty() || user_round <= 0 || event_types.is_empty() {
+            return Ok(0);
+        }
+        let placeholders = (0..event_types.len())
+            .map(|index| format!("${}", index + 3))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "DELETE FROM stream_events WHERE session_id = $1 AND user_round = $2 AND event_type IN ({placeholders})"
+        );
+        let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync>> =
+            Vec::with_capacity(event_types.len() + 2);
+        params.push(Box::new(cleaned.to_string()));
+        params.push(Box::new(user_round));
+        for event_type in event_types {
+            params.push(Box::new(event_type.to_string()));
+        }
+        let param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = params
+            .iter()
+            .map(|param| param.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync))
+            .collect();
+        let mut conn = self.conn()?;
+        let affected = conn.execute(&sql, &param_refs)?;
         Ok(affected as i64)
     }
 }

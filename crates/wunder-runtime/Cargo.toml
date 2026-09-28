@@ -113,7 +113,7 @@ name = "memory_routes"
 required-features = ["sqlite-storage"]
 
 [[test]]
-name = "monitor_log_profile_regression"
+name = "monitor_events_regression"
 required-features = ["sqlite-storage"]
 
 [[test]]

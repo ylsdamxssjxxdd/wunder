@@ -61,7 +61,7 @@
                 "type": "boolean",
                 "required": false,
                 "location": "body",
-                "desc": "是否保留模型请求体用于调试。"
+                "desc": "已废弃：仅为兼容旧客户端保留，服务端解析后忽略，日志统一为精简形态。"
               },
               {
                 "name": "session_id",

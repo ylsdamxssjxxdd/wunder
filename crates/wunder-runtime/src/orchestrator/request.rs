@@ -99,7 +99,6 @@ impl Orchestrator {
             preview_skill: request.preview_skill,
             agent_id,
             stream: request.stream,
-            debug_payload: request.debug_payload,
             attachments,
             language,
             allow_queue: request.allow_queue,

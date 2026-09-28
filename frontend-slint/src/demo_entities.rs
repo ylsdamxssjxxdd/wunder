@@ -52,7 +52,19 @@ pub fn install(app: &MainWindow) {
     });
     let weak = app.as_weak();
     app.on_save_agent(
-        move |name, description, system_prompt, model, _icon_name, _icon_color, tool_names, preset_questions, sandbox_container_id, approval_mode, preview_skill, silent, prefer_mother| {
+        move |name,
+              description,
+              system_prompt,
+              model,
+              _icon_name,
+              _icon_color,
+              tool_names,
+              preset_questions,
+              sandbox_container_id,
+              approval_mode,
+              preview_skill,
+              silent,
+              prefer_mother| {
             let Some(app) = weak.upgrade() else { return };
             let Ok(index) = usize::try_from(app.get_selected_agent()) else {
                 return;
@@ -84,9 +96,22 @@ pub fn install(app: &MainWindow) {
     let weak = app.as_weak();
     app.on_toggle_agent_tool(move |name| {
         if let Some(app) = weak.upgrade() {
-            let mut names = app.get_selected_agent_tool_names().iter().map(|v| v.to_string()).collect::<Vec<_>>();
-            if let Some(index) = names.iter().position(|value| value == name.as_str()) { names.remove(index); } else { names.push(name.to_string()); }
-            app.set_selected_agent_tool_names(ModelRc::new(VecModel::from(names.into_iter().map(Into::into).collect::<Vec<slint::SharedString>>())));
+            let mut names = app
+                .get_selected_agent_tool_names()
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>();
+            if let Some(index) = names.iter().position(|value| value == name.as_str()) {
+                names.remove(index);
+            } else {
+                names.push(name.to_string());
+            }
+            app.set_selected_agent_tool_names(ModelRc::new(VecModel::from(
+                names
+                    .into_iter()
+                    .map(Into::into)
+                    .collect::<Vec<slint::SharedString>>(),
+            )));
             crate::entity_state::sync_tool_selection(&app);
         }
     });
@@ -94,12 +119,43 @@ pub fn install(app: &MainWindow) {
     app.on_add_agent_question(move || {
         if let Some(app) = weak.upgrade() {
             let draft = app.get_agent_question_draft().trim().to_string();
-            if !draft.is_empty() { let mut values = app.get_selected_agent_preset_questions().iter().map(|v| v.to_string()).collect::<Vec<_>>(); values.push(draft); app.set_selected_agent_preset_questions(ModelRc::new(VecModel::from(values.into_iter().map(Into::into).collect::<Vec<slint::SharedString>>()))); app.set_agent_question_draft("".into()); }
+            if !draft.is_empty() {
+                let mut values = app
+                    .get_selected_agent_preset_questions()
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>();
+                values.push(draft);
+                app.set_selected_agent_preset_questions(ModelRc::new(VecModel::from(
+                    values
+                        .into_iter()
+                        .map(Into::into)
+                        .collect::<Vec<slint::SharedString>>(),
+                )));
+                app.set_agent_question_draft("".into());
+            }
         }
     });
     let weak = app.as_weak();
     app.on_remove_agent_question(move |index| {
-        if let Some(app) = weak.upgrade() { let mut values = app.get_selected_agent_preset_questions().iter().map(|v| v.to_string()).collect::<Vec<_>>(); if let Ok(index) = usize::try_from(index) { if index < values.len() { values.remove(index); app.set_selected_agent_preset_questions(ModelRc::new(VecModel::from(values.into_iter().map(Into::into).collect::<Vec<slint::SharedString>>()))); } } }
+        if let Some(app) = weak.upgrade() {
+            let mut values = app
+                .get_selected_agent_preset_questions()
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>();
+            if let Ok(index) = usize::try_from(index) {
+                if index < values.len() {
+                    values.remove(index);
+                    app.set_selected_agent_preset_questions(ModelRc::new(VecModel::from(
+                        values
+                            .into_iter()
+                            .map(Into::into)
+                            .collect::<Vec<slint::SharedString>>(),
+                    )));
+                }
+            }
+        }
     });
     let weak = app.as_weak();
     app.on_save_runtime(move |workspace, language| {

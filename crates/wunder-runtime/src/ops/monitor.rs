@@ -41,46 +41,9 @@ const MONITOR_WRITE_BATCH_SIZE: usize = 64;
 // storage when requested, so this cache limit never deletes historical logs.
 const MONITOR_HISTORY_LOAD_LIMIT: i64 = 5000;
 const MONITOR_ROUND_HYDRATE_STREAM_EVENT_LIMIT: i64 = 1000;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MonitorLogProfile {
-    Normal,
-    Debug,
-}
-
-impl MonitorLogProfile {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Normal => "normal",
-            Self::Debug => "debug",
-        }
-    }
-
-    fn from_request(debug_payload: bool, is_admin: bool) -> Self {
-        if debug_payload && is_admin {
-            Self::Debug
-        } else {
-            Self::Normal
-        }
-    }
-
-    fn from_storage(raw: Option<&str>, is_admin: bool) -> Self {
-        if let Some(value) = raw {
-            match value.trim().to_ascii_lowercase().as_str() {
-                "debug" | "verbose" => {
-                    return if is_admin { Self::Debug } else { Self::Normal };
-                }
-                "normal" | "default" => return Self::Normal,
-                _ => {}
-            }
-        }
-        if is_admin {
-            Self::Debug
-        } else {
-            Self::Normal
-        }
-    }
-}
+// Bound the in-memory per-session event queue; persistence and detail reads
+// all consume this deque, so the cap also bounds stored payload growth.
+const MONITOR_SESSION_EVENT_LIMIT: usize = 500;
 
 #[derive(Debug, Clone)]
 struct MonitorEvent {
@@ -272,7 +235,6 @@ struct SessionRecord {
     user_id: String,
     agent_id: String,
     is_admin: bool,
-    log_profile: MonitorLogProfile,
     trace_id: String,
     question: String,
     status: String,
@@ -305,7 +267,6 @@ struct SessionRecordInit {
     agent_id: String,
     question: String,
     is_admin: bool,
-    log_profile: MonitorLogProfile,
     trace_id: String,
 }
 
@@ -317,7 +278,6 @@ impl SessionRecord {
             agent_id,
             question,
             is_admin,
-            log_profile,
             trace_id,
         } = init;
         Self {
@@ -325,7 +285,6 @@ impl SessionRecord {
             user_id,
             agent_id,
             is_admin,
-            log_profile,
             trace_id,
             question,
             status: MonitorState::STATUS_RUNNING.to_string(),
@@ -408,7 +367,6 @@ impl SessionRecord {
             "user_id": self.user_id,
             "agent_id": self.agent_id,
             "is_admin": self.is_admin,
-            "log_profile": self.log_profile.as_str(),
             "trace_id": self.trace_id,
             "question": self.question,
             "status": self.status,
@@ -446,7 +404,6 @@ impl SessionRecord {
             "user_id": self.user_id,
             "agent_id": self.agent_id,
             "is_admin": self.is_admin,
-            "log_profile": self.log_profile.as_str(),
             "trace_id": self.trace_id,
             "question": self.question,
             "status": self.status,
@@ -495,10 +452,6 @@ impl SessionRecord {
             .get("is_admin")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let log_profile = MonitorLogProfile::from_storage(
-            payload.get("log_profile").and_then(Value::as_str),
-            is_admin,
-        );
         let trace_id = payload
             .get("trace_id")
             .and_then(Value::as_str)
@@ -590,6 +543,10 @@ impl SessionRecord {
                 }
             }
         }
+        // Legacy records may exceed the cap; keep only the newest events.
+        while events.len() > MONITOR_SESSION_EVENT_LIMIT {
+            events.pop_front();
+        }
         let mut cursor = 1_i64;
         for event in &mut events {
             if event.event_id <= 0 {
@@ -664,7 +621,6 @@ impl SessionRecord {
             user_id,
             agent_id,
             is_admin,
-            log_profile,
             trace_id,
             question,
             status,
@@ -921,7 +877,6 @@ impl MonitorState {
         agent_id: &str,
         question: &str,
         is_admin: bool,
-        debug_payload: bool,
     ) -> i64 {
         self.run_guarded(
             "monitor.register",
@@ -975,7 +930,6 @@ impl MonitorState {
                     agent_id,
                     question,
                     is_admin,
-                    debug_payload,
                     now,
                     false,
                     persisted_round_floor,
@@ -997,7 +951,6 @@ impl MonitorState {
         agent_id: &str,
         question: &str,
         is_admin: bool,
-        debug_payload: bool,
         queue_payload: &Value,
     ) -> i64 {
         self.run_guarded(
@@ -1042,7 +995,6 @@ impl MonitorState {
                         agent_id,
                         question,
                         is_admin,
-                        debug_payload,
                         now,
                         false,
                         persisted_round_floor,
@@ -1913,6 +1865,11 @@ impl MonitorState {
                     "model_request_count".to_string(),
                     json!(record.model_request_count.unwrap_or(0).max(0)),
                 );
+                // Legacy alias mirroring the monitor summary shape.
+                overview.insert(
+                    "quota_used".to_string(),
+                    json!(record.model_request_count.unwrap_or(0).max(0)),
+                );
                 overview.insert(
                     "consumed_tokens".to_string(),
                     json!(record.consumed_tokens.max(0)),
@@ -2483,7 +2440,6 @@ impl MonitorState {
         agent_id: &str,
         question: &str,
         is_admin: bool,
-        debug_payload: bool,
         now: f64,
         append_received: bool,
         persisted_round_floor: i64,
@@ -2493,7 +2449,6 @@ impl MonitorState {
             return (None, 1);
         }
         let cleaned_agent = agent_id.trim();
-        let log_profile = MonitorLogProfile::from_request(debug_payload, is_admin);
         {
             let mut forced = self.forced_cancelled.lock();
             forced.remove(session_id);
@@ -2511,7 +2466,6 @@ impl MonitorState {
                     record.question = question.to_string();
                 }
                 record.is_admin = is_admin;
-                record.log_profile = log_profile;
                 let trace_id = if record.trace_id.trim().is_empty() {
                     let generated = build_monitor_trace_id();
                     record.trace_id = generated.clone();
@@ -2541,7 +2495,6 @@ impl MonitorState {
                         "user_round": user_round,
                         "question": question,
                         "trace_id": trace_id,
-                        "log_profile": log_profile.as_str(),
                     }),
                     now,
                 );
@@ -2551,7 +2504,6 @@ impl MonitorState {
             record.user_rounds += 1;
             record.question = question.to_string();
             record.is_admin = is_admin;
-            record.log_profile = log_profile;
             let trace_id = if record.trace_id.trim().is_empty() {
                 let generated = build_monitor_trace_id();
                 record.trace_id = generated.clone();
@@ -2581,7 +2533,6 @@ impl MonitorState {
                     "user_round": user_round,
                     "question": question,
                     "trace_id": trace_id,
-                    "log_profile": log_profile.as_str(),
                 }),
                 now,
             );
@@ -2595,7 +2546,6 @@ impl MonitorState {
                         "question": question,
                         "user_round": user_round,
                         "trace_id": trace_id,
-                        "log_profile": log_profile.as_str(),
                     }),
                     now,
                 );
@@ -2611,7 +2561,6 @@ impl MonitorState {
                 agent_id: cleaned_agent.to_string(),
                 question: question.to_string(),
                 is_admin,
-                log_profile,
                 trace_id: trace_id.clone(),
             },
             now,
@@ -2637,7 +2586,6 @@ impl MonitorState {
                 "user_round": user_round,
                 "question": question,
                 "trace_id": trace_id,
-                "log_profile": log_profile.as_str(),
             }),
             now,
         );
@@ -2651,7 +2599,6 @@ impl MonitorState {
                     "question": question,
                     "user_round": user_round,
                     "trace_id": trace_id,
-                    "log_profile": log_profile.as_str(),
                 }),
                 now,
             );
@@ -2791,10 +2738,8 @@ impl MonitorState {
         if let Value::Object(ref mut map) = payload {
             map.entry("trace_id".to_string())
                 .or_insert_with(|| Value::String(record.trace_id.clone()));
-            map.entry("log_profile".to_string())
-                .or_insert_with(|| Value::String(record.log_profile.as_str().to_string()));
         }
-        let sanitized = self.sanitize_event_data(event_type, &payload, record.log_profile);
+        let sanitized = self.sanitize_event_data(event_type, &payload);
         if let Some(previous) = record.events.back_mut() {
             if should_merge_monitor_event(previous, event_type, &sanitized) {
                 previous.timestamp = timestamp;
@@ -2810,6 +2755,11 @@ impl MonitorState {
             event_type: event_type.to_string(),
             data: sanitized.clone(),
         });
+        // Bound the per-session event queue so long sessions cannot grow
+        // in-memory and persisted payloads without limit.
+        while record.events.len() > MONITOR_SESSION_EVENT_LIMIT {
+            record.events.pop_front();
+        }
         // Each response is counted once, including rejected calls and compaction.
         // Legacy turns without per-response accounting still use round_usage.
         if event_type == "model_usage"
@@ -2827,12 +2777,7 @@ impl MonitorState {
         }
     }
 
-    fn sanitize_event_data(
-        &self,
-        event_type: &str,
-        data: &Value,
-        _log_profile: MonitorLogProfile,
-    ) -> Value {
+    fn sanitize_event_data(&self, event_type: &str, data: &Value) -> Value {
         if event_type == "llm_request" {
             return summarize_llm_request_event(data, self.payload_limit);
         }
@@ -3490,8 +3435,8 @@ mod tests {
     use super::{
         derive_effective_context_tokens, is_workspace_usage_dir_name,
         llm_speed_summary_from_monitor_events, resolve_payload_limit, trim_string_fields,
-        update_workspace_usage_state_incremental, MonitorEvent, MonitorLogProfile, MonitorState,
-        PendingExperienceAward, WorkspaceUsageScanState, MIN_PAYLOAD_LIMIT,
+        update_workspace_usage_state_incremental, MonitorEvent, MonitorState, PendingExperienceAward,
+        WorkspaceUsageScanState, MIN_PAYLOAD_LIMIT,
     };
     use crate::config::ObservabilityConfig;
     use crate::i18n;
@@ -3501,22 +3446,6 @@ mod tests {
     use serde_json::json;
     use std::{collections::VecDeque, fs, sync::Arc};
     use tempfile::tempdir;
-
-    #[test]
-    fn debug_profile_requires_admin_flag() {
-        assert_eq!(
-            MonitorLogProfile::from_request(true, true),
-            MonitorLogProfile::Debug
-        );
-        assert_eq!(
-            MonitorLogProfile::from_request(true, false),
-            MonitorLogProfile::Normal
-        );
-        assert_eq!(
-            MonitorLogProfile::from_storage(Some("debug"), false),
-            MonitorLogProfile::Normal
-        );
-    }
 
     #[test]
     fn trim_string_fields_recursively_applies_limit() {
@@ -3617,7 +3546,7 @@ mod tests {
             temp.path().to_string_lossy().to_string(),
         );
         let session_id = "sess-ctx";
-        monitor.register(session_id, "user", "agent", "question", true, false);
+        monitor.register(session_id, "user", "agent", "question", true);
         monitor.record_event(
             session_id,
             "context_usage",
@@ -3662,7 +3591,7 @@ mod tests {
             temp.path().to_string_lossy().to_string(),
         );
 
-        let round = monitor.register(" sess-round-hydrate ", "user", "agent", "next", true, false);
+        let round = monitor.register(" sess-round-hydrate ", "user", "agent", "next", true);
 
         assert_eq!(round, 4);
         let record = monitor.get_record("sess-round-hydrate").expect("record");
@@ -3704,7 +3633,6 @@ mod tests {
             "agent",
             "next",
             true,
-            false,
         );
 
         assert_eq!(round, 6);
@@ -3727,7 +3655,7 @@ mod tests {
             temp.path().to_string_lossy().to_string(),
         );
         let session_id = "sess-cancel-source";
-        monitor.register(session_id, "user", "agent", "question", true, false);
+        monitor.register(session_id, "user", "agent", "question", true);
 
         assert!(monitor.cancel_with_source(session_id, "client_abort"));
         let detail = monitor.get_detail(session_id).expect("session detail");
@@ -3761,14 +3689,13 @@ mod tests {
             temp.path().to_string_lossy().to_string(),
         );
 
-        monitor.register("sess-running", "user", "agent", "question", true, false);
+        monitor.register("sess-running", "user", "agent", "question", true);
         let queued_round = monitor.register_queued(
             "sess-queued",
             "user",
             "agent",
             "question",
             true,
-            false,
             &json!({
                 "summary": i18n::t("monitor.summary.queued"),
                 "queue_id": "queue-test",
@@ -3776,11 +3703,11 @@ mod tests {
                 "queue_total": 2
             }),
         );
-        monitor.register("sess-finished", "user", "agent", "question", true, false);
+        monitor.register("sess-finished", "user", "agent", "question", true);
         monitor.mark_finished("sess-finished");
-        monitor.register("sess-error", "user", "agent", "question", true, false);
+        monitor.register("sess-error", "user", "agent", "question", true);
         monitor.mark_error("sess-error", "error");
-        monitor.register("sess-cancelled", "user", "agent", "question", true, false);
+        monitor.register("sess-cancelled", "user", "agent", "question", true);
         monitor.mark_cancelled("sess-cancelled");
 
         let metrics = monitor.get_service_metrics(None, None);
@@ -3802,7 +3729,7 @@ mod tests {
         assert_eq!(metrics["total_sessions"], json!(5));
 
         let running_round =
-            monitor.register("sess-queued", "user", "agent", "question", true, false);
+            monitor.register("sess-queued", "user", "agent", "question", true);
         let running = monitor.get_record("sess-queued").expect("running record");
         assert_eq!(running_round, 1);
         assert_eq!(running["status"], json!("running"));
@@ -3855,7 +3782,6 @@ mod tests {
             "agent-id",
             "question",
             true,
-            false,
         );
         monitor.record_event("sess-log-overview", "tool_call", &json!({ "tool": "read" }));
         monitor.record_event(

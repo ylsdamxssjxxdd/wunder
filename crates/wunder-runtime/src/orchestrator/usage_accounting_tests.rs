@@ -82,7 +82,7 @@ async fn usage_accounting_includes_rejected_calls_empty_responses_and_compaction
     state.storage.upsert_user_account(&user).unwrap();
     state
         .monitor
-        .register("session_1", &user.user_id, "agent_1", "input", true, false);
+        .register("session_1", &user.user_id, "agent_1", "input", true);
     let emitter = EventEmitter::new(
         "session_1".into(),
         user.user_id.clone(),
@@ -118,7 +118,6 @@ async fn usage_accounting_includes_rejected_calls_empty_responses_and_compaction
                 RoundInfo::new(1, round),
                 visible,
                 true,
-                false,
                 Some(&tools),
                 None,
             )
@@ -171,7 +170,6 @@ async fn usage_accounting_includes_rejected_calls_empty_responses_and_compaction
                 RoundInfo::new(1, round),
                 true,
                 true,
-                false,
                 Some(&tools),
                 None,
             )
@@ -225,7 +223,6 @@ async fn usage_accounting_includes_rejected_calls_empty_responses_and_compaction
                 RoundInfo::new(2, 1),
                 true,
                 true,
-                false,
                 None,
                 None,
             )
@@ -308,7 +305,7 @@ async fn administrator_requests_track_thread_quota_without_debiting_account() {
         .unwrap();
     state
         .monitor
-        .register("session_1", &user.user_id, "agent_1", "input", true, false);
+        .register("session_1", &user.user_id, "agent_1", "input", true);
     let emitter = EventEmitter::new(
         "session_1".into(),
         user.user_id.clone(),
@@ -340,7 +337,6 @@ async fn administrator_requests_track_thread_quota_without_debiting_account() {
             RoundInfo::new(1, 1),
             true,
             true,
-            false,
             None,
             None,
         )

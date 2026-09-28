@@ -66,7 +66,7 @@ async fn workflow_metrics_preserve_parallel_success_failure_and_cancellation() {
     };
     state
         .monitor
-        .register("session_1", "user_1", "", "input", true, false);
+        .register("session_1", "user_1", "", "input", true);
     let (tx, mut rx) = mpsc::channel(64);
     let emitter = EventEmitter::new(
         "session_1".into(),

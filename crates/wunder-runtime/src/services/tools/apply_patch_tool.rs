@@ -1091,7 +1091,7 @@ mod tests {
     fn apply_update_chunks_stops_when_cancelled() {
         let dir = create_temp_dir("patch-cancelled");
         let monitor = create_monitor_for_tests(&dir);
-        monitor.register("sess_cancel", "tester", "", "q", false, false);
+        monitor.register("sess_cancel", "tester", "", "q", false);
         assert!(monitor.cancel("sess_cancel"));
         let probe = PatchCancelProbe {
             monitor,

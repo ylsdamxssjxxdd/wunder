@@ -59,17 +59,18 @@ export component EdgeToggle inherits Rectangle {
     in property <bool> open: false;
     in property <bool> opens-left: false;
     callback toggled();
-    width: 52px;
-    height: 100%;
+    width: 8px;
+    height: 48px;
     background: transparent;
     accessible-role: button;
     accessible-label: root.open ? "收起侧栏" : "展开侧栏";
     touch := TouchArea {
+        x: 0px; width: parent.width;
         mouse-cursor: pointer;
         clicked => { root.toggled(); }
     }
     if touch.has-hover : Rectangle {
-        x: 11px; y: (root.height - 48px) / 2; width: 30px; height: 48px;
+        x: -11px; y: 0px; width: 30px; height: 48px;
         background: transparent;
         Image {
             x: 9px; y: 18px; width: 12px; height: 12px;

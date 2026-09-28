@@ -84,7 +84,13 @@ impl EmptyOutputGuard {
             "role": "user",
             "content": super::execute_support::encode_observation_prefixed_json(&notice),
         });
-        orchestrator.append_model_context_entry(user_id, session_id, &message);
+        orchestrator.append_internal_model_context_chat(
+            user_id,
+            session_id,
+            &message,
+            "empty_output_recovery",
+            round_info,
+        );
         messages.push(message);
         Ok(())
     }

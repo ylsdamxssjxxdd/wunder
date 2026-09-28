@@ -629,7 +629,6 @@ async fn admin_monitor_compaction(
             Some(preview_skill),
             None,
             false,
-            false,
         )
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;

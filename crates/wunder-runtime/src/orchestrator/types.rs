@@ -16,7 +16,6 @@ pub(super) struct PreparedRequest {
     pub(super) preview_skill: bool,
     pub(super) agent_id: Option<String>,
     pub(super) stream: bool,
-    pub(super) debug_payload: bool,
     pub(super) attachments: Option<Vec<AttachmentPayload>>,
     pub(super) language: String,
     pub(super) allow_queue: bool,

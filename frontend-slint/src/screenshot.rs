@@ -43,7 +43,9 @@ pub fn capture(app: slint::Weak<MainWindow>, hide_window: bool) {
         let result = screen_capture::capture_screen();
         let _ = slint::invoke_from_event_loop(move || {
             if hidden {
-                if let Some(window) = app.upgrade() { let _ = window.show(); }
+                if let Some(window) = app.upgrade() {
+                    let _ = window.show();
+                }
             }
             CAPTURE_IN_FLIGHT.store(false, Ordering::Release);
             match result {
@@ -77,7 +79,9 @@ pub fn capture_fullscreen(app: slint::Weak<MainWindow>, hide_window: bool) {
             .and_then(|frame| save_attachment(frame.width, frame.height, &frame.rgba));
         let _ = slint::invoke_from_event_loop(move || {
             if hidden {
-                if let Some(window) = app.upgrade() { let _ = window.show(); }
+                if let Some(window) = app.upgrade() {
+                    let _ = window.show();
+                }
             }
             CAPTURE_IN_FLIGHT.store(false, Ordering::Release);
             match result {

@@ -6616,7 +6616,6 @@ pub(crate) async fn build_wunder_request(
         tool_names: Vec::new(),
         skip_tool_calls: false,
         stream: !global.no_stream,
-        debug_payload: false,
         session_id: Some(session_id.to_string()),
         agent_id: resolved_agent,
         workspace_container_id: None,

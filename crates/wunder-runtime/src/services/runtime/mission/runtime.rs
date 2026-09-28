@@ -1333,7 +1333,6 @@ fn build_task_request(
         tool_names,
         skip_tool_calls: false,
         stream: true,
-        debug_payload: false,
         session_id: Some(session_id.to_string()),
         agent_id: Some(agent.agent_id.clone()),
         workspace_container_id: None,

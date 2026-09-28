@@ -132,7 +132,7 @@
   - `tool_names`：字符串列表，可选，指定启用的内置工具/MCP/技能名称
   - `skip_tool_calls`：布尔，可选，是否忽略模型输出中的工具调用并直接结束（默认 false）
   - `stream`：布尔，可选，是否流式输出（默认 true）
-  - `debug_payload`：布尔，可选，调试用；仅管理员调试会话（`is_admin=true`）开启后会保留模型请求体用于事件与日志记录（默认 false）
+  - `debug_payload`：已废弃。仅为兼容旧客户端保留，服务端解析后忽略，不再保留模型请求体；日志统一为精简形态
   - `session_id`：字符串，可选，指定会话标识
   - `agent_id`：字符串，可选，智能体应用 id（用于附加提示词与沙盒容器工作区路由）
   - `model_name`：字符串，可选，模型配置名称（不传则使用默认模型）
@@ -1789,8 +1789,9 @@
   - `deleted`：按表统计的删除条数
   - `deleted_total`：总删除条数
   - `system`：删除后的系统资源指标快照
-- 说明：该接口是线程日志的唯一正常删除入口，仅供管理员按时间范围手动维护日志。
-- 说明：清理范围与 `system.log_used` 口径一致，覆盖 `chat_history`、`model_context_entries`、`tool_logs`、`artifact_logs`、`monitor_sessions`、`stream_events`、`memory_task_logs`。其中包含聊天历史上下文与流事件，删除后不可恢复。
+- 说明：该接口是管理端按时间范围手动维护线程日志的入口，立即物理删除，仅供管理员使用。
+- 说明：清理范围与 `system.log_used` 口径一致，覆盖 `chat_history`、`tool_logs`、`artifact_logs`、`monitor_sessions`、`stream_events`、`memory_task_logs`。其中包含聊天历史上下文与流事件，删除后不可恢复。
+- 说明：除管理员手动清理外，`stream_events` 按 `observability.stream_event_retention_hours`（默认 168 小时，0 表示禁用）由每小时保留期清扫任务自动删除过期事件（`chat_history` 永不自动删除）；用户删除会话后写入宽限期墓碑，`observability.deleted_session_log_grace_hours`（默认 24 小时，<=0 表示立即清理）到期后由清扫任务物理删除其日志。
 - 清理日志与空历史线程目录在同一事务提交，`deleted.chat_sessions` 返回目录删除数。仅清理范围内曾有消息、现已无聊天/上下文/流事件/监控/工具/产物记录的目录；保留未使用草稿、部分历史、有定时任务或活动目标的线程。运行中、排队中和等待审批线程的日志也会跳过。
 - 说明：必须同时提供开始和结束时间，后端会拒绝空范围或无效范围；若开始时间大于结束时间，后端会自动交换顺序。
 
@@ -1806,7 +1807,7 @@
   - `events`：事件详情列表
 - 分页响应字段：`event_offset`、`event_limit`、`event_total`、`events_has_more`。
 - 说明：
-- `session` 详情新增 `log_profile`（`normal`/`debug`）与 `trace_id`，用于跨模块追踪。
+- `session` 详情不再返回 `log_profile` 与 `trace_id`（MonitorLogProfile 已移除，日志统一为精简形态）。
 - `session` 详情新增 `agent_name`（智能体名称），用于在线程日志中快速辨认线程归属。
 - `events` 每条记录新增 `event_id`（线程内递增）。
 - 每轮用户提问会额外写入 `user_input` 事件，`data.message/question` 保存原始用户消息，便于在线程日志中快速定位上下文。
@@ -3084,7 +3085,7 @@
 ### 聊天消息提交补充
 
 - `POST /wunder/chat/sessions/{session_id}/messages`
-- 请求体新增可选字段 `debug_payload`（兼容 `debugPayload`），仅用于调试模式下把本轮实际下发给模型的请求结构体透出到前端调试日志，不影响正常对话行为。
+- 请求体可选字段 `debug_payload`（兼容 `debugPayload`）已废弃：仅为兼容旧客户端保留，服务端解析后忽略，请求与日志统一为精简形态，不影响正常对话行为。
 - 请求体支持可选字段 `reasoning_effort`（兼容 `reasoningEffort`），取值为 `default`、`none`、`minimal`、`low`、`medium`、`high` 或 `xhigh`。除 `default` 外，该值仅覆盖当前请求的模型思考等级，不修改管理员保存的模型配置；非法值会被忽略。WebSocket `/wunder/chat/ws` 的 `start` payload 同样支持该字段。
 - 请求体支持可选字段 `client_message_id`（兼容 `clientMessageId`），语义同 `/wunder` 请求；`/wunder/chat/ws` 与 `/wunder/ws` 的 `start` payload 也支持该字段。服务端会在本轮对象型流事件和队列事件中回带该值，供实时投影按精确键合并用户消息、排队占位和后续模型/工具输出。
 - 现支持“仅附件、无正文”的提交方式：
@@ -3097,7 +3098,7 @@
 - 鉴权：与聊天域保持一致（用户侧 Bearer Token）
 - 请求体：
   - `model_name?`：可选，指定用于压缩摘要的模型。
-  - `debug_payload?`：可选，兼容 `debugPayload`，开启后会把压缩摘要阶段的模型请求结构体写入调试事件。
+  - `debug_payload?`：已废弃，兼容 `debugPayload`，服务端解析后忽略；压缩摘要阶段的模型请求事件统一为精简摘要形态。
 - 行为：
   - 接口命中后立即返回 accepted，不再阻塞等待压缩完成。
 - 后端会将这次手动压缩登记为一个真实的独立运行轮次，并持续写入 `thread_status`、`progress`、`compaction`、`context_usage`、`turn_terminal` 等事件。

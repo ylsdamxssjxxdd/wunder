@@ -216,7 +216,6 @@ impl ServerHandler for WunderMcpServer {
                 tool_names,
                 skip_tool_calls: false,
                 stream: false,
-                debug_payload: false,
                 session_id: None,
                 agent_id: None,
                 workspace_container_id: None,

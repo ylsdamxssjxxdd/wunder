@@ -55,7 +55,10 @@ struct WsStartPayload {
     client_message_id: Option<String>,
     #[serde(default)]
     stream: Option<bool>,
+    // Deprecated compatibility field: parsed for older clients but ignored;
+    // request logging is unified to the compact profile.
     #[serde(default, alias = "debugPayload", alias = "debug_payload")]
+    #[allow(dead_code)]
     debug_payload: bool,
     #[serde(default)]
     attachments: Option<Vec<ChatAttachment>>,
@@ -455,7 +458,6 @@ async fn handle_ws(
                                 tool_call_mode: payload.tool_call_mode,
                                 approval_mode: payload.approval_mode,
                                 reasoning_effort: payload.reasoning_effort,
-                                debug_payload: payload.debug_payload,
                             },
                         )
                         .await

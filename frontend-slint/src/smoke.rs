@@ -39,7 +39,11 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
             title: "子智能体".into(),
             preview: "已中断 · 可复用".into(),
             time: "".into(),
-            consumed_tokens: "".into(), tool_calls: "".into(), quota_used: "".into(), runtime_status: "".into(), locked: false,
+            consumed_tokens: "".into(),
+            tool_calls: "".into(),
+            quota_used: "".into(),
+            runtime_status: "".into(),
+            locked: false,
         },
     ])));
     app.set_subagents_status("保留历史，可由主智能体继续分派".into());

@@ -180,7 +180,7 @@ async fn run_child_pool_scenario(messaging: bool, postgres: Option<String>) {
     }
     state
         .monitor
-        .register(&parent_id, &user.user_id, "", "task", true, false);
+        .register(&parent_id, &user.user_id, "", "task", true);
     let accepted = subagent_control::execute(
         &context,
         &json!({"action":"send","session_id":child_id,"message":"first"}),
@@ -279,7 +279,7 @@ async fn run_child_pool_scenario(messaging: bool, postgres: Option<String>) {
         }
         let history = state
             .storage
-            .load_model_context_entries(&user.user_id, &child_id, None)
+            .load_chat_history(&user.user_id, &child_id, None)
             .unwrap();
         assert_eq!(
             history
@@ -368,7 +368,7 @@ async fn run_child_pool_scenario(messaging: bool, postgres: Option<String>) {
         assert_eq!(calls.load(Ordering::SeqCst), 3);
         state
             .monitor
-            .register(&parent_id, &user.user_id, "", "held", true, false);
+            .register(&parent_id, &user.user_id, "", "held", true);
         let cancelled = subagent_control::execute(
             &context,
             &json!({"action":"report","message":"pending","message_id":"report_cancel"}),
@@ -432,7 +432,7 @@ async fn run_child_pool_scenario(messaging: bool, postgres: Option<String>) {
 
     state
         .monitor
-        .register(&parent_id, &user.user_id, "", "next", true, false);
+        .register(&parent_id, &user.user_id, "", "next", true);
     context.user_round = Some(2);
     for (action, message) in [("resume", "second"), ("send", "third")] {
         let result = subagent_control::execute(

@@ -1,3 +1,5 @@
+// Monitor event pipeline regression tests: explicit user input events,
+// llm_request summarization, event coalescing, and the bounded event queue.
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::thread;
@@ -8,11 +10,11 @@ use wunder_server::storage::{SqliteStorage, StorageBackend};
 
 fn build_monitor_with_storage(payload_limit: i64) -> (MonitorState, Arc<dyn StorageBackend>) {
     let db_path = std::env::temp_dir().join(format!(
-        "wunder_monitor_profile_it_{}.db",
+        "wunder_monitor_events_it_{}.db",
         uuid::Uuid::new_v4().simple()
     ));
     let workspace_root = std::env::temp_dir().join(format!(
-        "wunder_monitor_profile_ws_{}",
+        "wunder_monitor_events_ws_{}",
         uuid::Uuid::new_v4().simple()
     ));
     let storage: Arc<dyn StorageBackend> =
@@ -84,11 +86,11 @@ fn register_records_explicit_user_input_events() {
     let second_question = "second user message";
 
     assert_eq!(
-        monitor.register(&session_id, "user_round", "", first_question, false, false),
+        monitor.register(&session_id, "user_round", "", first_question, false),
         1
     );
     assert_eq!(
-        monitor.register(&session_id, "user_round", "", second_question, false, false),
+        monitor.register(&session_id, "user_round", "", second_question, false),
         2
     );
 
@@ -130,53 +132,12 @@ fn register_records_explicit_user_input_events() {
 }
 
 #[test]
-fn non_admin_debug_payload_still_persists_complete_event_sequence() {
-    let monitor = build_monitor(12);
-    let session_id = format!("sess_{}", uuid::Uuid::new_v4().simple());
-    monitor.register(&session_id, "user_normal", "", "hello", false, true);
-    monitor.record_event(
-        &session_id,
-        "llm_output_delta",
-        &json!({ "delta": "delta" }),
-    );
-    monitor.record_event(
-        &session_id,
-        "tool_output_delta",
-        &json!({ "delta": "tool" }),
-    );
-    monitor.record_event(
-        &session_id,
-        "llm_output",
-        &json!({ "content": "final output" }),
-    );
-
-    let detail = monitor
-        .get_detail(&session_id)
-        .expect("detail should exist");
-    assert_eq!(detail["session"]["log_profile"], json!("normal"));
-
-    let types = event_types(&detail);
-    assert!(types.iter().any(|value| value == "llm_output"));
-    assert!(types.iter().any(|value| value == "llm_output_delta"));
-    assert!(types.iter().any(|value| value == "tool_output_delta"));
-
-    let event_ids = detail["events"]
-        .as_array()
-        .expect("events should be an array")
-        .iter()
-        .map(|event| event["event_id"].as_i64().expect("event_id should be i64"))
-        .collect::<Vec<_>>();
-    assert!(event_ids.iter().all(|id| *id > 0));
-    assert!(event_ids.windows(2).all(|pair| pair[1] > pair[0]));
-}
-
-#[test]
-fn admin_debug_profile_keeps_delta_and_summarizes_llm_request() {
+fn llm_request_events_are_always_summarized() {
     let monitor = build_monitor(4);
     let session_id = format!("sess_{}", uuid::Uuid::new_v4().simple());
     let long_text = "abcdefghijklmnopqrstuvwxyz";
 
-    monitor.register(&session_id, "admin_user", "", "hello", true, true);
+    monitor.register(&session_id, "admin_user", "", "hello", true);
     monitor.record_event(
         &session_id,
         "llm_output_delta",
@@ -209,7 +170,6 @@ fn admin_debug_profile_keeps_delta_and_summarizes_llm_request() {
     let detail = monitor
         .get_detail(&session_id)
         .expect("detail should exist");
-    assert_eq!(detail["session"]["log_profile"], json!("debug"));
 
     let delta_event = find_event(&detail, "llm_output_delta").expect("delta event should exist");
     assert_eq!(delta_event["data"]["delta"], json!(long_text));
@@ -236,12 +196,12 @@ fn admin_debug_profile_keeps_delta_and_summarizes_llm_request() {
 }
 
 #[test]
-fn admin_debug_profile_persists_compact_record() {
+fn persisted_record_keeps_summarized_llm_request() {
     let (monitor, storage) = build_monitor_with_storage(12);
     let session_id = format!("sess_{}", uuid::Uuid::new_v4().simple());
     let long_text = "abcdefghijklmnopqrstuvwxyz";
 
-    monitor.register(&session_id, "admin_user", "", "hello", true, true);
+    monitor.register(&session_id, "admin_user", "", "hello", true);
     monitor.record_event(
         &session_id,
         "llm_output_delta",
@@ -281,10 +241,10 @@ fn admin_debug_profile_persists_compact_record() {
 }
 
 #[test]
-fn admin_without_debug_payload_still_persists_delta_events() {
+fn delta_events_persist_without_any_debug_flag() {
     let monitor = build_monitor(12);
     let session_id = format!("sess_{}", uuid::Uuid::new_v4().simple());
-    monitor.register(&session_id, "admin_user", "", "hello", true, false);
+    monitor.register(&session_id, "admin_user", "", "hello", true);
     monitor.record_event(
         &session_id,
         "llm_output_delta",
@@ -294,16 +254,42 @@ fn admin_without_debug_payload_still_persists_delta_events() {
     let detail = monitor
         .get_detail(&session_id)
         .expect("detail should exist");
-    assert_eq!(detail["session"]["log_profile"], json!("normal"));
     let types = event_types(&detail);
     assert!(types.iter().any(|value| value == "llm_output_delta"));
+}
+
+#[test]
+fn session_event_queue_is_bounded() {
+    let monitor = build_monitor(120);
+    let session_id = format!("sess_{}", uuid::Uuid::new_v4().simple());
+    monitor.register(&session_id, "user_cap", "", "hello", false);
+    // Push well past the in-memory cap; only the newest events may survive.
+    // Use a non-mergeable event type so every push appends a new entry.
+    for index in 0..600 {
+        monitor.record_event(&session_id, "marker", &json!({ "index": index }));
+    }
+
+    let detail = monitor
+        .get_detail(&session_id)
+        .expect("detail should exist");
+    let events = detail["events"].as_array().expect("events should be an array");
+    assert_eq!(events.len(), 500);
+    let last = events.last().expect("last event");
+    assert_eq!(last["type"], json!("marker"));
+    assert_eq!(last["data"]["index"], json!(599));
+    // Event ids keep increasing monotonically even after eviction.
+    let event_ids = events
+        .iter()
+        .map(|event| event["event_id"].as_i64().expect("event_id should be i64"))
+        .collect::<Vec<_>>();
+    assert!(event_ids.windows(2).all(|pair| pair[1] > pair[0]));
 }
 
 #[test]
 fn coalesces_consecutive_context_usage_events() {
     let monitor = build_monitor(120);
     let session_id = format!("sess_{}", uuid::Uuid::new_v4().simple());
-    monitor.register(&session_id, "user_context", "", "hello", false, false);
+    monitor.register(&session_id, "user_context", "", "hello", false);
     monitor.record_event(
         &session_id,
         "context_usage",
@@ -334,7 +320,7 @@ fn coalesces_consecutive_context_usage_events() {
 fn coalesces_progress_events_with_same_stage() {
     let monitor = build_monitor(120);
     let session_id = format!("sess_{}", uuid::Uuid::new_v4().simple());
-    monitor.register(&session_id, "user_progress", "", "hello", false, false);
+    monitor.register(&session_id, "user_progress", "", "hello", false);
     monitor.record_event(
         &session_id,
         "progress",

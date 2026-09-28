@@ -101,7 +101,15 @@ impl StreamDeltaBuffer {
             return None;
         }
         let mut segments = Vec::with_capacity(self.segments.len());
+        let mut last_user_round = None;
+        let mut last_model_round = None;
         for segment in self.segments.drain(..) {
+            if segment.user_round.is_some() {
+                last_user_round = segment.user_round;
+            }
+            if segment.model_round.is_some() {
+                last_model_round = segment.model_round;
+            }
             let mut item = serde_json::Map::new();
             item.insert("event_id".to_string(), json!(segment.event_id));
             if let Some(delta) = segment.delta {
@@ -130,6 +138,14 @@ impl StreamDeltaBuffer {
         let event_id = self.last_event_id;
         let mut payload = serde_json::Map::new();
         payload.insert("segments".to_string(), Value::Array(segments));
+        // Top-level round markers let the storage layer index folded delta rows by
+        // user round without parsing every segment.
+        if let Some(user_round) = last_user_round {
+            payload.insert("user_round".to_string(), json!(user_round));
+        }
+        if let Some(model_round) = last_model_round {
+            payload.insert("model_round".to_string(), json!(model_round));
+        }
         if self.first_event_id > 0 && self.last_event_id > 0 {
             payload.insert("event_id_start".to_string(), json!(self.first_event_id));
             payload.insert("event_id_end".to_string(), json!(self.last_event_id));
@@ -367,6 +383,10 @@ impl EventEmitter {
             let timestamp = Utc::now();
             self.persist_stream_event(event_id, "llm_output_delta", data, timestamp);
         }
+    }
+
+    pub(super) fn flush_pending_deltas(&self) {
+        self.flush_delta_buffer(true);
     }
 
     fn buffer_delta(&self, event_id: i64, data: &Value) {

@@ -24,10 +24,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, OnceLock};
+use std::sync::atomic::AtomicI64;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Handle;
-use tracing::warn;
+use tracing::{info, warn};
 use walkdir::WalkDir;
 
 const TREE_CACHE_TTL_S: f64 = 5.0;
@@ -44,6 +45,8 @@ const SESSION_ACTIVITY_META_PREFIX: &str = "session_activity:";
 const PUBLIC_WORKSPACE_ROOT: &str = "/workspaces";
 const WORKSPACE_SINGLE_ROOT_ENV: &str = "WUNDER_WORKSPACE_SINGLE_ROOT";
 const USER_PRIVATE_PERSISTENT_ROOTS: &[&str] = &["global", "knowledge", "skills"];
+pub const DEFAULT_DELETED_SESSION_LOG_GRACE_HOURS: i64 = 24;
+const DELETED_SESSION_LOG_CLEANUP_BATCH: i64 = 32;
 
 fn effective_temp_cleanup_idle_ttl_s(single_root: bool) -> f64 {
     // Single-root mode points to a user-managed local workspace (CLI/Desktop),
@@ -137,16 +140,6 @@ enum StorageWrite {
         user_id: String,
         payload: Value,
     },
-    ModelContextAppend {
-        user_id: String,
-        session_id: String,
-        payload: Value,
-    },
-    ModelContextReplace {
-        user_id: String,
-        session_id: String,
-        payloads: Vec<Value>,
-    },
     ToolLog {
         user_id: String,
         payload: Value,
@@ -196,16 +189,6 @@ impl StorageWriteQueue {
     fn apply_write(storage: &Arc<dyn StorageBackend>, task: StorageWrite) -> Result<()> {
         match task {
             StorageWrite::Chat { user_id, payload } => storage.append_chat(&user_id, &payload),
-            StorageWrite::ModelContextAppend {
-                user_id,
-                session_id,
-                payload,
-            } => storage.append_model_context_entry(&user_id, &session_id, &payload),
-            StorageWrite::ModelContextReplace {
-                user_id,
-                session_id,
-                payloads,
-            } => storage.replace_model_context_entries(&user_id, &session_id, &payloads),
             StorageWrite::ToolLog { user_id, payload } => {
                 storage.append_tool_log(&user_id, &payload)
             }
@@ -247,7 +230,8 @@ pub struct WorkspaceManager {
     container_roots: RwLock<HashMap<i32, PathBuf>>,
     storage: Arc<dyn StorageBackend>,
     write_queue: OnceLock<StorageWriteQueue>,
-    retention_days: i64,
+    stream_event_retention_hours: i64,
+    deleted_session_log_grace_hours: AtomicI64,
     retention_interval_s: f64,
     retention_state: Arc<Mutex<RetentionState>>,
     temp_cleanup_interval_s: f64,
@@ -272,10 +256,11 @@ impl WorkspaceManager {
     pub fn new(
         root: &str,
         storage: Arc<dyn StorageBackend>,
-        retention_days: i64,
+        stream_event_retention_hours: i64,
         container_roots: &HashMap<i32, String>,
     ) -> Self {
-        let retention_days = normalize_retention_days(retention_days);
+        let stream_event_retention_hours =
+            normalize_stream_event_retention_hours(stream_event_retention_hours);
         let single_root = workspace_single_root_enabled();
         let temp_cleanup_idle_ttl_s = effective_temp_cleanup_idle_ttl_s(single_root);
         if let Err(err) = storage.ensure_initialized() {
@@ -288,7 +273,8 @@ impl WorkspaceManager {
             container_roots: RwLock::new(normalized_container_roots),
             storage,
             write_queue: OnceLock::new(),
-            retention_days,
+            stream_event_retention_hours,
+            deleted_session_log_grace_hours: AtomicI64::new(DEFAULT_DELETED_SESSION_LOG_GRACE_HOURS),
             retention_interval_s: 3600.0,
             retention_state: Arc::new(Mutex::new(RetentionState::default())),
             temp_cleanup_interval_s: TEMP_FILES_CLEANUP_INTERVAL_S,
@@ -318,6 +304,16 @@ impl WorkspaceManager {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub fn set_deleted_session_log_grace_hours(&self, hours: i64) {
+        self.deleted_session_log_grace_hours
+            .store(hours.max(0), std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn deleted_session_log_grace_hours(&self) -> i64 {
+        self.deleted_session_log_grace_hours
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     pub fn container_roots(&self) -> HashMap<i32, String> {
@@ -684,7 +680,8 @@ impl WorkspaceManager {
     }
 
     fn maybe_schedule_retention_cleanup(&self) {
-        if self.retention_days <= 0 {
+        let grace_hours = self.deleted_session_log_grace_hours();
+        if self.stream_event_retention_hours <= 0 && grace_hours <= 0 {
             return;
         }
         let now = now_ts();
@@ -697,19 +694,38 @@ impl WorkspaceManager {
             state.last_cleanup = now;
         }
         let storage = self.storage.clone();
-        let retention_days = self.retention_days;
+        // Stream events are replay buffers; only rows older than the retention
+        // window are removed, chat history stays durable.
+        let retention_enabled = self.stream_event_retention_hours > 0;
+        let cutoff = now - (self.stream_event_retention_hours as f64) * 3600.0;
         let state = self.retention_state.clone();
         if let Ok(handle) = Handle::try_current() {
             handle.spawn(async move {
                 let _ = run_workspace_db("workspace.retention.cleanup", move || {
-                    storage.cleanup_retention(retention_days)
+                    if retention_enabled {
+                        let deleted = storage.cleanup_retention(cutoff)?;
+                        let removed = deleted.get("stream_events").copied().unwrap_or(0);
+                        if removed > 0 {
+                            info!(removed, cutoff, "expired stream events removed");
+                        }
+                    }
+                    cleanup_expired_deleted_session_logs(storage.as_ref(), grace_hours, now);
+                    Ok(())
                 })
                 .await;
                 let mut guard = state.lock();
                 guard.running = false;
             });
         } else {
-            let _ = storage.cleanup_retention(retention_days);
+            if retention_enabled {
+                if let Ok(deleted) = storage.cleanup_retention(cutoff) {
+                    let removed = deleted.get("stream_events").copied().unwrap_or(0);
+                    if removed > 0 {
+                        info!(removed, cutoff, "expired stream events removed");
+                    }
+                }
+            }
+            cleanup_expired_deleted_session_logs(storage.as_ref(), grace_hours, now);
             let mut guard = state.lock();
             guard.running = false;
         }
@@ -1171,48 +1187,6 @@ impl WorkspaceManager {
         Ok(())
     }
 
-    pub fn append_model_context_entry(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        payload: &Value,
-    ) -> Result<()> {
-        self.write_queue()
-            .enqueue(StorageWrite::ModelContextAppend {
-                user_id: user_id.to_string(),
-                session_id: session_id.to_string(),
-                payload: payload.clone(),
-            })?;
-        self.maybe_schedule_retention_cleanup();
-        Ok(())
-    }
-
-    pub fn replace_model_context_entries(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        payloads: &[Value],
-    ) -> Result<()> {
-        self.write_queue()
-            .enqueue(StorageWrite::ModelContextReplace {
-                user_id: user_id.to_string(),
-                session_id: session_id.to_string(),
-                payloads: payloads.to_vec(),
-            })?;
-        self.maybe_schedule_retention_cleanup();
-        Ok(())
-    }
-
-    pub fn load_model_context_entries(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        limit: i64,
-    ) -> Result<Vec<Value>> {
-        self.storage
-            .load_model_context_entries(user_id, session_id, normalize_history_limit(limit))
-    }
-
     pub fn append_tool_log(&self, user_id: &str, payload: &Value) -> Result<()> {
         self.write_queue().enqueue(StorageWrite::ToolLog {
             user_id: user_id.to_string(),
@@ -1552,23 +1526,43 @@ impl WorkspaceManager {
     }
 
     pub fn purge_session_logs(&self, user_id: &str, session_id: &str) {
+        purge_session_logs_with_storage(self.storage.as_ref(), user_id, session_id);
+    }
+
+    /// User-facing session deletion: durable logs are kept for a grace window
+    /// (`observability.deleted_session_log_grace_hours`) and purged later by the
+    /// retention cleanup. A non-positive grace purges immediately.
+    pub fn schedule_deleted_session_log_cleanup(self: &Arc<Self>, user_id: &str, session_id: &str) {
         let cleaned_user = user_id.trim();
         let cleaned_session = session_id.trim();
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
             return;
         }
-        let _ = self
-            .storage
-            .delete_chat_history_by_session(cleaned_user, cleaned_session);
-        let _ = self
-            .storage
-            .delete_tool_logs_by_session(cleaned_user, cleaned_session);
-        let _ = self
-            .storage
-            .delete_artifact_logs_by_session(cleaned_user, cleaned_session);
-        let _ = self
-            .storage
-            .delete_stream_events_by_session(cleaned_session);
+        let grace_hours = self.deleted_session_log_grace_hours();
+        if grace_hours <= 0 {
+            let workspace = Arc::clone(self);
+            let user_id = cleaned_user.to_string();
+            let session_id = cleaned_session.to_string();
+            if let Ok(handle) = Handle::try_current() {
+                handle.spawn(async move {
+                    let _ = run_workspace_db("workspace.deleted_session_logs.purge", move || {
+                        workspace.purge_session_logs(&user_id, &session_id);
+                        Ok(())
+                    })
+                    .await;
+                });
+            } else {
+                self.purge_session_logs(cleaned_user, cleaned_session);
+            }
+            return;
+        }
+        if let Err(err) = self.storage.mark_deleted_session_log_grace(
+            cleaned_user,
+            cleaned_session,
+            now_ts(),
+        ) {
+            warn!("mark deleted session log grace failed: {err}");
+        }
     }
 
     /// Remove a user's durable projection and workspace while preserving audit
@@ -2376,12 +2370,59 @@ fn normalize_history_limit(limit: i64) -> Option<i64> {
     }
 }
 
-fn normalize_retention_days(value: i64) -> i64 {
+fn normalize_stream_event_retention_hours(value: i64) -> i64 {
     if value <= 0 {
         0
     } else {
         value
     }
+}
+
+fn purge_session_logs_with_storage(storage: &dyn StorageBackend, user_id: &str, session_id: &str) {
+    let cleaned_user = user_id.trim();
+    let cleaned_session = session_id.trim();
+    if cleaned_user.is_empty() || cleaned_session.is_empty() {
+        return;
+    }
+    let _ = storage.delete_chat_history_by_session(cleaned_user, cleaned_session);
+    let _ = storage.delete_tool_logs_by_session(cleaned_user, cleaned_session);
+    let _ = storage.delete_artifact_logs_by_session(cleaned_user, cleaned_session);
+    let _ = storage.delete_stream_events_by_session(cleaned_session);
+}
+
+/// Purge durable logs for sessions whose deletion grace window has expired and
+/// clear their tombstones. Returns the number of sessions fully purged.
+fn cleanup_expired_deleted_session_logs(
+    storage: &dyn StorageBackend,
+    grace_hours: i64,
+    now: f64,
+) -> i64 {
+    if grace_hours <= 0 {
+        return 0;
+    }
+    let cutoff = now - (grace_hours as f64) * 3600.0;
+    let expired = match storage
+        .list_expired_deleted_session_log_grace(cutoff, DELETED_SESSION_LOG_CLEANUP_BATCH)
+    {
+        Ok(rows) => rows,
+        Err(err) => {
+            warn!("list expired deleted session log grace failed: {err}");
+            return 0;
+        }
+    };
+    let mut purged = 0i64;
+    for (user_id, session_id) in expired {
+        purge_session_logs_with_storage(storage, &user_id, &session_id);
+        if let Err(err) = storage.delete_deleted_session_log_grace(&user_id, &session_id) {
+            warn!("clear deleted session log grace failed: {err}");
+            continue;
+        }
+        purged += 1;
+    }
+    if purged > 0 {
+        info!(purged, "deleted session logs purged after grace window");
+    }
+    purged
 }
 
 fn workspace_single_root_enabled() -> bool {
@@ -2472,6 +2513,107 @@ mod tests {
     #[test]
     fn single_root_workspace_never_uses_temp_cleanup_ttl() {
         assert_eq!(effective_temp_cleanup_idle_ttl_s(true), 0.0);
+    }
+
+    #[test]
+    fn deleted_session_log_grace_purges_only_expired_sessions() {
+        let dir = tempdir().expect("tempdir");
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            dir.path()
+                .join("grace-tests.db")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        storage
+            .ensure_initialized()
+            .expect("initialize sqlite storage");
+        let manager = Arc::new(super::WorkspaceManager::new(
+            &dir.path().join("workspaces").to_string_lossy(),
+            storage.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        manager.set_deleted_session_log_grace_hours(24);
+        assert_eq!(manager.deleted_session_log_grace_hours(), 24);
+
+        for session in ["session-old", "session-new"] {
+            storage
+                .append_chat(
+                    "user-a",
+                    &json!({"session_id": session, "role": "user", "content": "hello"}),
+                )
+                .expect("append chat");
+            storage
+                .append_tool_log(
+                    "user-a",
+                    &json!({"session_id": session, "tool": "tool-a", "ok": true}),
+                )
+                .expect("append tool");
+            storage
+                .append_artifact_log(
+                    "user-a",
+                    &json!({"session_id": session, "kind": "kind-a", "name": "a"}),
+                )
+                .expect("append artifact");
+            storage
+                .append_stream_event(
+                    session,
+                    "user-a",
+                    1,
+                    &json!({"event": "tool_call", "data": {"data": {"user_round": 1}}}),
+                )
+                .expect("append stream event");
+        }
+
+        let now = super::now_ts();
+        storage
+            .mark_deleted_session_log_grace("user-a", "session-old", now - 25.0 * 3600.0)
+            .expect("mark expired tombstone");
+        storage
+            .mark_deleted_session_log_grace("user-a", "session-new", now)
+            .expect("mark fresh tombstone");
+
+        let purged = super::cleanup_expired_deleted_session_logs(storage.as_ref(), 24, now);
+        assert_eq!(purged, 1);
+
+        assert!(storage
+            .load_chat_history("user-a", "session-old", None)
+            .expect("load old chat")
+            .is_empty());
+        assert_eq!(
+            storage
+                .load_chat_history("user-a", "session-new", None)
+                .expect("load new chat")
+                .len(),
+            1
+        );
+        assert!(storage
+            .load_stream_events("session-old", 0, 8)
+            .expect("load old stream events")
+            .is_empty());
+        assert_eq!(
+            storage
+                .load_stream_events("session-new", 0, 8)
+                .expect("load new stream events")
+                .len(),
+            1
+        );
+
+        let remaining = storage
+            .list_expired_deleted_session_log_grace(now + 3600.0, 32)
+            .expect("list remaining tombstones");
+        assert_eq!(
+            remaining,
+            vec![("user-a".to_string(), "session-new".to_string())]
+        );
+
+        // A non-positive grace purges immediately without a tombstone.
+        manager.set_deleted_session_log_grace_hours(0);
+        manager.schedule_deleted_session_log_cleanup("user-a", "session-new");
+        assert!(storage
+            .load_chat_history("user-a", "session-new", None)
+            .expect("load new chat after immediate purge")
+            .is_empty());
     }
 
     #[test]

@@ -163,13 +163,6 @@ const WORKSPACE_EVENT_NESTED_OBJECT_KEYS: [&str; 5] =
 const CANCELLED_GENERATION_CONTEXT_MARKER: &str =
     "Previous run cancelled by user before an assistant response was produced.";
 
-pub(super) fn should_enable_local_full_event_logs(server_mode: &str) -> bool {
-    matches!(
-        server_mode.trim().to_ascii_lowercase().as_str(),
-        "desktop" | "cli"
-    )
-}
-
 pub(super) fn build_planned_tool_calls(
     calls: Vec<ToolCall>,
     allowed_tool_names: &HashSet<String>,
@@ -277,6 +270,7 @@ pub(super) fn append_terminal_tool_context_result(
     session_id: &str,
     call: &ToolCall,
     tool_name: &str,
+    round_info: RoundInfo,
 ) -> Value {
     let payload = json!({
         "tool": tool_name,
@@ -295,7 +289,13 @@ pub(super) fn append_terminal_tool_context_result(
     } else {
         json!({"role":"user", "content":format!("{OBSERVATION_PREFIX}{serialized}")})
     };
-    orchestrator.append_model_context_entry(user_id, session_id, &message);
+    orchestrator.append_internal_model_context_chat(
+        user_id,
+        session_id,
+        &message,
+        "terminal_tool_result",
+        round_info,
+    );
     message
 }
 
@@ -331,7 +331,6 @@ pub(super) fn append_cancelled_generation_context_marker(
         "role": "assistant",
         "content": CANCELLED_GENERATION_CONTEXT_MARKER,
     });
-    orchestrator.append_model_context_entry(user_id, session_id, &marker_message);
     orchestrator.append_internal_model_context_chat(
         user_id,
         session_id,
@@ -349,50 +348,6 @@ fn should_append_cancelled_generation_context_marker(messages: &[Value]) -> bool
             .and_then(Value::as_str),
         Some("user" | "tool")
     )
-}
-
-pub(super) fn build_model_context_tool_calls_snapshot(
-    tool_calls_payload: Option<&Value>,
-    allowed_tool_names: &HashSet<String>,
-) -> Option<Value> {
-    let payload = tool_calls_payload?;
-    let persisted = extract_model_context_tool_call_payloads(payload, allowed_tool_names);
-    (!persisted.is_empty()).then_some(Value::Array(persisted))
-}
-
-fn extract_model_context_tool_call_payloads(
-    payload: &Value,
-    allowed_tool_names: &HashSet<String>,
-) -> Vec<Value> {
-    let payload_items = match payload {
-        Value::Array(items) => items.clone(),
-        Value::Object(_) => vec![payload.clone()],
-        Value::String(text) => serde_json::from_str::<Value>(text)
-            .ok()
-            .map(|parsed| extract_model_context_tool_call_payloads(&parsed, allowed_tool_names))
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    };
-    payload_items
-        .into_iter()
-        .filter(|item| should_keep_model_context_tool_call_payload(item, allowed_tool_names))
-        .collect()
-}
-
-fn should_keep_model_context_tool_call_payload(
-    payload: &Value,
-    allowed_tool_names: &HashSet<String>,
-) -> bool {
-    let Some(name) = replay_tool_call_name(payload) else {
-        return false;
-    };
-    let name = name.trim();
-    if name.is_empty() {
-        return false;
-    }
-    let resolved = resolve_tool_name(name);
-    !resolved.trim().is_empty()
-        && (allowed_tool_names.contains(&resolved) || allowed_tool_names.contains(name))
 }
 
 fn extract_replayable_tool_call_payloads(

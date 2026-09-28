@@ -1038,7 +1038,6 @@ impl ChannelHub {
             tool_names: tool_names.clone(),
             skip_tool_calls: false,
             stream: true,
-            debug_payload: false,
             session_id: Some(session_info.session_id.clone()),
             agent_id: resolved_agent_id.clone(),
             workspace_container_id: None,

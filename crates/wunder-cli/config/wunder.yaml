@@ -148,7 +148,6 @@ workspace:
   root: C:\Users\sjxx\Desktop\wunder\crates\wunder-cli
   container_roots: {}
   max_history_items: 0
-  retention_days: 0
 onlyoffice:
   enabled: false
   document_server_url: null

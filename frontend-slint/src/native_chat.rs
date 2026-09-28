@@ -127,8 +127,17 @@ fn bind_refresh(app: &MainWindow, state: Rc<RefCell<State>>) {
         let desktop = state.borrow().desktop.clone();
         let weak = app.as_weak();
         app.set_chat_loading(true);
+        let agent_for_empty = app.get_active_agent_id().to_string();
         std::thread::spawn(move || {
-            let result = desktop.list_sessions();
+            let result = desktop.list_sessions().and_then(|mut items| {
+                if items.is_empty() {
+                    let created = desktop.create_session_for_agent(
+                        (!agent_for_empty.trim().is_empty()).then_some(agent_for_empty.as_str()),
+                    )?;
+                    items.push(created);
+                }
+                Ok(items)
+            });
             let _ = weak.upgrade_in_event_loop(move |app| {
                 app.set_chat_loading(false);
                 match result {
@@ -242,28 +251,30 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                         }
                         crate::entity_state::restore_agent(&app, &agent);
                         app.set_heading(session.title.into());
-                        app.set_messages(ModelRc::new(VecModel::from(
-                            messages
-                                .into_iter()
-                                .map(|message| ChatMessage {
-                                    text: message.text.clone().into(),
-                                    mine: message.mine,
-                                    time: format_time(message.created_at).into(),
-                                    state: message.state.into(),
-                                    stats_status: message.stats_status.into(),
-                                    stats_duration: message.stats_duration.into(),
-                                    stats_speed: message.stats_speed.into(),
-                                    stats_context: message.stats_context.into(),
-                                    stats_quota: message.stats_quota.into(),
-                                    stats_tools: message.stats_tools.into(),
-                                    stats_credits: message.stats_credits.into(),
-                                    blocks: crate::message_blocks::from_text(&message.text),
-                                    avatar_glyph: agent_avatar_glyph(&app),
-                                    avatar_tone: agent_avatar_tone(&app),
-                                    ..Default::default()
-                                })
-                                .collect::<Vec<_>>(),
-                        )));
+                        let mut projected = messages
+                            .into_iter()
+                            .map(|message| ChatMessage {
+                                text: message.text.clone().into(),
+                                mine: message.mine,
+                                time: format_time(message.created_at).into(),
+                                state: message.state.into(),
+                                stats_status: message.stats_status.into(),
+                                stats_duration: message.stats_duration.into(),
+                                stats_speed: message.stats_speed.into(),
+                                stats_context: message.stats_context.into(),
+                                stats_quota: message.stats_quota.into(),
+                                stats_tools: message.stats_tools.into(),
+                                stats_credits: message.stats_credits.into(),
+                                blocks: crate::message_blocks::from_text(&message.text),
+                                avatar_glyph: agent_avatar_glyph(&app),
+                                avatar_tone: agent_avatar_tone(&app),
+                                ..Default::default()
+                            })
+                            .collect::<Vec<_>>();
+                        // The web client always materializes one transient greeting before
+                        // transcript history. It is presentation-only and never persisted.
+                        projected.insert(0, greeting_message(&app));
+                        app.set_messages(ModelRc::new(VecModel::from(projected)));
                         app.set_scroll_revision(app.get_scroll_revision().wrapping_add(1));
                         app.set_status("内嵌运行时已就绪".into());
                     }
@@ -272,6 +283,26 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
             });
         });
     });
+}
+
+fn greeting_message(app: &MainWindow) -> ChatMessage {
+    let greeting = app.get_selected_agent_description().trim().to_string();
+    ChatMessage {
+        text: if greeting.is_empty() {
+            "你好！我是你的智能体助手，有什么可以帮你？".into()
+        } else {
+            greeting.clone().into()
+        },
+        time: "".into(),
+        blocks: ModelRc::from(crate::message_blocks::from_text(if greeting.is_empty() {
+            "你好！我是你的智能体助手，有什么可以帮你？"
+        } else {
+            &greeting
+        })),
+        avatar_glyph: agent_avatar_glyph(app),
+        avatar_tone: agent_avatar_tone(app),
+        ..Default::default()
+    }
 }
 
 fn bind_new_thread(app: &MainWindow, state: Rc<RefCell<State>>) {
@@ -469,7 +500,14 @@ fn bind_voice_recording(app: &MainWindow, state: Rc<RefCell<State>>) {
                 (current.history_generation.clone(), current.desktop.clone())
             };
             if let Some(worker) = worker {
-                finish_voice_recording(weak.clone(), generation_counter, desktop, session, generation, worker);
+                finish_voice_recording(
+                    weak.clone(),
+                    generation_counter,
+                    desktop,
+                    session,
+                    generation,
+                    worker,
+                );
             }
             return;
         }
@@ -659,7 +697,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                     break;
                 }
             }
-                if dirty || done {
+            if dirty || done {
                 // Flush once per frame, never once per token.
                 active.blocks.flush();
                 app.set_stream_bytes(active.blocks.raw.len().min(i32::MAX as usize) as i32);
@@ -768,13 +806,16 @@ fn event_data(event: &Value) -> &Value {
 }
 
 fn stat_number(value: &Value, keys: &[&str]) -> Option<f64> {
-    keys.iter().find_map(|key| value.get(*key).and_then(Value::as_f64))
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_f64))
 }
 
 fn stats_source(data: &Value) -> Vec<&Value> {
     let mut sources = vec![data];
     for key in ["stats", "usage", "round_usage", "context_usage"] {
-        if let Some(value) = data.get(key) { sources.push(value); }
+        if let Some(value) = data.get(key) {
+            sources.push(value);
+        }
     }
     sources
 }
@@ -783,22 +824,36 @@ fn update_active_stats(active: &mut Active, event: &Value) {
     let data = event_data(event);
     let sources = stats_source(data);
     let number = |keys: &[&str]| sources.iter().find_map(|source| stat_number(source, keys));
-    if let Some(seconds) = number(&["interaction_duration_s", "duration_s", "elapsed_s"]).filter(|value| *value > 0.0) {
+    if let Some(seconds) =
+        number(&["interaction_duration_s", "duration_s", "elapsed_s"]).filter(|value| *value > 0.0)
+    {
         active.stats_duration = format_duration_value(seconds);
     }
-    if let Some(speed) = number(&["visible_decode_speed_tps", "decode_speed_tps"]).filter(|value| *value > 0.0) {
+    if let Some(speed) =
+        number(&["visible_decode_speed_tps", "decode_speed_tps"]).filter(|value| *value > 0.0)
+    {
         active.stats_speed = format!("{speed:.1}/s");
     }
-    if let Some(tokens) = number(&["contextTokens", "context_occupancy_tokens", "context_tokens"]).filter(|value| *value >= 0.0) {
+    if let Some(tokens) = number(&[
+        "contextTokens",
+        "context_occupancy_tokens",
+        "context_tokens",
+    ])
+    .filter(|value| *value >= 0.0)
+    {
         active.stats_context = format_count_value(tokens);
     }
-    if let Some(tokens) = number(&["request_consumed_tokens", "consumed_tokens", "total_tokens"]).filter(|value| *value > 0.0) {
+    if let Some(tokens) = number(&["request_consumed_tokens", "consumed_tokens", "total_tokens"])
+        .filter(|value| *value > 0.0)
+    {
         active.stats_quota = format_count_value(tokens);
     }
     if let Some(calls) = number(&["toolCalls", "tool_calls"]).filter(|value| *value >= 0.0) {
         active.stats_tools = format_count_value(calls);
     }
-    if let Some(credits) = number(&["account_credits_consumed", "creditsConsumed"]).filter(|value| *value >= 0.0) {
+    if let Some(credits) =
+        number(&["account_credits_consumed", "creditsConsumed"]).filter(|value| *value >= 0.0)
+    {
         active.stats_credits = format_count_value(credits);
     }
 }
@@ -816,14 +871,21 @@ fn update_message_stats_row(active: &mut Active) {
 }
 
 fn format_count_value(value: f64) -> String {
-    if value >= 1_000_000.0 { format!("{:.1}m", value / 1_000_000.0) }
-    else if value >= 1_000.0 { format!("{:.1}k", value / 1_000.0) }
-    else { format!("{:.0}", value) }
+    if value >= 1_000_000.0 {
+        format!("{:.1}m", value / 1_000_000.0)
+    } else if value >= 1_000.0 {
+        format!("{:.1}k", value / 1_000.0)
+    } else {
+        format!("{:.0}", value)
+    }
 }
 
 fn format_duration_value(seconds: f64) -> String {
-    if seconds < 60.0 { format!("{seconds:.1}s") }
-    else { format!("{}m {:.0}s", (seconds / 60.0).floor(), seconds % 60.0) }
+    if seconds < 60.0 {
+        format!("{seconds:.1}s")
+    } else {
+        format!("{}m {:.0}s", (seconds / 60.0).floor(), seconds % 60.0)
+    }
 }
 
 /// Read the latest context occupancy from a runtime event without coupling
@@ -868,7 +930,11 @@ fn format_time(value: f64) -> String {
 }
 
 fn format_count_i64(value: i64) -> String {
-    if value >= 1_000_000 { format!("{:.1}m", value as f64 / 1_000_000.0) }
-    else if value >= 1_000 { format!("{:.1}k", value as f64 / 1_000.0) }
-    else { value.max(0).to_string() }
+    if value >= 1_000_000 {
+        format!("{:.1}m", value as f64 / 1_000_000.0)
+    } else if value >= 1_000 {
+        format!("{:.1}k", value as f64 / 1_000.0)
+    } else {
+        value.max(0).to_string()
+    }
 }

@@ -46,7 +46,6 @@ async fn virtual_provider_enforces_capabilities_and_completes_tool_exchange() {
             RoundInfo::new(1, 1),
             false,
             false,
-            false,
             None,
             None,
         )
@@ -68,7 +67,6 @@ async fn virtual_provider_enforces_capabilities_and_completes_tool_exchange() {
             "session_1",
             false,
             RoundInfo::new(1, 1),
-            false,
             false,
             false,
             None,
@@ -126,7 +124,6 @@ async fn virtual_provider_enforces_capabilities_and_completes_tool_exchange() {
             RoundInfo::new(1, 1),
             false,
             false,
-            false,
             Some(&tools),
             None,
         )
@@ -153,7 +150,6 @@ async fn virtual_provider_enforces_capabilities_and_completes_tool_exchange() {
             "session_1",
             false,
             RoundInfo::new(1, 2),
-            false,
             false,
             false,
             Some(&tools),
@@ -208,7 +204,7 @@ async fn virtual_replay_works_at_zero_balance_without_spending_or_granting_token
     };
     state
         .monitor
-        .register("session_1", &user.user_id, "agent_1", "input", false, false);
+        .register("session_1", &user.user_id, "agent_1", "input", false);
     let emitter = EventEmitter::new(
         "session_1".into(),
         user.user_id.clone(),
@@ -231,7 +227,6 @@ async fn virtual_replay_works_at_zero_balance_without_spending_or_granting_token
             "session_1",
             false,
             RoundInfo::new(1, 1),
-            false,
             false,
             false,
             None,

@@ -176,7 +176,6 @@ async fn run_one_request(
         tool_names: Vec::new(),
         skip_tool_calls: args.skip_tool_calls,
         stream: args.stream,
-        debug_payload: false,
         session_id: Some(session_id.clone()),
         agent_id: None,
         workspace_container_id: None,

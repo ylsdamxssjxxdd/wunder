@@ -8,12 +8,91 @@ use std::sync::{
 use wunder_desktop::NativeDesktop;
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
+    let thread_log_source: std::rc::Rc<std::cell::RefCell<Vec<crate::ThreadLogEvent>>> =
+        Default::default();
     let revision = Arc::new(AtomicU64::new(0));
+    let create_api = api.clone();
+    let create_weak = app.as_weak();
+    app.on_create_workspace_file(move |kind, path| {
+        let Some(app) = create_weak.upgrade() else {
+            return;
+        };
+        let agent = app.get_active_agent_id().to_string();
+        let base = if path.trim().is_empty() {
+            "".to_string()
+        } else {
+            format!("{}/", path.trim_end_matches('/'))
+        };
+        let (name, content) = match kind.as_str() {
+            "markdown" => ("notes.md", "# Title\n"),
+            "word" => ("document.docx", ""),
+            "sheet" => ("sheet.xlsx", ""),
+            "slides" => ("slides.pptx", ""),
+            "flowchart" => (
+                "flowchart.drawio",
+                "<mxfile><diagram name=\"Flowchart\"></diagram></mxfile>",
+            ),
+            _ => ("untitled.txt", ""),
+        };
+        let relative = format!("{base}{name}");
+        let api = create_api.clone();
+        let weak = app.as_weak();
+        std::thread::spawn(move || {
+            let result = api.create_workspace_file(&agent, &relative, content);
+            let _ = weak.upgrade_in_event_loop(move |app| match result {
+                Ok(()) => {
+                    app.set_status("文件已创建".into());
+                    app.invoke_refresh_files();
+                }
+                Err(error) => app.set_status(format!("无法创建文件：{error}").into()),
+            });
+        });
+    });
+    let filter_source = thread_log_source.clone();
+    let filter_weak = app.as_weak();
+    app.on_filter_thread_log(move |query, filter| {
+        let query = query.to_lowercase();
+        let matching = filter_source
+            .borrow()
+            .iter()
+            .filter(|event| {
+                let kind = event.event_type.to_lowercase();
+                let text_matches = query.is_empty()
+                    || kind.contains(&query)
+                    || event.summary.to_lowercase().contains(&query)
+                    || event.raw.to_lowercase().contains(&query);
+                let type_matches = filter == "全部"
+                    || (filter == "工具" && kind.contains("tool"))
+                    || (filter == "模型" && (kind.contains("llm") || kind.contains("model")));
+                text_matches && type_matches
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if let Some(app) = filter_weak.upgrade() {
+            app.set_thread_log_events(ModelRc::new(VecModel::from(matching)));
+        }
+    });
+    let weak = app.as_weak();
+    app.on_choose_workspace_directory(move || {
+        let weak = weak.clone();
+        std::thread::spawn(move || {
+            #[cfg(windows)]
+            let selected = choose_windows_directory();
+            #[cfg(not(windows))]
+            let selected: Option<String> = None;
+            if let Some(path) = selected {
+                let _ = weak
+                    .upgrade_in_event_loop(move |app| app.set_workspace_binding_path(path.into()));
+            }
+        });
+    });
     let weak = app.as_weak();
     let menu_api = api.clone();
     app.on_thread_menu(move |index, _action| {
         let Some(app) = weak.upgrade() else { return };
-        let Some(row) = app.get_conversations().row_data(index.max(0) as usize) else { return };
+        let Some(row) = app.get_conversations().row_data(index.max(0) as usize) else {
+            return;
+        };
         let id = row.id.to_string();
         let title = row.title.to_string();
         let api = menu_api.clone();
@@ -22,34 +101,88 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             // The compact menu defaults to details; rename/archive remain
             // available through the same façade for the richer native menu.
             let detail = api.session_detail_page(&id, 0, 100);
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                match detail {
-                    Ok(value) => {
-                        app.set_thread_log_title(format!("线程日志 · {title}").into());
-                        let session = value.get("session").cloned().unwrap_or_default();
-                        app.set_thread_log_status(session.get("status").and_then(serde_json::Value::as_str).unwrap_or("未知").into());
-                        app.set_thread_log_elapsed(session.get("elapsed_s").map(|v| format!("{}s", v)).unwrap_or_default().into());
-                        app.set_thread_log_rounds(session.get("user_rounds").map(|v| v.to_string()).unwrap_or_default().into());
-                        app.set_thread_log_tools(session.get("tool_calls").map(|v| v.to_string()).unwrap_or_default().into());
-                        app.set_thread_log_tokens(session.get("consumed_tokens").map(|v| v.to_string()).unwrap_or_default().into());
-                        app.set_thread_log_speed(session.get("decode_speed_tps").map(|v| format!("{v}/s")).unwrap_or_default().into());
-                        let events = value.get("events").and_then(serde_json::Value::as_array).into_iter().flatten().map(|event| {
+            let _ = weak.upgrade_in_event_loop(move |app| match detail {
+                Ok(value) => {
+                    app.set_thread_log_title(format!("线程日志 · {title}").into());
+                    let session = value.get("session").cloned().unwrap_or_default();
+                    app.set_thread_log_status(
+                        session
+                            .get("status")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("未知")
+                            .into(),
+                    );
+                    app.set_thread_log_elapsed(
+                        session
+                            .get("elapsed_s")
+                            .map(|v| format!("{}s", v))
+                            .unwrap_or_default()
+                            .into(),
+                    );
+                    app.set_thread_log_rounds(
+                        session
+                            .get("user_rounds")
+                            .map(|v| v.to_string())
+                            .unwrap_or_default()
+                            .into(),
+                    );
+                    app.set_thread_log_tools(
+                        session
+                            .get("tool_calls")
+                            .map(|v| v.to_string())
+                            .unwrap_or_default()
+                            .into(),
+                    );
+                    app.set_thread_log_tokens(
+                        session
+                            .get("consumed_tokens")
+                            .map(|v| v.to_string())
+                            .unwrap_or_default()
+                            .into(),
+                    );
+                    app.set_thread_log_speed(
+                        session
+                            .get("decode_speed_tps")
+                            .map(|v| format!("{v}/s"))
+                            .unwrap_or_default()
+                            .into(),
+                    );
+                    let events = value
+                        .get("events")
+                        .and_then(serde_json::Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .map(|event| {
                             let data = event.get("data").unwrap_or(event);
                             crate::ThreadLogEvent {
-                                event_type: event.get("type").and_then(serde_json::Value::as_str).unwrap_or("event").into(),
-                                time: event.get("timestamp").map(|v| v.to_string()).unwrap_or_default().into(),
-                                summary: data.get("summary").and_then(serde_json::Value::as_str).unwrap_or("").into(),
+                                event_type: event
+                                    .get("type")
+                                    .and_then(serde_json::Value::as_str)
+                                    .unwrap_or("event")
+                                    .into(),
+                                time: event
+                                    .get("timestamp")
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_default()
+                                    .into(),
+                                summary: data
+                                    .get("summary")
+                                    .and_then(serde_json::Value::as_str)
+                                    .unwrap_or("")
+                                    .into(),
                                 raw: serde_json::to_string(event).unwrap_or_default().into(),
                             }
-                        }).collect::<Vec<_>>();
-                        app.set_thread_log_events(ModelRc::new(VecModel::from(events)));
-                        app.set_thread_log_open(true);
-                    }
-                    Err(error) => {
-                        app.set_dialog_title("线程日志".into());
-                        app.set_dialog_text(format!("无法读取线程日志：{error}").into());
-                        app.set_dialog_open(true);
-                    }
+                        })
+                        .collect::<Vec<_>>();
+                    app.set_thread_log_query("".into());
+                    app.set_thread_log_filter("全部".into());
+                    app.set_thread_log_events(ModelRc::new(VecModel::from(events)));
+                    app.set_thread_log_open(true);
+                }
+                Err(error) => {
+                    app.set_dialog_title("线程日志".into());
+                    app.set_dialog_text(format!("无法读取线程日志：{error}").into());
+                    app.set_dialog_open(true);
                 }
             });
         });
@@ -58,7 +191,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     app.on_thread_drop(move |from, to| {
         let Some(app) = weak.upgrade() else { return };
         let mut rows = app.get_conversations().iter().collect::<Vec<_>>();
-        let (Ok(from), Ok(to)) = (usize::try_from(from), usize::try_from(to)) else { return };
+        let (Ok(from), Ok(to)) = (usize::try_from(from), usize::try_from(to)) else {
+            return;
+        };
         if from < rows.len() && to < rows.len() && from != to {
             let row = rows.remove(from);
             rows.insert(to, row);
@@ -69,20 +204,24 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let rename_api = api.clone();
     app.on_rename_thread(move |index, title| {
         let Some(app) = weak.upgrade() else { return };
-        let Some(row) = app.get_conversations().row_data(index.max(0) as usize) else { return };
+        let Some(row) = app.get_conversations().row_data(index.max(0) as usize) else {
+            return;
+        };
         let id = row.id.to_string();
         let api = rename_api.clone();
         let weak = app.as_weak();
         std::thread::spawn(move || {
             let result = api.rename_session(&id, &title);
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                match result {
-                    Ok(()) => {
-                        if let Some(mut row) = app.get_conversations().row_data(index.max(0) as usize) { row.title = title.into(); app.get_conversations().set_row_data(index.max(0) as usize, row); }
-                        app.set_status("工作线程已重命名".into());
+            let _ = weak.upgrade_in_event_loop(move |app| match result {
+                Ok(()) => {
+                    if let Some(mut row) = app.get_conversations().row_data(index.max(0) as usize) {
+                        row.title = title.into();
+                        app.get_conversations()
+                            .set_row_data(index.max(0) as usize, row);
                     }
-                    Err(error) => app.set_status(format!("无法重命名工作线程：{error}").into()),
+                    app.set_status("工作线程已重命名".into());
                 }
+                Err(error) => app.set_status(format!("无法重命名工作线程：{error}").into()),
             });
         });
     });
@@ -90,17 +229,20 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let archive_api = api.clone();
     app.on_archive_thread(move |index| {
         let Some(app) = weak.upgrade() else { return };
-        let Some(row) = app.get_conversations().row_data(index.max(0) as usize) else { return };
+        let Some(row) = app.get_conversations().row_data(index.max(0) as usize) else {
+            return;
+        };
         let id = row.id.to_string();
         let api = archive_api.clone();
         let weak = app.as_weak();
         std::thread::spawn(move || {
             let result = api.archive_session(&id);
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                match result {
-                    Ok(()) => { app.invoke_refresh_chat(); app.set_status("工作线程已归档".into()); }
-                    Err(error) => app.set_status(format!("无法归档工作线程：{error}").into()),
+            let _ = weak.upgrade_in_event_loop(move |app| match result {
+                Ok(()) => {
+                    app.invoke_refresh_chat();
+                    app.set_status("工作线程已归档".into());
                 }
+                Err(error) => app.set_status(format!("无法归档工作线程：{error}").into()),
             });
         });
     });
@@ -163,9 +305,13 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let bind_api = api.clone();
     app.on_save_workspace_binding(move |container, path| {
         let Some(app) = weak.upgrade() else { return };
-        if app.get_files_loading() { return; }
+        if app.get_files_loading() {
+            return;
+        }
         let agent = app.get_active_agent_id().to_string();
-        if agent.trim().is_empty() { return; }
+        if agent.trim().is_empty() {
+            return;
+        }
         app.set_files_loading(true);
         let api = bind_api.clone();
         let weak = app.as_weak();
@@ -195,6 +341,8 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         app.set_files_total(0);
         app.invoke_refresh_files();
     });
+    let preview_api = api.clone();
+    let native_api = api.clone();
     let weak = app.as_weak();
     app.on_open_file(move |path| {
         let Some(app) = weak.upgrade() else { return };
@@ -212,7 +360,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         app.set_preview_text("正在读取…".into());
         let agent = app.get_active_agent_id().to_string();
         let weak = app.as_weak();
-        let api = api.clone();
+        let api = preview_api.clone();
         std::thread::spawn(move || {
             let result = api.workspace_preview(&agent, &path);
             let _ = weak.upgrade_in_event_loop(move |app| {
@@ -229,4 +377,72 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             });
         });
     });
+    let weak = app.as_weak();
+    app.on_open_file_native(move |path| {
+        let Some(app) = weak.upgrade() else { return };
+        let agent = app.get_active_agent_id().to_string();
+        let weak = app.as_weak();
+        let api = native_api.clone();
+        std::thread::spawn(move || {
+            let result = api.open_workspace_file(&agent, &path);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                if let Err(error) = result {
+                    app.set_status(format!("无法使用系统程序打开：{error}").into());
+                }
+            });
+        });
+    });
+}
+
+#[cfg(windows)]
+fn choose_windows_directory() -> Option<String> {
+    use std::{ffi::c_void, ptr};
+    #[repr(C)]
+    struct BrowseInfoW {
+        hwnd_owner: isize,
+        pidl_root: *mut c_void,
+        display_name: *mut u16,
+        title: *const u16,
+        flags: u32,
+        callback: *const c_void,
+        param: isize,
+        image: i32,
+    }
+    #[link(name = "shell32")]
+    unsafe extern "system" {
+        fn SHBrowseForFolderW(info: *const BrowseInfoW) -> *mut c_void;
+        fn SHGetPathFromIDListW(pidl: *const c_void, path: *mut u16) -> i32;
+    }
+    #[link(name = "ole32")]
+    unsafe extern "system" {
+        fn CoTaskMemFree(value: *const c_void);
+    }
+    const BIF_RETURNONLYFSDIRS: u32 = 0x0001;
+    const BIF_NEWDIALOGSTYLE: u32 = 0x0040;
+    let title: Vec<u16> = "选择工作目录\0".encode_utf16().collect();
+    let mut display = [0u16; 260];
+    let info = BrowseInfoW {
+        hwnd_owner: 0,
+        pidl_root: ptr::null_mut(),
+        display_name: display.as_mut_ptr(),
+        title: title.as_ptr(),
+        flags: BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE,
+        callback: ptr::null(),
+        param: 0,
+        image: 0,
+    };
+    let pidl = unsafe { SHBrowseForFolderW(&info) };
+    if pidl.is_null() {
+        return None;
+    }
+    let mut path = [0u16; 260];
+    let ok = unsafe { SHGetPathFromIDListW(pidl, path.as_mut_ptr()) } != 0;
+    unsafe {
+        CoTaskMemFree(pidl);
+    }
+    if !ok {
+        return None;
+    }
+    let end = path.iter().position(|v| *v == 0).unwrap_or(path.len());
+    Some(String::from_utf16_lossy(&path[..end]))
 }

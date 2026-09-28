@@ -47,10 +47,10 @@ mod tests {
             ObservabilityConfig::default(),
             root.path().to_string_lossy().into_owned(),
         );
-        monitor.register("session_1", "user_1", "", "", false, false);
+        monitor.register("session_1", "user_1", "", "", false);
         assert_eq!(monitor.record_model_request("session_1", 1), Some(1));
         assert_eq!(monitor.record_model_request("session_1", 1), Some(2));
-        monitor.register("session_1", "user_1", "", "", false, false);
+        monitor.register("session_1", "user_1", "", "", false);
         assert_eq!(monitor.record_model_request("session_1", 1), Some(3));
         monitor.record_event(
             "session_1",

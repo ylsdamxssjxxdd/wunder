@@ -876,6 +876,9 @@ async fn delete_session(
     state
         .workspace
         .purge_session_data(&resolved.user.user_id, &session_id);
+    state
+        .workspace
+        .schedule_deleted_session_log_cleanup(&resolved.user.user_id, &session_id);
     let _ = state
         .storage
         .delete_cron_jobs_by_session(&resolved.user.user_id, &session_id);

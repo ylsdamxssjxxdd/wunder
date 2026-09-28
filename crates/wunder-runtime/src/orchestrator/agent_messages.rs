@@ -36,9 +36,8 @@ impl Orchestrator {
                 "source_session_id":message.source,"kind":message.kind,"message":message.text
             }))});
             // The receiving execution is the sole context writer. Never mutate system messages.
-            if let Err(error) = self
-                .workspace
-                .append_model_context_entry(user, session, &input)
+            if let Err(error) =
+                self.try_append_internal_model_context_chat(user, session, &input, "agent_inbox", round)
             {
                 // Draining transfers ownership here; failures must settle every
                 // accepted message, including the rest of this detached batch.

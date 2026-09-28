@@ -177,7 +177,6 @@ pub(crate) async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Re
         tool_names,
         skip_tool_calls: false,
         stream: true,
-        debug_payload: false,
         session_id: Some(session_id.clone()),
         agent_id: record.agent_id.clone(),
         workspace_container_id: None,

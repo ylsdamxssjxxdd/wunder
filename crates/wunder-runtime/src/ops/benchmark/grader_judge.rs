@@ -35,7 +35,6 @@ pub async fn grade_with_judge(
         tool_names: Vec::new(),
         skip_tool_calls: true,
         stream: true,
-        debug_payload: true,
         session_id: Some(session_id.to_string()),
         agent_id: None,
         workspace_container_id: Some(DEFAULT_SANDBOX_CONTAINER_ID),

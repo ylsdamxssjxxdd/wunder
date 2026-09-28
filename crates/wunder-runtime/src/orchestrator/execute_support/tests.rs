@@ -545,26 +545,6 @@ fn assistant_history_snapshot_preserves_original_tool_arguments_order() {
 }
 
 #[test]
-fn model_context_tool_calls_keep_terminal_calls_for_exact_replay() {
-    let allowed = HashSet::from([resolve_tool_name("final_response")]);
-    let payload = json!([{
-        "id": "call_final",
-        "type": "function",
-        "function": {
-            "name": "final_response",
-            "arguments": "{\"content\":\"ok\"}"
-        }
-    }]);
-
-    let model_context =
-        build_model_context_tool_calls_snapshot(Some(&payload), &allowed).expect("tool calls");
-    let history = build_assistant_history_snapshot(Some(&payload), &allowed);
-
-    assert_eq!(model_context, payload);
-    assert!(history.tool_calls.is_none());
-}
-
-#[test]
 fn cancelled_generation_marker_applies_after_prompt_tail() {
     assert!(should_append_cancelled_generation_context_marker(&[
         json!({
@@ -792,14 +772,6 @@ fn approval_summary_for_tool_falls_back_to_tool_name_when_details_missing() {
         ),
         format!("{desktop_controller}: wait_ms=1200")
     );
-}
-
-#[test]
-fn local_full_event_logs_only_enable_for_embedded_modes() {
-    assert!(should_enable_local_full_event_logs("desktop"));
-    assert!(should_enable_local_full_event_logs("cli"));
-    assert!(!should_enable_local_full_event_logs("server"));
-    assert!(!should_enable_local_full_event_logs("api"));
 }
 
 #[test]

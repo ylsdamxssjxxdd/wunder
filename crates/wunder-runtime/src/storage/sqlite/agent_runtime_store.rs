@@ -60,6 +60,12 @@ pub(super) trait SqliteAgentRuntimeStorage {
     fn delete_stream_events_before_impl(&self, before_time: f64) -> Result<i64>;
     fn delete_stream_events_by_user_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_stream_events_by_session_impl(&self, session_id: &str) -> Result<i64>;
+    fn delete_stream_events_by_round_impl(
+        &self,
+        session_id: &str,
+        user_round: i64,
+        event_types: &[&str],
+    ) -> Result<i64>;
 }
 
 impl SqliteAgentRuntimeStorage for SqliteStorage {
@@ -536,6 +542,33 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         )?;
         Ok(affected as i64)
     }
+
+    fn delete_stream_events_by_round_impl(
+        &self,
+        session_id: &str,
+        user_round: i64,
+        event_types: &[&str],
+    ) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty() || user_round <= 0 || event_types.is_empty() {
+            return Ok(0);
+        }
+        let placeholders = vec!["?"; event_types.len()].join(", ");
+        let sql = format!(
+            "DELETE FROM stream_events WHERE session_id = ? AND user_round = ? AND event_type IN ({placeholders})"
+        );
+        let mut params_list: Vec<rusqlite::types::Value> =
+            Vec::with_capacity(event_types.len() + 2);
+        params_list.push(rusqlite::types::Value::from(cleaned_session.to_string()));
+        params_list.push(rusqlite::types::Value::from(user_round));
+        for event_type in event_types {
+            params_list.push(rusqlite::types::Value::from(event_type.to_string()));
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(&sql, rusqlite::params_from_iter(params_list.iter()))?;
+        Ok(affected as i64)
+    }
 }
 
 fn stream_event_type(payload: &Value) -> String {
@@ -687,5 +720,58 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[0]["event_id"], json!(2));
         assert_eq!(events[1]["event_id"], json!(3));
+    }
+
+    #[test]
+    fn delete_stream_events_by_round_only_removes_matching_delta_events() {
+        let (storage, _dir) = build_storage();
+        let records = [
+            (
+                1,
+                json!({ "event": "llm_output_delta", "data": { "data": { "user_round": 3, "delta": "a" } } }),
+            ),
+            (
+                2,
+                json!({ "event": "llm_output_delta", "data": { "data": { "user_round": 3, "delta": "b" } } }),
+            ),
+            (
+                3,
+                json!({ "event": "tool_call", "data": { "data": { "user_round": 3, "tool": "tool_a" } } }),
+            ),
+            (
+                4,
+                json!({ "event": "llm_output_delta", "data": { "data": { "user_round": 4, "delta": "c" } } }),
+            ),
+            (
+                5,
+                json!({ "event": "turn_terminal", "data": { "data": { "user_round": 3, "status": "completed" } } }),
+            ),
+        ];
+        for (event_id, payload) in records {
+            storage
+                .append_stream_event("session-1", "user-1", event_id, &payload)
+                .expect("append stream event");
+        }
+
+        let removed = storage
+            .delete_stream_events_by_round("session-1", 3, &["llm_output_delta"])
+            .expect("delete deltas by round");
+        assert_eq!(removed, 2);
+
+        let remaining = storage
+            .load_stream_events("session-1", 0, 16)
+            .expect("load remaining events");
+        let event_ids: Vec<i64> = remaining
+            .iter()
+            .filter_map(|event| event.get("event_id").and_then(serde_json::Value::as_i64))
+            .collect();
+        assert_eq!(event_ids, vec![3, 4, 5]);
+
+        assert_eq!(
+            storage
+                .delete_stream_events_by_round("session-1", 3, &[])
+                .expect("empty event types"),
+            0
+        );
     }
 }

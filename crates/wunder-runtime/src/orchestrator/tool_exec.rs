@@ -23,8 +23,41 @@ impl Orchestrator {
         reasoning: Option<&str>,
         tool_calls: Option<&Value>,
         tool_call_id: Option<&str>,
+        model_content: Option<&Value>,
         round_info: RoundInfo,
     ) {
+        if let Err(err) = self.try_append_chat(
+            user_id,
+            session_id,
+            role,
+            content,
+            attachments,
+            meta,
+            reasoning,
+            tool_calls,
+            tool_call_id,
+            model_content,
+            round_info,
+        ) {
+            warn!("append chat failed for session {session_id} role {role}: {err}");
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn try_append_chat(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        role: &str,
+        content: Option<&Value>,
+        attachments: Option<&[AttachmentPayload]>,
+        meta: Option<&Value>,
+        reasoning: Option<&str>,
+        tool_calls: Option<&Value>,
+        tool_call_id: Option<&str>,
+        model_content: Option<&Value>,
+        round_info: RoundInfo,
+    ) -> Result<()> {
         let timestamp = Local::now().to_rfc3339();
         let content_value = content
             .cloned()
@@ -48,6 +81,11 @@ impl Orchestrator {
                     "round_info_source".to_string(),
                     Value::String("orchestrator".to_string()),
                 );
+            }
+        }
+        if let Some(model_content) = model_content {
+            if !model_content.is_null() {
+                payload["model_content"] = model_content.clone();
             }
         }
         if let Some(reasoning) = reasoning {
@@ -79,26 +117,7 @@ impl Orchestrator {
         }
         let payload =
             crate::services::chat_payload_sanitizer::sanitize_persisted_chat_payload(&payload);
-        if let Err(err) = self.workspace.append_chat(user_id, &payload) {
-            warn!("append chat failed for session {session_id} role {role}: {err}");
-        }
-    }
-
-    pub(super) fn append_model_context_entry(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        message: &Value,
-    ) {
-        let Some(payload) = normalize_model_context_message(message.clone()) else {
-            return;
-        };
-        if let Err(err) = self
-            .workspace
-            .append_model_context_entry(user_id, session_id, &payload)
-        {
-            warn!("append model context failed for session {session_id}: {err}");
-        }
+        self.workspace.append_chat(user_id, &payload)
     }
 
     pub(super) fn append_internal_model_context_chat(
@@ -109,8 +128,23 @@ impl Orchestrator {
         source: &str,
         round_info: RoundInfo,
     ) {
+        if let Err(err) =
+            self.try_append_internal_model_context_chat(user_id, session_id, message, source, round_info)
+        {
+            warn!("append internal model context chat failed for session {session_id}: {err}");
+        }
+    }
+
+    pub(super) fn try_append_internal_model_context_chat(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        message: &Value,
+        source: &str,
+        round_info: RoundInfo,
+    ) -> Result<()> {
         let Some(payload) = normalize_model_context_message(message.clone()) else {
-            return;
+            return Ok(());
         };
         let role = payload
             .get("role")
@@ -131,7 +165,7 @@ impl Orchestrator {
                 );
             }
         }
-        self.append_chat(
+        self.try_append_chat(
             user_id,
             session_id,
             role,
@@ -141,8 +175,34 @@ impl Orchestrator {
             payload.get("reasoning_content").and_then(Value::as_str),
             payload.get("tool_calls"),
             payload.get("tool_call_id").and_then(Value::as_str),
+            None,
             round_info,
-        );
+        )
+    }
+
+    /// A model round completed successfully and its assistant row is durable in
+    /// chat_history, so the round's persisted llm_output_delta replay rows are
+    /// redundant. Failure/cancel paths keep deltas; TTL cleanup is the fallback.
+    pub(super) async fn fold_completed_round_stream_deltas(
+        &self,
+        emitter: &EventEmitter,
+        session_id: &str,
+        user_round: i64,
+    ) {
+        if user_round <= 0 {
+            return;
+        }
+        emitter.flush_pending_deltas();
+        super::stream_persist::flush_stream_event_persist_queue().await;
+        let storage = self.storage.clone();
+        let session_id = session_id.to_string();
+        let result = crate::core::blocking::run_db("orchestrator.fold_stream_deltas", move || {
+            storage.delete_stream_events_by_round(&session_id, user_round, &["llm_output_delta"])
+        })
+        .await;
+        if let Err(err) = result {
+            warn!("fold stream deltas failed: {err}");
+        }
     }
 
     pub(super) fn mark_internal_model_context_message(
@@ -188,7 +248,6 @@ impl Orchestrator {
         tool_name: &str,
         args: &Value,
         result: &ToolResultPayload,
-        include_payload: bool,
     ) {
         let timestamp = Local::now().to_rfc3339();
         let safe_args = if args.is_object() {
@@ -196,6 +255,8 @@ impl Orchestrator {
         } else {
             json!({ "raw": args })
         };
+        // Tool logs always persist in the compact profile; the storage layer
+        // bounds args/data and never stores the full payload column.
         let mut payload = json!({
             "tool": tool_name,
             "session_id": session_id,
@@ -207,9 +268,6 @@ impl Orchestrator {
         });
         if let Some(meta) = &result.meta {
             payload["meta"] = meta.clone();
-        }
-        if !include_payload {
-            payload["__omit_payload"] = Value::Bool(true);
         }
         if result.sandbox {
             payload["sandbox"] = Value::Bool(true);
@@ -482,7 +540,6 @@ impl Orchestrator {
         args: &Value,
         skills: &SkillRegistry,
         user_tool_bindings: Option<&UserToolBindings>,
-        include_payload: bool,
     ) {
         let paths = extract_file_paths(args);
         if paths.is_empty() {
@@ -533,7 +590,7 @@ impl Orchestrator {
         }
         let result = ToolResultPayload::from_value(json!({ "source": "skill_read" }));
         for name in matched {
-            self.append_tool_log(user_id, session_id, &name, args, &result, include_payload);
+            self.append_tool_log(user_id, session_id, &name, args, &result);
         }
     }
 
@@ -717,7 +774,6 @@ impl Orchestrator {
         session_id: &str,
         name: &str,
         args: &Value,
-        include_payload: bool,
     ) {
         let content = self.resolve_final_answer_from_tool(args);
         let data = if content.trim().is_empty() {
@@ -726,7 +782,7 @@ impl Orchestrator {
             json!({ "content": content })
         };
         let result = ToolResultPayload::from_value(data);
-        self.append_tool_log(user_id, session_id, name, args, &result, include_payload);
+        self.append_tool_log(user_id, session_id, name, args, &result);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -739,7 +795,6 @@ impl Orchestrator {
         uid: &str,
         messages: &Option<Value>,
         content: &str,
-        include_payload: bool,
     ) {
         let message_count = messages
             .as_ref()
@@ -759,7 +814,7 @@ impl Orchestrator {
             }
         }
         let result = ToolResultPayload::from_value(data);
-        self.append_tool_log(user_id, session_id, name, args, &result, include_payload);
+        self.append_tool_log(user_id, session_id, name, args, &result);
     }
 
     pub(super) async fn execute_tool_with_timeout(

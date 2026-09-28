@@ -12,26 +12,8 @@ use serde_json::{json, Value};
 
 pub(super) trait PostgresConversationLogStorage {
     fn append_chat_impl(&self, user_id: &str, payload: &Value) -> Result<()>;
-    fn append_model_context_entry_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        payload: &Value,
-    ) -> Result<()>;
-    fn replace_model_context_entries_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        payloads: &[Value],
-    ) -> Result<()>;
     fn append_tool_log_impl(&self, user_id: &str, payload: &Value) -> Result<()>;
     fn append_artifact_log_impl(&self, user_id: &str, payload: &Value) -> Result<()>;
-    fn load_model_context_entries_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        limit: Option<i64>,
-    ) -> Result<Vec<Value>>;
     fn load_chat_history_impl(
         &self,
         user_id: &str,
@@ -82,102 +64,14 @@ impl PostgresConversationLogStorage for PostgresStorage {
         }
         let payload = output_quality::annotate_chat_payload(payload);
         let payload = sanitize_persisted_chat_payload(&payload);
-        let content = Self::parse_string(payload.get("content"));
-        let timestamp = Self::parse_string(payload.get("timestamp"));
-        let meta = payload
-            .get("meta")
-            .and_then(|value| serde_json::to_string(value).ok());
         let payload_text = Self::json_to_string(&payload);
         let now = Self::now_ts();
         let mut conn = self.conn()?;
         conn.execute(
-            "INSERT INTO chat_history (user_id, session_id, role, content, timestamp, meta, payload, created_time) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-            &[
-                &user_id,
-                &session_id,
-                &role,
-                &content,
-                &timestamp,
-                &meta,
-                &payload_text,
-                &now,
-            ],
-        )?;
-        Ok(())
-    }
-
-    fn append_model_context_entry_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        payload: &Value,
-    ) -> Result<()> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Ok(());
-        }
-        let role = payload
-            .get("role")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if role.is_empty() {
-            return Ok(());
-        }
-        let payload = sanitize_persisted_chat_payload(payload);
-        let payload_text = Self::json_to_string(&payload);
-        let now = Self::now_ts();
-        let mut conn = self.conn()?;
-        conn.execute(
-            "INSERT INTO model_context_entries (user_id, session_id, role, payload, created_time) \
+            "INSERT INTO chat_history (user_id, session_id, role, payload, created_time) \
              VALUES ($1, $2, $3, $4, $5)",
-            &[&cleaned_user, &cleaned_session, &role, &payload_text, &now],
+            &[&user_id, &session_id, &role, &payload_text, &now],
         )?;
-        Ok(())
-    }
-
-    fn replace_model_context_entries_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        payloads: &[Value],
-    ) -> Result<()> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Ok(());
-        }
-        let mut conn = self.conn()?;
-        let mut tx = conn.transaction()?;
-        tx.execute(
-            "DELETE FROM model_context_entries WHERE user_id = $1 AND session_id = $2",
-            &[&cleaned_user, &cleaned_session],
-        )?;
-        for payload in payloads {
-            let role = payload
-                .get("role")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            if role.is_empty() {
-                continue;
-            }
-            let payload = sanitize_persisted_chat_payload(payload);
-            let payload_text = Self::json_to_string(&payload);
-            let now = Self::now_ts();
-            tx.execute(
-                "INSERT INTO model_context_entries (user_id, session_id, role, payload, created_time) \
-                 VALUES ($1, $2, $3, $4, $5)",
-                &[&cleaned_user, &cleaned_session, &role, &payload_text, &now],
-            )?;
-        }
-        tx.commit()?;
         Ok(())
     }
 
@@ -197,20 +91,16 @@ impl PostgresConversationLogStorage for PostgresStorage {
         let error = Self::parse_string(payload.get("error"));
         let args = payload
             .get("args")
-            .and_then(|value| serde_json::to_string(value).ok());
+            .and_then(|value| serde_json::to_string(value).ok())
+            .map(|text| crate::storage::constants::truncate_tool_log_column(&text));
         let data = payload
             .get("data")
-            .and_then(|value| serde_json::to_string(value).ok());
+            .and_then(|value| serde_json::to_string(value).ok())
+            .map(|text| crate::storage::constants::truncate_tool_log_column(&text));
         let timestamp = Self::parse_string(payload.get("timestamp"));
-        let omit_payload = payload
-            .get("__omit_payload")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let payload_text = if omit_payload {
-            "{}".to_string()
-        } else {
-            Self::json_to_string(payload)
-        };
+        // The full payload column is retired: tool logs always persist the
+        // bounded args/data columns plus an empty payload placeholder.
+        let payload_text = "{}".to_string();
         let now = Self::now_ts();
         let mut conn = self.conn()?;
         conn.execute(
@@ -259,60 +149,6 @@ impl PostgresConversationLogStorage for PostgresStorage {
             &[&user_id, &session_id, &kind, &name, &payload_text, &now],
         )?;
         Ok(())
-    }
-
-    fn load_model_context_entries_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        limit: Option<i64>,
-    ) -> Result<Vec<Value>> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Ok(Vec::new());
-        }
-        let limit_value = limit.filter(|value| *value > 0);
-        let mut conn = self.conn()?;
-        let mut records = Vec::new();
-        let mut repairs = Vec::new();
-        if let Some(limit_value) = limit_value {
-            let rows = conn.query(
-                "SELECT id, payload FROM model_context_entries WHERE user_id = $1 AND session_id = $2 ORDER BY id DESC LIMIT $3",
-                &[&cleaned_user, &cleaned_session, &limit_value],
-            )?;
-            for row in rows {
-                let entry_id = row.get::<_, i64>(0);
-                let payload = row.get::<_, String>(1);
-                let (value, repaired_payload) = parse_sanitized_persisted_chat_payload(&payload);
-                if let Some(repaired_payload) = repaired_payload {
-                    repairs.push((entry_id, repaired_payload));
-                }
-                if let Some(value) = value {
-                    records.push(value);
-                }
-            }
-            records.reverse();
-        } else {
-            let rows = conn.query(
-                "SELECT id, payload FROM model_context_entries WHERE user_id = $1 AND session_id = $2 ORDER BY id ASC",
-                &[&cleaned_user, &cleaned_session],
-            )?;
-            for row in rows {
-                let entry_id = row.get::<_, i64>(0);
-                let payload = row.get::<_, String>(1);
-                let (value, repaired_payload) = parse_sanitized_persisted_chat_payload(&payload);
-                if let Some(repaired_payload) = repaired_payload {
-                    repairs.push((entry_id, repaired_payload));
-                }
-                if let Some(value) = value {
-                    records.push(value);
-                }
-            }
-        }
-        repair_model_context_payloads(&mut conn, repairs);
-        Ok(records)
     }
 
     fn load_chat_history_impl(
@@ -513,15 +349,6 @@ fn repair_chat_history_payloads(conn: &mut super::PgConn<'_>, repairs: Vec<(i64,
         let _ = conn.execute(
             "UPDATE chat_history SET payload = $1 WHERE id = $2",
             &[&payload, &history_id],
-        );
-    }
-}
-
-fn repair_model_context_payloads(conn: &mut super::PgConn<'_>, repairs: Vec<(i64, String)>) {
-    for (entry_id, payload) in repairs {
-        let _ = conn.execute(
-            "UPDATE model_context_entries SET payload = $1 WHERE id = $2",
-            &[&payload, &entry_id],
         );
     }
 }

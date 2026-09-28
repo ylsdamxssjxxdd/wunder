@@ -445,7 +445,7 @@ async fn create_and_enqueue_runs(
         state.user_store.upsert_chat_session(&session)?;
         state
             .monitor
-            .register(&parent_session_id, user_id, "", question, false, false);
+            .register(&parent_session_id, user_id, "", question, false);
 
         let team_run_id = format!("team_{}_{}", run_index, Uuid::new_v4().simple());
         let run = TeamRunRecord {

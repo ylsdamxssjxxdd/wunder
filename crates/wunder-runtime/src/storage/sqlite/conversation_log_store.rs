@@ -8,31 +8,13 @@ use crate::services::{
 };
 use crate::storage::StorageLifecycle;
 use anyhow::Result;
-use rusqlite::{params, TransactionBehavior};
+use rusqlite::params;
 use serde_json::{json, Value};
 
 pub(super) trait SqliteConversationLogStorage {
     fn append_chat_impl(&self, user_id: &str, payload: &Value) -> Result<()>;
-    fn append_model_context_entry_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        payload: &Value,
-    ) -> Result<()>;
-    fn replace_model_context_entries_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        payloads: &[Value],
-    ) -> Result<()>;
     fn append_tool_log_impl(&self, user_id: &str, payload: &Value) -> Result<()>;
     fn append_artifact_log_impl(&self, user_id: &str, payload: &Value) -> Result<()>;
-    fn load_model_context_entries_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        limit: Option<i64>,
-    ) -> Result<Vec<Value>>;
     fn load_chat_history_impl(
         &self,
         user_id: &str,
@@ -83,109 +65,14 @@ impl SqliteConversationLogStorage for SqliteStorage {
         }
         let payload = output_quality::annotate_chat_payload(payload);
         let payload = sanitize_persisted_chat_payload(&payload);
-        let content = Self::parse_string(payload.get("content"));
-        let timestamp = Self::parse_string(payload.get("timestamp"));
-        let meta = payload
-            .get("meta")
-            .and_then(|value| serde_json::to_string(value).ok());
         let payload_text = Self::json_to_string(&payload);
         let now = Self::now_ts();
         let conn = self.open()?;
         conn.execute(
-            "INSERT INTO chat_history (user_id, session_id, role, content, timestamp, meta, payload, created_time) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                user_id,
-                session_id,
-                role,
-                content,
-                timestamp,
-                meta,
-                payload_text,
-                now
-            ],
-        )?;
-        Ok(())
-    }
-
-    fn append_model_context_entry_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        payload: &Value,
-    ) -> Result<()> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Ok(());
-        }
-        let role = payload
-            .get("role")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if role.is_empty() {
-            return Ok(());
-        }
-        let payload = sanitize_persisted_chat_payload(payload);
-        let payload_text = Self::json_to_string(&payload);
-        let now = Self::now_ts();
-        let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO model_context_entries (user_id, session_id, role, payload, created_time) \
+            "INSERT INTO chat_history (user_id, session_id, role, payload, created_time) \
              VALUES (?, ?, ?, ?, ?)",
-            params![cleaned_user, cleaned_session, role, payload_text, now],
+            params![user_id, session_id, role, payload_text, now],
         )?;
-        Ok(())
-    }
-
-    fn replace_model_context_entries_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        payloads: &[Value],
-    ) -> Result<()> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Ok(());
-        }
-        let mut conn = self.open()?;
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute(
-            "DELETE FROM model_context_entries WHERE user_id = ? AND session_id = ?",
-            params![cleaned_user, cleaned_session],
-        )?;
-        {
-            let mut stmt = tx.prepare(
-                "INSERT INTO model_context_entries (user_id, session_id, role, payload, created_time) \
-                 VALUES (?, ?, ?, ?, ?)",
-            )?;
-            for payload in payloads {
-                let role = payload
-                    .get("role")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .trim();
-                if role.is_empty() {
-                    continue;
-                }
-                let payload = sanitize_persisted_chat_payload(payload);
-                let payload_text = Self::json_to_string(&payload);
-                let now = Self::now_ts();
-                stmt.execute(params![
-                    cleaned_user,
-                    cleaned_session,
-                    role,
-                    payload_text,
-                    now
-                ])?;
-            }
-        }
-        tx.commit()?;
         Ok(())
     }
 
@@ -205,20 +92,16 @@ impl SqliteConversationLogStorage for SqliteStorage {
         let error = Self::parse_string(payload.get("error"));
         let args = payload
             .get("args")
-            .and_then(|value| serde_json::to_string(value).ok());
+            .and_then(|value| serde_json::to_string(value).ok())
+            .map(|text| crate::storage::constants::truncate_tool_log_column(&text));
         let data = payload
             .get("data")
-            .and_then(|value| serde_json::to_string(value).ok());
+            .and_then(|value| serde_json::to_string(value).ok())
+            .map(|text| crate::storage::constants::truncate_tool_log_column(&text));
         let timestamp = Self::parse_string(payload.get("timestamp"));
-        let omit_payload = payload
-            .get("__omit_payload")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let payload_text = if omit_payload {
-            "{}".to_string()
-        } else {
-            Self::json_to_string(payload)
-        };
+        // The full payload column is retired: tool logs always persist the
+        // bounded args/data columns plus an empty payload placeholder.
+        let payload_text = "{}".to_string();
         let now = Self::now_ts();
         let conn = self.open()?;
         conn.execute(
@@ -267,63 +150,6 @@ impl SqliteConversationLogStorage for SqliteStorage {
             params![user_id, session_id, kind, name, payload_text, now],
         )?;
         Ok(())
-    }
-
-    fn load_model_context_entries_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        limit: Option<i64>,
-    ) -> Result<Vec<Value>> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Ok(Vec::new());
-        }
-        let limit_value = limit.filter(|value| *value > 0);
-        let conn = self.open()?;
-        let mut records = Vec::new();
-        let mut repairs = Vec::new();
-        if let Some(limit_value) = limit_value {
-            let mut stmt = conn.prepare(
-                "SELECT id, payload FROM model_context_entries WHERE user_id = ? AND session_id = ? ORDER BY id DESC LIMIT ?",
-            )?;
-            let rows = stmt
-                .query_map(params![cleaned_user, cleaned_session, limit_value], |row| {
-                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-                })?;
-            for row in rows {
-                let (entry_id, payload) = row?;
-                let (value, repaired_payload) = parse_sanitized_persisted_chat_payload(&payload);
-                if let Some(repaired_payload) = repaired_payload {
-                    repairs.push((entry_id, repaired_payload));
-                }
-                if let Some(value) = value {
-                    records.push(value);
-                }
-            }
-            records.reverse();
-        } else {
-            let mut stmt = conn.prepare(
-                "SELECT id, payload FROM model_context_entries WHERE user_id = ? AND session_id = ? ORDER BY id ASC",
-            )?;
-            let rows = stmt.query_map(params![cleaned_user, cleaned_session], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-            })?;
-            for row in rows {
-                let (entry_id, payload) = row?;
-                let (value, repaired_payload) = parse_sanitized_persisted_chat_payload(&payload);
-                if let Some(repaired_payload) = repaired_payload {
-                    repairs.push((entry_id, repaired_payload));
-                }
-                if let Some(value) = value {
-                    records.push(value);
-                }
-            }
-        }
-        repair_model_context_payloads(&conn, repairs);
-        Ok(records)
     }
 
     fn load_chat_history_impl(
@@ -533,11 +359,82 @@ fn repair_chat_history_payloads(conn: &rusqlite::Connection, repairs: Vec<(i64, 
     }
 }
 
-fn repair_model_context_payloads(conn: &rusqlite::Connection, repairs: Vec<(i64, String)>) {
-    for (entry_id, payload) in repairs {
-        let _ = conn.execute(
-            "UPDATE model_context_entries SET payload = ? WHERE id = ?",
-            params![payload, entry_id],
-        );
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::constants::{
+        TOOL_LOG_HEAD_CHARS, TOOL_LOG_TAIL_CHARS, TOOL_LOG_TRUNCATION_MARKER,
+    };
+    use tempfile::tempdir;
+    use wunder_core::storage_backend::ConversationLogStore;
+
+    fn read_tool_log_columns(db_path: &std::path::Path, session_id: &str) -> (String, String, String) {
+        let conn = rusqlite::Connection::open(db_path).expect("open db");
+        conn.query_row(
+            "SELECT args, data, payload FROM tool_logs WHERE session_id = ?1",
+            params![session_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read tool log row")
+    }
+
+    #[test]
+    fn tool_log_columns_are_bounded_and_payload_is_empty() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("tool-log-bounded.db");
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize storage");
+        let big_args = "a".repeat(TOOL_LOG_HEAD_CHARS + TOOL_LOG_TAIL_CHARS + 500);
+        let big_data = "d".repeat(TOOL_LOG_HEAD_CHARS + TOOL_LOG_TAIL_CHARS + 500);
+        let payload = json!({
+            "tool": "read_file",
+            "session_id": "sess-tool-log",
+            "ok": true,
+            "error": "",
+            "args": { "content": big_args },
+            "data": { "text": big_data },
+            "timestamp": "2024-01-01T00:00:00Z",
+        });
+        storage
+            .append_tool_log("user-1", &payload)
+            .expect("append tool log");
+
+        let (args, data, payload_text) = read_tool_log_columns(&db_path, "sess-tool-log");
+        assert_eq!(payload_text, "{}");
+        for column in [&args, &data] {
+            assert!(column.contains(TOOL_LOG_TRUNCATION_MARKER));
+            let budget = TOOL_LOG_HEAD_CHARS
+                + TOOL_LOG_TAIL_CHARS
+                + TOOL_LOG_TRUNCATION_MARKER.chars().count()
+                + 256; // serialized JSON wrapper overhead
+            assert!(column.chars().count() <= budget);
+        }
+    }
+
+    #[test]
+    fn short_tool_log_columns_are_not_truncated() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("tool-log-short.db");
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize storage");
+        let payload = json!({
+            "tool": "read_file",
+            "session_id": "sess-tool-log-short",
+            "ok": true,
+            "error": "",
+            "args": { "path": "a.txt" },
+            "data": { "text": "hello" },
+            "timestamp": "2024-01-01T00:00:00Z",
+        });
+        storage
+            .append_tool_log("user-1", &payload)
+            .expect("append tool log");
+
+        let (args, data, payload_text) = read_tool_log_columns(&db_path, "sess-tool-log-short");
+        assert_eq!(payload_text, "{}");
+        assert!(!args.contains(TOOL_LOG_TRUNCATION_MARKER));
+        assert!(!data.contains(TOOL_LOG_TRUNCATION_MARKER));
+        assert_eq!(args, json!({ "path": "a.txt" }).to_string());
+        assert_eq!(data, json!({ "text": "hello" }).to_string());
     }
 }

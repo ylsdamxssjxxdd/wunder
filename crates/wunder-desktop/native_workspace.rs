@@ -3,6 +3,7 @@ use anyhow::{bail, Result};
 use std::{
     io::Read,
     path::{Component, Path, PathBuf},
+    process::Command,
 };
 
 #[derive(Clone, Debug)]
@@ -23,6 +24,44 @@ pub struct Directory {
 }
 
 impl NativeDesktop {
+    pub fn open_workspace_file(&self, agent: &str, path: &str) -> Result<()> {
+        let scope = self.workspace_scope(agent)?;
+        let target = self.confined_path(&scope, path)?;
+        if !target.exists() {
+            bail!("文件不存在");
+        }
+        #[cfg(windows)]
+        {
+            Command::new("cmd")
+                .args(["/C", "start", "", &target.to_string_lossy()])
+                .spawn()?;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            Command::new("xdg-open").arg(&target).spawn()?;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            Command::new("open").arg(&target).spawn()?;
+        }
+        Ok(())
+    }
+    pub fn create_workspace_file(&self, agent: &str, path: &str, content: &str) -> Result<()> {
+        let scope = self.workspace_scope(agent)?;
+        let target = self.state().workspace.resolve_path(&scope, path)?;
+        let parent = target
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("无效文件路径"))?;
+        if !parent.exists() {
+            bail!("目标目录不存在");
+        }
+        if target.exists() {
+            bail!("文件已存在");
+        }
+        std::fs::write(&target, content.as_bytes())?;
+        self.state().workspace.refresh_workspace_tree(&scope);
+        Ok(())
+    }
     fn workspace_scope(&self, agent: &str) -> Result<String> {
         let record = self
             .runtime

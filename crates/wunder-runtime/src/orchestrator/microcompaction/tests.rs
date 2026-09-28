@@ -99,7 +99,7 @@ fn parallel_results_count_as_one_recent_group() {
 
 #[cfg(feature = "sqlite-storage")]
 #[tokio::test]
-async fn local_reduction_persists_model_context_without_rewriting_chat_history() {
+async fn local_reduction_persists_marker_row_without_rewriting_chat_history() {
     use crate::state::{AppState, AppStateInitOptions};
 
     let root = tempfile::tempdir().unwrap();
@@ -153,21 +153,76 @@ async fn local_reduction_persists_model_context_without_rewriting_chat_history()
         .unwrap();
     assert!(result.model_context_replaced);
     assert_eq!(result.compaction_id, None);
+
+    // Existing chat rows stay untouched; the reduction lands as one hidden marker row.
+    let chat_after = orchestrator
+        .workspace
+        .load_history("user", "session", 0)
+        .unwrap();
+    assert_eq!(chat_after.len(), chat_before.len() + 1);
+    assert_eq!(&chat_after[..chat_before.len()], chat_before.as_slice());
+    let marker = chat_after.last().expect("marker row");
+    let marker_meta = marker.get("meta").and_then(Value::as_object).unwrap();
     assert_eq!(
-        orchestrator
-            .workspace
-            .load_model_context_entries("user", "session", 0)
-            .unwrap(),
-        model_context_entries_from_messages(&result.messages)
+        marker_meta.get("type").and_then(Value::as_str),
+        Some(MICROCOMPACTION_META_TYPE)
     );
+    assert_eq!(
+        marker_meta.get("hidden").and_then(Value::as_bool),
+        Some(true)
+    );
+    let replacement = marker_meta
+        .get(COMPACTION_REPLACEMENT_HISTORY_META_KEY)
+        .and_then(Value::as_array)
+        .expect("replacement history");
+    // The snapshot excludes the in-flight current user message (index 1 here);
+    // its chat row is appended after compaction in the real flow and replays it.
+    let expected_snapshot_source: Vec<Value> = result
+        .messages
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != 1)
+        .map(|(_, message)| message.clone())
+        .collect();
+    assert_eq!(
+        replacement,
+        &model_context_entries_from_messages(&expected_snapshot_source)
+    );
+
+    // Mirror the production order: the current user chat row lands after the
+    // marker row, then derivation replays snapshot + that row.
+    orchestrator
+        .workspace
+        .append_chat(
+            "user",
+            &json!({"session_id": "session", "role": "user", "content": "follow-up request"}),
+        )
+        .unwrap();
+    assert!(orchestrator.workspace.flush_writes_async().await);
+    let derived = crate::history::HistoryManager
+        .load_history_messages_async(
+            orchestrator.workspace.clone(),
+            "user".to_string(),
+            "session".to_string(),
+            0,
+        )
+        .await;
+    assert_eq!(derived.len(), replacement.len() + 1);
+    assert_eq!(
+        derived.last(),
+        Some(&json!({"role": "user", "content": "follow-up request"}))
+    );
+    let derived_text = derived
+        .iter()
+        .filter_map(|message| message.get("content").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(derived_text.contains("[older output omitted; repeat the read if needed]"));
+    // Recent tool groups stay intact; only the older observations are elided.
+    let needle = "字🙂".repeat(2500);
+    assert!(derived_text.matches(needle.as_str()).count() < 10);
+
     assert_eq!(result.messages[0], messages[0]);
-    assert_eq!(
-        orchestrator
-            .workspace
-            .load_history("user", "session", 0)
-            .unwrap(),
-        chat_before
-    );
     assert!(plan_microcompaction(
         &result.messages,
         estimate_messages_tokens(&result.messages),

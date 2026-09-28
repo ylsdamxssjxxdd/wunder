@@ -160,11 +160,7 @@ fn sanitize_chat_messages_for_request(messages: &[ChatMessage]) -> ChatMessageRe
     ChatMessageRepairReport { messages, repair }
 }
 
-fn build_context_cache_probe(
-    messages: &[ChatMessage],
-    tools: Option<&[Value]>,
-    request_payload: Option<&Value>,
-) -> Value {
+fn build_context_cache_probe(messages: &[ChatMessage], tools: Option<&[Value]>) -> Value {
     let message_count = messages.len();
     let message_value = serde_json::to_value(messages).unwrap_or_else(|_| Value::Array(vec![]));
     let prefix_without_last_value = if message_count > 0 {
@@ -261,9 +257,6 @@ fn build_context_cache_probe(
         if let Ok(value) = serde_json::to_value(last_message) {
             probe["last_message_hash"] = Value::String(stable_json_hash(&value));
         }
-    }
-    if let Some(request_payload) = request_payload {
-        probe["request_payload_hash"] = Value::String(stable_json_hash(request_payload));
     }
     probe
 }
@@ -494,7 +487,6 @@ impl Orchestrator {
         round_info: RoundInfo,
         emit_events: bool,
         emit_quota_events: bool,
-        log_payload: bool,
         tools: Option<&[Value]>,
         llm_config_override: Option<LlmModelConfig>,
     ) -> Result<
@@ -599,15 +591,7 @@ impl Orchestrator {
         )
         .then_some("native_tools_non_stream_policy");
         let initial_will_stream = stream && stream_disabled_reason.is_none();
-        let request_payload = log_payload.then(|| {
-            client.build_request_payload_with_tools(
-                &chat_messages.messages,
-                initial_will_stream,
-                tools,
-            )
-        });
-        let context_cache_probe =
-            build_context_cache_probe(&chat_messages.messages, tools, request_payload.as_ref());
+        let context_cache_probe = build_context_cache_probe(&chat_messages.messages, tools);
         let virtual_turn = if virtual_replay {
             let app_config = self.config_store.get().await;
             let turn = crate::services::virtual_llm::load_turn_for_round(
@@ -649,27 +633,17 @@ impl Orchestrator {
         };
 
         if emit_events {
-            let mut request_payload = if log_payload {
-                json!({
-                    "provider": effective_config.provider,
-                    "model": effective_config.model,
-                    "base_url": effective_config.base_url,
-                    "stream": initial_will_stream,
-                    "stream_requested": stream,
-                    "payload": request_payload.clone().unwrap_or(Value::Null),
-                    "context_cache_probe": context_cache_probe,
-                })
-            } else {
-                json!({
-                    "provider": effective_config.provider,
-                    "model": effective_config.model,
-                    "base_url": effective_config.base_url,
-                    "stream": initial_will_stream,
-                    "stream_requested": stream,
-                    "payload_omitted": true,
-                    "context_cache_probe": context_cache_probe,
-                })
-            };
+            // llm_request events always use the compact profile; the full
+            // request body is never emitted or persisted.
+            let mut request_payload = json!({
+                "provider": effective_config.provider,
+                "model": effective_config.model,
+                "base_url": effective_config.base_url,
+                "stream": initial_will_stream,
+                "stream_requested": stream,
+                "payload_omitted": true,
+                "context_cache_probe": context_cache_probe,
+            });
             if let Value::Object(ref mut map) = request_payload {
                 if let Some(repair) = chat_messages.repair.clone() {
                     map.insert("repair".to_string(), repair);
@@ -1557,8 +1531,8 @@ mod tests {
         appended.push(test_message("assistant", "follow up answer"));
         appended.push(test_message("user", "next"));
 
-        let previous_probe = build_context_cache_probe(&previous, None, None);
-        let appended_probe = build_context_cache_probe(&appended, None, None);
+        let previous_probe = build_context_cache_probe(&previous, None);
+        let appended_probe = build_context_cache_probe(&appended, None);
 
         assert_eq!(
             previous_probe.get("message_hash"),
@@ -1581,7 +1555,7 @@ mod tests {
                 "parameters": { "type": "object" },
             }
         })];
-        let probe = build_context_cache_probe(&messages, Some(&tools), None);
+        let probe = build_context_cache_probe(&messages, Some(&tools));
 
         assert_eq!(probe.get("tool_transport"), Some(&json!("native_tools")));
         assert_eq!(

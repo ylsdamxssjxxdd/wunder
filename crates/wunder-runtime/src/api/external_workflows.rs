@@ -661,7 +661,6 @@ async fn build_wunder_request(
         tool_names,
         skip_tool_calls: false,
         stream: true,
-        debug_payload: false,
         session_id: Some(prepared.session_id.clone()),
         agent_id: Some(prepared.agent.agent_id.clone()),
         workspace_container_id: Some(EXTERNAL_WORKFLOW_CONTAINER_ID),

@@ -358,7 +358,7 @@ fn ensure_runtime_dirs(
 }
 
 fn default_cli_temp_root(wunder_home: &Path) -> PathBuf {
-    wunder_home.join("cli")
+    wunder_home.to_path_buf()
 }
 
 /// Older CLI builds placed mutable state one level below `cli/WUNDER_TEMP`.
@@ -477,7 +477,7 @@ fn apply_cli_defaults(
     // launch directory remains an input workspace only when explicitly
     // selected by the caller; it is never used as a storage root.
     config.workspace.root = wunder_home
-        .join("cli/workspace")
+        .join("workspace")
         .to_string_lossy()
         .to_string();
 

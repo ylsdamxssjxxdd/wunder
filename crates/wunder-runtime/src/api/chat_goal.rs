@@ -163,7 +163,6 @@ pub(crate) async fn apply_goal_command(
             session.agent_id.as_deref().unwrap_or(""),
             echo,
             is_admin,
-            false,
         );
         state.kernel.orchestrator.append_goal_command_message(
             user_id,

@@ -201,29 +201,62 @@ impl Orchestrator {
         for (index, content) in &plan.replacements {
             reduced[*index]["content"] = json!(content);
         }
-        let entries = model_context_entries_from_messages(&reduced);
-        if let Err(error) = self
-            .workspace
-            .replace_model_context_entries(user_id, session_id, &entries)
-        {
-            warn!(%session_id, %error, "local context reduction could not be persisted");
-            return None;
-        }
+        // Persist a hidden marker row carrying the reduced history snapshot. Model
+        // input derivation replays replacement_history from this row, so no separate
+        // context table write is needed. The in-flight current user message is
+        // excluded: its own chat row is appended right after compaction and replays it.
+        let current_user_index = Self::locate_current_user_index(&reduced);
+        let snapshot_source: Vec<Value> = reduced
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| Some(*index) != current_user_index)
+            .map(|(_, message)| message.clone())
+            .collect();
+        let entries = model_context_entries_from_messages(&snapshot_source);
+        let marker_meta = json!({
+            "type": MICROCOMPACTION_META_TYPE,
+            "hidden": true,
+            COMPACTION_REPLACEMENT_HISTORY_META_KEY: entries,
+        });
+        self.append_chat(
+            user_id,
+            session_id,
+            "system",
+            Some(&Value::String(String::new())),
+            None,
+            Some(&marker_meta),
+            None,
+            None,
+            None,
+            None,
+            round_info,
+        );
         if !self.workspace.flush_writes_async().await {
             warn!(%session_id, "local context reduction flush failed; using summary fallback");
             return None;
         }
         // The shared write queue's barrier acknowledges draining, not SQL success.
-        // Verify the replacement before declaring the current user persisted.
-        let workspace = Arc::clone(&self.workspace);
+        // Verify the marker row landed before declaring the reduction persisted.
+        let storage = self.storage.clone();
         let persisted_user_id = user_id.to_string();
         let persisted_session_id = session_id.to_string();
+        let expected_len = marker_meta
+            .get(COMPACTION_REPLACEMENT_HISTORY_META_KEY)
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
         let verified = crate::core::blocking::run_db("context.microcompaction.verify", move || {
-            Ok(workspace.load_model_context_entries(
-                &persisted_user_id,
-                &persisted_session_id,
-                0,
-            )? == entries)
+            let rows = storage.load_chat_history(&persisted_user_id, &persisted_session_id, Some(1))?;
+            Ok(rows.last().is_some_and(|row| {
+                let meta = row.get("meta").and_then(Value::as_object);
+                meta.and_then(|meta| meta.get("type")).and_then(Value::as_str)
+                    == Some(MICROCOMPACTION_META_TYPE)
+                    && meta
+                        .and_then(|meta| meta.get(COMPACTION_REPLACEMENT_HISTORY_META_KEY))
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        == Some(expected_len)
+            }))
         })
         .await;
         if !matches!(verified, Ok(true)) {

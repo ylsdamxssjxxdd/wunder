@@ -931,7 +931,6 @@ pub(crate) fn build_parent_auto_wake_request(
         tool_names: session.tool_overrides.clone(),
         skip_tool_calls: false,
         stream: true,
-        debug_payload: false,
         session_id: Some(parent_session_id.to_string()),
         agent_id: session.agent_id.clone(),
         workspace_container_id: None,

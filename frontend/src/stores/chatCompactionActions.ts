@@ -189,8 +189,7 @@ export const chatCompactionActions = {
         const compactionRevision = readChatRealtimeRevision(runtimeForManual);
         try {
           const requestPayload = {
-            ...(payload && typeof payload === 'object' ? payload : {}),
-            ...(debugPayloadEnabled ? { debug_payload: true } : {})
+            ...(payload && typeof payload === 'object' ? payload : {})
           };
           const { data } = await compactSessionApi(targetId, requestPayload, {
             signal: compactControllerForManual?.signal

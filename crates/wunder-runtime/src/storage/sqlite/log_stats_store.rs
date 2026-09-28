@@ -32,6 +32,18 @@ pub(super) trait SqliteLogStatsStorage {
     fn delete_tool_logs_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn delete_artifact_logs_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_artifact_logs_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64>;
+    fn mark_deleted_session_log_grace_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        deleted_at: f64,
+    ) -> Result<()>;
+    fn list_expired_deleted_session_log_grace_impl(
+        &self,
+        cutoff: f64,
+        limit: i64,
+    ) -> Result<Vec<(String, String)>>;
+    fn delete_deleted_session_log_grace_impl(&self, user_id: &str, session_id: &str) -> Result<()>;
 }
 
 fn append_tool_log_exclusions(filters: &mut Vec<String>, params_list: &mut Vec<SqlValue>) {
@@ -220,7 +232,6 @@ impl SqliteLogStatsStorage for SqliteStorage {
         let dbstat_query = "SELECT COALESCE(SUM(pgsize), 0) \
             FROM dbstat WHERE name IN ( \
                 'chat_history', \
-                'model_context_entries', \
                 'tool_logs', \
                 'artifact_logs', \
                 'monitor_sessions', \
@@ -233,7 +244,6 @@ impl SqliteLogStatsStorage for SqliteStorage {
         let total: i64 = conn.query_row(
             "SELECT \
             (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM chat_history) + \
-            (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM model_context_entries) + \
             (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM tool_logs) + \
             (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM artifact_logs) + \
             (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM monitor_sessions) + \
@@ -283,10 +293,6 @@ impl SqliteLogStatsStorage for SqliteStorage {
             delete_range("chat_history", "created_time")?,
         );
         results.insert(
-            "model_context_entries".to_string(),
-            delete_range("model_context_entries", "created_time")?,
-        );
-        results.insert(
             "tool_logs".to_string(),
             delete_range("tool_logs", "created_time")?,
         );
@@ -322,10 +328,6 @@ impl SqliteLogStatsStorage for SqliteStorage {
             "DELETE FROM chat_history WHERE user_id = ?",
             params![user_id],
         )?;
-        let _ = conn.execute(
-            "DELETE FROM model_context_entries WHERE user_id = ?",
-            params![user_id],
-        );
         Ok(affected as i64)
     }
 
@@ -341,10 +343,6 @@ impl SqliteLogStatsStorage for SqliteStorage {
             "DELETE FROM chat_history WHERE user_id = ? AND session_id = ?",
             params![cleaned_user, cleaned_session],
         )?;
-        let _ = conn.execute(
-            "DELETE FROM model_context_entries WHERE user_id = ? AND session_id = ?",
-            params![cleaned_user, cleaned_session],
-        );
         Ok(affected as i64)
     }
 
@@ -394,6 +392,60 @@ impl SqliteLogStatsStorage for SqliteStorage {
         )?;
         Ok(affected as i64)
     }
+
+    fn mark_deleted_session_log_grace_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        deleted_at: f64,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() || !deleted_at.is_finite() {
+            return Ok(());
+        }
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO deleted_session_log_grace (user_id, session_id, deleted_at) \
+             VALUES (?, ?, ?) \
+             ON CONFLICT (user_id, session_id) DO UPDATE SET deleted_at = excluded.deleted_at",
+            params![cleaned_user, cleaned_session, deleted_at],
+        )?;
+        Ok(())
+    }
+
+    fn list_expired_deleted_session_log_grace_impl(
+        &self,
+        cutoff: f64,
+        limit: i64,
+    ) -> Result<Vec<(String, String)>> {
+        self.ensure_initialized()?;
+        if !cutoff.is_finite() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT user_id, session_id FROM deleted_session_log_grace \
+             WHERE deleted_at <= ? ORDER BY deleted_at ASC LIMIT ?",
+        )?;
+        let rows = stmt
+            .query_map(params![cutoff, limit], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<(String, String)>, _>>()?;
+        Ok(rows)
+    }
+
+    fn delete_deleted_session_log_grace_impl(&self, user_id: &str, session_id: &str) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        conn.execute(
+            "DELETE FROM deleted_session_log_grace WHERE user_id = ? AND session_id = ?",
+            params![user_id, session_id],
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -435,16 +487,6 @@ mod tests {
                 }),
             )
             .expect("append chat b");
-        storage
-            .append_model_context_entry(
-                "user-a",
-                "session-a",
-                &json!({
-                    "role": "user",
-                    "content": "context-a"
-                }),
-            )
-            .expect("append context");
 
         storage
             .append_tool_log(
@@ -543,8 +585,8 @@ mod tests {
             1
         );
         assert!(storage
-            .load_model_context_entries("user-a", "session-a", None)
-            .expect("load context after delete")
+            .load_chat_history("user-a", "session-a", None)
+            .expect("load chat after delete")
             .is_empty());
         assert_eq!(
             storage

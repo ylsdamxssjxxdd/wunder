@@ -279,7 +279,6 @@ pub(crate) fn prepare_child_session(
             tool_names: child_tool_names,
             skip_tool_calls: false,
             stream: true,
-            debug_payload: false,
             session_id: Some(child_session_id),
             agent_id: child_agent_id,
             workspace_container_id: None,

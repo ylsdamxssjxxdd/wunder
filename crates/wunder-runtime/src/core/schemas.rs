@@ -21,8 +21,6 @@ pub struct WunderRequest {
     #[serde(default = "default_stream")]
     pub stream: bool,
     #[serde(default)]
-    pub debug_payload: bool,
-    #[serde(default)]
     pub session_id: Option<String>,
     #[serde(default)]
     pub agent_id: Option<String>,

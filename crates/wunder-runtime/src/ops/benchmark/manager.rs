@@ -608,7 +608,6 @@ async fn run_attempt(
         tool_names: ctx.requested_tool_names.clone(),
         skip_tool_calls: false,
         stream: true,
-        debug_payload: true,
         session_id: Some(session_id.clone()),
         agent_id: None,
         workspace_container_id: Some(workspace_container_id),

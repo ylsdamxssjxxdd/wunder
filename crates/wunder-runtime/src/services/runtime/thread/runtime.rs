@@ -792,7 +792,6 @@ impl ThreadRuntime {
                 &record.agent_id,
                 &request.question,
                 request.is_admin,
-                request.debug_payload,
                 &queue_monitor_payload,
             );
         }

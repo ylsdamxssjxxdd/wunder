@@ -628,7 +628,6 @@ export const chatSendActions = {
           content,
           stream: true,
           client_message_id: clientMessageId,
-          ...(debugPayloadEnabled ? { debug_payload: true } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(desktopToolCallMode ? { tool_call_mode: desktopToolCallMode } : {}),
           ...(approvalMode ? { approval_mode: approvalMode } : {}),

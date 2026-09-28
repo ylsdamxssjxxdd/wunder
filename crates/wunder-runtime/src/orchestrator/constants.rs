@@ -2,6 +2,7 @@
 pub const OBSERVATION_PREFIX: &str = "tool_response: ";
 pub const COMPACTION_META_TYPE: &str = "compaction_summary";
 pub const COMPACTION_REPLACEMENT_HISTORY_META_KEY: &str = "replacement_history";
+pub const MICROCOMPACTION_META_TYPE: &str = "microcompaction";
 pub const COMPACTION_RATIO: f64 = 0.9;
 pub const COMPACTION_HISTORY_RATIO: f64 = 0.9;
 pub const DEFAULT_MAX_OUTPUT_TOKENS: i64 = 8_192;

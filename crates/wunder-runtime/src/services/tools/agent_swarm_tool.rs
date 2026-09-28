@@ -58,7 +58,6 @@ async fn dispatch_swarm_batch_task(
         tool_names: task.tool_names,
         skip_tool_calls: false,
         stream: false,
-        debug_payload: false,
         session_id: Some(task.session_id.clone()),
         agent_id: Some(task.agent_id.clone()),
         workspace_container_id: None,

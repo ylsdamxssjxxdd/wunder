@@ -5,9 +5,9 @@
 //! Linux uses the ubiquitous ALSA `default` capture device.  Both paths run on
 //! a worker thread and enforce the same bounded duration.
 
-use std::sync::{atomic::AtomicBool, Arc};
 #[cfg(any(windows, target_os = "linux"))]
 use std::sync::atomic::Ordering;
+use std::sync::{atomic::AtomicBool, Arc};
 
 pub const MAX_RECORDING_SECONDS: u64 = 120;
 
@@ -228,7 +228,7 @@ fn record_linux(stop: Arc<AtomicBool>) -> Result<Vec<u8>, String> {
     const RATE: usize = 16_000;
     let name = CString::new("default").map_err(|_| "无效的 ALSA 设备名称".to_string())?;
     let mut handle = std::ptr::null_mut();
-    let result = unsafe { snd_pcm_open(&mut handle, name.as_ptr(), STREAM_CAPTURE, 0) };
+    let result = unsafe { snd_pcm_open(&mut handle, name.as_ptr().cast(), STREAM_CAPTURE, 0) };
     if result < 0 || handle.is_null() {
         return Err(format!("无法打开 ALSA 麦克风（错误 {result}）"));
     }

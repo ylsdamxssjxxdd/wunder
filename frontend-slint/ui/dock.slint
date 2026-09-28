@@ -1,10 +1,11 @@
 import { Theme, Conversation, FileCard } from "theme.slint";
-import { Action, SearchField } from "components.slint";
+import { Action } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 export component WorkDock inherits Rectangle {
     callback activate-task(int);
     callback preview-file(string);
+    callback open-file-native(string);
     callback refresh-files();
     callback open-workspace-binding();
     in property <int> active-task;
@@ -24,12 +25,15 @@ export component WorkDock inherits Rectangle {
     callback thread-drop(int, int);
     callback rename-thread(int, string);
     callback archive-thread(int);
+    callback file-menu(string, int);
+    callback create-file(string, string);
     background: Theme.dock;
-    private property <string> keyword;
+    private property <int> file-menu-index: -1;
     private property <int> menu-index: -1;
     private property <int> rename-index: -1;
     private property <string> rename-value;
     private property <int> dragging-index: -1;
+    private property <bool> new-file-open: false;
     VerticalLayout {
         padding: 10px; spacing: 10px;
         Rectangle {
@@ -40,27 +44,43 @@ export component WorkDock inherits Rectangle {
                 HorizontalLayout {
                     height: 26px; spacing: 6px;
                     Image { width: 14px; height: 14px; source: @image-url("../assets/icons/box-archive.svg"); colorize: Theme.accent-deep; }
-                    Text { text: "工作目录"; font-size: 13px; font-weight: 600; color: Theme.text; }
+                    Text { text: "工作目录"; font-size: 13px; font-weight: 600; color: Theme.text; vertical-alignment: center; }
+                    Text { text: root.directory-container-id; color: Theme.accent-deep; font-size: 11px; font-weight: 600; vertical-alignment: center; y: -1px; }
                     Rectangle { horizontal-stretch: 1; }
-                    Action { icon: @image-url("../assets/icons/folder-open.svg"); label: "切换目录"; show-label: true; clicked => { root.workspace-binding-container = root.directory-container-id; root.workspace-binding-path = root.directory-root; root.workspace-binding-open = true; } }
-                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.files-loading; clicked => { root.keyword = ""; root.refresh-files(); } }
+                    Action { icon: @image-url("../assets/icons/folder-open.svg"); label: "切换目录"; clicked => { root.open-workspace-binding(); } }
+                    Action { icon: @image-url("../assets/icons/plus.svg"); label: "新建文件"; clicked => { root.new-file-open = !root.new-file-open; } }
+                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.files-loading; clicked => { root.refresh-files(); } }
                 }
-                SearchField { icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索文件"; text <=> root.keyword; }
+                if root.new-file-open : Rectangle { z: 10; x: parent.width - 210px; width: 200px; height: 176px; border-radius: 9px; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 6px; spacing: 2px; Text { text: "新建文件"; height: 18px; color: Theme.muted; font-size: 10px; } for option in [{kind: "text", label: "文本 .txt"}, {kind: "markdown", label: "Markdown .md"}, {kind: "word", label: "Word .docx"}, {kind: "sheet", label: "表格 .xlsx"}, {kind: "slides", label: "演示文稿 .pptx"}, {kind: "flowchart", label: "流程图 .drawio"}] : Action { height: 22px; label: option.label; show-label: true; clicked => { root.new-file-open = false; root.create-file(option.kind, root.directory-path); } } } }
                 ScrollView {
                     horizontal-scrollbar-policy: always-off;
                     VerticalLayout {
                         alignment: start; spacing: 4px;
                         for file[index] in root.files : Rectangle {
-                            height: root.keyword == "" || file.name.starts-with(root.keyword) ? 36px : 0px;
-                            visible: self.height > 0px;
-                            Action { width: parent.width; height: parent.height; label: file.name; clicked => { root.preview-file(file.path); } }
-                            Image { x: 4px; y: 10px; width: 16px; height: 16px; source: file.entry-type == "dir" ? @image-url("../assets/icons/folder-open.svg") : @image-url("../assets/icons/file-lines.svg"); colorize: file.entry-type == "dir" ? Theme.accent : Theme.muted; }
+                            height: 36px;
+                            Action { width: parent.width; height: parent.height; label: file.name; clicked => { if file.entry-type == "dir" { root.file-menu(file.path, 2); } else { root.preview-file(file.path); } } }
+                            Image { x: 4px; y: 10px; width: 16px; height: 16px; source: file.entry-type == "dir" ? @image-url("../assets/icons/folder-open.svg") : file.name.ends-with(".md") ? @image-url("../assets/icons/file-type-markdown.svg") : file.name.ends-with(".docx") ? @image-url("../assets/icons/file-type-word.svg") : file.name.ends-with(".xlsx") ? @image-url("../assets/icons/file-type-excel.svg") : file.name.ends-with(".pptx") ? @image-url("../assets/icons/file-type-powerpoint.svg") : file.name.ends-with(".pdf") ? @image-url("../assets/icons/file-type-pdf.svg") : @image-url("../assets/icons/file-type-text.svg"); }
                             Text { x: 29px; width: parent.width - 72px; height: parent.height; text: file.name; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; }
                             Text { x: parent.width - 42px; width: 38px; height: parent.height; text: file.entry-type == "dir" ? "目录" : file.size; color: Theme.muted; font-size: 10px; vertical-alignment: center; horizontal-alignment: right; overflow: elide; }
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                pointer-event(event) => {
+                                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.right { root.file-menu-index = index; }
+                                    else if event.kind == PointerEventKind.up && event.button == PointerEventButton.left && file.entry-type != "dir" { root.open-file-native(file.path); }
+                                }
+                            }
+                            if root.file-menu-index == index : Rectangle {
+                                x: parent.width - 128px; y: 30px; z: 10; width: 120px; height: 86px; border-radius: 8px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                                VerticalLayout { padding: 5px; spacing: 2px;
+                                    Action { height: 24px; label: "打开"; show-label: true; clicked => { root.file-menu-index = -1; root.file-menu(file.path, 0); } }
+                                    Action { height: 24px; label: "复制路径"; show-label: true; clicked => { root.file-menu-index = -1; root.file-menu(file.path, 1); } }
+                                    Action { height: 24px; label: "系统打开"; show-label: true; clicked => { root.file-menu-index = -1; root.file-menu(file.path, 3); } }
+                                }
+                            }
                         }
                     }
                 }
-                Text { height: 18px; text: root.files-loading ? "正在读取…" : root.files-error != "" ? root.files-error : "容器 #" + root.directory-container-id + " · " + (root.directory-root == "" ? "本地工作目录" : root.directory-root); overflow: elide; color: Theme.muted; font-size: 10px; }
+                TextInput { height: 18px; text: root.files-loading ? "正在读取…" : root.files-error != "" ? root.files-error : (root.directory-root == "" ? "本地工作目录" : root.directory-root); read-only: true; color: Theme.muted; font-size: 10px; horizontal-alignment: right; }
             }
         }
         Rectangle {
@@ -85,7 +105,12 @@ export component WorkDock inherits Rectangle {
                             Action { width: parent.width - 30px; height: parent.height; label: conversation.title; enabled: root.tasks-enabled; clicked => { root.activate-task(index); } }
                             Image { x: 9px; y: 16px; width: 16px; height: 16px; source: @image-url("../assets/icons/comments.svg"); colorize: Theme.accent; }
                             Text { x: 36px; y: 8px; width: parent.width - 44px; height: 18px; text: conversation.title; color: Theme.text; font-size: 12px; overflow: elide; }
-                            Text { x: 36px; y: 29px; width: parent.width - 76px; height: 14px; text: conversation.consumed-tokens + " tokens · 工具 " + conversation.tool-calls + " · 额度 " + conversation.quota-used; color: Theme.muted; font-size: 10px; overflow: elide; }
+                            Image { x: 36px; y: 31px; width: 10px; height: 10px; source: @image-url("../assets/icons/bolt.svg"); colorize: Theme.muted; }
+                            Text { x: 49px; y: 28px; width: 31px; height: 14px; text: conversation.consumed-tokens; color: Theme.muted; font-size: 10px; vertical-alignment: center; overflow: elide; }
+                            Image { x: 82px; y: 31px; width: 10px; height: 10px; source: @image-url("../assets/icons/screwdriver-wrench.svg"); colorize: Theme.muted; }
+                            Text { x: 95px; y: 28px; width: 20px; height: 14px; text: conversation.tool-calls; color: Theme.muted; font-size: 10px; vertical-alignment: center; overflow: elide; }
+                            Image { x: 117px; y: 31px; width: 10px; height: 10px; source: @image-url("../assets/icons/coins.svg"); colorize: Theme.muted; }
+                            Text { x: 130px; y: 28px; width: parent.width - 166px; height: 14px; text: conversation.quota-used; color: Theme.muted; font-size: 10px; vertical-alignment: center; overflow: elide; }
                             Action { x: parent.width - 30px; y: 13px; width: 26px; height: 26px; icon: @image-url("../assets/icons/ellipsis.svg"); label: "线程操作"; clicked => { root.menu-index = index; } }
                             TouchArea {
                                 x: 0px; y: 0px; width: 26px; height: parent.height;
@@ -113,23 +138,6 @@ export component WorkDock inherits Rectangle {
                         }
                     }
                 }
-            }
-        }
-    }
-    if root.workspace-binding-open : Rectangle {
-        z: 20; background: #00000035;
-        TouchArea { clicked => { root.workspace-binding-open = false; } }
-        Rectangle {
-            width: min(360px, parent.width - 28px); height: 292px; border-radius: 14px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
-            TouchArea { }
-            VerticalLayout {
-                padding: 18px; spacing: 10px;
-                Text { height: 24px; text: "切换工作目录"; color: Theme.text; font-size: 16px; font-weight: 600; }
-                Text { height: 18px; text: "选择目录序号"; color: Theme.muted; font-size: 11px; }
-                HorizontalLayout { height: 30px; spacing: 5px; for id in [1,2,3,4,5,6,7,8,9,10] : Rectangle { width: 28px; height: 28px; border-radius: 7px; background: id == root.workspace-binding-container ? Theme.accent : Theme.accent-soft; Text { width: parent.width; height: parent.height; text: id; color: id == root.workspace-binding-container ? white : Theme.text; horizontal-alignment: center; vertical-alignment: center; } TouchArea { clicked => { root.workspace-binding-container = id; } } } }
-                Text { height: 18px; text: "本地目录路径"; color: Theme.muted; font-size: 11px; }
-                TextInput { height: 34px; text <=> root.workspace-binding-path; color: Theme.text; font-size: 12px; }
-                HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; } Action { label: "取消"; show-label: true; clicked => { root.workspace-binding-open = false; } } Action { label: "保存"; show-label: true; primary: true; enabled: root.workspace-binding-path != ""; clicked => { root.save-workspace-binding(root.workspace-binding-container, root.workspace-binding-path); root.workspace-binding-open = false; } } }
             }
         }
     }

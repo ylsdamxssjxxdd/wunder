@@ -19,29 +19,14 @@ pub trait MetaStore {
     fn delete_meta_prefix(&self, prefix: &str) -> Result<usize>;
 }
 
-/// Chat, model-context, tool, and artifact log storage.
+/// Chat, tool, and artifact log storage.
+///
+/// Model input is derived from `chat_history` (including hidden internal rows);
+/// the former `model_context_entries` mirror table was retired.
 pub trait ConversationLogStore {
     fn append_chat(&self, user_id: &str, payload: &Value) -> Result<()>;
-    fn append_model_context_entry(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        payload: &Value,
-    ) -> Result<()>;
-    fn replace_model_context_entries(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        payloads: &[Value],
-    ) -> Result<()>;
     fn append_tool_log(&self, user_id: &str, payload: &Value) -> Result<()>;
     fn append_artifact_log(&self, user_id: &str, payload: &Value) -> Result<()>;
-    fn load_model_context_entries(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        limit: Option<i64>,
-    ) -> Result<Vec<Value>>;
     fn load_chat_history(
         &self,
         user_id: &str,
@@ -107,6 +92,22 @@ pub trait LogStatsStore {
     fn delete_tool_logs_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn delete_artifact_logs(&self, user_id: &str) -> Result<i64>;
     fn delete_artifact_logs_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
+    /// Tombstone for a user-deleted session: its durable logs are purged once
+    /// the grace window elapses instead of at deletion time.
+    fn mark_deleted_session_log_grace(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        deleted_at: f64,
+    ) -> Result<()>;
+    /// Tombstones whose grace window fully elapsed (`deleted_at <= cutoff`),
+    /// returned as `(user_id, session_id)` pairs.
+    fn list_expired_deleted_session_log_grace(
+        &self,
+        cutoff: f64,
+        limit: i64,
+    ) -> Result<Vec<(String, String)>>;
+    fn delete_deleted_session_log_grace(&self, user_id: &str, session_id: &str) -> Result<()>;
 }
 
 /// Runtime monitor record storage.
@@ -294,6 +295,15 @@ pub trait AgentRuntimeStore {
     fn delete_stream_events_before(&self, before_time: f64) -> Result<i64>;
     fn delete_stream_events_by_user(&self, user_id: &str) -> Result<i64>;
     fn delete_stream_events_by_session(&self, session_id: &str) -> Result<i64>;
+    /// Fold a finished user round: drop persisted streaming rows of the given
+    /// event types (e.g. `llm_output_delta`). The final text is durable in
+    /// chat_history; delta rows only serve in-flight replay.
+    fn delete_stream_events_by_round(
+        &self,
+        session_id: &str,
+        user_round: i64,
+        event_types: &[&str],
+    ) -> Result<i64>;
 }
 
 /// Vector knowledge document storage.
@@ -449,7 +459,11 @@ pub trait BenchmarkStore {
 
 /// Retention cleanup storage.
 pub trait RetentionStore {
-    fn cleanup_retention(&self, retention_days: i64) -> Result<HashMap<String, i64>>;
+    /// Delete ephemeral stream events created before `cutoff_epoch_s`
+    /// (seconds since the Unix epoch). A cutoff <= 0 disables cleanup.
+    /// User-visible chat history is durable and never deleted here.
+    /// Returns deleted row counts keyed by table name.
+    fn cleanup_retention(&self, cutoff_epoch_s: f64) -> Result<HashMap<String, i64>>;
 }
 
 /// User, organization, token, external link, and session-scope storage.

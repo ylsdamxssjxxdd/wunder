@@ -747,7 +747,7 @@ mod tests {
         let user_id = "user_stream";
         harness
             .monitor
-            .register(session_id, user_id, "agent_parent", "", false, false);
+            .register(session_id, user_id, "agent_parent", "", false);
 
         let monitor = harness.monitor.clone();
         let session = session_id.to_string();
@@ -783,7 +783,7 @@ mod tests {
         let user_id = "user_non_stream";
         harness
             .monitor
-            .register(session_id, user_id, "agent_parent", "", false, false);
+            .register(session_id, user_id, "agent_parent", "", false);
 
         let callback_count = Arc::new(AtomicUsize::new(0));
         let callback_counter = callback_count.clone();
@@ -816,7 +816,7 @@ mod tests {
         let user_id = "user_reconcile";
         harness
             .monitor
-            .register(session_id, user_id, "agent_parent", "", false, false);
+            .register(session_id, user_id, "agent_parent", "", false);
 
         let run = harness.make_run(user_id, session_id);
         harness

@@ -731,7 +731,6 @@ fn build_mother_request(
         tool_names: vec!["agent_swarm".to_string()],
         skip_tool_calls: false,
         stream: false,
-        debug_payload: false,
         session_id: Some(mother_session_id.to_string()),
         agent_id: Some(plan.mother.agent_id.clone()),
         workspace_container_id: None,

@@ -32,35 +32,11 @@ impl ConversationLogStore for PostgresStorage {
     fn append_chat(&self, user_id: &str, payload: &Value) -> Result<()> {
         self.append_chat_impl(user_id, payload)
     }
-    fn append_model_context_entry(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        payload: &Value,
-    ) -> Result<()> {
-        self.append_model_context_entry_impl(user_id, session_id, payload)
-    }
-    fn replace_model_context_entries(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        payloads: &[Value],
-    ) -> Result<()> {
-        self.replace_model_context_entries_impl(user_id, session_id, payloads)
-    }
     fn append_tool_log(&self, user_id: &str, payload: &Value) -> Result<()> {
         self.append_tool_log_impl(user_id, payload)
     }
     fn append_artifact_log(&self, user_id: &str, payload: &Value) -> Result<()> {
         self.append_artifact_log_impl(user_id, payload)
-    }
-    fn load_model_context_entries(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        limit: Option<i64>,
-    ) -> Result<Vec<Value>> {
-        self.load_model_context_entries_impl(user_id, session_id, limit)
     }
     fn load_chat_history(
         &self,
@@ -146,6 +122,24 @@ impl LogStatsStore for PostgresStorage {
     }
     fn delete_artifact_logs_by_session(&self, user_id: &str, session_id: &str) -> Result<i64> {
         self.delete_artifact_logs_by_session_impl(user_id, session_id)
+    }
+    fn mark_deleted_session_log_grace(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        deleted_at: f64,
+    ) -> Result<()> {
+        self.mark_deleted_session_log_grace_impl(user_id, session_id, deleted_at)
+    }
+    fn list_expired_deleted_session_log_grace(
+        &self,
+        cutoff: f64,
+        limit: i64,
+    ) -> Result<Vec<(String, String)>> {
+        self.list_expired_deleted_session_log_grace_impl(cutoff, limit)
+    }
+    fn delete_deleted_session_log_grace(&self, user_id: &str, session_id: &str) -> Result<()> {
+        self.delete_deleted_session_log_grace_impl(user_id, session_id)
     }
 }
 
@@ -333,6 +327,14 @@ impl AgentRuntimeStore for PostgresStorage {
     }
     fn delete_stream_events_by_session(&self, session_id: &str) -> Result<i64> {
         self.delete_stream_events_by_session_impl(session_id)
+    }
+    fn delete_stream_events_by_round(
+        &self,
+        session_id: &str,
+        user_round: i64,
+        event_types: &[&str],
+    ) -> Result<i64> {
+        self.delete_stream_events_by_round_impl(session_id, user_round, event_types)
     }
 }
 
@@ -596,8 +598,8 @@ impl BenchmarkStore for PostgresStorage {
 }
 
 impl RetentionStore for PostgresStorage {
-    fn cleanup_retention(&self, retention_days: i64) -> Result<HashMap<String, i64>> {
-        self.cleanup_retention_impl(retention_days)
+    fn cleanup_retention(&self, cutoff_epoch_s: f64) -> Result<HashMap<String, i64>> {
+        self.cleanup_retention_impl(cutoff_epoch_s)
     }
 }
 

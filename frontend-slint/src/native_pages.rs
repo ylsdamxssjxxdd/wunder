@@ -3,8 +3,8 @@ use crate::{AgentCard, MainWindow, ModelCard, ToolCard};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{rc::Rc, sync::Arc};
 use wunder_desktop::{
-    AgentRecord, AgentSettingsEdit, DesktopSettings, LanPeerRecord, ModelEdit, NativeDesktop, NativeProfile,
-    ToolRecord,
+    AgentRecord, AgentSettingsEdit, DesktopSettings, LanPeerRecord, ModelEdit, NativeDesktop,
+    NativeProfile, ToolRecord,
 };
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
@@ -89,22 +89,47 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     app.on_toggle_agent_tool(move |name| {
         let Some(app) = weak.upgrade() else { return };
-        let mut names = app.get_selected_agent_tool_names().iter().map(|v| v.to_string()).collect::<Vec<_>>();
-        if let Some(pos) = names.iter().position(|value| value == name.as_str()) { names.remove(pos); } else { names.push(name.to_string()); }
+        let mut names = app
+            .get_selected_agent_tool_names()
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>();
+        if let Some(pos) = names.iter().position(|value| value == name.as_str()) {
+            names.remove(pos);
+        } else {
+            names.push(name.to_string());
+        }
         app.set_selected_agent_tool_names(string_model(names));
         crate::entity_state::sync_tool_selection(&app);
     });
     let weak = app.as_weak();
     app.on_add_agent_question(move || {
         let Some(app) = weak.upgrade() else { return };
-        let mut questions = app.get_selected_agent_preset_questions().iter().map(|v| v.to_string()).collect::<Vec<_>>();
-        if questions.len() < 12 && !app.get_agent_question_draft().trim().is_empty() { questions.push(app.get_agent_question_draft().trim().to_string()); app.set_selected_agent_preset_questions(string_model(questions)); app.set_agent_question_draft("".into()); }
+        let mut questions = app
+            .get_selected_agent_preset_questions()
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>();
+        if questions.len() < 12 && !app.get_agent_question_draft().trim().is_empty() {
+            questions.push(app.get_agent_question_draft().trim().to_string());
+            app.set_selected_agent_preset_questions(string_model(questions));
+            app.set_agent_question_draft("".into());
+        }
     });
     let weak = app.as_weak();
     app.on_remove_agent_question(move |index| {
         let Some(app) = weak.upgrade() else { return };
-        let mut questions = app.get_selected_agent_preset_questions().iter().map(|v| v.to_string()).collect::<Vec<_>>();
-        if let Ok(index) = usize::try_from(index) { if index < questions.len() { questions.remove(index); app.set_selected_agent_preset_questions(string_model(questions)); } }
+        let mut questions = app
+            .get_selected_agent_preset_questions()
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>();
+        if let Ok(index) = usize::try_from(index) {
+            if index < questions.len() {
+                questions.remove(index);
+                app.set_selected_agent_preset_questions(string_model(questions));
+            }
+        }
     });
     let weak = app.as_weak();
     let refresh_api = api.clone();
@@ -172,7 +197,19 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
     });
     let weak = app.as_weak();
     app.on_save_agent(
-        move |name, description, system_prompt, model, icon_name, icon_color, tool_names, preset_questions, sandbox_container_id, approval_mode, preview_skill, silent, prefer_mother| {
+        move |name,
+              description,
+              system_prompt,
+              model,
+              icon_name,
+              icon_color,
+              tool_names,
+              preset_questions,
+              sandbox_container_id,
+              approval_mode,
+              preview_skill,
+              silent,
+              prefer_mother| {
             let Some(app) = weak.upgrade() else { return };
             let Some(agent) = usize::try_from(app.get_selected_agent())
                 .ok()
@@ -188,9 +225,12 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
             let api = api.clone();
             let id = agent.id.to_string();
             let tool_names = tool_names.iter().map(|v| v.to_string()).collect::<Vec<_>>();
-            let preset_questions = preset_questions.iter().map(|v| v.to_string()).collect::<Vec<_>>();
+            let preset_questions = preset_questions
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>();
             run_background(move || {
-            let result = api.update_agent_settings(
+                let result = api.update_agent_settings(
                     &id,
                     AgentSettingsEdit {
                         name: name.to_string(),

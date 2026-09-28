@@ -34,11 +34,11 @@ fn child_cancellation_survives_monitor_registration_and_keeps_history_identity()
         Config::default().observability,
         dir.path().to_string_lossy().into(),
     );
-    monitor.register("parent", "user", "", "task", false, false);
+    monitor.register("parent", "user", "", "task", false);
     let guard = monitor.register_child_run("child", "parent").unwrap();
     let nested = monitor.register_child_run("nested", "child").unwrap();
     assert!(monitor.cancel("parent"));
-    monitor.register("child", "user", "", "task", false, false);
+    monitor.register("child", "user", "", "task", false);
     assert!(monitor.is_cancelled("child"));
     assert!(monitor.is_cancelled("nested"));
     assert!(monitor.register_child_run("late", "parent").is_err());
@@ -52,9 +52,9 @@ fn child_cancellation_survives_monitor_registration_and_keeps_history_identity()
     );
     drop(nested);
     drop(guard);
-    monitor.register("parent", "user", "", "next", false, false);
+    monitor.register("parent", "user", "", "next", false);
     let resumed = monitor.register_child_run("child", "parent").unwrap();
-    monitor.register("child", "user", "", "next", false, false);
+    monitor.register("child", "user", "", "next", false);
     assert!(!monitor.is_cancelled("child"));
     assert!(!resumed.token.is_cancelled());
     assert_eq!(

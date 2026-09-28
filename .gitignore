@@ -87,3 +87,4 @@ exports/
 形象/
 config/ppt_templates
 frontend/test-results
+crates/wunder-cli/config/wunder.yaml

@@ -179,16 +179,12 @@ impl Orchestrator {
                 ));
             }
 
-            let local_full_event_logs =
-                should_enable_local_full_event_logs(&request_config.server.mode);
-            let monitor_debug_payload = prepared.debug_payload || local_full_event_logs;
             let user_round = self.monitor.register(
                 &session_id,
                 &user_id,
                 prepared.agent_id.as_deref().unwrap_or(""),
                 &display_question,
                 is_admin,
-                monitor_debug_payload,
             );
             let request_round = RoundInfo::user_only(user_round);
             // Child cancellation survives monitor registration resetting the turn flags.
@@ -237,8 +233,6 @@ impl Orchestrator {
             emitter.emit("progress", start_payload).await;
 
             let config = request_config.clone();
-            let log_payload =
-                is_debug_log_level(&config.observability.log_level) || monitor_debug_payload;
             let (_llm_name, llm_config) =
                 self.resolve_llm_config(&config, prepared.model_name.as_deref())?;
             let skills = if prepared.config_overrides.is_some() {
@@ -324,60 +318,23 @@ impl Orchestrator {
             let history_manager = HistoryManager;
             let context_manager = ContextManager;
             let mut messages = vec![json!({ "role": "system", "content": system_prompt })];
-            // Ensure the previous turn's async history/context writes are visible before
-            // building this turn's prompt. Otherwise fast follow-up user messages can miss
-            // the tail of the append-only model context and break KV cache reuse.
+            // Ensure the previous turn's async history writes are visible before deriving
+            // this turn's model input. Otherwise fast follow-up user messages can miss the
+            // tail of the append-only chat history and break KV cache reuse.
             let _ = self.workspace.flush_writes_async().await;
-            let mut model_context_entries = self
-                .workspace
-                .load_model_context_entries(&user_id, &session_id, 0)
-                .unwrap_or_default()
+            let model_context_entries = history_manager
+                .load_history_messages_async(
+                    self.workspace.clone(),
+                    user_id.clone(),
+                    session_id.clone(),
+                    0,
+                )
+                .await
                 .into_iter()
                 .filter_map(normalize_model_context_message)
                 .collect::<Vec<_>>();
-            if model_context_entries.is_empty() {
-                model_context_entries = history_manager
-                    .load_history_messages_async(
-                        self.workspace.clone(),
-                        user_id.clone(),
-                        session_id.clone(),
-                        0,
-                    )
-                    .await
-                    .into_iter()
-                    .filter_map(normalize_model_context_message)
-                    .collect();
-                if !model_context_entries.is_empty() {
-                    if let Err(err) = self.workspace.replace_model_context_entries(
-                        &user_id,
-                        &session_id,
-                        &model_context_entries,
-                    ) {
-                        warn!(
-                            "replace model context entries failed for session {session_id}: {err}"
-                        );
-                    }
-                    let _ = self.workspace.flush_writes_async().await;
-                }
-            }
             messages.extend(model_context_entries);
-            let context_messages_before_normalize = messages.clone();
             messages = context_manager.normalize_messages(messages);
-            if messages != context_messages_before_normalize {
-                let repaired_model_context_entries =
-                    super::context::model_context_entries_from_messages(&messages);
-                if let Err(err) = self.workspace.replace_model_context_entries(
-                    &user_id,
-                    &session_id,
-                    &repaired_model_context_entries,
-                ) {
-                    warn!(
-                        "replace repaired model context entries failed for session {session_id}: {err}"
-                    );
-                } else {
-                    let _ = self.workspace.flush_writes_async().await;
-                }
-            }
             let user_message = self
                 .build_user_message(&question, prepared.attachments.as_deref())
                 .await;
@@ -385,7 +342,6 @@ impl Orchestrator {
             let persisted_user_model_message = user_message.clone();
             messages = context_manager.normalize_messages(messages);
             let mut user_message_appended = false;
-            let mut user_context_appended = false;
 
             let desktop_unlimited_rounds =
                 config.server.mode.trim().eq_ignore_ascii_case("desktop");
@@ -481,7 +437,6 @@ impl Orchestrator {
                         messages,
                         &emitter,
                         &question,
-                        log_payload,
                         persisted_context_tokens,
                         request_overhead_tokens,
                         force_compaction_on_entry,
@@ -490,10 +445,6 @@ impl Orchestrator {
                     )
                     .await?;
                 messages = compaction_result.messages;
-                if compaction_result.model_context_replaced {
-                    user_context_appended = true;
-                }
-
                 if compaction_result.model_context_replaced {
                     persisted_context_tokens = 0;
                     confirmed_context_occupancy_tokens = None;
@@ -547,6 +498,11 @@ impl Orchestrator {
                     } else {
                         resolve_user_content_for_persist(&messages, &user_message)
                     };
+                    let model_content = if display_question_override.is_some() {
+                        persisted_user_model_message.get("content").cloned()
+                    } else {
+                        None
+                    };
                     let hidden_user_meta = if hidden_internal_user {
                         Some(subagents::build_hidden_user_meta())
                     } else {
@@ -563,18 +519,11 @@ impl Orchestrator {
                             None,
                             None,
                             None,
+                            model_content.as_ref(),
                             request_round,
                         );
                     }
                     user_message_appended = true;
-                }
-                if !user_context_appended {
-                    self.append_model_context_entry(
-                        &user_id,
-                        &session_id,
-                        &persisted_user_model_message,
-                    );
-                    user_context_appended = true;
                 }
 
                 let mut overflow_recovery_attempts = 0_u32;
@@ -593,7 +542,6 @@ impl Orchestrator {
                             round_info,
                             true,
                             true,
-                            log_payload,
                             tools_payload,
                             empty_output_guard.config_override(&llm_config),
                         )
@@ -665,7 +613,6 @@ impl Orchestrator {
                                     messages,
                                     &emitter,
                                     &question,
-                                    log_payload,
                                     persisted_context_tokens,
                                     request_overhead_tokens,
                                     true,
@@ -850,10 +797,12 @@ impl Orchestrator {
                         "content": encode_observation_prefixed_json(&model_notice),
                     });
                     messages.push(model_notice_message.clone());
-                    self.append_model_context_entry(
+                    self.append_internal_model_context_chat(
                         &user_id,
                         &session_id,
                         &model_notice_message,
+                        "invalid_tool_call_reroute",
+                        round_info,
                     );
                     continue;
                 }
@@ -890,14 +839,16 @@ impl Orchestrator {
                     if !reasoning.trim().is_empty() {
                         assistant_model_message["reasoning_content"] = json!(reasoning.clone());
                     }
-                    self.append_model_context_entry(
-                        &user_id,
-                        &session_id,
-                        &assistant_model_message,
-                    );
-                    messages.push(assistant_model_message);
+                    messages.push(assistant_model_message.clone());
                     if self.apply_agent_messages(agent_inbox.as_ref().expect("active inbox"),
                         &user_id, &session_id, &mut messages, &emitter, round_info, true).await? {
+                        self.append_internal_model_context_chat(
+                            &user_id,
+                            &session_id,
+                            &assistant_model_message,
+                            "agent_inbox_interrupted_answer",
+                            round_info,
+                        );
                         answer.clear();
                         stop_reason = None;
                         continue;
@@ -923,8 +874,11 @@ impl Orchestrator {
                             Some(&reasoning),
                             None,
                             None,
+                            None,
                             round_info,
                         );
+                        self.fold_completed_round_stream_deltas(&emitter, &session_id, user_round)
+                            .await;
                     }
                     if answer.is_empty() {
                         answer = content.trim().to_string();
@@ -934,32 +888,6 @@ impl Orchestrator {
 
                 let assistant_content = content.clone();
                 let assistant_reasoning = reasoning.clone();
-                let assistant_model_tool_calls =
-                    build_model_context_tool_calls_snapshot(tool_calls_payload.as_ref(), &allowed_tool_names);
-                let has_model_tool_calls_payload = assistant_model_tool_calls
-                    .as_ref()
-                    .is_some_and(|payload| !matches!(payload, Value::Null));
-                if has_model_tool_calls_payload
-                    || !assistant_content.trim().is_empty()
-                    || !assistant_reasoning.trim().is_empty()
-                {
-                    let mut assistant_model_message = json!({
-                        "role": "assistant",
-                        "content": assistant_content.clone(),
-                    });
-                    if !assistant_reasoning.trim().is_empty() {
-                        assistant_model_message["reasoning_content"] =
-                            json!(assistant_reasoning.clone());
-                    }
-                    if let Some(tool_calls_payload) = assistant_model_tool_calls {
-                        assistant_model_message["tool_calls"] = tool_calls_payload;
-                    }
-                    self.append_model_context_entry(
-                        &user_id,
-                        &session_id,
-                        &assistant_model_message,
-                    );
-                }
                 let assistant_history =
                     build_assistant_history_snapshot(tool_calls_payload.as_ref(), &allowed_tool_names);
                 let has_tool_calls_payload = assistant_history
@@ -1003,8 +931,11 @@ impl Orchestrator {
                         Some(&assistant_reasoning),
                         assistant_history.persisted_tool_calls.as_ref(),
                         None,
+                        None,
                         round_info,
                     );
+                    self.fold_completed_round_stream_deltas(&emitter, &session_id, user_round)
+                        .await;
                 }
 
                 let tool_event_forwarder =
@@ -1369,10 +1300,18 @@ impl Orchestrator {
                             })
                         };
                         messages.push(observation_model_message.clone());
-                        self.append_model_context_entry(
+                        self.append_chat(
                             &user_id,
                             &session_id,
-                            &observation_model_message,
+                            "tool",
+                            Some(&json!(observation)),
+                            None,
+                            None,
+                            None,
+                            None,
+                            history_tool_call_id.as_deref(),
+                            None,
+                            round_info,
                         );
                         if let Some(followup_message) = read_image_followup {
                             let mut followup_message = followup_message;
@@ -1380,11 +1319,6 @@ impl Orchestrator {
                                 &mut followup_message,
                                 "read_image_followup",
                                 round_info,
-                            );
-                            self.append_model_context_entry(
-                                &user_id,
-                                &session_id,
-                                &followup_message,
                             );
                             self.append_internal_model_context_chat(
                                 &user_id,
@@ -1402,11 +1336,6 @@ impl Orchestrator {
                                 "desktop_followup",
                                 round_info,
                             );
-                            self.append_model_context_entry(
-                                &user_id,
-                                &session_id,
-                                &followup_message,
-                            );
                             self.append_internal_model_context_chat(
                                 &user_id,
                                 &session_id,
@@ -1420,18 +1349,6 @@ impl Orchestrator {
                                 "desktop_followup",
                             );
                         }
-                        self.append_chat(
-                            &user_id,
-                            &session_id,
-                            "tool",
-                            Some(&json!(observation)),
-                            None,
-                            None,
-                            None,
-                            None,
-                            history_tool_call_id.as_deref(),
-                            round_info,
-                        );
 
                         self.append_tool_log(
                             &user_id,
@@ -1439,7 +1356,6 @@ impl Orchestrator {
                             &name,
                             &args,
                             &result,
-                            log_payload,
                         );
                         self.append_artifact_logs(&user_id, &session_id, &name, &args, &result);
                         if name == read_tool_name {
@@ -1449,7 +1365,6 @@ impl Orchestrator {
                                 &args,
                                 &skills_snapshot,
                                 Some(&user_tool_bindings),
-                                log_payload,
                             );
                         }
 
@@ -1584,8 +1499,13 @@ impl Orchestrator {
                                 None,
                                 None,
                                 None,
+                                None,
                                 round_info,
                             );
+                            self.fold_completed_round_stream_deltas(
+                                &emitter, &session_id, user_round,
+                            )
+                            .await;
                         }
                         if let Some(meta) = sessions_yield_meta.as_ref() {
                             let content = if answer.trim().is_empty() {
@@ -1614,8 +1534,13 @@ impl Orchestrator {
                                 None,
                                 None,
                                 None,
+                                None,
                                 round_info,
                             );
+                            self.fold_completed_round_stream_deltas(
+                                &emitter, &session_id, user_round,
+                            )
+                            .await;
                         }
 
                         if failure_reroute_notice.is_none() {
@@ -1810,8 +1735,13 @@ impl Orchestrator {
                                         None,
                                         None,
                                         None,
+                                        None,
                                         round_info,
                                     );
+                                    self.fold_completed_round_stream_deltas(
+                                        &emitter, &session_id, user_round,
+                                    )
+                                    .await;
                                     should_finish = true;
                                     break;
                                 }
@@ -1837,10 +1767,12 @@ impl Orchestrator {
                             "content": model_notice,
                         });
                         messages.push(model_notice_message.clone());
-                        self.append_model_context_entry(
+                        self.append_internal_model_context_chat(
                             &user_id,
                             &session_id,
                             &model_notice_message,
+                            "tool_failure_reroute",
+                            round_info,
                         );
                         continue;
                     }
@@ -1873,10 +1805,12 @@ impl Orchestrator {
                             "content": format!("{OBSERVATION_PREFIX}{model_notice}"),
                         });
                         messages.push(model_notice_message.clone());
-                        self.append_model_context_entry(
+                        self.append_internal_model_context_chat(
                             &user_id,
                             &session_id,
                             &model_notice_message,
+                            "tool_budget_guard",
+                            round_info,
                         );
                         continue;
                     }
@@ -1896,6 +1830,7 @@ impl Orchestrator {
                                     &session_id,
                                     &terminal.call,
                                     &name,
+                                    round_info,
                                 ));
                                 if let Some(messages_payload) = messages_payload.as_ref() {
                                     let mut a2ui_payload = json!({
@@ -1928,7 +1863,6 @@ impl Orchestrator {
                                     &uid,
                                     &a2ui_messages,
                                     &answer,
-                                    log_payload,
                                 );
                                 if !answer.trim().is_empty() {
                                     let message_stats = build_persisted_message_stats(
@@ -1951,8 +1885,13 @@ impl Orchestrator {
                                         None,
                                         None,
                                         None,
+                                        None,
                                         round_info,
                                     );
+                                    self.fold_completed_round_stream_deltas(
+                                        &emitter, &session_id, user_round,
+                                    )
+                                    .await;
                                 }
                                 should_finish = true;
                             }
@@ -1964,6 +1903,7 @@ impl Orchestrator {
                                     &session_id,
                                     &terminal.call,
                                     &name,
+                                    round_info,
                                 ));
                                 if !answer.trim().is_empty() {
                                     answer = self.reconcile_final_answer_workspace_images(
@@ -1977,7 +1917,6 @@ impl Orchestrator {
                                     &session_id,
                                     &name,
                                     &args,
-                                    log_payload,
                                 );
                                 if answer.trim().is_empty() {
                                     empty_output_guard.recover_or_stop(
@@ -2008,8 +1947,13 @@ impl Orchestrator {
                                         None,
                                         None,
                                         None,
+                                        None,
                                         round_info,
                                     );
+                                    self.fold_completed_round_stream_deltas(
+                                        &emitter, &session_id, user_round,
+                                    )
+                                    .await;
                                 }
                                 should_finish = true;
                             }

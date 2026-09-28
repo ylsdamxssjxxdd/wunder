@@ -23,7 +23,7 @@ async fn queue_handoff_parks_original_turn_and_keeps_cancel_available() {
     let orchestrator = state.kernel.orchestrator.clone();
     state
         .monitor
-        .register("session-a", "user-a", "agent-a", "input", false, false);
+        .register("session-a", "user-a", "agent-a", "input", false);
     state
         .storage
         .try_acquire_session_lock("session-a", "user-a", "agent-a", 60.0, 1)

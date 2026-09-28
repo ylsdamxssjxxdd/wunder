@@ -31,6 +31,18 @@ pub(super) trait PostgresLogStatsStorage {
     fn delete_tool_logs_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn delete_artifact_logs_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_artifact_logs_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64>;
+    fn mark_deleted_session_log_grace_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        deleted_at: f64,
+    ) -> Result<()>;
+    fn list_expired_deleted_session_log_grace_impl(
+        &self,
+        cutoff: f64,
+        limit: i64,
+    ) -> Result<Vec<(String, String)>>;
+    fn delete_deleted_session_log_grace_impl(&self, user_id: &str, session_id: &str) -> Result<()>;
 }
 
 fn append_tool_log_exclusions(filters: &mut Vec<String>, params: &mut Vec<Box<dyn ToSql + Sync>>) {
@@ -214,7 +226,6 @@ impl PostgresLogStatsStorage for PostgresStorage {
         let row = conn.query_one(
             "SELECT \
             COALESCE(pg_total_relation_size(to_regclass('chat_history')), 0) + \
-            COALESCE(pg_total_relation_size(to_regclass('model_context_entries')), 0) + \
             COALESCE(pg_total_relation_size(to_regclass('tool_logs')), 0) + \
             COALESCE(pg_total_relation_size(to_regclass('artifact_logs')), 0) + \
             COALESCE(pg_total_relation_size(to_regclass('monitor_sessions')), 0) + \
@@ -244,7 +255,7 @@ impl PostgresLogStatsStorage for PostgresStorage {
         // Serialize this rare maintenance command with new thread starts; a
         // transaction alone would still allow a start between guard and deletion.
         tx.execute("LOCK TABLE chat_sessions, session_locks, agent_tasks, session_runs, monitor_sessions, \
-            chat_history, model_context_entries, stream_events, tool_logs, artifact_logs, cron_jobs, session_goals \
+            chat_history, stream_events, tool_logs, artifact_logs, cron_jobs, session_goals \
             IN SHARE ROW EXCLUSIVE MODE", &[])?;
         let now = Self::now_ts();
         let live = crate::storage::session_cleanup::LIVE_SESSION_PREDICATE.replace(":now", "$1");
@@ -267,10 +278,6 @@ impl PostgresLogStatsStorage for PostgresStorage {
         results.insert(
             "chat_history".to_string(),
             delete_range("chat_history", "created_time")?,
-        );
-        results.insert(
-            "model_context_entries".to_string(),
-            delete_range("model_context_entries", "created_time")?,
         );
         results.insert(
             "tool_logs".to_string(),
@@ -308,10 +315,6 @@ impl PostgresLogStatsStorage for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let affected = conn.execute("DELETE FROM chat_history WHERE user_id = $1", &[&cleaned])?;
-        let _ = conn.execute(
-            "DELETE FROM model_context_entries WHERE user_id = $1",
-            &[&cleaned],
-        );
         Ok(affected as i64)
     }
 
@@ -327,10 +330,6 @@ impl PostgresLogStatsStorage for PostgresStorage {
             "DELETE FROM chat_history WHERE user_id = $1 AND session_id = $2",
             &[&cleaned_user, &cleaned_session],
         )?;
-        let _ = conn.execute(
-            "DELETE FROM model_context_entries WHERE user_id = $1 AND session_id = $2",
-            &[&cleaned_user, &cleaned_session],
-        );
         Ok(affected as i64)
     }
 
@@ -384,5 +383,58 @@ impl PostgresLogStatsStorage for PostgresStorage {
             &[&cleaned_user, &cleaned_session],
         )?;
         Ok(affected as i64)
+    }
+
+    fn mark_deleted_session_log_grace_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        deleted_at: f64,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() || !deleted_at.is_finite() {
+            return Ok(());
+        }
+        let mut conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO deleted_session_log_grace (user_id, session_id, deleted_at) \
+             VALUES ($1, $2, $3) \
+             ON CONFLICT (user_id, session_id) DO UPDATE SET deleted_at = excluded.deleted_at",
+            &[&cleaned_user, &cleaned_session, &deleted_at],
+        )?;
+        Ok(())
+    }
+
+    fn list_expired_deleted_session_log_grace_impl(
+        &self,
+        cutoff: f64,
+        limit: i64,
+    ) -> Result<Vec<(String, String)>> {
+        self.ensure_initialized()?;
+        if !cutoff.is_finite() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT user_id, session_id FROM deleted_session_log_grace \
+             WHERE deleted_at <= $1 ORDER BY deleted_at ASC LIMIT $2",
+            &[&cutoff, &limit],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
+            .collect())
+    }
+
+    fn delete_deleted_session_log_grace_impl(&self, user_id: &str, session_id: &str) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        conn.execute(
+            "DELETE FROM deleted_session_log_grace WHERE user_id = $1 AND session_id = $2",
+            &[&user_id, &session_id],
+        )?;
+        Ok(())
     }
 }

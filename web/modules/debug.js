@@ -310,7 +310,6 @@ const buildStabilityPayload = (question, options = {}) => {
     question: String(question || "").trim(),
     session_id: options.sessionId || elements.sessionId?.value.trim() || null,
     stream: options.stream !== false,
-    debug_payload: true,
   };
   const modelName = String(elements.debugModelName?.value || "").trim();
   if (modelName) {
@@ -1766,7 +1765,6 @@ const buildPayload = () => {
     question: elements.question.value.trim(),
     session_id: elements.sessionId.value.trim() || null,
     stream: true,
-    debug_payload: true,
   };
   const modelName = String(elements.debugModelName?.value || "").trim();
   if (modelName) {

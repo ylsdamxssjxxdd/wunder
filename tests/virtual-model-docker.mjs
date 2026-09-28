@@ -37,7 +37,7 @@ async function benchmark() {
   throw new Error("Benchmark did not finish");
 }
 async function chat() {
-  const response = await fetch(`${base}/wunder`,{method:"POST",headers,body:JSON.stringify({user_id:"test_virtual",question:"test",model_name:modelName,tool_names:["self_status"],stream:true,language:"en",debug_payload:true}),signal:AbortSignal.timeout(90000)});
+  const response = await fetch(`${base}/wunder`,{method:"POST",headers,body:JSON.stringify({user_id:"test_virtual",question:"test",model_name:modelName,tool_names:["self_status"],stream:true,language:"en"}),signal:AbortSignal.timeout(90000)});
   assert.equal(response.status,200);
   const body = await response.text();
   return body.split(/\r?\n\r?\n/).flatMap(block=> {

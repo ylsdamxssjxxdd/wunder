@@ -1,4 +1,3 @@
-use super::context::model_context_entries_from_messages;
 use super::execute_support::{
     emit_turn_terminal_event, turn_terminal_status_for_error, TurnTerminalEvent,
 };
@@ -92,7 +91,6 @@ impl Orchestrator {
         messages: Vec<Value>,
         emitter: &EventEmitter,
         current_question: &str,
-        log_payload: bool,
         persisted_context_tokens: i64,
         _request_overhead_tokens: i64,
         force: bool,
@@ -411,26 +409,15 @@ impl Orchestrator {
             summary_input = trimmed;
         }
 
-        let mut request_payload = if log_payload {
-            let payload_messages = self.sanitize_messages_for_log(summary_input.clone(), None);
-            let payload = build_llm_client(&summary_config, self.http.clone())
-                .build_request_payload(&self.build_chat_messages(&payload_messages), false);
-            json!({
-                "provider": summary_config.provider,
-                "model": summary_config.model,
-                "base_url": summary_config.base_url,
-                "payload": payload,
-                "purpose": "compaction_summary",
-            })
-        } else {
-            json!({
-                "provider": summary_config.provider,
-                "model": summary_config.model,
-                "base_url": summary_config.base_url,
-                "payload_omitted": true,
-                "purpose": "compaction_summary",
-            })
-        };
+        // Compaction summary requests always log in the compact profile; the
+        // full request body is never persisted into monitor events.
+        let mut request_payload = json!({
+            "provider": summary_config.provider,
+            "model": summary_config.model,
+            "base_url": summary_config.base_url,
+            "payload_omitted": true,
+            "purpose": "compaction_summary",
+        });
         if let Value::Object(ref mut map) = request_payload {
             insert_compaction_id(map, compaction_id_ref);
             insert_compaction_trigger_mode(map, trigger_mode);
@@ -455,7 +442,6 @@ impl Orchestrator {
                 compaction_round,
                 false,
                 true,
-                log_payload,
                 None,
                 Some(summary_config),
             )
@@ -707,14 +693,9 @@ impl Orchestrator {
             build_compaction_message_debug_entries(&committed_replacement_history);
         clear_retained_interaction_markers(&mut rebuilt);
         clear_compaction_inflight_markers(&mut rebuilt);
-        let compacted_model_context_entries = model_context_entries_from_messages(&rebuilt);
-        if let Err(err) = self.workspace.replace_model_context_entries(
-            user_id,
-            session_id,
-            &compacted_model_context_entries,
-        ) {
-            warn!("replace model context after compaction failed for session {session_id}: {err}");
-        }
+        // The compaction summary chat row below carries the committed replacement
+        // history in its meta; the model input is derived from chat_history, so no
+        // separate context table write is needed.
         let _ = self.workspace.flush_writes_async().await;
         let rebuilt_tokens = estimate_messages_tokens(&rebuilt);
         let observed_rebuilt_tokens = 0_i64;
@@ -746,6 +727,7 @@ impl Orchestrator {
             Some(&Value::String(summary_text.clone())),
             None,
             Some(&meta_value),
+            None,
             None,
             None,
             None,
@@ -1111,7 +1093,6 @@ impl Orchestrator {
         agent_prompt: Option<&str>,
         preview_skill_override: Option<bool>,
         manual_user_round_override: Option<i64>,
-        debug_payload: bool,
         manage_runtime_turn: bool,
     ) -> Result<Value, OrchestratorError> {
         let storage = self.storage.clone();
@@ -1156,7 +1137,6 @@ impl Orchestrator {
         };
 
         let config = self.resolve_config(None).await;
-        let log_payload = is_debug_log_level(&config.observability.log_level) || debug_payload;
         let (_llm_name, llm_config) = match self.resolve_llm_config(&config, model_name) {
             Ok(value) => value,
             Err(err) => {
@@ -1307,7 +1287,6 @@ impl Orchestrator {
                 messages,
                 &emitter,
                 "",
-                log_payload,
                 0,
                 0,
                 true,
@@ -1511,6 +1490,7 @@ impl Orchestrator {
             None,
             None,
             None,
+            None,
             round_info,
         );
     }
@@ -1536,6 +1516,7 @@ impl Orchestrator {
                 "type": "goal_command",
                 "goal_command": true,
             })),
+            None,
             None,
             None,
             None,
@@ -1587,6 +1568,7 @@ impl Orchestrator {
             Some(&Value::String(content.to_string())),
             None,
             Some(&Value::Object(marker_meta)),
+            None,
             None,
             None,
             None,

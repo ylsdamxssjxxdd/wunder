@@ -315,7 +315,7 @@ fn message_from_value(value: Value) -> Option<NativeMessage> {
                 .get("status")
                 .and_then(Value::as_str)
                 .filter(|value| !value.trim().is_empty())
-                .unwrap_or("完成")
+                .unwrap_or("任务完成")
                 .to_string()
         } else {
             String::new()

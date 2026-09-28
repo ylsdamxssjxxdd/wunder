@@ -1278,8 +1278,6 @@ pub struct WorkspaceConfig {
     pub container_roots: HashMap<i32, String>,
     #[serde(default)]
     pub max_history_items: i64,
-    #[serde(default)]
-    pub retention_days: i64,
 }
 
 impl Default for WorkspaceConfig {
@@ -1288,7 +1286,6 @@ impl Default for WorkspaceConfig {
             root: "./config/data/workspaces".to_string(),
             container_roots: HashMap::new(),
             max_history_items: 0,
-            retention_days: 0,
         }
     }
 }
@@ -1536,6 +1533,13 @@ pub struct ObservabilityConfig {
     pub monitor_payload_max_chars: i64,
     #[serde(default)]
     pub monitor_drop_event_types: Vec<String>,
+    #[serde(
+        default = "default_stream_event_retention_hours",
+        deserialize_with = "deserialize_u64_from_any"
+    )]
+    pub stream_event_retention_hours: u64,
+    #[serde(default = "default_deleted_session_log_grace_hours")]
+    pub deleted_session_log_grace_hours: i64,
 }
 
 impl Default for ObservabilityConfig {
@@ -1547,8 +1551,18 @@ impl Default for ObservabilityConfig {
             monitor_event_limit: 0,
             monitor_payload_max_chars: 0,
             monitor_drop_event_types: Vec::new(),
+            stream_event_retention_hours: default_stream_event_retention_hours(),
+            deleted_session_log_grace_hours: default_deleted_session_log_grace_hours(),
         }
     }
+}
+
+fn default_stream_event_retention_hours() -> u64 {
+    168
+}
+
+fn default_deleted_session_log_grace_hours() -> i64 {
+    24
 }
 
 fn default_server_log_dir() -> String {
@@ -2732,7 +2746,6 @@ tools:
 workspace:
   root: ./config/data/workspaces
   max_history_items: 0
-  retention_days: 0
 security:
   allow_commands:
     - '*'

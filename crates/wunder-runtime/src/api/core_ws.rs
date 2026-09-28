@@ -53,7 +53,10 @@ struct WsStartPayload {
     skip_tool_calls: bool,
     #[serde(default)]
     stream: Option<bool>,
+    // Deprecated compatibility field: parsed for older clients but ignored;
+    // request logging is unified to the compact profile.
     #[serde(default)]
+    #[allow(dead_code)]
     debug_payload: bool,
     #[serde(default)]
     session_id: Option<String>,
@@ -399,7 +402,6 @@ async fn handle_ws(
                             tool_names: payload.tool_names,
                             skip_tool_calls: payload.skip_tool_calls,
                             stream,
-                            debug_payload: payload.debug_payload,
                             session_id,
                             agent_id: payload.agent_id,
                             workspace_container_id: None,

@@ -5,7 +5,7 @@ use crate::i18n;
 use crate::orchestrator_constants::{
     ARTIFACT_INDEX_MAX_ITEMS, COMPACTION_META_TYPE, COMPACTION_OUTPUT_RESERVE, COMPACTION_RATIO,
     COMPACTION_REPLACEMENT_HISTORY_META_KEY, COMPACTION_SAFETY_MARGIN, DEFAULT_MAX_OUTPUT_TOKENS,
-    OBSERVATION_PREFIX,
+    MICROCOMPACTION_META_TYPE, OBSERVATION_PREFIX,
 };
 use crate::prompting::read_prompt_template;
 use crate::tools::resolve_tool_name;
@@ -423,7 +423,13 @@ fn build_message_from_item(item: &Value, include_reasoning: bool) -> Option<Valu
         };
         return Some(json!({ "role": "user", "content": text }));
     }
-    let content = item.get("content")?.clone();
+    // Display-override rows persist the model-visible copy under model_content;
+    // derivation must replay that, not the display text.
+    let content = item
+        .get("model_content")
+        .filter(|value| !value.is_null())
+        .or_else(|| item.get("content"))?
+        .clone();
     if role == "tool" {
         let content_text = match &content {
             Value::String(text) => text.clone(),
@@ -809,6 +815,21 @@ fn materialize_history_items(history: &[Value]) -> Vec<Value> {
     let mut skip_next_assistant = false;
 
     for item in history {
+        // Local microcompaction marker rows carry the reduced snapshot; replay it
+        // the same way a compaction summary replacement history is replayed.
+        if item
+            .get("meta")
+            .and_then(Value::as_object)
+            .and_then(|meta| meta.get("type"))
+            .and_then(Value::as_str)
+            == Some(MICROCOMPACTION_META_TYPE)
+        {
+            if let Some(replacement_history) = extract_compaction_replacement_history(Some(item)) {
+                active_items = replacement_history;
+                skip_next_assistant = false;
+            }
+            continue;
+        }
         if HistoryManager::is_compaction_summary_item(item) {
             if let Some(replacement_history) = extract_compaction_replacement_history(Some(item)) {
                 active_items = replacement_history;
@@ -1690,5 +1711,138 @@ mod tests {
         assert_eq!(contents[3], "tail question");
         assert_eq!(contents[4], "tail answer");
         assert_eq!(contents[5], "current question");
+    }
+
+    #[test]
+    fn load_history_messages_prefers_model_content_and_replays_microcompaction_marker() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("history-derived-model-input.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace_root = dir.path().join("workspaces");
+        let workspace = Arc::new(WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &HashMap::new(),
+        ));
+        let user_id = "history-test-user";
+        let session_id = "history-test-session";
+        let rows = vec![
+            // Display-override row: derivation must replay model_content.
+            json!({
+                "role": "user",
+                "content": "display text",
+                "model_content": "model text",
+                "session_id": session_id,
+            }),
+            json!({
+                "role": "assistant",
+                "content": "first answer",
+                "session_id": session_id,
+            }),
+            json!({
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": "{\"tool\":\"read_file\",\"ok\":true}",
+                "session_id": session_id,
+            }),
+            // Hidden model-only injection stays in the derived model input.
+            json!({
+                "role": "user",
+                "content": "internal notice",
+                "meta": { "type": "model_context_internal", "hidden": true, "internal_user": true },
+                "session_id": session_id,
+            }),
+            // Microcompaction marker resets the derived history to its snapshot.
+            json!({
+                "role": "system",
+                "content": "",
+                "meta": {
+                    "type": MICROCOMPACTION_META_TYPE,
+                    "hidden": true,
+                    COMPACTION_REPLACEMENT_HISTORY_META_KEY: [
+                        { "role": "user", "content": "reduced question" },
+                        { "role": "assistant", "content": "reduced answer" }
+                    ]
+                },
+                "session_id": session_id,
+            }),
+            json!({
+                "role": "user",
+                "content": "latest question",
+                "session_id": session_id,
+            }),
+        ];
+        for row in rows {
+            workspace.append_chat(user_id, &row).expect("append history");
+        }
+        Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build runtime")
+            .block_on(workspace.clone().flush_writes_async());
+
+        let messages = HistoryManager.load_history_messages(&workspace, user_id, session_id, 0);
+        assert_eq!(
+            messages,
+            vec![
+                json!({ "role": "user", "content": "reduced question" }),
+                json!({ "role": "assistant", "content": "reduced answer" }),
+                json!({ "role": "user", "content": "latest question" }),
+            ]
+        );
+    }
+
+    #[test]
+    fn load_history_messages_replays_model_content_override_and_internal_rows() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("history-model-content.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace_root = dir.path().join("workspaces");
+        let workspace = Arc::new(WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &HashMap::new(),
+        ));
+        let user_id = "history-test-user";
+        let session_id = "history-test-session";
+        let rows = vec![
+            json!({
+                "role": "user",
+                "content": "display text",
+                "model_content": "model text",
+                "session_id": session_id,
+            }),
+            json!({
+                "role": "user",
+                "content": "internal notice",
+                "meta": { "type": "model_context_internal", "hidden": true, "internal_user": true },
+                "session_id": session_id,
+            }),
+            json!({
+                "role": "assistant",
+                "content": "answer",
+                "session_id": session_id,
+            }),
+        ];
+        for row in rows {
+            workspace.append_chat(user_id, &row).expect("append history");
+        }
+        Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build runtime")
+            .block_on(workspace.clone().flush_writes_async());
+
+        let messages = HistoryManager.load_history_messages(&workspace, user_id, session_id, 0);
+        assert_eq!(
+            messages,
+            vec![
+                json!({ "role": "user", "content": "model text" }),
+                json!({ "role": "user", "content": "internal notice" }),
+                json!({ "role": "assistant", "content": "answer" }),
+            ]
+        );
     }
 }

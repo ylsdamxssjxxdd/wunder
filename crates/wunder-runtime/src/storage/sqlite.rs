@@ -26,7 +26,7 @@ use rusqlite::Connection;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 mod agent_directory_store;
@@ -87,6 +87,10 @@ pub struct SqliteStorage {
     db_path: PathBuf,
     initialized: AtomicBool,
     init_guard: Mutex<()>,
+    // Set when open() upgrades a legacy database header to incremental
+    // auto-vacuum; ensure_initialized then runs the one-time VACUUM that
+    // persists the change.
+    auto_vacuum_upgrade_pending: AtomicBool,
     // SQLite has one writer. Reuse one bounded connection for message admission
     // instead of reopening/checkpointing the WAL for every small queue write.
     agent_message_connection: Mutex<Option<Connection>>,
@@ -103,6 +107,7 @@ impl SqliteStorage {
             db_path: path,
             initialized: AtomicBool::new(false),
             init_guard: Mutex::new(()),
+            auto_vacuum_upgrade_pending: AtomicBool::new(false),
             agent_message_connection: Mutex::new(None),
         }
     }
@@ -121,6 +126,18 @@ impl SqliteStorage {
         conn.busy_timeout(Duration::from_secs(5)).ok();
         conn.pragma_update(None, "journal_mode", "WAL").ok();
         conn.pragma_update(None, "synchronous", "NORMAL").ok();
+        // Enable incremental auto-vacuum so retention deletes gradually return
+        // pages to the OS. For databases created before this upgrade the header
+        // change only persists after a one-time VACUUM, which
+        // ensure_initialized runs when this flag is set.
+        let auto_vacuum: i64 = conn
+            .pragma_query_value(None, "auto_vacuum", |row| row.get(0))
+            .unwrap_or(0);
+        if auto_vacuum != 2 {
+            conn.pragma_update(None, "auto_vacuum", 2).ok();
+            self.auto_vacuum_upgrade_pending
+                .store(true, Ordering::Relaxed);
+        }
         Ok(conn)
     }
 
@@ -575,64 +592,6 @@ mod tests {
     }
 
     #[test]
-    fn model_context_entries_append_and_replace_in_order() {
-        let temp = tempdir().expect("tempdir");
-        let db_path = temp.path().join("model-context.db");
-        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
-        storage.ensure_initialized().expect("initialize storage");
-
-        storage
-            .append_model_context_entry(
-                "user-a",
-                "session-a",
-                &json!({
-                    "role": "user",
-                    "content": "first"
-                }),
-            )
-            .expect("append first");
-        storage
-            .append_model_context_entry(
-                "user-a",
-                "session-a",
-                &json!({
-                    "role": "assistant",
-                    "content": "second"
-                }),
-            )
-            .expect("append second");
-
-        let loaded = storage
-            .load_model_context_entries("user-a", "session-a", None)
-            .expect("load appended");
-        assert_eq!(loaded.len(), 2);
-        assert_eq!(loaded[0]["content"], json!("first"));
-        assert_eq!(loaded[1]["content"], json!("second"));
-
-        storage
-            .replace_model_context_entries(
-                "user-a",
-                "session-a",
-                &[
-                    json!({ "role": "user", "content": "compacted" }),
-                    json!({ "role": "assistant", "content": "baseline" }),
-                ],
-            )
-            .expect("replace entries");
-
-        let replaced = storage
-            .load_model_context_entries("user-a", "session-a", None)
-            .expect("load replaced");
-        assert_eq!(
-            replaced,
-            vec![
-                json!({ "role": "user", "content": "compacted" }),
-                json!({ "role": "assistant", "content": "baseline" }),
-            ]
-        );
-    }
-
-    #[test]
     fn legacy_inline_image_payloads_are_sanitized_and_repaired_on_load() {
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join("legacy-inline-image.db");
@@ -662,50 +621,116 @@ mod tests {
                 ],
             )
             .expect("insert legacy chat payload");
-            conn.execute(
-                "INSERT INTO model_context_entries (user_id, session_id, role, payload, created_time)
-                 VALUES (?, ?, ?, ?, ?)",
-                params![
-                    "user-a",
-                    "session-a",
-                    "user",
-                    legacy_payload.as_str(),
-                    1.0_f64
-                ],
-            )
-            .expect("insert legacy context payload");
         }
 
         let chat_history = storage
             .load_chat_history("user-a", "session-a", None)
             .expect("load chat history");
-        let model_context = storage
-            .load_model_context_entries("user-a", "session-a", None)
-            .expect("load model context");
 
         assert_eq!(chat_history.len(), 1);
-        assert_eq!(model_context.len(), 1);
         assert!(!chat_history[0]
             .to_string()
             .contains("data:image/png;base64"));
-        assert!(!model_context[0]
-            .to_string()
-            .contains("data:image/png;base64"));
         assert!(chat_history[0].to_string().contains("inline image omitted"));
-        assert!(model_context[0]
-            .to_string()
-            .contains("inline image omitted"));
 
         let conn = Connection::open(&db_path).expect("open sqlite");
         let repaired_chat: String = conn
             .query_row("SELECT payload FROM chat_history", [], |row| row.get(0))
             .expect("load repaired chat payload");
-        let repaired_context: String = conn
-            .query_row("SELECT payload FROM model_context_entries", [], |row| {
-                row.get(0)
-            })
-            .expect("load repaired context payload");
         assert!(!repaired_chat.contains("data:image/png;base64"));
-        assert!(!repaired_context.contains("data:image/png;base64"));
+    }
+
+    #[test]
+    fn legacy_chat_history_columns_are_dropped() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("legacy-chat-history.db");
+        let conn = Connection::open(&db_path).expect("open sqlite");
+        conn.execute_batch(
+            "CREATE TABLE chat_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT,
+                timestamp TEXT,
+                meta TEXT,
+                payload TEXT NOT NULL,
+                created_time REAL NOT NULL
+            );
+            INSERT INTO chat_history (user_id, session_id, role, content, timestamp, meta, payload, created_time)
+            VALUES ('user-a', 'session-a', 'user', 'legacy text', '2026-01-01T00:00:00Z',
+                '{\"origin\":\"legacy\"}', '{\"role\":\"user\",\"content\":\"legacy text\"}', 1);",
+        )
+        .expect("create legacy chat history");
+        drop(conn);
+
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage
+            .ensure_initialized()
+            .expect("migrate legacy chat history");
+
+        let conn = Connection::open(&db_path).expect("open migrated sqlite");
+        let columns = conn
+            .prepare("PRAGMA table_info(chat_history)")
+            .expect("prepare chat history columns")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("read chat history columns")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect chat history columns");
+        for retired in ["content", "timestamp", "meta"] {
+            assert!(!columns.iter().any(|column| column == retired));
+        }
+        let kept: (String, String) = conn
+            .query_row(
+                "SELECT role, payload FROM chat_history WHERE user_id = 'user-a'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read migrated chat row");
+        assert_eq!(kept.0, "user");
+        assert!(kept.1.contains("legacy text"));
+        drop(conn);
+
+        // New inserts target the reduced column set and stay loadable.
+        storage
+            .append_chat(
+                "user-a",
+                &json!({
+                    "session_id": "session-a",
+                    "role": "assistant",
+                    "content": "fresh reply"
+                }),
+            )
+            .expect("append chat after migration");
+        let history = storage
+            .load_chat_history("user-a", "session-a", None)
+            .expect("load chat history");
+        assert_eq!(history.len(), 2);
+    }
+
+    #[test]
+    fn auto_vacuum_is_enabled_for_existing_databases() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("auto-vacuum-upgrade.db");
+        let conn = Connection::open(&db_path).expect("open sqlite");
+        conn.execute_batch(
+            "CREATE TABLE placeholder (id INTEGER PRIMARY KEY);
+             INSERT INTO placeholder VALUES (1);",
+        )
+        .expect("seed existing database");
+        let before: i64 = conn
+            .pragma_query_value(None, "auto_vacuum", |row| row.get(0))
+            .expect("read initial auto_vacuum");
+        assert_eq!(before, 0);
+        drop(conn);
+
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize storage");
+
+        let conn = Connection::open(&db_path).expect("open upgraded sqlite");
+        let mode: i64 = conn
+            .pragma_query_value(None, "auto_vacuum", |row| row.get(0))
+            .expect("read upgraded auto_vacuum");
+        assert_eq!(mode, 2);
     }
 }
