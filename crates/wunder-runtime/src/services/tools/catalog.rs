@@ -1,8 +1,7 @@
 use super::mcp_pack;
 use super::{
     browser_tool, channel_tool, desktop_control, multimodal_generation_tool, read_image_tool,
-    self_status_tool, sessions_yield_tool, thread_control_tool, web_fetch_tool,
-    web_search_tool,
+    self_status_tool, sessions_yield_tool, thread_control_tool, web_fetch_tool, web_search_tool,
 };
 use crate::config::Config;
 use crate::core::json_schema::normalize_tool_input_schema;

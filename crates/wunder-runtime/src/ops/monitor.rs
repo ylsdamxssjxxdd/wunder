@@ -246,6 +246,7 @@ struct SessionRecord {
     cancel_source: Option<String>,
     ended_time: Option<f64>,
     user_rounds: i64,
+    model_round_high_water: BTreeMap<i64, i64>,
     last_awarded_user_round: i64,
     pending_awarded_user_round: i64,
     context_tokens: i64,
@@ -296,6 +297,7 @@ impl SessionRecord {
             cancel_source: None,
             ended_time: None,
             user_rounds: 1,
+            model_round_high_water: BTreeMap::new(),
             last_awarded_user_round: 0,
             pending_awarded_user_round: 0,
             context_tokens: 0,
@@ -416,6 +418,7 @@ impl SessionRecord {
             "cancel_source": self.cancel_source,
             "user_rounds": self.user_rounds,
             "rounds": self.user_rounds,
+            "model_round_high_water": self.model_round_high_water,
             "last_awarded_user_round": self.last_awarded_user_round,
             "context_tokens": self.context_tokens,
             "context_tokens_peak": self.context_tokens_peak,
@@ -543,6 +546,17 @@ impl SessionRecord {
                 }
             }
         }
+        let mut model_round_high_water: BTreeMap<i64, i64> = payload
+            .get("model_round_high_water")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default();
+        for event in &events {
+            update_model_round_high_water(&mut model_round_high_water, &event.data);
+        }
+        while model_round_high_water.len() > 64 {
+            model_round_high_water.pop_first();
+        }
         // Legacy records may exceed the cap; keep only the newest events.
         while events.len() > MONITOR_SESSION_EVENT_LIMIT {
             events.pop_front();
@@ -632,6 +646,7 @@ impl SessionRecord {
             cancel_source,
             ended_time,
             user_rounds,
+            model_round_high_water,
             last_awarded_user_round,
             pending_awarded_user_round: 0,
             context_tokens,
@@ -1018,6 +1033,94 @@ impl MonitorState {
                     self.save_record(&record);
                 }
                 user_round
+            },
+        )
+    }
+
+    /// Register an internal continuation on an already visible user round.
+    /// Goal wake-ups are execution continuations, not new user messages; they
+    /// must retain the command's round identity so workflow events stay in the
+    /// same bubble and cancellation can settle that bubble.
+    pub fn register_continuation(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        agent_id: &str,
+        question: &str,
+        is_admin: bool,
+        user_round: i64,
+    ) -> i64 {
+        self.run_guarded(
+            "monitor.register_continuation",
+            || user_round.max(1),
+            || {
+                let cleaned = session_id.trim().to_string();
+                let requested_round = user_round.max(1);
+                if cleaned.is_empty() {
+                    return requested_round;
+                }
+                let hydrated = {
+                    let sessions = self.sessions.lock();
+                    !sessions.contains_key(cleaned.as_str())
+                };
+                let hydrated_record = if hydrated {
+                    self.hydrate_session_record_for_register(cleaned.as_str())
+                } else {
+                    None
+                };
+                let persisted_floor = hydrated_record
+                    .as_ref()
+                    .map(|record| record.user_rounds)
+                    .unwrap_or(0);
+                let mut sessions = self.sessions.lock();
+                if let Some(record) = hydrated_record {
+                    sessions.entry(cleaned.clone()).or_insert(record);
+                }
+                let record = sessions.entry(cleaned.clone()).or_insert_with(|| {
+                    SessionRecord::new(
+                        SessionRecordInit {
+                            session_id: cleaned.clone(),
+                            user_id: user_id.to_string(),
+                            agent_id: agent_id.to_string(),
+                            question: question.to_string(),
+                            is_admin,
+                            trace_id: build_monitor_trace_id(),
+                        },
+                        now_ts(),
+                    )
+                });
+                record.user_rounds = record.user_rounds.max(persisted_floor).max(requested_round);
+                record.question = question.to_string();
+                record.is_admin = is_admin;
+                if !agent_id.trim().is_empty() {
+                    record.agent_id = agent_id.trim().to_string();
+                }
+                record.status = Self::STATUS_RUNNING.to_string();
+                record.stage = "running".to_string();
+                record.summary = i18n::t("monitor.summary.received");
+                record.updated_time = now_ts();
+                record.ended_time = None;
+                record.cancel_requested = false;
+                record.cancel_source = None;
+                record.context_tokens = 0;
+                let round = requested_round;
+                self.append_event(
+                    record,
+                    "round_resume",
+                    &json!({
+                        "user_round": round,
+                        "question": question,
+                        "hidden_internal_user": true,
+                    }),
+                    now_ts(),
+                );
+                record.dirty = true;
+                let to_persist = self.maybe_persist_record(record, now_ts(), false);
+                drop(sessions);
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
+                }
+                round
             },
         )
     }
@@ -1829,6 +1932,22 @@ impl MonitorState {
                 self.storage.get_monitor_record(cleaned).ok().flatten()
             },
         )
+    }
+
+    pub fn max_model_round_for_user_round(&self, session_id: &str, user_round: i64) -> i64 {
+        if let Some(round) = self
+            .sessions
+            .lock()
+            .get(session_id)
+            .and_then(|record| record.model_round_high_water.get(&user_round))
+            .copied()
+        {
+            return round;
+        }
+        // Old monitor summaries use the stream-event round index and one aggregate query.
+        self.storage
+            .max_session_model_round(session_id, user_round)
+            .unwrap_or(0)
     }
 
     /// Return the bounded, presentation-neutral metrics shared by user and admin log views.
@@ -2734,6 +2853,7 @@ impl MonitorState {
         data: &Value,
         timestamp: f64,
     ) {
+        update_model_round_high_water(&mut record.model_round_high_water, data);
         let mut payload = data.clone();
         if let Value::Object(ref mut map) = payload {
             map.entry("trace_id".to_string())
@@ -2850,6 +2970,23 @@ impl MonitorState {
         events.reverse();
         compacted.events = events.into();
         compacted.to_storage()
+    }
+}
+
+fn update_model_round_high_water(rounds: &mut BTreeMap<i64, i64>, data: &Value) {
+    if let (Some(user), Some(model)) = (
+        data.get("user_round")
+            .and_then(Value::as_i64)
+            .filter(|round| *round > 0),
+        data.get("model_round")
+            .and_then(Value::as_i64)
+            .filter(|round| *round > 0),
+    ) {
+        let maximum = rounds.entry(user).or_default();
+        *maximum = (*maximum).max(model);
+        while rounds.len() > 64 {
+            rounds.pop_first();
+        }
     }
 }
 
@@ -3435,8 +3572,8 @@ mod tests {
     use super::{
         derive_effective_context_tokens, is_workspace_usage_dir_name,
         llm_speed_summary_from_monitor_events, resolve_payload_limit, trim_string_fields,
-        update_workspace_usage_state_incremental, MonitorEvent, MonitorState, PendingExperienceAward,
-        WorkspaceUsageScanState, MIN_PAYLOAD_LIMIT,
+        update_workspace_usage_state_incremental, MonitorEvent, MonitorState,
+        PendingExperienceAward, WorkspaceUsageScanState, MIN_PAYLOAD_LIMIT,
     };
     use crate::config::ObservabilityConfig;
     use crate::i18n;
@@ -3627,13 +3764,7 @@ mod tests {
             temp.path().to_string_lossy().to_string(),
         );
 
-        let round = monitor.register(
-            "sess-stream-round-hydrate",
-            "user",
-            "agent",
-            "next",
-            true,
-        );
+        let round = monitor.register("sess-stream-round-hydrate", "user", "agent", "next", true);
 
         assert_eq!(round, 6);
         let record = monitor
@@ -3728,8 +3859,7 @@ mod tests {
         assert_eq!(metrics["cancelled_sessions"], json!(1));
         assert_eq!(metrics["total_sessions"], json!(5));
 
-        let running_round =
-            monitor.register("sess-queued", "user", "agent", "question", true);
+        let running_round = monitor.register("sess-queued", "user", "agent", "question", true);
         let running = monitor.get_record("sess-queued").expect("running record");
         assert_eq!(running_round, 1);
         assert_eq!(running["status"], json!("running"));

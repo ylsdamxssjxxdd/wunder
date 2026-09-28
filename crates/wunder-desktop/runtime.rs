@@ -424,10 +424,7 @@ fn resolve_repo_root(app_dir: &Path) -> PathBuf {
     app_dir.to_path_buf()
 }
 
-fn resolve_temp_root(
-    temp_root: Option<&Path>,
-    wunder_home: &Path,
-) -> Result<PathBuf> {
+fn resolve_temp_root(temp_root: Option<&Path>, wunder_home: &Path) -> Result<PathBuf> {
     match temp_root {
         Some(path) if path.is_absolute() => Ok(path.to_path_buf()),
         Some(path) => Ok(wunder_home.join(path)),
@@ -504,7 +501,6 @@ fn resolve_wunder_home_dir() -> PathBuf {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     home.unwrap_or_else(|| std::env::temp_dir()).join(".wunder")
 }
-
 
 fn resolve_frontend_root(
     arg_frontend_root: Option<&Path>,

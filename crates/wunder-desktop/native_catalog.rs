@@ -96,11 +96,7 @@ impl NativeDesktop {
         })
     }
 
-    pub fn update_agent_settings(
-        &self,
-        id: &str,
-        input: AgentSettingsEdit,
-    ) -> Result<AgentRecord> {
+    pub fn update_agent_settings(&self, id: &str, input: AgentSettingsEdit) -> Result<AgentRecord> {
         self.runtime.block_on(async {
             let input = agent_management::AgentSettingsUpdate {
                 name: input.name,
@@ -117,7 +113,8 @@ impl NativeDesktop {
                 silent: input.silent,
                 prefer_mother: input.prefer_mother,
             };
-            let record = agent_management::update_settings(self.state(), self.user_id(), id, input).await?;
+            let record =
+                agent_management::update_settings(self.state(), self.user_id(), id, input).await?;
             let config = self.state().config_store.get().await;
             Ok(agent_record(record, &config.llm.default))
         })
@@ -190,7 +187,7 @@ fn agent_record(
     record: wunder_server::storage::UserAgentRecord,
     default_model: &str,
 ) -> AgentRecord {
-        AgentRecord {
+    AgentRecord {
         id: record.agent_id,
         name: record.name,
         description: record.description,

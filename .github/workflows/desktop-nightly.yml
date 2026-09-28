@@ -99,27 +99,33 @@ jobs:
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-        if: matrix.arch == 'arm64'
       - uses: docker/setup-buildx-action@v3
-      - name: Build Ubuntu 18.04 native desktop AppImage
+      - name: Build Ubuntu 18.04 desktop AppImage
         shell: bash
         run: |
           set -euo pipefail
-          docker build --platform "${{ matrix.platform }}" \
+          # ARM64 is cross-compiled and packaged on amd64; QEMU is not used
+          # for the expensive Rust or SquashFS phases.
+          build_platform=linux/amd64
+          if [ "${{ matrix.arch }}" = arm64 ]; then
+            build_script=builders/build-linux-arm64-cross-appimage.sh
+          else
+            build_script=builders/build-linux-appimage-native.sh
+          fi
+          docker build --platform "$build_platform" \
             --build-arg RUST_TOOLCHAIN="${RUST_TOOLCHAIN}" \
             --build-arg APPIMAGE_RUNTIME_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/runtime-${{ matrix.appimage_runtime }}" \
             -f packaging/docker/Dockerfile.ubuntu18-desktop \
             -t "${{ matrix.image }}" .
           mkdir -p release-assets
-          docker run --rm --platform "${{ matrix.platform }}" \
+          docker run --rm --platform "$build_platform" \
             -v "$GITHUB_WORKSPACE:/app" \
             -w /app \
             -e ARCH="${{ matrix.arch }}" \
             -e WUNDER_OUTPUT_DIR=/app/release-assets \
             -e WUNDER_APPIMAGE_RUNTIME=/usr/local/lib/wunder/appimage-runtime \
             "${{ matrix.image }}" \
-            bash builders/build-linux-appimage-native.sh
+            bash "$build_script"
           test -n "$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.AppImage" -print -quit)"
       - name: Verify AppImage payload
         shell: bash
@@ -127,7 +133,7 @@ jobs:
           set -euo pipefail
           asset_name="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.AppImage" -printf '%f' -quit)"
           test -n "$asset_name"
-          docker run --rm --platform "${{ matrix.platform }}" \
+          docker run --rm --platform linux/amd64 \
             -v "$GITHUB_WORKSPACE:/app" \
             -w /app \
             "${{ matrix.image }}" \

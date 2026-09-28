@@ -287,6 +287,9 @@ impl AgentRuntimeStore for SqliteStorage {
     fn load_recent_stream_events(&self, session_id: &str, limit: i64) -> Result<Vec<Value>> {
         self.load_recent_stream_events_impl(session_id, limit)
     }
+    fn max_session_model_round(&self, session_id: &str, user_round: i64) -> Result<i64> {
+        self.max_session_model_round_impl(session_id, user_round)
+    }
     fn load_session_workflow_events(
         &self,
         session_id: &str,

@@ -270,7 +270,10 @@ impl AppState {
         let workspace = Arc::new(WorkspaceManager::new(
             &config.workspace.root,
             storage.clone(),
-            config.observability.stream_event_retention_hours.min(i64::MAX as u64) as i64,
+            config
+                .observability
+                .stream_event_retention_hours
+                .min(i64::MAX as u64) as i64,
             &config.workspace.container_roots,
         ));
         workspace.set_deleted_session_log_grace_hours(

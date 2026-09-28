@@ -22,9 +22,9 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicI64;
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, OnceLock};
-use std::sync::atomic::AtomicI64;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Handle;
@@ -136,21 +136,10 @@ struct SearchIndex {
 }
 
 enum StorageWrite {
-    Chat {
-        user_id: String,
-        payload: Value,
-    },
-    ToolLog {
-        user_id: String,
-        payload: Value,
-    },
-    ArtifactLog {
-        user_id: String,
-        payload: Value,
-    },
-    Flush {
-        done: SyncSender<()>,
-    },
+    Chat { user_id: String, payload: Value },
+    ToolLog { user_id: String, payload: Value },
+    ArtifactLog { user_id: String, payload: Value },
+    Flush { done: SyncSender<()> },
 }
 
 struct StorageWriteQueue {
@@ -274,7 +263,9 @@ impl WorkspaceManager {
             storage,
             write_queue: OnceLock::new(),
             stream_event_retention_hours,
-            deleted_session_log_grace_hours: AtomicI64::new(DEFAULT_DELETED_SESSION_LOG_GRACE_HOURS),
+            deleted_session_log_grace_hours: AtomicI64::new(
+                DEFAULT_DELETED_SESSION_LOG_GRACE_HOURS,
+            ),
             retention_interval_s: 3600.0,
             retention_state: Arc::new(Mutex::new(RetentionState::default())),
             temp_cleanup_interval_s: TEMP_FILES_CLEANUP_INTERVAL_S,
@@ -1556,11 +1547,10 @@ impl WorkspaceManager {
             }
             return;
         }
-        if let Err(err) = self.storage.mark_deleted_session_log_grace(
-            cleaned_user,
-            cleaned_session,
-            now_ts(),
-        ) {
+        if let Err(err) =
+            self.storage
+                .mark_deleted_session_log_grace(cleaned_user, cleaned_session, now_ts())
+        {
             warn!("mark deleted session log grace failed: {err}");
         }
     }

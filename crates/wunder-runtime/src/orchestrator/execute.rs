@@ -179,13 +179,27 @@ impl Orchestrator {
                 ));
             }
 
-            let user_round = self.monitor.register(
-                &session_id,
-                &user_id,
-                prepared.agent_id.as_deref().unwrap_or(""),
-                &display_question,
-                is_admin,
-            );
+            let user_round = if goal_continuation_turn {
+                let requested_round = goal::goal_continuation_user_round(
+                    prepared.config_overrides.as_ref(),
+                );
+                self.monitor.register_continuation(
+                    &session_id,
+                    &user_id,
+                    prepared.agent_id.as_deref().unwrap_or(""),
+                    &display_question,
+                    is_admin,
+                    requested_round.unwrap_or(1),
+                )
+            } else {
+                self.monitor.register(
+                    &session_id,
+                    &user_id,
+                    prepared.agent_id.as_deref().unwrap_or(""),
+                    &display_question,
+                    is_admin,
+                )
+            };
             let request_round = RoundInfo::user_only(user_round);
             // Child cancellation survives monitor registration resetting the turn flags.
             self.ensure_not_cancelled(&session_id)?;
@@ -367,7 +381,15 @@ impl Orchestrator {
             let mut last_response: Option<(String, String)> = None;
             let mut last_round_info = request_round;
 
-            let mut model_round = 0_i64;
+            // A goal can wake repeatedly under the same visible user round.
+            // Continue its model-round sequence so replay identity remains
+            // unique instead of replacing earlier tool loops in the bubble.
+            let mut model_round = if goal_continuation_turn {
+                self.monitor.max_model_round_for_user_round(&session_id, user_round)
+            } else {
+                0
+            };
+            let initial_model_round = model_round;
             let repeated_tool_failure_threshold =
                 resolve_tool_failure_guard_threshold(&request_config);
             let mut retry_governor = RetryGovernor::new(repeated_tool_failure_threshold);
@@ -408,7 +430,7 @@ impl Orchestrator {
             loop {
                 self.yield_queue_slot(&session_id, &emitter, last_round_info).await?;
                 if let Some(max_rounds) = max_rounds {
-                    if model_round >= max_rounds {
+                    if model_round.saturating_sub(initial_model_round) >= max_rounds {
                         reached_max_rounds = true;
                         break;
                     }

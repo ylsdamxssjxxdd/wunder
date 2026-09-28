@@ -22,6 +22,8 @@ target_dir="${CARGO_TARGET_DIR:-$repo_root/target/linux-arm64-ubuntu18-slint/car
 output_dir="${WUNDER_OUTPUT_DIR:-$repo_root/target/slint/dist/linux-arm64}"
 runtime_source="${WUNDER_APPIMAGE_RUNTIME:-}"
 max_glibc="${WUNDER_SLINT_LINUX_MAX_GLIBC:-2.27}"
+sysroot="$offline_root/linux-arm64-ubuntu18/root"
+sysroot_lib="$sysroot/usr/lib/aarch64-linux-gnu"
 stage_dir=""
 phase=preflight
 
@@ -41,7 +43,7 @@ cleanup() {
     esac
   fi
   if ((status != 0)); then
-    echo "[wunder-slint-appimage] failed during $phase (exit $status); no new AppImage was published" >&2
+    echo "[wunder-slint-appimage] failed during $phase (exit $status); command: ${BASH_COMMAND:-unknown}; no new AppImage was published" >&2
   fi
   exit "$status"
 }
@@ -53,6 +55,7 @@ trap 'exit 143' TERM
 manifest="$repo_root/frontend-slint/Cargo.toml"
 require_file "$manifest"
 [[ -d "$vendor_root" ]] || fail "offline Cargo vendor is missing: $vendor_root"
+[[ -f "$sysroot_lib/crt1.o" && -f "$sysroot_lib/libc.so" ]] || fail "Ubuntu 18 ARM64 development sysroot is incomplete: $sysroot"
 [[ -n "$runtime_source" ]] || fail "WUNDER_APPIMAGE_RUNTIME must point to an ARM64 type-2 AppImage runtime"
 require_file "$runtime_source"
 export PATH="$offline_root/rust/toolchains/1.92.0-aarch64-unknown-linux-gnu/bin:$PATH"
@@ -90,6 +93,11 @@ EOF
 export CARGO_HOME="$cargo_home"
 export CARGO_TARGET_DIR="$target_dir"
 export CARGO_NET_OFFLINE=true
+export RCHO_ARM64_SYSROOT="$sysroot"
+export RCHO_ARM64_CC="$sysroot/usr/bin/aarch64-linux-gnu-gcc-7"
+export CC_aarch64_unknown_linux_gnu="$repo_root/builders/linux_arm64_sysroot_cc.sh"
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="$repo_root/builders/linux_arm64_sysroot_cc.sh"
+export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=--sysroot=$sysroot -C link-arg=-L$sysroot_lib"
 
 echo "[wunder-slint-appimage] cargo: $(cargo --version)"
 echo "[wunder-slint-appimage] rustc: $(rustc --version)"
@@ -229,7 +237,10 @@ squashfs="$stage_dir/$app_name.squashfs"
 runtime="$stage_dir/$app_name.runtime"
 staged_appimage="$stage_dir/$app_name.AppImage"
 appimage="$output_dir/$app_name.AppImage"
-mksquashfs "$appdir" "$squashfs" -noappend -comp gzip -all-root -no-xattrs -b 1048576 >/dev/null
+squashfs_processors="${WUNDER_SQUASHFS_PROCESSORS:-1}"
+[[ "$squashfs_processors" =~ ^[1-9][0-9]*$ ]] || fail "WUNDER_SQUASHFS_PROCESSORS must be a positive integer"
+echo "[wunder-slint-appimage] packaging SquashFS with $squashfs_processors processor(s)"
+mksquashfs "$appdir" "$squashfs" -noappend -comp gzip -all-root -no-xattrs -b 1048576 -processors "$squashfs_processors"
 dd if="$runtime_source" of="$runtime" bs=1 count="$runtime_offset" status=none
 cat "$runtime" "$squashfs" > "$staged_appimage"
 chmod +x "$staged_appimage"

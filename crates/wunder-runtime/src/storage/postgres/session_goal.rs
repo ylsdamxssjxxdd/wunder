@@ -45,8 +45,8 @@ impl PostgresSessionGoalStorage for PostgresStorage {
         conn.execute(
             "INSERT INTO session_goals (
                 session_id, user_id, goal_id, objective, status, token_budget, tokens_used,
-                time_used_seconds, created_at, updated_at, completed_at, last_continued_at, source
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                time_used_seconds, created_at, updated_at, completed_at, last_continued_at, source, user_round, approval_mode
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
              ON CONFLICT(session_id) DO UPDATE SET
                 user_id = EXCLUDED.user_id,
                 goal_id = EXCLUDED.goal_id,
@@ -59,7 +59,9 @@ impl PostgresSessionGoalStorage for PostgresStorage {
                 updated_at = EXCLUDED.updated_at,
                 completed_at = EXCLUDED.completed_at,
                 last_continued_at = EXCLUDED.last_continued_at,
-                source = EXCLUDED.source",
+                source = EXCLUDED.source,
+                user_round = EXCLUDED.user_round,
+                approval_mode = EXCLUDED.approval_mode",
             &[
                 &cleaned_session,
                 &cleaned_user,
@@ -74,6 +76,8 @@ impl PostgresSessionGoalStorage for PostgresStorage {
                 &record.completed_at,
                 &record.last_continued_at,
                 &record.source.trim(),
+                &record.user_round,
+                &record.approval_mode,
             ],
         )?;
         Ok(())
@@ -181,7 +185,7 @@ impl PostgresSessionGoalStorage for PostgresStorage {
 fn session_goal_select_sql(where_clause: &str) -> String {
     format!(
         "SELECT goal_id, session_id, user_id, objective, status, token_budget, tokens_used,
-         time_used_seconds, created_at, updated_at, completed_at, last_continued_at, source
+         time_used_seconds, created_at, updated_at, completed_at, last_continued_at, source, user_round, approval_mode
          FROM session_goals {where_clause}"
     )
 }
@@ -201,5 +205,7 @@ fn map_session_goal_row(row: tokio_postgres::Row) -> SessionGoalRecord {
         completed_at: row.get(10),
         last_continued_at: row.get(11),
         source: row.get::<_, Option<String>>(12).unwrap_or_default(),
+        user_round: row.get(13),
+        approval_mode: row.get(14),
     }
 }

@@ -18,6 +18,8 @@ target_dir="${CARGO_TARGET_DIR:-$repo_root/target/cli-linux-arm64/cargo}"
 cargo_home="${CARGO_HOME:-$repo_root/target/cli-linux-arm64/cargo-home}"
 output_dir="${WUNDER_CLI_OUTPUT_DIR:-$repo_root/target/cli/dist/linux-arm64}"
 max_glibc="${WUNDER_CLI_LINUX_MAX_GLIBC:-2.27}"
+sysroot="$offline_root/linux-arm64-ubuntu18/root"
+sysroot_lib="$sysroot/usr/lib/aarch64-linux-gnu"
 
 fail() { echo "[wunder-cli-linux-arm64] $*" >&2; exit 2; }
 require_file() { [[ -f "$1" ]] || fail "required file is missing: $1"; }
@@ -27,6 +29,7 @@ require_command() { command -v "$1" >/dev/null 2>&1 || fail "required command is
 require_file "$repo_root/Cargo.toml"
 [[ -x "$rust/bin/cargo" ]] || fail "ARM64 Rust toolchain is missing: $rust/bin/cargo"
 [[ -d "$vendor_root" ]] || fail "shared offline Cargo vendor is missing: $vendor_root"
+[[ -f "$sysroot_lib/crt1.o" && -f "$sysroot_lib/libc.so" ]] || fail "Ubuntu 18 ARM64 development sysroot is incomplete: $sysroot"
 
 # The SDK toolchain supplies cargo/rustc; put it on PATH before probing for
 # the commands so a host without its own Rust installation still builds.
@@ -36,6 +39,11 @@ for tool in cargo rustc readelf strip awk grep sed sort tail; do require_command
 export CARGO_HOME="$cargo_home"
 export CARGO_TARGET_DIR="$target_dir"
 export CARGO_NET_OFFLINE=true
+export RCHO_ARM64_SYSROOT="$sysroot"
+export RCHO_ARM64_CC="$sysroot/usr/bin/aarch64-linux-gnu-gcc-7"
+export CC_aarch64_unknown_linux_gnu="$repo_root/builders/linux_arm64_sysroot_cc.sh"
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="$repo_root/builders/linux_arm64_sysroot_cc.sh"
+export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=--sysroot=$sysroot -C link-arg=-L$sysroot_lib"
 mkdir -p "$cargo_home" "$target_dir" "$output_dir"
 cat > "$cargo_home/config.toml" <<EOF
 [source.crates-io]

@@ -249,6 +249,65 @@ impl ThreadRuntime {
             .user_store
             .get_user_by_id(user_id)?
             .ok_or_else(|| anyhow!(i18n::t("error.permission_denied")))?;
+        let Some(goal_record) =
+            goal::get_goal(self.user_store.storage_backend(), user_id, session_id).await?
+        else {
+            return Ok(GoalContinuationSubmission::Skipped);
+        };
+        if !goal::should_continue_goal(&goal_record, false) {
+            return Ok(GoalContinuationSubmission::Skipped);
+        }
+        // Initialize execution context once for CLI and pre-migration goals.
+        // Subsequent wake-ups use the durable goal, never the latest monitor round.
+        if goal_record.user_round.is_none() || goal_record.approval_mode.is_none() {
+            let user_round = goal_record.user_round.unwrap_or_else(|| {
+                let echo = format!("/goal {}", goal_record.objective);
+                let round = self.monitor.register(
+                    &session.session_id,
+                    user_id,
+                    session.agent_id.as_deref().unwrap_or(""),
+                    &echo,
+                    UserStore::is_admin(&user),
+                );
+                self.orchestrator.append_goal_command_message(
+                    user_id,
+                    &session.session_id,
+                    &echo,
+                    round,
+                );
+                round
+            });
+            let agent = if session
+                .agent_id
+                .as_deref()
+                .is_none_or(|id| matches!(id.trim(), "" | "default" | "__default__"))
+            {
+                crate::user_store::build_default_agent_record_from_storage(
+                    self.user_store.storage_backend().as_ref(),
+                    user_id,
+                )
+                .ok()
+            } else {
+                session
+                    .agent_id
+                    .as_deref()
+                    .and_then(|id| self.user_store.get_user_agent_by_id(id).ok().flatten())
+            };
+            let config = self.config_store.get().await;
+            let mode = goal_record
+                .approval_mode
+                .clone()
+                .or_else(|| agent.map(|agent| agent.approval_mode))
+                .or_else(|| config.security.approval_mode.clone())
+                .unwrap_or_else(|| "full_auto".to_string());
+            goal::bind_goal_execution_context(
+                self.user_store.storage_backend(),
+                goal_record,
+                Some(user_round),
+                Some(&mode),
+            )
+            .await?;
+        }
         let tool_names = self
             .orchestrator
             .resolve_session_effective_tool_names(&user, &session)
@@ -258,6 +317,7 @@ impl ThreadRuntime {
             user_id,
             &session,
             tool_names,
+            UserStore::is_admin(&user),
         )
         .await?
         else {
@@ -769,6 +829,12 @@ impl ThreadRuntime {
                 {
                     map.insert("client_message_id".to_string(), json!(client_message_id));
                 }
+                if let Some(round) =
+                    goal::goal_continuation_user_round(request.config_overrides.as_ref())
+                {
+                    payload["user_round"] = json!(round);
+                    payload["hidden_internal_user"] = json!(true);
+                }
                 payload
             })
             .await;
@@ -786,14 +852,33 @@ impl ThreadRuntime {
             "queue_event_id": queue_event_id,
         });
         if !self.session_has_active_runtime_slot(&record.session_id) {
-            self.monitor.register_queued(
-                &record.session_id,
-                &record.user_id,
-                &record.agent_id,
-                &request.question,
-                request.is_admin,
-                &queue_monitor_payload,
-            );
+            if let Some(round) =
+                goal::goal_continuation_user_round(request.config_overrides.as_ref())
+            {
+                self.monitor.register_continuation(
+                    &record.session_id,
+                    &record.user_id,
+                    &record.agent_id,
+                    &request.question,
+                    request.is_admin,
+                    round,
+                );
+                self.monitor.mark_queued(&record.session_id, None);
+                self.monitor.record_event(
+                    &record.session_id,
+                    "queue_enter",
+                    &queue_monitor_payload,
+                );
+            } else {
+                self.monitor.register_queued(
+                    &record.session_id,
+                    &record.user_id,
+                    &record.agent_id,
+                    &request.question,
+                    request.is_admin,
+                    &queue_monitor_payload,
+                );
+            }
         }
         let _ = self.queue_tx.try_send(());
         Ok(QueueInfo {

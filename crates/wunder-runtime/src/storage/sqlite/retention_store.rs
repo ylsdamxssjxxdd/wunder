@@ -61,10 +61,8 @@ mod tests {
 
     fn count_stream_events(storage: &SqliteStorage) -> i64 {
         let conn = storage.open().expect("open sqlite");
-        conn.query_row("SELECT COUNT(*) FROM stream_events", [], |row| {
-            row.get(0)
-        })
-        .expect("count stream events")
+        conn.query_row("SELECT COUNT(*) FROM stream_events", [], |row| row.get(0))
+            .expect("count stream events")
     }
 
     #[test]
@@ -90,7 +88,9 @@ mod tests {
             .expect("append chat");
 
         let cutoff = now - 24.0 * 3600.0;
-        let deleted = storage.cleanup_retention(cutoff).expect("cleanup retention");
+        let deleted = storage
+            .cleanup_retention(cutoff)
+            .expect("cleanup retention");
         assert_eq!(deleted.get("stream_events").copied(), Some(1));
         assert_eq!(count_stream_events(&storage), 1);
         assert_eq!(

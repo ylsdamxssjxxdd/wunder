@@ -246,10 +246,12 @@ impl Orchestrator {
             .map(Vec::len)
             .unwrap_or(0);
         let verified = crate::core::blocking::run_db("context.microcompaction.verify", move || {
-            let rows = storage.load_chat_history(&persisted_user_id, &persisted_session_id, Some(1))?;
+            let rows =
+                storage.load_chat_history(&persisted_user_id, &persisted_session_id, Some(1))?;
             Ok(rows.last().is_some_and(|row| {
                 let meta = row.get("meta").and_then(Value::as_object);
-                meta.and_then(|meta| meta.get("type")).and_then(Value::as_str)
+                meta.and_then(|meta| meta.get("type"))
+                    .and_then(Value::as_str)
                     == Some(MICROCOMPACTION_META_TYPE)
                     && meta
                         .and_then(|meta| meta.get(COMPACTION_REPLACEMENT_HISTORY_META_KEY))

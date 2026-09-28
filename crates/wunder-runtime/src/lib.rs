@@ -30,11 +30,10 @@ pub use services::subagents::list_parent_subagents;
 pub use services::worker_card_settings;
 pub use services::{
     a2a_store, admin_skills, agent_management, attachment, beeroom_realtime, browser, cron,
-    default_agent_protocol,
-    desktop_lan, desktop_runtime_recovery, doc2md, drawio, goal, history, knowledge, llm, mcp,
-    memory, multimodal_models, onlyoffice, org_units, presence, prompting, ragflow_knowledge,
-    runtime, sim_lab, skills, swarm, tools, user_access, user_leveling, user_plaza,
-    user_prompt_templates, user_store, user_tools, user_world, vector_knowledge, virtual_llm,
-    workspace,
+    default_agent_protocol, desktop_lan, desktop_runtime_recovery, doc2md, drawio, goal, history,
+    knowledge, llm, mcp, memory, multimodal_models, onlyoffice, org_units, presence, prompting,
+    ragflow_knowledge, runtime, sim_lab, skills, swarm, tools, user_access, user_leveling,
+    user_plaza, user_prompt_templates, user_store, user_tools, user_world, vector_knowledge,
+    virtual_llm, workspace,
 };
 pub use wunder_core as stable_core;

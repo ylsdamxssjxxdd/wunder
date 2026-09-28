@@ -47,6 +47,7 @@ async fn upsert_session_goal(
     let resolved = resolve_user(&state, &headers, None).await?;
     let session_id = normalize_session_id(session_id)?;
     let session = ensure_session_owner(&state, &resolved.user.user_id, &session_id)?;
+    let approval_mode = payload.approval_mode.clone();
     let command = goal_command_from_payload(payload)?;
     let (goal, continuation, command_user_round) = apply_goal_command(
         &state,
@@ -55,6 +56,7 @@ async fn upsert_session_goal(
         command,
         session.agent_id.as_deref(),
         crate::user_store::UserStore::is_admin(&resolved.user),
+        approval_mode.as_deref(),
     )
     .await?;
     Ok(Json(json!({
@@ -90,6 +92,7 @@ pub(crate) async fn apply_goal_command(
     command: GoalCommand,
     agent_id: Option<&str>,
     is_admin: bool,
+    approval_mode: Option<&str>,
 ) -> Result<
     (
         Option<crate::storage::SessionGoalRecord>,
@@ -107,7 +110,7 @@ pub(crate) async fn apply_goal_command(
         GoalCommand::Resume => Some("/goal resume".to_string()),
         _ => None,
     };
-    let record = match command {
+    let mut record = match command {
         GoalCommand::Show => goal::get_goal(state.storage.clone(), user_id, session_id)
             .await
             .map_err(bad_request)?,
@@ -174,6 +177,20 @@ pub(crate) async fn apply_goal_command(
     } else {
         None
     };
+    if let Some(goal_record) = record.take() {
+        record = Some(if command_user_round.is_some() {
+            goal::bind_goal_execution_context(
+                state.storage.clone(),
+                goal_record,
+                command_user_round,
+                approval_mode,
+            )
+            .await
+            .map_err(bad_request)?
+        } else {
+            goal_record
+        });
+    }
     let continuation = if should_schedule {
         schedule_goal_continuation(state, user_id, session_id).await
     } else {

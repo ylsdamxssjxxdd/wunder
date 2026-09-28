@@ -292,6 +292,9 @@ pub struct SessionGoalRecord {
     pub completed_at: Option<f64>,
     pub last_continued_at: Option<f64>,
     pub source: String,
+    /// Visible user turn and effective permission captured when the goal is started.
+    pub user_round: Option<i64>,
+    pub approval_mode: Option<String>,
 }
 
 #[derive(Debug, Clone)]

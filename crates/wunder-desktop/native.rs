@@ -117,21 +117,52 @@ impl NativeDesktop {
             0,
             100,
         )?;
-        Ok(records.into_iter().map(|record| self.session_with_stats(record)).collect())
+        Ok(records
+            .into_iter()
+            .map(|record| self.session_with_stats(record))
+            .collect())
     }
 
-    fn session_with_stats(&self, record: wunder_server::storage::ChatSessionRecord) -> NativeSession {
-        let overview = self.desktop.state.monitor.get_log_overview(&record.session_id);
+    fn session_with_stats(
+        &self,
+        record: wunder_server::storage::ChatSessionRecord,
+    ) -> NativeSession {
+        let overview = self
+            .desktop
+            .state
+            .monitor
+            .get_log_overview(&record.session_id);
         NativeSession {
             id: record.session_id,
             title: record.title,
             updated_at: record.updated_at,
             agent_id: record.agent_id,
-            consumed_tokens: overview.as_ref().and_then(|v| v.get("consumed_tokens")).and_then(Value::as_i64).unwrap_or(0),
-            tool_calls: overview.as_ref().and_then(|v| v.get("tool_calls")).and_then(Value::as_i64).unwrap_or(0),
-            model_request_count: overview.as_ref().and_then(|v| v.get("model_request_count")).and_then(Value::as_i64).unwrap_or(0),
-            quota_used: overview.as_ref().and_then(|v| v.get("quota_used").or_else(|| v.get("model_request_count"))).and_then(Value::as_i64).unwrap_or(0),
-            runtime_status: overview.as_ref().and_then(|v| v.get("status")).and_then(Value::as_str).unwrap_or("done").to_string(),
+            consumed_tokens: overview
+                .as_ref()
+                .and_then(|v| v.get("consumed_tokens"))
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            tool_calls: overview
+                .as_ref()
+                .and_then(|v| v.get("tool_calls"))
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            model_request_count: overview
+                .as_ref()
+                .and_then(|v| v.get("model_request_count"))
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            quota_used: overview
+                .as_ref()
+                .and_then(|v| v.get("quota_used").or_else(|| v.get("model_request_count")))
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            runtime_status: overview
+                .as_ref()
+                .and_then(|v| v.get("status"))
+                .and_then(Value::as_str)
+                .unwrap_or("done")
+                .to_string(),
             locked: false,
         }
     }
@@ -199,19 +230,40 @@ impl NativeDesktop {
 
     pub fn rename_session(&self, session_id: &str, title: &str) -> Result<()> {
         let title = title.trim();
-        if title.is_empty() || title.chars().count() > 120 || title.chars().any(char::is_control) { return Err(anyhow!("线程名称无效")); }
-        self.desktop.state.user_store.update_chat_session_title(&self.desktop.user_id, session_id.trim(), title, now_ts())
+        if title.is_empty() || title.chars().count() > 120 || title.chars().any(char::is_control) {
+            return Err(anyhow!("线程名称无效"));
+        }
+        self.desktop.state.user_store.update_chat_session_title(
+            &self.desktop.user_id,
+            session_id.trim(),
+            title,
+            now_ts(),
+        )
     }
 
     pub fn archive_session(&self, session_id: &str) -> Result<()> {
-        let mut record = self.desktop.state.user_store.get_chat_session(&self.desktop.user_id, session_id.trim())?.ok_or_else(|| anyhow!("线程不存在"))?;
+        let mut record = self
+            .desktop
+            .state
+            .user_store
+            .get_chat_session(&self.desktop.user_id, session_id.trim())?
+            .ok_or_else(|| anyhow!("线程不存在"))?;
         record.status = "archived".into();
         record.updated_at = now_ts();
         self.desktop.state.user_store.upsert_chat_session(&record)
     }
 
-    pub fn session_detail_page(&self, session_id: &str, offset: usize, limit: usize) -> Result<Value> {
-        self.desktop.state.monitor.get_detail_page(session_id.trim(), offset, limit).ok_or_else(|| anyhow!("线程日志不存在"))
+    pub fn session_detail_page(
+        &self,
+        session_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Value> {
+        self.desktop
+            .state
+            .monitor
+            .get_detail_page(session_id.trim(), offset, limit)
+            .ok_or_else(|| anyhow!("线程日志不存在"))
     }
 
     pub fn cancel_chat(&self, session_id: &str) -> Result<()> {
@@ -320,15 +372,42 @@ fn message_from_value(value: Value) -> Option<NativeMessage> {
         } else {
             String::new()
         },
-        stats_duration: format_duration(stats_value(stats, &["interaction_duration_s", "duration_s", "elapsed_s"])),
-        stats_speed: format_speed(stats_value(stats, &["visible_decode_speed_tps", "decode_speed_tps"])),
-        stats_context: format_count(stats_value(stats, &["contextTokens", "context_occupancy_tokens", "context_tokens"]))
+        stats_duration: format_duration(stats_value(
+            stats,
+            &["interaction_duration_s", "duration_s", "elapsed_s"],
+        )),
+        stats_speed: format_speed(stats_value(
+            stats,
+            &["visible_decode_speed_tps", "decode_speed_tps"],
+        )),
+        stats_context: format_count(stats_value(
+            stats,
+            &[
+                "contextTokens",
+                "context_occupancy_tokens",
+                "context_tokens",
+            ],
+        ))
+        .unwrap_or_default(),
+        stats_quota: format_count(stats_value(
+            stats,
+            &["request_consumed_tokens", "consumed_tokens"],
+        ))
+        .or_else(|| {
+            format_count(
+                stats
+                    .get("round_usage")
+                    .and_then(|value| stats_value(value, &["total_tokens", "total"])),
+            )
+        })
+        .unwrap_or_default(),
+        stats_tools: format_count(stats_value(stats, &["toolCalls", "tool_calls"]))
             .unwrap_or_default(),
-        stats_quota: format_count(stats_value(stats, &["request_consumed_tokens", "consumed_tokens"]))
-            .or_else(|| format_count(stats.get("round_usage").and_then(|value| stats_value(value, &["total_tokens", "total"]))))
-            .unwrap_or_default(),
-        stats_tools: format_count(stats_value(stats, &["toolCalls", "tool_calls"])).unwrap_or_default(),
-        stats_credits: format_count(stats_value(stats, &["account_credits_consumed", "creditsConsumed"])).unwrap_or_default(),
+        stats_credits: format_count(stats_value(
+            stats,
+            &["account_credits_consumed", "creditsConsumed"],
+        ))
+        .unwrap_or_default(),
     })
 }
 
@@ -337,7 +416,11 @@ fn stats_value<'a>(stats: &'a Value, keys: &[&str]) -> Option<&'a Value> {
 }
 
 fn format_count(value: Option<&Value>) -> Option<String> {
-    let number = value.and_then(|value| value.as_i64().or_else(|| value.as_f64().map(|value| value as i64)))?;
+    let number = value.and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_f64().map(|value| value as i64))
+    })?;
     (number >= 0).then(|| {
         if number >= 1_000_000 {
             format!("{:.1}m", number as f64 / 1_000_000.0)
@@ -350,14 +433,24 @@ fn format_count(value: Option<&Value>) -> Option<String> {
 }
 
 fn format_duration(value: Option<&Value>) -> String {
-    let Some(seconds) = value.and_then(Value::as_f64).filter(|value| value.is_finite() && *value > 0.0) else {
+    let Some(seconds) = value
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && *value > 0.0)
+    else {
         return String::new();
     };
-    if seconds < 60.0 { format!("{seconds:.1}s") } else { format!("{}m {:.0}s", (seconds / 60.0).floor(), seconds % 60.0) }
+    if seconds < 60.0 {
+        format!("{seconds:.1}s")
+    } else {
+        format!("{}m {:.0}s", (seconds / 60.0).floor(), seconds % 60.0)
+    }
 }
 
 fn format_speed(value: Option<&Value>) -> String {
-    let Some(speed) = value.and_then(Value::as_f64).filter(|value| value.is_finite() && *value > 0.0) else {
+    let Some(speed) = value
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && *value > 0.0)
+    else {
         return String::new();
     };
     format!("{speed:.1}/s")

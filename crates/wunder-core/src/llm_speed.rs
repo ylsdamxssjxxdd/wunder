@@ -115,6 +115,10 @@ impl TurnDecodeSpeedAccumulator {
             "visible_decode_speed_tps".to_string(),
             json!(self.last_decode_speed_tps),
         );
+        map.insert(
+            "visible_decode_measured".to_string(),
+            json!(self.last_decode_tokens.is_some() && self.last_decode_duration_s.is_some()),
+        );
     }
 }
 

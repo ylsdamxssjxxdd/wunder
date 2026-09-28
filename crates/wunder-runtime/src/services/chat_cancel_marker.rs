@@ -61,10 +61,12 @@ pub(crate) fn persist_user_cancelled_turn_marker_sync(
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let _ = workspace.flush_writes();
     let history = workspace.load_history(user_id, session_id, 0)?;
-    let Some(last_user_index) = history
-        .iter()
-        .rposition(|item| item.get("role").and_then(Value::as_str) == Some("user"))
-    else {
+    let Some(last_user_index) = history.iter().rposition(|item| {
+        item.get("role").and_then(Value::as_str) == Some("user")
+            && !crate::services::chat_transcript::is_hidden_internal_history_message_for_cancel(
+                item,
+            )
+    }) else {
         return Ok(false);
     };
     if history

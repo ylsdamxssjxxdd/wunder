@@ -272,7 +272,9 @@ fn session_event_queue_is_bounded() {
     let detail = monitor
         .get_detail(&session_id)
         .expect("detail should exist");
-    let events = detail["events"].as_array().expect("events should be an array");
+    let events = detail["events"]
+        .as_array()
+        .expect("events should be an array");
     assert_eq!(events.len(), 500);
     let last = events.last().expect("last event");
     assert_eq!(last["type"], json!("marker"));

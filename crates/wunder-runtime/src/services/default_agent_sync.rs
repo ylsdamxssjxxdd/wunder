@@ -612,7 +612,7 @@ mod tests {
             vec![
                 "最终回复".to_string(),
                 "定时任务".to_string(),
-                    "读取文件".to_string(),
+                "读取文件".to_string(),
                 "技能创建器".to_string(),
             ]
         );

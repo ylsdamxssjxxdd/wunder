@@ -57,7 +57,12 @@ impl NativeDesktop {
     /// Switches the selected agent to one of the ten local workspace roots.
     /// A path is accepted directly so desktop users do not need a platform
     /// specific folder picker.
-    pub fn save_workspace_binding(&self, agent_id: &str, container_id: i32, path: &str) -> Result<()> {
+    pub fn save_workspace_binding(
+        &self,
+        agent_id: &str,
+        container_id: i32,
+        path: &str,
+    ) -> Result<()> {
         let container_id = wunder_server::storage::normalize_sandbox_container_id(container_id);
         let path = std::path::Path::new(path.trim());
         if !path.is_absolute() || path.to_string_lossy().chars().any(char::is_control) {
@@ -65,14 +70,26 @@ impl NativeDesktop {
         }
         std::fs::create_dir_all(path)?;
         let canonical = path.canonicalize()?;
-        let _guard = self.settings_lock.lock().map_err(|_| anyhow!("配置锁不可用"))?;
+        let _guard = self
+            .settings_lock
+            .lock()
+            .map_err(|_| anyhow!("配置锁不可用"))?;
         let mut settings = load_desktop_settings(&self.desktop.settings_path)?;
-        settings.container_roots.insert(container_id, canonical.to_string_lossy().into_owned());
+        settings
+            .container_roots
+            .insert(container_id, canonical.to_string_lossy().into_owned());
         save_desktop_settings(&self.desktop.settings_path, &settings)?;
-        let mut record = self.runtime.block_on(wunder_server::agent_management::owned(self.state(), self.user_id(), agent_id))?;
+        let mut record = self
+            .runtime
+            .block_on(wunder_server::agent_management::owned(
+                self.state(),
+                self.user_id(),
+                agent_id,
+            ))?;
         record.sandbox_container_id = container_id;
         if record.agent_id == "__default__" {
-            let config = wunder_server::default_agent_protocol::default_agent_config_from_record(&record);
+            let config =
+                wunder_server::default_agent_protocol::default_agent_config_from_record(&record);
             self.state().user_store.set_meta(
                 &wunder_server::default_agent_protocol::default_agent_meta_key(self.user_id()),
                 &serde_json::to_string(&config)?,
@@ -80,11 +97,14 @@ impl NativeDesktop {
         } else {
             self.state().user_store.upsert_user_agent(&record)?;
         }
-        self.state().workspace.set_container_roots(settings.container_roots.clone());
+        self.state()
+            .workspace
+            .set_container_roots(settings.container_roots.clone());
         let roots = settings.container_roots.clone();
-        self.runtime.block_on(self.state().config_store.update(|config| {
-            config.workspace.container_roots = roots.clone();
-        }))?;
+        self.runtime
+            .block_on(self.state().config_store.update(|config| {
+                config.workspace.container_roots = roots.clone();
+            }))?;
         Ok(())
     }
 

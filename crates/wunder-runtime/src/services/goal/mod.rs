@@ -33,6 +33,7 @@ pub const EVENT_GOAL_CONTINUATION_STARTED: &str = "goal_continuation_started";
 pub const EVENT_GOAL_BUDGET_LIMITED: &str = "goal_budget_limited";
 
 pub const GOAL_CONTINUATION_CONFIG_KEY: &str = "_goal_continuation";
+pub const GOAL_CONTINUATION_USER_ROUND_CONFIG_KEY: &str = "_goal_user_round";
 
 const MAX_OBJECTIVE_CHARS: usize = 4000;
 const CONTINUATION_COOLDOWN_S: f64 = 1.0;
@@ -81,6 +82,8 @@ pub struct GoalUpsertPayload {
     pub token_budget: Option<i64>,
     #[serde(default)]
     pub status: Option<String>,
+    #[serde(default, alias = "approvalMode")]
+    pub approval_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -251,6 +254,8 @@ pub fn goal_payload(record: &SessionGoalRecord) -> Value {
         "completed_at": record.completed_at,
         "last_continued_at": record.last_continued_at,
         "source": record.source,
+        "user_round": record.user_round,
+        "approval_mode": record.approval_mode,
     })
 }
 
@@ -293,6 +298,29 @@ pub async fn set_goal(
     token_budget: Option<i64>,
     source: &str,
 ) -> Result<SessionGoalRecord> {
+    set_goal_with_context(
+        storage,
+        user_id,
+        session_id,
+        objective,
+        token_budget,
+        source,
+        None,
+        None,
+    )
+    .await
+}
+
+pub async fn set_goal_with_context(
+    storage: Arc<dyn StorageBackend>,
+    user_id: &str,
+    session_id: &str,
+    objective: &str,
+    token_budget: Option<i64>,
+    source: &str,
+    user_round: Option<i64>,
+    approval_mode: Option<&str>,
+) -> Result<SessionGoalRecord> {
     let objective = validate_objective(objective)?;
     let user_id = clean_required(user_id, "user id")?;
     let session_id = clean_required(session_id, "session id")?;
@@ -311,6 +339,12 @@ pub async fn set_goal(
         completed_at: None,
         last_continued_at: None,
         source: source.trim().to_string(),
+        user_round: user_round.filter(|round| *round > 0),
+        approval_mode: approval_mode.map(|mode| {
+            crate::approval::ApprovalMode::from_raw(Some(mode))
+                .as_str()
+                .to_string()
+        }),
     };
     let storage_for_write = storage.clone();
     let record_for_write = record.clone();
@@ -319,6 +353,28 @@ pub async fn set_goal(
     })
     .await?;
     emit_goal_event(storage, &record, EVENT_GOAL_UPDATED, None).await;
+    Ok(record)
+}
+
+pub async fn bind_goal_execution_context(
+    storage: Arc<dyn StorageBackend>,
+    mut record: SessionGoalRecord,
+    user_round: Option<i64>,
+    approval_mode: Option<&str>,
+) -> Result<SessionGoalRecord> {
+    record.user_round = user_round.filter(|round| *round > 0).or(record.user_round);
+    if let Some(mode) = approval_mode {
+        record.approval_mode = Some(
+            crate::approval::ApprovalMode::from_raw(Some(mode))
+                .as_str()
+                .to_string(),
+        );
+    }
+    let updated = record.clone();
+    run_goal_db("goal.bind_context", move || {
+        storage.upsert_session_goal(&updated)
+    })
+    .await?;
     Ok(record)
 }
 
@@ -513,11 +569,31 @@ pub fn build_goal_continuation_overrides(base: Option<&Value>) -> Value {
     payload
 }
 
+pub fn set_goal_continuation_user_round(overrides: &mut Value, user_round: Option<i64>) {
+    let Some(round) = user_round.filter(|value| *value > 0) else {
+        return;
+    };
+    if let Some(map) = overrides.as_object_mut() {
+        map.insert(
+            GOAL_CONTINUATION_USER_ROUND_CONFIG_KEY.to_string(),
+            Value::Number(round.into()),
+        );
+    }
+}
+
+pub fn goal_continuation_user_round(overrides: Option<&Value>) -> Option<i64> {
+    overrides
+        .and_then(|value| value.get(GOAL_CONTINUATION_USER_ROUND_CONFIG_KEY))
+        .and_then(Value::as_i64)
+        .filter(|value| *value > 0)
+}
+
 pub async fn build_continuation_request_from_session(
     storage: Arc<dyn StorageBackend>,
     user_id: &str,
     session: &ChatSessionRecord,
     tool_names: Vec<String>,
+    is_admin: bool,
 ) -> Result<Option<GoalContinuationRequest>> {
     let Some(goal) = get_goal(storage.clone(), user_id, &session.session_id).await? else {
         return Ok(None);
@@ -526,6 +602,13 @@ pub async fn build_continuation_request_from_session(
         return Ok(None);
     }
     let question = build_continuation_prompt(&goal);
+    let mut config_overrides = build_goal_continuation_overrides(None);
+    set_goal_continuation_user_round(&mut config_overrides, goal.user_round);
+    if let Some(mode) = goal.approval_mode.as_deref() {
+        if let Some(map) = config_overrides.as_object_mut() {
+            map.insert("security".to_string(), json!({ "approval_mode": mode }));
+        }
+    }
     let request = WunderRequest {
         user_id: user_id.trim().to_string(),
         question,
@@ -538,12 +621,12 @@ pub async fn build_continuation_request_from_session(
         workspace_container_id: None,
         model_name: None,
         language: Some(crate::i18n::get_language()),
-        config_overrides: Some(build_goal_continuation_overrides(None)),
+        config_overrides: Some(config_overrides),
         agent_prompt: None,
         preview_skill: false,
         attachments: None,
         allow_queue: true,
-        is_admin: false,
+        is_admin,
         enforce_runtime_queue: false,
         approval_tx: None,
     };
@@ -603,13 +686,15 @@ pub async fn execute_goal_tool(
                     "data": { "goal": goal_payload(existing) }
                 }));
             }
-            let record = set_goal(
+            let record = set_goal_with_context(
                 context.storage.clone(),
                 context.user_id,
                 context.session_id,
                 objective,
                 token_budget,
                 SOURCE_MODEL,
+                context.user_round,
+                context.config.security.approval_mode.as_deref(),
             )
             .await?;
             Ok(json!({ "ok": true, "data": { "goal": goal_payload(&record) } }))
@@ -776,6 +861,32 @@ mod tests {
     fn status_normalization_rejects_unknown() {
         assert_eq!(normalize_status("active").unwrap(), GoalStatus::Active);
         assert!(normalize_status("waiting").is_err());
+    }
+
+    #[test]
+    fn continuation_request_reuses_durable_turn_and_approval() {
+        let goal = SessionGoalRecord {
+            goal_id: "goal".to_string(),
+            session_id: "session".to_string(),
+            user_id: "user".to_string(),
+            objective: "finish work".to_string(),
+            status: STATUS_ACTIVE.to_string(),
+            token_budget: None,
+            tokens_used: 0,
+            time_used_seconds: 0,
+            created_at: 0.0,
+            updated_at: 0.0,
+            completed_at: None,
+            last_continued_at: None,
+            source: SOURCE_API.to_string(),
+            user_round: Some(3),
+            approval_mode: Some("full_auto".to_string()),
+        };
+        let mut overrides = build_goal_continuation_overrides(None);
+        set_goal_continuation_user_round(&mut overrides, goal.user_round);
+        overrides["security"] = json!({ "approval_mode": goal.approval_mode });
+        assert_eq!(goal_continuation_user_round(Some(&overrides)), Some(3));
+        assert_eq!(overrides["security"]["approval_mode"], json!("full_auto"));
     }
 
     #[test]

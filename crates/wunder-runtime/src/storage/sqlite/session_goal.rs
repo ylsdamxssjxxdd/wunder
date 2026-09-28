@@ -47,8 +47,8 @@ impl SqliteSessionGoalStorage for SqliteStorage {
         conn.execute(
             "INSERT INTO session_goals (
                 session_id, user_id, goal_id, objective, status, token_budget, tokens_used,
-                time_used_seconds, created_at, updated_at, completed_at, last_continued_at, source
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                time_used_seconds, created_at, updated_at, completed_at, last_continued_at, source, user_round, approval_mode
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(session_id) DO UPDATE SET
                 user_id = excluded.user_id,
                 goal_id = excluded.goal_id,
@@ -61,7 +61,9 @@ impl SqliteSessionGoalStorage for SqliteStorage {
                 updated_at = excluded.updated_at,
                 completed_at = excluded.completed_at,
                 last_continued_at = excluded.last_continued_at,
-                source = excluded.source",
+                source = excluded.source,
+                user_round = excluded.user_round,
+                approval_mode = excluded.approval_mode",
             params![
                 cleaned_session,
                 cleaned_user,
@@ -75,7 +77,9 @@ impl SqliteSessionGoalStorage for SqliteStorage {
                 record.updated_at,
                 record.completed_at,
                 record.last_continued_at,
-                record.source.trim()
+                record.source.trim(),
+                record.user_round,
+                record.approval_mode
             ],
         )?;
         Ok(())
@@ -197,7 +201,7 @@ impl SqliteSessionGoalStorage for SqliteStorage {
 fn session_goal_select_sql(where_clause: &str) -> String {
     format!(
         "SELECT goal_id, session_id, user_id, objective, status, token_budget, tokens_used,
-         time_used_seconds, created_at, updated_at, completed_at, last_continued_at, source
+         time_used_seconds, created_at, updated_at, completed_at, last_continued_at, source, user_round, approval_mode
          FROM session_goals {where_clause}"
     )
 }
@@ -217,5 +221,7 @@ fn map_session_goal_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionGoal
         completed_at: row.get(10)?,
         last_continued_at: row.get(11)?,
         source: row.get::<_, Option<String>>(12)?.unwrap_or_default(),
+        user_round: row.get(13)?,
+        approval_mode: row.get(14)?,
     })
 }

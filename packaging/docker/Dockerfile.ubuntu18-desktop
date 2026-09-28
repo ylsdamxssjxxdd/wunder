@@ -10,6 +10,7 @@ ARG APPIMAGE_RUNTIME_URL
 # archive.ubuntu.com only serves the amd64/i386 archive; the arm64 indexes live
 # on ports.ubuntu.com, so pick the apt mirror from the build platform.
 ARG TARGETARCH
+ARG TARGETPLATFORM
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CARGO_HOME=/usr/local/cargo
@@ -19,27 +20,43 @@ ENV PATH=/usr/local/cargo/bin:$PATH
 # The packager hard-requires the winit X11 dlopen closure (libxkbcommon-x11,
 # libxcb-xkb); ldd cannot report dlopen'd libraries, so the build image must
 # install them explicitly.
-RUN if [ "${TARGETARCH}" = "arm64" ]; then \
-      apt_mirror="http://ports.ubuntu.com/ubuntu-ports"; \
+RUN if [ "${TARGETARCH}" = "amd64" ]; then \
+      printf '%s\n' \
+        "deb [arch=amd64 trusted=yes] http://archive.ubuntu.com/ubuntu bionic main universe multiverse restricted" \
+        "deb [arch=amd64 trusted=yes] http://archive.ubuntu.com/ubuntu bionic-updates main universe multiverse restricted" \
+        "deb [arch=amd64 trusted=yes] http://archive.ubuntu.com/ubuntu bionic-security main universe multiverse restricted" \
+        "deb [arch=arm64 trusted=yes] http://ports.ubuntu.com/ubuntu-ports bionic main universe multiverse restricted" \
+        "deb [arch=arm64 trusted=yes] http://ports.ubuntu.com/ubuntu-ports bionic-updates main universe multiverse restricted" \
+        "deb [arch=arm64 trusted=yes] http://ports.ubuntu.com/ubuntu-ports bionic-security main universe multiverse restricted" \
+        > /etc/apt/sources.list; \
     else \
-      apt_mirror="http://archive.ubuntu.com/ubuntu"; \
+      printf '%s\n' \
+        "deb [trusted=yes] http://ports.ubuntu.com/ubuntu-ports bionic main universe multiverse restricted" \
+        "deb [trusted=yes] http://ports.ubuntu.com/ubuntu-ports bionic-updates main universe multiverse restricted" \
+        "deb [trusted=yes] http://ports.ubuntu.com/ubuntu-ports bionic-security main universe multiverse restricted" \
+        > /etc/apt/sources.list; \
     fi \
- && printf '%s\n' \
-      "deb [trusted=yes] ${apt_mirror} bionic main universe multiverse restricted" \
-      "deb [trusted=yes] ${apt_mirror} bionic-updates main universe multiverse restricted" \
-      "deb [trusted=yes] ${apt_mirror} bionic-security main universe multiverse restricted" \
-      > /etc/apt/sources.list \
  && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99no-check-valid \
  && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=5 update \
+ && if [ "${TARGETARCH}" = "amd64" ]; then dpkg --add-architecture arm64; fi \
+ && apt-get -o Acquire::Check-Valid-Until=false update \
  && apt-get install -y --no-install-recommends \
       build-essential ca-certificates curl file git pkg-config python3 nasm cmake \
       libssl-dev libgtk-3-dev libxkbcommon-dev libfontconfig1-dev \
       libfreetype6-dev libudev-dev libx11-dev libxi-dev libxcursor-dev \
       libxrandr-dev libxinerama-dev libxtst-dev libwayland-dev libasound2 libasound2-dev \
       libxkbcommon-x11-0 libxcb-xkb1 squashfs-tools \
+ && if [ "${TARGETARCH}" = "amd64" ]; then \
+      apt-get install -y --no-install-recommends \
+        gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu libc6-dev-arm64-cross \
+        libssl-dev:arm64 libgtk-3-dev:arm64 libxkbcommon-dev:arm64 libfontconfig1-dev:arm64 \
+        libfreetype6-dev:arm64 libudev-dev:arm64 libasound2-dev:arm64 \
+        libxkbcommon-x11-0:arm64 libxcb-xkb1:arm64; \
+    fi \
  && rm -rf /var/lib/apt/lists/* \
  && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
  && rustup component add rust-src --toolchain "${RUST_TOOLCHAIN}" \
+ && rustup target add aarch64-unknown-linux-gnu --toolchain "${RUST_TOOLCHAIN}" \
  && if [ -z "${APPIMAGE_RUNTIME_URL}" ]; then \
       echo "APPIMAGE_RUNTIME_URL is required (AppImageKit type-2 runtime blob)"; \
       exit 1; \

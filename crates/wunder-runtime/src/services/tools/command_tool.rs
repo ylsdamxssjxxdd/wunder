@@ -1565,7 +1565,12 @@ fn build_sandbox_command_result(data: Value) -> Value {
             false,
         );
     }
-    build_model_tool_success("execute_command", "completed", "Sandbox command completed.", data)
+    build_model_tool_success(
+        "execute_command",
+        "completed",
+        "Sandbox command completed.",
+        data,
+    )
 }
 
 pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -1719,10 +1724,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                 }
                 let guidance = i18n::t("tool.exec.background_next_step");
                 if let Value::Object(ref mut map) = data {
-                    map.insert(
-                        "next_step".to_string(),
-                        Value::String(guidance.clone()),
-                    );
+                    map.insert("next_step".to_string(), Value::String(guidance.clone()));
                 }
                 return Ok(build_model_tool_success(
                     "execute_command",

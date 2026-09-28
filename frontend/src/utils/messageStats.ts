@@ -342,6 +342,9 @@ const resolveDurationSeconds = (stats: Record<string, any>): number | null => {
 };
 
 const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
+  if (stats?.visible_decode_measured === false || stats?.visibleDecodeMeasured === false) {
+    return null;
+  }
   const averageSpeed = normalizeSpeed(
     Number(
       stats?.visible_decode_speed_tps ?? stats?.visibleDecodeSpeedTps ??
@@ -354,6 +357,13 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
   const timing = stats?.stream_timing && typeof stats.stream_timing === 'object'
     ? stats.stream_timing
     : null;
+  // A persisted visible metric is authoritative. When the provider could not
+  // measure the final visible response, do not combine its token count with a
+  // legacy duration from an earlier tool/model round.
+  const hasVisibleTokenMetric = Object.prototype.hasOwnProperty.call(stats || {}, 'visible_decode_tokens') ||
+    Object.prototype.hasOwnProperty.call(stats || {}, 'visibleDecodeTokens') ||
+    Object.prototype.hasOwnProperty.call(stats || {}, 'visible_decode_duration_s') ||
+    Object.prototype.hasOwnProperty.call(stats || {}, 'visibleDecodeDurationS');
   const visibleChars = Number(timing?.content_delta_chars ?? timing?.contentDeltaChars);
   const reasoningChars = Number(timing?.reasoning_delta_chars ?? timing?.reasoningDeltaChars);
   const tokens = Number(
@@ -367,7 +377,7 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
   );
   const durationSeconds = Number(
     stats?.visible_decode_duration_s ?? stats?.visibleDecodeDurationS ??
-      stats?.decode_duration_s ?? stats?.decodeDurationS
+      (hasVisibleTokenMetric ? undefined : stats?.decode_duration_s ?? stats?.decodeDurationS)
   );
   const timingMs = Number(timing?.content_decode_ms ?? timing?.decode_ms);
   const durationMs = Number.isFinite(durationSeconds) && durationSeconds > 0

@@ -121,6 +121,8 @@ struct WsGoalPayload {
     objective: Option<String>,
     #[serde(default, alias = "tokenBudget", alias = "token_budget")]
     token_budget: Option<i64>,
+    #[serde(default, alias = "approvalMode")]
+    approval_mode: Option<String>,
 }
 
 #[derive(Clone)]
@@ -1037,6 +1039,7 @@ async fn handle_ws(
                             command,
                             session_record.agent_id.as_deref(),
                             crate::user_store::UserStore::is_admin(&user),
+                            payload.approval_mode.as_deref(),
                         )
                         .await;
                         match result {

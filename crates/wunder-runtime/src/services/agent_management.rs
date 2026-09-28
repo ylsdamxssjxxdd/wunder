@@ -183,8 +183,10 @@ pub async fn update_settings(
     let allowed = user_access::compute_allowed_tool_names(&user, &context);
     let container = input.sandbox_container_id.clamp(1, 10);
     record.tool_names = user_agent_presets::filter_allowed_tools(&input.tool_names, &allowed);
-    record.preset_questions = user_agent_presets::normalize_preset_questions(input.preset_questions);
-    record.approval_mode = user_agent_presets::normalize_agent_approval_mode(Some(&input.approval_mode));
+    record.preset_questions =
+        user_agent_presets::normalize_preset_questions(input.preset_questions);
+    record.approval_mode =
+        user_agent_presets::normalize_agent_approval_mode(Some(&input.approval_mode));
     record.sandbox_container_id = container;
     record.preview_skill = input.preview_skill;
     record.silent = input.silent;

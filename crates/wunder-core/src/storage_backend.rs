@@ -271,6 +271,8 @@ pub trait AgentRuntimeStore {
         limit: i64,
     ) -> Result<Vec<Value>>;
     fn load_recent_stream_events(&self, session_id: &str, limit: i64) -> Result<Vec<Value>>;
+    /// Return the highest model action ordinal for one visible user round.
+    fn max_session_model_round(&self, session_id: &str, user_round: i64) -> Result<i64>;
     fn load_session_workflow_events(
         &self,
         session_id: &str,

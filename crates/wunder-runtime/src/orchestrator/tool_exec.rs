@@ -128,9 +128,9 @@ impl Orchestrator {
         source: &str,
         round_info: RoundInfo,
     ) {
-        if let Err(err) =
-            self.try_append_internal_model_context_chat(user_id, session_id, message, source, round_info)
-        {
+        if let Err(err) = self.try_append_internal_model_context_chat(
+            user_id, session_id, message, source, round_info,
+        ) {
             warn!("append internal model context chat failed for session {session_id}: {err}");
         }
     }

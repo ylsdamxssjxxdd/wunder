@@ -2636,6 +2636,17 @@ const sendQuickCommand = async (command: string) => {
     ElMessage.warning(chatBusyMessage.value);
     return;
   }
+  if (command === '/goal') {
+    inputText.value = '/goal ';
+    commandMenuDismissed.value = false;
+    flushPersistDraftState();
+    void nextTick(() => {
+      resizeInput();
+      focusComposerInputAt(inputText.value.length);
+    });
+    ElMessage.info(t('chat.command.goalDraftHint'));
+    return;
+  }
   emit('send', { content: command, attachments: [], reasoningEffort: reasoningEffort.value });
   inputText.value = '';
   commandMenuDismissed.value = false;

@@ -702,6 +702,7 @@ const buildCompactionMarkerMessage = (roundNumber, events, manualMarker) => ({
   workflowStreaming: false,
   stream_incomplete: false,
   stream_round: roundNumber,
+  user_round: roundNumber,
   ...(manualMarker ? { manual_compaction_marker: true } : {})
 });
 
@@ -713,9 +714,16 @@ export const insertMessageByTimestamp = (messages, message) => {
   // `/compact` user turn. Event timestamps can precede the durable command
   // row, so keep the pair together even when replay order is reconstructed.
   if (message?.manual_compaction_marker === true || message?.manualCompactionMarker === true) {
+    const markerRound = Number(message?.user_round ?? message?.stream_round);
     let commandIndex = -1;
     for (let index = messages.length - 1; index >= 0; index -= 1) {
-      if (messages[index]?.role === 'user' && messages[index]?.manual_compaction_command === true) {
+      const commandRound = Number(messages[index]?.user_round);
+      if (
+        messages[index]?.role === 'user' &&
+        messages[index]?.manual_compaction_command === true &&
+        (!Number.isFinite(markerRound) || markerRound <= 0 ||
+          !Number.isFinite(commandRound) || commandRound === markerRound)
+      ) {
         commandIndex = index;
         break;
       }
@@ -825,7 +833,8 @@ export const attachWorkflowEvents = (messages, rounds) => {
       workflowItems: [],
       workflowStreaming: false,
       stream_incomplete: false,
-      stream_round: currentRound
+      stream_round: currentRound,
+      user_round: currentRound
     };
     lastAssistantIndex = pushMessage(syntheticMessage);
   };
@@ -848,6 +857,7 @@ export const attachWorkflowEvents = (messages, rounds) => {
           canonical.workflowStreaming = false;
           canonical.stream_incomplete = false;
           canonical.stream_round = roundNumber;
+          canonical.user_round = roundNumber;
         }
         assignedRounds.add(roundNumber);
       }
@@ -880,10 +890,16 @@ export const attachWorkflowEvents = (messages, rounds) => {
   };
   sourceMessages.forEach((message) => {
     if (message?.role === 'user') {
+      // Bind the preceding assistant to the preceding user round before
+      // advancing. Explicit durable rounds take precedence over list order,
+      // which may contain hidden internal rows or paged history gaps.
       ensureSyntheticAssistantForRound();
       assignRound();
       pushMessage(message);
-      currentRound += 1;
+      const explicitRound = Number(message?.user_round ?? message?.userRound);
+      currentRound = Number.isFinite(explicitRound) && explicitRound > 0
+        ? explicitRound
+        : currentRound + 1;
       lastAssistantIndex = null;
       return;
     }
@@ -911,7 +927,8 @@ export const attachWorkflowEvents = (messages, rounds) => {
           workflowItems: [],
           workflowStreaming: false,
           stream_incomplete: false,
-          stream_round: roundNumber
+          stream_round: roundNumber,
+          user_round: roundNumber
         };
     const insertedIndex = compactionRound
       ? insertMessageByTimestamp(hydratedMessages, syntheticMessage)

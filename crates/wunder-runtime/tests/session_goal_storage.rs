@@ -42,6 +42,8 @@ fn goal_record(user_id: &str, session_id: &str) -> SessionGoalRecord {
         completed_at: None,
         last_continued_at: None,
         source: goal::SOURCE_API.to_string(),
+        user_round: Some(3),
+        approval_mode: Some("full_auto".to_string()),
     }
 }
 
@@ -63,6 +65,8 @@ fn sqlite_session_goal_crud_and_usage() {
         .expect("goal exists");
     assert_eq!(loaded.objective, record.objective);
     assert_eq!(loaded.status, goal::STATUS_ACTIVE);
+    assert_eq!(loaded.user_round, Some(3));
+    assert_eq!(loaded.approval_mode.as_deref(), Some("full_auto"));
 
     let updated = storage
         .account_session_goal_usage("user_id", "session_id", 42, 3, now_ts() + 1.0)

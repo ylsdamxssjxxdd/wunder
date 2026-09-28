@@ -36,6 +36,7 @@ pub(super) trait PostgresAgentRuntimeStorage {
         limit: i64,
     ) -> Result<Vec<Value>>;
     fn load_recent_stream_events_impl(&self, session_id: &str, limit: i64) -> Result<Vec<Value>>;
+    fn max_session_model_round_impl(&self, session_id: &str, user_round: i64) -> Result<i64>;
     fn load_session_workflow_events_impl(
         &self,
         session_id: &str,
@@ -396,6 +397,20 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
             }
         }
         Ok(records)
+    }
+
+    fn max_session_model_round_impl(&self, session_id: &str, user_round: i64) -> Result<i64> {
+        self.ensure_initialized()?;
+        let session_id = session_id.trim();
+        if session_id.is_empty() || user_round <= 0 {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_one(
+            "SELECT MAX(CASE WHEN COALESCE(                payload::jsonb #>> '{data,model_round}',                payload::jsonb #>> '{data,data,model_round}',                payload::jsonb ->> 'model_round'             ) ~ '^[0-9]+$' THEN COALESCE(                payload::jsonb #>> '{data,model_round}',                payload::jsonb #>> '{data,data,model_round}',                payload::jsonb ->> 'model_round'             )::BIGINT END) FROM stream_events WHERE session_id = $1 AND user_round = $2",
+            &[&session_id, &user_round],
+        )?;
+        Ok(row.get::<_, Option<i64>>(0)?.unwrap_or(0).max(0))
     }
 
     fn load_session_workflow_events_impl(

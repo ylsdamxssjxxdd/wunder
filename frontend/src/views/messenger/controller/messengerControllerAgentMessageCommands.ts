@@ -768,7 +768,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           const commandMessage = commandLabel
               ? ctx.chatStore.appendLocalMessage('user', commandLabel, { sessionId, goalCommand: true })
               : null;
-          const result = await ctx.chatStore.setSessionGoal(sessionId, { objective });
+          const result = await ctx.chatStore.setSessionGoal(sessionId, { objective, approval_mode: 'full_auto' });
           applyGoalCommandUserRound(sessionId, commandMessage, result?.user_round);
           const savedObjective = String(result?.goal?.objective || objective).trim();
           ElMessage.success(ctx.t('chat.command.goalSet', { objective: savedObjective }));
@@ -831,7 +831,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
                   goalCommand: true
               });
               try {
-                  const result = await ctx.chatStore.setSessionGoal(goalSessionId, { status: 'active' });
+                  const result = await ctx.chatStore.setSessionGoal(goalSessionId, { status: 'active', approval_mode: 'full_auto' });
                   applyGoalCommandUserRound(goalSessionId, commandMessage, result?.user_round);
                   ElMessage.success(ctx.t('chat.command.goalResumed'));
               }

@@ -3124,6 +3124,8 @@ const PROJECTED_STATS_DISPLAY_FIELDS = [
   'visibleDecodeDurationS',
   'visible_decode_speed_tps',
   'visibleDecodeSpeedTps',
+  'visible_decode_measured',
+  'visibleDecodeMeasured',
   'decode_tokens',
   'decodeTokens',
   'decode_output_tokens',
@@ -4247,6 +4249,13 @@ const mergeProjectedDisplayMetadata = (
   Object.entries(source).forEach(([key, value]) => {
     if (value === undefined) return;
     const current = merged[key];
+    if (value === null && new Set([
+      'visible_decode_tokens', 'visible_decode_duration_s', 'visible_decode_speed_tps',
+      'decode_tokens', 'decode_duration_s', 'decode_speed_tps', 'visible_decode_measured'
+    ]).has(key)) {
+      merged[key] = null;
+      return;
+    }
     if (isPlainRecord(current) && isPlainRecord(value)) {
       merged[key] = mergeProjectedDisplayMetadata(current, value);
       return;
@@ -5143,6 +5152,8 @@ const mirrorProjectedStatsDisplay = (
     'visibleDecodeDurationS',
     'visible_decode_speed_tps',
     'visibleDecodeSpeedTps',
+    'visible_decode_measured',
+    'visibleDecodeMeasured',
     'decode_tokens',
     'decodeTokens',
     'decode_output_tokens',
@@ -5314,6 +5325,22 @@ const applyProjectedTimingStats = (
   stats: Record<string, unknown>,
   source: Record<string, unknown>
 ): void => {
+  const hasOwn = (key: string): boolean => Object.prototype.hasOwnProperty.call(source, key);
+  const explicit = (...keys: string[]) => keys.find((key) => hasOwn(key));
+  const visibleSpeedKey = explicit('visible_decode_speed_tps', 'visibleDecodeSpeedTps');
+  const visibleDurationKey = explicit('visible_decode_duration_s', 'visibleDecodeDurationS');
+  const visibleTokensKey = explicit('visible_decode_tokens', 'visibleDecodeTokens');
+  if (visibleSpeedKey && source[visibleSpeedKey] == null) stats.visible_decode_speed_tps = null;
+  if (visibleDurationKey && source[visibleDurationKey] == null) stats.visible_decode_duration_s = null;
+  if (visibleTokensKey && source[visibleTokensKey] == null) stats.visible_decode_tokens = null;
+  const visibleMeasuredKey = explicit('visible_decode_measured', 'visibleDecodeMeasured');
+  if (visibleMeasuredKey && typeof source[visibleMeasuredKey] === 'boolean') {
+    stats.visible_decode_measured = source[visibleMeasuredKey];
+  }
+  const decodeDurationKey = explicit('decode_duration_s', 'decodeDurationS', 'decodeDuration');
+  const decodeSpeedKey = explicit('decode_speed_tps', 'decodeSpeedTps');
+  if (decodeDurationKey && source[decodeDurationKey] == null) stats.decode_duration_s = null;
+  if (decodeSpeedKey && source[decodeSpeedKey] == null) stats.decode_speed_tps = null;
   const streamTiming = asRecord(source.stream_timing ?? source.streamTiming);
   if (Object.keys(streamTiming).length > 0) {
     stats.stream_timing = cloneProjectedDisplayValue(streamTiming);

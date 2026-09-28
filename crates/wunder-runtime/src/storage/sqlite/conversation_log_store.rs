@@ -368,7 +368,10 @@ mod tests {
     use tempfile::tempdir;
     use wunder_core::storage_backend::ConversationLogStore;
 
-    fn read_tool_log_columns(db_path: &std::path::Path, session_id: &str) -> (String, String, String) {
+    fn read_tool_log_columns(
+        db_path: &std::path::Path,
+        session_id: &str,
+    ) -> (String, String, String) {
         let conn = rusqlite::Connection::open(db_path).expect("open db");
         conn.query_row(
             "SELECT args, data, payload FROM tool_logs WHERE session_id = ?1",

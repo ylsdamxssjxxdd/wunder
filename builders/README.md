@@ -51,4 +51,6 @@ docker run --rm --network host \
 
 `prepare-linux-arm64-runtime-sysroot.sh` 是 arm64 侧的同类一次性维护脚本，把 bionic arm64 的 X11/XCB/XKB/ALSA 运行库闭包和 `squashfs-tools`（含压缩依赖）装进 `linux-arm64-ubuntu18/root`；必须在 **aarch64 Ubuntu 18.04** 环境（如 `rcho-slint-arm64-ubuntu18` 镜像）执行并将 SDK 挂载为可写。准备完成后，ARM64 Desktop 构建的运行库和 `mksquashfs` 都可完全来自 SDK，不再要求主机安装这些包。
 
+GitHub Actions 的 ARM64 Desktop 发布使用 `build-linux-arm64-cross-appimage.sh`：在 amd64 Ubuntu 18.04 容器中调用 `aarch64-linux-gnu-gcc`、Rust `aarch64-unknown-linux-gnu` target 和 ARM64 多架构 sysroot，编译与 SquashFS 打包均不经过 QEMU。需要启动验证时再单独加入轻量 QEMU smoke test；这样不会把数小时的 Rust 编译放进模拟器。
+
 Linux ARM64 Desktop 的 X11/XCB 运行库默认取自建机 `ldconfig`；当 ARM 主机缺少这些库（典型如 `libxkbcommon-x11.so.0`）时，`build-linux-arm64-appimage.sh` 会按库逐一优先改用 kylin-arm SDK 的 `offline/linux-arm64-ubuntu18/root/usr/lib/aarch64-linux-gnu` 或 `offline/runtime-libs/aarch64-linux-gnu`，其余库仍回退到 ldconfig，也可用 `WUNDER_SLINT_RUNTIME_LIB_DIR=/path/to/libs` 显式指定整个目录。从目录取用的库会校验 AArch64 ELF，防止误指其它架构的库目录。

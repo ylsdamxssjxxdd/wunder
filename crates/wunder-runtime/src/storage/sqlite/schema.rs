@@ -127,6 +127,19 @@ impl SqliteStorage {
         Ok(())
     }
 
+    fn ensure_session_goal_columns(&self, conn: &Connection) -> Result<()> {
+        let columns = load_table_columns(conn, "session_goals")?;
+        for (name, kind) in [("user_round", "INTEGER"), ("approval_mode", "TEXT")] {
+            if !columns.contains(name) {
+                conn.execute(
+                    &format!("ALTER TABLE session_goals ADD COLUMN {name} {kind}"),
+                    [],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     fn ensure_chat_history_columns(&self, conn: &Connection) -> Result<()> {
         let columns = load_table_columns(conn, "chat_history")?;
         if columns.is_empty() {
@@ -863,6 +876,8 @@ impl SqliteSchemaStorage for SqliteStorage {
               updated_at REAL NOT NULL,
               completed_at REAL,
               last_continued_at REAL,
+              user_round INTEGER,
+              approval_mode TEXT,
               source TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_session_goals_user
@@ -1473,6 +1488,7 @@ impl SqliteSchemaStorage for SqliteStorage {
         self.ensure_user_token_columns(&conn)?;
         self.ensure_user_tool_access_columns(&conn)?;
         self.ensure_chat_session_columns(&conn)?;
+        self.ensure_session_goal_columns(&conn)?;
         self.ensure_chat_history_columns(&conn)?;
         self.ensure_model_context_table_retired(&conn)?;
         self.ensure_stream_event_workflow_columns(&conn)?;

@@ -944,10 +944,7 @@ fn build_mother_wait_args(scenario: &MockScenario, observations: &[Value]) -> Op
     }))
 }
 
-fn worker_response(
-    user_message: &str,
-    observed_tools: &HashSet<String>,
-) -> Value {
+fn worker_response(user_message: &str, observed_tools: &HashSet<String>) -> Value {
     let worker_id =
         extract_message_value(user_message, "worker").unwrap_or_else(|| "worker".to_string());
     let tool1 = extract_message_value(user_message, "tool1").filter(|tool| !tool.is_empty());

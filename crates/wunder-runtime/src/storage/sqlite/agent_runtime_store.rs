@@ -37,6 +37,7 @@ pub(super) trait SqliteAgentRuntimeStorage {
         limit: i64,
     ) -> Result<Vec<Value>>;
     fn load_recent_stream_events_impl(&self, session_id: &str, limit: i64) -> Result<Vec<Value>>;
+    fn max_session_model_round_impl(&self, session_id: &str, user_round: i64) -> Result<i64>;
     fn load_session_workflow_events_impl(
         &self,
         session_id: &str,
@@ -411,6 +412,21 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
             }
         }
         Ok(records)
+    }
+
+    fn max_session_model_round_impl(&self, session_id: &str, user_round: i64) -> Result<i64> {
+        self.ensure_initialized()?;
+        let session_id = session_id.trim();
+        if session_id.is_empty() || user_round <= 0 {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let maximum = conn.query_row(
+            "SELECT MAX(CAST(COALESCE(                json_extract(payload, '$.data.model_round'),                json_extract(payload, '$.data.data.model_round'),                json_extract(payload, '$.model_round')             ) AS INTEGER)) FROM stream_events WHERE session_id = ? AND user_round = ?",
+            params![session_id, user_round],
+            |row| row.get::<_, Option<i64>>(0),
+        )?;
+        Ok(maximum.unwrap_or(0).max(0))
     }
 
     fn load_session_workflow_events_impl(

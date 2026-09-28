@@ -1774,7 +1774,9 @@ mod tests {
             }),
         ];
         for row in rows {
-            workspace.append_chat(user_id, &row).expect("append history");
+            workspace
+                .append_chat(user_id, &row)
+                .expect("append history");
         }
         Builder::new_current_thread()
             .enable_all()
@@ -1827,7 +1829,9 @@ mod tests {
             }),
         ];
         for row in rows {
-            workspace.append_chat(user_id, &row).expect("append history");
+            workspace
+                .append_chat(user_id, &row)
+                .expect("append history");
         }
         Builder::new_current_thread()
             .enable_all()

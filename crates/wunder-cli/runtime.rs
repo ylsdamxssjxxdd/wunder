@@ -476,10 +476,7 @@ fn apply_cli_defaults(
     // Runtime-owned data belongs under the user's single Wunder home. The
     // launch directory remains an input workspace only when explicitly
     // selected by the caller; it is never used as a storage root.
-    config.workspace.root = wunder_home
-        .join("workspace")
-        .to_string_lossy()
-        .to_string();
+    config.workspace.root = wunder_home.join("workspace").to_string_lossy().to_string();
 
     config.channels.enabled = false;
     config.gateway.enabled = false;
@@ -499,10 +496,7 @@ fn apply_cli_defaults(
 
     let user_skills = wunder_home.join("skills");
     let repo_skills = repo_assets::builtin_skills_root(repo_root);
-    let mut skill_paths = vec![
-        user_skills,
-        repo_skills,
-    ];
+    let mut skill_paths = vec![user_skills, repo_skills];
     for existing in &config.skills.paths {
         if is_eva_skills_path(existing) {
             continue;

@@ -77,6 +77,18 @@ impl PostgresStorage {
         Ok(())
     }
 
+    fn ensure_session_goal_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        conn.execute(
+            "ALTER TABLE session_goals ADD COLUMN IF NOT EXISTS user_round BIGINT",
+            &[],
+        )?;
+        conn.execute(
+            "ALTER TABLE session_goals ADD COLUMN IF NOT EXISTS approval_mode TEXT",
+            &[],
+        )?;
+        Ok(())
+    }
+
     fn ensure_chat_history_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
         let rows = conn.query(
             "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'chat_history'",
@@ -1293,6 +1305,8 @@ impl PostgresSchemaStorage for PostgresStorage {
                   updated_at DOUBLE PRECISION NOT NULL,
                   completed_at DOUBLE PRECISION,
                   last_continued_at DOUBLE PRECISION,
+                  user_round BIGINT,
+                  approval_mode TEXT,
                   source TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_session_goals_user
@@ -1905,6 +1919,7 @@ impl PostgresSchemaStorage for PostgresStorage {
                     self.ensure_user_token_columns(&mut conn)?;
                     self.ensure_user_tool_access_columns(&mut conn)?;
                     self.ensure_chat_session_columns(&mut conn)?;
+                    self.ensure_session_goal_columns(&mut conn)?;
                     self.ensure_chat_history_columns(&mut conn)?;
                     self.ensure_model_context_table_retired(&mut conn)?;
                     self.ensure_stream_event_workflow_columns(&mut conn)?;

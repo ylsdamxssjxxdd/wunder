@@ -543,6 +543,10 @@ fn is_hidden_internal_history_message(item: &Value) -> bool {
         .unwrap_or(false)
 }
 
+pub(crate) fn is_hidden_internal_history_message_for_cancel(item: &Value) -> bool {
+    is_hidden_internal_history_message(item)
+}
+
 fn positive_i64(value: Option<&Value>) -> Option<i64> {
     let parsed = value.and_then(|value| {
         value.as_i64().or_else(|| {
