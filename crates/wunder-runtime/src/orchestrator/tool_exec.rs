@@ -889,13 +889,39 @@ impl Orchestrator {
             if timeout_s <= 0.0 {
                 timeout_s = config.a2a.timeout_s as f64;
             }
-        } else if crate::tools::is_sleep_tool_name(tool_name) {
-            if let Some(seconds) = crate::tools::extract_sleep_seconds(args) {
-                timeout_s = timeout_s.max(seconds + 10.0);
+        } else if canonical_tool_name == "执行命令" {
+            let run_in_background = match args.get("run_in_background") {
+                Some(Value::Bool(flag)) => *flag,
+                Some(Value::String(text)) => matches!(
+                    text.trim().to_ascii_lowercase().as_str(),
+                    "true" | "1" | "yes" | "on"
+                ),
+                _ => false,
+            };
+            if !run_in_background {
+                // Blocking mode: the tool waits for the command up to its own
+                // timeout_s (default 120s), so the outer budget must outlast it.
+                let explicit = args.get("timeout_s").is_some();
+                return if explicit && timeout_s <= 0.0 {
+                    None
+                } else {
+                    let effective = if timeout_s > 0.0 { timeout_s } else { 120.0 };
+                    Some(Duration::from_secs_f64(
+                        (effective + 30.0).max(MIN_TOOL_TIMEOUT_S),
+                    ))
+                };
             }
             if timeout_s <= 0.0 {
                 timeout_s = DEFAULT_TOOL_TIMEOUT_S;
             }
+        } else if canonical_tool_name == "命令会话" {
+            // A poll may wait up to 60s server-side before responding.
+            let yield_s = args
+                .get("yield_time_ms")
+                .and_then(Value::as_u64)
+                .unwrap_or(500) as f64
+                / 1000.0;
+            timeout_s = timeout_s.max(yield_s.min(60.0) + 30.0);
         } else if tool_name == "a2a观察" || tool_name.starts_with("a2a@") {
             if timeout_s <= 0.0 {
                 timeout_s = config.a2a.timeout_s as f64;

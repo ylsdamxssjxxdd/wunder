@@ -2,7 +2,7 @@
 
 本目录集中放置桌面 Slint 与 CLI 的离线发布、交叉编译和分发门禁脚本。仓库根目录只保留两个公开入口：Linux 使用 `build.sh`，Windows 使用 `build.bat`。`frontend-slint/scripts/` 只保留原生联调、启动回归和 AppImage 内容检查。
 
-公开入口统一以程序目标和分发架构选择构建：
+公开入口统一以程序目标和分发架构选择构建。推荐使用简拼 `-t`/`-a`，`-target`/`-arch`/`--target`/`--arch` 写法等价：
 
 ```bash
 # ARM64 Linux 主机；从其它 Linux 主机执行时在命令末尾添加 --docker。
@@ -15,20 +15,20 @@ bash build.sh -t desktop -a win7-x86
 bash build.sh -t cli -a win7-x86
 
 # linux-amd64 Desktop 默认是 ELF；仅明确要求时才打成 AppImage。
-WUNDER_APPIMAGE_RUNTIME_AMD64=/path/to/runtime.AppImage \
-  bash build.sh -t desktop -a linux-amd64 --appimage
+# AppImage runtime 默认取 kylin-arm SDK 的 offline/appimage-runtime/runtime-x86_64，
+# 仅在需要覆盖时才设置 WUNDER_APPIMAGE_RUNTIME_AMD64。
+bash build.sh -t desktop -a linux-amd64 --appimage
 
 # 构建当前 ARM64 Linux 主机可发布的全部程序：三个架构 × Desktop/CLI。
-WUNDER_APPIMAGE_RUNTIME_ARM64=/path/to/arm64-runtime.AppImage \
-WUNDER_APPIMAGE_RUNTIME_AMD64=/path/to/amd64-runtime.AppImage \
-  bash build.sh -all
+# AppImage runtime 默认使用 SDK 的 offline/appimage-runtime/ 内同架构 blob。
+bash build.sh -all
 ```
 
 Windows 使用同一套目标/架构名称。Linux 目标通过 Docker 使用 `kylin-arm`；`win7-x86` 在本机通过 `win7` SDK 构建，在 ARM64 Linux 上也可用 `build.sh` 交叉生成（Desktop 与 CLI 均可，同一 `i686-win7-windows-gnu` 目标，build-std 方式）。旧的 `win32-x86` 名称已并入 `win7-x86`（Win7 兼容构建覆盖全部 32 位 Windows 场景）：
 
 ```bat
-build.bat -Target desktop -Arch win7-x86
-build.bat -Target cli -Arch linux-amd64
+build.bat -t desktop -a win7-x86
+build.bat -t cli -a linux-amd64
 build.bat -All -AppImageRuntimeArm64 X:\runtime-arm64.AppImage -AppImageRuntimeAmd64 X:\runtime-amd64.AppImage
 ```
 
@@ -48,5 +48,7 @@ docker run --rm --network host \
 ```
 
 准备完成后，`linux-amd64-ubuntu18/root` 必须包含 `libX11.so.6`、`libXtst.so.6`、`libasound.so.2`、`libasound.so`、`libxcb.so.1`、`libxcb-xkb.so.1`、`libxkbcommon.so.0` 和 `libxkbcommon-x11.so.0`；其中 `libasound.so` 只用于交叉链接，AppImage 内容门禁验证其余运行库。
+
+`prepare-linux-arm64-runtime-sysroot.sh` 是 arm64 侧的同类一次性维护脚本，把 bionic arm64 的 X11/XCB/XKB/ALSA 运行库闭包和 `squashfs-tools`（含压缩依赖）装进 `linux-arm64-ubuntu18/root`；必须在 **aarch64 Ubuntu 18.04** 环境（如 `rcho-slint-arm64-ubuntu18` 镜像）执行并将 SDK 挂载为可写。准备完成后，ARM64 Desktop 构建的运行库和 `mksquashfs` 都可完全来自 SDK，不再要求主机安装这些包。
 
 Linux ARM64 Desktop 的 X11/XCB 运行库默认取自建机 `ldconfig`；当 ARM 主机缺少这些库（典型如 `libxkbcommon-x11.so.0`）时，`build-linux-arm64-appimage.sh` 会按库逐一优先改用 kylin-arm SDK 的 `offline/linux-arm64-ubuntu18/root/usr/lib/aarch64-linux-gnu` 或 `offline/runtime-libs/aarch64-linux-gnu`，其余库仍回退到 ldconfig，也可用 `WUNDER_SLINT_RUNTIME_LIB_DIR=/path/to/libs` 显式指定整个目录。从目录取用的库会校验 AArch64 ELF，防止误指其它架构的库目录。

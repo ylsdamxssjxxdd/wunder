@@ -113,17 +113,17 @@ bash build.sh -t desktop -a linux-amd64
 bash build.sh -t cli -a linux-amd64
 
 # ARM64 Linux -> x86_64 Desktop AppImage（CLI 永远不打包 AppImage）
-WUNDER_APPIMAGE_RUNTIME_AMD64=/path/to/x86_64-runtime.AppImage \
-  bash build.sh -t desktop -a linux-amd64 --appimage
+# runtime 默认取 kylin-arm SDK 的 offline/appimage-runtime/runtime-x86_64，
+# 仅在需要覆盖时才设置 WUNDER_APPIMAGE_RUNTIME_AMD64。
+bash build.sh -t desktop -a linux-amd64 --appimage
 
 # ARM64 Linux -> Win32 i686 Desktop PE / CLI PE
 bash build.sh -t desktop -a win32-x86
 bash build.sh -t cli -a win32-x86
 
 # 全量发布：三个 Linux ARM64 主机可构建的架构 × Desktop/CLI。
-WUNDER_APPIMAGE_RUNTIME_ARM64=/path/to/arm64-runtime.AppImage \
-WUNDER_APPIMAGE_RUNTIME_AMD64=/path/to/amd64-runtime.AppImage \
-  bash build.sh -all
+# AppImage runtime 默认使用 SDK 的 offline/appimage-runtime/ 内同架构 blob。
+bash build.sh -all
 ```
 
 Windows 主机使用同一个 `build.bat`，Linux/Win32 走 Docker，Win7 留在本地 SDK：
@@ -136,9 +136,9 @@ Windows 主机使用同一个 `build.bat`，Linux/Win32 走 Docker，Win7 留在
 
 `build.bat -All` 同时使用 `Rust-builder/kylin-arm` 与 `Rust-builder/win7`；可分别通过 `-KylinBuilderRoot`、`-Win7BuilderRoot` 覆盖，不能用同一目录替代两套工具链。
 
-Linux AppImage 必须提供同架构 type-2 runtime（Linux 命令使用
+Linux AppImage 默认使用 kylin-arm SDK `offline/appimage-runtime/` 内的同架构 type-2 runtime（`runtime-aarch64` / `runtime-x86_64`）；需要覆盖时 Linux 命令使用
 `WUNDER_APPIMAGE_RUNTIME_ARM64` / `WUNDER_APPIMAGE_RUNTIME_AMD64`，Windows 使用
-`-AppImageRuntimeArm64` / `-AppImageRuntimeAmd64`），不会再依赖固定版本的参考工程产物。ARM64 打包、amd64 交叉打包
+`-AppImageRuntimeArm64` / `-AppImageRuntimeAmd64`，不会再依赖固定版本的参考工程产物。ARM64 打包、amd64 交叉打包
 都在输出目录创建唯一私有临时目录，完成后原子发布；失败会清理临时文件并保留已有版本。
 构建缓存分别位于 `target/linux-arm64-ubuntu18-slint`、
 `target/linux-amd64-ubuntu18-slint` 和 `target/win32-x86-arm64`，与旧桌面壳产物隔离。

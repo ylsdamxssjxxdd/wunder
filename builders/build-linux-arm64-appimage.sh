@@ -56,7 +56,16 @@ require_file "$manifest"
 [[ -n "$runtime_source" ]] || fail "WUNDER_APPIMAGE_RUNTIME must point to an ARM64 type-2 AppImage runtime"
 require_file "$runtime_source"
 export PATH="$offline_root/rust/toolchains/1.92.0-aarch64-unknown-linux-gnu/bin:$PATH"
-for command_name in cargo rustc readelf strip file ldd mksquashfs dd awk grep sort mktemp stat; do
+# squashfs-tools may be absent on a minimal ARM64 host; the offline SDK's
+# arm64 sysroot carries a copy together with its own library closure.
+if ! command -v mksquashfs >/dev/null 2>&1; then
+  sdk_arm64_root="$offline_root/linux-arm64-ubuntu18/root"
+  if [[ -x "$sdk_arm64_root/usr/bin/mksquashfs" ]]; then
+    export LD_LIBRARY_PATH="$sdk_arm64_root/usr/lib/aarch64-linux-gnu:$sdk_arm64_root/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    export PATH="$sdk_arm64_root/usr/bin:$PATH"
+  fi
+fi
+for command_name in cargo rustc readelf strip ldd mksquashfs dd awk grep sort mktemp stat od tr; do
   require_command "$command_name"
 done
 
@@ -200,8 +209,22 @@ exec "$APPDIR/usr/bin/wunder-frontend-slint" "$@"
 EOF
 chmod +x "$appdir/AppRun"
 
-runtime_offset="$(LC_ALL=C grep -oba -m 1 'hsqs' "$runtime_source" | awk -F: '{print $1}')"
-[[ "$runtime_offset" =~ ^[0-9]+$ && "$runtime_offset" -gt 0 ]] || fail "could not locate embedded AppImage runtime"
+# The runtime blob is prepended to the squashfs verbatim. A fat runtime with
+# an embedded tools filesystem must be cut at that image; a bare blob (the
+# AppImageKit runtime-* downloads) contains none and is used whole. The hsqs
+# magic also appears as look-alike bytes inside the ELF, so a hit is trusted
+# only when a squashfs 4.0 superblock parses at the same offset.
+runtime_offset="$(LC_ALL=C grep -oba -m 1 'hsqs' "$runtime_source" | LC_ALL=C awk -F: '{print $1}' || true)"
+if [[ "$runtime_offset" =~ ^[0-9]+$ && "$runtime_offset" -gt 0 ]]; then
+  block_size="$(dd if="$runtime_source" bs=1 skip=$((runtime_offset + 12)) count=4 status=none | od -An -tu4 | tr -d ' ')"
+  sb_major="$(dd if="$runtime_source" bs=1 skip=$((runtime_offset + 28)) count=2 status=none | od -An -tu2 | tr -d ' ')"
+  sb_minor="$(dd if="$runtime_source" bs=1 skip=$((runtime_offset + 30)) count=2 status=none | od -An -tu2 | tr -d ' ')"
+  if [[ "$sb_major" != 4 || "$sb_minor" != 0 ]] || (( block_size < 4096 || block_size > 1048576 || (block_size & (block_size - 1)) != 0 )); then
+    runtime_offset=""
+  fi
+fi
+# Bare runtime blobs carry no embedded squashfs; prepend the whole file.
+[[ "$runtime_offset" =~ ^[0-9]+$ && "$runtime_offset" -gt 0 ]] || runtime_offset="$(stat -c '%s' "$runtime_source")"
 squashfs="$stage_dir/$app_name.squashfs"
 runtime="$stage_dir/$app_name.runtime"
 staged_appimage="$stage_dir/$app_name.AppImage"

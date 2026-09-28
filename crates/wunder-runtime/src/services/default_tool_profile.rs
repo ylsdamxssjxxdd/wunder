@@ -3,7 +3,6 @@ use std::collections::HashSet;
 const DEFAULT_BUILTIN_TOOL_NAMES: &[&str] = &[
     "最终回复",
     "定时任务",
-    "休眠等待",
     "记忆管理",
     "执行命令",
     "命令会话",

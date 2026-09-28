@@ -2,6 +2,11 @@ use super::*;
 use crate::orchestrator::execute_support::PlannedToolCall;
 use crate::state::{AppState, AppStateInitOptions};
 
+#[cfg(windows)]
+const LONG_RUNNING_COMMAND: &str = "ping -n 10 127.0.0.1";
+#[cfg(not(windows))]
+const LONG_RUNNING_COMMAND: &str = "sleep 8 && echo done";
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn workflow_metrics_preserve_parallel_success_failure_and_cancellation() {
     let root = tempfile::tempdir().unwrap();
@@ -9,6 +14,9 @@ async fn workflow_metrics_preserve_parallel_success_failure_and_cancellation() {
     config.storage.backend = "sqlite".into();
     config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
     config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
+    // Run commands through the local blocking path instead of the sandbox HTTP client.
+    config.server.mode = "desktop".to_string();
+    config.security.allow_commands = vec!["*".to_string()];
     let store = ConfigStore::new(root.path().join("config.yaml"));
     store
         .update(|current| *current = config.clone())
@@ -52,17 +60,17 @@ async fn workflow_metrics_preserve_parallel_success_failure_and_cancellation() {
         event_emitter: None,
         http: &orchestrator.http,
     };
-    let name = crate::tools::resolve_tool_name("sleep");
+    let name = crate::tools::resolve_tool_name("execute_command");
     let allowed = HashSet::from([name.clone()]);
-    let planned = |id: &str, seconds: f64| PlannedToolCall {
+    let planned = |id: &str, content: &str| PlannedToolCall {
         call: tool_calls::ToolCall {
             id: Some(id.into()),
             name: name.clone(),
-            arguments: json!({"seconds": seconds}),
-            function_name: Some("sleep".into()),
+            arguments: json!({"content": content}),
+            function_name: Some("execute_command".into()),
         },
         name: name.clone(),
-        function_name: "sleep".into(),
+        function_name: "execute_command".into(),
     };
     state
         .monitor
@@ -80,7 +88,7 @@ async fn workflow_metrics_preserve_parallel_success_failure_and_cancellation() {
     );
     let outcomes = orchestrator
         .execute_tool_calls_parallel(
-            vec![planned("call_1", 0.02), planned("call_2", -1.0)],
+            vec![planned("call_1", "echo ok"), planned("call_2", "exit 3")],
             &context,
             &allowed,
             "session_1",
@@ -104,7 +112,10 @@ async fn workflow_metrics_preserve_parallel_success_failure_and_cancellation() {
         vec![(true, true), (false, true)]
     );
     let work = orchestrator.execute_tool_calls_parallel(
-        vec![planned("call_3", 0.01), planned("call_4", 5.0)],
+        vec![
+            planned("call_3", "echo ok"),
+            planned("call_4", LONG_RUNNING_COMMAND),
+        ],
         &context,
         &allowed,
         "session_1",
@@ -114,7 +125,7 @@ async fn workflow_metrics_preserve_parallel_success_failure_and_cancellation() {
         RoundInfo::new(1, 2),
     );
     let cancel = async {
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(1500)).await;
         state.monitor.cancel("session_1");
     };
     let (result, _) = tokio::join!(work, cancel);

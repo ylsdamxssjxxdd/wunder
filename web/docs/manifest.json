@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-09-26T11:20:33.354476+00:00",
+  "generated_at": "2026-09-28T05:07:50.362488+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -275,8 +275,8 @@
                   },
                   {
                     "slug": "zh-CN/tools/sleep",
-                    "title": "睡眠与让出",
-                    "summary": "`sleep` 与 `sessions_yield` 的语义区别。",
+                    "title": "会话让出",
+                    "summary": "`sessions_yield` 的语义与适用场景。",
                     "url": "/docs/zh-CN/tools/sleep/"
                   }
                 ]
@@ -991,8 +991,8 @@
                   },
                   {
                     "slug": "en/tools/sleep",
-                    "title": "Sleep and Yield",
-                    "summary": "The semantic difference between `sleep` and `sessions_yield`.",
+                    "title": "Sessions Yield",
+                    "summary": "Semantics and use cases of `sessions_yield`.",
                     "url": "/docs/en/tools/sleep/"
                   }
                 ]
@@ -3758,7 +3758,7 @@
       "language": "zh-CN",
       "title": "执行命令",
       "summary": "`execute_command` 的预算、dry-run、输出守卫与返回结构。",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-09-28",
       "read_when": [
         "用户要运行 shell 命令、编译、测试或调用现成 CLI"
       ],
@@ -4533,14 +4533,13 @@
     "zh-CN/tools/sleep": {
       "slug": "zh-CN/tools/sleep",
       "language": "zh-CN",
-      "title": "睡眠与让出",
-      "summary": "`sleep` 与 `sessions_yield` 的语义区别。",
-      "updated_at": "2026-04-10",
+      "title": "会话让出",
+      "summary": "`sessions_yield` 的语义与适用场景。",
+      "updated_at": "2026-09-28",
       "read_when": [
-        "用户要等待一段时间，或暂时让出当前轮次控制权"
+        "需要暂时让出当前轮次控制权、等待外部结果"
       ],
       "source_docs": [
-        "src/services/tools/sleep_tool.rs",
         "src/services/tools/sessions_yield_tool.rs"
       ],
       "tab": "工具",
@@ -4553,42 +4552,22 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "睡眠与让出"
+          "text": "会话让出"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "sleep"
+          "text": "最小参数"
         },
         {
           "id": "section-3",
-          "level": 3,
-          "text": "最小参数"
+          "level": 2,
+          "text": "成功返回"
         },
         {
           "id": "section-4",
-          "level": 3,
-          "text": "成功返回"
-        },
-        {
-          "id": "section-5",
           "level": 2,
-          "text": "sessionsyield"
-        },
-        {
-          "id": "section-6",
-          "level": 3,
-          "text": "最小参数"
-        },
-        {
-          "id": "section-7",
-          "level": 3,
-          "text": "成功返回"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "选择建议"
+          "text": "使用场景"
         }
       ],
       "prev_slug": "zh-CN/tools/final-response",
@@ -12314,7 +12293,7 @@
       "language": "en",
       "title": "Execute Command",
       "summary": "The budgets, dry-run behavior, output guards, and return structure of `execute_command`.",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-09-28",
       "read_when": [
         "You need to run shell commands, compile, test, or invoke an existing CLI"
       ],
@@ -13089,14 +13068,13 @@
     "en/tools/sleep": {
       "slug": "en/tools/sleep",
       "language": "en",
-      "title": "Sleep and Yield",
-      "summary": "The semantic difference between `sleep` and `sessions_yield`.",
-      "updated_at": "2026-04-10",
+      "title": "Sessions Yield",
+      "summary": "Semantics and use cases of `sessions_yield`.",
+      "updated_at": "2026-09-28",
       "read_when": [
-        "You need to wait for a while, or temporarily yield control of the current turn"
+        "You need to temporarily yield control of the current turn and wait for an external result"
       ],
       "source_docs": [
-        "src/services/tools/sleep_tool.rs",
         "src/services/tools/sessions_yield_tool.rs"
       ],
       "tab": "Tools",
@@ -13109,42 +13087,22 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Sleep and Yield"
+          "text": "Sessions Yield"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "sleep"
+          "text": "Minimum arguments"
         },
         {
           "id": "section-3",
-          "level": 3,
-          "text": "Minimum arguments"
+          "level": 2,
+          "text": "Success result"
         },
         {
           "id": "section-4",
-          "level": 3,
-          "text": "Success result"
-        },
-        {
-          "id": "section-5",
           "level": 2,
-          "text": "sessionsyield"
-        },
-        {
-          "id": "section-6",
-          "level": 3,
-          "text": "Minimum arguments"
-        },
-        {
-          "id": "section-7",
-          "level": 3,
-          "text": "Success result"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "How to choose"
+          "text": "When to use"
         }
       ],
       "prev_slug": "en/tools/final-response",

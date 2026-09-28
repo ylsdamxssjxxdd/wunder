@@ -643,10 +643,13 @@ pub async fn control_command_session(
     let endpoints = sandbox_endpoint_candidates(config);
     let payload = json!({"user_id": user_id, "session_id": session_id, "command_session_id": command_session_id, "input": input, "after_seq": after_seq, "yield_time_ms": yield_time_ms});
     let route = if write_stdin { "stdin" } else { "poll" };
+    // The server may hold the request for the full yield window before
+    // responding, so the HTTP timeout must exceed it.
+    let request_timeout = Duration::from_millis(yield_time_ms.saturating_add(15_000).max(15_000));
     for endpoint in endpoints {
         let response = http_client()
             .post(format!("{endpoint}/sandboxes/command-sessions/{route}"))
-            .timeout(Duration::from_secs(15))
+            .timeout(request_timeout)
             .json(&payload)
             .send()
             .await;

@@ -19,14 +19,14 @@ Usage:
   build.sh -all [--native|--docker]
 
 Options:
-  -t, --target     Build one program: desktop or cli.
-  -a, --arch       Select one distribution architecture.
-                  linux-arm64: Desktop AppImage or CLI ELF.
-                  linux-amd64: Desktop ELF (or AppImage with --appimage) or CLI ELF.
-                  win7-x86:    Win7-compatible Desktop or CLI PE built by kylin-arm
-                              (i686-win7-windows-gnu with -Z build-std).
-  -all, --all      Build every distribution available on this host: both programs for
-                  Linux ARM64, Linux amd64 and Win7 x86. Linux Desktop outputs are AppImages.
+  -t, -target, --target  Build one program: desktop or cli.
+  -a, -arch, --arch      Select one distribution architecture.
+                         linux-arm64: Desktop AppImage or CLI ELF.
+                         linux-amd64: Desktop ELF (or AppImage with --appimage) or CLI ELF.
+                         win7-x86:    Win7-compatible Desktop or CLI PE built by kylin-arm
+                                      (i686-win7-windows-gnu with -Z build-std).
+  -all, --all            Build every distribution available on this host: both programs for
+                         Linux ARM64, Linux amd64 and Win7 x86. Linux Desktop outputs are AppImages.
   --appimage       Package a linux-amd64 Desktop build as an AppImage. CLI never uses AppImage.
   --native         Build on an ARM64 Linux host (default).
   --docker         Run the ARM64 Ubuntu 18.04 build image. Useful from non-ARM Linux hosts.
@@ -51,14 +51,14 @@ fail() {
 
 while (($#)); do
   case "$1" in
-    -t|--target)
+    -t|-target|--target)
       shift
-      (($#)) || fail "missing value after --target"
+      (($#)) || fail "missing value after -t"
       target="$1"
       ;;
-    -a|--arch)
+    -a|-arch|--arch)
       shift
-      (($#)) || fail "missing value after --arch"
+      (($#)) || fail "missing value after -a"
       arch="$(normalize_arch "$1")" || fail "unsupported architecture: $1"
       ;;
     -all|--all) build_all=1 ;;
@@ -93,10 +93,14 @@ runtime_for() {
     linux-arm64)
       runtime="${WUNDER_APPIMAGE_RUNTIME_ARM64:-}"
       [[ -n "$runtime" || "$build_all" == 1 ]] || runtime="${WUNDER_APPIMAGE_RUNTIME:-}"
+      # The offline SDK carries the pinned AppImageKit type-2 runtime blobs so
+      # a release build never depends on host-side files outside the SDK.
+      [[ -n "$runtime" ]] || runtime="$offline_root/appimage-runtime/runtime-aarch64"
       ;;
     linux-amd64)
       runtime="${WUNDER_APPIMAGE_RUNTIME_AMD64:-}"
       [[ -n "$runtime" || "$build_all" == 1 ]] || runtime="${WUNDER_APPIMAGE_RUNTIME:-}"
+      [[ -n "$runtime" ]] || runtime="$offline_root/appimage-runtime/runtime-x86_64"
       ;;
   esac
   local variable_name="WUNDER_APPIMAGE_RUNTIME_${runtime_arch#linux-}"

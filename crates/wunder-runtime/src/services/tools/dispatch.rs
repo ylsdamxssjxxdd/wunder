@@ -20,7 +20,7 @@ use super::{
     subagent_control,
 };
 use super::{
-    apply_patch_tool, browser_tool, desktop_control, read_image_tool, sleep_tool, web_fetch_tool,
+    apply_patch_tool, browser_tool, desktop_control, read_image_tool, web_fetch_tool,
     web_search_tool,
 };
 use crate::services::goal;
@@ -134,7 +134,6 @@ pub async fn execute_builtin_tool(
         "计划面板" => panel_tools::execute_plan_tool(context, args).await,
         "问询面板" => panel_tools::execute_question_panel_tool(context, args).await,
         "定时任务" => schedule_task_tool::execute_schedule_task_tool(context, args).await,
-        sleep_tool::TOOL_SLEEP_WAIT => sleep_tool::tool_sleep_wait(context, args).await,
         "用户世界工具" => user_world_tool::execute_user_world_tool(context, args).await,
         channel_tool::TOOL_CHANNEL => channel_tool::channel_tool(context, args).await,
         "记忆管理" => execute_memory_manager_tool(context, args).await,

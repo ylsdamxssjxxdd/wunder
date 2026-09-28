@@ -1383,14 +1383,6 @@
     "en-US": "Desktop monitor captured a new screenshot.",
     "zh-CN": "桌面监视器已捕获新截图。"
   },
-  "tool.sleep.invalid_seconds": {
-    "en-US": "Sleep duration must be greater than 0 seconds.",
-    "zh-CN": "休眠时长必须大于 0 秒。"
-  },
-  "tool.sleep.seconds_too_large": {
-    "en-US": "Sleep duration exceeds the allowed maximum (3600 seconds).",
-    "zh-CN": "休眠时长超过允许上限（3600 秒）。"
-  },
   "tool.replace.count_mismatch": {
     "en-US": "Replacement count mismatch.",
     "zh-CN": "实际替换数量与期望不一致。"
@@ -1763,21 +1755,37 @@
     "en-US": "Query code intelligence. definition/references/hover/implementation/call_hierarchy usually need path + line + character; workspace_symbol usually needs query; call_hierarchy_direction is only for call_hierarchy.",
     "zh-CN": "查询代码智能信息。definition/references/hover/implementation/call_hierarchy 常用 path + line + character；workspace_symbol 常用 query；call_hierarchy_direction 仅用于 call_hierarchy。"
   },
+  "tool.exec.background_next_step": {
+    "en-US": "The command is running in the background. Poll the command_session tool with this command_session_id (yield_time_ms up to 60000 waits for output or exit in one call); confirm it has exited before reporting completion; do not use sleep to wait.",
+    "zh-CN": "命令已在后台运行。请用命令会话工具传入该 command_session_id 轮询结果（yield_time_ms 最长 60000，可一次调用等待输出或退出）；在报告完成前必须先确认其已退出；不要使用 sleep 空等。"
+  },
+  "tool.exec.sleep_not_allowed": {
+    "en-US": "Do not idle with a bare sleep command: execute_command blocks by default and returns the result; to wait for a background command, poll it with the command_session tool instead.",
+    "zh-CN": "不要用 sleep 空等：执行命令默认阻塞等待即可拿到结果；等待后台命令请用命令会话工具轮询。"
+  },
+  "tool.exec.timeout": {
+    "en-US": "Command timed out and was terminated; the collected partial output is included.",
+    "zh-CN": "命令执行超时已被终止，已收集的部分输出一并返回。"
+  },
   "tool.spec.exec.args.content": {
     "en-US": "CLI command. Content has no path restrictions.",
     "zh-CN": "CLI 命令，content 不限制路径格式。"
   },
+  "tool.spec.exec.args.run_in_background": {
+    "en-US": "Optional, default false: block until the command exits or timeout_s is reached and return the full output. Set true only for long-running commands to return a command_session_id immediately, then poll it with the command_session tool.",
+    "zh-CN": "可选，默认 false：阻塞等待命令结束（或达到 timeout_s）并返回完整输出。仅对长时间运行的命令设为 true，此时立即返回 command_session_id，需用命令会话工具轮询结果。"
+  },
   "tool.spec.exec.args.timeout": {
-    "en-US": "Optional. Command timeout in seconds (default 30).",
-    "zh-CN": "可选，命令超时秒数，默认 30 秒。"
+    "en-US": "Optional. Command timeout in seconds; on timeout the process is killed and partial output is returned (default 120; pass 0 to disable).",
+    "zh-CN": "可选，命令超时秒数；超时后终止进程并返回已收集的部分输出。默认 120 秒，传 0 表示不限制。"
   },
   "tool.spec.exec.args.workdir": {
     "en-US": "Optional. Working directory relative to the current workspace only (no absolute paths).",
     "zh-CN": "可选，工作目录仅支持工作区内相对路径（不允许绝对路径）。"
   },
   "tool.spec.exec.description": {
-    "en-US": "Run CLI commands in the workspace. Use workdir only for a workspace-relative subdirectory.",
-    "zh-CN": "在工作区内执行 CLI 命令。`workdir` 仅用于指定工作区内的相对目录。"
+    "en-US": "Run CLI commands in the workspace. Blocks by default until the command exits or timeout_s (default 120s) is reached, returning the full output; only set run_in_background=true for long-running commands, which returns a command_session_id to poll with the command_session tool. Never use a bare sleep command to idle-wait. Use workdir only for a workspace-relative subdirectory.",
+    "zh-CN": "在工作区内执行 CLI 命令。默认阻塞等待命令结束（或达到 timeout_s，默认 120 秒）并返回完整输出；仅对长时间运行的命令设置 run_in_background=true，此时返回 command_session_id，需用命令会话工具轮询。不要用单独的 sleep 命令空等。`workdir` 仅用于指定工作区内的相对目录。"
   },
   "tool.spec.browser.description": {
     "en-US": "Browser automation tool. Prefer start first to warm up or reuse the session, then open/navigate; for slow pages pass timeout_ms. Common flow: start -> open/navigate -> snapshot/read_page -> click/type/press -> wait/screenshot. Screenshots from agent tool calls are saved to the workspace by default.",
@@ -2142,18 +2150,6 @@
   "tool.spec.schedule_task.description": {
     "en-US": "Create and manage scheduled jobs. Prefer flat fields like action, job_id, schedule_text, message, session, and enabled. Use session=main to inject the trigger into the job's bound task thread at fire time; use session=isolated to run in a fresh thread and send the result back. Recurring jobs keep at most one active run and skip missed ticks instead of piling up every overdue interval.",
     "zh-CN": "创建和管理定时任务。优先使用扁平字段 action、job_id、schedule_text、message、session、enabled。session=main 会在触发时把消息注入该定时任务绑定的线程；session=isolated 会先在新线程执行，再把结果回送到绑定的任务线程。循环任务同一时刻最多只有一个活跃执行，不会把所有逾期 tick 全部堆积起来。"
-  },
-  "tool.spec.sleep.args.reason": {
-    "en-US": "Optional reason for this sleep.",
-    "zh-CN": "可选，本次休眠原因。"
-  },
-  "tool.spec.sleep.args.seconds": {
-    "en-US": "Sleep duration in seconds (0 < seconds <= 3600).",
-    "zh-CN": "休眠秒数（0 < seconds <= 3600）。"
-  },
-  "tool.spec.sleep.description": {
-    "en-US": "Sleep for a number of seconds, mainly for active polling intervals. Usually only seconds is needed; reason is optional context.",
-    "zh-CN": "按秒等待一段时间，适合主动轮询间隔。常用 seconds，reason 仅用于补充说明。"
   },
   "tool.spec.user_world.args.action": {
     "en-US": "Action: list_users/send_message.",

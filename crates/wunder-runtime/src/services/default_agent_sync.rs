@@ -603,7 +603,6 @@ mod tests {
         let allowed = HashSet::from([
             "最终回复".to_string(),
             "定时任务".to_string(),
-            "休眠等待".to_string(),
             "读取文件".to_string(),
             "技能创建器".to_string(),
             "其他工具".to_string(),
@@ -613,8 +612,7 @@ mod tests {
             vec![
                 "最终回复".to_string(),
                 "定时任务".to_string(),
-                "休眠等待".to_string(),
-                "读取文件".to_string(),
+                    "读取文件".to_string(),
                 "技能创建器".to_string(),
             ]
         );

@@ -194,7 +194,6 @@ const TOOL_ICON_RULES = [
   { keywords: ["网页抓取", "web_fetch", "web fetch", "webfetch"], icon: "fa-globe" },
   { keywords: ["a2a观察", "a2a_observe"], icon: "fa-glasses" },
   { keywords: ["a2a等待", "a2a_wait"], icon: "fa-clock" },
-  { keywords: ["休眠等待", "sleep_wait", "sleep", "pause"], icon: "fa-hourglass-half" },
   { keywords: ["记忆管理", "memory_manager", "memory_manage", "memory manager"], icon: "fa-memory" },
   { keywords: ["a2ui"], icon: "fa-image" },
   { keywords: ["读图工具", "read_image", "read image", "view_image", "view image"], icon: "fa-image" },

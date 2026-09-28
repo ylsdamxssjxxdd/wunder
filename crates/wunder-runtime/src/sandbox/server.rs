@@ -49,7 +49,7 @@ use tracing::warn;
 mod file_runtime;
 use file_runtime::execute_builtin_file_tool;
 
-const DEFAULT_COMMAND_TIMEOUT_S: f64 = 30.0;
+const DEFAULT_COMMAND_TIMEOUT_S: f64 = 120.0;
 const PTC_TIMEOUT_S: u64 = 60;
 const PTC_DIR_NAME: &str = "ptc_temp";
 const RULES_CACHE_CAPACITY: usize = 512;
@@ -644,7 +644,7 @@ async fn poll_command_session_inner(
     let initial = session.snapshot(request.after_seq);
     if initial.status == "running" && request.yield_time_ms > 0 {
         let _ = timeout(
-            Duration::from_millis(request.yield_time_ms.clamp(1, 10_000)),
+            Duration::from_millis(request.yield_time_ms.clamp(1, 60_000)),
             notified,
         )
         .await;

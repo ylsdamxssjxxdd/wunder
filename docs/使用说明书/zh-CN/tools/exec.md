@@ -5,7 +5,7 @@ read_when:
   - 用户要运行 shell 命令、编译、测试或调用现成 CLI
 source_docs:
   - src/services/tools.rs
-updated_at: 2026-04-10
+updated_at: 2026-09-28
 ---
 
 # 执行命令
@@ -28,8 +28,9 @@ updated_at: 2026-04-10
 
 - `content`
 - `workdir`
-- `timeout_s`
-- `yield_time_ms`
+- `timeout_s`ï¼é»è®¤ 120 ç§ï¼ä¼  0 è¡¨ç¤ºä¸éå¶ï¼
+- `run_in_background`ï¼é»è®¤ falseï¼é»å¡æ§è¡ï¼
+- `yield_time_ms`ï¼ä»éå `run_in_background` ä½¿ç¨ï¼
 - `budget`
 - `dry_run`
 
@@ -85,19 +86,22 @@ updated_at: 2026-04-10
 
 ## 后台命令会话
 
-本地运行时和服务端 sandbox 默认先等待 750ms。命令仍在运行时会立刻返回，智能体可继续读取文件、编辑代码或处理其他任务；不要用“休眠等待”替代命令会话轮询：
+默认阻塞执行：调用会一直等待，直到命令结束或达到 `timeout_s`（默认 120 秒，传 0 表示不限制），一次性返回完整输出；超时后进程被终止并返回 `timed_out` 与已收集的部分输出。
+
+仅对长时间运行的命令设置 `run_in_background: true`：短暂等待 `yield_time_ms`（默认 750ms）后命令仍在运行就会立刻返回，返回结果的 `data.next_step` 中包含下一步指引：
 
 ```json
 {
   "state": "running",
   "data": {
     "command_session_id": "cmd_xxx",
-    "status": "running"
+    "status": "running",
+    "next_step": "命令已在后台运行。请用命令会话工具传入该 command_session_id 轮询结果……"
   }
 }
 ```
 
-随后用 `command_session` 查询结果；空输入只轮询，有交互需求时用 `write_stdin` 写入：
+随后用 `command_session` 轮询结果；`yield_time_ms` 最长 60000，可一次调用持续等待直到命令退出，等待后台命令不要用 sleep 空转。空输入只轮询，有交互需求时用 `write_stdin` 写入：
 
 ```json
 {"command_session_id":"cmd_xxx","yield_time_ms":500}

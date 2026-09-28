@@ -43,6 +43,9 @@ fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
 
 const DEFAULT_COMMAND_YIELD_MS: u64 = 750;
 const MAX_COMMAND_YIELD_MS: u64 = 10_000;
+const DEFAULT_COMMAND_TIMEOUT_S: f64 = 120.0;
+const MAX_COMMAND_SESSION_POLL_MS: u64 = 60_000;
+const SANDBOX_BLOCKING_WAIT_MARGIN_S: f64 = 15.0;
 
 fn parse_command_yield_time(args: &Value) -> Duration {
     let value = args
@@ -51,6 +54,49 @@ fn parse_command_yield_time(args: &Value) -> Duration {
         .unwrap_or(DEFAULT_COMMAND_YIELD_MS)
         .clamp(50, MAX_COMMAND_YIELD_MS);
     Duration::from_millis(value)
+}
+
+fn parse_run_in_background(args: &Value) -> bool {
+    match args.get("run_in_background") {
+        Some(Value::Bool(flag)) => *flag,
+        Some(Value::String(text)) => matches!(
+            text.trim().to_ascii_lowercase().as_str(),
+            "true" | "1" | "yes" | "on"
+        ),
+        Some(Value::Number(number)) => number.as_f64().unwrap_or(0.0) != 0.0,
+        _ => false,
+    }
+}
+
+/// Detect commands that only idle (e.g. `sleep 5`) without doing real work.
+fn is_bare_sleep_command(command: &str) -> bool {
+    let trimmed = command.trim().trim_end_matches(';').trim();
+    let mut parts = trimmed.split_whitespace();
+    let Some(program) = parts.next() else {
+        return false;
+    };
+    let program = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    if !program.eq_ignore_ascii_case("sleep") && !program.eq_ignore_ascii_case("start-sleep") {
+        return false;
+    }
+    let mut duration_args = 0usize;
+    for part in parts {
+        let cleaned = part.trim_end_matches(['s', 'm', 'h', 'd']);
+        if cleaned.is_empty() || cleaned.parse::<f64>().is_err() {
+            return false;
+        }
+        duration_args += 1;
+    }
+    duration_args >= 1
+}
+
+fn content_is_bare_sleep(content: &str) -> bool {
+    let lines = content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    lines.len() == 1 && is_bare_sleep_command(lines[0])
 }
 
 pub(crate) fn extract_direct_patch_from_command(content: &str) -> Option<String> {
@@ -1128,7 +1174,7 @@ pub(crate) async fn command_session_control(
         .get("yield_time_ms")
         .and_then(Value::as_u64)
         .unwrap_or(500)
-        .clamp(0, MAX_COMMAND_YIELD_MS);
+        .clamp(0, MAX_COMMAND_SESSION_POLL_MS);
     if session_id.starts_with("sandcmd_") {
         let after_seq = args.get("after_seq").and_then(Value::as_u64).unwrap_or(0);
         let Some(result) = crate::sandbox::control_command_session(
@@ -1358,6 +1404,170 @@ async fn run_ptc_python_script_streaming(
         .unwrap_or_else(|| anyhow!("python interpreter not found (tried: {})", tried.join(", "))))
 }
 
+/// Block until a sandbox background command exits, using the session
+/// poll-with-wait loop (Notify-driven on the sandbox side) instead of sleeps.
+async fn await_sandbox_command_exit(
+    context: &ToolContext<'_>,
+    command_session_id: &str,
+    timeout_s: f64,
+    tracker: Option<&CommandSessionTracker>,
+) -> Option<Value> {
+    let deadline = (timeout_s > 0.0).then(|| {
+        std::time::Instant::now()
+            + Duration::from_secs_f64(timeout_s + SANDBOX_BLOCKING_WAIT_MARGIN_S)
+    });
+    let mut after_seq = 0u64;
+    loop {
+        let yield_time_ms = deadline
+            .map(|deadline| {
+                deadline
+                    .saturating_duration_since(std::time::Instant::now())
+                    .as_millis() as u64
+            })
+            .unwrap_or(MAX_COMMAND_SESSION_POLL_MS)
+            .clamp(1, MAX_COMMAND_SESSION_POLL_MS);
+        let result = crate::sandbox::control_command_session(
+            context.config,
+            context.user_id,
+            context.session_id,
+            command_session_id,
+            "",
+            after_seq,
+            yield_time_ms,
+            false,
+        )
+        .await;
+        let data = result
+            .as_ref()
+            .filter(|value| value.get("ok").and_then(Value::as_bool).unwrap_or(false))
+            .and_then(|value| value.get("data").cloned());
+        let Some(mut data) = data else {
+            return None;
+        };
+        if let Some(tracker) = tracker {
+            for delta in data
+                .get("deltas")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let seq = delta.get("seq").and_then(Value::as_u64).unwrap_or(0);
+                if seq <= after_seq {
+                    continue;
+                }
+                let stream =
+                    command_session_stream_from_value(delta.get("stream").unwrap_or(&Value::Null));
+                if let Some(text) = delta.get("delta").and_then(Value::as_str) {
+                    tracker.emit_delta(stream, text.as_bytes());
+                }
+            }
+        }
+        after_seq = after_seq.max(data.get("seq").and_then(Value::as_u64).unwrap_or(after_seq));
+        let status = data.get("status").and_then(Value::as_str).unwrap_or("");
+        let deadline_exceeded = deadline
+            .map(|deadline| std::time::Instant::now() >= deadline)
+            .unwrap_or(false);
+        if status.eq_ignore_ascii_case("running") && !deadline_exceeded {
+            continue;
+        }
+        if status.eq_ignore_ascii_case("running") && deadline_exceeded {
+            // Backstop: the sandbox watcher normally kills at timeout_s first;
+            // cancel here only when that kill was never observed.
+            let _ = crate::sandbox::cancel_command_session(
+                context.config,
+                context.user_id,
+                context.session_id,
+                command_session_id,
+            )
+            .await;
+            if let Some(final_value) = crate::sandbox::control_command_session(
+                context.config,
+                context.user_id,
+                context.session_id,
+                command_session_id,
+                "",
+                after_seq,
+                0,
+                false,
+            )
+            .await
+            .filter(|value| value.get("ok").and_then(Value::as_bool).unwrap_or(false))
+            {
+                if let Some(final_data) = final_value.get("data").cloned() {
+                    data = final_data;
+                }
+            }
+            if let Value::Object(ref mut map) = data {
+                map.insert("status".to_string(), Value::String("exited".to_string()));
+                map.insert("timed_out".to_string(), Value::Bool(true));
+            }
+        }
+        if let Some(tracker) = tracker {
+            tracker.emit_exit(
+                data.get("exit_code")
+                    .and_then(Value::as_i64)
+                    .and_then(|value| i32::try_from(value).ok()),
+                data.get("timed_out")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                data.get("error")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+            );
+        }
+        return Some(data);
+    }
+}
+
+/// Build the model-facing result for a finished sandbox command, mirroring the
+/// local blocking semantics: timeout and non-zero exit are failures.
+fn build_sandbox_command_result(data: Value) -> Value {
+    let timed_out = data
+        .get("timed_out")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if timed_out {
+        return build_failed_tool_result(
+            i18n::t("tool.exec.timeout"),
+            data,
+            ToolErrorMeta::new(
+                "TOOL_EXEC_TIMEOUT",
+                Some("命令执行超时，可拆分命令或提高 timeout_s 后重试。".to_string()),
+                true,
+                Some(500),
+            ),
+            false,
+        );
+    }
+    let exit_code = data.get("exit_code").and_then(Value::as_i64);
+    if exit_code.unwrap_or(-1) != 0 {
+        let detail = data
+            .get("error")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                data.get("stderr")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+            })
+            .map(str::trim)
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("command exited with code {}", exit_code.unwrap_or(-1)));
+        return build_failed_tool_result(
+            detail,
+            data,
+            ToolErrorMeta::new(
+                "TOOL_EXEC_NON_ZERO_EXIT",
+                Some("命令返回非 0，请先根据 stderr 修正后再重试。".to_string()),
+                false,
+                None,
+            ),
+            false,
+        );
+    }
+    build_model_tool_success("execute_command", "completed", "Sandbox command completed.", data)
+}
+
 pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let args = recover_tool_args_value(args);
     let dry_run = parse_dry_run(&args);
@@ -1386,6 +1596,25 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
         }
         return Ok(result);
     }
+    if content_is_bare_sleep(&content) {
+        return Ok(build_failed_tool_result(
+            i18n::t("tool.exec.sleep_not_allowed"),
+            json!({ "command": content }),
+            ToolErrorMeta::new(
+                "TOOL_EXEC_SLEEP_NOT_ALLOWED",
+                Some("不要用 sleep 空等：默认阻塞执行即可拿到结果；等待后台命令请用命令会话工具轮询。".to_string()),
+                false,
+                None,
+            ),
+            false,
+        ));
+    }
+    let run_in_background = parse_run_in_background(&args);
+    let timeout_s = parse_timeout_secs(args.get("timeout_s"))
+        .map(|value| value.max(0.0))
+        .unwrap_or(DEFAULT_COMMAND_TIMEOUT_S);
+    let timeout_s = apply_time_budget_secs(timeout_s, &command_budget);
+    let timeout = (timeout_s > 0.0).then(|| Duration::from_secs_f64(timeout_s));
     if crate::sandbox::sandbox_enabled(context.config) && !dry_run && !content.is_empty() {
         if let Some(result) = crate::sandbox::launch_command_session(
             context.config,
@@ -1400,7 +1629,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
         {
             if result.get("ok").and_then(Value::as_bool).unwrap_or(false) {
                 context.workspace.mark_tree_dirty(context.workspace_id);
-                let data = result.get("data").cloned().unwrap_or_else(|| json!({}));
+                let mut data = result.get("data").cloned().unwrap_or_else(|| json!({}));
                 let command_session_id = data
                     .get("command_session_id")
                     .and_then(Value::as_str)
@@ -1418,12 +1647,12 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                         false,
                     )
                 });
-                let completed = data
+                let mut completed = data
                     .get("status")
                     .and_then(Value::as_str)
                     .is_some_and(|status| status.eq_ignore_ascii_case("exited"));
                 if completed {
-                    if let Some(tracker) = tracker {
+                    if let Some(tracker) = tracker.as_ref() {
                         if let Some(stderr) = data.get("stderr").and_then(Value::as_str) {
                             tracker.emit_delta(CommandSessionStream::Stderr, stderr.as_bytes());
                         }
@@ -1442,15 +1671,63 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                                 .map(ToString::to_string),
                         );
                     }
+                } else if !run_in_background {
+                    // Default blocking mode: wait for the command to finish via
+                    // the session poll-with-wait loop instead of returning early.
+                    let Some(command_session_id) = command_session_id.as_deref() else {
+                        return Ok(build_failed_tool_result(
+                            "sandbox command session id is missing",
+                            json!({}),
+                            ToolErrorMeta::new(
+                                "TOOL_COMMAND_SESSION_UNAVAILABLE",
+                                Some("沙盒未返回 command_session_id，请重试。".to_string()),
+                                true,
+                                Some(500),
+                            ),
+                            false,
+                        ));
+                    };
+                    match await_sandbox_command_exit(
+                        context,
+                        command_session_id,
+                        timeout_s,
+                        tracker.as_ref(),
+                    )
+                    .await
+                    {
+                        Some(final_data) => {
+                            data = final_data;
+                            completed = true;
+                        }
+                        None => {
+                            return Ok(build_failed_tool_result(
+                                "sandbox command session poll failed",
+                                json!({ "command_session_id": command_session_id }),
+                                ToolErrorMeta::new(
+                                    "TOOL_COMMAND_SESSION_UNAVAILABLE",
+                                    Some("轮询沙盒命令会话失败，可用命令会话工具按该 command_session_id 重试。".to_string()),
+                                    true,
+                                    Some(500),
+                                ),
+                                false,
+                            ));
+                        }
+                    }
+                }
+                if completed {
+                    return Ok(build_sandbox_command_result(data));
+                }
+                let guidance = i18n::t("tool.exec.background_next_step");
+                if let Value::Object(ref mut map) = data {
+                    map.insert(
+                        "next_step".to_string(),
+                        Value::String(guidance.clone()),
+                    );
                 }
                 return Ok(build_model_tool_success(
                     "execute_command",
-                    if completed { "completed" } else { "running" },
-                    if completed {
-                        "Sandbox command completed."
-                    } else {
-                        "Sandbox command started in the background; poll command_session with the returned ID."
-                    },
+                    "running",
+                    format!("Sandbox command started in the background. {guidance}"),
                     data,
                 ));
             }
@@ -1491,15 +1768,6 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             .map(|item| item.trim().to_lowercase())
             .filter(|item| !item.is_empty())
             .collect::<Vec<_>>()
-    };
-    let timeout_s = parse_timeout_secs(args.get("timeout_s"))
-        .unwrap_or(0.0)
-        .max(0.0);
-    let timeout_s = apply_time_budget_secs(timeout_s, &command_budget);
-    let timeout = if timeout_s > 0.0 {
-        Some(Duration::from_secs_f64(timeout_s))
-    } else {
-        None
     };
     let workdir = args.get("workdir").and_then(Value::as_str).unwrap_or("");
     let cwd = if workdir.is_empty() {
@@ -1646,7 +1914,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             stdout_policy,
             stderr_policy,
             command_index,
-            Some(parse_command_yield_time(&args)),
+            run_in_background.then(|| parse_command_yield_time(&args)),
         )
         .await?;
         let command_total_bytes = run
@@ -1681,13 +1949,15 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
         }));
         if run.running {
             context.workspace.mark_tree_dirty(context.workspace_id);
+            let guidance = i18n::t("tool.exec.background_next_step");
             return Ok(build_model_tool_success(
                 "execute_command",
                 "running",
-                "Command started in the background; poll command_session with the returned ID.",
+                format!("Command started in the background. {guidance}"),
                 json!({
                     "command_session_id": run.command_session_id,
                     "status": "running",
+                    "next_step": guidance,
                     "results": compact_command_results_for_model(&results),
                     "yield_time_ms": parse_command_yield_time(&args).as_millis(),
                 }),

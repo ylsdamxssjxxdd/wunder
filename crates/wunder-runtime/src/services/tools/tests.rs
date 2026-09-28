@@ -1031,12 +1031,8 @@ fn builtin_aliases_excludes_replace_text() {
             .map(String::as_str),
         Some(read_image_tool::TOOL_READ_IMAGE)
     );
-    assert_eq!(
-        aliases
-            .get(sleep_tool::TOOL_SLEEP_ALIAS)
-            .map(String::as_str),
-        Some(sleep_tool::TOOL_SLEEP_WAIT)
-    );
+    assert!(!aliases.contains_key("sleep"));
+    assert!(!aliases.contains_key("sleep_wait"));
 }
 
 #[test]

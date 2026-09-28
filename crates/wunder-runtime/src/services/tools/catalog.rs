@@ -1,7 +1,7 @@
 use super::mcp_pack;
 use super::{
     browser_tool, channel_tool, desktop_control, multimodal_generation_tool, read_image_tool,
-    self_status_tool, sessions_yield_tool, sleep_tool, thread_control_tool, web_fetch_tool,
+    self_status_tool, sessions_yield_tool, thread_control_tool, web_fetch_tool,
     web_search_tool,
 };
 use crate::config::Config;
@@ -350,20 +350,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             }),
         },
         ToolSpec {
-            name: sleep_tool::TOOL_SLEEP_WAIT.to_string(),
-            title: None,
-            description: t("tool.spec.sleep.description"),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "seconds": {"type": "number", "description": t("tool.spec.sleep.args.seconds"), "minimum": 0.001},
-                    "reason": {"type": "string", "description": t("tool.spec.sleep.args.reason")}
-                },
-                "required": ["seconds"],
-                "additionalProperties": false
-            }),
-        },
-        ToolSpec {
             name: "用户世界工具".to_string(),
             title: None,
             description: t("tool.spec.user_world.description"),
@@ -501,7 +487,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "content": {"type": "string", "description": t("tool.spec.exec.args.content")},
                     "workdir": {"type": "string", "description": t("tool.spec.exec.args.workdir")},
                     "timeout_s": {"type": "number", "description": t("tool.spec.exec.args.timeout")},
-                    "yield_time_ms": {"type": "integer", "minimum": 50, "maximum": 10000, "description": "Wait briefly before returning a running command session; default 750ms. Continue other work, then poll before reporting command success."},
+                    "run_in_background": {"type": "boolean", "description": t("tool.spec.exec.args.run_in_background")},
+                    "yield_time_ms": {"type": "integer", "minimum": 50, "maximum": 10000, "description": "Only with run_in_background=true: brief wait before returning the background command session; default 750ms."},
                     "dry_run": {"type": "boolean", "description": "Validate command only without execution."}
                 },
                 "required": ["content"],
@@ -511,7 +498,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         ToolSpec {
             name: "命令会话".to_string(),
             title: None,
-            description: "Poll a background command or write its stdin. Use the command_session_id returned by execute_command. Continue independent work while it runs, but poll it before reporting completion. Pass after_seq from the prior poll to receive only newer sandbox output.".to_string(),
+            description: "Poll a background command or write its stdin. Use the command_session_id returned by execute_command with run_in_background=true. To wait for a long-running background command, pass yield_time_ms (up to 60000) so one poll blocks until output or exit; never use sleep to wait. Confirm the command has exited before reporting completion. Pass after_seq from the prior poll to receive only newer sandbox output.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -519,7 +506,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "command_session_id": {"type": "string", "description": "Background command session ID."},
                     "input": {"type": "string", "description": "Text sent to stdin only with write_stdin."},
                     "after_seq": {"type": "integer", "minimum": 0, "description": "Last sandbox output sequence already consumed; omit on the first poll."},
-                    "yield_time_ms": {"type": "integer", "minimum": 0, "maximum": 10000, "description": "Maximum poll wait; default 500ms."}
+                    "yield_time_ms": {"type": "integer", "minimum": 0, "maximum": 60000, "description": "Poll wait window in ms; default 500, max 60000. Prefer one poll with a long window over any sleep when waiting for a background command to finish."}
                 },
                 "required": ["command_session_id"],
                 "additionalProperties": false
@@ -1239,18 +1226,6 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("question_panel".to_string(), "问询面板".to_string());
     map.insert("ask_panel".to_string(), "问询面板".to_string());
     map.insert("schedule_task".to_string(), "定时任务".to_string());
-    map.insert(
-        sleep_tool::TOOL_SLEEP_ALIAS.to_string(),
-        sleep_tool::TOOL_SLEEP_WAIT.to_string(),
-    );
-    map.insert(
-        sleep_tool::TOOL_SLEEP_WAIT_ALIAS.to_string(),
-        sleep_tool::TOOL_SLEEP_WAIT.to_string(),
-    );
-    map.insert(
-        sleep_tool::TOOL_SLEEP_PAUSE_ALIAS.to_string(),
-        sleep_tool::TOOL_SLEEP_WAIT.to_string(),
-    );
     map.insert("user_world".to_string(), "用户世界工具".to_string());
     map.insert(
         "channel_tool".to_string(),
@@ -1431,14 +1406,6 @@ pub async fn build_read_image_followup_user_message(
     read_image_tool::build_followup_user_message(context, result).await
 }
 
-pub fn is_sleep_tool_name(name: &str) -> bool {
-    sleep_tool::is_sleep_tool_name(name)
-}
-
-pub fn extract_sleep_seconds(args: &Value) -> Option<f64> {
-    sleep_tool::extract_sleep_seconds(args)
-}
-
 fn is_desktop_mode(config: &Config) -> bool {
     config.server.mode.trim().eq_ignore_ascii_case("desktop")
 }
@@ -1604,7 +1571,6 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         multimodal_generation_tool::TOOL_GENERATE_VIDEO => {
             Some(multimodal_generation_tool::TOOL_GENERATE_VIDEO_ALIAS)
         }
-        sleep_tool::TOOL_SLEEP_WAIT => Some(sleep_tool::TOOL_SLEEP_ALIAS),
         canonical if canonical == goal::goal_tool_name() => Some("goal"),
         _ => None,
     }
@@ -2788,15 +2754,7 @@ mod tests {
             Some(false)
         );
 
-        let sleep_spec = specs
-            .iter()
-            .find(|spec| spec.name == super::sleep_tool::TOOL_SLEEP_WAIT)
-            .expect("sleep spec");
-        assert!(sleep_spec.description.contains("主动轮询间隔"));
-        assert_eq!(
-            sleep_spec.input_schema["additionalProperties"].as_bool(),
-            Some(false)
-        );
+        assert!(specs.iter().all(|spec| spec.name != "休眠等待"));
 
         let memory_spec = specs
             .iter()

@@ -108,14 +108,6 @@ impl DemoSpeed {
         }
     }
 
-    fn worker_sleep_seconds(self) -> f64 {
-        match self {
-            Self::Fast => 0.35,
-            Self::Normal => 0.65,
-            Self::Slow => 1.0,
-        }
-    }
-
     fn as_text(self) -> &'static str {
         match self {
             Self::Fast => "fast",
@@ -246,7 +238,6 @@ struct MockScenario {
     seed: u64,
     speed: String,
     wait_seconds: f64,
-    worker_sleep_seconds: f64,
 }
 
 #[derive(Default)]
@@ -573,7 +564,7 @@ fn choose_worker_tools(tool_names: &[String], profile: &str) -> (Option<String>,
 
     let first = normalized
         .iter()
-        .find(|(_, canonical)| is_sleep_tool(canonical) || is_list_tool(canonical))
+        .find(|(_, canonical)| is_list_tool(canonical))
         .map(|(raw, _)| raw.clone())
         .or_else(|| {
             normalized
@@ -638,7 +629,6 @@ async fn execute_demo_run(state: Arc<AppState>, control: Arc<DemoRunControl>, pl
                 seed: plan.seed,
                 speed: plan.speed.as_text().to_string(),
                 wait_seconds: plan.speed.wait_seconds(),
-                worker_sleep_seconds: plan.speed.worker_sleep_seconds(),
             };
         }
 
@@ -863,7 +853,7 @@ async fn mock_chat_completions(
             mother_followup_response(&scenario, &current_observations)
         }
     } else if user_message.contains(WORKER_MARKER) {
-        worker_response(&scenario, &user_message, &observed_tools)
+        worker_response(&user_message, &observed_tools)
     } else {
         openai_chat_response("Demo fallback response.", None)
     };
@@ -955,7 +945,6 @@ fn build_mother_wait_args(scenario: &MockScenario, observations: &[Value]) -> Op
 }
 
 fn worker_response(
-    scenario: &MockScenario,
     user_message: &str,
     observed_tools: &HashSet<String>,
 ) -> Value {
@@ -969,7 +958,7 @@ fn worker_response(
             .iter()
             .any(|observed| tool_equal(observed, tool1))
         {
-            let args = build_tool_args(tool1, &worker_id, scenario.worker_sleep_seconds);
+            let args = build_tool_args(tool1);
             return openai_chat_response(
                 &format!("Demo worker {worker_id} step-1 calling {tool1}."),
                 Some(vec![function_tool_call(tool1, &args)]),
@@ -981,7 +970,7 @@ fn worker_response(
             .iter()
             .any(|observed| tool_equal(observed, tool2))
         {
-            let args = build_tool_args(tool2, &worker_id, scenario.worker_sleep_seconds);
+            let args = build_tool_args(tool2);
             return openai_chat_response(
                 &format!("Demo worker {worker_id} step-2 calling {tool2}."),
                 Some(vec![function_tool_call(tool2, &args)]),
@@ -995,13 +984,7 @@ fn worker_response(
     )
 }
 
-fn build_tool_args(tool_name: &str, worker_id: &str, sleep_seconds: f64) -> Value {
-    if is_sleep_tool(tool_name) {
-        return json!({
-            "seconds": sleep_seconds.max(0.1),
-            "reason": format!("beeroom demo worker={worker_id}")
-        });
-    }
+fn build_tool_args(tool_name: &str) -> Value {
     if is_list_tool(tool_name) {
         return json!({ "path": ".", "max_depth": 2 });
     }
@@ -1182,14 +1165,6 @@ fn tool_equal(left: &str, right: &str) -> bool {
     left.eq_ignore_ascii_case(right) || resolve_tool_name(left) == resolve_tool_name(right)
 }
 
-fn is_sleep_tool(name: &str) -> bool {
-    let cleaned = name.trim();
-    matches!(
-        cleaned.to_ascii_lowercase().as_str(),
-        "sleep" | "sleep_wait" | "pause"
-    ) || resolve_tool_name(cleaned) == resolve_tool_name("sleep")
-}
-
 fn is_list_tool(name: &str) -> bool {
     let normalized = name.trim().to_ascii_lowercase();
     normalized == "list" || resolve_tool_name(name.trim()) == resolve_tool_name("list_files")
@@ -1333,7 +1308,6 @@ mod tests {
             seed: 7,
             speed: "normal".to_string(),
             wait_seconds: 6.0,
-            worker_sleep_seconds: 0.5,
         };
 
         let response = mother_dispatch_response(&scenario);

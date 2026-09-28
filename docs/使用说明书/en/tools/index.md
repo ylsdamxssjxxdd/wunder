@@ -211,7 +211,7 @@ Use it to discover candidate URLs. When a source needs verification or full read
 
 - [Final Response](/docs/en/tools/final-response/)
 - [Panels and a2ui](/docs/en/tools/panels-and-a2ui/)
-- [Sleep and Yield](/docs/en/tools/sleep/): `sessions_yield` also belongs to turn-control semantics
+- [Sessions Yield](/docs/en/tools/sleep/): `sessions_yield` belongs to turn-control semantics
 
 ## 2. Workspace and code
 
@@ -244,7 +244,6 @@ Use it to discover candidate URLs. When a source needs verification or full read
 - [A2A Tools](/docs/en/tools/a2a-tools/)
 - [Node Invoke](/docs/en/tools/node-invoke/)
 - [Schedule Task](/docs/en/tools/schedule-task/)
-- [Sleep and Yield](/docs/en/tools/sleep/)
 
 ## Selection guidance
 

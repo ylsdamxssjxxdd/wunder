@@ -29,7 +29,6 @@ fn parallel_safe_builtin_names() -> &'static HashSet<String> {
             "web_fetch",
             "browser",
             "self_status",
-            "sleep",
             "a2a_observe",
             "a2a_wait",
         ]

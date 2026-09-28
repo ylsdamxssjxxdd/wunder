@@ -26,7 +26,7 @@ $Win7BuilderRoot = [IO.Path]::GetFullPath($Win7BuilderRoot)
 if ($All) {
   if ($Target -or $Arch -or $AppImage) { throw "-All selects every distribution; do not combine it with -Target, -Arch, or -AppImage." }
 } elseif (-not $Target -or -not $Arch) {
-  throw "Specify both -Target desktop|cli and -Arch linux-arm64|linux-amd64|win7-x86, or use -All."
+  throw "Specify both -t desktop|cli and -a linux-arm64|linux-amd64|win7-x86, or use -All."
 }
 if ($AppImage -and ($Target -ne "desktop" -or $Arch -ne "linux-amd64")) {
   throw "-AppImage is only valid for -Target desktop -Arch linux-amd64. CLI never uses AppImage."

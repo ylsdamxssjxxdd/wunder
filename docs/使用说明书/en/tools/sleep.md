@@ -1,54 +1,20 @@
 ---
-title: Sleep and Yield
-summary: The semantic difference between `sleep` and `sessions_yield`.
+title: Sessions Yield
+summary: Semantics and use cases of `sessions_yield`.
 read_when:
-  - You need to wait for a while, or temporarily yield control of the current turn
+  - You need to temporarily yield control of the current turn and wait for an external result
 source_docs:
-  - src/services/tools/sleep_tool.rs
   - src/services/tools/sessions_yield_tool.rs
-updated_at: 2026-04-10
+updated_at: 2026-09-28
 ---
 
-# Sleep and Yield
+# Sessions Yield
 
-This page covers two different tools:
+`sessions_yield` means: **the current turn yields control and does not produce a final reply.**
 
-- `sleep`
-- `sessions_yield`
+The standalone `sleep` tool has been removed: command execution blocks by default and returns the result; to wait for a background command, use the `command_session` poll window (`yield_time_ms`) instead of idle waiting.
 
-Do not mix them up.
-
-## `sleep`
-
-### Minimum arguments
-
-```json
-{
-  "seconds": 1.5
-}
-```
-
-### Success result
-
-```json
-{
-  "ok": true,
-  "action": "sleep",
-  "state": "completed",
-  "summary": "Slept for 1.5 seconds.",
-  "data": {
-    "requested_seconds": 1.5,
-    "elapsed_ms": 1502,
-    "reason": null
-  }
-}
-```
-
-It means: **the current turn actually blocked and waited for a period of time.**
-
-## `sessions_yield`
-
-### Minimum arguments
+## Minimum arguments
 
 ```json
 {
@@ -56,7 +22,7 @@ It means: **the current turn actually blocked and waited for a period of time.**
 }
 ```
 
-### Success result
+## Success result
 
 ```json
 {
@@ -77,9 +43,7 @@ It means: **the current turn actually blocked and waited for a period of time.**
 }
 ```
 
-It means: **the current turn yielded control and did not produce a final reply.**
+## When to use
 
-## How to choose
-
-- For a simple polling delay, use `sleep`
-- If you need to tell the system "stop this turn here for now," use `sessions_yield`
+- Use it to explicitly tell the system "stop this turn here and wait for an external resume."
+- Not needed for waiting on commands: `execute_command` blocks by default; poll background commands with `command_session`.

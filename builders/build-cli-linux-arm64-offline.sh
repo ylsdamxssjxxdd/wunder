@@ -27,9 +27,12 @@ require_command() { command -v "$1" >/dev/null 2>&1 || fail "required command is
 require_file "$repo_root/Cargo.toml"
 [[ -x "$rust/bin/cargo" ]] || fail "ARM64 Rust toolchain is missing: $rust/bin/cargo"
 [[ -d "$vendor_root" ]] || fail "shared offline Cargo vendor is missing: $vendor_root"
+
+# The SDK toolchain supplies cargo/rustc; put it on PATH before probing for
+# the commands so a host without its own Rust installation still builds.
+export PATH="$rust/bin:$PATH"
 for tool in cargo rustc readelf strip awk grep sed sort tail; do require_command "$tool"; done
 
-export PATH="$rust/bin:$PATH"
 export CARGO_HOME="$cargo_home"
 export CARGO_TARGET_DIR="$target_dir"
 export CARGO_NET_OFFLINE=true

@@ -71,7 +71,6 @@ Tool surface 决定了当前线程、当前模型能看到哪些工具。它由�
 | `session_run_stream.rs` | 会话运行流 |
 | `sessions_yield_tool.rs` | 会话让出工具 |
 | `skill_call.rs` | 技能调用 |
-| `sleep_tool.rs` | 延迟工具 |
 | `subagent_control.rs` | 子智能体控制 |
 | `swarm_realtime.rs` | 蜂群实时 |
 | `swarm_tool_error.rs` | 蜂群工具错误 |
@@ -88,7 +87,6 @@ Tool surface 决定了当前线程、当前模型能看到哪些工具。它由�
 | --- | --- | --- |
 | `最终回复` | `final_response` | 输出最终答复并结束当前工具链。 |
 | `定时任务` | `schedule_task` | 创建、更新、查询和执行定时任务。 |
-| `休眠等待` | `sleep` `sleep_wait` `pause` | 主动等待指定时间后继续执行。 |
 | `记忆管理` | `memory_manager` `memory_manage` | 管理长期记忆条目与记忆状态。 |
 | `执行命令` | `execute_command` | 执行 shell/终端命令。 |
 | `ptc` | `programmatic_tool_call` | 执行程序化工具调用脚本。 |
@@ -104,7 +102,7 @@ Tool surface 决定了当前线程、当前模型能看到哪些工具。它由�
 
 ### 5.3 内置工具全量总表
 
-当前 model-visible 内置工具按 `src/services/tools/catalog.rs` 中的 `builtin_tool_specs_with_language()` 统计，共 **31** 个。
+当前 model-visible 内置工具按 `src/services/tools/catalog.rs` 中的 `builtin_tool_specs_with_language()` 统计，共 **30** 个。
 
 | 工具名 | 常用别名 | 类别 | 默认启用 | 说明 |
 | --- | --- | --- | --- | --- |
@@ -114,7 +112,6 @@ Tool surface 决定了当前线程、当前模型能看到哪些工具。它由�
 | `问询面板` | `question_panel` `ask_panel` | 回复控制 | 否 | 向用户发起路线选择、确认或澄清。 |
 | `会话让出` | `sessions_yield` `yield` | 回复控制 | 否 | 让出当前会话，等待外部恢复或继续执行。 |
 | `定时任务` | `schedule_task` | 调度治理 | 是 | 管理 cron/at/every 定时任务。 |
-| `休眠等待` | `sleep` `sleep_wait` `pause` | 调度治理 | 是 | 在当前任务内主动等待。 |
 | `用户世界工具` | `user_world` | 平台内协作 | 否 | 在 Wunder 用户域内列用户、发消息。 |
 | `渠道工具` | `channel_tool` `channel_send` `channel_contacts` | 外部渠道 | 否 | 查询渠道联系人并向外部对象发消息。 |
 | `记忆管理` | `memory_manager` `memory_manage` | 状态与记忆 | 是 | 管理长期记忆条目、写入与删除。 |

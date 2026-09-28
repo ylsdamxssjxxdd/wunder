@@ -5,7 +5,7 @@ read_when:
   - You need to run shell commands, compile, test, or invoke an existing CLI
 source_docs:
   - src/services/tools.rs
-updated_at: 2026-04-10
+updated_at: 2026-09-28
 ---
 
 # Execute Command
@@ -28,8 +28,9 @@ updated_at: 2026-04-10
 
 - `content`
 - `workdir`
-- `timeout_s`
-- `yield_time_ms`
+- `timeout_s` (default 120 seconds; pass 0 to disable)
+- `run_in_background` (default false, blocking execution)
+- `yield_time_ms` (only with `run_in_background`)
 - `budget`
 - `dry_run`
 
@@ -93,7 +94,9 @@ If output was trimmed by the guard, the result may also include:
 
 ## Background command sessions
 
-Local runtimes and the server sandbox wait 750ms by default. A command that is still running returns `state: "running"` and a `command_session_id`, so the agent can keep working. Poll it with `command_session`; do not use the generic sleep tool to wait for command completion:
+Blocking by default: the call waits until the command exits or `timeout_s` (default 120 seconds; pass 0 to disable) is reached, then returns the full output at once. On timeout the process is killed and `timed_out` plus the collected partial output are returned.
+
+Set `run_in_background: true` only for long-running commands: after a brief `yield_time_ms` wait (default 750ms) a still-running command returns `state: "running"`, a `command_session_id`, and a `data.next_step` instruction. Poll it with `command_session`; `yield_time_ms` up to 60000 lets one poll wait until the command exits. Never idle with sleep to wait for a command:
 
 ```json
 {"command_session_id":"cmd_xxx","yield_time_ms":500}

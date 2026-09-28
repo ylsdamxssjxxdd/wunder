@@ -48,7 +48,6 @@ mod session_tool_args;
 mod session_tool_support;
 pub(crate) mod sessions_yield_tool;
 pub(crate) mod skill_call;
-mod sleep_tool;
 mod subagent_control;
 mod swarm_realtime;
 mod swarm_run_support;
@@ -82,9 +81,8 @@ pub use catalog::{
     build_runtime_tool_display_map, builtin_aliases, builtin_tool_specs,
     collect_available_tool_names, collect_enabled_tool_names_for_catalog,
     collect_prompt_tool_specs, collect_prompt_tool_specs_with_language, desktop_tools_available,
-    extract_sleep_seconds, filter_tool_names_by_model_capability, is_browser_tool_name,
-    is_desktop_control_tool_name, is_read_image_tool_name, is_sleep_tool_name,
-    resolve_runtime_tool_display_name, resolve_tool_name,
+    filter_tool_names_by_model_capability, is_browser_tool_name, is_desktop_control_tool_name,
+    is_read_image_tool_name, resolve_runtime_tool_display_name, resolve_tool_name,
 };
 pub(crate) use compact::{compact_tool_spec_for_model, compact_tool_specs_for_model};
 pub use context::{build_tool_roots, ToolContext, ToolEventEmitter, ToolRoots};

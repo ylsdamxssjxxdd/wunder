@@ -211,7 +211,7 @@ wunder 的内置工具已经不再是“每个工具各回各的格式”。大�
 
 - [最终回复](/docs/zh-CN/tools/final-response/)
 - [面板与 a2ui](/docs/zh-CN/tools/panels-and-a2ui/)
-- [会话让出](/docs/zh-CN/tools/sleep/)：这里的 `sessions_yield` 也归入回合控制思路
+- [会话让出](/docs/zh-CN/tools/sleep/)：`sessions_yield` 归入回合控制思路
 
 ## 2. 工作区与代码
 
@@ -244,7 +244,6 @@ wunder 的内置工具已经不再是“每个工具各回各的格式”。大�
 - [A2A 工具](/docs/zh-CN/tools/a2a-tools/)
 - [节点调用](/docs/zh-CN/tools/node-invoke/)
 - [定时任务](/docs/zh-CN/tools/schedule-task/)
-- [睡眠等待](/docs/zh-CN/tools/sleep/)
 
 ## 选型建议
 
