@@ -391,6 +391,20 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
 
 const resolveCreditsConsumed = (source: Record<string, any> | null | undefined): number | null => {
   if (!source || typeof source !== 'object') return null;
+  // The bubble's quota metric is the admitted model-request count.  The
+  // account debit field is intentionally allowed to be zero for exempt or
+  // internal requests, so it must not hide a persisted request total.
+  const requestCandidates = [
+    source.model_request_count,
+    source.modelRequestCount,
+    source.turn_request_count,
+    source.turnRequestCount
+  ]
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  if (requestCandidates.length > 0) {
+    return Math.trunc(Math.max(...requestCandidates));
+  }
   const accountValue = source.account_credits_consumed ?? source.accountCreditsConsumed;
   if (accountValue !== undefined && accountValue !== null && accountValue !== '') {
     const parsed = Number(accountValue);
@@ -409,17 +423,6 @@ const resolveCreditsConsumed = (source: Record<string, any> | null | undefined):
   if (explicitCandidates.length > 0 && Math.max(...explicitCandidates) > 0) {
     return Math.trunc(Math.max(...explicitCandidates));
   }
-  // A persisted zero from the old account-debit field was common even though
-  // the thread monitor already had the admitted request count. For a normal
-  // user, one admitted model request equals one consumed credit.
-  const requestCandidates = [
-    source.model_request_count,
-    source.modelRequestCount,
-    source.turn_request_count,
-    source.turnRequestCount
-  ]
-    .map((value) => Number(value))
-    .filter((value) => Number.isFinite(value) && value >= 0);
   const legacyUsage = Number(
     source.quotaConsumed ?? source.quota_consumed ?? source.request_consumed_tokens
   );

@@ -172,13 +172,22 @@ test('message stats expose quota charges carried as consumed', () => {
   assert.equal(findEntryValue(entries, 'Credits'), '1');
 });
 
-test('message stats retain a zero account charge for an exempt model request', () => {
+test('message stats show the admitted request total when an exempt request has no account debit', () => {
   const entries = buildAssistantMessageStatsEntries({
     role: 'assistant',
     stats: { modelRequestCount: 1, creditsConsumed: 0, toolCalls: 0 }
   }, createTranslator());
-  assert.equal(findEntryValue(entries, 'Credits'), '0');
+  assert.equal(findEntryValue(entries, 'Credits'), '1');
   assert.equal(findEntryValue(entries, 'Tools'), '0');
+});
+
+test('message stats restore the persisted model request total ahead of a zero account debit', () => {
+  const entries = buildAssistantMessageStatsEntries({
+    role: 'assistant',
+    stats: { account_credits_consumed: 0, model_request_count: 7, toolCalls: 6 }
+  }, createTranslator());
+  assert.equal(findEntryValue(entries, 'Credits'), '7');
+  assert.equal(findEntryValue(entries, 'Tools'), '6');
 });
 
 test('message stats recover a legacy zero account charge from request count', () => {

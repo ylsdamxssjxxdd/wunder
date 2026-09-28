@@ -56,6 +56,7 @@ import MessengerToolsSection from '@/views/messenger/sections/MessengerToolsSect
 import { useMiddlePaneOverlayPreview } from '@/views/messenger/middlePaneOverlayPreview';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
+import { resolveRuntimeMessageContentSource } from '@/components/chat/messageRuntimeContent';
 import {
   InquiryPanel,
   MessageCompactionDivider,
@@ -1099,14 +1100,44 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
 
   ctx.shouldMountAgentMessageBubble = (message: Record<string, unknown>): boolean => ctx.shouldShowAgentMessageBubble(message);
 
+  const resolveRuntimeAssistantProjection = (message: Record<string, unknown>) => {
+      if (String(message?.role || '') !== 'assistant') {
+          return null;
+      }
+      const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
+      if (!sessionId) {
+          return null;
+      }
+      return resolveRuntimeMessageContentSource({
+          projection: ctx.chatStore.runtimeProjection,
+          sessionId,
+          runtimeMessageId: message.__runtime_message_id || message.message_id || message.messageId,
+          runtimeUserTurnId: message.__runtime_user_turn_id || message.user_turn_id || message.userTurnId,
+          runtimeModelTurnId: message.__runtime_model_turn_id || message.model_turn_id || message.modelTurnId,
+          message
+      });
+  };
+
+  ctx.resolveAgentWorkflowSubagents = (message: Record<string, unknown>): unknown[] => {
+      const projected = resolveRuntimeAssistantProjection(message);
+      const projectedItems = Array.isArray(projected?.subagents) ? projected.subagents : [];
+      if (projectedItems.length > 0) {
+          return projectedItems;
+      }
+      return Array.isArray(message?.subagents) ? message.subagents : [];
+  };
+
   ctx.shouldMountAgentWorkflow = (message: Record<string, unknown>): boolean => {
       if (String(message?.role || '') !== 'assistant') {
           return false;
       }
+      const projected = resolveRuntimeAssistantProjection(message);
       const hasWorkflow = Boolean(message?.stream_incomplete) ||
           Boolean(message?.workflowStreaming) ||
           (Array.isArray(message?.workflowItems) && message.workflowItems.length > 0) ||
-          (Array.isArray(message?.subagents) && message.subagents.length > 0);
+          (Array.isArray(message?.subagents) && message.subagents.length > 0) ||
+          Boolean(projected?.workflowItems?.length) ||
+          Boolean(projected?.subagents?.length);
       // Message virtualization bounds mounted shells; each shell lazily mounts details.
       return hasWorkflow;
   };

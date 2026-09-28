@@ -410,7 +410,7 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
             "SELECT MAX(CASE WHEN COALESCE(                payload::jsonb #>> '{data,model_round}',                payload::jsonb #>> '{data,data,model_round}',                payload::jsonb ->> 'model_round'             ) ~ '^[0-9]+$' THEN COALESCE(                payload::jsonb #>> '{data,model_round}',                payload::jsonb #>> '{data,data,model_round}',                payload::jsonb ->> 'model_round'             )::BIGINT END) FROM stream_events WHERE session_id = $1 AND user_round = $2",
             &[&session_id, &user_round],
         )?;
-        Ok(row.get::<_, Option<i64>>(0).unwrap_or(0).max(0))
+        Ok(row.try_get::<_, Option<i64>>(0)?.unwrap_or(0).max(0))
     }
 
     fn load_session_workflow_events_impl(

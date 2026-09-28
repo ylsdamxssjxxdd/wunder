@@ -128,7 +128,7 @@ let workflowStateCacheClock = 0;
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, triggerRef, toRaw, watch, type ComponentPublicInstance } from 'vue';
 
 import { useI18n } from '@/i18n';
-import { selectChatRuntimeMessage } from '@/realtime/chat/chatRuntimeSelectors';
+import { resolveRuntimeMessageContentSource } from './messageRuntimeContent';
 import { useChatStore } from '@/stores/chat';
 import {
   useCommandSessionStore,
@@ -243,6 +243,8 @@ type Props = {
   terminalAutoStick?: TerminalAutoStickMode;
   renderVersion?: number | string;
   runtimeMessageId?: string;
+  runtimeUserTurnId?: string;
+  runtimeModelTurnId?: string;
   sessionId?: string;
   stateKey?: string;
   stateAliases?: string[];
@@ -309,6 +311,8 @@ const props = withDefaults(defineProps<Props>(), {
   terminalAutoStick: 'smart',
   renderVersion: 0,
   runtimeMessageId: '',
+  runtimeUserTurnId: '',
+  runtimeModelTurnId: '',
   sessionId: '',
   stateKey: '',
   stateAliases: () => [],
@@ -357,12 +361,16 @@ const resolveRuntimeWorkflowItems = (): WorkflowItem[] | null => {
   if (!props.visible) return null;
   const messageId = String(props.runtimeMessageId || '').trim();
   const sessionId = String(props.sessionId || chatStore.activeSessionId || '').trim();
-  if (!messageId || !sessionId) return null;
-  const runtimeMessage = selectChatRuntimeMessage(
-    toRaw(chatStore.runtimeProjection),
+  if (!sessionId) return null;
+  const projection = toRaw(chatStore.runtimeProjection);
+  const runtimeMessage = resolveRuntimeMessageContentSource({
+    projection,
     sessionId,
-    messageId
-  );
+    runtimeMessageId: messageId,
+    runtimeUserTurnId: props.runtimeUserTurnId,
+    runtimeModelTurnId: props.runtimeModelTurnId,
+    message: { role: 'assistant', message_id: messageId }
+  });
   return Array.isArray(runtimeMessage?.workflowItems)
     ? runtimeMessage.workflowItems as WorkflowItem[]
     : null;
@@ -4072,7 +4080,14 @@ watch(
     const contentVersion = messageId
       ? Number(chatStore.runtimeProjectionContentVersionByMessage?.[messageId] || 0)
       : 0;
-    return [sessionId, messageId, contentVersion].join('\u0001');
+    // A refreshed history row can be materialized before its message id is
+    // indexed. The session projection clock still advances when workflow-only
+    // hydration attaches tool records, so subscribe to it as the fallback
+    // invalidation source.
+    const projectionVersion = sessionId
+      ? Number(chatStore.runtimeProjectionVersionBySession?.[sessionId] || 0)
+      : 0;
+    return [sessionId, messageId, contentVersion, projectionVersion].join('\u0001');
   },
   (signature, previousSignature) => {
     const [sessionId, messageId] = signature.split('\u0001');

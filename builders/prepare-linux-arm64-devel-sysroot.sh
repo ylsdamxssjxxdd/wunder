@@ -13,6 +13,6 @@ EOF
 printf 'Acquire::Check-Valid-Until "false";\n' >/etc/apt/apt.conf.d/99wunder-no-valid-until
 apt-get update -o Acquire::Check-Valid-Until=false
 cd "$debs"
-apt-get download libc6-dev:arm64 linux-libc-dev:arm64 libgcc-7-dev:arm64 gcc-7:arm64 binutils:arm64
+apt-get download libc6:arm64 libc6-dev:arm64 linux-libc-dev:arm64 libgcc1:arm64 libgcc-7-dev:arm64 cpp-7:arm64 gcc-7:arm64 binutils:arm64
 for deb in ./*.deb; do dpkg-deb -x "$deb" "$root"; done
 echo "prepared ARM64 Ubuntu 18 development sysroot: $root"

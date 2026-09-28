@@ -143,6 +143,8 @@
                     :loading="Boolean(item.message.workflowStreaming)"
                     :render-version="buildMessageWorkflowRenderVersion(item.message)"
                     :runtime-message-id="String(item.message.__runtime_message_id || item.message.message_id || '')"
+                    :runtime-user-turn-id="String(item.message.__runtime_user_turn_id || item.message.user_turn_id || item.message.userTurnId || '')"
+                    :runtime-model-turn-id="String(item.message.__runtime_model_turn_id || item.message.model_turn_id || item.message.modelTurnId || '')"
                     :session-id="String(chatStore.activeSessionId || '')"
                     :state-key="`${sessionHub.activeConversationKey}:workflow:${resolveMessageWorkflowStateKey(item.message, item.sourceIndex)}`"
                     :state-aliases="resolveMessageWorkflowStateAliases(item.message, item.sourceIndex, item.key)
@@ -151,16 +153,17 @@
                       Boolean(
                         item.message.stream_incomplete ||
                           item.message.workflowStreaming ||
-                          (Array.isArray(item.message.workflowItems) && item.message.workflowItems.length > 0)
+                          (Array.isArray(item.message.workflowItems) && item.message.workflowItems.length > 0) ||
+                          shouldMountAgentWorkflow(item.message)
                       )
                     "
                     :pending-placeholder="item.message.workflowPendingPlaceholder || null"
                     @layout-change="handleMessageWorkflowLayoutChange(item.key)"
                   />
                   <MessageSubagentPanel
-                    v-if="Array.isArray(item.message.subagents) && item.message.subagents.length > 0"
+                    v-if="resolveAgentWorkflowSubagents(item.message).length > 0"
                     :session-id="chatStore.activeSessionId"
-                    :items="Array.isArray(item.message.subagents) ? item.message.subagents : []"
+                    :items="resolveAgentWorkflowSubagents(item.message)"
                   />
                 </div>
                 <div
@@ -618,6 +621,7 @@ const openProfilePage = props.controller.openProfilePage;
 const replaceWorldAtPathTokens = props.controller.replaceWorldAtPathTokens;
 const resolveAgentMarkdownWorkspacePath = props.controller.resolveAgentMarkdownWorkspacePath;
 const resolveAgentMessageKey = props.controller.resolveAgentMessageKey;
+const resolveAgentWorkflowSubagents = props.controller.resolveAgentWorkflowSubagents;
 const resolveMessageWorkflowStateKey = props.controller.resolveMessageWorkflowStateKey;
 const resolveMessageWorkflowStateAliases = props.controller.resolveMessageWorkflowStateAliases;
 const retainedMessageRenderKind = props.controller.retainedMessageRenderKind;
