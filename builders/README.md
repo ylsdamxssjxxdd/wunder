@@ -9,6 +9,9 @@
 bash build.sh -t desktop -a linux-arm64
 bash build.sh -t cli -a linux-arm64
 bash build.sh -t desktop -a linux-amd64
+
+# Win7 x86 的 Desktop/CLI 同样由 build.sh 在 ARM64 Linux 主机上交叉构建：
+bash build.sh -t desktop -a win7-x86
 bash build.sh -t cli -a win7-x86
 
 # linux-amd64 Desktop 默认是 ELF；仅明确要求时才打成 AppImage。
@@ -21,7 +24,7 @@ WUNDER_APPIMAGE_RUNTIME_AMD64=/path/to/amd64-runtime.AppImage \
   bash build.sh -all
 ```
 
-Windows 使用同一套目标/架构名称。Linux 目标通过 Docker 使用 `kylin-arm`；`win7-x86` 在本机通过 `win7` SDK 构建，在 ARM64 Linux 上也可交叉生成（同一 `i686-win7-windows-gnu` 目标，build-std 方式）。旧的 `win32-x86` 名称已并入 `win7-x86`（Win7 兼容构建覆盖全部 32 位 Windows 场景）：
+Windows 使用同一套目标/架构名称。Linux 目标通过 Docker 使用 `kylin-arm`；`win7-x86` 在本机通过 `win7` SDK 构建，在 ARM64 Linux 上也可用 `build.sh` 交叉生成（Desktop 与 CLI 均可，同一 `i686-win7-windows-gnu` 目标，build-std 方式）。旧的 `win32-x86` 名称已并入 `win7-x86`（Win7 兼容构建覆盖全部 32 位 Windows 场景）：
 
 ```bat
 build.bat -Target desktop -Arch win7-x86
