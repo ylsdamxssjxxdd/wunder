@@ -24,6 +24,27 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             format!("{}/", path.trim_end_matches('/'))
         };
         let (name, content) = match kind.as_str() {
+            "directory" => {
+                let relative = if path.trim().is_empty() {
+                    "新建目录".to_string()
+                } else {
+                    format!("{}/新建目录", path.trim_end_matches('/'))
+                };
+                let api = create_api.clone();
+                let weak = app.as_weak();
+                let agent = agent.clone();
+                std::thread::spawn(move || {
+                    let result = api.create_workspace_directory(&agent, &relative);
+                    let _ = weak.upgrade_in_event_loop(move |app| match result {
+                        Ok(()) => {
+                            app.set_status("目录已创建".into());
+                            app.invoke_refresh_files();
+                        }
+                        Err(error) => app.set_status(format!("无法创建目录：{error}").into()),
+                    });
+                });
+                return;
+            }
             "markdown" => ("notes.md", "# Title\n"),
             "word" => ("document.docx", ""),
             "sheet" => ("sheet.xlsx", ""),
@@ -45,6 +66,74 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     app.invoke_refresh_files();
                 }
                 Err(error) => app.set_status(format!("无法创建文件：{error}").into()),
+            });
+        });
+    });
+    let action_api = api.clone();
+    let action_weak = app.as_weak();
+    app.on_workspace_action(move |kind, path, value| {
+        let Some(app) = action_weak.upgrade() else {
+            return;
+        };
+        if app.get_files_loading() {
+            return;
+        }
+        let agent = app.get_active_agent_id().to_string();
+        if agent.trim().is_empty() {
+            return;
+        }
+        app.set_files_loading(true);
+        let api = action_api.clone();
+        let weak = app.as_weak();
+        std::thread::spawn(move || {
+            let result = match kind.as_str() {
+                "delete" => api.delete_workspace_entry(&agent, &path),
+                "rename" => api
+                    .rename_workspace_entry(&agent, &path, &value)
+                    .map(|_| ()),
+                "copy" => api.copy_workspace_entry(&agent, &path, &value),
+                "move" => api.move_workspace_entry(&agent, &path, &value),
+                _ => Err(
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, "未知文件操作").into(),
+                ),
+            };
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_files_loading(false);
+                match result {
+                    Ok(()) => {
+                        app.set_status("文件操作已完成".into());
+                        app.invoke_refresh_files();
+                    }
+                    Err(error) => app.set_status(format!("文件操作失败：{error}").into()),
+                }
+            });
+        });
+    });
+    let save_api = api.clone();
+    let save_weak = app.as_weak();
+    app.on_save_workspace_text(move |path, content| {
+        let Some(app) = save_weak.upgrade() else {
+            return;
+        };
+        if app.get_preview_loading() {
+            return;
+        }
+        let agent = app.get_active_agent_id().to_string();
+        app.set_preview_loading(true);
+        app.set_preview_editable(false);
+        let api = save_api.clone();
+        let weak = app.as_weak();
+        std::thread::spawn(move || {
+            let result = api.save_workspace_text(&agent, &path, &content);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_preview_loading(false);
+                match result {
+                    Ok(()) => {
+                        app.set_status("文件已保存".into());
+                        app.invoke_refresh_files();
+                    }
+                    Err(error) => app.set_status(format!("无法保存文件：{error}").into()),
+                }
             });
         });
     });
@@ -355,6 +444,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             return;
         }
         app.set_preview_open(true);
+        app.set_preview_editing(false);
         app.set_preview_loading(true);
         app.set_preview_path(path.clone());
         app.set_preview_text("正在读取…".into());
@@ -362,15 +452,17 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let weak = app.as_weak();
         let api = preview_api.clone();
         std::thread::spawn(move || {
-            let result = api.workspace_preview(&agent, &path);
+            let result = api.workspace_preview_detail(&agent, &path);
             let _ = weak.upgrade_in_event_loop(move |app| {
                 app.set_preview_loading(false);
                 if app.get_preview_path() == path && app.get_active_agent_id() == agent {
-                    app.set_preview_text(
-                        result
-                            .unwrap_or_else(|error| format!("无法预览：{error}"))
-                            .into(),
-                    );
+                    match result {
+                        Ok(preview) => {
+                            app.set_preview_editable(preview.editable);
+                            app.set_preview_text(preview.text.into());
+                        }
+                        Err(error) => app.set_preview_text(format!("无法预览：{error}").into()),
+                    }
                 } else {
                     app.set_preview_open(false);
                 }

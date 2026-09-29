@@ -61,6 +61,8 @@ pub mod skills;
 pub mod stream_events;
 pub mod subagents;
 pub mod swarm;
+pub mod thread_catalog;
+pub mod thread_log;
 pub mod tools;
 pub mod user_access;
 pub mod user_agent_presets;

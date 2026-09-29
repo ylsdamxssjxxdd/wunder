@@ -189,6 +189,8 @@ impl ThreadRuntime {
             // Scheduler authority is internal; request payloads cannot grant priority or claim ownership.
             overrides.remove("__queue_task_id");
             overrides.remove("__queue_priority");
+            overrides.remove("__thread_log_turn_id");
+            overrides.remove("__thread_log_user_round");
         }
         request.enforce_runtime_queue = true;
         let agent_id = normalize_agent_id(request.agent_id.as_deref());
@@ -209,6 +211,31 @@ impl ThreadRuntime {
         }
         request.session_id = Some(session_id.clone());
         request.agent_id = (!agent_id.is_empty()).then_some(agent_id.clone());
+        let input = json!({
+            "role": "user", "content": request.question,
+            "client_message_id": request.client_message_id, "attachments": request.attachments,
+            "root_user_round": goal::goal_continuation_user_round(request.config_overrides.as_ref()),
+        });
+        let storage = self.user_store.storage_backend().clone();
+        let owner = user_id.clone();
+        let thread = session_id.clone();
+        let accepted = crate::core::blocking::run_db("thread_log.accept", move || {
+            storage.accept_thread_turn(&owner, &thread, &input)
+        })
+        .await?;
+        if accepted["created"] == false {
+            return Err(anyhow!("client_message_id already accepted"));
+        }
+        let thread_turn_id = accepted["turn_id"].as_str().unwrap_or_default().to_string();
+        let user_round = accepted["user_turn_index"].as_i64().unwrap_or(1);
+        let overrides = request.config_overrides.get_or_insert_with(|| json!({}));
+        if let Some(map) = overrides.as_object_mut() {
+            map.insert(
+                "__thread_log_turn_id".into(),
+                json!(thread_turn_id.to_string()),
+            );
+            map.insert("__thread_log_user_round".into(), json!(user_round));
+        }
         let session_id = Some(session_id);
         let mut lease = None;
         let config = self.config_store.get().await;
@@ -260,15 +287,19 @@ impl ThreadRuntime {
         // Initialize execution context once for CLI and pre-migration goals.
         // Subsequent wake-ups use the durable goal, never the latest monitor round.
         if goal_record.user_round.is_none() || goal_record.approval_mode.is_none() {
-            let user_round = goal_record.user_round.unwrap_or_else(|| {
+            let user_round = if let Some(round) = goal_record.user_round {
+                round
+            } else {
                 let echo = format!("/goal {}", goal_record.objective);
-                let round = self.monitor.register(
-                    &session.session_id,
-                    user_id,
-                    session.agent_id.as_deref().unwrap_or(""),
-                    &echo,
-                    UserStore::is_admin(&user),
-                );
+                let storage = self.user_store.storage_backend().clone();
+                let owner = user_id.to_string();
+                let thread = session.session_id.clone();
+                let input = json!({"role":"user","content":echo,"client_message_id":format!("goal:{}",session.session_id)});
+                let accepted = blocking::run_db("thread_log.accept.goal", move || {
+                    storage.accept_thread_turn(&owner, &thread, &input)
+                })
+                .await?;
+                let round = accepted["user_turn_index"].as_i64().unwrap_or(1);
                 self.orchestrator.append_goal_command_message(
                     user_id,
                     &session.session_id,
@@ -276,7 +307,7 @@ impl ThreadRuntime {
                     round,
                 );
                 round
-            });
+            };
             let agent = if session
                 .agent_id
                 .as_deref()
@@ -480,6 +511,23 @@ impl ThreadRuntime {
 
     pub fn cancel_task(&self, task_id: &str) -> Result<()> {
         let now = now_ts();
+        if let Some(task) = self.user_store.get_agent_task(task_id)? {
+            if let Some(turn_id) = task
+                .request_payload
+                .pointer("/config_overrides/__thread_log_turn_id")
+                .and_then(Value::as_str)
+            {
+                let payload = json!({"session_id": task.session_id, "turn_id": turn_id, "status": "cancelled", "error": "cancelled"});
+                let _ = self.user_store.storage_backend().update_thread_turn(
+                    &task.user_id,
+                    &task.session_id,
+                    turn_id,
+                    "cancelled",
+                    "cancelled",
+                    &payload,
+                );
+            }
+        }
         self.user_store
             .update_agent_task_status(UpdateAgentTaskStatusParams {
                 task_id,
@@ -852,33 +900,9 @@ impl ThreadRuntime {
             "queue_event_id": queue_event_id,
         });
         if !self.session_has_active_runtime_slot(&record.session_id) {
-            if let Some(round) =
-                goal::goal_continuation_user_round(request.config_overrides.as_ref())
-            {
-                self.monitor.register_continuation(
-                    &record.session_id,
-                    &record.user_id,
-                    &record.agent_id,
-                    &request.question,
-                    request.is_admin,
-                    round,
-                );
-                self.monitor.mark_queued(&record.session_id, None);
-                self.monitor.record_event(
-                    &record.session_id,
-                    "queue_enter",
-                    &queue_monitor_payload,
-                );
-            } else {
-                self.monitor.register_queued(
-                    &record.session_id,
-                    &record.user_id,
-                    &record.agent_id,
-                    &request.question,
-                    request.is_admin,
-                    &queue_monitor_payload,
-                );
-            }
+            self.monitor.mark_queued(&record.session_id, None);
+            self.monitor
+                .record_event(&record.session_id, "queue_enter", &queue_monitor_payload);
         }
         let _ = self.queue_tx.try_send(());
         Ok(QueueInfo {
@@ -1506,6 +1530,26 @@ impl ThreadRuntime {
                 last_error: Some(message.as_str()),
                 updated_at: now,
             })?;
+        if let Some(turn_id) = task
+            .request_payload
+            .pointer("/config_overrides/__thread_log_turn_id")
+            .and_then(Value::as_str)
+        {
+            let terminal = if status == TASK_STATUS_CANCELLED {
+                "cancelled"
+            } else {
+                "failed"
+            };
+            let payload = json!({"session_id": task.session_id, "turn_id": turn_id, "status": terminal, "error": message});
+            let _ = self.user_store.storage_backend().update_thread_turn(
+                &task.user_id,
+                &task.session_id,
+                turn_id,
+                terminal,
+                &message,
+                &payload,
+            );
+        }
         if status == TASK_STATUS_CANCELLED {
             self.monitor.mark_cancelled(&task.session_id);
         } else {

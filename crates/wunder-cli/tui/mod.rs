@@ -1,5 +1,6 @@
 mod activity_indicator;
 mod app;
+mod command_center;
 mod frame_scheduler;
 mod highlight;
 mod line_utils;
@@ -8,6 +9,8 @@ mod markdown_render;
 mod markdown_stream;
 mod scrollback;
 mod theme;
+mod thread_registry;
+mod transcript;
 mod ui;
 mod wrapping;
 

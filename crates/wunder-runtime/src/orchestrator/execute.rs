@@ -124,7 +124,10 @@ impl Orchestrator {
             .unwrap_or_else(|| question.clone());
         let is_admin = prepared.is_admin;
         let mut active_turn_id: Option<String> = None;
-        let mut active_turn_round = RoundInfo::default();
+        let mut active_turn_round = match (prepared.thread_turn_id, prepared.thread_user_round) {
+            (Some(turn_id), Some(user_round)) => RoundInfo::user_only_thread(user_round, turn_id),
+            _ => RoundInfo::default(),
+        };
 
         let result = async {
             // Execution exclusion belongs to a session; one agent can run independent tasks.
@@ -179,28 +182,31 @@ impl Orchestrator {
                 ));
             }
 
-            let user_round = if goal_continuation_turn {
-                let requested_round = goal::goal_continuation_user_round(
-                    prepared.config_overrides.as_ref(),
+            let user_round = prepared.thread_user_round.expect("accepted user round");
+            // Monitoring observes the durable round; it never allocates its identity.
+            self.monitor.register_continuation(&session_id, &user_id,
+                prepared.agent_id.as_deref().unwrap_or(""), &display_question, is_admin, user_round);
+            let request_round = prepared
+                .thread_turn_id
+                .map(|turn_id| RoundInfo::user_only_thread(user_round, turn_id))
+                .unwrap_or_else(|| RoundInfo::user_only(user_round));
+            if let Some(turn_id) = request_round.thread_turn_id {
+                let payload = json!({
+                    "session_id": session_id,
+                    "turn_id": turn_id.to_string(),
+                    "user_round": user_round,
+                    "status": "running",
+                    "summary": display_question,
+                });
+                let _ = self.storage.update_thread_turn(
+                    &user_id,
+                    &session_id,
+                    &turn_id.to_string(),
+                    "running",
+                    &display_question,
+                    &payload,
                 );
-                self.monitor.register_continuation(
-                    &session_id,
-                    &user_id,
-                    prepared.agent_id.as_deref().unwrap_or(""),
-                    &display_question,
-                    is_admin,
-                    requested_round.unwrap_or(1),
-                )
-            } else {
-                self.monitor.register(
-                    &session_id,
-                    &user_id,
-                    prepared.agent_id.as_deref().unwrap_or(""),
-                    &display_question,
-                    is_admin,
-                )
-            };
-            let request_round = RoundInfo::user_only(user_round);
+            }
             // Child cancellation survives monitor registration resetting the turn flags.
             self.ensure_not_cancelled(&session_id)?;
             agent_inbox = Some(self.monitor.mailboxes.open(&user_id, &session_id)
@@ -214,7 +220,7 @@ impl Orchestrator {
                     .is_some_and(|task| task.status == "running");
                 if !active { return Err(OrchestratorError::cancelled(i18n::t("error.session_cancelled"))); }
             }
-            let active_turn = self.active_turns.begin_turn(&session_id);
+            let active_turn = self.active_turns.begin_turn_with_id(&session_id, &prepared.thread_turn_id.expect("accepted turn").to_string());
             active_turn_id = Some(active_turn.turn_id.clone());
             active_turn_round = request_round;
             self.emit_thread_runtime_update(
@@ -436,7 +442,7 @@ impl Orchestrator {
                     }
                 }
                 model_round += 1;
-                let round_info = RoundInfo::new(user_round, model_round);
+                let round_info = request_round.with_model_round(model_round);
                 last_round_info = round_info;
                 let mut adaptive_recovery_limit_hint: Option<i64> = None;
                 self.ensure_not_cancelled(&session_id)?;
@@ -899,8 +905,6 @@ impl Orchestrator {
                             None,
                             round_info,
                         );
-                        self.fold_completed_round_stream_deltas(&emitter, &session_id, user_round)
-                            .await;
                     }
                     if answer.is_empty() {
                         answer = content.trim().to_string();
@@ -956,8 +960,6 @@ impl Orchestrator {
                         None,
                         round_info,
                     );
-                    self.fold_completed_round_stream_deltas(&emitter, &session_id, user_round)
-                        .await;
                 }
 
                 let tool_event_forwarder =
@@ -1378,6 +1380,8 @@ impl Orchestrator {
                             &name,
                             &args,
                             &result,
+                            round_info,
+                            event_tool_call_id.as_deref(),
                         );
                         self.append_artifact_logs(&user_id, &session_id, &name, &args, &result);
                         if name == read_tool_name {
@@ -1387,6 +1391,7 @@ impl Orchestrator {
                                 &args,
                                 &skills_snapshot,
                                 Some(&user_tool_bindings),
+                                round_info,
                             );
                         }
 
@@ -1524,10 +1529,6 @@ impl Orchestrator {
                                 None,
                                 round_info,
                             );
-                            self.fold_completed_round_stream_deltas(
-                                &emitter, &session_id, user_round,
-                            )
-                            .await;
                         }
                         if let Some(meta) = sessions_yield_meta.as_ref() {
                             let content = if answer.trim().is_empty() {
@@ -1559,10 +1560,6 @@ impl Orchestrator {
                                 None,
                                 round_info,
                             );
-                            self.fold_completed_round_stream_deltas(
-                                &emitter, &session_id, user_round,
-                            )
-                            .await;
                         }
 
                         if failure_reroute_notice.is_none() {
@@ -1760,10 +1757,6 @@ impl Orchestrator {
                                         None,
                                         round_info,
                                     );
-                                    self.fold_completed_round_stream_deltas(
-                                        &emitter, &session_id, user_round,
-                                    )
-                                    .await;
                                     should_finish = true;
                                     break;
                                 }
@@ -1885,6 +1878,7 @@ impl Orchestrator {
                                     &uid,
                                     &a2ui_messages,
                                     &answer,
+                                    round_info,
                                 );
                                 if !answer.trim().is_empty() {
                                     let message_stats = build_persisted_message_stats(
@@ -1910,10 +1904,6 @@ impl Orchestrator {
                                         None,
                                         round_info,
                                     );
-                                    self.fold_completed_round_stream_deltas(
-                                        &emitter, &session_id, user_round,
-                                    )
-                                    .await;
                                 }
                                 should_finish = true;
                             }
@@ -1939,6 +1929,7 @@ impl Orchestrator {
                                     &session_id,
                                     &name,
                                     &args,
+                                    round_info,
                                 );
                                 if answer.trim().is_empty() {
                                     empty_output_guard.recover_or_stop(
@@ -1972,10 +1963,6 @@ impl Orchestrator {
                                         None,
                                         round_info,
                                     );
-                                    self.fold_completed_round_stream_deltas(
-                                        &emitter, &session_id, user_round,
-                                    )
-                                    .await;
                                 }
                                 should_finish = true;
                             }

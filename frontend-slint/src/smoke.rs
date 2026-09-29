@@ -33,27 +33,17 @@ pub fn run(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::erro
 }
 
 fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    app.set_subagents(slint::ModelRc::new(slint::VecModel::from(vec![
-        crate::Conversation {
-            id: "child".into(),
-            title: "子智能体".into(),
-            preview: "已中断 · 可复用".into(),
-            time: "".into(),
-            consumed_tokens: "".into(),
-            tool_calls: "".into(),
-            quota_used: "".into(),
-            runtime_status: "".into(),
-            locked: false,
-        },
-    ])));
-    app.set_subagents_status("保留历史，可由主智能体继续分派".into());
     snapshot(app, &directory.join("native-preview.png"))?;
     // Dispatch pointer events through Slint hit testing. Invoking callbacks
     // directly cannot detect focus-only first clicks or decorative overlays.
-    for (section, y) in [(2, 160.0), (3, 218.0), (0, 102.0)] {
+    for (page, y) in [
+        (crate::DesktopPage::Agents, 160.0),
+        (crate::DesktopPage::Tools, 218.0),
+        (crate::DesktopPage::Messages, 102.0),
+    ] {
         click(app, 28.0, y)?;
         require(
-            app.get_section() == section,
+            app.get_page() == page,
             "rail navigation required another click",
         )?;
     }
@@ -112,7 +102,7 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
     // The prototype follows the original light visual and no longer exposes
     // a theme switch. Keep a light snapshot for regression.
     snapshot(app, &directory.join("native-light.png"))?;
-    app.set_section(2);
+    app.set_page(crate::DesktopPage::Agents);
     let count = app.get_agents().row_count();
     app.invoke_create_agent("测试智能体".into());
     require(
@@ -139,12 +129,12 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         "prompt edit lost whitespace",
     )?;
     snapshot(app, &directory.join("native-agents.png"))?;
-    app.set_section(3);
+    app.set_page(crate::DesktopPage::Tools);
     snapshot(app, &directory.join("native-tools.png"))?;
     // The workspace stays in the chat dock; the standalone files rail entry
     // was removed to match the web messenger information architecture.
     snapshot(app, &directory.join("native-workspace.png"))?;
-    app.set_section(4);
+    app.set_page(crate::DesktopPage::Settings);
     app.invoke_save_model(
         "测试模型".into(),
         "openai".into(),
@@ -159,7 +149,7 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         "model/default update failed",
     )?;
     snapshot(app, &directory.join("native-settings.png"))?;
-    app.set_section(5);
+    app.set_page(crate::DesktopPage::Profile);
     snapshot(app, &directory.join("native-profile.png"))?;
     app.set_model_key_draft(app.get_selected_model_key());
     app.set_model_editor_open(true);

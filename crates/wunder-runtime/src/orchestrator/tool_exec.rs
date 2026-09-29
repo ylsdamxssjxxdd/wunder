@@ -115,6 +115,17 @@ impl Orchestrator {
                 payload["attachments"] = value;
             }
         }
+        if let Some(turn_id) = round_info.thread_turn_id {
+            let hidden = meta.and_then(|v| v.get("hidden")).and_then(Value::as_bool) == Some(true);
+            let item_id = if role == "user" && round_info.model_round.is_none() && !hidden {
+                format!("{turn_id}:user")
+            } else {
+                // An append denotes a new message, including identical internal messages.
+                // Tool execution records have their own invocation ID and lifecycle.
+                Uuid::new_v4().to_string()
+            };
+            payload["item_id"] = Value::String(item_id);
+        }
         let payload =
             crate::services::chat_payload_sanitizer::sanitize_persisted_chat_payload(&payload);
         self.workspace.append_chat(user_id, &payload)
@@ -180,31 +191,6 @@ impl Orchestrator {
         )
     }
 
-    /// A model round completed successfully and its assistant row is durable in
-    /// chat_history, so the round's persisted llm_output_delta replay rows are
-    /// redundant. Failure/cancel paths keep deltas; TTL cleanup is the fallback.
-    pub(super) async fn fold_completed_round_stream_deltas(
-        &self,
-        emitter: &EventEmitter,
-        session_id: &str,
-        user_round: i64,
-    ) {
-        if user_round <= 0 {
-            return;
-        }
-        emitter.flush_pending_deltas();
-        super::stream_persist::flush_stream_event_persist_queue().await;
-        let storage = self.storage.clone();
-        let session_id = session_id.to_string();
-        let result = crate::core::blocking::run_db("orchestrator.fold_stream_deltas", move || {
-            storage.delete_stream_events_by_round(&session_id, user_round, &["llm_output_delta"])
-        })
-        .await;
-        if let Err(err) = result {
-            warn!("fold stream deltas failed: {err}");
-        }
-    }
-
     pub(super) fn mark_internal_model_context_message(
         &self,
         message: &mut Value,
@@ -248,6 +234,8 @@ impl Orchestrator {
         tool_name: &str,
         args: &Value,
         result: &ToolResultPayload,
+        round_info: RoundInfo,
+        tool_call_id: Option<&str>,
     ) {
         let timestamp = Local::now().to_rfc3339();
         let safe_args = if args.is_object() {
@@ -266,11 +254,27 @@ impl Orchestrator {
             "data": result.data,
             "timestamp": timestamp,
         });
+        if let Some(tool_call_id) = tool_call_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            payload["tool_call_id"] = Value::String(tool_call_id.to_string());
+        }
         if let Some(meta) = &result.meta {
             payload["meta"] = meta.clone();
         }
         if result.sandbox {
             payload["sandbox"] = Value::Bool(true);
+        }
+        round_info.insert_into(payload.as_object_mut().expect("tool payload object"));
+        if let Some(turn_id) = round_info.thread_turn_id {
+            let tool_id = payload
+                .get("tool_call_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(|id| format!("{turn_id}:tool-{id}"))
+                .unwrap_or_else(|| Uuid::new_v4().to_string());
+            payload["item_id"] = Value::String(tool_id);
         }
         if let Err(err) = self.workspace.append_tool_log(user_id, &payload) {
             warn!("append tool log failed for session {session_id} tool {tool_name}: {err}");
@@ -540,6 +544,7 @@ impl Orchestrator {
         args: &Value,
         skills: &SkillRegistry,
         user_tool_bindings: Option<&UserToolBindings>,
+        round_info: RoundInfo,
     ) {
         let paths = extract_file_paths(args);
         if paths.is_empty() {
@@ -590,7 +595,7 @@ impl Orchestrator {
         }
         let result = ToolResultPayload::from_value(json!({ "source": "skill_read" }));
         for name in matched {
-            self.append_tool_log(user_id, session_id, &name, args, &result);
+            self.append_tool_log(user_id, session_id, &name, args, &result, round_info, None);
         }
     }
 
@@ -774,6 +779,7 @@ impl Orchestrator {
         session_id: &str,
         name: &str,
         args: &Value,
+        round_info: RoundInfo,
     ) {
         let content = self.resolve_final_answer_from_tool(args);
         let data = if content.trim().is_empty() {
@@ -782,7 +788,7 @@ impl Orchestrator {
             json!({ "content": content })
         };
         let result = ToolResultPayload::from_value(data);
-        self.append_tool_log(user_id, session_id, name, args, &result);
+        self.append_tool_log(user_id, session_id, name, args, &result, round_info, None);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -795,6 +801,7 @@ impl Orchestrator {
         uid: &str,
         messages: &Option<Value>,
         content: &str,
+        round_info: RoundInfo,
     ) {
         let message_count = messages
             .as_ref()
@@ -814,7 +821,7 @@ impl Orchestrator {
             }
         }
         let result = ToolResultPayload::from_value(data);
-        self.append_tool_log(user_id, session_id, name, args, &result);
+        self.append_tool_log(user_id, session_id, name, args, &result, round_info, None);
     }
 
     pub(super) async fn execute_tool_with_timeout(

@@ -24,6 +24,7 @@ runtime_source="${WUNDER_APPIMAGE_RUNTIME:-}"
 max_glibc="${WUNDER_SLINT_LINUX_MAX_GLIBC:-2.27}"
 sysroot="$offline_root/linux-arm64-ubuntu18/root"
 sysroot_lib="$sysroot/usr/lib/aarch64-linux-gnu"
+gcc_lib="$sysroot/usr/lib/gcc/aarch64-linux-gnu/7"
 stage_dir=""
 phase=preflight
 
@@ -56,6 +57,17 @@ manifest="$repo_root/frontend-slint/Cargo.toml"
 require_file "$manifest"
 [[ -d "$vendor_root" ]] || fail "offline Cargo vendor is missing: $vendor_root"
 [[ -f "$sysroot_lib/crt1.o" && -f "$sysroot_lib/libc.so" ]] || fail "Ubuntu 18 ARM64 development sysroot is incomplete: $sysroot"
+gcc_shared="$gcc_lib/libgcc_s.so"
+[[ ! -L "$gcc_shared" || "$(readlink "$gcc_shared")" != /* ]] \
+  || fail "Ubuntu 18 ARM64 sysroot has an absolute libgcc_s.so link: $gcc_lib (run builders/prepare-linux-arm64-devel-sysroot.sh --repair)"
+[[ -e "$gcc_shared" ]] \
+  || fail "Ubuntu 18 ARM64 sysroot has a dangling libgcc_s.so link: $gcc_lib (run builders/prepare-linux-arm64-devel-sysroot.sh --repair)"
+[[ -x "$gcc_lib/cc1" ]] \
+  || fail "ARM64 SDK GCC backend is missing: $gcc_lib/cc1 (run builders/prepare-linux-arm64-devel-sysroot.sh)"
+for library in libgmp.so.10 libisl.so.19 libmpc.so.3 libmpfr.so.6; do
+  [[ -e "$sysroot/usr/lib/aarch64-linux-gnu/$library" || -e "$sysroot/lib/aarch64-linux-gnu/$library" ]] \
+    || fail "ARM64 SDK GCC runtime is missing: $library (run builders/prepare-linux-arm64-devel-sysroot.sh)"
+done
 [[ -n "$runtime_source" ]] || fail "WUNDER_APPIMAGE_RUNTIME must point to an ARM64 type-2 AppImage runtime"
 require_file "$runtime_source"
 export PATH="$offline_root/rust/toolchains/1.92.0-aarch64-unknown-linux-gnu/bin:$PATH"

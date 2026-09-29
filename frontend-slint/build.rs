@@ -3,6 +3,9 @@ fn main() {
     println!("cargo:rerun-if-changed=ui/theme.slint");
     println!("cargo:rerun-if-changed=ui/components.slint");
     println!("cargo:rerun-if-changed=ui/dock.slint");
+    println!("cargo:rerun-if-changed=ui/files_page.slint");
+    println!("cargo:rerun-if-changed=ui/world_page.slint");
+    println!("cargo:rerun-if-changed=ui/cron_page.slint");
     println!("cargo:rerun-if-changed=ui/entity_pages.slint");
     println!("cargo:rerun-if-changed=ui/composer.slint");
     println!("cargo:rerun-if-changed=assets/icons/microphone.svg");

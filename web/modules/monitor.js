@@ -3962,6 +3962,66 @@ const normalizeMonitorExportTimestamp = (value) => {
   return "";
 };
 
+const normalizeThreadLogTurnsForMonitor = (turns) => {
+  return (Array.isArray(turns) ? turns : []).map((turn) => {
+    const payload = turn?.payload && typeof turn.payload === "object" ? turn.payload : {};
+    const round = parseMonitorDetailRound(turn?.user_turn_index);
+    return {
+      type: String(payload.kind || payload.role || turn?.status || "turn"),
+      data: payload,
+      timestamp: turn?.updated_time || turn?.created_time || "",
+      __userRound: round,
+    };
+  }).filter((event) => event.__userRound > 0);
+};
+
+const normalizeThreadLogTurnItemsForMonitor = (turn) => {
+  const items = Array.isArray(turn?.items) ? turn.items : [];
+  return items.map((item) => {
+    const payload = item?.payload && typeof item.payload === "object" ? item.payload : {};
+    const round = parseMonitorDetailRound(turn?.user_turn_index);
+    return {
+      type: String(item?.kind || payload.kind || payload.role || "item"),
+      data: payload,
+      timestamp: item?.updated_time || item?.created_time || turn?.updated_time || "",
+      __userRound: round,
+      __itemId: String(item?.item_id || ""),
+    };
+  }).filter((event) => event.__userRound > 0);
+};
+
+let monitorTurnRequest = 0;
+const loadMonitorDetailThreadTurn = async (sessionId, round, next = false) => {
+  const detail = state.monitor?.detail;
+  if (!detail || !sessionId || round <= 0) return;
+  const summary = detail.threadTurns?.find((turn) => Number(turn.user_turn_index) === round);
+  if (!summary?.turn_id) return;
+  const token = ++monitorTurnRequest;
+  try {
+    const after = next ? detail.itemAfter : -1;
+    const response = await fetch(`${getWunderBase()}/admin/monitor/${encodeURIComponent(sessionId)}/thread-log/turns/${encodeURIComponent(summary.turn_id)}?item_after=${after}&limit=100`);
+    if (!response.ok) throw new Error(t("common.requestFailed", { status: response.status }));
+    const turn = (await response.json())?.data?.turn;
+    if (token !== monitorTurnRequest || state.monitor?.detail !== detail || state.monitor.detailFilters.round !== round) return;
+    detail.events = normalizeThreadLogTurnItemsForMonitor(turn);
+    detail.itemAfter = Number(turn?.next_after ?? -1);
+    detail.itemHasMore = Boolean(turn?.has_more);
+    renderMonitorDetailQuestion();
+    renderMonitorDetailWithFilters(detail.events, { focusRound: round });
+    // Item pages replace the rendered rows; browsing a large turn never grows the DOM.
+    const navigation = document.createElement("div");
+    navigation.className = "monitor-detail-pagination";
+    for (const [label, advance] of [[t("monitor.detail.pagination.first"), false], [t("monitor.detail.pagination.next"), true]]) {
+      if (advance && !detail.itemHasMore) continue;
+      const button = document.createElement("button"); button.type = "button";
+      button.textContent = label;
+      button.addEventListener("click", () => void loadMonitorDetailThreadTurn(sessionId, round, advance));
+      navigation.appendChild(button);
+    }
+    elements.monitorDetailEvents?.appendChild(navigation);
+  } catch (error) { notify(error?.message || String(error), "error"); }
+};
+
 // Panel navigation can reveal a chart that was initialized while its panel
 // was hidden. Resize and repaint on the next frame so the canvas and heatmap
 // hit targets match the visible layout before the user clicks them.
@@ -3977,7 +4037,7 @@ const syncMonitorDetailPagination = () => {
   const offset = Number(detail?.offset) || 0;
   const limit = Number(detail?.limit) || MONITOR_DETAIL_EVENT_PAGE_SIZE;
   const total = Number(detail?.total) || 0;
-  const count = Array.isArray(detail?.events) ? detail.events.length : 0;
+  const count = Array.isArray(detail?.threadTurns) ? detail.threadTurns.length : 0;
   const page = Math.floor(offset / limit) + 1;
   const start = count > 0 ? offset + 1 : 0;
   const end = count > 0 ? offset + count : 0;
@@ -3997,7 +4057,7 @@ const syncMonitorDetailPagination = () => {
     elements.monitorDetailPageNext.disabled = !detail?.hasMore || Boolean(detail?.loading);
   }
   if (elements.monitorDetailPageLast) {
-    elements.monitorDetailPageLast.disabled = offset >= lastOffset || Boolean(detail?.loading);
+    elements.monitorDetailPageLast.hidden = true;
   }
 };
 
@@ -4248,25 +4308,9 @@ const exportMonitorDetailLogs = async () => {
       notify(t("monitor.detail.exportEmpty"), "warning");
       return;
     }
-    const wunderBase = getWunderBase();
-    const response = await fetch(
-      `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}?export_all=true`
-    );
-    if (!response.ok) {
-      throw new Error(t("common.requestFailed", { status: response.status }));
-    }
-    const result = await response.json();
-    const payload = buildMonitorDetailExportPayload(normalizeMonitorDetailEvents(result.events));
-    if (!payload) {
-      notify(t("monitor.detail.exportEmpty"), "warning");
-      return;
-    }
-    const jsonlBody = payload.lines.map((item) => JSON.stringify(item)).join("\n");
-    // Prefix UTF-8 BOM for better compatibility with Windows editors/shell defaults.
-    const jsonl = `\uFEFF${jsonlBody}\n`;
-    const blob = new Blob([jsonl], { type: "application/x-ndjson;charset=utf-8" });
-    const filename = buildMonitorDetailExportFilename(payload.session_id);
-    downloadBlob(blob, filename);
+    const response = await fetch(`${getWunderBase()}/admin/monitor/${encodeURIComponent(sessionId)}/thread-log/export`);
+    if (!response.ok) throw new Error(t("common.requestFailed", { status: response.status }));
+    downloadBlob(await response.blob(), buildMonitorDetailExportFilename(sessionId));
     notify(t("monitor.detail.exported"), "success");
   } catch (error) {
     const message = error?.message || String(error);
@@ -4322,26 +4366,42 @@ const loadMonitorDetailPage = async (sessionId, offset = 0, options = {}) => {
     elements.monitorDetailTitle.textContent = t("monitor.detail.title", {
       sessionId: session.session_id || "-",
     });
-    const events = normalizeMonitorDetailEvents(result.events);
-    const roundOptions = collectMonitorDetailRoundOptions(session, events);
+    const previous = state.monitor?.detail;
+    const page = Math.floor(safeOffset / MONITOR_DETAIL_EVENT_PAGE_SIZE);
+    const cursors = previous?.session?.session_id === sessionId && !options.resetFilters
+      ? previous.turnCursors || [null] : [null];
+    const before = cursors[page];
+    const threadResponse = await fetch(`${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}/thread-log/turns?limit=${MONITOR_DETAIL_EVENT_PAGE_SIZE}${before ? `&before=${before}` : ""}`);
+    if (!threadResponse.ok) throw new Error(t("common.requestFailed", { status: threadResponse.status }));
+    const catalog = (await threadResponse.json()).data;
+    let threadTurns = Array.isArray(catalog?.turns) ? catalog.turns : [];
+    const pinned = !options.resetFilters && previous?.threadTurns?.find((turn) => Number(turn.user_turn_index) === state.monitor.detailFilters.round);
+    if (pinned && !threadTurns.some((turn) => turn.turn_id === pinned.turn_id)) threadTurns.push(pinned);
+    cursors[page + 1] = catalog?.next_before;
+    const events = normalizeThreadLogTurnsForMonitor(threadTurns);
+    const roundOptions = threadTurns.map((turn) => Number(turn.user_turn_index)).sort((a, b) => a - b);
     const roundQuestions = buildMonitorDetailRoundQuestionMap(
       events,
       roundOptions,
       session.question
     );
     const feedback = normalizeMonitorDetailFeedbackList(result.feedback);
-    const eventTotal = Number(result.event_total) || events.length;
+    const eventTotal = threadTurns.length;
     elements.monitorDetailMeta.innerHTML = buildMonitorDetailMeta(session, events, eventTotal);
     state.monitor.detail = {
       session,
       events,
+      threadTurns,
+      turnCursors: cursors,
+      itemAfter: -1,
+      itemHasMore: false,
       roundOptions,
       roundQuestions,
       feedback,
       offset: safeOffset,
       limit: MONITOR_DETAIL_EVENT_PAGE_SIZE,
       total: eventTotal,
-      hasMore: Boolean(result.events_has_more),
+      hasMore: Boolean(catalog?.has_more),
       loading: false,
     };
     if (options.resetFilters) {
@@ -4361,6 +4421,7 @@ const loadMonitorDetailPage = async (sessionId, offset = 0, options = {}) => {
       elements.monitorDetailEvents.scrollTop = 0;
     }
     elements.monitorDetailModal.classList.add("active");
+    await loadMonitorDetailThreadTurn(sessionId, state.monitor.detailFilters.round);
   } catch (error) {
     if (state.monitor?.detail) {
       state.monitor.detail.loading = false;
@@ -4508,6 +4569,10 @@ export const initMonitorPanel = () => {
       renderMonitorDetailWithFilters(state.monitor.detail.events || [], {
         focusRound: state.monitor.detailFilters.round,
       });
+      void loadMonitorDetailThreadTurn(
+        state.monitor.detail.session?.session_id,
+        state.monitor.detailFilters.round
+      );
     });
   }
   if (elements.monitorDetailPagePrev) {

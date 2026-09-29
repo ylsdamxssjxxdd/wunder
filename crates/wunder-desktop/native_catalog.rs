@@ -120,6 +120,23 @@ impl NativeDesktop {
         })
     }
 
+    pub fn delete_agent(&self, id: &str) -> Result<()> {
+        self.runtime.block_on(async {
+            let record = agent_management::owned(self.state(), self.user_id(), id).await?;
+            if record.is_shared {
+                anyhow::bail!("共享智能体不能由当前用户删除");
+            }
+            let deleted = self
+                .state()
+                .user_store
+                .delete_user_agent(self.user_id(), &record.agent_id)?;
+            if deleted == 0 {
+                anyhow::bail!("智能体不存在或无权删除");
+            }
+            Ok(())
+        })
+    }
+
     pub fn list_tools(&self) -> Result<Vec<ToolRecord>> {
         self.runtime.block_on(async {
             let user = self

@@ -25,6 +25,22 @@ pub(super) fn router() -> Router<Arc<AppState>> {
             get(get_session_events),
         )
         .route(
+            "/wunder/chat/sessions/{session_id}/thread-log/export",
+            get(export_thread_log),
+        )
+        .route(
+            "/wunder/chat/sessions/{session_id}/thread-log/turns",
+            get(list_thread_turns),
+        )
+        .route(
+            "/wunder/chat/sessions/{session_id}/thread-log/turns/{turn_id}",
+            get(get_thread_turn),
+        )
+        .route(
+            "/wunder/chat/sessions/{session_id}/thread-log/changes",
+            get(list_thread_changes),
+        )
+        .route(
             "/wunder/chat/sessions/{session_id}/command-sessions",
             get(list_session_command_sessions),
         )
@@ -48,6 +64,117 @@ struct SessionEventsQuery {
     offset: Option<i64>,
     #[serde(default)]
     page_size: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadTurnsQuery {
+    #[serde(default)]
+    before: Option<i64>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+#[derive(Debug, Deserialize)]
+struct ThreadChangesQuery {
+    #[serde(default)]
+    after: Option<i64>,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    item_after: Option<i64>,
+}
+
+async fn require_owned_thread(
+    state: &Arc<AppState>,
+    headers: &HeaderMap,
+    session_id: &str,
+) -> Result<String, Response> {
+    let resolved = resolve_user(state, headers, None).await?;
+    state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    Ok(resolved.user.user_id)
+}
+
+async fn list_thread_turns(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<ThreadTurnsQuery>,
+) -> Result<Json<Value>, Response> {
+    let session_id = session_id.trim().to_string();
+    let user_id = require_owned_thread(&state, &headers, &session_id).await?;
+    let storage = state.storage.clone();
+    let lookup_session = session_id.clone();
+    let turns = blocking::run_db("api.chat.thread_log.turns", move || {
+        storage.list_thread_turns(
+            &user_id,
+            &lookup_session,
+            query.before,
+            query.limit.unwrap_or(50).clamp(1, 100),
+        )
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let next_before = turns
+        .last()
+        .and_then(|turn| turn.get("user_turn_index"))
+        .and_then(Value::as_i64);
+    Ok(Json(
+        json!({"data":{"session_id":session_id,"turns":turns,"next_before":next_before,"has_more":turns.len() >= query.limit.unwrap_or(50).clamp(1,100) as usize}}),
+    ))
+}
+
+async fn get_thread_turn(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath((session_id, turn_id)): AxumPath<(String, String)>,
+    Query(query): Query<ThreadChangesQuery>,
+) -> Result<Json<Value>, Response> {
+    let session_id = session_id.trim().to_string();
+    let user_id = require_owned_thread(&state, &headers, &session_id).await?;
+    let storage = state.storage.clone();
+    let lookup_session = session_id.clone();
+    let turn = blocking::run_db("api.chat.thread_log.turn", move || {
+        storage.get_thread_turn(
+            &user_id,
+            &lookup_session,
+            &turn_id,
+            query.item_after.unwrap_or(-1),
+            query.limit.unwrap_or(100),
+            false,
+        )
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.content_not_found")))?;
+    Ok(Json(json!({"data":{"session_id":session_id,"turn":turn}})))
+}
+
+async fn list_thread_changes(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<ThreadChangesQuery>,
+) -> Result<Json<Value>, Response> {
+    let session_id = session_id.trim().to_string();
+    let user_id = require_owned_thread(&state, &headers, &session_id).await?;
+    let storage = state.storage.clone();
+    let lookup_session = session_id.clone();
+    let changes = blocking::run_db("api.chat.thread_log.changes", move || {
+        storage.list_thread_changes(
+            &user_id,
+            &lookup_session,
+            query.after.unwrap_or(0),
+            query.limit.unwrap_or(100).clamp(1, 500),
+        )
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(
+        json!({"data":{"session_id":session_id,"changes":changes}}),
+    ))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -877,4 +1004,18 @@ mod tests {
             Some((1, i64::MAX))
         );
     }
+}
+
+async fn export_thread_log(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Response, Response> {
+    let user_id = require_owned_thread(&state, &headers, &session_id).await?;
+    Ok(crate::services::thread_log::export_response(
+        state.storage.clone(),
+        user_id,
+        session_id,
+        false,
+    ))
 }

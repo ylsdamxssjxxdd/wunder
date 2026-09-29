@@ -94,6 +94,12 @@ impl StreamPersistQueue {
             payload,
             event_type,
         } = task;
+        if event_type == "thread_item_block" {
+            if let Err(err) = storage.upsert_thread_text_block(&user_id, &session_id, &payload) {
+                warn!("failed to persist thread text block: {err}");
+            }
+            return;
+        }
         if let Err(err) = storage.append_stream_event(&session_id, &user_id, event_id, &payload) {
             warn!("failed to persist stream event {event_type} for session {session_id}: {err}");
         }

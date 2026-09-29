@@ -24,12 +24,15 @@ ENV PATH=/usr/local/cargo/bin:$PATH
 # /usr/aarch64-linux-gnu tree, cannot clash with the amd64 dev stack) plus the
 # ARM64 runtime libraries the AppImage packager copies out of
 # /usr/lib/aarch64-linux-gnu, and libwayland-dev:arm64 (Multi-Arch: same) for
-# the wayland-sys link path. The GTK/Pango/Freetype ":arm64 -dev" stack must
-# stay out: bionic's libpango1.0-dev and libgdk-pixbuf2.0-dev carry no
-# Multi-Arch field, so they can never coexist with the amd64 copies already
-# installed above ("Depends: libpango1.0-dev:arm64 but it is not going to be
-# installed" is unfixable). The frontend links none of them anyway: winit and
-# x11-dl dlopen the X11 stack at runtime and the tray uses pure-Rust ksni.
+# the wayland-sys link path. libasound2-dev:arm64 is required too: the ALSA
+# recording FFI carries #[link(name = "asound")], so libasound.so must be
+# resolvable by the cross linker. The remaining GTK/Pango/Freetype
+# ":arm64 -dev" stack must stay out: bionic's libpango1.0-dev and
+# libgdk-pixbuf2.0-dev carry no Multi-Arch field, so they can never coexist
+# with the amd64 copies already installed above ("Depends:
+# libpango1.0-dev:arm64 but it is not going to be installed" is unfixable).
+# The frontend links none of them anyway: winit and x11-dl dlopen the X11
+# stack at runtime and the tray uses pure-Rust ksni.
 RUN if [ "${TARGETARCH}" = "amd64" ]; then \
       printf '%s\n' \
         "deb [arch=amd64 trusted=yes] http://archive.ubuntu.com/ubuntu bionic main universe multiverse restricted" \
@@ -59,7 +62,7 @@ RUN if [ "${TARGETARCH}" = "amd64" ]; then \
  && if [ "${TARGETARCH}" = "amd64" ]; then \
       apt-get install -y --no-install-recommends \
         gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu libc6-dev-arm64-cross \
-        libwayland-dev:arm64 \
+        libasound2-dev:arm64 libwayland-dev:arm64 \
         libx11-6:arm64 libxext6:arm64 libxfixes3:arm64 libxrender1:arm64 \
         libxi6:arm64 libxrandr2:arm64 libxcursor1:arm64 libxinerama1:arm64 \
         libxtst6:arm64 libxau6:arm64 libxdmcp6:arm64 libx11-xcb1:arm64 \

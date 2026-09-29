@@ -631,6 +631,13 @@ export const buildCanonicalChatRuntimeEvents = (
     return [buildBaseEvent(options, 'usage_stats')];
   }
 
+  if (eventType === 'thread_item_block') {
+    return [buildBaseEvent(options, 'assistant_output_snapshot', {
+      content: firstText(data.content, payload.content),
+      reasoning: firstText(data.reasoning, payload.reasoning)
+    })];
+  }
+
   if (eventType === 'llm_output') {
     const finalContent = extractFinalContent(payload, data);
     if (!isTerminalLlmOutput(payload, data)) {

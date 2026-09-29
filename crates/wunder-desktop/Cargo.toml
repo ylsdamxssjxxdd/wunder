@@ -53,5 +53,8 @@ url.workspace = true
 uuid.workspace = true
 wunder-runtime = { path = "../wunder-runtime", default-features = false }
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [build-dependencies]
 tauri-build = { workspace = true, optional = true }

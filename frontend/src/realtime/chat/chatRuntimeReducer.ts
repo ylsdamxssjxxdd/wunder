@@ -1159,11 +1159,20 @@ const applyAssistantOutputSnapshot = (
   modelTurn.status = 'streaming';
   const message = ensureAssistantMessageForModelTurn(session, event, 'streaming');
   settleProjectedRetryWorkflowItems(message);
-  if (event.content) {
-    message.content = mergeRuntimeSnapshotText(message.content, event.content, event);
-  }
-  if (event.reasoning) {
-    message.reasoning = mergeRuntimeSnapshotText(message.reasoning, event.reasoning, event);
+  const blockPayload = isPlainRecord(event.payload.data) ? event.payload.data : event.payload;
+  const block = Number.isInteger(blockPayload.block_index);
+  if (block) {
+    const contentOffset = Math.max(0, Number(blockPayload.content_offset) || 0);
+    const reasoningOffset = Math.max(0, Number(blockPayload.reasoning_offset) || 0);
+    if (event.content && contentOffset <= message.content.length) {
+      message.content = message.content.slice(0, contentOffset) + event.content + message.content.slice(contentOffset + event.content.length);
+    }
+    if (event.reasoning && reasoningOffset <= message.reasoning.length) {
+      message.reasoning = message.reasoning.slice(0, reasoningOffset) + event.reasoning + message.reasoning.slice(reasoningOffset + event.reasoning.length);
+    }
+  } else {
+    if (event.content) message.content = mergeRuntimeSnapshotText(message.content, event.content, event);
+    if (event.reasoning) message.reasoning = mergeRuntimeSnapshotText(message.reasoning, event.reasoning, event);
   }
   if (isPlainRecord(message.display)) {
     clearProjectedRetryDisplay(message.display);

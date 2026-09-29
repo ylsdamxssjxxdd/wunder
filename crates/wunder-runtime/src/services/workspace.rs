@@ -1262,9 +1262,13 @@ impl WorkspaceManager {
         after_event_id: i64,
         limit: i64,
     ) -> Vec<Value> {
-        self.storage
-            .load_stream_events(session_id, after_event_id, limit)
-            .unwrap_or_default()
+        crate::services::thread_log::replay(
+            self.storage.as_ref(),
+            session_id,
+            after_event_id,
+            limit,
+        )
+        .unwrap_or_default()
     }
 
     pub fn load_recent_stream_events(&self, session_id: &str, limit: i64) -> Vec<Value> {
@@ -2378,6 +2382,7 @@ fn purge_session_logs_with_storage(storage: &dyn StorageBackend, user_id: &str, 
     let _ = storage.delete_tool_logs_by_session(cleaned_user, cleaned_session);
     let _ = storage.delete_artifact_logs_by_session(cleaned_user, cleaned_session);
     let _ = storage.delete_stream_events_by_session(cleaned_session);
+    let _ = storage.delete_thread_log_by_session(cleaned_user, cleaned_session);
 }
 
 /// Purge durable logs for sessions whose deletion grace window has expired and

@@ -45,11 +45,13 @@ export component AgentsPage inherits Rectangle {
     private property <string> keyword;
     private property <string> tool-keyword;
     private property <int> tool-tab: 0;
+    private property <bool> delete-confirm-open: false;
     in-out property <string> question-draft;
     callback toggle-tool(string);
     callback add-question();
     callback remove-question(int);
     callback save-agent(string, string, string, string, string, string, [string], [string], int, string, bool, bool, bool);
+    callback delete-agent();
     background: Theme.chat;
     VerticalLayout {
         spacing: 0px;
@@ -101,12 +103,13 @@ export component AgentsPage inherits Rectangle {
                         Text { height: 18px; text: "预设问题"; color: Theme.text; font-size: 14px; font-weight: 600; }
                         VerticalLayout { spacing: 5px; for question[index] in root.selected-preset-questions : Rectangle { height: 34px; border-radius: 7px; background: Theme.panel; Text { x: 10px; width: parent.width - 42px; height: parent.height; text: question; color: Theme.text; font-size: 11px; vertical-alignment: center; overflow: elide; } Action { x: parent.width - 30px; width: 26px; height: 26px; y: 4px; label: "×"; clicked => { root.remove-question(index); } } } }
                         HorizontalLayout { height: 32px; spacing: 6px; TextInput { horizontal-stretch: 1; text <=> root.question-draft; color: Theme.text; font-size: 11px; } Action { width: 58px; label: "添加"; show-label: true; enabled: root.question-draft != ""; clicked => { root.add-question(); } } }
-                        HorizontalLayout { height: 34px; Rectangle { horizontal-stretch: 1; } Action { label: root.saving ? "保存中" : "保存设置"; show-label: true; primary: true; enabled: !root.saving && !root.loading && root.selected-agent >= 0 && root.selected-name != ""; clicked => { root.save-agent(root.selected-name, root.selected-description, root.selected-system-prompt, root.selected-model, root.selected-icon-name, root.selected-icon-color, root.selected-tool-names, root.selected-preset-questions, root.selected-sandbox-container-id, root.selected-approval-mode, root.selected-preview-skill, root.selected-silent, root.selected-prefer-mother); } } }
+                        HorizontalLayout { height: 34px; Action { width: 68px; label: "删除"; show-label: true; enabled: !root.saving && !root.loading && root.selected-agent >= 0 && !root.agents[root.selected-agent].is-shared; clicked => { root.delete-confirm-open = true; } } Rectangle { horizontal-stretch: 1; } Action { label: root.saving ? "保存中" : "保存设置"; show-label: true; primary: true; enabled: !root.saving && !root.loading && root.selected-agent >= 0 && root.selected-name != ""; clicked => { root.save-agent(root.selected-name, root.selected-description, root.selected-system-prompt, root.selected-model, root.selected-icon-name, root.selected-icon-color, root.selected-tool-names, root.selected-preset-questions, root.selected-sandbox-container-id, root.selected-approval-mode, root.selected-preview-skill, root.selected-silent, root.selected-prefer-mother); } } }
                     }
                 }
             }
         }
     }
+    if root.delete-confirm-open : Rectangle { background: #00000040; TouchArea { clicked => { root.delete-confirm-open = false; } } Rectangle { width: min(400px, parent.width - 44px); height: 180px; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; TouchArea { } VerticalLayout { padding: 20px; spacing: 10px; Text { height: 24px; text: "确认删除智能体"; color: Theme.text; font-size: 16px; font-weight: 600; } Text { vertical-stretch: 1; text: "将删除“" + root.selected-name + "”及其本地配置。已有会话不会被改写。"; color: Theme.muted; font-size: 12px; wrap: word-wrap; } HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; } Action { label: "取消"; show-label: true; clicked => { root.delete-confirm-open = false; } } Action { width: 76px; label: "删除"; show-label: true; primary: true; clicked => { root.delete-confirm-open = false; root.delete-agent(); } } } } } }
 }
 
 export component ToolsPage inherits Rectangle {

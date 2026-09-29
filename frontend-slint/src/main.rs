@@ -17,9 +17,10 @@ mod screen_capture;
 mod screenshot;
 mod shutdown;
 mod smoke;
-mod subagent_pool;
 mod tray;
 mod workspace_ui;
+mod world_ui;
+mod cron_ui;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     install_slint_platform()?;

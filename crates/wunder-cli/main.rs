@@ -392,6 +392,17 @@ async fn handle_chat_slash_command(
             .await?;
             Ok(false)
         }
+        SlashCommand::Threads => {
+            println!(
+                "{}",
+                locale::tr(
+                    language.as_str(),
+                    "/threads 仅在 TUI 模式可用（TTY 下默认直接运行 `wunder-cli`）",
+                    "/threads is available in TUI mode only (default `wunder-cli` on TTY)",
+                )
+            );
+            Ok(false)
+        }
         SlashCommand::New => {
             *session_id = uuid::Uuid::new_v4().simple().to_string();
             runtime.save_session(session_id).ok();
@@ -696,6 +707,11 @@ pub(crate) struct SessionStatsSnapshot {
 pub(crate) struct ResumeSessionSummary {
     pub session_id: String,
     pub title: String,
+    pub status: String,
+    pub agent_id: Option<String>,
+    pub parent_session_id: Option<String>,
+    pub spawn_label: Option<String>,
+    pub spawned_by: Option<String>,
     pub updated_at: f64,
     pub last_message_at: f64,
 }
@@ -704,25 +720,29 @@ async fn query_recent_sessions(
     runtime: &CliRuntime,
     limit: i64,
 ) -> Result<Vec<ResumeSessionSummary>> {
-    let user_store = runtime.state.user_store.clone();
-    let user_id = runtime.user_id.clone();
-    tokio::task::spawn_blocking(move || -> Result<Vec<ResumeSessionSummary>> {
-        let (items, _) = user_store.list_chat_sessions(&user_id, None, None, 0, limit)?;
-        Ok(items
-            .into_iter()
-            .map(|record| {
-                let title = normalize_session_title(&record);
-                ResumeSessionSummary {
-                    session_id: record.session_id,
-                    title,
-                    updated_at: record.updated_at,
-                    last_message_at: record.last_message_at,
-                }
-            })
-            .collect())
-    })
-    .await
-    .map_err(|err| anyhow!("list sessions cancelled: {err}"))?
+    let catalog = wunder_server::ThreadCatalogService::new((*runtime.state).clone());
+    let page = catalog
+        .list(wunder_server::ThreadListQuery {
+            user_id: runtime.user_id.clone(),
+            limit,
+            ..Default::default()
+        })
+        .await?;
+    Ok(page
+        .items
+        .into_iter()
+        .map(|record| ResumeSessionSummary {
+            session_id: record.session_id,
+            title: record.title,
+            status: record.status.as_str().to_string(),
+            agent_id: record.agent_id,
+            parent_session_id: record.parent_session_id,
+            spawn_label: record.spawn_label,
+            spawned_by: record.spawned_by,
+            updated_at: record.updated_at,
+            last_message_at: record.last_message_at,
+        })
+        .collect())
 }
 
 pub(crate) async fn list_recent_sessions(

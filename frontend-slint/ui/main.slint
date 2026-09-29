@@ -1,12 +1,15 @@
-import { Theme, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent } from "theme.slint";
+import { Theme, DesktopPage, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, CronCard } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, SearchField, FormField } from "components.slint";
 import { Composer } from "composer.slint";
 import { MessageRow } from "message.slint";
 import { WorkDock } from "dock.slint";
+import { FilesPage } from "files_page.slint";
+import { WorldPage } from "world_page.slint";
+import { CronPage } from "cron_page.slint";
 import { AgentsPage, ToolsPage, SettingsPage } from "entity_pages.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { ListView, ScrollView, ComboBox } from "std-widgets.slint";
-export { Theme, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent }
+export { Theme, DesktopPage, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, CronCard }
 export { AppTray } from "tray.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
 
@@ -21,14 +24,10 @@ export component MainWindow inherits Window {
     in-out property <bool> navigation-open: true;
     in-out property <int> selected-conversation: 0;
     in-out property <int> active-task: 0;
-    in-out property <int> section: 0;
+    in-out property <DesktopPage> page: DesktopPage.messages;
     in-out property <int> selected-agent: -1;
     in-out property <int> selected-model: -1;
     in-out property <string> active-session-id;
-    in-out property <[Conversation]> subagents: [];
-    in-out property <string> subagents-status;
-    callback refresh-subagents();
-    callback inspect-subagent(int);
     in-out property <string> active-agent-id;
     in-out property <string> heading: "默认智能体";
     in-out property <bool> busy: false;
@@ -48,6 +47,8 @@ export component MainWindow inherits Window {
     in-out property <int> files-total;
     in-out property <bool> preview-open;
     in-out property <bool> preview-loading;
+    in-out property <bool> preview-editing: false;
+    in-out property <bool> preview-editable: false;
     in-out property <string> preview-path;
     in-out property <string> preview-text;
     in-out property <bool> settings-loading: false;
@@ -92,6 +93,16 @@ export component MainWindow inherits Window {
         { name: "文件操作", description: "读取和整理本地工作目录中的内容", category: "内置工具", enabled: false },
         { name: "技能调用", description: "按权限使用已安装的技能", category: "技能", enabled: false }
     ];
+    in-out property <[WorldContactCard]> world-contacts: [];
+    in-out property <[WorldGroupCard]> world-groups: [];
+    in-out property <int> world-total: 0;
+    in-out property <int> world-offset: 0;
+    in-out property <bool> world-loading: false;
+    in-out property <bool> cron-loading: false;
+    in-out property <[CronCard]> cron-jobs: [];
+    in-out property <[WorldMessageCard]> world-messages: [];
+    in-out property <string> world-active-title;
+    in-out property <string> world-active-conversation;
     in-out property <[ModelCard]> models: [
         { key: "默认模型", provider: "", model: "未连接", base-url: "", model-type: "llm", is-default: true }
     ];
@@ -155,6 +166,14 @@ export component MainWindow inherits Window {
     callback toggle-agent-tool(string);
     callback add-agent-question();
     callback remove-agent-question(int);
+    callback delete-agent();
+    callback refresh-world(bool);
+    callback open-world-contact(int);
+    callback send-world-message(string);
+    callback create-world-group(string);
+    callback refresh-cron();
+    callback toggle-cron(string, bool);
+    callback delete-cron(string);
     in-out property <string> selected-agent-icon-name;
     in-out property <string> selected-agent-icon-color;
     in-out property <string> selected-agent-icon-glyph;
@@ -166,10 +185,15 @@ export component MainWindow inherits Window {
     in-out property <bool> selected-agent-silent: false;
     in-out property <bool> selected-agent-prefer-mother: false;
     in-out property <string> agent-question-draft;
-    in-out property <ProfileCard> profile: { user-id: "", username: "", email: "", unit: "", sessions: "0", sessions-last-7d: "0", tool-calls: "0", tokens: "0", agents: "0", last-active: "", avatar-icon: "initial", avatar-glyph: "✦", avatar-color: "#3b82f6" };
+    in-out property <ProfileCard> profile: { user-id: "", username: "", email: "", unit: "", unit-id: "", sessions: "0", sessions-last-7d: "0", tool-calls: "0", tokens: "0", agents: "0", last-active: "", avatar-icon: "initial", avatar-glyph: "✦", avatar-color: "#3b82f6" };
     in-out property <bool> profile-loading: false;
     callback refresh-profile();
     callback save-profile-avatar(string, string);
+    callback save-profile(string, string, string);
+    in-out property <bool> profile-edit-open: false;
+    in-out property <string> profile-username-draft;
+    in-out property <string> profile-email-draft;
+    in-out property <string> profile-unit-draft;
     callback refresh-tools();
     callback refresh-files();
     callback save-workspace-binding(int, string);
@@ -185,6 +209,8 @@ export component MainWindow inherits Window {
     callback open-file(string);
     callback open-file-native(string);
     callback create-workspace-file(string, string);
+    callback workspace-action(string, string, string);
+    callback save-workspace-text(string, string);
     callback save-runtime(string, string);
     callback save-lan(bool, string);
     callback refresh-settings();
@@ -223,13 +249,15 @@ export component MainWindow inherits Window {
                 padding-top: 10px; padding-bottom: 10px; padding-left: 5px; padding-right: 5px; spacing: 8px;
                 Rectangle {
                     height: 44px;
-                    TouchArea { clicked => { root.section = 5; root.refresh-profile(); } }
+                    TouchArea { clicked => { root.page = DesktopPage.profile; root.refresh-profile(); } }
                     Avatar { width: 38px; height: 38px; mine: false; glyph: root.profile.avatar-glyph; tone: 1; source: @image-url("../assets/avatar.png"); }
                 }
                 Rectangle { height: 1px; background: #ffffff44; }
-                RailButton { icon: @image-url("../assets/icons/comments.svg"); label: "消息"; active: root.section == 0; clicked => { root.section = 0; } }
-                RailButton { icon: @image-url("../assets/icons/robot.svg"); label: "专家"; active: root.section == 2; clicked => { root.section = 2; root.refresh-agents(); } }
-                RailButton { icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "工具"; active: root.section == 3; clicked => { root.section = 3; root.refresh-tools(); } }
+                RailButton { icon: @image-url("../assets/icons/comments.svg"); label: "消息"; active: root.page == DesktopPage.messages; clicked => { root.page = DesktopPage.messages; } }
+                RailButton { icon: @image-url("../assets/icons/robot.svg"); label: "专家"; active: root.page == DesktopPage.agents; clicked => { root.page = DesktopPage.agents; root.refresh-agents(); } }
+                RailButton { icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "工具"; active: root.page == DesktopPage.tools; clicked => { root.page = DesktopPage.tools; root.refresh-tools(); } }
+                RailButton { icon: @image-url("../assets/icons/folder-open.svg"); label: "文件"; active: root.page == DesktopPage.files; clicked => { root.page = DesktopPage.files; root.refresh-files(); } }
+                RailButton { icon: @image-url("../assets/icons/comments.svg"); label: "用户"; active: root.page == DesktopPage.users; clicked => { root.page = DesktopPage.users; root.refresh-world(false); } }
                 Rectangle { vertical-stretch: 1; }
                 RailButton { icon: @image-url("../assets/icons/ellipsis.svg"); label: "更多"; active: root.more-open; clicked => { root.more-open = !root.more-open; } }
             }
@@ -241,21 +269,23 @@ export component MainWindow inherits Window {
             VerticalLayout {
                 padding: 8px; spacing: 4px;
                 Text { height: 24px; text: "更多"; color: Theme.text; font-size: 13px; font-weight: 600; }
-                Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/gear.svg"); label: "系统设置"; show-label: true; clicked => { root.more-open = false; root.section = 4; root.refresh-settings(); } }
-                Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/robot.svg"); label: "我的概况"; show-label: true; clicked => { root.more-open = false; root.section = 5; root.refresh-profile(); } }
+                Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/gear.svg"); label: "系统设置"; show-label: true; clicked => { root.more-open = false; root.page = DesktopPage.settings; root.refresh-settings(); } }
+                Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/comments.svg"); label: "群组"; show-label: true; clicked => { root.more-open = false; root.page = DesktopPage.groups; root.refresh-world(true); } }
+                Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/rotate-right.svg"); label: "定时任务"; show-label: true; clicked => { root.more-open = false; root.page = DesktopPage.cron; root.refresh-cron(); } }
+                Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/robot.svg"); label: "我的概况"; show-label: true; clicked => { root.more-open = false; root.page = DesktopPage.profile; root.refresh-profile(); } }
                 Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/comments.svg"); label: "关于心舰"; show-label: true; clicked => { root.more-open = false; root.open-info("关于", "心舰 · 蜂巢\n\n本地原生运行时"); } }
             }
         }
 
-        if root.navigation-open && root.section == 0 : Rectangle {
+        if root.navigation-open && root.page == DesktopPage.messages : Rectangle {
             x: 56px; y: 0px; width: 220px; height: parent.height; background: Theme.middle;
             Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
             VerticalLayout {
                 spacing: 0px;
                 Rectangle {
                     height: 80px;
-                    Text { x: 16px; y: 20px; width: parent.width - 32px; text: root.section == 2 ? "智能体" : "消息"; color: Theme.text; font-size: 18px; font-weight: 700; }
-                    Text { x: 16px; y: 49px; width: parent.width - 32px; text: root.section == 2 ? "管理你的智能体" : "与智能体一起，继续工作"; color: Theme.muted; font-size: 12px; }
+                    Text { x: 16px; y: 20px; width: parent.width - 32px; text: "消息"; color: Theme.text; font-size: 18px; font-weight: 700; }
+                    Text { x: 16px; y: 49px; width: parent.width - 32px; text: "与智能体一起，继续工作"; color: Theme.muted; font-size: 12px; }
                 }
                 HorizontalLayout {
                     padding-left: 14px; padding-right: 14px; height: 34px; spacing: 8px;
@@ -285,7 +315,7 @@ export component MainWindow inherits Window {
         }
 
         Rectangle {
-            visible: root.section == 0;
+            visible: root.page == DesktopPage.messages;
             x: root.navigation-open ? 276px : 56px;
             y: 0px; width: root.width - self.x - (root.right-open && root.width >= 1100px ? 284px : 0px);
             height: parent.height; background: Theme.chat;
@@ -327,7 +357,7 @@ export component MainWindow inherits Window {
             }
         }
         // Preserve the chat's minimum width; the right dock becomes optional.
-        if root.section == 0 && root.right-open && root.width >= 1100px : WorkDock {
+        if root.page == DesktopPage.messages && root.right-open && root.width >= 1100px : WorkDock {
             files-loading: root.files-loading; files-error: root.files-error; directory-path: root.directory-path; directory-root: root.directory-root; directory-container-id: root.directory-container-id;
             tasks-enabled: !root.busy && !root.session-loading && !root.chat-loading && !root.creating-session;
             conversations: root.conversations;
@@ -349,14 +379,14 @@ export component MainWindow inherits Window {
         // These transparent hitboxes match the web client's divider controls:
         // the circular affordance appears only while the pointer is near a
         // sidebar edge, centred vertically on the divider.
-        if root.section == 0 : EdgeToggle {
+        if root.page == DesktopPage.messages : EdgeToggle {
             x: (root.navigation-open ? 276px : 56px) - 4px;
             y: (root.height - 48px) / 2;
             open: root.navigation-open;
             opens-left: true;
             toggled => { root.navigation-open = !root.navigation-open; }
         }
-        if root.section == 0 && root.width >= 1100px : EdgeToggle {
+        if root.page == DesktopPage.messages && root.width >= 1100px : EdgeToggle {
             x: root.right-open ? root.width - 288px : root.width - 8px;
             y: (root.height - 48px) / 2;
             open: root.right-open;
@@ -365,7 +395,7 @@ export component MainWindow inherits Window {
         }
     }
 
-    if root.section == 0 && root.dock-overlay-open && root.width < 1100px : Rectangle {
+    if root.page == DesktopPage.messages && root.dock-overlay-open && root.width < 1100px : Rectangle {
         background: #00000030;
         TouchArea { clicked => { root.dock-overlay-open = false; } }
         WorkDock {
@@ -394,7 +424,7 @@ export component MainWindow inherits Window {
         }
     }
 
-    if root.section == 0 && root.width < 1100px && !root.dock-overlay-open : EdgeToggle {
+    if root.page == DesktopPage.messages && root.width < 1100px && !root.dock-overlay-open : EdgeToggle {
         x: parent.width - 8px; y: (parent.height - 48px) / 2;
         open: false; opens-left: false;
         toggled => { root.dock-overlay-open = true; }
@@ -419,7 +449,7 @@ export component MainWindow inherits Window {
         }
     }
 
-    if root.section == 2 : AgentsPage {
+    if root.page == DesktopPage.agents : AgentsPage {
         x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px;
         loading: root.agents-loading; saving: root.saving;
         agents: root.agents; selected-agent: root.selected-agent;
@@ -438,12 +468,13 @@ export component MainWindow inherits Window {
         toggle-tool(name) => { root.toggle-agent-tool(name); }
         add-question => { root.add-agent-question(); }
         remove-question(index) => { root.remove-agent-question(index); }
+        delete-agent => { root.delete-agent(); }
     }
-    if root.section == 3 : ToolsPage {
+    if root.page == DesktopPage.tools : ToolsPage {
         x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px;
         tools: root.tools; loading: root.tools-loading; refresh => { root.refresh-tools(); }
     }
-    if root.section == 4 : SettingsPage {
+    if root.page == DesktopPage.settings : SettingsPage {
         x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px;
         loading: root.settings-loading; saving: root.saving;
         models: root.models; selected-model: root.selected-model;
@@ -460,10 +491,10 @@ export component MainWindow inherits Window {
         set-default-model(key) => { root.set-default-model(key); }
         refresh => { root.refresh-settings(); }
     }
-    if root.section == 5 : Rectangle {
+    if root.page == DesktopPage.profile : Rectangle {
         x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px; background: Theme.chat;
         VerticalLayout { spacing: 0px;
-            HorizontalLayout { height: 82px; padding: 20px; spacing: 14px; Rectangle { width: 48px; height: 48px; border-radius: 24px; background: Theme.accent-soft; Text { width: parent.width; height: parent.height; text: root.profile.avatar-glyph; color: Theme.accent-deep; font-size: 20px; horizontal-alignment: center; vertical-alignment: center; } } VerticalLayout { Text { height: 25px; text: "我的概况"; color: Theme.text; font-size: 19px; font-weight: 700; } Text { height: 20px; text: root.profile.username + "  ·  " + root.profile.user-id; color: Theme.muted; font-size: 12px; } } }
+            Rectangle { height: 82px; HorizontalLayout { padding: 20px; spacing: 14px; Rectangle { width: 48px; height: 48px; border-radius: 24px; background: Theme.accent-soft; Text { width: parent.width; height: parent.height; text: root.profile.avatar-glyph; color: Theme.accent-deep; font-size: 20px; horizontal-alignment: center; vertical-alignment: center; } } VerticalLayout { Text { height: 25px; text: "我的概况"; color: Theme.text; font-size: 19px; font-weight: 700; } Text { height: 20px; text: root.profile.username + "  ·  " + root.profile.user-id; color: Theme.muted; font-size: 12px; } } Rectangle { horizontal-stretch: 1; } Action { width: 112px; label: "编辑资料"; show-label: true; enabled: !root.profile-loading; clicked => { root.profile-username-draft = root.profile.username; root.profile-email-draft = root.profile.email; root.profile-unit-draft = root.profile.unit-id; root.profile-edit-open = true; } } } }
             Rectangle { height: 1px; background: Theme.border; }
             HorizontalLayout { padding: 20px; spacing: 12px; vertical-stretch: 1;
                 for item in [{label: "会话总数", value: root.profile.sessions}, {label: "近 7 天", value: root.profile.sessions-last-7d}, {label: "工具调用", value: root.profile.tool-calls}, {label: "智能体", value: root.profile.agents}, {label: "Token 使用", value: root.profile.tokens}] : Rectangle { width: 150px; height: 92px; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 12px; Text { height: 18px; text: item.label; color: Theme.muted; font-size: 11px; } Text { height: 34px; text: item.value; color: Theme.text; font-size: 24px; font-weight: 700; } } }
@@ -472,8 +503,39 @@ export component MainWindow inherits Window {
             Rectangle { width: parent.width - 40px; height: 176px; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 16px; spacing: 6px; Text { height: 20px; text: "账户信息"; color: Theme.text; font-size: 14px; font-weight: 600; } Text { height: 18px; text: "邮箱：" + root.profile.email; color: Theme.muted; font-size: 12px; } Text { height: 18px; text: "单位：" + root.profile.unit; color: Theme.muted; font-size: 12px; } Text { height: 18px; text: "最近活跃：" + root.profile.last-active; color: Theme.muted; font-size: 12px; } HorizontalLayout { height: 28px; spacing: 8px; Text { width: 48px; text: "头像"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } for color in ["#3b82f6", "#10b981", "#f97316", "#8b5cf6", "#ec4899", "#64748b"] : Rectangle { width: 20px; height: 20px; border-radius: 10px; background: color == "#3b82f6" ? #3b82f6 : color == "#10b981" ? #10b981 : color == "#f97316" ? #f97316 : color == "#8b5cf6" ? #8b5cf6 : color == "#ec4899" ? #ec4899 : #64748b; border-width: root.profile.avatar-color == color ? 2px : 0px; border-color: Theme.text; TouchArea { clicked => { root.save-profile-avatar(root.profile.avatar-icon, color); } } } Rectangle { horizontal-stretch: 1; } } } }
         }
     }
+    if root.page == DesktopPage.files : FilesPage {
+        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px;
+        loading: root.files-loading; error: root.files-error; directory-path: root.directory-path; directory-parent: root.directory-parent;
+        directory-root: root.directory-root; directory-container-id: root.directory-container-id; offset: root.files-offset; total: root.files-total; files: root.files;
+        refresh => { root.refresh-files(); }
+        navigate(path) => { root.navigate-directory(path); }
+        open-file(path) => { root.open-file(path); }
+        open-native(path) => { root.open-file-native(path); }
+        create-file(kind, path) => { root.create-workspace-file(kind, path); }
+        workspace-action(kind, path, value) => { root.workspace-action(kind, path, value); }
+        open-workspace-binding => { root.workspace-binding-container = root.directory-container-id; root.workspace-binding-path = root.directory-root; root.workspace-binding-open = true; }
+        previous-page => { root.files-offset = max(0, root.files-offset - 100); root.refresh-files(); }
+        next-page => { root.files-offset += 100; root.refresh-files(); }
+    }
+    if root.page == DesktopPage.users || root.page == DesktopPage.groups : WorldPage {
+        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px;
+        groups: root.page == DesktopPage.groups; loading: root.world-loading; total: root.world-total; offset: root.world-offset; contacts: root.world-contacts; group-items: root.world-groups;
+        messages: root.world-messages; active-title: root.world-active-title; conversation-open: root.world-active-conversation != "";
+        refresh => { root.refresh-world(root.page == DesktopPage.groups); }
+        previous-page => { root.world-offset = max(0, root.world-offset - 100); root.refresh-world(root.page == DesktopPage.groups); }
+        next-page => { root.world-offset += 100; root.refresh-world(root.page == DesktopPage.groups); }
+        create-group(name) => { root.create-world-group(name); }
+        open-contact(index) => { root.open-world-contact(index); }
+        send-message(content) => { root.send-world-message(content); }
+    }
+    if root.page == DesktopPage.cron : CronPage {
+        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px; loading: root.cron-loading; jobs: root.cron-jobs;
+        refresh => { root.refresh-cron(); }
+        toggle(id, enabled) => { root.toggle-cron(id, enabled); }
+        delete(id) => { root.delete-cron(id); }
+    }
 
-    if root.section >= 2 : Rectangle {
+    if root.page != DesktopPage.messages : Rectangle {
         x: 56px; y: root.height - 32px; width: root.width - 56px; height: 32px; background: Theme.panel;
         Text { x: 16px; width: parent.width - 32px; height: parent.height; text: root.status; color: Theme.muted; font-size: 11px; vertical-alignment: center; overflow: elide; }
     }
@@ -490,6 +552,12 @@ export component MainWindow inherits Window {
                 FormField { label: "名称"; placeholder: "输入智能体名称"; text <=> root.agent-name-draft; }
                 HorizontalLayout { height: 30px; Rectangle { horizontal-stretch: 1; } Action { icon: @image-url("../assets/icons/xmark.svg"); label: "取消"; show-label: true; clicked => { if !root.saving { root.agent-creator-open = false; } } } Action { width: 66px; icon: @image-url("../assets/icons/check.svg"); label: root.saving ? "创建中" : "创建"; show-label: true; primary: true; enabled: !root.saving && !root.agents-loading && root.agent-name-draft != ""; clicked => { root.create-agent(root.agent-name-draft); } } }
             }
+        }
+    }
+    if root.profile-edit-open : Rectangle {
+        z: 100; background: #00000040; TouchArea { clicked => { root.profile-edit-open = false; } }
+        Rectangle { width: min(460px, parent.width - 48px); height: 300px; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; border-radius: 14px; background: Theme.surface; border-width: 1px; border-color: Theme.border; TouchArea { }
+            VerticalLayout { padding: 20px; spacing: 10px; Text { height: 24px; text: "编辑个人资料"; color: Theme.text; font-size: 17px; font-weight: 600; } FormField { label: "用户名"; text <=> root.profile-username-draft; } FormField { label: "邮箱"; text <=> root.profile-email-draft; } FormField { label: "单位编号（可选）"; text <=> root.profile-unit-draft; } Rectangle { vertical-stretch: 1; } HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; } Action { label: "取消"; show-label: true; clicked => { root.profile-edit-open = false; } } Action { label: "保存"; show-label: true; primary: true; enabled: root.profile-username-draft != ""; clicked => { root.save-profile(root.profile-username-draft, root.profile-email-draft, root.profile-unit-draft); root.profile-edit-open = false; } } } }
         }
     }
     if root.model-editor-open : Rectangle {
@@ -526,10 +594,12 @@ export component MainWindow inherits Window {
             VerticalLayout { padding: 20px; spacing: 12px;
                 HorizontalLayout { height: 30px;
                     Text { text: root.preview-path; color: Theme.text; overflow: elide; horizontal-stretch: 1; }
+                    Action { label: root.preview-editing ? "取消编辑" : "编辑"; show-label: true; enabled: !root.preview-loading && root.preview-editable; clicked => { root.preview-editing = !root.preview-editing; } }
                     Action { label: "复制"; show-label: true; enabled: !root.preview-loading; clicked => { root.copy-raw(root.preview-text); } }
+                    if root.preview-editing : Action { label: "保存"; show-label: true; primary: true; enabled: !root.preview-loading; clicked => { root.save-workspace-text(root.preview-path, root.preview-text); root.preview-editing = false; } }
                     Action { icon: @image-url("../assets/icons/xmark.svg"); label: "关闭预览"; clicked => { root.preview-open = false; } }
                 }
-                TextEditBase { text: root.preview-text; read-only: true; wrap: word-wrap;
+                TextEditBase { text <=> root.preview-text; read-only: !root.preview-editing; wrap: word-wrap;
                     foreground: Theme.text; font-size: 13px; scroll-view-padding: 10px;
                     selection-background-color: Theme.accent-soft; selection-foreground-color: Theme.text;
                     vertical-stretch: 1;

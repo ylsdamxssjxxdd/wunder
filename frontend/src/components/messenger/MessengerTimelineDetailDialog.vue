@@ -114,6 +114,8 @@
               >{{ resolveEventRaw(item) }}</pre>
             </details>
           </div>
+            <button v-if="itemAfter >= 0" type="button" class="messenger-inline-btn" @click="loadSelectedTurnItems(selectedRound)">{{ t('messenger.timeline.detail.firstPage') }}</button>
+            <button v-if="itemHasMore" type="button" class="messenger-inline-btn" @click="loadSelectedTurnItems(selectedRound, true)">{{ t('messenger.timeline.detail.nextPage') }}</button>
           <div class="messenger-timeline-detail-pagination">
             <button type="button" class="messenger-inline-btn messenger-timeline-detail-page-icon" :disabled="eventPage === 0 || loadingEvents" :title="t('messenger.timeline.detail.firstPage')" :aria-label="t('messenger.timeline.detail.firstPage')" @click="loadTimelineEventPage(0)">
               <i class="fa-solid fa-angles-left" aria-hidden="true"></i>
@@ -125,7 +127,7 @@
             <button type="button" class="messenger-inline-btn messenger-timeline-detail-page-icon" :disabled="!eventHasMore || loadingEvents" :title="t('messenger.timeline.detail.nextPage')" :aria-label="t('messenger.timeline.detail.nextPage')" @click="loadTimelineEventPage(eventPage + 1)">
               <i class="fa-solid fa-angle-right" aria-hidden="true"></i>
             </button>
-            <button type="button" class="messenger-inline-btn messenger-timeline-detail-page-icon" :disabled="!eventHasMore || loadingEvents" :title="t('messenger.timeline.detail.lastPage')" :aria-label="t('messenger.timeline.detail.lastPage')" @click="loadTimelineEventPage(lastEventPage)">
+            <button v-if="false" type="button" class="messenger-inline-btn messenger-timeline-detail-page-icon" :disabled="!eventHasMore || loadingEvents" :title="t('messenger.timeline.detail.lastPage')" :aria-label="t('messenger.timeline.detail.lastPage')" @click="loadTimelineEventPage(lastEventPage)">
               <i class="fa-solid fa-angles-right" aria-hidden="true"></i>
             </button>
           </div>
@@ -140,12 +142,13 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import {
-  getSessionEventsWithParams as getChatSessionEventsWithParams,
-  getSessionWithParams as getChatSessionWithParams
+  getSessionWithParams as getChatSessionWithParams,
+  getThreadLogTurn,
+  getThreadLogTurns
 } from '@/api/chat';
 import { getCurrentLanguage, useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
-import { downloadSessionLogLines } from '@/utils/sessionLogExport';
+import { exportSingleSessionLog } from '@/utils/sessionLogExport';
 import { formatCompactCount } from '@/utils/compactNumber';
 
 type TimelineDetailRoundEvent = {
@@ -156,8 +159,11 @@ type TimelineDetailRoundEvent = {
 };
 
 type TimelineDetailRound = {
+  turn_id?: string;
   user_round?: unknown;
   round?: unknown;
+  status?: unknown;
+  summary?: unknown;
   events?: TimelineDetailRoundEvent[];
 };
 
@@ -229,6 +235,10 @@ const expandedEventKeys = ref<Set<string>>(new Set());
 const eventRawCache = new Map<string, string>();
 const eventPage = ref(0);
 const eventHasMore = ref(false);
+const turnPageCursors = ref<(number | undefined)[]>([undefined]);
+const itemAfter = ref(-1);
+const itemHasMore = ref(false);
+let detailRequestToken = 0;
 const eventTotal = ref(0);
 const loadingEvents = ref(false);
 
@@ -255,6 +265,9 @@ const resetDetailState = () => {
   expandedEventKeys.value = new Set();
   eventRawCache.clear();
   eventPage.value = 0;
+  turnPageCursors.value = [undefined];
+  itemAfter.value = -1;
+  itemHasMore.value = false;
   eventHasMore.value = false;
   eventTotal.value = 0;
   loadingEvents.value = false;
@@ -572,6 +585,33 @@ const isDefaultHiddenEventType = (eventType: string): boolean => {
   return normalized.endsWith('_delta') || normalized === 'context_usage';
 };
 
+// ThreadLog is the authoritative history.  Keep the existing event renderer
+// as a presentation adapter so a turn remains selectable even when it only has
+// a user message, an empty response, or a terminal error.
+const normalizeThreadTurns = (value: unknown): TimelineDetailRound[] => {
+  if (!Array.isArray(value)) return [];
+  return value.map((turn) => {
+    const source = turn && typeof turn === 'object' && !Array.isArray(turn)
+      ? (turn as Record<string, unknown>) : {};
+    const index = normalizeRoundIndex(source.user_turn_index, 1);
+    const payload = source.payload && typeof source.payload === 'object'
+      ? source.payload as Record<string, unknown> : {};
+    const eventType = String(payload.kind || payload.role || source.status || 'turn').trim() || 'turn';
+    const item = {
+      event: eventType,
+      data: payload,
+      timestamp: source.updated_time || source.created_time || ''
+    };
+    return {
+      turn_id: String(source.turn_id || ''),
+      user_round: index,
+      status: source.status,
+      summary: source.summary,
+      events: [item]
+    };
+  });
+};
+
 const normalizeSession = (sessionId: string, value: unknown): TimelineDetailSession => {
   const source =
     value && typeof value === 'object' && !Array.isArray(value)
@@ -768,7 +808,7 @@ const filterTimelineEvents = (items: TimelineDetailEventItem[]): TimelineDetailE
 };
 
 const filteredEvents = computed(() => {
-  return filterTimelineEvents(events.value);
+  return filterTimelineEvents(events.value.filter((item) => item.round === selectedRound.value));
 });
 
 const resolveEventRaw = (item: TimelineDetailEventItem): string => {
@@ -1073,35 +1113,30 @@ const loadTimelineDetail = async (sessionId: string) => {
   expandedEventKeys.value = new Set();
   eventRawCache.clear();
   eventPage.value = 0;
+  turnPageCursors.value = [undefined];
+  itemAfter.value = -1;
+  itemHasMore.value = false;
   eventHasMore.value = false;
   resetFilters();
   try {
-    const [sessionRes, eventsRes] = await Promise.all([
+    const [sessionRes, turnsRes] = await Promise.all([
       getChatSessionWithParams(targetId, {
         limit: TIMELINE_DETAIL_SESSION_MESSAGE_LIMIT,
         summary: true
       }),
-      getChatSessionEventsWithParams(targetId, {
-        workflow_only: true,
-        offset: 0,
-        page_size: TIMELINE_DETAIL_EVENT_PAGE_SIZE
-      }).catch(() => null)
+      getThreadLogTurns(targetId, { limit: TIMELINE_DETAIL_EVENT_PAGE_SIZE })
     ]);
     if (currentToken !== requestToken) {
       return;
     }
     const sessionData = (sessionRes?.data as { data?: unknown } | undefined)?.data;
     sessionDetail.value = normalizeSession(targetId, sessionData);
-    const eventPayload = (eventsRes?.data as { data?: Record<string, unknown> } | undefined)?.data;
-    rounds.value = normalizeRounds(eventPayload?.rounds);
-    eventHasMore.value = Boolean(eventPayload?.events_has_more);
-    eventTotal.value = Number(eventPayload?.event_total) || rounds.value.reduce(
-      (total, round) => total + (Array.isArray(round.events) ? round.events.length : 0),
-      0
-    );
-    running.value = Boolean(eventPayload?.running);
-    const parsedLastEventId = Number.parseInt(String(eventPayload?.last_event_id ?? 0), 10);
-    lastEventId.value = Number.isFinite(parsedLastEventId) && parsedLastEventId > 0 ? parsedLastEventId : 0;
+    const turnPayload = (turnsRes?.data as { data?: Record<string, unknown> } | undefined)?.data;
+    rounds.value = normalizeThreadTurns(turnPayload?.turns);
+    turnPageCursors.value[1] = Number(turnPayload?.next_before) || undefined;
+    eventHasMore.value = Boolean(turnPayload?.has_more);
+    eventTotal.value = rounds.value.length;
+    running.value = false;
   } catch (error) {
     if (currentToken !== requestToken) {
       return;
@@ -1124,19 +1159,20 @@ const loadTimelineEventPage = async (page: number) => {
   const currentToken = requestToken;
   loadingEvents.value = true;
   try {
-    const response = await getChatSessionEventsWithParams(session.id, {
-      workflow_only: true,
-      offset: nextPage * TIMELINE_DETAIL_EVENT_PAGE_SIZE,
-      page_size: TIMELINE_DETAIL_EVENT_PAGE_SIZE
+    const response = await getThreadLogTurns(session.id, {
+      before: turnPageCursors.value[nextPage], limit: TIMELINE_DETAIL_EVENT_PAGE_SIZE
     });
-    if (currentToken !== requestToken) {
-      return;
-    }
-    const payload = (response?.data as { data?: Record<string, unknown> } | undefined)?.data;
-    rounds.value = normalizeRounds(payload?.rounds);
+    if (currentToken !== requestToken) return;
+    const payload = response.data?.data;
+    const selected = rounds.value.find((round) => Number(round.user_round) === selectedRound.value);
+    const pageRounds = normalizeThreadTurns(payload?.turns);
+    // Keep at most one pinned selection plus the current catalog page.
+    rounds.value = selected && !pageRounds.some((round) => round.turn_id === selected.turn_id)
+      ? [...pageRounds, selected] : pageRounds;
+    turnPageCursors.value[nextPage + 1] = payload?.next_before;
     eventPage.value = nextPage;
-    eventHasMore.value = Boolean(payload?.events_has_more);
-    eventTotal.value = Number(payload?.event_total) || eventTotal.value;
+    eventHasMore.value = Boolean(payload?.has_more);
+    eventTotal.value = pageRounds.length;
     expandedEventKeys.value = new Set();
     eventRawCache.clear();
     await nextTick();
@@ -1152,27 +1188,42 @@ const loadTimelineEventPage = async (page: number) => {
   }
 };
 
+const loadSelectedTurnItems = async (round: number, next = false) => {
+  const target = rounds.value.find((item) => Number(item.user_round) === round);
+  const session = sessionDetail.value;
+  if (!target?.turn_id || !session) return;
+  const token = ++detailRequestToken;
+  const parentToken = requestToken;
+  try {
+    const response = await getThreadLogTurn(session.id, target.turn_id, {
+      item_after: next ? itemAfter.value : -1, limit: 100
+    });
+    if (token !== detailRequestToken || parentToken !== requestToken || selectedRound.value !== round) return;
+    const turn = response.data?.data?.turn;
+    const items = Array.isArray(turn?.items) ? turn.items : [];
+    itemAfter.value = Number(turn?.next_after ?? -1);
+    itemHasMore.value = Boolean(turn?.has_more);
+    const detailEvents = items.map((item: Record<string, unknown>) => ({
+      event: String(item.kind || 'item'), data: item.payload || {},
+      timestamp: item.updated_time || item.created_time || ''
+    }));
+    rounds.value = rounds.value.map((item) => ({ ...item,
+      events: item.turn_id === target.turn_id ? detailEvents : [] }));
+    expandedEventKeys.value = new Set();
+    eventRawCache.clear();
+  } catch (error) {
+    if (token === detailRequestToken && parentToken === requestToken)
+      showApiError(error, t('messenger.timeline.detail.loadFailed'));
+  }
+};
+
 const exportTimelineDetail = async () => {
   const session = sessionDetail.value;
   if (!session) {
     return;
   }
   try {
-    const response = await getChatSessionEventsWithParams(session.id, {
-      limit: 0,
-      workflow_only: true
-    }).catch(() => null);
-    const payload = (response?.data as { data?: Record<string, unknown> } | undefined)?.data;
-    const sourceEvents = payload
-      ? selectTimelineExportEvents(buildTimelineDetailEvents(normalizeRounds(payload.rounds)))
-      : exportEvents.value;
-    const lines = buildTimelineExportLines(sourceEvents);
-    downloadSessionLogLines(lines, {
-      sessionId: session.id,
-      agentName: session.agentName,
-      title: session.title,
-      filenamePrefix: session.agentName || session.title || session.agentId || session.id
-    });
+    await exportSingleSessionLog(session.id, { filenamePrefix: session.agentName || session.title || session.id });
     ElMessage.success(t('messenger.timeline.detail.exported'));
   } catch (error) {
     const detail = String((error as { message?: string })?.message || t('common.requestFailed'));
@@ -1233,6 +1284,7 @@ watch(
 watch(
   selectedRound,
   () => {
+    if (selectedRound.value > 0) void loadSelectedTurnItems(selectedRound.value);
     void nextTick(() => {
       scrollToSelectedRound();
     });

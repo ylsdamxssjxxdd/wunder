@@ -65,6 +65,66 @@ pub trait ConversationLogStore {
     ) -> Result<Option<String>>;
 }
 
+/// Durable thread timeline storage.  The timeline is intentionally separate
+/// from the short lived stream event buffer: turns are the pagination unit and
+/// items are stable, idempotently replaceable records.
+pub trait ThreadLogStore {
+    fn upsert_thread_text_block(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        block: &Value,
+    ) -> Result<()>;
+    fn list_thread_text_blocks(
+        &self,
+        session_id: &str,
+        after: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>>;
+    fn find_thread_turn_id(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        user_turn_index: i64,
+    ) -> Result<Option<String>>;
+    /// Atomically allocate a root user round or an execution attached to an existing root.
+    fn accept_thread_turn(&self, user_id: &str, session_id: &str, input: &Value) -> Result<Value>;
+    fn update_thread_turn(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turn_id: &str,
+        status: &str,
+        summary: &str,
+        payload: &Value,
+    ) -> Result<()>;
+    fn append_thread_item(&self, user_id: &str, payload: &Value) -> Result<()>;
+    fn list_thread_turns(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        before_user_turn: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<Value>>;
+    fn get_thread_turn(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turn_id: &str,
+        after: i64,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<Option<Value>>;
+    fn list_thread_changes(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        after_seq: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>>;
+    fn delete_thread_log_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
+}
+
 /// Log usage, statistics, and cleanup storage.
 pub trait LogStatsStore {
     fn get_user_chat_stats(&self) -> Result<HashMap<String, HashMap<String, i64>>>;
@@ -1037,6 +1097,7 @@ pub trait StorageBackend:
     StorageLifecycle
     + MetaStore
     + ConversationLogStore
+    + ThreadLogStore
     + LogStatsStore
     + MonitorStore
     + SessionLockStore
@@ -1069,6 +1130,7 @@ impl<T> StorageBackend for T where
         + StorageLifecycle
         + MetaStore
         + ConversationLogStore
+        + ThreadLogStore
         + LogStatsStore
         + MonitorStore
         + SessionLockStore

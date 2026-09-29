@@ -176,9 +176,9 @@ fn advance(
         if paused_scroll.is_none() {
             app.set_draft("测试草稿".into());
             crate::smoke::click(app, 28.0, 160.0)?;
-            ensure(app.get_section() == 2, "navigation blocked")?;
+            ensure(app.get_page() == crate::DesktopPage::Agents, "navigation blocked")?;
             crate::smoke::click(app, 28.0, 102.0)?;
-            ensure(app.get_section() == 0, "return navigation blocked")?;
+            ensure(app.get_page() == crate::DesktopPage::Messages, "return navigation blocked")?;
             app.set_follow_output(false);
             *paused_scroll = Some(app.get_scroll_revision());
         } else {
@@ -265,7 +265,7 @@ fn advance(
         7 => {
             ensure(app.get_status() == "已停止", "cancel did not settle")?;
             crate::smoke::snapshot(app, &directory.join("native-stopped.png"))?;
-            app.set_section(2);
+            app.set_page(crate::DesktopPage::Agents);
             app.invoke_create_agent("test-ui-agent".into());
         }
         8 => {
@@ -295,13 +295,13 @@ fn advance(
                 "native UI save failed",
             )?;
             crate::smoke::snapshot(app, &directory.join("native-agents.png"))?;
-            app.set_section(3);
+            app.set_page(crate::DesktopPage::Tools);
             app.invoke_refresh_tools();
         }
         10 => {
             ensure(app.get_tools().row_count() > 0, "native tools empty")?;
             crate::smoke::snapshot(app, &directory.join("native-tools.png"))?;
-            app.set_section(4);
+            app.set_page(crate::DesktopPage::Settings);
             app.invoke_save_model(
                 "test-ui-model".into(),
                 "openai".into(),
@@ -329,7 +329,7 @@ fn advance(
             app.invoke_save_runtime(app.get_workspace_root(), "zh-CN".into());
         }
         13 => {
-            app.set_section(0);
+            app.set_page(crate::DesktopPage::Messages);
             app.invoke_navigate_directory("".into());
         }
         14 => {

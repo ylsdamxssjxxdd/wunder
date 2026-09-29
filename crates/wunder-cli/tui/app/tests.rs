@@ -589,3 +589,10 @@ fn normalize_statusline_item_supports_project_and_branch_aliases() {
     );
     assert_eq!(normalize_statusline_item("git").as_deref(), Some("branch"));
 }
+
+#[test]
+fn approval_and_inquiry_have_distinct_transcript_markers() {
+    assert_eq!(log_prefix(LogKind::Approval), "! ");
+    assert_eq!(log_prefix(LogKind::Inquiry), "? ");
+    assert_ne!(log_prefix(LogKind::Inquiry), log_prefix(LogKind::Tool));
+}

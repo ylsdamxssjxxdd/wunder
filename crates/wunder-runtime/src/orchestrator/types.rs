@@ -1,5 +1,6 @@
 use super::*;
 use crate::core::approval::ApprovalRequestTx;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub(super) struct PreparedRequest {
@@ -22,12 +23,15 @@ pub(super) struct PreparedRequest {
     pub(super) is_admin: bool,
     pub(super) enforce_runtime_queue: bool,
     pub(super) approval_tx: Option<ApprovalRequestTx>,
+    pub(super) thread_turn_id: Option<Uuid>,
+    pub(super) thread_user_round: Option<i64>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct RoundInfo {
     pub(super) user_round: Option<i64>,
     pub(super) model_round: Option<i64>,
+    pub(super) thread_turn_id: Option<Uuid>,
 }
 
 impl RoundInfo {
@@ -35,6 +39,7 @@ impl RoundInfo {
         Self {
             user_round: Some(user_round),
             model_round: Some(model_round),
+            thread_turn_id: None,
         }
     }
 
@@ -42,6 +47,23 @@ impl RoundInfo {
         Self {
             user_round: Some(user_round),
             model_round: None,
+            thread_turn_id: None,
+        }
+    }
+
+    pub(super) fn user_only_thread(user_round: i64, thread_turn_id: Uuid) -> Self {
+        Self {
+            user_round: Some(user_round),
+            model_round: None,
+            thread_turn_id: Some(thread_turn_id),
+        }
+    }
+
+    pub(super) fn with_model_round(self, model_round: i64) -> Self {
+        Self {
+            user_round: self.user_round,
+            model_round: Some(model_round),
+            thread_turn_id: self.thread_turn_id,
         }
     }
 
@@ -51,6 +73,9 @@ impl RoundInfo {
         }
         if let Some(model_round) = self.model_round {
             map.insert("model_round".to_string(), json!(model_round));
+        }
+        if let Some(turn_id) = self.thread_turn_id {
+            map.insert("turn_id".to_string(), json!(turn_id.to_string()));
         }
     }
 }

@@ -39,10 +39,19 @@ export struct ChatMessage {
     avatar-glyph: string,
     avatar-tone: int
 }
+
+// Stable desktop navigation identifiers. Keep presentation pages independent
+// from their position in the rail so deep links and native controllers never
+// rely on an integer slot.
+export enum DesktopPage { messages, agents, tools, settings, profile, files, users, groups, cron }
 // Screenshot attachment state remains in the UI projection until send. The
 // data URL is forwarded through the native Rust façade without an HTTP hop.
 export struct ChatAttachment { name: string, mime-type: string, data-url: string }
 export struct FileCard { name: string, path: string, entry-type: string, size: string }
+export struct WorldContactCard { user-id: string, username: string, online: bool, preview: string, unread: int }
+export struct WorldGroupCard { group-id: string, conversation-id: string, name: string, members: int, preview: string, unread: int }
+export struct WorldMessageCard { content: string, mine: bool, sender: string }
+export struct CronCard { id: string, name: string, enabled: bool, schedule: string, next-run: string, last-status: string, last-error: string }
 export struct AgentCard {
     id: string,
     name: string,
@@ -68,5 +77,5 @@ export struct AgentCard {
 }
 export struct ToolCard { name: string, description: string, category: string, enabled: bool }
 export struct ModelCard { key: string, provider: string, model: string, base-url: string, model-type: string, is-default: bool }
-export struct ProfileCard { user-id: string, username: string, email: string, unit: string, sessions: string, sessions-last-7d: string, tool-calls: string, tokens: string, agents: string, last-active: string, avatar-icon: string, avatar-glyph: string, avatar-color: string }
+export struct ProfileCard { user-id: string, username: string, email: string, unit: string, unit-id: string, sessions: string, sessions-last-7d: string, tool-calls: string, tokens: string, agents: string, last-active: string, avatar-icon: string, avatar-glyph: string, avatar-color: string }
 export struct LanPeerCard { peer-id: string, display-name: string, address: string }

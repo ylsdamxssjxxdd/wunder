@@ -91,6 +91,12 @@ export const getSessionEventsWithParams = (
   params: QueryParams = {},
   options: { signal?: AbortSignal } = {}
 ) => api.get(`/chat/sessions/${id}/events`, { params, ...options });
+export const getThreadLogTurns = (id: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
+  api.get(`/chat/sessions/${id}/thread-log/turns`, { params, ...options });
+export const getThreadLogTurn = (sessionId: string, turnId: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
+  api.get(`/chat/sessions/${sessionId}/thread-log/turns/${encodeURIComponent(turnId)}`, { params, ...options });
+export const getThreadLogChanges = (id: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
+  api.get(`/chat/sessions/${id}/thread-log/changes`, { params, ...options });
 export const getSessionGoal = (id: string, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}/goal`, options);
 export const setSessionGoal = (id: string, payload: unknown) =>
@@ -178,3 +184,6 @@ export const openChatSocket = (options: OpenChatSocketOptions = {}): WebSocket =
   const protocols = buildWsProtocols(token, options);
   return protocols ? new WebSocket(url, protocols) : new WebSocket(url);
 };
+
+export const exportThreadLog = (sessionId: string) =>
+  api.get(`/chat/sessions/${encodeURIComponent(sessionId)}/thread-log/export`, { responseType: 'blob' });

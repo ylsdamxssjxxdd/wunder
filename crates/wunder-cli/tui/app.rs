@@ -12,11 +12,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc::{self, error::TryRecvError, UnboundedReceiver};
+use tokio::sync::mpsc::{self, error::TryRecvError};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use wunder_server::approval::{
-    new_channel as new_approval_channel, ApprovalRequest, ApprovalRequestKind, ApprovalRequestRx,
-    ApprovalResponse,
+    new_channel as new_approval_channel, ApprovalRequest, ApprovalRequestKind, ApprovalResponse,
 };
 use wunder_server::schemas::StreamEvent;
 use wunder_server::user_tools::UserMcpServer;
@@ -28,9 +27,11 @@ use crate::command_session_display::{
 use crate::render::FinalEvent;
 use crate::runtime::CliRuntime;
 use crate::slash_command::{self, ParsedSlashCommand, SlashCommand};
+use crate::tui::command_center::{CommandCenterState, ThreadStatusFilter};
+use crate::tui::thread_registry::ThreadRegistry;
 
-const MAX_LOG_ENTRIES: usize = 1200;
-const MAX_LOG_TOTAL_CHARS: usize = 320_000;
+const MAX_LOG_ENTRIES: usize = super::transcript::MAX_TRANSCRIPT_CELLS;
+const MAX_LOG_TOTAL_CHARS: usize = super::transcript::MAX_TRANSCRIPT_CHARS;
 const MAX_DRAIN_MESSAGES_PER_TICK_BASE: usize = 400;
 const MAX_DRAIN_MESSAGES_PER_TICK_CATCHUP: usize = 1400;
 const STREAM_CATCHUP_ENTER_DEPTH: usize = 120;
@@ -55,6 +56,8 @@ const PASTE_BURST_ACTIVE_IDLE_TIMEOUT: Duration = Duration::from_millis(60);
 const SUPPRESSED_CLIPBOARD_PASTE_TIMEOUT: Duration = Duration::from_millis(1200);
 mod commands;
 mod input_placeholders;
+mod thread_ui_state;
+use thread_ui_state::ThreadUiState;
 
 pub(super) mod helpers;
 mod patch_log;
@@ -74,17 +77,13 @@ pub enum LogKind {
     User,
     Assistant,
     Reasoning,
+    Approval,
+    Inquiry,
     Tool,
     Error,
 }
 
-#[derive(Debug, Clone)]
-pub struct LogEntry {
-    pub kind: LogKind,
-    pub text: String,
-    special: Option<SpecialLogEntry>,
-    markdown_cache: Option<MarkdownCache>,
-}
+type LogEntry = super::transcript::TranscriptCell<LogKind, SpecialLogEntry, MarkdownCache>;
 
 #[derive(Debug, Clone)]
 struct MarkdownCache {
@@ -136,10 +135,47 @@ pub struct PopupView {
     pub selected_index: Option<usize>,
 }
 
-enum StreamMessage {
-    Event(StreamEvent),
-    Error(String),
-    Done,
+#[derive(Debug, Clone)]
+pub struct CommandCenterRow {
+    pub session_id: String,
+    pub title: String,
+    pub status: String,
+    pub marker: char,
+    pub updated_at: String,
+    pub agent: Option<String>,
+    pub parent: Option<String>,
+    pub spawn_label: Option<String>,
+    pub unread_events: usize,
+    pub needs_replay: bool,
+    pub pending_approvals: usize,
+    pub pending_events: usize,
+    pub stream_active: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommandCenterView {
+    pub rows: Vec<CommandCenterRow>,
+    pub selected_session_id: Option<String>,
+    pub filter: String,
+    pub filter_counts: Vec<(String, usize)>,
+    pub search: String,
+    pub searching: bool,
+    pub help: bool,
+    pub group: String,
+}
+
+pub(crate) enum StreamMessage {
+    Event {
+        session_id: String,
+        event: StreamEvent,
+    },
+    Error {
+        session_id: String,
+        error: String,
+    },
+    Done {
+        session_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -240,8 +276,6 @@ pub struct TuiApp {
     workspace_files: Vec<IndexedFile>,
     active_assistant: Option<usize>,
     active_reasoning: Option<usize>,
-    stream_rx: Option<UnboundedReceiver<StreamMessage>>,
-    approval_rx: Option<ApprovalRequestRx>,
     approval_queue: VecDeque<ApprovalRequest>,
     active_approval: Option<ApprovalRequest>,
     approval_selected_index: usize,
@@ -269,6 +303,7 @@ pub struct TuiApp {
     focus_area: FocusArea,
     transcript_selected: Option<usize>,
     resume_picker: Option<ResumePickerState>,
+    command_center: Option<CommandCenterState>,
     active_inquiry_panel: Option<InquiryPanelState>,
     inquiry_selected_index: usize,
     tool_phase_notice_emitted: bool,
@@ -303,6 +338,11 @@ pub struct TuiApp {
     reasoning_markdown_stream: Option<StreamedMarkdownState>,
     command_sessions: CommandSessionDisplayState,
     command_log_indices: HashMap<String, usize>,
+    tool_log_indices: HashMap<String, usize>,
+    thread_registry: ThreadRegistry,
+    thread_ui_cache: VecDeque<(String, ThreadUiState)>,
+    active_stream_sessions: HashSet<String>,
+    pending_thread_terminals: HashMap<String, StreamMessage>,
 }
 
 impl TuiApp {
@@ -328,7 +368,7 @@ impl TuiApp {
             global,
             frame_requester,
             display_language,
-            session_id,
+            session_id: session_id.clone(),
             input: String::new(),
             input_cursor: 0,
             input_viewport_width: 1,
@@ -353,8 +393,6 @@ impl TuiApp {
             workspace_files: Vec::new(),
             active_assistant: None,
             active_reasoning: None,
-            stream_rx: None,
-            approval_rx: None,
             approval_queue: VecDeque::new(),
             active_approval: None,
             approval_selected_index: 0,
@@ -382,6 +420,7 @@ impl TuiApp {
             focus_area: FocusArea::Input,
             transcript_selected: None,
             resume_picker: None,
+            command_center: None,
             active_inquiry_panel: None,
             inquiry_selected_index: 0,
             tool_phase_notice_emitted: false,
@@ -416,6 +455,11 @@ impl TuiApp {
             reasoning_markdown_stream: None,
             command_sessions: CommandSessionDisplayState::default(),
             command_log_indices: HashMap::new(),
+            tool_log_indices: HashMap::new(),
+            thread_registry: ThreadRegistry::new(session_id.clone()),
+            thread_ui_cache: VecDeque::new(),
+            active_stream_sessions: HashSet::new(),
+            pending_thread_terminals: HashMap::new(),
         };
         app.load_persisted_history();
         app.load_popup_recents();
@@ -540,7 +584,7 @@ impl TuiApp {
         let ctrl_c_pending = self
             .ctrl_c_hint_deadline
             .is_some_and(|deadline| Instant::now() <= deadline);
-        if self.busy || self.stream_rx.is_some() {
+        if self.busy || self.thread_registry.has_stream(self.session_id.as_str()) {
             self.frame_requester
                 .schedule_frame_in(super::activity_indicator::RUNNING_ANIMATION_FRAME);
             return;
@@ -549,7 +593,7 @@ impl TuiApp {
             self.frame_requester.schedule_frame_in(PASTE_BURST_CHAR_GAP);
             return;
         }
-        if self.approval_rx.is_some() || self.active_approval.is_some() || ctrl_c_pending {
+        if self.active_approval.is_some() || ctrl_c_pending {
             self.frame_requester
                 .schedule_frame_in(Duration::from_millis(90));
         }
@@ -1170,6 +1214,112 @@ impl TuiApp {
         Some((rows, picker.selected))
     }
 
+    fn refresh_command_center_statuses(&mut self) {
+        let Some(center) = self.command_center.as_mut() else {
+            return;
+        };
+        for item in &mut center.sessions {
+            let pending = self
+                .thread_registry
+                .pending_approval_count(&item.session_id)
+                + if item.session_id == self.session_id {
+                    self.approval_queue.len() + usize::from(self.active_approval.is_some())
+                } else {
+                    0
+                };
+            let status = if pending > 0 {
+                Some("needs_you")
+            } else if self
+                .thread_registry
+                .projection(&item.session_id)
+                .is_some_and(|projection| {
+                    projection.status == super::thread_registry::ThreadRunState::NeedsYou
+                })
+            {
+                Some("needs_you")
+            } else if self.thread_registry.has_stream(&item.session_id) {
+                Some("working")
+            } else {
+                self.thread_registry
+                    .projection(&item.session_id)
+                    .map(|projection| {
+                        use super::thread_registry::ThreadRunState;
+                        match projection.status {
+                            ThreadRunState::Working => "working",
+                            ThreadRunState::NeedsYou => "needs_you",
+                            ThreadRunState::Ready => "ready",
+                            ThreadRunState::Failed => "failed",
+                            ThreadRunState::Finished => "finished",
+                        }
+                    })
+            };
+            if let Some(status) = status {
+                item.status = status.to_string();
+            }
+        }
+        center.reconcile_selection(&self.session_id);
+    }
+
+    pub fn command_center_view(&self) -> Option<CommandCenterView> {
+        let center = self.command_center.as_ref()?;
+        let is_zh = self.is_zh_language();
+        let visible = center.visible_indices(self.session_id.as_str());
+        let mut rows = Vec::with_capacity(visible.len());
+        for index in visible {
+            let item = &center.sessions[index];
+            let marker = crate::tui::command_center::status_marker(item, self.session_id.as_str());
+            let status =
+                crate::tui::command_center::status_label(item, self.session_id.as_str(), is_zh);
+            rows.push(CommandCenterRow {
+                session_id: item.session_id.clone(),
+                title: item.title.clone(),
+                status: status.to_string(),
+                marker,
+                updated_at: format_session_timestamp(item.updated_at.max(item.last_message_at)),
+                agent: item.agent_id.clone(),
+                parent: item.parent_session_id.clone(),
+                spawn_label: item.spawn_label.clone().or_else(|| item.spawned_by.clone()),
+                unread_events: self.thread_registry.unread_events(item.session_id.as_str()),
+                needs_replay: self.thread_registry.needs_replay(item.session_id.as_str()),
+                pending_approvals: self
+                    .thread_registry
+                    .pending_approval_count(&item.session_id)
+                    + if item.session_id == self.session_id {
+                        self.approval_queue.len() + usize::from(self.active_approval.is_some())
+                    } else {
+                        0
+                    },
+                pending_events: self
+                    .thread_registry
+                    .projection(&item.session_id)
+                    .map_or(0, |projection| projection.pending_events.len()),
+                stream_active: self.thread_registry.has_stream(&item.session_id),
+            });
+        }
+        Some(CommandCenterView {
+            rows,
+            selected_session_id: center.selected_session_id(self.session_id.as_str()),
+            filter: center.filter.label(is_zh).to_string(),
+            filter_counts: ThreadStatusFilter::ALL
+                .iter()
+                .map(|filter| {
+                    (
+                        filter.label(is_zh).to_string(),
+                        center.filter_count(*filter, self.session_id.as_str()),
+                    )
+                })
+                .collect(),
+            search: center.search.clone(),
+            searching: center.searching,
+            help: center.help,
+            group: center.group.label(is_zh).to_string(),
+        })
+    }
+
+    pub fn command_center_open(&self) -> bool {
+        self.command_center.is_some()
+    }
+
     pub fn approval_modal_lines(&self) -> Option<Vec<String>> {
         let request = self.active_approval.as_ref()?;
         let is_zh = self.is_zh_language();
@@ -1273,6 +1423,10 @@ impl TuiApp {
             .unwrap_or(0);
         self.inquiry_selected_index = recommended_index;
         self.active_inquiry_panel = Some(panel.clone());
+        self.thread_registry.set_status(
+            &self.session_id,
+            super::thread_registry::ThreadRunState::NeedsYou,
+        );
         if emit_log && !already_same {
             self.show_inquiry_panel_prompt(&panel);
         }
@@ -1378,9 +1532,12 @@ impl TuiApp {
 
     fn show_inquiry_panel_prompt(&mut self, panel: &InquiryPanelState) {
         if self.is_zh_language() {
-            self.push_log(LogKind::Tool, format!("[问询面板] {}", panel.question));
+            self.push_log(LogKind::Inquiry, format!("[问询面板] {}", panel.question));
         } else {
-            self.push_log(LogKind::Tool, format!("[Inquiry Panel] {}", panel.question));
+            self.push_log(
+                LogKind::Inquiry,
+                format!("[Inquiry Panel] {}", panel.question),
+            );
         }
         for (index, route) in panel.routes.iter().enumerate() {
             let badge = if route.recommended {
@@ -1401,7 +1558,7 @@ impl TuiApp {
             } else {
                 format!("  {}. {}{}", index + 1, route.label, badge)
             };
-            self.push_log(LogKind::Tool, line);
+            self.push_log(LogKind::Inquiry, line);
         }
         let hint = if panel.multiple {
             crate::locale::tr(
@@ -1416,7 +1573,7 @@ impl TuiApp {
                 "Type a route number (e.g. 1) then Enter; or send free text to continue.",
             )
         };
-        self.push_log(LogKind::Tool, hint);
+        self.push_log(LogKind::Inquiry, hint);
     }
 
     fn try_handle_inquiry_panel_navigation_key(&mut self, key: KeyEvent) -> Option<Option<String>> {
@@ -1877,6 +2034,135 @@ impl TuiApp {
             .unwrap_or(0);
         self.shortcuts_visible = false;
         self.resume_picker = Some(ResumePickerState { sessions, selected });
+        Ok(())
+    }
+
+    async fn open_command_center(&mut self) -> Result<()> {
+        let sessions = crate::list_recent_sessions(&self.runtime, 120).await?;
+        if sessions.is_empty() {
+            self.push_log(
+                LogKind::Info,
+                "no sessions available for command center".to_string(),
+            );
+            return Ok(());
+        }
+        self.shortcuts_visible = false;
+        self.resume_picker = None;
+        self.command_center = Some(CommandCenterState::new(sessions, self.session_id.as_str()));
+        self.refresh_command_center_statuses();
+        Ok(())
+    }
+
+    async fn refresh_command_center(&mut self) -> Result<()> {
+        let Some(previous) = self.command_center.take() else {
+            return self.open_command_center().await;
+        };
+        let selected_session_id = previous.selected_session_id(self.session_id.as_str());
+        let sessions = crate::list_recent_sessions(&self.runtime, 120).await?;
+        let mut refreshed = CommandCenterState::new(sessions, self.session_id.as_str());
+        refreshed.filter = previous.filter;
+        refreshed.search = previous.search;
+        refreshed.searching = previous.searching;
+        refreshed.help = previous.help;
+        refreshed.group = previous.group;
+        if let Some(selected_session_id) = selected_session_id {
+            if let Some(index) = refreshed
+                .sessions
+                .iter()
+                .position(|item| item.session_id == selected_session_id)
+            {
+                refreshed.selected = index;
+            }
+        }
+        refreshed.reconcile_selection(self.session_id.as_str());
+        self.command_center = Some(refreshed);
+        Ok(())
+    }
+
+    fn close_command_center(&mut self) {
+        self.command_center = None;
+    }
+
+    async fn handle_command_center_key(&mut self, key: KeyEvent) -> Result<()> {
+        self.refresh_command_center_statuses();
+        if matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R'))
+            && self
+                .command_center
+                .as_ref()
+                .is_some_and(|center| !center.help && !center.searching)
+        {
+            return self.refresh_command_center().await;
+        }
+        let Some(center) = self.command_center.as_mut() else {
+            return Ok(());
+        };
+        if center.help {
+            if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
+                center.help = false;
+            }
+            return Ok(());
+        }
+        if center.searching {
+            match key.code {
+                KeyCode::Esc => {
+                    center.searching = false;
+                    center.search.clear();
+                }
+                KeyCode::Enter => center.searching = false,
+                KeyCode::Backspace => {
+                    center.search.pop();
+                    center.reconcile_selection(self.session_id.as_str());
+                }
+                KeyCode::Char(ch)
+                    if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+                {
+                    center.search.push(ch);
+                    center.reconcile_selection(self.session_id.as_str());
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+        match key.code {
+            KeyCode::Esc | KeyCode::Left => self.close_command_center(),
+            KeyCode::Up => center.move_selection(self.session_id.as_str(), -1),
+            KeyCode::Down => center.move_selection(self.session_id.as_str(), 1),
+            KeyCode::PageUp => center.move_selection(self.session_id.as_str(), -8),
+            KeyCode::PageDown => center.move_selection(self.session_id.as_str(), 8),
+            KeyCode::Home => {
+                center.selected = center
+                    .visible_indices(self.session_id.as_str())
+                    .first()
+                    .copied()
+                    .unwrap_or(0)
+            }
+            KeyCode::End => {
+                center.selected = center
+                    .visible_indices(self.session_id.as_str())
+                    .last()
+                    .copied()
+                    .unwrap_or(0)
+            }
+            KeyCode::Tab => {
+                center.filter = center
+                    .filter
+                    .next(key.modifiers.contains(KeyModifiers::SHIFT));
+                center.reconcile_selection(self.session_id.as_str());
+            }
+            KeyCode::Char('/') => center.searching = true,
+            KeyCode::Char('g') | KeyCode::Char('G') => {
+                center.group = center.group.next();
+                center.reconcile_selection(self.session_id.as_str());
+            }
+            KeyCode::Char('?') => center.help = true,
+            KeyCode::Enter => {
+                if let Some(target) = center.selected_session_id(self.session_id.as_str()) {
+                    self.close_command_center();
+                    self.resume_to_session(target.as_str()).await?;
+                }
+            }
+            _ => {}
+        }
         Ok(())
     }
 
@@ -2582,36 +2868,53 @@ impl TuiApp {
         self.flush_pending_paste();
         self.drain_pending_attachment_paths().await;
         self.drain_approval_requests();
+        let current_session = self.session_id.clone();
+        self.replay_thread_events_if_needed(&current_session).await;
+        if !self.thread_registry.needs_replay(&current_session) {
+            for event in self
+                .thread_registry
+                .take_pending_events(&current_session, 512)
+            {
+                self.apply_stream_event(event);
+            }
+        }
+        if !self.thread_registry.needs_replay(&current_session)
+            && self
+                .thread_registry
+                .projection(&current_session)
+                .is_none_or(|projection| projection.pending_events.is_empty())
+        {
+            if let Some(terminal) = self.pending_thread_terminals.remove(&current_session) {
+                self.handle_stream_message(terminal);
+            }
+        }
         let drain_budget = self.stream_drain_budget();
-
+        let sessions = self.thread_registry.stream_session_ids();
         let mut drained = 0usize;
-        loop {
-            let Some(receiver) = self.stream_rx.as_mut() else {
-                self.reset_stream_catchup_state();
-                break;
-            };
+        for session_id in sessions {
+            while drained < drain_budget {
+                let received = self
+                    .thread_registry
+                    .stream_receiver_mut(session_id.as_str())
+                    .map(|receiver| receiver.try_recv());
+                match received {
+                    Some(Ok(message)) => self.handle_stream_message(message),
+                    Some(Err(TryRecvError::Empty)) => break,
+                    Some(Err(TryRecvError::Disconnected)) => {
+                        self.thread_registry.remove_stream(session_id.as_str());
+                        self.finish_disconnected_stream(session_id.as_str());
+                        break;
+                    }
+                    None => break,
+                }
+                drained = drained.saturating_add(1);
+            }
             if drained >= drain_budget {
                 break;
             }
-            match receiver.try_recv() {
-                Ok(message) => self.handle_stream_message(message),
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    self.stream_rx = None;
-                    self.busy = false;
-                    self.active_assistant = None;
-                    self.active_reasoning = None;
-                    self.stream_received_content_delta = false;
-                    self.stream_tool_markup_open = false;
-                    self.session_stats_dirty = true;
-                    self.refresh_workspace_context();
-                    self.reset_stream_catchup_state();
-                    break;
-                }
-            }
-            drained = drained.saturating_add(1);
         }
 
+        self.refresh_command_center_statuses();
         if self.session_stats_dirty {
             self.reload_session_stats().await;
             self.session_stats_dirty = false;
@@ -2623,24 +2926,46 @@ impl TuiApp {
     }
 
     fn drain_approval_requests(&mut self) {
-        loop {
-            let Some(receiver) = self.approval_rx.as_mut() else {
-                break;
-            };
-            match receiver.try_recv() {
-                Ok(request) => {
-                    self.enqueue_approval_request(request);
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    self.approval_rx = None;
-                    break;
+        let session_ids = self.thread_registry.approval_session_ids();
+        for session_id in session_ids {
+            loop {
+                let received = self
+                    .thread_registry
+                    .approval_receiver_mut(session_id.as_str())
+                    .map(|receiver| receiver.try_recv());
+                match received {
+                    Some(Ok(request)) => {
+                        self.thread_registry.set_status(
+                            &session_id,
+                            super::thread_registry::ThreadRunState::NeedsYou,
+                        );
+                        if session_id == self.session_id {
+                            self.enqueue_approval_request(request);
+                        } else {
+                            self.thread_registry
+                                .queue_approval(session_id.as_str(), request);
+                            self.thread_registry.record_event(session_id.as_str(), 0);
+                        }
+                    }
+                    Some(Err(TryRecvError::Empty)) => break,
+                    Some(Err(TryRecvError::Disconnected)) => {
+                        self.thread_registry
+                            .remove_approval_stream(session_id.as_str());
+                        break;
+                    }
+                    None => break,
                 }
             }
         }
     }
 
     fn enqueue_approval_request(&mut self, request: ApprovalRequest) {
+        let notice = if self.is_zh_language() {
+            format!("待审批：{}", request.summary)
+        } else {
+            format!("Approval required: {}", request.summary)
+        };
+        self.push_log(LogKind::Approval, notice);
         // Ensure the approval overlay is not obscured by other modal states.
         self.shortcuts_visible = false;
         self.resume_picker = None;
@@ -2660,11 +2985,11 @@ impl TuiApp {
     }
 
     fn stream_drain_budget(&mut self) -> usize {
-        let Some(receiver) = self.stream_rx.as_ref() else {
+        let depth = self.thread_registry.total_stream_depth();
+        if depth == 0 {
             self.reset_stream_catchup_state();
             return MAX_DRAIN_MESSAGES_PER_TICK_BASE;
-        };
-        let depth = receiver.len();
+        }
         let now = Instant::now();
         if self.stream_catchup_mode {
             if depth <= STREAM_CATCHUP_EXIT_DEPTH {
@@ -3180,6 +3505,7 @@ impl TuiApp {
                 KeyCode::Char('l') => {
                     self.logs.clear();
                     self.command_log_indices.clear();
+                    self.tool_log_indices.clear();
                     self.reset_scrollback_archive();
                     self.invalidate_transcript_metrics();
                     self.active_assistant = None;
@@ -3289,6 +3615,12 @@ impl TuiApp {
             return Ok(());
         }
 
+        if self.command_center_open() {
+            self.reset_plain_char_burst();
+            self.handle_command_center_key(key).await?;
+            return Ok(());
+        }
+
         if self.has_resume_picker() {
             self.reset_plain_char_burst();
             self.handle_resume_picker_key(key).await?;
@@ -3314,6 +3646,9 @@ impl TuiApp {
         match key.code {
             KeyCode::Esc => {
                 self.clear_input_draft();
+            }
+            KeyCode::Left if key.modifiers.is_empty() && self.input.trim().is_empty() => {
+                self.open_command_center().await?;
             }
             KeyCode::Enter => {
                 if self.key_paste_burst_active() {
@@ -3540,7 +3875,7 @@ impl TuiApp {
         let _ = request.respond_to.send(response);
         match response {
             ApprovalResponse::ApproveOnce => self.push_log(
-                LogKind::Info,
+                LogKind::Approval,
                 if self.is_zh_language() {
                     format!("审批通过（仅本次）：{}", request.summary)
                 } else {
@@ -3548,7 +3883,7 @@ impl TuiApp {
                 },
             ),
             ApprovalResponse::ApproveSession => self.push_log(
-                LogKind::Info,
+                LogKind::Approval,
                 if self.is_zh_language() {
                     format!("审批通过（本会话）：{}", request.summary)
                 } else {
@@ -3556,7 +3891,7 @@ impl TuiApp {
                 },
             ),
             ApprovalResponse::Deny => self.push_log(
-                LogKind::Info,
+                LogKind::Approval,
                 if self.is_zh_language() {
                     format!("已拒绝：{}", request.summary)
                 } else {
@@ -3565,8 +3900,21 @@ impl TuiApp {
             ),
         };
 
-        self.active_approval = self.approval_queue.pop_front();
+        self.active_approval = self
+            .approval_queue
+            .pop_front()
+            .or_else(|| self.thread_registry.take_pending_approval(&self.session_id));
         self.approval_selected_index = 0;
+        self.thread_registry.set_status(
+            &self.session_id,
+            if self.active_approval.is_some() || self.active_inquiry_panel.is_some() {
+                super::thread_registry::ThreadRunState::NeedsYou
+            } else if self.thread_registry.has_stream(&self.session_id) {
+                super::thread_registry::ThreadRunState::Working
+            } else {
+                super::thread_registry::ThreadRunState::Ready
+            },
+        );
     }
 
     async fn handle_resume_picker_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -3773,18 +4121,6 @@ impl TuiApp {
     }
 
     async fn resume_to_session(&mut self, target: &str) -> Result<()> {
-        if self.busy {
-            self.push_log(
-                LogKind::Error,
-                crate::locale::tr(
-                    self.display_language.as_str(),
-                    "助手仍在运行，请等待完成后再恢复其他会话",
-                    "assistant is still running, wait for completion before resuming another session",
-                ),
-            );
-            return Ok(());
-        }
-
         let cleaned = target.trim();
         if cleaned.is_empty() {
             self.push_log(
@@ -3825,11 +4161,60 @@ impl TuiApp {
     }
 
     async fn switch_to_existing_session(&mut self, session_id: &str) -> Result<()> {
-        let history = crate::load_session_history_entries(&self.runtime, session_id, 0).await?;
+        if session_id == self.session_id {
+            return Ok(());
+        }
+        // Read before moving any visible state: a storage failure leaves it intact.
+        let cached_index = self
+            .thread_ui_cache
+            .iter()
+            .position(|(id, _)| id == session_id);
+        let history = if cached_index.is_none() {
+            Some(crate::load_session_history_entries(&self.runtime, session_id, 0).await?)
+        } else {
+            None
+        };
+        if cached_index.is_none()
+            && self.thread_ui_cache.len() >= super::thread_registry::MAX_THREAD_PROJECTIONS - 1
+        {
+            let evict = self
+                .thread_ui_cache
+                .iter()
+                .position(|(id, _)| {
+                    !self.thread_registry.has_stream(id)
+                        && !self.pending_thread_terminals.contains_key(id)
+                        && self.thread_registry.pending_approval_count(id) == 0
+                })
+                .ok_or_else(|| {
+                    anyhow!("thread display cache is full; finish a running thread first")
+                })?;
+            self.thread_ui_cache.remove(evict);
+        }
+        let target_state = cached_index.and_then(|index| self.thread_ui_cache.remove(index));
+        let previous_session_id = self.session_id.clone();
+        self.thread_registry.save_view_state(
+            previous_session_id.as_str(),
+            self.input.clone(),
+            self.transcript_offset_from_bottom,
+        );
+        let previous_state = ThreadUiState::take(self);
+        self.thread_ui_cache
+            .push_back((self.session_id.clone(), previous_state));
+        if let Some(request) = self.active_approval.take() {
+            self.thread_registry
+                .queue_approval(previous_session_id.as_str(), request);
+        }
+        for request in self.approval_queue.drain(..) {
+            self.thread_registry
+                .queue_approval(previous_session_id.as_str(), request);
+        }
         self.session_id = session_id.to_string();
+        self.thread_registry.activate(session_id);
+        self.busy = self.active_stream_sessions.contains(session_id);
         self.runtime.save_session(&self.session_id).ok();
-        self.input.clear();
-        self.input_cursor = 0;
+        let (draft, saved_scroll) = self.thread_registry.view_state(session_id);
+        self.input = draft;
+        self.input_cursor = self.input.len();
         self.pending_large_pastes.clear();
         self.history_cursor = None;
         self.config_wizard = None;
@@ -3846,24 +4231,41 @@ impl TuiApp {
         self.tool_phase_notice_emitted = false;
         self.reset_stream_catchup_state();
         self.reset_plain_char_burst();
-        self.approval_rx = None;
         self.active_approval = None;
         self.approval_queue.clear();
         self.approval_selected_index = 0;
         self.ctrl_c_hint_deadline = None;
-        self.transcript_offset_from_bottom = 0;
+        self.transcript_offset_from_bottom = saved_scroll;
         self.transcript_selected = None;
         self.focus_area = FocusArea::Input;
         self.resume_picker = None;
         self.active_inquiry_panel = None;
         self.inquiry_selected_index = 0;
+        if let Some(request) = self.thread_registry.take_pending_approval(session_id) {
+            self.active_approval = Some(request);
+        }
         self.logs.clear();
         self.command_sessions = CommandSessionDisplayState::default();
         self.command_log_indices.clear();
+        self.tool_log_indices.clear();
         self.reset_scrollback_archive();
         self.invalidate_transcript_metrics();
 
-        let restored = self.restore_transcript_from_history(history);
+        let restored = if let Some((_, state)) = target_state {
+            state.restore(self);
+            self.logs.len()
+        } else {
+            self.restore_transcript_from_history(history.unwrap_or_default())
+        };
+        while let Some(request) = self.thread_registry.take_pending_approval(session_id) {
+            self.approval_queue.push_back(request);
+        }
+        self.replay_thread_events_if_needed(session_id).await;
+        if !self.thread_registry.needs_replay(session_id) {
+            for event in self.thread_registry.take_pending_events(session_id, 512) {
+                self.apply_stream_event(event);
+            }
+        }
         self.session_stats = crate::SessionStatsSnapshot::default();
         self.reload_session_stats().await;
         if self.is_zh_language() {
@@ -3878,6 +4280,41 @@ impl TuiApp {
             );
         }
         Ok(())
+    }
+
+    async fn replay_thread_events_if_needed(&mut self, session_id: &str) {
+        if !self.thread_registry.needs_replay(session_id) {
+            return;
+        }
+        let after_event_id = self.thread_registry.replay_from(session_id).unwrap_or(0);
+        let storage = self.runtime.state.storage.clone();
+        let target = session_id.to_string();
+        let result = tokio::task::spawn_blocking(move || {
+            storage.load_stream_events(&target, after_event_id.max(0), 512)
+        })
+        .await;
+        let records = match result {
+            Ok(Ok(records)) => records,
+            _ => {
+                // Retain the cursor: a failed read must never acknowledge replay.
+                return;
+            }
+        };
+        let full_page = records.len() == 512;
+        let mut cursor = after_event_id;
+        for record in records {
+            let Some(event) = persisted_stream_event(record) else {
+                return;
+            };
+            cursor = cursor.max(stream_event_id(&event));
+            // apply_stream_event owns deduplication. Pre-marking here drops the event.
+            self.apply_stream_event(event);
+        }
+        if full_page && cursor > after_event_id {
+            self.thread_registry.projection_mut(session_id).replay_from = Some(cursor);
+        } else if !full_page {
+            self.thread_registry.clear_replay(session_id);
+        }
     }
 
     fn restore_transcript_from_history(&mut self, history: Vec<Value>) -> usize {
@@ -4074,10 +4511,10 @@ impl TuiApp {
         user_echo: String,
         attachments: Option<Vec<wunder_server::schemas::AttachmentPayload>>,
     ) -> Result<()> {
-        if self.busy {
+        if self.busy || self.thread_registry.has_stream(self.session_id.as_str()) {
             self.push_log(
                 LogKind::Error,
-                "assistant is still running, wait for completion before sending a new prompt"
+                "a streamed thread is still running; wait for completion before sending a new prompt"
                     .to_string(),
             );
             return Ok(());
@@ -4088,17 +4525,24 @@ impl TuiApp {
         self.inquiry_selected_index = 0;
         self.push_log(LogKind::User, user_echo);
         self.busy = true;
+        self.active_stream_sessions.insert(self.session_id.clone());
+        self.thread_registry.set_status(
+            self.session_id.as_str(),
+            crate::tui::thread_registry::ThreadRunState::Working,
+        );
         self.active_assistant = None;
         self.active_reasoning = None;
         self.command_sessions = CommandSessionDisplayState::default();
         self.command_log_indices.clear();
+        self.tool_log_indices.clear();
         self.turn_final_answer.clear();
         self.turn_final_stop_reason = None;
         self.begin_turn_metrics();
         self.request_redraw();
 
         let (approval_tx, approval_rx) = new_approval_channel();
-        self.approval_rx = Some(approval_rx);
+        self.thread_registry
+            .insert_approval_stream(self.session_id.clone(), approval_rx);
         self.approval_queue.clear();
         self.active_approval = None;
         self.approval_selected_index = 0;
@@ -4115,26 +4559,47 @@ impl TuiApp {
         request.approval_tx = Some(approval_tx);
         let orchestrator = self.runtime.state.kernel.orchestrator.clone();
         let frame_requester = self.frame_requester.clone();
-        let (tx, rx) = mpsc::unbounded_channel::<StreamMessage>();
-        self.stream_rx = Some(rx);
+        let stream_session_id = self.session_id.clone();
+        // A bounded queue makes the producer apply backpressure instead of
+        // allowing a fast model/tool stream to grow memory without limit.
+        const STREAM_CHANNEL_CAPACITY: usize = 1024;
+        let (tx, rx) = mpsc::channel::<StreamMessage>(STREAM_CHANNEL_CAPACITY);
+        self.thread_registry
+            .insert_stream(stream_session_id.clone(), rx);
 
         tokio::spawn(async move {
             match orchestrator.stream(request).await {
                 Ok(mut stream) => {
                     while let Some(item) = stream.next().await {
                         let event = item.expect("infallible stream event");
-                        if tx.send(StreamMessage::Event(event)).is_err() {
+                        if tx
+                            .send(StreamMessage::Event {
+                                session_id: stream_session_id.clone(),
+                                event,
+                            })
+                            .await
+                            .is_err()
+                        {
                             return;
                         }
                         frame_requester.schedule_frame();
                     }
                 }
                 Err(err) => {
-                    let _ = tx.send(StreamMessage::Error(err.to_string()));
+                    let _ = tx
+                        .send(StreamMessage::Error {
+                            session_id: stream_session_id.clone(),
+                            error: err.to_string(),
+                        })
+                        .await;
                     frame_requester.schedule_frame();
                 }
             }
-            let _ = tx.send(StreamMessage::Done);
+            let _ = tx
+                .send(StreamMessage::Done {
+                    session_id: stream_session_id,
+                })
+                .await;
             frame_requester.schedule_frame();
         });
 
@@ -4685,17 +5150,79 @@ impl TuiApp {
     }
 
     fn handle_stream_message(&mut self, message: StreamMessage) {
+        let terminal = match &message {
+            StreamMessage::Done { session_id } => Some((session_id.clone(), false)),
+            StreamMessage::Error { session_id, .. } => Some((session_id.clone(), true)),
+            StreamMessage::Event { .. } => None,
+        };
+        if let Some((session_id, failed)) = terminal {
+            let has_pending = self
+                .thread_registry
+                .projection(&session_id)
+                .is_some_and(|projection| !projection.pending_events.is_empty());
+            if session_id != self.session_id
+                || has_pending
+                || self.thread_registry.needs_replay(&session_id)
+            {
+                self.thread_registry.remove_stream(&session_id);
+                self.active_stream_sessions.remove(&session_id);
+                self.thread_registry.set_status(
+                    &session_id,
+                    if failed {
+                        super::thread_registry::ThreadRunState::Failed
+                    } else if self.thread_registry.projection(&session_id).is_some_and(
+                        |projection| {
+                            projection.status == super::thread_registry::ThreadRunState::NeedsYou
+                        },
+                    ) {
+                        super::thread_registry::ThreadRunState::NeedsYou
+                    } else {
+                        super::thread_registry::ThreadRunState::Finished
+                    },
+                );
+                self.pending_thread_terminals.insert(session_id, message);
+                return;
+            }
+        }
         match message {
-            StreamMessage::Event(event) => self.apply_stream_event(event),
-            StreamMessage::Error(err) => {
+            StreamMessage::Event { session_id, event } => {
+                if session_id == self.session_id
+                    && !self.thread_registry.needs_replay(&session_id)
+                    && self
+                        .thread_registry
+                        .projection(&session_id)
+                        .is_none_or(|projection| projection.pending_events.is_empty())
+                {
+                    self.apply_stream_event(event);
+                } else {
+                    self.queue_background_event(session_id.as_str(), event);
+                }
+            }
+            StreamMessage::Error { session_id, error } => {
+                self.active_stream_sessions.remove(session_id.as_str());
+                self.thread_registry.remove_stream(session_id.as_str());
+                self.thread_registry.set_status(
+                    session_id.as_str(),
+                    crate::tui::thread_registry::ThreadRunState::Failed,
+                );
+                if session_id != self.session_id {
+                    self.queue_background_event(
+                        session_id.as_str(),
+                        StreamEvent {
+                            event: "thread_error".to_string(),
+                            data: serde_json::json!({"error": error}),
+                            id: None,
+                            timestamp: None,
+                        },
+                    );
+                    return;
+                }
                 self.finalize_all_markdown_streams();
-                self.push_log(LogKind::Error, err);
+                self.push_log(LogKind::Error, error);
                 self.finalize_turn_metrics();
                 self.busy = false;
                 self.active_assistant = None;
                 self.active_reasoning = None;
-                self.stream_rx = None;
-                self.approval_rx = None;
                 self.active_approval = None;
                 self.approval_queue.clear();
                 self.approval_selected_index = 0;
@@ -4710,7 +5237,20 @@ impl TuiApp {
                 self.session_stats_dirty = true;
                 self.refresh_workspace_context();
             }
-            StreamMessage::Done => {
+            StreamMessage::Done { session_id } => {
+                self.active_stream_sessions.remove(session_id.as_str());
+                self.thread_registry.remove_stream(session_id.as_str());
+                self.thread_registry.set_status(
+                    session_id.as_str(),
+                    if self.active_inquiry_panel.is_some() {
+                        crate::tui::thread_registry::ThreadRunState::NeedsYou
+                    } else {
+                        crate::tui::thread_registry::ThreadRunState::Finished
+                    },
+                );
+                if session_id != self.session_id {
+                    return;
+                }
                 let should_continue_goal = self.stream_goal_continue_ready;
                 self.finalize_all_markdown_streams();
                 self.maybe_emit_tool_only_final_summary();
@@ -4732,8 +5272,6 @@ impl TuiApp {
                 self.busy = false;
                 self.active_assistant = None;
                 self.active_reasoning = None;
-                self.stream_rx = None;
-                self.approval_rx = None;
                 self.active_approval = None;
                 self.approval_queue.clear();
                 self.approval_selected_index = 0;
@@ -4761,6 +5299,13 @@ impl TuiApp {
                 }
             }
         }
+    }
+
+    fn finish_disconnected_stream(&mut self, session_id: &str) {
+        self.handle_stream_message(StreamMessage::Error {
+            session_id: session_id.to_string(),
+            error: "stream disconnected before completion".to_string(),
+        });
     }
 
     fn notification_final_event(&self) -> FinalEvent {
@@ -4805,6 +5350,34 @@ impl TuiApp {
     }
 
     fn apply_stream_event(&mut self, event: StreamEvent) {
+        let event_id = stream_event_id(&event);
+        if !self
+            .thread_registry
+            .mark_event_applied(self.session_id.as_str(), event_id)
+        {
+            return;
+        }
+        let payload_event_id = event
+            .data
+            .get("event_id")
+            .and_then(Value::as_i64)
+            .or_else(|| {
+                event
+                    .data
+                    .get("data")
+                    .and_then(|value| value.get("event_id"))
+                    .and_then(Value::as_i64)
+            });
+        if let Some(event_id) = event
+            .id
+            .as_deref()
+            .and_then(|value| value.parse::<i64>().ok())
+            .or(payload_event_id)
+        {
+            let session_id = self.session_id.clone();
+            self.thread_registry
+                .record_event(session_id.as_str(), event_id);
+        }
         let payload = event_payload(&event.data);
         match event.event.as_str() {
             "goal_continuation_ready" => {
@@ -4935,7 +5508,10 @@ impl TuiApp {
                     .unwrap_or("unknown");
                 let args = payload.get("args").unwrap_or(&Value::Null);
                 if is_apply_patch_tool_name(tool) {
-                    if !self.push_patch_call_log(args) {
+                    if !self.push_patch_call_log(
+                        args,
+                        payload.get("tool_call_id").and_then(Value::as_str),
+                    ) {
                         self.push_log(LogKind::Tool, format_tool_call_line(tool, args));
                     }
                 } else if is_execute_command_tool_name(tool) {
@@ -4946,7 +5522,11 @@ impl TuiApp {
                         self.push_log(LogKind::Tool, format_tool_call_line(tool, args));
                     }
                 } else {
-                    self.push_generic_tool_call_log(tool, args);
+                    self.push_generic_tool_call_log(
+                        tool,
+                        args,
+                        payload.get("tool_call_id").and_then(Value::as_str),
+                    );
                 }
             }
             "command_session_start" => {
@@ -5046,6 +5626,22 @@ impl TuiApp {
         }
     }
 
+    fn queue_background_event(&mut self, session_id: &str, event: StreamEvent) {
+        let payload = event.data.get("data").unwrap_or(&event.data);
+        if (event.event == "question_panel" && self.parse_inquiry_panel_state(payload).is_some())
+            || (event.event == "tool_result"
+                && self.parse_inquiry_panel_from_tool_result(payload).is_some())
+        {
+            self.thread_registry
+                .set_status(session_id, super::thread_registry::ThreadRunState::NeedsYou);
+        }
+        let event_id = stream_event_id(&event);
+        self.thread_registry.record_event(session_id, event_id);
+        self.thread_registry
+            .projection_mut(session_id)
+            .queue_event(event);
+    }
+
     fn ensure_assistant_entry(&mut self) -> usize {
         if let Some(index) = self.active_assistant {
             return index;
@@ -5092,6 +5688,7 @@ impl TuiApp {
         }
         self.adjust_markdown_stream_indices_after_remove(index);
         self.adjust_command_log_indices_after_remove(index);
+        self.adjust_tool_log_indices_after_remove(index);
         if self.logs.is_empty() {
             self.reset_scrollback_archive();
         }
@@ -5117,6 +5714,7 @@ impl TuiApp {
         }
         self.adjust_markdown_stream_indices_after_remove(0);
         self.adjust_command_log_indices_after_remove(0);
+        self.adjust_tool_log_indices_after_remove(0);
         if self.logs.is_empty() {
             self.reset_scrollback_archive();
         }
@@ -5125,6 +5723,19 @@ impl TuiApp {
 
     fn adjust_command_log_indices_after_remove(&mut self, removed_index: usize) {
         self.command_log_indices.retain(|_, index| {
+            if *index == removed_index {
+                false
+            } else {
+                if *index > removed_index {
+                    *index = index.saturating_sub(1);
+                }
+                true
+            }
+        });
+    }
+
+    fn adjust_tool_log_indices_after_remove(&mut self, removed_index: usize) {
+        self.tool_log_indices.retain(|_, index| {
             if *index == removed_index {
                 false
             } else {
@@ -5460,12 +6071,13 @@ impl TuiApp {
         }
     }
 
-    fn push_patch_call_log(&mut self, args: &Value) -> bool {
+    fn push_patch_call_log(&mut self, args: &Value, tool_call_id: Option<&str>) -> bool {
         let Some(special) = build_pending_patch_log(args, self.is_zh_language()) else {
             return false;
         };
         let text = special.summary_text();
-        self.push_special_log(LogKind::Tool, text, special);
+        let index = self.push_special_log(LogKind::Tool, text, special);
+        self.register_tool_log_ref(tool_call_id, index);
         true
     }
 
@@ -5532,19 +6144,27 @@ impl TuiApp {
         }
     }
 
-    fn push_generic_tool_call_log(&mut self, tool: &str, args: &Value) {
+    fn push_generic_tool_call_log(&mut self, tool: &str, args: &Value, tool_call_id: Option<&str>) {
         let special = build_pending_tool_log(tool, args);
         let text = special.summary_text();
-        self.push_special_log(LogKind::Tool, text, special);
+        let index = self.push_special_log(LogKind::Tool, text, special);
+        self.register_tool_log_ref(tool_call_id, index);
     }
 
     fn complete_patch_log(&mut self, payload: &Value) {
         let mut special = build_completed_patch_log(payload, self.is_zh_language());
-        if let Some(index) = self.logs.iter().rposition(|entry| {
-            entry
-                .special
-                .as_ref()
-                .is_some_and(SpecialLogEntry::is_pending_patch)
+        let indexed = payload
+            .get("tool_call_id")
+            .and_then(Value::as_str)
+            .and_then(|id| self.tool_log_indices.get(id).copied())
+            .filter(|index| *index < self.logs.len());
+        if let Some(index) = indexed.or_else(|| {
+            self.logs.iter().rposition(|entry| {
+                entry
+                    .special
+                    .as_ref()
+                    .is_some_and(SpecialLogEntry::is_pending_patch)
+            })
         }) {
             let previous_special = self.logs.get(index).and_then(|entry| entry.special.clone());
             if let Some(previous_special) = previous_special.as_ref() {
@@ -5589,11 +6209,18 @@ impl TuiApp {
     fn complete_generic_tool_log(&mut self, tool: &str, payload: &Value) {
         let special = build_completed_tool_log(tool, payload);
         let text = special.summary_text();
-        if let Some(index) = self.logs.iter().rposition(|entry| {
-            entry
-                .special
-                .as_ref()
-                .is_some_and(|special| special.is_pending_tool_named(tool))
+        let indexed = payload
+            .get("tool_call_id")
+            .and_then(Value::as_str)
+            .and_then(|id| self.tool_log_indices.get(id).copied())
+            .filter(|index| *index < self.logs.len());
+        if let Some(index) = indexed.or_else(|| {
+            self.logs.iter().rposition(|entry| {
+                entry
+                    .special
+                    .as_ref()
+                    .is_some_and(|special| special.is_pending_tool_named(tool))
+            })
         }) {
             if let Some(entry) = self.logs.get_mut(index) {
                 entry.text = text;
@@ -5604,6 +6231,14 @@ impl TuiApp {
             return;
         }
         self.push_special_log(LogKind::Tool, text, special);
+    }
+
+    fn register_tool_log_ref(&mut self, tool_call_id: Option<&str>, index: usize) {
+        let Some(tool_call_id) = tool_call_id.map(str::trim).filter(|id| !id.is_empty()) else {
+            return;
+        };
+        self.tool_log_indices
+            .insert(tool_call_id.to_string(), index);
     }
 }
 
@@ -5895,6 +6530,43 @@ fn format_busy_activity_line(
     parts.join(" · ")
 }
 
+fn stream_event_id(event: &StreamEvent) -> i64 {
+    event
+        .id
+        .as_deref()
+        .and_then(|value| value.parse::<i64>().ok())
+        .or_else(|| event.data.get("event_id").and_then(Value::as_i64))
+        .or_else(|| {
+            event
+                .data
+                .get("data")
+                .and_then(|value| value.get("event_id"))
+                .and_then(Value::as_i64)
+        })
+        .unwrap_or(0)
+}
+
+fn persisted_stream_event(record: Value) -> Option<StreamEvent> {
+    let event_id = record.get("event_id").and_then(Value::as_i64);
+    let payload = if record.get("event").or_else(|| record.get("type")).is_some() {
+        record
+    } else {
+        record.get("data").cloned().unwrap_or(record)
+    };
+    let event_name = payload
+        .get("event")
+        .or_else(|| payload.get("type"))
+        .and_then(Value::as_str)?
+        .to_string();
+    let data = payload.get("data").cloned().unwrap_or(payload);
+    Some(StreamEvent {
+        event: event_name,
+        data,
+        id: event_id.map(|value| value.to_string()),
+        timestamp: None,
+    })
+}
+
 fn format_footer_context_summary(
     is_zh: bool,
     used_tokens: i64,
@@ -5925,3 +6597,32 @@ fn format_footer_context_summary(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod persisted_event_tests {
+    use super::{persisted_stream_event, stream_event_id};
+    use serde_json::json;
+
+    #[test]
+    fn persisted_direct_event_keeps_payload_without_unwrapping_it_as_envelope() {
+        let event = persisted_stream_event(json!({
+            "event_id": 23, "event": "tool_result", "data": {"ok": true}
+        }))
+        .expect("direct event should decode");
+        assert_eq!(event.event, "tool_result");
+        assert_eq!(stream_event_id(&event), 23);
+        assert_eq!(event.data["ok"], json!(true));
+    }
+
+    #[test]
+    fn persisted_nested_event_keeps_id_and_payload() {
+        let event = persisted_stream_event(json!({
+            "event_id": 17,
+            "data": {"event": "tool_result", "data": {"ok": true}}
+        }))
+        .expect("event should decode");
+        assert_eq!(event.event, "tool_result");
+        assert_eq!(stream_event_id(&event), 17);
+        assert_eq!(event.data["ok"], json!(true));
+    }
+}

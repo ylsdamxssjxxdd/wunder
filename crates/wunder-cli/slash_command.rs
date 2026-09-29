@@ -33,6 +33,7 @@ pub enum SlashCommand {
     System,
     Mouse,
     Resume,
+    Threads,
     New,
     Config,
     ConfigShow,
@@ -54,7 +55,7 @@ struct SlashCommandDoc {
     description: &'static str,
 }
 
-const SLASH_COMMAND_DOCS: [SlashCommandDoc; 37] = [
+const SLASH_COMMAND_DOCS: [SlashCommandDoc; 38] = [
     SlashCommandDoc {
         command: SlashCommand::Model,
         usage: "/model [name]",
@@ -212,6 +213,11 @@ const SLASH_COMMAND_DOCS: [SlashCommandDoc; 37] = [
         description: "list and resume historical sessions",
     },
     SlashCommandDoc {
+        command: SlashCommand::Threads,
+        usage: "/threads",
+        description: "open Agent command center",
+    },
+    SlashCommandDoc {
         command: SlashCommand::New,
         usage: "/new",
         description: "start a new chat session",
@@ -251,6 +257,7 @@ impl SlashCommand {
                 | SlashCommand::Status
                 | SlashCommand::Session
                 | SlashCommand::Mouse
+                | SlashCommand::Threads
                 | SlashCommand::Diff
                 | SlashCommand::Mention
                 | SlashCommand::Mcp
@@ -288,6 +295,7 @@ pub fn parse_slash_command(input: &str) -> Option<ParsedSlashCommand<'_>> {
         "system" => (SlashCommand::System, remaining),
         "mouse" => (SlashCommand::Mouse, remaining),
         "resume" | "r" => (SlashCommand::Resume, remaining),
+        "threads" | "thread" => (SlashCommand::Threads, remaining),
         "new" => (SlashCommand::New, remaining),
         "model" => (SlashCommand::Model, remaining),
         "tool-call-mode" | "mode" => (SlashCommand::ToolCallMode, remaining),
@@ -402,6 +410,7 @@ fn command_doc_by_name(name: &str) -> Option<&'static SlashCommandDoc> {
         "system" => SlashCommand::System,
         "mouse" => SlashCommand::Mouse,
         "resume" | "r" => SlashCommand::Resume,
+        "threads" | "thread" => SlashCommand::Threads,
         "new" => SlashCommand::New,
         "model" => SlashCommand::Model,
         "tool-call-mode" | "mode" => SlashCommand::ToolCallMode,
@@ -520,6 +529,7 @@ fn localized_description(entry: &SlashCommandDoc, language: &str) -> String {
         SlashCommand::System => "查看系统提示词或管理额外提示词",
         SlashCommand::Mouse => "切换鼠标自动/滚轮/选择模式",
         SlashCommand::Resume => "列出并恢复历史会话",
+        SlashCommand::Threads => "打开 Agent command center 并监视或切换线程",
         SlashCommand::New => "开始新会话",
         SlashCommand::Config => "交互式配置模型或一行直配",
         SlashCommand::ConfigShow => "显示当前运行配置",

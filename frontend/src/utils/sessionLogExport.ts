@@ -1,4 +1,4 @@
-import { getSession as getChatSessionApi, getSessionEvents as getChatSessionEventsApi } from '@/api/chat';
+import { exportThreadLog } from '@/api/chat';
 import { getCurrentLanguage } from '@/i18n';
 import { saveObjectUrlAsFile } from '@/utils/workspaceResourceCards';
 
@@ -532,23 +532,6 @@ const buildBundleExportFilename = (sources: ExportedSessionSource[], prefix?: st
   return `${primary}-${timestamp}.jsonl`;
 };
 
-const fetchSessionExportBundle = async (sessionId: string): Promise<SessionExportBundle> => {
-  const targetId = String(sessionId || '').trim();
-  const [sessionRes, eventsRes] = await Promise.all([
-    getChatSessionApi(targetId),
-    getChatSessionEventsApi(targetId).catch(() => null)
-  ]);
-  const sessionData = (sessionRes?.data as { data?: unknown } | undefined)?.data;
-  const eventPayload = (eventsRes?.data as { data?: Record<string, unknown> } | undefined)?.data;
-  const parsedLastEventId = Number.parseInt(String(eventPayload?.last_event_id ?? 0), 10);
-  return {
-    session: normalizeSessionForLogExport(targetId, sessionData),
-    rounds: normalizeRounds(eventPayload?.rounds),
-    running: Boolean(eventPayload?.running),
-    lastEventId: Number.isFinite(parsedLastEventId) && parsedLastEventId > 0 ? parsedLastEventId : 0
-  };
-};
-
 const serializeLines = (lines: SessionExportLine[]): string =>
   lines.map((item) => JSON.stringify(item)).join('\n');
 
@@ -565,17 +548,14 @@ export const exportSingleSessionLog = async (
   sessionId: string,
   options: { filenamePrefix?: string } = {}
 ) => {
-  const bundle = await fetchSessionExportBundle(sessionId);
-  const lines = buildSessionExportLines(bundle);
-  const filename = buildSessionExportFilename(bundle.session, {
-    prefix: options.filenamePrefix,
-    sessionIdFallback: sessionId
-  });
-  downloadTextAsFile(serializeLines(lines), filename);
-  return {
-    filename,
-    session: bundle.session
-  };
+  const response = await exportThreadLog(sessionId);
+  const filename = `${sanitizeFilenamePart(options.filenamePrefix || sessionId, 'thread')}-${Date.now()}.jsonl`;
+  const blob = response.data as Blob;
+  const url = URL.createObjectURL(blob);
+  saveObjectUrlAsFile(url, filename);
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  return { filename, sessionId };
+
 };
 
 export const downloadSessionLogLines = (
@@ -616,44 +596,9 @@ export const exportMultipleSessionLogs = async (
   const uniqueSources = normalizedSources.filter(
     (item, index, array) => array.findIndex((candidate) => candidate.sessionId === item.sessionId) === index
   );
-  const bundles = await Promise.all(
-    uniqueSources.map(async (source) => ({
-      source,
-      bundle: await fetchSessionExportBundle(source.sessionId)
-    }))
-  );
-  const header: SessionExportLine = {
-    record_type: 'bundle_meta',
-    export_schema_version: 4,
-    export_format: 'jsonl',
-    exported_at: new Date().toISOString(),
-    exported_from: 'orchestration',
-    source_count: bundles.length,
-    language: getCurrentLanguage(),
-    sessions: bundles.map(({ source, bundle }) => ({
-      session_id: bundle.session.id,
-      agent_name: bundle.session.agentName || source.agentName || '',
-      label: source.label || '',
-      round_count: bundle.rounds.length,
-      event_count: buildEventItems(bundle.rounds).filter((item) => !isDefaultHiddenEventType(item.eventType)).length
-    }))
-  };
-  const lines: SessionExportLine[] = [header];
-  bundles.forEach(({ source, bundle }) => {
-    const sessionLines = buildSessionExportLines(bundle, {
-      exportLabel: source.label
-    }).map((line) => ({
-      ...line,
-      source_session_id: bundle.session.id,
-      source_agent_name: bundle.session.agentName || source.agentName || '',
-      source_label: source.label || ''
-    }));
-    lines.push(...sessionLines);
-  });
-  const filename = buildBundleExportFilename(uniqueSources, options.filenamePrefix);
-  downloadTextAsFile(serializeLines(lines), filename);
-  return {
-    filename,
-    count: bundles.length
-  };
+  // Sequential downloads keep memory bounded by one exported thread.
+  for (const source of uniqueSources) {
+    await exportSingleSessionLog(source.sessionId, { filenamePrefix: source.agentName || options.filenamePrefix });
+  }
+  return { filename: options.filenamePrefix || 'thread-logs', count: uniqueSources.length };
 };

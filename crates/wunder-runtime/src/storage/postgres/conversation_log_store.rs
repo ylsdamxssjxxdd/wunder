@@ -1,3 +1,4 @@
+use super::thread_log_store::PostgresThreadLogStorage;
 use super::PostgresStorage;
 use crate::i18n;
 use crate::services::{
@@ -72,6 +73,28 @@ impl PostgresConversationLogStorage for PostgresStorage {
              VALUES ($1, $2, $3, $4, $5)",
             &[&user_id, &session_id, &role, &payload_text, &now],
         )?;
+        if payload
+            .get("user_round")
+            .and_then(Value::as_i64)
+            .is_some_and(|round| round > 0)
+        {
+            let mut timeline_payload = payload.clone();
+            if let Value::Object(map) = &mut timeline_payload {
+                map.insert("kind".into(), Value::String(format!("{}_message", role)));
+                map.insert(
+                    "status".into(),
+                    Value::String(
+                        if role == "user" {
+                            "running"
+                        } else {
+                            "completed"
+                        }
+                        .into(),
+                    ),
+                );
+            }
+            self.append_thread_item_impl(user_id, &timeline_payload)?;
+        }
         Ok(())
     }
 
@@ -100,6 +123,35 @@ impl PostgresConversationLogStorage for PostgresStorage {
         let timestamp = Self::parse_string(payload.get("timestamp"));
         // The full payload column is retired: tool logs always persist the
         // bounded args/data columns plus an empty payload placeholder.
+        let mut timeline_payload = payload.clone();
+        if let Value::Object(map) = &mut timeline_payload {
+            let has_thread_identity = map
+                .get("turn_id")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty())
+                && map
+                    .get("user_round")
+                    .and_then(Value::as_i64)
+                    .is_some_and(|value| value > 0);
+            if !has_thread_identity {
+                // Diagnostics produced outside an orchestrated request do not
+                // belong to an arbitrary latest user turn.
+            } else {
+                map.insert("kind".into(), Value::String("tool_call".into()));
+                map.insert(
+                    "status".into(),
+                    Value::String(
+                        if ok.unwrap_or(0) != 0 {
+                            "completed"
+                        } else {
+                            "failed"
+                        }
+                        .into(),
+                    ),
+                );
+                self.append_thread_item_impl(user_id, &timeline_payload)?;
+            }
+        }
         let payload_text = "{}".to_string();
         let now = Self::now_ts();
         let mut conn = self.conn()?;

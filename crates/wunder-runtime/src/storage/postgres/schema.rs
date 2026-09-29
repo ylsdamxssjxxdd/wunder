@@ -925,6 +925,73 @@ impl PostgresSchemaStorage for PostgresStorage {
                 );
                 CREATE INDEX IF NOT EXISTS idx_chat_history_session
                   ON chat_history (user_id, session_id, id);
+                CREATE TABLE IF NOT EXISTS thread_logs (
+                  session_id TEXT PRIMARY KEY,
+                  user_id TEXT NOT NULL,
+                  latest_user_turn BIGINT NOT NULL DEFAULT 0,
+                  latest_change_seq BIGINT NOT NULL DEFAULT 0,
+                  created_time DOUBLE PRECISION NOT NULL,
+                  updated_time DOUBLE PRECISION NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_thread_logs_user ON thread_logs (user_id, updated_time);
+                CREATE TABLE IF NOT EXISTS thread_turns (
+                  session_id TEXT NOT NULL,
+                  turn_id TEXT NOT NULL,
+                  user_id TEXT NOT NULL,
+                  root_turn_id TEXT NOT NULL,
+              trigger_kind TEXT NOT NULL,
+              client_message_id TEXT,
+              user_turn_index BIGINT NOT NULL,
+                  status TEXT NOT NULL DEFAULT 'running',
+                  summary TEXT NOT NULL DEFAULT '',
+                  payload TEXT NOT NULL,
+                  created_time DOUBLE PRECISION NOT NULL,
+                  updated_time DOUBLE PRECISION NOT NULL,
+                  PRIMARY KEY (session_id, turn_id),
+                  UNIQUE (session_id, client_message_id)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_thread_root_round ON thread_turns(session_id,user_turn_index) WHERE trigger_kind='user';
+            CREATE INDEX IF NOT EXISTS idx_thread_turns_page
+                  ON thread_turns (user_id, session_id, user_turn_index DESC);
+                CREATE TABLE IF NOT EXISTS thread_items (
+                  session_id TEXT NOT NULL,
+                  item_id TEXT NOT NULL,
+                  turn_id TEXT NOT NULL,
+              root_turn_id TEXT NOT NULL,
+              visibility TEXT NOT NULL DEFAULT 'user',
+                  user_id TEXT NOT NULL,
+                  item_index BIGINT NOT NULL,
+                  kind TEXT NOT NULL,
+                  status TEXT NOT NULL DEFAULT 'completed',
+                  revision BIGINT NOT NULL DEFAULT 1,
+                  payload TEXT NOT NULL,
+                  created_time DOUBLE PRECISION NOT NULL,
+                  updated_time DOUBLE PRECISION NOT NULL,
+                  PRIMARY KEY (session_id, item_id),
+                  UNIQUE (session_id, root_turn_id, item_index)
+                );
+                CREATE INDEX IF NOT EXISTS idx_thread_items_turn
+                  ON thread_items (user_id, session_id, root_turn_id, item_index);
+            CREATE TABLE IF NOT EXISTS thread_item_blocks (
+              session_id TEXT NOT NULL, user_id TEXT NOT NULL, item_id TEXT NOT NULL,
+              block_index BIGINT NOT NULL, event_id BIGINT NOT NULL, payload TEXT NOT NULL,
+              PRIMARY KEY(session_id,item_id,block_index)
+            );
+            CREATE INDEX IF NOT EXISTS idx_thread_blocks_replay ON thread_item_blocks(session_id,event_id);
+                CREATE TABLE IF NOT EXISTS thread_log_changes (
+                  session_id TEXT NOT NULL,
+                  change_seq BIGINT NOT NULL,
+                  user_id TEXT NOT NULL,
+                  change_type TEXT NOT NULL,
+                  turn_id TEXT NOT NULL,
+                  item_id TEXT,
+                  revision BIGINT NOT NULL DEFAULT 1,
+                  payload TEXT NOT NULL,
+                  created_time DOUBLE PRECISION NOT NULL,
+                  PRIMARY KEY (session_id, change_seq)
+                );
+                CREATE INDEX IF NOT EXISTS idx_thread_changes_cursor
+                  ON thread_log_changes (user_id, session_id, change_seq);
                 CREATE TABLE IF NOT EXISTS deleted_session_log_grace (
                   user_id TEXT NOT NULL,
                   session_id TEXT NOT NULL,

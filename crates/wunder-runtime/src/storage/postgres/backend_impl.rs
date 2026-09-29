@@ -4,7 +4,7 @@ use crate::storage::{
     ChannelDirectoryStore, ChannelRuntimeStore, ChatSessionStore, ConversationLogStore, CronStore,
     GatewayStore, LogStatsStore, MediaStore, MemoryRecordStore, MetaStore, MonitorStore,
     QuotaBalanceStore, RetentionStore, SessionGoalStore, SessionLockStore, SessionRunStore,
-    StorageLifecycle, UserAccountStore, UserWorldStore, VectorDocumentStore,
+    StorageLifecycle, ThreadLogStore, UserAccountStore, UserWorldStore, VectorDocumentStore,
 };
 
 impl StorageLifecycle for PostgresStorage {
@@ -70,6 +70,84 @@ impl ConversationLogStore for PostgresStorage {
         language: Option<&str>,
     ) -> Result<Option<String>> {
         self.get_session_system_prompt_impl(user_id, session_id, language)
+    }
+}
+
+impl ThreadLogStore for PostgresStorage {
+    fn upsert_thread_text_block(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        block: &Value,
+    ) -> Result<()> {
+        self.upsert_thread_text_block_impl(user_id, session_id, block)
+    }
+    fn list_thread_text_blocks(
+        &self,
+        session_id: &str,
+        after: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        self.list_thread_text_blocks_impl(session_id, after, limit)
+    }
+
+    fn find_thread_turn_id(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        user_turn_index: i64,
+    ) -> Result<Option<String>> {
+        self.find_thread_turn_id_impl(user_id, session_id, user_turn_index)
+    }
+    fn accept_thread_turn(&self, user_id: &str, session_id: &str, input: &Value) -> Result<Value> {
+        self.accept_thread_turn_impl(user_id, session_id, input)
+    }
+    fn update_thread_turn(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turn_id: &str,
+        status: &str,
+        summary: &str,
+        payload: &Value,
+    ) -> Result<()> {
+        self.update_thread_turn_impl(user_id, session_id, turn_id, status, summary, payload)
+    }
+    fn delete_thread_log_by_session(&self, user_id: &str, session_id: &str) -> Result<i64> {
+        self.delete_thread_log_by_session_impl(user_id, session_id)
+    }
+
+    fn append_thread_item(&self, user_id: &str, payload: &Value) -> Result<()> {
+        self.append_thread_item_impl(user_id, payload)
+    }
+    fn list_thread_turns(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        before: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        self.list_thread_turns_impl(user_id, session_id, before, limit)
+    }
+    fn get_thread_turn(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turn_id: &str,
+        after: i64,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<Option<Value>> {
+        self.get_thread_turn_impl(user_id, session_id, turn_id, after, limit, include_internal)
+    }
+    fn list_thread_changes(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        after_seq: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        self.list_thread_changes_impl(user_id, session_id, after_seq, limit)
     }
 }
 

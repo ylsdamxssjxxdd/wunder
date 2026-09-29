@@ -1,0 +1,18 @@
+import { Theme, CronCard } from "theme.slint";
+import { Action, SearchField } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export component CronPage inherits Rectangle {
+    in property <bool> loading: false;
+    in property <[CronCard]> jobs;
+    callback refresh();
+    callback toggle(string, bool);
+    callback delete(string);
+    private property <string> keyword;
+    background: Theme.chat;
+    VerticalLayout { spacing: 0px;
+        Rectangle { height: 76px; background: Theme.surface; HorizontalLayout { padding: 18px; spacing: 12px; Text { text: "定时任务"; color: Theme.text; font-size: 18px; font-weight: 700; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.loading; clicked => { root.refresh(); } } } }
+        Rectangle { height: 1px; background: Theme.border; }
+        Rectangle { vertical-stretch: 1; background: Theme.chat; VerticalLayout { padding: 16px; Rectangle { vertical-stretch: 1; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 14px; spacing: 9px; SearchField { icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索任务"; text <=> root.keyword; } ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off; VerticalLayout { spacing: 6px; for job in root.jobs : Rectangle { visible: root.keyword == "" || job.name.to-lowercase().starts-with(root.keyword.to-lowercase()); height: self.visible ? 82px : 0px; border-radius: 9px; background: Theme.panel; VerticalLayout { padding: 10px; spacing: 3px; HorizontalLayout { height: 22px; Text { text: job.name; color: Theme.text; font-size: 13px; font-weight: 600; horizontal-stretch: 1; overflow: elide; } Text { text: job.enabled ? "已启用" : "已停用"; color: job.enabled ? #16845d : Theme.muted; font-size: 10px; } } Text { text: job.schedule + " · 下次 " + job.next-run; color: Theme.muted; font-size: 10px; overflow: elide; } Text { text: job.last-error == "" ? "上次状态：" + job.last-status : "上次失败：" + job.last-error; color: job.last-error == "" ? Theme.muted : #b63a22; font-size: 10px; overflow: elide; } } Action { x: parent.width - 140px; y: 10px; width: 58px; label: job.enabled ? "停用" : "启用"; show-label: true; clicked => { root.toggle(job.id, !job.enabled); } } Action { x: parent.width - 72px; y: 10px; width: 58px; label: "删除"; show-label: true; clicked => { root.delete(job.id); } } } if root.jobs.length == 0 : Text { height: 70px; text: root.loading ? "正在加载…" : "暂无定时任务"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; } } } } } } }
+    }
+}

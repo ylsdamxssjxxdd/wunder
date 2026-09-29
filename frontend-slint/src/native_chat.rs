@@ -59,7 +59,6 @@ impl Drop for Recording {
 }
 
 pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
-    crate::subagent_pool::install_native(app, desktop.clone());
     app.set_connected(true);
     app.set_status("正在加载内嵌运行时…".into());
     app.set_conversations(ModelRc::default());
@@ -229,7 +228,6 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         let weak = app.as_weak();
         app.set_selected_conversation(index);
         app.set_active_session_id(id.clone().into());
-        app.invoke_refresh_subagents();
         app.set_heading(row.title);
         app.set_session_loading(true);
         app.set_messages(ModelRc::default());
@@ -344,7 +342,7 @@ fn bind_new_thread(app: &MainWindow, state: Rc<RefCell<State>>) {
                         rows.insert(0, row);
                         rows.truncate(100);
                         app.set_conversations(ModelRc::new(VecModel::from(rows)));
-                        app.set_section(0);
+                        app.set_page(crate::DesktopPage::Messages);
                         app.invoke_select_conversation(0);
                     }
                     Err(error) => app.set_status(format!("无法新建会话：{error}").into()),
@@ -669,12 +667,6 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                         if let Some(ratio) = context_usage_ratio(&event) {
                             app.set_context_usage(ratio);
                         }
-                        if event["event"]
-                            .as_str()
-                            .is_some_and(|kind| kind.starts_with("subagent_"))
-                        {
-                            app.invoke_refresh_subagents();
-                        }
                         match apply_event(active, &event) {
                             Ok(changed) => dirty |= changed,
                             Err(error) => {
@@ -722,7 +714,6 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 app.set_status(active.state.as_str().into());
                 state.timer.stop();
                 state.active = None;
-                app.invoke_refresh_subagents();
             }
             app.set_stream_max_ui_ms(
                 app.get_stream_max_ui_ms()

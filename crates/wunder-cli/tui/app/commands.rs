@@ -50,6 +50,9 @@ impl TuiApp {
             SlashCommand::Resume => {
                 self.handle_resume_slash(command.args).await?;
             }
+            SlashCommand::Threads => {
+                self.open_command_center().await?;
+            }
             SlashCommand::New => {
                 if self.busy {
                     self.push_log(
@@ -2826,7 +2829,6 @@ impl TuiApp {
         self.tool_phase_notice_emitted = false;
         self.reset_stream_catchup_state();
         self.reset_plain_char_burst();
-        self.approval_rx = None;
         self.active_approval = None;
         self.approval_queue.clear();
         self.approval_selected_index = 0;

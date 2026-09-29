@@ -47,7 +47,7 @@
             :title="t('workspace.panel.clear')"
             :aria-label="t('workspace.panel.clear')"
             :disabled="loading || isReadonlyFileSystem"
-            @click="clearWorkspaceCurrent"
+            @click="handleHeaderDelete"
           >
             <i class="fa-solid fa-trash-can workspace-icon" aria-hidden="true"></i>
           </button>
@@ -1223,7 +1223,6 @@ const state = reactive({
   }
 });
 
-const displayPath = computed(() => (state.path ? `/${state.path}` : '/'));
 const canGoUp = computed(() => Boolean(state.path));
 const selectedEntry = computed(() => state.selected);
 const loading = computed(() => state.visualLoading);
@@ -2826,54 +2825,13 @@ const refreshWorkspace = async () => {
   }
 };
 
-const clearWorkspaceCurrent = async () => {
+const handleHeaderDelete = async () => {
   if (!ensureWritableFileSystem()) return;
-  const display = displayPath.value;
-  try {
-    await ElMessageBox.confirm(
-      t('workspace.clear.confirm', { name: display }),
-      t('workspace.clear.title'),
-      {
-        confirmButtonText: t('workspace.clear.action'),
-        cancelButtonText: t('common.cancel'),
-        type: 'warning'
-      }
-    );
-  } catch (error) {
+  if (!getWorkspaceSelectionPaths().length) {
+    ElMessage.info(t('workspace.delete.noneSelected'));
     return;
   }
-  try {
-    const { data } = await activeFileSystem.value.listContent(withFsParams({
-      path: state.path,
-      include_content: true,
-      depth: 1,
-      sort_by: state.sortBy,
-      order: state.sortOrder
-    }));
-    const entries = Array.isArray(data?.entries) ? data.entries : [];
-    if (!entries.length) {
-      ElMessage.info(t('workspace.clear.empty'));
-      return;
-    }
-    const response = await activeFileSystem.value.batchAction(withFsParams({
-      action: 'delete',
-      paths: entries.map((entry) => entry.path)
-    }));
-    notifyBatchResult(response.data, t('workspace.action.clear'));
-    await reloadWorkspaceView();
-    if (isWorkspaceFileSystem.value) {
-      emitWorkspaceRefresh({
-        reason: 'workspace-clear',
-        sourceId: workspacePanelRefreshSourceId,
-        agentId: normalizedAgentId.value,
-        containerId: normalizedContainerId.value,
-        path: state.path,
-        paths: [state.path]
-      });
-    }
-  } catch (error) {
-    showApiError(error, t('workspace.clear.failed'));
-  }
+  await deleteWorkspaceSelection();
 };
 
 const handleGoUp = async () => {

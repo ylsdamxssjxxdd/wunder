@@ -13,6 +13,7 @@ pub struct NativeProfile {
     pub username: String,
     pub email: String,
     pub unit: String,
+    pub unit_id: String,
     pub sessions: i64,
     pub sessions_last_7d: i64,
     pub tool_calls: i64,
@@ -24,6 +25,54 @@ pub struct NativeProfile {
 }
 
 impl NativeDesktop {
+    pub fn update_profile(
+        &self,
+        username: &str,
+        email: &str,
+        unit_id: &str,
+    ) -> Result<NativeProfile> {
+        let mut record = self
+            .state()
+            .user_store
+            .get_user_by_id(self.user_id())?
+            .ok_or_else(|| anyhow!("用户不存在"))?;
+        let username = wunder_server::user_store::UserStore::normalize_user_id(username)
+            .ok_or_else(|| anyhow!("用户名格式不正确"))?;
+        if username != record.username {
+            if let Some(existing) = self.state().user_store.get_user_by_username(&username)? {
+                if existing.user_id != record.user_id {
+                    return Err(anyhow!("用户名已存在"));
+                }
+            }
+            record.username = username;
+        }
+        let email = email.trim();
+        if !email.is_empty()
+            && (!email.contains('@') || email.starts_with('@') || email.ends_with('@'))
+        {
+            return Err(anyhow!("邮箱格式不正确"));
+        }
+        if !email.is_empty() {
+            if let Some(existing) = self.state().user_store.get_user_by_email(email)? {
+                if existing.user_id != record.user_id {
+                    return Err(anyhow!("邮箱已被使用"));
+                }
+            }
+        }
+        record.email = if email.is_empty() {
+            None
+        } else {
+            Some(email.to_string())
+        };
+        record.unit_id = if unit_id.trim().is_empty() {
+            None
+        } else {
+            Some(unit_id.trim().to_string())
+        };
+        self.state().user_store.update_user(&record)?;
+        self.get_profile()
+    }
+
     pub fn get_profile(&self) -> Result<NativeProfile> {
         let user = self
             .state()
@@ -81,6 +130,7 @@ impl NativeDesktop {
             username: user.username,
             email: user.email.unwrap_or_default(),
             unit,
+            unit_id: user.unit_id.unwrap_or_default(),
             sessions: total.max(0),
             sessions_last_7d,
             tool_calls,

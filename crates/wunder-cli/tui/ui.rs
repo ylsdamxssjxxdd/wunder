@@ -1,3 +1,4 @@
+mod command_center;
 mod composer;
 mod layout;
 mod modals;
@@ -9,6 +10,10 @@ use ratatui::Frame;
 
 pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     let is_zh = app.is_zh_language();
+    if let Some(view) = app.command_center_view() {
+        command_center::draw(frame, frame.area(), view, is_zh);
+        return;
+    }
     let popup_view = app.popup_view();
     let activity_visible = app.activity_highlighted();
     let layout = layout::build_layout(frame.area(), popup_view.lines.len(), activity_visible);

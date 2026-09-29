@@ -16,16 +16,22 @@ mod stream;
 pub use stream::{NativeChatEvent, NativeStream};
 #[path = "native_catalog.rs"]
 mod catalog;
+#[path = "native_cron.rs"]
+mod cron;
 #[path = "native_profile.rs"]
 mod profile;
 #[path = "native_settings.rs"]
 mod settings;
 #[path = "native_workspace.rs"]
 mod workspace;
+#[path = "native_world.rs"]
+mod world;
 pub use catalog::{AgentRecord, AgentSettingsEdit, ToolRecord};
+pub use cron::CronRecord;
 pub use profile::NativeProfile;
 pub use settings::{DesktopSettings, LanPeerRecord, LanSettings, ModelEdit, ModelRecord};
 pub use workspace::{Directory, FileRecord};
+pub use world::{WorldContact, WorldGroup, WorldMessage};
 
 #[derive(Debug, Clone)]
 pub struct NativeChatInput {
@@ -165,18 +171,6 @@ impl NativeDesktop {
                 .to_string(),
             locked: false,
         }
-    }
-
-    pub fn list_subagents(&self, session_id: &str) -> std::result::Result<Value, String> {
-        let items = wunder_server::list_parent_subagents(
-            self.desktop.state.storage.as_ref(),
-            Some(self.desktop.state.monitor.as_ref()),
-            &self.desktop.user_id,
-            session_id,
-            Some(200),
-        )
-        .map_err(|error| error.to_string())?;
-        Ok(serde_json::json!({"data": {"items": items}}))
     }
 
     pub fn get_session(&self, session_id: &str) -> Result<(NativeSession, Vec<NativeMessage>)> {

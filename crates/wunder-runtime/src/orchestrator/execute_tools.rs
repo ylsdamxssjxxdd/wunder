@@ -80,6 +80,32 @@ impl Orchestrator {
             emitter.emit("round_usage", payload).await;
         }
         emitter.emit("error", err.to_payload()).await;
+        let _ = self.workspace.flush_writes_async().await;
+        if let Some(thread_turn_id) = active_turn_round.thread_turn_id {
+            let status = if err.code() == "CANCELLED" {
+                "cancelled"
+            } else {
+                "failed"
+            };
+            let payload = json!({
+                "session_id": session_id,
+                "turn_id": thread_turn_id.to_string(),
+                "user_round": active_turn_round.user_round,
+                "status": status,
+                "error": err.message(),
+                "code": err.code(),
+            });
+            if let Err(error) = self.storage.update_thread_turn(
+                user_id,
+                session_id,
+                &thread_turn_id.to_string(),
+                status,
+                err.message(),
+                &payload,
+            ) {
+                warn!("update failed thread turn failed for session {session_id}: {error}");
+            }
+        }
         emit_turn_terminal_event(
             emitter,
             active_turn_round,
@@ -171,6 +197,31 @@ impl Orchestrator {
         skip_auto_memory_extract: bool,
         llm_config: LlmModelConfig,
     ) {
+        let _ = self.workspace.flush_writes_async().await;
+        if let Some(thread_turn_id) = last_round_info.thread_turn_id {
+            let status = if waiting_question_panel {
+                "waiting_input"
+            } else {
+                "completed"
+            };
+            let payload = json!({
+                "session_id": session_id,
+                "turn_id": thread_turn_id.to_string(),
+                "user_round": last_round_info.user_round,
+                "status": status,
+                "stop_reason": stop_reason,
+            });
+            if let Err(error) = self.storage.update_thread_turn(
+                user_id,
+                session_id,
+                &thread_turn_id.to_string(),
+                status,
+                answer,
+                &payload,
+            ) {
+                warn!("update completed thread turn failed for session {session_id}: {error}");
+            }
+        }
         emit_turn_terminal_event(
             emitter,
             last_round_info,

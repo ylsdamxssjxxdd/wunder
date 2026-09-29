@@ -85,6 +85,51 @@ impl Orchestrator {
             .attachments
             .clone()
             .filter(|items| !items.is_empty());
+        // Only the internal scheduler can supply an accepted identity. This flag is
+        // serde-skipped; external config overrides cannot claim a different turn.
+        let reserved = request
+            .enforce_runtime_queue
+            .then(|| request.config_overrides.as_ref())
+            .flatten()
+            .and_then(|fields| {
+                let id = fields
+                    .get("__thread_log_turn_id")?
+                    .as_str()?
+                    .parse::<Uuid>()
+                    .ok()?;
+                let round = fields.get("__thread_log_user_round")?.as_i64()?;
+                (round > 0).then_some((id, round))
+            });
+        let (id, round) = if let Some(reserved) = reserved {
+            reserved
+        } else {
+            let storage = self.storage.clone();
+            let owner = user_id.clone();
+            let thread = session_id.clone();
+            let input = json!({"role":"user", "content":question, "attachments":attachments,
+                "client_message_id":client_message_id,
+                "root_user_round":crate::services::goal::goal_continuation_user_round(request.config_overrides.as_ref())});
+            let accepted = crate::core::blocking::run_db("thread_log.accept", move || {
+                storage.accept_thread_turn(&owner, &thread, &input)
+            })
+            .await
+            .map_err(|err| OrchestratorError::internal(err.to_string()))?;
+            if accepted["created"] == false {
+                return Err(OrchestratorError::invalid_request(
+                    "client_message_id already accepted".to_string(),
+                ));
+            }
+            (
+                accepted["turn_id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .parse::<Uuid>()
+                    .map_err(|err| OrchestratorError::internal(err.to_string()))?,
+                accepted["user_turn_index"].as_i64().unwrap_or(1),
+            )
+        };
+        let thread_turn_id = Some(id);
+        let thread_user_round = Some(round);
         Ok(PreparedRequest {
             user_id,
             workspace_id,
@@ -105,6 +150,8 @@ impl Orchestrator {
             is_admin: request.is_admin,
             enforce_runtime_queue: request.enforce_runtime_queue,
             approval_tx: request.approval_tx.clone(),
+            thread_turn_id,
+            thread_user_round,
         })
     }
 
@@ -153,11 +200,15 @@ impl Orchestrator {
             prepared.session_id.clone(),
             prepared.user_id.clone(),
             None,
-            None,
+            Some(self.storage.clone()),
             self.monitor.clone(),
             prepared.is_admin,
             0,
             prepared.client_message_id.clone(),
+        );
+        emitter.bind_turn(
+            &prepared.thread_turn_id.expect("accepted turn").to_string(),
+            prepared.thread_user_round.expect("accepted round"),
         );
         let response = i18n::with_language(language, async {
             self.execute_request(prepared, emitter).await
@@ -200,6 +251,10 @@ impl Orchestrator {
             prepared.is_admin,
             start_event_id,
             prepared.client_message_id.clone(),
+        );
+        emitter.bind_turn(
+            &prepared.thread_turn_id.expect("accepted turn").to_string(),
+            prepared.thread_user_round.expect("accepted round"),
         );
         let _ = self.thread_runtime.attach_subscriber(&prepared.session_id);
         let runner = {

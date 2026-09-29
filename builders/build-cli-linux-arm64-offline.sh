@@ -20,6 +20,7 @@ output_dir="${WUNDER_CLI_OUTPUT_DIR:-$repo_root/target/cli/dist/linux-arm64}"
 max_glibc="${WUNDER_CLI_LINUX_MAX_GLIBC:-2.27}"
 sysroot="$offline_root/linux-arm64-ubuntu18/root"
 sysroot_lib="$sysroot/usr/lib/aarch64-linux-gnu"
+gcc_lib="$sysroot/usr/lib/gcc/aarch64-linux-gnu/7"
 
 fail() { echo "[wunder-cli-linux-arm64] $*" >&2; exit 2; }
 require_file() { [[ -f "$1" ]] || fail "required file is missing: $1"; }
@@ -30,6 +31,17 @@ require_file "$repo_root/Cargo.toml"
 [[ -x "$rust/bin/cargo" ]] || fail "ARM64 Rust toolchain is missing: $rust/bin/cargo"
 [[ -d "$vendor_root" ]] || fail "shared offline Cargo vendor is missing: $vendor_root"
 [[ -f "$sysroot_lib/crt1.o" && -f "$sysroot_lib/libc.so" ]] || fail "Ubuntu 18 ARM64 development sysroot is incomplete: $sysroot"
+gcc_shared="$gcc_lib/libgcc_s.so"
+[[ ! -L "$gcc_shared" || "$(readlink "$gcc_shared")" != /* ]] \
+  || fail "Ubuntu 18 ARM64 sysroot has an absolute libgcc_s.so link: $gcc_lib (run builders/prepare-linux-arm64-devel-sysroot.sh --repair)"
+[[ -e "$gcc_shared" ]] \
+  || fail "Ubuntu 18 ARM64 sysroot has a dangling libgcc_s.so link: $gcc_lib (run builders/prepare-linux-arm64-devel-sysroot.sh --repair)"
+[[ -x "$gcc_lib/cc1" ]] \
+  || fail "ARM64 SDK GCC backend is missing: $gcc_lib/cc1 (run builders/prepare-linux-arm64-devel-sysroot.sh)"
+for library in libgmp.so.10 libisl.so.19 libmpc.so.3 libmpfr.so.6; do
+  [[ -e "$sysroot/usr/lib/aarch64-linux-gnu/$library" || -e "$sysroot/lib/aarch64-linux-gnu/$library" ]] \
+    || fail "ARM64 SDK GCC runtime is missing: $library (run builders/prepare-linux-arm64-devel-sysroot.sh)"
+done
 
 # The SDK toolchain supplies cargo/rustc; put it on PATH before probing for
 # the commands so a host without its own Rust installation still builds.

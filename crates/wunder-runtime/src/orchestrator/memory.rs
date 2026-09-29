@@ -176,6 +176,7 @@ impl Orchestrator {
         let compaction_round = RoundInfo {
             user_round: round_info.user_round,
             model_round: None,
+            thread_turn_id: round_info.thread_turn_id,
         };
         let mut compacting_payload = json!({
             "stage": "compacting",

@@ -28,8 +28,12 @@ impl ActiveTurnRegistry {
     }
 
     pub(super) fn begin_turn(&self, session_id: &str) -> ActiveTurnSnapshot {
+        self.begin_turn_with_id(session_id, &Uuid::new_v4().to_string())
+    }
+
+    pub(super) fn begin_turn_with_id(&self, session_id: &str, turn_id: &str) -> ActiveTurnSnapshot {
         let cleaned_session = session_id.trim();
-        let turn_id = format!("turn_{}", Uuid::new_v4().simple());
+        let turn_id = turn_id.to_string();
         let entry = ActiveTurnEntry {
             turn_id: turn_id.clone(),
             pending_approval_ids: HashSet::new(),

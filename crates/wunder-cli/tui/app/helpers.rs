@@ -81,6 +81,8 @@ pub(crate) fn log_prefix(kind: LogKind) -> &'static str {
         LogKind::Assistant => "• ",
         LogKind::Reasoning => "• ",
         LogKind::Tool => "• ",
+        LogKind::Approval => "! ",
+        LogKind::Inquiry => "? ",
         LogKind::Error => "✕ ",
     }
 }

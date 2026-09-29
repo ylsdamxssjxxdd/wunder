@@ -14,6 +14,8 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     bind_settings(app, api.clone());
     bind_profile(app, api.clone());
     crate::workspace_ui::install(app, api.clone());
+    crate::world_ui::install(app, api.clone());
+    crate::cron_ui::install(app, api.clone());
     crate::runtime_settings::install(app, api);
     app.invoke_refresh_agents();
     app.invoke_refresh_settings();
@@ -56,6 +58,30 @@ fn bind_profile(app: &MainWindow, api: Arc<NativeDesktop>) {
             });
         });
     });
+    let weak = app.as_weak();
+    let profile_api = api.clone();
+    app.on_save_profile(move |username, email, unit| {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_profile_loading() {
+            return;
+        }
+        app.set_profile_loading(true);
+        let weak = app.as_weak();
+        let api = profile_api.clone();
+        run_background(move || {
+            let result = api.update_profile(&username, &email, &unit);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_profile_loading(false);
+                match result {
+                    Ok(profile) => {
+                        apply_profile(&app, profile);
+                        app.set_status("个人资料已保存".into());
+                    }
+                    Err(error) => show_error(&app, format!("无法保存个人资料：{error}")),
+                }
+            });
+        });
+    });
 }
 
 fn apply_profile(app: &MainWindow, profile: NativeProfile) {
@@ -64,6 +90,7 @@ fn apply_profile(app: &MainWindow, profile: NativeProfile) {
         username: profile.username.into(),
         email: profile.email.into(),
         unit: profile.unit.into(),
+        unit_id: profile.unit_id.into(),
         sessions: profile.sessions.to_string().into(),
         sessions_last_7d: profile.sessions_last_7d.to_string().into(),
         tool_calls: profile.tool_calls.to_string().into(),
@@ -86,6 +113,7 @@ fn profile_glyph(icon: &str) -> &'static str {
 }
 
 fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
+    let save_agent_api = api.clone();
     let weak = app.as_weak();
     app.on_toggle_agent_tool(move |name| {
         let Some(app) = weak.upgrade() else { return };
@@ -222,7 +250,7 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
             }
             app.set_saving(true);
             let weak = weak.clone();
-            let api = api.clone();
+            let api = save_agent_api.clone();
             let id = agent.id.to_string();
             let tool_names = tool_names.iter().map(|v| v.to_string()).collect::<Vec<_>>();
             let preset_questions = preset_questions
@@ -268,6 +296,40 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
             });
         },
     );
+    let weak = app.as_weak();
+    let delete_api = api.clone();
+    app.on_delete_agent(move || {
+        let Some(app) = weak.upgrade() else { return };
+        let Some(index) = usize::try_from(app.get_selected_agent()).ok() else {
+            return;
+        };
+        let Some(row) = app.get_agents().row_data(index) else {
+            return;
+        };
+        if row.is_shared || row.id.is_empty() || app.get_saving() {
+            return;
+        }
+        app.set_saving(true);
+        let id = row.id.to_string();
+        let weak = app.as_weak();
+        let api = delete_api.clone();
+        run_background(move || {
+            let result = api.delete_agent(&id);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_saving(false);
+                match result {
+                    Ok(()) => {
+                        let mut rows = app.get_agents().iter().collect::<Vec<_>>();
+                        rows.retain(|item| item.id != id);
+                        app.set_agents(model_from(rows));
+                        app.set_selected_agent(-1);
+                        app.set_status("智能体已删除".into());
+                    }
+                    Err(error) => show_error(&app, format!("无法删除智能体：{error}")),
+                }
+            });
+        });
+    });
 }
 
 fn bind_tools(app: &MainWindow, api: Arc<NativeDesktop>) {

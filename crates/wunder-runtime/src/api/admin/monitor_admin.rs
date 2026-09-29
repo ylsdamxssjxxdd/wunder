@@ -46,6 +46,22 @@ pub(super) fn router() -> Router<Arc<AppState>> {
             get(admin_monitor_detail).delete(admin_monitor_delete),
         )
         .route(
+            "/wunder/admin/monitor/{session_id}/thread-log/export",
+            get(export_thread_log),
+        )
+        .route(
+            "/wunder/admin/monitor/{session_id}/thread-log/turns",
+            get(admin_thread_turns),
+        )
+        .route(
+            "/wunder/admin/monitor/{session_id}/thread-log/turns/{turn_id}",
+            get(admin_thread_turn),
+        )
+        .route(
+            "/wunder/admin/monitor/{session_id}/thread-log/changes",
+            get(admin_thread_changes),
+        )
+        .route(
             "/wunder/admin/monitor/{session_id}/cancel",
             post(admin_monitor_cancel),
         )
@@ -458,37 +474,54 @@ async fn admin_monitor_detail(
     AxumPath(session_id): AxumPath<String>,
     Query(query): Query<MonitorDetailQuery>,
 ) -> Result<Json<Value>, Response> {
-    let offset = query.offset.unwrap_or(0).max(0) as usize;
-    let limit = if query.export_all {
-        usize::MAX
-    } else {
-        query
-            .limit
-            .unwrap_or(ADMIN_MONITOR_DETAIL_EVENT_PAGE_MAX_LIMIT)
-            .clamp(1, ADMIN_MONITOR_DETAIL_EVENT_PAGE_MAX_LIMIT) as usize
-    };
-    let mut detail = state
-        .monitor
-        .get_detail_page(&session_id, offset, limit)
-        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
-    if let Some(session) = detail.get_mut("session").and_then(Value::as_object_mut) {
-        let user_id = session
+    let cleaned = session_id.trim().to_string();
+    let user_id = monitor_user_id(&state, &cleaned)?;
+    let monitor = state.monitor.get_record(&cleaned);
+    let chat = state
+        .user_store
+        .get_chat_session(&user_id, &cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut session = monitor.unwrap_or_else(|| json!({"session_id":cleaned,"user_id":user_id}));
+    if let Some(chat) = chat {
+        if let Some(map) = session.as_object_mut() {
+            map.entry("session_id").or_insert_with(|| json!(cleaned));
+            map.entry("user_id").or_insert_with(|| json!(user_id));
+            map.entry("question").or_insert_with(|| json!(chat.title));
+            map.entry("agent_id")
+                .or_insert_with(|| json!(chat.agent_id));
+            map.entry("status").or_insert_with(|| json!("completed"));
+        }
+    }
+    if let Some(map) = session.as_object_mut() {
+        let uid = map
             .get("user_id")
             .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
+            .unwrap_or(&user_id)
             .to_string();
-        let agent_id = session
+        let aid = map
             .get("agent_id")
             .and_then(Value::as_str)
             .unwrap_or("")
-            .trim()
             .to_string();
-        if let Some(agent_name) = resolve_monitor_session_agent_name(&state, &user_id, &agent_id)? {
-            session.insert("agent_name".to_string(), Value::String(agent_name));
+        if let Some(name) = resolve_monitor_session_agent_name(&state, &uid, &aid)? {
+            map.insert("agent_name".into(), json!(name));
         }
     }
-    Ok(Json(detail))
+    let limit = query
+        .limit
+        .unwrap_or(ADMIN_MONITOR_DETAIL_EVENT_PAGE_MAX_LIMIT)
+        .clamp(1, ADMIN_MONITOR_DETAIL_EVENT_PAGE_MAX_LIMIT);
+    let storage = state.storage.clone();
+    let owner = user_id.clone();
+    let thread = cleaned.clone();
+    let turns = crate::core::blocking::run_db("api.admin.thread_log.detail", move || {
+        storage.list_thread_turns(&owner, &thread, None, limit)
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(
+        json!({"session":session,"events":[],"events_has_more":!turns.is_empty() && turns.len()>=limit as usize,"event_total":0,"thread_turns":turns,"feedback":[]}),
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -499,6 +532,101 @@ struct MonitorDetailQuery {
     limit: Option<i64>,
     #[serde(default)]
     export_all: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct AdminThreadTurnsQuery {
+    #[serde(default)]
+    before: Option<i64>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+#[derive(Debug, Deserialize)]
+struct AdminThreadChangesQuery {
+    #[serde(default)]
+    after: Option<i64>,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    item_after: Option<i64>,
+}
+
+fn monitor_user_id(state: &AppState, session_id: &str) -> Result<String, Response> {
+    state
+        .storage
+        .get_chat_session_owner(session_id)
+        .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))
+}
+
+async fn admin_thread_turns(
+    State(state): State<Arc<AppState>>,
+    AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<AdminThreadTurnsQuery>,
+) -> Result<Json<Value>, Response> {
+    let session_id = session_id.trim().to_string();
+    let user_id = monitor_user_id(&state, &session_id)?;
+    let storage = state.storage.clone();
+    let lookup = session_id.clone();
+    let limit = query.limit.unwrap_or(50).clamp(1, 100);
+    let turns = crate::core::blocking::run_db("api.admin.thread_log.turns", move || {
+        storage.list_thread_turns(&user_id, &lookup, query.before, limit)
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let next_before = turns
+        .last()
+        .and_then(|v| v.get("user_turn_index"))
+        .and_then(Value::as_i64);
+    let has_more = turns.len() >= limit as usize;
+    Ok(Json(
+        json!({"data":{"session_id":session_id,"turns":turns,"next_before":next_before,"has_more":has_more}}),
+    ))
+}
+
+async fn admin_thread_turn(
+    State(state): State<Arc<AppState>>,
+    AxumPath((session_id, turn_id)): AxumPath<(String, String)>,
+    Query(query): Query<AdminThreadChangesQuery>,
+) -> Result<Json<Value>, Response> {
+    let session_id = session_id.trim().to_string();
+    let user_id = monitor_user_id(&state, &session_id)?;
+    let storage = state.storage.clone();
+    let lookup = session_id.clone();
+    let turn = crate::core::blocking::run_db("api.admin.thread_log.turn", move || {
+        storage.get_thread_turn(
+            &user_id,
+            &lookup,
+            &turn_id,
+            query.item_after.unwrap_or(-1),
+            query.limit.unwrap_or(100),
+            true,
+        )
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.content_not_found")))?;
+    Ok(Json(json!({"data":{"session_id":session_id,"turn":turn}})))
+}
+
+async fn admin_thread_changes(
+    State(state): State<Arc<AppState>>,
+    AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<AdminThreadChangesQuery>,
+) -> Result<Json<Value>, Response> {
+    let session_id = session_id.trim().to_string();
+    let user_id = monitor_user_id(&state, &session_id)?;
+    let storage = state.storage.clone();
+    let lookup = session_id.clone();
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    let changes = crate::core::blocking::run_db("api.admin.thread_log.changes", move || {
+        storage.list_thread_changes(&user_id, &lookup, query.after.unwrap_or(0), limit)
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(
+        json!({"data":{"session_id":session_id,"changes":changes}}),
+    ))
 }
 
 async fn admin_monitor_cancel(
@@ -920,4 +1048,17 @@ struct MonitorCompactionRequest {
 struct MonitorLogsCleanupRequest {
     start_time: Option<f64>,
     end_time: Option<f64>,
+}
+
+async fn export_thread_log(
+    State(state): State<Arc<AppState>>,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Response, Response> {
+    let user_id = monitor_user_id(&state, &session_id)?;
+    Ok(crate::services::thread_log::export_response(
+        state.storage.clone(),
+        user_id,
+        session_id,
+        true,
+    ))
 }
