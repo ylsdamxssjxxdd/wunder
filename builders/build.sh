@@ -10,24 +10,22 @@ target=""
 arch=""
 build_all=0
 mode=native
-package=0
 
 usage() {
   cat <<'EOF'
 Usage:
-  build.sh -t desktop|cli -a linux-arm64|linux-amd64|win7-x86 [--appimage] [--native|--docker]
+  build.sh -t desktop|cli -a linux-arm64|linux-amd64|win7-x86 [--native|--docker]
   build.sh -all [--native|--docker]
 
 Options:
   -t, -target, --target  Build one program: desktop or cli.
   -a, -arch, --arch      Select one distribution architecture.
                          linux-arm64: Desktop AppImage or CLI ELF.
-                         linux-amd64: Desktop ELF (or AppImage with --appimage) or CLI ELF.
+                         linux-amd64: Desktop AppImage or CLI ELF.
                          win7-x86:    Win7-compatible Desktop or CLI PE built by kylin-arm
                                       (i686-win7-windows-gnu with -Z build-std).
   -all, --all            Build every distribution available on this host: both programs for
                          Linux ARM64, Linux amd64 and Win7 x86. Linux Desktop outputs are AppImages.
-  --appimage       Package a linux-amd64 Desktop build as an AppImage. CLI never uses AppImage.
   --native         Build on an ARM64 Linux host (default).
   --docker         Run the ARM64 Ubuntu 18.04 build image. Useful from non-ARM Linux hosts.
 
@@ -62,7 +60,6 @@ while (($#)); do
       arch="$(normalize_arch "$1")" || fail "unsupported architecture: $1"
       ;;
     -all|--all) build_all=1 ;;
-    --appimage) package=1 ;;
     --native) mode=native ;;
     --docker) mode=docker ;;
     -h|--help) usage; exit 0 ;;
@@ -73,17 +70,9 @@ done
 
 if [[ "$build_all" == 1 ]]; then
   [[ -z "$target" && -z "$arch" ]] || fail "-all already selects every program and architecture; do not combine it with --target or --arch"
-  [[ "$package" == 0 ]] || fail "-all already packages every Linux Desktop distribution as AppImage"
 else
   [[ "$target" == desktop || "$target" == cli ]] || fail "--target must be desktop or cli"
   [[ -n "$arch" ]] || fail "--arch is required unless -all is used"
-fi
-
-if [[ "$package" == 1 && "$target" != desktop ]]; then
-  fail "--appimage is only valid for a Desktop build; CLI outputs are plain executables"
-fi
-if [[ "$package" == 1 && "$arch" != linux-amd64 ]]; then
-  fail "--appimage is only valid for linux-amd64; linux-arm64 Desktop is always an AppImage"
 fi
 
 runtime_for() {
@@ -131,7 +120,7 @@ run_in_docker() {
     runtime="$(runtime_for linux-arm64)"
     docker_args+=(-e WUNDER_APPIMAGE_RUNTIME_ARM64=/builder/appimage-runtime/linux-arm64.AppImage -v "$runtime:/builder/appimage-runtime/linux-arm64.AppImage:ro")
   fi
-  if [[ "$build_all" == 1 || ( "$target" == desktop && "$arch" == linux-amd64 && "$package" == 1 ) ]]; then
+  if [[ "$build_all" == 1 || ( "$target" == desktop && "$arch" == linux-amd64 ) ]]; then
     runtime="$(runtime_for linux-amd64)"
     docker_args+=(-e WUNDER_APPIMAGE_RUNTIME_AMD64=/builder/appimage-runtime/linux-amd64.AppImage -v "$runtime:/builder/appimage-runtime/linux-amd64.AppImage:ro")
   fi
@@ -141,7 +130,6 @@ run_in_docker() {
     nested_args+=(-all)
   else
     nested_args+=(-t "$target" -a "$arch")
-    [[ "$package" == 1 ]] && nested_args+=(--appimage)
   fi
   exec docker "${docker_args[@]}" -w /workspace "${WUNDER_SLINT_LINUX_DOCKER_IMAGE:-rcho-slint-arm64-ubuntu18:latest}" bash /workspace/build.sh "${nested_args[@]}"
 }
@@ -165,7 +153,6 @@ run_builder() {
 build_one() {
   local selected_target="$1"
   local selected_arch="$2"
-  local as_appimage="${3:-0}"
   local script=""
   local runtime=""
 
@@ -179,12 +166,8 @@ build_one() {
       run_builder "$repo_root/builders/build-cli-linux-arm64-offline.sh" env
       ;;
     linux-amd64:desktop)
-      if [[ "$as_appimage" == 1 ]]; then
-        runtime="$(runtime_for linux-amd64)"
-        WUNDER_APPIMAGE_RUNTIME="$runtime" run_builder "$repo_root/builders/build-linux-amd64-appimage.sh" env
-      else
-        run_builder "$repo_root/builders/build-linux-amd64-offline.sh" env
-      fi
+      runtime="$(runtime_for linux-amd64)"
+      WUNDER_APPIMAGE_RUNTIME="$runtime" run_builder "$repo_root/builders/build-linux-amd64-appimage.sh" env
       ;;
     linux-amd64:cli)
       run_builder "$repo_root/builders/build-cli-linux-amd64-offline.sh" env
@@ -204,12 +187,12 @@ if [[ "$build_all" == 1 ]]; then
   # invocation fail early instead of leaving a partial architecture set.
   runtime_for linux-arm64 >/dev/null
   runtime_for linux-amd64 >/dev/null
-  build_one desktop linux-arm64 1
-  build_one cli linux-arm64 0
-  build_one desktop linux-amd64 1
-  build_one cli linux-amd64 0
-  build_one desktop win7-x86 0
-  build_one cli win7-x86 0
+  build_one desktop linux-arm64
+  build_one cli linux-arm64
+  build_one desktop linux-amd64
+  build_one cli linux-amd64
+  build_one desktop win7-x86
+  build_one cli win7-x86
 else
-  build_one "$target" "$arch" "$package"
+  build_one "$target" "$arch"
 fi

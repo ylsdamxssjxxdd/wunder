@@ -114,21 +114,14 @@
               >{{ resolveEventRaw(item) }}</pre>
             </details>
           </div>
-            <button v-if="itemAfter >= 0" type="button" class="messenger-inline-btn" @click="loadSelectedTurnItems(selectedRound)">{{ t('messenger.timeline.detail.firstPage') }}</button>
             <button v-if="itemHasMore" type="button" class="messenger-inline-btn" @click="loadSelectedTurnItems(selectedRound, true)">{{ t('messenger.timeline.detail.nextPage') }}</button>
           <div class="messenger-timeline-detail-pagination">
-            <button type="button" class="messenger-inline-btn messenger-timeline-detail-page-icon" :disabled="eventPage === 0 || loadingEvents" :title="t('messenger.timeline.detail.firstPage')" :aria-label="t('messenger.timeline.detail.firstPage')" @click="loadTimelineEventPage(0)">
-              <i class="fa-solid fa-angles-left" aria-hidden="true"></i>
-            </button>
             <button type="button" class="messenger-inline-btn messenger-timeline-detail-page-icon" :disabled="eventPage === 0 || loadingEvents" :title="t('messenger.timeline.detail.previousPage')" :aria-label="t('messenger.timeline.detail.previousPage')" @click="loadTimelineEventPage(eventPage - 1)">
               <i class="fa-solid fa-angle-left" aria-hidden="true"></i>
             </button>
             <span class="messenger-timeline-detail-page-info">{{ eventPageInfo }}</span>
             <button type="button" class="messenger-inline-btn messenger-timeline-detail-page-icon" :disabled="!eventHasMore || loadingEvents" :title="t('messenger.timeline.detail.nextPage')" :aria-label="t('messenger.timeline.detail.nextPage')" @click="loadTimelineEventPage(eventPage + 1)">
               <i class="fa-solid fa-angle-right" aria-hidden="true"></i>
-            </button>
-            <button v-if="false" type="button" class="messenger-inline-btn messenger-timeline-detail-page-icon" :disabled="!eventHasMore || loadingEvents" :title="t('messenger.timeline.detail.lastPage')" :aria-label="t('messenger.timeline.detail.lastPage')" @click="loadTimelineEventPage(lastEventPage)">
-              <i class="fa-solid fa-angles-right" aria-hidden="true"></i>
             </button>
           </div>
         </div>
@@ -240,6 +233,7 @@ const itemAfter = ref(-1);
 const itemHasMore = ref(false);
 let detailRequestToken = 0;
 const eventTotal = ref(0);
+const turnTotal = ref(0);
 const loadingEvents = ref(false);
 
 let requestToken = 0;
@@ -270,6 +264,7 @@ const resetDetailState = () => {
   itemHasMore.value = false;
   eventHasMore.value = false;
   eventTotal.value = 0;
+  turnTotal.value = 0;
   loadingEvents.value = false;
   resetFilters();
 };
@@ -977,14 +972,14 @@ const overviewItems = computed(() => {
     { icon: 'fa-solid fa-robot', label: t('messenger.timeline.detail.metaAgentLabel'), value: overviewValue(metrics.agent_name || resolveSessionAgentDisplay(session)) },
     { icon: 'fa-solid fa-circle-info', label: t('messenger.timeline.detail.metaStatusLabel'), value: overviewStatus(metrics.status || (running.value ? 'running' : 'finished')) },
     { icon: 'fa-regular fa-clock', label: t('messenger.timeline.detail.metaElapsedLabel'), value: overviewDuration(metrics.elapsed_s) },
-    { icon: 'fa-solid fa-arrow-rotate-right', label: t('messenger.timeline.detail.metaRoundCountLabel'), value: overviewCount(metrics.user_rounds ?? roundOptions.value.length) },
+    { icon: 'fa-solid fa-arrow-rotate-right', label: t('messenger.timeline.detail.metaRoundCountLabel'), value: overviewCount(turnTotal.value) },
     { icon: 'fa-solid fa-screwdriver-wrench', label: t('messenger.timeline.detail.metaToolsLabel'), value: overviewCount(metrics.tool_calls) },
     { icon: 'fa-solid fa-coins', label: t('messenger.timeline.detail.metaQuotaLabel'), value: overviewCount(metrics.model_request_count ?? metrics.quota_used) },
     { icon: 'fa-solid fa-bolt', label: t('messenger.timeline.detail.metaTokensLabel'), value: overviewCount(metrics.consumed_tokens) },
     { icon: 'fa-solid fa-bolt-lightning', label: t('messenger.timeline.detail.metaTtftLabel'), value: overviewDuration(Number(metrics.ttft_ms) / 1000) },
     { icon: 'fa-solid fa-arrow-up', label: t('messenger.timeline.detail.metaPrefillLabel'), value: overviewSpeed(metrics.prefill_speed_tps, Boolean(metrics.prefill_speed_lower_bound)) },
     { icon: 'fa-solid fa-arrow-down', label: t('messenger.timeline.detail.metaDecodeLabel'), value: overviewSpeed(decodeSpeed) },
-    { icon: 'fa-solid fa-list', label: t('messenger.timeline.detail.metaEventCountLabel'), value: overviewCount(metrics.event_total ?? eventTotal.value) },
+    { icon: 'fa-solid fa-list', label: t('messenger.timeline.detail.metaEventCountLabel'), value: overviewCount(eventTotal.value) },
     { icon: 'fa-solid fa-fingerprint', label: t('messenger.timeline.detail.metaSessionIdLabel'), value: overviewValue(metrics.session_id || session.id) }
   ];
 });
@@ -996,14 +991,8 @@ const eventPageInfo = computed(() =>
     end: events.value.length
       ? eventPage.value * TIMELINE_DETAIL_EVENT_PAGE_SIZE + events.value.length
       : 0,
-    total: eventTotal.value
+    total: turnTotal.value
   })
-);
-
-const lastEventPage = computed(() =>
-  eventTotal.value > 0
-    ? Math.max(0, Math.ceil(eventTotal.value / TIMELINE_DETAIL_EVENT_PAGE_SIZE) - 1)
-    : eventPage.value
 );
 
 const buildEventSummary = (eventType: string, payload: unknown): Record<string, unknown> => {
@@ -1135,7 +1124,10 @@ const loadTimelineDetail = async (sessionId: string) => {
     rounds.value = normalizeThreadTurns(turnPayload?.turns);
     turnPageCursors.value[1] = Number(turnPayload?.next_before) || undefined;
     eventHasMore.value = Boolean(turnPayload?.has_more);
-    eventTotal.value = rounds.value.length;
+    const itemTotal = Number(turnPayload?.item_total);
+    const userRoundTotal = Number(turnPayload?.user_round_total);
+    eventTotal.value = Number.isFinite(itemTotal) ? itemTotal : 0;
+    turnTotal.value = Number.isFinite(userRoundTotal) ? userRoundTotal : rounds.value.length;
     running.value = false;
   } catch (error) {
     if (currentToken !== requestToken) {
@@ -1172,7 +1164,10 @@ const loadTimelineEventPage = async (page: number) => {
     turnPageCursors.value[nextPage + 1] = payload?.next_before;
     eventPage.value = nextPage;
     eventHasMore.value = Boolean(payload?.has_more);
-    eventTotal.value = pageRounds.length;
+    const itemTotal = Number(payload?.item_total);
+    const userRoundTotal = Number(payload?.user_round_total);
+    eventTotal.value = Number.isFinite(itemTotal) ? itemTotal : eventTotal.value;
+    turnTotal.value = Number.isFinite(userRoundTotal) ? userRoundTotal : pageRounds.length;
     expandedEventKeys.value = new Set();
     eventRawCache.clear();
     await nextTick();

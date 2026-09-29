@@ -1,18 +1,75 @@
-import { Theme, CronCard } from "theme.slint";
+import { Theme, CronCard, CronRunCard } from "theme.slint";
 import { Action, SearchField } from "components.slint";
-import { ScrollView } from "std-widgets.slint";
+import { CheckBox, ComboBox, ScrollView } from "std-widgets.slint";
 
 export component CronPage inherits Rectangle {
     in property <bool> loading: false;
     in property <[CronCard]> jobs;
+    in-out property <[string]> agent-names: ["默认智能体"];
+    in-out property <bool> editor-open: false;
+    in-out property <bool> editor-saving: false;
+    in-out property <int> editor-kind: 0;
+    in-out property <string> editor-name;
+    in-out property <string> editor-at;
+    in-out property <string> editor-every;
+    in-out property <string> editor-cron;
+    in-out property <string> editor-tz;
+    in-out property <string> editor-message;
+    in-out property <int> editor-agent: 0;
+    in-out property <bool> editor-delete-after: false;
+    in-out property <bool> editor-enabled: true;
+    in-out property <bool> runs-open: false;
+    in property <bool> runs-loading: false;
+    in property <string> runs-title;
+    in property <[CronRunCard]> runs;
     callback refresh();
     callback toggle(string, bool);
     callback delete(string);
+    callback run-now(string);
+    callback open-runs(string);
+    callback close-runs();
+    callback open-creator();
+    callback save-editor();
+    callback cancel-editor();
     private property <string> keyword;
     background: Theme.chat;
     VerticalLayout { spacing: 0px;
-        Rectangle { height: 76px; background: Theme.surface; HorizontalLayout { padding: 18px; spacing: 12px; Text { text: "定时任务"; color: Theme.text; font-size: 18px; font-weight: 700; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.loading; clicked => { root.refresh(); } } } }
+        Rectangle { height: 76px; background: Theme.surface; HorizontalLayout { padding: 18px; spacing: 12px; Text { text: "定时任务"; color: Theme.text; font-size: 18px; font-weight: 700; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } Action { icon: @image-url("../assets/icons/plus.svg"); label: "新建任务"; show-label: true; enabled: !root.editor-open; clicked => { root.open-creator(); } } Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.loading; clicked => { root.refresh(); } } } }
         Rectangle { height: 1px; background: Theme.border; }
-        Rectangle { vertical-stretch: 1; background: Theme.chat; VerticalLayout { padding: 16px; Rectangle { vertical-stretch: 1; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 14px; spacing: 9px; SearchField { icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索任务"; text <=> root.keyword; } ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off; VerticalLayout { spacing: 6px; for job in root.jobs : Rectangle { visible: root.keyword == "" || job.name.to-lowercase().starts-with(root.keyword.to-lowercase()); height: self.visible ? 82px : 0px; border-radius: 9px; background: Theme.panel; VerticalLayout { padding: 10px; spacing: 3px; HorizontalLayout { height: 22px; Text { text: job.name; color: Theme.text; font-size: 13px; font-weight: 600; horizontal-stretch: 1; overflow: elide; } Text { text: job.enabled ? "已启用" : "已停用"; color: job.enabled ? #16845d : Theme.muted; font-size: 10px; } } Text { text: job.schedule + " · 下次 " + job.next-run; color: Theme.muted; font-size: 10px; overflow: elide; } Text { text: job.last-error == "" ? "上次状态：" + job.last-status : "上次失败：" + job.last-error; color: job.last-error == "" ? Theme.muted : #b63a22; font-size: 10px; overflow: elide; } } Action { x: parent.width - 140px; y: 10px; width: 58px; label: job.enabled ? "停用" : "启用"; show-label: true; clicked => { root.toggle(job.id, !job.enabled); } } Action { x: parent.width - 72px; y: 10px; width: 58px; label: "删除"; show-label: true; clicked => { root.delete(job.id); } } } if root.jobs.length == 0 : Text { height: 70px; text: root.loading ? "正在加载…" : "暂无定时任务"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; } } } } } } }
+        Rectangle { vertical-stretch: 1; background: Theme.chat; VerticalLayout { padding: 16px; Rectangle { vertical-stretch: 1; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 14px; spacing: 9px; SearchField { icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索任务"; text <=> root.keyword; } ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off; VerticalLayout { spacing: 6px; for job in root.jobs : Rectangle { visible: root.keyword == "" || job.name.to-lowercase().starts-with(root.keyword.to-lowercase()); height: self.visible ? 104px : 0px; border-radius: 9px; background: Theme.panel; VerticalLayout { padding: 10px; spacing: 3px;
+            HorizontalLayout { height: 22px; spacing: 8px; Text { text: job.name; color: Theme.text; font-size: 13px; font-weight: 600; horizontal-stretch: 1; overflow: elide; vertical-alignment: center; } Text { text: job.enabled ? "已启用" : "已停用"; color: job.enabled ? #16845d : Theme.muted; font-size: 10px; vertical-alignment: center; } }
+            Text { text: job.schedule + " · 下次 " + job.next-run; color: Theme.muted; font-size: 10px; overflow: elide; }
+            Text { text: job.last-error == "" ? "上次状态：" + job.last-status : "上次失败：" + job.last-error; color: job.last-error == "" ? Theme.muted : #b63a22; font-size: 10px; overflow: elide; }
+        } Rectangle { x: parent.width - 248px; y: 10px; width: 238px; height: 84px; VerticalLayout { spacing: 4px;
+            HorizontalLayout { height: 38px; spacing: 4px; Action { horizontal-stretch: 1; label: job.enabled ? "停用" : "启用"; show-label: true; enabled: !root.loading; clicked => { root.toggle(job.id, !job.enabled); } } Action { horizontal-stretch: 1; label: "立即运行"; show-label: true; enabled: !root.loading; clicked => { root.run-now(job.id); } } }
+            HorizontalLayout { height: 38px; spacing: 4px; Action { horizontal-stretch: 1; label: "运行记录"; show-label: true; enabled: !root.runs-loading; clicked => { root.open-runs(job.id); } } Action { horizontal-stretch: 1; label: "删除"; show-label: true; enabled: !root.loading; clicked => { root.delete(job.id); } } }
+        } } } if root.jobs.length == 0 : Text { height: 70px; text: root.loading ? "正在加载…" : "暂无定时任务"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; } } } } } } }
+        if root.runs-open : Rectangle { Rectangle { background: #00000022; TouchArea { clicked => { root.close-runs(); } } } Rectangle { x: parent.width - 420px; y: 0px; width: 420px; height: parent.height; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 16px; spacing: 10px;
+            HorizontalLayout { height: 26px; Text { text: "运行记录 · " + root.runs-title; color: Theme.text; font-size: 15px; font-weight: 700; horizontal-stretch: 1; overflow: elide; vertical-alignment: center; } Action { width: 30px; icon: @image-url("../assets/icons/xmark.svg"); clicked => { root.close-runs(); } } }
+            Text { height: 18px; text: root.runs-loading ? "正在加载…" : "最近 " + root.runs.length + " 次（最多 200 条）"; color: Theme.muted; font-size: 11px; }
+            ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off; VerticalLayout { spacing: 6px; alignment: start; for run in root.runs : Rectangle { height: 74px; border-radius: 9px; background: Theme.panel; VerticalLayout { padding: 10px; spacing: 3px;
+                HorizontalLayout { height: 20px; spacing: 8px; Text { text: run.status; color: run.status == "success" ? #16845d : (run.status == "running" ? #b8860b : #b63a22); font-size: 12px; font-weight: 600; vertical-alignment: center; } Text { text: run.trigger == "manual" ? "手动" : "计划"; color: Theme.muted; font-size: 10px; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } Text { text: run.created-at + " · " + run.duration; color: Theme.muted; font-size: 10px; vertical-alignment: center; } }
+                Text { text: run.error == "" ? (run.summary == "" ? "无输出摘要" : run.summary) : "失败：" + run.error; color: run.error == "" ? Theme.text : #b63a22; font-size: 11px; wrap: word-wrap; overflow: elide; }
+            } } if root.runs.length == 0 && !root.runs-loading : Text { height: 70px; text: "暂无运行记录"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; } } }
+        } } }
+        if root.editor-open : Rectangle { Rectangle { background: #00000033; TouchArea { clicked => { } } } Rectangle { x: (parent.width - 460px) / 2; y: 24px; width: 460px; height: parent.height - 48px; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 18px; spacing: 10px;
+            Text { height: 24px; text: "定时任务"; color: Theme.text; font-size: 16px; font-weight: 700; }
+            HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: "名称"; color: Theme.muted; font-size: 12px; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-name; color: Theme.text; font-size: 12px; } }
+            HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: "调度"; color: Theme.muted; font-size: 12px; vertical-alignment: center; } ComboBox { horizontal-stretch: 1; model: ["一次性", "固定间隔", "Cron 表达式"]; current-index <=> root.editor-kind; enabled: !root.editor-saving; } }
+            if root.editor-kind == 0 : HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: "执行时间"; color: Theme.muted; font-size: 12px; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-at; color: Theme.text; font-size: 12px; } }
+            if root.editor-kind == 1 : VerticalLayout { spacing: 8px;
+                HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: "间隔（秒）"; color: Theme.muted; font-size: 12px; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-every; color: Theme.text; font-size: 12px; input-type: number; } }
+                HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: "首次时间"; color: Theme.muted; font-size: 12px; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-at; color: Theme.text; font-size: 12px; } }
+            }
+            if root.editor-kind == 2 : VerticalLayout { spacing: 8px;
+                HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: "表达式"; color: Theme.muted; font-size: 12px; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-cron; color: Theme.text; font-size: 12px; } }
+                HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: "时区"; color: Theme.muted; font-size: 12px; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-tz; color: Theme.text; font-size: 12px; } }
+            }
+            HorizontalLayout { height: 52px; spacing: 10px; Text { width: 64px; text: "执行消息"; color: Theme.muted; font-size: 12px; vertical-alignment: center; } TextInput { horizontal-stretch: 1; height: 52px; text <=> root.editor-message; color: Theme.text; font-size: 12px; wrap: word-wrap; } }
+            HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: "目标智能体"; color: Theme.muted; font-size: 12px; vertical-alignment: center; } ComboBox { horizontal-stretch: 1; model: root.agent-names; current-index <=> root.editor-agent; enabled: !root.editor-saving; } }
+            HorizontalLayout { height: 24px; spacing: 10px; CheckBox { text: "运行一次后删除"; checked <=> root.editor-delete-after; enabled: !root.editor-saving; } CheckBox { text: "启用"; checked <=> root.editor-enabled; enabled: !root.editor-saving; } }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout { height: 34px; spacing: 8px; Rectangle { horizontal-stretch: 1; } Action { width: 84px; label: "保存"; show-label: true; primary: true; enabled: !root.editor-saving; clicked => { root.save-editor(); } } Action { width: 84px; label: "取消"; show-label: true; enabled: !root.editor-saving; clicked => { root.cancel-editor(); } } }
+        } } }
     }
 }

@@ -15,7 +15,8 @@ pub(super) struct ThreadUiState {
     reasoning_markdown_stream: Option<StreamedMarkdownState>,
     command_sessions: CommandSessionDisplayState,
     command_log_indices: HashMap<String, usize>,
-    tool_log_indices: HashMap<String, usize>,
+    tool_log_indices: HashMap<ToolCallKey, usize>,
+    pending_temp_tool_cells: VecDeque<PendingTempToolCell>,
     stream_saw_output: bool,
     stream_saw_final: bool,
     stream_goal_continue_ready: bool,
@@ -56,6 +57,7 @@ impl ThreadUiState {
             command_sessions: std::mem::take(&mut app.command_sessions),
             command_log_indices: std::mem::take(&mut app.command_log_indices),
             tool_log_indices: std::mem::take(&mut app.tool_log_indices),
+            pending_temp_tool_cells: std::mem::take(&mut app.pending_temp_tool_cells),
             stream_saw_output: std::mem::take(&mut app.stream_saw_output),
             stream_saw_final: std::mem::take(&mut app.stream_saw_final),
             stream_goal_continue_ready: std::mem::take(&mut app.stream_goal_continue_ready),
@@ -95,6 +97,7 @@ impl ThreadUiState {
         app.command_sessions = self.command_sessions;
         app.command_log_indices = self.command_log_indices;
         app.tool_log_indices = self.tool_log_indices;
+        app.pending_temp_tool_cells = self.pending_temp_tool_cells;
         app.stream_saw_output = self.stream_saw_output;
         app.stream_saw_final = self.stream_saw_final;
         app.stream_goal_continue_ready = self.stream_goal_continue_ready;

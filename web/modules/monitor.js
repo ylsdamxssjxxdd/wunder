@@ -90,7 +90,6 @@ const MONITOR_DETAIL_TEXT_FALLBACKS = {
     zh: "上一页",
     en: "Previous",
   },
-  "monitor.detail.pagination.first": { zh: "首页", en: "First page" },
   "monitor.detail.pagination.last": { zh: "尾页", en: "Last page" },
   "monitor.detail.pagination.next": {
     zh: "下一页",
@@ -1821,7 +1820,7 @@ const escapeMonitorDetailHtml = (value) =>
 const resolveMonitorDetailAgentName = (session) =>
   String(session?.agent_name || session?.agent_id || "-").trim() || "-";
 
-const buildMonitorDetailMeta = (session, events, eventTotal) => {
+const buildMonitorDetailMeta = (session, events, { userRoundTotal, itemTotal }) => {
   const items = [];
   const add = (icon, label, value) => {
     const text = String(value ?? "-").trim() || "-";
@@ -1841,7 +1840,7 @@ const buildMonitorDetailMeta = (session, events, eventTotal) => {
   add(
     "fa-solid fa-arrow-rotate-right",
     t("monitor.detail.meta.rounds"),
-    formatHeatmapCount(session?.user_rounds)
+    formatHeatmapCount(Number.isFinite(userRoundTotal) ? userRoundTotal : session?.user_rounds)
   );
   add(
     "fa-solid fa-screwdriver-wrench",
@@ -1888,7 +1887,7 @@ const buildMonitorDetailMeta = (session, events, eventTotal) => {
   add(
     "fa-solid fa-list",
     t("monitor.detail.meta.events"),
-    formatHeatmapCount(Number.isFinite(eventTotal) ? eventTotal : events.length)
+    formatHeatmapCount(Number.isFinite(itemTotal) ? itemTotal : events.length)
   );
   add("fa-solid fa-fingerprint", t("monitor.detail.meta.sessionId"), session?.session_id);
 
@@ -4004,6 +4003,17 @@ const loadMonitorDetailThreadTurn = async (sessionId, round, next = false) => {
     const turn = (await response.json())?.data?.turn;
     if (token !== monitorTurnRequest || state.monitor?.detail !== detail || state.monitor.detailFilters.round !== round) return;
     detail.events = normalizeThreadLogTurnItemsForMonitor(turn);
+    const userItem = detail.events.find((event) => {
+      const type = String(event?.type || "").trim().toLowerCase();
+      const data = event?.data && typeof event.data === "object" ? event.data : {};
+      const role = String(data?.role || "").trim().toLowerCase();
+      return type === "user_message" || role === "user";
+    });
+    const question = resolveMonitorDetailQuestionTextFromPayload(userItem?.data);
+    if (question) {
+      if (!(detail.roundQuestions instanceof Map)) detail.roundQuestions = new Map();
+      detail.roundQuestions.set(round, question);
+    }
     detail.itemAfter = Number(turn?.next_after ?? -1);
     detail.itemHasMore = Boolean(turn?.has_more);
     renderMonitorDetailQuestion();
@@ -4011,14 +4021,15 @@ const loadMonitorDetailThreadTurn = async (sessionId, round, next = false) => {
     // Item pages replace the rendered rows; browsing a large turn never grows the DOM.
     const navigation = document.createElement("div");
     navigation.className = "monitor-detail-pagination";
-    for (const [label, advance] of [[t("monitor.detail.pagination.first"), false], [t("monitor.detail.pagination.next"), true]]) {
-      if (advance && !detail.itemHasMore) continue;
+    if (detail.itemHasMore) {
+      const label = t("monitor.detail.pagination.next");
+      const advance = true;
       const button = document.createElement("button"); button.type = "button";
       button.textContent = label;
       button.addEventListener("click", () => void loadMonitorDetailThreadTurn(sessionId, round, advance));
       navigation.appendChild(button);
     }
-    elements.monitorDetailEvents?.appendChild(navigation);
+    if (navigation.childElementCount > 0) elements.monitorDetailEvents?.appendChild(navigation);
   } catch (error) { notify(error?.message || String(error), "error"); }
 };
 
@@ -4046,9 +4057,6 @@ const syncMonitorDetailPagination = () => {
     elements.monitorDetailPageInfo.textContent = resolveMonitorDetailText("monitor.detail.pagination.info", {
       page, start, end, total,
     });
-  }
-  if (elements.monitorDetailPageFirst) {
-    elements.monitorDetailPageFirst.disabled = offset <= 0 || Boolean(detail?.loading);
   }
   if (elements.monitorDetailPagePrev) {
     elements.monitorDetailPagePrev.disabled = offset <= 0 || Boolean(detail?.loading);
@@ -4386,8 +4394,12 @@ const loadMonitorDetailPage = async (sessionId, offset = 0, options = {}) => {
       session.question
     );
     const feedback = normalizeMonitorDetailFeedbackList(result.feedback);
-    const eventTotal = threadTurns.length;
-    elements.monitorDetailMeta.innerHTML = buildMonitorDetailMeta(session, events, eventTotal);
+    const itemTotal = Number(catalog?.item_total);
+    const userRoundTotal = Number(catalog?.user_round_total);
+    elements.monitorDetailMeta.innerHTML = buildMonitorDetailMeta(session, events, {
+      itemTotal: Number.isFinite(itemTotal) ? itemTotal : events.length,
+      userRoundTotal: Number.isFinite(userRoundTotal) ? userRoundTotal : roundOptions.length,
+    });
     state.monitor.detail = {
       session,
       events,
@@ -4400,7 +4412,7 @@ const loadMonitorDetailPage = async (sessionId, offset = 0, options = {}) => {
       feedback,
       offset: safeOffset,
       limit: MONITOR_DETAIL_EVENT_PAGE_SIZE,
-      total: eventTotal,
+      total: Number.isFinite(userRoundTotal) ? userRoundTotal : roundOptions.length,
       hasMore: Boolean(catalog?.has_more),
       loading: false,
     };
@@ -4583,13 +4595,6 @@ export const initMonitorPanel = () => {
         detail.session?.session_id,
         Math.max(0, (Number(detail.offset) || 0) - MONITOR_DETAIL_EVENT_PAGE_SIZE)
       );
-    });
-  }
-  if (elements.monitorDetailPageFirst) {
-    elements.monitorDetailPageFirst.addEventListener("click", () => {
-      const detail = state.monitor?.detail;
-      if (!detail || detail.loading || Number(detail.offset) <= 0) return;
-      void loadMonitorDetailPage(detail.session?.session_id, 0);
     });
   }
   if (elements.monitorDetailPageNext) {

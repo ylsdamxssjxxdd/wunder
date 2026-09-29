@@ -25,6 +25,11 @@ pub(super) trait PostgresChatSessionStorage {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)>;
+    fn count_child_chat_sessions_impl(
+        &self,
+        user_id: &str,
+        parent_session_ids: &[String],
+    ) -> Result<Vec<(String, i64)>>;
     fn list_chat_sessions_by_status_impl(
         &self,
         user_id: &str,
@@ -237,6 +242,43 @@ impl PostgresChatSessionStorage for PostgresStorage {
             limit,
             false,
         )
+    }
+
+    fn count_child_chat_sessions_impl(
+        &self,
+        user_id: &str,
+        parent_session_ids: &[String],
+    ) -> Result<Vec<(String, i64)>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let parents: Vec<String> = parent_session_ids
+            .iter()
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .collect();
+        if cleaned_user.is_empty() || parents.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::with_capacity(parents.len() + 1);
+        params.push(Box::new(cleaned_user.to_string()));
+        let mut placeholders = Vec::with_capacity(parents.len());
+        for parent in &parents {
+            params.push(Box::new(parent.clone()));
+            placeholders.push(format!("${}", params.len()));
+        }
+        let sql = format!(
+            "SELECT parent_session_id, COUNT(*) FROM chat_sessions \
+             WHERE user_id = $1 AND parent_session_id IN ({}) GROUP BY parent_session_id",
+            placeholders.join(", ")
+        );
+        let params_ref: Vec<&(dyn ToSql + Sync)> =
+            params.iter().map(|value| value.as_ref()).collect();
+        let rows = conn.query(&sql, &params_ref)?;
+        Ok(rows
+            .iter()
+            .map(|row| (row.get::<_, String>(0), row.get::<_, i64>(1)))
+            .collect())
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -25,6 +25,7 @@ pub use lsp::LspManager;
 pub use ops::{benchmark, monitor, performance, throughput};
 pub use orchestrator::constants as orchestrator_constants;
 pub use services::chat_cancel_marker::persist_user_cancelled_turn_marker;
+pub use services::user_world::UserWorldRealtimeEvent;
 pub use services::runtime::thread::{ThreadCancelSettlement, ThreadSubmitOutcome};
 pub use services::subagents::list_parent_subagents;
 pub use services::thread_catalog::{

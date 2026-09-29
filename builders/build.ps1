@@ -2,7 +2,6 @@ param(
   [Alias("t")][ValidateSet("desktop", "cli")][string]$Target = "",
   [Alias("a")][ValidateSet("linux-arm64", "linux-amd64", "win7-x86")][string]$Arch = "",
   [switch]$All,
-  [switch]$AppImage,
   [string]$KylinBuilderRoot = "",
   [string]$Win7BuilderRoot = "",
   [string]$Image = "rcho-slint-arm64-ubuntu18:latest",
@@ -24,25 +23,22 @@ $KylinBuilderRoot = [IO.Path]::GetFullPath($KylinBuilderRoot)
 $Win7BuilderRoot = [IO.Path]::GetFullPath($Win7BuilderRoot)
 
 if ($All) {
-  if ($Target -or $Arch -or $AppImage) { throw "-All selects every distribution; do not combine it with -Target, -Arch, or -AppImage." }
+  if ($Target -or $Arch) { throw "-All selects every distribution; do not combine it with -Target or -Arch." }
 } elseif (-not $Target -or -not $Arch) {
   throw "Specify both -t desktop|cli and -a linux-arm64|linux-amd64|win7-x86, or use -All."
-}
-if ($AppImage -and ($Target -ne "desktop" -or $Arch -ne "linux-amd64")) {
-  throw "-AppImage is only valid for -Target desktop -Arch linux-amd64. CLI never uses AppImage."
 }
 
 function Invoke-LinuxBuild {
   param(
     [ValidateSet("desktop", "cli")][string]$SelectedTarget,
-    [ValidateSet("linux-arm64", "linux-amd64")][string]$SelectedArch,
-    [switch]$Package
+    [ValidateSet("linux-arm64", "linux-amd64")][string]$SelectedArch
   )
 
   if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "docker.exe is required for the Linux/Win32 Docker build dispatcher."
   }
-  $needsRuntime = $SelectedTarget -eq "desktop" -and ($SelectedArch -eq "linux-arm64" -or $Package)
+  # Both Linux Desktop distributions are AppImages; CLI stays a plain ELF.
+  $needsRuntime = $SelectedTarget -eq "desktop"
   $runtime = if ($SelectedArch -eq "linux-arm64") { $AppImageRuntimeArm64 } else { $AppImageRuntimeAmd64 }
   if ($needsRuntime -and -not $runtime) {
     throw "An AppImage runtime is required for $SelectedArch Desktop packaging."
@@ -73,7 +69,6 @@ function Invoke-LinuxBuild {
     $Image,
     "bash", "/workspace/build.sh", "-t", $SelectedTarget, "-a", $SelectedArch, "--native"
   )
-  if ($Package) { $dockerArgs += "--appimage" }
   & docker @dockerArgs
   if ($LASTEXITCODE -ne 0) { throw "Docker build failed with exit code $LASTEXITCODE" }
 }
@@ -91,7 +86,7 @@ if ($All) {
     throw "-All packages both Linux Desktop AppImages. Provide -AppImageRuntimeArm64 and -AppImageRuntimeAmd64."
   }
   foreach ($selectedArch in @("linux-arm64", "linux-amd64")) {
-    Invoke-LinuxBuild -SelectedTarget desktop -SelectedArch $selectedArch -Package:($selectedArch -eq "linux-amd64")
+    Invoke-LinuxBuild -SelectedTarget desktop -SelectedArch $selectedArch
     Invoke-LinuxBuild -SelectedTarget cli -SelectedArch $selectedArch
   }
   Invoke-Win7Build -SelectedTarget desktop
@@ -102,5 +97,5 @@ if ($All) {
 if ($Arch -eq "win7-x86") {
   Invoke-Win7Build -SelectedTarget $Target
 } else {
-  Invoke-LinuxBuild -SelectedTarget $Target -SelectedArch $Arch -Package:$AppImage
+  Invoke-LinuxBuild -SelectedTarget $Target -SelectedArch $Arch
 }

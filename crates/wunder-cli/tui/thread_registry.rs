@@ -273,11 +273,25 @@ impl ThreadRegistry {
     }
 
     fn evict_inactive(&mut self) {
+        // Projections hold queued events that were already consumed from the
+        // stream receiver. Evicting a thread with a live stream or a pending
+        // approval would silently drop that work, so only projections without
+        // either are evictable. When every inactive projection is protected,
+        // keep the current surface: live streams bound this soft overflow.
         while self.projections.len() > MAX_THREAD_PROJECTIONS {
             let Some(id) = self
                 .projections
                 .keys()
-                .find(|id| self.active_thread_id.as_deref() != Some(id.as_str()))
+                .filter(|id| self.active_thread_id.as_deref() != Some(id.as_str()))
+                .filter(|id| {
+                    !self.streams.contains_key(*id)
+                        && !self.approval_streams.contains_key(*id)
+                        && !self
+                            .pending_approvals
+                            .get(*id)
+                            .is_some_and(|queue| !queue.is_empty())
+                })
+                .next()
                 .cloned()
             else {
                 break;
@@ -350,5 +364,132 @@ mod tests {
         registry.remove_stream("a");
         assert!(!registry.has_stream("a"));
         assert!(registry.has_stream("b"));
+    }
+
+    fn delta_event(sequence: usize) -> StreamEvent {
+        StreamEvent {
+            event: "llm_output_delta".into(),
+            data: serde_json::json!({ "text": format!("t{sequence}") }),
+            id: None,
+            timestamp: None,
+        }
+    }
+
+    /// Load gate from the plan (section 6): at least 20 directory threads with
+    /// 4 live streams, high-frequency deltas on every stream. Queues stay
+    /// bounded, the visible thread keeps every character until the queue
+    /// overflows, and overflow flags only the affected thread for replay.
+    #[test]
+    fn stress_directory_threads_and_live_streams_keep_queues_bounded_and_isolated() {
+        let mut registry = ThreadRegistry::new("visible");
+        let streaming = ["stream-1", "stream-2", "stream-3", "stream-4"];
+        let catalog_threads = 20usize;
+        let deltas_per_stream = 600usize;
+
+        // Directory threads without streams only carry catalog metadata.
+        for index in 0..catalog_threads {
+            let id = format!("idle-{index}");
+            registry.projection_mut(&id);
+        }
+        for id in streaming {
+            let (_tx, rx) = mpsc::channel(1);
+            registry.insert_stream(id.to_string(), rx);
+            registry.projection_mut(id);
+        }
+
+        // High-frequency deltas on all four streams; "visible" is one of them.
+        let visible_stream = "stream-1";
+        for sequence in 0..deltas_per_stream {
+            for (stream_index, id) in streaming.iter().enumerate() {
+                let event = delta_event(sequence);
+                registry.record_event(id, (sequence + 1) as i64);
+                registry.projection_mut(id).queue_event(event);
+                let _ = stream_index;
+            }
+        }
+
+        // Bounded queues everywhere.
+        for id in streaming {
+            let projection = registry.projection(id).expect("streaming projection kept");
+            assert!(projection.pending_events.len() <= MAX_PENDING_EVENTS);
+        }
+        assert!(registry.projections.len() <= MAX_THREAD_PROJECTIONS);
+
+        // The visible thread drains through the per-frame budget; no silent
+        // loss while the queue never overflows.
+        registry.activate(visible_stream);
+        let mut drained = Vec::new();
+        loop {
+            let batch = registry.take_pending_events(visible_stream, 400);
+            if batch.is_empty() {
+                break;
+            }
+            for event in batch {
+                if let Some(text) = event.data.get("text").and_then(serde_json::Value::as_str) {
+                    drained.push(text.to_string());
+                }
+            }
+        }
+        let visible_text: String = drained.join("");
+        let expected: String = (0..deltas_per_stream).map(|s| format!("t{s}")).collect();
+        assert_eq!(visible_text, expected);
+        assert!(!registry.needs_replay(visible_stream));
+
+        // Overflow on one background thread flags replay for that thread only.
+        let overflowing = "stream-2";
+        for sequence in 0..=(MAX_PENDING_EVENTS + 50) {
+            registry.projection_mut(overflowing).queue_event(delta_event(sequence));
+            registry.record_event(overflowing, (sequence + 1) as i64);
+        }
+        assert!(registry.needs_replay(overflowing));
+        assert!(registry.replay_from(overflowing).is_some());
+        for id in ["stream-3", "stream-4"] {
+            assert!(!registry.needs_replay(id), "{id} must not be flagged");
+        }
+
+        // Draining one thread never returns another thread's events.
+        let batch = registry.take_pending_events(overflowing, 64);
+        assert_eq!(batch.len(), 64);
+        let other_batch = registry.take_pending_events("stream-3", 16);
+        assert_eq!(other_batch.len(), 16);
+    }
+
+    /// Eviction keeps streaming and approval-holding projections even when the
+    /// directory grows past the cache cap; only quiet threads are evicted.
+    #[test]
+    fn eviction_protects_streams_and_pending_approvals() {
+        let mut registry = ThreadRegistry::new("visible");
+        let protected_stream = "protected-stream";
+        let (_tx, rx) = mpsc::channel(1);
+        registry.insert_stream(protected_stream.to_string(), rx);
+        registry.projection_mut(protected_stream);
+        let (respond_to, _respond) = tokio::sync::oneshot::channel();
+        registry.queue_approval(
+            "protected-approval",
+            wunder_server::approval::ApprovalRequest {
+                id: "approval-1".into(),
+                kind: wunder_server::approval::ApprovalRequestKind::Exec,
+                tool: "sample_tool".into(),
+                args: serde_json::Value::Null,
+                summary: "sample approval".into(),
+                detail: serde_json::Value::Null,
+                respond_to,
+            },
+        );
+        drop(_respond);
+        registry.projection_mut("protected-approval");
+        let total = MAX_THREAD_PROJECTIONS + 24;
+        for index in 0..total {
+            registry.projection_mut(&format!("quiet-{index}"));
+        }
+        registry.activate("visible");
+        assert!(registry.projection(protected_stream).is_some());
+        assert!(registry.projection("protected-approval").is_some());
+        let quiet_remaining = registry
+            .projections
+            .keys()
+            .filter(|id| id.starts_with("quiet-"))
+            .count();
+        assert!(quiet_remaining < total);
     }
 }

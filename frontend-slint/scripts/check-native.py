@@ -72,7 +72,11 @@ def main():
             while process.poll() is None:
                 try:
                     peak = max(peak, watched.memory_info().rss)
-                    assert not watched.children(), "native runtime spawned a bridge child"
+                    # Debug builds keep a console, so Windows auto-spawns
+                    # conhost. Only a real bridge/runtime child is a failure.
+                    children = [c for c in watched.children()
+                                if c.name().lower() not in ("conhost.exe", "openconsole.exe")]
+                    assert not children, "native runtime spawned a bridge child"
                     connections = getattr(watched, "net_connections", None) or watched.connections
                     assert not any(c.status == psutil.CONN_LISTEN for c in connections()), "native UI opened a listening socket"
                 except psutil.NoSuchProcess:

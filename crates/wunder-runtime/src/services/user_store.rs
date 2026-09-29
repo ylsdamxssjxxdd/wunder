@@ -810,6 +810,15 @@ impl UserStore {
             .list_chat_sessions(user_id, agent_id, parent_session_id, offset, limit)
     }
 
+    pub fn count_child_chat_sessions(
+        &self,
+        user_id: &str,
+        parent_session_ids: &[String],
+    ) -> Result<Vec<(String, i64)>> {
+        self.storage
+            .count_child_chat_sessions(user_id, parent_session_ids)
+    }
+
     pub fn list_chat_sessions_by_status(
         &self,
         user_id: &str,

@@ -26,6 +26,11 @@ pub(super) trait SqliteChatSessionStorage {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)>;
+    fn count_child_chat_sessions_impl(
+        &self,
+        user_id: &str,
+        parent_session_ids: &[String],
+    ) -> Result<Vec<(String, i64)>>;
     fn list_chat_sessions_by_status_impl(
         &self,
         user_id: &str,
@@ -250,6 +255,46 @@ impl SqliteChatSessionStorage for SqliteStorage {
         )
     }
 
+    fn count_child_chat_sessions_impl(
+        &self,
+        user_id: &str,
+        parent_session_ids: &[String],
+    ) -> Result<Vec<(String, i64)>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let parents: Vec<String> = parent_session_ids
+            .iter()
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .collect();
+        if cleaned_user.is_empty() || parents.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let placeholders = parents
+            .iter()
+            .map(|_| "?".to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT parent_session_id, COUNT(*) FROM chat_sessions \
+             WHERE user_id = ? AND parent_session_id IN ({placeholders}) \
+             GROUP BY parent_session_id"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut params_vec: Vec<SqlValue> = Vec::with_capacity(parents.len() + 1);
+        params_vec.push(SqlValue::from(cleaned_user.to_string()));
+        for parent in &parents {
+            params_vec.push(SqlValue::from(parent.clone()));
+        }
+        let rows = stmt
+            .query_map(params_from_iter(params_vec.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<(String, i64)>, _>>()?;
+        Ok(rows)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn list_chat_sessions_filtered_impl(
         &self,
@@ -455,4 +500,107 @@ fn map_chat_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatSession
         spawn_label: row.get(11)?,
         spawned_by: row.get(12)?,
     })
+}
+
+#[cfg(test)]
+mod child_directory_tests {
+    use super::*;
+    use crate::storage::sqlite::SqliteStorage;
+    use crate::storage::*;
+    use tempfile::tempdir;
+
+    fn build_storage() -> SqliteStorage {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("chat-session-directory.db");
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize sqlite");
+        // Keep the tempdir alive for the whole test by leaking it; the path is
+        // already embedded in the storage handle.
+        std::mem::forget(dir);
+        storage
+    }
+
+    fn session(user: &str, id: &str, parent: Option<&str>, updated_at: f64) -> ChatSessionRecord {
+        ChatSessionRecord {
+            session_id: id.to_string(),
+            user_id: user.to_string(),
+            title: format!("thread {id}"),
+            status: "active".to_string(),
+            created_at: updated_at,
+            updated_at,
+            last_message_at: updated_at,
+            agent_id: None,
+            tool_overrides: Vec::new(),
+            parent_session_id: parent.map(str::to_string),
+            parent_message_id: None,
+            spawn_label: parent.map(|_| "subagent".to_string()),
+            spawned_by: None,
+        }
+    }
+
+    /// Directory load gate: a 24-thread catalog pages with correct totals and
+    /// child counts stay per-parent.
+    #[test]
+    fn directory_pages_twenty_four_threads_and_counts_children() {
+        let storage = build_storage();
+        let user = "catalog-user";
+        for index in 0..20 {
+            let record = session(
+                user,
+                &format!("root-{index:02}"),
+                None,
+                1_000.0 + index as f64,
+            );
+            storage.upsert_chat_session(&record).expect("upsert root");
+        }
+        for index in 0..3 {
+            let record = session(user, &format!("child-a-{index}"), Some("root-00"), 2_000.0);
+            storage.upsert_chat_session(&record).expect("upsert child a");
+        }
+        let record = session(user, "child-b-0", Some("root-01"), 2_100.0);
+        storage.upsert_chat_session(&record).expect("upsert child b");
+
+        let (page, total) = storage
+            .list_chat_sessions(user, None, None, 0, 10)
+            .expect("first page");
+        assert_eq!(total, 24);
+        assert_eq!(page.len(), 10);
+
+        let mut seen = std::collections::HashSet::new();
+        let mut offset = 0;
+        while let Some((page, _)) = storage
+            .list_chat_sessions(user, None, None, offset, 10)
+            .ok()
+            .filter(|(page, _)| !page.is_empty())
+        {
+            for record in &page {
+                assert!(seen.insert(record.session_id.clone()));
+            }
+            offset += page.len() as i64;
+        }
+        assert_eq!(seen.len(), 24);
+
+        let parents: Vec<String> = vec!["root-00".into(), "root-01".into(), "root-02".into()];
+        let counts = storage
+            .count_child_chat_sessions(user, &parents)
+            .expect("child counts");
+        let mut counts = counts.into_iter().collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(counts.remove("root-00"), Some(3));
+        assert_eq!(counts.remove("root-01"), Some(1));
+        // Parents without children simply have no row, per the trait contract.
+        assert_eq!(counts.remove("root-02"), None);
+
+        let (children, child_total) = storage
+            .list_chat_sessions(user, None, Some("root-00"), 0, 100)
+            .expect("children page");
+        assert_eq!(child_total, 3);
+        assert_eq!(children.len(), 3);
+
+        // Another user's threads never leak across scopes.
+        let (other, other_total) = storage
+            .list_chat_sessions("someone-else", None, None, 0, 100)
+            .expect("other user page");
+        assert_eq!(other_total, 0);
+        assert!(other.is_empty());
+    }
 }

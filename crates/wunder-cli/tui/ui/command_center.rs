@@ -211,6 +211,11 @@ fn draw_details(frame: &mut Frame, area: Rect, view: &CommandCenterView, is_zh: 
             )),
             Line::from(row.spawn_label.clone().unwrap_or_else(|| "-".to_string())),
             Line::from(Span::styled(
+                if is_zh { "子线程" } else { "Child threads" },
+                theme::secondary_text(),
+            )),
+            Line::from(row.child_threads.to_string()),
+            Line::from(Span::styled(
                 if is_zh { "会话" } else { "Session" },
                 theme::secondary_text(),
             )),
@@ -328,6 +333,7 @@ mod tests {
             pending_approvals: 2,
             pending_events: 4,
             stream_active: true,
+            child_threads: 2,
         };
         for width in [32, 40, 60, 90] {
             assert!(row_line(&row, true, width, true).width() <= usize::from(width));

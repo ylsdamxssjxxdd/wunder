@@ -48,6 +48,12 @@ pub(super) trait SqliteThreadLogStorage {
         before: Option<i64>,
         limit: i64,
     ) -> Result<Vec<Value>>;
+    fn get_thread_log_counts_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        include_internal: bool,
+    ) -> Result<(i64, i64)>;
     fn get_thread_turn_impl(
         &self,
         user_id: &str,
@@ -390,6 +396,26 @@ impl SqliteThreadLogStorage for SqliteStorage {
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             rows
         })
+    }
+    fn get_thread_log_counts_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        include_internal: bool,
+    ) -> Result<(i64, i64)> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let user_turns = conn.query_row(
+            "SELECT COUNT(*) FROM thread_turns WHERE user_id=? AND session_id=? AND trigger_kind='user'",
+            params![user_id, session_id],
+            |r| r.get(0),
+        )?;
+        let items = conn.query_row(
+            "SELECT COUNT(*) FROM thread_items WHERE user_id=? AND session_id=? AND (? OR visibility='user')",
+            params![user_id, session_id, include_internal],
+            |r| r.get(0),
+        )?;
+        Ok((user_turns, items))
     }
     fn get_thread_turn_impl(
         &self,

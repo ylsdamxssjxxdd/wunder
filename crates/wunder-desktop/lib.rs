@@ -8,9 +8,11 @@ pub mod native;
 pub mod runtime;
 
 pub use native::{
-    AgentRecord, AgentSettingsEdit, CronRecord, DesktopSettings, Directory, FileRecord,
+    AgentRecord, AgentSettingsEdit, CronRecord, CronRunRecord, DesktopSettings, Directory,
+    FileRecord, NativeCronJobEdit,
     LanPeerRecord, LanSettings, ModelEdit, ModelRecord, NativeChatAttachment, NativeChatEvent,
     NativeChatInput, NativeDesktop, NativeMessage, NativeProfile, NativeSession, NativeStream,
-    ToolRecord, WorldContact, WorldGroup, WorldMessage,
+    ToolRecord, WorldContact, WorldEventFeed, WorldGroup, WorldGroupDetail, WorldGroupMember,
+    WorldMessage, WorldMessageTracker,
 };
 pub use runtime::DesktopRuntime;

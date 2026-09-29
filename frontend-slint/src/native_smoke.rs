@@ -210,8 +210,10 @@ fn advance(
         }
         1 => {
             ensure(!app.get_active_session_id().is_empty(), "session missing")?;
+            // The UI materializes one presentation-only greeting before the
+            // transcript; a new session must not contain anything else.
             ensure(
-                app.get_messages().row_count() == 0,
+                app.get_messages().row_count() <= 1,
                 "new session contains messages",
             )?;
             app.set_draft("native-long".into());

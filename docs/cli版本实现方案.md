@@ -409,3 +409,12 @@ N1、N2 是 N3–N5 的前置条件：在没有线程目录、线程作用域状
 - 前一节点 `cargo test -p wunder-cli --bin wunder-cli tui:: --no-fail-fast`：103 项通过。
 - 实际日志单元改为 `TranscriptCell`，保留结构化工具内容和 Markdown 缓存；渲染、增量更新、工具结果回填及线程窗口保存使用同一份单元，移除只在创建时追加、此后不更新的纯文本 `TranscriptStore` 副本。
 - 这是 N3 的数据源统一步骤，尚不代表 N3/N4 全部验收完成；类型化审批/询问单元、长文本增量预算以及完整工具调用键仍需按原节点逐项验证。
+
+
+### 工具调用键与目录服务收敛进展（2026-09-29）
+
+- **N4 工具卡关联**：结果回填全面改用 `ToolCallKey { turn_id, tool_call_id }`（会话作用域由线程视图状态隐含）。补丁、命令与通用工具的完成函数不再使用“从后向前找第一个同名 pending 卡片”的反查路径；无稳定 ID 的调用卡进入有界临时队列（上限 32），结果携带稳定 ID 时显式迁移索引，完全无 ID 的流按到达顺序消费，同名并行调用在携带 ID 时不串卡。跨卡索引随日志裁剪同步调整。
+- **回放保留期缺口检测**：因 token delta 占用事件 ID 但不持久化，ID 相邻跳变是常态，不能作为缺口信号；现以“投影已应用过事件但持久事件水位为 0”为诚实信号，出现时明确提示实时事件超出保留期并降级为会话历史展示。
+- **N1 目录服务修正**：关键词搜索从“分页后过滤”改为服务层分页执行（有界扫描最多 10 页 × 100 条，扫描外的匹配不返回）；`ThreadCatalogService::snapshot` 改为按会话 ID 直接读取并用父线程筛选统计子线程数，不再用搜索模拟。存储层新增 `count_child_chat_sessions` 批量子线程计数（SQLite/PostgreSQL 双实现，`UserStore` 委托）。
+- **N5/N6 呈现**：命令中心搜索按 Enter 后走目录服务查询（本地输入仍对已加载页即时过滤）；详情栏新增“子线程”计数。类型化审批/询问单元已由 `LogKind::Approval` / `LogKind::Inquiry` 承载（`!` / `?` 前缀）。
+- 验证状态：`cargo check --workspace` 通过；`cargo test -p wunder-cli` 169 项通过（含新增 ToolCallKey/临时卡匹配测试），`cargo test -p wunder-core --lib` 80 项通过；`cargo test -p wunder-runtime` 存在 15 项与本方案无关的既有失败（tools/catalog、prompting、worker_card 区域，属并行开发中的路径解析与文案断言）。剩余发布门禁：多线程高频 delta 压测、Windows 7 x86 与 Ubuntu 18.04 目标构建仍待执行。

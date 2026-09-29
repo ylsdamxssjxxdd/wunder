@@ -714,17 +714,20 @@ pub(crate) struct ResumeSessionSummary {
     pub spawned_by: Option<String>,
     pub updated_at: f64,
     pub last_message_at: f64,
+    pub child_threads: i64,
 }
 
 async fn query_recent_sessions(
     runtime: &CliRuntime,
     limit: i64,
+    search: Option<&str>,
 ) -> Result<Vec<ResumeSessionSummary>> {
     let catalog = wunder_server::ThreadCatalogService::new((*runtime.state).clone());
     let page = catalog
         .list(wunder_server::ThreadListQuery {
             user_id: runtime.user_id.clone(),
             limit,
+            search: search.map(str::to_string),
             ..Default::default()
         })
         .await?;
@@ -741,6 +744,7 @@ async fn query_recent_sessions(
             spawned_by: record.spawned_by,
             updated_at: record.updated_at,
             last_message_at: record.last_message_at,
+            child_threads: record.child_threads,
         })
         .collect())
 }
@@ -749,15 +753,23 @@ pub(crate) async fn list_recent_sessions(
     runtime: &CliRuntime,
     limit: usize,
 ) -> Result<Vec<ResumeSessionSummary>> {
+    list_recent_sessions_searched(runtime, limit, None).await
+}
+
+pub(crate) async fn list_recent_sessions_searched(
+    runtime: &CliRuntime,
+    limit: usize,
+    search: Option<&str>,
+) -> Result<Vec<ResumeSessionSummary>> {
     let limit = limit.clamp(1, 200) as i64;
-    let mut sessions = query_recent_sessions(runtime, limit).await?;
+    let mut sessions = query_recent_sessions(runtime, limit, search).await?;
     if !sessions.is_empty() {
         return Ok(sessions);
     }
 
     if let Some(saved_session) = runtime.load_saved_session() {
         let _ = ensure_cli_session_record(runtime, &saved_session, None).await?;
-        sessions = query_recent_sessions(runtime, limit).await?;
+        sessions = query_recent_sessions(runtime, limit, search).await?;
     }
     Ok(sessions)
 }

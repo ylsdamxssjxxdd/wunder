@@ -507,6 +507,34 @@ async fn admin_monitor_detail(
             map.insert("agent_name".into(), json!(name));
         }
     }
+    // `get_record()` retains raw events and counters. Re-apply the canonical
+    // derived timing projection so the administrator and user detail views
+    // expose the same TTFT, prefill, and decode metrics.
+    if let Some(Value::Object(overview)) = state.monitor.get_log_overview(&cleaned) {
+        if let Some(map) = session.as_object_mut() {
+            for key in [
+                "elapsed_s",
+                "user_rounds",
+                "tool_calls",
+                "model_request_count",
+                "quota_used",
+                "consumed_tokens",
+                "ttft_ms",
+                "prefill_tokens",
+                "prefill_duration_s",
+                "prefill_speed_tps",
+                "prefill_speed_lower_bound",
+                "decode_tokens",
+                "decode_duration_s",
+                "decode_speed_tps",
+                "event_total",
+            ] {
+                if let Some(value) = overview.get(key) {
+                    map.insert(key.to_string(), value.clone());
+                }
+            }
+        }
+    }
     let limit = query
         .limit
         .unwrap_or(ADMIN_MONITOR_DETAIL_EVENT_PAGE_MAX_LIMIT)
@@ -514,13 +542,16 @@ async fn admin_monitor_detail(
     let storage = state.storage.clone();
     let owner = user_id.clone();
     let thread = cleaned.clone();
-    let turns = crate::core::blocking::run_db("api.admin.thread_log.detail", move || {
-        storage.list_thread_turns(&owner, &thread, None, limit)
-    })
-    .await
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let (turns, (user_round_total, item_total)) =
+        crate::core::blocking::run_db("api.admin.thread_log.detail", move || {
+            let turns = storage.list_thread_turns(&owner, &thread, None, limit)?;
+            let counts = storage.get_thread_log_counts(&owner, &thread, true)?;
+            Ok::<_, anyhow::Error>((turns, counts))
+        })
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(
-        json!({"session":session,"events":[],"events_has_more":!turns.is_empty() && turns.len()>=limit as usize,"event_total":0,"thread_turns":turns,"feedback":[]}),
+        json!({"session":session,"events":[],"events_has_more":!turns.is_empty() && turns.len()>=limit as usize,"event_total":item_total,"user_round_total":user_round_total,"thread_turns":turns,"feedback":[]}),
     ))
 }
 
@@ -569,18 +600,21 @@ async fn admin_thread_turns(
     let storage = state.storage.clone();
     let lookup = session_id.clone();
     let limit = query.limit.unwrap_or(50).clamp(1, 100);
-    let turns = crate::core::blocking::run_db("api.admin.thread_log.turns", move || {
-        storage.list_thread_turns(&user_id, &lookup, query.before, limit)
-    })
-    .await
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let (turns, (user_round_total, item_total)) =
+        crate::core::blocking::run_db("api.admin.thread_log.turns", move || {
+            let turns = storage.list_thread_turns(&user_id, &lookup, query.before, limit)?;
+            let counts = storage.get_thread_log_counts(&user_id, &lookup, true)?;
+            Ok::<_, anyhow::Error>((turns, counts))
+        })
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let next_before = turns
         .last()
         .and_then(|v| v.get("user_turn_index"))
         .and_then(Value::as_i64);
     let has_more = turns.len() >= limit as usize;
     Ok(Json(
-        json!({"data":{"session_id":session_id,"turns":turns,"next_before":next_before,"has_more":has_more}}),
+        json!({"data":{"session_id":session_id,"turns":turns,"user_round_total":user_round_total,"item_total":item_total,"next_before":next_before,"has_more":has_more}}),
     ))
 }
 

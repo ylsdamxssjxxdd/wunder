@@ -32,6 +32,8 @@ use crate::tui::thread_registry::ThreadRegistry;
 
 const MAX_LOG_ENTRIES: usize = super::transcript::MAX_TRANSCRIPT_CELLS;
 const MAX_LOG_TOTAL_CHARS: usize = super::transcript::MAX_TRANSCRIPT_CHARS;
+const MAX_PENDING_TEMP_TOOL_CELLS: usize = 32;
+const REPLAY_PAGE_SIZE: usize = 512;
 const MAX_DRAIN_MESSAGES_PER_TICK_BASE: usize = 400;
 const MAX_DRAIN_MESSAGES_PER_TICK_CATCHUP: usize = 1400;
 const STREAM_CATCHUP_ENTER_DEPTH: usize = 120;
@@ -135,6 +137,64 @@ pub struct PopupView {
     pub selected_index: Option<usize>,
 }
 
+/// Stable identity of one tool invocation inside a thread. The session scope is
+/// implied: these maps live inside the thread-scoped view state and never cross
+/// threads. Results are matched back to their card through this key only.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct ToolCallKey {
+    pub turn_id: Option<String>,
+    pub tool_call_id: String,
+}
+
+impl ToolCallKey {
+    fn from_payload(payload: &Value) -> Option<Self> {
+        let tool_call_id = payload
+            .get("tool_call_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|id| !id.is_empty())?;
+        let turn_id = payload
+            .get("turn_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string);
+        Some(Self {
+            turn_id,
+            tool_call_id: tool_call_id.to_string(),
+        })
+    }
+}
+
+/// Which pending card flavor a temp cell stands in for. Cards created by events
+/// without a stable `tool_call_id` are migrated explicitly once the result
+/// carries one; same-kind FIFO keeps arrival order for fully ID-less streams.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TempToolKind {
+    Patch,
+    Command,
+    Generic(String),
+}
+
+impl TempToolKind {
+    fn matches_result(&self, tool: &str, special: Option<&SpecialLogEntry>) -> bool {
+        match self {
+            Self::Patch => special.is_some_and(SpecialLogEntry::is_pending_patch),
+            Self::Command => special.is_some_and(SpecialLogEntry::is_pending_command),
+            Self::Generic(name) => {
+                name.eq_ignore_ascii_case(tool)
+                    && special.is_some_and(|entry| entry.is_pending_tool_named(name))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PendingTempToolCell {
+    kind: TempToolKind,
+    index: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct CommandCenterRow {
     pub session_id: String,
@@ -150,6 +210,7 @@ pub struct CommandCenterRow {
     pub pending_approvals: usize,
     pub pending_events: usize,
     pub stream_active: bool,
+    pub child_threads: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -338,7 +399,8 @@ pub struct TuiApp {
     reasoning_markdown_stream: Option<StreamedMarkdownState>,
     command_sessions: CommandSessionDisplayState,
     command_log_indices: HashMap<String, usize>,
-    tool_log_indices: HashMap<String, usize>,
+    tool_log_indices: HashMap<ToolCallKey, usize>,
+    pending_temp_tool_cells: VecDeque<PendingTempToolCell>,
     thread_registry: ThreadRegistry,
     thread_ui_cache: VecDeque<(String, ThreadUiState)>,
     active_stream_sessions: HashSet<String>,
@@ -456,6 +518,7 @@ impl TuiApp {
             command_sessions: CommandSessionDisplayState::default(),
             command_log_indices: HashMap::new(),
             tool_log_indices: HashMap::new(),
+            pending_temp_tool_cells: VecDeque::new(),
             thread_registry: ThreadRegistry::new(session_id.clone()),
             thread_ui_cache: VecDeque::new(),
             active_stream_sessions: HashSet::new(),
@@ -1294,6 +1357,7 @@ impl TuiApp {
                     .projection(&item.session_id)
                     .map_or(0, |projection| projection.pending_events.len()),
                 stream_active: self.thread_registry.has_stream(&item.session_id),
+                child_threads: item.child_threads,
             });
         }
         Some(CommandCenterView {
@@ -2058,7 +2122,14 @@ impl TuiApp {
             return self.open_command_center().await;
         };
         let selected_session_id = previous.selected_session_id(self.session_id.as_str());
-        let sessions = crate::list_recent_sessions(&self.runtime, 120).await?;
+        let search = previous.search.trim().to_string();
+        // Keyword search runs at the catalog service level so matches beyond
+        // the first store page are reachable; an empty term lists normally.
+        let sessions = if search.is_empty() {
+            crate::list_recent_sessions(&self.runtime, 120).await?
+        } else {
+            crate::list_recent_sessions_searched(&self.runtime, 100, Some(&search)).await?
+        };
         let mut refreshed = CommandCenterState::new(sessions, self.session_id.as_str());
         refreshed.filter = previous.filter;
         refreshed.search = previous.search;
@@ -2108,7 +2179,12 @@ impl TuiApp {
                     center.searching = false;
                     center.search.clear();
                 }
-                KeyCode::Enter => center.searching = false,
+                // Confirming the search queries the catalog service; typing
+                // keeps filtering the already-loaded bounded page locally.
+                KeyCode::Enter => {
+                    center.searching = false;
+                    return self.refresh_command_center().await;
+                }
                 KeyCode::Backspace => {
                     center.search.pop();
                     center.reconcile_selection(self.session_id.as_str());
@@ -3506,6 +3582,7 @@ impl TuiApp {
                     self.logs.clear();
                     self.command_log_indices.clear();
                     self.tool_log_indices.clear();
+                    self.pending_temp_tool_cells.clear();
                     self.reset_scrollback_archive();
                     self.invalidate_transcript_metrics();
                     self.active_assistant = None;
@@ -4248,6 +4325,7 @@ impl TuiApp {
         self.command_sessions = CommandSessionDisplayState::default();
         self.command_log_indices.clear();
         self.tool_log_indices.clear();
+        self.pending_temp_tool_cells.clear();
         self.reset_scrollback_archive();
         self.invalidate_transcript_metrics();
 
@@ -4290,17 +4368,33 @@ impl TuiApp {
         let storage = self.runtime.state.storage.clone();
         let target = session_id.to_string();
         let result = tokio::task::spawn_blocking(move || {
-            storage.load_stream_events(&target, after_event_id.max(0), 512)
+            let records = storage.load_stream_events(
+                &target,
+                after_event_id.max(0),
+                REPLAY_PAGE_SIZE as i64,
+            )?;
+            let watermark = storage.get_max_stream_event_id(&target)?;
+            anyhow::Ok((records, watermark))
         })
         .await;
-        let records = match result {
-            Ok(Ok(records)) => records,
+        let (records, watermark) = match result {
+            Ok(Ok(pair)) => pair,
             _ => {
                 // Retain the cursor: a failed read must never acknowledge replay.
                 return;
             }
         };
-        let full_page = records.len() == 512;
+        // Delta frames occupy event IDs without being persisted, so ID gaps in a
+        // replay page are normal. The honest retention signal is narrower: this
+        // view already applied events, but the durable stream holds nothing at
+        // all — the retention window removed them. Degrade visibly instead of
+        // presenting a silently shortened history.
+        if records.is_empty() && watermark <= 0 && after_event_id > 0 {
+            self.notify_replay_history_expired(session_id);
+            self.thread_registry.clear_replay(session_id);
+            return;
+        }
+        let full_page = records.len() == REPLAY_PAGE_SIZE;
         let mut cursor = after_event_id;
         for record in records {
             let Some(event) = persisted_stream_event(record) else {
@@ -4315,6 +4409,19 @@ impl TuiApp {
         } else if !full_page {
             self.thread_registry.clear_replay(session_id);
         }
+    }
+
+    fn notify_replay_history_expired(&mut self, session_id: &str) {
+        if self.session_id != session_id {
+            return;
+        }
+        let message = if self.is_zh_language() {
+            "该线程的实时事件已超出保留期，无法回放此前的运行记录；当前显示会话历史中保留的消息。"
+                .to_string()
+        } else {
+            "this thread's stream events passed the retention window and cannot be replayed; only retained conversation history is shown".to_string()
+        };
+        self.push_log(LogKind::Info, message);
     }
 
     fn restore_transcript_from_history(&mut self, history: Vec<Value>) -> usize {
@@ -4535,6 +4642,7 @@ impl TuiApp {
         self.command_sessions = CommandSessionDisplayState::default();
         self.command_log_indices.clear();
         self.tool_log_indices.clear();
+        self.pending_temp_tool_cells.clear();
         self.turn_final_answer.clear();
         self.turn_final_stop_reason = None;
         self.begin_turn_metrics();
@@ -5507,26 +5615,20 @@ impl TuiApp {
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
                 let args = payload.get("args").unwrap_or(&Value::Null);
+                let tool_call_key = ToolCallKey::from_payload(payload);
                 if is_apply_patch_tool_name(tool) {
-                    if !self.push_patch_call_log(
-                        args,
-                        payload.get("tool_call_id").and_then(Value::as_str),
-                    ) {
+                    if !self.push_patch_call_log(args, tool_call_key) {
                         self.push_log(LogKind::Tool, format_tool_call_line(tool, args));
                     }
                 } else if is_execute_command_tool_name(tool) {
                     let update = self.command_sessions.register_tool_call(payload);
                     if let Some(update) = update {
                         self.upsert_command_session_log(&update);
-                    } else if !self.push_command_call_log(args) {
+                    } else if !self.push_command_call_log(args, tool_call_key) {
                         self.push_log(LogKind::Tool, format_tool_call_line(tool, args));
                     }
                 } else {
-                    self.push_generic_tool_call_log(
-                        tool,
-                        args,
-                        payload.get("tool_call_id").and_then(Value::as_str),
-                    );
+                    self.push_generic_tool_call_log(tool, args, tool_call_key);
                 }
             }
             "command_session_start" => {
@@ -5689,6 +5791,7 @@ impl TuiApp {
         self.adjust_markdown_stream_indices_after_remove(index);
         self.adjust_command_log_indices_after_remove(index);
         self.adjust_tool_log_indices_after_remove(index);
+        self.adjust_temp_tool_cells_after_remove(index);
         if self.logs.is_empty() {
             self.reset_scrollback_archive();
         }
@@ -5715,6 +5818,7 @@ impl TuiApp {
         self.adjust_markdown_stream_indices_after_remove(0);
         self.adjust_command_log_indices_after_remove(0);
         self.adjust_tool_log_indices_after_remove(0);
+        self.adjust_temp_tool_cells_after_remove(0);
         if self.logs.is_empty() {
             self.reset_scrollback_archive();
         }
@@ -5741,6 +5845,19 @@ impl TuiApp {
             } else {
                 if *index > removed_index {
                     *index = index.saturating_sub(1);
+                }
+                true
+            }
+        });
+    }
+
+    fn adjust_temp_tool_cells_after_remove(&mut self, removed_index: usize) {
+        self.pending_temp_tool_cells.retain_mut(|cell| {
+            if cell.index == removed_index {
+                false
+            } else {
+                if cell.index > removed_index {
+                    cell.index = cell.index.saturating_sub(1);
                 }
                 true
             }
@@ -6071,22 +6188,23 @@ impl TuiApp {
         }
     }
 
-    fn push_patch_call_log(&mut self, args: &Value, tool_call_id: Option<&str>) -> bool {
+    fn push_patch_call_log(&mut self, args: &Value, key: Option<ToolCallKey>) -> bool {
         let Some(special) = build_pending_patch_log(args, self.is_zh_language()) else {
             return false;
         };
         let text = special.summary_text();
         let index = self.push_special_log(LogKind::Tool, text, special);
-        self.register_tool_log_ref(tool_call_id, index);
+        self.register_created_tool_card(key, TempToolKind::Patch, index);
         true
     }
 
-    fn push_command_call_log(&mut self, args: &Value) -> bool {
+    fn push_command_call_log(&mut self, args: &Value, key: Option<ToolCallKey>) -> bool {
         let Some(special) = build_pending_command_log(args, self.is_zh_language()) else {
             return false;
         };
         let text = special.summary_text();
-        self.push_special_log(LogKind::Tool, text, special);
+        let index = self.push_special_log(LogKind::Tool, text, special);
+        self.register_created_tool_card(key, TempToolKind::Command, index);
         true
     }
 
@@ -6144,39 +6262,41 @@ impl TuiApp {
         }
     }
 
-    fn push_generic_tool_call_log(&mut self, tool: &str, args: &Value, tool_call_id: Option<&str>) {
+    fn push_generic_tool_call_log(&mut self, tool: &str, args: &Value, key: Option<ToolCallKey>) {
         let special = build_pending_tool_log(tool, args);
         let text = special.summary_text();
         let index = self.push_special_log(LogKind::Tool, text, special);
-        self.register_tool_log_ref(tool_call_id, index);
+        self.register_created_tool_card(key, TempToolKind::Generic(tool.to_string()), index);
+    }
+
+    fn register_created_tool_card(
+        &mut self,
+        key: Option<ToolCallKey>,
+        kind: TempToolKind,
+        index: usize,
+    ) {
+        if let Some(key) = key {
+            self.tool_log_indices.insert(key, index);
+            return;
+        }
+        self.pending_temp_tool_cells
+            .push_back(PendingTempToolCell { kind, index });
+        while self.pending_temp_tool_cells.len() > MAX_PENDING_TEMP_TOOL_CELLS {
+            self.pending_temp_tool_cells.pop_front();
+        }
     }
 
     fn complete_patch_log(&mut self, payload: &Value) {
         let mut special = build_completed_patch_log(payload, self.is_zh_language());
-        let indexed = payload
-            .get("tool_call_id")
-            .and_then(Value::as_str)
-            .and_then(|id| self.tool_log_indices.get(id).copied())
-            .filter(|index| *index < self.logs.len());
-        if let Some(index) = indexed.or_else(|| {
-            self.logs.iter().rposition(|entry| {
-                entry
-                    .special
-                    .as_ref()
-                    .is_some_and(SpecialLogEntry::is_pending_patch)
-            })
-        }) {
+        let key = ToolCallKey::from_payload(payload);
+        if let Some(index) =
+            self.resolve_pending_tool_cell("", key.as_ref())
+        {
             let previous_special = self.logs.get(index).and_then(|entry| entry.special.clone());
             if let Some(previous_special) = previous_special.as_ref() {
                 special.inherit_patch_preview_from(previous_special);
             }
-            let text = special.summary_text();
-            if let Some(entry) = self.logs.get_mut(index) {
-                entry.text = text;
-                entry.special = Some(special);
-                entry.markdown_cache = None;
-            }
-            self.invalidate_transcript_metrics();
+            self.write_completed_tool_cell(index, special);
             return;
         }
         let text = special.summary_text();
@@ -6187,58 +6307,75 @@ impl TuiApp {
         let Some(special) = build_completed_command_log(payload, self.is_zh_language()) else {
             return false;
         };
-        let text = special.summary_text();
-        if let Some(index) = self.logs.iter().rposition(|entry| {
-            entry
-                .special
-                .as_ref()
-                .is_some_and(SpecialLogEntry::is_pending_command)
-        }) {
-            if let Some(entry) = self.logs.get_mut(index) {
-                entry.text = text;
-                entry.special = Some(special);
-                entry.markdown_cache = None;
-            }
-            self.invalidate_transcript_metrics();
+        let key = ToolCallKey::from_payload(payload);
+        if let Some(index) =
+            self.resolve_pending_tool_cell("", key.as_ref())
+        {
+            self.write_completed_tool_cell(index, special);
             return true;
         }
-        self.push_special_log(LogKind::Tool, text, special);
+        self.push_special_log(LogKind::Tool, special.summary_text(), special);
         true
     }
 
     fn complete_generic_tool_log(&mut self, tool: &str, payload: &Value) {
         let special = build_completed_tool_log(tool, payload);
-        let text = special.summary_text();
-        let indexed = payload
-            .get("tool_call_id")
-            .and_then(Value::as_str)
-            .and_then(|id| self.tool_log_indices.get(id).copied())
-            .filter(|index| *index < self.logs.len());
-        if let Some(index) = indexed.or_else(|| {
-            self.logs.iter().rposition(|entry| {
-                entry
-                    .special
-                    .as_ref()
-                    .is_some_and(|special| special.is_pending_tool_named(tool))
-            })
-        }) {
-            if let Some(entry) = self.logs.get_mut(index) {
-                entry.text = text;
-                entry.special = Some(special);
-                entry.markdown_cache = None;
-            }
-            self.invalidate_transcript_metrics();
+        let key = ToolCallKey::from_payload(payload);
+        if let Some(index) = self.resolve_pending_tool_cell(tool, key.as_ref()) {
+            self.write_completed_tool_cell(index, special);
             return;
         }
-        self.push_special_log(LogKind::Tool, text, special);
+        self.push_special_log(LogKind::Tool, special.summary_text(), special);
     }
 
-    fn register_tool_log_ref(&mut self, tool_call_id: Option<&str>, index: usize) {
-        let Some(tool_call_id) = tool_call_id.map(str::trim).filter(|id| !id.is_empty()) else {
-            return;
-        };
-        self.tool_log_indices
-            .insert(tool_call_id.to_string(), index);
+    /// Locate the pending card a tool result belongs to. Stable `tool_call_id`
+    /// keys always win. Cards created before an ID was known are migrated
+    /// explicitly once the result carries the stable ID; fully ID-less streams
+    /// consume pending cards in arrival order. Name-and-position reverse search
+    /// is never used to associate results.
+    fn resolve_pending_tool_cell(
+        &mut self,
+        result_tool: &str,
+        key: Option<&ToolCallKey>,
+    ) -> Option<usize> {
+        if let Some(key) = key {
+            if let Some(index) = self
+                .tool_log_indices
+                .get(key)
+                .copied()
+                .filter(|index| *index < self.logs.len())
+            {
+                return Some(index);
+            }
+            let position = self.pending_temp_tool_cell_position(result_tool)?;
+            let cell = self.pending_temp_tool_cells.remove(position)?;
+            self.tool_log_indices.insert(key.clone(), cell.index);
+            return Some(cell.index);
+        }
+        let position = self.pending_temp_tool_cell_position(result_tool)?;
+        self.pending_temp_tool_cells
+            .remove(position)
+            .map(|cell| cell.index)
+    }
+
+    fn pending_temp_tool_cell_position(&self, result_tool: &str) -> Option<usize> {
+        self.pending_temp_tool_cells
+            .iter()
+            .position(|cell| {
+                cell.index < self.logs.len()
+                    && cell
+                        .kind
+                        .matches_result(result_tool, self.logs[cell.index].special.as_ref())
+            })
+    }
+
+    fn write_completed_tool_cell(&mut self, index: usize, special: SpecialLogEntry) {
+        if let Some(entry) = self.logs.get_mut(index) {
+            entry.text = special.summary_text();
+            entry.special = Some(special);
+            entry.markdown_cache = None;
+        }
+        self.invalidate_transcript_metrics();
     }
 }
 

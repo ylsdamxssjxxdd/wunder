@@ -14,10 +14,10 @@ bash build.sh -t desktop -a linux-amd64
 bash build.sh -t desktop -a win7-x86
 bash build.sh -t cli -a win7-x86
 
-# linux-amd64 Desktop 默认是 ELF；仅明确要求时才打成 AppImage。
-# AppImage runtime 默认取 kylin-arm SDK 的 offline/appimage-runtime/runtime-x86_64，
-# 仅在需要覆盖时才设置 WUNDER_APPIMAGE_RUNTIME_AMD64。
-bash build.sh -t desktop -a linux-amd64 --appimage
+# Linux Desktop（arm64 与 amd64）默认都打成 AppImage，同时保留裸 ELF；
+# CLI 永远是普通 ELF。AppImage runtime 默认取 kylin-arm SDK 的
+# offline/appimage-runtime/ 内同架构 blob，仅在需要覆盖时才设置
+# WUNDER_APPIMAGE_RUNTIME_ARM64 / WUNDER_APPIMAGE_RUNTIME_AMD64。
 
 # 构建当前 ARM64 Linux 主机可发布的全部程序：三个架构 × Desktop/CLI。
 # AppImage runtime 默认使用 SDK 的 offline/appimage-runtime/ 内同架构 blob。

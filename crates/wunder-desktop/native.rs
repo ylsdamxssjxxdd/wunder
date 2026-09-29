@@ -27,11 +27,14 @@ mod workspace;
 #[path = "native_world.rs"]
 mod world;
 pub use catalog::{AgentRecord, AgentSettingsEdit, ToolRecord};
-pub use cron::CronRecord;
+pub use cron::{CronRecord, CronRunRecord, NativeCronJobEdit};
 pub use profile::NativeProfile;
 pub use settings::{DesktopSettings, LanPeerRecord, LanSettings, ModelEdit, ModelRecord};
 pub use workspace::{Directory, FileRecord};
-pub use world::{WorldContact, WorldGroup, WorldMessage};
+pub use world::{
+    WorldContact, WorldEventFeed, WorldGroup, WorldGroupDetail, WorldGroupMember, WorldMessage,
+    WorldMessageTracker,
+};
 
 #[derive(Debug, Clone)]
 pub struct NativeChatInput {

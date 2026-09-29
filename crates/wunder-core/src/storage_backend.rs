@@ -106,6 +106,13 @@ pub trait ThreadLogStore {
         before_user_turn: Option<i64>,
         limit: i64,
     ) -> Result<Vec<Value>>;
+    /// Return the durable user-turn and item totals without materializing the timeline.
+    fn get_thread_log_counts(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        include_internal: bool,
+    ) -> Result<(i64, i64)>;
     fn get_thread_turn(
         &self,
         user_id: &str,
@@ -605,6 +612,13 @@ pub trait ChatSessionStore {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)>;
+    /// Count child threads grouped by parent session for one user. Only parents
+    /// present in the result are returned; missing parents simply have no child.
+    fn count_child_chat_sessions(
+        &self,
+        user_id: &str,
+        parent_session_ids: &[String],
+    ) -> Result<Vec<(String, i64)>>;
     fn list_chat_sessions_by_status(
         &self,
         user_id: &str,

@@ -47,6 +47,12 @@ pub(super) trait PostgresThreadLogStorage {
         before: Option<i64>,
         limit: i64,
     ) -> Result<Vec<Value>>;
+    fn get_thread_log_counts_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        include_internal: bool,
+    ) -> Result<(i64, i64)>;
     fn get_thread_turn_impl(
         &self,
         user_id: &str,
@@ -372,6 +378,22 @@ impl PostgresThreadLogStorage for PostgresStorage {
         let before = before.unwrap_or(i64::MAX);
         let limit = limit.clamp(1, 101);
         Ok(conn.query("SELECT turn_id,user_turn_index,status,summary,payload,updated_time,root_turn_id,trigger_kind FROM thread_turns WHERE user_id=$1 AND session_id=$2 AND user_turn_index<$3 AND trigger_kind='user' ORDER BY user_turn_index DESC LIMIT $4", &[&user_id,&session_id,&before,&limit])?.into_iter().map(turn_row).collect::<Vec<_>>())
+    }
+    fn get_thread_log_counts_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        include_internal: bool,
+    ) -> Result<(i64, i64)> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let row = conn.query_one(
+            "SELECT \
+                (SELECT COUNT(*) FROM thread_turns WHERE user_id=$1 AND session_id=$2 AND trigger_kind='user'), \
+                (SELECT COUNT(*) FROM thread_items WHERE user_id=$1 AND session_id=$2 AND ($3 OR visibility='user'))",
+            &[&user_id, &session_id, &include_internal],
+        )?;
+        Ok((row.get(0), row.get(1)))
     }
     fn get_thread_turn_impl(
         &self,

@@ -1,4 +1,4 @@
-import { Theme, DesktopPage, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, CronCard } from "theme.slint";
+import { Theme, DesktopPage, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, CronCard, CronRunCard } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, SearchField, FormField } from "components.slint";
 import { Composer } from "composer.slint";
 import { MessageRow } from "message.slint";
@@ -9,7 +9,7 @@ import { CronPage } from "cron_page.slint";
 import { AgentsPage, ToolsPage, SettingsPage } from "entity_pages.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { ListView, ScrollView, ComboBox } from "std-widgets.slint";
-export { Theme, DesktopPage, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, CronCard }
+export { Theme, DesktopPage, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, CronCard, CronRunCard }
 export { AppTray } from "tray.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
 
@@ -100,9 +100,35 @@ export component MainWindow inherits Window {
     in-out property <bool> world-loading: false;
     in-out property <bool> cron-loading: false;
     in-out property <[CronCard]> cron-jobs: [];
+    in-out property <bool> cron-delete-open: false;
+    in-out property <string> cron-delete-pending;
+    in-out property <[string]> cron-agent-names: ["默认智能体"];
+    in-out property <bool> cron-editor-open: false;
+    in-out property <bool> cron-editor-saving: false;
+    in-out property <string> cron-edit-id;
+    in-out property <int> cron-editor-kind: 0;
+    in-out property <string> cron-edit-name;
+    in-out property <string> cron-edit-at;
+    in-out property <string> cron-edit-every;
+    in-out property <string> cron-edit-cron;
+    in-out property <string> cron-edit-tz;
+    in-out property <string> cron-edit-message;
+    in-out property <int> cron-edit-agent: 0;
+    in-out property <bool> cron-edit-delete-after: false;
+    in-out property <bool> cron-edit-enabled: true;
+    in-out property <bool> cron-runs-open: false;
+    in-out property <bool> cron-runs-loading: false;
+    in-out property <string> cron-runs-title;
+    in-out property <[CronRunCard]> cron-runs: [];
     in-out property <[WorldMessageCard]> world-messages: [];
     in-out property <string> world-active-title;
     in-out property <string> world-active-conversation;
+    in-out property <string> world-active-group;
+    in-out property <bool> world-group-creator-open: false;
+    in-out property <[WorldPickRow]> world-group-picks: [];
+    in-out property <string> world-announcement;
+    in-out property <bool> world-announcement-editing: false;
+    in-out property <bool> world-has-earlier: false;
     in-out property <[ModelCard]> models: [
         { key: "默认模型", provider: "", model: "未连接", base-url: "", model-type: "llm", is-default: true }
     ];
@@ -171,9 +197,23 @@ export component MainWindow inherits Window {
     callback open-world-contact(int);
     callback send-world-message(string);
     callback create-world-group(string);
+    callback open-world-group-creator();
+    callback close-world-group-creator();
+    callback toggle-world-group-member(string);
+    callback edit-world-announcement();
+    callback cancel-world-announcement();
+    callback save-world-announcement(string);
+    callback load-earlier-world-messages();
     callback refresh-cron();
     callback toggle-cron(string, bool);
     callback delete-cron(string);
+    callback run-cron-now(string);
+    callback open-cron-runs(string);
+    callback close-cron-runs();
+    callback open-cron-creator();
+    callback edit-cron-job(string);
+    callback save-cron-editor();
+    callback cancel-cron-editor();
     in-out property <string> selected-agent-icon-name;
     in-out property <string> selected-agent-icon-color;
     in-out property <string> selected-agent-icon-glyph;
@@ -521,18 +561,48 @@ export component MainWindow inherits Window {
         x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px;
         groups: root.page == DesktopPage.groups; loading: root.world-loading; total: root.world-total; offset: root.world-offset; contacts: root.world-contacts; group-items: root.world-groups;
         messages: root.world-messages; active-title: root.world-active-title; conversation-open: root.world-active-conversation != "";
+        announcement: root.world-announcement; announcement-editing: root.world-announcement-editing; has-earlier: root.world-has-earlier;
+        group-creator-open: root.world-group-creator-open; picks: root.world-group-picks;
         refresh => { root.refresh-world(root.page == DesktopPage.groups); }
         previous-page => { root.world-offset = max(0, root.world-offset - 100); root.refresh-world(root.page == DesktopPage.groups); }
         next-page => { root.world-offset += 100; root.refresh-world(root.page == DesktopPage.groups); }
         create-group(name) => { root.create-world-group(name); }
         open-contact(index) => { root.open-world-contact(index); }
         send-message(content) => { root.send-world-message(content); }
+        edit-announcement => { root.edit-world-announcement(); }
+        open-group-creator => { root.open-world-group-creator(); }
+        close-group-creator => { root.close-world-group-creator(); }
+        toggle-group-member(id) => { root.toggle-world-group-member(id); }
+        cancel-announcement => { root.cancel-world-announcement(); }
+        save-announcement(text) => { root.save-world-announcement(text); }
+        load-earlier => { root.load-earlier-world-messages(); }
     }
     if root.page == DesktopPage.cron : CronPage {
         x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px; loading: root.cron-loading; jobs: root.cron-jobs;
+        agent-names <=> root.cron-agent-names;
+        editor-open <=> root.cron-editor-open;
+        editor-saving <=> root.cron-editor-saving;
+        editor-kind <=> root.cron-editor-kind;
+        editor-name <=> root.cron-edit-name;
+        editor-at <=> root.cron-edit-at;
+        editor-every <=> root.cron-edit-every;
+        editor-cron <=> root.cron-edit-cron;
+        editor-tz <=> root.cron-edit-tz;
+        editor-message <=> root.cron-edit-message;
+        editor-agent <=> root.cron-edit-agent;
+        editor-delete-after <=> root.cron-edit-delete-after;
+        editor-enabled <=> root.cron-edit-enabled;
+        runs-open <=> root.cron-runs-open;
+        runs-loading: root.cron-runs-loading; runs-title: root.cron-runs-title; runs: root.cron-runs;
         refresh => { root.refresh-cron(); }
         toggle(id, enabled) => { root.toggle-cron(id, enabled); }
-        delete(id) => { root.delete-cron(id); }
+        delete(id) => { root.cron-delete-pending = id; root.cron-delete-open = true; }
+        run-now(id) => { root.run-cron-now(id); }
+        open-runs(id) => { root.open-cron-runs(id); }
+        close-runs => { root.close-cron-runs(); }
+        open-creator => { root.open-cron-creator(); }
+        save-editor => { root.save-cron-editor(); }
+        cancel-editor => { root.cancel-cron-editor(); }
     }
 
     if root.page != DesktopPage.messages : Rectangle {
@@ -648,6 +718,23 @@ export component MainWindow inherits Window {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+    if root.cron-delete-open : Rectangle {
+        background: #00000040;
+        TouchArea { clicked => { root.cron-delete-open = false; } }
+        Rectangle {
+            x: (parent.width - 380px) / 2; y: (parent.height - 150px) / 2; width: 380px; height: 150px;
+            border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+            TouchArea { }
+            VerticalLayout { padding: 18px; spacing: 12px;
+                Text { text: "删除定时任务"; color: Theme.text; font-size: 15px; font-weight: 700; }
+                Text { vertical-stretch: 1; text: "删除后任务与运行记录不可恢复。确认删除该任务？"; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+                HorizontalLayout { height: 32px; spacing: 8px; Rectangle { horizontal-stretch: 1; }
+                    Action { width: 96px; label: "确认删除"; show-label: true; clicked => { root.cron-delete-open = false; root.delete-cron(root.cron-delete-pending); } }
+                    Action { width: 72px; label: "取消"; show-label: true; primary: true; clicked => { root.cron-delete-open = false; } }
                 }
             }
         }

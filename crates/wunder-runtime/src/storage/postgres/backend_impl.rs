@@ -129,6 +129,14 @@ impl ThreadLogStore for PostgresStorage {
     ) -> Result<Vec<Value>> {
         self.list_thread_turns_impl(user_id, session_id, before, limit)
     }
+    fn get_thread_log_counts(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        include_internal: bool,
+    ) -> Result<(i64, i64)> {
+        self.get_thread_log_counts_impl(user_id, session_id, include_internal)
+    }
     fn get_thread_turn(
         &self,
         user_id: &str,
@@ -808,6 +816,13 @@ impl ChatSessionStore for PostgresStorage {
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)> {
         self.list_chat_sessions_impl(user_id, agent_id, parent_session_id, offset, limit)
+    }
+    fn count_child_chat_sessions(
+        &self,
+        user_id: &str,
+        parent_session_ids: &[String],
+    ) -> Result<Vec<(String, i64)>> {
+        self.count_child_chat_sessions_impl(user_id, parent_session_ids)
     }
     fn list_chat_sessions_by_status(
         &self,

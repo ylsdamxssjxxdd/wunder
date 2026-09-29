@@ -561,7 +561,6 @@ export const elements = {
   monitorDetailKeyword: document.getElementById("monitorDetailKeyword"),
   monitorDetailEvents: document.getElementById("monitorDetailEvents"),
   monitorDetailPagination: document.getElementById("monitorDetailPagination"),
-  monitorDetailPageFirst: document.getElementById("monitorDetailPageFirst"),
   monitorDetailPagePrev: document.getElementById("monitorDetailPagePrev"),
   monitorDetailPageInfo: document.getElementById("monitorDetailPageInfo"),
   monitorDetailPageNext: document.getElementById("monitorDetailPageNext"),

@@ -107,22 +107,25 @@ async fn list_thread_turns(
     let user_id = require_owned_thread(&state, &headers, &session_id).await?;
     let storage = state.storage.clone();
     let lookup_session = session_id.clone();
-    let turns = blocking::run_db("api.chat.thread_log.turns", move || {
-        storage.list_thread_turns(
-            &user_id,
-            &lookup_session,
-            query.before,
-            query.limit.unwrap_or(50).clamp(1, 100),
-        )
-    })
-    .await
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let (turns, (user_round_total, item_total)) =
+        blocking::run_db("api.chat.thread_log.turns", move || {
+            let turns = storage.list_thread_turns(
+                &user_id,
+                &lookup_session,
+                query.before,
+                query.limit.unwrap_or(50).clamp(1, 100),
+            )?;
+            let counts = storage.get_thread_log_counts(&user_id, &lookup_session, false)?;
+            Ok::<_, anyhow::Error>((turns, counts))
+        })
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let next_before = turns
         .last()
         .and_then(|turn| turn.get("user_turn_index"))
         .and_then(Value::as_i64);
     Ok(Json(
-        json!({"data":{"session_id":session_id,"turns":turns,"next_before":next_before,"has_more":turns.len() >= query.limit.unwrap_or(50).clamp(1,100) as usize}}),
+        json!({"data":{"session_id":session_id,"turns":turns,"user_round_total":user_round_total,"item_total":item_total,"next_before":next_before,"has_more":turns.len() >= query.limit.unwrap_or(50).clamp(1,100) as usize}}),
     ))
 }
 

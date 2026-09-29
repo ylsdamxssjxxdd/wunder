@@ -596,3 +596,43 @@ fn approval_and_inquiry_have_distinct_transcript_markers() {
     assert_eq!(log_prefix(LogKind::Inquiry), "? ");
     assert_ne!(log_prefix(LogKind::Inquiry), log_prefix(LogKind::Tool));
 }
+
+#[test]
+fn tool_call_key_reads_stable_and_turn_ids_from_payload() {
+    let payload = serde_json::json!({
+        "tool_call_id": " call-7 ",
+        "turn_id": "turn-2",
+    });
+    let key = ToolCallKey::from_payload(&payload).expect("key present");
+    assert_eq!(key.tool_call_id, "call-7");
+    assert_eq!(key.turn_id.as_deref(), Some("turn-2"));
+}
+
+#[test]
+fn tool_call_key_is_absent_without_tool_call_id() {
+    let payload = serde_json::json!({ "tool_call_id": "   " });
+    assert!(ToolCallKey::from_payload(&payload).is_none());
+    assert!(ToolCallKey::from_payload(&serde_json::json!({})).is_none());
+    let turn_only = serde_json::json!({ "turn_id": "turn-1" });
+    assert!(ToolCallKey::from_payload(&turn_only).is_none());
+}
+
+#[test]
+fn temp_tool_kinds_only_match_pending_cards_of_the_same_shape() {
+    let pending_patch = build_pending_patch_log(
+        &serde_json::json!({"patch": "*** Begin Patch\n*** Update File: a.txt\n*** End Patch"}),
+        false,
+    );
+    assert!(TempToolKind::Patch.matches_result("apply_patch", pending_patch.as_ref()));
+
+    let pending_tool = Some(build_pending_tool_log(
+        "read_file",
+        &serde_json::json!({"path": "a.txt"}),
+    ));
+    assert!(TempToolKind::Generic("read_file".into())
+        .matches_result("read_file", pending_tool.as_ref()));
+    assert!(!TempToolKind::Generic("read_file".into())
+        .matches_result("read_file", pending_patch.as_ref()));
+    assert!(!TempToolKind::Generic("list_dir".into())
+        .matches_result("read_file", pending_tool.as_ref()));
+}

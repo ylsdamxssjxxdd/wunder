@@ -276,6 +276,7 @@ mod tests {
             spawned_by: None,
             updated_at: 0.0,
             last_message_at: 0.0,
+            child_threads: 0,
         }
     }
 
