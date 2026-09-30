@@ -79,14 +79,15 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
                 "completed"
             },
         ),
-        "llm_request" | "llm_output" => (
+        "llm_request" => (
             "model_call",
             format!("model-{model}"),
-            if event_type == "llm_request" {
-                "running"
-            } else {
-                "completed"
-            },
+            "running",
+        ),
+        "llm_output" => (
+            "assistant_message",
+            format!("text-{model}"),
+            "completed",
         ),
         "approval_request" | "approval_result" | "approval_resolved" => (
             "approval",
@@ -193,21 +194,61 @@ impl TextTail {
         }
         self.dirty = false;
         self.last_flush = Some(std::time::Instant::now());
-        let mut data = self.context.clone();
-        data["content"] = json!(self.content);
-        data["reasoning"] = json!(self.reasoning);
-        data["content_offset"] = json!(self.content_offset);
-        data["reasoning_offset"] = json!(self.reasoning_offset);
-        data["item_id"] = json!(self.item_id);
-        data["block_index"] = json!(self.block_index);
-        Some(
+        // Content and reasoning use independent field/block coordinates.  A
+        // shared payload would make the database key overwrite one field when
+        // both are present at the same block index.
+        let field_block = |field: &str, text: &str, offset: usize| {
+            let mut data = self.context.clone();
+            data["field"] = json!(field);
+            if field == "reasoning" {
+                data["reasoning"] = json!(text);
+                data["reasoning_offset"] = json!(offset);
+            } else {
+                data["content"] = json!(text);
+                data["content_offset"] = json!(offset);
+            }
+            data["item_id"] = json!(self.item_id);
+            data["block_index"] = json!(self.block_index);
             json!({"event":"thread_item_block","event_id":self.event_id,"item_id":self.item_id,
-            "block_index":self.block_index,"session_id":session_id,"data":data}),
-        )
+                "field":field,"block_index":self.block_index,"session_id":session_id,"data":data})
+        };
+        let mut blocks = Vec::with_capacity(2);
+        if !self.content.is_empty() {
+            blocks.push(field_block("content", &self.content, self.content_offset));
+        }
+        if !self.reasoning.is_empty() {
+            blocks.push(field_block("reasoning", &self.reasoning, self.reasoning_offset));
+        }
+        (!blocks.is_empty()).then(|| json!({"blocks":blocks}))
     }
 }
 
-/// Merge short-lived boundary events with block snapshots for queued and reconnect readers.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_tail_separates_content_and_reasoning_block_identity() {
+        let mut tail = TextTail::default();
+        tail.append("thread", 1, &json!({
+            "turn_id":"turn", "model_round":1,
+            "delta":"answer", "reasoning_delta":"thought"
+        }));
+        let flush = tail.flush("thread").expect("flush");
+        let blocks = flush["blocks"].as_array().expect("blocks");
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["field"], "content");
+        assert_eq!(blocks[0]["data"]["content"], "answer");
+        assert!(blocks[0]["data"].get("reasoning").is_none());
+        assert_eq!(blocks[1]["field"], "reasoning");
+        assert_eq!(blocks[1]["data"]["reasoning"], "thought");
+        assert!(blocks[1]["data"].get("content").is_none());
+    }
+}
+
+/// Compatibility replay reads only durable ThreadLog text snapshots. Lifecycle
+/// recovery is served by the change cursor API; stream_events are never a
+/// source of historical assistant text or round state.
 pub fn replay(
     storage: &dyn StorageBackend,
     session_id: &str,
@@ -215,9 +256,25 @@ pub fn replay(
     limit: i64,
 ) -> anyhow::Result<Vec<Value>> {
     let limit = limit.clamp(1, 500);
-    let mut records = storage.load_stream_events(session_id, after, limit)?;
-    records.extend(storage.list_thread_text_blocks(session_id, after, limit)?);
-    records.sort_by_key(|v| v["event_id"].as_i64().unwrap_or(0));
-    records.truncate(limit as usize);
+    let after = after.max(0);
+    // The cursor belongs to durable changes. Text blocks carry independent
+    // transport offsets, so they are snapshots on every recovery rather than
+    // competing for the cursor page.
+    let changes = storage.list_thread_changes_by_session(session_id, after, limit)?;
+    let mut records = Vec::with_capacity(changes.len() + limit as usize);
+    for mut change in changes {
+        if change.get("change_type").and_then(Value::as_str) == Some("snapshot_required") {
+            records.push(json!({"event":"thread_snapshot_required","data":change,"event_id":after+1}));
+            return Ok(records);
+        }
+        let cursor = change.get("change_seq").and_then(Value::as_i64).unwrap_or(0);
+        change["event"] = json!("thread_change");
+        change["event_id"] = json!(cursor);
+        change["data"] = json!({"change_type":change.get("change_type").cloned().unwrap_or(Value::Null),"turn_id":change.get("turn_id").cloned().unwrap_or(Value::Null),"item_id":change.get("item_id").cloned().unwrap_or(Value::Null),"revision":change.get("revision").cloned().unwrap_or(Value::Null),"cursor":cursor});
+        records.push(change);
+    }
+    // The caller's event cursor does not apply to block event IDs. Return a
+    // bounded current snapshot so offsets can overwrite the active tail.
+    records.extend(storage.list_thread_text_blocks(session_id, 0, limit)?);
     Ok(records)
 }

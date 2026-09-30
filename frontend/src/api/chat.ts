@@ -97,6 +97,15 @@ export const getThreadLogTurn = (sessionId: string, turnId: string, params: Quer
   api.get(`/chat/sessions/${sessionId}/thread-log/turns/${encodeURIComponent(turnId)}`, { params, ...options });
 export const getThreadLogChanges = (id: string, params: QueryParams = {}, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}/thread-log/changes`, { params, ...options });
+export const getThreadLogItemContent = (
+  sessionId: string,
+  itemId: string,
+  params: QueryParams = {},
+  options: { signal?: AbortSignal } = {}
+) => api.get(
+  `/chat/sessions/${encodeURIComponent(sessionId)}/thread-log/items/${encodeURIComponent(itemId)}/content`,
+  { params: sanitizeQueryParams(params), ...options }
+);
 export const getSessionGoal = (id: string, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}/goal`, options);
 export const setSessionGoal = (id: string, payload: unknown) =>
@@ -116,6 +125,11 @@ export const getSessionHistoryMessage = (
   historyId: number | string,
   options: { signal?: AbortSignal } = {}
 ) => api.get(`/chat/sessions/${sessionId}/messages/${historyId}`, options);
+export const getSessionThreadItem = (
+  sessionId: string,
+  itemId: string,
+  options: { signal?: AbortSignal } = {}
+) => api.get(`/chat/sessions/${sessionId}/thread-log/items/${encodeURIComponent(itemId)}`, options);
 export const getSessionSubagents = (
   id: string,
   params: QueryParams = {},

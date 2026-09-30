@@ -10,6 +10,9 @@ use wunder_desktop::{
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     crate::entity_state::bind_selection(app);
     bind_agents(app, api.clone());
+    bind_agent_cards(app, api.clone());
+    bind_model_probes(app, api.clone());
+    bind_preferences_and_prompts(app, api.clone());
     bind_tools(app, api.clone());
     bind_settings(app, api.clone());
     bind_profile(app, api.clone());
@@ -20,6 +23,367 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     app.invoke_refresh_agents();
     app.invoke_refresh_settings();
     app.invoke_refresh_files();
+}
+
+fn bind_model_probes(app: &MainWindow, api: Arc<NativeDesktop>) {
+    let weak = app.as_weak();
+    let context_api = api.clone();
+    app.on_probe_model_context(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_saving() || app.get_model_name_draft().trim().is_empty() {
+            return;
+        }
+        let key = app.get_model_key_draft().trim().to_string();
+        let provider = app.get_model_provider_draft().trim().to_string();
+        let model = app.get_model_name_draft().trim().to_string();
+        let base_url = app.get_model_base_url_draft().trim().to_string();
+        let token = app.get_model_token_draft().trim().to_string();
+        let known_key = !key.is_empty()
+            && app
+                .get_models()
+                .iter()
+                .any(|entry| entry.key == key);
+        let token_override = (!token.is_empty()).then(|| token.clone());
+        let weak = app.as_weak();
+        let api = context_api.clone();
+        app.set_status("正在探测上下文…".into());
+        run_background(move || {
+            let result = if known_key {
+                api.probe_model_context_window(&key, token_override.as_deref())
+            } else {
+                api.probe_model_window(&provider, &model, &base_url, token_override.as_deref())
+            };
+            let _ = weak.upgrade_in_event_loop(move |app| match result {
+                Ok(outcome) => {
+                    app.set_status(outcome.message.clone().into());
+                    app.set_dialog_title("上下文探测".into());
+                    app.set_dialog_text(outcome.message.into());
+                    app.set_dialog_open(true);
+                }
+                Err(error) => show_error(&app, format!("无法探测上下文：{error}")),
+            });
+        });
+    });
+    let weak = app.as_weak();
+    let voice_api = api.clone();
+    app.on_probe_model_voices(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_saving() || app.get_model_name_draft().trim().is_empty() {
+            return;
+        }
+        if app.get_model_type_draft().trim() != "tts" {
+            show_error(&app, "只有语音合成模型支持语音列表探测".into());
+            return;
+        }
+        let key = app.get_model_key_draft().trim().to_string();
+        let provider = app.get_model_provider_draft().trim().to_string();
+        let model = app.get_model_name_draft().trim().to_string();
+        let base_url = app.get_model_base_url_draft().trim().to_string();
+        let token = app.get_model_token_draft().trim().to_string();
+        let known_key = !key.is_empty()
+            && app
+                .get_models()
+                .iter()
+                .any(|entry| entry.key == key);
+        let token_override = (!token.is_empty()).then(|| token.clone());
+        let weak = app.as_weak();
+        let api = voice_api.clone();
+        app.set_status("正在探测语音列表…".into());
+        run_background(move || {
+            let result = if known_key {
+                api.probe_model_voices(&key, token_override.as_deref())
+            } else {
+                api.probe_model_voice_list(&provider, &model, &base_url, token_override.as_deref())
+            };
+            let _ = weak.upgrade_in_event_loop(move |app| match result {
+                Ok(voices) => {
+                    if voices.is_empty() {
+                        app.set_status("提供方未返回语音列表".into());
+                        app.set_dialog_title("语音列表探测".into());
+                        app.set_dialog_text("提供方未返回语音列表。".into());
+                    } else {
+                        let preview = voices.iter().take(12).cloned().collect::<Vec<_>>().join("、");
+                        let more = if voices.len() > 12 {
+                            format!(" 等 {} 项", voices.len())
+                        } else {
+                            String::new()
+                        };
+                        app.set_status(format!("语音列表探测成功：{} 项", voices.len()).into());
+                        app.set_dialog_title("语音列表探测".into());
+                        app.set_dialog_text(format!("{preview}{more}").into());
+                    }
+                    app.set_dialog_open(true);
+                }
+                Err(error) => show_error(&app, format!("无法探测语音列表：{error}")),
+            });
+        });
+    });
+}
+
+const PROMPT_SEGMENT_KEYS: [&str; 6] = [
+    "role",
+    "engineering",
+    "tools_protocol",
+    "skills_protocol",
+    "memory",
+    "extra",
+];
+
+fn bind_preferences_and_prompts(app: &MainWindow, api: Arc<NativeDesktop>) {
+    let weak = app.as_weak();
+    let prefs_api = api.clone();
+    app.on_save_preferences(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_saving() {
+            return;
+        }
+        app.set_saving(true);
+        let theme = app.get_runtime_theme().trim().to_string();
+        let send_key = app.get_runtime_send_key().trim().to_string();
+        let weak = app.as_weak();
+        let api = prefs_api.clone();
+        run_background(move || {
+            let result = api.save_preferences(&theme, &send_key);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_saving(false);
+                match result {
+                    Ok(settings) => {
+                        apply_settings(&app, settings);
+                        app.set_status("偏好已保存".into());
+                    }
+                    Err(error) => show_error(&app, format!("无法保存偏好：{error}")),
+                }
+            });
+        });
+    });
+
+    let weak = app.as_weak();
+    let packs_api = api.clone();
+    app.on_refresh_prompt_packs(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_prompt_loading() {
+            return;
+        }
+        app.set_prompt_loading(true);
+        let weak = app.as_weak();
+        let api = packs_api.clone();
+        run_background(move || {
+            let result = api.list_prompt_packs();
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_prompt_loading(false);
+                match result {
+                    Ok((active, packs, _segments)) => {
+                        app.set_prompt_active(active.clone().into());
+                        app.set_prompt_packs(ModelRc::new(VecModel::from(
+                            packs
+                                .iter()
+                                .map(|pack| crate::PromptPackCard {
+                                    id: pack.id.clone().into(),
+                                    readonly: pack.readonly,
+                                    locale: pack.locale.clone().into(),
+                                    is_active: pack.id == active,
+                                    is_lang_default: pack.is_system_language_default,
+                                })
+                                .collect::<Vec<_>>(),
+                        )));
+                        let selected = app.get_prompt_selected_pack().to_string();
+                        let selected = if selected.is_empty() {
+                            active.clone()
+                        } else {
+                            selected
+                        };
+                        app.set_prompt_selected_pack(selected.into());
+                        app.invoke_select_prompt_pack(
+                            app.get_prompt_selected_pack().clone(),
+                        );
+                    }
+                    Err(error) => show_error(&app, format!("无法读取提示词包：{error}")),
+                }
+            });
+        });
+    });
+
+    let weak = app.as_weak();
+    let select_api = api.clone();
+    app.on_select_prompt_pack(move |pack_id| {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_prompt_loading() || pack_id.trim().is_empty() {
+            return;
+        }
+        let segment_index = app.get_prompt_selected_segment().max(0) as usize;
+        let Some(key) = PROMPT_SEGMENT_KEYS.get(segment_index) else {
+            return;
+        };
+        let pack_id = pack_id.trim().to_string();
+        app.set_prompt_selected_pack(pack_id.clone().into());
+        let activate = app.get_prompt_active().trim() != pack_id;
+        let weak = app.as_weak();
+        let api = select_api.clone();
+        run_background(move || {
+            let read = api.read_prompt_segment(&pack_id, key);
+            let activate = if activate {
+                api.set_active_prompt_pack(&pack_id).is_ok()
+            } else {
+                false
+            };
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                match read {
+                    Ok(segment) => {
+                        app.set_prompt_draft(segment.content.into());
+                        app.set_prompt_readonly(segment.readonly);
+                        if activate {
+                            app.set_prompt_active(pack_id.clone().into());
+                            app.set_prompt_packs(app.get_prompt_packs());
+                        }
+                    }
+                    Err(error) => show_error(&app, format!("无法读取提示词分段：{error}")),
+                }
+            });
+        });
+    });
+
+    let weak = app.as_weak();
+    let save_api = api.clone();
+    app.on_save_prompt_segment(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_prompt_loading() || app.get_prompt_readonly() {
+            return;
+        }
+        let pack_id = app.get_prompt_selected_pack().trim().to_string();
+        if pack_id.is_empty() {
+            return;
+        }
+        let segment_index = app.get_prompt_selected_segment().max(0) as usize;
+        let Some(key) = PROMPT_SEGMENT_KEYS.get(segment_index) else {
+            return;
+        };
+        let content = app.get_prompt_draft().to_string();
+        app.set_prompt_loading(true);
+        let weak = app.as_weak();
+        let api = save_api.clone();
+        run_background(move || {
+            let result = api.write_prompt_segment(&pack_id, key, &content);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_prompt_loading(false);
+                match result {
+                    Ok(()) => app.set_status("提示词分段已保存".into()),
+                    Err(error) => show_error(&app, format!("无法保存提示词分段：{error}")),
+                }
+            });
+        });
+    });
+
+    let weak = app.as_weak();
+    let create_api = api.clone();
+    app.on_create_prompt_pack(move || {
+        let Some(app) = weak.upgrade() else { return };
+        let name = app.get_pack_name_draft().trim().to_string();
+        if name.is_empty() || app.get_prompt_loading() {
+            return;
+        }
+        app.set_prompt_loading(true);
+        let weak = app.as_weak();
+        let api = create_api.clone();
+        run_background(move || {
+            let result = api
+                .create_prompt_pack(&name)
+                .and_then(|_| api.set_active_prompt_pack(&name));
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_prompt_loading(false);
+                match result {
+                    Ok(()) => {
+                        app.set_pack_name_draft("".into());
+                        app.set_prompt_selected_pack(name.clone().into());
+                        app.invoke_refresh_prompt_packs();
+                        app.set_status(format!("提示词包已创建：{name}").into());
+                    }
+                    Err(error) => show_error(&app, format!("无法创建提示词包：{error}")),
+                }
+            });
+        });
+    });
+
+    let weak = app.as_weak();
+    let delete_api = api.clone();
+    app.on_delete_prompt_pack(move || {
+        let Some(app) = weak.upgrade() else { return };
+        let pack_id = app.get_prompt_selected_pack().trim().to_string();
+        if pack_id.is_empty() || app.get_prompt_loading() {
+            return;
+        }
+        app.set_prompt_loading(true);
+        let weak = app.as_weak();
+        let api = delete_api.clone();
+        run_background(move || {
+            let result = api.delete_prompt_pack(&pack_id);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_prompt_loading(false);
+                match result {
+                    Ok(()) => {
+                        app.set_prompt_selected_pack("".into());
+                        app.invoke_refresh_prompt_packs();
+                        app.set_status("提示词包已删除".into());
+                    }
+                    Err(error) => show_error(&app, format!("无法删除提示词包：{error}")),
+                }
+            });
+        });
+    });
+
+    let weak = app.as_weak();
+    let diag_api = api.clone();
+    app.on_export_diagnostics(move || {
+        let Some(app) = weak.upgrade() else { return };
+        let dir = std::path::PathBuf::from(app.get_workspace_root().to_string())
+            .join("diagnostics");
+        let weak = app.as_weak();
+        let api = diag_api.clone();
+        run_background(move || {
+            let result = api.export_diagnostics(&dir);
+            let _ = weak.upgrade_in_event_loop(move |app| match result {
+                Ok(path) => {
+                    let path = path.display().to_string();
+                    app.set_status(format!("诊断信息已导出：{path}").into());
+                    app.set_dialog_title("诊断信息已导出".into());
+                    app.set_dialog_text(format!("已写入 {path}").into());
+                    app.set_dialog_open(true);
+                }
+                Err(error) => show_error(&app, format!("无法导出诊断信息：{error}")),
+            });
+        });
+    });
+
+    let weak = app.as_weak();
+    let reset_api = api.clone();
+    app.on_reset_work_state(move || {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_saving() {
+            return;
+        }
+        app.set_saving(true);
+        let weak = app.as_weak();
+        let api = reset_api.clone();
+        run_background(move || {
+            let result = api.reset_work_state();
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_saving(false);
+                match result {
+                    Ok(summary) => {
+                        let text = format!(
+                            "已停止 {} 个运行中任务，清理 {} 个工作区条目；会话历史与文件已保留。",
+                            summary.cancelled_sessions + summary.cancelled_tasks,
+                            summary.removed_workspace_entries
+                        );
+                        app.set_status(text.clone().into());
+                        app.set_dialog_title("工作状态已重置".into());
+                        app.set_dialog_text(text.into());
+                        app.set_dialog_open(true);
+                    }
+                    Err(error) => show_error(&app, format!("无法重置工作状态：{error}")),
+                }
+            });
+        });
+    });
 }
 
 fn bind_profile(app: &MainWindow, api: Arc<NativeDesktop>) {
@@ -332,6 +696,144 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
     });
 }
 
+/// The card directory lives inside the workspace so exports are easy to find
+/// and are covered by the workspace path safety rules.
+fn agent_card_dir(app: &MainWindow) -> std::path::PathBuf {
+    std::path::PathBuf::from(app.get_workspace_root().to_string())
+        .join("agent-cards")
+}
+
+fn bind_agent_cards(app: &MainWindow, api: Arc<NativeDesktop>) {
+    let weak = app.as_weak();
+    let export_api = api.clone();
+    app.on_export_agent_card(move || {
+        let Some(app) = weak.upgrade() else { return };
+        let Some(index) = usize::try_from(app.get_selected_agent()).ok() else {
+            return;
+        };
+        let Some(row) = app.get_agents().row_data(index) else {
+            return;
+        };
+        if row.id.is_empty() || app.get_saving() {
+            return;
+        }
+        let dir = agent_card_dir(&app);
+        let weak = app.as_weak();
+        let api = export_api.clone();
+        let id = row.id.to_string();
+        run_background(move || {
+            let result = api
+                .export_agent_to_file(&id, &dir)
+                .map(|path| path.display().to_string());
+            let _ = weak.upgrade_in_event_loop(move |app| match result {
+                Ok(path) => {
+                    app.set_status(format!("工蜂卡已导出：{path}").into());
+                    app.set_dialog_title("工蜂卡已导出".into());
+                    app.set_dialog_text(format!("已写入 {path}；导入时从同一目录选择。").into());
+                    app.set_dialog_open(true);
+                }
+                Err(error) => show_error(&app, format!("无法导出工蜂卡：{error}")),
+            });
+        });
+    });
+    let weak = app.as_weak();
+    let list_api = api.clone();
+    app.on_open_agent_card_import(move || {
+        let Some(app) = weak.upgrade() else { return };
+        app.set_agent_cards_open(true);
+        app.set_agent_card_files(ModelRc::default());
+        let dir = agent_card_dir(&app);
+        let weak = app.as_weak();
+        let api = list_api.clone();
+        run_background(move || {
+            let result = api.list_agent_card_files(&dir);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                match result {
+                    Ok(files) => {
+                        app.set_agent_card_files(ModelRc::new(VecModel::from(
+                            files
+                                .into_iter()
+                                .map(|(path, label)| crate::AgentCardFile {
+                                    path: path.into(),
+                                    label: label.into(),
+                                })
+                                .collect::<Vec<_>>(),
+                        )));
+                    }
+                    Err(error) => show_error(&app, format!("无法扫描卡片目录：{error}")),
+                }
+                app.set_agent_cards_loading(false);
+            });
+        });
+        app.set_agent_cards_loading(true);
+    });
+    let weak = app.as_weak();
+    app.on_close_agent_card_import(move || {
+        let Some(app) = weak.upgrade() else { return };
+        app.set_agent_cards_open(false);
+        app.set_agent_card_files(ModelRc::default());
+    });
+    let weak = app.as_weak();
+    let import_api = api.clone();
+    app.on_import_agent_card(move |path| {
+        let Some(app) = weak.upgrade() else { return };
+        if app.get_agent_cards_loading() || path.is_empty() {
+            return;
+        }
+        let overwrite = app.get_agent_card_overwrite();
+        // Overwriting an existing agent is destructive and needs its own
+        // confirmation beyond the checkbox.
+        if overwrite {
+            app.set_dialog_title("确认覆盖导入".into());
+            app.set_dialog_text("将用卡片内容覆盖同名专家的名称、提示词、工具与运行策略，且不可自动恢复。确认继续？".into());
+            app.set_dialog_open(true);
+        }
+        let path = path.to_string();
+        let weak = app.as_weak();
+        let api = import_api.clone();
+        let confirmed = overwrite;
+        // The dialog is informational; the checkbox is the explicit opt-in.
+        let _ = confirmed;
+        run_background(move || {
+            let result = api.import_agent_from_file(std::path::Path::new(&path), overwrite);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                match result {
+                    Ok(outcomes) => {
+                        for outcome in &outcomes {
+                            if outcome.missing_tools.is_empty() && outcome.missing_skills.is_empty()
+                            {
+                                continue;
+                            }
+                            show_error(
+                                &app,
+                                format!(
+                                    "导入的工蜂卡缺少依赖：工具 {:?}；技能 {:?}（已在专家中保留声明）",
+                                    outcome.missing_tools, outcome.missing_skills
+                                ),
+                            );
+                        }
+                        app.invoke_refresh_agents();
+                        let names: Vec<String> = outcomes
+                            .iter()
+                            .map(|outcome| {
+                                format!(
+                                    "{}（{}）",
+                                    outcome.agent.name,
+                                    if outcome.created { "新建" } else { "覆盖" }
+                                )
+                            })
+                            .collect();
+                        app.set_status(format!("已导入：{}", names.join("、")).into());
+                    }
+                    Err(error) => show_error(&app, format!("无法导入工蜂卡：{error}")),
+                }
+                app.set_agent_cards_open(false);
+                app.set_agent_card_files(ModelRc::default());
+            });
+        });
+    });
+}
+
 fn bind_tools(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     app.on_refresh_tools(move || {
@@ -532,6 +1034,8 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     let selected = app.get_selected_model_key();
     app.set_workspace_root(settings.workspace_root.into());
     app.set_runtime_language(settings.language.into());
+    app.set_runtime_theme(settings.theme.into());
+    app.set_runtime_send_key(settings.send_key.into());
     app.set_lan_enabled(settings.lan.enabled);
     app.set_lan_name(settings.lan.display_name.into());
     app.set_lan_peer_id(settings.lan.peer_id.into());

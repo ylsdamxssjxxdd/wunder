@@ -44,7 +44,8 @@ export component CronPage inherits Rectangle {
             HorizontalLayout { height: 38px; spacing: 4px; Action { horizontal-stretch: 1; label: job.enabled ? "停用" : "启用"; show-label: true; enabled: !root.loading; clicked => { root.toggle(job.id, !job.enabled); } } Action { horizontal-stretch: 1; label: "立即运行"; show-label: true; enabled: !root.loading; clicked => { root.run-now(job.id); } } }
             HorizontalLayout { height: 38px; spacing: 4px; Action { horizontal-stretch: 1; label: "运行记录"; show-label: true; enabled: !root.runs-loading; clicked => { root.open-runs(job.id); } } Action { horizontal-stretch: 1; label: "删除"; show-label: true; enabled: !root.loading; clicked => { root.delete(job.id); } } }
         } } } if root.jobs.length == 0 : Text { height: 70px; text: root.loading ? "正在加载…" : "暂无定时任务"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; } } } } } } }
-        if root.runs-open : Rectangle { Rectangle { background: #00000022; TouchArea { clicked => { root.close-runs(); } } } Rectangle { x: parent.width - 420px; y: 0px; width: 420px; height: parent.height; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 16px; spacing: 10px;
+    }
+    if root.runs-open : Rectangle { Rectangle { background: #00000022; TouchArea { clicked => { root.close-runs(); } } } Rectangle { x: parent.width - 420px; y: 0px; width: 420px; height: parent.height; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 16px; spacing: 10px;
             HorizontalLayout { height: 26px; Text { text: "运行记录 · " + root.runs-title; color: Theme.text; font-size: 15px; font-weight: 700; horizontal-stretch: 1; overflow: elide; vertical-alignment: center; } Action { width: 30px; icon: @image-url("../assets/icons/xmark.svg"); clicked => { root.close-runs(); } } }
             Text { height: 18px; text: root.runs-loading ? "正在加载…" : "最近 " + root.runs.length + " 次（最多 200 条）"; color: Theme.muted; font-size: 11px; }
             ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off; VerticalLayout { spacing: 6px; alignment: start; for run in root.runs : Rectangle { height: 74px; border-radius: 9px; background: Theme.panel; VerticalLayout { padding: 10px; spacing: 3px;
@@ -71,5 +72,4 @@ export component CronPage inherits Rectangle {
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout { height: 34px; spacing: 8px; Rectangle { horizontal-stretch: 1; } Action { width: 84px; label: "保存"; show-label: true; primary: true; enabled: !root.editor-saving; clicked => { root.save-editor(); } } Action { width: 84px; label: "取消"; show-label: true; enabled: !root.editor-saving; clicked => { root.cancel-editor(); } } }
         } } }
-    }
 }

@@ -4,6 +4,7 @@ use crate::core::blocking;
 use crate::i18n;
 use crate::orchestrator_constants::STREAM_EVENT_FETCH_LIMIT;
 use crate::services::chat_runtime_projection::load_chat_session_activity;
+use crate::services::chat_transcript::build_chat_transcript;
 use crate::state::AppState;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -39,6 +40,14 @@ pub(super) fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/chat/sessions/{session_id}/thread-log/changes",
             get(list_thread_changes),
+        )
+        .route(
+            "/wunder/chat/sessions/{session_id}/thread-log/items/{item_id}/content",
+            get(get_thread_item_content),
+        )
+        .route(
+            "/wunder/chat/sessions/{session_id}/thread-log/items/{item_id}",
+            get(get_thread_item),
         )
         .route(
             "/wunder/chat/sessions/{session_id}/command-sessions",
@@ -81,6 +90,10 @@ struct ThreadChangesQuery {
     limit: Option<i64>,
     #[serde(default)]
     item_after: Option<i64>,
+    #[serde(default)]
+    from_block: Option<i64>,
+    #[serde(default)]
+    field: Option<String>,
 }
 
 async fn require_owned_thread(
@@ -175,9 +188,62 @@ async fn list_thread_changes(
     })
     .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(
-        json!({"data":{"session_id":session_id,"changes":changes}}),
-    ))
+    let snapshot_required = changes.iter().any(|change| change.get("change_type").and_then(Value::as_str) == Some("snapshot_required"));
+    Ok(Json(json!({"data":{"session_id":session_id,"changes":changes,"frame":if snapshot_required {"thread_snapshot_required"} else {"thread_change"}}})))
+}
+
+async fn get_thread_item_content(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath((session_id, item_id)): AxumPath<(String, String)>,
+    Query(query): Query<ThreadChangesQuery>,
+) -> Result<Json<Value>, Response> {
+    let session_id = session_id.trim().to_string();
+    let user_id = require_owned_thread(&state, &headers, &session_id).await?;
+    let storage = state.storage.clone();
+    let lookup = session_id.clone();
+    let item_lookup = item_id.clone();
+    let field = query.field.clone();
+    let field_for_query = field.clone();
+    let from_block = query.from_block.or(query.item_after).unwrap_or(0);
+    let blocks = blocking::run_db("api.chat.thread_log.item_content", move || {
+        storage.list_thread_item_blocks_page(&user_id, &lookup, &item_lookup, field_for_query.as_deref(), from_block, query.limit.unwrap_or(50).clamp(1, 100), false)
+    }).await.map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({"data":{"session_id":session_id,"item_id":item_id,"field":field,"blocks":blocks.0,"next_block":blocks.1,"has_more":blocks.2}})))
+}
+
+async fn get_thread_item(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath((session_id, item_id)): AxumPath<(String, String)>,
+) -> Result<Json<Value>, Response> {
+    let session_id = session_id.trim().to_string();
+    let user_id = require_owned_thread(&state, &headers, &session_id).await?;
+    let storage = state.storage.clone();
+    let lookup_session = session_id.clone();
+    let lookup_item = item_id.clone();
+    let item = blocking::run_db("api.chat.thread_log.item", move || {
+        storage.get_thread_item(&user_id, &lookup_session, &lookup_item, false)
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.content_not_found")))?;
+    let mut payload = item
+        .get("payload")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if let Value::Object(map) = &mut payload {
+            for key in ["item_id", "turn_id", "kind", "visibility", "revision", "status"] {
+                if let Some(value) = item.get(key) {
+                    map.insert(key.to_string(), value.clone());
+                }
+            }
+    }
+    let message = build_chat_transcript(&session_id, vec![payload], &HashMap::new())
+        .into_iter()
+        .next()
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.content_not_found")))?;
+    Ok(Json(json!({"data":{"id":session_id,"item_id":item_id,"message":message}})))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -210,6 +276,7 @@ async fn get_session_events(
     let (stream_events, rounds, events_has_more, event_total) = if query.workflow_only {
         let (rounds, has_more, total) = load_session_workflow_rounds(
             &state,
+            &resolved.user.user_id,
             &session_id,
             query.from_user_round,
             query.to_user_round,
@@ -567,6 +634,7 @@ fn collect_session_event_rounds(record: &Value) -> Vec<Value> {
 
 async fn load_session_workflow_rounds(
     state: &Arc<AppState>,
+    user_id: &str,
     session_id: &str,
     from_user_round: Option<i64>,
     to_user_round: Option<i64>,
@@ -578,42 +646,50 @@ async fn load_session_workflow_rounds(
         return (Vec::new(), false, page.map(|_| 0));
     };
     let storage = state.storage.clone();
+    let user_id = user_id.to_string();
     let session_id = session_id.trim().to_string();
     blocking::run_db("api.chat.events.load_workflow", move || {
-        if let Some(page) = page {
-            let query_limit = page.limit.saturating_add(1);
-            let events = storage.load_session_workflow_events_page(
-                &session_id,
-                from_user_round,
-                to_user_round,
-                page.offset,
-                query_limit,
-            )?;
-            let total = storage.count_session_workflow_events(
-                &session_id,
-                from_user_round,
-                to_user_round,
-            )?;
-            Ok((events, Some(total)))
-        } else {
-            storage
-                .load_session_workflow_events(&session_id, from_user_round, to_user_round)
-                .map(|events| (events, None))
-        }
+        // This temporary adapter returns a bounded turn page. Seek directly to
+        // the requested numeric round; never scan/materialize the whole thread.
+        let limit = page.map_or(WORKFLOW_EVENTS_PAGE_MAX_LIMIT, |page| page.limit);
+        let offset = page.map_or(0, |page| page.offset);
+        let latest = storage.list_thread_turns(&user_id, &session_id, None, 1)?;
+        let latest_index = latest.first().and_then(|turn| turn["user_turn_index"].as_i64()).unwrap_or(0);
+        let upper = to_user_round.min(latest_index);
+        let total = (upper - from_user_round + 1).max(0);
+        let before = upper.saturating_add(1).saturating_sub(offset);
+        let turns = storage.list_thread_turns(&user_id, &session_id, Some(before), limit + 1)?;
+        let mut turns: Vec<_> = turns.into_iter().filter(|turn| {
+            turn["user_turn_index"].as_i64().is_some_and(|index| index >= from_user_round)
+        }).collect();
+        let has_more = turns.len() > limit as usize;
+        turns.truncate(limit as usize);
+        let rounds = turns.iter().map(|turn| {
+            thread_turn_to_workflow_round(&*storage, &user_id, &session_id, turn)
+        }).collect::<anyhow::Result<Vec<_>>>()?;
+        // These are already round projections, not raw events to regroup.
+        Ok((rounds, has_more, Some(total)))
     })
     .await
-    .map(|(mut events, total)| {
-        let has_more = page.is_some_and(|page| events.len() > page.limit as usize);
-        if has_more {
-            events.pop();
-        }
-        (
-            collect_session_event_rounds(&json!({ "events": events })),
-            has_more,
-            total,
-        )
-    })
     .unwrap_or_default()
+}
+
+fn thread_turn_to_workflow_round(
+    storage: &dyn crate::storage::StorageBackend,
+    user_id: &str,
+    session_id: &str,
+    turn: &Value,
+) -> anyhow::Result<Value> {
+    let turn_id = turn.get("turn_id").and_then(Value::as_str).unwrap_or_default();
+    let detail = storage.get_thread_turn(user_id, session_id, turn_id, -1, 100, false)?
+        .unwrap_or_else(|| turn.clone());
+    let events = detail.get("items").and_then(Value::as_array).into_iter().flatten().map(|item| json!({
+        "event": item.get("kind").cloned().unwrap_or_else(|| json!("item")),
+        "data": item.get("payload").cloned().unwrap_or_else(|| json!({})),
+        "item_id": item.get("item_id").cloned().unwrap_or(Value::Null),
+        "event_seq": item.get("item_index").cloned().unwrap_or(Value::Null),
+    })).collect::<Vec<_>>();
+    Ok(json!({"user_round": turn.get("user_turn_index").cloned().unwrap_or(Value::Null), "turn_id": turn_id, "status": turn.get("status").cloned().unwrap_or(Value::Null), "events": events}))
 }
 
 fn normalize_workflow_events_page(

@@ -20,6 +20,8 @@ pub struct ModelRecord {
 pub struct DesktopSettings {
     pub workspace_root: String,
     pub language: String,
+    pub theme: String,
+    pub send_key: String,
     pub models: Vec<ModelRecord>,
     pub lan: LanSettings,
 }
@@ -115,8 +117,105 @@ impl NativeDesktop {
             .map_err(|_| anyhow!("配置锁不可用"))?;
         let config = self.runtime.block_on(self.state().config_store.get());
         let lan = self.read_lan_settings();
-        Ok(project(&config, lan))
+        let persisted = load_desktop_settings(&self.desktop.settings_path)
+            .unwrap_or_default();
+        Ok(project(
+            &config,
+            lan,
+            (persisted.theme.as_str(), persisted.send_key.as_str()),
+        ))
     }
+
+/// Persisted UI preferences: theme and composer send key. Only "light" is
+/// rendered today; the value is stored so future themes need no migration.
+    pub fn save_preferences(&self, theme: &str, send_key: &str) -> Result<DesktopSettings> {
+    let theme = theme.trim();
+    let send_key = send_key.trim();
+    if !matches!(theme, "light") {
+        bail!("暂不支持该主题");
+    }
+    if !matches!(send_key, "enter" | "ctrl_enter") {
+        bail!("发送键设置无效");
+    }
+    let _guard = self
+        .settings_lock
+        .lock()
+        .map_err(|_| anyhow!("配置锁不可用"))?;
+    let mut settings = load_desktop_settings(&self.desktop.settings_path)?;
+    settings.theme = theme.to_string();
+    settings.send_key = send_key.to_string();
+    settings.updated_at = super::now_ts();
+    save_desktop_settings(&self.desktop.settings_path, &settings)?;
+    self.get_desktop_settings()
+}
+
+/// Reset volatile work state (queues, running turns, temporary projections)
+/// through the shared runtime service. Assets, configuration, files and
+/// history are preserved by definition of the service.
+pub fn reset_work_state(
+    &self,
+) -> Result<wunder_server::ResetWorkStateSummary> {
+    let user = self.user_id().to_string();
+    self.runtime.block_on(async {
+        wunder_server::reset_user_work_state(
+            self.state(),
+            &user,
+            "desktop_reset_work_state",
+        )
+        .await
+    })
+}
+
+/// Export a secret-free diagnostics bundle (settings, counts, versions) into
+/// `directory` and return the file path. Mirrors the secret-free projection:
+/// no API keys, tokens or absolute remote endpoints are included.
+pub fn export_diagnostics(&self, directory: &std::path::Path) -> Result<std::path::PathBuf> {
+    let settings = self.get_desktop_settings()?;
+    let agents = self.list_agents().map(|items| items.len()).unwrap_or(0);
+    let sessions = self
+        .list_sessions()
+        .map(|items| items.len())
+        .unwrap_or(0);
+    let cron_jobs = self.list_cron_jobs().map(|items| items.len()).unwrap_or(0);
+    let models = settings
+        .models
+        .iter()
+        .map(|model| {
+            serde_json::json!({
+                "key": model.key,
+                "provider": model.provider,
+                "model": model.model,
+                "model_type": model.model_type,
+                "is_default": model.is_default,
+            })
+        })
+        .collect::<Vec<_>>();
+    let bundle = serde_json::json!({
+        "kind": "wunder-desktop-diagnostics",
+        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "language": settings.language,
+        "theme": settings.theme,
+        "send_key": settings.send_key,
+        "counts": {
+            "agents": agents,
+            "active_sessions": sessions,
+            "cron_jobs": cron_jobs,
+            "models": models.len(),
+        },
+        "models": models,
+        "lan": {
+            "enabled": settings.lan.enabled,
+            "peer_id": settings.lan.peer_id,
+            "peer_count": settings.lan.peer_count,
+        },
+    });
+    std::fs::create_dir_all(directory)?;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let path = directory.join(format!("diagnostics-{stamp}.json"));
+    std::fs::write(&path, serde_json::to_vec_pretty(&bundle)?)?;
+    Ok(path)
+}
+
 
     pub fn save_lan(&self, enabled: bool, display_name: &str) -> Result<DesktopSettings> {
         if display_name.chars().any(char::is_control) || display_name.chars().count() > 80 {
@@ -135,7 +234,12 @@ impl NativeDesktop {
             wunder_server::desktop_lan::manager().apply_settings(settings.lan_mesh.clone()),
         );
         let config = self.runtime.block_on(self.state().config_store.get());
-        Ok(project(&config, self.read_lan_settings()))
+        let persisted = load_desktop_settings(&self.desktop.settings_path).unwrap_or_default();
+        Ok(project(
+            &config,
+            self.read_lan_settings(),
+            (persisted.theme.as_str(), persisted.send_key.as_str()),
+        ))
     }
 
     fn read_lan_settings(&self) -> LanSettings {
@@ -306,7 +410,12 @@ impl NativeDesktop {
             .workspace
             .set_container_roots(config.workspace.container_roots.clone());
         let lan = self.read_lan_settings();
-        Ok(project(&config, lan))
+        let persisted = load_desktop_settings(&self.desktop.settings_path).unwrap_or_default();
+        Ok(project(
+            &config,
+            lan,
+            (persisted.theme.as_str(), persisted.send_key.as_str()),
+        ))
     }
 }
 
@@ -341,7 +450,7 @@ fn set_default(llm: &mut LlmConfig, kind: &str, key: String) {
     }
 }
 
-fn project(config: &Config, lan: LanSettings) -> DesktopSettings {
+fn project(config: &Config, lan: LanSettings, preferences: (&str, &str)) -> DesktopSettings {
     let mut models = config
         .llm
         .models
@@ -363,7 +472,174 @@ fn project(config: &Config, lan: LanSettings) -> DesktopSettings {
     DesktopSettings {
         workspace_root: config.workspace.root.clone(),
         language: config.i18n.default_language.clone(),
+        theme: preferences.0.to_string(),
+        send_key: preferences.1.to_string(),
         models,
         lan,
+    }
+}
+
+
+/// Secret-free probe result: the outcome message is user-facing and the
+/// resolved API key never leaves the process boundary.
+#[derive(Clone, Debug)]
+pub struct ModelProbeOutcome {
+    pub max_context: Option<u32>,
+    pub message: String,
+}
+
+impl NativeDesktop {
+    fn resolve_probe_target(
+        &self,
+        model_key: &str,
+        api_key: Option<&str>,
+    ) -> Result<(String, String, String, String, String)> {
+        let key = model_key.trim();
+        if key.is_empty() {
+            bail!("模型标识为空");
+        }
+        let config = self.runtime.block_on(self.state().config_store.get());
+        let entry = config
+            .llm
+            .models
+            .get(key)
+            .ok_or_else(|| anyhow!("模型配置不存在：{key}"))?;
+        let provider = wunder_server::llm::normalize_provider(entry.provider.as_deref());
+        let base_url = entry
+            .base_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .or_else(|| {
+                wunder_server::llm::provider_default_base_url(&provider).map(str::to_string)
+            })
+            .ok_or_else(|| anyhow!("该模型未配置服务地址"))?;
+        // An explicit probe key overrides the stored secret (the editor may
+        // probe before saving); stored secrets stay inside the process.
+        let secret = api_key
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .or_else(|| entry.api_key.clone().filter(|value| !value.trim().is_empty()))
+            .unwrap_or_default();
+        let model = entry
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("该模型未配置模型名称"))?
+            .to_string();
+        Ok((provider, base_url, secret, model, entry.model_type.clone().unwrap_or_default()))
+    }
+
+    /// Probe the context window of one configured model through the shared
+    /// OpenAI-compatible resolver used by the desktop API.
+    pub fn probe_model_context_window(
+        &self,
+        model_key: &str,
+        api_key: Option<&str>,
+    ) -> Result<ModelProbeOutcome> {
+        let (provider, base_url, secret, model, _) =
+            self.resolve_probe_target(model_key, api_key)?;
+        self.probe_model_window(&provider, &model, &base_url, Some(&secret))
+    }
+
+    /// Probe with explicit editor fields so an unsaved draft can be probed
+    /// too; `model_key` is only used to fall back to the stored secret.
+    pub fn probe_model_window(
+        &self,
+        provider: &str,
+        model: &str,
+        base_url: &str,
+        api_key: Option<&str>,
+    ) -> Result<ModelProbeOutcome> {
+        let provider = wunder_server::llm::normalize_provider(Some(provider));
+        let base_url = self.effective_probe_base_url(&provider, base_url)?;
+        let secret = Self::probe_secret(api_key).unwrap_or_default();
+        if !wunder_server::llm::is_openai_compatible_provider(&provider) {
+            return Ok(ModelProbeOutcome {
+                max_context: None,
+                message: "该提供方不支持上下文探测".into(),
+            });
+        }
+        let outcome = self.runtime.block_on(wunder_server::llm::probe_openai_context_window(
+            &base_url,
+            &secret,
+            model.trim(),
+            15,
+        ));
+        match outcome {
+            Ok(Some(value)) => Ok(ModelProbeOutcome {
+                max_context: Some(value),
+                message: format!("探测成功：上下文 {value}"),
+            }),
+            Ok(None) => Ok(ModelProbeOutcome {
+                max_context: None,
+                message: "提供方未返回上下文信息".into(),
+            }),
+            Err(error) => Ok(ModelProbeOutcome {
+                max_context: None,
+                message: format!("探测失败：{error}"),
+            }),
+        }
+    }
+
+    /// Probe the voice list of one configured TTS model.
+    pub fn probe_model_voices(&self, model_key: &str, api_key: Option<&str>) -> Result<Vec<String>> {
+        let (provider, base_url, secret, model, model_type) =
+            self.resolve_probe_target(model_key, api_key)?;
+        if model_type != "tts" {
+            bail!("只有语音合成模型支持语音列表探测");
+        }
+        self.probe_model_voice_list(&provider, &model, &base_url, Some(&secret))
+    }
+
+    /// Voice-list probe with explicit editor fields (unsaved drafts allowed).
+    pub fn probe_model_voice_list(
+        &self,
+        provider: &str,
+        model: &str,
+        base_url: &str,
+        api_key: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let provider = wunder_server::llm::normalize_provider(Some(provider));
+        if model.trim().is_empty() {
+            bail!("模型名称为空");
+        }
+        let base_url = self.effective_probe_base_url(&provider, base_url)?;
+        let secret = Self::probe_secret(api_key).unwrap_or_default();
+        if !wunder_server::llm::is_openai_compatible_provider(&provider) {
+            bail!("该提供方不支持语音列表探测");
+        }
+        let voices = self
+            .runtime
+            .block_on(wunder_server::multimodal_models::probe_tts_voices(
+                &base_url,
+                &secret,
+                model.trim(),
+                15,
+            ))?;
+        Ok(voices)
+    }
+
+    fn effective_probe_base_url(&self, provider: &str, base_url: &str) -> Result<String> {
+        let trimmed = base_url.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+        wunder_server::llm::provider_default_base_url(provider)
+            .map(str::to_string)
+            .ok_or_else(|| anyhow!("该模型未配置服务地址"))
+    }
+
+    /// Probe secrets: only an explicit editor override reaches the probe;
+    /// stored secrets are resolved by the key-based variants. Secrets never
+    /// leave the process.
+    fn probe_secret(api_key: Option<&str>) -> Option<String> {
+        api_key
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
     }
 }

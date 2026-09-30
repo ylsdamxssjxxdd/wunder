@@ -49,6 +49,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/workspace/move", post(workspace_move))
         .route("/wunder/workspace/copy", post(workspace_copy))
         .route("/wunder/workspace/batch", post(workspace_batch))
+        .route("/wunder/workspace/clear", post(workspace_clear))
         .route("/wunder/workspace/file", post(workspace_file_update))
         .route("/wunder/workspace/archive", get(workspace_archive))
         .route("/wunder/workspace/download", get(workspace_download))
@@ -1124,6 +1125,46 @@ async fn workspace_download(
     ))
 }
 
+async fn workspace_clear(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(params): Json<WorkspaceClearRequest>,
+) -> Result<Json<WorkspaceActionResponse>, Response> {
+    let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
+    let agent_id = normalize_agent_id(params.agent_id.as_deref());
+    let workspace_id = resolve_workspace_id(
+        &state,
+        &resolved.user.user_id,
+        agent_id,
+        params.container_id,
+    );
+    let root = state
+        .workspace
+        .ensure_user_root(&workspace_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let result: io::Result<()> = async {
+        let mut entries = tokio::fs::read_dir(&root).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            if entry.file_type().await?.is_dir() {
+                tokio::fs::remove_dir_all(entry.path()).await?;
+            } else {
+                tokio::fs::remove_file(entry.path()).await?;
+            }
+        }
+        Ok(())
+    }
+    .await;
+    // Invalidate the tree even when only part of the contents could be removed.
+    state.workspace.refresh_workspace_tree(&workspace_id);
+    result.map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(WorkspaceActionResponse {
+        ok: true,
+        message: i18n::t("message.deleted"),
+        tree_version: state.workspace.get_tree_version(&workspace_id),
+        files: Vec::new(),
+    }))
+}
+
 async fn workspace_delete(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -1685,6 +1726,13 @@ struct WorkspaceArchiveQuery {
     container_id: Option<i32>,
     #[serde(default)]
     path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspaceClearRequest {
+    user_id: Option<String>,
+    agent_id: Option<String>,
+    container_id: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]

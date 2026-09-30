@@ -254,6 +254,7 @@
                     :runtime-model-turn-id="String(item.message.__runtime_model_turn_id || item.message.model_turn_id || item.message.modelTurnId || '')"
                     :session-id="String(chatStore.activeSessionId || '')"
                     :history-id="item.message.history_id"
+                    :item-id="String(item.message.item_id || '')"
                     :content-truncated="
                       item.message.content_truncated === true ||
                         item.message.reasoning_truncated === true ||

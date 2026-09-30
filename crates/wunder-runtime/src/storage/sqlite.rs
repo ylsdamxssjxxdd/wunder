@@ -493,6 +493,33 @@ mod tests {
     }
 
     #[test]
+    fn legacy_thread_blocks_gain_field_identity_without_losing_rows() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("legacy-thread-blocks.db");
+        let conn = Connection::open(&db_path).expect("open sqlite");
+        conn.execute_batch(
+            "CREATE TABLE thread_item_blocks (
+                session_id TEXT NOT NULL, user_id TEXT NOT NULL, item_id TEXT NOT NULL,
+                block_index INTEGER NOT NULL, event_id INTEGER NOT NULL, payload TEXT NOT NULL,
+                PRIMARY KEY(session_id,item_id,block_index)
+              );
+              INSERT INTO thread_item_blocks VALUES
+                ('thread', 'owner', 'item', 0, 1, '{\"field\":\"content\",\"content\":\"text\"}');",
+        ).expect("create legacy blocks");
+        drop(conn);
+
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("migrate thread blocks");
+        let conn = Connection::open(&db_path).expect("open migrated sqlite");
+        let row: (String, String) = conn.query_row(
+            "SELECT field,payload FROM thread_item_blocks WHERE session_id='thread' AND item_id='item'",
+            [], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).expect("read migrated block");
+        assert_eq!(row.0, "content");
+        assert!(row.1.contains("text"));
+    }
+
+    #[test]
     fn prepare_user_quota_grants_once_per_day() {
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join("prepare-user-quota.db");

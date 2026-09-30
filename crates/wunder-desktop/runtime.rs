@@ -61,6 +61,13 @@ pub struct DesktopSettings {
     pub container_cloud_workspaces: HashMap<i32, String>,
     #[serde(default)]
     pub language: String,
+    /// UI appearance; "light" is the only rendered theme today but the
+    /// choice is persisted so future themes need no migration.
+    #[serde(default = "default_theme")]
+    pub theme: String,
+    /// Composer send key: "enter" (default) or "ctrl_enter".
+    #[serde(default = "default_send_key")]
+    pub send_key: String,
     #[serde(default)]
     pub llm: Option<LlmConfig>,
     #[serde(default)]
@@ -81,6 +88,8 @@ impl Default for DesktopSettings {
             container_roots: HashMap::new(),
             container_cloud_workspaces: HashMap::new(),
             language: String::new(),
+            theme: default_theme(),
+            send_key: default_send_key(),
             llm: None,
             lan_mesh: DesktopLanMeshSettings::default(),
             updated_at: now_ts(),
@@ -756,6 +765,14 @@ fn resolve_workspace_path_input(raw: &str, app_dir: &Path) -> PathBuf {
     } else {
         app_dir.join(path)
     }
+}
+
+fn default_theme() -> String {
+    "light".to_string()
+}
+
+fn default_send_key() -> String {
+    "enter".to_string()
 }
 
 fn default_python_runtime_mode() -> String {

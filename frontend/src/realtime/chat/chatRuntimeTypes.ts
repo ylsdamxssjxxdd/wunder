@@ -85,6 +85,9 @@ export type ChatRuntimeEvent = {
   snapshot_seq?: unknown;
   user_turn_id?: unknown;
   model_turn_id?: unknown;
+  turn_id?: unknown;
+  item_id?: unknown;
+  revision?: unknown;
   message_id?: unknown;
   role?: unknown;
   content?: unknown;

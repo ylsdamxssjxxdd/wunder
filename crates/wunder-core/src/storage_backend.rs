@@ -21,8 +21,9 @@ pub trait MetaStore {
 
 /// Chat, tool, and artifact log storage.
 ///
-/// Model input is derived from `chat_history` (including hidden internal rows);
-/// the former `model_context_entries` mirror table was retired.
+/// Model input is derived from ThreadLog message Items (including hidden
+/// internal rows); the former `chat_history` and `model_context_entries`
+/// mirrors remain only for compatibility and retention tooling.
 pub trait ConversationLogStore {
     fn append_chat(&self, user_id: &str, payload: &Value) -> Result<()>;
     fn append_tool_log(&self, user_id: &str, payload: &Value) -> Result<()>;
@@ -69,6 +70,20 @@ pub trait ConversationLogStore {
 /// from the short lived stream event buffer: turns are the pagination unit and
 /// items are stable, idempotently replaceable records.
 pub trait ThreadLogStore {
+    /// Build a bounded model-context projection from durable Turn/Item rows.
+    /// Implementations keep pagination in the storage layer; callers never
+    /// reconstruct context by replaying stream events.
+    /// Atomically fork all durable records through a root round into an empty thread.
+    /// Identities are session-scoped and remain stable within the copied graph.
+    fn fork_thread_log(&self, user_id: &str, source_session_id: &str, target_session_id: &str, through_round: i64) -> Result<()>;
+    fn load_thread_context_items(&self, user_id: &str, session_id: &str, limit: i64, include_internal: bool) -> Result<Vec<Value>>;
+    /// User-visible message projection ordered by durable Item creation sequence.
+    fn list_thread_visible_messages(&self, user_id: &str, session_id: &str, before_seq: Option<i64>, limit: i64) -> Result<Vec<Value>>;
+
+    /// Execution history excludes queued turns and the current turn's admission
+    /// message. The executor appends the fully prepared current input once.
+    fn load_thread_execution_context(&self, user_id: &str, session_id: &str, turn_id: &str, limit: i64) -> Result<Vec<Value>>;
+
     fn upsert_thread_text_block(
         &self,
         user_id: &str,
@@ -81,6 +96,28 @@ pub trait ThreadLogStore {
         after: i64,
         limit: i64,
     ) -> Result<Vec<Value>>;
+    /// Read one item's durable text blocks in block order. Ownership is checked
+    /// here instead of trusting a caller supplied item identifier.
+    fn list_thread_item_blocks(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        from_block: i64,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<Vec<Value>>;
+    /// Read blocks with an explicit field and bounded page metadata.
+    fn list_thread_item_blocks_page(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        field: Option<&str>,
+        from_block: i64,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<(Vec<Value>, Option<i64>, bool)>;
     fn find_thread_turn_id(
         &self,
         user_id: &str,
@@ -99,6 +136,8 @@ pub trait ThreadLogStore {
         payload: &Value,
     ) -> Result<()>;
     fn append_thread_item(&self, user_id: &str, payload: &Value) -> Result<()>;
+    /// Return a committed change receipt; an idempotent no-op returns None.
+    fn commit_thread_item(&self, user_id: &str, payload: &Value) -> Result<Option<Value>>;
     fn list_thread_turns(
         &self,
         user_id: &str,
@@ -122,6 +161,16 @@ pub trait ThreadLogStore {
         limit: i64,
         include_internal: bool,
     ) -> Result<Option<Value>>;
+    /// Read one stable Item by identity for long-content hydration and other
+    /// targeted projections. Ownership and visibility are enforced in the
+    /// storage query; callers never fall back to chat_history IDs.
+    fn get_thread_item(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        include_internal: bool,
+    ) -> Result<Option<Value>>;
     fn list_thread_changes(
         &self,
         user_id: &str,
@@ -129,6 +178,8 @@ pub trait ThreadLogStore {
         after_seq: i64,
         limit: i64,
     ) -> Result<Vec<Value>>;
+    /// Internal recovery projection; callers must perform authorization before invoking.
+    fn list_thread_changes_by_session(&self, session_id: &str, after_seq: i64, limit: i64) -> Result<Vec<Value>>;
     fn delete_thread_log_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
 }
 

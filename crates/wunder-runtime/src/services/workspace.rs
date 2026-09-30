@@ -1217,13 +1217,18 @@ impl WorkspaceManager {
 
     pub fn load_history(&self, user_id: &str, session_id: &str, limit: i64) -> Result<Vec<Value>> {
         let limit = normalize_history_limit(limit);
-        let history = self.storage.load_chat_history(user_id, session_id, limit)?;
+        let history = self.storage.load_thread_context_items(user_id, session_id, limit.unwrap_or(0), true)?;
         Ok(filter_orchestration_suppressed_messages(
             self.storage.as_ref(),
             user_id,
             session_id,
             history,
         ))
+    }
+
+    pub fn load_execution_history(&self, user_id: &str, session_id: &str, turn_id: &str, limit: i64) -> Result<Vec<Value>> {
+        let history = self.storage.load_thread_execution_context(user_id, session_id, turn_id, normalize_history_limit(limit).unwrap_or(0))?;
+        Ok(filter_orchestration_suppressed_messages(self.storage.as_ref(), user_id, session_id, history))
     }
 
     pub fn load_history_page(
@@ -1283,8 +1288,44 @@ impl WorkspaceManager {
         session_id: &str,
         language: Option<&str>,
     ) -> Result<Option<String>> {
-        self.storage
-            .get_session_system_prompt(user_id, session_id, language)
+        let normalized_language = language
+            .map(|value| crate::i18n::normalize_language(Some(value), true));
+        // Frozen prompts are ThreadLog system Items.  The old conversation
+        // table may still contain a compatibility mirror, but it is never a
+        // source for prompt reuse once the thread log exists.
+        let history = self
+            .storage
+            .load_thread_context_items(user_id, session_id, 0, true)?;
+        for value in history.into_iter().filter(|value| {
+            value.get("role").and_then(Value::as_str) == Some("system")
+                && value
+                    .get("meta")
+                    .and_then(Value::as_object)
+                    .and_then(|meta| meta.get("type"))
+                    .and_then(Value::as_str)
+                    == Some("system_prompt")
+        }) {
+            let meta = value.get("meta").and_then(Value::as_object);
+            if let Some(expected) = normalized_language.as_ref() {
+                let stored = meta
+                    .and_then(|meta| meta.get("language"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if !stored.is_empty()
+                    && crate::i18n::normalize_language(Some(stored), true) != *expected
+                {
+                    continue;
+                }
+            }
+            if let Some(content) = value.get("content").and_then(Value::as_str) {
+                let content = content.trim();
+                if !content.is_empty() {
+                    return Ok(Some(content.to_string()));
+                }
+            }
+        }
+        Ok(None)
     }
 
     pub fn load_session_frozen_tool_overrides(
@@ -1435,7 +1476,28 @@ impl WorkspaceManager {
                 "language": language.unwrap_or("").trim(),
             }
         });
-        self.append_chat(user_id, &payload)
+        // A frozen prompt is a durable internal Item, independent from the
+        // compatibility conversation mirror.
+        let turn = self
+            .storage
+            .list_thread_turns(user_id, session_id, None, 1)?
+            .into_iter()
+            .next()
+            .and_then(|turn| turn.get("turn_id").and_then(Value::as_str).map(str::to_owned))
+            .ok_or_else(|| anyhow::anyhow!("thread turn is required before freezing system prompt"))?;
+        let item = json!({
+            "session_id": session_id,
+            "turn_id": turn,
+            "item_id": format!("{session_id}:system-prompt"),
+            "kind": "system_message",
+            "status": "completed",
+            "visibility": "model_internal",
+            "meta": {"type": "system_prompt", "language": language.unwrap_or("").trim()},
+            "role": "system",
+            "content": content,
+            "timestamp": payload["timestamp"].clone()
+        });
+        self.storage.append_thread_item(user_id, &item)
     }
 
     pub fn get_user_usage_stats(&self) -> HashMap<String, HashMap<String, i64>> {

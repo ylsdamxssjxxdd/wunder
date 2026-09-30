@@ -54,6 +54,8 @@ export struct WorldMessageCard { content: string, mine: bool, sender: string }
 export struct WorldPickRow { user-id: string, username: string, selected: bool }
 export struct CronCard { id: string, name: string, enabled: bool, schedule: string, next-run: string, last-status: string, last-error: string }
 export struct CronRunCard { run-id: string, status: string, trigger: string, summary: string, error: string, duration: string, created-at: string }
+export struct AgentCardFile { path: string, label: string }
+export struct PromptPackCard { id: string, readonly: bool, locale: string, is-active: bool, is-lang-default: bool }
 export struct AgentCard {
     id: string,
     name: string,

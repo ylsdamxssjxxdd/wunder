@@ -44,8 +44,8 @@
           <button
             class="workspace-icon-btn danger"
             type="button"
-            :title="t('workspace.panel.clear')"
-            :aria-label="t('workspace.panel.clear')"
+            :title="t(isWorkspaceFileSystem && !state.selectedPaths.size ? 'workspace.clear.action' : 'workspace.panel.clear')"
+            :aria-label="t(isWorkspaceFileSystem && !state.selectedPaths.size ? 'workspace.clear.action' : 'workspace.panel.clear')"
             :disabled="loading || isReadonlyFileSystem"
             @click="handleHeaderDelete"
           >
@@ -561,6 +561,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
   batchWunderWorkspaceAction,
+  clearWorkspace,
   copyWunderWorkspaceEntry,
   createWunderWorkspaceDir,
   downloadWunderWorkspaceArchive,
@@ -2828,7 +2829,32 @@ const refreshWorkspace = async () => {
 const handleHeaderDelete = async () => {
   if (!ensureWritableFileSystem()) return;
   if (!getWorkspaceSelectionPaths().length) {
-    ElMessage.info(t('workspace.delete.noneSelected'));
+    if (!isWorkspaceFileSystem.value) {
+      ElMessage.info(t('workspace.delete.noneSelected'));
+      return;
+    }
+    const params = withAgentParams();
+    const agentId = normalizedAgentId.value;
+    const containerId = normalizedContainerId.value;
+    const fileSystemKey = activeFileSystemKey.value;
+    if (!(await confirmAction(t('workspace.clear.confirm')))) return;
+    try {
+      await clearWorkspace(params);
+      ElMessage.success(t('workspace.clear.success'));
+    } catch (error) {
+      showApiError(error, t('workspace.clear.failed'));
+    } finally {
+      emitWorkspaceRefresh({
+        reason: 'workspace-clear',
+        sourceId: workspacePanelRefreshSourceId,
+        agentId,
+        containerId,
+        paths: ['']
+      });
+      if (activeFileSystemKey.value === fileSystemKey) {
+        await loadWorkspace({ path: '', resetExpanded: true, resetSearch: true });
+      }
+    }
     return;
   }
   await deleteWorkspaceSelection();

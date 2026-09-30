@@ -65,6 +65,49 @@ pub async fn owned(state: &AppState, user_id: &str, agent_id: &str) -> Result<Us
     Ok(record)
 }
 
+/// Transport-independent delete shared by the server API and the native
+/// desktop façade. Removes the record, its materialized worker-card files and
+/// the scoped workspace data, so the next bidirectional sync cannot restore
+/// the agent from disk.
+pub async fn delete(state: &AppState, user_id: &str, agent_id: &str) -> Result<()> {
+    let record = owned(state, user_id, agent_id).await?;
+    if record.is_shared {
+        bail!("共享智能体不能由当前用户删除");
+    }
+    let deleted = state
+        .user_store
+        .delete_user_agent(user_id, &record.agent_id)?;
+    if deleted == 0 {
+        bail!("智能体不存在或无权删除");
+    }
+    if let Err(err) = state
+        .inner_visible
+        .remove_agent_files(user_id, &record.agent_id)
+    {
+        tracing::warn!(
+            "failed to remove inner-visible files for {}/{}: {err}",
+            user_id,
+            record.agent_id
+        );
+    }
+    // Purge only agent-scoped workspace variants. In single-root deployments
+    // every variant collapses to the base user, where a purge would wipe the
+    // user's shared sessions and cron jobs, so scoping must be effective.
+    let scoped = state
+        .workspace
+        .scoped_user_id_variants(user_id, Some(&record.agent_id));
+    let unscoped = state.workspace.scoped_user_id_variants(user_id, None);
+    if scoped != unscoped {
+        let mut workspace_ids = scoped;
+        workspace_ids.sort();
+        workspace_ids.dedup();
+        for workspace_id in workspace_ids {
+            let _ = state.workspace.purge_user_data(&workspace_id);
+        }
+    }
+    Ok(())
+}
+
 pub async fn create(state: &AppState, user_id: &str, name: &str) -> Result<UserAgentRecord> {
     validate_name(name)?;
     state.user_store.ensure_default_hive(user_id)?;

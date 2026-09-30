@@ -10,6 +10,34 @@ pub(super) trait PostgresSchemaStorage {
 }
 
 impl PostgresStorage {
+    fn ensure_thread_item_block_fields(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        let mut tx = conn.transaction()?;
+        let exists: bool = tx.query_one("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='thread_item_blocks' AND column_name='field')", &[])?.get(0);
+        if !exists {
+            tx.batch_execute("ALTER TABLE thread_item_blocks ADD COLUMN field TEXT NOT NULL DEFAULT 'content';
+                UPDATE thread_item_blocks SET field=COALESCE(payload::jsonb->>'field',payload::jsonb->'data'->>'field','content');
+                ALTER TABLE thread_item_blocks DROP CONSTRAINT IF EXISTS thread_item_blocks_pkey;
+                ALTER TABLE thread_item_blocks ADD PRIMARY KEY(session_id,item_id,field,block_index);
+                CREATE INDEX IF NOT EXISTS idx_thread_blocks_replay ON thread_item_blocks(session_id,event_id);")?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn ensure_thread_item_sequence(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        let mut tx = conn.transaction()?;
+        tx.batch_execute("LOCK TABLE thread_items IN ACCESS EXCLUSIVE MODE")?;
+        let exists: bool = tx.query_one("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='thread_items' AND column_name='created_seq')", &[])?.get(0);
+        if !exists {
+            tx.batch_execute("ALTER TABLE thread_items ADD COLUMN created_seq BIGINT NOT NULL DEFAULT 0;
+                WITH numbered AS (SELECT session_id,item_id,ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY created_time,root_turn_id,item_index) AS seq FROM thread_items)
+                UPDATE thread_items i SET created_seq=n.seq FROM numbered n WHERE i.session_id=n.session_id AND i.item_id=n.item_id;
+                UPDATE thread_logs SET latest_change_seq=GREATEST(latest_change_seq,COALESCE((SELECT MAX(created_seq) FROM thread_items WHERE thread_items.session_id=thread_logs.session_id),0));")?;
+        }
+        tx.batch_execute("CREATE INDEX IF NOT EXISTS idx_thread_items_context_seq ON thread_items(user_id,session_id,created_seq DESC) WHERE kind IN ('user_message','assistant_message','tool_message','system_message');")?;
+        tx.commit()?;
+        Ok(())
+    }
     fn ensure_user_account_quota_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
         let mut tx = conn.transaction()?;
         // Serializes startup migrations across server instances.
@@ -974,8 +1002,9 @@ impl PostgresSchemaStorage for PostgresStorage {
                   ON thread_items (user_id, session_id, root_turn_id, item_index);
             CREATE TABLE IF NOT EXISTS thread_item_blocks (
               session_id TEXT NOT NULL, user_id TEXT NOT NULL, item_id TEXT NOT NULL,
-              block_index BIGINT NOT NULL, event_id BIGINT NOT NULL, payload TEXT NOT NULL,
-              PRIMARY KEY(session_id,item_id,block_index)
+              field TEXT NOT NULL DEFAULT 'content', block_index BIGINT NOT NULL,
+              event_id BIGINT NOT NULL, payload TEXT NOT NULL,
+              PRIMARY KEY(session_id,item_id,field,block_index)
             );
             CREATE INDEX IF NOT EXISTS idx_thread_blocks_replay ON thread_item_blocks(session_id,event_id);
                 CREATE TABLE IF NOT EXISTS thread_log_changes (
@@ -992,6 +1021,16 @@ impl PostgresSchemaStorage for PostgresStorage {
                 );
                 CREATE INDEX IF NOT EXISTS idx_thread_changes_cursor
                   ON thread_log_changes (user_id, session_id, change_seq);
+                CREATE TABLE IF NOT EXISTS thread_log_metrics (
+                  session_id TEXT NOT NULL,
+                  user_id TEXT NOT NULL,
+                  metric_key TEXT NOT NULL,
+                  metric_value DOUBLE PRECISION NOT NULL DEFAULT 0,
+                  updated_time DOUBLE PRECISION NOT NULL,
+                  PRIMARY KEY (session_id, metric_key)
+                );
+                CREATE INDEX IF NOT EXISTS idx_thread_metrics_user
+                  ON thread_log_metrics (user_id, session_id, metric_key);
                 CREATE TABLE IF NOT EXISTS deleted_session_log_grace (
                   user_id TEXT NOT NULL,
                   session_id TEXT NOT NULL,
@@ -1987,6 +2026,8 @@ impl PostgresSchemaStorage for PostgresStorage {
                     self.ensure_user_tool_access_columns(&mut conn)?;
                     self.ensure_chat_session_columns(&mut conn)?;
                     self.ensure_session_goal_columns(&mut conn)?;
+                    self.ensure_thread_item_sequence(&mut conn)?;
+                    self.ensure_thread_item_block_fields(&mut conn)?;
                     self.ensure_chat_history_columns(&mut conn)?;
                     self.ensure_model_context_table_retired(&mut conn)?;
                     self.ensure_stream_event_workflow_columns(&mut conn)?;

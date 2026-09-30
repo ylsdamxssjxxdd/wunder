@@ -298,7 +298,7 @@ impl ChannelHub {
         let user_id = cleaned_user.to_string();
         let session_id = cleaned_session.to_string();
         let history = run_channel_db("channels.persistence.load_latest_user_message", move || {
-            storage.load_chat_history(&user_id, &session_id, Some(20))
+            storage.load_thread_context_items(&user_id, &session_id, 20, false)
         })
         .await
         .ok()?;
@@ -329,7 +329,7 @@ impl ChannelHub {
         let session_id = cleaned_session.to_string();
         let history = run_channel_db(
             "channels.persistence.load_latest_assistant_message",
-            move || storage.load_chat_history(&user_id, &session_id, Some(20)),
+            move || storage.load_thread_context_items(&user_id, &session_id, 20, false),
         )
         .await
         .ok()?;

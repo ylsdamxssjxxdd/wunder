@@ -11,6 +11,20 @@ use wunder_desktop::{NativeChatEvent, NativeChatInput, NativeDesktop};
 
 pub const DELTA: &str = "增量测试内容。增量测试内容。增量测试内容。增量测试内容。\n";
 
+/// The runtime collapses online *_delta frames into thread_item_delta and
+/// keeps the semantic stream type in data.source_event.
+fn is_llm_text_delta(event: &serde_json::Value) -> bool {
+    match event["event"].as_str() {
+        Some("llm_output_delta") => true,
+        Some("thread_item_delta") => {
+            let envelope = &event["data"];
+            let data = envelope.get("data").unwrap_or(envelope);
+            data["source_event"].as_str() == Some("llm_output_delta")
+        }
+        _ => false,
+    }
+}
+
 pub fn check_runtime(desktop: &NativeDesktop) -> Result<(), Box<dyn std::error::Error>> {
     ensure(
         desktop.get_session("missing-session").is_err(),
@@ -75,7 +89,7 @@ fn check_queue_and_detach(desktop: &NativeDesktop) -> Result<(), Box<dyn std::er
     loop {
         ensure(Instant::now() < deadline, "first queued test timeout")?;
         match first.try_recv()? {
-            Some(NativeChatEvent::Event(event)) if event["event"] == "llm_output_delta" => break,
+            Some(NativeChatEvent::Event(event)) if is_llm_text_delta(&event) => break,
             Some(NativeChatEvent::Failed(error)) => return Err(error.into()),
             _ => std::thread::sleep(Duration::from_millis(10)),
         }

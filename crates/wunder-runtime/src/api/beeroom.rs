@@ -2778,7 +2778,7 @@ fn resolve_cancelled_round_suppression_range(
     let mut latest_user_created_at = 0.0;
     if !mother_session_id.trim().is_empty() {
         latest_user_created_at = storage
-            .load_chat_history(user_id.trim(), mother_session_id.trim(), None)
+            .load_thread_context_items(user_id.trim(), mother_session_id.trim(), 0, false)
             .ok()
             .unwrap_or_default()
             .into_iter()
@@ -2793,7 +2793,7 @@ fn resolve_cancelled_round_suppression_range(
                     return None;
                 }
                 let created_at = message
-                    .get("created_at")
+                    .get("created_at").or_else(|| message.get("timestamp"))
                     .map(parse_chat_message_time)
                     .unwrap_or(0.0);
                 if created_at <= 0.0
@@ -2839,7 +2839,7 @@ fn count_mother_user_rounds(
         .min_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
         .unwrap_or(0.0);
     storage
-        .load_chat_history(user_id.trim(), mother_session_id.trim(), None)
+        .load_thread_context_items(user_id.trim(), mother_session_id.trim(), 0, false)
         .ok()
         .unwrap_or_default()
         .into_iter()
@@ -2854,7 +2854,7 @@ fn count_mother_user_rounds(
                 return false;
             }
             let created_at = message
-                .get("created_at")
+                .get("created_at").or_else(|| message.get("timestamp"))
                 .map(parse_chat_message_time)
                 .unwrap_or(0.0);
             if message_is_suppressed(round_state, created_at) {
@@ -2897,7 +2897,7 @@ fn load_or_migrate_round_state_by_orchestration_id(
     }
     let messages = state
         .storage
-        .load_chat_history(user_id.trim(), mother_session_id.trim(), Some(400))
+        .load_thread_context_items(user_id.trim(), mother_session_id.trim(), 400, false)
         .ok()
         .unwrap_or_default();
     let history = load_history_record(state.storage.as_ref(), user_id, group_id, orchestration_id);
@@ -2918,7 +2918,7 @@ fn load_or_migrate_round_state_by_orchestration_id(
             continue;
         }
         let created_at = message
-            .get("created_at")
+            .get("created_at").or_else(|| message.get("timestamp"))
             .map(parse_chat_message_time)
             .unwrap_or_else(now_ts);
         let suppression_probe = OrchestrationRoundState {

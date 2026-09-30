@@ -22,14 +22,21 @@ mod cron;
 mod profile;
 #[path = "native_settings.rs"]
 mod settings;
+#[path = "native_prompts.rs"]
+mod prompts;
 #[path = "native_workspace.rs"]
 mod workspace;
 #[path = "native_world.rs"]
 mod world;
-pub use catalog::{AgentRecord, AgentSettingsEdit, ToolRecord};
+pub use catalog::{
+    AgentImportOutcome, AgentRecord, AgentSettingsEdit, ToolRecord, WORKER_CARD_SCHEMA_VERSION,
+};
 pub use cron::{CronRecord, CronRunRecord, NativeCronJobEdit};
 pub use profile::NativeProfile;
-pub use settings::{DesktopSettings, LanPeerRecord, LanSettings, ModelEdit, ModelRecord};
+pub use settings::{
+    DesktopSettings, LanPeerRecord, LanSettings, ModelEdit, ModelProbeOutcome, ModelRecord,
+};
+pub use prompts::{PromptPackInfo, PromptSegmentContent};
 pub use workspace::{Directory, FileRecord};
 pub use world::{
     WorldContact, WorldEventFeed, WorldGroup, WorldGroupDetail, WorldGroupMember, WorldMessage,

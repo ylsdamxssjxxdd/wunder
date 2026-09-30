@@ -695,7 +695,7 @@ impl Orchestrator {
         clear_retained_interaction_markers(&mut rebuilt);
         clear_compaction_inflight_markers(&mut rebuilt);
         // The compaction summary chat row below carries the committed replacement
-        // history in its meta; the model input is derived from chat_history, so no
+        // history in its meta; model input is derived from ThreadLog, so no
         // separate context table write is needed.
         let _ = self.workspace.flush_writes_async().await;
         let rebuilt_tokens = estimate_messages_tokens(&rebuilt);

@@ -343,13 +343,14 @@ impl Orchestrator {
             // tail of the append-only chat history and break KV cache reuse.
             let _ = self.workspace.flush_writes_async().await;
             let model_context_entries = history_manager
-                .load_history_messages_async(
+                .load_execution_messages_async(
                     self.workspace.clone(),
                     user_id.clone(),
                     session_id.clone(),
-                    0,
+                    prepared.thread_turn_id.expect("accepted turn").to_string(),
                 )
                 .await
+                .map_err(|error| OrchestratorError::internal(error.to_string()))?
                 .into_iter()
                 .filter_map(normalize_model_context_message)
                 .collect::<Vec<_>>();

@@ -24,9 +24,10 @@ require_file "$repo_root/Cargo.toml"
 [[ -x "$rust/bin/cargo" ]] || fail "ARM64 Rust toolchain is missing: $rust/bin/cargo"
 [[ -d "$rust/lib/rustlib/$target/lib" ]] || fail "Rust std for $target is missing"
 [[ -d "$vendor_root" ]] || fail "shared offline Cargo vendor is missing: $vendor_root"
-for tool in cc x86_64-linux-gnu-gcc-7 x86_64-linux-gnu-readelf x86_64-linux-gnu-strip awk grep sed sort tail; do require_command "$tool"; done
-
+# SDK tools are the ones the build actually uses (the cross wrapper execs
+# $sdk/usr/bin copies directly), so put them on PATH before validation.
 export PATH="$rust/bin:$sdk/usr/bin:$PATH"
+for tool in cc x86_64-linux-gnu-gcc-7 x86_64-linux-gnu-readelf x86_64-linux-gnu-strip awk grep sed sort tail; do require_command "$tool"; done
 export LD_LIBRARY_PATH="$sdk/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export WUNDER_AMD64_SDK_ROOT="$sdk"
 unset GCC_EXEC_PREFIX COMPILER_PATH LIBRARY_PATH

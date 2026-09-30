@@ -77,6 +77,7 @@ fn should_backpressure_online_stream_event(event_type: &str) -> bool {
     matches!(
         event_type,
         "llm_output_delta"
+            | "thread_item_delta"
             | "command_session_delta"
             | "command_session_start"
             | "command_session_status"
@@ -254,7 +255,9 @@ impl EventEmitter {
     ) -> bool {
         // Token deltas are an online transport frame only.  The durable
         // assistant item is written when the model turn completes.
-        if event_type == "llm_output_delta" || self.storage.is_none() {
+        // Delta frames are transport-only. Durable recovery uses the bounded
+        // ThreadLog text blocks and stable item changes instead of token rows.
+        if event_type.ends_with("_delta") || self.storage.is_none() {
             return false;
         }
         if !should_persist_stream_event(event_type) {
@@ -275,6 +278,43 @@ impl EventEmitter {
                 }
             }
         }
+        // A text block is keyed by the stable assistant Item. Register it at
+        // model-call admission, never once per token.
+        if event_type == "llm_request" {
+            if let Some(storage) = self.storage.clone() {
+                if let Some(turn_id) = data.get("turn_id").and_then(Value::as_str) {
+                    let model_round = data.get("model_round").and_then(Value::as_i64).unwrap_or(0);
+                    let item = json!({
+                        "session_id": self.session_id,
+                        "turn_id": turn_id,
+                        "model_round": model_round,
+                        "item_id": format!("{turn_id}:text-{model_round}"),
+                        "kind": "assistant_message",
+                        "status": "running",
+                        "visibility": "user",
+                        "role": "assistant",
+                        "content": "",
+                        "reasoning": ""
+                    });
+                    let owner = self.user_id.clone();
+                    match crate::core::blocking::run_db("thread_log.text_item", move || {
+                        storage.commit_thread_item(&owner, &item)
+                    }).await {
+                        Ok(Some(receipt)) => {
+                            let change_event = StreamEvent {
+                                event: "thread_change".into(),
+                                data: enrich_event_payload(receipt, Some(&self.session_id), timestamp),
+                                id: None,
+                                timestamp: Some(timestamp),
+                            };
+                            self.enqueue_event(&change_event, true).await;
+                        }
+                        Ok(None) => {}
+                        Err(error) => warn!("persist text item failed: {error}"),
+                    }
+                }
+            }
+        }
         let block = if event_type == "llm_output_delta" {
             self.text_tail
                 .lock()
@@ -288,26 +328,37 @@ impl EventEmitter {
             None
         };
         if let (Some(block), Some(storage)) = (block, self.storage.clone()) {
-            super::stream_persist::enqueue_stream_event_persist(
-                storage,
-                self.session_id.clone(),
-                self.user_id.clone(),
-                block["event_id"].as_i64().unwrap_or(event_id),
-                block,
-                "thread_item_block".into(),
-            );
+            let blocks = block.get("blocks").and_then(Value::as_array).cloned().unwrap_or_else(|| vec![block]);
+            for block in blocks {
+                super::stream_persist::enqueue_stream_event_persist(
+                    storage.clone(),
+                    self.session_id.clone(),
+                    self.user_id.clone(),
+                    block["event_id"].as_i64().unwrap_or(event_id),
+                    block,
+                    "thread_item_block".into(),
+                );
+            }
         }
-        if let Some(item) =
-            crate::services::thread_log::event_item(&self.session_id, event_type, &data)
-        {
+        if let Some(item) = crate::services::thread_log::event_item(&self.session_id, event_type, &data) {
             if let Some(storage) = self.storage.clone() {
                 let owner = self.user_id.clone();
-                if let Err(error) = crate::core::blocking::run_db("thread_log.event", move || {
-                    storage.append_thread_item(&owner, &item)
-                })
-                .await
-                {
-                    warn!("persist thread item failed: {error}");
+                match crate::core::blocking::run_db("thread_log.event", move || {
+                    storage.commit_thread_item(&owner, &item)
+                }).await {
+                    Ok(Some(receipt)) => {
+                        let change_event = StreamEvent {
+                            event: "thread_change".into(),
+                            data: enrich_event_payload(receipt, Some(&self.session_id), timestamp),
+                            // Change cursor and transport event IDs are distinct.
+                            // Reusing the following event's ID would deduplicate it.
+                            id: None,
+                            timestamp: Some(timestamp),
+                        };
+                        self.enqueue_event(&change_event, true).await;
+                    }
+                    Ok(None) => {}
+                    Err(error) => warn!("persist thread item failed: {error}"),
                 }
             }
         }
@@ -316,9 +367,17 @@ impl EventEmitter {
                 .record_event(&self.session_id, event_type, &data);
         }
         let persisted = self.persist_event_on_emit(event_id, event_type, &data, timestamp);
+        if event_type.ends_with("_delta") {
+            if let Some(map) = data.as_object_mut() {
+                // The shared envelope must retain the semantic stream type.
+                // Otherwise command/tool output is rendered as assistant text.
+                map.insert("source_event".into(), json!(event_type));
+            }
+        }
         let payload = enrich_event_payload(data, Some(&self.session_id), timestamp);
+        let online_event_type = if event_type.ends_with("_delta") { "thread_item_delta" } else { event_type };
         let event = StreamEvent {
-            event: event_type.to_string(),
+            event: online_event_type.to_string(),
             data: payload,
             id: Some(event_id.to_string()),
             timestamp: Some(timestamp),
@@ -380,7 +439,7 @@ impl EventEmitter {
             .cloned()
             .unwrap_or_else(|| event.data.clone());
         let timestamp = event.timestamp.unwrap_or_else(Utc::now);
-        if event.event == "llm_output_delta" {
+        if event.event == "thread_item_delta" || event.event.ends_with("_delta") {
             return;
         }
         self.persist_stream_event(event_id, &event.event, raw_data, timestamp);
@@ -662,6 +721,8 @@ fn load_overflow_events_inner(
         if event_type.is_empty() {
             continue;
         }
+        // Recovery blocks replace text at their stored offsets. They must not
+        // become append-only deltas, including when only the active tail changed.
         let data = record.get("data").cloned().unwrap_or(Value::Null);
         let timestamp = record
             .get("timestamp")
@@ -698,6 +759,46 @@ fn enrich_event_payload(data: Value, session_id: Option<&str>, timestamp: DateTi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::ThreadLogStore;
+
+    #[test]
+    fn replay_preserves_block_snapshot_offsets_and_reasoning() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = crate::storage::SqliteStorage::new(
+            dir.path().join("snapshot.db").to_string_lossy().into_owned(),
+        );
+        let accepted = storage.accept_thread_turn("owner", "thread", &json!({"content":"request"})).unwrap();
+        storage.append_thread_item("owner", &json!({
+            "session_id":"thread", "turn_id":accepted["turn_id"],
+            "item_id":"text-item", "kind":"assistant_message", "visibility":"user",
+            "content":"tail"
+        })).unwrap();
+        let data = json!({"item_id":"text-item","block_index":1,
+            "field":"content","content":"tail","content_offset":8});
+        storage.upsert_thread_text_block("owner", "thread", &json!({
+            "event":"thread_item_block","event_id":7,"item_id":"text-item",
+            "block_index":1,"data":data
+        })).unwrap();
+        let events = load_overflow_events_inner(&storage, "thread", 0, 10);
+        let block = events.iter().find(|event| event.event == "thread_item_block").expect("block snapshot");
+        assert_eq!(block.data, data);
+        assert!(block.data.get("delta").is_none());
+        assert!(events.iter().any(|event| event.event == "thread_change"));
+        let later = load_overflow_events_inner(&storage, "thread", 7, 10);
+        assert!(later.iter().any(|event| event.event == "thread_item_block"));
+        assert!(!later.iter().any(|event| event.event == "thread_change"));
+    }
+
+    #[test]
+    fn replay_restores_committed_lifecycle_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = crate::storage::SqliteStorage::new(dir.path().join("recovery.db").to_string_lossy().into_owned());
+        let accepted = storage.accept_thread_turn("owner", "thread", &json!({"content":"request"})).unwrap();
+        let turn_id = accepted["turn_id"].as_str().unwrap();
+        storage.update_thread_turn("owner", "thread", turn_id, "running", "", &json!({})).unwrap();
+        let events = load_overflow_events_inner(&storage, "thread", 0, 10);
+        assert!(events.iter().any(|event| event.event == "thread_change" && event.data["turn_id"] == turn_id));
+    }
 
     #[test]
     fn test_backoff_stream_poll_interval_starts_from_base_interval() {
@@ -742,6 +843,7 @@ mod tests {
 
     #[test]
     fn online_llm_delta_uses_backpressure_instead_of_lossy_overflow() {
+        assert!(should_backpressure_online_stream_event("thread_item_delta"));
         assert!(should_backpressure_online_stream_event("llm_output_delta"));
         assert!(should_backpressure_online_stream_event(
             "command_session_delta"

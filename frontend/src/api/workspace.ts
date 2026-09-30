@@ -25,6 +25,7 @@ export const createWorkspaceDir = (payload: ApiPayload) => api.post('/workspace/
 export const moveWorkspaceEntry = (payload: ApiPayload) => api.post('/workspace/move', payload);
 export const copyWorkspaceEntry = (payload: ApiPayload) => api.post('/workspace/copy', payload);
 export const batchWorkspaceAction = (payload: ApiPayload) => api.post('/workspace/batch', payload);
+export const clearWorkspace = (payload: ApiPayload) => api.post('/workspace/clear', payload);
 export const saveWorkspaceFile = (payload: ApiPayload) => api.post('/workspace/file', payload);
 export const deleteWorkspaceEntry = (params: QueryParams) => api.delete('/workspace', { params });
 export const downloadWorkspaceFile = (params: QueryParams, config: RequestConfig = {}) =>

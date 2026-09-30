@@ -56,3 +56,17 @@ GitHub Actions 的 ARM64 Desktop 发布使用 `build-linux-arm64-cross-appimage.
 Linux ARM64 Desktop 的 X11/XCB 运行库默认取自建机 `ldconfig`；当 ARM 主机缺少这些库（典型如 `libxkbcommon-x11.so.0`）时，`build-linux-arm64-appimage.sh` 会按库逐一优先改用 kylin-arm SDK 的 `offline/linux-arm64-ubuntu18/root/usr/lib/aarch64-linux-gnu` 或 `offline/runtime-libs/aarch64-linux-gnu`，其余库仍回退到 ldconfig，也可用 `WUNDER_SLINT_RUNTIME_LIB_DIR=/path/to/libs` 显式指定整个目录。从目录取用的库会校验 AArch64 ELF，防止误指其它架构的库目录。
 
 ARM64 开发 sysroot 首次准备使用 `bash builders/prepare-linux-arm64-devel-sysroot.sh`。如果构建提示 `absolute libgcc_s.so link`、`dangling libgcc_s.so link` 或 `cannot find -lgcc_s`，可在 ARM64 Docker 容器中执行 `bash builders/prepare-linux-arm64-devel-sysroot.sh --repair`；它只修复已有 `Rust-builder/kylin-arm/offline/linux-arm64-ubuntu18/root` 内的软链接，不重新下载 SDK。
+
+## Linux amd64 离线 SDK 维护
+
+`kylin-x86` 表示 Linux amd64 宿主。联网准备一次：
+
+```bash
+bash builders/build-kylin-x86-sdk-docker.sh
+```
+
+生成目录包含固定 Rust 工具链、Cargo vendor、两架构 sysroot tar、真实 AppImage runtime、宿主工具 tar 和 Docker 镜像归档。Linux 符号链接与权限保存在 tar 中，不能把 Windows 解压结果当成同等 SDK。
+
+离线机器先执行 `docker load -i offline/archives/builder-amd64-ubuntu18.docker.tar`，再用 `--network none` 运行镜像。ARM64 sysroot 从 `offline/archives/linux-arm64-ubuntu18.tar` 解压到 Linux 文件系统；编译器使用镜像的 `aarch64-linux-gnu-gcc`，不能运行 ARM 宿主 sysroot 中的 GCC。Win7 使用 nightly 的 `-Z build-std=std,panic_abort` 与 `i686-w64-mingw32-gcc`，不能用普通 Windows target 替代 Win7 验收。
+
+`metadata/smoke-test.txt` 保存实际禁网工具链验证，`metadata/packages.tsv` 保存系统工具版本，`manifest.json` / `SHA256SUMS` 保存最终文件校验信息。小程序验证不替代完整桌面应用与真实系统运行验收。

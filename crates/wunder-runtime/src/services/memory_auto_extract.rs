@@ -392,7 +392,7 @@ impl MemoryAutoExtractService {
     ) -> Vec<String> {
         let mut texts = self
             .storage
-            .load_chat_history(user_id, session_id, Some(MAX_EXTRACTION_HISTORY_MESSAGES))
+            .load_thread_context_items(user_id, session_id, MAX_EXTRACTION_HISTORY_MESSAGES, false)
             .unwrap_or_default()
             .into_iter()
             .filter_map(|payload| extract_user_message_text(&payload))

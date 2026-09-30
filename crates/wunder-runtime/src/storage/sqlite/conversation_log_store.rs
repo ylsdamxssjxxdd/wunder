@@ -66,36 +66,51 @@ impl SqliteConversationLogStorage for SqliteStorage {
         }
         let payload = output_quality::annotate_chat_payload(payload);
         let payload = sanitize_persisted_chat_payload(&payload);
-        let payload_text = Self::json_to_string(&payload);
         let now = Self::now_ts();
+        // ThreadLog is authoritative even for legacy callers that did not yet
+        // attach a Turn identity. Admit a synthetic root once, then route all
+        // following messages in this session to that durable Turn.
+        let explicit_turn = payload.get("turn_id").and_then(Value::as_str).filter(|v| !v.is_empty()).map(str::to_owned);
+        let mut admitted_user = false;
+        let turn_id = if let Some(turn_id) = explicit_turn {
+            Some(turn_id)
+        } else if let Some(round) = payload.get("user_round").and_then(Value::as_i64).filter(|round| *round > 0) {
+            self.find_thread_turn_id_impl(user_id, &session_id, round)?
+        } else if role == "user" {
+            let accepted = self.accept_thread_turn_impl(user_id, &session_id, &payload)?;
+            admitted_user = accepted.get("created").and_then(Value::as_bool) == Some(true);
+            accepted.get("turn_id").and_then(Value::as_str).map(str::to_owned)
+        } else {
+            self.list_thread_turns_impl(user_id, &session_id, None, 1)?.into_iter().next()
+                .and_then(|turn| turn.get("turn_id").and_then(Value::as_str).map(str::to_owned))
+        };
+        if let Some(turn_id) = turn_id {
+            if !admitted_user {
+                let mut timeline_payload = payload.clone();
+                if let Value::Object(map) = &mut timeline_payload {
+                    map.insert("turn_id".into(), Value::String(turn_id.clone()));
+                    map.insert("item_id".into(), Value::String(payload.get("item_id").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| uuid::Uuid::new_v4().to_string())));
+                    map.insert("kind".into(), Value::String(format!("{}_message", role)));
+                    map.insert(
+                        "status".into(),
+                        Value::String(
+                            if role == "user" { "running" } else { "completed" }.into(),
+                        ),
+                    );
+                }
+                self.append_thread_item_impl(user_id, &timeline_payload)?;
+            }
+        }
+        // Keep the legacy row only as a compatibility mirror.  It is written
+        // after the authoritative ThreadLog mutation so a failed timeline
+        // admission cannot leave an orphan history row.
+        let payload_text = Self::json_to_string(&payload);
         let conn = self.open()?;
         conn.execute(
             "INSERT INTO chat_history (user_id, session_id, role, payload, created_time) \
              VALUES (?, ?, ?, ?, ?)",
             params![user_id, session_id, role, payload_text, now],
         )?;
-        if payload
-            .get("user_round")
-            .and_then(Value::as_i64)
-            .is_some_and(|round| round > 0)
-        {
-            let mut timeline_payload = payload.clone();
-            if let Value::Object(map) = &mut timeline_payload {
-                map.insert("kind".into(), Value::String(format!("{}_message", role)));
-                map.insert(
-                    "status".into(),
-                    Value::String(
-                        if role == "user" {
-                            "running"
-                        } else {
-                            "completed"
-                        }
-                        .into(),
-                    ),
-                );
-            }
-            self.append_thread_item_impl(user_id, &timeline_payload)?;
-        }
         Ok(())
     }
 

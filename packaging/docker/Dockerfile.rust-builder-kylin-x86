@@ -1,0 +1,9 @@
+FROM ubuntu:18.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl build-essential gcc-aarch64-linux-gnu g++-aarch64-linux-gnu gcc-mingw-w64-i686 g++-mingw-w64-i686 binutils-mingw-w64-i686 cmake ninja-build nasm pkg-config python3 rsync file patchelf squashfs-tools xz-utils libasound2-dev libx11-dev libxtst-dev libxkbcommon-dev libxkbcommon-x11-dev llvm && rm -rf /var/lib/apt/lists/*
+RUN curl --fail --location --retry 3 https://sh.rustup.rs -o /tmp/rustup.sh && sh /tmp/rustup.sh -y --profile minimal --default-toolchain none
+RUN update-alternatives --set i686-w64-mingw32-gcc /usr/bin/i686-w64-mingw32-gcc-posix  && update-alternatives --set i686-w64-mingw32-g++ /usr/bin/i686-w64-mingw32-g++-posix
+ENV PATH=/root/.cargo/bin:$PATH
+RUN rustup toolchain install nightly-2026-03-14 --profile minimal --component rust-src --target aarch64-unknown-linux-gnu --target i686-pc-windows-gnu && rustup toolchain install 1.92.0 --profile minimal --component rust-src --target aarch64-unknown-linux-gnu --target i686-pc-windows-gnu
+WORKDIR /workspace
+CMD ["bash"]

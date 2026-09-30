@@ -1,4 +1,4 @@
-import { Theme, DesktopPage, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, CronCard, CronRunCard } from "theme.slint";
+import { Theme, DesktopPage, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, CronCard, CronRunCard, AgentCardFile, PromptPackCard } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, SearchField, FormField } from "components.slint";
 import { Composer } from "composer.slint";
 import { MessageRow } from "message.slint";
@@ -9,7 +9,7 @@ import { CronPage } from "cron_page.slint";
 import { AgentsPage, ToolsPage, SettingsPage } from "entity_pages.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { ListView, ScrollView, ComboBox } from "std-widgets.slint";
-export { Theme, DesktopPage, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, CronCard, CronRunCard }
+export { Theme, DesktopPage, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, CronCard, CronRunCard, AgentCardFile, PromptPackCard }
 export { AppTray } from "tray.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
 
@@ -100,6 +100,19 @@ export component MainWindow inherits Window {
     in-out property <bool> world-loading: false;
     in-out property <bool> cron-loading: false;
     in-out property <[CronCard]> cron-jobs: [];
+    in-out property <[PromptPackCard]> prompt-packs: [];
+    in-out property <string> prompt-active;
+    in-out property <string> prompt-selected-pack;
+    in-out property <int> prompt-selected-segment: 0;
+    in-out property <string> prompt-draft;
+    in-out property <bool> prompt-readonly: false;
+    in-out property <bool> prompt-loading: false;
+    in-out property <bool> reset-confirm-open: false;
+    in-out property <string> pack-name-draft;
+    in-out property <bool> agent-cards-open: false;
+    in-out property <bool> agent-cards-loading: false;
+    in-out property <bool> agent-card-overwrite: false;
+    in-out property <[AgentCardFile]> agent-card-files: [];
     in-out property <bool> cron-delete-open: false;
     in-out property <string> cron-delete-pending;
     in-out property <[string]> cron-agent-names: ["默认智能体"];
@@ -139,6 +152,8 @@ export component MainWindow inherits Window {
     in-out property <string> selected-agent-status;
     in-out property <string> workspace-root;
     in-out property <string> runtime-language;
+    in-out property <string> runtime-theme;
+    in-out property <string> runtime-send-key;
     in-out property <bool> lan-enabled: false;
     in-out property <string> lan-name;
     in-out property <string> lan-peer-id;
@@ -207,6 +222,21 @@ export component MainWindow inherits Window {
     callback refresh-cron();
     callback toggle-cron(string, bool);
     callback delete-cron(string);
+    callback export-agent-card();
+    callback open-agent-card-import();
+    callback close-agent-card-import();
+    callback import-agent-card(string);
+    callback probe-model-context();
+    callback probe-model-voices();
+    callback save-preferences();
+    callback refresh-prompt-packs();
+    callback select-prompt-pack(string);
+    callback save-prompt-segment();
+    callback create-prompt-pack();
+    callback delete-prompt-pack();
+    callback confirm-delete-prompt-pack();
+    callback export-diagnostics();
+    callback reset-work-state();
     callback run-cron-now(string);
     callback open-cron-runs(string);
     callback close-cron-runs();
@@ -509,6 +539,31 @@ export component MainWindow inherits Window {
         add-question => { root.add-agent-question(); }
         remove-question(index) => { root.remove-agent-question(index); }
         delete-agent => { root.delete-agent(); }
+        export-agent-card => { root.export-agent-card(); }
+        open-agent-card-import => { root.open-agent-card-import(); }
+        close-agent-card-import => { root.close-agent-card-import(); }
+        import-agent-card(path) => { root.import-agent-card(path); }
+        cards-open <=> root.agent-cards-open;
+        cards-loading: root.agent-cards-loading;
+        card-files: root.agent-card-files;
+        card-overwrite <=> root.agent-card-overwrite;
+    }
+    if root.reset-confirm-open : Rectangle {
+        background: #00000040;
+        TouchArea { clicked => { root.reset-confirm-open = false; } }
+        Rectangle {
+            x: (parent.width - 400px) / 2; y: (parent.height - 160px) / 2; width: 400px; height: 160px;
+            border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+            TouchArea { }
+            VerticalLayout { padding: 18px; spacing: 12px;
+                Text { text: "重置工作状态"; color: Theme.text; font-size: 15px; font-weight: 700; }
+                Text { vertical-stretch: 1; text: "将停止运行中的任务、清理队列与临时投影。资产、配置、文件与历史保留。确认重置？"; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+                HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; }
+                    Action { width: 96px; label: "确认重置"; show-label: true; clicked => { root.reset-confirm-open = false; root.reset-work-state(); } }
+                    Action { width: 72px; label: "取消"; show-label: true; primary: true; clicked => { root.reset-confirm-open = false; } }
+                }
+            }
+        }
     }
     if root.page == DesktopPage.tools : ToolsPage {
         x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px;
@@ -530,6 +585,25 @@ export component MainWindow inherits Window {
         edit-model => { root.open-selected-model(); }
         set-default-model(key) => { root.set-default-model(key); }
         refresh => { root.refresh-settings(); }
+        theme <=> root.runtime-theme;
+        send-key <=> root.runtime-send-key;
+        save-preferences => { root.save-preferences(); }
+        prompt-packs: root.prompt-packs;
+        prompt-active: root.prompt-active;
+        selected-pack <=> root.prompt-selected-pack;
+        selected-segment <=> root.prompt-selected-segment;
+        prompt-draft <=> root.prompt-draft;
+        prompt-readonly: root.prompt-readonly;
+        prompt-loading: root.prompt-loading;
+        reset-confirm-open <=> root.reset-confirm-open;
+        pack-name-draft <=> root.pack-name-draft;
+        refresh-prompt-packs => { root.refresh-prompt-packs(); }
+        select-prompt-pack(id) => { root.select-prompt-pack(id); }
+        save-prompt-segment => { root.save-prompt-segment(); }
+        create-prompt-pack => { root.create-prompt-pack(); }
+        delete-prompt-pack => { root.delete-prompt-pack(); }
+        export-diagnostics => { root.export-diagnostics(); }
+        reset-work-state => { root.reset-work-state(); }
     }
     if root.page == DesktopPage.profile : Rectangle {
         x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px; background: Theme.chat;
@@ -648,6 +722,10 @@ export component MainWindow inherits Window {
                         FormField { horizontal-stretch: 1; label: "服务地址"; placeholder: "输入服务地址"; text <=> root.model-base-url-draft; }
                     FormField { horizontal-stretch: 1; label: "访问密钥（留空保留原值）"; placeholder: "仅保存到本机设置"; secret: true; text <=> root.model-token-draft; }
                     FormField { horizontal-stretch: 1; label: "类型"; placeholder: "llm、embedding、asr、tts、image 或 video"; text <=> root.model-type-draft; }
+                    HorizontalLayout { height: 30px; spacing: 8px;
+                        Action { width: 96px; label: "探测上下文"; show-label: true; enabled: !root.saving && root.model-name-draft != "" && root.model-base-url-draft != ""; clicked => { root.probe-model-context(); } }
+                        if root.model-type-draft == "tts" : Action { width: 96px; label: "探测语音"; show-label: true; enabled: !root.saving && root.model-name-draft != "" && root.model-base-url-draft != ""; clicked => { root.probe-model-voices(); } }
+                    }
                     }
                 }
                 HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; } Action { icon: @image-url("../assets/icons/xmark.svg"); label: "取消"; show-label: true; clicked => { if !root.saving { root.model-editor-open = false; root.model-token-draft = ""; } } } Action { width: 66px; icon: @image-url("../assets/icons/check.svg"); label: root.saving ? "保存中" : "保存"; show-label: true; primary: true; enabled: !root.saving && !root.settings-loading && root.model-provider-draft != "" && root.model-key-draft != "" && root.model-name-draft != ""; clicked => { root.save-model(root.model-key-draft, root.model-provider-draft, root.model-name-draft, root.model-base-url-draft, root.model-token-draft, root.model-type-draft); } } }

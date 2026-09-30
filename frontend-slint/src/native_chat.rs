@@ -723,9 +723,16 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
 }
 
 fn apply_event(active: &mut Active, event: &Value) -> Result<bool, String> {
-    let kind = event["event"].as_str().unwrap_or("");
+    let raw_kind = event["event"].as_str().unwrap_or("");
     let envelope = &event["data"];
     let data = envelope.get("data").unwrap_or(envelope);
+    // The runtime collapses every online *_delta frame into thread_item_delta
+    // and keeps the semantic type in data.source_event.
+    let kind = if raw_kind == "thread_item_delta" {
+        data["source_event"].as_str().unwrap_or(raw_kind)
+    } else {
+        raw_kind
+    };
     if data["session_id"]
         .as_str()
         .is_some_and(|id| id != active.session)

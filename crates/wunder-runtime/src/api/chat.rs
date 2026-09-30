@@ -473,17 +473,13 @@ pub(crate) async fn build_chat_request(
         .map(|record| record.preview_skill)
         .unwrap_or(false);
 
+    // ThreadLog owns the durable user-turn directory.  Do not infer whether
+    // this is the first message from a compatibility chat_history page: that
+    // table may lag the admission transaction and can contain hidden rows.
     let is_first_user_message = state
-        .workspace
-        .load_history_page(&user.user_id, &session_id, None, 2)
-        .map(|items| {
-            !items.iter().any(|item| {
-                item.get("role")
-                    .and_then(Value::as_str)
-                    .map(|role| role == "user")
-                    .unwrap_or(false)
-            })
-        })
+        .storage
+        .get_thread_log_counts(&user.user_id, &session_id, false)
+        .map(|(user_turn_total, _item_total)| user_turn_total == 0)
         .unwrap_or(false);
 
     if is_first_user_message && should_auto_title(&record.title) {

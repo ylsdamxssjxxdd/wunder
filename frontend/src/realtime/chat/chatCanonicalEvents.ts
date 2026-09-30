@@ -446,6 +446,15 @@ export const buildCanonicalChatRuntimeEvents = (
   const payload = asRecord(options.payload);
   const data = readData(payload);
 
+  if (eventType === 'thread_item_delta') {
+    const sourceEvent = normalizeEventType(data.source_event ?? payload.source_event);
+    if (!['llm_output_delta', 'tool_output_delta', 'tool_call_delta', 'command_session_delta'].includes(sourceEvent)) {
+      // Unknown typed tails must never become assistant prose by default.
+      return [];
+    }
+    return buildCanonicalChatRuntimeEvents({ ...options, eventType: sourceEvent });
+  }
+
   if (
     eventType === 'llm_output_delta' ||
     eventType === 'delta' ||
@@ -621,6 +630,18 @@ export const buildCanonicalChatRuntimeEvents = (
   // Workspace mutations share the stream cursor but must not create chat work.
   if (eventType === 'workspace_update') {
     return [buildBaseEvent(options, 'cursor_only')];
+  }
+
+  if (eventType === 'thread_change') {
+    return [buildBaseEvent(options, 'cursor_only', {
+      turn_id: firstText(data.turn_id, payload.turn_id),
+      item_id: firstText(data.item_id, payload.item_id),
+      revision: data.revision ?? payload.revision
+    })];
+  }
+
+  if (eventType === 'thread_snapshot_required') {
+    return [buildBaseEvent(options, 'session_runtime', { runtime_status: 'snapshot_required' })];
   }
 
   if (GENERIC_WORKFLOW_EVENT_TYPES.has(eventType) || WORKFLOW_EVENT_PREFIXES.some((prefix) => eventType.startsWith(prefix))) {

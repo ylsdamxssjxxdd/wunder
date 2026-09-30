@@ -10,6 +10,43 @@ pub(super) trait SqliteSchemaStorage {
 }
 
 impl SqliteStorage {
+    fn ensure_thread_item_block_fields(&self, conn: &Connection) -> Result<()> {
+        let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+        let columns = load_table_columns(&tx, "thread_item_blocks")?;
+        if !columns.contains("field") {
+            tx.execute_batch(
+                "ALTER TABLE thread_item_blocks RENAME TO thread_item_blocks_legacy;
+                 CREATE TABLE thread_item_blocks (
+                   session_id TEXT NOT NULL, user_id TEXT NOT NULL, item_id TEXT NOT NULL,
+                   field TEXT NOT NULL DEFAULT 'content', block_index INTEGER NOT NULL,
+                   event_id INTEGER NOT NULL, payload TEXT NOT NULL,
+                   PRIMARY KEY(session_id,item_id,field,block_index)
+                 );
+                 INSERT INTO thread_item_blocks(session_id,user_id,item_id,field,block_index,event_id,payload)
+                   SELECT session_id,user_id,item_id,
+                     COALESCE(json_extract(payload,'$.field'),json_extract(payload,'$.data.field'),'content'),
+                     block_index,event_id,payload FROM thread_item_blocks_legacy;
+                 DROP TABLE thread_item_blocks_legacy;
+                 CREATE INDEX IF NOT EXISTS idx_thread_blocks_replay ON thread_item_blocks(session_id,event_id);",
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn ensure_thread_item_sequence(&self, conn: &Connection) -> Result<()> {
+        let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+        let columns = load_table_columns(&tx, "thread_items")?;
+        if !columns.contains("created_seq") {
+            tx.execute("ALTER TABLE thread_items ADD COLUMN created_seq INTEGER NOT NULL DEFAULT 0", [])?;
+            // Existing prototype rows can only retain their recorded insertion order.
+            tx.execute("UPDATE thread_items SET created_seq=rowid", [])?;
+            tx.execute("UPDATE thread_logs SET latest_change_seq=MAX(latest_change_seq, COALESCE((SELECT MAX(created_seq) FROM thread_items WHERE thread_items.session_id=thread_logs.session_id),0))", [])?;
+        }
+        tx.execute_batch("CREATE INDEX IF NOT EXISTS idx_thread_items_context_seq ON thread_items(user_id,session_id,created_seq DESC) WHERE kind IN ('user_message','assistant_message','tool_message','system_message');")?;
+        tx.commit()?;
+        Ok(())
+    }
     fn ensure_user_account_quota_columns(&self, conn: &Connection) -> Result<()> {
         let tx =
             rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
@@ -547,8 +584,9 @@ impl SqliteSchemaStorage for SqliteStorage {
               ON thread_items (user_id, session_id, root_turn_id, item_index);
             CREATE TABLE IF NOT EXISTS thread_item_blocks (
               session_id TEXT NOT NULL, user_id TEXT NOT NULL, item_id TEXT NOT NULL,
-              block_index INTEGER NOT NULL, event_id INTEGER NOT NULL, payload TEXT NOT NULL,
-              PRIMARY KEY(session_id,item_id,block_index)
+              field TEXT NOT NULL DEFAULT 'content', block_index INTEGER NOT NULL,
+              event_id INTEGER NOT NULL, payload TEXT NOT NULL,
+              PRIMARY KEY(session_id,item_id,field,block_index)
             );
             CREATE INDEX IF NOT EXISTS idx_thread_blocks_replay ON thread_item_blocks(session_id,event_id);
             CREATE TABLE IF NOT EXISTS thread_log_changes (
@@ -563,8 +601,18 @@ impl SqliteSchemaStorage for SqliteStorage {
               created_time REAL NOT NULL,
               PRIMARY KEY (session_id, change_seq)
             );
-            CREATE INDEX IF NOT EXISTS idx_thread_changes_cursor
-              ON thread_log_changes (user_id, session_id, change_seq);
+              CREATE INDEX IF NOT EXISTS idx_thread_changes_cursor
+                ON thread_log_changes (user_id, session_id, change_seq);
+              CREATE TABLE IF NOT EXISTS thread_log_metrics (
+                session_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                metric_key TEXT NOT NULL,
+                metric_value REAL NOT NULL DEFAULT 0,
+                updated_time REAL NOT NULL,
+                PRIMARY KEY (session_id, metric_key)
+              );
+              CREATE INDEX IF NOT EXISTS idx_thread_metrics_user
+                ON thread_log_metrics (user_id, session_id, metric_key);
             CREATE TABLE IF NOT EXISTS deleted_session_log_grace (
               user_id TEXT NOT NULL,
               session_id TEXT NOT NULL,
@@ -1556,6 +1604,8 @@ impl SqliteSchemaStorage for SqliteStorage {
         self.ensure_user_tool_access_columns(&conn)?;
         self.ensure_chat_session_columns(&conn)?;
         self.ensure_session_goal_columns(&conn)?;
+        self.ensure_thread_item_sequence(&conn)?;
+        self.ensure_thread_item_block_fields(&conn)?;
         self.ensure_chat_history_columns(&conn)?;
         self.ensure_model_context_table_retired(&conn)?;
         self.ensure_stream_event_workflow_columns(&conn)?;

@@ -126,7 +126,7 @@ import { dismissStaleInquiryPanels, ensureGreetingMessage, hydrateSessionCommand
 import { hydrateMessage } from './chatMessageHydration';
 import { DEFAULT_AGENT_KEY, patchSessionRuntimeFields, persistActiveSession, persistAgentSession, persistDraftSession, syncGoalFromSessionRecord, syncGoalsFromSessionList } from './chatPersist';
 import { HISTORY_PAGE_LIMIT, clearDraftSessionBootstrapMarkers, clearRuntimeInteractiveControllers, clearSessionWatcher, normalizeHistoryPageLimit, recoverRuntimeInteractiveControllers, resolveKnownSessionEventFloor, resolveMaterializedMessageEventId, resolveMessageWindowMax, resolveSessionDetailMessageLimit, setSessionLoading } from './chatRuntimeControls';
-import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyLocalChatMessageRuntimeEvent, applyMessageWindow, applySessionRuntimeSnapshot, buildMessageIdentityDebugList, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, countAssistantStreamingMessages, ensureRuntime, filterSessionsByAgent, findOldestHistoryId, getHistoryState, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeForegroundHydratedMessagesWithLive, notifySessionSnapshot, purgeUnavailableSession, readSessionDetailSnapshot, readSessionEventsSnapshot, readSessionHydratedMessageVersion, readSessionListCacheEntry, refreshRuntimeStreamLifecycle, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveSessionKey, resolveSessionListCacheKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldApplySessionEventsSnapshotToProjection, shouldPreferCachedMessages, syncChatRuntimeProjectionFromSnapshot, touchSessionUpdatedAt, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
+import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyLocalChatMessageRuntimeEvent, applyMessageWindow, applySessionRuntimeSnapshot, buildMessageIdentityDebugList, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, countAssistantStreamingMessages, ensureRuntime, filterSessionsByAgent, findOldestHistoryId, getHistoryState, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, loadSessionWorkflowEventsSnapshot, markSessionDetailWarm, mergeForegroundHydratedMessagesWithLive, notifySessionSnapshot, purgeUnavailableSession, readSessionDetailSnapshot, readSessionEventsSnapshot, readSessionHydratedMessageVersion, readSessionListCacheEntry, refreshRuntimeStreamLifecycle, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveSessionKey, resolveSessionListCacheKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldApplySessionEventsSnapshotToProjection, shouldPreferCachedMessages, syncChatRuntimeProjectionFromSnapshot, touchSessionUpdatedAt, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
 import { normalizeSnapshotMessage } from './chatSnapshot';
 import { buildMessage } from './chatStats';
 import { normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
@@ -659,6 +659,7 @@ export const chatSessionOpenLoadActions = {
         );
         let sessionRes = null;
         let eventsPayload = null;
+        let workflowEventsPayload = null;
         let sessionDetail = prefetchedSessionDetail;
         const detailLimit = resolveSessionOpenDetailLimit();
         const knownEventFloor = resolveKnownSessionEventFloor(
@@ -678,29 +679,39 @@ export const chatSessionOpenLoadActions = {
           });
         }
         try {
-          if (!sessionDetail || !eventsPayload) {
+          if (!sessionDetail || !eventsPayload || !workflowEventsPayload) {
             perfFetchStart = perfEnabled ? performance.now() : 0;
-            [sessionRes, eventsPayload] = await Promise.all([
-              getSessionWithParams(
-                targetSessionId,
-                { limit: detailLimit, summary: true },
-                detailAbortController ? { signal: detailAbortController.signal } : {}
-              ),
-              loadSessionEventsSnapshot(targetSessionId, {
-                limit: detailLimit,
-                minLastEventId: knownEventFloor,
-                shouldCache: () => !isSessionUnavailable(this, targetSessionId) &&
-                  !isStaleDesktopSessionDetailLoad(this, targetSessionId, preserveWatcher),
-                ...(detailAbortController ? { signal: detailAbortController.signal } : {})
-              }).catch((error) => {
-                if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
-                  throw error;
-                }
-                if (isAbortLikeError(error)) {
-                  throw error;
-                }
-                return null;
-              })
+            [sessionRes, eventsPayload, workflowEventsPayload] = await Promise.all([
+              sessionDetail
+                ? Promise.resolve(null)
+                : getSessionWithParams(
+                    targetSessionId,
+                    { limit: detailLimit, summary: true },
+                    detailAbortController ? { signal: detailAbortController.signal } : {}
+                  ),
+              eventsPayload
+                ? Promise.resolve(eventsPayload)
+                : loadSessionEventsSnapshot(targetSessionId, {
+                    limit: detailLimit,
+                    minLastEventId: knownEventFloor,
+                    shouldCache: () => !isSessionUnavailable(this, targetSessionId) &&
+                      !isStaleDesktopSessionDetailLoad(this, targetSessionId, preserveWatcher),
+                    ...(detailAbortController ? { signal: detailAbortController.signal } : {})
+                  }).catch((error) => {
+                    if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
+                      throw error;
+                    }
+                    if (isAbortLikeError(error)) {
+                      throw error;
+                    }
+                    return null;
+                  }),
+              // Hydrate durable tool loops together with the transcript.  A
+              // deferred request leaves a visible blank workflow shell after
+              // refresh until the second response arrives.
+              loadSessionWorkflowEventsSnapshot(targetSessionId, {
+                signal: detailAbortController?.signal
+              }).catch(() => null)
             ]);
             if (detailAbortController?.signal.aborted || isStaleDesktopSessionDetailLoad(this, targetSessionId, preserveWatcher)) {
               return null;
@@ -708,7 +719,7 @@ export const chatSessionOpenLoadActions = {
             if (perfEnabled) {
               perfFetchMs = performance.now() - perfFetchStart;
             }
-            sessionDetail = sessionRes?.data?.data || null;
+            sessionDetail = sessionRes?.data?.data || sessionDetail;
             if (isSessionUnavailable(this, targetSessionId)) return null;
             cacheSessionDetailSnapshot(targetSessionId, sessionDetail);
           }
@@ -789,7 +800,7 @@ export const chatSessionOpenLoadActions = {
           resolvedAgentIdText,
           filterSessionsByAgent(resolvedAgentIdText, this.sessions)
         );
-        const rounds = eventsPayload?.rounds || [];
+        const rounds = workflowEventsPayload?.rounds || eventsPayload?.rounds || [];
         perfRemoteRunning = remoteRunning;
         perfRoundCount = Array.isArray(rounds) ? rounds.length : 0;
         chatDebugLog('chat.store.detail', 'payload-loaded', {
@@ -1178,7 +1189,11 @@ export const chatSessionOpenLoadActions = {
           startSessionWatcher(this, targetSessionId);
         }
         void this.refreshSessionSubagents(targetSessionId).catch(() => null);
-        void this.hydrateSessionWorkflowHistory(targetSessionId, this.messages);
+        // A failed initial workflow request is retried in the background;
+        // successful refreshes already included it before their first render.
+        if (!workflowEventsPayload) {
+          void this.hydrateSessionWorkflowHistory(targetSessionId, this.messages);
+        }
         if (perfEnabled) {
           chatPerf.recordDuration('chat_session_detail_load', performance.now() - perfStart, {
             sessionId: targetSessionId,

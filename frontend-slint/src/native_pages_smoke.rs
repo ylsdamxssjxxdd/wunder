@@ -1,6 +1,7 @@
 //! Isolated persistence and permission regression for native page operations.
 use std::path::Path;
-use wunder_desktop::{ModelEdit, NativeCronJobEdit, NativeDesktop};pub fn check_runtime(
+use wunder_desktop::{ModelEdit, NativeCronJobEdit, NativeDesktop};
+pub fn check_runtime(
     runtime: &NativeDesktop,
     output: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -119,6 +120,67 @@ use wunder_desktop::{ModelEdit, NativeCronJobEdit, NativeDesktop};pub fn check_r
     )?;
     check_world(runtime)?;
     check_cron(runtime)?;
+    check_agent_cards(runtime, output)?;
+    Ok(())
+}
+
+/// Worker-card contract: export reflects the stored record, delete removes
+/// the record AND its file projection (the bidirectional sync must not
+/// resurrect it), and import restores the fields verbatim.
+fn check_agent_cards(
+    runtime: &NativeDesktop,
+    output: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use wunder_desktop::{AgentSettingsEdit, WORKER_CARD_SCHEMA_VERSION};
+    let tool = runtime
+        .list_tools()?
+        .into_iter()
+        .find(|item| item.category == "内置工具")
+        .map(|item| item.name)
+        .ok_or("builtin tool unavailable")?;
+    let created = runtime.create_agent("card-agent")?;
+    runtime.update_agent_settings(
+        &created.id,
+        AgentSettingsEdit {
+            name: "card-agent".into(),
+            description: "冒烟工蜂卡".into(),
+            system_prompt: "你是冒烟测试专家。".into(),
+            model_name: "test-model".into(),
+            icon_name: "robot".into(),
+            icon_color: "#3b82f6".into(),
+            tool_names: vec![tool.clone()],
+            preset_questions: vec!["总结当前进展".into()],
+            sandbox_container_id: 1,
+            approval_mode: "suggest".into(),
+            preview_skill: true,
+            silent: false,
+            prefer_mother: false,
+        },
+    )?;
+    let document = runtime.export_agent_document(&created.id)?;
+    assert_eq!(document["kind"], "WorkerCard");
+    assert_eq!(document["schema_version"], WORKER_CARD_SCHEMA_VERSION);
+    assert_eq!(document["extra_prompt"], "你是冒烟测试专家。");
+    assert_eq!(document["runtime"]["preview_skill"], true);
+
+    let directory = output.join("agent-cards");
+    let path = runtime.export_agent_to_file(&created.id, &directory)?;
+    runtime.delete_agent(&created.id)?;
+    assert!(runtime
+        .list_agents()?
+        .iter()
+        .all(|agent| agent.id != created.id));
+
+    let outcomes = runtime.import_agent_from_file(&path, false)?;
+    assert_eq!(outcomes.len(), 1);
+    assert!(outcomes[0].created);
+    let imported = &outcomes[0].agent;
+    assert_eq!(imported.name, "card-agent");
+    assert_eq!(imported.system_prompt, "你是冒烟测试专家。");
+    assert!(imported.tool_names.contains(&tool));
+    assert_eq!(imported.preset_questions, vec!["总结当前进展".to_string()]);
+    assert!(imported.preview_skill);
+    runtime.delete_agent(&imported.id)?;
     Ok(())
 }
 
@@ -205,7 +267,7 @@ fn check_cron(runtime: &NativeDesktop) -> Result<(), Box<dyn std::error::Error>>
         }
     }
     assert!(!runs.is_empty(), "manual run did not produce a run record");
-    assert_eq!(runs[0].run_id.is_empty(), false);
+    assert!(!runs[0].run_id.is_empty());
     runtime.delete_cron_job(&created.id)?;
     runtime.delete_cron_job(&expr_job.id)?;
     assert!(runtime.delete_cron_job(&created.id).is_err());
@@ -367,7 +429,7 @@ pub fn check_restored(
         .any(|job| job.name == "test-cron-restore" && !job.enabled));
     std::fs::write(
         output.join("restore.txt"),
-        "PASS: settings/agents/workspace/world restored after process restart\n",
+        "PASS: settings/agents/workspace/world/cron restored after process restart\n",
     )?;
     Ok(())
 }

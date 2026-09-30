@@ -1190,33 +1190,7 @@ pub fn copy_chat_history_until_round(
     target_session_id: &str,
     inclusive_round_index: i64,
 ) -> Result<()> {
-    let target_round = normalize_round_index(inclusive_round_index);
-    let messages = storage.load_chat_history(user_id.trim(), source_session_id.trim(), None)?;
-    let mut copied_user_round = 0_i64;
-    for message in messages {
-        let role = message
-            .get("role")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase();
-        if role == "user" {
-            copied_user_round += 1;
-            if copied_user_round > target_round {
-                break;
-            }
-        }
-        let mut cloned = message;
-        if let serde_json::Value::Object(ref mut map) = cloned {
-            map.insert(
-                "session_id".to_string(),
-                serde_json::Value::String(target_session_id.trim().to_string()),
-            );
-            map.remove("_history_id");
-        }
-        storage.append_chat(user_id.trim(), &cloned)?;
-    }
-    Ok(())
+    storage.fork_thread_log(user_id.trim(), source_session_id.trim(), target_session_id.trim(), normalize_round_index(inclusive_round_index))
 }
 
 pub fn active_orchestration_for_agent(
@@ -1591,7 +1565,7 @@ pub fn session_has_visible_history(
     }
     let Some(context) = load_session_context(storage, cleaned_user_id, cleaned_session_id) else {
         return storage
-            .load_chat_history(cleaned_user_id, cleaned_session_id, Some(1))
+            .load_thread_context_items(cleaned_user_id, cleaned_session_id, 1, false)
             .map(|items| !items.is_empty())
             .unwrap_or(false);
     };
@@ -1599,25 +1573,25 @@ pub fn session_has_visible_history(
         active_orchestration_for_agent(storage, cleaned_user_id, &context.mother_agent_id)
     else {
         return storage
-            .load_chat_history(cleaned_user_id, cleaned_session_id, Some(1))
+            .load_thread_context_items(cleaned_user_id, cleaned_session_id, 1, false)
             .map(|items| !items.is_empty())
             .unwrap_or(false);
     };
     if binding.session_id.trim() != cleaned_session_id {
         return storage
-            .load_chat_history(cleaned_user_id, cleaned_session_id, Some(1))
+            .load_thread_context_items(cleaned_user_id, cleaned_session_id, 1, false)
             .map(|items| !items.is_empty())
             .unwrap_or(false);
     }
     let Some(round_state) = load_round_state(storage, cleaned_user_id, &state.orchestration_id)
     else {
         return storage
-            .load_chat_history(cleaned_user_id, cleaned_session_id, Some(1))
+            .load_thread_context_items(cleaned_user_id, cleaned_session_id, 1, false)
             .map(|items| !items.is_empty())
             .unwrap_or(false);
     };
     storage
-        .load_chat_history(cleaned_user_id, cleaned_session_id, None)
+        .load_thread_context_items(cleaned_user_id, cleaned_session_id, 0, false)
         .map(|items| {
             items.into_iter().any(|item| {
                 let created_at = item

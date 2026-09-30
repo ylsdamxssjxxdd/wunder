@@ -99,6 +99,7 @@ fn map_transcript_message(
     }
 
     let history_id = item.get("_history_id").and_then(Value::as_i64);
+    let thread_item_seq = item.get("_thread_item_seq").and_then(Value::as_i64);
     let created_at = item
         .get("timestamp")
         .and_then(Value::as_str)
@@ -141,8 +142,20 @@ fn map_transcript_message(
     });
 
     if let Value::Object(ref mut map) = message {
+        // Preserve the durable ThreadLog identity in the UI projection.  The
+        // message id remains a compatibility/rendering key, while these
+        // fields let realtime reconciliation target one Item revision without
+        // rebuilding the whole transcript.
+        for key in ["item_id", "turn_id", "kind", "visibility", "revision"] {
+            if let Some(value) = item.get(key) {
+                map.insert(key.to_string(), value.clone());
+            }
+        }
         if let Some(history_id) = history_id {
             map.insert("history_id".to_string(), json!(history_id));
+        }
+        if let Some(thread_item_seq) = thread_item_seq {
+            map.insert("_thread_item_seq".to_string(), json!(thread_item_seq));
         }
         if let Some(model_turn_id) = model_turn_id {
             map.insert("model_turn_id".to_string(), json!(model_turn_id));

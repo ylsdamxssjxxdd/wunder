@@ -1,7 +1,7 @@
-import { Theme, AgentCard, ToolCard, ModelCard, FileCard, LanPeerCard } from "theme.slint";
+import { Theme, AgentCard, AgentCardFile, PromptPackCard, ToolCard, ModelCard, FileCard, LanPeerCard } from "theme.slint";
 import { Action, Avatar, SearchField, FormField } from "components.slint";
 import { TextEditBase } from "textedit-base.slint";
-import { ScrollView } from "std-widgets.slint";
+import { CheckBox, ComboBox, ScrollView } from "std-widgets.slint";
 
 component PageHeader inherits Rectangle {
     in property <string> title;
@@ -52,6 +52,14 @@ export component AgentsPage inherits Rectangle {
     callback remove-question(int);
     callback save-agent(string, string, string, string, string, string, [string], [string], int, string, bool, bool, bool);
     callback delete-agent();
+    callback export-agent-card();
+    callback open-agent-card-import();
+    callback close-agent-card-import();
+    callback import-agent-card(string);
+    in-out property <bool> cards-open: false;
+    in property <bool> cards-loading: false;
+    in property <[AgentCardFile]> card-files;
+    in-out property <bool> card-overwrite: false;
     background: Theme.chat;
     VerticalLayout {
         spacing: 0px;
@@ -60,6 +68,8 @@ export component AgentsPage inherits Rectangle {
             VerticalLayout { spacing: 1px; Text { height: 25px; text: "专家"; color: Theme.text; font-size: 18px; font-weight: 700; } Text { height: 17px; text: "管理可用于新会话的智能体"; color: Theme.muted; font-size: 11px; } }
             Rectangle { horizontal-stretch: 1; }
             Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.loading; clicked => { root.refresh(); } }
+            Action { label: "导出卡片"; show-label: true; enabled: !root.loading && !root.saving && root.selected-agent >= 0; clicked => { root.export-agent-card(); } }
+            Action { label: "导入卡片"; show-label: true; enabled: !root.loading && !root.saving; clicked => { root.open-agent-card-import(); } }
             Action { icon: @image-url("../assets/icons/plus.svg"); label: "新建专家"; show-label: true; primary: true; enabled: !root.loading && !root.saving; clicked => { root.create-agent(); } }
         }
         Rectangle { height: 1px; background: Theme.border; }
@@ -110,6 +120,30 @@ export component AgentsPage inherits Rectangle {
         }
     }
     if root.delete-confirm-open : Rectangle { background: #00000040; TouchArea { clicked => { root.delete-confirm-open = false; } } Rectangle { width: min(400px, parent.width - 44px); height: 180px; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; TouchArea { } VerticalLayout { padding: 20px; spacing: 10px; Text { height: 24px; text: "确认删除智能体"; color: Theme.text; font-size: 16px; font-weight: 600; } Text { vertical-stretch: 1; text: "将删除“" + root.selected-name + "”及其本地配置。已有会话不会被改写。"; color: Theme.muted; font-size: 12px; wrap: word-wrap; } HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; } Action { label: "取消"; show-label: true; clicked => { root.delete-confirm-open = false; } } Action { width: 76px; label: "删除"; show-label: true; primary: true; clicked => { root.delete-confirm-open = false; root.delete-agent(); } } } } } }
+    if root.cards-open : Rectangle {
+        background: #00000040;
+        TouchArea { clicked => { root.close-agent-card-import(); } }
+        Rectangle {
+            x: (parent.width - 460px) / 2; y: 30px; width: min(460px, parent.width - 40px); height: parent.height - 60px;
+            border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+            TouchArea { }
+            VerticalLayout { padding: 18px; spacing: 10px;
+                HorizontalLayout { height: 26px; Text { text: "导入工蜂卡"; color: Theme.text; font-size: 16px; font-weight: 700; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } Action { width: 30px; icon: @image-url("../assets/icons/xmark.svg"); clicked => { root.close-agent-card-import(); } } }
+                Text { height: 17px; text: "卡片目录：工作区 agent-cards 目录下的导出文件"; color: Theme.muted; font-size: 11px; }
+                CheckBox { height: 24px; text: "覆盖同名专家（导入前需确认）"; checked <=> root.card-overwrite; enabled: !root.cards-loading; }
+                ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { spacing: 6px; alignment: start;
+                        for card in root.card-files : Rectangle { height: 52px; border-radius: 9px; background: Theme.panel;
+                            Text { x: 12px; y: 8px; width: parent.width - 150px; height: 18px; text: card.label; color: Theme.text; font-size: 12px; font-weight: 600; overflow: elide; }
+                            Text { x: 12px; y: 29px; width: parent.width - 150px; height: 15px; text: card.path; color: Theme.muted; font-size: 9px; overflow: elide; }
+                            Action { x: parent.width - 96px; y: 10px; width: 84px; height: 32px; label: "导入"; show-label: true; primary: true; enabled: !root.cards-loading; clicked => { root.import-agent-card(card.path); } }
+                        }
+                        if root.card-files.length == 0 : Text { height: 70px; text: root.cards-loading ? "正在扫描卡片目录…" : "卡片目录暂无可导入的工蜂卡文件"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                }
+            }
+        }
+    }
 }
 
 export component ToolsPage inherits Rectangle {
@@ -182,6 +216,25 @@ export component SettingsPage inherits Rectangle {
     callback refresh();
     callback save-runtime(string, string);
     callback save-lan(bool, string);
+    callback save-preferences();
+    callback refresh-prompt-packs();
+    callback select-prompt-pack(string);
+    callback save-prompt-segment();
+    callback create-prompt-pack();
+    callback delete-prompt-pack();
+    callback export-diagnostics();
+    callback reset-work-state();
+    in-out property <string> theme;
+    in-out property <string> send-key;
+    in property <[PromptPackCard]> prompt-packs;
+    in property <string> prompt-active;
+    in-out property <string> selected-pack;
+    in-out property <int> selected-segment: 0;
+    in-out property <string> prompt-draft;
+    in property <bool> prompt-readonly;
+    in property <bool> prompt-loading: false;
+    in-out property <bool> reset-confirm-open: false;
+    in-out property <string> pack-name-draft;
     private property <int> settings-tab: 0;
     background: Theme.chat;
     VerticalLayout {
@@ -195,6 +248,8 @@ export component SettingsPage inherits Rectangle {
                     Action { height: 38px; width: parent.width; icon: @image-url("../assets/icons/gear.svg"); label: "本地运行时"; show-label: true; selected: root.settings-tab == 1; clicked => { root.settings-tab = 1; } }
                     Action { height: 38px; width: parent.width; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "工具与技能"; show-label: true; selected: root.settings-tab == 2; clicked => { root.settings-tab = 2; } }
                     Action { height: 38px; width: parent.width; icon: @image-url("../assets/icons/comments.svg"); label: "帮助与关于"; show-label: true; selected: root.settings-tab == 3; clicked => { root.settings-tab = 3; } }
+                    Action { height: 38px; width: parent.width; icon: @image-url("../assets/icons/gear.svg"); label: "通用偏好"; show-label: true; selected: root.settings-tab == 4; clicked => { root.settings-tab = 4; } }
+                    Action { height: 38px; width: parent.width; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "提示词包"; show-label: true; selected: root.settings-tab == 5; clicked => { root.settings-tab = 5; root.refresh-prompt-packs(); } }
                     Rectangle { vertical-stretch: 1; }
                     Text { height: 18px; text: "桌面端本地设置"; color: Theme.muted; font-size: 10px; }
                 }
@@ -248,11 +303,69 @@ export component SettingsPage inherits Rectangle {
                             }
                         }
                     }
-                    if root.settings-tab >= 2 : Rectangle { vertical-stretch: 1;
+                    if root.settings-tab == 2 : Rectangle { vertical-stretch: 1;
                         VerticalLayout { padding: 24px; spacing: 12px;
-                            Text { height: 28px; text: root.settings-tab == 2 ? "工具与技能" : "帮助与关于"; color: Theme.text; font-size: 18px; font-weight: 700; }
-                            Text { text: root.settings-tab == 2 ? "工具目录和技能能力已在工具页面统一展示。" : "桌面端使用本地原生运行时，帮助内容将逐步补齐。"; color: Theme.muted; font-size: 13px; wrap: word-wrap; }
+                            Text { height: 28px; text: "工具与技能"; color: Theme.text; font-size: 18px; font-weight: 700; }
+                            Text { text: "工具目录和技能能力已在工具页面统一展示。"; color: Theme.muted; font-size: 13px; wrap: word-wrap; }
                             Rectangle { vertical-stretch: 1; }
+                        }
+                    }
+                    if root.settings-tab == 3 : Rectangle { vertical-stretch: 1;
+                        VerticalLayout { padding: 24px; spacing: 12px; alignment: start;
+                            Text { height: 28px; text: "帮助与关于"; color: Theme.text; font-size: 18px; font-weight: 700; }
+                            Text { text: "桌面端使用本地原生运行时，不经本机 HTTP/WebSocket，不拉起 bridge 子进程。"; color: Theme.muted; font-size: 13px; wrap: word-wrap; }
+                            Text { height: 22px; text: "诊断"; color: Theme.text; font-size: 14px; font-weight: 600; }
+                            HorizontalLayout { height: 32px; spacing: 8px;
+                                Action { width: 110px; label: "导出诊断信息"; show-label: true; enabled: !root.loading; clicked => { root.export-diagnostics(); } }
+                                Text { height: 30px; text: "导出密钥无关的本机设置与能力计数，便于问题排查。"; color: Theme.muted; font-size: 11px; vertical-alignment: center; overflow: elide; }
+                            }
+                            Rectangle { height: 1px; background: Theme.border; }
+                            Text { height: 22px; text: "重置工作状态"; color: #b63a22; font-size: 14px; font-weight: 600; }
+                            HorizontalLayout { height: 32px; spacing: 8px;
+                                Action { width: 110px; label: "重置工作状态"; show-label: true; enabled: !root.loading && !root.saving; clicked => { root.reset-confirm-open = true; } }
+                                Text { height: 30px; text: "清理运行状态、队列与临时投影；保留资产、配置、文件与历史。"; color: Theme.muted; font-size: 11px; vertical-alignment: center; overflow: elide; }
+                            }
+                            Rectangle { vertical-stretch: 1; }
+                        }
+                    }
+                    if root.settings-tab == 4 : Rectangle { vertical-stretch: 1;
+                        VerticalLayout { padding: 24px; spacing: 14px; alignment: start;
+                            Text { height: 28px; text: "通用偏好"; color: Theme.text; font-size: 18px; font-weight: 700; }
+                            HorizontalLayout { height: 30px; spacing: 10px; Text { width: 84px; text: "主题"; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+                                ComboBox { width: 180px; model: ["浅色（蜂巢基调）"]; current-index: 0; enabled: false; } }
+                            HorizontalLayout { height: 30px; spacing: 10px; Text { width: 84px; text: "发送键"; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+                                ComboBox { width: 180px; model: ["Enter 发送", "Ctrl+Enter 发送"]; current-index: root.send-key == "ctrl_enter" ? 1 : 0; enabled: true; selected(index) => { root.send-key = index == 1 ? "ctrl_enter" : "enter"; } }
+                                Text { text: root.send-key == "ctrl_enter" ? "Enter 换行，Ctrl+Enter 发送" : "Enter 直接发送"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } }
+                            Action { width: 110px; label: root.saving ? "保存中" : "保存偏好"; show-label: true; primary: true; enabled: !root.saving && !root.loading; clicked => { root.save-preferences(); } }
+                            Rectangle { vertical-stretch: 1; }
+                        }
+                    }
+                    if root.settings-tab == 5 : HorizontalLayout { height: parent.height - 16px; padding: 8px; spacing: 14px;
+                        Rectangle { width: 260px; border-radius: 10px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+                            VerticalLayout { padding: 12px; spacing: 8px;
+                                HorizontalLayout { height: 24px; Text { text: "提示词包"; color: Theme.text; font-size: 13px; font-weight: 600; } Rectangle { horizontal-stretch: 1; } Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.prompt-loading; clicked => { root.refresh-prompt-packs(); } } }
+                                ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                                    VerticalLayout { alignment: start; spacing: 4px;
+                                        for pack in root.prompt-packs : Rectangle { height: 52px; border-radius: 8px; background: root.selected-pack == pack.id ? Theme.accent-soft : transparent;
+                                            Action { width: parent.width; height: parent.height; label: pack.id; enabled: !root.prompt-loading; clicked => { root.select-prompt-pack(pack.id); } }
+                                            Text { x: 10px; y: 6px; width: parent.width - 20px; height: 17px; text: pack.id + (pack.is-active ? "  · 当前" : ""); color: Theme.text; font-size: 11px; font-weight: 600; overflow: elide; }
+                                            Text { x: 10px; y: 26px; width: parent.width - 20px; height: 15px; text: pack.readonly ? "内置只读" : (pack.locale == "" ? "自定义" : "内置语言包"); color: Theme.muted; font-size: 9px; overflow: elide; }
+                                        }
+                                        if root.prompt-packs.length == 0 : Text { height: 48px; text: root.prompt-loading ? "正在加载…" : "暂无提示词包"; color: Theme.muted; horizontal-alignment: center; }
+                                    }
+                                }
+                                HorizontalLayout { height: 30px; spacing: 6px; TextInput { horizontal-stretch: 1; text <=> root.pack-name-draft; color: Theme.text; font-size: 11px; } Action { width: 44px; label: "新建"; show-label: true; enabled: !root.prompt-loading && root.pack-name-draft != ""; clicked => { root.create-prompt-pack(); } } }
+                                Action { height: 30px; label: "删除当前自定义包"; show-label: true; enabled: !root.prompt-loading && root.selected-pack != "" && !root.prompt-readonly; clicked => { root.delete-prompt-pack(); } }
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; border-radius: 10px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+                            VerticalLayout { padding: 18px; spacing: 10px;
+                                HorizontalLayout { height: 26px; Text { text: root.selected-pack == "" ? "分段编辑" : "分段编辑 · " + root.selected-pack; color: Theme.text; font-size: 15px; font-weight: 700; overflow: elide; } Rectangle { horizontal-stretch: 1; } Text { text: root.prompt-readonly ? "只读（内置包）" : "可编辑"; color: root.prompt-readonly ? Theme.muted : #16845d; font-size: 11px; vertical-alignment: center; } }
+                                HorizontalLayout { height: 30px; spacing: 6px;
+                                    for segment[index] in [{key: "role", label: "角色"}, {key: "engineering", label: "工程"}, {key: "tools_protocol", label: "工具协议"}, {key: "skills_protocol", label: "技能协议"}, {key: "memory", label: "记忆"}, {key: "extra", label: "附加"}] : Action { label: segment.label; show-label: true; enabled: root.selected-pack != ""; selected: root.selected-segment == index; clicked => { root.selected-segment = index; root.select-prompt-pack(root.selected-pack); } } }
+                                TextEditBase { vertical-stretch: 1; text <=> root.prompt-draft; read-only: root.prompt-readonly || root.prompt-loading; wrap: word-wrap; foreground: Theme.text; font-size: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; border-radius: 8px; }
+                                HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; } Action { width: 96px; label: "保存分段"; show-label: true; primary: true; enabled: !root.prompt-readonly && !root.prompt-loading && root.selected-pack != ""; clicked => { root.save-prompt-segment(); } } }
+                            }
                         }
                     }
                 }

@@ -115,15 +115,22 @@ impl Orchestrator {
                 payload["attachments"] = value;
             }
         }
-        if let Some(turn_id) = round_info.thread_turn_id {
-            let hidden = meta.and_then(|v| v.get("hidden")).and_then(Value::as_bool) == Some(true);
-            let item_id = if role == "user" && round_info.model_round.is_none() && !hidden {
-                format!("{turn_id}:user")
-            } else {
-                // An append denotes a new message, including identical internal messages.
-                // Tool execution records have their own invocation ID and lifecycle.
-                Uuid::new_v4().to_string()
-            };
+        let turn_id = match round_info.thread_turn_id {
+            Some(id) => Some(id.to_string()),
+            None => match round_info.user_round {
+                Some(round) => self.storage.find_thread_turn_id(user_id, session_id, round)?,
+                None => None,
+            },
+        };
+        if let Some(turn_id) = turn_id {
+            // Only an admitted request owns the stable input slot. Commands,
+            // summaries and internal observations append independent messages.
+            let input_slot = role == "user" && round_info.model_round.is_none()
+                && round_info.thread_turn_id.is_some()
+                && meta.and_then(|value| value.get("type")).and_then(Value::as_str)
+                    .is_none_or(|kind| kind == "subagent_hidden_user");
+            let item_id = if input_slot { format!("{turn_id}:user") } else { Uuid::new_v4().to_string() };
+            payload["turn_id"] = Value::String(turn_id);
             payload["item_id"] = Value::String(item_id);
         }
         let payload =

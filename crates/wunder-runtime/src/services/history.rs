@@ -128,6 +128,20 @@ impl HistoryManager {
         .unwrap_or_default()
     }
 
+    pub async fn load_execution_messages_async(
+        &self,
+        workspace: Arc<WorkspaceManager>,
+        user_id: String,
+        session_id: String,
+        turn_id: String,
+    ) -> anyhow::Result<Vec<Value>> {
+        blocking::run_fs("services.history.load_execution_messages", move || {
+            let history = workspace.load_execution_history(&user_id, &session_id, &turn_id, 0)?;
+            Ok(materialize_history_items(&history).iter()
+                .filter_map(|item| build_message_from_item(item, true)).collect())
+        }).await
+    }
+
     pub fn build_compaction_candidates(history: &[Value]) -> (Vec<Value>, Vec<Value>) {
         let mut items = Vec::new();
         let mut messages = Vec::new();

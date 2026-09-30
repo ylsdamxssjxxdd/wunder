@@ -2907,28 +2907,46 @@ export const mergeForegroundHydratedMessagesWithLive = (liveMessages, hydratedMe
   const liveAssistants = liveMessages.filter(
     (message) => message?.role === 'assistant' && !message?.isGreeting
   );
-  if (liveAssistants.length === 0) {
-    return {
-      messages: mergedMessages,
-      debug: {
-        matchedLiveAssistantCount: 0,
-        appendedLivePending: false,
-        pendingAssistantPreserved: false
-      }
-    };
-  }
-  for (const liveTarget of liveAssistants) {
-    if (!shouldPreserveUnmatchedLiveAssistant(liveTarget)) continue;
-    if (mergedMessages.includes(liveTarget)) continue;
-    mergedMessages.push(liveTarget);
-  }
+  const identityKeysOf = (message) => {
+    const record = message && typeof message === 'object' ? message : {};
+    const role = String(record.role || '').trim();
+    const keys = [
+      record.message_id ?? record.messageId ?? record.id,
+      record.user_turn_id ?? record.userTurnId,
+      record.model_turn_id ?? record.modelTurnId
+    ].map((value) => String(value ?? '').trim()).filter(Boolean)
+      .map((value) => `${role}:${value}`);
+    if (role === 'user') {
+      const round = Number(record.user_round ?? record.userRound ?? record.user_turn_index ?? record.userTurnIndex);
+      if (Number.isFinite(round) && round > 0) keys.push(`user:round:${round}`);
+    }
+    return keys;
+  };
+  const existingIdentities = new Set(mergedMessages.flatMap(identityKeysOf));
+  const preservedLiveMessages = liveMessages.filter((message) => {
+    if (!message || message.isGreeting || (message.role !== 'user' && message.role !== 'assistant')) return false;
+    const identities = identityKeysOf(message);
+    if (identities.some((identity) => existingIdentities.has(identity))) return false;
+    if (message.role === 'user') return true;
+    return shouldPreserveUnmatchedLiveAssistant(message);
+  });
+  preservedLiveMessages.forEach((message) => {
+    identityKeysOf(message).forEach((identity) => existingIdentities.add(identity));
+    mergedMessages.push(message);
+  });
   const livePendingAssistant = findPendingAssistantMessage(liveMessages);
   let appendedLivePending = false;
   const suppressedLivePendingCompaction =
     isCompactionMarkerAssistantMessage(livePendingAssistant) &&
     isSupersededRunningManualCompactionMarker(livePendingAssistant, mergedMessages);
   // Check if livePendingAssistant was already matched by checking its index in liveAssistants
-  const livePendingAlreadyMatched = Boolean(livePendingAssistant && mergedMessages.includes(livePendingAssistant));
+  const livePendingIdentities = livePendingAssistant ? identityKeysOf(livePendingAssistant) : [];
+  const livePendingAlreadyMatched = Boolean(
+    livePendingAssistant && (
+      mergedMessages.includes(livePendingAssistant) ||
+      livePendingIdentities.some((identity) => existingIdentities.has(identity))
+    )
+  );
   if (
     isForegroundRealtimeAssistant(livePendingAssistant) &&
     !livePendingAlreadyMatched &&
@@ -2937,8 +2955,32 @@ export const mergeForegroundHydratedMessagesWithLive = (liveMessages, hydratedMe
     mergedMessages.push(livePendingAssistant);
     appendedLivePending = true;
   }
+  const roundOf = (message) => {
+    const record = message && typeof message === 'object' ? message : {};
+    for (const value of [record.user_round, record.userRound, record.user_turn_index, record.userTurnIndex, record.stream_round, record.streamRound]) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+    const turn = String(record.user_turn_id ?? record.userTurnId ?? '');
+    const match = turn.match(/(?:round:|user:)(\d+)/i);
+    return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+  };
+  const orderedMessages = mergedMessages
+    .map((message, index) => ({ message, index }))
+    .sort((left, right) => {
+      const roundDiff = roundOf(left.message) - roundOf(right.message);
+      if (roundDiff !== 0) return roundDiff;
+      const leftRole = left.message?.role === 'user' ? 0 : 1;
+      const rightRole = right.message?.role === 'user' ? 0 : 1;
+      if (leftRole !== rightRole) return leftRole - rightRole;
+      const leftTurn = Number(left.message?.turn_index ?? left.message?.turnIndex ?? 0);
+      const rightTurn = Number(right.message?.turn_index ?? right.message?.turnIndex ?? 0);
+      if (Number.isFinite(leftTurn) && Number.isFinite(rightTurn) && leftTurn !== rightTurn) return leftTurn - rightTurn;
+      return left.index - right.index;
+    })
+    .map(({ message }) => message);
   return {
-    messages: mergedMessages,
+    messages: orderedMessages,
     debug: {
       matchedLiveAssistantCount: 0,
       liveAssistantCount: liveAssistants.length,

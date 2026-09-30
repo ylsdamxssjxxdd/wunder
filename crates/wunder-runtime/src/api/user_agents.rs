@@ -1521,28 +1521,9 @@ async fn delete_agent(
             i18n::t("error.permission_denied"),
         ));
     }
-    state
-        .user_store
-        .delete_user_agent(&resolved.user.user_id, &normalized_agent_id)
+    crate::services::agent_management::delete(&state, &resolved.user.user_id, &normalized_agent_id)
+        .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    if let Err(err) = state
-        .inner_visible
-        .remove_agent_files(&resolved.user.user_id, &normalized_agent_id)
-    {
-        tracing::warn!(
-            "failed to remove inner-visible files for {}/{}: {err}",
-            resolved.user.user_id,
-            normalized_agent_id
-        );
-    }
-    let mut workspace_ids = state
-        .workspace
-        .scoped_user_id_variants(&resolved.user.user_id, Some(cleaned));
-    workspace_ids.sort();
-    workspace_ids.dedup();
-    for workspace_id in workspace_ids {
-        let _ = state.workspace.purge_user_data(&workspace_id);
-    }
     Ok(Json(json!({ "data": { "id": cleaned } })))
 }
 

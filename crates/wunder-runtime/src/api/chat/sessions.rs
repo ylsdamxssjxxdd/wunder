@@ -723,62 +723,27 @@ fn load_visible_transcript_page(
     limit: i64,
     message_feedback: &HashMap<i64, Value>,
 ) -> anyhow::Result<VisibleTranscriptPage> {
-    if limit <= 0 {
-        let history = state.workspace.load_history(user_id, session_id, limit)?;
-        let history = filter_orchestration_suppressed_history(state, user_id, session_id, history);
-        return Ok(VisibleTranscriptPage {
-            transcript: build_chat_transcript(session_id, history, message_feedback),
-            history_has_more: false,
-            history_before_id: None,
-        });
-    }
-
-    let mut cursor = before_id;
-    let mut raw_has_more = true;
-    let mut visible_window_trimmed = false;
-    let mut transcript = Vec::new();
-    let mut fetch_count = 0usize;
-    while transcript.len() < limit as usize
-        && raw_has_more
-        && fetch_count < MAX_VISIBLE_HISTORY_PAGE_FETCHES
-    {
-        fetch_count += 1;
-        let page = raw_history_page_from_loaded_history(
-            state.storage.load_chat_history_page(
-                user_id,
-                session_id,
-                cursor,
-                limit.saturating_add(1),
-            )?,
-            limit,
-        );
-        raw_has_more = page.has_more;
-        let next_cursor = page.before_id;
-        if page.history.is_empty() {
-            cursor = next_cursor;
-            break;
-        }
-        let history =
-            filter_orchestration_suppressed_history(state, user_id, session_id, page.history);
-        let page_transcript = build_chat_transcript(session_id, history, message_feedback);
-        if page_transcript.is_empty() {
-            if next_cursor.is_none() || next_cursor == cursor {
-                cursor = next_cursor;
-                break;
-            }
-            cursor = next_cursor;
-            continue;
-        }
-        let trimmed = merge_visible_transcript_page(&mut transcript, page_transcript, limit);
-        visible_window_trimmed = visible_window_trimmed || trimmed;
-        cursor = history_page_cursor_after_merge(trimmed, &transcript, next_cursor);
-    }
-
-    let history_before_id = cursor.or_else(|| oldest_history_id_from_transcript(&transcript));
+    let requested = if limit > 0 { limit } else { 500 };
+    let rows = state.storage.list_thread_visible_messages(
+        user_id,
+        session_id,
+        before_id,
+        requested.saturating_add(1),
+    )?;
+    let has_more = rows.len() > requested as usize;
+    let mut rows = rows;
+    if has_more { rows.truncate(requested as usize); }
+    rows.reverse();
+    let rows = filter_orchestration_suppressed_history(state, user_id, session_id, rows);
+    let transcript = build_chat_transcript(session_id, rows, message_feedback);
+    let next_before = transcript.first()
+        .and_then(|item| item.get("_thread_item_seq"))
+        .and_then(Value::as_i64)
+        .or_else(|| before_id.filter(|_| has_more));
     Ok(VisibleTranscriptPage {
         transcript,
-        history_has_more: (raw_has_more || visible_window_trimmed) && history_before_id.is_some(),
-        history_before_id,
+        history_has_more: has_more,
+        history_before_id: next_before,
     })
 }
 
