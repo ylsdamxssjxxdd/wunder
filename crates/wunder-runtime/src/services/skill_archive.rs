@@ -1,13 +1,13 @@
-use crate::services::archive_extract::extract_archive_bytes;
+use crate::services::archive_extract::{decoded_zip_entry_path, extract_archive_bytes};
 use anyhow::{anyhow, Context, Result};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
-use std::io::Write;
+use std::io::{Cursor, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::write::FileOptions;
-use zip::{CompressionMethod, ZipWriter};
+use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 pub fn create_skill_archive(skill_root: &Path, top_dir: &str, target_zip: &Path) -> Result<()> {
     if let Some(parent) = target_zip.parent() {
@@ -83,6 +83,17 @@ pub fn import_skill_archive(
     target_root: &Path,
     reserved_top_dirs: &HashSet<String>,
 ) -> Result<ImportedSkillArchive> {
+    let lower = filename.trim().to_ascii_lowercase();
+    if lower.ends_with(".zip") || lower.ends_with(".skill") {
+        // 单趟直落：zip 条目直接解压写入目标目录，省去临时目录解压 + 逐文件复制 +
+        // 临时目录清理三趟小文件 I/O，对海量小文件的技能包（容器卷元数据操作更慢）提速明显。
+        let plan = plan_zip_skill_import(data, target_root, reserved_top_dirs)?;
+        extract_zip_skill_plan(data, &plan)?;
+        for final_name in &plan.final_names {
+            rewrite_skill_md_name(&target_root.join(final_name), final_name)?;
+        }
+        return Ok(plan.into_summary());
+    }
     let temp_root = std::env::temp_dir().join(format!("wskimp-{}", Uuid::new_v4().simple()));
     fs::create_dir_all(&temp_root)?;
     let result = (|| -> Result<ImportedSkillArchive> {
@@ -153,6 +164,127 @@ pub fn import_skill_archive(
     })();
     let _ = fs::remove_dir_all(&temp_root);
     result
+}
+
+/// zip 技能包导入计划：每个条目的最终落盘位置，复用与临时目录方案完全相同的布局校验。
+struct ZipSkillImportEntry {
+    destination: PathBuf,
+}
+
+struct ZipSkillImportPlan {
+    entries: Vec<ZipSkillImportEntry>,
+    top_level_dirs: BTreeSet<String>,
+    final_names: BTreeSet<String>,
+}
+
+impl ZipSkillImportPlan {
+    fn into_summary(self) -> ImportedSkillArchive {
+        ImportedSkillArchive {
+            extracted: self.entries.len(),
+            top_level_dirs: self.top_level_dirs.into_iter().collect(),
+            final_names: self.final_names.into_iter().collect(),
+        }
+    }
+}
+
+/// 第一趟：遍历 zip 条目做布局校验并确定每个条目的最终目标路径，不落任何数据。
+fn plan_zip_skill_import(
+    data: &[u8],
+    target_root: &Path,
+    reserved_top_dirs: &HashSet<String>,
+) -> Result<ZipSkillImportPlan> {
+    let cursor = Cursor::new(data);
+    let mut archive = ZipArchive::new(cursor).context("invalid zip archive")?;
+    let mut relatives = Vec::new();
+    for index in 0..archive.len() {
+        let file = archive.by_index(index).context("invalid zip entry")?;
+        if file.is_dir() {
+            continue;
+        }
+        let relative = decoded_zip_entry_path(&file)?;
+        if normalized_path_components(&relative)?.len() < 2 {
+            return Err(anyhow!(
+                "skill archive must contain a dedicated top-level directory"
+            ));
+        }
+        relatives.push(relative);
+    }
+    let entries = normalize_imported_skill_entries(&relatives)?;
+    let mut top_level_dirs = BTreeSet::new();
+    let mut final_names = BTreeSet::new();
+    let mut renamed_targets: HashSet<String> = HashSet::new();
+    let mut top_dir_renames: HashMap<String, String> = HashMap::new();
+    let mut plan_entries = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let final_name = if let Some(existing) = top_dir_renames.get(&entry.top_level_dir) {
+            existing.clone()
+        } else {
+            let resolved = resolve_import_skill_name(
+                target_root,
+                &entry.preferred_name,
+                reserved_top_dirs,
+                &renamed_targets,
+            );
+            renamed_targets.insert(resolved.clone());
+            top_dir_renames.insert(entry.top_level_dir.clone(), resolved.clone());
+            resolved
+        };
+        let relative_under_skill = entry
+            .destination_relative
+            .strip_prefix(&entry.top_level_dir)
+            .unwrap_or(&entry.destination_relative);
+        let destination_relative = if relative_under_skill.as_os_str().is_empty() {
+            PathBuf::from(&final_name)
+        } else {
+            PathBuf::from(&final_name).join(relative_under_skill)
+        };
+        plan_entries.push(ZipSkillImportEntry {
+            destination: target_root.join(&destination_relative),
+        });
+        top_level_dirs.insert(final_name.clone());
+        final_names.insert(final_name.clone());
+    }
+    Ok(ZipSkillImportPlan {
+        entries: plan_entries,
+        top_level_dirs,
+        final_names,
+    })
+}
+
+/// 第二趟：按第一趟确定的目标路径逐条目解压落盘（顺序与第一趟一致）。
+fn extract_zip_skill_plan(data: &[u8], plan: &ZipSkillImportPlan) -> Result<()> {
+    let cursor = Cursor::new(data);
+    let mut archive = ZipArchive::new(cursor).context("invalid zip archive")?;
+    let mut entry_index = 0usize;
+    for index in 0..archive.len() {
+        let mut file = archive.by_index(index).context("invalid zip entry")?;
+        if file.is_dir() {
+            continue;
+        }
+        let relative = decoded_zip_entry_path(&file)?;
+        if normalized_path_components(&relative)?.len() < 2 {
+            return Err(anyhow!(
+                "skill archive must contain a dedicated top-level directory"
+            ));
+        }
+        let destination = plan
+            .entries
+            .get(entry_index)
+            .ok_or_else(|| anyhow!("zip skill import plan mismatch"))?
+            .destination
+            .clone();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&destination, &bytes)?;
+        entry_index += 1;
+    }
+    if entry_index != plan.entries.len() {
+        return Err(anyhow!("zip skill import plan mismatch"));
+    }
+    Ok(())
 }
 
 fn normalize_imported_skill_entries(files: &[PathBuf]) -> Result<Vec<ImportedArchiveEntry>> {

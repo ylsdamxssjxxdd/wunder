@@ -1021,9 +1021,8 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
       invalidateUserSkillsCache();
       void ctx.loadAgentToolSummary({ force: true });
       void ctx.loadRightDockSkills({ force: true, silent: true });
-      if (ctx.sessionHub.activeSection === 'tools') {
-          void ctx.loadToolsCatalog({ silent: true });
-      }
+      // 专家页（agents 分区）的技能工具列表同样依赖 skillTools，不能只在 tools 分区时刷新。
+      void ctx.loadToolsCatalog({ silent: true });
   };
 
   ctx.handleRightDockSkillArchiveUpload = async (file: File) => {

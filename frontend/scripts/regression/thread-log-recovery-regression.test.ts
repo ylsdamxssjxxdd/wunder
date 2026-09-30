@@ -161,6 +161,41 @@ test('idle snapshot overrides stale workflow flags and historical tools keep met
   assert.equal(labels.durationLabel, '1.3s');
 });
 
+test('durable item envelope keeps automatic compaction completed without creating a manual marker', () => {
+  const projection = createChatRuntimeProjection();
+  applyChatRuntimeEvent(projection, {event_type:'session_snapshot',source:'snapshot',strict:false,
+    session_id:'thread',messages:[assistant('final', 'answer')],payload:{runtime_status:'idle'}});
+  const history = buildCanonicalSessionEventsSnapshot({sessionId:'thread',payload:{rounds:[{
+    user_round:1,events:[{item_id:'compact',revision:2,event:'compaction',data:{
+      user_round:1,model_round:1,status:'done',trigger_mode:'auto',compaction_id:'compact-1'
+    }}]
+  }]}});
+  history.forEach(event => applyChatRuntimeEvent(projection, event));
+  const message = selectVisibleMessageProjections(projection, 'thread')[0];
+  assert.equal(message.status, 'final');
+  assert.equal(message.workflowItems?.[0]?.status, 'completed');
+  assert.notEqual(message.display?.manual_compaction_marker, true);
+  assert.equal(selectSessionBusy(projection, 'thread'), false);
+});
+
+test('tool recovery keeps the outer call identity and arguments beside nested result data', () => {
+  const projection = createChatRuntimeProjection();
+  applyChatRuntimeEvent(projection, {event_type:'session_snapshot',source:'snapshot',strict:false,
+    session_id:'thread',messages:[assistant('final', 'answer')],payload:{runtime_status:'idle'}});
+  const history = buildCanonicalSessionEventsSnapshot({sessionId:'thread',payload:{rounds:[{
+    user_round:1,events:[{item_id:'tool',revision:3,event:'tool_result',data:{
+      user_round:1,model_round:1,tool:'read_file',tool_call_id:'call-1',
+      args:{path:'sample.txt'},data:{content:'file body'},status:'completed'
+    }}]
+  }]}});
+  history.forEach(event => applyChatRuntimeEvent(projection, event));
+  const item = selectVisibleMessageProjections(projection, 'thread')[0].workflowItems?.[0];
+  assert.equal(item?.toolName, 'read_file');
+  assert.equal(item?.toolCallId, 'call-1');
+  assert.match(String(item?.toolCallRawDetail), /sample\.txt/);
+  assert.match(String(item?.toolResultRawDetail), /file body/);
+});
+
 test('item indexes in different rounds never share transport deduplication', () => {
   const events = buildCanonicalSessionEventsSnapshot({sessionId:'thread',payload:{rounds:[1,2].map(round => ({
     user_round:round,events:[{event:'tool_result',item_id:`tool-${round}`,revision:2,item_index:1,

@@ -68,6 +68,7 @@ export component Composer inherits Rectangle {
     in property <float> context-usage: 0.0;
     in property <string> model-name: "";
     in property <[ChatAttachment]> attachments: [];
+    in property <string> send-key: "enter";
     callback stop();
     callback send();
     callback attach();
@@ -111,8 +112,14 @@ export component Composer inherits Rectangle {
             font-size: 15px; font-family: "SimSun";
             wrap: word-wrap;
             key-pressed(event) => {
-                if event.text == "\n" && !event.modifiers.shift {
-                    if !root.busy { root.send(); }
+                // The send key preference: "enter" sends on plain Enter;
+                // "ctrl_enter" sends only with Ctrl+Enter.
+                if event.text == "\n" && !event.modifiers.shift && !event.modifiers.control {
+                    if root.send-key == "enter" && !root.busy { root.send(); }
+                    return accept;
+                }
+                if event.text == "\n" && event.modifiers.control {
+                    if root.send-key == "ctrl_enter" && !root.busy { root.send(); }
                     return accept;
                 }
                 return reject;

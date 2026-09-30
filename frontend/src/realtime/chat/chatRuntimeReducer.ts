@@ -1,7 +1,6 @@
 import { captureTranscriptTail, restoreTranscriptTail } from './chatTranscriptTail';
 import { normalizeTokenUsage } from '@/utils/tokenUsage';
 import { applyWorkflowMetrics, finishWorkflowMetrics } from './chatWorkflowMetrics';
-import { isCompactionOnlyWorkflowItems } from '@/utils/chatCompactionWorkflow';
 import { continuesRecoveryOnModelRequest, isChatRetryEventType, resolveChatRetryEvent } from './chatRetryState';
 import type {
   ChatRuntimeApplyResult,
@@ -4716,7 +4715,15 @@ const upsertToolWorkflowItem = (
     next.approvalId = approvalId;
     next.approval_id = approvalId;
   }
-  const rawCallDetail = eventType === 'tool_call'
+  // Durable ThreadLog stores the final tool Item as `tool_result`, but it
+  // retains the original arguments on that same Item. Keep these arguments
+  // visible; do not invent a call detail when a result has no arguments.
+  const hasExplicitCallArguments = detailSource.args !== undefined ||
+    detailSource.arguments !== undefined ||
+    detailSource.input !== undefined ||
+    asRecord(detailSource.function).arguments !== undefined;
+  const rawCallDetail = eventType === 'tool_call' ||
+    (eventType === 'tool_result' && hasExplicitCallArguments)
     ? buildProjectedToolCallRawDetail(detailSource, toolFunctionName || toolRuntimeName || toolName)
     : sourceType === 'command_session_start'
       ? buildProjectedCommandSessionStartRawDetail(
@@ -4876,9 +4883,14 @@ const applyProjectedWorkflowDisplay = (
     return;
   }
   if (eventType === 'compaction' || eventType === 'compaction_progress' || eventType === 'compaction_notice') {
-    // An automatic compaction inside a tool loop must not hide the entire loop
-    // behind a standalone divider while the assistant body is still empty.
-    display.manual_compaction_marker = isCompactionOnlyWorkflowItems(message.workflowItems);
+    // Only an explicit manual request owns the green compaction marker.
+    // Automatic compaction is ordinary workflow history and must not turn a
+    // later assistant bubble into a permanently "compacting" divider.
+    if (isManualCompactionEvent(sourceType, source, payload, message)) {
+      display.manual_compaction_marker = true;
+    } else if (display.manual_compaction_marker !== true) {
+      display.manual_compaction_marker = false;
+    }
     if (status !== 'loading') {
       display.resume_available = false;
     }
@@ -5444,6 +5456,18 @@ const applyProjectedTimingStats = (
   const timingMs = parsePositiveNumber(
     streamTiming?.content_decode_ms ?? streamTiming?.contentDecodeMs ?? streamTiming?.decode_ms ?? streamTiming?.decodeMs
   );
+  // A tool round commonly emits only reasoning/tool-call tokens. Preserve
+  // its provider timing as general decode speed even though it cannot produce
+  // a visible-body metric.
+  const decodeTokens = parsePositiveInt(
+    source.decode_output_tokens ?? source.decodeOutputTokens ??
+    source.decode_tokens ?? source.decodeTokens
+  );
+  if (decodeTokens !== null && timingMs !== null) {
+    stats.decode_tokens = decodeTokens;
+    stats.decode_duration_s = timingMs / 1000;
+    stats.decode_speed_tps = decodeTokens / (timingMs / 1000);
+  }
   const bodyTokens = parsePositiveInt(
     source.visible_decode_tokens ?? source.visibleDecodeTokens ??
       (parsePositiveNumber(streamTiming?.content_delta_chars ?? streamTiming?.contentDeltaChars) > 0 &&

@@ -156,6 +156,19 @@ test('message stats restore generation speed from persisted tokens and duration'
   assert.equal(findEntryValue(entries, 'Speed'), '60.0 token/s');
 });
 
+test('message stats retains provider decode speed for a tool-only model round', () => {
+  const entries = buildAssistantMessageStatsEntries({
+    role: 'assistant',
+    stats: {
+      visible_decode_measured: false,
+      decode_output_tokens: 90,
+      decode_duration_s: 1.5,
+      decode_speed_tps: 60
+    }
+  }, createTranslator());
+  assert.equal(findEntryValue(entries, 'Speed'), '60.0 token/s');
+});
+
 test('message stats render a legal zero tool count as zero', () => {
   const entries = buildAssistantMessageStatsEntries({
     role: 'assistant',

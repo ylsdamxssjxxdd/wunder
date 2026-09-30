@@ -50,6 +50,9 @@ use download::{stream_response, TempFileStream};
 use mcp_payload::UserMcpServerPayload;
 
 const MAX_SKILL_UPLOAD_BYTES: usize = 200 * 1024 * 1024;
+/// 技能压缩包导入（解压 + 落盘 + 目录扫描）在慢盘/杀毒扫描下可能远超共享
+/// FS 池默认的 60s 执行上限，大体积多文件技能包需要单独放宽。
+const SKILL_IMPORT_EXEC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
 const BUILTIN_SKILLS_MANIFEST_NAME: &str = ".wunder_builtin_skills_manifest.json";
 
@@ -1322,7 +1325,15 @@ async fn user_skills_delete(
         ));
     }
     let root = resolved_skill.root;
-    tokio::fs::remove_dir_all(&root).await.map_err(|err| {
+    let remove_root = root.clone();
+    blocking::run_with_exec_timeout(
+        blocking::BlockingKind::Fs,
+        "api.user_tools.delete_skill",
+        SKILL_IMPORT_EXEC_TIMEOUT,
+        move || std::fs::remove_dir_all(&remove_root).map_err(|err| anyhow::anyhow!(err.to_string())),
+    )
+    .await
+    .map_err(|err| {
         error_response(
             StatusCode::BAD_REQUEST,
             i18n::t_with_params(
@@ -1410,13 +1421,18 @@ async fn user_skills_upload(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let config = state.config_store.get().await;
     let builtin_catalog = load_builtin_skill_catalog(&config, Some(&skill_root));
-    let import_result = blocking::run_fs("api.user_tools.import_skill", {
-        let filename = filename.clone();
-        let data = data.clone();
-        let skill_root = skill_root.clone();
-        let reserved_top_dirs = builtin_catalog.dir_names.clone();
-        move || import_skill_archive(&filename, &data, &skill_root, &reserved_top_dirs)
-    })
+    let import_result = blocking::run_with_exec_timeout(
+        blocking::BlockingKind::Fs,
+        "api.user_tools.import_skill",
+        SKILL_IMPORT_EXEC_TIMEOUT,
+        {
+            let filename = filename.clone();
+            let data = data.clone();
+            let skill_root = skill_root.clone();
+            let reserved_top_dirs = builtin_catalog.dir_names.clone();
+            move || import_skill_archive(&filename, &data, &skill_root, &reserved_top_dirs)
+        },
+    )
     .await
     .map_err(|err| {
         let message = err.to_string();

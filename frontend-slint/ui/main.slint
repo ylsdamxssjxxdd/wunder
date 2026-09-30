@@ -413,6 +413,7 @@ export component MainWindow inherits Window {
                 if !root.follow-output : Action { height: 26px; label: "回到最新消息"; show-label: true; clicked => { root.follow-output = true; root.scroll-revision += 1; } }
                 Composer {
                     draft <=> root.draft; status: root.status; busy: root.busy || root.session-loading || root.creating-session || root.chat-loading;
+                    send-key: root.runtime-send-key;
                     context-usage: root.context-usage;
                     model-name: root.selected-model-name != "" ? root.selected-model-name : root.selected-agent-model;
                     attachments: root.pending-attachments;

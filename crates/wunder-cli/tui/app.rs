@@ -770,6 +770,16 @@ impl TuiApp {
             items.push((String::new(), cwd_display));
         }
 
+        // Discoverability gate (plan N6): the command-center entry must stay
+        // visible in the composer footer; build_footer_spans drops the
+        // description first when the terminal is narrow.
+        let hint = if self.is_zh_language() {
+            "线程中心 /threads"
+        } else {
+            "command center /threads"
+        };
+        items.push(("←".to_string(), hint.to_string()));
+
         items
     }
 

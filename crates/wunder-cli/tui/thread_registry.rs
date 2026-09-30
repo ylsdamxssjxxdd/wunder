@@ -493,3 +493,7 @@ mod tests {
         assert!(quiet_remaining < total);
     }
 }
+
+#[cfg(test)]
+#[path = "thread_registry_load_tests.rs"]
+mod thread_registry_load_tests;

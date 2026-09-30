@@ -34,9 +34,12 @@ export const searchUserSkillFs = (params: ApiPayload) =>
   api.get('/user_tools/skills/fs/search', { params });
 export const saveUserSkillFsFile = (payload: ApiPayload) =>
   api.put('/user_tools/skills/fs/file', payload);
+const UPLOAD_TIMEOUT_MS = 600_000;
+
 export const uploadUserSkillFsFiles = (formData: FormData, config: UploadRequestConfig = {}) =>
   api.post('/user_tools/skills/fs/upload', formData, {
     ...config,
+    timeout: UPLOAD_TIMEOUT_MS,
     headers: { 'Content-Type': 'multipart/form-data', ...(config.headers || {}) }
   });
 export const createUserSkillDir = (payload: ApiPayload) => api.post('/user_tools/skills/dir', payload);
@@ -55,6 +58,7 @@ export const uploadUserSkillZip = (file: Blob | File, config: UploadRequestConfi
   form.append('file', file);
   return api.post('/user_tools/skills/upload', form, {
     ...config,
+    timeout: UPLOAD_TIMEOUT_MS,
     headers: { 'Content-Type': 'multipart/form-data', ...(config.headers || {}) }
   });
 };

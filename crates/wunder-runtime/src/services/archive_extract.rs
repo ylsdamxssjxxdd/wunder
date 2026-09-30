@@ -107,7 +107,7 @@ pub fn collect_relative_dirs(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(dirs)
 }
 
-fn decoded_zip_entry_path(file: &zip::read::ZipFile<'_>) -> Result<PathBuf> {
+pub(crate) fn decoded_zip_entry_path(file: &zip::read::ZipFile<'_>) -> Result<PathBuf> {
     let decoded = decode_zip_entry_name(file);
     validate_archive_entry_path(&decoded)
 }

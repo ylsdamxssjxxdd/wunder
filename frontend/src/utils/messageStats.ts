@@ -342,16 +342,18 @@ const resolveDurationSeconds = (stats: Record<string, any>): number | null => {
 };
 
 const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
-  if (stats?.visible_decode_measured === false || stats?.visibleDecodeMeasured === false) {
-    return null;
-  }
-  const averageSpeed = normalizeSpeed(
-    Number(
-      stats?.visible_decode_speed_tps ?? stats?.visibleDecodeSpeedTps ??
-        stats?.decode_speed_tps ?? stats?.decodeSpeedTps
-    )
-  );
-  if (averageSpeed !== null) return averageSpeed;
+  // Tool/reasoning rounds often have no visible prose. A false visible-body
+  // flag only rules out a body-derived estimate; it must not hide the durable
+  // decode timing recorded for the round itself.
+  const visibleMeasured = stats?.visible_decode_measured ?? stats?.visibleDecodeMeasured;
+  const visibleSpeed = normalizeSpeed(Number(
+    stats?.visible_decode_speed_tps ?? stats?.visibleDecodeSpeedTps
+  ));
+  if (visibleSpeed !== null && visibleMeasured !== false) return visibleSpeed;
+  const decodeSpeed = normalizeSpeed(Number(
+    stats?.decode_speed_tps ?? stats?.decodeSpeedTps
+  ));
+  if (decodeSpeed !== null) return decodeSpeed;
   // `decode_output_tokens` may include reasoning/tool output. It is safe as a
   // fallback only when stream timing confirms visible body characters.
   const timing = stats?.stream_timing && typeof stats.stream_timing === 'object'
@@ -367,7 +369,9 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
   const visibleChars = Number(timing?.content_delta_chars ?? timing?.contentDeltaChars);
   const reasoningChars = Number(timing?.reasoning_delta_chars ?? timing?.reasoningDeltaChars);
   const tokens = Number(
-    stats?.visible_decode_tokens ?? stats?.visibleDecodeTokens ??
+    (visibleMeasured === false
+      ? stats?.decode_output_tokens ?? stats?.decodeOutputTokens ?? stats?.decode_tokens ?? stats?.decodeTokens
+      : stats?.visible_decode_tokens ?? stats?.visibleDecodeTokens) ??
       ((Number.isFinite(visibleChars) && visibleChars > 0 &&
         (!Number.isFinite(reasoningChars) || reasoningChars <= 0)) ||
         (!Number.isFinite(visibleChars) && !Number.isFinite(reasoningChars))
@@ -376,8 +380,8 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
         : undefined)
   );
   const durationSeconds = Number(
-    stats?.visible_decode_duration_s ?? stats?.visibleDecodeDurationS ??
-      (hasVisibleTokenMetric ? undefined : stats?.decode_duration_s ?? stats?.decodeDurationS)
+    (visibleMeasured === false ? undefined : stats?.visible_decode_duration_s ?? stats?.visibleDecodeDurationS) ??
+      (hasVisibleTokenMetric && visibleMeasured !== false ? undefined : stats?.decode_duration_s ?? stats?.decodeDurationS)
   );
   const timingMs = Number(timing?.content_decode_ms ?? timing?.decode_ms);
   const durationMs = Number.isFinite(durationSeconds) && durationSeconds > 0

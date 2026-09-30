@@ -490,6 +490,12 @@ const deleteSkill = async (skill: any) => {
     return;
   }
   deleteLoading.value = true;
+  const deleting = ElLoading.service({
+    lock: false,
+    target: '.user-tools-dialog',
+    text: t('userTools.skills.deleting'),
+    background: 'rgba(15, 23, 42, 0.18)'
+  });
   try {
     await deleteUserSkill(skill.name);
     await removeSkillFromList(skill.name);
@@ -502,6 +508,7 @@ const deleteSkill = async (skill: any) => {
       })
     );
   } finally {
+    deleting.close();
     deleteLoading.value = false;
   }
 };

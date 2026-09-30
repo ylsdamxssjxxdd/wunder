@@ -2395,6 +2395,7 @@ export default {
   'userTools.skills.title': '技能',
   'userTools.skills.delete.title': '删除技能',
   'userTools.skills.deleteConfirm': '确定删除技能 {name} 吗？',
+  'userTools.skills.deleting': '正在删除技能，请稍候…',
   'userTools.skills.deleted': '已删除技能 {name}',
   'userTools.skills.deleteFailed': '删除失败：{message}',
   'userTools.skills.upload.failed': '上传失败',

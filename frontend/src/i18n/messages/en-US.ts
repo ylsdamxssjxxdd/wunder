@@ -2436,6 +2436,7 @@ export default {
   'userTools.skills.title': 'Skills',
   'userTools.skills.delete.title': 'Delete skill',
   'userTools.skills.deleteConfirm': 'Delete skill {name}?',
+  'userTools.skills.deleting': 'Deleting skill, please wait…',
   'userTools.skills.deleted': 'Deleted skill {name}',
   'userTools.skills.deleteFailed': 'Delete failed: {message}',
   'userTools.skills.upload.failed': 'Upload failed',

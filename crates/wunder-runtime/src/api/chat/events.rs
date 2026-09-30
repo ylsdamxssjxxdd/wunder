@@ -692,9 +692,10 @@ fn thread_item_workflow_event(item: &Value) -> Option<Value> {
     } else {
         item_payload
     };
+    let item_status = item.get("status").cloned().unwrap_or(Value::Null);
     let event = if kind == "tool_call" {
         if matches!(
-            item["status"].as_str(),
+            item_status.as_str(),
             Some("completed" | "failed" | "cancelled" | "interrupted")
         ) {
             "tool_result"
@@ -704,10 +705,23 @@ fn thread_item_workflow_event(item: &Value) -> Option<Value> {
     } else {
         payload["event_type"].as_str().unwrap_or(kind)
     };
+    let mut data = payload.as_object().cloned().unwrap_or_default();
+    // Item status is an envelope attribute in durable storage. It is not
+    // necessarily repeated in the original stream body, especially for
+    // compaction and terminal tool records. Expose it to hydration without
+    // overwriting a more specific status carried by that body.
+    if !item_status.is_null() {
+        data.entry("status".to_string()).or_insert(item_status);
+    }
+    for key in ["kind", "turn_id", "root_turn_id", "user_round", "model_round"] {
+        if let Some(value) = item.get(key).filter(|value| !value.is_null()) {
+            data.entry(key.to_string()).or_insert_with(|| value.clone());
+        }
+    }
     Some(json!({
         "event": event,
-        "timestamp": payload.get("timestamp").cloned().unwrap_or(Value::Null),
-        "data": payload,
+        "timestamp": data.get("timestamp").cloned().unwrap_or(Value::Null),
+        "data": Value::Object(data),
         "item_id": item["item_id"],
         "revision": item["revision"],
     }))
@@ -917,8 +931,22 @@ mod tests {
         assert_eq!(event["event"], "tool_result");
         assert_eq!(event["data"]["request_context_tokens"], 120);
         assert_eq!(event["data"]["meta"]["duration_ms"], 1250);
+        assert_eq!(event["data"]["status"], "completed");
         assert!(event.get("event_seq").is_none());
         assert!(super::thread_item_workflow_event(&json!({"kind":"assistant_message"})).is_none());
+    }
+
+    #[test]
+    fn durable_compaction_event_inherits_completed_item_status() {
+        let event = super::thread_item_workflow_event(&json!({
+            "kind":"compaction", "item_id":"compact", "revision":3,
+            "status":"done", "turn_id":"turn-1",
+            "payload":{"event_type":"compaction", "trigger_mode":"auto"}
+        }))
+        .unwrap();
+        assert_eq!(event["event"], "compaction");
+        assert_eq!(event["data"]["status"], "done");
+        assert_eq!(event["data"]["turn_id"], "turn-1");
     }
 
     #[test]

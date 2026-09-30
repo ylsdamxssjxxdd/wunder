@@ -100,7 +100,16 @@ const readData = (payload: Record<string, unknown>): Record<string, unknown> => 
   while (isStreamEnvelope(current)) {
     current = asRecord(current.data);
   }
-  return current;
+  // Tool records deliberately carry two layers: outer fields identify the
+  // call (tool, call id, arguments), while `data` carries its result. Treat
+  // them as one event view. Returning only the nested object made live tools
+  // lose their call identity and parameters until a later full refresh.
+  const nested = asRecord(current.data);
+  return Object.keys(nested).length > 0
+    // Keep the complete result under `data`: it is rendered as tool detail.
+    // Its scalar fields are copied for status/identity lookup only.
+    ? { ...current, ...nested, data: current.data }
+    : current;
 };
 
 const readSegments = (source: Record<string, unknown>): Record<string, unknown>[] => {

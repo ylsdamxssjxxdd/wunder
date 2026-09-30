@@ -36,6 +36,8 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 const MAX_SKILL_UPLOAD_BYTES: usize = 200 * 1024 * 1024;
+/// 与用户端技能导入一致：大体积多文件技能包解压 + 落盘需要更长执行窗口。
+const SKILL_IMPORT_EXEC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 const MAX_LSP_DIAGNOSTICS: usize = 20;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -1291,12 +1293,17 @@ async fn admin_skills_upload(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let config = state.config_store.get().await;
     let reserved_top_dirs = collect_admin_reserved_skill_top_dirs(&config, true);
-    let import_result = blocking::run_fs("api.admin.integration.import_skill", {
-        let filename = filename.clone();
-        let data = data.clone();
-        let skill_root = skill_root.clone();
-        move || import_skill_archive(&filename, &data, &skill_root, &reserved_top_dirs)
-    })
+    let import_result = blocking::run_with_exec_timeout(
+        blocking::BlockingKind::Fs,
+        "api.admin.integration.import_skill",
+        SKILL_IMPORT_EXEC_TIMEOUT,
+        {
+            let filename = filename.clone();
+            let data = data.clone();
+            let skill_root = skill_root.clone();
+            move || import_skill_archive(&filename, &data, &skill_root, &reserved_top_dirs)
+        },
+    )
     .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let updated = state
