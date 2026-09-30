@@ -118,18 +118,27 @@ impl Orchestrator {
         let turn_id = match round_info.thread_turn_id {
             Some(id) => Some(id.to_string()),
             None => match round_info.user_round {
-                Some(round) => self.storage.find_thread_turn_id(user_id, session_id, round)?,
+                Some(round) => self
+                    .storage
+                    .find_thread_turn_id(user_id, session_id, round)?,
                 None => None,
             },
         };
         if let Some(turn_id) = turn_id {
             // Only an admitted request owns the stable input slot. Commands,
             // summaries and internal observations append independent messages.
-            let input_slot = role == "user" && round_info.model_round.is_none()
+            let input_slot = role == "user"
+                && round_info.model_round.is_none()
                 && round_info.thread_turn_id.is_some()
-                && meta.and_then(|value| value.get("type")).and_then(Value::as_str)
+                && meta
+                    .and_then(|value| value.get("type"))
+                    .and_then(Value::as_str)
                     .is_none_or(|kind| kind == "subagent_hidden_user");
-            let item_id = if input_slot { format!("{turn_id}:user") } else { Uuid::new_v4().to_string() };
+            let item_id = if input_slot {
+                format!("{turn_id}:user")
+            } else {
+                Uuid::new_v4().to_string()
+            };
             payload["turn_id"] = Value::String(turn_id);
             payload["item_id"] = Value::String(item_id);
         }
@@ -611,7 +620,9 @@ impl Orchestrator {
         }
         let result = ToolResultPayload::from_value(json!({ "source": "skill_read" }));
         for name in matched {
-            self.append_tool_log(user_id, session_id, &name, args, &result, round_info, None, None, None);
+            self.append_tool_log(
+                user_id, session_id, &name, args, &result, round_info, None, None, None,
+            );
         }
     }
 
@@ -804,7 +815,9 @@ impl Orchestrator {
             json!({ "content": content })
         };
         let result = ToolResultPayload::from_value(data);
-        self.append_tool_log(user_id, session_id, name, args, &result, round_info, None, None, None);
+        self.append_tool_log(
+            user_id, session_id, name, args, &result, round_info, None, None, None,
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -837,7 +850,9 @@ impl Orchestrator {
             }
         }
         let result = ToolResultPayload::from_value(data);
-        self.append_tool_log(user_id, session_id, name, args, &result, round_info, None, None, None);
+        self.append_tool_log(
+            user_id, session_id, name, args, &result, round_info, None, None, None,
+        );
     }
 
     pub(super) async fn execute_tool_with_timeout(

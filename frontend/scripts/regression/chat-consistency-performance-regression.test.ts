@@ -322,13 +322,14 @@ for (const switching of [false, true]) {
   test(`stale cached tools do not flash running during ${switching ? 'thread switch' : 'refresh'}`, async () => {
     const store = await setup();
     const { default: api } = await import('../../src/api/http');
-    const { cacheSessionMessages } = await import('../../src/stores/chatRuntimeState');
+    const { cacheSessionMessages, ensureRuntime } = await import('../../src/stores/chatRuntimeState');
     const original = api.defaults.adapter;
     const messages = [{role:'assistant',content:'answer',message_id:'item:answer',item_id:'answer',
       user_turn_id:'user-turn:session-1:round:1',model_turn_id:'model-turn:session-1:user:1:model:1',
       turn_index:2,status:'streaming',stream_incomplete:true,workflowStreaming:true,
       workflowItems:[{eventType:'tool_call',status:'loading',toolCallId:'call'}]}];
     cacheSessionMessages('session-1', messages);
+    ensureRuntime('session-1').threadStatus = 'running';
     store.messages = switching ? [] : messages;
     if (switching) store.activeSessionId = 'session-2';
     const pending: Array<() => void> = [];

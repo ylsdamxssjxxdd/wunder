@@ -50,6 +50,13 @@ pub fn build_chat_transcript(session_id: &str, history: Vec<Value>) -> Vec<Value
             transcript.push(message);
         }
     }
+    // One user turn may contain several model requests (for example a tool
+    // call followed by the final answer).  ThreadLog stores each durable
+    // assistant Item so that usage and workflow metadata remain addressable,
+    // but the conversation surface has one assistant bubble per user turn.
+    // Fold those Items before exposing the transcript; the frontend applies
+    // the same rule to live snapshots.
+    coalesce_assistant_messages_by_user_turn(&mut transcript);
     if transcript.iter().any(has_trusted_transcript_round) {
         sort_transcript_messages(&mut transcript);
     }
@@ -244,6 +251,186 @@ fn dedupe_cancelled_markers(history: Vec<Value>) -> Vec<Value> {
         result.push(item);
     }
     result
+}
+
+fn coalesce_assistant_messages_by_user_turn(messages: &mut Vec<Value>) {
+    let mut result = Vec::with_capacity(messages.len());
+    let mut assistant_index_by_turn = HashMap::<String, usize>::new();
+    for message in messages.drain(..) {
+        if message.get("role").and_then(Value::as_str) != Some("assistant")
+            || is_special_assistant_transcript_message(&message)
+        {
+            result.push(message);
+            continue;
+        }
+        let Some(turn_id) = message.get("user_turn_id").and_then(Value::as_str) else {
+            result.push(message);
+            continue;
+        };
+        let Some(&index) = assistant_index_by_turn.get(turn_id) else {
+            assistant_index_by_turn.insert(turn_id.to_string(), result.len());
+            result.push(message);
+            continue;
+        };
+        let existing = &mut result[index];
+        merge_transcript_assistant_message(existing, &message);
+    }
+    *messages = result;
+}
+
+fn is_special_assistant_transcript_message(message: &Value) -> bool {
+    if is_cancelled_history_message(message) {
+        return true;
+    }
+    message
+        .get("meta")
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get("type"))
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind == "manual_compaction_marker")
+}
+
+fn merge_transcript_assistant_message(target: &mut Value, source: &Value) {
+    let (Some(target_map), Some(source_map)) = (target.as_object_mut(), source.as_object()) else {
+        return;
+    };
+    if should_replace_transcript_assistant_target(target_map, source_map) {
+        let old = std::mem::take(target_map);
+        *target_map = source_map.clone();
+        merge_transcript_assistant_fields(target_map, &old, true);
+    } else {
+        merge_transcript_assistant_fields(target_map, source_map, false);
+    }
+}
+
+fn should_replace_transcript_assistant_target(
+    target: &serde_json::Map<String, Value>,
+    source: &serde_json::Map<String, Value>,
+) -> bool {
+    transcript_assistant_score(source) > transcript_assistant_score(target)
+}
+
+fn transcript_assistant_score(message: &serde_json::Map<String, Value>) -> i32 {
+    let mut score = 0;
+    if message
+        .get("content")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        score += 8;
+    }
+    if message
+        .get("reasoning")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        score += 2;
+    }
+    if message.get("stats").is_some() {
+        score += 3;
+    }
+    if message
+        .get("item_id")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.contains(":text-"))
+    {
+        score += 3;
+    }
+    if message.get("status").and_then(Value::as_str) == Some("final") {
+        score += 2;
+    }
+    score
+}
+
+fn merge_transcript_assistant_fields(
+    target: &mut serde_json::Map<String, Value>,
+    source: &serde_json::Map<String, Value>,
+    source_precedes_target: bool,
+) {
+    for (key, value) in source {
+        if key == "content" || key == "reasoning" {
+            let current = target.get(key).and_then(Value::as_str).unwrap_or("");
+            let incoming = value.as_str().unwrap_or("");
+            if !incoming.is_empty() {
+                let merged = merge_transcript_text(current, incoming, source_precedes_target);
+                if merged != current {
+                    target.insert(key.clone(), Value::String(merged));
+                }
+            }
+            continue;
+        }
+        if key == "stats" {
+            if let (Some(current), Some(incoming)) =
+                (target.get_mut(key), value.as_object())
+            {
+                merge_transcript_object(current, incoming);
+            } else if !target.contains_key(key) {
+                target.insert(key.clone(), value.clone());
+            }
+            continue;
+        }
+        if key == "revision" || key == "created_seq" {
+            let current = target.get(key).and_then(Value::as_i64).unwrap_or(0);
+            let incoming = value.as_i64().unwrap_or(0);
+            if key == "revision" {
+                target.insert(key.clone(), json!(current.max(incoming)));
+            } else if current == 0 || (incoming > 0 && incoming < current) {
+                target.insert(key.clone(), value.clone());
+            }
+            continue;
+        }
+        if !target.contains_key(key)
+            || target
+                .get(key)
+                .is_some_and(|current| current.is_null() || current.as_str() == Some(""))
+        {
+            target.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+fn merge_transcript_text(current: &str, incoming: &str, incoming_precedes_current: bool) -> String {
+    if current.is_empty() || current == incoming {
+        return incoming.to_string();
+    }
+    if incoming.is_empty() || current.starts_with(incoming) {
+        return current.to_string();
+    }
+    if incoming.starts_with(current) {
+        return incoming.to_string();
+    }
+    if incoming_precedes_current {
+        format!("{incoming}\n\n{current}")
+    } else {
+        format!("{current}\n\n{incoming}")
+    }
+}
+
+fn merge_transcript_object(target: &mut Value, source: &serde_json::Map<String, Value>) {
+    let Some(target_map) = target.as_object_mut() else {
+        *target = Value::Object(source.clone());
+        return;
+    };
+    for (key, value) in source {
+        if let (Some(Value::Object(_)), Value::Object(incoming)) = (target_map.get(key), value) {
+            let mut merged = target_map.remove(key).unwrap_or(Value::Null);
+            merge_transcript_object(&mut merged, incoming);
+            target_map.insert(key.clone(), merged);
+            continue;
+        }
+        if let (Some(Value::Number(current)), Value::Number(incoming)) = (target_map.get(key), value) {
+            if incoming.as_f64().unwrap_or(0.0) > current.as_f64().unwrap_or(0.0) {
+                target_map.insert(key.clone(), value.clone());
+            }
+            continue;
+        }
+        if target_map
+            .get(key)
+            .is_none_or(|current| current.is_null() || current.as_str() == Some(""))
+        {
+            target_map.insert(key.clone(), value.clone());
+        }
+    }
 }
 
 fn extract_persisted_message_stats(item: &Value) -> Option<Value> {
@@ -603,6 +790,52 @@ mod tests {
         assert_eq!(transcript.len(), 5);
         assert_ne!(ids[2], ids[4]);
         assert_eq!(transcript[4]["user_turn_index"], json!(2));
+    }
+
+    #[test]
+    fn transcript_coalesces_tool_loop_assistant_items_into_one_bubble() {
+        let history = vec![
+            json!({
+                "role": "user", "content": "hello", "user_round": 1,
+                "round_info_source": "orchestrator", "created_seq": 1
+            }),
+            json!({
+                "role": "assistant", "content": "", "reasoning": "decide to use a tool",
+                "finish_reason": "tool_calls", "tool_calls": [{"id":"call-1"}],
+                "user_round": 1, "model_round": 1,
+                "round_info_source": "orchestrator", "created_seq": 2,
+                "item_id": "turn:text-1"
+            }),
+            json!({
+                "role": "assistant", "content": "", "reasoning_content": "decide to use a tool",
+                "meta": {"type": "tool_call", "message_stats": {"contextTokens": 10}},
+                "tool_calls": [{"id":"call-1"}], "user_round": 1, "model_round": 1,
+                "round_info_source": "orchestrator", "created_seq": 3,
+                "item_id": "duplicate-tool"
+            }),
+            json!({
+                "role": "assistant", "content": "hello back", "reasoning": "final answer",
+                "user_round": 1, "model_round": 2,
+                "round_info_source": "orchestrator", "created_seq": 4,
+                "item_id": "turn:text-2"
+            }),
+            json!({
+                "role": "assistant", "content": "hello back", "reasoning_content": "final answer",
+                "meta": {"message_stats": {"contextTokens": 20}},
+                "user_round": 1, "model_round": 2,
+                "round_info_source": "orchestrator", "created_seq": 5,
+                "item_id": "duplicate-final"
+            }),
+        ];
+
+        let transcript = build_chat_transcript("sess", history);
+        assert_eq!(transcript.iter().filter(|item| item["role"] == "assistant").count(), 1);
+        let assistant = transcript.iter().find(|item| item["role"] == "assistant").unwrap();
+        assert_eq!(assistant["content"], json!("hello back"));
+        assert_eq!(assistant["reasoning"], json!("final answer"));
+        assert_eq!(assistant["user_round"], json!(1));
+        assert_eq!(assistant["model_round"], json!(2));
+        assert_eq!(assistant["stats"]["contextTokens"], json!(20));
     }
 
     #[test]

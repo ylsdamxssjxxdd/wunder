@@ -219,6 +219,13 @@ const shouldMergeVisibleDuplicate = (
   if (left.role === 'user' && right.role === 'user') return true;
   if (left.role !== 'assistant' || right.role !== 'assistant') return false;
   if (isSpecialAssistantProjection(left) || isSpecialAssistantProjection(right)) return false;
+  // A user turn may contain several model requests: an intermediate
+  // tool-call response, the tool result projection, and the final response.
+  // They are one conversation turn and must render as one assistant bubble.
+  // Workflow records, reasoning, usage and final text are merged below.
+  const leftRound = resolveAssistantSemanticUserRound(left);
+  const rightRound = resolveAssistantSemanticUserRound(right);
+  if (leftRound !== null && leftRound === rightRound) return true;
   if (shouldMergeTransientAssistantDuplicate(session, left, right)) return true;
   if (shouldMergeSameRoundSupplementalAssistantDuplicate(left, right)) return true;
   const hasLeftPayload = hasVisibleAssistantPayload(left);

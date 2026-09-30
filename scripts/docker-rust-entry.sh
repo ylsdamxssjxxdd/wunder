@@ -61,7 +61,7 @@ binary_is_ready() {
     return 1
   fi
 
-  ! find Cargo.toml Cargo.lock crates/wunder-core crates/wunder-runtime crates/wunder-server patches/tokio-xmpp scripts/docker-rust-entry.sh \
+  ! find Cargo.toml Cargo.lock crates/wunder-core crates/wunder-runtime crates/wunder-server scripts/docker-rust-entry.sh \
     -type f -newer "${binary}" -print -quit 2>/dev/null | grep -q .
 }
 

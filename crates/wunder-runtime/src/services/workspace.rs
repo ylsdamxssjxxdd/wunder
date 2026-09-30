@@ -1284,7 +1284,11 @@ impl WorkspaceManager {
         after_seq: i64,
         limit: i64,
     ) -> Result<Vec<Value>> {
-        if after_seq > self.storage.latest_thread_change_seq_by_session(session_id)? {
+        if after_seq
+            > self
+                .storage
+                .latest_thread_change_seq_by_session(session_id)?
+        {
             return Ok(vec![json!({"event":"thread_snapshot_required","data":{}})]);
         }
         let changes = self.storage.list_thread_changes_by_session(
@@ -1301,8 +1305,14 @@ impl WorkspaceManager {
             }
             let cursor = change["change_seq"].as_i64().unwrap_or(0);
             if change["change_type"] == "item_upsert" {
-                if let (Some(owner), Some(item_id)) = (user_id.as_deref(), change["item_id"].as_str()) {
-                    if self.storage.get_thread_item(owner, session_id, item_id, false)?.is_none() {
+                if let (Some(owner), Some(item_id)) =
+                    (user_id.as_deref(), change["item_id"].as_str())
+                {
+                    if self
+                        .storage
+                        .get_thread_item(owner, session_id, item_id, false)?
+                        .is_none()
+                    {
                         frames.push(json!({"event":"thread_change","data":{
                             "change_type":"cursor", "cursor":cursor
                         }}));
@@ -2664,6 +2674,72 @@ mod tests {
     #[test]
     fn single_root_workspace_never_uses_temp_cleanup_ttl() {
         assert_eq!(effective_temp_cleanup_idle_ttl_s(true), 0.0);
+    }
+
+    #[test]
+    fn thread_log_recovery_emits_blocks_and_skips_private_items_without_transport_ids() {
+        let (workspace, _dir) = build_workspace_manager();
+        workspace
+            .storage
+            .upsert_chat_session(&crate::storage::ChatSessionRecord {
+                session_id: "thread".into(),
+                user_id: "owner".into(),
+                title: "Thread".into(),
+                status: "active".into(),
+                created_at: 1.0,
+                updated_at: 1.0,
+                last_message_at: 1.0,
+                agent_id: None,
+                tool_overrides: vec![],
+                parent_session_id: None,
+                parent_message_id: None,
+                spawn_label: None,
+                spawned_by: None,
+            })
+            .unwrap();
+        let turn = workspace
+            .storage
+            .accept_thread_turn("owner", "thread", &json!({"content":"input"}))
+            .unwrap();
+        workspace
+            .storage
+            .append_thread_item(
+                "owner",
+                &json!({"session_id":"thread",
+            "turn_id":turn["turn_id"], "item_id":"answer", "kind":"assistant_message",
+            "role":"assistant", "status":"running", "visibility":"user"}),
+            )
+            .unwrap();
+        let cursor = workspace.latest_thread_change_seq("thread").unwrap();
+        workspace.storage.upsert_thread_text_block("owner", "thread", &json!({
+            "item_id":"answer", "field":"content", "block_index":0, "event_id":900,
+            "data":{"content":"prefix", "field":"content", "block_index":0, "content_offset":0}
+        })).unwrap();
+        workspace
+            .storage
+            .append_thread_item(
+                "owner",
+                &json!({"session_id":"thread",
+            "turn_id":turn["turn_id"], "item_id":"private", "kind":"system_message",
+            "role":"system", "visibility":"model_internal", "content":"internal"}),
+            )
+            .unwrap();
+        let frames = workspace
+            .try_load_thread_changes("thread", cursor, 100)
+            .unwrap();
+        assert_eq!(frames.len(), 3);
+        assert_eq!(frames[0]["event"], "thread_item_block");
+        assert_eq!(frames[0]["data"]["message_id"], "item:answer");
+        assert_eq!(frames[0]["data"]["content"], "prefix");
+        assert_eq!(frames[1]["data"]["cursor"], cursor + 1);
+        assert_eq!(frames[2]["data"]["change_type"], "cursor");
+        assert!(frames.iter().all(|frame| frame.get("event_id").is_none()));
+        assert_eq!(
+            workspace
+                .try_load_thread_changes("thread", 900, 100)
+                .unwrap()[0]["event"],
+            "thread_snapshot_required"
+        );
     }
 
     #[test]

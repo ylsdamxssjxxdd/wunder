@@ -600,28 +600,6 @@ pub(crate) async fn resume_stream_events(
         {
             return;
         }
-        let activity = crate::services::chat_runtime_projection::load_chat_session_activity(
-            &state,
-            &session_id,
-            monitor.get_record(&session_id).as_ref(),
-        )
-        .await;
-        let queued = has_active_queue_task(user_store.as_ref(), &session_id);
-        let running = activity.running || queued;
-        let status = activity
-            .runtime
-            .as_ref()
-            .and_then(|v| v["thread_status"].as_str())
-            .filter(|_| activity.running || !queued)
-            .unwrap_or(if activity.running {
-                "running"
-            } else if queued {
-                "queued"
-            } else {
-                "idle"
-            })
-            .to_string();
-
         let session_id_snapshot = session_id.clone();
         let workspace_snapshot = workspace.clone();
         let records = blocking::run_fs("api.ws_helpers.resume_stream_events", move || {
@@ -662,6 +640,28 @@ pub(crate) async fn resume_stream_events(
             }
             progressed = true;
         }
+        let activity = crate::services::chat_runtime_projection::load_chat_session_activity(
+            &state,
+            &session_id,
+            monitor.get_record(&session_id).as_ref(),
+        )
+        .await;
+        let queued = has_active_queue_task(user_store.as_ref(), &session_id);
+        let running = activity.running || queued;
+        let status = activity
+            .runtime
+            .as_ref()
+            .and_then(|v| v["thread_status"].as_str())
+            .filter(|_| activity.running || !queued)
+            .unwrap_or(if activity.running {
+                "running"
+            } else if queued {
+                "queued"
+            } else {
+                "idle"
+            })
+            .to_string();
+
         // Drain retained pages before publishing idle, otherwise intermediate
         // text pages would repeatedly reopen and settle the same message.
         if !full_page && (status != last_status || progressed) {

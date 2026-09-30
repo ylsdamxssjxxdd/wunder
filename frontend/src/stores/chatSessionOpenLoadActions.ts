@@ -1,7 +1,6 @@
 import { sessionCatalogCheckIds, sessionCatalogCandidateIds, mergeSessionCatalogPage, cacheSessionCatalog } from './chatSessionCatalog';
 import { isSessionUnavailable } from './chatSessionAvailability';
 import { normalizeThreadChangeCursor } from './chatThreadCursor';
-import { isThreadRuntimeBusy } from '@/utils/chatSessionRuntime';
 import { isChatSnapshotCurrent, readChatRealtimeRevision } from './chatSnapshotFreshness';
 import { defineStore } from 'pinia';
 
@@ -640,10 +639,10 @@ export const chatSessionOpenLoadActions = {
         }
         if (cachedSessionMessages?.length || snapshot?.messages?.length) {
           const entryRuntime = ensureRuntime(targetSessionId);
-          // Disk/cache flags are not proof of an active execution. Keep a live
-          // controller or a confirmed runtime, otherwise render neutral history.
+          // Disk/cache flags are not proof of an active execution. Only a live
+          // controller can keep cached activity while fresh status is loading.
           if (!entryRuntime?.sendController && !entryRuntime?.resumeController &&
-              !isThreadRuntimeBusy(entryRuntime?.threadStatus)) {
+              !entryRuntime?.watchController) {
             clearCompletedAssistantStreamingState(this.messages);
             syncChatRuntimeProjectionFromSnapshot(this, targetSessionId, this.messages, {
               immediate: true, loading: false, running: false, authoritative: true

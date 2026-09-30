@@ -115,7 +115,6 @@ incremental = false
 incremental = false
 
 [patch.crates-io]
-tokio-xmpp = { path = "patches/tokio-xmpp" }
 # Use the rlib-only fork for every workspace member. The kylin-arm vendor's
 # old-layout html2md declares crate-type dylib/staticlib, which makes CLI
 # builds emit a DLL whose link fails on missing DW2 unwind symbols with

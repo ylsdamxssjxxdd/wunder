@@ -6426,6 +6426,8 @@ dependencies = [
 [[package]]
 name = "tokio-xmpp"
 version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8f8ac72971d5c993971490239c6fa7306bf5e699d39c6bc2775bdb98d590c7c"
 dependencies = [
  "bytes",
  "futures",
