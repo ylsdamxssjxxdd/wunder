@@ -70,7 +70,15 @@ fn map_transcript_message(
     page_user_rounds: &HashSet<i64>,
     cursor: &mut TranscriptCursor,
 ) -> Option<Value> {
-    let role = item.get("role").and_then(Value::as_str)?.to_string();
+    let role = item
+        .get("role")
+        .and_then(Value::as_str)
+        .or_else(|| match item.get("kind").and_then(Value::as_str) {
+            Some("user_message") => Some("user"),
+            Some("assistant_message") => Some("assistant"),
+            _ => None,
+        })?
+        .to_string();
     if role == "system" || role == "tool" {
         return None;
     }
@@ -288,21 +296,41 @@ fn coalesce_assistant_messages_by_user_turn(messages: &mut Vec<Value>) {
 }
 
 fn is_special_assistant_transcript_message(message: &Value) -> bool {
-    if is_cancelled_history_message(message) {
-        return true;
-    }
     message
-        .get("meta")
-        .and_then(Value::as_object)
-        .and_then(|meta| meta.get("type"))
-        .and_then(Value::as_str)
-        .is_some_and(|kind| kind == "manual_compaction_marker")
+        .get("manual_compaction_marker")
+        .and_then(Value::as_bool)
+        == Some(true)
+        || message
+            .get("meta")
+            .and_then(Value::as_object)
+            .and_then(|meta| meta.get("type"))
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind == "manual_compaction_marker")
 }
 
 fn merge_transcript_assistant_message(target: &mut Value, source: &Value) {
     let (Some(target_map), Some(source_map)) = (target.as_object_mut(), source.as_object()) else {
         return;
     };
+    if source_map.get("cancelled").and_then(Value::as_bool) == Some(true) {
+        target_map.insert("status".into(), json!("cancelled"));
+        target_map.insert("cancelled".into(), json!(true));
+        if let Some(reason) = source_map.get("stop_reason") {
+            target_map.insert("stop_reason".into(), reason.clone());
+        }
+        if target_map
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .is_empty()
+        {
+            target_map.insert(
+                "content".into(),
+                source_map.get("content").cloned().unwrap_or(json!("")),
+            );
+        }
+        return;
+    }
     if should_replace_transcript_assistant_target(target_map, source_map) {
         let old = std::mem::take(target_map);
         *target_map = source_map.clone();
@@ -311,7 +339,7 @@ fn merge_transcript_assistant_message(target: &mut Value, source: &Value) {
         // tool-call reasoning followed by the final answer).
         merge_transcript_assistant_fields(target_map, &old, false);
     } else {
-        merge_transcript_assistant_fields(target_map, source_map, true);
+        merge_transcript_assistant_fields(target_map, source_map, false);
     }
 }
 
@@ -319,6 +347,23 @@ fn should_replace_transcript_assistant_target(
     target: &serde_json::Map<String, Value>,
     source: &serde_json::Map<String, Value>,
 ) -> bool {
+    let round = |map: &serde_json::Map<String, Value>| {
+        map.get("model_round")
+            .or_else(|| map.get("model_turn_index"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+    };
+    if round(source) != round(target) {
+        return round(source) > round(target);
+    }
+    if target.get("item_id") == source.get("item_id") {
+        let revision = |map: &serde_json::Map<String, Value>| {
+            map.get("revision").and_then(Value::as_i64).unwrap_or(0)
+        };
+        if revision(source) != revision(target) {
+            return revision(source) > revision(target);
+        }
+    }
     transcript_assistant_score(source) > transcript_assistant_score(target)
 }
 
@@ -372,16 +417,17 @@ fn merge_transcript_assistant_fields(
             continue;
         }
         if key == "stats" {
-            if let (Some(current), Some(incoming)) =
-                (target.get_mut(key), value.as_object())
-            {
+            if let (Some(current), Some(incoming)) = (target.get_mut(key), value.as_object()) {
                 merge_transcript_object(current, incoming);
             } else if !target.contains_key(key) {
                 target.insert(key.clone(), value.clone());
             }
             continue;
         }
-        if key == "revision" || key == "created_seq" {
+        if key == "revision" {
+            continue;
+        }
+        if key == "created_seq" {
             let current = target.get(key).and_then(Value::as_i64).unwrap_or(0);
             let incoming = value.as_i64().unwrap_or(0);
             if key == "revision" {
@@ -408,6 +454,9 @@ fn merge_transcript_text(current: &str, incoming: &str, prefer_incoming: bool) -
     if incoming.is_empty() || current.starts_with(incoming) {
         return current.to_string();
     }
+    if !prefer_incoming {
+        return current.to_string();
+    }
     if incoming.starts_with(current) {
         return incoming.to_string();
     }
@@ -430,7 +479,9 @@ fn merge_transcript_object(target: &mut Value, source: &serde_json::Map<String, 
             target_map.insert(key.clone(), merged);
             continue;
         }
-        if let (Some(Value::Number(current)), Value::Number(incoming)) = (target_map.get(key), value) {
+        if let (Some(Value::Number(current)), Value::Number(incoming)) =
+            (target_map.get(key), value)
+        {
             if incoming.as_f64().unwrap_or(0.0) > current.as_f64().unwrap_or(0.0) {
                 target_map.insert(key.clone(), value.clone());
             }
@@ -446,9 +497,50 @@ fn merge_transcript_object(target: &mut Value, source: &serde_json::Map<String, 
 }
 
 fn extract_persisted_message_stats(item: &Value) -> Option<Value> {
-    let meta = item.get("meta")?.as_object()?;
-    let stats = meta.get("message_stats")?.as_object()?;
-    (!stats.is_empty()).then(|| Value::Object(stats.clone()))
+    let mut stats = item
+        .get("meta")
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get("message_stats"))
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for key in [
+        "decode_output_tokens", "decode_tokens", "decode_duration_s",
+        "decode_speed_tps", "visible_decode_tokens", "visible_decode_duration_s",
+        "visible_decode_speed_tps", "prefill_duration_s", "prefill_speed_tps",
+        "stream_timing", "usage", "round_usage", "context_occupancy_tokens",
+    ] {
+        if let Some(value) = item.get(key) {
+            stats.entry(key.to_string()).or_insert_with(|| value.clone());
+        }
+    }
+    if stats.get("visible_decode_tokens").is_none() {
+        if let Some(tokens) = item.get("decode_output_tokens").or_else(|| item.get("decode_tokens")) {
+            stats.insert("visible_decode_tokens".into(), tokens.clone());
+        }
+    }
+    let timing_ms = item
+        .get("stream_timing")
+        .and_then(Value::as_object)
+        .and_then(|timing| timing.get("content_decode_ms"))
+        .and_then(Value::as_f64)
+        .filter(|value| *value > 0.0);
+    if stats.get("visible_decode_duration_s").is_none() {
+        if let Some(ms) = timing_ms {
+            stats.insert("visible_decode_duration_s".into(), json!(ms / 1000.0));
+        }
+    }
+    if stats.get("visible_decode_speed_tps").is_none() {
+        let tokens = stats.get("visible_decode_tokens").and_then(Value::as_f64);
+        let duration = stats.get("visible_decode_duration_s").and_then(Value::as_f64);
+        if let (Some(tokens), Some(duration)) = (tokens, duration) {
+            if tokens > 0.0 && duration > 0.0 {
+                stats.insert("visible_decode_speed_tps".into(), json!(tokens / duration));
+                stats.insert("visible_decode_measured".into(), json!(true));
+            }
+        }
+    }
+    (!stats.is_empty()).then_some(Value::Object(stats))
 }
 
 fn resolve_message_id(session_id: &str, role: &str, turn_index: i64) -> String {
@@ -780,6 +872,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn latest_model_round_wins_without_borrowing_another_item_revision() {
+        let transcript = build_chat_transcript(
+            "thread",
+            vec![
+                json!({"role":"user","content":"request","user_round":1}),
+                json!({"role":"assistant","content":"A longer preliminary response", "reasoning":"plan",
+                "turn_id":"root","item_id":"root:text-1","revision":9,"model_round":1,"user_round":1}),
+                json!({"role":"assistant","content":"Done.","turn_id":"root","item_id":"root:text-4",
+                "revision":2,"model_round":4,"user_round":1}),
+            ],
+        );
+        assert_eq!(transcript.len(), 2);
+        assert_eq!(transcript[1]["content"], "Done.");
+        assert_eq!(transcript[1]["item_id"], "root:text-4");
+        assert_eq!(transcript[1]["revision"], 2);
+    }
+
+    #[test]
+    fn cancelled_marker_settles_one_bubble_and_retains_partial_text() {
+        let transcript = build_chat_transcript(
+            "thread",
+            vec![
+                json!({"role":"user","content":"request","user_round":1}),
+                json!({"role":"assistant","content":"Partial reply", "status":"cancelled",
+                "turn_id":"root","item_id":"root:text-1","model_round":1,"user_round":1}),
+                json!({"role":"assistant","content":"Cancelled", "turn_id":"root","item_id":"marker",
+                "user_round":1,"meta":{"type":"session_cancelled","stop_reason":"user_stop"}}),
+            ],
+        );
+        assert_eq!(transcript.len(), 2);
+        assert_eq!(transcript[1]["status"], "cancelled");
+        assert_eq!(transcript[1]["content"], "Partial reply");
+    }
+
+    #[test]
     fn transcript_does_not_fold_same_stream_round_assistants() {
         let history = vec![
             json!({"role": "assistant", "content": "greeting", "timestamp": "2026-04-30T02:14:01Z", "created_seq": 1}),
@@ -841,8 +968,17 @@ mod tests {
         ];
 
         let transcript = build_chat_transcript("sess", history);
-        assert_eq!(transcript.iter().filter(|item| item["role"] == "assistant").count(), 1);
-        let assistant = transcript.iter().find(|item| item["role"] == "assistant").unwrap();
+        assert_eq!(
+            transcript
+                .iter()
+                .filter(|item| item["role"] == "assistant")
+                .count(),
+            1
+        );
+        let assistant = transcript
+            .iter()
+            .find(|item| item["role"] == "assistant")
+            .unwrap();
         assert_eq!(assistant["content"], json!("hello back"));
         assert_eq!(assistant["reasoning"], json!("final answer"));
         assert_eq!(assistant["user_round"], json!(1));

@@ -182,11 +182,13 @@ const resolveUserTurnId = (
     data.userTurnId,
     payload.user_turn_id,
     payload.userTurnId,
+    userRound ? `user-turn:${sessionId}:round:${userRound}` : '',
+    // `turn_id` is the durable ThreadLog root identity, not a chat user-turn
+    // projection key. Keep it only as a legacy fallback when no round exists.
     data.turn_id,
     data.turnId,
     payload.turn_id,
     payload.turnId,
-    userRound ? `user-turn:${sessionId}:round:${userRound}` : '',
     clientMessageId,
     requestId ? `user-turn:${sessionId}:request:${requestId}` : '',
     `user-turn:${sessionId}:unknown`

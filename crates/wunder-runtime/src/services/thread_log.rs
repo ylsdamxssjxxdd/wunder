@@ -3,6 +3,27 @@ use crate::storage::StorageBackend;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+/// Read-time lifecycle projection also repairs logs written before terminal
+/// turns began settling their unfinished items. It does not rewrite model context.
+pub fn project_visible_item(message: &mut Value, kind: &str, turn_status: &str) {
+    if message.get("role").and_then(Value::as_str).is_none() {
+        message["role"] = json!(if kind == "user_message" {
+            "user"
+        } else {
+            "assistant"
+        });
+    }
+    if matches!(
+        message["status"].as_str(),
+        Some("queued" | "running" | "waiting_input")
+    ) && matches!(
+        turn_status,
+        "completed" | "failed" | "cancelled" | "interrupted"
+    ) {
+        message["status"] = json!(turn_status);
+    }
+}
+
 /// Hydrate only unfinished visible messages. Completed messages already own their
 /// final text; recovery reads the active fields in bounded database pages.
 pub fn hydrate_active_text(
@@ -14,7 +35,9 @@ pub fn hydrate_active_text(
     if message["role"] != "assistant"
         || !matches!(
             message["status"].as_str(),
-            Some("running" | "streaming" | "waiting_input")
+            Some(
+                "running" | "streaming" | "waiting_input" | "cancelled" | "interrupted" | "failed"
+            )
         )
     {
         return Ok(());
@@ -150,6 +173,18 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
             },
         ),
         "plan_update" => ("plan", "plan".into(), "completed"),
+        // Preserve the compaction lifecycle; the generic completed default
+        // otherwise turns an in-flight compaction green as soon as it is stored.
+        "compaction" => (
+            "compaction",
+            data.get("compaction_id")
+                .and_then(Value::as_str)
+                .map(|id| format!("compaction-{id}"))
+                .unwrap_or_else(|| format!("compaction-{model}")),
+            data.get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("running"),
+        ),
         "turn_terminal" => (
             "terminal",
             "terminal".into(),

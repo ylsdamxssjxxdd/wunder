@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 const SESSION_EVENTS_MAX_LIMIT: i64 = 500;
 const WORKFLOW_EVENTS_PAGE_MAX_LIMIT: i64 = 100;
+const WORKFLOW_TURN_ITEMS_MAX: usize = 10_000;
 
 pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -624,16 +625,44 @@ fn thread_turn_to_workflow_round(
         .get("turn_id")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let detail = storage
-        .get_thread_turn(user_id, session_id, turn_id, -1, 100, false)?
-        .unwrap_or_else(|| turn.clone());
-    let events = detail
-        .get("items")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(thread_item_workflow_event)
-        .collect::<Vec<_>>();
+    let mut after = -1_i64;
+    let mut events = Vec::new();
+    let mut loaded = 0usize;
+    loop {
+        let Some(detail) = storage.get_thread_turn(
+            user_id,
+            session_id,
+            turn_id,
+            after,
+            WORKFLOW_EVENTS_PAGE_MAX_LIMIT,
+            false,
+        )?
+        else {
+            break;
+        };
+        let items = detail
+            .get("items")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        if items.is_empty() {
+            break;
+        }
+        loaded = loaded.saturating_add(items.len());
+        events.extend(items.iter().filter_map(thread_item_workflow_event));
+        let has_more = detail
+            .get("has_more")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let next_after = detail
+            .get("next_after")
+            .and_then(Value::as_i64)
+            .unwrap_or(after);
+        if !has_more || next_after <= after || loaded >= WORKFLOW_TURN_ITEMS_MAX {
+            break;
+        }
+        after = next_after;
+    }
     Ok(
         json!({"user_round": turn.get("user_turn_index").cloned().unwrap_or(Value::Null), "turn_id": turn_id, "status": turn.get("status").cloned().unwrap_or(Value::Null), "events": events}),
     )
@@ -647,7 +676,22 @@ fn thread_item_workflow_event(item: &Value) -> Option<Value> {
     ) {
         return None;
     }
-    let payload = item.get("payload").cloned().unwrap_or_else(|| json!({}));
+    let item_payload = item.get("payload").cloned().unwrap_or_else(|| json!({}));
+    // ThreadLog stores item envelope fields in `payload` and may retain the
+    // original event body under `payload.payload`. Rebuild one flat event data
+    // shape here so refresh hydration sees the same tool identity and metrics
+    // as the live stream.
+    let payload = if let (Some(outer), Some(inner)) = (
+        item_payload.as_object(),
+        item_payload.get("payload").and_then(Value::as_object),
+    ) {
+        let mut merged = outer.clone();
+        merged.remove("payload");
+        merged.extend(inner.clone());
+        Value::Object(merged)
+    } else {
+        item_payload
+    };
     let event = if kind == "tool_call" {
         if matches!(
             item["status"].as_str(),
@@ -856,8 +900,11 @@ fn is_workflow_event(event_type: &str) -> bool {
 mod tests {
     use super::{
         collect_session_event_rounds, normalize_workflow_round_range, should_merge_round_event,
+        thread_turn_to_workflow_round,
     };
+    use crate::storage::SqliteStorage;
     use serde_json::{json, Value};
+    use wunder_core::storage_backend::ThreadLogStore;
 
     #[test]
     fn durable_tool_result_preserves_metrics_without_replaying_a_start() {
@@ -872,6 +919,41 @@ mod tests {
         assert_eq!(event["data"]["meta"]["duration_ms"], 1250);
         assert!(event.get("event_seq").is_none());
         assert!(super::thread_item_workflow_event(&json!({"kind":"assistant_message"})).is_none());
+    }
+
+    #[test]
+    fn workflow_round_paginates_all_items_in_a_long_root_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = SqliteStorage::new(
+            dir.path()
+                .join("thread-log.db")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        let accepted = storage
+            .accept_thread_turn(
+                "owner",
+                "thread",
+                &json!({"role":"user","content":"request","client_message_id":"request-id"}),
+            )
+            .unwrap();
+        let turn_id = accepted["turn_id"].as_str().unwrap();
+        for index in 0..205 {
+            storage
+                .append_thread_item(
+                    "owner",
+                    &json!({
+                        "session_id":"thread", "turn_id":turn_id,
+                        "item_id":format!("tool-{index}"), "kind":"tool_call",
+                        "status":"completed", "visibility":"user",
+                        "payload":{"tool":"read_file", "tool_call_id":format!("tool-{index}"), "user_round":1}
+                    }),
+                )
+                .unwrap();
+        }
+        let round = thread_turn_to_workflow_round(&storage, "owner", "thread", &accepted).unwrap();
+        assert_eq!(round["events"].as_array().map(Vec::len), Some(205));
+        assert_eq!(round["events"][204]["data"]["tool_call_id"], "tool-204");
     }
 
     #[test]

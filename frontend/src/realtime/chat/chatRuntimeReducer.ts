@@ -46,7 +46,9 @@ const TERMINAL_EVENT_TYPES = new Set([
   'session_idle'
 ]);
 
-const ACTIVE_WORKFLOW_STATUSES = new Set(['loading', 'pending', 'queued', 'running', 'streaming']);
+const ACTIVE_WORKFLOW_STATUSES = new Set([
+  'loading', 'pending', 'queued', 'running', 'streaming', 'compacting'
+]);
 const QUEUE_WAIT_EVENT_TYPES = new Set(['queued', 'queue_enter', 'queue_update']);
 const QUEUE_WORKFLOW_EVENT_TYPES = new Set([
   'queued',
@@ -131,6 +133,11 @@ const SUCCESS_WORKFLOW_STATUSES = new Set([
   'idle',
   'success',
   'succeeded'
+]);
+const COMPACTION_TERMINAL_SUCCESS_STATUSES = new Set([
+  'fallback',
+  'guard_only',
+  'skipped'
 ]);
 
 const isCommandSessionRuntimeEvent = (event: { payload?: Record<string, unknown> | null }): boolean => {
@@ -244,6 +251,41 @@ export const applyChatRuntimeEvent = (
   const session = resolveChatRuntimeSession(projection, event.sessionId);
   ensureRuntimeSessionCollections(session);
   const beforeSummary = summarizeSession(session);
+  // Durable workflow history enriches the transcript. It must neither replay
+  // old execution states nor rely on transport dedupe after transcript replacement.
+  if (event.payload.workflow_history === true) {
+    const candidates = Object.values(session.messageById).filter(message =>
+      message.role === 'assistant' && message.userTurnId === event.userTurnId);
+    const message = candidates.find(message => message.modelTurnId === event.modelTurnId) || candidates.at(-1);
+    if (!message) return { applied: false, ignored: true, quarantined: false,
+      sessionId: session.sessionId, messageId: event.messageId, eventSeq: event.eventSeq };
+    const modelTurn = session.modelTurnById[message.modelTurnId];
+    const sourceType = normalizeText(event.payload.source_event_type);
+    if (event.type === 'usage_stats') {
+      applyProjectedUsageStatsDisplay(message, event,
+        normalizeText(event.payload.source_event_type) || 'model_usage');
+    } else if (event.type.startsWith('tool_call_')) {
+      upsertToolWorkflowItem(message, event, event.type === 'tool_call_failed' ? 'failed'
+        : event.type === 'tool_call_completed' ? 'completed' : 'loading', modelTurn);
+    } else if (event.type === 'workflow_event') {
+      upsertProjectedWorkflowEventItem(message, event, sourceType,
+        resolveProjectedWorkflowStatus(sourceType, event.payload), modelTurn);
+      applyProjectedWorkflowDisplay(message, event, sourceType,
+        resolveProjectedWorkflowStatus(sourceType, event.payload));
+      if (SUBAGENT_WORKFLOW_EVENT_TYPES.has(sourceType)) {
+        upsertProjectedSubagents(message, event, sourceType,
+          resolveProjectedWorkflowStatus(sourceType, event.payload));
+      }
+    }
+    if (!isActiveMessageStatus(message.status)) {
+      settleProjectedWorkflowItems(message, message.status === 'final' ? 'completed' : 'failed');
+    }
+    syncProjectedToolCallStats(message);
+    markMessageStructureChanged(message);
+    markVisibleMessageTopologyChanged(session);
+    return { applied: true, ignored: false, quarantined: false,
+      sessionId: session.sessionId, messageId: message.id, eventSeq: null };
+  }
   const duplicateEventId = event.eventId && session.eventIdIndex[event.eventId];
   const commandSessionRuntimeEvent = isCommandSessionRuntimeEvent(event);
 
@@ -2913,6 +2955,7 @@ const patchMessageFromRaw = (
   status: ChatRuntimeMessageStatus,
   seq: number
 ): void => {
+  message.raw = raw;
   message.display = patchMessageDisplayProjectionFromRaw(message.display, raw);
   message.content = String(raw.content ?? '');
   message.reasoning = String(raw.reasoning ?? '');
@@ -4718,7 +4761,11 @@ const resolveProjectedWorkflowStatus = (
   if (sourceType === 'compaction') {
     const data = asRecord(payload.data);
     const status = normalizeText(data.status ?? payload.status);
-    return FAILED_WORKFLOW_STATUSES.has(status) ? 'failed' : 'completed';
+    if (FAILED_WORKFLOW_STATUSES.has(status)) return 'failed';
+    if (SUCCESS_WORKFLOW_STATUSES.has(status) || COMPACTION_TERMINAL_SUCCESS_STATUSES.has(status)) {
+      return 'completed';
+    }
+    return 'loading';
   }
   if (sourceType === 'team_error') return 'failed';
   if (sourceType === 'team_finish') return 'completed';

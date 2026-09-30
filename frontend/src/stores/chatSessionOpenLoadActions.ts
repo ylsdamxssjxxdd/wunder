@@ -756,6 +756,9 @@ export const chatSessionOpenLoadActions = {
             syncChatRuntimeProjectionFromSnapshot(this, targetSessionId, sessionDetail.transcript, {
               immediate: true, preserveLive: true
             });
+            applyCanonicalSessionEventsSnapshot(this, targetSessionId, workflowEventsPayload, {
+              phase: 'history-workflow', includeRuntime: false
+            });
           }
           return sessionDetail;
         }
@@ -1128,6 +1131,10 @@ export const chatSessionOpenLoadActions = {
         // while deduplication prevents the same events from rebuilding them.
         // Workflow history is durable even when the thread is idle. Replay it
         // after the transcript snapshot, while keeping runtime status separate.
+        applyCanonicalSessionEventsSnapshot(this, targetSessionId, workflowEventsPayload, {
+          phase: 'history-workflow',
+          includeRuntime: false
+        });
         applyCanonicalSessionEventsSnapshot(this, targetSessionId, eventsPayload, {
           phase: 'detail',
           includeRuntime: shouldApplySessionEventsSnapshotToProjection(eventsPayload, runtime)

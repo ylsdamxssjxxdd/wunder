@@ -3307,6 +3307,33 @@ test('manual compaction terminal event fills the assistant bubble before refresh
   assert.equal(selectSessionBusy(projection, 'session-manual-live'), false);
 });
 
+test('manual compaction remains active until its durable terminal status arrives', () => {
+  const projection = createChatRuntimeProjection();
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-manual-active',
+    eventType: 'compaction',
+    eventId: 1,
+    requestId: 'request-manual-active',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        trigger_mode: 'manual',
+        status: 'compacting'
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const assistant = selectVisibleMessageProjections(projection, 'session-manual-active')
+    .find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  const compaction = assistant.workflowItems?.find((item) => item.eventType === 'compaction');
+  assert.ok(compaction);
+  assert.equal(compaction.status, 'loading');
+  assert.equal(assistant.status, 'tooling');
+  assert.equal(selectSessionBusy(projection, 'session-manual-active'), true);
+});
+
 test('canonical command session events project into execute command workflow item', () => {
   const projection = createChatRuntimeProjection();
   const startEvents = buildCanonicalChatRuntimeEvents({
@@ -4595,6 +4622,10 @@ test('idle history workflow replay retains terminal workflow metadata', () => {
 
 test('filtered workflow round snapshot replays tool state without waiting for omitted output deltas', () => {
   const projection = createChatRuntimeProjection();
+  applyChatRuntimeEvent(projection, { event_type: 'session_snapshot', source: 'snapshot', strict: false,
+    session_id: 'session-history-workflow-filtered', messages: [{ role: 'assistant', content: 'answer',
+      message_id: 'answer', user_turn_id: 'user-turn:session-history-workflow-filtered:round:2',
+      model_turn_id: 'model-turn:session-history-workflow-filtered:user:2:model:2', turn_index: 1, status: 'final' }] });
   buildCanonicalSessionEventsSnapshot({
     sessionId: 'session-history-workflow-filtered',
     phase: 'history-workflow',
@@ -4629,6 +4660,10 @@ test('filtered workflow round snapshot replays tool state without waiting for om
 test('filtered workflow history retains its terminal event so completed tools do not revive the composer', () => {
   const projection = createChatRuntimeProjection();
   const sessionId = 'session-history-workflow-terminal';
+  applyChatRuntimeEvent(projection, { event_type: 'session_snapshot', source: 'snapshot', strict: false,
+    session_id: sessionId, messages: [{ role: 'assistant', content: 'answer', message_id: 'answer',
+      user_turn_id: `user-turn:${sessionId}:round:1`,
+      model_turn_id: `model-turn:${sessionId}:user:1:model:2`, turn_index: 1, status: 'final' }] });
   buildCanonicalSessionEventsSnapshot({
     sessionId,
     phase: 'history-workflow',
@@ -6610,4 +6645,60 @@ test('final answer snapshots are eligible for terminal smoothing from an empty a
   assert.ok(analysis.plan);
   assert.equal(analysis.plan?.tail, finalContent);
   assert.equal(analysis.debug.smoothReason, 'terminal_tail_prefix');
+});
+
+
+test('durable model rounds choose the final answer even when the preamble is longer', () => {
+  const projection = createChatRuntimeProjection();
+  const messages = [1, 4].map(round => ({ role: 'assistant',
+    content: round === 1 ? 'A much longer preliminary explanation before using a tool.' : 'Done.',
+    message_id: `item:root:text-${round}`, item_id: `root:text-${round}`, turn_id: 'root', revision: 2,
+    user_turn_id: 'user-turn:session-1:round:1',
+    model_turn_id: `model-turn:session-1:user:1:model:${round}`, turn_index: round, status: 'final' }));
+  applyChatRuntimeEvent(projection, baseEvent({ event_type: 'session_snapshot', strict: false,
+    source: 'snapshot', messages, running: true }));
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].content, 'Done.');
+  assert.equal(visible[0].status, 'final');
+});
+
+test('workflow history survives identity replacement and never revives historical bubbles', () => {
+  const projection = createChatRuntimeProjection();
+  const snapshot = (id: string) => applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'session_snapshot', strict: false, source: 'snapshot', running: true,
+    messages: [1, 2].map(round => ({ role: 'assistant', content: round === 1 ? 'Done.' : '',
+      message_id: round === 1 ? id : 'active', item_id: round === 1 ? id : 'active',
+      turn_id: `root-${round}`, user_turn_id: `user-turn:session-1:round:${round}`,
+      model_turn_id: `model-turn:session-1:user:${round}:model:4`, turn_index: round,
+      status: round === 1 ? 'final' : 'streaming' })) }));
+  const replay = () => buildCanonicalSessionEventsSnapshot({ sessionId: 'session-1',
+    payload: { workflow_only: true, rounds: [{ user_round: 1, events: [{
+      event: 'tool_result', item_id: 'tool-1', revision: 1,
+      data: { user_round: 1, model_round: 1, tool: 'tool_a', tool_call_id: 'call-1', ok: true }
+    }] }] } }).forEach(event => applyChatRuntimeEvent(projection, event));
+  snapshot('old-answer'); replay(); snapshot('new-answer'); replay(); replay();
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.deepEqual(visible.map(message => message.status), ['final', 'streaming']);
+  assert.equal(visible[0].workflowItems?.length, 1);
+  assert.equal(visible[0].workflowItems?.[0].status, 'completed');
+  assert.equal(visible[0].content, 'Done.');
+});
+
+
+test('cancelled durable marker and unfinished text render one settled partial response', () => {
+  const projection = createChatRuntimeProjection();
+  applyChatRuntimeEvent(projection, baseEvent({ event_type: 'session_snapshot', strict: false,
+    source: 'snapshot', running: false, messages: [
+      { role: 'assistant', content: 'Partial reply', message_id: 'item:partial', item_id: 'partial',
+        user_turn_id: 'user-turn:session-1:round:1', model_turn_id: 'model-turn:session-1:user:1:model:1',
+        turn_index: 1, status: 'streaming' },
+      { role: 'assistant', content: 'Cancelled', message_id: 'item:notice', item_id: 'notice',
+        user_turn_id: 'user-turn:session-1:round:1', model_turn_id: 'model-turn:session-1:user:1:model:2',
+        turn_index: 2, status: 'cancelled', meta: { type: 'session_cancelled' } }
+    ] }));
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].status, 'cancelled');
+  assert.equal(visible[0].content, 'Partial reply');
 });

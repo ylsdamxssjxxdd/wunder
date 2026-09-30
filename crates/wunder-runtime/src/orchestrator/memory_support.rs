@@ -226,6 +226,7 @@ pub(super) struct CompactionResult {
     pub(super) messages: Vec<Value>,
     pub(super) compaction_id: Option<String>,
     pub(super) model_context_replaced: bool,
+    pub(super) summary_speed: crate::core::llm_speed::LlmSpeedSummary,
 }
 
 impl CompactionResult {
@@ -234,6 +235,7 @@ impl CompactionResult {
             messages,
             compaction_id: None,
             model_context_replaced: false,
+            summary_speed: crate::core::llm_speed::LlmSpeedSummary::default(),
         }
     }
 
@@ -242,7 +244,16 @@ impl CompactionResult {
             messages,
             compaction_id: Some(compaction_id),
             model_context_replaced: true,
+            summary_speed: crate::core::llm_speed::LlmSpeedSummary::default(),
         }
+    }
+
+    pub(super) fn with_summary_speed(
+        mut self,
+        summary_speed: crate::core::llm_speed::LlmSpeedSummary,
+    ) -> Self {
+        self.summary_speed = summary_speed;
+        self
     }
 }
 

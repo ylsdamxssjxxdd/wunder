@@ -255,10 +255,7 @@
                     :session-id="String(chatStore.activeSessionId || '')"
                     :item-id="String(item.message.item_id || '')"
                     :content-truncated="
-                      item.message.content_truncated === true ||
-                        item.message.reasoning_truncated === true ||
-                        item.message.workflowItems_truncated === true ||
-                        item.message.subagents_truncated === true
+                      item.message.content_truncated === true
                     "
                     :assistant-display="true"
                     :streaming="

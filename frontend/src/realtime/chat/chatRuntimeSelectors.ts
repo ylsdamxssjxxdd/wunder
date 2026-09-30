@@ -480,16 +480,17 @@ const mergeVisibleMessageProjection = (
 ): ChatRuntimeMessageProjection => {
   const target = chooseVisibleMergeTarget(session, left, right);
   const source = target === left ? right : left;
+  const cancellationNotice = isPlainRecord(target.raw?.meta) && target.raw.meta.type === 'session_cancelled';
   const merged: ChatRuntimeMessageProjection = {
     ...target,
-    content: chooseMergedText(target.content, source.content),
+    content: cancellationNotice ? source.content || target.content : target.content || source.content,
     reasoning: chooseMergedText(target.reasoning, source.reasoning),
-    status: mergeVisibleMessageStatus(session, target.status, source.status),
+    status: target.status,
     createdSeq: Math.min(target.createdSeq, source.createdSeq),
     updatedSeq: Math.max(target.updatedSeq, source.updatedSeq),
-    final: target.final || source.final,
-    failed: target.failed || source.failed,
-    cancelled: target.cancelled || source.cancelled,
+    final: target.final,
+    failed: target.failed,
+    cancelled: target.cancelled,
     display: mergeVisibleRecord(target.display, source.display),
     workflowItems: mergeVisibleRecordArray(target.workflowItems, source.workflowItems),
     subagents: mergeVisibleRecordArray(target.subagents, source.subagents),
@@ -503,6 +504,22 @@ const chooseVisibleMergeTarget = (
   left: ChatRuntimeMessageProjection,
   right: ChatRuntimeMessageProjection
 ): ChatRuntimeMessageProjection => {
+  if (left.role === 'assistant' && right.role === 'assistant') {
+    // Model responses are replacements, not text fragments. A later, shorter
+    // answer must win over a verbose tool preamble, regardless of session activity.
+    if (left.cancelled !== right.cancelled) return left.cancelled ? left : right;
+    const leftRound = resolveAssistantModelRound(left);
+    const rightRound = resolveAssistantModelRound(right);
+    if (leftRound !== null && rightRound !== null && leftRound !== rightRound) {
+      return leftRound > rightRound ? left : right;
+    }
+    const leftRaw = isPlainRecord(left.raw) ? left.raw : {};
+    const rightRaw = isPlainRecord(right.raw) ? right.raw : {};
+    if (leftRaw.item_id && leftRaw.item_id === rightRaw.item_id) {
+      const revision = Number(leftRaw.revision || 0) - Number(rightRaw.revision || 0);
+      if (revision) return revision > 0 ? left : right;
+    }
+  }
   const leftScore = scoreVisibleMergeTarget(session, left);
   const rightScore = scoreVisibleMergeTarget(session, right);
   if (leftScore !== rightScore) return leftScore > rightScore ? left : right;

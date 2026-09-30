@@ -177,7 +177,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         self.ensure_initialized()?;
         let conn = self.open()?;
         let before = before_seq.unwrap_or(i64::MAX);
-        let mut stmt = conn.prepare("SELECT payload,created_seq FROM thread_items WHERE user_id=? AND session_id=? AND visibility='user' AND kind IN ('user_message','assistant_message') AND created_seq<? ORDER BY created_seq DESC LIMIT ?")?;
+        let mut stmt = conn.prepare("SELECT i.payload,i.created_seq,i.kind,t.status FROM thread_items i JOIN thread_turns t ON t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=? AND i.session_id=? AND i.visibility='user' AND i.kind IN ('user_message','assistant_message') AND i.created_seq<? ORDER BY i.created_seq DESC LIMIT ?")?;
         let rows = stmt
             .query_map(
                 params![user_id, session_id, before, limit.clamp(1, 501)],
@@ -188,6 +188,11 @@ impl SqliteThreadLogStorage for SqliteStorage {
                     if let Value::Object(map) = &mut value {
                         map.insert("created_seq".into(), json!(seq));
                     }
+                    crate::services::thread_log::project_visible_item(
+                        &mut value,
+                        &row.get::<_, String>(2)?,
+                        &row.get::<_, String>(3)?,
+                    );
                     Ok(value)
                 },
             )?
@@ -549,6 +554,11 @@ impl SqliteThreadLogStorage for SqliteStorage {
             "UPDATE thread_items SET status=?, payload=json_set(payload, '$.status', ?), revision=revision+1, updated_time=? WHERE session_id=? AND item_id=? AND status<>?",
             params![bubble_status, bubble_status, now, session_id, input_item_id, bubble_status],
         )?;
+        // A terminal root turn owns the lifecycle of every unfinished item.
+        // The turn_upsert notification below invalidates the entire paged turn.
+        if bubble_status == "completed" {
+            tx.execute("UPDATE thread_items SET status=?1, payload=json_set(payload, '$.status', ?1), revision=revision+1, updated_time=?2 WHERE session_id=?3 AND turn_id=?4 AND status IN ('running','queued','waiting_input')", params![status,now,session_id,turn_id])?;
+        }
         let change_type = "turn_upsert";
         let change_item: Option<&str> = None;
         let mut seq: i64 = tx.query_row(
@@ -1117,6 +1127,44 @@ mod tests {
             2
         );
     }
+    #[test]
+    fn cancellation_settles_unfinished_items_and_preserves_completed_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteStorage::new(dir.path().join("log.db").to_string_lossy().into_owned());
+        let accepted = db
+            .accept_thread_turn_impl("owner", "thread", &input(1))
+            .unwrap();
+        let id = accepted["turn_id"].as_str().unwrap();
+        for (item, status) in [
+            ("partial", "running"),
+            ("tool", "running"),
+            ("done", "completed"),
+        ] {
+            db.append_thread_item_impl(
+                "owner",
+                &json!({"session_id":"thread","turn_id":id,
+                "item_id":item,"kind":"assistant_message","role":"assistant","status":status,
+                "content":"Retained text"}),
+            )
+            .unwrap();
+        }
+        db.update_thread_turn_impl("owner", "thread", id, "cancelled", "", &json!({}))
+            .unwrap();
+        for (item, expected) in [
+            ("partial", "cancelled"),
+            ("tool", "cancelled"),
+            ("done", "completed"),
+        ] {
+            let value = db
+                .get_thread_item_impl("owner", "thread", item, true)
+                .unwrap()
+                .unwrap();
+            assert_eq!(value["status"], expected);
+            assert_eq!(value["payload"]["status"], expected);
+            assert_eq!(value["payload"]["content"], "Retained text");
+        }
+    }
+
     #[test]
     fn terminal_turn_closes_its_user_message() {
         let dir = tempfile::tempdir().unwrap();

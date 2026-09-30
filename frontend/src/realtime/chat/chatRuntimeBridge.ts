@@ -225,6 +225,14 @@ export const buildCanonicalSessionEventsSnapshot = (
     });
   }
 
+  if (payload.workflow_only === true || phase === 'history-workflow') {
+    return events.filter(event => event.event_type === 'workflow_event' ||
+      event.event_type === 'usage_stats' ||
+      String(event.event_type).startsWith('tool_call_')).map(event => ({
+        ...event, event_seq: null, strict: false,
+        payload: { ...asRecord(event.payload), workflow_history: true }
+      }));
+  }
   events.push(...buildCanonicalSnapshotRuntimeEvents(sessionId, payload, phase));
   return events;
 };

@@ -175,7 +175,7 @@ impl PostgresThreadLogStorage for PostgresStorage {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
         let before = before_seq.unwrap_or(i64::MAX);
-        Ok(conn.query("SELECT payload,created_seq FROM thread_items WHERE user_id=$1 AND session_id=$2 AND visibility='user' AND kind IN ('user_message','assistant_message') AND created_seq<$3 ORDER BY created_seq DESC LIMIT $4", &[&user_id,&session_id,&before,&limit.clamp(1,501)])?.into_iter().map(|row| { let mut value: Value=serde_json::from_str(row.get(0)).unwrap_or(Value::Null); if let Value::Object(map)=&mut value { map.insert("created_seq".into(), json!(row.get::<_,i64>(1))); } value }).collect())
+        Ok(conn.query("SELECT i.payload,i.created_seq,i.kind,t.status FROM thread_items i JOIN thread_turns t ON t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=$1 AND i.session_id=$2 AND i.visibility='user' AND i.kind IN ('user_message','assistant_message') AND i.created_seq<$3 ORDER BY i.created_seq DESC LIMIT $4", &[&user_id,&session_id,&before,&limit.clamp(1,501)])?.into_iter().map(|row| { let mut value: Value=serde_json::from_str(row.get(0)).unwrap_or(Value::Null); if let Value::Object(map)=&mut value { map.insert("created_seq".into(), json!(row.get::<_,i64>(1))); } crate::services::thread_log::project_visible_item(&mut value, row.get::<_, &str>(2), row.get::<_, &str>(3)); value }).collect())
     }
     fn load_thread_context_items_impl(
         &self,
@@ -487,6 +487,9 @@ impl PostgresThreadLogStorage for PostgresStorage {
             "UPDATE thread_items SET status=$1, payload=jsonb_set(payload::jsonb, '{status}', to_jsonb($1::text), true)::text, revision=revision+1, updated_time=$2 WHERE session_id=$3 AND item_id=$4 AND status<>$1",
             &[&bubble_status, &now, &session_id, &input_item_id],
         )?;
+        if bubble_status == "completed" {
+            tx.execute("UPDATE thread_items SET status=$1, payload=jsonb_set(payload::jsonb, '{status}', to_jsonb($1::text), true)::text, revision=revision+1, updated_time=$2 WHERE session_id=$3 AND turn_id=$4 AND status IN ('running','queued','waiting_input')", &[&status,&now,&session_id,&turn_id])?;
+        }
         let change_type = "turn_upsert";
         let change_item: Option<&str> = None;
         let mut seq: i64 = tx

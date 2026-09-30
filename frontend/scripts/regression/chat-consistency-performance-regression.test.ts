@@ -216,7 +216,12 @@ test('detail response racing live output seeds history without rolling back cont
   api.defaults.adapter = async (config) => new Promise(resolve => {
     pending.push(() => resolve({ status: 200, statusText: 'OK', headers: {}, config, data: { data:
       config.url?.endsWith('/events')
-        ? { running: false, runtime: { status: 'idle' }, last_event_id: 10, events: [] }
+        ? { running: false, runtime: { status: 'idle' }, last_event_id: 10, events: [],
+            workflow_only: config.params?.workflow_only === true,
+            rounds: config.params?.workflow_only ? [{ user_round: 1, events: [{
+              event: 'tool_result', item_id: 'stored-tool', revision: 1,
+              data: { user_round: 1, model_round: 1, tool: 'tool_a', tool_call_id: 'stored-call', ok: true }
+            }] }] : [] }
         : { id: 'session-1', transcript: transcript() }
     } }));
   });
@@ -233,6 +238,37 @@ test('detail response racing live output seeds history without rolling back cont
       .map(message => [message.role, message.content]),
     [['user', 'input-1'], ['assistant', 'output-1'], ['user', 'input-2'], ['assistant', 'new-output']]);
     assert.equal(store.isSessionBusy('session-1'), true);
+    const restored = selectVisibleMessageProjections(store.runtimeProjection, 'session-1');
+    assert.equal(restored[1].status, 'final');
+    assert.equal(restored[1].workflowItems?.[0]?.toolCallId, 'stored-call');
+  } finally {
+    api.defaults.adapter = originalAdapter;
+    store.resetState();
+  }
+});
+
+test('cold detail restores tools from the workflow response when the event tail is empty', async () => {
+  const store = await setup();
+  const { default: api } = await import('../../src/api/http');
+  const originalAdapter = api.defaults.adapter;
+  api.defaults.adapter = async config => ({ status: 200, statusText: 'OK', headers: {}, config,
+    data: { data: config.url?.endsWith('/events')
+      ? { running: false, workflow_only: config.params?.workflow_only === true, events: [],
+          rounds: config.params?.workflow_only ? [{ user_round: 1, status: 'completed', events: [
+            { event: 'tool_result', item_id: 'tool-1', revision: 2,
+              data: { user_round: 1, model_round: 1, tool: 'read_file', tool_call_id: 'call-1',
+                status: 'completed', ok: true, request_context_tokens: 120,
+                meta: { duration_ms: 1250 } } }
+          ] }] : [] }
+      : { id: 'session-1', transcript: transcript() } }
+  });
+  try {
+    await store.loadSessionDetail('session-1', { startWatcherAfterHydration: false });
+    const visible = selectVisibleMessageProjections(store.runtimeProjection, 'session-1');
+    const assistant = visible.find(message => message.role === 'assistant');
+    assert.ok(assistant?.workflowItems?.some(item => item.toolCallId === 'call-1'));
+    assert.equal(visible.filter(message => message.role === 'assistant').length, 1);
+    assert.equal(store.isSessionBusy('session-1'), false);
   } finally {
     api.defaults.adapter = originalAdapter;
     store.resetState();

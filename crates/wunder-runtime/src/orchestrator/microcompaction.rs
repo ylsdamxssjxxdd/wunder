@@ -285,6 +285,7 @@ impl Orchestrator {
             messages: reduced,
             compaction_id: None,
             model_context_replaced: true,
+            summary_speed: crate::core::llm_speed::LlmSpeedSummary::default(),
         })
     }
 }

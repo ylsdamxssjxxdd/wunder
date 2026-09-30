@@ -212,7 +212,10 @@ export const startSessionWatcher = (store, sessionId) => {
       if (role !== 'user' && role !== 'assistant') continue;
       const itemId = String(item.item_id ?? payload.item_id ?? '').trim();
       if (!itemId) continue;
-      const itemStatus = String(item.status ?? payload.status ?? '').trim().toLowerCase();
+      const storedStatus = String(item.status ?? payload.status ?? '').trim().toLowerCase();
+      const itemStatus = payload.meta?.type === 'session_cancelled' ? 'cancelled'
+        : ['running', 'waiting_input', 'queued'].includes(storedStatus) &&
+          ['completed', 'failed', 'cancelled', 'interrupted'].includes(turnStatus) ? turnStatus : storedStatus;
       const renderStatus = itemStatus === 'failed' ? 'failed'
         : itemStatus === 'cancelled' || itemStatus === 'canceled' || itemStatus === 'interrupted' ? 'cancelled'
           : itemStatus === 'queued' ? 'queued'
@@ -228,6 +231,8 @@ export const startSessionWatcher = (store, sessionId) => {
         item_id: itemId,
         turn_id: String(item.turn_id ?? payload.turn_id ?? turn?.turn_id ?? '').trim(),
         kind,
+        created_seq: item.created_seq ?? payload.created_seq,
+        stats: payload.stats ?? payload.meta?.message_stats,
         ...(renderStatus ? { status: renderStatus } : {}),
         ...(role === 'assistant' ? {
           final: renderStatus === 'final', failed: renderStatus === 'failed',
@@ -278,6 +283,10 @@ export const startSessionWatcher = (store, sessionId) => {
           message.status = nextStatus;
           message.failed = nextStatus === 'failed';
           message.cancelled = nextStatus === 'cancelled';
+          message.final = nextStatus === 'final';
+          message.stream_incomplete = false;
+          message.workflowStreaming = false;
+          message.reasoningStreaming = false;
           changed = true;
         }
       });
@@ -328,7 +337,7 @@ export const startSessionWatcher = (store, sessionId) => {
           const items = Array.isArray(turn?.items) ? turn.items : [];
           items.forEach(item => targetItems.delete(String(item?.item_id ?? '').trim()));
           const found = targetItems.size === 0;
-          if (found || turn?.has_more !== true) {
+          if (turn?.has_more !== true) {
             if (!found) throw new Error('Thread items missing from recovery page');
             break;
           }
@@ -337,7 +346,7 @@ export const startSessionWatcher = (store, sessionId) => {
           after = next;
           page += 1;
         } while (page < 20 && !controller.signal.aborted);
-        if (targetItems.size > 0) throw new Error('Thread recovery requires a fresh snapshot');
+        if (targetItems.size > 0 || page >= 20) throw new Error('Thread recovery requires a fresh snapshot');
       }
     })();
     threadReconcileInFlight = task;

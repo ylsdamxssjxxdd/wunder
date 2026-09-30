@@ -1,5 +1,6 @@
 use super::execute_support::{
-    emit_turn_terminal_event, turn_terminal_status_for_error, TurnTerminalEvent,
+    build_persisted_message_stats, emit_turn_terminal_event, turn_terminal_status_for_error,
+    TurnTerminalEvent,
 };
 use super::thread_runtime::ThreadRuntimeStatus;
 use super::*;
@@ -431,6 +432,7 @@ impl Orchestrator {
         let mut summary_failure_code: Option<String> = None;
         let mut summary_failure_message: Option<String> = None;
         let mut summary_failure_retryable: Option<bool> = None;
+        let mut summary_speed = crate::core::llm_speed::LlmSpeedSummary::default();
         let summary_model_output = match self
             .call_llm(
                 llm_config,
@@ -439,7 +441,9 @@ impl Orchestrator {
                 is_admin,
                 emitter,
                 session_id,
-                false,
+                // Measure real summary decoding when the provider supports
+                // streaming, without publishing summary deltas as chat text.
+                run_mode == CompactionRunMode::Manual,
                 compaction_round,
                 false,
                 true,
@@ -448,7 +452,10 @@ impl Orchestrator {
             )
             .await
         {
-            Ok((content, _, _, _, _, _)) => self.resolve_final_answer(&content),
+            Ok((content, _, _, _, round_speed, _)) => {
+                summary_speed = round_speed;
+                self.resolve_final_answer(&content)
+            }
             Err(err) => {
                 if matches!(
                     err.code(),
@@ -566,7 +573,8 @@ impl Orchestrator {
                     messages
                 },
                 compaction_id,
-            ));
+            )
+            .with_summary_speed(summary_speed));
         };
         let resume_action = detect_compaction_resume_action(&summary_text);
         let source_interaction_blocks = collect_normalized_interaction_blocks(&source_messages);
@@ -1054,7 +1062,7 @@ impl Orchestrator {
         }
         emitter.emit("compaction", compaction_payload).await;
 
-        Ok(CompactionResult::compacted(rebuilt, compaction_id))
+        Ok(CompactionResult::compacted(rebuilt, compaction_id).with_summary_speed(summary_speed))
     }
 
     async fn build_fresh_memory_block_for_compaction(
@@ -1121,6 +1129,9 @@ impl Orchestrator {
             start_event_id,
             None,
         );
+        let manual_turn_started_at = std::time::Instant::now();
+        let mut manual_turn_decode_speed =
+            crate::core::llm_speed::TurnDecodeSpeedAccumulator::default();
         let storage = self.storage.clone();
         let owner = user_id.to_string();
         let thread = session_id.to_string();
@@ -1176,6 +1187,12 @@ impl Orchestrator {
                         "failed",
                         None,
                         None,
+                        self.manual_compaction_message_stats(
+                            &emitter,
+                            is_admin,
+                            &manual_turn_decode_speed,
+                            manual_turn_started_at.elapsed().as_secs_f64(),
+                        ),
                     );
                     let _ = self.workspace.flush_writes_async().await;
                     self.emit_manual_compaction_failure(&emitter, lifecycle_round_info, &err)
@@ -1269,6 +1286,12 @@ impl Orchestrator {
                     "cancelled",
                     None,
                     None,
+                    self.manual_compaction_message_stats(
+                        &emitter,
+                        is_admin,
+                        &manual_turn_decode_speed,
+                        manual_turn_started_at.elapsed().as_secs_f64(),
+                    ),
                 );
                 let _ = self.workspace.flush_writes_async().await;
                 self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
@@ -1307,7 +1330,10 @@ impl Orchestrator {
             )
             .await
         {
-            Ok(result) => result.messages,
+            Ok(result) => {
+                manual_turn_decode_speed.record_summary(&result.summary_speed);
+                result.messages
+            }
             Err(err) => {
                 if manage_runtime_turn {
                     self.append_manual_compaction_result(
@@ -1321,6 +1347,12 @@ impl Orchestrator {
                         },
                         None,
                         None,
+                        self.manual_compaction_message_stats(
+                            &emitter,
+                            is_admin,
+                            &manual_turn_decode_speed,
+                            manual_turn_started_at.elapsed().as_secs_f64(),
+                        ),
                     );
                     let _ = self.workspace.flush_writes_async().await;
                 }
@@ -1350,6 +1382,12 @@ impl Orchestrator {
                     "cancelled",
                     None,
                     None,
+                    self.manual_compaction_message_stats(
+                        &emitter,
+                        is_admin,
+                        &manual_turn_decode_speed,
+                        manual_turn_started_at.elapsed().as_secs_f64(),
+                    ),
                 );
                 let _ = self.workspace.flush_writes_async().await;
             }
@@ -1426,6 +1464,12 @@ impl Orchestrator {
                         .unwrap_or("done"),
                     Some(summary),
                     compaction.get("compaction_id"),
+                    self.manual_compaction_message_stats(
+                        &emitter,
+                        is_admin,
+                        &manual_turn_decode_speed,
+                        manual_turn_started_at.elapsed().as_secs_f64(),
+                    ),
                 );
                 let _ = self.workspace.flush_writes_async().await;
             } else {
@@ -1436,6 +1480,12 @@ impl Orchestrator {
                     "failed",
                     None,
                     None,
+                    self.manual_compaction_message_stats(
+                        &emitter,
+                        is_admin,
+                        &manual_turn_decode_speed,
+                        manual_turn_started_at.elapsed().as_secs_f64(),
+                    ),
                 );
                 let _ = self.workspace.flush_writes_async().await;
             }
@@ -1486,6 +1536,7 @@ impl Orchestrator {
         status: &str,
         summary: Option<&str>,
         compaction_id: Option<&Value>,
+        message_stats: Value,
     ) {
         let status = match status.trim() {
             "cancelled" | "canceled" => "cancelled",
@@ -1511,6 +1562,7 @@ impl Orchestrator {
             Value::String("manual".to_string()),
         );
         marker_meta.insert("status".to_string(), Value::String(status.to_string()));
+        marker_meta.insert("message_stats".to_string(), message_stats);
         if let Some(compaction_id) = compaction_id {
             marker_meta.insert("compaction_id".to_string(), compaction_id.clone());
         }
@@ -1537,6 +1589,7 @@ impl Orchestrator {
         status: &str,
         summary: Option<&str>,
         compaction_id: Option<&Value>,
+        message_stats: Value,
     ) {
         self.append_manual_compaction_result(
             user_id,
@@ -1545,7 +1598,28 @@ impl Orchestrator {
             status,
             summary,
             compaction_id,
+            message_stats,
         );
+    }
+
+    fn manual_compaction_message_stats(
+        &self,
+        emitter: &EventEmitter,
+        is_admin: bool,
+        turn_decode_speed: &crate::core::llm_speed::TurnDecodeSpeedAccumulator,
+        interaction_duration_s: f64,
+    ) -> Value {
+        let usage = emitter.accumulated_usage();
+        build_persisted_message_stats(
+            &usage,
+            &usage,
+            Some(0),
+            turn_decode_speed,
+            interaction_duration_s,
+            emitter.accumulated_model_requests(),
+            emitter.accumulated_billable_account_credits(is_admin),
+            0,
+        )
     }
 
     async fn emit_manual_compaction_failure(
@@ -1583,6 +1657,7 @@ impl Orchestrator {
         round_info: RoundInfo,
         outcome: Result<(), &OrchestratorError>,
     ) {
+        let round_usage = emitter.accumulated_usage();
         if let Some(turn) = round_info.thread_turn_id {
             let status = match outcome {
                 Ok(()) => "completed",
@@ -1607,7 +1682,7 @@ impl Orchestrator {
                     TurnTerminalEvent {
                         status: "completed",
                         stop_reason: Some("manual_compaction"),
-                        round_usage: None,
+                        round_usage: Some(&round_usage),
                         error: None,
                         waiting_for_user_input: false,
                         stop_meta: None,
@@ -1622,7 +1697,7 @@ impl Orchestrator {
                     TurnTerminalEvent {
                         status: turn_terminal_status_for_error(err),
                         stop_reason: None,
-                        round_usage: None,
+                        round_usage: Some(&round_usage),
                         error: Some(err),
                         waiting_for_user_input: false,
                         stop_meta: None,
