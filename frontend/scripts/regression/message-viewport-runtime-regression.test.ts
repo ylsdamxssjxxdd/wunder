@@ -623,7 +623,7 @@ test('message viewport runtime loads older agent history near top and preserves 
       loadOlderHistory: async () => {
         loadCalls += 1;
         (container as unknown as { scrollHeight: number }).scrollHeight = 1320;
-        return [{ history_id: 1 }];
+        return [{ created_seq: 1 }];
       }
     });
 
@@ -694,7 +694,7 @@ test('message viewport runtime auto-loads older history when refreshed viewport 
       loadOlderHistory: async () => {
         loadCalls += 1;
         (container as unknown as { scrollHeight: number }).scrollHeight = 900;
-        return [{ history_id: 7 }];
+        return [{ created_seq: 7 }];
       }
     });
 

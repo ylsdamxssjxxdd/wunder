@@ -99,7 +99,7 @@ const buildMessages = (sessionId: string, count: number) =>
     return {
       id: `${sessionId}-message-${index}`,
       message_id: `${sessionId}-message-${index}`,
-      history_id: index + 1,
+      created_seq: index + 1,
       user_turn_id: `user-turn:${sessionId}:round:${Math.floor(index / 2) + 1}`,
       model_turn_id: assistant ? `model-turn:${sessionId}:user:${Math.floor(index / 2) + 1}:model:1` : undefined,
       turn_index: index + 1,
@@ -176,7 +176,7 @@ const prependHistory = async () => {
     ...message,
     id: `older-${index}`,
     message_id: `older-${index}`,
-    history_id: index + 1
+    created_seq: index + 1
   }));
   const current = Array.isArray(chat.messages) ? chat.messages : [];
   chat.messages = [...older, ...current];

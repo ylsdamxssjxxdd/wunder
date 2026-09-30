@@ -469,7 +469,7 @@ mod tests {
         )
         .expect("persist marker"));
         let history = storage
-            .load_chat_history("user_cancel", "sess_cancel_marker", None)
+            .load_thread_context_items("user_cancel", "sess_cancel_marker", 500, true)
             .expect("load history");
 
         assert_eq!(history.len(), 2);
@@ -523,7 +523,7 @@ mod tests {
         )
         .expect("second marker"));
         let history = storage
-            .load_chat_history("user_cancel", "sess_cancel_idempotent", None)
+            .load_thread_context_items("user_cancel", "sess_cancel_idempotent", 500, true)
             .expect("load history");
         let marker_count = history
             .iter()
@@ -565,7 +565,7 @@ mod tests {
         )
         .expect("persist marker"));
         let history = storage
-            .load_chat_history("user_cancel", "sess_cancel_pending_flush", None)
+            .load_thread_context_items("user_cancel", "sess_cancel_pending_flush", 500, true)
             .expect("load history");
 
         assert_eq!(history.len(), 2);
@@ -616,7 +616,7 @@ mod tests {
         )
         .expect("marker skipped"));
         let history = storage
-            .load_chat_history("user_cancel", "sess_cancel_answered", None)
+            .load_thread_context_items("user_cancel", "sess_cancel_answered", 500, true)
             .expect("load history");
 
         assert_eq!(history.len(), 2);
@@ -668,7 +668,7 @@ mod tests {
         )
         .expect("persist marker"));
         let history = storage
-            .load_chat_history("user_cancel", "sess_cancel_round", None)
+            .load_thread_context_items("user_cancel", "sess_cancel_round", 500, true)
             .expect("load history");
 
         assert_eq!(history[1]["user_round"], json!(3));

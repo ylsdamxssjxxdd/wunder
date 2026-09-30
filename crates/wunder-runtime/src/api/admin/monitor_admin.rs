@@ -485,7 +485,18 @@ async fn admin_monitor_detail(
         .user_store
         .get_chat_session(&user_id, &cleaned)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let mut session = monitor.unwrap_or_else(|| json!({"session_id":cleaned,"user_id":user_id}));
+    let user_name = state
+        .user_store
+        .get_user_by_id(&user_id)
+        .ok()
+        .flatten()
+        .map(|user| user.username)
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| user_id.clone());
+    let mut session = monitor.unwrap_or_else(|| json!({"session_id":cleaned,"user_id":user_id,"user_name":user_name}));
+    if let Some(map) = session.as_object_mut() {
+        map.entry("user_name").or_insert_with(|| json!(user_name));
+    }
     if let Some(chat) = chat {
         if let Some(map) = session.as_object_mut() {
             map.entry("session_id").or_insert_with(|| json!(cleaned));

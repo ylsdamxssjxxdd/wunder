@@ -57,8 +57,7 @@ import { resolveWorkflowDurationMs } from '@/utils/toolWorkflowTiming';
 import { summarizeTurnDecodeSpeed } from '@/utils/turnDecodeSpeed';
 import {
   normalizeMessageFeedback,
-  normalizeMessageFeedbackVote,
-  resolveMessageHistoryId
+  normalizeMessageFeedbackVote
 } from '@/utils/messageFeedback';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';

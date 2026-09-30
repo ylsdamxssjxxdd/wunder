@@ -309,7 +309,7 @@ const shouldMergeSameRoundSupplementalAssistantDuplicate = (
     return true;
   }
   return areAssistantTextsCompatible(left, right) &&
-    (isHydratedHistoryProjection(left) || isHydratedHistoryProjection(right));
+    (isHydratedThreadLogProjection(left) || isHydratedThreadLogProjection(right));
 };
 
 const hasSupplementalAssistantPayload = (
@@ -334,13 +334,13 @@ const areAssistantTextsCompatible = (
   return leftText === rightText || leftText.startsWith(rightText) || rightText.startsWith(leftText);
 };
 
-const isHydratedHistoryProjection = (
+const isHydratedThreadLogProjection = (
   message: ChatRuntimeMessageProjection
 ): boolean => {
   const id = String(message.id || '').trim();
-  if (id.startsWith('history:')) return true;
+  if (id.startsWith('item:')) return true;
   const raw = isPlainRecord(message.raw) ? message.raw : {};
-  return normalizeText(raw.source ?? raw.source_type ?? raw.sourceType) === 'history';
+  return normalizeText(raw.source ?? raw.source_type ?? raw.sourceType) === 'thread_log';
 };
 
 const shouldMergeUnknownRoundQueueStartAssistant = (

@@ -33,11 +33,7 @@ impl Default for TranscriptCursor {
     }
 }
 
-pub fn build_chat_transcript(
-    session_id: &str,
-    history: Vec<Value>,
-    message_feedback: &HashMap<i64, Value>,
-) -> Vec<Value> {
+pub fn build_chat_transcript(session_id: &str, history: Vec<Value>) -> Vec<Value> {
     let mut cursor = TranscriptCursor::default();
     // Cancellation is requested through more than one transport in the web
     // client. Older sessions can therefore contain several identical visible
@@ -48,13 +44,9 @@ pub fn build_chat_transcript(
     let page_user_rounds = collect_explicit_user_rounds(&history);
     let mut transcript = Vec::new();
     for item in history {
-        if let Some(message) = map_transcript_message(
-            session_id,
-            item,
-            message_feedback,
-            &page_user_rounds,
-            &mut cursor,
-        ) {
+        if let Some(message) =
+            map_transcript_message(session_id, item, &page_user_rounds, &mut cursor)
+        {
             transcript.push(message);
         }
     }
@@ -68,7 +60,6 @@ pub fn build_chat_transcript(
 fn map_transcript_message(
     session_id: &str,
     item: Value,
-    message_feedback: &HashMap<i64, Value>,
     page_user_rounds: &HashSet<i64>,
     cursor: &mut TranscriptCursor,
 ) -> Option<Value> {
@@ -98,8 +89,8 @@ fn map_transcript_message(
         return None;
     }
 
-    let history_id = item.get("_history_id").and_then(Value::as_i64);
-    let thread_item_seq = item.get("_thread_item_seq").and_then(Value::as_i64);
+    let item_id = item.get("item_id").and_then(Value::as_str);
+    let created_seq = item.get("created_seq").and_then(Value::as_i64);
     let created_at = item
         .get("timestamp")
         .and_then(Value::as_str)
@@ -129,7 +120,9 @@ fn map_transcript_message(
     let user_turn_id = format!("user-turn:{session_id}:round:{user_turn_index}");
     let model_turn_id = model_turn_index
         .map(|index| format!("model-turn:{session_id}:user:{user_turn_index}:model:{index}"));
-    let message_id = resolve_message_id(session_id, role.as_str(), history_id, turn_index);
+    let message_id = item_id
+        .map(|id| format!("item:{id}"))
+        .unwrap_or_else(|| resolve_message_id(session_id, role.as_str(), turn_index));
     let status = resolve_message_status(role.as_str(), &item);
     let mut message = json!({
         "role": role,
@@ -151,11 +144,8 @@ fn map_transcript_message(
                 map.insert(key.to_string(), value.clone());
             }
         }
-        if let Some(history_id) = history_id {
-            map.insert("history_id".to_string(), json!(history_id));
-        }
-        if let Some(thread_item_seq) = thread_item_seq {
-            map.insert("_thread_item_seq".to_string(), json!(thread_item_seq));
+        if let Some(created_seq) = created_seq {
+            map.insert("created_seq".to_string(), json!(created_seq));
         }
         if let Some(model_turn_id) = model_turn_id {
             map.insert("model_turn_id".to_string(), json!(model_turn_id));
@@ -215,7 +205,7 @@ fn map_transcript_message(
                     map.insert(
                         "workflowItems".to_string(),
                         json!([{
-                            "id": format!("compaction:{}", history_id.unwrap_or(turn_index)),
+                            "id": format!("compaction:{}", item_id.unwrap_or("turn")),
                             "eventType": "compaction",
                             "toolName": "context_compaction",
                             "status": meta.get("status").and_then(Value::as_str).unwrap_or("completed"),
@@ -227,10 +217,8 @@ fn map_transcript_message(
             }
         }
         if role == "assistant" {
-            if let Some(history_id) = history_id {
-                if let Some(feedback) = message_feedback.get(&history_id) {
-                    map.insert("feedback".to_string(), feedback.clone());
-                }
+            if let Some(feedback) = item.get("feedback") {
+                map.insert("feedback".to_string(), feedback.clone());
             }
         }
     }
@@ -264,15 +252,7 @@ fn extract_persisted_message_stats(item: &Value) -> Option<Value> {
     (!stats.is_empty()).then(|| Value::Object(stats.clone()))
 }
 
-fn resolve_message_id(
-    session_id: &str,
-    role: &str,
-    history_id: Option<i64>,
-    turn_index: i64,
-) -> String {
-    if let Some(history_id) = history_id {
-        return format!("history:{history_id}");
-    }
+fn resolve_message_id(session_id: &str, role: &str, turn_index: i64) -> String {
     format!("message:{session_id}:turn:{turn_index}:{role}")
 }
 
@@ -310,9 +290,9 @@ fn sort_transcript_messages(messages: &mut [Value]) {
                     .cmp(&non_negative_i64(right.get("model_turn_index")).unwrap_or(i64::MAX))
             })
             .then_with(|| {
-                positive_i64(left.get("history_id"))
+                positive_i64(left.get("created_seq"))
                     .unwrap_or(i64::MAX)
-                    .cmp(&positive_i64(right.get("history_id")).unwrap_or(i64::MAX))
+                    .cmp(&positive_i64(right.get("created_seq")).unwrap_or(i64::MAX))
             })
             .then_with(|| {
                 positive_i64(left.get("turn_index"))
@@ -600,13 +580,13 @@ mod tests {
     #[test]
     fn transcript_does_not_fold_same_stream_round_assistants() {
         let history = vec![
-            json!({"role": "assistant", "content": "greeting", "timestamp": "2026-04-30T02:14:01Z", "_history_id": 1}),
-            json!({"role": "user", "content": "first", "timestamp": "2026-04-30T02:14:06Z", "_history_id": 2}),
-            json!({"role": "assistant", "content": "first answer", "timestamp": "2026-04-30T02:14:07Z", "user_round": 1, "model_round": 1, "_history_id": 3}),
-            json!({"role": "user", "content": "second", "timestamp": "2026-04-30T02:14:16Z", "_history_id": 4}),
-            json!({"role": "assistant", "content": "second answer", "timestamp": "2026-04-30T02:14:18Z", "user_round": 1, "model_round": 1, "_history_id": 5}),
+            json!({"role": "assistant", "content": "greeting", "timestamp": "2026-04-30T02:14:01Z", "created_seq": 1}),
+            json!({"role": "user", "content": "first", "timestamp": "2026-04-30T02:14:06Z", "created_seq": 2}),
+            json!({"role": "assistant", "content": "first answer", "timestamp": "2026-04-30T02:14:07Z", "user_round": 1, "model_round": 1, "created_seq": 3}),
+            json!({"role": "user", "content": "second", "timestamp": "2026-04-30T02:14:16Z", "created_seq": 4}),
+            json!({"role": "assistant", "content": "second answer", "timestamp": "2026-04-30T02:14:18Z", "user_round": 1, "model_round": 1, "created_seq": 5}),
         ];
-        let transcript = build_chat_transcript("sess", history, &HashMap::new());
+        let transcript = build_chat_transcript("sess", history);
         let ids = transcript
             .iter()
             .map(|item| {
@@ -625,10 +605,10 @@ mod tests {
     #[test]
     fn transcript_preserves_cancelled_marker_after_user_turn() {
         let history = vec![
-            json!({"role": "user", "content": "stop me", "timestamp": "2026-04-30T02:14:06Z", "_history_id": 10}),
-            json!({"role": "assistant", "content": "cancelled", "timestamp": "2026-04-30T02:14:07Z", "stop_reason": "user_stop", "_history_id": 11}),
+            json!({"role": "user", "content": "stop me", "timestamp": "2026-04-30T02:14:06Z", "created_seq": 10}),
+            json!({"role": "assistant", "content": "cancelled", "timestamp": "2026-04-30T02:14:07Z", "stop_reason": "user_stop", "created_seq": 11}),
         ];
-        let transcript = build_chat_transcript("sess", history, &HashMap::new());
+        let transcript = build_chat_transcript("sess", history);
 
         assert_eq!(transcript.len(), 2);
         assert_eq!(transcript[1]["status"], json!("cancelled"));
@@ -639,12 +619,12 @@ mod tests {
     #[test]
     fn transcript_collapses_duplicate_cancelled_markers_for_one_user_turn() {
         let history = vec![
-            json!({"role": "user", "content": "stop me", "timestamp": "2026-04-30T02:14:06Z", "_history_id": 10}),
-            json!({"role": "assistant", "content": "cancelled", "timestamp": "2026-04-30T02:14:07Z", "stop_reason": "user_stop", "_history_id": 11}),
-            json!({"role": "assistant", "content": "cancelled", "timestamp": "2026-04-30T02:14:08Z", "meta": {"type": "session_cancelled"}, "_history_id": 12}),
-            json!({"role": "assistant", "content": "cancelled", "timestamp": "2026-04-30T02:14:09Z", "cancelled": true, "_history_id": 13}),
+            json!({"role": "user", "content": "stop me", "timestamp": "2026-04-30T02:14:06Z", "created_seq": 10}),
+            json!({"role": "assistant", "content": "cancelled", "timestamp": "2026-04-30T02:14:07Z", "stop_reason": "user_stop", "created_seq": 11}),
+            json!({"role": "assistant", "content": "cancelled", "timestamp": "2026-04-30T02:14:08Z", "meta": {"type": "session_cancelled"}, "created_seq": 12}),
+            json!({"role": "assistant", "content": "cancelled", "timestamp": "2026-04-30T02:14:09Z", "cancelled": true, "created_seq": 13}),
         ];
-        let transcript = build_chat_transcript("sess", history, &HashMap::new());
+        let transcript = build_chat_transcript("sess", history);
 
         assert_eq!(transcript.len(), 2);
         assert_eq!(transcript[1]["status"], json!("cancelled"));
@@ -654,12 +634,12 @@ mod tests {
     #[test]
     fn transcript_keeps_cancellations_for_distinct_user_turns() {
         let history = vec![
-            json!({"role": "user", "content": "first", "timestamp": "2026-04-30T02:14:06Z", "_history_id": 20}),
-            json!({"role": "assistant", "content": "cancelled", "timestamp": "2026-04-30T02:14:07Z", "stop_reason": "user_stop", "_history_id": 21}),
-            json!({"role": "user", "content": "second", "timestamp": "2026-04-30T02:14:16Z", "_history_id": 22}),
-            json!({"role": "assistant", "content": "cancelled", "timestamp": "2026-04-30T02:14:17Z", "stop_reason": "user_stop", "_history_id": 23}),
+            json!({"role": "user", "content": "first", "timestamp": "2026-04-30T02:14:06Z", "created_seq": 20}),
+            json!({"role": "assistant", "content": "cancelled", "timestamp": "2026-04-30T02:14:07Z", "stop_reason": "user_stop", "created_seq": 21}),
+            json!({"role": "user", "content": "second", "timestamp": "2026-04-30T02:14:16Z", "created_seq": 22}),
+            json!({"role": "assistant", "content": "cancelled", "timestamp": "2026-04-30T02:14:17Z", "stop_reason": "user_stop", "created_seq": 23}),
         ];
-        let transcript = build_chat_transcript("sess", history, &HashMap::new());
+        let transcript = build_chat_transcript("sess", history);
 
         assert_eq!(transcript.len(), 4);
         assert_eq!(transcript[1]["user_turn_index"], json!(1));
@@ -679,10 +659,10 @@ mod tests {
                     "avg_model_round_speed_tps": 16.0
                 }
             },
-            "_history_id": 12
+            "created_seq": 12
         })];
 
-        let transcript = build_chat_transcript("sess", history, &HashMap::new());
+        let transcript = build_chat_transcript("sess", history);
 
         assert_eq!(
             transcript[0]["stats"]["round_usage"]["total_tokens"],
@@ -697,15 +677,15 @@ mod tests {
     #[test]
     fn transcript_binds_delayed_assistant_to_persisted_user_round() {
         let history = vec![
-            json!({"role": "user", "content": "first", "timestamp": "2026-04-30T02:14:06Z", "user_round": 1, "_history_id": 20}),
-            json!({"role": "user", "content": "second", "timestamp": "2026-04-30T02:14:16Z", "user_round": 2, "_history_id": 21}),
-            json!({"role": "assistant", "content": "first answer", "timestamp": "2026-04-30T02:14:30Z", "user_round": 1, "model_round": 1, "round_info_source": "orchestrator", "_history_id": 22}),
+            json!({"role": "user", "content": "first", "timestamp": "2026-04-30T02:14:06Z", "user_round": 1, "created_seq": 20}),
+            json!({"role": "user", "content": "second", "timestamp": "2026-04-30T02:14:16Z", "user_round": 2, "created_seq": 21}),
+            json!({"role": "assistant", "content": "first answer", "timestamp": "2026-04-30T02:14:30Z", "user_round": 1, "model_round": 1, "round_info_source": "orchestrator", "created_seq": 22}),
         ];
 
-        let transcript = build_chat_transcript("sess", history, &HashMap::new());
+        let transcript = build_chat_transcript("sess", history);
         let delayed = transcript
             .iter()
-            .find(|item| item.get("history_id") == Some(&json!(22)))
+            .find(|item| item.get("created_seq") == Some(&json!(22)))
             .expect("delayed assistant exists");
 
         assert_eq!(transcript.len(), 3);
@@ -731,7 +711,7 @@ mod tests {
                 "user_round": 2,
                 "round_info_source": "orchestrator",
                 "meta": {"type": "manual_compaction_command", "manual_compaction": true},
-                "_history_id": 21
+                "created_seq": 21
             }),
             json!({
                 "role": "assistant",
@@ -746,11 +726,11 @@ mod tests {
                     "status": "done",
                     "compaction_id": "compact-test"
                 },
-                "_history_id": 22
+                "created_seq": 22
             }),
         ];
 
-        let transcript = build_chat_transcript("sess", history, &HashMap::new());
+        let transcript = build_chat_transcript("sess", history);
 
         assert_eq!(transcript.len(), 2);
         assert_eq!(transcript[0]["content"], json!("/compact"));
@@ -768,13 +748,13 @@ mod tests {
     #[test]
     fn transcript_preserves_legacy_history_order_without_trusted_rounds() {
         let history = vec![
-            json!({"role": "user", "content": "first", "timestamp": "2026-04-30T02:14:06Z", "_history_id": 40}),
-            json!({"role": "assistant", "content": "first answer", "timestamp": "2026-04-30T02:14:07Z", "_history_id": 41}),
-            json!({"role": "user", "content": "second", "timestamp": "2026-04-30T02:14:16Z", "_history_id": 42}),
-            json!({"role": "assistant", "content": "second answer", "timestamp": "2026-04-30T02:14:18Z", "_history_id": 43}),
+            json!({"role": "user", "content": "first", "timestamp": "2026-04-30T02:14:06Z", "created_seq": 40}),
+            json!({"role": "assistant", "content": "first answer", "timestamp": "2026-04-30T02:14:07Z", "created_seq": 41}),
+            json!({"role": "user", "content": "second", "timestamp": "2026-04-30T02:14:16Z", "created_seq": 42}),
+            json!({"role": "assistant", "content": "second answer", "timestamp": "2026-04-30T02:14:18Z", "created_seq": 43}),
         ];
 
-        let transcript = build_chat_transcript("sess", history, &HashMap::new());
+        let transcript = build_chat_transcript("sess", history);
 
         assert_eq!(transcript.len(), 4);
         assert_eq!(transcript[0]["content"], json!("first"));
@@ -786,12 +766,12 @@ mod tests {
     #[test]
     fn hidden_internal_user_does_not_advance_visible_turn_binding() {
         let history = vec![
-            json!({"role": "user", "content": "visible", "timestamp": "2026-04-30T02:14:06Z", "_history_id": 30}),
-            json!({"role": "user", "content": "internal", "timestamp": "2026-04-30T02:14:07Z", "meta": {"type": "model_context_internal", "hidden": true, "internal_user": true}, "_history_id": 31}),
-            json!({"role": "assistant", "content": "answer", "timestamp": "2026-04-30T02:14:08Z", "_history_id": 32}),
+            json!({"role": "user", "content": "visible", "timestamp": "2026-04-30T02:14:06Z", "created_seq": 30}),
+            json!({"role": "user", "content": "internal", "timestamp": "2026-04-30T02:14:07Z", "meta": {"type": "model_context_internal", "hidden": true, "internal_user": true}, "created_seq": 31}),
+            json!({"role": "assistant", "content": "answer", "timestamp": "2026-04-30T02:14:08Z", "created_seq": 32}),
         ];
 
-        let transcript = build_chat_transcript("sess", history, &HashMap::new());
+        let transcript = build_chat_transcript("sess", history);
 
         assert_eq!(transcript.len(), 2);
         assert_eq!(transcript[0]["content"], json!("visible"));
@@ -813,10 +793,10 @@ mod tests {
             ],
             "timestamp": "2026-04-30T02:14:07Z",
             "meta": {"type": "model_context_internal", "hidden": true, "internal_user": true},
-            "_history_id": 31
+            "created_seq": 31
         })];
 
-        let transcript = build_chat_transcript("sess", history, &HashMap::new());
+        let transcript = build_chat_transcript("sess", history);
 
         assert!(transcript.is_empty());
     }
@@ -830,10 +810,10 @@ mod tests {
                 {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
             ],
             "timestamp": "2026-04-30T02:14:07Z",
-            "_history_id": 32
+            "created_seq": 32
         })];
 
-        let transcript = build_chat_transcript("sess", history, &HashMap::new());
+        let transcript = build_chat_transcript("sess", history);
 
         assert_eq!(transcript.len(), 1);
         assert!(!transcript[0].to_string().contains("data:image/png;base64"));

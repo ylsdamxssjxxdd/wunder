@@ -173,6 +173,11 @@ struct PgTx<'a> {
 }
 
 impl PgTx<'_> {
+    fn batch_execute(&mut self, query: &str) -> Result<()> {
+        self.storage.block_on(self.tx.batch_execute(query))??;
+        Ok(())
+    }
+
     fn execute(&mut self, query: &str, params: &[&(dyn ToSql + Sync)]) -> Result<u64> {
         Ok(self.storage.block_on(self.tx.execute(query, params))??)
     }

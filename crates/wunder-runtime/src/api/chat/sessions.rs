@@ -40,8 +40,8 @@ struct RawHistoryPage {
 
 struct VisibleTranscriptPage {
     transcript: Vec<Value>,
-    history_has_more: bool,
-    history_before_id: Option<i64>,
+    has_more: bool,
+    before_seq: Option<i64>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -80,16 +80,12 @@ pub(super) fn router() -> Router<Arc<AppState>> {
             post(update_session_title),
         )
         .route(
-            "/wunder/chat/sessions/{session_id}/history",
+            "/wunder/chat/sessions/{session_id}/thread-log/messages",
             get(get_session_history),
         )
         .route(
-            "/wunder/chat/sessions/{session_id}/messages/{history_id}/feedback",
+            "/wunder/chat/sessions/{session_id}/thread-log/items/{item_id}/feedback",
             post(submit_message_feedback),
-        )
-        .route(
-            "/wunder/chat/sessions/{session_id}/messages/{history_id}",
-            get(get_session_message),
         )
 }
 
@@ -138,7 +134,7 @@ struct SessionDetailQuery {
 #[derive(Debug, Deserialize)]
 struct HistoryPageQuery {
     #[serde(default)]
-    before_id: Option<String>,
+    before_seq: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
     #[serde(default)]
@@ -393,7 +389,6 @@ async fn get_session(
         .map(str::to_string);
 
     let monitor_record = state.monitor.get_record(&session_id);
-    let message_feedback = extract_monitor_message_feedback_map(monitor_record.as_ref());
     let limit = normalize_session_detail_limit(
         query.limit,
         if is_admin { 0 } else { DEFAULT_MESSAGE_LIMIT },
@@ -405,7 +400,6 @@ async fn get_session(
         &session_id,
         None,
         limit,
-        &message_feedback,
     ) {
         Ok(page) => page,
         Err(err) => {
@@ -416,8 +410,8 @@ async fn get_session(
             history_incomplete = true;
             VisibleTranscriptPage {
                 transcript: Vec::new(),
-                history_has_more: false,
-                history_before_id: None,
+                has_more: false,
+                before_seq: None,
             }
         }
     };
@@ -481,6 +475,7 @@ async fn get_session(
     Ok(Json(json!({
         "data": {
             "id": record.session_id,
+            "user_name": resolved.user.username,
             "title": record.title,
             "created_at": format_ts(record.created_at),
             "updated_at": format_ts(record.updated_at),
@@ -498,8 +493,8 @@ async fn get_session(
             "context_tokens": context_tokens,
             "context_occupancy_tokens": context_tokens,
             "log_overview": log_overview,
-            "history_has_more": transcript_page.history_has_more,
-            "history_before_id": transcript_page.history_before_id
+            "has_more": transcript_page.has_more,
+            "before_seq": transcript_page.before_seq
         }
     })))
 }
@@ -662,10 +657,10 @@ fn summarize_transcript_text_field(
     map.insert(format!("{key}_length"), json!(length));
 }
 
-fn oldest_history_id_from_transcript(transcript: &[Value]) -> Option<i64> {
+fn oldest_item_seq_from_transcript(transcript: &[Value]) -> Option<i64> {
     transcript
         .iter()
-        .find_map(|item| item.get("history_id").and_then(Value::as_i64))
+        .find_map(|item| item.get("created_seq").and_then(Value::as_i64))
 }
 
 fn merge_visible_transcript_page(
@@ -687,14 +682,14 @@ fn merge_visible_transcript_page(
     trimmed
 }
 
-fn raw_history_page_from_loaded_history(mut history: Vec<Value>, limit: i64) -> RawHistoryPage {
+fn raw_item_page_from_loaded_history(mut history: Vec<Value>, limit: i64) -> RawHistoryPage {
     let has_more = limit > 0 && history.len() as i64 > limit;
     if has_more && !history.is_empty() {
         history.remove(0);
     }
     let before_id = history
         .first()
-        .and_then(|item| item.get("_history_id"))
+        .and_then(|item| item.get("created_seq"))
         .and_then(Value::as_i64);
     RawHistoryPage {
         history,
@@ -703,13 +698,13 @@ fn raw_history_page_from_loaded_history(mut history: Vec<Value>, limit: i64) -> 
     }
 }
 
-fn history_page_cursor_after_merge(
+fn item_page_cursor_after_merge(
     transcript_was_trimmed: bool,
     transcript: &[Value],
     raw_before_id: Option<i64>,
 ) -> Option<i64> {
     if transcript_was_trimmed {
-        oldest_history_id_from_transcript(transcript).or(raw_before_id)
+        oldest_item_seq_from_transcript(transcript).or(raw_before_id)
     } else {
         raw_before_id
     }
@@ -721,7 +716,6 @@ fn load_visible_transcript_page(
     session_id: &str,
     before_id: Option<i64>,
     limit: i64,
-    message_feedback: &HashMap<i64, Value>,
 ) -> anyhow::Result<VisibleTranscriptPage> {
     let requested = if limit > 0 { limit } else { 500 };
     let rows = state.storage.list_thread_visible_messages(
@@ -732,18 +726,21 @@ fn load_visible_transcript_page(
     )?;
     let has_more = rows.len() > requested as usize;
     let mut rows = rows;
-    if has_more { rows.truncate(requested as usize); }
+    if has_more {
+        rows.truncate(requested as usize);
+    }
     rows.reverse();
     let rows = filter_orchestration_suppressed_history(state, user_id, session_id, rows);
-    let transcript = build_chat_transcript(session_id, rows, message_feedback);
-    let next_before = transcript.first()
-        .and_then(|item| item.get("_thread_item_seq"))
+    let transcript = build_chat_transcript(session_id, rows);
+    let next_before = transcript
+        .first()
+        .and_then(|item| item.get("created_seq"))
         .and_then(Value::as_i64)
         .or_else(|| before_id.filter(|_| has_more));
     Ok(VisibleTranscriptPage {
         transcript,
-        history_has_more: has_more,
-        history_before_id: next_before,
+        has_more: has_more,
+        before_seq: next_before,
     })
 }
 
@@ -767,16 +764,13 @@ async fn get_session_history(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
     let limit = normalize_history_page_limit(query.limit);
-    let before_id = normalize_history_before_id(query.before_id.as_deref());
-    let monitor_record = state.monitor.get_record(&session_id);
-    let message_feedback = extract_monitor_message_feedback_map(monitor_record.as_ref());
+    let before_id = normalize_before_seq(query.before_seq.as_deref());
     let transcript_page = match load_visible_transcript_page(
         state.as_ref(),
         &resolved.user.user_id,
         &session_id,
         before_id,
         limit,
-        &message_feedback,
     ) {
         Ok(page) => page,
         Err(err) => {
@@ -811,55 +805,22 @@ async fn get_session_history(
         "data": {
             "id": session_id,
             "transcript": transcript,
-            "history_has_more": transcript_page.history_has_more,
-            "history_before_id": transcript_page.history_before_id
+            "has_more": transcript_page.has_more,
+            "before_seq": transcript_page.before_seq
         }
     })))
-}
-
-async fn get_session_message(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    AxumPath((session_id, history_id)): AxumPath<(String, i64)>,
-) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
-    let session_id = session_id.trim().to_string();
-    if session_id.is_empty() || history_id <= 0 {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.param_required"),
-        ));
-    }
-    let _record = state
-        .user_store
-        .get_chat_session(&resolved.user.user_id, &session_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
-    let raw = state
-        .storage
-        .load_chat_history_item(&resolved.user.user_id, &session_id, history_id)
-        .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
-        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
-    let monitor_record = state.monitor.get_record(&session_id);
-    let message_feedback = extract_monitor_message_feedback_map(monitor_record.as_ref());
-    let message = build_chat_transcript(&session_id, vec![raw], &message_feedback)
-        .into_iter()
-        .next()
-        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
-    Ok(Json(
-        json!({ "data": { "id": session_id, "message": message } }),
-    ))
 }
 
 async fn submit_message_feedback(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    AxumPath((session_id, history_id)): AxumPath<(String, i64)>,
+    AxumPath((session_id, item_id)): AxumPath<(String, String)>,
     Json(payload): Json<MessageFeedbackRequest>,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let session_id = session_id.trim().to_string();
-    if session_id.is_empty() || history_id <= 0 {
+    let item_id = item_id.trim().to_string();
+    if session_id.is_empty() || item_id.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.param_required"),
@@ -876,57 +837,33 @@ async fn submit_message_feedback(
         .get_chat_session(&resolved.user.user_id, &session_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
-    let target_history = state
-        .workspace
-        .load_history_page(
-            &resolved.user.user_id,
-            &session_id,
-            Some(history_id.saturating_add(1)),
-            1,
-        )
+    let target_item = state
+        .storage
+        .get_thread_item(&resolved.user.user_id, &session_id, &item_id, false)
         .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
-        .into_iter()
-        .find(|item| {
-            item.get("_history_id")
-                .and_then(Value::as_i64)
-                .map(|value| value == history_id)
-                .unwrap_or(false)
-        })
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.content_not_found")))?;
-    let target_role = target_history
-        .get("role")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    if target_role != "assistant" {
+    if target_item.get("kind").and_then(Value::as_str) != Some("assistant_message") {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "feedback only supports assistant messages".to_string(),
         ));
     }
 
-    let outcome =
-        state
-            .monitor
-            .set_message_feedback(&session_id, history_id, vote, &resolved.user.user_id);
-    match outcome {
-        crate::monitor::SetMessageFeedbackResult::Applied(item) => Ok(Json(json!({
+    match state
+        .storage
+        .set_thread_item_feedback(&resolved.user.user_id, &session_id, &item_id, vote)
+        .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
+    {
+        Some(feedback) => Ok(Json(json!({
             "data": {
                 "session_id": session_id,
-                "history_id": history_id,
-                "feedback": {
-                    "vote": item.vote,
-                    "created_at": format_ts(item.created_time),
-                    "locked": true,
-                }
+                "item_id": item_id,
+                "feedback": feedback
             }
         }))),
-        crate::monitor::SetMessageFeedbackResult::AlreadyExists(_item) => Err(error_response(
+        None => Err(error_response(
             StatusCode::CONFLICT,
             "feedback already submitted".to_string(),
-        )),
-        crate::monitor::SetMessageFeedbackResult::SessionNotFound => Err(error_response(
-            StatusCode::NOT_FOUND,
-            i18n::t("error.session_not_found"),
         )),
     }
 }
@@ -1176,7 +1113,7 @@ fn normalize_history_page_limit(raw: Option<i64>) -> i64 {
     }
 }
 
-fn normalize_history_before_id(raw: Option<&str>) -> Option<i64> {
+fn normalize_before_seq(raw: Option<&str>) -> Option<i64> {
     raw.and_then(|value| value.trim().parse::<i64>().ok())
         .filter(|value| *value > 0)
 }
@@ -1639,55 +1576,6 @@ fn positive_i64(value: Option<&Value>) -> Option<i64> {
     (parsed > 0).then_some(parsed)
 }
 
-fn extract_monitor_message_feedback_map(record: Option<&Value>) -> HashMap<i64, Value> {
-    let mut feedback_map = HashMap::new();
-    let Some(record) = record else {
-        return feedback_map;
-    };
-    let Some(items) = record.get("message_feedback").and_then(Value::as_object) else {
-        return feedback_map;
-    };
-    for (raw_history_id, raw_feedback) in items {
-        let Ok(history_id) = raw_history_id.parse::<i64>() else {
-            continue;
-        };
-        if history_id <= 0 {
-            continue;
-        }
-        let Some(normalized) = normalize_monitor_message_feedback(raw_feedback) else {
-            continue;
-        };
-        feedback_map.insert(history_id, normalized);
-    }
-    feedback_map
-}
-
-fn normalize_monitor_message_feedback(raw: &Value) -> Option<Value> {
-    let vote = normalize_message_feedback_vote(
-        raw.get("vote").and_then(Value::as_str).unwrap_or_default(),
-    )?;
-    let mut feedback = json!({
-        "vote": vote,
-        "locked": true,
-    });
-    let created_time = raw
-        .get("created_time")
-        .or_else(|| raw.get("created_at"))
-        .and_then(|value| {
-            value
-                .as_f64()
-                .or_else(|| value.as_str().and_then(|text| text.parse::<f64>().ok()))
-        });
-    if let Some(created_time) = created_time {
-        if created_time > 0.0 {
-            if let Value::Object(ref mut map) = feedback {
-                map.insert("created_at".to_string(), json!(format_ts(created_time)));
-            }
-        }
-    }
-    Some(feedback)
-}
-
 fn filter_orchestration_suppressed_history(
     state: &AppState,
     user_id: &str,
@@ -1892,10 +1780,10 @@ fn resolve_pagination(query: &SessionListQuery) -> (i64, i64) {
 mod tests {
     use super::{
         apply_session_running_state, build_projected_queue_assistant_message,
-        build_projected_queue_user_message, has_active_queue_task, history_page_cursor_after_merge,
-        is_session_stream_active_or_queued, merge_persisted_transcript_metrics,
-        merge_visible_transcript_page, normalize_history_before_id,
-        project_queued_session_messages, raw_history_page_from_loaded_history,
+        build_projected_queue_user_message, has_active_queue_task,
+        is_session_stream_active_or_queued, item_page_cursor_after_merge,
+        merge_persisted_transcript_metrics, merge_visible_transcript_page, normalize_before_seq,
+        project_queued_session_messages, raw_item_page_from_loaded_history,
         summarize_transcript_messages, RunningTurnHint,
     };
     use crate::storage::{AgentTaskRecord, SqliteStorage, StorageBackend};
@@ -1915,13 +1803,13 @@ mod tests {
     }
 
     #[test]
-    fn normalize_history_before_id_ignores_invalid_cursor_values() {
-        assert_eq!(normalize_history_before_id(Some("42")), Some(42));
-        assert_eq!(normalize_history_before_id(Some(" 42 ")), Some(42));
-        assert_eq!(normalize_history_before_id(Some("NaN")), None);
-        assert_eq!(normalize_history_before_id(Some("0")), None);
-        assert_eq!(normalize_history_before_id(Some("-1")), None);
-        assert_eq!(normalize_history_before_id(None), None);
+    fn normalize_before_seq_ignores_invalid_cursor_values() {
+        assert_eq!(normalize_before_seq(Some("42")), Some(42));
+        assert_eq!(normalize_before_seq(Some(" 42 ")), Some(42));
+        assert_eq!(normalize_before_seq(Some("NaN")), None);
+        assert_eq!(normalize_before_seq(Some("0")), None);
+        assert_eq!(normalize_before_seq(Some("-1")), None);
+        assert_eq!(normalize_before_seq(None), None);
     }
 
     #[test]
@@ -1929,8 +1817,8 @@ mod tests {
         let content = "x".repeat(6_100);
         let reasoning = "r".repeat(1_600);
         let summary = summarize_transcript_messages(vec![json!({
-            "message_id": "history:42",
-            "history_id": 42,
+            "message_id": "item:turn-42:text-1",
+            "created_seq": 42,
             "user_turn_id": "user-turn:sample:round:1",
             "content": content,
             "reasoning": reasoning,
@@ -1939,8 +1827,8 @@ mod tests {
         })]);
         let message = summary.first().expect("summary message");
 
-        assert_eq!(message["message_id"], json!("history:42"));
-        assert_eq!(message["history_id"], json!(42));
+        assert_eq!(message["message_id"], json!("item:turn-42:text-1"));
+        assert_eq!(message["created_seq"], json!(42));
         assert_eq!(
             message["content"]
                 .as_str()
@@ -1988,14 +1876,14 @@ mod tests {
     #[test]
     fn visible_transcript_page_merge_backfills_without_dropping_recent_window() {
         let mut transcript = vec![
-            json!({"role": "user", "content": "newer-user", "history_id": 40}),
-            json!({"role": "assistant", "content": "newer-assistant", "history_id": 41}),
+            json!({"role": "user", "content": "newer-user", "created_seq": 40}),
+            json!({"role": "assistant", "content": "newer-assistant", "created_seq": 41}),
         ];
         let trimmed = merge_visible_transcript_page(
             &mut transcript,
             vec![
-                json!({"role": "user", "content": "older-user", "history_id": 20}),
-                json!({"role": "assistant", "content": "older-assistant", "history_id": 21}),
+                json!({"role": "user", "content": "older-user", "created_seq": 20}),
+                json!({"role": "assistant", "content": "older-assistant", "created_seq": 21}),
             ],
             3,
         );
@@ -2013,11 +1901,11 @@ mod tests {
 
     #[test]
     fn raw_history_page_uses_oldest_raw_id_as_cursor_after_sentinel_trim() {
-        let page = raw_history_page_from_loaded_history(
+        let page = raw_item_page_from_loaded_history(
             vec![
-                json!({"role": "system", "content": "hidden", "_history_id": 7}),
-                json!({"role": "tool", "content": "hidden", "_history_id": 8}),
-                json!({"role": "assistant", "content": "visible", "_history_id": 9}),
+                json!({"role": "system", "content": "hidden", "created_seq": 7}),
+                json!({"role": "tool", "content": "hidden", "created_seq": 8}),
+                json!({"role": "assistant", "content": "visible", "created_seq": 9}),
             ],
             2,
         );
@@ -2029,14 +1917,14 @@ mod tests {
 
     #[test]
     fn history_cursor_advances_past_scanned_raw_rows_when_visible_window_not_trimmed() {
-        let transcript = vec![json!({"role": "assistant", "content": "visible", "history_id": 9})];
+        let transcript = vec![json!({"role": "assistant", "content": "visible", "created_seq": 9})];
 
         assert_eq!(
-            history_page_cursor_after_merge(false, &transcript, Some(7)),
+            item_page_cursor_after_merge(false, &transcript, Some(7)),
             Some(7)
         );
         assert_eq!(
-            history_page_cursor_after_merge(true, &transcript, Some(7)),
+            item_page_cursor_after_merge(true, &transcript, Some(7)),
             Some(9)
         );
     }

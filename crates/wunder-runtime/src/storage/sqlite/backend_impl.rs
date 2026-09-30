@@ -38,23 +38,6 @@ impl ConversationLogStore for SqliteStorage {
     fn append_artifact_log(&self, user_id: &str, payload: &Value) -> Result<()> {
         self.append_artifact_log_impl(user_id, payload)
     }
-    fn load_chat_history(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        limit: Option<i64>,
-    ) -> Result<Vec<Value>> {
-        self.load_chat_history_impl(user_id, session_id, limit)
-    }
-    fn load_chat_history_page(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        before_id: Option<i64>,
-        limit: i64,
-    ) -> Result<Vec<Value>> {
-        self.load_chat_history_page_impl(user_id, session_id, before_id, limit)
-    }
     fn load_artifact_logs(
         &self,
         user_id: &str,
@@ -62,14 +45,6 @@ impl ConversationLogStore for SqliteStorage {
         limit: i64,
     ) -> Result<Vec<Value>> {
         self.load_artifact_logs_impl(user_id, session_id, limit)
-    }
-    fn get_session_system_prompt(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        language: Option<&str>,
-    ) -> Result<Option<String>> {
-        self.get_session_system_prompt_impl(user_id, session_id, language)
     }
 }
 
@@ -90,11 +65,43 @@ impl ThreadLogStore for SqliteStorage {
     ) -> Result<Vec<Value>> {
         self.list_thread_text_blocks_impl(session_id, after, limit)
     }
-    fn list_thread_item_blocks(&self, user_id: &str, session_id: &str, item_id: &str, from_block: i64, limit: i64, include_internal: bool) -> Result<Vec<Value>> {
-        self.list_thread_item_blocks_impl(user_id, session_id, item_id, from_block, limit, include_internal)
+    fn list_thread_item_blocks(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        from_block: i64,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<Vec<Value>> {
+        self.list_thread_item_blocks_impl(
+            user_id,
+            session_id,
+            item_id,
+            from_block,
+            limit,
+            include_internal,
+        )
     }
-    fn list_thread_item_blocks_page(&self, user_id: &str, session_id: &str, item_id: &str, field: Option<&str>, from_block: i64, limit: i64, include_internal: bool) -> Result<(Vec<Value>, Option<i64>, bool)> {
-        self.list_thread_item_blocks_page_impl(user_id, session_id, item_id, field, from_block, limit, include_internal)
+    fn list_thread_item_blocks_page(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        field: Option<&str>,
+        from_block: i64,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<(Vec<Value>, Option<i64>, bool)> {
+        self.list_thread_item_blocks_page_impl(
+            user_id,
+            session_id,
+            item_id,
+            field,
+            from_block,
+            limit,
+            include_internal,
+        )
     }
 
     fn find_thread_turn_id(
@@ -119,7 +126,12 @@ impl ThreadLogStore for SqliteStorage {
     ) -> Result<()> {
         self.update_thread_turn_impl(user_id, session_id, turn_id, status, summary, payload)
     }
-    fn list_thread_changes_by_session(&self, session_id: &str, after_seq: i64, limit: i64) -> Result<Vec<Value>> {
+    fn list_thread_changes_by_session(
+        &self,
+        session_id: &str,
+        after_seq: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
         self.list_thread_changes_by_session_impl(session_id, after_seq, limit)
     }
     fn delete_thread_log_by_session(&self, user_id: &str, session_id: &str) -> Result<i64> {
@@ -129,16 +141,40 @@ impl ThreadLogStore for SqliteStorage {
     fn append_thread_item(&self, user_id: &str, payload: &Value) -> Result<()> {
         self.append_thread_item_impl(user_id, payload).map(|_| ())
     }
-    fn list_thread_visible_messages(&self, user_id: &str, session_id: &str, before_seq: Option<i64>, limit: i64) -> Result<Vec<Value>> {
+    fn list_thread_visible_messages(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        before_seq: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
         self.list_thread_visible_messages_impl(user_id, session_id, before_seq, limit)
     }
-    fn load_thread_context_items(&self, user_id: &str, session_id: &str, limit: i64, include_internal: bool) -> Result<Vec<Value>> {
+    fn load_thread_context_items(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<Vec<Value>> {
         self.load_thread_context_items_impl(user_id, session_id, limit, include_internal, None)
     }
-    fn load_thread_execution_context(&self, user_id: &str, session_id: &str, turn_id: &str, limit: i64) -> Result<Vec<Value>> {
+    fn load_thread_execution_context(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turn_id: &str,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
         self.load_thread_context_items_impl(user_id, session_id, limit, true, Some(turn_id))
     }
-    fn fork_thread_log(&self, user_id: &str, source_session_id: &str, target_session_id: &str, through_round: i64) -> Result<()> {
+    fn fork_thread_log(
+        &self,
+        user_id: &str,
+        source_session_id: &str,
+        target_session_id: &str,
+        through_round: i64,
+    ) -> Result<()> {
         self.fork_thread_log_impl(user_id, source_session_id, target_session_id, through_round)
     }
     fn commit_thread_item(&self, user_id: &str, payload: &Value) -> Result<Option<Value>> {
@@ -161,6 +197,9 @@ impl ThreadLogStore for SqliteStorage {
     ) -> Result<(i64, i64)> {
         self.get_thread_log_counts_impl(user_id, session_id, include_internal)
     }
+    fn latest_thread_user_round_by_session(&self, session_id: &str) -> Result<i64> {
+        self.latest_thread_user_round_by_session_impl(session_id)
+    }
     fn get_thread_turn(
         &self,
         user_id: &str,
@@ -172,8 +211,23 @@ impl ThreadLogStore for SqliteStorage {
     ) -> Result<Option<Value>> {
         self.get_thread_turn_impl(user_id, session_id, turn_id, after, limit, include_internal)
     }
-    fn get_thread_item(&self, user_id: &str, session_id: &str, item_id: &str, include_internal: bool) -> Result<Option<Value>> {
+    fn get_thread_item(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        include_internal: bool,
+    ) -> Result<Option<Value>> {
         self.get_thread_item_impl(user_id, session_id, item_id, include_internal)
+    }
+    fn set_thread_item_feedback(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        vote: &str,
+    ) -> Result<Option<Value>> {
+        self.set_thread_item_feedback_impl(user_id, session_id, item_id, vote)
     }
     fn list_thread_changes(
         &self,
@@ -218,11 +272,8 @@ impl LogStatsStore for SqliteStorage {
     ) -> Result<HashMap<String, i64>> {
         self.delete_logs_by_time_range_impl(start_time, end_time)
     }
-    fn delete_chat_history(&self, user_id: &str) -> Result<i64> {
-        self.delete_chat_history_impl(user_id)
-    }
-    fn delete_chat_history_by_session(&self, user_id: &str, session_id: &str) -> Result<i64> {
-        self.delete_chat_history_by_session_impl(user_id, session_id)
+    fn delete_thread_logs_by_user(&self, user_id: &str) -> Result<i64> {
+        self.delete_thread_logs_by_user_impl(user_id)
     }
     fn delete_tool_logs(&self, user_id: &str) -> Result<i64> {
         self.delete_tool_logs_impl(user_id)

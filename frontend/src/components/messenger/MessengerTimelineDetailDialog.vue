@@ -179,6 +179,7 @@ type TimelineRoundOption = {
 type TimelineDetailSession = {
   id: string;
   title: string;
+  userName: string;
   agentId: string;
   agentName: string;
   createdAt: unknown;
@@ -623,6 +624,7 @@ const normalizeSession = (sessionId: string, value: unknown): TimelineDetailSess
   return {
     id: String(source.id || sessionId),
     title: String(source.title || ''),
+    userName: String(source.user_name || source.username || ''),
     agentId: String(source.agent_id || ''),
     agentName: String(source.agent_name || ''),
     createdAt: source.created_at,
@@ -969,6 +971,7 @@ const overviewItems = computed(() => {
     ? overviewDecodeSpeed
     : persistedDecodeSpeed;
   return [
+    { icon: 'fa-solid fa-user', label: t('messenger.timeline.detail.metaUserNameLabel'), value: overviewValue(session.userName) },
     { icon: 'fa-solid fa-robot', label: t('messenger.timeline.detail.metaAgentLabel'), value: overviewValue(metrics.agent_name || resolveSessionAgentDisplay(session)) },
     { icon: 'fa-solid fa-circle-info', label: t('messenger.timeline.detail.metaStatusLabel'), value: overviewStatus(metrics.status || (running.value ? 'running' : 'finished')) },
     { icon: 'fa-regular fa-clock', label: t('messenger.timeline.detail.metaElapsedLabel'), value: overviewDuration(metrics.elapsed_s) },

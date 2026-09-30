@@ -1,12 +1,6 @@
 use super::thread_log_store::PostgresThreadLogStorage;
 use super::PostgresStorage;
-use crate::i18n;
-use crate::services::{
-    chat_payload_sanitizer::{
-        parse_sanitized_persisted_chat_payload, sanitize_persisted_chat_payload,
-    },
-    output_quality,
-};
+use crate::services::{chat_payload_sanitizer::sanitize_persisted_chat_payload, output_quality};
 use crate::storage::StorageLifecycle;
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -15,31 +9,12 @@ pub(super) trait PostgresConversationLogStorage {
     fn append_chat_impl(&self, user_id: &str, payload: &Value) -> Result<()>;
     fn append_tool_log_impl(&self, user_id: &str, payload: &Value) -> Result<()>;
     fn append_artifact_log_impl(&self, user_id: &str, payload: &Value) -> Result<()>;
-    fn load_chat_history_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        limit: Option<i64>,
-    ) -> Result<Vec<Value>>;
-    fn load_chat_history_page_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        before_id: Option<i64>,
-        limit: i64,
-    ) -> Result<Vec<Value>>;
     fn load_artifact_logs_impl(
         &self,
         user_id: &str,
         session_id: &str,
         limit: i64,
     ) -> Result<Vec<Value>>;
-    fn get_session_system_prompt_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        language: Option<&str>,
-    ) -> Result<Option<String>>;
 }
 
 impl PostgresConversationLogStorage for PostgresStorage {
@@ -65,51 +40,72 @@ impl PostgresConversationLogStorage for PostgresStorage {
         }
         let payload = output_quality::annotate_chat_payload(payload);
         let payload = sanitize_persisted_chat_payload(&payload);
-        let now = Self::now_ts();
         // ThreadLog is authoritative even for legacy callers that did not yet
         // attach a Turn identity. Admit a synthetic root once, then route all
         // following messages in this session to that durable Turn.
-        let explicit_turn = payload.get("turn_id").and_then(Value::as_str).filter(|v| !v.is_empty()).map(str::to_owned);
+        let explicit_turn = payload
+            .get("turn_id")
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned);
         let mut admitted_user = false;
         let turn_id = if let Some(turn_id) = explicit_turn {
             Some(turn_id)
-        } else if let Some(round) = payload.get("user_round").and_then(Value::as_i64).filter(|round| *round > 0) {
+        } else if let Some(round) = payload
+            .get("user_round")
+            .and_then(Value::as_i64)
+            .filter(|round| *round > 0)
+        {
             self.find_thread_turn_id_impl(user_id, &session_id, round)?
         } else if role == "user" {
             let accepted = self.accept_thread_turn_impl(user_id, &session_id, &payload)?;
             admitted_user = accepted.get("created").and_then(Value::as_bool) == Some(true);
-            accepted.get("turn_id").and_then(Value::as_str).map(str::to_owned)
+            accepted
+                .get("turn_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
         } else {
-            self.list_thread_turns_impl(user_id, &session_id, None, 1)?.into_iter().next()
-                .and_then(|turn| turn.get("turn_id").and_then(Value::as_str).map(str::to_owned))
+            self.list_thread_turns_impl(user_id, &session_id, None, 1)?
+                .into_iter()
+                .next()
+                .and_then(|turn| {
+                    turn.get("turn_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
         };
         if let Some(turn_id) = turn_id {
             if !admitted_user {
                 let mut timeline_payload = payload.clone();
                 if let Value::Object(map) = &mut timeline_payload {
                     map.insert("turn_id".into(), Value::String(turn_id.clone()));
-                    map.insert("item_id".into(), Value::String(payload.get("item_id").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| uuid::Uuid::new_v4().to_string())));
+                    map.insert(
+                        "item_id".into(),
+                        Value::String(
+                            payload
+                                .get("item_id")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                        ),
+                    );
                     map.insert("kind".into(), Value::String(format!("{}_message", role)));
                     map.insert(
                         "status".into(),
                         Value::String(
-                            if role == "user" { "running" } else { "completed" }.into(),
+                            if role == "user" {
+                                "running"
+                            } else {
+                                "completed"
+                            }
+                            .into(),
                         ),
                     );
                 }
                 self.append_thread_item_impl(user_id, &timeline_payload)?;
             }
         }
-        // Keep the legacy row only as a compatibility mirror.  It is written
-        // after the authoritative ThreadLog mutation so a failed timeline
-        // admission cannot leave an orphan history row.
-        let payload_text = Self::json_to_string(&payload);
-        let mut conn = self.conn()?;
-        conn.execute(
-            "INSERT INTO chat_history (user_id, session_id, role, payload, created_time) \
-             VALUES ($1, $2, $3, $4, $5)",
-            &[&user_id, &session_id, &role, &payload_text, &now],
-        )?;
+        // ThreadLog is the only durable chat history.
         Ok(())
     }
 
@@ -218,116 +214,6 @@ impl PostgresConversationLogStorage for PostgresStorage {
         Ok(())
     }
 
-    fn load_chat_history_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        limit: Option<i64>,
-    ) -> Result<Vec<Value>> {
-        self.ensure_initialized()?;
-        let limit_value = limit.filter(|value| *value > 0);
-        let mut conn = self.conn()?;
-        let mut records = Vec::new();
-        let mut repairs = Vec::new();
-        if let Some(limit_value) = limit_value {
-            let rows = conn.query(
-                "SELECT id, payload FROM chat_history WHERE user_id = $1 AND session_id = $2 ORDER BY id DESC LIMIT $3",
-                &[&user_id, &session_id, &limit_value],
-            )?;
-            for row in rows {
-                let history_id = row.get::<_, i64>(0);
-                let payload = row.get::<_, String>(1);
-                let (value, repaired_payload) = parse_sanitized_persisted_chat_payload(&payload);
-                if let Some(repaired_payload) = repaired_payload {
-                    repairs.push((history_id, repaired_payload));
-                }
-                if let Some(value) = value {
-                    records.push(value);
-                }
-            }
-            records.reverse();
-        } else {
-            let rows = conn.query(
-                "SELECT id, payload FROM chat_history WHERE user_id = $1 AND session_id = $2 ORDER BY id ASC",
-                &[&user_id, &session_id],
-            )?;
-            for row in rows {
-                let history_id = row.get::<_, i64>(0);
-                let payload = row.get::<_, String>(1);
-                let (value, repaired_payload) = parse_sanitized_persisted_chat_payload(&payload);
-                if let Some(repaired_payload) = repaired_payload {
-                    repairs.push((history_id, repaired_payload));
-                }
-                if let Some(value) = value {
-                    records.push(value);
-                }
-            }
-        }
-        repair_chat_history_payloads(&mut conn, repairs);
-        Ok(records)
-    }
-
-    fn load_chat_history_page_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        before_id: Option<i64>,
-        limit: i64,
-    ) -> Result<Vec<Value>> {
-        self.ensure_initialized()?;
-        if user_id.trim().is_empty() || session_id.trim().is_empty() || limit <= 0 {
-            return Ok(Vec::new());
-        }
-        let before_id = before_id.filter(|value| *value > 0);
-        let mut conn = self.conn()?;
-        let mut records = Vec::new();
-        let mut repairs = Vec::new();
-        if let Some(before_id) = before_id {
-            let rows = conn.query(
-                "SELECT id, payload FROM chat_history WHERE user_id = $1 AND session_id = $2 AND id < $3 ORDER BY id DESC LIMIT $4",
-                &[&user_id, &session_id, &before_id, &limit],
-            )?;
-            for row in rows {
-                let history_id = row.get::<_, i64>(0);
-                let payload = row.get::<_, String>(1);
-                let (mut value, repaired_payload) =
-                    parse_sanitized_persisted_chat_payload(&payload);
-                if let Some(repaired_payload) = repaired_payload {
-                    repairs.push((history_id, repaired_payload));
-                }
-                if let Some(Value::Object(ref mut map)) = value {
-                    map.insert("_history_id".to_string(), json!(history_id));
-                }
-                if let Some(value) = value {
-                    records.push(value);
-                }
-            }
-        } else {
-            let rows = conn.query(
-                "SELECT id, payload FROM chat_history WHERE user_id = $1 AND session_id = $2 ORDER BY id DESC LIMIT $3",
-                &[&user_id, &session_id, &limit],
-            )?;
-            for row in rows {
-                let history_id = row.get::<_, i64>(0);
-                let payload = row.get::<_, String>(1);
-                let (mut value, repaired_payload) =
-                    parse_sanitized_persisted_chat_payload(&payload);
-                if let Some(repaired_payload) = repaired_payload {
-                    repairs.push((history_id, repaired_payload));
-                }
-                if let Some(Value::Object(ref mut map)) = value {
-                    map.insert("_history_id".to_string(), json!(history_id));
-                }
-                if let Some(value) = value {
-                    records.push(value);
-                }
-            }
-        }
-        records.reverse();
-        repair_chat_history_payloads(&mut conn, repairs);
-        Ok(records)
-    }
-
     fn load_artifact_logs_impl(
         &self,
         user_id: &str,
@@ -358,64 +244,5 @@ impl PostgresConversationLogStorage for PostgresStorage {
             }
         }
         Ok(records)
-    }
-
-    fn get_session_system_prompt_impl(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        language: Option<&str>,
-    ) -> Result<Option<String>> {
-        self.ensure_initialized()?;
-        let normalized_language = language.map(|value| i18n::normalize_language(Some(value), true));
-        let mut conn = self.conn()?;
-        let rows = conn.query(
-            "SELECT payload FROM chat_history WHERE user_id = $1 AND session_id = $2 AND role = 'system' ORDER BY id ASC",
-            &[&user_id, &session_id],
-        )?;
-        for row in rows {
-            let payload: String = row.get(0);
-            let Some(value) = Self::json_from_str(&payload) else {
-                continue;
-            };
-            let meta = value.get("meta").and_then(Value::as_object);
-            let Some(meta) = meta else {
-                continue;
-            };
-            if meta.get("type").and_then(Value::as_str) != Some("system_prompt") {
-                continue;
-            }
-            if let Some(ref normalized) = normalized_language {
-                let meta_language = meta
-                    .get("language")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .trim();
-                if !meta_language.is_empty() {
-                    let meta_normalized = i18n::normalize_language(Some(meta_language), true);
-                    if &meta_normalized != normalized {
-                        continue;
-                    }
-                } else if normalized != &i18n::get_default_language() {
-                    continue;
-                }
-            }
-            if let Some(content) = value.get("content").and_then(Value::as_str) {
-                let cleaned = content.trim();
-                if !cleaned.is_empty() {
-                    return Ok(Some(cleaned.to_string()));
-                }
-            }
-        }
-        Ok(None)
-    }
-}
-
-fn repair_chat_history_payloads(conn: &mut super::PgConn<'_>, repairs: Vec<(i64, String)>) {
-    for (history_id, payload) in repairs {
-        let _ = conn.execute(
-            "UPDATE chat_history SET payload = $1 WHERE id = $2",
-            &[&payload, &history_id],
-        );
     }
 }

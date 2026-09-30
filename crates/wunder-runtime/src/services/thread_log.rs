@@ -79,16 +79,8 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
                 "completed"
             },
         ),
-        "llm_request" => (
-            "model_call",
-            format!("model-{model}"),
-            "running",
-        ),
-        "llm_output" => (
-            "assistant_message",
-            format!("text-{model}"),
-            "completed",
-        ),
+        "llm_request" => ("model_call", format!("model-{model}"), "running"),
+        "llm_output" => ("assistant_message", format!("text-{model}"), "completed"),
         "approval_request" | "approval_result" | "approval_resolved" => (
             "approval",
             format!(
@@ -122,6 +114,7 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
         _ => (event_type, uuid::Uuid::new_v4().to_string(), "completed"),
     };
     let mut item = data.clone();
+    item["event_type"] = json!(event_type);
     item["session_id"] = json!(session_id);
     item["item_id"] = json!(format!("{turn}:{key}"));
     item["kind"] = json!(kind);
@@ -217,7 +210,11 @@ impl TextTail {
             blocks.push(field_block("content", &self.content, self.content_offset));
         }
         if !self.reasoning.is_empty() {
-            blocks.push(field_block("reasoning", &self.reasoning, self.reasoning_offset));
+            blocks.push(field_block(
+                "reasoning",
+                &self.reasoning,
+                self.reasoning_offset,
+            ));
         }
         (!blocks.is_empty()).then(|| json!({"blocks":blocks}))
     }
@@ -230,10 +227,14 @@ mod tests {
     #[test]
     fn text_tail_separates_content_and_reasoning_block_identity() {
         let mut tail = TextTail::default();
-        tail.append("thread", 1, &json!({
-            "turn_id":"turn", "model_round":1,
-            "delta":"answer", "reasoning_delta":"thought"
-        }));
+        tail.append(
+            "thread",
+            1,
+            &json!({
+                "turn_id":"turn", "model_round":1,
+                "delta":"answer", "reasoning_delta":"thought"
+            }),
+        );
         let flush = tail.flush("thread").expect("flush");
         let blocks = flush["blocks"].as_array().expect("blocks");
         assert_eq!(blocks.len(), 2);
@@ -264,10 +265,14 @@ pub fn replay(
     let mut records = Vec::with_capacity(changes.len() + limit as usize);
     for mut change in changes {
         if change.get("change_type").and_then(Value::as_str) == Some("snapshot_required") {
-            records.push(json!({"event":"thread_snapshot_required","data":change,"event_id":after+1}));
+            records
+                .push(json!({"event":"thread_snapshot_required","data":change,"event_id":after+1}));
             return Ok(records);
         }
-        let cursor = change.get("change_seq").and_then(Value::as_i64).unwrap_or(0);
+        let cursor = change
+            .get("change_seq")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
         change["event"] = json!("thread_change");
         change["event_id"] = json!(cursor);
         change["data"] = json!({"change_type":change.get("change_type").cloned().unwrap_or(Value::Null),"turn_id":change.get("turn_id").cloned().unwrap_or(Value::Null),"item_id":change.get("item_id").cloned().unwrap_or(Value::Null),"revision":change.get("revision").cloned().unwrap_or(Value::Null),"cursor":cursor});

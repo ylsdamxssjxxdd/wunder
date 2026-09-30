@@ -5,9 +5,28 @@ use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 use uuid::Uuid;
 pub(super) trait SqliteThreadLogStorage {
-    fn fork_thread_log_impl(&self, user_id: &str, source: &str, target: &str, through_round: i64) -> Result<()>;
-    fn list_thread_visible_messages_impl(&self, user_id: &str, session_id: &str, before_seq: Option<i64>, limit: i64) -> Result<Vec<Value>>;
-    fn load_thread_context_items_impl(&self, user_id: &str, session_id: &str, limit: i64, include_internal: bool, executing_turn: Option<&str>) -> Result<Vec<Value>>;
+    fn fork_thread_log_impl(
+        &self,
+        user_id: &str,
+        source: &str,
+        target: &str,
+        through_round: i64,
+    ) -> Result<()>;
+    fn list_thread_visible_messages_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        before_seq: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<Value>>;
+    fn load_thread_context_items_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit: i64,
+        include_internal: bool,
+        executing_turn: Option<&str>,
+    ) -> Result<Vec<Value>>;
     fn upsert_thread_text_block_impl(
         &self,
         user_id: &str,
@@ -20,8 +39,25 @@ pub(super) trait SqliteThreadLogStorage {
         after: i64,
         limit: i64,
     ) -> Result<Vec<Value>>;
-    fn list_thread_item_blocks_impl(&self, user_id: &str, session_id: &str, item_id: &str, from_block: i64, limit: i64, include_internal: bool) -> Result<Vec<Value>>;
-    fn list_thread_item_blocks_page_impl(&self, user_id: &str, session_id: &str, item_id: &str, field: Option<&str>, from_block: i64, limit: i64, include_internal: bool) -> Result<(Vec<Value>, Option<i64>, bool)>;
+    fn list_thread_item_blocks_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        from_block: i64,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<Vec<Value>>;
+    fn list_thread_item_blocks_page_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        field: Option<&str>,
+        from_block: i64,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<(Vec<Value>, Option<i64>, bool)>;
 
     fn find_thread_turn_id_impl(
         &self,
@@ -59,6 +95,7 @@ pub(super) trait SqliteThreadLogStorage {
         session_id: &str,
         include_internal: bool,
     ) -> Result<(i64, i64)>;
+    fn latest_thread_user_round_by_session_impl(&self, session_id: &str) -> Result<i64>;
     fn get_thread_turn_impl(
         &self,
         user_id: &str,
@@ -68,8 +105,26 @@ pub(super) trait SqliteThreadLogStorage {
         limit: i64,
         include_internal: bool,
     ) -> Result<Option<Value>>;
-    fn get_thread_item_impl(&self, user_id: &str, session_id: &str, item_id: &str, include_internal: bool) -> Result<Option<Value>>;
-    fn list_thread_changes_by_session_impl(&self, session_id: &str, after: i64, limit: i64) -> Result<Vec<Value>>;
+    fn get_thread_item_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        include_internal: bool,
+    ) -> Result<Option<Value>>;
+    fn set_thread_item_feedback_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        vote: &str,
+    ) -> Result<Option<Value>>;
+    fn list_thread_changes_by_session_impl(
+        &self,
+        session_id: &str,
+        after: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>>;
     fn list_thread_changes_impl(
         &self,
         user_id: &str,
@@ -79,12 +134,27 @@ pub(super) trait SqliteThreadLogStorage {
     ) -> Result<Vec<Value>>;
 }
 impl SqliteThreadLogStorage for SqliteStorage {
-    fn fork_thread_log_impl(&self, user_id: &str, source: &str, target: &str, through_round: i64) -> Result<()> {
+    fn fork_thread_log_impl(
+        &self,
+        user_id: &str,
+        source: &str,
+        target: &str,
+        through_round: i64,
+    ) -> Result<()> {
         self.ensure_initialized()?;
-        ensure!(!target.trim().is_empty() && source != target && through_round > 0, "invalid thread fork");
+        ensure!(
+            !target.trim().is_empty() && source != target && through_round > 0,
+            "invalid thread fork"
+        );
         let mut conn = self.open()?;
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let owner: Option<String> = tx.query_row("SELECT user_id FROM thread_logs WHERE session_id=?", params![source], |r| r.get(0)).optional()?;
+        let owner: Option<String> = tx
+            .query_row(
+                "SELECT user_id FROM thread_logs WHERE session_id=?",
+                params![source],
+                |r| r.get(0),
+            )
+            .optional()?;
         ensure!(owner.as_deref() == Some(user_id), "thread owner mismatch");
         // The root INSERT rejects an existing destination, so retries cannot merge graphs.
         tx.execute("INSERT INTO thread_logs(session_id,user_id,latest_user_turn,latest_change_seq,created_time,updated_time) SELECT ?3,user_id,COALESCE((SELECT MAX(user_turn_index) FROM thread_turns WHERE session_id=?2 AND trigger_kind='user' AND user_turn_index<=?4),0),latest_change_seq,created_time,updated_time FROM thread_logs WHERE user_id=?1 AND session_id=?2", params![user_id,source,target,through_round])?;
@@ -96,27 +166,62 @@ impl SqliteThreadLogStorage for SqliteStorage {
         tx.commit()?;
         Ok(())
     }
-    fn list_thread_visible_messages_impl(&self, user_id: &str, session_id: &str, before_seq: Option<i64>, limit: i64) -> Result<Vec<Value>> {
+    fn list_thread_visible_messages_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        before_seq: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
         let conn = self.open()?;
         let before = before_seq.unwrap_or(i64::MAX);
         let mut stmt = conn.prepare("SELECT payload,created_seq FROM thread_items WHERE user_id=? AND session_id=? AND visibility='user' AND kind IN ('user_message','assistant_message') AND created_seq<? ORDER BY created_seq DESC LIMIT ?")?;
-        let rows = stmt.query_map(params![user_id,session_id,before,limit.clamp(1,101)], |row| {
-            let text: String = row.get(0)?; let seq: i64 = row.get(1)?;
-            let mut value: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-            if let Value::Object(map) = &mut value { map.insert("_thread_item_seq".into(), json!(seq)); }
-            Ok(value)
-        })?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows = stmt
+            .query_map(
+                params![user_id, session_id, before, limit.clamp(1, 501)],
+                |row| {
+                    let text: String = row.get(0)?;
+                    let seq: i64 = row.get(1)?;
+                    let mut value: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+                    if let Value::Object(map) = &mut value {
+                        map.insert("created_seq".into(), json!(seq));
+                    }
+                    Ok(value)
+                },
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
-    fn load_thread_context_items_impl(&self, user_id: &str, session_id: &str, limit: i64, include_internal: bool, executing_turn: Option<&str>) -> Result<Vec<Value>> {
+    fn load_thread_context_items_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit: i64,
+        include_internal: bool,
+        executing_turn: Option<&str>,
+    ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
         let conn = self.open()?;
         let mut stmt = conn.prepare("SELECT i.payload FROM thread_items i JOIN thread_turns t ON t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=? AND i.session_id=? AND (? OR i.visibility='user') AND (? IS NULL OR (t.status<>'queued' AND i.item_id<>? || ':user')) AND i.kind IN ('user_message','assistant_message','tool_message','system_message') ORDER BY i.created_seq DESC LIMIT ?")?;
-        let rows = stmt.query_map(params![user_id, session_id, include_internal, executing_turn, executing_turn, if limit > 0 { limit } else { -1 }], |row| row.get::<_, String>(0))?
+        let rows = stmt
+            .query_map(
+                params![
+                    user_id,
+                    session_id,
+                    include_internal,
+                    executing_turn,
+                    executing_turn,
+                    if limit > 0 { limit } else { -1 }
+                ],
+                |row| row.get::<_, String>(0),
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         // Decode failures must surface instead of silently dropping model messages.
-        rows.into_iter().rev().map(|text| serde_json::from_str(&text).map_err(Into::into)).collect()
+        rows.into_iter()
+            .rev()
+            .map(|text| serde_json::from_str(&text).map_err(Into::into))
+            .collect()
     }
     fn upsert_thread_text_block_impl(
         &self,
@@ -130,7 +235,8 @@ impl SqliteThreadLogStorage for SqliteStorage {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing text item"))?;
         let index = block["block_index"].as_i64().unwrap_or(0);
-        let field = block["field"].as_str()
+        let field = block["field"]
+            .as_str()
             .or_else(|| block.pointer("/data/field").and_then(Value::as_str))
             .unwrap_or("content");
         let event_id = block["event_id"].as_i64().unwrap_or(0);
@@ -163,20 +269,66 @@ impl SqliteThreadLogStorage for SqliteStorage {
             .filter_map(|text| serde_json::from_str(&text).ok())
             .collect())
     }
-    fn list_thread_item_blocks_page_impl(&self, user_id: &str, session_id: &str, item_id: &str, field: Option<&str>, from_block: i64, limit: i64, include_internal: bool) -> Result<(Vec<Value>, Option<i64>, bool)> {
+    fn list_thread_item_blocks_page_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        field: Option<&str>,
+        from_block: i64,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<(Vec<Value>, Option<i64>, bool)> {
         self.ensure_initialized()?;
         let conn = self.open()?;
-        let requested = limit.clamp(1,100);
+        let requested = limit.clamp(1, 100);
         let field = field.unwrap_or("content");
         let mut stmt = conn.prepare("SELECT b.payload FROM thread_item_blocks b JOIN thread_items i ON i.session_id=b.session_id AND i.item_id=b.item_id WHERE b.user_id=? AND b.session_id=? AND b.item_id=? AND b.field=? AND b.block_index>=? AND (? OR i.visibility='user') ORDER BY b.block_index LIMIT ?")?;
-        let rows = stmt.query_map(params![user_id,session_id,item_id,field,from_block.max(0),include_internal,requested+1], |r| r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows = stmt
+            .query_map(
+                params![
+                    user_id,
+                    session_id,
+                    item_id,
+                    field,
+                    from_block.max(0),
+                    include_internal,
+                    requested + 1
+                ],
+                |r| r.get::<_, String>(0),
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         let has_more = rows.len() > requested as usize;
-        let blocks: Vec<Value> = rows.into_iter().take(requested as usize).filter_map(|text| serde_json::from_str(&text).ok()).collect();
-        let next = blocks.last().and_then(|block| block.get("block_index").and_then(Value::as_i64));
+        let blocks: Vec<Value> = rows
+            .into_iter()
+            .take(requested as usize)
+            .filter_map(|text| serde_json::from_str(&text).ok())
+            .collect();
+        let next = blocks
+            .last()
+            .and_then(|block| block.get("block_index").and_then(Value::as_i64));
         Ok((blocks, next, has_more))
     }
-    fn list_thread_item_blocks_impl(&self, user_id: &str, session_id: &str, item_id: &str, from_block: i64, limit: i64, include_internal: bool) -> Result<Vec<Value>> {
-        Ok(self.list_thread_item_blocks_page_impl(user_id, session_id, item_id, None, from_block, limit, include_internal)?.0)
+    fn list_thread_item_blocks_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        from_block: i64,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<Vec<Value>> {
+        Ok(self
+            .list_thread_item_blocks_page_impl(
+                user_id,
+                session_id,
+                item_id,
+                None,
+                from_block,
+                limit,
+                include_internal,
+            )?
+            .0)
     }
 
     fn find_thread_turn_id_impl(
@@ -302,7 +454,10 @@ impl SqliteThreadLogStorage for SqliteStorage {
         )?;
         let item_seq = seq + 1;
         tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,'{}',?)", params![session_id,item_seq,user_id,"item_upsert",turn_id,item_id,revision,now])?;
-        tx.execute("UPDATE thread_logs SET latest_change_seq=? WHERE session_id=?", params![item_seq, session_id])?;
+        tx.execute(
+            "UPDATE thread_logs SET latest_change_seq=? WHERE session_id=?",
+            params![item_seq, session_id],
+        )?;
         tx.execute(
             "INSERT INTO thread_log_metrics(session_id,user_id,metric_key,metric_value,updated_time) SELECT ?,?,?,latest_user_turn,? FROM thread_logs WHERE session_id=? ON CONFLICT(session_id,metric_key) DO UPDATE SET metric_value=excluded.metric_value,updated_time=excluded.updated_time",
             params![session_id, user_id, "user_turn_total", now, session_id],
@@ -350,7 +505,10 @@ impl SqliteThreadLogStorage for SqliteStorage {
         // Keep the visible user bubble in sync with its durable turn.  The
         // bubble is created as running when the request is admitted, so a
         // terminal turn must close that item as well.
-        let bubble_status = if matches!(status, "completed" | "cancelled" | "failed" | "rejected" | "stopped" | "interrupted") {
+        let bubble_status = if matches!(
+            status,
+            "completed" | "cancelled" | "failed" | "rejected" | "stopped" | "interrupted"
+        ) {
             "completed"
         } else {
             "running"
@@ -442,7 +600,10 @@ impl SqliteThreadLogStorage for SqliteStorage {
             )
             .optional()?;
         if let Some((existing_turn, _)) = &existing {
-            ensure!(existing_turn == turn_id, "thread item belongs to another turn");
+            ensure!(
+                existing_turn == turn_id,
+                "thread item belongs to another turn"
+            );
         }
         if existing.as_ref().map(|(_, value)| value.as_str()) == Some(text.as_str()) {
             tx.commit()?;
@@ -473,7 +634,9 @@ impl SqliteThreadLogStorage for SqliteStorage {
             params![session_id, seq.saturating_sub(4096)],
         )?;
         tx.commit()?;
-        Ok(Some(json!({"change_type":"item_upsert","turn_id":turn_id,"item_id":item_id,"revision":revision,"cursor":seq})))
+        Ok(Some(
+            json!({"change_type":"item_upsert","turn_id":turn_id,"item_id":item_id,"revision":revision,"cursor":seq}),
+        ))
     }
     fn list_thread_turns_impl(
         &self,
@@ -513,6 +676,11 @@ impl SqliteThreadLogStorage for SqliteStorage {
             |r| r.get(0),
         )?;
         Ok((user_turns, items))
+    }
+    fn latest_thread_user_round_by_session_impl(&self, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        Ok(conn.query_row("SELECT COALESCE(MAX(user_turn_index),0) FROM thread_turns WHERE session_id=? AND trigger_kind='user'", params![session_id], |r| r.get(0))?)
     }
     fn get_thread_turn_impl(
         &self,
@@ -567,12 +735,25 @@ impl SqliteThreadLogStorage for SqliteStorage {
         turn["next_after"] = json!(next);
         Ok(Some(turn))
     }
-    fn get_thread_item_impl(&self, user_id: &str, session_id: &str, item_id: &str, include_internal: bool) -> Result<Option<Value>> {
+    fn get_thread_item_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        include_internal: bool,
+    ) -> Result<Option<Value>> {
         self.ensure_initialized()?;
         let conn = self.open()?;
         let mut stmt = conn.prepare("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility FROM thread_items WHERE user_id=? AND session_id=? AND item_id=? AND (? OR visibility='user') LIMIT 1")?;
-        let mut items = stmt.query_map(params![user_id, session_id, item_id, include_internal], item_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
-        let Some(mut item) = items.pop() else { return Ok(None); };
+        let mut items = stmt
+            .query_map(
+                params![user_id, session_id, item_id, include_internal],
+                item_row,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let Some(mut item) = items.pop() else {
+            return Ok(None);
+        };
         if !include_internal {
             if let Some(map) = item["payload"].as_object_mut() {
                 map.remove("model_content");
@@ -581,14 +762,79 @@ impl SqliteThreadLogStorage for SqliteStorage {
         }
         Ok(Some(item))
     }
-    fn list_thread_changes_by_session_impl(&self, session_id: &str, after: i64, limit: i64) -> Result<Vec<Value>> {
+    fn set_thread_item_feedback_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        vote: &str,
+    ) -> Result<Option<Value>> {
+        self.ensure_initialized()?;
+        ensure!(matches!(vote, "up" | "down"), "invalid feedback vote");
+        let now = Self::now_ts();
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let row: Option<(String, String, String, String)> = tx.query_row(
+            "SELECT turn_id,kind,visibility,payload FROM thread_items WHERE user_id=? AND session_id=? AND item_id=?",
+            params![user_id, session_id, item_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).optional()?;
+        let Some((turn_id, kind, visibility, payload_text)) = row else {
+            return Ok(None);
+        };
+        ensure!(
+            kind == "assistant_message" && visibility == "user",
+            "feedback requires visible assistant item"
+        );
+        let mut payload: Value = serde_json::from_str(&payload_text)?;
+        let map = payload
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("invalid thread item payload"))?;
+        if map.get("feedback").is_some() {
+            return Ok(None);
+        }
+        let feedback = json!({"vote":vote,"created_at":now,"locked":true});
+        map.insert("feedback".to_string(), feedback.clone());
+        let text = serde_json::to_string(&payload)?;
+        tx.execute("UPDATE thread_items SET payload=?,revision=revision+1,updated_time=? WHERE session_id=? AND item_id=?", params![text,now,session_id,item_id])?;
+        let revision: i64 = tx.query_row(
+            "SELECT revision FROM thread_items WHERE session_id=? AND item_id=?",
+            params![session_id, item_id],
+            |row| row.get(0),
+        )?;
+        let seq: i64 = tx.query_row(
+            "SELECT latest_change_seq+1 FROM thread_logs WHERE session_id=?",
+            params![session_id],
+            |row| row.get(0),
+        )?;
+        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,'{}',?)", params![session_id,seq,user_id,"item_upsert",turn_id,item_id,revision,now])?;
+        tx.execute(
+            "UPDATE thread_logs SET latest_change_seq=?,updated_time=? WHERE session_id=?",
+            params![seq, now, session_id],
+        )?;
+        tx.commit()?;
+        Ok(Some(feedback))
+    }
+    fn list_thread_changes_by_session_impl(
+        &self,
+        session_id: &str,
+        after: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
         let conn = self.open()?;
         let after = after.max(0);
-        let earliest: Option<i64> = conn.query_row("SELECT MIN(change_seq) FROM thread_log_changes WHERE session_id=?", params![session_id], |r| r.get(0))?;
-        if earliest.is_some_and(|first| after > 0 && first > after + 1) { return Ok(vec![json!({"change_type":"snapshot_required"})]); }
+        let earliest: Option<i64> = conn.query_row(
+            "SELECT MIN(change_seq) FROM thread_log_changes WHERE session_id=?",
+            params![session_id],
+            |r| r.get(0),
+        )?;
+        if earliest.is_some_and(|first| after > 0 && first > after + 1) {
+            return Ok(vec![json!({"change_type":"snapshot_required"})]);
+        }
         let mut stmt = conn.prepare("SELECT change_seq,change_type,turn_id,item_id,revision,payload,created_time FROM thread_log_changes WHERE session_id=? AND change_seq>? ORDER BY change_seq LIMIT ?")?;
-        let rows = stmt.query_map(params![session_id, after, limit.clamp(1,500)], change_row)?
+        let rows = stmt
+            .query_map(params![session_id, after, limit.clamp(1, 500)], change_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
@@ -624,7 +870,10 @@ impl SqliteThreadLogStorage for SqliteStorage {
         let mut conn = self.open()?;
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let mut count = 0i64;
-        count += tx.execute("DELETE FROM thread_log_metrics WHERE user_id=? AND session_id=?", params![user_id, session_id])? as i64;
+        count += tx.execute(
+            "DELETE FROM thread_log_metrics WHERE user_id=? AND session_id=?",
+            params![user_id, session_id],
+        )? as i64;
         count += tx.execute(
             "DELETE FROM thread_item_blocks WHERE user_id=? AND session_id=?",
             params![user_id, session_id],
@@ -779,14 +1028,24 @@ mod tests {
     fn terminal_turn_closes_its_user_message() {
         let dir = tempfile::tempdir().unwrap();
         let db = SqliteStorage::new(dir.path().join("log.db").to_string_lossy().into_owned());
-        let accepted = db.accept_thread_turn_impl("owner", "thread", &input(1)).unwrap();
+        let accepted = db
+            .accept_thread_turn_impl("owner", "thread", &input(1))
+            .unwrap();
         let id = accepted["turn_id"].as_str().unwrap();
-        db.append_thread_item_impl("owner", &json!({
-            "session_id":"thread", "turn_id":id, "item_id":format!("{id}:user"),
-            "kind":"user_message", "status":"running", "content":"message 1"
-        })).unwrap();
-        db.update_thread_turn_impl("owner", "thread", id, "completed", "", &json!({})).unwrap();
-        let turn = db.get_thread_turn_impl("owner", "thread", id, -1, 10, true).unwrap().unwrap();
+        db.append_thread_item_impl(
+            "owner",
+            &json!({
+                "session_id":"thread", "turn_id":id, "item_id":format!("{id}:user"),
+                "kind":"user_message", "status":"running", "content":"message 1"
+            }),
+        )
+        .unwrap();
+        db.update_thread_turn_impl("owner", "thread", id, "completed", "", &json!({}))
+            .unwrap();
+        let turn = db
+            .get_thread_turn_impl("owner", "thread", id, -1, 10, true)
+            .unwrap()
+            .unwrap();
         assert_eq!(turn["items"][0]["status"], "completed");
         assert_eq!(turn["items"][0]["payload"]["status"], "completed");
     }
@@ -794,50 +1053,81 @@ mod tests {
     fn item_blocks_respect_visibility_projection() {
         let dir = tempfile::tempdir().unwrap();
         let db = SqliteStorage::new(dir.path().join("log.db").to_string_lossy().into_owned());
-        let accepted = db.accept_thread_turn_impl("owner", "thread", &input(1)).unwrap();
+        let accepted = db
+            .accept_thread_turn_impl("owner", "thread", &input(1))
+            .unwrap();
         let id = accepted["turn_id"].as_str().unwrap();
         for (item, visibility) in [("public", "user"), ("internal", "model_internal")] {
             db.append_thread_item_impl("owner", &json!({"session_id":"thread","turn_id":id,"item_id":item,"kind":"assistant_message","visibility":visibility})).unwrap();
-            db.upsert_thread_text_block_impl("owner", "thread", &json!({"item_id":item,"block_index":0,"event_id":1,"content":item})).unwrap();
+            db.upsert_thread_text_block_impl(
+                "owner",
+                "thread",
+                &json!({"item_id":item,"block_index":0,"event_id":1,"content":item}),
+            )
+            .unwrap();
         }
-        let visible = db.list_thread_item_blocks_impl("owner", "thread", "internal", 0, 10, false).unwrap();
+        let visible = db
+            .list_thread_item_blocks_impl("owner", "thread", "internal", 0, 10, false)
+            .unwrap();
         assert!(visible.is_empty());
-        let internal = db.list_thread_item_blocks_impl("owner", "thread", "internal", 0, 10, true).unwrap();
+        let internal = db
+            .list_thread_item_blocks_impl("owner", "thread", "internal", 0, 10, true)
+            .unwrap();
         assert_eq!(internal.len(), 1);
     }
     #[test]
     fn model_context_projection_includes_internal_but_user_projection_does_not() {
         let dir = tempfile::tempdir().unwrap();
         let db = SqliteStorage::new(dir.path().join("log.db").to_string_lossy().into_owned());
-        let accepted = db.accept_thread_turn_impl("owner", "thread", &input(1)).unwrap();
+        let accepted = db
+            .accept_thread_turn_impl("owner", "thread", &input(1))
+            .unwrap();
         let id = accepted["turn_id"].as_str().unwrap();
         db.append_thread_item_impl("owner", &json!({"session_id":"thread","turn_id":id,"item_id":"internal-context","kind":"assistant_message","visibility":"model_internal","role":"assistant","content":"hidden context"})).unwrap();
-        let model = crate::storage::ThreadLogStore::load_thread_context_items(&db, "owner", "thread", 0, true).unwrap();
+        let model = crate::storage::ThreadLogStore::load_thread_context_items(
+            &db, "owner", "thread", 0, true,
+        )
+        .unwrap();
         assert!(model.iter().any(|item| item["content"] == "hidden context"));
-        let user = crate::storage::ThreadLogStore::load_thread_context_items(&db, "owner", "thread", 0, false).unwrap();
+        let user = crate::storage::ThreadLogStore::load_thread_context_items(
+            &db, "owner", "thread", 0, false,
+        )
+        .unwrap();
         assert!(!user.iter().any(|item| item["content"] == "hidden context"));
     }
     #[test]
     fn admission_emits_turn_and_initial_item_changes() {
         let dir = tempfile::tempdir().unwrap();
         let db = SqliteStorage::new(dir.path().join("log.db").to_string_lossy().into_owned());
-        let accepted = db.accept_thread_turn_impl("owner", "thread", &input(1)).unwrap();
-        let changes = db.list_thread_changes_impl("owner", "thread", 0, 10).unwrap();
+        let accepted = db
+            .accept_thread_turn_impl("owner", "thread", &input(1))
+            .unwrap();
+        let changes = db
+            .list_thread_changes_impl("owner", "thread", 0, 10)
+            .unwrap();
         assert_eq!(changes.len(), 2);
         assert_eq!(changes[0]["change_type"], "turn_upsert");
         assert_eq!(changes[1]["change_type"], "item_upsert");
-        assert_eq!(changes[1]["item_id"], format!("{}:user", accepted["turn_id"].as_str().unwrap()));
+        assert_eq!(
+            changes[1]["item_id"],
+            format!("{}:user", accepted["turn_id"].as_str().unwrap())
+        );
     }
     #[test]
     fn model_context_pages_all_items_in_a_dense_turn() {
         let dir = tempfile::tempdir().unwrap();
         let db = SqliteStorage::new(dir.path().join("log.db").to_string_lossy().into_owned());
-        let accepted = db.accept_thread_turn_impl("owner", "thread", &input(1)).unwrap();
+        let accepted = db
+            .accept_thread_turn_impl("owner", "thread", &input(1))
+            .unwrap();
         let id = accepted["turn_id"].as_str().unwrap();
         for index in 0..205 {
             db.append_thread_item_impl("owner", &json!({"session_id":"thread","turn_id":id,"item_id":format!("dense-{index}"),"kind":"assistant_message","role":"assistant","content":format!("entry-{index}")})).unwrap();
         }
-        let items = crate::storage::ThreadLogStore::load_thread_context_items(&db, "owner", "thread", 0, true).unwrap();
+        let items = crate::storage::ThreadLogStore::load_thread_context_items(
+            &db, "owner", "thread", 0, true,
+        )
+        .unwrap();
         assert!(items.iter().any(|item| item["content"] == "entry-204"));
         assert!(items.len() >= 206);
     }
@@ -869,7 +1159,9 @@ mod tests {
         use crate::storage::{ConversationLogStore, ThreadLogStore};
         let dir = tempfile::tempdir().unwrap();
         let db = SqliteStorage::new(dir.path().join("log.db").to_string_lossy().into_owned());
-        let accepted = db.accept_thread_turn_impl("owner", "thread", &input(1)).unwrap();
+        let accepted = db
+            .accept_thread_turn_impl("owner", "thread", &input(1))
+            .unwrap();
         let id = accepted["turn_id"].as_str().unwrap();
         let tool = json!({"session_id":"thread","turn_id":id,"user_round":1,
             "item_id":"result-message","role":"tool","tool_call_id":"call-1","content":"result"});
@@ -878,15 +1170,25 @@ mod tests {
             "meta":{"hidden":true,"type":"microcompaction","replacement_history":[]}});
         db.append_chat("owner", &tool).unwrap();
         db.append_chat("owner", &marker).unwrap();
-        db.append_thread_item_impl("owner", &json!({"session_id":"thread","turn_id":id,
-            "item_id":"diagnostic","kind":"model_call","content":"diagnostic"})).unwrap();
-        let model = db.load_thread_context_items("owner", "thread", 0, true).unwrap();
+        db.append_thread_item_impl(
+            "owner",
+            &json!({"session_id":"thread","turn_id":id,
+            "item_id":"diagnostic","kind":"model_call","content":"diagnostic"}),
+        )
+        .unwrap();
+        let model = db
+            .load_thread_context_items("owner", "thread", 0, true)
+            .unwrap();
         assert_eq!(model.len(), 3);
         assert_eq!(model[1]["tool_call_id"], "call-1");
         assert_eq!(model[2]["meta"], marker["meta"]);
-        let last = db.load_thread_context_items("owner", "thread", 1, true).unwrap();
+        let last = db
+            .load_thread_context_items("owner", "thread", 1, true)
+            .unwrap();
         assert_eq!(last[0]["item_id"], "context-marker");
-        let visible = db.load_thread_context_items("owner", "thread", 0, false).unwrap();
+        let visible = db
+            .load_thread_context_items("owner", "thread", 0, false)
+            .unwrap();
         assert_eq!(visible.len(), 2);
     }
     #[test]
@@ -936,25 +1238,51 @@ mod tests {
         item["status"] = json!("completed");
         let second = db.commit_thread_item("owner", &item).unwrap().unwrap();
         assert_eq!(second["revision"], 2);
-        assert_eq!(second["cursor"].as_i64().unwrap(), first["cursor"].as_i64().unwrap() + 1);
-        let changes = db.list_thread_changes("owner", "thread", first["cursor"].as_i64().unwrap(), 10).unwrap();
+        assert_eq!(
+            second["cursor"].as_i64().unwrap(),
+            first["cursor"].as_i64().unwrap() + 1
+        );
+        let changes = db
+            .list_thread_changes("owner", "thread", first["cursor"].as_i64().unwrap(), 10)
+            .unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0]["revision"], second["revision"]);
         assert!(db.commit_thread_item("other", &item).is_err());
-        assert_eq!(db.list_thread_changes("owner", "thread", first["cursor"].as_i64().unwrap(), 10).unwrap(), changes);
+        assert_eq!(
+            db.list_thread_changes("owner", "thread", first["cursor"].as_i64().unwrap(), 10)
+                .unwrap(),
+            changes
+        );
     }
     #[test]
     fn item_identity_cannot_move_between_turns() {
         let dir = tempfile::tempdir().unwrap();
         let db = SqliteStorage::new(dir.path().join("log.db").to_string_lossy().into_owned());
-        let first = db.accept_thread_turn_impl("owner", "thread", &input(1)).unwrap();
-        let second = db.accept_thread_turn_impl("owner", "thread", &input(2)).unwrap();
+        let first = db
+            .accept_thread_turn_impl("owner", "thread", &input(1))
+            .unwrap();
+        let second = db
+            .accept_thread_turn_impl("owner", "thread", &input(2))
+            .unwrap();
         let mut item = json!({"session_id":"thread", "turn_id":first["turn_id"], "item_id":"stable-item", "kind":"tool_message", "content":"result"});
         let receipt = db.append_thread_item_impl("owner", &item).unwrap().unwrap();
         item["turn_id"] = second["turn_id"].clone();
         assert!(db.append_thread_item_impl("owner", &item).is_err());
-        assert!(db.list_thread_changes_impl("owner", "thread", receipt["cursor"].as_i64().unwrap(), 10).unwrap().is_empty());
-        let original = db.get_thread_turn_impl("owner", "thread", first["turn_id"].as_str().unwrap(), -1, 10, true).unwrap().unwrap();
+        assert!(db
+            .list_thread_changes_impl("owner", "thread", receipt["cursor"].as_i64().unwrap(), 10)
+            .unwrap()
+            .is_empty());
+        let original = db
+            .get_thread_turn_impl(
+                "owner",
+                "thread",
+                first["turn_id"].as_str().unwrap(),
+                -1,
+                10,
+                true,
+            )
+            .unwrap()
+            .unwrap();
         assert_eq!(original["items"][1]["revision"], 1);
         assert_eq!(original["items"][1]["payload"]["turn_id"], first["turn_id"]);
     }
@@ -963,22 +1291,54 @@ mod tests {
     fn continuation_preserves_totals_and_context_execution_order() {
         let dir = tempfile::tempdir().unwrap();
         let db = SqliteStorage::new(dir.path().join("log.db").to_string_lossy().into_owned());
-        db.accept_thread_turn_impl("owner", "thread", &input(1)).unwrap();
-        let second = db.accept_thread_turn_impl("owner", "thread", &input(2)).unwrap();
-        let continuation = db.accept_thread_turn_impl("owner", "thread", &json!({"root_user_round":1,"role":"user","content":"resume"})).unwrap();
+        db.accept_thread_turn_impl("owner", "thread", &input(1))
+            .unwrap();
+        let second = db
+            .accept_thread_turn_impl("owner", "thread", &input(2))
+            .unwrap();
+        let continuation = db
+            .accept_thread_turn_impl(
+                "owner",
+                "thread",
+                &json!({"root_user_round":1,"role":"user","content":"resume"}),
+            )
+            .unwrap();
         let conn = db.open().unwrap();
-        conn.execute("UPDATE thread_items SET created_time=1", []).unwrap();
-        conn.execute("UPDATE thread_items SET created_time=2 WHERE turn_id=?", params![second["turn_id"].as_str().unwrap()]).unwrap();
-        conn.execute("UPDATE thread_items SET created_time=3 WHERE turn_id=?", params![continuation["turn_id"].as_str().unwrap()]).unwrap();
-        let context = db.load_thread_context_items_impl("owner", "thread", 2, true, None).unwrap();
+        conn.execute("UPDATE thread_items SET created_time=1", [])
+            .unwrap();
+        conn.execute(
+            "UPDATE thread_items SET created_time=2 WHERE turn_id=?",
+            params![second["turn_id"].as_str().unwrap()],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE thread_items SET created_time=3 WHERE turn_id=?",
+            params![continuation["turn_id"].as_str().unwrap()],
+        )
+        .unwrap();
+        let context = db
+            .load_thread_context_items_impl("owner", "thread", 2, true, None)
+            .unwrap();
         assert_eq!(context.len(), 2);
         assert_eq!(context[0]["content"], "message 2");
         assert_eq!(context[1]["content"], "resume");
-        assert!(db.load_thread_context_items_impl("other", "thread", 0, true, None).unwrap().is_empty());
-        let total: f64 = conn.query_row("SELECT metric_value FROM thread_log_metrics", [], |row| row.get(0)).unwrap();
+        assert!(db
+            .load_thread_context_items_impl("other", "thread", 0, true, None)
+            .unwrap()
+            .is_empty());
+        let total: f64 = conn
+            .query_row("SELECT metric_value FROM thread_log_metrics", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(total, 2.0);
-        db.delete_thread_log_by_session_impl("owner", "thread").unwrap();
-        let remaining: i64 = conn.query_row("SELECT COUNT(*) FROM thread_log_metrics", [], |row| row.get(0)).unwrap();
+        db.delete_thread_log_by_session_impl("owner", "thread")
+            .unwrap();
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM thread_log_metrics", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(remaining, 0);
     }
 
@@ -988,22 +1348,58 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = SqliteStorage::new(dir.path().join("log.db").to_string_lossy().into_owned());
         let previous = db.accept_thread_turn("owner", "thread", &input(1)).unwrap();
-        db.update_thread_turn("owner", "thread", previous["turn_id"].as_str().unwrap(), "completed", "", &json!({})).unwrap();
-        let current = db.accept_thread_turn("owner", "thread", &json!({"role":"user", "content":"message 1", "client_message_id":"current"})).unwrap();
+        db.update_thread_turn(
+            "owner",
+            "thread",
+            previous["turn_id"].as_str().unwrap(),
+            "completed",
+            "",
+            &json!({}),
+        )
+        .unwrap();
+        let current = db
+            .accept_thread_turn(
+                "owner",
+                "thread",
+                &json!({"role":"user", "content":"message 1", "client_message_id":"current"}),
+            )
+            .unwrap();
         let id = current["turn_id"].as_str().unwrap();
-        db.update_thread_turn("owner", "thread", id, "running", "", &json!({})).unwrap();
+        db.update_thread_turn("owner", "thread", id, "running", "", &json!({}))
+            .unwrap();
         db.accept_thread_turn("owner", "thread", &input(3)).unwrap();
-        let continuation = db.accept_thread_turn("owner", "thread", &json!({"root_user_round":1, "role":"user", "content":"pending continuation"})).unwrap();
-        let context = db.load_thread_execution_context("owner", "thread", id, 0).unwrap();
+        let continuation = db
+            .accept_thread_turn(
+                "owner",
+                "thread",
+                &json!({"root_user_round":1, "role":"user", "content":"pending continuation"}),
+            )
+            .unwrap();
+        let context = db
+            .load_thread_execution_context("owner", "thread", id, 0)
+            .unwrap();
         assert_eq!(context.len(), 1);
         assert_eq!(context[0]["content"], "message 1");
         assert_eq!(context[0]["turn_id"], previous["turn_id"]);
-        assert_eq!(db.load_thread_context_items("owner", "thread", 0, true).unwrap().len(), 4);
-        assert!(db.load_thread_execution_context("other", "thread", id, 0).unwrap().is_empty());
+        assert_eq!(
+            db.load_thread_context_items("owner", "thread", 0, true)
+                .unwrap()
+                .len(),
+            4
+        );
+        assert!(db
+            .load_thread_execution_context("other", "thread", id, 0)
+            .unwrap()
+            .is_empty());
         let resume_id = continuation["turn_id"].as_str().unwrap();
-        db.update_thread_turn("owner", "thread", resume_id, "running", "", &json!({})).unwrap();
-        let resumed = db.load_thread_execution_context("owner", "thread", resume_id, 0).unwrap();
-        assert!(!resumed.iter().any(|item| item["content"] == "pending continuation"));
+        db.update_thread_turn("owner", "thread", resume_id, "running", "", &json!({}))
+            .unwrap();
+        let resumed = db
+            .load_thread_execution_context("owner", "thread", resume_id, 0)
+            .unwrap();
+        assert!(!resumed
+            .iter()
+            .any(|item| item["content"] == "pending continuation"));
     }
 
     #[test]
@@ -1014,18 +1410,36 @@ mod tests {
         let db = SqliteStorage::new(path.clone());
         let first = db.accept_thread_turn("owner", "thread", &input(1)).unwrap();
         db.accept_thread_turn("owner", "thread", &input(2)).unwrap();
-        db.accept_thread_turn("owner", "thread", &json!({"root_user_round":1,"role":"user","content":"resume"})).unwrap();
+        db.accept_thread_turn(
+            "owner",
+            "thread",
+            &json!({"root_user_round":1,"role":"user","content":"resume"}),
+        )
+        .unwrap();
         let mut item = json!({"session_id":"thread","turn_id":first["turn_id"],"item_id":"late-result","kind":"assistant_message","role":"assistant","content":"late"});
         db.append_thread_item("owner", &item).unwrap();
-        db.open().unwrap().execute("UPDATE thread_items SET created_time=1", []).unwrap();
+        db.open()
+            .unwrap()
+            .execute("UPDATE thread_items SET created_time=1", [])
+            .unwrap();
         item["content"] = json!("revised");
         db.append_thread_item("owner", &item).unwrap();
         drop(db);
         let reopened = SqliteStorage::new(path);
-        let rows = reopened.load_thread_context_items("owner", "thread", 0, true).unwrap();
-        let contents: Vec<_> = rows.iter().map(|row| row["content"].as_str().unwrap()).collect();
-        assert_eq!(contents, vec!["message 1", "message 2", "resume", "revised"]);
-        let latest = reopened.load_thread_context_items("owner", "thread", 2, true).unwrap();
+        let rows = reopened
+            .load_thread_context_items("owner", "thread", 0, true)
+            .unwrap();
+        let contents: Vec<_> = rows
+            .iter()
+            .map(|row| row["content"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            contents,
+            vec!["message 1", "message 2", "resume", "revised"]
+        );
+        let latest = reopened
+            .load_thread_context_items("owner", "thread", 2, true)
+            .unwrap();
         assert_eq!(latest[0]["content"], "resume");
         assert_eq!(latest[1]["content"], "revised");
     }
@@ -1034,24 +1448,41 @@ mod tests {
     fn lifecycle_changes_publish_input_revision_and_leave_internal_messages_untouched() {
         let dir = tempfile::tempdir().unwrap();
         let db = SqliteStorage::new(dir.path().join("log.db").to_string_lossy().into_owned());
-        let accepted = db.accept_thread_turn_impl("owner", "thread", &input(1)).unwrap();
+        let accepted = db
+            .accept_thread_turn_impl("owner", "thread", &input(1))
+            .unwrap();
         let id = accepted["turn_id"].as_str().unwrap();
         db.append_thread_item_impl("owner", &json!({"session_id":"thread","turn_id":id,"item_id":"internal","kind":"user_message","visibility":"model_internal","status":"completed","content":"observation"})).unwrap();
-        db.update_thread_turn_impl("owner", "thread", id, "running", "", &json!({})).unwrap();
-        let running = db.list_thread_changes_impl("owner", "thread", 3, 10).unwrap();
+        db.update_thread_turn_impl("owner", "thread", id, "running", "", &json!({}))
+            .unwrap();
+        let running = db
+            .list_thread_changes_impl("owner", "thread", 3, 10)
+            .unwrap();
         assert_eq!(running.len(), 2);
         assert_eq!(running[1]["revision"], 2);
         assert_eq!(running[1]["item_id"], format!("{id}:user"));
-        db.update_thread_turn_impl("owner", "thread", id, "interrupted", "", &json!({})).unwrap();
-        let terminal = db.list_thread_changes_impl("owner", "thread", 5, 10).unwrap();
+        db.update_thread_turn_impl("owner", "thread", id, "interrupted", "", &json!({}))
+            .unwrap();
+        let terminal = db
+            .list_thread_changes_impl("owner", "thread", 5, 10)
+            .unwrap();
         assert_eq!(terminal.len(), 2);
         assert_eq!(terminal[1]["revision"], 3);
-        assert!(terminal[0]["revision"].as_i64().unwrap() > running[0]["revision"].as_i64().unwrap());
-        let detail = db.get_thread_turn_impl("owner", "thread", id, -1, 10, true).unwrap().unwrap();
+        assert!(
+            terminal[0]["revision"].as_i64().unwrap() > running[0]["revision"].as_i64().unwrap()
+        );
+        let detail = db
+            .get_thread_turn_impl("owner", "thread", id, -1, 10, true)
+            .unwrap()
+            .unwrap();
         assert_eq!(detail["items"][0]["status"], "completed");
         assert_eq!(detail["items"][1]["revision"], 1);
-        db.update_thread_turn_impl("owner", "thread", id, "running", "", &json!({})).unwrap();
-        assert!(db.list_thread_changes_impl("owner", "thread", 7, 10).unwrap().is_empty());
+        db.update_thread_turn_impl("owner", "thread", id, "running", "", &json!({}))
+            .unwrap();
+        assert!(db
+            .list_thread_changes_impl("owner", "thread", 7, 10)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -1064,42 +1495,91 @@ mod tests {
         for index in 0..125 {
             db.append_thread_item("owner", &json!({"session_id":"source","turn_id":id,"item_id":format!("tool-{index}"),"kind":"tool_message","visibility":"model_internal","role":"tool","content":"result"})).unwrap();
         }
-        let continuation = db.accept_thread_turn("owner", "source", &json!({"root_user_round":1,"role":"user","content":"resume"})).unwrap();
-        db.update_thread_turn("owner", "source", id, "completed", "", &json!({})).unwrap();
-        db.upsert_thread_text_block("owner", "source", &json!({"item_id":"tool-124","block_index":0,"event_id":1,"content":"block"})).unwrap();
+        let continuation = db
+            .accept_thread_turn(
+                "owner",
+                "source",
+                &json!({"root_user_round":1,"role":"user","content":"resume"}),
+            )
+            .unwrap();
+        db.update_thread_turn("owner", "source", id, "completed", "", &json!({}))
+            .unwrap();
+        db.upsert_thread_text_block(
+            "owner",
+            "source",
+            &json!({"item_id":"tool-124","block_index":0,"event_id":1,"content":"block"}),
+        )
+        .unwrap();
         db.accept_thread_turn("owner", "source", &input(2)).unwrap();
         assert!(db.fork_thread_log("other", "source", "denied", 1).is_err());
         db.fork_thread_log("owner", "source", "branch", 1).unwrap();
-        let rows = db.load_thread_context_items("owner", "branch", 0, true).unwrap();
+        let rows = db
+            .load_thread_context_items("owner", "branch", 0, true)
+            .unwrap();
         assert_eq!(rows.len(), 127);
         assert!(rows.iter().all(|item| item["session_id"] == "branch"));
-        let detail = db.get_thread_turn("owner", "branch", id, -1, 1, true).unwrap().unwrap();
+        let detail = db
+            .get_thread_turn("owner", "branch", id, -1, 1, true)
+            .unwrap()
+            .unwrap();
         assert_eq!(detail["status"], "completed");
-        let resume = db.get_thread_turn("owner", "branch", continuation["turn_id"].as_str().unwrap(), -1, 1, true).unwrap().unwrap();
+        let resume = db
+            .get_thread_turn(
+                "owner",
+                "branch",
+                continuation["turn_id"].as_str().unwrap(),
+                -1,
+                1,
+                true,
+            )
+            .unwrap()
+            .unwrap();
         assert_eq!(resume["root_turn_id"], root["turn_id"]);
-        assert_eq!(db.list_thread_item_blocks("owner", "branch", "tool-124", 0, 10, true).unwrap()[0]["content"], "block");
-        assert!(db.list_thread_item_blocks("owner", "branch", "tool-124", 0, 10, false).unwrap().is_empty());
+        assert_eq!(
+            db.list_thread_item_blocks("owner", "branch", "tool-124", 0, 10, true)
+                .unwrap()[0]["content"],
+            "block"
+        );
+        assert!(db
+            .list_thread_item_blocks("owner", "branch", "tool-124", 0, 10, false)
+            .unwrap()
+            .is_empty());
         assert!(db.fork_thread_log("owner", "source", "branch", 2).is_err());
-        assert_eq!(db.load_thread_context_items("owner", "branch", 0, true).unwrap(), rows);
-        assert_eq!(db.accept_thread_turn("owner", "branch", &input(3)).unwrap()["user_turn_index"], 2);
+        assert_eq!(
+            db.load_thread_context_items("owner", "branch", 0, true)
+                .unwrap(),
+            rows
+        );
+        assert_eq!(
+            db.accept_thread_turn("owner", "branch", &input(3)).unwrap()["user_turn_index"],
+            2
+        );
     }
 
     #[test]
     fn visible_message_projection_is_cursor_paginated_and_hides_internal_items() {
         let dir = tempfile::tempdir().unwrap();
         let db = SqliteStorage::new(dir.path().join("visible.db").to_string_lossy().into_owned());
-        let accepted = db.accept_thread_turn_impl("owner", "thread", &input(1)).unwrap();
+        let accepted = db
+            .accept_thread_turn_impl("owner", "thread", &input(1))
+            .unwrap();
         let turn = accepted["turn_id"].as_str().unwrap();
         for i in 0..8 {
             db.append_thread_item_impl("owner", &json!({"session_id":"thread","turn_id":turn,"item_id":format!("visible-{i}"),"kind":"assistant_message","content":format!("v{i}")})).unwrap();
         }
         db.append_thread_item_impl("owner", &json!({"session_id":"thread","turn_id":turn,"item_id":"hidden","kind":"assistant_message","visibility":"model_internal","content":"secret"})).unwrap();
-        let first = db.list_thread_visible_messages_impl("owner", "thread", None, 4).unwrap();
+        let first = db
+            .list_thread_visible_messages_impl("owner", "thread", None, 4)
+            .unwrap();
         assert_eq!(first.len(), 4);
         assert!(first.iter().all(|row| row["content"] != "secret"));
-        let cursor = first.last().unwrap()["_thread_item_seq"].as_i64().unwrap();
-        let second = db.list_thread_visible_messages_impl("owner", "thread", Some(cursor), 20).unwrap();
-        assert!(second.iter().all(|row| row["_thread_item_seq"].as_i64().unwrap() < cursor));
+        let cursor = first.last().unwrap()["created_seq"].as_i64().unwrap();
+        let second = db
+            .list_thread_visible_messages_impl("owner", "thread", Some(cursor), 20)
+            .unwrap();
+        assert!(second
+            .iter()
+            .all(|row| row["created_seq"].as_i64().unwrap() < cursor));
         assert_eq!(second.len(), 5);
     }
 
@@ -1110,39 +1590,90 @@ mod tests {
         let db = SqliteStorage::new(dir.path().join("blocks.db").to_string_lossy().into_owned());
         let accepted = db.accept_thread_turn("owner", "thread", &input(1)).unwrap();
         let turn_id = accepted["turn_id"].as_str().unwrap();
-        db.append_thread_item("owner", &json!({
-            "session_id":"thread", "turn_id":turn_id, "item_id":"answer",
-            "kind":"assistant_message", "visibility":"user", "role":"assistant",
-            "content":""
-        })).unwrap();
+        db.append_thread_item(
+            "owner",
+            &json!({
+                "session_id":"thread", "turn_id":turn_id, "item_id":"answer",
+                "kind":"assistant_message", "visibility":"user", "role":"assistant",
+                "content":""
+            }),
+        )
+        .unwrap();
         for index in 0..3 {
-            db.upsert_thread_text_block("owner", "thread", &json!({
-                "item_id":"answer", "block_index":index, "event_id":index + 1,
-                "field":"content", "content":format!("c{index}")
-            })).unwrap();
+            db.upsert_thread_text_block(
+                "owner",
+                "thread",
+                &json!({
+                    "item_id":"answer", "block_index":index, "event_id":index + 1,
+                    "field":"content", "content":format!("c{index}")
+                }),
+            )
+            .unwrap();
         }
-        db.upsert_thread_text_block("owner", "thread", &json!({
-            "item_id":"answer", "block_index":0, "event_id":10,
-            "field":"reasoning", "reasoning":"thought"
-        })).unwrap();
-        let first = db.list_thread_item_blocks_page("owner", "thread", "answer", Some("content"), 0, 2, false).unwrap();
+        db.upsert_thread_text_block(
+            "owner",
+            "thread",
+            &json!({
+                "item_id":"answer", "block_index":0, "event_id":10,
+                "field":"reasoning", "reasoning":"thought"
+            }),
+        )
+        .unwrap();
+        let first = db
+            .list_thread_item_blocks_page("owner", "thread", "answer", Some("content"), 0, 2, false)
+            .unwrap();
         assert_eq!(first.0.len(), 2);
         assert_eq!(first.1, Some(1));
         assert!(first.2);
-        let second = db.list_thread_item_blocks_page("owner", "thread", "answer", Some("content"), 2, 2, false).unwrap();
+        let second = db
+            .list_thread_item_blocks_page("owner", "thread", "answer", Some("content"), 2, 2, false)
+            .unwrap();
         assert_eq!(second.0.len(), 1);
         assert!(!second.2);
-        let reasoning = db.list_thread_item_blocks_page("owner", "thread", "answer", Some("reasoning"), 0, 2, false).unwrap();
+        let reasoning = db
+            .list_thread_item_blocks_page(
+                "owner",
+                "thread",
+                "answer",
+                Some("reasoning"),
+                0,
+                2,
+                false,
+            )
+            .unwrap();
         assert_eq!(reasoning.0.len(), 1);
-        assert!(db.upsert_thread_text_block("owner", "thread", &json!({"item_id":"orphan", "block_index":0, "event_id":99, "content":"x"})).is_err());
-        assert!(db.list_thread_item_blocks_page("owner", "thread", "orphan", None, 0, 2, false).unwrap().0.is_empty());
-        db.append_thread_item("owner", &json!({
-            "session_id":"thread", "turn_id":turn_id, "item_id":"hidden-answer",
-            "kind":"assistant_message", "visibility":"model_internal", "role":"assistant"
-        })).unwrap();
+        assert!(db
+            .upsert_thread_text_block(
+                "owner",
+                "thread",
+                &json!({"item_id":"orphan", "block_index":0, "event_id":99, "content":"x"})
+            )
+            .is_err());
+        assert!(db
+            .list_thread_item_blocks_page("owner", "thread", "orphan", None, 0, 2, false)
+            .unwrap()
+            .0
+            .is_empty());
+        db.append_thread_item(
+            "owner",
+            &json!({
+                "session_id":"thread", "turn_id":turn_id, "item_id":"hidden-answer",
+                "kind":"assistant_message", "visibility":"model_internal", "role":"assistant"
+            }),
+        )
+        .unwrap();
         db.upsert_thread_text_block("owner", "thread", &json!({"item_id":"hidden-answer", "block_index":0, "event_id":100, "content":"secret"})).unwrap();
-        assert!(db.list_thread_item_blocks_page("owner", "thread", "hidden-answer", None, 0, 2, false).unwrap().0.is_empty());
-        assert_eq!(db.list_thread_item_blocks_page("owner", "thread", "hidden-answer", None, 0, 2, true).unwrap().0.len(), 1);
+        assert!(db
+            .list_thread_item_blocks_page("owner", "thread", "hidden-answer", None, 0, 2, false)
+            .unwrap()
+            .0
+            .is_empty());
+        assert_eq!(
+            db.list_thread_item_blocks_page("owner", "thread", "hidden-answer", None, 0, 2, true)
+                .unwrap()
+                .0
+                .len(),
+            1
+        );
     }
-
 }

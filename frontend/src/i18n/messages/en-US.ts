@@ -2643,6 +2643,7 @@ export default {
   'messenger.timeline.detail.lastPage': 'Last page',
   'messenger.timeline.detail.pageInfo': 'Page {page} · {start}-{end}/{total}',
   'messenger.timeline.detail.noEvents': 'No events yet',
+  'messenger.timeline.detail.metaUserNameLabel': 'User name',
   'messenger.timeline.detail.metaAgentLabel': 'Agent',
   'messenger.timeline.detail.metaStatusLabel': 'Status',
   'messenger.timeline.detail.metaElapsedLabel': 'Elapsed',

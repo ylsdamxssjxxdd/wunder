@@ -26,8 +26,7 @@ pub(super) trait SqliteLogStatsStorage {
         start_time: f64,
         end_time: f64,
     ) -> Result<HashMap<String, i64>>;
-    fn delete_chat_history_impl(&self, user_id: &str) -> Result<i64>;
-    fn delete_chat_history_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64>;
+    fn delete_thread_logs_by_user_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_tool_logs_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_tool_logs_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn delete_artifact_logs_impl(&self, user_id: &str) -> Result<i64>;
@@ -64,7 +63,7 @@ impl SqliteLogStatsStorage for SqliteStorage {
         self.ensure_initialized()?;
         let conn = self.open()?;
         let mut stmt = conn.prepare(
-            "SELECT user_id, COUNT(*) as chat_records, MAX(created_time) as last_time FROM chat_history GROUP BY user_id",
+            "SELECT l.user_id, COUNT(i.item_id) as chat_records, COALESCE(MAX(i.updated_time), MAX(l.updated_time)) as last_time FROM thread_logs l LEFT JOIN thread_items i ON i.session_id=l.session_id AND i.user_id=l.user_id AND i.visibility='user' AND i.kind IN ('user_message','assistant_message') GROUP BY l.user_id",
         )?;
         let rows = stmt
             .query_map([], |row| {
@@ -231,7 +230,7 @@ impl SqliteLogStatsStorage for SqliteStorage {
         let conn = self.open()?;
         let dbstat_query = "SELECT COALESCE(SUM(pgsize), 0) \
             FROM dbstat WHERE name IN ( \
-                'chat_history', \
+                'thread_logs', 'thread_turns', 'thread_items', 'thread_item_blocks', 'thread_log_changes', 'thread_log_metrics', \
                 'tool_logs', \
                 'artifact_logs', \
                 'monitor_sessions', \
@@ -243,7 +242,6 @@ impl SqliteLogStatsStorage for SqliteStorage {
         }
         let total: i64 = conn.query_row(
             "SELECT \
-            (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM chat_history) + \
             (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM tool_logs) + \
             (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM artifact_logs) + \
             (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM monitor_sessions) + \
@@ -289,10 +287,6 @@ impl SqliteLogStatsStorage for SqliteStorage {
         };
         let mut results = HashMap::new();
         results.insert(
-            "chat_history".to_string(),
-            delete_range("chat_history", "created_time")?,
-        );
-        results.insert(
             "tool_logs".to_string(),
             delete_range("tool_logs", "created_time")?,
         );
@@ -321,29 +315,29 @@ impl SqliteLogStatsStorage for SqliteStorage {
         Ok(results)
     }
 
-    fn delete_chat_history_impl(&self, user_id: &str) -> Result<i64> {
+    fn delete_thread_logs_by_user_impl(&self, user_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM chat_history WHERE user_id = ?",
-            params![user_id],
-        )?;
-        Ok(affected as i64)
-    }
-
-    fn delete_chat_history_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+        if user_id.trim().is_empty() {
             return Ok(0);
         }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM chat_history WHERE user_id = ? AND session_id = ?",
-            params![cleaned_user, cleaned_session],
-        )?;
-        Ok(affected as i64)
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let mut removed = 0i64;
+        for table in [
+            "thread_item_blocks",
+            "thread_log_changes",
+            "thread_items",
+            "thread_turns",
+            "thread_log_metrics",
+            "thread_logs",
+        ] {
+            removed += tx.execute(
+                &format!("DELETE FROM {table} WHERE user_id=?"),
+                params![user_id],
+            )? as i64;
+        }
+        tx.commit()?;
+        Ok(removed)
     }
 
     fn delete_tool_logs_impl(&self, user_id: &str) -> Result<i64> {
@@ -580,17 +574,17 @@ mod tests {
 
         assert_eq!(
             storage
-                .delete_chat_history_by_session("user-a", "session-a")
+                .delete_thread_log_by_session("user-a", "session-a")
                 .expect("delete chat by session"),
             1
         );
         assert!(storage
-            .load_chat_history("user-a", "session-a", None)
+            .load_thread_context_items("user-a", "session-a", 500, true)
             .expect("load chat after delete")
             .is_empty());
         assert_eq!(
             storage
-                .delete_chat_history("user-a")
+                .delete_thread_logs_by_user("user-a")
                 .expect("delete remaining chat"),
             1
         );
@@ -618,72 +612,5 @@ mod tests {
                 .expect("delete remaining artifacts"),
             1
         );
-    }
-
-    #[test]
-    fn log_stats_store_deletes_logs_by_time_range() {
-        let (storage, _dir) = build_storage();
-        let conn = storage.open().expect("open sqlite");
-        conn.execute(
-            "INSERT INTO chat_history (user_id, session_id, role, payload, created_time)
-             VALUES (?, ?, ?, ?, ?)",
-            ("user-a", "session-old", "user", "{}", 10.0),
-        )
-        .expect("insert old chat");
-        conn.execute(
-            "INSERT INTO chat_history (user_id, session_id, role, payload, created_time)
-             VALUES (?, ?, ?, ?, ?)",
-            ("user-a", "session-new", "user", "{}", 90.0),
-        )
-        .expect("insert new chat");
-        conn.execute(
-            "INSERT INTO tool_logs (user_id, session_id, tool, payload, created_time)
-             VALUES (?, ?, ?, ?, ?)",
-            ("user-a", "session-tool", "tool-a", "{}", 50.0),
-        )
-        .expect("insert tool");
-        conn.execute(
-            "INSERT INTO monitor_sessions (session_id, user_id, status, updated_time, payload)
-             VALUES (?, ?, ?, ?, ?)",
-            ("session-monitor", "user-a", "finished", 55.0, "{}"),
-        )
-        .expect("insert monitor");
-        conn.execute(
-            "INSERT INTO stream_events (session_id, event_id, user_id, payload, created_time)
-             VALUES (?, ?, ?, ?, ?)",
-            ("session-stream", 1_i64, "user-a", "{}", 60.0),
-        )
-        .expect("insert stream");
-        conn.execute(
-            "INSERT INTO memory_task_logs (task_id, user_id, session_id, status, updated_time)
-             VALUES (?, ?, ?, ?, ?)",
-            ("task-a", "user-a", "session-memory", "finished", 70.0),
-        )
-        .expect("insert memory task");
-        drop(conn);
-
-        let deleted = storage
-            .delete_logs_by_time_range(40.0, 80.0)
-            .expect("delete range");
-        assert_eq!(deleted.get("tool_logs").copied(), Some(1));
-        assert_eq!(deleted.get("monitor_sessions").copied(), Some(1));
-        assert_eq!(deleted.get("stream_events").copied(), Some(1));
-        assert_eq!(deleted.get("memory_task_logs").copied(), Some(1));
-
-        let conn = storage.open().expect("reopen sqlite");
-        let chat_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM chat_history", [], |row| row.get(0))
-            .expect("count chat");
-        assert_eq!(chat_count, 2);
-        let tool_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM tool_logs", [], |row| row.get(0))
-            .expect("count tool");
-        assert_eq!(tool_count, 0);
-        let monitor_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM monitor_sessions", [], |row| {
-                row.get(0)
-            })
-            .expect("count monitor");
-        assert_eq!(monitor_count, 0);
     }
 }

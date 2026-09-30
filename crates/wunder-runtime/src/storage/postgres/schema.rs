@@ -117,38 +117,6 @@ impl PostgresStorage {
         Ok(())
     }
 
-    fn ensure_chat_history_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
-        let rows = conn.query(
-            "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'chat_history'",
-            &[],
-        )?;
-        let mut columns = HashSet::new();
-        for row in rows {
-            let name: String = row.get(0);
-            columns.insert(name);
-        }
-        // Retire the duplicated content/timestamp/meta columns: they were only
-        // written on insert while every reader parses the payload JSON.
-        let retired: Vec<&str> = ["content", "timestamp", "meta"]
-            .into_iter()
-            .filter(|column| columns.contains(*column))
-            .collect();
-        if retired.is_empty() {
-            return Ok(());
-        }
-        let mut tx = conn.transaction()?;
-        // Serializes startup migrations across server instances.
-        tx.execute("LOCK TABLE chat_history IN ACCESS EXCLUSIVE MODE", &[])?;
-        for column in retired {
-            tx.execute(
-                &format!("ALTER TABLE chat_history DROP COLUMN {column}"),
-                &[],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
     fn ensure_model_context_table_retired(&self, conn: &mut PgConn<'_>) -> Result<()> {
         conn.execute("DROP TABLE IF EXISTS model_context_entries", &[])?;
         Ok(())
@@ -869,12 +837,6 @@ impl PostgresStorage {
                  ON tool_logs USING brin (created_time)",
             ),
             (
-                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chat_history_time \
-                 ON chat_history USING brin (created_time)",
-                "CREATE INDEX IF NOT EXISTS idx_chat_history_time \
-                 ON chat_history USING brin (created_time)",
-            ),
-            (
                 "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_artifact_logs_time \
                  ON artifact_logs USING brin (created_time)",
                 "CREATE INDEX IF NOT EXISTS idx_artifact_logs_time \
@@ -943,16 +905,6 @@ impl PostgresSchemaStorage for PostgresStorage {
                   value TEXT NOT NULL,
                   updated_time DOUBLE PRECISION NOT NULL
                 );
-                CREATE TABLE IF NOT EXISTS chat_history (
-                  id BIGSERIAL PRIMARY KEY,
-                  user_id TEXT NOT NULL,
-                  session_id TEXT NOT NULL,
-                  role TEXT NOT NULL,
-                  payload TEXT NOT NULL,
-                  created_time DOUBLE PRECISION NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_chat_history_session
-                  ON chat_history (user_id, session_id, id);
                 CREATE TABLE IF NOT EXISTS thread_logs (
                   session_id TEXT PRIMARY KEY,
                   user_id TEXT NOT NULL,
@@ -2028,7 +1980,8 @@ impl PostgresSchemaStorage for PostgresStorage {
                     self.ensure_session_goal_columns(&mut conn)?;
                     self.ensure_thread_item_sequence(&mut conn)?;
                     self.ensure_thread_item_block_fields(&mut conn)?;
-                    self.ensure_chat_history_columns(&mut conn)?;
+                    // A hard cutover intentionally discards obsolete duplicate history.
+                    conn.execute("DROP TABLE IF EXISTS chat_history", &[])?;
                     self.ensure_model_context_table_retired(&mut conn)?;
                     self.ensure_stream_event_workflow_columns(&mut conn)?;
                     self.ensure_channel_columns(&mut conn)?;

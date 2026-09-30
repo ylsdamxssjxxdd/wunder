@@ -11,7 +11,8 @@ pub(super) trait SqliteSchemaStorage {
 
 impl SqliteStorage {
     fn ensure_thread_item_block_fields(&self, conn: &Connection) -> Result<()> {
-        let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+        let tx =
+            rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
         let columns = load_table_columns(&tx, "thread_item_blocks")?;
         if !columns.contains("field") {
             tx.execute_batch(
@@ -35,10 +36,14 @@ impl SqliteStorage {
     }
 
     fn ensure_thread_item_sequence(&self, conn: &Connection) -> Result<()> {
-        let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+        let tx =
+            rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
         let columns = load_table_columns(&tx, "thread_items")?;
         if !columns.contains("created_seq") {
-            tx.execute("ALTER TABLE thread_items ADD COLUMN created_seq INTEGER NOT NULL DEFAULT 0", [])?;
+            tx.execute(
+                "ALTER TABLE thread_items ADD COLUMN created_seq INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
             // Existing prototype rows can only retain their recorded insertion order.
             tx.execute("UPDATE thread_items SET created_seq=rowid", [])?;
             tx.execute("UPDATE thread_logs SET latest_change_seq=MAX(latest_change_seq, COALESCE((SELECT MAX(created_seq) FROM thread_items WHERE thread_items.session_id=thread_logs.session_id),0))", [])?;
@@ -170,24 +175,6 @@ impl SqliteStorage {
             if !columns.contains(name) {
                 conn.execute(
                     &format!("ALTER TABLE session_goals ADD COLUMN {name} {kind}"),
-                    [],
-                )?;
-            }
-        }
-        Ok(())
-    }
-
-    fn ensure_chat_history_columns(&self, conn: &Connection) -> Result<()> {
-        let columns = load_table_columns(conn, "chat_history")?;
-        if columns.is_empty() {
-            return Ok(());
-        }
-        // Retire the duplicated content/timestamp/meta columns: they were only
-        // written on insert while every reader parses the payload JSON.
-        for column in ["content", "timestamp", "meta"] {
-            if columns.contains(column) {
-                conn.execute(
-                    &format!("ALTER TABLE chat_history DROP COLUMN {column}"),
                     [],
                 )?;
             }
@@ -525,16 +512,6 @@ impl SqliteSchemaStorage for SqliteStorage {
               value TEXT NOT NULL,
               updated_time REAL NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS chat_history (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              user_id TEXT NOT NULL,
-              session_id TEXT NOT NULL,
-              role TEXT NOT NULL,
-              payload TEXT NOT NULL,
-              created_time REAL NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_chat_history_session
-              ON chat_history (user_id, session_id, id);
             CREATE TABLE IF NOT EXISTS thread_logs (
               session_id TEXT PRIMARY KEY,
               user_id TEXT NOT NULL,
@@ -1606,7 +1583,8 @@ impl SqliteSchemaStorage for SqliteStorage {
         self.ensure_session_goal_columns(&conn)?;
         self.ensure_thread_item_sequence(&conn)?;
         self.ensure_thread_item_block_fields(&conn)?;
-        self.ensure_chat_history_columns(&conn)?;
+        // A hard cutover intentionally discards obsolete duplicate history.
+        conn.execute("DROP TABLE IF EXISTS chat_history", [])?;
         self.ensure_model_context_table_retired(&conn)?;
         self.ensure_stream_event_workflow_columns(&conn)?;
         self.ensure_channel_columns(&conn)?;

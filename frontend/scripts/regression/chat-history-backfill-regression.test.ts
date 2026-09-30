@@ -2,23 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  buildExistingHistoryIdSet,
+  buildExistingHistoryItemSeqSet,
   collectDedupedHistoryBackfillPage,
   prependHistoryBackfillPage,
   readHistoryBackfillPage
 } from '../../src/stores/chatHistoryBackfill';
 
 test('history backfill continues past duplicate pages and preserves chronological order', () => {
-  const existingIds = buildExistingHistoryIdSet([
-    { role: 'user', content: 'recent user', history_id: 30 },
-    { role: 'assistant', content: 'recent assistant', history_id: 31 }
+  const existingIds = buildExistingHistoryItemSeqSet([
+    { role: 'user', content: 'recent user', created_seq: 30 },
+    { role: 'assistant', content: 'recent assistant', created_seq: 31 }
   ]);
   let accumulated: Record<string, unknown>[] = [];
 
   const duplicatePage = readHistoryBackfillPage({
-    transcript: [{ role: 'user', content: 'recent user', history_id: 30 }],
-    history_has_more: true,
-    history_before_id: 20
+    transcript: [{ role: 'user', content: 'recent user', created_seq: 30 }],
+    has_more: true,
+    before_seq: 20
   });
   const duplicateDeduped = collectDedupedHistoryBackfillPage(
     duplicatePage.transcript,
@@ -32,11 +32,11 @@ test('history backfill continues past duplicate pages and preserves chronologica
 
   const olderPage = readHistoryBackfillPage({
     transcript: [
-      { role: 'user', content: 'older user', history_id: 10 },
-      { role: 'assistant', content: 'older assistant', history_id: 11 }
+      { role: 'user', content: 'older user', created_seq: 10 },
+      { role: 'assistant', content: 'older assistant', created_seq: 11 }
     ],
-    history_has_more: false,
-    history_before_id: 10
+    has_more: false,
+    before_seq: 10
   });
   const olderDeduped = collectDedupedHistoryBackfillPage(olderPage.transcript, existingIds);
   accumulated = prependHistoryBackfillPage(accumulated, olderDeduped);
@@ -48,13 +48,13 @@ test('history backfill continues past duplicate pages and preserves chronologica
 });
 
 test('history backfill prepends later-discovered older pages before accumulated newer pages', () => {
-  const existingIds = buildExistingHistoryIdSet([]);
+  const existingIds = buildExistingHistoryItemSeqSet([]);
   let accumulated: Record<string, unknown>[] = [];
 
   const newerPage = collectDedupedHistoryBackfillPage(
     [
-      { role: 'user', content: 'middle user', history_id: 20 },
-      { role: 'assistant', content: 'middle assistant', history_id: 21 }
+      { role: 'user', content: 'middle user', created_seq: 20 },
+      { role: 'assistant', content: 'middle assistant', created_seq: 21 }
     ],
     existingIds
   );
@@ -62,15 +62,15 @@ test('history backfill prepends later-discovered older pages before accumulated 
 
   const olderPage = collectDedupedHistoryBackfillPage(
     [
-      { role: 'user', content: 'oldest user', history_id: 10 },
-      { role: 'assistant', content: 'oldest assistant', history_id: 11 }
+      { role: 'user', content: 'oldest user', created_seq: 10 },
+      { role: 'assistant', content: 'oldest assistant', created_seq: 11 }
     ],
     existingIds
   );
   accumulated = prependHistoryBackfillPage(accumulated, olderPage);
 
   assert.deepEqual(
-    accumulated.map((message) => message.history_id),
+    accumulated.map((message) => message.created_seq),
     [10, 11, 20, 21]
   );
 });

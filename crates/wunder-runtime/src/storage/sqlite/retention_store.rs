@@ -95,7 +95,7 @@ mod tests {
         assert_eq!(count_stream_events(&storage), 1);
         assert_eq!(
             storage
-                .load_chat_history("user-a", "session-a", None)
+                .load_thread_context_items("user-a", "session-a", 500, true)
                 .expect("load chat history")
                 .len(),
             1

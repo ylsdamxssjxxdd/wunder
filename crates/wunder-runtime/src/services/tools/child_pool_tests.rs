@@ -279,7 +279,7 @@ async fn run_child_pool_scenario(messaging: bool, postgres: Option<String>) {
         }
         let history = state
             .storage
-            .load_chat_history(&user.user_id, &child_id, None)
+            .load_thread_context_items(&user.user_id, &child_id, 500, true)
             .unwrap();
         assert_eq!(
             history

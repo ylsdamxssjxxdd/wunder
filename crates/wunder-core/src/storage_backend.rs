@@ -22,48 +22,13 @@ pub trait MetaStore {
 /// Chat, tool, and artifact log storage.
 ///
 /// Model input is derived from ThreadLog message Items (including hidden
-/// internal rows); the former `chat_history` and `model_context_entries`
-/// mirrors remain only for compatibility and retention tooling.
+/// internal rows). No duplicate conversation history is stored.
 pub trait ConversationLogStore {
     fn append_chat(&self, user_id: &str, payload: &Value) -> Result<()>;
     fn append_tool_log(&self, user_id: &str, payload: &Value) -> Result<()>;
     fn append_artifact_log(&self, user_id: &str, payload: &Value) -> Result<()>;
-    fn load_chat_history(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        limit: Option<i64>,
-    ) -> Result<Vec<Value>>;
-    fn load_chat_history_page(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        before_id: Option<i64>,
-        limit: i64,
-    ) -> Result<Vec<Value>>;
-    fn load_chat_history_item(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        history_id: i64,
-    ) -> Result<Option<Value>> {
-        if history_id <= 0 {
-            return Ok(None);
-        }
-        // Reuse the indexed cursor query so SQLite and PostgreSQL keep identical ownership semantics.
-        Ok(self
-            .load_chat_history_page(user_id, session_id, Some(history_id.saturating_add(1)), 1)?
-            .into_iter()
-            .find(|item| item.get("_history_id").and_then(Value::as_i64) == Some(history_id)))
-    }
     fn load_artifact_logs(&self, user_id: &str, session_id: &str, limit: i64)
         -> Result<Vec<Value>>;
-    fn get_session_system_prompt(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        language: Option<&str>,
-    ) -> Result<Option<String>>;
 }
 
 /// Durable thread timeline storage.  The timeline is intentionally separate
@@ -75,14 +40,38 @@ pub trait ThreadLogStore {
     /// reconstruct context by replaying stream events.
     /// Atomically fork all durable records through a root round into an empty thread.
     /// Identities are session-scoped and remain stable within the copied graph.
-    fn fork_thread_log(&self, user_id: &str, source_session_id: &str, target_session_id: &str, through_round: i64) -> Result<()>;
-    fn load_thread_context_items(&self, user_id: &str, session_id: &str, limit: i64, include_internal: bool) -> Result<Vec<Value>>;
+    fn fork_thread_log(
+        &self,
+        user_id: &str,
+        source_session_id: &str,
+        target_session_id: &str,
+        through_round: i64,
+    ) -> Result<()>;
+    fn load_thread_context_items(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<Vec<Value>>;
     /// User-visible message projection ordered by durable Item creation sequence.
-    fn list_thread_visible_messages(&self, user_id: &str, session_id: &str, before_seq: Option<i64>, limit: i64) -> Result<Vec<Value>>;
+    fn list_thread_visible_messages(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        before_seq: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<Value>>;
 
     /// Execution history excludes queued turns and the current turn's admission
     /// message. The executor appends the fully prepared current input once.
-    fn load_thread_execution_context(&self, user_id: &str, session_id: &str, turn_id: &str, limit: i64) -> Result<Vec<Value>>;
+    fn load_thread_execution_context(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turn_id: &str,
+        limit: i64,
+    ) -> Result<Vec<Value>>;
 
     fn upsert_thread_text_block(
         &self,
@@ -152,6 +141,7 @@ pub trait ThreadLogStore {
         session_id: &str,
         include_internal: bool,
     ) -> Result<(i64, i64)>;
+    fn latest_thread_user_round_by_session(&self, session_id: &str) -> Result<i64>;
     fn get_thread_turn(
         &self,
         user_id: &str,
@@ -163,13 +153,22 @@ pub trait ThreadLogStore {
     ) -> Result<Option<Value>>;
     /// Read one stable Item by identity for long-content hydration and other
     /// targeted projections. Ownership and visibility are enforced in the
-    /// storage query; callers never fall back to chat_history IDs.
+    /// storage query; callers use stable Item IDs.
     fn get_thread_item(
         &self,
         user_id: &str,
         session_id: &str,
         item_id: &str,
         include_internal: bool,
+    ) -> Result<Option<Value>>;
+    /// Persist one immutable user feedback decision on a visible assistant
+    /// Item. Returns None when a decision was already recorded.
+    fn set_thread_item_feedback(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        vote: &str,
     ) -> Result<Option<Value>>;
     fn list_thread_changes(
         &self,
@@ -179,7 +178,12 @@ pub trait ThreadLogStore {
         limit: i64,
     ) -> Result<Vec<Value>>;
     /// Internal recovery projection; callers must perform authorization before invoking.
-    fn list_thread_changes_by_session(&self, session_id: &str, after_seq: i64, limit: i64) -> Result<Vec<Value>>;
+    fn list_thread_changes_by_session(
+        &self,
+        session_id: &str,
+        after_seq: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>>;
     fn delete_thread_log_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
 }
 
@@ -204,8 +208,7 @@ pub trait LogStatsStore {
         start_time: f64,
         end_time: f64,
     ) -> Result<HashMap<String, i64>>;
-    fn delete_chat_history(&self, user_id: &str) -> Result<i64>;
-    fn delete_chat_history_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
+    fn delete_thread_logs_by_user(&self, user_id: &str) -> Result<i64>;
     fn delete_tool_logs(&self, user_id: &str) -> Result<i64>;
     fn delete_tool_logs_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn delete_artifact_logs(&self, user_id: &str) -> Result<i64>;
@@ -417,7 +420,7 @@ pub trait AgentRuntimeStore {
     fn delete_stream_events_by_session(&self, session_id: &str) -> Result<i64>;
     /// Fold a finished user round: drop persisted streaming rows of the given
     /// event types (e.g. `llm_output_delta`). The final text is durable in
-    /// chat_history; delta rows only serve in-flight replay.
+    /// ThreadLog; delta rows only serve in-flight replay.
     fn delete_stream_events_by_round(
         &self,
         session_id: &str,

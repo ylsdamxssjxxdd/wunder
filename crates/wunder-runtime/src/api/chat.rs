@@ -341,8 +341,8 @@ async fn send_message(
                 "queue_total": info.queue_total,
                 "active_ahead": info.active_ahead,
                 "wait_ahead": info.wait_ahead,
-                "queue_event_id": info.queue_event_id,
-                "queue_after_event_id": info.queue_after_event_id,
+                "queue_change_seq": info.queue_change_seq,
+                "queue_after_change_seq": info.queue_after_change_seq,
             });
             Ok((StatusCode::ACCEPTED, Json(json!({ "data": payload }))).into_response())
         }
@@ -473,9 +473,8 @@ pub(crate) async fn build_chat_request(
         .map(|record| record.preview_skill)
         .unwrap_or(false);
 
-    // ThreadLog owns the durable user-turn directory.  Do not infer whether
-    // this is the first message from a compatibility chat_history page: that
-    // table may lag the admission transaction and can contain hidden rows.
+    // ThreadLog owns the durable user-turn directory. The admission
+    // transaction, rather than a message projection, defines first use.
     let is_first_user_message = state
         .storage
         .get_thread_log_counts(&user.user_id, &session_id, false)

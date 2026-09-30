@@ -10,25 +10,16 @@ fn seed(mut execute: impl FnMut(&str) -> Result<()>) {
         execute(&format!("INSERT INTO chat_sessions (session_id,user_id,title,status,created_at,updated_at,last_message_at) \
             VALUES ('{id}','{owner}','thread','active',20,80,{last})")).unwrap();
     }
-    for (id, at) in [
-        ("cleared", 50),
-        ("partial", 200),
-        ("live", 50),
-        ("queued", 50),
-        ("locked", 50),
-        ("other", 200),
-    ] {
-        execute(&format!(
-            "INSERT INTO chat_history (user_id,session_id,role,payload,created_time) \
-            VALUES ('{}','{id}','user','{{}}',{at})",
-            if id == "other" { "user-b" } else { "user-a" }
-        ))
-        .unwrap();
-    }
     execute("INSERT INTO monitor_sessions (session_id,user_id,status,updated_time,payload) VALUES ('live','user-a','running',50,'{}')").unwrap();
     execute("INSERT INTO agent_tasks (task_id,thread_id,user_id,agent_id,session_id,status,request_payload,retry_count,retry_at,created_at,updated_at) VALUES ('task-a','thread-a','user-a','','queued','pending','{}',0,50,50,50)").unwrap();
     execute("INSERT INTO session_locks (session_id,user_id,agent_id,created_time,updated_time,expires_at,suspended) VALUES ('locked','user-a','',50,50,0,1)").unwrap();
     execute("INSERT INTO session_goals (session_id,user_id,goal_id,objective,status,tokens_used,time_used_seconds,created_at,updated_at,source) VALUES ('goal','user-a','goal-a','input','active',0,0,50,50,'user')").unwrap();
+    // A partial response is a durable ThreadLog item.  The cleanup predicate
+    // must retain it even when no monitor or transient transport record
+    // remains for the session.
+    execute("INSERT INTO thread_logs (session_id,user_id,latest_user_turn,latest_change_seq,created_time,updated_time) VALUES ('partial','user-a',1,1,20,80)").unwrap();
+    execute("INSERT INTO thread_items (session_id,item_id,turn_id,root_turn_id,visibility,user_id,item_index,kind,status,revision,payload,created_time,updated_time,created_seq) VALUES ('partial','turn-partial:text-1','turn-partial','turn-partial','user','user-a',0,'assistant_message','running',1,'{}',20,80,1)").unwrap();
+    execute("INSERT INTO thread_logs (session_id,user_id,latest_user_turn,latest_change_seq,created_time,updated_time) VALUES ('other','user-b',1,1,20,80)").unwrap();
 }
 
 fn verify(storage: &dyn StorageBackend) {
@@ -43,12 +34,6 @@ fn verify(storage: &dyn StorageBackend) {
         ids,
         ["draft", "goal", "live", "locked", "partial", "queued"]
     );
-    for id in ["live", "locked", "queued", "partial"] {
-        assert_eq!(
-            storage.load_chat_history("user-a", id, None).unwrap().len(),
-            1
-        );
-    }
     assert_eq!(
         storage
             .delete_logs_by_time_range(10.0, 100.0)
@@ -95,13 +80,6 @@ fn session_cleanup_sqlite_rolls_back_logs_when_catalog_delete_fails() {
     seed(|sql| Ok(conn.execute_batch(sql)?));
     conn.execute_batch("CREATE TRIGGER reject_catalog_delete BEFORE DELETE ON chat_sessions BEGIN SELECT RAISE(ABORT, 'injected failure'); END;").unwrap();
     assert!(storage.delete_logs_by_time_range(10.0, 100.0).is_err());
-    assert_eq!(
-        storage
-            .load_chat_history("user-a", "cleared", None)
-            .unwrap()
-            .len(),
-        1
-    );
     assert!(storage
         .get_chat_session("user-a", "cleared")
         .unwrap()

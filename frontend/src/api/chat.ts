@@ -119,12 +119,7 @@ export const getSessionCommandSession = (
   options: { signal?: AbortSignal } = {}
 ) => api.get(`/chat/sessions/${sessionId}/command-sessions/${commandSessionId}`, options);
 export const getSessionHistoryPage = (id: string, params: QueryParams = {}) =>
-  api.get(`/chat/sessions/${id}/history`, { params: sanitizeQueryParams(params) });
-export const getSessionHistoryMessage = (
-  sessionId: string,
-  historyId: number | string,
-  options: { signal?: AbortSignal } = {}
-) => api.get(`/chat/sessions/${sessionId}/messages/${historyId}`, options);
+  api.get(`/chat/sessions/${id}/thread-log/messages`, { params: sanitizeQueryParams(params) });
 export const getSessionThreadItem = (
   sessionId: string,
   itemId: string,
@@ -143,9 +138,9 @@ export const renameSession = (id: string, payload: unknown) =>
 export const sendMessage = (id: string, payload: unknown) => api.post(`/chat/sessions/${id}/messages`, payload);
 export const submitMessageFeedback = (
   sessionId: string,
-  historyId: number | string,
+  itemId: string,
   payload: unknown
-) => api.post(`/chat/sessions/${sessionId}/messages/${historyId}/feedback`, payload);
+) => api.post(`/chat/sessions/${sessionId}/thread-log/items/${encodeURIComponent(itemId)}/feedback`, payload);
 export const fetchSessionSystemPrompt = (id: string, payload: unknown) =>
   api.post(`/chat/sessions/${id}/system-prompt`, payload);
 export const fetchRealtimeSystemPrompt = (payload: unknown) => api.post('/chat/system-prompt', payload);

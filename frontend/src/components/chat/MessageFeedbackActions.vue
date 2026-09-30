@@ -33,7 +33,6 @@ import { useI18n } from '@/i18n';
 import { useChatStore } from '@/stores/chat';
 import {
   normalizeMessageFeedback,
-  resolveMessageHistoryId,
   type MessageFeedbackVote
 } from '@/utils/messageFeedback';
 
@@ -50,7 +49,7 @@ const selectedVote = computed<MessageFeedbackVote | ''>(() => {
   return feedback?.vote || '';
 });
 
-const historyId = computed<number>(() => resolveMessageHistoryId(props.message));
+const itemId = computed<string>(() => String(props.message?.item_id || '').trim());
 
 const visible = computed<boolean>(() => {
   const role = String(props.message?.role || '').trim().toLowerCase();
@@ -69,18 +68,12 @@ const submitVote = async (vote: MessageFeedbackVote) => {
   if (!sessionId) return;
   submitting.value = true;
   try {
-    let targetHistoryId = historyId.value;
-    if (targetHistoryId <= 0) {
-      targetHistoryId = await chatStore.ensureAssistantMessageHistoryId(
-        sessionId,
-        props.message || null
-      );
-    }
-    if (!Number.isFinite(targetHistoryId) || targetHistoryId <= 0) {
+    const targetItemId = itemId.value;
+    if (!targetItemId) {
       ElMessage.warning(t('chat.message.feedbackFailed'));
       return;
     }
-    const payload = await chatStore.submitMessageFeedback(sessionId, targetHistoryId, vote);
+    const payload = await chatStore.submitMessageFeedback(sessionId, targetItemId, vote);
     if (!payload) {
       ElMessage.warning(t('chat.message.feedbackFailed'));
       return;

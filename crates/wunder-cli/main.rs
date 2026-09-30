@@ -958,11 +958,6 @@ fn current_ts() -> f64 {
         .unwrap_or(0.0)
 }
 
-fn stream_event_payload(record: &Value) -> &Value {
-    let data = record.get("data").unwrap_or(record);
-    data.get("data").unwrap_or(data)
-}
-
 fn context_left_percent(used_tokens: i64, max_context: Option<u32>) -> Option<u32> {
     let total = u64::from(max_context?.max(1));
     let used = used_tokens.max(0) as u64;
@@ -975,58 +970,69 @@ pub(crate) async fn load_session_stats(
     session_id: &str,
 ) -> SessionStatsSnapshot {
     let storage = runtime.state.storage.clone();
+    let owner = runtime.user_id.clone();
     let session_id_for_load = session_id.to_string();
     let mut stats = tokio::task::spawn_blocking(move || -> Result<SessionStatsSnapshot> {
         let mut output = SessionStatsSnapshot::default();
-        let max_event_id = storage.get_max_stream_event_id(&session_id_for_load)?;
-        if max_event_id <= 0 {
-            return Ok(output);
-        }
-        let limit = max_event_id.saturating_add(64).max(1);
-        let events = storage.load_stream_events(&session_id_for_load, 0, limit)?;
-        for record in events {
-            let event_name = record
-                .get("event")
+        let turns = storage.list_thread_turns(&owner, &session_id_for_load, None, 500)?;
+        for turn in turns {
+            let turn_id = turn
+                .get("turn_id")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let payload = stream_event_payload(&record);
-            match event_name {
-                "context_usage" => {
-                    if let Some(tokens) = payload.get("context_tokens").and_then(Value::as_i64) {
-                        output.context_used_tokens = tokens.max(0);
-                        output.context_peak_tokens = output.context_peak_tokens.max(tokens.max(0));
+            let Some(detail) =
+                storage.get_thread_turn(&owner, &session_id_for_load, turn_id, -1, 500, true)?
+            else {
+                continue;
+            };
+            for item in detail
+                .get("items")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let payload = item.get("payload").unwrap_or(item);
+                let event_name = payload
+                    .get("event_type")
+                    .and_then(Value::as_str)
+                    .or_else(|| item.get("kind").and_then(Value::as_str))
+                    .unwrap_or_default();
+                match event_name {
+                    "context_usage" => {
+                        if let Some(tokens) = payload.get("context_tokens").and_then(Value::as_i64)
+                        {
+                            output.context_used_tokens = tokens.max(0);
+                            output.context_peak_tokens =
+                                output.context_peak_tokens.max(tokens.max(0));
+                        }
                     }
+                    "llm_request" | "model_call" => {
+                        output.model_calls = output.model_calls.saturating_add(1)
+                    }
+                    "tool_call" => output.tool_calls = output.tool_calls.saturating_add(1),
+                    "tool_result" => output.tool_results = output.tool_results.saturating_add(1),
+                    "token_usage" => {
+                        output.total_input_tokens = output.total_input_tokens.saturating_add(
+                            payload
+                                .get("input_tokens")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0),
+                        );
+                        output.total_output_tokens = output.total_output_tokens.saturating_add(
+                            payload
+                                .get("output_tokens")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0),
+                        );
+                        output.total_tokens = output.total_tokens.saturating_add(
+                            payload
+                                .get("total_tokens")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0),
+                        );
+                    }
+                    _ => {}
                 }
-                "llm_request" => {
-                    output.model_calls = output.model_calls.saturating_add(1);
-                }
-                "tool_call" => {
-                    output.tool_calls = output.tool_calls.saturating_add(1);
-                }
-                "tool_result" => {
-                    output.tool_results = output.tool_results.saturating_add(1);
-                }
-                "token_usage" => {
-                    output.total_input_tokens = output.total_input_tokens.saturating_add(
-                        payload
-                            .get("input_tokens")
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0),
-                    );
-                    output.total_output_tokens = output.total_output_tokens.saturating_add(
-                        payload
-                            .get("output_tokens")
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0),
-                    );
-                    output.total_tokens = output.total_tokens.saturating_add(
-                        payload
-                            .get("total_tokens")
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0),
-                    );
-                }
-                _ => {}
             }
         }
         Ok(output)
@@ -1035,7 +1041,6 @@ pub(crate) async fn load_session_stats(
     .ok()
     .and_then(Result::ok)
     .unwrap_or_default();
-
     let workspace_tokens = runtime
         .state
         .workspace
@@ -1046,7 +1051,6 @@ pub(crate) async fn load_session_stats(
     if stats.context_used_tokens <= 0 {
         stats.context_used_tokens = workspace_tokens;
     }
-
     stats
 }
 

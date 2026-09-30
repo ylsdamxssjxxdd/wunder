@@ -37,7 +37,7 @@ import {
 import { useChatStore } from '@/stores/chat';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import { chatPerf } from '@/utils/chatPerf';
-import { getSessionHistoryMessage, getSessionThreadItem } from '@/api/chat';
+import { getSessionThreadItem } from '@/api/chat';
 
 type MessageRecord = Record<string, unknown>;
 
@@ -54,7 +54,6 @@ const props = withDefaults(defineProps<{
   throttleMs?: number;
   resolveWorkspacePath?: (rawPath: string, context?: string) => string;
   workspacePathContext?: string;
-  historyId?: number | string;
   itemId?: string;
   contentTruncated?: boolean;
 }>(), {
@@ -68,7 +67,6 @@ const props = withDefaults(defineProps<{
   throttleMs: 120,
   resolveWorkspacePath: undefined,
   workspacePathContext: '',
-  historyId: '',
   itemId: '',
   contentTruncated: false
 });
@@ -554,8 +552,7 @@ const expandLongContent = async () => {
   if (detailLoading.value) return;
   const sessionId = String(props.sessionId || '').trim();
   const itemId = String(props.itemId || props.message?.item_id || '').trim();
-  const historyId = String(props.historyId || '').trim();
-  if (!sessionId || (!itemId && !historyId) || props.contentTruncated !== true) {
+  if (!sessionId || !itemId || props.contentTruncated !== true) {
     expandedLongContent.value = true;
     return;
   }
@@ -565,9 +562,7 @@ const expandLongContent = async () => {
   historyDetailAbortController = controller;
   const cacheKey = normalizedCacheKey.value;
   try {
-    const response = itemId
-      ? await getSessionThreadItem(sessionId, itemId, { signal: controller.signal })
-      : await getSessionHistoryMessage(sessionId, historyId, { signal: controller.signal });
+    const response = await getSessionThreadItem(sessionId, itemId, { signal: controller.signal });
     if (disposed || controller.signal.aborted || cacheKey !== normalizedCacheKey.value) return;
     const message = response?.data?.data?.message as MessageRecord | undefined;
     if (message && typeof message.content === 'string') {

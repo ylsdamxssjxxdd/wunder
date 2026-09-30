@@ -2601,6 +2601,7 @@ export default {
   'messenger.timeline.detail.lastPage': '尾页',
   'messenger.timeline.detail.pageInfo': '第 {page} 页 · {start}-{end}/{total} 条',
   'messenger.timeline.detail.noEvents': '暂无事件',
+  'messenger.timeline.detail.metaUserNameLabel': '用户名称',
   'messenger.timeline.detail.metaAgentLabel': '智能体',
   'messenger.timeline.detail.metaStatusLabel': '状态',
   'messenger.timeline.detail.metaElapsedLabel': '耗时',

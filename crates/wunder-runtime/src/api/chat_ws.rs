@@ -143,8 +143,8 @@ fn build_queued_event_data(info: &QueueInfo) -> serde_json::Value {
         "queue_total": info.queue_total,
         "active_ahead": info.active_ahead,
         "wait_ahead": info.wait_ahead,
-        "queue_event_id": info.queue_event_id,
-        "queue_after_event_id": info.queue_after_event_id,
+        "queue_change_seq": info.queue_change_seq,
+        "queue_after_change_seq": info.queue_after_change_seq,
     })
 }
 
@@ -524,7 +524,7 @@ async fn handle_ws(
                                 // without closing the request. The queue-scoped resume
                                 // loop then forwards persisted queue/start/final events
                                 // for this task only.
-                                let queue_after_event_id = info.queue_after_event_id;
+                                let queue_after_change_seq = info.queue_after_change_seq;
                                 let queue_id = info.task_id.clone();
                                 let (cancel, task_id) = register_ws_task(
                                     &tasks,
@@ -545,7 +545,7 @@ async fn handle_ws(
                                         resume_state,
                                         resume_session,
                                         queue_id,
-                                        queue_after_event_id,
+                                        queue_after_change_seq,
                                         Some(&resume_request_id),
                                         resume_tx,
                                         Some(cancel),
@@ -1408,8 +1408,8 @@ mod tests {
             queue_total: 4,
             active_ahead: 1,
             wait_ahead: 3,
-            queue_event_id: 42,
-            queue_after_event_id: 41,
+            queue_change_seq: 42,
+            queue_after_change_seq: 41,
         };
 
         let payload = build_queued_event_data(&info);
@@ -1425,8 +1425,8 @@ mod tests {
                 "queue_total": 4,
                 "active_ahead": 1,
                 "wait_ahead": 3,
-                "queue_event_id": 42,
-                "queue_after_event_id": 41,
+                "queue_change_seq": 42,
+                "queue_after_change_seq": 41,
             })
         );
     }

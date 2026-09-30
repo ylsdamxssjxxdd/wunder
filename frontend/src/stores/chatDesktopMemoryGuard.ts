@@ -36,14 +36,14 @@ export const touchDesktopChatSession = (sessionId: unknown): void => {
   sessionAccessAt.set(key, Date.now());
 };
 
-const oldestHistoryIdFromMessages = (messages: unknown[]): number | null => {
+const oldestItemSeqFromMessages = (messages: unknown[]): number | null => {
   for (const message of messages) {
     const record = message && typeof message === 'object'
       ? message as Record<string, unknown>
       : null;
-    const historyId = Number.parseInt(String(record?.history_id ?? ''), 10);
-    if (Number.isFinite(historyId) && historyId > 0) {
-      return historyId;
+    const itemSeq = Number.parseInt(String(record?.created_seq ?? ''), 10);
+    if (Number.isFinite(itemSeq) && itemSeq > 0) {
+      return itemSeq;
     }
   }
   return null;
@@ -59,7 +59,7 @@ const trimDesktopBackgroundMessages = (
   if (!Array.isArray(messages) || messages.length <= DESKTOP_BACKGROUND_MESSAGE_LIMIT) return;
   const overflow = messages.length - DESKTOP_BACKGROUND_MESSAGE_LIMIT;
   messages.splice(0, overflow);
-  const beforeId = oldestHistoryIdFromMessages(messages);
+  const beforeId = oldestItemSeqFromMessages(messages);
   const state = historyState.get(sessionId);
   if (state && typeof state === 'object') {
     Object.assign(state as Record<string, unknown>, {

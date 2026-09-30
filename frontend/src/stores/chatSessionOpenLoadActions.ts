@@ -57,8 +57,7 @@ import { resolveWorkflowDurationMs } from '@/utils/toolWorkflowTiming';
 import { summarizeTurnDecodeSpeed } from '@/utils/turnDecodeSpeed';
 import {
   normalizeMessageFeedback,
-  normalizeMessageFeedbackVote,
-  resolveMessageHistoryId
+  normalizeMessageFeedbackVote
 } from '@/utils/messageFeedback';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
@@ -87,7 +86,7 @@ import {
   stopPendingAssistantMessage
 } from './chatPendingMessage';
 import {
-  buildExistingHistoryIdSet,
+  buildExistingHistoryItemSeqSet,
   collectDedupedHistoryBackfillPage,
   normalizeHistoryBeforeId,
   prependHistoryBackfillPage,
@@ -126,7 +125,7 @@ import { dismissStaleInquiryPanels, ensureGreetingMessage, hydrateSessionCommand
 import { hydrateMessage } from './chatMessageHydration';
 import { DEFAULT_AGENT_KEY, patchSessionRuntimeFields, persistActiveSession, persistAgentSession, persistDraftSession, syncGoalFromSessionRecord, syncGoalsFromSessionList } from './chatPersist';
 import { HISTORY_PAGE_LIMIT, clearDraftSessionBootstrapMarkers, clearRuntimeInteractiveControllers, clearSessionWatcher, normalizeHistoryPageLimit, recoverRuntimeInteractiveControllers, resolveKnownSessionEventFloor, resolveMaterializedMessageEventId, resolveMessageWindowMax, resolveSessionDetailMessageLimit, setSessionLoading } from './chatRuntimeControls';
-import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyLocalChatMessageRuntimeEvent, applyMessageWindow, applySessionRuntimeSnapshot, buildMessageIdentityDebugList, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, countAssistantStreamingMessages, ensureRuntime, filterSessionsByAgent, findOldestHistoryId, getHistoryState, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, loadSessionWorkflowEventsSnapshot, markSessionDetailWarm, mergeForegroundHydratedMessagesWithLive, notifySessionSnapshot, purgeUnavailableSession, readSessionDetailSnapshot, readSessionEventsSnapshot, readSessionHydratedMessageVersion, readSessionListCacheEntry, refreshRuntimeStreamLifecycle, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveSessionKey, resolveSessionListCacheKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldApplySessionEventsSnapshotToProjection, shouldPreferCachedMessages, syncChatRuntimeProjectionFromSnapshot, touchSessionUpdatedAt, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
+import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyLocalChatMessageRuntimeEvent, applyMessageWindow, applySessionRuntimeSnapshot, buildMessageIdentityDebugList, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, countAssistantStreamingMessages, ensureRuntime, filterSessionsByAgent, findOldestItemSeq, getHistoryState, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, loadSessionWorkflowEventsSnapshot, markSessionDetailWarm, mergeForegroundHydratedMessagesWithLive, notifySessionSnapshot, purgeUnavailableSession, readSessionDetailSnapshot, readSessionEventsSnapshot, readSessionHydratedMessageVersion, readSessionListCacheEntry, refreshRuntimeStreamLifecycle, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveSessionKey, resolveSessionListCacheKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldApplySessionEventsSnapshotToProjection, shouldPreferCachedMessages, syncChatRuntimeProjectionFromSnapshot, touchSessionUpdatedAt, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
 import { normalizeSnapshotMessage } from './chatSnapshot';
 import { buildMessage } from './chatStats';
 import { normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
@@ -888,7 +887,7 @@ export const chatSessionOpenLoadActions = {
         const durableCompactCommand = nextMessages.find(
           (message) => message?.role === 'user' &&
             message?.manual_compaction_command === true &&
-            (message?.history_id || message?.message_id?.startsWith('history:'))
+            Boolean(message?.item_id)
         );
         if (durableCompactCommand) {
           nextMessages = nextMessages.filter(
@@ -903,14 +902,14 @@ export const chatSessionOpenLoadActions = {
           nextMessages
             .filter((message) => message?.role === 'user' &&
               message?.goal_command === true &&
-              (message?.history_id || String(message?.message_id || '').startsWith('history:')))
+              Boolean(message?.item_id))
             .map((message) => Number(message?.user_round))
             .filter((round) => Number.isFinite(round) && round > 0)
         );
         if (durableGoalCommandRounds.size > 0) {
           nextMessages = nextMessages.filter((message) => {
             if (!(message?.role === 'user' && message?.goal_command === true)) return true;
-            if (message?.history_id || String(message?.message_id || '').startsWith('history:')) return true;
+            if (message?.item_id) return true;
             const round = Number(message?.user_round);
             return !(Number.isFinite(round) && durableGoalCommandRounds.has(round));
           });
@@ -1230,7 +1229,7 @@ export const chatSessionOpenLoadActions = {
           targetId,
           resolveSessionKey(this.activeSessionId) === targetId ? this.messages : null
         );
-        const existingIds = buildExistingHistoryIdSet(currentSessionMessages);
+        const existingIds = buildExistingHistoryItemSeqSet(currentSessionMessages);
         let cursor = beforeId;
         let incomingCount = 0;
         let incomingHasMore = false;
@@ -1239,12 +1238,12 @@ export const chatSessionOpenLoadActions = {
         let messagesForCursor = currentSessionMessages;
         const maxEmptyPages = 3;
         for (let emptyPageCount = 0; emptyPageCount <= maxEmptyPages; emptyPageCount += 1) {
-          const params: { before_id?: number; limit: number; summary: boolean } = {
+          const params: { before_seq?: number; limit: number; summary: boolean } = {
             limit,
             summary: true
           };
           if (cursor !== null) {
-            params.before_id = cursor;
+            params.before_seq = cursor;
           }
           const { data } = await getSessionHistoryPage(targetId, params);
           const payload = data?.data || {};
@@ -1293,7 +1292,7 @@ export const chatSessionOpenLoadActions = {
           }
           void this.hydrateSessionWorkflowHistory(targetId, deduped);
         }
-        state.beforeId = incomingBeforeId ?? findOldestHistoryId(messagesForCursor);
+        state.beforeId = incomingBeforeId ?? findOldestItemSeq(messagesForCursor);
         state.hasMore = Boolean(incomingHasMore) && Boolean(state.beforeId);
         if (perfEnabled) {
           chatPerf.recordDuration('chat_history_load', performance.now() - perfStart, {

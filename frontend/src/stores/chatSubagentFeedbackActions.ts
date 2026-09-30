@@ -56,8 +56,7 @@ import { resolveWorkflowDurationMs } from '@/utils/toolWorkflowTiming';
 import { summarizeTurnDecodeSpeed } from '@/utils/turnDecodeSpeed';
 import {
   normalizeMessageFeedback,
-  normalizeMessageFeedbackVote,
-  resolveMessageHistoryId
+  normalizeMessageFeedbackVote
 } from '@/utils/messageFeedback';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
@@ -115,7 +114,7 @@ import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
 import { HISTORY_PAGE_LIMIT } from './chatRuntimeControls';
-import { SESSION_SUBAGENTS_CACHE_TTL_MS, applyAssistantHistoryIdBackfill, applyMessageFeedbackByHistoryId, cacheSessionMessages, getSessionMessages, isAssistantFeedbackCandidate, notifySessionSnapshot, resolveChatHttpStatus, resolveSessionKey, sessionSubagentsCache, sessionSubagentsInFlight, touchSessionUpdatedAt } from './chatRuntimeState';
+import { SESSION_SUBAGENTS_CACHE_TTL_MS, cacheSessionMessages, getSessionMessages, notifySessionSnapshot, resolveChatHttpStatus, resolveSessionKey, sessionSubagentsCache, sessionSubagentsInFlight, touchSessionUpdatedAt } from './chatRuntimeState';
 import { attachSubagentsToMessages } from './chatStats';
 
 export const chatSubagentFeedbackActions = {
@@ -183,45 +182,11 @@ export const chatSubagentFeedbackActions = {
       await this.refreshSessionSubagents(targetSessionId, { force: true });
       return data?.data || null;
     },
-    async ensureAssistantMessageHistoryId(sessionId, message = null) {
-      const targetSessionId = resolveSessionKey(sessionId || this.activeSessionId);
-      if (!targetSessionId) return 0;
-      const directHistoryId = resolveMessageHistoryId(message);
-      if (directHistoryId > 0) return directHistoryId;
-
-      const isActiveSession = resolveSessionKey(this.activeSessionId) === targetSessionId;
-      const targetMessages = isActiveSession
-        ? this.messages
-        : getSessionMessages(targetSessionId) || [];
-      if (!Array.isArray(targetMessages) || targetMessages.length === 0) {
-        return 0;
-      }
-      if (!targetMessages.some((item) => isAssistantFeedbackCandidate(item))) {
-        return resolveMessageHistoryId(message);
-      }
-
-      try {
-        const { data } = await getSessionHistoryPage(targetSessionId, {
-          limit: Math.max(HISTORY_PAGE_LIMIT, 120)
-        });
-        const payload = data?.data || {};
-        const incoming = Array.isArray(payload.transcript) ? payload.transcript : [];
-        const updatedCount = applyAssistantHistoryIdBackfill(targetMessages, incoming);
-        if (updatedCount > 0) {
-          touchSessionUpdatedAt(this, targetSessionId, Date.now());
-          notifySessionSnapshot(this, targetSessionId, targetMessages, true);
-        }
-      } catch (error) {
-        // Best effort only: feedback remains optional if history backfill fails.
-      }
-
-      return resolveMessageHistoryId(message);
-    },
-    async submitMessageFeedback(sessionId, historyId, vote) {
+    async submitMessageFeedback(sessionId, itemId, vote) {
       const targetSessionId = resolveSessionKey(sessionId || this.activeSessionId);
       if (!targetSessionId) return null;
-      const targetHistoryId = Number.parseInt(String(historyId ?? ''), 10);
-      if (!Number.isFinite(targetHistoryId) || targetHistoryId <= 0) return null;
+      const targetItemId = String(itemId ?? '').trim();
+      if (!targetItemId) return null;
       const normalizedVote = normalizeMessageFeedbackVote(vote);
       if (!normalizedVote) return null;
 
@@ -234,7 +199,7 @@ export const chatSubagentFeedbackActions = {
         ? targetMessages.find(
             (message) =>
               message?.role === 'assistant' &&
-              resolveMessageHistoryId(message) === targetHistoryId
+              String(message?.item_id || '').trim() === targetItemId
           )
         : null;
       const existingFeedback = normalizeMessageFeedback(existing?.feedback);
@@ -244,24 +209,24 @@ export const chatSubagentFeedbackActions = {
 
       let feedback = null;
       try {
-        const { data } = await submitMessageFeedbackApi(targetSessionId, targetHistoryId, {
+        const { data } = await submitMessageFeedbackApi(targetSessionId, targetItemId, {
           vote: normalizedVote
         });
         feedback =
           normalizeMessageFeedback(data?.data?.feedback) ||
           normalizeMessageFeedback({ vote: normalizedVote, locked: true });
       } catch (error) {
-        if (resolveChatHttpStatus(error) === 409) {
-          feedback =
-            normalizeMessageFeedback(existing?.feedback) ||
-            normalizeMessageFeedback({ vote: normalizedVote, locked: true });
-        } else {
-          throw error;
-        }
+        throw error;
       }
       if (!feedback) return null;
 
-      const updated = applyMessageFeedbackByHistoryId(targetMessages, targetHistoryId, feedback);
+      const updated = Array.isArray(targetMessages)
+        ? targetMessages.some((message) => {
+            if (String(message?.item_id || '').trim() !== targetItemId) return false;
+            message.feedback = { ...feedback, locked: true };
+            return true;
+          })
+        : false;
       if (!updated) {
         return feedback;
       }

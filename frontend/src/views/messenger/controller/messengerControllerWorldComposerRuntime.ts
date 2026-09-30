@@ -494,7 +494,7 @@ export function installMessengerControllerWorldComposerRuntime(ctx: MessengerCon
           const messageId = Number.parseInt(String(source.message_id || ''), 10);
           const createdAt = ctx.normalizeWorldMessageTimestamp(source.created_at);
           return {
-              key: `history:${source.message_id || index}:${createdAt}`,
+              key: `thread-item:${source.message_id || index}:${createdAt}`,
               messageId: Number.isFinite(messageId) ? messageId : 0,
               sender: ctx.resolveWorldMessageSender(source),
               createdAt,

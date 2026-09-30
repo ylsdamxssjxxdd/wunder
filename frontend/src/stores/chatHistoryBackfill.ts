@@ -26,35 +26,31 @@ export const readHistoryBackfillPage = (payload: unknown): HistoryBackfillPage =
   return {
     transcript,
     hasMore: Boolean(
-      record.history_has_more ??
-        record.historyHasMore ??
-        record.history_more ??
-        record.historyMore ??
+      record.has_more ??
+        record.hasMore ??
         false
     ),
     beforeId: normalizeHistoryBeforeId(
-      record.history_before_id ??
-        record.historyBeforeId ??
-        record.history_before ??
-        record.historyBefore
+      record.before_seq ??
+        record.beforeSeq
     )
   };
 };
 
-export const resolveHistoryBackfillMessageId = (message: unknown): number | null => {
+export const resolveHistoryBackfillMessageSeq = (message: unknown): number | null => {
   const record = asRecord(message);
   if (!record) return null;
-  const parsed = Number.parseInt(String(record.history_id ?? ''), 10);
+  const parsed = Number.parseInt(String(record.created_seq ?? ''), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 };
 
-export const buildExistingHistoryIdSet = (messages: unknown[] | null | undefined): Set<number> => {
+export const buildExistingHistoryItemSeqSet = (messages: unknown[] | null | undefined): Set<number> => {
   const ids = new Set<number>();
   if (!Array.isArray(messages)) {
     return ids;
   }
   messages.forEach((message) => {
-    const id = resolveHistoryBackfillMessageId(message);
+    const id = resolveHistoryBackfillMessageSeq(message);
     if (id !== null) {
       ids.add(id);
     }
@@ -73,7 +69,7 @@ export const collectDedupedHistoryBackfillPage = (
   incoming.forEach((message) => {
     const record = asRecord(message);
     if (!record) return;
-    const id = resolveHistoryBackfillMessageId(record);
+    const id = resolveHistoryBackfillMessageSeq(record);
     if (id !== null) {
       if (existingIds.has(id)) return;
       existingIds.add(id);

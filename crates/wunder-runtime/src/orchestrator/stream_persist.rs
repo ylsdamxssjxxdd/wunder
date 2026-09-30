@@ -90,7 +90,7 @@ impl StreamPersistQueue {
             storage,
             session_id,
             user_id,
-            event_id,
+            event_id: _,
             payload,
             event_type,
         } = task;
@@ -100,9 +100,7 @@ impl StreamPersistQueue {
             }
             return;
         }
-        if let Err(err) = storage.append_stream_event(&session_id, &user_id, event_id, &payload) {
-            warn!("failed to persist stream event {event_type} for session {session_id}: {err}");
-        }
+        warn!("ignored obsolete stream event persistence request: {event_type}");
     }
 }
 
@@ -161,68 +159,5 @@ mod tests {
             uuid::Uuid::new_v4().simple()
         ));
         Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()))
-    }
-
-    #[test]
-    fn apply_task_appends_stream_event() {
-        let storage = build_storage();
-        StreamPersistQueue::apply_task(StreamPersistTask {
-            storage: storage.clone(),
-            session_id: "sess_queue_append".to_string(),
-            user_id: "user_queue_append".to_string(),
-            event_id: 7,
-            payload: json!({
-                "event": "progress",
-                "data": { "summary": "queued" },
-                "timestamp": "2026-03-07T00:00:00+08:00"
-            }),
-            event_type: "progress".to_string(),
-        });
-
-        let records = storage
-            .load_stream_events("sess_queue_append", 0, 16)
-            .expect("load stream events");
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0]["event"], json!("progress"));
-        assert_eq!(records[0]["data"]["summary"], json!("queued"));
-        assert_eq!(records[0]["event_id"], json!(7));
-    }
-
-    #[tokio::test]
-    async fn flush_barrier_waits_for_preceding_stream_events() {
-        let storage = build_storage();
-        enqueue_stream_event_persist(
-            storage.clone(),
-            "sess_flush_barrier".to_string(),
-            "user_flush_barrier".to_string(),
-            1,
-            json!({
-                "event": "progress",
-                "data": { "summary": "first" },
-                "timestamp": "2026-03-07T00:00:00+08:00"
-            }),
-            "progress".to_string(),
-        );
-
-        flush_stream_event_persist_queue().await;
-        storage
-            .append_stream_event(
-                "sess_flush_barrier",
-                "user_flush_barrier",
-                2,
-                &json!({
-                    "event": "queue_finish",
-                    "data": { "queue_id": "queue_flush_barrier" },
-                    "timestamp": "2026-03-07T00:00:01+08:00"
-                }),
-            )
-            .expect("append terminal event");
-
-        let records = storage
-            .load_stream_events("sess_flush_barrier", 0, 16)
-            .expect("load stream events");
-        assert_eq!(records.len(), 2);
-        assert_eq!(records[0]["event"], json!("progress"));
-        assert_eq!(records[1]["event"], json!("queue_finish"));
     }
 }

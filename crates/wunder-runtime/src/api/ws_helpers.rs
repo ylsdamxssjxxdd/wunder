@@ -614,7 +614,7 @@ pub(crate) async fn resume_stream_events(
         let session_id_snapshot = session_id.clone();
         let workspace_snapshot = workspace.clone();
         let records = blocking::run_fs("api.ws_helpers.resume_stream_events", move || {
-            Ok(workspace_snapshot.load_stream_events(
+            Ok(workspace_snapshot.load_thread_changes(
                 &session_id_snapshot,
                 last_event_id,
                 STREAM_EVENT_FETCH_LIMIT,
@@ -689,120 +689,91 @@ pub(crate) async fn resume_queued_stream_events(
     state: Arc<AppState>,
     session_id: String,
     queue_id: String,
-    after_event_id: i64,
+    _after_change_seq: i64,
     request_id: Option<&str>,
     tx: WsSender,
     cancel: Option<CancellationToken>,
 ) {
-    let workspace = state.workspace.clone();
     let user_store = state.user_store.clone();
     let base_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
     let heartbeat_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_HEARTBEAT_INTERVAL_S);
-    let mut idle_rounds: usize = 0;
     let mut poll_interval = base_interval;
-    let mut last_event_id = after_event_id;
+    let mut idle_rounds = 0usize;
     let mut last_heartbeat = std::time::Instant::now();
-    let mut saw_terminal_queue_event = false;
-    let mut saw_queue_start = false;
+    let mut last_status = String::new();
     loop {
-        if cancel
-            .as_ref()
-            .map(|token| token.is_cancelled())
-            .unwrap_or(false)
-        {
+        if cancel.as_ref().is_some_and(|token| token.is_cancelled()) {
             return;
         }
-        let session_id_snapshot = session_id.clone();
-        let workspace_snapshot = workspace.clone();
-        let records = blocking::run_fs("api.ws_helpers.resume_queued_stream_events", move || {
-            Ok(workspace_snapshot.load_stream_events(
-                &session_id_snapshot,
-                last_event_id,
-                STREAM_EVENT_FETCH_LIMIT,
-            ))
-        })
-        .await
-        .unwrap_or_default();
-        let mut progressed = false;
-        for record in records {
-            let Some(event) = map_stream_event(record) else {
-                continue;
-            };
-            progressed = true;
-            let parsed_id = event
-                .id
-                .as_ref()
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(0);
-            if parsed_id > last_event_id {
-                last_event_id = parsed_id;
-            }
-            let queue_event_kind = queue_event_kind(&event);
-            let matches_queue = queue_event_kind
-                .map(|_| is_queue_event_for_queue(&event, &queue_id))
-                .unwrap_or(false);
-            let is_terminal_queue_event = queue_event_kind
-                .is_some_and(|kind| is_terminal_queue_event_kind(kind))
-                && matches_queue;
-            let should_forward = if let Some(kind) = queue_event_kind {
-                if !matches_queue {
-                    false
-                } else {
-                    if kind == "queue_start" {
-                        saw_queue_start = true;
-                    }
-                    true
-                }
-            } else {
-                saw_queue_start
-            };
-            if should_forward && send_ws_event(&tx, request_id, event).await.is_err() {
-                return;
-            }
-            if is_terminal_queue_event {
-                saw_terminal_queue_event = true;
-                break;
-            }
+        let task = user_store.get_agent_task(&queue_id).ok().flatten();
+        let Some(task) = task else {
+            return;
+        };
+        if task.session_id != session_id {
+            return;
         }
-        if saw_terminal_queue_event {
-            break;
-        }
-        if !progressed {
-            let queue_running = has_active_queue_task(user_store.as_ref(), &session_id);
-            if queue_running && last_heartbeat.elapsed() >= heartbeat_interval {
-                let heartbeat = StreamEvent {
-                    event: "heartbeat".to_string(),
-                    data: json!({
-                        "ts": Utc::now().to_rfc3339(),
-                        "running": true,
-                    }),
-                    id: None,
-                    timestamp: Some(Utc::now()),
-                };
-                if send_ws_event(&tx, request_id, heartbeat).await.is_err() {
+        let status = task.status.trim().to_string();
+        let event = match status.as_str() {
+            "pending" | "retry" => Some("queued"),
+            "running" => Some("queue_start"),
+            "success" => Some("queue_finish"),
+            "failed" | "cancelled" | "dead" => Some("queue_fail"),
+            _ => None,
+        };
+        if status != last_status {
+            if let Some(kind) = event {
+                let data = json!({"queue_id":queue_id,"thread_id":task.thread_id,"session_id":task.session_id,"status":status,"queue_ahead":task.request_payload.get("queue_ahead"),"queue_total":task.request_payload.get("queue_total")});
+                if send_ws_event(
+                    &tx,
+                    request_id,
+                    StreamEvent {
+                        event: kind.into(),
+                        data,
+                        id: None,
+                        timestamp: Some(Utc::now()),
+                    },
+                )
+                .await
+                .is_err()
+                {
                     return;
                 }
-                last_heartbeat = std::time::Instant::now();
             }
-            idle_rounds = idle_rounds.saturating_add(1);
-            if idle_rounds > STREAM_EVENT_RESUME_POLL_BACKOFF_AFTER {
-                let next = poll_interval.as_secs_f64() * STREAM_EVENT_RESUME_POLL_BACKOFF_FACTOR;
-                poll_interval = std::time::Duration::from_secs_f64(
-                    next.min(STREAM_EVENT_RESUME_POLL_MAX_INTERVAL_S),
-                );
+            last_status = status.clone();
+        }
+        if matches!(status.as_str(), "success" | "failed" | "cancelled" | "dead") {
+            return;
+        }
+        if last_heartbeat.elapsed() >= heartbeat_interval {
+            let running = status == "running";
+            if send_ws_event(
+                &tx,
+                request_id,
+                StreamEvent {
+                    event: "heartbeat".into(),
+                    data: json!({"ts":Utc::now().to_rfc3339(),"running":running}),
+                    id: None,
+                    timestamp: Some(Utc::now()),
+                },
+            )
+            .await
+            .is_err()
+            {
+                return;
             }
-            if let Some(token) = cancel.as_ref() {
-                tokio::select! {
-                    _ = token.cancelled() => return,
-                    _ = tokio::time::sleep(poll_interval) => {}
-                }
-            } else {
-                tokio::time::sleep(poll_interval).await;
-            }
-        } else {
             last_heartbeat = std::time::Instant::now();
-            idle_rounds = 0;
-            poll_interval = base_interval;
+        }
+        idle_rounds = idle_rounds.saturating_add(1);
+        if idle_rounds > STREAM_EVENT_RESUME_POLL_BACKOFF_AFTER {
+            poll_interval = std::time::Duration::from_secs_f64(
+                (poll_interval.as_secs_f64() * STREAM_EVENT_RESUME_POLL_BACKOFF_FACTOR)
+                    .min(STREAM_EVENT_RESUME_POLL_MAX_INTERVAL_S),
+            );
+        }
+        if let Some(token) = cancel.as_ref() {
+            tokio::select! { _ = token.cancelled() => return, _ = tokio::time::sleep(poll_interval) => {} }
+        } else {
+            tokio::time::sleep(poll_interval).await;
         }
     }
 }

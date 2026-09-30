@@ -20,10 +20,10 @@ mod catalog;
 mod cron;
 #[path = "native_profile.rs"]
 mod profile;
-#[path = "native_settings.rs"]
-mod settings;
 #[path = "native_prompts.rs"]
 mod prompts;
+#[path = "native_settings.rs"]
+mod settings;
 #[path = "native_workspace.rs"]
 mod workspace;
 #[path = "native_world.rs"]
@@ -33,10 +33,10 @@ pub use catalog::{
 };
 pub use cron::{CronRecord, CronRunRecord, NativeCronJobEdit};
 pub use profile::NativeProfile;
+pub use prompts::{PromptPackInfo, PromptSegmentContent};
 pub use settings::{
     DesktopSettings, LanPeerRecord, LanSettings, ModelEdit, ModelProbeOutcome, ModelRecord,
 };
-pub use prompts::{PromptPackInfo, PromptSegmentContent};
 pub use workspace::{Directory, FileRecord};
 pub use world::{
     WorldContact, WorldEventFeed, WorldGroup, WorldGroupDetail, WorldGroupMember, WorldMessage,
@@ -191,12 +191,11 @@ impl NativeDesktop {
             .user_store
             .get_chat_session(&self.desktop.user_id, cleaned)?
             .ok_or_else(|| anyhow!("chat session not found"))?;
-        let history = self.desktop.state.workspace.load_history_page(
-            &self.desktop.user_id,
-            cleaned,
-            None,
-            100,
-        )?;
+        let history =
+            self.desktop
+                .state
+                .workspace
+                .load_history(&self.desktop.user_id, cleaned, 100)?;
         let messages = history.into_iter().filter_map(message_from_value).collect();
         Ok((self.session_with_stats(record), messages))
     }

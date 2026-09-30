@@ -40,7 +40,6 @@ const MONITOR_WRITE_BATCH_SIZE: usize = 64;
 // Keep startup bounded. Cold session logs are hydrated directly from durable
 // storage when requested, so this cache limit never deletes historical logs.
 const MONITOR_HISTORY_LOAD_LIMIT: i64 = 5000;
-const MONITOR_ROUND_HYDRATE_STREAM_EVENT_LIMIT: i64 = 1000;
 // Bound the in-memory per-session event queue; persistence and detail reads
 // all consume this deque, so the cap also bounds stored payload growth.
 const MONITOR_SESSION_EVENT_LIMIT: usize = 500;
@@ -176,60 +175,6 @@ impl MonitorWriteQueue {
 }
 
 #[derive(Debug, Clone)]
-pub struct MessageFeedbackItem {
-    pub vote: String,
-    pub user_id: String,
-    pub created_time: f64,
-}
-
-impl MessageFeedbackItem {
-    fn to_storage(&self) -> Value {
-        json!({
-            "vote": self.vote,
-            "user_id": self.user_id,
-            "created_time": self.created_time,
-        })
-    }
-
-    fn from_storage(payload: &Value) -> Option<Self> {
-        let vote = normalize_monitor_feedback_vote(
-            payload
-                .get("vote")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-        )?
-        .to_string();
-        let user_id = payload
-            .get("user_id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        let created_time = payload
-            .get("created_time")
-            .or_else(|| payload.get("created_at"))
-            .and_then(|value| {
-                value
-                    .as_f64()
-                    .or_else(|| value.as_str().and_then(|text| text.parse::<f64>().ok()))
-            })
-            .unwrap_or_else(now_ts);
-        Some(Self {
-            vote,
-            user_id,
-            created_time,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum SetMessageFeedbackResult {
-    Applied(MessageFeedbackItem),
-    AlreadyExists(MessageFeedbackItem),
-    SessionNotFound,
-}
-
-#[derive(Debug, Clone)]
 struct SessionRecord {
     session_id: String,
     user_id: String,
@@ -254,7 +199,6 @@ struct SessionRecord {
     consumed_tokens: i64,
     tool_calls: i64,
     model_request_count: Option<i64>,
-    message_feedback: BTreeMap<i64, MessageFeedbackItem>,
     next_event_id: i64,
     events: VecDeque<MonitorEvent>,
     dirty: bool,
@@ -305,7 +249,6 @@ impl SessionRecord {
             consumed_tokens: 0,
             tool_calls: 0,
             model_request_count: Some(0),
-            message_feedback: BTreeMap::new(),
             next_event_id: 1,
             events: VecDeque::new(),
             dirty: true,
@@ -319,51 +262,12 @@ impl SessionRecord {
         (end - self.start_time).max(0.0)
     }
 
-    fn feedback_counts(&self) -> (i64, i64) {
-        let mut up_count = 0_i64;
-        let mut down_count = 0_i64;
-        for item in self.message_feedback.values() {
-            match item.vote.as_str() {
-                "up" => up_count += 1,
-                "down" => down_count += 1,
-                _ => {}
-            }
-        }
-        (up_count, down_count)
-    }
-
-    fn feedback_list(&self) -> Vec<Value> {
-        self.message_feedback
-            .iter()
-            .map(|(history_id, item)| {
-                json!({
-                    "history_id": history_id,
-                    "vote": item.vote,
-                    "user_id": item.user_id,
-                    "created_at": format_ts(item.created_time),
-                    "created_time": item.created_time,
-                })
-            })
-            .collect()
-    }
-
     fn to_summary(&self) -> Value {
         let (context_tokens, context_tokens_peak) = derive_effective_context_tokens(&self.events)
             .unwrap_or((
                 self.context_tokens,
                 self.context_tokens_peak.max(self.context_tokens),
             ));
-        let (feedback_up_count, feedback_down_count) = self.feedback_counts();
-        let feedback_total_count = feedback_up_count + feedback_down_count;
-        let feedback_status = if feedback_up_count > 0 && feedback_down_count == 0 {
-            "up"
-        } else if feedback_down_count > 0 && feedback_up_count == 0 {
-            "down"
-        } else if feedback_total_count > 0 {
-            "mixed"
-        } else {
-            "none"
-        };
         json!({
             "session_id": self.session_id,
             "user_id": self.user_id,
@@ -388,19 +292,10 @@ impl SessionRecord {
             "tool_calls": self.tool_calls,
             "model_request_count": self.model_request_count,
             "quota_used": self.model_request_count,
-            "feedback_up_count": feedback_up_count,
-            "feedback_down_count": feedback_down_count,
-            "feedback_total_count": feedback_total_count,
-            "feedback_status": feedback_status,
         })
     }
 
     fn to_storage(&self) -> Value {
-        let message_feedback = self
-            .message_feedback
-            .iter()
-            .map(|(history_id, item)| (history_id.to_string(), item.to_storage()))
-            .collect::<serde_json::Map<String, Value>>();
         json!({
             "session_id": self.session_id,
             "user_id": self.user_id,
@@ -426,7 +321,6 @@ impl SessionRecord {
             "tool_calls": self.tool_calls,
             "model_request_count": self.model_request_count,
             "quota_used": self.model_request_count,
-            "message_feedback": message_feedback,
             "next_event_id": self.next_event_id,
             "events": self
                 .events
@@ -523,21 +417,6 @@ impl SessionRecord {
             .get("consumed_tokens")
             .and_then(Value::as_i64)
             .unwrap_or(0);
-        let mut message_feedback = BTreeMap::new();
-        if let Some(items) = payload.get("message_feedback").and_then(Value::as_object) {
-            for (raw_history_id, raw_feedback) in items {
-                let Ok(history_id) = raw_history_id.parse::<i64>() else {
-                    continue;
-                };
-                if history_id <= 0 {
-                    continue;
-                }
-                let Some(feedback) = MessageFeedbackItem::from_storage(raw_feedback) else {
-                    continue;
-                };
-                message_feedback.insert(history_id, feedback);
-            }
-        }
         let mut events = VecDeque::new();
         if let Some(Value::Array(items)) = payload.get("events") {
             for item in items {
@@ -654,7 +533,6 @@ impl SessionRecord {
             consumed_tokens,
             tool_calls,
             model_request_count,
-            message_feedback,
             next_event_id,
             events,
             dirty: false,
@@ -689,15 +567,6 @@ fn derive_effective_context_tokens(events: &VecDeque<MonitorEvent>) -> Option<(i
         }
     }
     latest.map(|tokens| (tokens, peak.max(tokens)))
-}
-
-fn normalize_monitor_feedback_vote(raw: &str) -> Option<&'static str> {
-    let value = raw.trim().to_ascii_lowercase();
-    match value.as_str() {
-        "up" | "like" | "thumb_up" | "thumbs_up" => Some("up"),
-        "down" | "dislike" | "thumb_down" | "thumbs_down" => Some("down"),
-        _ => None,
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1672,73 +1541,6 @@ impl MonitorState {
         )
     }
 
-    pub fn set_message_feedback(
-        &self,
-        session_id: &str,
-        history_id: i64,
-        vote: &str,
-        user_id: &str,
-    ) -> SetMessageFeedbackResult {
-        self.run_guarded(
-            "monitor.set_message_feedback",
-            || SetMessageFeedbackResult::SessionNotFound,
-            || {
-                let cleaned_session_id = session_id.trim();
-                if cleaned_session_id.is_empty() || history_id <= 0 {
-                    return SetMessageFeedbackResult::SessionNotFound;
-                }
-                let Some(vote) = normalize_monitor_feedback_vote(vote).map(str::to_string) else {
-                    return SetMessageFeedbackResult::SessionNotFound;
-                };
-                let cleaned_user_id = user_id.trim().to_string();
-                let now = now_ts();
-                let (result, to_persist) = {
-                    let mut sessions = self.sessions.lock();
-                    if !sessions.contains_key(cleaned_session_id) {
-                        if let Ok(Some(payload)) =
-                            self.storage.get_monitor_record(cleaned_session_id)
-                        {
-                            if let Some(record) = SessionRecord::from_storage(&payload) {
-                                sessions.insert(cleaned_session_id.to_string(), record);
-                            }
-                        }
-                    }
-                    let Some(record) = sessions.get_mut(cleaned_session_id) else {
-                        return SetMessageFeedbackResult::SessionNotFound;
-                    };
-                    if let Some(existing) = record.message_feedback.get(&history_id).cloned() {
-                        return SetMessageFeedbackResult::AlreadyExists(existing);
-                    }
-                    let feedback = MessageFeedbackItem {
-                        vote: vote.clone(),
-                        user_id: cleaned_user_id.clone(),
-                        created_time: now,
-                    };
-                    record.message_feedback.insert(history_id, feedback.clone());
-                    record.updated_time = now;
-                    self.append_event(
-                        record,
-                        "message_feedback",
-                        &json!({
-                            "history_id": history_id,
-                            "vote": vote,
-                            "user_id": cleaned_user_id,
-                            "created_time": now,
-                        }),
-                        now,
-                    );
-                    record.dirty = true;
-                    let to_persist = self.maybe_persist_record(record, now, true);
-                    (SetMessageFeedbackResult::Applied(feedback), to_persist)
-                };
-                if let Some(record) = to_persist {
-                    self.save_record(&record);
-                }
-                result
-            },
-        )
-    }
-
     pub fn list_sessions(&self, active_only: bool) -> Vec<Value> {
         self.run_guarded("monitor.list_sessions", Vec::new, || {
             let sessions = self.sessions.lock();
@@ -1909,7 +1711,6 @@ impl MonitorState {
         json!({
             "session": session,
             "events": events,
-            "feedback": record.feedback_list(),
             "event_offset": offset,
             "event_limit": limit.min(event_total),
             "event_total": event_total,
@@ -2742,9 +2543,9 @@ impl MonitorState {
             }
         };
         let mut record = SessionRecord::from_storage(&payload)?;
-        let stream_round_floor = self.persisted_user_round_floor(cleaned);
+        let thread_round_floor = self.persisted_user_round_floor(cleaned);
         record.user_rounds = max_known_user_round_for_monitor_payload(&payload)
-            .max(stream_round_floor)
+            .max(thread_round_floor)
             .max(record.user_rounds)
             .max(1);
         record.dirty = false;
@@ -2754,13 +2555,9 @@ impl MonitorState {
     }
 
     fn persisted_user_round_floor(&self, session_id: &str) -> i64 {
-        max_known_user_round_for_stream_events(
-            self.storage
-                .load_recent_stream_events(session_id, MONITOR_ROUND_HYDRATE_STREAM_EVENT_LIMIT)
-                .unwrap_or_default()
-                .iter(),
-        )
-        .unwrap_or(0)
+        self.storage
+            .latest_thread_user_round_by_session(session_id)
+            .unwrap_or(0)
     }
 
     fn mark_status(&self, session_id: &str, status: &str, summary: Option<&str>) {

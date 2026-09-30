@@ -1217,7 +1217,12 @@ impl WorkspaceManager {
 
     pub fn load_history(&self, user_id: &str, session_id: &str, limit: i64) -> Result<Vec<Value>> {
         let limit = normalize_history_limit(limit);
-        let history = self.storage.load_thread_context_items(user_id, session_id, limit.unwrap_or(0), true)?;
+        let history = self.storage.load_thread_context_items(
+            user_id,
+            session_id,
+            limit.unwrap_or(0),
+            true,
+        )?;
         Ok(filter_orchestration_suppressed_messages(
             self.storage.as_ref(),
             user_id,
@@ -1226,24 +1231,19 @@ impl WorkspaceManager {
         ))
     }
 
-    pub fn load_execution_history(&self, user_id: &str, session_id: &str, turn_id: &str, limit: i64) -> Result<Vec<Value>> {
-        let history = self.storage.load_thread_execution_context(user_id, session_id, turn_id, normalize_history_limit(limit).unwrap_or(0))?;
-        Ok(filter_orchestration_suppressed_messages(self.storage.as_ref(), user_id, session_id, history))
-    }
-
-    pub fn load_history_page(
+    pub fn load_execution_history(
         &self,
         user_id: &str,
         session_id: &str,
-        before_id: Option<i64>,
+        turn_id: &str,
         limit: i64,
     ) -> Result<Vec<Value>> {
-        if limit <= 0 {
-            return Ok(Vec::new());
-        }
-        let history = self
-            .storage
-            .load_chat_history_page(user_id, session_id, before_id, limit)?;
+        let history = self.storage.load_thread_execution_context(
+            user_id,
+            session_id,
+            turn_id,
+            normalize_history_limit(limit).unwrap_or(0),
+        )?;
         Ok(filter_orchestration_suppressed_messages(
             self.storage.as_ref(),
             user_id,
@@ -1261,6 +1261,34 @@ impl WorkspaceManager {
         self.storage.load_artifact_logs(user_id, session_id, limit)
     }
 
+    /// Read the durable ThreadLog change cursor used by chat reconnects.
+    /// This is deliberately separate from the diagnostic stream event store.
+    pub fn load_thread_changes(&self, session_id: &str, after_seq: i64, limit: i64) -> Vec<Value> {
+        self.storage
+            .list_thread_changes_by_session(session_id, after_seq.max(0), limit.clamp(1, 500))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|mut change| {
+                let seq = change
+                    .get("change_seq")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
+                let data = serde_json::json!({
+                    "change_type": change.get("change_type").cloned().unwrap_or(Value::Null),
+                    "turn_id": change.get("turn_id").cloned().unwrap_or(Value::Null),
+                    "item_id": change.get("item_id").cloned().unwrap_or(Value::Null),
+                    "revision": change.get("revision").cloned().unwrap_or(Value::Null),
+                    "cursor": seq,
+                });
+                change["event"] = serde_json::json!("thread_change");
+                change["event_id"] = serde_json::json!(seq);
+                change["data"] = data;
+                change
+            })
+            .collect()
+    }
+
+    /// Compatibility projection for non-chat diagnostics only.
     pub fn load_stream_events(
         &self,
         session_id: &str,
@@ -1288,8 +1316,8 @@ impl WorkspaceManager {
         session_id: &str,
         language: Option<&str>,
     ) -> Result<Option<String>> {
-        let normalized_language = language
-            .map(|value| crate::i18n::normalize_language(Some(value), true));
+        let normalized_language =
+            language.map(|value| crate::i18n::normalize_language(Some(value), true));
         // Frozen prompts are ThreadLog system Items.  The old conversation
         // table may still contain a compatibility mirror, but it is never a
         // source for prompt reuse once the thread log exists.
@@ -1483,8 +1511,14 @@ impl WorkspaceManager {
             .list_thread_turns(user_id, session_id, None, 1)?
             .into_iter()
             .next()
-            .and_then(|turn| turn.get("turn_id").and_then(Value::as_str).map(str::to_owned))
-            .ok_or_else(|| anyhow::anyhow!("thread turn is required before freezing system prompt"))?;
+            .and_then(|turn| {
+                turn.get("turn_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!("thread turn is required before freezing system prompt")
+            })?;
         let item = json!({
             "session_id": session_id,
             "turn_id": turn,
@@ -1648,7 +1682,9 @@ impl WorkspaceManager {
         // Directory deletion must succeed before reporting a successful user purge.
         let chat_sessions = self.storage.delete_chat_sessions_by_user(cleaned)?;
         let chat_deleted = if delete_logs {
-            self.storage.delete_chat_history(cleaned).unwrap_or(0)
+            self.storage
+                .delete_thread_logs_by_user(cleaned)
+                .unwrap_or(0)
         } else {
             0
         };
@@ -2420,9 +2456,12 @@ fn search_by_walkdir(
 
 fn normalize_history_limit(limit: i64) -> Option<i64> {
     if limit <= 0 {
-        None
+        // A zero limit historically meant "all rows".  That makes a long
+        // thread an unbounded memory and model-context read.  Keep the call
+        // contract while bounding the database query at a safe upper page.
+        Some(2_000)
     } else {
-        Some(limit)
+        Some(limit.min(2_000))
     }
 }
 
@@ -2440,7 +2479,6 @@ fn purge_session_logs_with_storage(storage: &dyn StorageBackend, user_id: &str, 
     if cleaned_user.is_empty() || cleaned_session.is_empty() {
         return;
     }
-    let _ = storage.delete_chat_history_by_session(cleaned_user, cleaned_session);
     let _ = storage.delete_tool_logs_by_session(cleaned_user, cleaned_session);
     let _ = storage.delete_artifact_logs_by_session(cleaned_user, cleaned_session);
     let _ = storage.delete_stream_events_by_session(cleaned_session);
@@ -2634,12 +2672,12 @@ mod tests {
         assert_eq!(purged, 1);
 
         assert!(storage
-            .load_chat_history("user-a", "session-old", None)
+            .load_thread_context_items("user-a", "session-old", 500, true)
             .expect("load old chat")
             .is_empty());
         assert_eq!(
             storage
-                .load_chat_history("user-a", "session-new", None)
+                .load_thread_context_items("user-a", "session-new", 500, true)
                 .expect("load new chat")
                 .len(),
             1
@@ -2668,7 +2706,7 @@ mod tests {
         manager.set_deleted_session_log_grace_hours(0);
         manager.schedule_deleted_session_log_cleanup("user-a", "session-new");
         assert!(storage
-            .load_chat_history("user-a", "session-new", None)
+            .load_thread_context_items("user-a", "session-new", 500, true)
             .expect("load new chat after immediate purge")
             .is_empty());
     }
@@ -2809,7 +2847,7 @@ mod tests {
             .expect("purge projection");
         assert_eq!(
             storage
-                .load_chat_history(user_id, session_id, None)
+                .load_thread_context_items(user_id, session_id, 500, true)
                 .unwrap()
                 .len(),
             1
@@ -2823,7 +2861,7 @@ mod tests {
             .purge_user_data_with_logs(user_id)
             .expect("purge logs");
         assert!(storage
-            .load_chat_history(user_id, session_id, None)
+            .load_thread_context_items(user_id, session_id, 500, true)
             .unwrap()
             .is_empty());
         assert!(storage

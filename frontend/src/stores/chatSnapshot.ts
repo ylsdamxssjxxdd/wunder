@@ -56,8 +56,7 @@ import { resolveWorkflowDurationMs } from '@/utils/toolWorkflowTiming';
 import { summarizeTurnDecodeSpeed } from '@/utils/turnDecodeSpeed';
 import {
   normalizeMessageFeedback,
-  normalizeMessageFeedbackVote,
-  resolveMessageHistoryId
+  normalizeMessageFeedbackVote
 } from '@/utils/messageFeedback';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
@@ -165,7 +164,7 @@ export const normalizeSnapshotMessage = (message) => {
   };
   // Preserve backend identity across reloads instead of reconstructing turns from text.
   for (const key of ['id', 'message_id', 'user_turn_id', 'model_turn_id', 'client_message_id',
-    'history_id', 'turn_index', 'user_turn_index', 'model_turn_index', 'user_round',
+    'turn_index', 'user_turn_index', 'model_turn_index', 'user_round',
     'model_round', 'status', 'failed', 'cancelled', 'content_truncated', 'item_id',
     'turn_id', 'kind', 'visibility', 'revision', 'created_seq', 'item_index']) {
     if (message[key] !== undefined) base[key] = message[key];

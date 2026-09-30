@@ -214,67 +214,34 @@ async fn replay_queue(
     output: &mpsc::Sender<NativeChatEvent>,
     cancel: &CancellationToken,
 ) -> Result<()> {
-    let mut cursor = info.queue_after_event_id;
-    let mut started = false;
+    let mut last_status = String::new();
     loop {
         if cancel.is_cancelled() {
             cancel_chat(state, user, &info.session_id).await?;
-            let _ = output
-                .send(NativeChatEvent::Event(
-                    json!({"event":"turn_terminal","data":{"status":"cancelled"}}),
-                ))
-                .await;
             return Ok(());
         }
         if output.is_closed() {
             return Ok(());
         }
-        let storage = state.storage.clone();
-        let session = info.session_id.clone();
-        let events = blocking::run_db("native.chat.queue_replay", move || {
-            storage.load_stream_events(&session, cursor, CAPACITY as i64)
-        })
-        .await?;
-        let progressed = !events.is_empty();
-        for record in events {
-            let id = record["event_id"].as_i64().unwrap_or_default();
-            if id <= cursor {
-                continue;
-            }
-            cursor = id;
-            let kind = record["event"].as_str().unwrap_or_default();
-            let data = &record["data"];
-            let queue_event = kind.starts_with("queue_");
-            let matches_queue = data["queue_id"].as_str() == Some(info.task_id.as_str());
-            if queue_event && !matches_queue {
-                continue;
-            }
-            if kind == "queue_start" {
-                started = true;
-            }
-            if !queue_event && !started {
-                continue;
-            }
-            let terminal = matches!(kind, "queue_finish" | "queue_fail" | "queue_cancel");
-            // A queued subscriber settles on its own queue terminal, not a
-            // neighbouring turn_terminal belonging to another queued request.
-            if kind != "turn_terminal" {
-                tokio::select! {
-                    biased;
-                    _ = cancel.cancelled() => break,
-                    _ = output.send(NativeChatEvent::Event(json!({"event":kind,"data":data,"id":id}))) => {}
-                }
-            }
-            if terminal {
-                return Ok(());
-            }
+        let task = state.user_store.get_agent_task(&info.task_id)?;
+        let Some(task) = task else {
+            return Ok(());
+        };
+        let status = task.status.trim().to_string();
+        if status != last_status {
+            let event = match status.as_str() {
+                "pending" | "retry" => "queued",
+                "running" => "queue_start",
+                "success" => "queue_finish",
+                "failed" | "cancelled" | "dead" => "queue_fail",
+                _ => "queue_update",
+            };
+            output.send(NativeChatEvent::Event(json!({"event":event,"data":{"queue_id":info.task_id,"thread_id":task.thread_id,"session_id":task.session_id,"status":status}}))).await.ok();
+            last_status = status.clone();
         }
-        if !progressed {
-            tokio::select! {
-                _ = cancel.cancelled() => {},
-                _ = output.closed() => return Ok(()),
-                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {},
-            }
+        if matches!(status.as_str(), "success" | "failed" | "cancelled" | "dead") {
+            return Ok(());
         }
+        tokio::select! { _ = cancel.cancelled() => {}, _ = output.closed() => return Ok(()), _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {} }
     }
 }

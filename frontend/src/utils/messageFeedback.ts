@@ -29,12 +29,6 @@ export const normalizeMessageFeedbackVote = (
   return '';
 };
 
-export const resolveMessageHistoryId = (message: unknown): number => {
-  const raw = (message as Record<string, unknown> | null)?.history_id;
-  const parsed = Number.parseInt(String(raw ?? ''), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-};
-
 export const normalizeMessageFeedback = (
   value: unknown
 ): MessageFeedbackState | null => {
@@ -70,4 +64,3 @@ export const isMessageFeedbackLocked = (message: unknown): boolean => {
   );
   return Boolean(feedback?.vote);
 };
-

@@ -4,9 +4,28 @@ use anyhow::{ensure, Result};
 use serde_json::{json, Value};
 use uuid::Uuid;
 pub(super) trait PostgresThreadLogStorage {
-    fn fork_thread_log_impl(&self, user_id: &str, source: &str, target: &str, through_round: i64) -> Result<()>;
-    fn list_thread_visible_messages_impl(&self, user_id: &str, session_id: &str, before_seq: Option<i64>, limit: i64) -> Result<Vec<Value>>;
-    fn load_thread_context_items_impl(&self, user_id: &str, session_id: &str, limit: i64, include_internal: bool, executing_turn: Option<&str>) -> Result<Vec<Value>>;
+    fn fork_thread_log_impl(
+        &self,
+        user_id: &str,
+        source: &str,
+        target: &str,
+        through_round: i64,
+    ) -> Result<()>;
+    fn list_thread_visible_messages_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        before_seq: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<Value>>;
+    fn load_thread_context_items_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit: i64,
+        include_internal: bool,
+        executing_turn: Option<&str>,
+    ) -> Result<Vec<Value>>;
     fn upsert_thread_text_block_impl(
         &self,
         user_id: &str,
@@ -19,8 +38,25 @@ pub(super) trait PostgresThreadLogStorage {
         after: i64,
         limit: i64,
     ) -> Result<Vec<Value>>;
-    fn list_thread_item_blocks_impl(&self, user_id: &str, session_id: &str, item_id: &str, from_block: i64, limit: i64, include_internal: bool) -> Result<Vec<Value>>;
-    fn list_thread_item_blocks_page_impl(&self, user_id: &str, session_id: &str, item_id: &str, field: Option<&str>, from_block: i64, limit: i64, include_internal: bool) -> Result<(Vec<Value>, Option<i64>, bool)>;
+    fn list_thread_item_blocks_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        from_block: i64,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<Vec<Value>>;
+    fn list_thread_item_blocks_page_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        field: Option<&str>,
+        from_block: i64,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<(Vec<Value>, Option<i64>, bool)>;
 
     fn find_thread_turn_id_impl(
         &self,
@@ -58,6 +94,7 @@ pub(super) trait PostgresThreadLogStorage {
         session_id: &str,
         include_internal: bool,
     ) -> Result<(i64, i64)>;
+    fn latest_thread_user_round_by_session_impl(&self, session_id: &str) -> Result<i64>;
     fn get_thread_turn_impl(
         &self,
         user_id: &str,
@@ -67,8 +104,26 @@ pub(super) trait PostgresThreadLogStorage {
         limit: i64,
         include_internal: bool,
     ) -> Result<Option<Value>>;
-    fn get_thread_item_impl(&self, user_id: &str, session_id: &str, item_id: &str, include_internal: bool) -> Result<Option<Value>>;
-    fn list_thread_changes_by_session_impl(&self, session_id: &str, after: i64, limit: i64) -> Result<Vec<Value>>;
+    fn get_thread_item_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        include_internal: bool,
+    ) -> Result<Option<Value>>;
+    fn set_thread_item_feedback_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        vote: &str,
+    ) -> Result<Option<Value>>;
+    fn list_thread_changes_by_session_impl(
+        &self,
+        session_id: &str,
+        after: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>>;
     fn list_thread_changes_impl(
         &self,
         user_id: &str,
@@ -78,12 +133,26 @@ pub(super) trait PostgresThreadLogStorage {
     ) -> Result<Vec<Value>>;
 }
 impl PostgresThreadLogStorage for PostgresStorage {
-    fn fork_thread_log_impl(&self, user_id: &str, source: &str, target: &str, through_round: i64) -> Result<()> {
+    fn fork_thread_log_impl(
+        &self,
+        user_id: &str,
+        source: &str,
+        target: &str,
+        through_round: i64,
+    ) -> Result<()> {
         self.ensure_initialized()?;
-        ensure!(!target.trim().is_empty() && source != target && through_round > 0, "invalid thread fork");
+        ensure!(
+            !target.trim().is_empty() && source != target && through_round > 0,
+            "invalid thread fork"
+        );
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
-        let owner: Option<String> = tx.query_opt("SELECT user_id FROM thread_logs WHERE session_id=$1 FOR UPDATE", &[&source])?.map(|r| r.get(0));
+        let owner: Option<String> = tx
+            .query_opt(
+                "SELECT user_id FROM thread_logs WHERE session_id=$1 FOR UPDATE",
+                &[&source],
+            )?
+            .map(|r| r.get(0));
         ensure!(owner.as_deref() == Some(user_id), "thread owner mismatch");
         // The root INSERT rejects an existing destination, so retries cannot merge graphs.
         tx.execute("INSERT INTO thread_logs(session_id,user_id,latest_user_turn,latest_change_seq,created_time,updated_time) SELECT $3,user_id,COALESCE((SELECT MAX(user_turn_index) FROM thread_turns WHERE session_id=$2 AND trigger_kind='user' AND user_turn_index<=$4),0),latest_change_seq,created_time,updated_time FROM thread_logs WHERE user_id=$1 AND session_id=$2", &[&user_id,&source,&target,&through_round])?;
@@ -95,20 +164,36 @@ impl PostgresThreadLogStorage for PostgresStorage {
         tx.commit()?;
         Ok(())
     }
-    fn list_thread_visible_messages_impl(&self, user_id: &str, session_id: &str, before_seq: Option<i64>, limit: i64) -> Result<Vec<Value>> {
+    fn list_thread_visible_messages_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        before_seq: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
         let before = before_seq.unwrap_or(i64::MAX);
-        Ok(conn.query("SELECT payload,created_seq FROM thread_items WHERE user_id=$1 AND session_id=$2 AND visibility='user' AND kind IN ('user_message','assistant_message') AND created_seq<$3 ORDER BY created_seq DESC LIMIT $4", &[&user_id,&session_id,&before,&limit.clamp(1,101)])?.into_iter().map(|row| { let mut value: Value=serde_json::from_str(row.get(0)).unwrap_or(Value::Null); if let Value::Object(map)=&mut value { map.insert("_thread_item_seq".into(), json!(row.get::<_,i64>(1))); } value }).collect())
+        Ok(conn.query("SELECT payload,created_seq FROM thread_items WHERE user_id=$1 AND session_id=$2 AND visibility='user' AND kind IN ('user_message','assistant_message') AND created_seq<$3 ORDER BY created_seq DESC LIMIT $4", &[&user_id,&session_id,&before,&limit.clamp(1,501)])?.into_iter().map(|row| { let mut value: Value=serde_json::from_str(row.get(0)).unwrap_or(Value::Null); if let Value::Object(map)=&mut value { map.insert("created_seq".into(), json!(row.get::<_,i64>(1))); } value }).collect())
     }
-    fn load_thread_context_items_impl(&self, user_id: &str, session_id: &str, limit: i64, include_internal: bool, executing_turn: Option<&str>) -> Result<Vec<Value>> {
+    fn load_thread_context_items_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit: i64,
+        include_internal: bool,
+        executing_turn: Option<&str>,
+    ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
         let limit = (limit > 0).then_some(limit);
         let rows = conn.query("SELECT i.payload FROM thread_items i JOIN thread_turns t ON t.session_id=i.session_id AND t.turn_id=i.turn_id WHERE i.user_id=$1 AND i.session_id=$2 AND ($3 OR i.visibility='user') AND ($5::text IS NULL OR (t.status<>'queued' AND i.item_id<>$5 || ':user')) AND i.kind IN ('user_message','assistant_message','tool_message','system_message') ORDER BY i.created_seq DESC LIMIT $4", &[&user_id, &session_id, &include_internal, &limit, &executing_turn])?
             .into_iter().map(|row| row.get::<_, String>(0)).collect::<Vec<_>>();
         // Decode failures must surface instead of silently dropping model messages.
-        rows.into_iter().rev().map(|text| serde_json::from_str(&text).map_err(Into::into)).collect()
+        rows.into_iter()
+            .rev()
+            .map(|text| serde_json::from_str(&text).map_err(Into::into))
+            .collect()
     }
     fn upsert_thread_text_block_impl(
         &self,
@@ -122,7 +207,8 @@ impl PostgresThreadLogStorage for PostgresStorage {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing text item"))?;
         let index = block["block_index"].as_i64().unwrap_or(0);
-        let field = block["field"].as_str()
+        let field = block["field"]
+            .as_str()
             .or_else(|| block.pointer("/data/field").and_then(Value::as_str))
             .unwrap_or("content");
         let event_id = block["event_id"].as_i64().unwrap_or(0);
@@ -151,20 +237,52 @@ impl PostgresThreadLogStorage for PostgresStorage {
             .filter_map(|r| serde_json::from_str(&r.get::<_, String>(0)).ok())
             .collect())
     }
-    fn list_thread_item_blocks_page_impl(&self, user_id: &str, session_id: &str, item_id: &str, field: Option<&str>, from_block: i64, limit: i64, include_internal: bool) -> Result<(Vec<Value>, Option<i64>, bool)> {
+    fn list_thread_item_blocks_page_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        field: Option<&str>,
+        from_block: i64,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<(Vec<Value>, Option<i64>, bool)> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
-        let requested = limit.clamp(1,100);
+        let requested = limit.clamp(1, 100);
         let field = field.unwrap_or("content");
         let rows = conn.query("SELECT b.payload FROM thread_item_blocks b JOIN thread_items i ON i.session_id=b.session_id AND i.item_id=b.item_id WHERE b.user_id=$1 AND b.session_id=$2 AND b.item_id=$3 AND b.field=$4 AND b.block_index>=$5 AND ($6 OR i.visibility='user') ORDER BY b.block_index LIMIT $7", &[&user_id,&session_id,&item_id,&field,&from_block.max(0),&include_internal,&(requested+1)])?;
-        let mut blocks: Vec<Value> = rows.into_iter().filter_map(|row| serde_json::from_str(row.get::<_,String>(0)).ok()).collect();
+        let mut blocks: Vec<Value> = rows
+            .into_iter()
+            .filter_map(|row| serde_json::from_str(&row.get::<_, String>(0)).ok())
+            .collect();
         let has_more = blocks.len() > requested as usize;
         blocks.truncate(requested as usize);
-        let next = blocks.last().and_then(|block| block.get("block_index").and_then(Value::as_i64));
+        let next = blocks
+            .last()
+            .and_then(|block| block.get("block_index").and_then(Value::as_i64));
         Ok((blocks, next, has_more))
     }
-    fn list_thread_item_blocks_impl(&self, user_id: &str, session_id: &str, item_id: &str, from_block: i64, limit: i64, include_internal: bool) -> Result<Vec<Value>> {
-        Ok(self.list_thread_item_blocks_page_impl(user_id, session_id, item_id, None, from_block, limit, include_internal)?.0)
+    fn list_thread_item_blocks_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        from_block: i64,
+        limit: i64,
+        include_internal: bool,
+    ) -> Result<Vec<Value>> {
+        Ok(self
+            .list_thread_item_blocks_page_impl(
+                user_id,
+                session_id,
+                item_id,
+                None,
+                from_block,
+                limit,
+                include_internal,
+            )?
+            .0)
     }
 
     fn find_thread_turn_id_impl(
@@ -285,7 +403,10 @@ impl PostgresThreadLogStorage for PostgresStorage {
         )?;
         let item_seq = seq + 1;
         tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,$4,$5,$6,$7,'{}',$8)", &[&session_id,&item_seq,&user_id,&"item_upsert",&turn_id,&item_id,&revision,&now])?;
-        tx.execute("UPDATE thread_logs SET latest_change_seq=$1 WHERE session_id=$2", &[&item_seq,&session_id])?;
+        tx.execute(
+            "UPDATE thread_logs SET latest_change_seq=$1 WHERE session_id=$2",
+            &[&item_seq, &session_id],
+        )?;
         tx.execute(
             "INSERT INTO thread_log_metrics(session_id,user_id,metric_key,metric_value,updated_time) SELECT $1,$2,$3,latest_user_turn::double precision,$4 FROM thread_logs WHERE session_id=$1 ON CONFLICT(session_id,metric_key) DO UPDATE SET metric_value=EXCLUDED.metric_value,updated_time=EXCLUDED.updated_time",
             &[&session_id, &user_id, &"user_turn_total", &now],
@@ -330,7 +451,10 @@ impl PostgresThreadLogStorage for PostgresStorage {
             return Ok(());
         }
         // Keep the visible user bubble in sync with its durable turn.
-        let bubble_status = if matches!(status, "completed" | "cancelled" | "failed" | "rejected" | "stopped" | "interrupted") {
+        let bubble_status = if matches!(
+            status,
+            "completed" | "cancelled" | "failed" | "rejected" | "stopped" | "interrupted"
+        ) {
             "completed"
         } else {
             "running"
@@ -420,7 +544,10 @@ impl PostgresThreadLogStorage for PostgresStorage {
             )?
             .map(|r| (r.get(0), r.get(1)));
         if let Some((existing_turn, _)) = &existing {
-            ensure!(existing_turn == turn_id, "thread item belongs to another turn");
+            ensure!(
+                existing_turn == turn_id,
+                "thread item belongs to another turn"
+            );
         }
         if existing.as_ref().map(|(_, value)| value.as_str()) == Some(text.as_str()) {
             tx.commit()?;
@@ -453,7 +580,9 @@ impl PostgresThreadLogStorage for PostgresStorage {
             &[&session_id, &seq.saturating_sub(4096)],
         )?;
         tx.commit()?;
-        Ok(Some(json!({"change_type":"item_upsert","turn_id":turn_id,"item_id":item_id,"revision":revision,"cursor":seq})))
+        Ok(Some(
+            json!({"change_type":"item_upsert","turn_id":turn_id,"item_id":item_id,"revision":revision,"cursor":seq}),
+        ))
     }
     fn list_thread_turns_impl(
         &self,
@@ -483,6 +612,11 @@ impl PostgresThreadLogStorage for PostgresStorage {
             &[&user_id, &session_id, &include_internal],
         )?;
         Ok((row.get(0), row.get(1)))
+    }
+    fn latest_thread_user_round_by_session_impl(&self, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        Ok(conn.query_one("SELECT COALESCE(MAX(user_turn_index),0) FROM thread_turns WHERE session_id=$1 AND trigger_kind='user'", &[&session_id])?.get(0))
     }
     fn get_thread_turn_impl(
         &self,
@@ -522,11 +656,19 @@ impl PostgresThreadLogStorage for PostgresStorage {
         turn["next_after"] = json!(next);
         Ok(Some(turn))
     }
-    fn get_thread_item_impl(&self, user_id: &str, session_id: &str, item_id: &str, include_internal: bool) -> Result<Option<Value>> {
+    fn get_thread_item_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        include_internal: bool,
+    ) -> Result<Option<Value>> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
         let mut items = conn.query("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility FROM thread_items WHERE user_id=$1 AND session_id=$2 AND item_id=$3 AND ($4 OR visibility='user') LIMIT 1", &[&user_id, &session_id, &item_id, &include_internal])?.into_iter().map(item_row).collect::<Vec<_>>();
-        let Some(mut item) = items.pop() else { return Ok(None); };
+        let Some(mut item) = items.pop() else {
+            return Ok(None);
+        };
         if !include_internal {
             if let Some(map) = item["payload"].as_object_mut() {
                 map.remove("model_content");
@@ -535,12 +677,79 @@ impl PostgresThreadLogStorage for PostgresStorage {
         }
         Ok(Some(item))
     }
-    fn list_thread_changes_by_session_impl(&self, session_id: &str, after: i64, limit: i64) -> Result<Vec<Value>> {
+    fn set_thread_item_feedback_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        item_id: &str,
+        vote: &str,
+    ) -> Result<Option<Value>> {
+        self.ensure_initialized()?;
+        ensure!(matches!(vote, "up" | "down"), "invalid feedback vote");
+        let now = Self::now_ts();
+        let mut conn = self.conn()?;
+        let mut tx = conn.transaction()?;
+        let row = tx.query_opt("SELECT turn_id,kind,visibility,payload FROM thread_items WHERE user_id=$1 AND session_id=$2 AND item_id=$3 FOR UPDATE", &[&user_id,&session_id,&item_id])?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let turn_id: String = row.get(0);
+        let kind: String = row.get(1);
+        let visibility: String = row.get(2);
+        ensure!(
+            kind == "assistant_message" && visibility == "user",
+            "feedback requires visible assistant item"
+        );
+        let payload_text: String = row.get(3);
+        let mut payload: Value = serde_json::from_str(&payload_text)?;
+        let map = payload
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("invalid thread item payload"))?;
+        if map.get("feedback").is_some() {
+            return Ok(None);
+        }
+        let feedback = json!({"vote":vote,"created_at":now,"locked":true});
+        map.insert("feedback".to_string(), feedback.clone());
+        let text = serde_json::to_string(&payload)?;
+        tx.execute("UPDATE thread_items SET payload=$1,revision=revision+1,updated_time=$2 WHERE session_id=$3 AND item_id=$4", &[&text,&now,&session_id,&item_id])?;
+        let revision: i64 = tx
+            .query_one(
+                "SELECT revision FROM thread_items WHERE session_id=$1 AND item_id=$2",
+                &[&session_id, &item_id],
+            )?
+            .get(0);
+        let seq: i64 = tx
+            .query_one(
+                "SELECT latest_change_seq+1 FROM thread_logs WHERE session_id=$1",
+                &[&session_id],
+            )?
+            .get(0);
+        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,$4,$5,$6,$7,'{}',$8)", &[&session_id,&seq,&user_id,&"item_upsert",&turn_id,&item_id,&revision,&now])?;
+        tx.execute(
+            "UPDATE thread_logs SET latest_change_seq=$1,updated_time=$2 WHERE session_id=$3",
+            &[&seq, &now, &session_id],
+        )?;
+        tx.commit()?;
+        Ok(Some(feedback))
+    }
+    fn list_thread_changes_by_session_impl(
+        &self,
+        session_id: &str,
+        after: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
         let after = after.max(0);
-        let earliest: Option<i64> = conn.query_one("SELECT MIN(change_seq) FROM thread_log_changes WHERE session_id=$1", &[&session_id])?.get(0);
-        if earliest.is_some_and(|first| after > 0 && first > after + 1) { return Ok(vec![json!({"change_type":"snapshot_required"})]); }
+        let earliest: Option<i64> = conn
+            .query_one(
+                "SELECT MIN(change_seq) FROM thread_log_changes WHERE session_id=$1",
+                &[&session_id],
+            )?
+            .get(0);
+        if earliest.is_some_and(|first| after > 0 && first > after + 1) {
+            return Ok(vec![json!({"change_type":"snapshot_required"})]);
+        }
         Ok(conn.query("SELECT change_seq,change_type,turn_id,item_id,revision,payload,created_time FROM thread_log_changes WHERE session_id=$1 AND change_seq>$2 ORDER BY change_seq LIMIT $3", &[&session_id,&after,&limit.clamp(1,500)])?.into_iter().map(change_row).collect())
     }
     fn list_thread_changes_impl(
@@ -570,7 +779,10 @@ impl PostgresThreadLogStorage for PostgresStorage {
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
         let mut count = 0i64;
-        count += tx.execute("DELETE FROM thread_log_metrics WHERE user_id=$1 AND session_id=$2", &[&user_id, &session_id])? as i64;
+        count += tx.execute(
+            "DELETE FROM thread_log_metrics WHERE user_id=$1 AND session_id=$2",
+            &[&user_id, &session_id],
+        )? as i64;
         count += tx.execute(
             "DELETE FROM thread_item_blocks WHERE user_id=$1 AND session_id=$2",
             &[&user_id, &session_id],

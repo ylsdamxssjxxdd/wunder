@@ -6,14 +6,13 @@ use crate::monitor::MonitorState;
 use crate::orchestrator::{Orchestrator, OrchestratorError};
 use crate::schemas::WunderRequest;
 use crate::services::goal;
-use crate::services::stream_events::StreamEventService;
 use crate::services::tools::command_sessions::CommandSessionBroker;
 use crate::storage::{AgentTaskRecord, ChatSessionRecord, UpdateAgentTaskStatusParams};
 use crate::user_store::UserStore;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use futures::StreamExt;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{mpsc, Mutex};
@@ -45,8 +44,9 @@ pub struct QueueInfo {
     pub queue_total: usize,
     pub active_ahead: usize,
     pub wait_ahead: usize,
-    pub queue_event_id: i64,
-    pub queue_after_event_id: i64,
+    /// Durable ThreadLog change cursor for this queue Item.
+    pub queue_change_seq: i64,
+    pub queue_after_change_seq: i64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -114,7 +114,6 @@ pub struct ThreadRuntime {
     monitor: Arc<MonitorState>,
     orchestrator: Arc<Orchestrator>,
     command_sessions: Arc<CommandSessionBroker>,
-    stream_events: StreamEventService,
     queue_tx: mpsc::Sender<()>,
     queue_rx: Arc<Mutex<Option<mpsc::Receiver<()>>>>,
     running_threads: Arc<Mutex<HashSet<String>>>,
@@ -132,7 +131,6 @@ impl ThreadRuntime {
         orchestrator: Arc<Orchestrator>,
         command_sessions: Arc<CommandSessionBroker>,
     ) -> Arc<Self> {
-        let stream_events = StreamEventService::new(user_store.storage_backend());
         let (queue_tx, queue_rx) = mpsc::channel(64);
         let runtime = Arc::new(Self {
             config_store,
@@ -140,7 +138,6 @@ impl ThreadRuntime {
             monitor,
             orchestrator,
             command_sessions,
-            stream_events,
             queue_tx,
             queue_rx: Arc::new(Mutex::new(Some(queue_rx))),
             running_threads: Arc::new(Mutex::new(HashSet::new())),
@@ -854,12 +851,7 @@ impl ThreadRuntime {
                     "active_ahead": queue_stats.active_ahead, "wait_ahead": queue_stats.wait_ahead
                 }),
             )?;
-        let queue_before_event_id = self
-            .stream_events
-            .tail_event_id(&record.session_id)
-            .await
-            .unwrap_or(0);
-        let queue_event_id = self
+        let queue_change_seq = self
             .emit_queue_event(&record.session_id, &record.user_id, "queue_enter", {
                 let mut payload = json!({
                     "queue_id": record.task_id,
@@ -871,6 +863,9 @@ impl ThreadRuntime {
                     "queue_total": queue_stats.queue_total,
                     "active_ahead": queue_stats.active_ahead,
                     "wait_ahead": queue_stats.wait_ahead,
+                    "turn_id": request.config_overrides.as_ref()
+                        .and_then(|value| value.get("__thread_log_turn_id"))
+                        .cloned().unwrap_or(Value::Null),
                 });
                 if let (Some(client_message_id), Value::Object(ref mut map)) =
                     (request.client_message_id.as_deref(), &mut payload)
@@ -897,7 +892,7 @@ impl ThreadRuntime {
             "queue_total": queue_stats.queue_total,
             "active_ahead": queue_stats.active_ahead,
             "wait_ahead": queue_stats.wait_ahead,
-            "queue_event_id": queue_event_id,
+            "queue_change_seq": queue_change_seq,
         });
         if !self.session_has_active_runtime_slot(&record.session_id) {
             self.monitor.mark_queued(&record.session_id, None);
@@ -913,12 +908,8 @@ impl ThreadRuntime {
             queue_total: queue_stats.queue_total,
             active_ahead: queue_stats.active_ahead,
             wait_ahead: queue_stats.wait_ahead,
-            queue_event_id,
-            queue_after_event_id: if queue_event_id > 0 {
-                queue_event_id.saturating_sub(1)
-            } else {
-                queue_before_event_id
-            },
+            queue_change_seq,
+            queue_after_change_seq: queue_change_seq.saturating_sub(1),
         })
     }
 
@@ -1089,40 +1080,80 @@ impl ThreadRuntime {
         true
     }
 
+    /// Persist queue lifecycle as one stable ThreadLog Item.  `stream_events`
+    /// remains a diagnostic facility and is deliberately not written here.
     async fn emit_queue_event(
         &self,
         session_id: &str,
         user_id: &str,
         event_type: &str,
-        payload: Value,
+        mut payload: Value,
     ) -> i64 {
-        let cleaned_session = session_id.trim();
-        let cleaned_user = user_id.trim();
-        let cleaned_event = event_type.trim();
-        if cleaned_session.is_empty() || cleaned_event.is_empty() {
+        let session_id = session_id.trim();
+        let user_id = user_id.trim();
+        let event_type = event_type.trim();
+        if session_id.is_empty() || user_id.is_empty() || event_type.is_empty() {
             return 0;
         }
-        self.monitor
-            .record_event(cleaned_session, cleaned_event, &payload);
-        if cleaned_user.is_empty() {
+        self.monitor.record_event(session_id, event_type, &payload);
+        let queue_id = payload
+            .get("queue_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if queue_id.is_empty() {
             return 0;
         }
-        let stream_payload = json!({
-            "event": cleaned_event,
-            "data": payload,
-            "timestamp": Utc::now().to_rfc3339(),
-        });
-        match self
-            .stream_events
-            .append_event(cleaned_session, cleaned_user, stream_payload)
-            .await
+        let turn_id = payload
+            .get("turn_id")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_owned)
+            .or_else(|| {
+                self.user_store
+                    .get_agent_task(&queue_id)
+                    .ok()
+                    .flatten()
+                    .and_then(|task| {
+                        task.request_payload
+                            .pointer("/config_overrides/__thread_log_turn_id")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                    })
+            });
+        let Some(turn_id) = turn_id else {
+            return 0;
+        };
+        let status = match event_type {
+            "queue_enter" | "queue_update" => "queued",
+            "queue_start" => "running",
+            "queue_finish" => "completed",
+            "queue_fail" | "queue_cancel" => "failed",
+            _ => "completed",
+        };
+        if let Some(map) = payload.as_object_mut() {
+            map.insert("event_type".into(), json!(event_type));
+            map.insert("turn_id".into(), json!(turn_id));
+            map.insert("kind".into(), json!("queue"));
+            map.insert("status".into(), json!(status));
+            map.insert(
+                "item_id".into(),
+                json!(format!("{turn_id}:queue-{queue_id}")),
+            );
+            map.insert("visibility".into(), json!("user"));
+        }
+        let storage = self.user_store.storage_backend();
+        let owner = user_id.to_string();
+        match blocking::run_db("thread_log.queue", move || {
+            storage.commit_thread_item(&owner, &payload)
+        })
+        .await
         {
-            Ok(event_id) => event_id,
-            Err(err) => {
-                warn!(
-                    "append queue stream event failed: session_id={}, event_type={}, error={err}",
-                    cleaned_session, cleaned_event
-                );
+            Ok(Some(receipt)) => receipt.get("cursor").and_then(Value::as_i64).unwrap_or(0),
+            Ok(None) => 0,
+            Err(error) => {
+                warn!("persist queue item failed: {error}");
                 0
             }
         }
@@ -1137,57 +1168,17 @@ impl ThreadRuntime {
         queued_tasks_cancelled: usize,
         running_tasks_marked_cancelled: usize,
     ) -> i64 {
-        let cleaned_session = session_id.trim();
-        let cleaned_user = user_id.trim();
-        let cleaned_status = status.trim();
-        if cleaned_session.is_empty() || cleaned_status.is_empty() {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
             return 0;
         }
-
-        let mut data = Map::new();
-        data.insert("session_id".to_string(), json!(cleaned_session));
-        data.insert(
-            "thread_id".to_string(),
-            json!(format!("thread_{cleaned_session}")),
-        );
-        data.insert("status".to_string(), json!(cleaned_status));
-        data.insert("thread_status".to_string(), json!(cleaned_status));
-        data.insert("loaded".to_string(), json!(true));
-        data.insert("active_turn_id".to_string(), Value::Null);
-        data.insert("cancel_source".to_string(), json!(cancel_source));
-        data.insert(
-            "queued_tasks_cancelled".to_string(),
-            json!(queued_tasks_cancelled),
-        );
-        data.insert(
-            "running_tasks_marked_cancelled".to_string(),
-            json!(running_tasks_marked_cancelled),
-        );
-        let payload = Value::Object(data);
+        let payload = json!({"session_id":session_id,"thread_id":format!("thread_{session_id}"),
+            "status":status,"thread_status":status,"loaded":true,"active_turn_id":Value::Null,
+            "cancel_source":cancel_source,"queued_tasks_cancelled":queued_tasks_cancelled,
+            "running_tasks_marked_cancelled":running_tasks_marked_cancelled,"user_id":user_id});
         self.monitor
-            .record_event(cleaned_session, "thread_status", &payload);
-        if cleaned_user.is_empty() {
-            return 0;
-        }
-        let stream_payload = json!({
-            "event": "thread_status",
-            "data": payload,
-            "timestamp": Utc::now().to_rfc3339(),
-        });
-        match self
-            .stream_events
-            .append_event(cleaned_session, cleaned_user, stream_payload)
-            .await
-        {
-            Ok(event_id) => event_id,
-            Err(err) => {
-                warn!(
-                    "append thread status stream event failed: session_id={}, status={}, error={err}",
-                    cleaned_session, cleaned_status
-                );
-                0
-            }
-        }
+            .record_event(session_id, "thread_status", &payload);
+        0
     }
 
     async fn run_loop(self: Arc<Self>) {

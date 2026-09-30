@@ -1828,6 +1828,7 @@ const buildMonitorDetailMeta = (session, events, { userRoundTotal, itemTotal }) 
       `<div class="monitor-detail-overview-item"><i class="${icon}" aria-hidden="true"></i><div><span>${escapeMonitorDetailHtml(label)}</span><strong title="${escapeMonitorDetailHtml(text)}">${escapeMonitorDetailHtml(text)}</strong></div></div>`
     );
   };
+  add("fa-solid fa-user", t("monitor.detail.meta.userName"), session?.user_name || session?.username || session?.user_id);
   add("fa-solid fa-robot", t("monitor.detail.meta.agent"), resolveMonitorDetailAgentName(session));
   add("fa-solid fa-circle-info", t("monitor.detail.meta.status"), getSessionStatusLabel(session?.status));
 

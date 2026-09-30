@@ -25,8 +25,7 @@ pub(super) trait PostgresLogStatsStorage {
         start_time: f64,
         end_time: f64,
     ) -> Result<HashMap<String, i64>>;
-    fn delete_chat_history_impl(&self, user_id: &str) -> Result<i64>;
-    fn delete_chat_history_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64>;
+    fn delete_thread_logs_by_user_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_tool_logs_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_tool_logs_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn delete_artifact_logs_impl(&self, user_id: &str) -> Result<i64>;
@@ -67,7 +66,7 @@ impl PostgresLogStatsStorage for PostgresStorage {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
         let rows = conn.query(
-            "SELECT user_id, COUNT(*) as chat_records, MAX(created_time) as last_time FROM chat_history GROUP BY user_id",
+            "SELECT l.user_id, COUNT(i.item_id) as chat_records, COALESCE(MAX(i.updated_time), MAX(l.updated_time)) as last_time FROM thread_logs l LEFT JOIN thread_items i ON i.session_id=l.session_id AND i.user_id=l.user_id AND i.visibility='user' AND i.kind IN ('user_message','assistant_message') GROUP BY l.user_id",
             &[],
         )?;
         let mut stats = HashMap::new();
@@ -225,7 +224,6 @@ impl PostgresLogStatsStorage for PostgresStorage {
         let mut conn = self.conn()?;
         let row = conn.query_one(
             "SELECT \
-            COALESCE(pg_total_relation_size(to_regclass('chat_history')), 0) + \
             COALESCE(pg_total_relation_size(to_regclass('tool_logs')), 0) + \
             COALESCE(pg_total_relation_size(to_regclass('artifact_logs')), 0) + \
             COALESCE(pg_total_relation_size(to_regclass('monitor_sessions')), 0) + \
@@ -255,7 +253,7 @@ impl PostgresLogStatsStorage for PostgresStorage {
         // Serialize this rare maintenance command with new thread starts; a
         // transaction alone would still allow a start between guard and deletion.
         tx.execute("LOCK TABLE chat_sessions, session_locks, agent_tasks, session_runs, monitor_sessions, \
-            chat_history, stream_events, tool_logs, artifact_logs, cron_jobs, session_goals \
+            thread_logs, thread_turns, thread_items, thread_item_blocks, thread_log_changes, thread_log_metrics, stream_events, tool_logs, artifact_logs, cron_jobs, session_goals \
             IN SHARE ROW EXCLUSIVE MODE", &[])?;
         let now = Self::now_ts();
         let live = crate::storage::session_cleanup::LIVE_SESSION_PREDICATE.replace(":now", "$1");
@@ -275,10 +273,6 @@ impl PostgresLogStatsStorage for PostgresStorage {
                     AND NOT EXISTS (SELECT 1 FROM protected_chat_sessions p WHERE p.session_id = {table}.session_id)");
             Ok(tx.execute(&sql, &[&start, &end])? as i64)
         };
-        results.insert(
-            "chat_history".to_string(),
-            delete_range("chat_history", "created_time")?,
-        );
         results.insert(
             "tool_logs".to_string(),
             delete_range("tool_logs", "created_time")?,
@@ -307,30 +301,29 @@ impl PostgresLogStatsStorage for PostgresStorage {
         Ok(results)
     }
 
-    fn delete_chat_history_impl(&self, user_id: &str) -> Result<i64> {
+    fn delete_thread_logs_by_user_impl(&self, user_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
-        let cleaned = user_id.trim();
-        if cleaned.is_empty() {
+        if user_id.trim().is_empty() {
             return Ok(0);
         }
         let mut conn = self.conn()?;
-        let affected = conn.execute("DELETE FROM chat_history WHERE user_id = $1", &[&cleaned])?;
-        Ok(affected as i64)
-    }
-
-    fn delete_chat_history_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Ok(0);
+        let mut tx = conn.transaction()?;
+        let mut removed = 0i64;
+        for table in [
+            "thread_item_blocks",
+            "thread_log_changes",
+            "thread_items",
+            "thread_turns",
+            "thread_log_metrics",
+            "thread_logs",
+        ] {
+            removed += tx.execute(
+                &format!("DELETE FROM {table} WHERE user_id=$1"),
+                &[&user_id],
+            )? as i64;
         }
-        let mut conn = self.conn()?;
-        let affected = conn.execute(
-            "DELETE FROM chat_history WHERE user_id = $1 AND session_id = $2",
-            &[&cleaned_user, &cleaned_session],
-        )?;
-        Ok(affected as i64)
+        tx.commit()?;
+        Ok(removed)
     }
 
     fn delete_tool_logs_impl(&self, user_id: &str) -> Result<i64> {

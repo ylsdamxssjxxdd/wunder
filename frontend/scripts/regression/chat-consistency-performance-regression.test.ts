@@ -135,7 +135,7 @@ test('snapshot normalization preserves canonical identity, round order and cance
     await import('../../src/stores/chatSnapshot');
   const input = { role: 'assistant', content: 'output', created_at: '', message_id: 'history:2',
     user_turn_id: 'user-turn:session-1:round:2', model_turn_id: 'model-turn:session-1:user:2:model:1',
-    history_id: 2, turn_index: 4, user_turn_index: 2, model_turn_index: 1,
+    created_seq: 2, turn_index: 4, user_turn_index: 2, model_turn_index: 1,
     user_round: 2, model_round: 1, status: 'cancelled', cancelled: true };
   const normalized = normalizeSnapshotMessage(input);
   for (const [key, value] of Object.entries(input)) assert.deepEqual(normalized[key], value);

@@ -316,7 +316,6 @@ mod tests {
     use chrono::Local;
     use rusqlite::params;
     use rusqlite::Connection;
-    use serde_json::json;
     use tempfile::tempdir;
 
     fn sample_user(
@@ -505,7 +504,8 @@ mod tests {
               );
               INSERT INTO thread_item_blocks VALUES
                 ('thread', 'owner', 'item', 0, 1, '{\"field\":\"content\",\"content\":\"text\"}');",
-        ).expect("create legacy blocks");
+        )
+        .expect("create legacy blocks");
         drop(conn);
 
         let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
@@ -618,123 +618,6 @@ mod tests {
         assert_eq!(account.quota_granted_total, 150);
         assert_eq!(account.quota_used_total, 3);
         assert_eq!(account.last_quota_grant_date.as_deref(), Some("2026-04-10"));
-    }
-
-    #[test]
-    fn legacy_inline_image_payloads_are_sanitized_and_repaired_on_load() {
-        let temp = tempdir().expect("tempdir");
-        let db_path = temp.path().join("legacy-inline-image.db");
-        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
-        storage.ensure_initialized().expect("initialize storage");
-
-        let legacy_payload = json!({
-            "session_id": "session-a",
-            "role": "user",
-            "content": [
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
-            ]
-        })
-        .to_string();
-
-        {
-            let conn = Connection::open(&db_path).expect("open sqlite");
-            conn.execute(
-                "INSERT INTO chat_history (user_id, session_id, role, payload, created_time)
-                 VALUES (?, ?, ?, ?, ?)",
-                params![
-                    "user-a",
-                    "session-a",
-                    "user",
-                    legacy_payload.as_str(),
-                    1.0_f64
-                ],
-            )
-            .expect("insert legacy chat payload");
-        }
-
-        let chat_history = storage
-            .load_chat_history("user-a", "session-a", None)
-            .expect("load chat history");
-
-        assert_eq!(chat_history.len(), 1);
-        assert!(!chat_history[0]
-            .to_string()
-            .contains("data:image/png;base64"));
-        assert!(chat_history[0].to_string().contains("inline image omitted"));
-
-        let conn = Connection::open(&db_path).expect("open sqlite");
-        let repaired_chat: String = conn
-            .query_row("SELECT payload FROM chat_history", [], |row| row.get(0))
-            .expect("load repaired chat payload");
-        assert!(!repaired_chat.contains("data:image/png;base64"));
-    }
-
-    #[test]
-    fn legacy_chat_history_columns_are_dropped() {
-        let temp = tempdir().expect("tempdir");
-        let db_path = temp.path().join("legacy-chat-history.db");
-        let conn = Connection::open(&db_path).expect("open sqlite");
-        conn.execute_batch(
-            "CREATE TABLE chat_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT,
-                timestamp TEXT,
-                meta TEXT,
-                payload TEXT NOT NULL,
-                created_time REAL NOT NULL
-            );
-            INSERT INTO chat_history (user_id, session_id, role, content, timestamp, meta, payload, created_time)
-            VALUES ('user-a', 'session-a', 'user', 'legacy text', '2026-01-01T00:00:00Z',
-                '{\"origin\":\"legacy\"}', '{\"role\":\"user\",\"content\":\"legacy text\"}', 1);",
-        )
-        .expect("create legacy chat history");
-        drop(conn);
-
-        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
-        storage
-            .ensure_initialized()
-            .expect("migrate legacy chat history");
-
-        let conn = Connection::open(&db_path).expect("open migrated sqlite");
-        let columns = conn
-            .prepare("PRAGMA table_info(chat_history)")
-            .expect("prepare chat history columns")
-            .query_map([], |row| row.get::<_, String>(1))
-            .expect("read chat history columns")
-            .collect::<Result<Vec<_>, _>>()
-            .expect("collect chat history columns");
-        for retired in ["content", "timestamp", "meta"] {
-            assert!(!columns.iter().any(|column| column == retired));
-        }
-        let kept: (String, String) = conn
-            .query_row(
-                "SELECT role, payload FROM chat_history WHERE user_id = 'user-a'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .expect("read migrated chat row");
-        assert_eq!(kept.0, "user");
-        assert!(kept.1.contains("legacy text"));
-        drop(conn);
-
-        // New inserts target the reduced column set and stay loadable.
-        storage
-            .append_chat(
-                "user-a",
-                &json!({
-                    "session_id": "session-a",
-                    "role": "assistant",
-                    "content": "fresh reply"
-                }),
-            )
-            .expect("append chat after migration");
-        let history = storage
-            .load_chat_history("user-a", "session-a", None)
-            .expect("load chat history");
-        assert_eq!(history.len(), 2);
     }
 
     #[test]

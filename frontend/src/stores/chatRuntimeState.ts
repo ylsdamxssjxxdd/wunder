@@ -62,8 +62,7 @@ import { resolveWorkflowDurationMs } from '@/utils/toolWorkflowTiming';
 import { summarizeTurnDecodeSpeed } from '@/utils/turnDecodeSpeed';
 import {
   normalizeMessageFeedback,
-  normalizeMessageFeedbackVote,
-  resolveMessageHistoryId
+  normalizeMessageFeedbackVote
 } from '@/utils/messageFeedback';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
@@ -274,11 +273,11 @@ export const updateHistoryState = (sessionId, patch) => {
   return state;
 };
 
-export const findOldestHistoryId = (messages) => {
+export const findOldestItemSeq = (messages) => {
   if (!Array.isArray(messages)) return null;
   for (let i = 0; i < messages.length; i += 1) {
     const message = messages[i];
-    const id = Number.parseInt(String(message?.history_id ?? ''), 10);
+    const id = Number.parseInt(String(message?.created_seq ?? ''), 10);
     if (Number.isFinite(id) && id > 0) {
       return id;
     }
@@ -286,147 +285,10 @@ export const findOldestHistoryId = (messages) => {
   return null;
 };
 
-export const applyMessageFeedbackByHistoryId = (messages, historyId, feedback) => {
-  if (!Array.isArray(messages)) return false;
-  const normalizedHistoryId = Number.parseInt(String(historyId ?? ''), 10);
-  if (!Number.isFinite(normalizedHistoryId) || normalizedHistoryId <= 0) {
-    return false;
-  }
-  const normalizedFeedback = normalizeMessageFeedback(feedback);
-  if (!normalizedFeedback) return false;
-  let updated = false;
-  for (let i = 0; i < messages.length; i += 1) {
-    const message = messages[i];
-    if (!message || message.role !== 'assistant') continue;
-    if (resolveMessageHistoryId(message) !== normalizedHistoryId) continue;
-    const current = normalizeMessageFeedback(message.feedback);
-    const shouldUpdate =
-      !current ||
-      current.vote !== normalizedFeedback.vote ||
-      current.locked !== true ||
-      String(current.created_at || '') !== String(normalizedFeedback.created_at || '');
-    message.feedback = {
-      ...normalizedFeedback,
-      locked: true
-    };
-    if (shouldUpdate) {
-      updated = true;
-    }
-  }
-  return updated;
-};
-
 export const normalizeFeedbackMatchText = (value) =>
   normalizeAssistantContent(String(value || ''))
     .replace(/\s+/g, ' ')
     .trim();
-
-export const isAssistantFeedbackCandidate = (message) => {
-  if (!message || message.role !== 'assistant' || message.isGreeting) return false;
-  if (resolveMessageHistoryId(message) > 0) return false;
-  const text = normalizeFeedbackMatchText(message.content);
-  return Boolean(text || message.created_at);
-};
-
-export const scoreAssistantHistoryMatch = (localMessage, remoteMessage) => {
-  const localText = normalizeFeedbackMatchText(localMessage?.content);
-  const remoteText = normalizeFeedbackMatchText(remoteMessage?.content);
-  const localTime = resolveTimestampMs(localMessage?.created_at);
-  const remoteTime = resolveTimestampMs(remoteMessage?.created_at);
-  const hasTime = Number.isFinite(localTime) && Number.isFinite(remoteTime);
-  const timeDelta = hasTime ? Math.abs(localTime - remoteTime) : Number.POSITIVE_INFINITY;
-
-  let textScore = 0;
-  if (localText && remoteText) {
-    if (localText === remoteText) {
-      textScore = 100000;
-    } else if (localText.includes(remoteText) || remoteText.includes(localText)) {
-      textScore = 80000;
-    } else {
-      return 0;
-    }
-  } else if (!localText && !remoteText) {
-    if (!hasTime || timeDelta > 5000) {
-      return 0;
-    }
-    textScore = 1000;
-  } else {
-    return 0;
-  }
-
-  let timeScore = 0;
-  if (hasTime) {
-    if (timeDelta <= 1000) {
-      timeScore = 5000;
-    } else if (timeDelta <= 10000) {
-      timeScore = 4000;
-    } else if (timeDelta <= 60000) {
-      timeScore = 3000;
-    } else if (timeDelta <= 180000) {
-      timeScore = 1000;
-    } else if (textScore < 100000) {
-      return 0;
-    }
-  }
-  return textScore + timeScore;
-};
-
-export const applyAssistantHistoryIdBackfill = (messages, historyMessages) => {
-  if (!Array.isArray(messages) || !Array.isArray(historyMessages)) {
-    return 0;
-  }
-  const localCandidates = [];
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (!isAssistantFeedbackCandidate(message)) continue;
-    localCandidates.push(message);
-  }
-  if (!localCandidates.length) {
-    return 0;
-  }
-
-  const remoteCandidates = [];
-  for (let index = historyMessages.length - 1; index >= 0; index -= 1) {
-    const message = historyMessages[index];
-    if (!message || message.role !== 'assistant' || message.isGreeting) continue;
-    const historyId = resolveMessageHistoryId(message);
-    if (historyId <= 0) continue;
-    remoteCandidates.push(message);
-  }
-  if (!remoteCandidates.length) {
-    return 0;
-  }
-
-  const usedHistoryIds = new Set();
-  let updated = 0;
-  for (const localMessage of localCandidates) {
-    let bestMatch = null;
-    let bestScore = 0;
-    for (const remoteMessage of remoteCandidates) {
-      const historyId = resolveMessageHistoryId(remoteMessage);
-      if (historyId <= 0 || usedHistoryIds.has(historyId)) continue;
-      const score = scoreAssistantHistoryMatch(localMessage, remoteMessage);
-      if (score > bestScore) {
-        bestScore = score;
-        bestMatch = remoteMessage;
-      }
-    }
-    if (!bestMatch || bestScore <= 0) continue;
-    const historyId = resolveMessageHistoryId(bestMatch);
-    if (historyId <= 0) continue;
-    usedHistoryIds.add(historyId);
-    localMessage.history_id = historyId;
-    const feedback = normalizeMessageFeedback(bestMatch.feedback);
-    if (feedback) {
-      localMessage.feedback = {
-        ...feedback,
-        locked: true
-      };
-    }
-    updated += 1;
-  }
-  return updated;
-};
 
 export const applyMessageWindow = (store, sessionId, messages, options: { force?: boolean } = {}) => {
   if (!store || !isWindowingEnabled()) return;
@@ -443,7 +305,7 @@ export const applyMessageWindow = (store, sessionId, messages, options: { force?
   const overflow = messages.length - limit;
   if (overflow <= 0) return;
   messages.splice(0, overflow);
-  const visibleBeforeId = findOldestHistoryId(messages);
+  const visibleBeforeId = findOldestItemSeq(messages);
   if (visibleBeforeId) {
     updateHistoryState(key, {
       beforeId: visibleBeforeId,
@@ -455,21 +317,21 @@ export const applyMessageWindow = (store, sessionId, messages, options: { force?
 export const applyHistoryMeta = (sessionId, detail, messages) => {
   const beforeId = Number.parseInt(
     String(
-      detail?.history_before_id ??
-        detail?.history_beforeId ??
-        detail?.historyBeforeId ??
+      detail?.before_seq ??
+        detail?.beforeSeq ??
+        detail?.beforeSeq ??
         ''
     ),
     10
   );
   const hasMore =
-    detail?.history_has_more ??
-    detail?.historyHasMore ??
-    detail?.history_more ??
-    detail?.historyMore ??
+    detail?.has_more ??
+    detail?.hasMore ??
+    detail?.has_more ??
+    detail?.hasMore ??
     null;
   const resolvedBeforeId =
-    Number.isFinite(beforeId) && beforeId > 0 ? beforeId : findOldestHistoryId(messages);
+    Number.isFinite(beforeId) && beforeId > 0 ? beforeId : findOldestItemSeq(messages);
   updateHistoryState(sessionId, {
     beforeId: resolvedBeforeId,
     hasMore: hasMore === null ? Boolean(resolvedBeforeId) : Boolean(hasMore)
@@ -594,7 +456,7 @@ export const buildSessionMessageFingerprint = (messages) => {
         index,
         String(record.role || ''),
         String(record.created_at || ''),
-        String(record.history_id ?? ''),
+        String(record.item_id ?? ''),
         String(record.stream_event_id ?? ''),
         String(record.stream_round ?? ''),
         String(record.content || '').length,

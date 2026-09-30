@@ -4365,15 +4365,19 @@ impl TuiApp {
             return;
         }
         let after_event_id = self.thread_registry.replay_from(session_id).unwrap_or(0);
-        let storage = self.runtime.state.storage.clone();
+        let workspace = self.runtime.state.workspace.clone();
         let target = session_id.to_string();
         let result = tokio::task::spawn_blocking(move || {
-            let records = storage.load_stream_events(
+            let records = workspace.load_thread_changes(
                 &target,
                 after_event_id.max(0),
                 REPLAY_PAGE_SIZE as i64,
-            )?;
-            let watermark = storage.get_max_stream_event_id(&target)?;
+            );
+            let watermark = records
+                .iter()
+                .filter_map(|record| record.get("event_id").and_then(Value::as_i64))
+                .max()
+                .unwrap_or(after_event_id);
             anyhow::Ok((records, watermark))
         })
         .await;
@@ -4397,12 +4401,18 @@ impl TuiApp {
         let full_page = records.len() == REPLAY_PAGE_SIZE;
         let mut cursor = after_event_id;
         for record in records {
-            let Some(event) = persisted_stream_event(record) else {
+            let event_cursor = record
+                .get("event_id")
+                .and_then(Value::as_i64)
+                .or_else(|| record.get("change_seq").and_then(Value::as_i64));
+            cursor = cursor.max(event_cursor.unwrap_or(cursor));
+            // ThreadLog replay is an identity/change projection. The transcript
+            // snapshot is loaded separately; only advance the durable cursor here.
+            if record.get("event").and_then(Value::as_str) == Some("thread_snapshot_required") {
+                self.notify_replay_history_expired(session_id);
+                self.thread_registry.clear_replay(session_id);
                 return;
-            };
-            cursor = cursor.max(stream_event_id(&event));
-            // apply_stream_event owns deduplication. Pre-marking here drops the event.
-            self.apply_stream_event(event);
+            }
         }
         if full_page && cursor > after_event_id {
             self.thread_registry.projection_mut(session_id).replay_from = Some(cursor);
@@ -6289,9 +6299,7 @@ impl TuiApp {
     fn complete_patch_log(&mut self, payload: &Value) {
         let mut special = build_completed_patch_log(payload, self.is_zh_language());
         let key = ToolCallKey::from_payload(payload);
-        if let Some(index) =
-            self.resolve_pending_tool_cell("", key.as_ref())
-        {
+        if let Some(index) = self.resolve_pending_tool_cell("", key.as_ref()) {
             let previous_special = self.logs.get(index).and_then(|entry| entry.special.clone());
             if let Some(previous_special) = previous_special.as_ref() {
                 special.inherit_patch_preview_from(previous_special);
@@ -6308,9 +6316,7 @@ impl TuiApp {
             return false;
         };
         let key = ToolCallKey::from_payload(payload);
-        if let Some(index) =
-            self.resolve_pending_tool_cell("", key.as_ref())
-        {
+        if let Some(index) = self.resolve_pending_tool_cell("", key.as_ref()) {
             self.write_completed_tool_cell(index, special);
             return true;
         }
@@ -6359,14 +6365,12 @@ impl TuiApp {
     }
 
     fn pending_temp_tool_cell_position(&self, result_tool: &str) -> Option<usize> {
-        self.pending_temp_tool_cells
-            .iter()
-            .position(|cell| {
-                cell.index < self.logs.len()
-                    && cell
-                        .kind
-                        .matches_result(result_tool, self.logs[cell.index].special.as_ref())
-            })
+        self.pending_temp_tool_cells.iter().position(|cell| {
+            cell.index < self.logs.len()
+                && cell
+                    .kind
+                    .matches_result(result_tool, self.logs[cell.index].special.as_ref())
+        })
     }
 
     fn write_completed_tool_cell(&mut self, index: usize, special: SpecialLogEntry) {
@@ -6683,27 +6687,6 @@ fn stream_event_id(event: &StreamEvent) -> i64 {
         .unwrap_or(0)
 }
 
-fn persisted_stream_event(record: Value) -> Option<StreamEvent> {
-    let event_id = record.get("event_id").and_then(Value::as_i64);
-    let payload = if record.get("event").or_else(|| record.get("type")).is_some() {
-        record
-    } else {
-        record.get("data").cloned().unwrap_or(record)
-    };
-    let event_name = payload
-        .get("event")
-        .or_else(|| payload.get("type"))
-        .and_then(Value::as_str)?
-        .to_string();
-    let data = payload.get("data").cloned().unwrap_or(payload);
-    Some(StreamEvent {
-        event: event_name,
-        data,
-        id: event_id.map(|value| value.to_string()),
-        timestamp: None,
-    })
-}
-
 fn format_footer_context_summary(
     is_zh: bool,
     used_tokens: i64,
@@ -6734,32 +6717,3 @@ fn format_footer_context_summary(
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod persisted_event_tests {
-    use super::{persisted_stream_event, stream_event_id};
-    use serde_json::json;
-
-    #[test]
-    fn persisted_direct_event_keeps_payload_without_unwrapping_it_as_envelope() {
-        let event = persisted_stream_event(json!({
-            "event_id": 23, "event": "tool_result", "data": {"ok": true}
-        }))
-        .expect("direct event should decode");
-        assert_eq!(event.event, "tool_result");
-        assert_eq!(stream_event_id(&event), 23);
-        assert_eq!(event.data["ok"], json!(true));
-    }
-
-    #[test]
-    fn persisted_nested_event_keeps_id_and_payload() {
-        let event = persisted_stream_event(json!({
-            "event_id": 17,
-            "data": {"event": "tool_result", "data": {"ok": true}}
-        }))
-        .expect("event should decode");
-        assert_eq!(event.event, "tool_result");
-        assert_eq!(stream_event_id(&event), 17);
-        assert_eq!(event.data["ok"], json!(true));
-    }
-}

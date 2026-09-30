@@ -2,7 +2,6 @@ use super::{error_response, format_ts};
 use crate::api::user_context::resolve_user;
 use crate::core::blocking;
 use crate::i18n;
-use crate::orchestrator_constants::STREAM_EVENT_FETCH_LIMIT;
 use crate::services::chat_runtime_projection::load_chat_session_activity;
 use crate::services::chat_transcript::build_chat_transcript;
 use crate::state::AppState;
@@ -188,8 +187,12 @@ async fn list_thread_changes(
     })
     .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let snapshot_required = changes.iter().any(|change| change.get("change_type").and_then(Value::as_str) == Some("snapshot_required"));
-    Ok(Json(json!({"data":{"session_id":session_id,"changes":changes,"frame":if snapshot_required {"thread_snapshot_required"} else {"thread_change"}}})))
+    let snapshot_required = changes.iter().any(|change| {
+        change.get("change_type").and_then(Value::as_str) == Some("snapshot_required")
+    });
+    Ok(Json(
+        json!({"data":{"session_id":session_id,"changes":changes,"frame":if snapshot_required {"thread_snapshot_required"} else {"thread_change"}}}),
+    ))
 }
 
 async fn get_thread_item_content(
@@ -207,9 +210,21 @@ async fn get_thread_item_content(
     let field_for_query = field.clone();
     let from_block = query.from_block.or(query.item_after).unwrap_or(0);
     let blocks = blocking::run_db("api.chat.thread_log.item_content", move || {
-        storage.list_thread_item_blocks_page(&user_id, &lookup, &item_lookup, field_for_query.as_deref(), from_block, query.limit.unwrap_or(50).clamp(1, 100), false)
-    }).await.map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({"data":{"session_id":session_id,"item_id":item_id,"field":field,"blocks":blocks.0,"next_block":blocks.1,"has_more":blocks.2}})))
+        storage.list_thread_item_blocks_page(
+            &user_id,
+            &lookup,
+            &item_lookup,
+            field_for_query.as_deref(),
+            from_block,
+            query.limit.unwrap_or(50).clamp(1, 100),
+            false,
+        )
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(
+        json!({"data":{"session_id":session_id,"item_id":item_id,"field":field,"blocks":blocks.0,"next_block":blocks.1,"has_more":blocks.2}}),
+    ))
 }
 
 async fn get_thread_item(
@@ -228,22 +243,28 @@ async fn get_thread_item(
     .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.content_not_found")))?;
-    let mut payload = item
-        .get("payload")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
+    let mut payload = item.get("payload").cloned().unwrap_or_else(|| json!({}));
     if let Value::Object(map) = &mut payload {
-            for key in ["item_id", "turn_id", "kind", "visibility", "revision", "status"] {
-                if let Some(value) = item.get(key) {
-                    map.insert(key.to_string(), value.clone());
-                }
+        for key in [
+            "item_id",
+            "turn_id",
+            "kind",
+            "visibility",
+            "revision",
+            "status",
+        ] {
+            if let Some(value) = item.get(key) {
+                map.insert(key.to_string(), value.clone());
             }
+        }
     }
-    let message = build_chat_transcript(&session_id, vec![payload], &HashMap::new())
+    let message = build_chat_transcript(&session_id, vec![payload])
         .into_iter()
         .next()
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.content_not_found")))?;
-    Ok(Json(json!({"data":{"id":session_id,"item_id":item_id,"message":message}})))
+    Ok(Json(
+        json!({"data":{"id":session_id,"item_id":item_id,"message":message}}),
+    ))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -258,94 +279,40 @@ async fn get_session_events(
     AxumPath(session_id): AxumPath<String>,
     Query(query): Query<SessionEventsQuery>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
     let session_id = session_id.trim().to_string();
-    if session_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.content_required"),
-        ));
-    }
-    let _record = state
-        .user_store
-        .get_chat_session(&resolved.user.user_id, &session_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
-    let requested_limit = normalize_session_events_limit(query.limit);
+    let user_id = require_owned_thread(&state, &headers, &session_id).await?;
     let workflow_page = normalize_workflow_events_page(query.offset, query.page_size);
-    let (stream_events, rounds, events_has_more, event_total) = if query.workflow_only {
-        let (rounds, has_more, total) = load_session_workflow_rounds(
-            &state,
-            &resolved.user.user_id,
-            &session_id,
-            query.from_user_round,
-            query.to_user_round,
-            workflow_page,
-        )
-        .await;
-        (Vec::new(), rounds, has_more, total)
-    } else {
-        let stream_events = load_session_stream_events(&state, &session_id, requested_limit).await;
-        let rounds = if stream_events.is_empty() {
-            load_session_event_rounds(&state, &session_id).await
-        } else {
-            collect_session_event_rounds(&json!({ "events": stream_events.clone() }))
-        };
-        (stream_events, rounds, false, None)
-    };
+    let (rounds, events_has_more, event_total) = load_session_workflow_rounds(
+        &state,
+        &user_id,
+        &session_id,
+        query.from_user_round,
+        query.to_user_round,
+        workflow_page,
+    )
+    .await;
     let command_sessions = state
         .control
         .command_sessions
-        .list_session_snapshots(&resolved.user.user_id, &session_id);
+        .list_session_snapshots(&user_id, &session_id);
     let monitor_record = state.monitor.get_record(&session_id);
-    let goal =
-        crate::services::goal::get_goal(state.storage.clone(), &resolved.user.user_id, &session_id)
-            .await
-            .ok()
-            .flatten();
+    let goal = crate::services::goal::get_goal(state.storage.clone(), &user_id, &session_id)
+        .await
+        .ok()
+        .flatten();
     let activity = load_chat_session_activity(&state, &session_id, monitor_record.as_ref()).await;
     let runtime = activity.runtime;
     let queued = super::has_active_queue_task(&state.user_store, &session_id);
     let running = activity.running;
-    let runtime_payload = runtime.or_else(|| {
-        queued.then(|| {
-            json!({
-                "thread_status": "queued",
-                "status": "queued",
-                "loaded": true,
-                "active_turn_id": null
-            })
-        })
-    });
-    let last_event_id = {
-        let storage = state.storage.clone();
-        let session_id = session_id.clone();
-        blocking::run_db("api.chat.events.tail", move || {
-            storage.get_max_stream_event_id(&session_id)
-        })
-        .await
-        .unwrap_or(0)
-    };
-    Ok(Json(json!({
-        "data": {
-            "id": session_id,
-            "events": stream_events,
-            "rounds": rounds,
-            "limit": requested_limit,
-            "events_limited": !query.workflow_only && requested_limit > 0,
-            "workflow_only": query.workflow_only,
-            "event_offset": workflow_page.map(|page| page.offset),
-            "event_limit": workflow_page.map(|page| page.limit),
-            "event_total": event_total,
-            "events_has_more": workflow_page.is_some() && events_has_more,
-            "running": running,
-            "queued": queued,
-            "last_event_id": last_event_id,
-            "goal": goal.as_ref().map(crate::services::goal::goal_payload),
-            "runtime": runtime_payload,
-            "command_sessions": command_sessions
-        }
-    })))
+    let runtime_payload = runtime.or_else(|| queued.then(|| json!({"thread_status":"queued","status":"queued","loaded":true,"active_turn_id":null})));
+    Ok(Json(json!({"data":{
+        "id":session_id,"events":Vec::<Value>::new(),"rounds":rounds,
+        "limit":normalize_session_events_limit(query.limit),"events_limited":false,"workflow_only":query.workflow_only,
+        "event_offset":workflow_page.map(|page| page.offset),"event_limit":workflow_page.map(|page| page.limit),
+        "event_total":event_total,"events_has_more":events_has_more,"running":running,"queued":queued,
+        "last_event_id":0,"goal":goal.as_ref().map(crate::services::goal::goal_payload),
+        "runtime":runtime_payload,"command_sessions":command_sessions
+    }})))
 }
 
 async fn list_session_command_sessions(
@@ -408,66 +375,6 @@ async fn get_session_command_session(
             "item": snapshot
         }
     })))
-}
-
-async fn load_session_event_rounds(state: &Arc<AppState>, session_id: &str) -> Vec<Value> {
-    let stream_events = load_session_stream_events(state, session_id, 0).await;
-    if !stream_events.is_empty() {
-        return collect_session_event_rounds(&json!({ "events": stream_events }));
-    }
-    state
-        .monitor
-        .get_record(session_id)
-        .map(|record| collect_session_event_rounds(&record))
-        .unwrap_or_default()
-}
-
-async fn load_session_stream_events(
-    state: &Arc<AppState>,
-    session_id: &str,
-    limit: i64,
-) -> Vec<Value> {
-    let cleaned_session_id = session_id.trim().to_string();
-    if cleaned_session_id.is_empty() {
-        return Vec::new();
-    }
-    let workspace = state.workspace.clone();
-    let normalized_limit = normalize_session_events_limit(Some(limit));
-    blocking::run_fs("api.chat.events.load_stream", move || {
-        let records = if normalized_limit <= 0 {
-            let mut after_event_id = 0;
-            let mut records = Vec::new();
-            let batch_limit = STREAM_EVENT_FETCH_LIMIT.max(1);
-            loop {
-                let batch =
-                    workspace.load_stream_events(&cleaned_session_id, after_event_id, batch_limit);
-                if batch.is_empty() {
-                    break;
-                }
-                let batch_len = batch.len();
-                let mut last_event_id = after_event_id;
-                for record in &batch {
-                    if let Some(event_id) = record.get("event_id").and_then(Value::as_i64) {
-                        last_event_id = last_event_id.max(event_id);
-                    }
-                }
-                records.extend(batch);
-                if last_event_id <= after_event_id {
-                    break;
-                }
-                after_event_id = last_event_id;
-                if batch_len < batch_limit as usize {
-                    break;
-                }
-            }
-            records
-        } else {
-            workspace.load_recent_stream_events(&cleaned_session_id, normalized_limit)
-        };
-        Ok(records)
-    })
-    .await
-    .unwrap_or_default()
 }
 
 fn normalize_session_events_limit(raw: Option<i64>) -> i64 {
@@ -654,19 +561,28 @@ async fn load_session_workflow_rounds(
         let limit = page.map_or(WORKFLOW_EVENTS_PAGE_MAX_LIMIT, |page| page.limit);
         let offset = page.map_or(0, |page| page.offset);
         let latest = storage.list_thread_turns(&user_id, &session_id, None, 1)?;
-        let latest_index = latest.first().and_then(|turn| turn["user_turn_index"].as_i64()).unwrap_or(0);
+        let latest_index = latest
+            .first()
+            .and_then(|turn| turn["user_turn_index"].as_i64())
+            .unwrap_or(0);
         let upper = to_user_round.min(latest_index);
         let total = (upper - from_user_round + 1).max(0);
         let before = upper.saturating_add(1).saturating_sub(offset);
         let turns = storage.list_thread_turns(&user_id, &session_id, Some(before), limit + 1)?;
-        let mut turns: Vec<_> = turns.into_iter().filter(|turn| {
-            turn["user_turn_index"].as_i64().is_some_and(|index| index >= from_user_round)
-        }).collect();
+        let mut turns: Vec<_> = turns
+            .into_iter()
+            .filter(|turn| {
+                turn["user_turn_index"]
+                    .as_i64()
+                    .is_some_and(|index| index >= from_user_round)
+            })
+            .collect();
         let has_more = turns.len() > limit as usize;
         turns.truncate(limit as usize);
-        let rounds = turns.iter().map(|turn| {
-            thread_turn_to_workflow_round(&*storage, &user_id, &session_id, turn)
-        }).collect::<anyhow::Result<Vec<_>>>()?;
+        let rounds = turns
+            .iter()
+            .map(|turn| thread_turn_to_workflow_round(&*storage, &user_id, &session_id, turn))
+            .collect::<anyhow::Result<Vec<_>>>()?;
         // These are already round projections, not raw events to regroup.
         Ok((rounds, has_more, Some(total)))
     })
@@ -680,16 +596,30 @@ fn thread_turn_to_workflow_round(
     session_id: &str,
     turn: &Value,
 ) -> anyhow::Result<Value> {
-    let turn_id = turn.get("turn_id").and_then(Value::as_str).unwrap_or_default();
-    let detail = storage.get_thread_turn(user_id, session_id, turn_id, -1, 100, false)?
+    let turn_id = turn
+        .get("turn_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let detail = storage
+        .get_thread_turn(user_id, session_id, turn_id, -1, 100, false)?
         .unwrap_or_else(|| turn.clone());
-    let events = detail.get("items").and_then(Value::as_array).into_iter().flatten().map(|item| json!({
-        "event": item.get("kind").cloned().unwrap_or_else(|| json!("item")),
-        "data": item.get("payload").cloned().unwrap_or_else(|| json!({})),
-        "item_id": item.get("item_id").cloned().unwrap_or(Value::Null),
-        "event_seq": item.get("item_index").cloned().unwrap_or(Value::Null),
-    })).collect::<Vec<_>>();
-    Ok(json!({"user_round": turn.get("user_turn_index").cloned().unwrap_or(Value::Null), "turn_id": turn_id, "status": turn.get("status").cloned().unwrap_or(Value::Null), "events": events}))
+    let events = detail
+        .get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|item| {
+            json!({
+                "event": item.get("kind").cloned().unwrap_or_else(|| json!("item")),
+                "data": item.get("payload").cloned().unwrap_or_else(|| json!({})),
+                "item_id": item.get("item_id").cloned().unwrap_or(Value::Null),
+                "event_seq": item.get("item_index").cloned().unwrap_or(Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(
+        json!({"user_round": turn.get("user_turn_index").cloned().unwrap_or(Value::Null), "turn_id": turn_id, "status": turn.get("status").cloned().unwrap_or(Value::Null), "events": events}),
+    )
 }
 
 fn normalize_workflow_events_page(
