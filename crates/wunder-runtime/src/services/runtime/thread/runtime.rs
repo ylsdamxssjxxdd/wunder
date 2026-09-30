@@ -291,18 +291,14 @@ impl ThreadRuntime {
                 let storage = self.user_store.storage_backend().clone();
                 let owner = user_id.to_string();
                 let thread = session.session_id.clone();
-                let input = json!({"role":"user","content":echo,"client_message_id":format!("goal:{}",session.session_id)});
+                let input = json!({"role":"user","content":echo,
+                    "client_message_id":format!("goal:{}",goal_record.goal_id),
+                    "meta":{"type":"goal_command","goal_command":true}});
                 let accepted = blocking::run_db("thread_log.accept.goal", move || {
                     storage.accept_thread_turn(&owner, &thread, &input)
                 })
                 .await?;
                 let round = accepted["user_turn_index"].as_i64().unwrap_or(1);
-                self.orchestrator.append_goal_command_message(
-                    user_id,
-                    &session.session_id,
-                    &echo,
-                    round,
-                );
                 round
             };
             let agent = if session

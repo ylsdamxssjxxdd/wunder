@@ -576,7 +576,7 @@ pub(crate) async fn send_ws_message(
 pub(crate) async fn resume_stream_events(
     state: Arc<AppState>,
     session_id: String,
-    after_event_id: i64,
+    after_change_seq: i64,
     request_id: Option<&str>,
     tx: WsSender,
     cancel: Option<CancellationToken>,
@@ -589,7 +589,8 @@ pub(crate) async fn resume_stream_events(
     let heartbeat_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_HEARTBEAT_INTERVAL_S);
     let mut idle_rounds: usize = 0;
     let mut poll_interval = base_interval;
-    let mut last_event_id = after_event_id;
+    let mut last_change_seq = after_change_seq;
+    let mut last_status = String::new();
     let mut last_heartbeat = std::time::Instant::now();
     loop {
         if cancel
@@ -599,46 +600,93 @@ pub(crate) async fn resume_stream_events(
         {
             return;
         }
-        let running = monitor
-            .get_record(&session_id)
-            .map(|record| {
-                record
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .map(is_stream_active_status)
-                    .unwrap_or(false)
+        let activity = crate::services::chat_runtime_projection::load_chat_session_activity(
+            &state,
+            &session_id,
+            monitor.get_record(&session_id).as_ref(),
+        )
+        .await;
+        let queued = has_active_queue_task(user_store.as_ref(), &session_id);
+        let running = activity.running || queued;
+        let status = activity
+            .runtime
+            .as_ref()
+            .and_then(|v| v["thread_status"].as_str())
+            .filter(|_| activity.running || !queued)
+            .unwrap_or(if activity.running {
+                "running"
+            } else if queued {
+                "queued"
+            } else {
+                "idle"
             })
-            .unwrap_or(false)
-            || has_active_queue_task(user_store.as_ref(), &session_id);
+            .to_string();
 
         let session_id_snapshot = session_id.clone();
         let workspace_snapshot = workspace.clone();
         let records = blocking::run_fs("api.ws_helpers.resume_stream_events", move || {
-            Ok(workspace_snapshot.load_thread_changes(
+            workspace_snapshot.try_load_thread_changes(
                 &session_id_snapshot,
-                last_event_id,
+                last_change_seq,
                 STREAM_EVENT_FETCH_LIMIT,
-            ))
+            )
         })
-        .await
-        .unwrap_or_default();
+        .await;
+        let records = match records {
+            Ok(records) => records,
+            Err(err) => {
+                let _ =
+                    send_ws_error(&tx, request_id, "THREAD_RECOVERY_FAILED", err.to_string()).await;
+                return;
+            }
+        };
+        let full_page = records
+            .iter()
+            .filter(|record| record["event"] == "thread_change")
+            .count()
+            >= STREAM_EVENT_FETCH_LIMIT as usize;
         let mut progressed = false;
         for record in records {
             let Some(event) = map_stream_event(record) else {
                 continue;
             };
-            let parsed_id = event
-                .id
-                .as_ref()
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(0);
-            if parsed_id > last_event_id {
-                last_event_id = parsed_id;
+            if let Some(cursor) = event.data["cursor"].as_i64() {
+                last_change_seq = last_change_seq.max(cursor);
             }
+            let snapshot_required = event.event == "thread_snapshot_required";
             if send_ws_event(&tx, request_id, event).await.is_err() {
                 return;
             }
+            if snapshot_required {
+                return;
+            }
             progressed = true;
+        }
+        // Drain retained pages before publishing idle, otherwise intermediate
+        // text pages would repeatedly reopen and settle the same message.
+        if !full_page && (status != last_status || progressed) {
+            let mut data = activity
+                .runtime
+                .unwrap_or_else(|| json!({"thread_status":status,"loaded":true}));
+            data["thread_status"] = json!(status);
+            data["recovery"] = json!(true);
+            data["cursor"] = json!(last_change_seq);
+            if send_ws_event(
+                &tx,
+                request_id,
+                StreamEvent {
+                    event: "thread_status".into(),
+                    data,
+                    id: None,
+                    timestamp: Some(Utc::now()),
+                },
+            )
+            .await
+            .is_err()
+            {
+                return;
+            }
+            last_status = status;
         }
         if !progressed {
             if running && last_heartbeat.elapsed() >= heartbeat_interval {

@@ -9,6 +9,17 @@ fn now_ts() -> f64 {
     1_700_000_000.0
 }
 
+#[test]
+fn stale_goal_update_cannot_restore_cleared_goal() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = SqliteStorage::new(temp.path().join("goals.db").to_string_lossy().to_string());
+    let record = goal_record("owner", "thread");
+    db.upsert_session_goal(&record).unwrap();
+    db.delete_session_goal("owner", "thread").unwrap();
+    assert!(!db.update_session_goal(&record, record.updated_at).unwrap());
+    assert!(db.get_session_goal("owner", "thread").unwrap().is_none());
+}
+
 fn session(user_id: &str, session_id: &str) -> ChatSessionRecord {
     ChatSessionRecord {
         session_id: session_id.to_string(),

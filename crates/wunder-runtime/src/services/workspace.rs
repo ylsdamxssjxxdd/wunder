@@ -1268,24 +1268,80 @@ impl WorkspaceManager {
             .list_thread_changes_by_session(session_id, after_seq.max(0), limit.clamp(1, 500))
             .unwrap_or_default()
             .into_iter()
-            .map(|mut change| {
-                let seq = change
-                    .get("change_seq")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(0);
-                let data = serde_json::json!({
-                    "change_type": change.get("change_type").cloned().unwrap_or(Value::Null),
-                    "turn_id": change.get("turn_id").cloned().unwrap_or(Value::Null),
-                    "item_id": change.get("item_id").cloned().unwrap_or(Value::Null),
-                    "revision": change.get("revision").cloned().unwrap_or(Value::Null),
-                    "cursor": seq,
-                });
-                change["event"] = serde_json::json!("thread_change");
-                change["event_id"] = serde_json::json!(seq);
-                change["data"] = data;
-                change
+            .map(|change| {
+                let cursor = change["change_seq"].as_i64().unwrap_or(0);
+                json!({"event":"thread_change", "event_id":cursor, "data":{
+                    "change_type":change["change_type"], "turn_id":change["turn_id"],
+                    "item_id":change["item_id"], "revision":change["revision"], "cursor":cursor
+                }})
             })
             .collect()
+    }
+
+    pub fn try_load_thread_changes(
+        &self,
+        session_id: &str,
+        after_seq: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        if after_seq > self.storage.latest_thread_change_seq_by_session(session_id)? {
+            return Ok(vec![json!({"event":"thread_snapshot_required","data":{}})]);
+        }
+        let changes = self.storage.list_thread_changes_by_session(
+            session_id,
+            after_seq.max(0),
+            limit.clamp(1, 500),
+        )?;
+        let mut frames = Vec::with_capacity(changes.len());
+        let user_id = self.storage.get_chat_session_owner(session_id)?;
+        for change in changes {
+            if change["change_type"] == "snapshot_required" {
+                frames.push(json!({"event":"thread_snapshot_required","data":change}));
+                break;
+            }
+            let cursor = change["change_seq"].as_i64().unwrap_or(0);
+            if change["change_type"] == "item_upsert" {
+                if let (Some(owner), Some(item_id)) = (user_id.as_deref(), change["item_id"].as_str()) {
+                    if self.storage.get_thread_item(owner, session_id, item_id, false)?.is_none() {
+                        frames.push(json!({"event":"thread_change","data":{
+                            "change_type":"cursor", "cursor":cursor
+                        }}));
+                        continue;
+                    }
+                }
+            }
+            if change["change_type"] == "text_block" {
+                if let Some(user_id) = user_id.as_deref() {
+                    let item_id = change["item_id"].as_str().unwrap_or_default();
+                    let index = change["payload"]["block_index"].as_i64().unwrap_or(0);
+                    let field = change["payload"]["field"].as_str();
+                    let (blocks, _, _) = self.storage.list_thread_item_blocks_page(
+                        user_id, session_id, item_id, field, index, 1, false,
+                    )?;
+                    for block in blocks {
+                        if block["block_index"].as_i64() != Some(index) {
+                            continue;
+                        }
+                        let mut data = block.get("data").cloned().unwrap_or_else(|| block.clone());
+                        data["cursor"] = json!(cursor);
+                        data["item_id"] = json!(item_id);
+                        data["message_id"] = json!(format!("item:{item_id}"));
+                        frames.push(json!({"event":"thread_item_block","data":data}));
+                    }
+                }
+            }
+            frames.push(json!({"event":"thread_change","data":{
+                "change_type":change["change_type"], "turn_id":change["turn_id"],
+                "item_id":change["item_id"], "revision":change["revision"], "cursor":cursor
+            }}));
+        }
+        Ok(frames)
+    }
+
+    pub fn latest_thread_change_seq(&self, session_id: &str) -> Result<i64> {
+        self.storage
+            .latest_thread_change_seq_by_session(session_id)
+            .map(|seq| seq.max(0))
     }
 
     /// Compatibility projection for non-chat diagnostics only.

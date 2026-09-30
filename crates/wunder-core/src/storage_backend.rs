@@ -184,6 +184,8 @@ pub trait ThreadLogStore {
         after_seq: i64,
         limit: i64,
     ) -> Result<Vec<Value>>;
+    /// Return the latest durable ThreadLog change cursor without materializing changes.
+    fn latest_thread_change_seq_by_session(&self, session_id: &str) -> Result<i64>;
     fn delete_thread_log_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
 }
 
@@ -705,6 +707,8 @@ pub trait ChatSessionStore {
 /// Session goal accounting storage.
 pub trait SessionGoalStore {
     fn upsert_session_goal(&self, record: &SessionGoalRecord) -> Result<()>;
+    /// Update an existing goal revision; never recreate a cleared/replaced goal.
+    fn update_session_goal(&self, record: &SessionGoalRecord, expected_updated_at: f64) -> Result<bool>;
     fn get_session_goal(
         &self,
         user_id: &str,

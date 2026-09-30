@@ -160,17 +160,25 @@ pub(crate) async fn apply_goal_command(
     // Persist the /goal command as a durable user round in the transcript so
     // the chat bubble survives reloads, mirroring the /compact command flow.
     let command_user_round = if let Some(echo) = command_echo.as_deref() {
-        let user_round = state.monitor.register(
+        let storage = state.storage.clone();
+        let owner = user_id.to_string();
+        let thread = session.session_id.clone();
+        let input = json!({"role":"user", "content":echo,
+            "meta":{"type":"goal_command", "goal_command":true}});
+        let accepted = crate::core::blocking::run_db("thread_log.accept.goal_command", move || {
+            storage.accept_thread_turn(&owner, &thread, &input)
+        })
+        .await
+        .map_err(bad_request)?;
+        let user_round = accepted["user_turn_index"]
+            .as_i64()
+            .expect("accepted round");
+        state.monitor.register_continuation(
             &session.session_id,
             user_id,
             session.agent_id.as_deref().unwrap_or(""),
             echo,
             is_admin,
-        );
-        state.kernel.orchestrator.append_goal_command_message(
-            user_id,
-            &session.session_id,
-            echo,
             user_round,
         );
         Some(user_round)
@@ -190,6 +198,26 @@ pub(crate) async fn apply_goal_command(
         } else {
             goal_record
         });
+    }
+    if let Some(round) = command_user_round {
+        let storage = state.storage.clone();
+        let owner = user_id.to_string();
+        let thread = session_id.to_string();
+        crate::core::blocking::run_db("thread_log.goal_command.complete", move || {
+            if let Some(turn) = storage.find_thread_turn_id(&owner, &thread, round)? {
+                storage.update_thread_turn(
+                    &owner,
+                    &thread,
+                    &turn,
+                    "completed",
+                    "",
+                    &json!({"stop_reason":"goal_command"}),
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(bad_request)?;
     }
     let continuation = if should_schedule {
         schedule_goal_continuation(state, user_id, session_id).await

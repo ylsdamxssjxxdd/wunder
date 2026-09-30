@@ -1,3 +1,5 @@
+import { advanceThreadChangeCursor, threadChangeCursor } from './chatThreadCursor';
+import { selectVisibleMessageProjections } from '@/realtime/chat/chatRuntimeSelectors';
 import { isChatSnapshotCurrent } from './chatSnapshotFreshness';
 import { defineStore } from 'pinia';
 
@@ -117,7 +119,7 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 import { buildWorkflowItem, hydrateSessionCommandSessions, safeJsonParse } from './chatDemoPanels';
 import { applyGoalStreamEvent } from './chatPersist';
 import { SLOW_CLIENT_RESUME_DELAY_MS, WATCH_RECONCILE_COOLDOWN_MS, WATCH_RECONCILE_DELAY_MS, abortWatchStream, clearRuntimeInteractiveControllers, clearRuntimeResumeStreamState, clearRuntimeSendStreamState, clearSessionWatcher, clearSlowClientResume, clearWatchdog, recoverRuntimeInteractiveControllers, resolveLastAssistantStreamEventId, resolveLastStreamEventId, resolveMaxStreamEventId, resolveWatchdogProfile, setSessionLoading } from './chatRuntimeControls';
-import { applyCanonicalSessionEventsSnapshot, applyCanonicalStreamRuntimeEvent, applySessionRuntimeEvent, applySessionRuntimeSnapshot, buildLatestAssistantRuntimeDebugSnapshot, buildRuntimeDebugSnapshot, cacheSessionMessages, clearRuntimeProjectionInvalidation, clearSessionEventsSnapshot, countAssistantStreamingMessages, ensureRuntime, getRuntime, getSessionMessages, hasKnownSessionInStore, isSessionUnavailableStatus, loadSessionEventsSnapshot, notifySessionSnapshot, purgeUnavailableSession, refreshRuntimeStreamLifecycle, resolveChatHttpStatus, resolveSessionKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionDetailSnapshotCache, sessionDetailWarmState, sessionEventsSnapshotCache, sessionEventsSnapshotInFlight, sessionHistoryState, sessionHydratedMessageVersion, sessionListCache, sessionListCacheInFlight, sessionMessages, sessionProtectedRealtimeMessages, sessionRuntime, sessionRuntimeShadowState, sessionSubagentsCache, sessionSubagentsInFlight } from './chatRuntimeState';
+import { applyCanonicalSessionEventsSnapshot, applyCanonicalStreamRuntimeEvent, applySessionRuntimeEvent, applySessionRuntimeSnapshot, buildLatestAssistantRuntimeDebugSnapshot, buildRuntimeDebugSnapshot, cacheSessionMessages, syncChatRuntimeProjectionFromSnapshot, clearRuntimeProjectionInvalidation, clearSessionEventsSnapshot, countAssistantStreamingMessages, ensureRuntime, getRuntime, getSessionMessages, hasKnownSessionInStore, isSessionUnavailableStatus, loadSessionEventsSnapshot, notifySessionSnapshot, purgeUnavailableSession, refreshRuntimeStreamLifecycle, resolveChatHttpStatus, resolveSessionKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionDetailSnapshotCache, sessionDetailWarmState, sessionEventsSnapshotCache, sessionEventsSnapshotInFlight, sessionHistoryState, sessionHydratedMessageVersion, sessionListCache, sessionListCacheInFlight, sessionMessages, sessionProtectedRealtimeMessages, sessionRuntime, sessionRuntimeShadowState, sessionSubagentsCache, sessionSubagentsInFlight } from './chatRuntimeState';
 import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
 import { chatWatcherSharedState } from './chatSharedState';
 import { clearAllChatSnapshots, clearScheduledChatSnapshot } from './chatSnapshot';
@@ -174,12 +176,23 @@ export const startSessionWatcher = (store, sessionId) => {
   const pendingThreadChanges = new Map<string, Record<string, unknown>>();
   let threadReconcileTimer: ReturnType<typeof setTimeout> | null = null;
   let threadReconcileInFlight: Promise<void> | null = null;
+  let pendingThreadStatus: Record<string, any> | null = null;
+  let threadRecoveryFailed = false;
 
   const mergeThreadTurnItems = (turn: Record<string, unknown> | null | undefined) => {
     const rawItems = Array.isArray(turn?.items) ? turn.items : [];
     if (!rawItems.length) return false;
     const current = resolveSessionMessageArray(store, key, sessionMessagesRef);
     if (!Array.isArray(current)) return false;
+    const projected = new Map(selectVisibleMessageProjections(store.runtimeProjection, key)
+      .map(message => [message.id, message]));
+    current.forEach(message => {
+      const live = projected.get(String(message.message_id ?? message.id ?? ''));
+      if (live?.role === 'assistant') {
+        Object.assign(message, { content: live.content, reasoning: live.reasoning,
+          status: live.status, final: live.final, failed: live.failed, cancelled: live.cancelled });
+      }
+    });
     const byItemId = new Map<string, Record<string, any>>();
     current.forEach((message) => {
       const itemId = String(message?.item_id ?? '').trim();
@@ -216,14 +229,32 @@ export const startSessionWatcher = (store, sessionId) => {
         turn_id: String(item.turn_id ?? payload.turn_id ?? turn?.turn_id ?? '').trim(),
         kind,
         ...(renderStatus ? { status: renderStatus } : {}),
+        ...(role === 'assistant' ? {
+          final: renderStatus === 'final', failed: renderStatus === 'failed',
+          cancelled: renderStatus === 'cancelled',
+          stream_incomplete: renderStatus === 'streaming', workflowStreaming: false,
+          reasoningStreaming: false
+        } : {}),
+        turn_index: existing?.turn_index ?? current.length + 1,
         visibility: item.visibility ?? payload.visibility ?? 'user',
         revision: Number.isFinite(revision) && revision > 0 ? revision : existingRevision + 1,
         thread_item_revision: Number.isFinite(revision) && revision > 0 ? revision : existingRevision + 1,
-        user_turn_id: String(item.turn_id ?? payload.turn_id ?? turn?.turn_id ?? '').trim(),
-        message_id: String(payload.message_id ?? payload.id ?? `thread-item:${itemId}`),
+        user_turn_id: Number(payload.user_round ?? turn?.user_turn_index) > 0
+          ? `user-turn:${key}:round:${Number(payload.user_round ?? turn?.user_turn_index)}`
+          : String(item.turn_id ?? payload.turn_id ?? turn?.turn_id ?? '').trim(),
+        user_turn_index: Number(payload.user_round ?? turn?.user_turn_index) || undefined,
+        model_turn_id: role === 'assistant' && Number(payload.model_round) > 0
+          ? `model-turn:${key}:user:${Number(payload.user_round ?? turn?.user_turn_index)}:model:${Number(payload.model_round)}`
+          : payload.model_turn_id,
+        message_id: String(payload.message_id ?? payload.id ?? `item:${itemId}`),
+        ...(payload.meta?.type === 'manual_compaction_marker' ? { manual_compaction_marker: true } : {}),
         content: typeof payload.content === 'string' ? payload.content : String(payload.content ?? '')
       };
       if (existing) {
+        if (renderStatus === 'streaming') {
+          if (String(existing.content || '').length > next.content.length) next.content = existing.content;
+          if (String(existing.reasoning || '').length > String(next.reasoning || '').length) next.reasoning = existing.reasoning;
+        }
         Object.assign(existing, next);
       } else {
         current.push(next);
@@ -231,16 +262,18 @@ export const startSessionWatcher = (store, sessionId) => {
       }
       changed = true;
     }
-    if (turnStatus) {
+    const durableTurnId = String(turn?.turn_id ?? '').trim();
+    // Turn activity never revives completed model messages. In particular an
+    // identity-less page must not match every legacy message's empty turn id.
+    if (durableTurnId && ['completed', 'failed', 'cancelled', 'interrupted'].includes(turnStatus)) {
       current.forEach((message) => {
         if (message?.role !== 'assistant') return;
         const messageTurnId = String(message?.turn_id ?? message?.user_turn_id ?? '').trim();
-        if (messageTurnId !== String(turn?.turn_id ?? '').trim()) return;
+        if (messageTurnId !== durableTurnId) return;
+        if (['final', 'completed', 'cancelled', 'failed'].includes(String(message.status || ''))) return;
         const nextStatus = turnStatus === 'failed' ? 'failed'
           : turnStatus === 'cancelled' || turnStatus === 'interrupted' ? 'cancelled'
-            : turnStatus === 'queued' ? 'queued'
-              : turnStatus === 'running' || turnStatus === 'waiting_input' ? 'streaming'
-                : turnStatus === 'completed' ? 'final' : null;
+            : turnStatus === 'completed' ? 'final' : null;
         if (nextStatus && message.status !== nextStatus) {
           message.status = nextStatus;
           message.failed = nextStatus === 'failed';
@@ -251,7 +284,18 @@ export const startSessionWatcher = (store, sessionId) => {
     }
     if (changed) {
       cacheSessionMessages(key, current);
+      syncChatRuntimeProjectionFromSnapshot(store, key, current, {
+        immediate: true, loading: false,
+        running: isThreadRuntimeBusy(runtime?.threadStatus) ||
+          current.some(message => message.role === 'assistant' &&
+            ['streaming', 'tooling', 'waiting_first_output'].includes(message.status))
+      });
       notifySessionSnapshot(store, key, current, true);
+    }
+    if (Array.isArray(turn?.events) && turn.events.length) {
+      applyCanonicalSessionEventsSnapshot(store, key, { events: turn.events }, {
+        phase: 'watch', includeRuntime: false
+      });
     }
     return changed;
   };
@@ -264,61 +308,85 @@ export const startSessionWatcher = (store, sessionId) => {
     const changesByTurn = new Map<string, Set<string>>();
     changes.forEach((change) => {
       const turnId = String(change.turn_id ?? '').trim();
-      if (!turnId) return;
+      if (!turnId || change.change_type === 'text_block' || change.change_type === 'cursor') return;
       const items = changesByTurn.get(turnId) || new Set<string>();
       const itemId = String(change.item_id ?? '').trim();
       if (itemId) items.add(itemId);
       changesByTurn.set(turnId, items);
     });
-    const turnIds = Array.from(new Set(changes
-      .map((change) => String(change.turn_id ?? '').trim())
-      .filter(Boolean)));
-    if (!turnIds.length) {
-      scheduleWatchReconcile(0);
-      return;
-    }
-    const task = Promise.all(turnIds.map(async (turnId) => {
-      const targetItems = changesByTurn.get(turnId) || new Set<string>();
-      let after = -1;
-      let page = 0;
-      do {
-        const response = await getThreadLogTurn(key, turnId, { item_after: after, limit: 100 }, { signal: controller.signal });
-        const turn = response?.data?.data?.turn;
-        mergeThreadTurnItems(turn);
-        const items = Array.isArray(turn?.items) ? turn.items : [];
-        const found = targetItems.size === 0 || items.some((item) => targetItems.has(String(item?.item_id ?? '').trim()));
-        if (found || turn?.has_more !== true) break;
-        const next = Number(turn?.next_after);
-        if (!Number.isFinite(next) || next <= after) break;
-        after = next;
-        page += 1;
-      } while (page < 20 && !controller.signal.aborted);
-    })).then(() => undefined);
+    const turnIds = Array.from(changesByTurn.keys());
+    const task = (async () => {
+      for (const turnId of turnIds) {
+        const targetItems = changesByTurn.get(turnId) || new Set<string>();
+        let after = -1;
+        let page = 0;
+        do {
+          const response = await getThreadLogTurn(key, turnId, { item_after: after, limit: 100 }, { signal: controller.signal });
+          const turn = response?.data?.data?.turn;
+          if (controller.signal.aborted) return;
+          mergeThreadTurnItems(turn);
+          const items = Array.isArray(turn?.items) ? turn.items : [];
+          items.forEach(item => targetItems.delete(String(item?.item_id ?? '').trim()));
+          const found = targetItems.size === 0;
+          if (found || turn?.has_more !== true) {
+            if (!found) throw new Error('Thread items missing from recovery page');
+            break;
+          }
+          const next = Number(turn?.next_after);
+          if (!Number.isFinite(next) || next <= after) break;
+          after = next;
+          page += 1;
+        } while (page < 20 && !controller.signal.aborted);
+        if (targetItems.size > 0) throw new Error('Thread recovery requires a fresh snapshot');
+      }
+    })();
     threadReconcileInFlight = task;
     try {
       await task;
+      if (!controller.signal.aborted) {
+        advanceThreadChangeCursor(runtime, Math.max(...changes.map(change => Number(change.cursor) || 0)));
+        if (!pendingThreadChanges.size && pendingThreadStatus) {
+          applyRecoveredThreadStatus(pendingThreadStatus);
+          pendingThreadStatus = null;
+        }
+      }
     } catch {
-      if (!controller.signal.aborted) scheduleWatchReconcile(WATCH_RECONCILE_DELAY_MS);
+      if (!controller.signal.aborted) {
+        threadRecoveryFailed = true;
+        scheduleWatchReconcile(0);
+      }
     } finally {
       if (threadReconcileInFlight === task) threadReconcileInFlight = null;
-      if (pendingThreadChanges.size > 0 && !controller.signal.aborted && !threadReconcileTimer) {
+      if (pendingThreadChanges.size > 0 && !controller.signal.aborted && !threadReconcileTimer && !threadRecoveryFailed) {
         threadReconcileTimer = setTimeout(() => { void flushThreadChanges(); }, 0);
       }
     }
   };
 
   const scheduleThreadLogReconcile = (data: unknown) => {
+    if (threadRecoveryFailed) return;
     const change = data && typeof data === 'object' ? data as Record<string, unknown> : {};
     const turnId = String(change.turn_id ?? '').trim();
     const itemId = String(change.item_id ?? '').trim();
-    if (!turnId) {
+    if (!turnId && change.change_type !== 'cursor') {
       scheduleWatchReconcile(0);
       return;
     }
-    pendingThreadChanges.set(`${turnId}:${itemId}`, change);
+    if (pendingThreadChanges.size >= 500) {
+      threadRecoveryFailed = true;
+      pendingThreadChanges.clear();
+      scheduleWatchReconcile(0);
+      return;
+    }
+    pendingThreadChanges.set(`${turnId}:${itemId}:${change.change_type}`, change);
     if (threadReconcileTimer || threadReconcileInFlight) return;
     threadReconcileTimer = setTimeout(() => { void flushThreadChanges(); }, 0);
   };
+
+  controller.signal.addEventListener('abort', () => {
+    if (threadReconcileTimer) clearTimeout(threadReconcileTimer);
+    pendingThreadChanges.clear();
+  }, { once: true });
 
   const markWatchdogEvent = () => {
     runtime.watchLastEventAt = Date.now();
@@ -350,7 +418,9 @@ export const startSessionWatcher = (store, sessionId) => {
       if (runtime.watchController !== controller) return;
       if (store.activeSessionId !== key) return;
       if (!hasKnownSessionInStore(store, key)) return;
-      void store.loadSessionDetail(key, { preserveWatcher: true }).catch(() => {});
+      void store.loadSessionDetail(key, { preserveWatcher: true, startWatcherAfterHydration: false })
+        .then(() => { if (!controller.signal.aborted) startSessionWatcher(store, key); })
+        .catch(() => {});
     }, Math.max(0, Number(delayMs) || 0));
   };
 
@@ -414,8 +484,9 @@ export const startSessionWatcher = (store, sessionId) => {
           remoteLastEventId,
           localLastEventId
         });
+        const remoteCursor = Number(payload?.thread_change_cursor);
         const shouldReconcileRemoteDrift =
-          Number.isFinite(remoteLastEventId) && remoteLastEventId > localLastEventId;
+          Number.isSafeInteger(remoteCursor) && remoteCursor > threadChangeCursor(runtime);
         if (shouldReconcileRemoteDrift) {
           scheduleWatchReconcile(running === false ? 0 : WATCH_RECONCILE_DELAY_MS);
         }
@@ -444,6 +515,13 @@ export const startSessionWatcher = (store, sessionId) => {
     scheduleNext(initialProfile.intervalMs);
   };
 
+  const applyRecoveredThreadStatus = (data: Record<string, any>) => {
+    applyCanonicalStreamRuntimeEvent(store, key, 'thread_status', { data }, null, {
+      requestId, phase: 'watch'
+    });
+    applySessionRuntimeEvent(store, key, data, 'thread_status');
+  };
+
   const onEvent = (eventType, dataText, eventId) => {
     const currentSessionMessagesRef = resolveSessionMessageArray(store, key, sessionMessagesRef);
     if (currentSessionMessagesRef !== sessionMessagesRef) {
@@ -467,6 +545,25 @@ export const startSessionWatcher = (store, sessionId) => {
     if (applyGoalStreamEvent(store, key, normalizedEventType, data ?? payload)) {
       return;
     }
+    if (normalizedEventType === 'thread_change') {
+      scheduleThreadLogReconcile(data);
+      return;
+    }
+    if (normalizedEventType === 'thread_snapshot_required') {
+      threadRecoveryFailed = true;
+      void store.loadSessionDetail(key, { preserveWatcher: true, startWatcherAfterHydration: false })
+        .then(() => { if (!controller.signal.aborted) startSessionWatcher(store, key); })
+        .catch(() => scheduleWatchReconcile(0));
+      return;
+    }
+    if (normalizedEventType === 'thread_status' && data?.recovery === true) {
+      if (pendingThreadChanges.size || threadReconcileInFlight || threadRecoveryFailed) {
+        pendingThreadStatus = data;
+      } else {
+        applyRecoveredThreadStatus(data);
+      }
+      return;
+    }
     applyCanonicalStreamRuntimeEvent(
       store,
       key,
@@ -480,15 +577,7 @@ export const startSessionWatcher = (store, sessionId) => {
           scheduleWatchReconcile(reason === 'event_seq_gap' ? 0 : WATCH_RECONCILE_DELAY_MS)
       }
     );
-    // ThreadLog lifecycle frames carry a durable cursor rather than a stream
-    // event sequence. Reconcile immediately so the authoritative Turn/Item
-    // projection is fetched and merged; cursor-only handling alone would
-    // leave queued and terminal state stale after reconnect.
-    if (normalizedEventType === 'thread_change') {
-      scheduleThreadLogReconcile(data);
-    } else if (normalizedEventType === 'thread_snapshot_required') {
-      scheduleWatchReconcile(0);
-    }
+    if (normalizedEventType === 'thread_item_block') return;
     const normalizedEventId = normalizeStreamEventId(eventId);
     if (normalizedEventId !== null) {
       updateRuntimeRemoteLastEventId(runtime, normalizedEventId);
@@ -535,7 +624,7 @@ export const startSessionWatcher = (store, sessionId) => {
     return;
   };
 
-  const baseEventId = lastEventId || 0;
+  const baseEventId = threadChangeCursor(runtime);
   startWatchdog();
   const watchPromise = chatWsClient.request({
       requestId,

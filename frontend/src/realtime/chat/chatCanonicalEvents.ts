@@ -567,7 +567,11 @@ export const buildCanonicalChatRuntimeEvents = (
     );
     return [
       buildBaseEvent(options, status === 'idle' ? 'session_idle' : 'session_runtime', {
-        runtime_status: status || 'running'
+        runtime_status: status || 'running',
+        ...(data.recovery === true ? {
+          source: 'snapshot', strict: false, event_seq: null,
+            event_id: ''
+        } : {})
       })
     ];
   }
@@ -633,11 +637,8 @@ export const buildCanonicalChatRuntimeEvents = (
   }
 
   if (eventType === 'thread_change') {
-    return [buildBaseEvent(options, 'cursor_only', {
-      turn_id: firstText(data.turn_id, payload.turn_id),
-      item_id: firstText(data.item_id, payload.item_id),
-      revision: data.revision ?? payload.revision
-    })];
+    // Consumed by the durable item reconciler, never by the transport sequence reducer.
+    return [];
   }
 
   if (eventType === 'thread_snapshot_required') {
@@ -654,6 +655,8 @@ export const buildCanonicalChatRuntimeEvents = (
 
   if (eventType === 'thread_item_block') {
     return [buildBaseEvent(options, 'assistant_output_snapshot', {
+      source: 'snapshot', strict: false, event_seq: null,
+      event_id: `block:${options.sessionId}:${data.item_id}:${data.field}:${data.block_index}:${data.cursor ?? options.eventId}`,
       content: firstText(data.content, payload.content),
       reasoning: firstText(data.reasoning, payload.reasoning)
     })];

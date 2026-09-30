@@ -362,7 +362,9 @@ pub async fn bind_goal_execution_context(
     user_round: Option<i64>,
     approval_mode: Option<&str>,
 ) -> Result<SessionGoalRecord> {
+    let expected_updated_at = record.updated_at;
     record.user_round = user_round.filter(|round| *round > 0).or(record.user_round);
+    record.updated_at = now_ts();
     if let Some(mode) = approval_mode {
         record.approval_mode = Some(
             crate::approval::ApprovalMode::from_raw(Some(mode))
@@ -372,7 +374,10 @@ pub async fn bind_goal_execution_context(
     }
     let updated = record.clone();
     run_goal_db("goal.bind_context", move || {
-        storage.upsert_session_goal(&updated)
+        if !storage.update_session_goal(&updated, expected_updated_at)? {
+            return Err(anyhow!("goal changed or cleared"));
+        }
+        Ok(())
     })
     .await?;
     Ok(record)
@@ -397,6 +402,7 @@ pub async fn set_goal_status(
     else {
         return Err(anyhow!("goal not found"));
     };
+    let expected_updated_at = record.updated_at;
     record.status = status.as_str().to_string();
     record.updated_at = now_ts();
     record.source = source.trim().to_string();
@@ -407,8 +413,11 @@ pub async fn set_goal_status(
     };
     let storage_for_write = storage.clone();
     let record_for_write = record.clone();
-    run_goal_db("goal.status.upsert", move || {
-        storage_for_write.upsert_session_goal(&record_for_write)
+    run_goal_db("goal.status.update", move || {
+        if !storage_for_write.update_session_goal(&record_for_write, expected_updated_at)? {
+            return Err(anyhow!("goal changed or cleared"));
+        }
+        Ok(())
     })
     .await?;
     let event = if status == GoalStatus::BudgetLimited {
@@ -459,16 +468,20 @@ pub async fn mark_goal_continuation_started(
         return Ok(None);
     };
     if normalize_status(&record.status)? != GoalStatus::Active {
-        return Ok(Some(record));
+        return Ok(None);
     }
+    let expected_updated_at = record.updated_at;
     record.last_continued_at = Some(now_ts());
     record.updated_at = record.last_continued_at.unwrap_or(record.updated_at);
     let storage_for_write = storage.clone();
     let record_for_write = record.clone();
-    run_goal_db("goal.continuation.upsert", move || {
-        storage_for_write.upsert_session_goal(&record_for_write)
+    if !run_goal_db("goal.continuation.update", move || {
+        storage_for_write.update_session_goal(&record_for_write, expected_updated_at)
     })
-    .await?;
+    .await?
+    {
+        return Ok(None);
+    }
     emit_goal_event(storage, &record, EVENT_GOAL_CONTINUATION_STARTED, None).await;
     Ok(Some(record))
 }

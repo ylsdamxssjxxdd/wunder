@@ -124,6 +124,7 @@ pub(super) trait PostgresThreadLogStorage {
         after: i64,
         limit: i64,
     ) -> Result<Vec<Value>>;
+    fn latest_thread_change_seq_by_session_impl(&self, session_id: &str) -> Result<i64>;
     fn list_thread_changes_impl(
         &self,
         user_id: &str,
@@ -202,7 +203,12 @@ impl PostgresThreadLogStorage for PostgresStorage {
         block: &Value,
     ) -> Result<()> {
         self.ensure_initialized()?;
-        let mut conn = self.conn()?;
+        let mut client = self.conn()?;
+        let mut conn = client.transaction()?;
+        conn.query_opt(
+            "SELECT user_id FROM thread_logs WHERE session_id=$1 FOR UPDATE",
+            &[&session_id],
+        )?;
         let item_id = block["item_id"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing text item"))?;
@@ -220,7 +226,24 @@ impl PostgresThreadLogStorage for PostgresStorage {
             )?
             .get(0);
         anyhow::ensure!(item_exists, "thread item does not exist for block");
-        conn.execute("INSERT INTO thread_item_blocks(session_id,user_id,item_id,field,block_index,event_id,payload) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(session_id,item_id,field,block_index) DO UPDATE SET event_id=excluded.event_id,payload=excluded.payload WHERE thread_item_blocks.event_id<=excluded.event_id",&[&session_id,&user_id,&item_id,&field,&index,&event_id,&text])?;
+        let written = conn.execute("INSERT INTO thread_item_blocks(session_id,user_id,item_id,field,block_index,event_id,payload) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(session_id,item_id,field,block_index) DO UPDATE SET event_id=excluded.event_id,payload=excluded.payload WHERE thread_item_blocks.event_id<=excluded.event_id AND thread_item_blocks.payload<>excluded.payload",&[&session_id,&user_id,&item_id,&field,&index,&event_id,&text])?;
+        if written > 0 {
+            let row = conn.query_one("SELECT l.latest_change_seq+1,i.turn_id FROM thread_logs l JOIN thread_items i ON i.session_id=l.session_id WHERE l.session_id=$1 AND i.item_id=$2", &[&session_id,&item_id])?;
+            let seq: i64 = row.get(0);
+            let turn_id: String = row.get(1);
+            let reference = json!({"field":field,"block_index":index}).to_string();
+            let now = Self::now_ts();
+            conn.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,'text_block',$4,$5,0,$6,$7)", &[&session_id,&seq,&user_id,&turn_id,&item_id,&reference,&now])?;
+            conn.execute(
+                "UPDATE thread_logs SET latest_change_seq=$1,updated_time=$2 WHERE session_id=$3",
+                &[&seq, &now, &session_id],
+            )?;
+            conn.execute(
+                "DELETE FROM thread_log_changes WHERE session_id=$1 AND change_seq<=$2",
+                &[&session_id, &seq.saturating_sub(4096)],
+            )?;
+        }
+        conn.commit()?;
         Ok(())
     }
     fn list_thread_text_blocks_impl(
@@ -747,10 +770,21 @@ impl PostgresThreadLogStorage for PostgresStorage {
                 &[&session_id],
             )?
             .get(0);
-        if earliest.is_some_and(|first| after > 0 && first > after + 1) {
+        if earliest.is_some_and(|first| first > after.saturating_add(1)) {
             return Ok(vec![json!({"change_type":"snapshot_required"})]);
         }
         Ok(conn.query("SELECT change_seq,change_type,turn_id,item_id,revision,payload,created_time FROM thread_log_changes WHERE session_id=$1 AND change_seq>$2 ORDER BY change_seq LIMIT $3", &[&session_id,&after,&limit.clamp(1,500)])?.into_iter().map(change_row).collect())
+    }
+    fn latest_thread_change_seq_by_session_impl(&self, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        Ok(conn
+            .query_opt(
+                "SELECT COALESCE(latest_change_seq,0) FROM thread_logs WHERE session_id=$1",
+                &[&session_id],
+            )?
+            .map(|row| row.get(0))
+            .unwrap_or(0))
     }
     fn list_thread_changes_impl(
         &self,
@@ -769,7 +803,7 @@ impl PostgresThreadLogStorage for PostgresStorage {
                 &[&user_id, &session_id],
             )?
             .get(0);
-        if earliest.is_some_and(|first| after > 0 && first > after + 1) {
+        if earliest.is_some_and(|first| first > after.saturating_add(1)) {
             return Ok(vec![json!({"change_type":"snapshot_required"})]);
         }
         Ok(conn.query("SELECT change_seq,change_type,turn_id,item_id,revision,payload,created_time FROM thread_log_changes WHERE user_id=$1 AND session_id=$2 AND change_seq>$3 ORDER BY change_seq LIMIT $4", &[&user_id,&session_id,&after,&limit])?.into_iter().map(change_row).collect::<Vec<_>>())

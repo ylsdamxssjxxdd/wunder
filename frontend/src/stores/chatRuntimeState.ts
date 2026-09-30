@@ -1073,6 +1073,7 @@ export const ensureRuntime = (sessionId) => {
       pendingManualCompaction: null,
       lastEventId: 0,
       remoteLastEventId: 0,
+      threadChangeCursor: 0,
       threadStatus: 'not_loaded',
       loaded: false,
       activeTurnId: '',
@@ -2441,6 +2442,16 @@ export const applyCanonicalSessionEventsSnapshot = (
   const runtimeBefore = sessionBefore && !includeRuntime
     ? { runtimeStatus: sessionBefore.runtimeStatus, busyReason: sessionBefore.busyReason }
     : null;
+  // Restore the current runtime inside the same reduction batch, before any
+  // render invalidation. Historical workflow events must never flash as live.
+  if (runtimeBefore) {
+    events.push({
+      event_type: ['idle', 'completed', 'not_loaded'].includes(runtimeBefore.runtimeStatus)
+        ? 'session_idle' : 'session_runtime', source: 'snapshot', strict: false,
+      session_id: key, runtime_status: runtimeBefore.runtimeStatus,
+      payload: { runtime_status: runtimeBefore.runtimeStatus }
+    });
+  }
   applyChatRuntimeEventsWithInvalidation(store, projection, events, {
     immediate: true,
     reason: 'session-events-snapshot'
@@ -2451,7 +2462,6 @@ export const applyCanonicalSessionEventsSnapshot = (
   if (includeRuntime && snapshotPayload.workflow_only !== true) {
     store.restorePendingApprovals?.(key, snapshotPayload);
   }
-  if (runtimeBefore && projection.sessions[key]) Object.assign(projection.sessions[key], runtimeBefore);
   inspectChatRuntimeShadow(store, key, null, {
     phase: options.phase || 'session-events-snapshot'
   });
@@ -2536,6 +2546,11 @@ export const clearCompletedAssistantStreamingState = (messages) => {
       message.stream_incomplete = false;
       message.reasoningStreaming = false;
     }
+    if (['running', 'streaming', 'tooling', 'waiting_first_output', 'placeholder'].includes(message.status)) {
+      message.status = 'final';
+      message.final = true;
+    }
+    settleTerminalAssistantArtifacts([message]);
     clearAssistantRetryState(message);
   });
 };

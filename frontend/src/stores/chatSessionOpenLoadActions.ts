@@ -1,5 +1,7 @@
 import { sessionCatalogCheckIds, sessionCatalogCandidateIds, mergeSessionCatalogPage, cacheSessionCatalog } from './chatSessionCatalog';
 import { isSessionUnavailable } from './chatSessionAvailability';
+import { normalizeThreadChangeCursor } from './chatThreadCursor';
+import { isThreadRuntimeBusy } from '@/utils/chatSessionRuntime';
 import { isChatSnapshotCurrent, readChatRealtimeRevision } from './chatSnapshotFreshness';
 import { defineStore } from 'pinia';
 
@@ -637,6 +639,17 @@ export const chatSessionOpenLoadActions = {
           });
         }
         if (cachedSessionMessages?.length || snapshot?.messages?.length) {
+          const entryRuntime = ensureRuntime(targetSessionId);
+          // Disk/cache flags are not proof of an active execution. Keep a live
+          // controller or a confirmed runtime, otherwise render neutral history.
+          if (!entryRuntime?.sendController && !entryRuntime?.resumeController &&
+              !isThreadRuntimeBusy(entryRuntime?.threadStatus)) {
+            clearCompletedAssistantStreamingState(this.messages);
+            syncChatRuntimeProjectionFromSnapshot(this, targetSessionId, this.messages, {
+              immediate: true, loading: false, running: false, authoritative: true
+            });
+            setSessionLoading(this, targetSessionId, false);
+          }
           cacheSessionMessages(targetSessionId, this.messages);
         }
         const pendingPrefetch = sessionDetailPrefetchInFlight.get(targetSessionId);
@@ -763,6 +776,10 @@ export const chatSessionOpenLoadActions = {
           eventsPayload?.command_sessions ?? eventsPayload?.commandSessions
         );
         const runtime = ensureRuntime(targetSessionId);
+        if (typeof sessionDetail?.running === 'boolean') {
+          eventsPayload = { ...eventsPayload, running: sessionDetail.running,
+            queued: sessionDetail.queued, runtime: sessionDetail.runtime };
+        }
         applySessionRuntimeSnapshot(runtime, eventsPayload?.runtime);
         const remoteRunning = eventsPayload?.running === true;
         const remoteLastEventId = normalizeStreamEventId(
@@ -1085,6 +1102,10 @@ export const chatSessionOpenLoadActions = {
           setSessionLoading(this, targetSessionId, false);
         }
         writeSessionHydratedMessageVersion(targetSessionId, hydratedVersion);
+        const snapshotCursor = normalizeThreadChangeCursor(sessionDetail?.thread_change_cursor);
+        if (runtime && snapshotCursor !== null && sessionDetail?.history_incomplete !== true) {
+          runtime.threadChangeCursor = snapshotCursor;
+        }
         markSessionDetailWarm(targetSessionId);
         // Ignore stale async response: keep current foreground conversation state untouched.
         if (activeSessionKey !== targetSessionId) {
@@ -1117,31 +1138,9 @@ export const chatSessionOpenLoadActions = {
         if (perfEnabled) {
           perfForegroundSyncMs = performance.now() - perfForegroundSyncStart;
         }
-        if (hydrateForegroundMessages) {
-          const pendingMessage = findPendingAssistantMessage(this.messages);
-          if (pendingMessage && remoteRunning) {
-            const resumeAfterEventId =
-              normalizeStreamEventId(pendingMessage.stream_event_id) ?? remoteLastEventId;
-            if (
-              resumeAfterEventId !== null &&
-              resumeAfterEventId > 0 &&
-              normalizeStreamEventId(pendingMessage.stream_event_id) === null
-            ) {
-              pendingMessage.stream_event_id = resumeAfterEventId;
-            }
-            this.resumeStream(
-              targetSessionId,
-              pendingMessage,
-              resumeAfterEventId !== null && resumeAfterEventId > 0
-                ? { afterEventId: resumeAfterEventId }
-                : {}
-            );
-          } else {
-            if (!remoteRunning) {
-              clearCompletedAssistantStreamingState(this.messages);
-            }
-            setSessionLoading(this, targetSessionId, false);
-          }
+        if (hydrateForegroundMessages && !remoteRunning) {
+          clearCompletedAssistantStreamingState(this.messages);
+          setSessionLoading(this, targetSessionId, false);
         }
         chatDebugLog('chat.store.detail', 'hydration-message-identity', {
           sessionId: targetSessionId,

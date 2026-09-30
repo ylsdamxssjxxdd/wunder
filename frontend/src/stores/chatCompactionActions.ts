@@ -199,6 +199,9 @@ export const chatCompactionActions = {
           if (Number.isFinite(acceptedRound) && acceptedRound > 0 && compactionMessage) {
             const userRound = Math.trunc(acceptedRound);
             compactionMessage.stream_round = userRound;
+            compactionMessage.user_round = userRound;
+            compactionMessage.user_turn_id = `user-turn:${targetId}:round:${userRound}`;
+            bindRuntimeMessageToUserRound(this, targetId, compactionMessage.message_id, userRound);
             const firstWorkflow = Array.isArray(compactionMessage.workflowItems)
               ? compactionMessage.workflowItems[0]
               : null;

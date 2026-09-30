@@ -223,7 +223,7 @@ test('detail response racing live output seeds history without rolling back cont
   try {
     const loading = store.loadSessionDetail('session-1', { startWatcherAfterHydration: false });
     await new Promise(resolve => setTimeout(resolve, 0));
-    assert.equal(pending.length, 2);
+    assert.equal(pending.length, 3);
     applyCanonicalStreamRuntimeEvent(store, 'session-1', 'llm_output_delta', {
       user_round: 2, model_round: 1, delta: 'new-output'
     }, '11');
@@ -293,29 +293,63 @@ test('model tool-call completion never ends the request or clears its busy state
   store.resetState();
 });
 
-test('replaced resume cleanup cannot cancel the turn or clear the new controller', async () => {
+test('recovery reloads a snapshot without inventing a running turn or creating a second stream', async () => {
   const store = await setup();
   const { chatWsClient } = await import('../../src/stores/chatWatcher');
-  const { ensureRuntime, applyCanonicalStreamRuntimeEvent } = await import('../../src/stores/chatRuntimeState');
+  const { ensureRuntime } = await import('../../src/stores/chatRuntimeState');
   const request = chatWsClient.request;
-  const pending: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
-  chatWsClient.request = () => new Promise<void>((resolve, reject) => pending.push({ resolve, reject }));
-  // Suppress a post-resume watcher; the two requests themselves are real store actions.
+  const detail = store.loadSessionDetail;
+  const pending: Array<() => void> = [];
+  let streamRequests = 0;
+  chatWsClient.request = () => { streamRequests++; return Promise.resolve(); };
+  store.loadSessionDetail = () => new Promise<void>(resolve => pending.push(resolve));
   store.activeSessionId = null;
   try {
     const first = store.resumeStream('session-1', null, { force: true });
     const second = store.resumeStream('session-1', null, { force: true });
-    const controller = ensureRuntime('session-1').resumeController;
-    pending[0].reject(Object.assign(new Error('replaced'), { name: 'AbortError' }));
-    await first;
-    assert.equal(ensureRuntime('session-1').resumeController, controller);
-    assert.equal(store.isSessionBusy('session-1'), true);
-    applyCanonicalStreamRuntimeEvent(store, 'session-1', 'thread_status', { status: 'idle' }, '1');
-    pending[1].resolve();
-    await second;
     assert.equal(store.isSessionBusy('session-1'), false);
-  } finally { chatWsClient.request = request; store.resetState(); }
+    pending[1]();
+    await second;
+    pending[0]();
+    await first;
+    assert.equal(store.isSessionBusy('session-1'), false);
+    assert.equal(ensureRuntime('session-1').resumeController, null);
+    assert.equal(streamRequests, 0);
+  } finally { store.loadSessionDetail = detail; chatWsClient.request = request; store.resetState(); }
 });
+
+for (const switching of [false, true]) {
+  test(`stale cached tools do not flash running during ${switching ? 'thread switch' : 'refresh'}`, async () => {
+    const store = await setup();
+    const { default: api } = await import('../../src/api/http');
+    const { cacheSessionMessages } = await import('../../src/stores/chatRuntimeState');
+    const original = api.defaults.adapter;
+    const messages = [{role:'assistant',content:'answer',message_id:'item:answer',item_id:'answer',
+      user_turn_id:'user-turn:session-1:round:1',model_turn_id:'model-turn:session-1:user:1:model:1',
+      turn_index:2,status:'streaming',stream_incomplete:true,workflowStreaming:true,
+      workflowItems:[{eventType:'tool_call',status:'loading',toolCallId:'call'}]}];
+    cacheSessionMessages('session-1', messages);
+    store.messages = switching ? [] : messages;
+    if (switching) store.activeSessionId = 'session-2';
+    const pending: Array<() => void> = [];
+    api.defaults.adapter = config => new Promise(resolve => pending.push(() => resolve({
+      status:200,statusText:'OK',headers:{},config,data:{data:config.url?.endsWith('/events')
+        ? {running:false,runtime:{thread_status:'idle'},rounds:[]}
+        : {id:'session-1',running:false,runtime:{thread_status:'idle'},thread_change_cursor:8,
+          transcript:messages.map(message => ({...message,status:'final'}))}}
+    })));
+    try {
+      const loading = store.loadSessionDetail('session-1', {startWatcherAfterHydration:false});
+      await new Promise(resolve => setTimeout(resolve,0));
+      assert.equal(store.isSessionBusy('session-1'), false);
+      assert.equal(selectVisibleMessageProjections(store.runtimeProjection,'session-1')[0].status,'final');
+      pending.splice(0).forEach(resolve => resolve());
+      await loading;
+      assert.equal(store.isSessionBusy('session-1'), false);
+      assert.equal(selectVisibleMessageProjections(store.runtimeProjection,'session-1')[0].status,'final');
+    } finally { api.defaults.adapter = original; store.resetState(); }
+  });
+}
 
 test('stale idle event cannot clear approval state or settle a newer running turn', async () => {
   const store = await setup();

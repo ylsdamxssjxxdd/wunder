@@ -134,6 +134,9 @@ impl ThreadLogStore for SqliteStorage {
     ) -> Result<Vec<Value>> {
         self.list_thread_changes_by_session_impl(session_id, after_seq, limit)
     }
+    fn latest_thread_change_seq_by_session(&self, session_id: &str) -> Result<i64> {
+        self.latest_thread_change_seq_by_session_impl(session_id)
+    }
     fn delete_thread_log_by_session(&self, user_id: &str, session_id: &str) -> Result<i64> {
         self.delete_thread_log_by_session_impl(user_id, session_id)
     }
@@ -959,6 +962,11 @@ impl ChatSessionStore for SqliteStorage {
 impl SessionGoalStore for SqliteStorage {
     fn upsert_session_goal(&self, record: &SessionGoalRecord) -> Result<()> {
         self.upsert_session_goal_impl(record)
+    }
+    fn update_session_goal(&self, record: &SessionGoalRecord, expected_updated_at: f64) -> Result<bool> {
+        let conn = self.open()?;
+        Ok(conn.execute("UPDATE session_goals SET status=?, updated_at=?, completed_at=?, last_continued_at=?, source=?, user_round=?, approval_mode=? WHERE user_id=? AND session_id=? AND goal_id=? AND updated_at=?",
+            rusqlite::params![record.status,record.updated_at,record.completed_at,record.last_continued_at,record.source,record.user_round,record.approval_mode,record.user_id,record.session_id,record.goal_id,expected_updated_at])? > 0)
     }
     fn get_session_goal(
         &self,

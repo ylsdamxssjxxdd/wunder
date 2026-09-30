@@ -3,6 +3,60 @@ use crate::storage::StorageBackend;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+/// Hydrate only unfinished visible messages. Completed messages already own their
+/// final text; recovery reads the active fields in bounded database pages.
+pub fn hydrate_active_text(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    session_id: &str,
+    message: &mut Value,
+) -> anyhow::Result<()> {
+    if message["role"] != "assistant"
+        || !matches!(
+            message["status"].as_str(),
+            Some("running" | "streaming" | "waiting_input")
+        )
+    {
+        return Ok(());
+    }
+    let Some(item_id) = message["item_id"].as_str().map(str::to_owned) else {
+        return Ok(());
+    };
+    for field in ["content", "reasoning"] {
+        let mut from = 0;
+        let mut text = String::new();
+        loop {
+            let (blocks, next, more) = storage.list_thread_item_blocks_page(
+                user_id,
+                session_id,
+                &item_id,
+                Some(field),
+                from,
+                100,
+                false,
+            )?;
+            for block in blocks {
+                let data = block.get("data").unwrap_or(&block);
+                if let Some(part) = data[field].as_str() {
+                    text.push_str(part);
+                }
+            }
+            if !more {
+                break;
+            }
+            let next = next
+                .map(|next| next.saturating_add(1))
+                .filter(|next| *next > from)
+                .ok_or_else(|| anyhow::anyhow!("text block cursor did not advance"))?;
+            from = next;
+        }
+        if !text.is_empty() {
+            message[field] = json!(text);
+        }
+    }
+    Ok(())
+}
+
 pub fn export_response(
     storage: Arc<dyn StorageBackend>,
     user_id: String,
@@ -227,15 +281,16 @@ mod tests {
     #[test]
     fn text_tail_separates_content_and_reasoning_block_identity() {
         let mut tail = TextTail::default();
-        tail.append(
-            "thread",
-            1,
-            &json!({
-                "turn_id":"turn", "model_round":1,
-                "delta":"answer", "reasoning_delta":"thought"
-            }),
-        );
-        let flush = tail.flush("thread").expect("flush");
+        let flush = tail
+            .append(
+                "thread",
+                1,
+                &json!({
+                    "turn_id":"turn", "model_round":1,
+                    "delta":"answer", "reasoning_delta":"thought"
+                }),
+            )
+            .expect("initial flush");
         let blocks = flush["blocks"].as_array().expect("blocks");
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0]["field"], "content");

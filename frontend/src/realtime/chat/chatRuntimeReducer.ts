@@ -832,7 +832,8 @@ const normalizeRuntimeEvent = (event: ChatRuntimeEvent): NormalizedRuntimeEvent 
     sessionId,
     agentId: normalizeId(event.agent_id ?? payload.agent_id ?? payload.agentId),
     eventId: normalizeId(event.event_id ?? payload.event_id ?? payload.id),
-    eventSeq: normalizeSeq(event.event_seq ?? payload.event_seq ?? payload.eventSeq),
+    eventSeq: normalizeSeq(Object.prototype.hasOwnProperty.call(event, 'event_seq')
+      ? event.event_seq : payload.event_seq ?? payload.eventSeq),
     snapshotSeq,
     userTurnId: normalizeId(event.user_turn_id ?? payload.user_turn_id ?? payload.userTurnId),
     modelTurnId: normalizeId(event.model_turn_id ?? payload.model_turn_id ?? payload.modelTurnId),
@@ -1156,6 +1157,10 @@ const applyAssistantOutputSnapshot = (
   event: NormalizedRuntimeEvent
 ): void => {
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
+  const blockData = isPlainRecord(event.payload.data) ? event.payload.data : event.payload;
+  // A retained text block can arrive after the terminal Item snapshot. Its
+  // offsets are useful while streaming, but cannot reopen the completed turn.
+  if (Number.isInteger(blockData.block_index) && isTerminalModelTurnStatus(modelTurn.status)) return;
   modelTurn.status = 'streaming';
   const message = ensureAssistantMessageForModelTurn(session, event, 'streaming');
   settleProjectedRetryWorkflowItems(message);
@@ -1231,6 +1236,17 @@ const applyToolActivity = (
 ): void => {
   const sourceType = normalizeText(event.payload.source_event_type);
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
+  const settled = event.source === 'snapshot' && isTerminalModelTurnStatus(modelTurn.status)
+    ? modelTurn.messageIds.map(id => session.messageById[id])
+      .find(message => message?.role === 'assistant' && !isActiveMessageStatus(message.status))
+    : null;
+  if (settled) {
+    upsertToolWorkflowItem(settled, event, completed ? 'completed' : 'loading', modelTurn);
+    settleProjectedWorkflowItems(settled, settled.status === 'failed' ? 'failed' : 'completed');
+    syncProjectedToolCallStats(settled);
+    markMessageStructureChanged(settled);
+    return;
+  }
   const message = ensureAssistantMessageForModelTurn(
     session,
     event,
@@ -1265,7 +1281,11 @@ const applyToolFailed = (
   event: NormalizedRuntimeEvent
 ): void => {
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
-  const message = ensureAssistantMessageForModelTurn(session, event, 'tooling');
+  const settled = event.source === 'snapshot' && isTerminalModelTurnStatus(modelTurn.status)
+    ? modelTurn.messageIds.map(id => session.messageById[id])
+      .find(message => message?.role === 'assistant' && !isActiveMessageStatus(message.status))
+    : null;
+  const message = settled || ensureAssistantMessageForModelTurn(session, event, 'tooling');
   upsertToolWorkflowItem(message, event, 'failed', modelTurn);
   if (message.display) message.display.manual_compaction_marker = false;
   syncProjectedToolCallStats(message);
@@ -1823,6 +1843,11 @@ const isSnapshotRuntimeActive = (
   const loading = normalizeFlag(event.loading ?? event.payload.loading);
   const running = normalizeFlag(event.running ?? event.payload.running);
   const status = normalizeChatRuntimeStatus(event.payload.runtime_status ?? event.payload.status);
+  // Explicit snapshot state wins over cached streaming flags and historical tool cards.
+  if (event.payload.runtime_status !== undefined || event.payload.status !== undefined ||
+      event.authoritative === true || event.payload.authoritative === true || isCanonicalTranscript(messages)) {
+    return loading || running || isChatRuntimeBusyStatus(status);
+  }
   return loading || running || isChatRuntimeBusyStatus(status) || hasActiveLegacyRuntime(messages);
 };
 
@@ -2481,7 +2506,8 @@ const buildCanonicalTranscriptPlan = (
     index,
     role,
     id,
-    status: resolveLegacyMessageStatus(raw),
+    status: raw.item_id && ['final', 'streaming', 'tooling', 'waiting_first_output', 'queued', 'cancelled', 'failed'].includes(String(raw.status))
+      ? raw.status as ChatRuntimeMessageStatus : resolveLegacyMessageStatus(raw),
     streamRound: normalizeSeq(raw.stream_round ?? raw.streamRound),
     userTurnId,
     userTurnBinding: 'strong',

@@ -243,6 +243,8 @@ impl Orchestrator {
         result: &ToolResultPayload,
         round_info: RoundInfo,
         tool_call_id: Option<&str>,
+        request_context_tokens: Option<i64>,
+        request_usage: Option<&TokenUsage>,
     ) {
         let timestamp = Local::now().to_rfc3339();
         let safe_args = if args.is_object() {
@@ -260,7 +262,14 @@ impl Orchestrator {
             "args": safe_args,
             "data": result.data,
             "timestamp": timestamp,
+            "event_type": "tool_result",
         });
+        if let Some(tokens) = request_context_tokens {
+            payload["request_context_tokens"] = json!(tokens);
+        }
+        if let Some(usage) = request_usage {
+            payload["request_usage"] = serde_json::to_value(usage).unwrap_or(Value::Null);
+        }
         if let Some(tool_call_id) = tool_call_id
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -602,7 +611,7 @@ impl Orchestrator {
         }
         let result = ToolResultPayload::from_value(json!({ "source": "skill_read" }));
         for name in matched {
-            self.append_tool_log(user_id, session_id, &name, args, &result, round_info, None);
+            self.append_tool_log(user_id, session_id, &name, args, &result, round_info, None, None, None);
         }
     }
 
@@ -795,7 +804,7 @@ impl Orchestrator {
             json!({ "content": content })
         };
         let result = ToolResultPayload::from_value(data);
-        self.append_tool_log(user_id, session_id, name, args, &result, round_info, None);
+        self.append_tool_log(user_id, session_id, name, args, &result, round_info, None, None, None);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -828,7 +837,7 @@ impl Orchestrator {
             }
         }
         let result = ToolResultPayload::from_value(data);
-        self.append_tool_log(user_id, session_id, name, args, &result, round_info, None);
+        self.append_tool_log(user_id, session_id, name, args, &result, round_info, None, None, None);
     }
 
     pub(super) async fn execute_tool_with_timeout(

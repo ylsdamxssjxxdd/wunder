@@ -13,10 +13,10 @@ test('watchdog no longer depends on a content-level recovery helper', () => {
   assert.equal(watcherSource.includes('shouldWatchdogReconcileDrift'), false);
 });
 
-test('watchdog drift is based on projection cursor versus remote tail', () => {
+test('watchdog drift is based on durable change cursor versus remote tail', () => {
   assert.ok(
     watcherSource.includes(
-      'Number.isFinite(remoteLastEventId) && remoteLastEventId > localLastEventId'
+      'Number.isSafeInteger(remoteCursor) && remoteCursor > threadChangeCursor(runtime)'
     )
   );
 });

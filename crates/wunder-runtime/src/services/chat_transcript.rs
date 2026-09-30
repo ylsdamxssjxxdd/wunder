@@ -79,7 +79,6 @@ fn map_transcript_message(
             .or_else(|| item.get("reasoning"))
             .and_then(Value::as_str)
             .unwrap_or("")
-            .trim()
     } else {
         ""
     };
@@ -199,8 +198,9 @@ fn map_transcript_message(
             if let Some(meta) = item.get("meta").and_then(Value::as_object) {
                 if meta.get("type").and_then(Value::as_str) == Some("manual_compaction_marker") {
                     map.insert("manual_compaction_marker".to_string(), Value::Bool(true));
-                    map.insert("workflowStreaming".to_string(), Value::Bool(false));
-                    map.insert("stream_incomplete".to_string(), Value::Bool(false));
+                    let running = meta.get("status").and_then(Value::as_str) == Some("running");
+                    map.insert("workflowStreaming".to_string(), Value::Bool(running));
+                    map.insert("stream_incomplete".to_string(), Value::Bool(running));
                     let detail = Value::Object(meta.clone());
                     map.insert(
                         "workflowItems".to_string(),
@@ -272,6 +272,9 @@ fn resolve_message_status(role: &str, item: &Value) -> &'static str {
     }
     if status == "cancelled" || status == "canceled" || is_cancelled_history_message(item) {
         return "cancelled";
+    }
+    if matches!(status.as_str(), "running" | "streaming" | "waiting_input") {
+        return "streaming";
     }
     "final"
 }

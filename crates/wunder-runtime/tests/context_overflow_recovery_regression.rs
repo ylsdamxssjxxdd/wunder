@@ -705,6 +705,83 @@ async fn trigger_manual_compaction_and_wait(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn slash_commands_have_durable_turns_and_compaction_result() {
+    let context = build_test_context("command_turn_test").await;
+    let session_id = create_test_session(&context, "Command turns").await;
+    run_pressure_rounds(&context, &session_id, 3, 60).await;
+    let before = context
+        .state
+        .storage
+        .get_thread_log_counts(&context.user_id, &session_id, false)
+        .unwrap()
+        .0;
+    let (round, _) = trigger_manual_compaction_and_wait(&context, &session_id).await;
+    assert_eq!(round, before + 1);
+    let turns = context
+        .state
+        .storage
+        .list_thread_turns(&context.user_id, &session_id, None, 1)
+        .unwrap();
+    assert_eq!(turns[0]["status"], "completed");
+    let (_, detail) = send_json(
+        &context.app,
+        &context.token,
+        Method::GET,
+        &format!("/wunder/chat/sessions/{session_id}"),
+        None,
+    )
+    .await;
+    let transcript = detail["data"]["transcript"].as_array().expect("transcript");
+    assert_eq!(
+        transcript
+            .iter()
+            .filter(|m| m["content"] == "/compact")
+            .count(),
+        1
+    );
+    assert!(transcript
+        .iter()
+        .any(|m| m["manual_compaction_marker"] == true && m["user_turn_index"] == round));
+    let (status, goal) = send_json(
+        &context.app,
+        &context.token,
+        Method::PUT,
+        &format!("/wunder/chat/sessions/{session_id}/goal"),
+        Some(json!({"objective":"Complete the example task", "token_budget":100})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{goal}");
+    assert_eq!(goal["data"]["user_round"], round + 1);
+    assert_eq!(
+        context
+            .state
+            .storage
+            .get_thread_log_counts(&context.user_id, &session_id, false)
+            .unwrap()
+            .0,
+        round + 1
+    );
+    let (status, cancelled) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        &format!("/wunder/chat/sessions/{session_id}/cancel"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{cancelled}");
+    assert_eq!(cancelled["data"]["goal_cleared"], true);
+    assert!(wunder_server::goal::get_goal(
+        context.state.storage.clone(),
+        &context.user_id,
+        &session_id
+    )
+    .await
+    .unwrap()
+    .is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mindie_context_overflow_recovers_and_session_keeps_running() {
     let context = build_test_context("mindie_context_recovery_user").await;
     let session_id = create_test_session(&context, "MindIE context overflow regression").await;

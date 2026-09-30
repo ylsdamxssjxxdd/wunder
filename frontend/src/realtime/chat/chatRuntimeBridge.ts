@@ -144,7 +144,7 @@ const buildCanonicalSnapshotRecordEvents = (
     if (segmented.length > 0) return segmented;
   }
   const payload = patchSnapshotEventPayload(data, record, roundHint);
-  return buildCanonicalChatRuntimeEvents({
+  const result = buildCanonicalChatRuntimeEvents({
     sessionId,
     eventType,
     payload,
@@ -152,6 +152,11 @@ const buildCanonicalSnapshotRecordEvents = (
     phase,
     source: 'snapshot'
   });
+  // Stable Items carry revisions, never transport event sequence numbers.
+  return record.item_id ? result.map(event => ({
+    ...event, event_id: `item:${record.item_id}:${record.revision ?? 1}:${event.event_type}`,
+    event_seq: null, strict: false
+  })) : result;
 };
 
 const buildCanonicalSnapshotRuntimeEvents = (

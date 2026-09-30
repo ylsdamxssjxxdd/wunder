@@ -262,7 +262,10 @@ test('send, resume, and watch no longer route realtime events through legacy pro
   const sendSource = readFileSync(resolve(process.cwd(), 'src/stores/chatSendActions.ts'), 'utf8');
   const resumeSource = readFileSync(resolve(process.cwd(), 'src/stores/chatStopResumeActions.ts'), 'utf8');
   const runtimeControlsSource = readFileSync(resolve(process.cwd(), 'src/stores/chatRuntimeControls.ts'), 'utf8');
-  for (const [label, source] of [['send', sendSource], ['resume', resumeSource]]) {
+  assert.ok(resumeSource.includes('await this.loadSessionDetail('));
+  assert.ok(resumeSource.includes('startSessionWatcher(this, sessionId)'));
+  assert.equal(resumeSource.includes('chatWsClient.request('), false);
+  for (const [label, source] of [['send', sendSource]]) {
     assert.ok(source.includes("from './chatProjectionOnlyEvents';"), label);
     assert.ok(source.includes('shouldUseProjectionOnlyInteractiveStreamEvent('), label);
     assert.ok(source.includes('normalizedEventType,'), label);
@@ -390,10 +393,7 @@ test('channel messages no longer enter realtime legacy sideband writers', () => 
   assert.equal(watchSource.includes('resolveWatchRoundNumber'), false);
   assert.equal(watchSource.includes('state.processor.handleEvent('), false);
 
-  const resumeProjectionOnlyIndex = resumeSource.indexOf('const projectionOnlyInteractiveEvent = shouldUseProjectionOnlyInteractiveStreamEvent(');
-  const resumeCanonicalIndex = resumeSource.indexOf('applyCanonicalStreamRuntimeEvent(', resumeProjectionOnlyIndex);
-  assert.ok(resumeProjectionOnlyIndex >= 0);
-  assert.ok(resumeCanonicalIndex > resumeProjectionOnlyIndex);
+  assert.ok(resumeSource.includes('startSessionWatcher(this, sessionId)'));
   assert.equal(resumeSource.includes('shouldUseLegacyInteractiveStreamFallback'), false);
   assert.equal(resumeSource.includes('processor.handleEvent('), false);
 });

@@ -185,6 +185,7 @@ impl EventEmitter {
                         "session_id": self.session_id,
                         "turn_id": turn_id,
                         "model_round": model_round,
+                        "user_round": data.get("user_round").cloned().unwrap_or(Value::Null),
                         "item_id": format!("{turn_id}:text-{model_round}"),
                         "kind": "assistant_message",
                         "status": "running",

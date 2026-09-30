@@ -125,6 +125,7 @@ pub(super) trait SqliteThreadLogStorage {
         after: i64,
         limit: i64,
     ) -> Result<Vec<Value>>;
+    fn latest_thread_change_seq_by_session_impl(&self, session_id: &str) -> Result<i64>;
     fn list_thread_changes_impl(
         &self,
         user_id: &str,
@@ -193,6 +194,18 @@ impl SqliteThreadLogStorage for SqliteStorage {
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
+    fn latest_thread_change_seq_by_session_impl(&self, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        Ok(conn
+            .query_row(
+                "SELECT COALESCE(latest_change_seq,0) FROM thread_logs WHERE session_id=?",
+                params![session_id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .unwrap_or(0))
+    }
     fn load_thread_context_items_impl(
         &self,
         user_id: &str,
@@ -230,7 +243,8 @@ impl SqliteThreadLogStorage for SqliteStorage {
         block: &Value,
     ) -> Result<()> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let mut conn = self.open()?;
+        let conn = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let item_id = block["item_id"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing text item"))?;
@@ -247,7 +261,24 @@ impl SqliteThreadLogStorage for SqliteStorage {
             |row| row.get(0),
         )?;
         anyhow::ensure!(item_exists, "thread item does not exist for block");
-        conn.execute("INSERT INTO thread_item_blocks(session_id,user_id,item_id,field,block_index,event_id,payload) VALUES (?,?,?,?,?,?,?) ON CONFLICT(session_id,item_id,field,block_index) DO UPDATE SET event_id=excluded.event_id,payload=excluded.payload WHERE thread_item_blocks.event_id<=excluded.event_id",params![session_id,user_id,item_id,field,index,event_id,text])?;
+        let written = conn.execute("INSERT INTO thread_item_blocks(session_id,user_id,item_id,field,block_index,event_id,payload) VALUES (?,?,?,?,?,?,?) ON CONFLICT(session_id,item_id,field,block_index) DO UPDATE SET event_id=excluded.event_id,payload=excluded.payload WHERE thread_item_blocks.event_id<=excluded.event_id AND thread_item_blocks.payload<>excluded.payload",params![session_id,user_id,item_id,field,index,event_id,text])?;
+        if written > 0 {
+            let (seq, turn_id): (i64, String) = conn.query_row(
+                "SELECT l.latest_change_seq+1,i.turn_id FROM thread_logs l JOIN thread_items i ON i.session_id=l.session_id WHERE l.session_id=? AND i.item_id=?",
+                params![session_id,item_id], |r| Ok((r.get(0)?,r.get(1)?)))?;
+            let reference = json!({"field":field,"block_index":index}).to_string();
+            let now = Self::now_ts();
+            conn.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,'text_block',?,?,0,?,?)", params![session_id,seq,user_id,turn_id,item_id,reference,now])?;
+            conn.execute(
+                "UPDATE thread_logs SET latest_change_seq=?,updated_time=? WHERE session_id=?",
+                params![seq, now, session_id],
+            )?;
+            conn.execute(
+                "DELETE FROM thread_log_changes WHERE session_id=? AND change_seq<=?",
+                params![session_id, seq.saturating_sub(4096)],
+            )?;
+        }
+        conn.commit()?;
         Ok(())
     }
     fn list_thread_text_blocks_impl(
@@ -829,7 +860,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
             params![session_id],
             |r| r.get(0),
         )?;
-        if earliest.is_some_and(|first| after > 0 && first > after + 1) {
+        if earliest.is_some_and(|first| first > after.saturating_add(1)) {
             return Ok(vec![json!({"change_type":"snapshot_required"})]);
         }
         let mut stmt = conn.prepare("SELECT change_seq,change_type,turn_id,item_id,revision,payload,created_time FROM thread_log_changes WHERE session_id=? AND change_seq>? ORDER BY change_seq LIMIT ?")?;
@@ -854,7 +885,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
             params![user_id, session_id],
             |r| r.get(0),
         )?;
-        if earliest.is_some_and(|first| after > 0 && first > after + 1) {
+        if earliest.is_some_and(|first| first > after.saturating_add(1)) {
             return Ok(vec![json!({"change_type":"snapshot_required"})]);
         }
         Ok({
@@ -920,6 +951,68 @@ mod tests {
     use std::sync::Arc;
     fn input(id: usize) -> Value {
         json!({"role":"user","content":format!("message {id}"),"client_message_id":format!("message-{id}")})
+    }
+    #[test]
+    fn active_text_recovery_pages_fields_and_commits_idempotent_change_cursors() {
+        use wunder_core::storage_backend::ThreadLogStore;
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteStorage::new(dir.path().join("blocks.db").to_string_lossy().into_owned());
+        let accepted = db.accept_thread_turn("owner", "thread", &input(1)).unwrap();
+        let mut message = json!({"session_id":"thread", "turn_id":accepted["turn_id"],
+            "item_id":"answer", "kind":"assistant_message", "role":"assistant",
+            "visibility":"user", "status":"running", "content":"", "reasoning":""});
+        db.append_thread_item("owner", &message).unwrap();
+        let start = db.latest_thread_change_seq_by_session("thread").unwrap();
+        let mut last = Value::Null;
+        for index in 0..102 {
+            last = json!({"item_id":"answer", "field":"content", "block_index":index,
+                "event_id":index+100, "data":{"field":"content", "content":"x😀"}});
+            db.upsert_thread_text_block("owner", "thread", &last)
+                .unwrap();
+        }
+        let cursor = db.latest_thread_change_seq_by_session("thread").unwrap();
+        assert_eq!(cursor, start + 102);
+        db.upsert_thread_text_block("owner", "thread", &last)
+            .unwrap();
+        assert_eq!(
+            db.latest_thread_change_seq_by_session("thread").unwrap(),
+            cursor
+        );
+        let mut stale = last.clone();
+        stale["event_id"] = json!(1);
+        stale["data"]["content"] = json!("stale");
+        db.upsert_thread_text_block("owner", "thread", &stale)
+            .unwrap();
+        assert_eq!(
+            db.latest_thread_change_seq_by_session("thread").unwrap(),
+            cursor
+        );
+        db.upsert_thread_text_block(
+            "owner",
+            "thread",
+            &json!({"item_id":"answer",
+            "field":"reasoning", "block_index":0, "event_id":201,
+            "data":{"reasoning":" thought "}}),
+        )
+        .unwrap();
+        crate::services::thread_log::hydrate_active_text(&db, "owner", "thread", &mut message)
+            .unwrap();
+        assert_eq!(message["content"], "x😀".repeat(102));
+        assert_eq!(message["reasoning"], " thought ");
+        let changes = db
+            .list_thread_changes_by_session("thread", cursor, 10)
+            .unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0]["change_type"], "text_block");
+        assert_eq!(
+            changes[0]["payload"],
+            json!({"field":"reasoning","block_index":0})
+        );
+        message["status"] = json!("completed");
+        message["content"] = json!("final answer");
+        crate::services::thread_log::hydrate_active_text(&db, "owner", "thread", &mut message)
+            .unwrap();
+        assert_eq!(message["content"], "final answer");
     }
     #[test]
     fn durable_catalog_survives_more_than_five_hundred_turns() {

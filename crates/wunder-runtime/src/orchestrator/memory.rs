@@ -1121,8 +1121,35 @@ impl Orchestrator {
             start_event_id,
             None,
         );
-        let lifecycle_round_info =
-            RoundInfo::user_only(manual_user_round_override.unwrap_or(1).max(1));
+        let storage = self.storage.clone();
+        let owner = user_id.to_string();
+        let thread = session_id.to_string();
+        let (round, durable_turn) = blocking::run_db("compaction.turn_identity", move || {
+            let round = match manual_user_round_override {
+                Some(round) => round,
+                None => storage.latest_thread_user_round_by_session(&thread)?,
+            };
+            Ok((round, storage.find_thread_turn_id(&owner, &thread, round)?))
+        })
+        .await
+        .map_err(|err| OrchestratorError::internal(err.to_string()))?;
+        let mut lifecycle_round_info = RoundInfo::user_only(round);
+        if let Some(turn) = durable_turn.as_deref() {
+            emitter.bind_turn(turn, round);
+            lifecycle_round_info.thread_turn_id = uuid::Uuid::parse_str(turn).ok();
+            if manage_runtime_turn {
+                self.storage
+                    .update_thread_turn(user_id, session_id, turn, "running", "", &json!({}))
+                    .map_err(|err| OrchestratorError::internal(err.to_string()))?;
+                self.storage.commit_thread_item(user_id, &json!({
+                    "session_id":session_id, "turn_id":turn,
+                    "item_id":format!("{turn}:manual-compaction"),
+                    "kind":"assistant_message", "role":"assistant", "status":"running",
+                    "user_round":round, "content":"",
+                    "meta":{"type":"manual_compaction_marker","manual_compaction":true,"status":"running"}
+                })).map_err(|err| OrchestratorError::internal(err.to_string()))?;
+            }
+        }
         let active_turn_id = if manage_runtime_turn {
             let active_turn = self.active_turns.begin_turn(session_id);
             let turn_id = active_turn.turn_id.clone();
@@ -1154,6 +1181,7 @@ impl Orchestrator {
                     self.emit_manual_compaction_failure(&emitter, lifecycle_round_info, &err)
                         .await;
                     self.finish_manual_compaction_turn(
+                        user_id,
                         session_id,
                         active_turn_id.as_deref(),
                         &emitter,
@@ -1230,27 +1258,9 @@ impl Orchestrator {
             .await;
         messages.extend(history_messages);
         let messages = context_manager.normalize_messages(messages);
-        let manual_user_round = manual_user_round_override.unwrap_or_else(|| {
-            messages
-                .iter()
-                .filter(|message| message.get("role").and_then(Value::as_str) == Some("user"))
-                .count() as i64
-                + 1
-        });
-        let manual_round_info = RoundInfo::user_only(manual_user_round.max(1));
-
-        let persist_manual_command = |orchestrator: &Orchestrator| {
-            if manage_runtime_turn {
-                orchestrator.append_manual_compaction_command(
-                    user_id,
-                    session_id,
-                    manual_round_info,
-                );
-            }
-        };
+        let manual_round_info = lifecycle_round_info;
 
         if let Err(err) = self.ensure_not_cancelled(session_id) {
-            persist_manual_command(self);
             if manage_runtime_turn {
                 self.append_manual_compaction_result(
                     user_id,
@@ -1264,6 +1274,7 @@ impl Orchestrator {
                 self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
                     .await;
                 self.finish_manual_compaction_turn(
+                    user_id,
                     session_id,
                     active_turn_id.as_deref(),
                     &emitter,
@@ -1298,7 +1309,6 @@ impl Orchestrator {
         {
             Ok(result) => result.messages,
             Err(err) => {
-                persist_manual_command(self);
                 if manage_runtime_turn {
                     self.append_manual_compaction_result(
                         user_id,
@@ -1318,6 +1328,7 @@ impl Orchestrator {
                     .await;
                 if manage_runtime_turn {
                     self.finish_manual_compaction_turn(
+                        user_id,
                         session_id,
                         active_turn_id.as_deref(),
                         &emitter,
@@ -1332,7 +1343,6 @@ impl Orchestrator {
         };
         if let Err(err) = self.ensure_not_cancelled(session_id) {
             if manage_runtime_turn {
-                self.append_manual_compaction_command(user_id, session_id, manual_round_info);
                 self.append_manual_compaction_result(
                     user_id,
                     session_id,
@@ -1347,6 +1357,7 @@ impl Orchestrator {
                 .await;
             if manage_runtime_turn {
                 self.finish_manual_compaction_turn(
+                    user_id,
                     session_id,
                     active_turn_id.as_deref(),
                     &emitter,
@@ -1374,18 +1385,6 @@ impl Orchestrator {
             manual_round_info.insert_into(map);
         }
         emitter.emit("context_usage", context_payload).await;
-        if manage_runtime_turn {
-            self.finish_manual_compaction_turn(
-                session_id,
-                active_turn_id.as_deref(),
-                &emitter,
-                manual_round_info,
-                Ok(()),
-            )
-            .await;
-        }
-        emitter.finish().await;
-
         let mut compaction_payload: Option<Value> = None;
         let mut final_context_payload: Option<Value> = None;
         while let Ok(signal) = queue_rx.try_recv() {
@@ -1409,9 +1408,6 @@ impl Orchestrator {
         // the next model context by `HistoryManager`, but remains in the
         // durable transcript after refresh and thread switching.
         if manage_runtime_turn {
-            // Write the visible command after the replacement-history summary
-            // so materializing that snapshot cannot erase the `/compact` row.
-            self.append_manual_compaction_command(user_id, session_id, manual_round_info);
             if let Some(compaction) = compaction_payload.as_ref().and_then(Value::as_object) {
                 let summary = compaction
                     .get("summary_text")
@@ -1445,6 +1441,19 @@ impl Orchestrator {
             }
         }
 
+        if manage_runtime_turn {
+            self.finish_manual_compaction_turn(
+                user_id,
+                session_id,
+                active_turn_id.as_deref(),
+                &emitter,
+                manual_round_info,
+                Ok(()),
+            )
+            .await;
+        }
+        emitter.finish().await;
+
         let mut response_payload = compaction_payload.unwrap_or_else(|| {
             json!({
                 "status": "done",
@@ -1467,62 +1476,6 @@ impl Orchestrator {
         }
 
         Ok(response_payload)
-    }
-
-    /// Persist the manual command and its terminal assistant projection as one
-    /// user round. The rows are durable transcript entries, while history
-    /// replay filters their metadata before constructing the next model input.
-    fn append_manual_compaction_command(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        round_info: RoundInfo,
-    ) {
-        self.append_chat(
-            user_id,
-            session_id,
-            "user",
-            Some(&Value::String("/compact".to_string())),
-            None,
-            Some(&json!({
-                "type": "manual_compaction_command",
-                "manual_compaction": true,
-            })),
-            None,
-            None,
-            None,
-            None,
-            round_info,
-        );
-    }
-
-    /// Persist a `/goal ...` command as a durable user round so the chat
-    /// bubble survives reloads, mirroring the manual compaction command flow.
-    /// The row stays visible to the user; history replay rewords it for the
-    /// model (see history.rs) so the raw command is not replayed verbatim.
-    pub(crate) fn append_goal_command_message(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        command_text: &str,
-        user_round: i64,
-    ) {
-        self.append_chat(
-            user_id,
-            session_id,
-            "user",
-            Some(&Value::String(command_text.to_string())),
-            None,
-            Some(&json!({
-                "type": "goal_command",
-                "goal_command": true,
-            })),
-            None,
-            None,
-            None,
-            None,
-            RoundInfo::user_only(user_round.max(1)),
-        );
     }
 
     fn append_manual_compaction_result(
@@ -1562,19 +1515,18 @@ impl Orchestrator {
             marker_meta.insert("compaction_id".to_string(), compaction_id.clone());
         }
         round_info.insert_into(&mut marker_meta);
-        self.append_chat(
-            user_id,
-            session_id,
-            "assistant",
-            Some(&Value::String(content.to_string())),
-            None,
-            Some(&Value::Object(marker_meta)),
-            None,
-            None,
-            None,
-            None,
-            round_info,
-        );
+        if let Some(turn) = round_info.thread_turn_id {
+            let payload = json!({
+                "session_id":session_id, "turn_id":turn.to_string(),
+                "item_id":format!("{turn}:manual-compaction"),
+                "kind":"assistant_message", "role":"assistant",
+                "status":if status == "done" { "completed" } else { status },
+                "user_round":round_info.user_round, "content":content, "meta":marker_meta
+            });
+            if let Err(err) = self.storage.commit_thread_item(user_id, &payload) {
+                warn!("persist manual compaction result failed: {err}");
+            }
+        }
     }
 
     fn append_manual_compaction_transcript(
@@ -1586,7 +1538,6 @@ impl Orchestrator {
         summary: Option<&str>,
         compaction_id: Option<&Value>,
     ) {
-        self.append_manual_compaction_command(user_id, session_id, round_info);
         self.append_manual_compaction_result(
             user_id,
             session_id,
@@ -1625,12 +1576,29 @@ impl Orchestrator {
 
     async fn finish_manual_compaction_turn(
         &self,
+        user_id: &str,
         session_id: &str,
         turn_id: Option<&str>,
         emitter: &EventEmitter,
         round_info: RoundInfo,
         outcome: Result<(), &OrchestratorError>,
     ) {
+        if let Some(turn) = round_info.thread_turn_id {
+            let status = match outcome {
+                Ok(()) => "completed",
+                Err(err) => turn_terminal_status_for_error(err),
+            };
+            if let Err(err) = self.storage.update_thread_turn(
+                user_id,
+                session_id,
+                &turn.to_string(),
+                status,
+                "",
+                &json!({"status":status,"stop_reason":"manual_compaction"}),
+            ) {
+                warn!("persist compaction terminal failed: {err}");
+            }
+        }
         match outcome {
             Ok(()) => {
                 emit_turn_terminal_event(

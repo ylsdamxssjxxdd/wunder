@@ -389,6 +389,11 @@ async fn get_session(
         .map(str::to_string);
 
     let monitor_record = state.monitor.get_record(&session_id);
+    // Capture before reading the transcript so the watcher can replay concurrent changes.
+    let thread_change_cursor = state
+        .workspace
+        .latest_thread_change_seq(&session_id)
+        .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     let limit = normalize_session_detail_limit(
         query.limit,
         if is_admin { 0 } else { DEFAULT_MESSAGE_LIMIT },
@@ -415,9 +420,8 @@ async fn get_session(
             }
         }
     };
-    let monitor_active = load_chat_session_activity(&state, &session_id, monitor_record.as_ref())
-        .await
-        .running;
+    let activity = load_chat_session_activity(&state, &session_id, monitor_record.as_ref()).await;
+    let monitor_active = activity.running;
     let active_queue_tasks = list_active_queue_tasks(&state.user_store, &session_id);
     let pure_queue_phase = !monitor_active && !active_queue_tasks.is_empty();
     let mut transcript = std::mem::take(&mut transcript_page.transcript);
@@ -494,7 +498,11 @@ async fn get_session(
             "context_occupancy_tokens": context_tokens,
             "log_overview": log_overview,
             "has_more": transcript_page.has_more,
-            "before_seq": transcript_page.before_seq
+            "before_seq": transcript_page.before_seq,
+            "thread_change_cursor": thread_change_cursor,
+            "running": monitor_active,
+            "queued": pure_queue_phase,
+            "runtime": activity.runtime.unwrap_or_else(|| json!({"thread_status": if monitor_active { "running" } else if pure_queue_phase { "queued" } else { "idle" }, "loaded": true}))
         }
     })))
 }
@@ -730,7 +738,15 @@ fn load_visible_transcript_page(
         rows.truncate(requested as usize);
     }
     rows.reverse();
-    let rows = filter_orchestration_suppressed_history(state, user_id, session_id, rows);
+    let mut rows = filter_orchestration_suppressed_history(state, user_id, session_id, rows);
+    for message in &mut rows {
+        crate::services::thread_log::hydrate_active_text(
+            state.storage.as_ref(),
+            user_id,
+            session_id,
+            message,
+        )?;
+    }
     let transcript = build_chat_transcript(session_id, rows);
     let next_before = transcript
         .first()

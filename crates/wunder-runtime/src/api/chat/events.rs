@@ -152,14 +152,34 @@ async fn get_thread_turn(
     let storage = state.storage.clone();
     let lookup_session = session_id.clone();
     let turn = blocking::run_db("api.chat.thread_log.turn", move || {
-        storage.get_thread_turn(
+        let mut turn = storage.get_thread_turn(
             &user_id,
             &lookup_session,
             &turn_id,
             query.item_after.unwrap_or(-1),
             query.limit.unwrap_or(100),
             false,
-        )
+        )?;
+        if let Some(turn) = turn.as_mut() {
+            let mut events = Vec::new();
+            if let Some(items) = turn["items"].as_array_mut() {
+                for item in items {
+                    if let Some(event) = thread_item_workflow_event(item) {
+                        events.push(event);
+                    }
+                    if item["kind"] == "assistant_message" {
+                        crate::services::thread_log::hydrate_active_text(
+                            storage.as_ref(),
+                            &user_id,
+                            &lookup_session,
+                            &mut item["payload"],
+                        )?;
+                    }
+                }
+            }
+            turn["events"] = json!(events);
+        }
+        Ok::<_, anyhow::Error>(turn)
     })
     .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
@@ -301,6 +321,10 @@ async fn get_session_events(
         .ok()
         .flatten();
     let activity = load_chat_session_activity(&state, &session_id, monitor_record.as_ref()).await;
+    let thread_change_cursor = state
+        .workspace
+        .latest_thread_change_seq(&session_id)
+        .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     let runtime = activity.runtime;
     let queued = super::has_active_queue_task(&state.user_store, &session_id);
     let running = activity.running;
@@ -310,7 +334,7 @@ async fn get_session_events(
         "limit":normalize_session_events_limit(query.limit),"events_limited":false,"workflow_only":query.workflow_only,
         "event_offset":workflow_page.map(|page| page.offset),"event_limit":workflow_page.map(|page| page.limit),
         "event_total":event_total,"events_has_more":events_has_more,"running":running,"queued":queued,
-        "last_event_id":0,"goal":goal.as_ref().map(crate::services::goal::goal_payload),
+        "last_event_id":0,"thread_change_cursor":thread_change_cursor,"goal":goal.as_ref().map(crate::services::goal::goal_payload),
         "runtime":runtime_payload,"command_sessions":command_sessions
     }})))
 }
@@ -608,18 +632,41 @@ fn thread_turn_to_workflow_round(
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .map(|item| {
-            json!({
-                "event": item.get("kind").cloned().unwrap_or_else(|| json!("item")),
-                "data": item.get("payload").cloned().unwrap_or_else(|| json!({})),
-                "item_id": item.get("item_id").cloned().unwrap_or(Value::Null),
-                "event_seq": item.get("item_index").cloned().unwrap_or(Value::Null),
-            })
-        })
+        .filter_map(thread_item_workflow_event)
         .collect::<Vec<_>>();
     Ok(
         json!({"user_round": turn.get("user_turn_index").cloned().unwrap_or(Value::Null), "turn_id": turn_id, "status": turn.get("status").cloned().unwrap_or(Value::Null), "events": events}),
     )
+}
+
+fn thread_item_workflow_event(item: &Value) -> Option<Value> {
+    let kind = item["kind"].as_str().unwrap_or("item");
+    if matches!(
+        kind,
+        "user_message" | "assistant_message" | "tool_message" | "system_message"
+    ) {
+        return None;
+    }
+    let payload = item.get("payload").cloned().unwrap_or_else(|| json!({}));
+    let event = if kind == "tool_call" {
+        if matches!(
+            item["status"].as_str(),
+            Some("completed" | "failed" | "cancelled" | "interrupted")
+        ) {
+            "tool_result"
+        } else {
+            "tool_call"
+        }
+    } else {
+        payload["event_type"].as_str().unwrap_or(kind)
+    };
+    Some(json!({
+        "event": event,
+        "timestamp": payload.get("timestamp").cloned().unwrap_or(Value::Null),
+        "data": payload,
+        "item_id": item["item_id"],
+        "revision": item["revision"],
+    }))
 }
 
 fn normalize_workflow_events_page(
@@ -811,6 +858,21 @@ mod tests {
         collect_session_event_rounds, normalize_workflow_round_range, should_merge_round_event,
     };
     use serde_json::{json, Value};
+
+    #[test]
+    fn durable_tool_result_preserves_metrics_without_replaying_a_start() {
+        let event = super::thread_item_workflow_event(&json!({
+            "kind":"tool_call", "item_id":"call", "revision":2, "status":"completed",
+            "item_index":1, "payload":{"tool":"read_file", "tool_call_id":"call",
+                "request_context_tokens":120, "meta":{"duration_ms":1250}}
+        }))
+        .unwrap();
+        assert_eq!(event["event"], "tool_result");
+        assert_eq!(event["data"]["request_context_tokens"], 120);
+        assert_eq!(event["data"]["meta"]["duration_ms"], 1250);
+        assert!(event.get("event_seq").is_none());
+        assert!(super::thread_item_workflow_event(&json!({"kind":"assistant_message"})).is_none());
+    }
 
     #[test]
     fn merges_duplicate_round_error_pair_by_trace() {

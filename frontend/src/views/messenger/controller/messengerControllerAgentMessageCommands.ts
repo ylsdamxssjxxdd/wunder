@@ -1017,7 +1017,8 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           return captureStopRunSnapshot({
               sessionId: targetSessionId,
               messages: targetMessages,
-              busy: targetSessionId ? ctx.resolveEffectiveSessionBusy(targetSessionId, targetMessages) : false
+              busy: targetSessionId ? (ctx.resolveEffectiveSessionBusy(targetSessionId, targetMessages) ||
+                  ctx.chatStore.isSessionGoalLocked?.(targetSessionId) === true) : false
           });
       };
       const stopSnapshot = resolveStopSnapshot();

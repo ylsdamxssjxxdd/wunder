@@ -1383,6 +1383,8 @@ impl Orchestrator {
                             &result,
                             round_info,
                             event_tool_call_id.as_deref(),
+                            request_context_tokens,
+                            Some(&usage),
                         );
                         self.append_artifact_logs(&user_id, &session_id, &name, &args, &result);
                         if name == read_tool_name {
