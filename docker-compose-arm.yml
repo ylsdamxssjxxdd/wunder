@@ -4,9 +4,6 @@ services:
   wunder-server:
     container_name: wunder-server
     shm_size: "2gb"
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
     image: wunder-arm
     platform: linux/arm64
     working_dir: /app
@@ -81,9 +78,6 @@ services:
     image: onlyoffice/documentserver:latest
     platform: ${ONLYOFFICE_PLATFORM:-linux/arm64}
     shm_size: "2gb"
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
     ports:
       - "0.0.0.0:${ONLYOFFICE_PORT:-18080}:80"
     environment:
@@ -114,9 +108,6 @@ services:
     image: jgraph/drawio:latest
     platform: ${DRAWIO_PLATFORM:-linux/arm64}
     shm_size: "1gb"
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
     ports:
       - "0.0.0.0:${DRAWIO_PORT:-18081}:8080"
     environment:
@@ -126,9 +117,6 @@ services:
   wunder-sandbox:
     container_name: wunder-sandbox
     shm_size: "2gb"
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
     image: wunder-arm
     platform: linux/arm64
     working_dir: /tmp
@@ -181,9 +169,6 @@ services:
     container_name: extra-mcp
     image: wunder-arm
     platform: linux/arm64
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
     working_dir: /app
     volumes:
       - ./:/app
@@ -205,9 +190,6 @@ services:
   wunder-postgres:
     container_name: wunder-postgres
     image: postgres:16
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
     platform: linux/arm64
     environment:
       - TZ=Asia/Shanghai
@@ -228,9 +210,6 @@ services:
 
   wunder-frontend:
     image: node:22.14
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
     platform: linux/arm64
     container_name: wunder-frontend
     working_dir: /workspace
@@ -273,9 +252,6 @@ services:
 
   wunder-nginx:
     image: nginx:latest
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
     platform: linux/arm64
     container_name: wunder-nginx
     environment:

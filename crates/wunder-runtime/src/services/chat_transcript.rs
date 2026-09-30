@@ -263,12 +263,21 @@ fn coalesce_assistant_messages_by_user_turn(messages: &mut Vec<Value>) {
             result.push(message);
             continue;
         }
-        let Some(turn_id) = message.get("user_turn_id").and_then(Value::as_str) else {
+        // A persisted root `turn_id` is the only safe durable coalescing key.
+        // Legacy rows can reuse a stale user_round across separate user
+        // inputs, so historical hydration must not infer one bubble from the
+        // synthesized round key.
+        let turn_key = message
+            .get("turn_id")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| format!("turn:{value}"));
+        let Some(turn_key) = turn_key else {
             result.push(message);
             continue;
         };
-        let Some(&index) = assistant_index_by_turn.get(turn_id) else {
-            assistant_index_by_turn.insert(turn_id.to_string(), result.len());
+        let Some(&index) = assistant_index_by_turn.get(&turn_key) else {
+            assistant_index_by_turn.insert(turn_key, result.len());
             result.push(message);
             continue;
         };
@@ -297,9 +306,12 @@ fn merge_transcript_assistant_message(target: &mut Value, source: &Value) {
     if should_replace_transcript_assistant_target(target_map, source_map) {
         let old = std::mem::take(target_map);
         *target_map = source_map.clone();
-        merge_transcript_assistant_fields(target_map, &old, true);
+        // `target_map` is the newer/richer snapshot here.  Keep its text when
+        // the older snapshot contains a different model round (for example,
+        // tool-call reasoning followed by the final answer).
+        merge_transcript_assistant_fields(target_map, &old, false);
     } else {
-        merge_transcript_assistant_fields(target_map, source_map, false);
+        merge_transcript_assistant_fields(target_map, source_map, true);
     }
 }
 
@@ -345,14 +357,14 @@ fn transcript_assistant_score(message: &serde_json::Map<String, Value>) -> i32 {
 fn merge_transcript_assistant_fields(
     target: &mut serde_json::Map<String, Value>,
     source: &serde_json::Map<String, Value>,
-    source_precedes_target: bool,
+    prefer_source_text: bool,
 ) {
     for (key, value) in source {
         if key == "content" || key == "reasoning" {
             let current = target.get(key).and_then(Value::as_str).unwrap_or("");
             let incoming = value.as_str().unwrap_or("");
             if !incoming.is_empty() {
-                let merged = merge_transcript_text(current, incoming, source_precedes_target);
+                let merged = merge_transcript_text(current, incoming, prefer_source_text);
                 if merged != current {
                     target.insert(key.clone(), Value::String(merged));
                 }
@@ -389,7 +401,7 @@ fn merge_transcript_assistant_fields(
     }
 }
 
-fn merge_transcript_text(current: &str, incoming: &str, incoming_precedes_current: bool) -> String {
+fn merge_transcript_text(current: &str, incoming: &str, prefer_incoming: bool) -> String {
     if current.is_empty() || current == incoming {
         return incoming.to_string();
     }
@@ -399,10 +411,10 @@ fn merge_transcript_text(current: &str, incoming: &str, incoming_precedes_curren
     if incoming.starts_with(current) {
         return incoming.to_string();
     }
-    if incoming_precedes_current {
-        format!("{incoming}\n\n{current}")
+    if prefer_incoming {
+        incoming.to_string()
     } else {
-        format!("{current}\n\n{incoming}")
+        current.to_string()
     }
 }
 
@@ -804,27 +816,27 @@ mod tests {
                 "finish_reason": "tool_calls", "tool_calls": [{"id":"call-1"}],
                 "user_round": 1, "model_round": 1,
                 "round_info_source": "orchestrator", "created_seq": 2,
-                "item_id": "turn:text-1"
+                "item_id": "turn:text-1", "turn_id": "turn-1"
             }),
             json!({
                 "role": "assistant", "content": "", "reasoning_content": "decide to use a tool",
                 "meta": {"type": "tool_call", "message_stats": {"contextTokens": 10}},
                 "tool_calls": [{"id":"call-1"}], "user_round": 1, "model_round": 1,
                 "round_info_source": "orchestrator", "created_seq": 3,
-                "item_id": "duplicate-tool"
+                "item_id": "duplicate-tool", "turn_id": "turn-1"
             }),
             json!({
                 "role": "assistant", "content": "hello back", "reasoning": "final answer",
                 "user_round": 1, "model_round": 2,
                 "round_info_source": "orchestrator", "created_seq": 4,
-                "item_id": "turn:text-2"
+                "item_id": "turn:text-2", "turn_id": "turn-1"
             }),
             json!({
                 "role": "assistant", "content": "hello back", "reasoning_content": "final answer",
                 "meta": {"message_stats": {"contextTokens": 20}},
                 "user_round": 1, "model_round": 2,
                 "round_info_source": "orchestrator", "created_seq": 5,
-                "item_id": "duplicate-final"
+                "item_id": "duplicate-final", "turn_id": "turn-1"
             }),
         ];
 

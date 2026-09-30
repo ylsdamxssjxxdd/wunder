@@ -9,10 +9,7 @@ services:
   wunder-server:
     container_name: wunder-server
     build: *rust-build
-    shm_size: "2gb"
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
+    shm_size: "2gb" 
     image: wunder-x86
     pull_policy: never
     working_dir: /app
@@ -86,9 +83,6 @@ services:
     image: onlyoffice/documentserver:latest
     platform: linux/amd64
     shm_size: "2gb"
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
     ports:
       - "0.0.0.0:${ONLYOFFICE_PORT:-18080}:80"
     environment:
@@ -119,9 +113,6 @@ services:
     image: jgraph/drawio:latest
     platform: linux/amd64
     shm_size: "1gb"
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
     ports:
       - "0.0.0.0:${DRAWIO_PORT:-18081}:8080"
     environment:
@@ -132,9 +123,6 @@ services:
     container_name: wunder-sandbox
     build: *rust-build
     shm_size: "2gb"
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
     image: wunder-x86
     pull_policy: never
     working_dir: /tmp
@@ -187,9 +175,6 @@ services:
     build: *rust-build
     image: wunder-x86
     pull_policy: never
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
     working_dir: /app
     volumes:
       - ./:/app
@@ -212,9 +197,6 @@ services:
     container_name: wunder-postgres
     image: postgres:16
     platform: linux/amd64
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
     environment:
       - TZ=Asia/Shanghai
       - POSTGRES_DB=wunder
@@ -279,9 +261,6 @@ services:
   wunder-nginx:
     image: nginx:latest
     platform: linux/amd64
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
     container_name: wunder-nginx
     environment:
       - TZ=Asia/Shanghai

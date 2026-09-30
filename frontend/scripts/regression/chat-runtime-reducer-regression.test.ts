@@ -845,10 +845,13 @@ test('authoritative stopped legacy reconcile prunes projection-only assistant tu
   }));
 
   const visibleBeforeStop = selectVisibleMessageProjections(projection, 'session-1');
-  assert.equal(visibleBeforeStop.length, 3);
+  // A user turn owns one assistant bubble even while a later model round is
+  // still projected optimistically.  The projection-only round is merged
+  // into the durable assistant turn and pruned with it on stop.
+  assert.equal(visibleBeforeStop.length, 2);
   assert.equal(
     visibleBeforeStop.filter((message) => message.role === 'assistant').length,
-    2
+    1
   );
 
   visibleAssistant.status = 'cancelled';
