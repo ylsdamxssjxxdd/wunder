@@ -1104,20 +1104,6 @@ impl Orchestrator {
         manual_user_round_override: Option<i64>,
         manage_runtime_turn: bool,
     ) -> Result<Value, OrchestratorError> {
-        let storage = self.storage.clone();
-        let session_id_for_offset = session_id.to_string();
-        let start_event_id =
-            match blocking::run_db("orchestrator.memory.stream_offset", move || {
-                storage.get_max_stream_event_id(&session_id_for_offset)
-            })
-            .await
-            {
-                Err(err) => {
-                    warn!("failed to load stream event offset for session {session_id}: {err}");
-                    0
-                }
-                Ok(value) => value,
-            };
         let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(STREAM_EVENT_QUEUE_SIZE);
         let emitter = EventEmitter::new(
             session_id.to_string(),
@@ -1126,7 +1112,6 @@ impl Orchestrator {
             Some(self.storage.clone()),
             self.monitor.clone(),
             is_admin,
-            start_event_id,
             None,
         )
         .with_committer(self.committer.clone());

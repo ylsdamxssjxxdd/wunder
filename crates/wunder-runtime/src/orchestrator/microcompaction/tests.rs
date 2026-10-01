@@ -121,7 +121,6 @@ async fn local_reduction_persists_marker_row_without_rewriting_chat_history() {
         None,
         state.monitor.clone(),
         false,
-        0,
         None,
     );
     let messages = history(false);

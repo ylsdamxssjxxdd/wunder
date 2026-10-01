@@ -141,7 +141,7 @@ import { chatPageLifecycle } from './chatSharedState';
 import { buildMessage, resolveTimestampMs } from './chatStats';
 import { getRuntimeLastEventId, normalizeApprovalMode, normalizeStreamEventId, updateRuntimeLastEventId } from './chatStreamIds';
 import { SendMessageOptions } from './chatTypes';
-import { abortResumeStream, abortSendStream, buildWsRequestId, chatWsClient, scheduleSlowClientResume, startSessionWatcher } from './chatWatcher';
+import { abortResumeStream, abortSendStream, buildWsRequestId, chatWsClient, startSessionWatcher } from './chatWatcher';
 import { buildDetail, buildSessionTitle, handleApprovalEvent, isTerminalLlmOutputPayload, isTerminalStreamEventType, resolveNormalizedStreamEventType, shouldAutoTitle, shouldTreatRuntimeEventAsTerminal } from './chatWorkflowHydration';
 import { shouldUseProjectionOnlyInteractiveStreamEvent } from './chatProjectionOnlyEvents';
 import {
@@ -535,7 +535,6 @@ export const chatSendActions = {
       let recoveredByRealtime = false;
       let finalSeen = false;
       let errorSeen = false;
-      let slowClientResumeAfterEventId = 0;
       let sendRequestId = '';
       const hasProjectionSession = Boolean(this.runtimeProjection?.sessions?.[sessionId]);
       const syncRuntimeLastAppliedEventId = () => {
@@ -628,7 +627,6 @@ export const chatSendActions = {
           content,
           stream: true,
           client_message_id: clientMessageId,
-          change_stream: true,
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(desktopToolCallMode ? { tool_call_mode: desktopToolCallMode } : {}),
           ...(approvalMode ? { approval_mode: approvalMode } : {}),
@@ -648,8 +646,7 @@ export const chatSendActions = {
           const approvalPayload = payload?.data ?? payload;
           const normalizedEventType = resolveNormalizedStreamEventType(eventType, payload);
           const effectiveEventType = normalizedEventType || eventType;
-          // Change-stream v2 consumes bubble content here; only interactive
-          // and lifecycle frames fall through to the legacy send path.
+          // Durable frames are the only source of timeline projection.
           if (
             applyChatThreadServerEvent(this, sessionId, effectiveEventType, payload)
           ) {
@@ -1013,17 +1010,6 @@ export const chatSendActions = {
             }
           } else if (terminalLlmOutput) {
             finalSeen = true;
-          } else if (
-            normalizedEventType === 'slow_client' &&
-            String(payload?.reason ?? payload?.data?.reason ?? '').trim() === 'queue_full_resume_required'
-          ) {
-            const appliedEventId = selectRuntimeLastAppliedEventId(this.runtimeProjection, sessionId);
-            slowClientResumeAfterEventId = Math.max(
-              slowClientResumeAfterEventId,
-              appliedEventId,
-              hasProjectionSession ? 0 : getRuntimeLastEventId(runtime),
-              normalizeStreamEventId(assistantMessage.stream_event_id) || 0
-            );
           }
           syncRuntimeLastAppliedEventId();
           return;
@@ -1283,9 +1269,6 @@ export const chatSendActions = {
             pageUnloading: chatPageLifecycle.pageUnloading
           })
         ) {
-          if (keepStreaming && slowClientResumeAfterEventId > 0) {
-            scheduleSlowClientResume(this, sessionId, null, slowClientResumeAfterEventId);
-          }
           startSessionWatcher(this, sessionId);
         }
       }

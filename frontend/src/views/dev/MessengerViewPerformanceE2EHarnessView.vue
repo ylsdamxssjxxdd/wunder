@@ -19,6 +19,7 @@ import { useAgentStore } from '@/stores/agents';
 import { useChatStore } from '@/stores/chat';
 import { useSessionHubStore } from '@/stores/sessionHub';
 import { applyCanonicalStreamRuntimeEvent, cacheSessionMessages, markSessionDetailWarm, syncChatRuntimeProjectionFromSnapshot } from '@/stores/chatRuntimeState';
+import { applyChatThreadServerEvent, resetChatThreadRuntime } from '@/realtime/chat/chatThreadRuntime';
 
 type HarnessMetrics = {
   firstInteractiveMs: number;
@@ -314,6 +315,112 @@ const switchSessionAndReturn = async () => {
   await installSession(SESSION_A, 320);
 };
 
+const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+/**
+ * Browser-level durable pipeline probe. It deliberately enters through the
+ * production frame adapter and renders MessengerView, while simulating a
+ * dropped live tail followed by the durable block used on reconnect.
+ */
+const runDurableStreamProbe = async () => {
+  resetChatThreadRuntime(SESSION_A);
+  const chat = useChatStore();
+  const turnId = 'durable-probe-turn';
+  const itemId = `${turnId}:text-1`;
+  const apply = (event: string, data: Record<string, unknown>) => {
+    const accepted = applyChatThreadServerEvent(chat, SESSION_A, event, data);
+    if (!accepted) throw new Error(`durable frame was not consumed: ${event}`);
+  };
+  apply('thread_change', {
+    cursor: 1, change_type: 'turn_upsert', turn_id: turnId,
+    payload: { turn_id: turnId, user_round: 1001, status: 'running', content: 'probe input' }
+  });
+  apply('thread_change', {
+    cursor: 2, change_type: 'item_upsert', turn_id: turnId, item_id: `${turnId}:user`, revision: 1,
+    payload: {
+      item_id: `${turnId}:user`, turn_id: turnId, kind: 'user_message', status: 'completed',
+      visibility: 'user', revision: 1, payload: { role: 'user', content: 'probe input', user_round: 1001 }
+    }
+  });
+  apply('thread_change', {
+    cursor: 3, change_type: 'item_upsert', turn_id: turnId, item_id: itemId, revision: 1,
+    payload: {
+      item_id: itemId, turn_id: turnId, kind: 'assistant_message', status: 'running',
+      visibility: 'user', revision: 1,
+      payload: { role: 'assistant', content: '', reasoning: '', user_round: 1001, model_round: 1 }
+    }
+  });
+  await nextFrame();
+
+  const samples: number[] = [];
+  const longTasks: number[] = [];
+  const observer = typeof PerformanceObserver === 'undefined' ? null : new PerformanceObserver((list) => {
+    for (const entry of list.getEntries()) longTasks.push(entry.duration);
+  });
+  try { observer?.observe({ type: 'longtask' } as PerformanceObserverInit); } catch { /* optional API */ }
+  const list = document.querySelector<HTMLElement>('[data-testid="messenger-message-list"]');
+  const composer = document.querySelector<HTMLTextAreaElement>('.messenger-agent-composer textarea');
+  let copied = false;
+  const onCopy = () => { copied = true; };
+  document.addEventListener('copy', onCopy);
+  const chunks: string[] = [];
+  try {
+    for (let index = 0; index < 1000; index += 1) {
+      const text = ` ${index % 10}`;
+      chunks.push(text);
+      const startedAt = performance.now();
+      apply('thread_item_tail', { item_id: itemId, field: 'content', offset: index * 2, base_seq: 3, text });
+      if (composer && index % 100 === 0) {
+        composer.value = `typing-${index}`;
+        composer.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      if (list && index % 100 === 0) {
+        list.scrollTop = list.scrollHeight;
+        list.dispatchEvent(new Event('scroll'));
+      }
+      if (index === 500) {
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        const range = document.createRange();
+        range.selectNodeContents(document.body);
+        selection?.addRange(range);
+        document.dispatchEvent(new Event('copy', { bubbles: true }));
+        selection?.removeAllRanges();
+      }
+      await nextFrame();
+      samples.push(performance.now() - startedAt);
+    }
+    const recoveryStartedAt = performance.now();
+    // The active connection is considered lost here. Its unsent tail is
+    // healed by the next durable block delivered by the resumed watch.
+    apply('thread_change', {
+      cursor: 4, change_type: 'text_block', turn_id: turnId, item_id: itemId,
+      payload: { item_id: itemId, field: 'content', block_index: 0, content_offset: 0, content: chunks.join('') }
+    });
+    await nextTick();
+    await nextFrame();
+    await nextFrame();
+    const ordered = [...samples].sort((left, right) => left - right);
+    const p95 = ordered[Math.max(0, Math.ceil(ordered.length * 0.95) - 1)] || 0;
+    const rendered = document.body.textContent?.includes('probe input') === true
+      && document.body.textContent?.includes(' 0 1 2 3 4 5') === true;
+    return {
+      tokens: samples.length,
+      p95FrameLatencyMs: p95,
+      maxFrameLatencyMs: Math.max(...samples, 0),
+      reconnectRecoveryMs: performance.now() - recoveryStartedAt,
+      longTasksOver50Ms: longTasks.filter((duration) => duration > 50).length,
+      inputApplied: composer?.value === 'typing-900',
+      scrollApplied: Boolean(list && list.scrollTop >= 0),
+      copyObserved: copied,
+      rendered
+    };
+  } finally {
+    document.removeEventListener('copy', onCopy);
+    observer?.disconnect();
+  }
+};
+
 const snapshot = computed(() => JSON.stringify(metrics.value, null, 2));
 
 onMounted(async () => {
@@ -362,6 +469,7 @@ onMounted(async () => {
     expandToolDetails,
     showEarlierToolEntries,
     switchSessionAndReturn,
+    runDurableStreamProbe,
     collectMetrics
   };
 });

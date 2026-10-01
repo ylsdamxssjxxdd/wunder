@@ -291,7 +291,6 @@ export type AppendLocalMessageOptions = {
 
 export type ResumeStreamOptions = {
   force?: boolean;
-  afterEventId?: number | string;
 };
 
 export type ApprovalDecision = 'approve_once' | 'approve_session' | 'deny';

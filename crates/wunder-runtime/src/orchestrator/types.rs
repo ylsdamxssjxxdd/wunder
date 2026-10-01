@@ -29,8 +29,6 @@ pub(super) struct PreparedRequest {
     /// Change-stream feeders start here so the accept transaction's changes
     /// are replayed instead of skipped.
     pub(super) thread_resume_from_seq: i64,
-    /// Change-stream v2 opt-in from the WS start payload.
-    pub(super) change_stream: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]

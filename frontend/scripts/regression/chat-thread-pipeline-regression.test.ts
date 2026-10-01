@@ -6,7 +6,6 @@ import {
   applyChatThreadServerEvent,
   ensureChatThreadRuntime,
   buildChatThreadMaterializedMessages,
-  markChatThreadFallback,
   registerChatThreadSnapshotLoader,
   isChatThreadV2Session,
   resetChatThreadRuntime,
@@ -281,7 +280,6 @@ test('state defaults stay isolated when the feature gate is consulted', () => {
   assert.equal(state.items.size, 0);
   resetChatThreadRuntime('sess-x');
   assert.equal(getChatThreadState('sess-x'), null);
-  markChatThreadFallback('sess-x', 'noop');
 });
 
 test('tail frames ahead of the replay cursor are dropped until their base seq lands (I3)', () => {

@@ -159,6 +159,21 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
                 "queued"
             },
         ),
+        // A mailbox message may be observed repeatedly while an execution is
+        // retried. Its producer supplied message_id is the durable identity;
+        // a generated key would make a replay look like a new timeline item.
+        "subagent_message" => (
+            "subagent_message",
+            format!(
+                "subagent-{}",
+                data.get("message_id")?.as_str()?
+            ),
+            if data.get("delivery").and_then(Value::as_str) == Some("not_applied") {
+                "cancelled"
+            } else {
+                "completed"
+            },
+        ),
         "tool_call" | "tool_result" => (
             "tool_call",
             format!("tool-{}", data.get("tool_call_id")?.as_str()?),

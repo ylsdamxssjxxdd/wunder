@@ -45,7 +45,6 @@ async fn queue_handoff_parks_original_turn_and_keeps_cancel_available() {
         Some(state.storage.clone()),
         state.monitor.clone(),
         false,
-        0,
         None,
     )
     .with_committer(orchestrator.committer.clone());

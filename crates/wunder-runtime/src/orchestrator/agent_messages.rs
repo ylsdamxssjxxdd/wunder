@@ -18,13 +18,12 @@ impl Orchestrator {
         let mut applied = false;
         while let Some(message) = pending.next() {
             if message.cancelled() {
-                emitter
-                    .emit(
-                        "subagent_message",
-                        json!({"message_id":message.id,
+                let mut data = json!({"message_id":message.id,
                     "source_session_id":message.source,"session_id":session,"kind":message.kind,
-                    "delivery":"not_applied"}),
-                    )
+                    "delivery":"not_applied"});
+                round.insert_into(data.as_object_mut().expect("message payload"));
+                emitter
+                    .emit("subagent_message", data)
                     .await;
                 continue;
             }
@@ -46,13 +45,12 @@ impl Orchestrator {
                 // Draining transfers ownership here; failures must settle every
                 // accepted message, including the rest of this detached batch.
                 for rejected in std::iter::once(message).chain(pending) {
-                    emitter
-                        .emit(
-                            "subagent_message",
-                            json!({"message_id":rejected.id,
+                    let mut data = json!({"message_id":rejected.id,
                         "source_session_id":rejected.source,"session_id":session,
-                        "kind":rejected.kind,"delivery":"not_applied"}),
-                        )
+                        "kind":rejected.kind,"delivery":"not_applied"});
+                    round.insert_into(data.as_object_mut().expect("message payload"));
+                    emitter
+                        .emit("subagent_message", data)
                         .await;
                 }
                 return Err(OrchestratorError::internal(error.to_string()));

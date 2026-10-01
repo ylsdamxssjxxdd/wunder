@@ -173,11 +173,6 @@ impl Orchestrator {
             thread_turn_id,
             thread_user_round,
             thread_resume_from_seq: resume_from_seq.max(0),
-            change_stream: request
-                .config_overrides
-                .as_ref()
-                .and_then(|fields| fields.get("__change_stream").and_then(Value::as_bool))
-                .unwrap_or(false),
         })
     }
 
@@ -229,7 +224,6 @@ impl Orchestrator {
             Some(self.storage.clone()),
             self.monitor.clone(),
             prepared.is_admin,
-            0,
             prepared.client_message_id.clone(),
         )
         .with_committer(self.committer.clone());
@@ -252,55 +246,36 @@ impl Orchestrator {
         let language = prepared.language.clone();
         let (queue_tx, queue_rx) = mpsc::channel::<StreamSignal>(STREAM_EVENT_QUEUE_SIZE);
         let (event_tx, event_rx) = mpsc::channel::<StreamEvent>(STREAM_EVENT_QUEUE_SIZE);
-        // v2 uses the durable ThreadLog cursor as its only recovery baseline.
-        // v1 keeps its transport sequence for the compatibility pump, but the
-        // v2 branch never consults stream_events or derives ordering from it.
-        let start_event_id = if prepared.change_stream {
-            0
-        } else {
-            let session_id = prepared.session_id.clone();
-            let storage = self.storage.clone();
-            crate::core::blocking::run_db("orchestrator.request.v1_stream_offset", move || {
-                storage.get_max_stream_event_id(&session_id)
-            })
-            .await
-            .unwrap_or(0)
-        };
-        let mut emitter = EventEmitter::new(
+        // Transport event IDs are not recovery cursors. Durable recovery is
+        // exclusively served by ThreadLog change_seq through the feeder.
+        let emitter = EventEmitter::new(
             prepared.session_id.clone(),
             prepared.user_id.clone(),
             Some(queue_tx),
             Some(self.storage.clone()),
             self.monitor.clone(),
             prepared.is_admin,
-            start_event_id,
             prepared.client_message_id.clone(),
         )
         .with_committer(self.committer.clone());
-        if prepared.change_stream {
-            emitter = emitter.with_change_stream();
-        }
         emitter.bind_turn(
             &prepared.thread_turn_id.expect("accepted turn").to_string(),
             prepared.thread_user_round.expect("accepted round"),
         );
-        if prepared.change_stream {
-            // The change-stream ack anchors the client's feeder cursor. Emitted
-            // through the pump so it is ordered before every turn event.
-            emitter
-                .emit(
-                    "thread_turn_started",
-                    json!({
-                        "turn_id": prepared.thread_turn_id.expect("accepted turn").to_string(),
-                        "user_round": prepared.thread_user_round.expect("accepted round"),
-                        "change_cursor": prepared.thread_resume_from_seq,
-                        "resume_from_seq": prepared.thread_resume_from_seq,
-                        "content": prepared.question,
-                        "client_message_id": prepared.client_message_id,
-                    }),
-                )
-                .await;
-        }
+        // The durable feeder starts from this baseline after the acknowledgement.
+        emitter
+            .emit(
+                "thread_turn_started",
+                json!({
+                    "turn_id": prepared.thread_turn_id.expect("accepted turn").to_string(),
+                    "user_round": prepared.thread_user_round.expect("accepted round"),
+                    "change_cursor": prepared.thread_resume_from_seq,
+                    "resume_from_seq": prepared.thread_resume_from_seq,
+                    "content": prepared.question,
+                    "client_message_id": prepared.client_message_id,
+                }),
+            )
+            .await;
         let _ = self.thread_runtime.attach_subscriber(&prepared.session_id);
         let runner = {
             let orchestrator = self.clone();
@@ -320,7 +295,6 @@ impl Orchestrator {
             event_tx,
             emitter,
             runner,
-            start_event_id,
         );
         let stream = tokio_stream::wrappers::ReceiverStream::new(event_rx)
             .map(Ok::<_, std::convert::Infallible>);

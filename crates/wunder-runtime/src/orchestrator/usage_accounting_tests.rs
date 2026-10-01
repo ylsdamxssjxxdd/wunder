@@ -90,7 +90,6 @@ async fn usage_accounting_includes_rejected_calls_empty_responses_and_compaction
         None,
         state.monitor.clone(),
         false,
-        0,
         None,
     );
     let model = LlmModelConfig {
@@ -313,7 +312,6 @@ async fn administrator_requests_track_thread_quota_without_debiting_account() {
         None,
         state.monitor.clone(),
         true,
-        0,
         None,
     );
     let model = LlmModelConfig {

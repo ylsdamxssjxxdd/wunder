@@ -346,4 +346,56 @@ mod tests {
             .expect("recv must resolve once the feeder stops");
         assert!(stopped.is_none(), "cancelled feeder must stop");
     }
+
+    #[tokio::test]
+    async fn feeder_recovers_committed_change_by_poll_without_hub_signal() {
+        let (state, _temp_dir) = build_state("feeder-poll-fallback").await;
+        seed_session(&state.storage);
+        let turn = state
+            .storage
+            .accept_thread_turn("owner", "feeder-thread", &json!({"content":"hi"}))
+            .unwrap();
+        let baseline = state
+            .storage
+            .latest_thread_change_seq_by_session("feeder-thread")
+            .unwrap();
+        let cancel = CancellationToken::new();
+        let mut rx = watch_thread_changes(
+            state.clone(),
+            "feeder-thread".into(),
+            baseline,
+            Some(cancel.clone()),
+        )
+        .await
+        .expect("start feeder");
+
+        // Write through an independent producer with no local hub publish,
+        // representing a different server instance. The polling reader must
+        // still obtain the immutable durable payload.
+        state
+            .storage
+            .append_thread_item(
+                "owner",
+                &json!({
+                    "session_id":"feeder-thread", "turn_id":turn["turn_id"],
+                    "item_id":"cross-instance", "kind":"assistant_message",
+                    "role":"assistant", "status":"completed", "visibility":"user",
+                    "content":"durable"
+                }),
+            )
+            .unwrap();
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("poll fallback must deliver")
+            .expect("feeder remains open");
+        match frame {
+            ThreadChangeFrame::Change { seq, data, .. } => {
+                assert!(seq > baseline);
+                assert_eq!(data["payload"]["item_id"], "cross-instance");
+                assert_eq!(data["payload"]["payload"]["content"], "durable");
+            }
+            other => panic!("expected durable change, got {other:?}"),
+        }
+        cancel.cancel();
+    }
 }

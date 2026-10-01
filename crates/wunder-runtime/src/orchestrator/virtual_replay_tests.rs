@@ -23,7 +23,6 @@ async fn virtual_provider_enforces_capabilities_and_completes_tool_exchange() {
         None,
         state.monitor.clone(),
         false,
-        0,
         None,
     );
     let mut model = LlmModelConfig {
@@ -212,7 +211,6 @@ async fn virtual_replay_works_at_zero_balance_without_spending_or_granting_token
         None,
         state.monitor.clone(),
         false,
-        0,
         None,
     );
     let result = state

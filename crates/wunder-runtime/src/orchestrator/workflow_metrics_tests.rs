@@ -83,7 +83,6 @@ async fn workflow_metrics_preserve_parallel_success_failure_and_cancellation() {
         None,
         state.monitor.clone(),
         true,
-        0,
         None,
     );
     let outcomes = orchestrator

@@ -22,7 +22,6 @@ import {
   markRuntimeProjectionContentChanged,
   markRuntimeProjectionReasoningChanged
 } from './chatRuntimeProjectionInvalidation';
-import { isDesktopModeEnabled } from '@/config/desktop';
 import type { ChatRuntimeMessageProjection, ChatRuntimeProjection } from './chatRuntimeTypes';
 import {
   materializeChatRuntimeProjectionList
@@ -39,7 +38,8 @@ interface ChatThreadRuntimeEntry {
 
 const registry = new Map<string, ChatThreadRuntimeEntry>();
 const REGISTRY_LIMIT = 64;
-export const isChatChangeStreamEnabled = (): boolean => !isDesktopModeEnabled();
+/** Chat has no protocol selection: every web session uses durable changes. */
+export const isChatChangeStreamEnabled = (): boolean => true;
 
 export const ensureChatThreadRuntime = (key: string): ChatThreadRuntimeEntry => {
   let entry = registry.get(key);
@@ -65,18 +65,12 @@ export const getChatThreadState = (key: string): ChatThreadState | null =>
 export const isChatThreadV2Session = (key: string): boolean =>
   Boolean(registry.get(key)) && isChatChangeStreamEnabled();
 
-/** Deprecated API retained only so external test helpers compile; chat never falls back. */
-export const markChatThreadFallback = (_key: string, _reason: string): void => {};
-
-export const getChatThreadFallbackReason = (_key: string): string =>
-  '';
-
 export const resetChatThreadRuntime = (key: string): void => {
   registry.delete(key);
 };
 
-/** Interactive lifecycle events remain outside the durable item reducer. */
-const LEGACY_FALLTHROUGH =
+/** Connection and user-interaction controls do not carry timeline state. */
+const CONTROL_EVENT =
   /^(approval_|queue_|queued$|goal_|session_|command_session_|heartbeat$|ping$|thread_status$|thread_closed$|slow_client$|error$)/;
 
 const asRowObject = (value: unknown): Record<string, unknown> | null =>
@@ -334,7 +328,7 @@ export const applyChatThreadServerEvent = (
   payload: unknown,
   hooks: ChatThreadServerEventHooks = {}
 ): boolean => {
-  if (LEGACY_FALLTHROUGH.test(eventType)) return false;
+  if (CONTROL_EVENT.test(eventType)) return false;
   const entry = ensureChatThreadRuntime(key);
   if (eventType === 'thread_snapshot_required') {
     dispatchSnapshotRequired(store, key, payload, hooks);

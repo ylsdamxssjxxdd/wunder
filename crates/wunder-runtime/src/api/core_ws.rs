@@ -172,7 +172,6 @@ async fn handle_ws(
         watch: false,
         ping_pong: true,
         goal: false,
-        change_stream: false,
     };
     let ready_payload = WsReadyPayload {
         connection_id: connection_id.clone(),

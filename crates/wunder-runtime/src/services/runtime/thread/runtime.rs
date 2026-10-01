@@ -1138,7 +1138,8 @@ impl ThreadRuntime {
             "queue_enter" | "queue_update" => "queued",
             "queue_start" => "running",
             "queue_finish" => "completed",
-            "queue_fail" | "queue_cancel" => "failed",
+            "queue_cancel" => "cancelled",
+            "queue_fail" => "failed",
             _ => "completed",
         };
         if let Some(map) = payload.as_object_mut() {

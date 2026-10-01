@@ -68,7 +68,6 @@ async fn concurrent_emits_keep_change_cursor_order_in_queue() {
         Some(state.storage.clone()),
         state.monitor.clone(),
         false,
-        0,
         None,
     )
     .with_committer(state.kernel.orchestrator.committer.clone());
@@ -162,6 +161,68 @@ async fn direct_turn_commit_publishes_latest_durable_cursor() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn subagent_message_replay_uses_one_stable_durable_item() {
+    let (state, _dir) = build_test_state("change_stream_subagent_message").await;
+    let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(64);
+    let emitter = EventEmitter::new(
+        "session-a".into(),
+        "user-a".into(),
+        Some(queue_tx),
+        Some(state.storage.clone()),
+        state.monitor.clone(),
+        false,
+        None,
+    )
+    .with_committer(state.kernel.orchestrator.committer.clone());
+    let turn = accept_turn(&state, "session-a", "user-a");
+    emitter.bind_turn(&turn, 1);
+    let data = json!({
+        "message_id":"mail-1", "source_session_id":"child-a",
+        "session_id":"session-a", "kind":"completion", "message":"result",
+        "delivery":"applied", "model_round":1
+    });
+    emitter.emit("subagent_message", data.clone()).await;
+    let after_first = state
+        .storage
+        .latest_thread_change_seq_by_session("session-a")
+        .expect("first durable cursor");
+    emitter.emit("subagent_message", data).await;
+    assert_eq!(
+        state
+            .storage
+            .latest_thread_change_seq_by_session("session-a")
+            .expect("replayed durable cursor"),
+        after_first,
+        "identical mailbox delivery must be a durable no-op"
+    );
+
+    let (queued, _tails) = drain_changes(&mut queue_rx).await;
+    assert_eq!(
+        queued
+            .iter()
+            .filter(|frame| frame["data"]["item_id"] == json!(format!("{turn}:subagent-mail-1")))
+            .count(),
+        1,
+        "only the first commit may produce a live durable receipt"
+    );
+    let changes = state
+        .storage
+        .list_thread_changes_by_session("session-a", 0, 100)
+        .expect("load immutable change payloads");
+    let durable_messages: Vec<_> = changes
+        .iter()
+        .filter(|change| {
+            change["change_type"] == "item_upsert"
+                && change["payload"]["kind"] == "subagent_message"
+        })
+        .collect();
+    assert_eq!(durable_messages.len(), 1);
+    let payload = &durable_messages[0]["payload"];
+    assert_eq!(payload["item_id"], json!(format!("{turn}:subagent-mail-1")));
+    assert_eq!(payload["payload"]["message"], "result");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn change_stream_emits_tail_frames_with_utf16_offsets() {
     let (state, _dir) = build_test_state("change_stream_tail").await;
     let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(256);
@@ -172,11 +233,9 @@ async fn change_stream_emits_tail_frames_with_utf16_offsets() {
         Some(state.storage.clone()),
         state.monitor.clone(),
         false,
-        0,
         None,
     )
-    .with_committer(state.kernel.orchestrator.committer.clone())
-    .with_change_stream();
+    .with_committer(state.kernel.orchestrator.committer.clone());
     let turn = accept_turn(&state, "session-a", "user-a");
     emitter.bind_turn(&turn, 1);
 
@@ -229,11 +288,9 @@ async fn interleaved_model_tails_keep_item_offsets_and_durable_bases() {
         Some(state.storage.clone()),
         state.monitor.clone(),
         false,
-        0,
         None,
     )
-    .with_committer(state.kernel.orchestrator.committer.clone())
-    .with_change_stream();
+    .with_committer(state.kernel.orchestrator.committer.clone());
     let turn = accept_turn(&state, "session-a", "user-a");
     emitter.bind_turn(&turn, 1);
 

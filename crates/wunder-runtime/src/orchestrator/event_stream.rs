@@ -30,7 +30,6 @@ pub(super) struct EventEmitter {
     is_admin: bool,
     closed: Arc<AtomicBool>,
     next_event_id: Arc<AtomicI64>,
-    overflow_version: Arc<AtomicU64>,
     client_message_id: Option<String>,
     turn_context: Arc<ParkingMutex<Value>>,
     text_tail: Arc<ParkingMutex<crate::services::thread_log::TextTails>>,
@@ -38,9 +37,6 @@ pub(super) struct EventEmitter {
     /// change-cursor order == queue order == wire order for every emitter.
     emit_lock: Arc<tokio::sync::Mutex<()>>,
     committer: Option<Arc<super::thread_log_committer::ThreadLogCommitter>>,
-    /// Change-stream v2 marker: enables ephemeral tail frames. v1 clients
-    /// never receive them.
-    change_stream: bool,
     usage: Arc<ParkingMutex<TokenUsage>>,
     model_requests: Arc<ParkingMutex<i64>>,
     account_credits_consumed: Arc<ParkingMutex<i64>>,
@@ -59,11 +55,6 @@ impl EventEmitter {
         self
     }
 
-    pub(super) fn with_change_stream(mut self) -> Self {
-        self.change_stream = true;
-        self
-    }
-
     pub(super) fn session_id(&self) -> &str {
         &self.session_id
     }
@@ -75,10 +66,8 @@ impl EventEmitter {
         storage: Option<Arc<dyn StorageBackend>>,
         monitor: Arc<MonitorState>,
         is_admin: bool,
-        start_event_id: i64,
         client_message_id: Option<String>,
     ) -> Self {
-        let start_event_id = start_event_id.max(0);
         Self {
             session_id,
             user_id,
@@ -87,14 +76,14 @@ impl EventEmitter {
             monitor,
             is_admin,
             closed: Arc::new(AtomicBool::new(false)),
-            next_event_id: Arc::new(AtomicI64::new(start_event_id.saturating_add(1))),
-            overflow_version: Arc::new(AtomicU64::new(0)),
+            // IDs only order frames on this live connection. They are never
+            // persisted or used to resume a chat stream.
+            next_event_id: Arc::new(AtomicI64::new(1)),
             client_message_id,
             turn_context: Arc::new(ParkingMutex::new(json!({}))),
             text_tail: Arc::new(ParkingMutex::new(Default::default())),
             emit_lock: Arc::new(tokio::sync::Mutex::new(())),
             committer: None,
-            change_stream: false,
             usage: Arc::new(ParkingMutex::new(TokenUsage {
                 reasoning: Some(0),
                 ..Default::default()
@@ -156,14 +145,6 @@ impl EventEmitter {
 
     fn close(&self) {
         self.closed.store(true, AtomicOrdering::SeqCst);
-    }
-
-    fn note_overflow(&self) {
-        self.overflow_version.fetch_add(1, AtomicOrdering::SeqCst);
-    }
-
-    fn overflow_version(&self) -> u64 {
-        self.overflow_version.load(AtomicOrdering::SeqCst)
     }
 
     pub(super) async fn finish(&self) {
@@ -240,15 +221,13 @@ impl EventEmitter {
             let mut tail = self.text_tail.lock();
             let (blocks, hints) = tail.append(&self.session_id, event_id, &data);
             let mut tail_events = Vec::new();
-            if self.change_stream {
-                for (item_id, offset, field, text) in hints {
-                    tail_events.push(StreamEvent {
-                        event: "thread_item_tail".into(),
-                        data: json!({"item_id":item_id,"field":field,"offset":offset,"text":text}),
-                        id: None,
-                        timestamp: Some(timestamp),
-                    });
-                }
+            for (item_id, offset, field, text) in hints {
+                tail_events.push(StreamEvent {
+                    event: "thread_item_tail".into(),
+                    data: json!({"item_id":item_id,"field":field,"offset":offset,"text":text}),
+                    id: None,
+                    timestamp: Some(timestamp),
+                });
             }
             (blocks, tail_events)
         } else if event_type == "llm_output" {
@@ -436,34 +415,7 @@ impl EventEmitter {
     async fn record_overflow(&self, _event: &StreamEvent) {
         // The online queue is bounded. A dropped diagnostic frame never creates
         // a second durable event log; clients recover committed state by cursor.
-        self.note_overflow();
     }
-}
-
-fn reset_stream_poll_state(
-    poll_interval: &mut Duration,
-    idle_rounds: &mut usize,
-    base_interval: Duration,
-) {
-    *idle_rounds = 0;
-    *poll_interval = base_interval;
-}
-
-fn backoff_stream_poll_interval(
-    poll_interval: &mut Duration,
-    idle_rounds: &mut usize,
-    base_interval: Duration,
-) {
-    *idle_rounds = idle_rounds.saturating_add(1);
-    if *idle_rounds <= STREAM_EVENT_RESUME_POLL_BACKOFF_AFTER {
-        *poll_interval = base_interval;
-        return;
-    }
-    let next = poll_interval.as_secs_f64() * STREAM_EVENT_RESUME_POLL_BACKOFF_FACTOR;
-    *poll_interval = Duration::from_secs_f64(
-        next.max(base_interval.as_secs_f64())
-            .min(STREAM_EVENT_RESUME_POLL_MAX_INTERVAL_S),
-    );
 }
 
 impl Orchestrator {
@@ -474,183 +426,37 @@ impl Orchestrator {
         event_tx: mpsc::Sender<StreamEvent>,
         emitter: EventEmitter,
         runner: JoinHandle<()>,
-        start_event_id: i64,
     ) {
-        let storage = self.storage.clone();
         let thread_runtime = self.thread_runtime.clone();
         long_task::spawn("orchestrator.stream_pump", async move {
-            let mut last_event_id: i64 = start_event_id.max(0);
             let mut closed = false;
-            let mut client_open = true;
-            let base_interval = Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
-            let mut poll_interval = base_interval;
-            let mut idle_rounds: usize = 0;
-            let mut overflow_probe_pending = false;
-            let mut seen_overflow_version: u64 = 0;
-
-            async fn drain_until(
-                storage: Arc<dyn StorageBackend>,
-                session_id: &str,
-                last_event_id: &mut i64,
-                target_event_id: i64,
-                event_tx: &mpsc::Sender<StreamEvent>,
-                emitter: &EventEmitter,
-            ) -> bool {
-                if target_event_id <= *last_event_id {
-                    return true;
-                }
-                let mut current = *last_event_id;
-                while current < target_event_id {
-                    let events = load_overflow_events(
-                        storage.clone(),
-                        session_id.to_string(),
-                        current,
-                        STREAM_EVENT_FETCH_LIMIT,
-                    )
-                    .await;
-                    if events.is_empty() {
-                        break;
-                    }
-                    let mut progressed = false;
-                    for event in events {
-                        let Some(event_id) = parse_stream_event_id(&event) else {
-                            continue;
-                        };
-                        if event_id <= current {
-                            continue;
-                        }
-                        if event_tx.send(event).await.is_err() {
-                            emitter.close();
-                            return false;
-                        }
-                        current = event_id;
-                        progressed = true;
-                        if current >= target_event_id {
-                            break;
-                        }
-                    }
-                    if !progressed {
-                        break;
-                    }
-                }
-                *last_event_id = current;
-                true
-            }
-
             loop {
-                let current_overflow_version = emitter.overflow_version();
-                if current_overflow_version > seen_overflow_version {
-                    seen_overflow_version = current_overflow_version;
-                    overflow_probe_pending = true;
-                }
-
                 if !closed {
-                    match tokio::time::timeout(poll_interval, queue_rx.recv()).await {
-                        Ok(Some(StreamSignal::Done)) => {
+                    match queue_rx.recv().await {
+                        Some(StreamSignal::Done) => {
                             closed = true;
                             continue;
                         }
-                        Ok(Some(StreamSignal::Event(event))) => {
-                            let event_id = parse_stream_event_id(&event);
-                            if client_open {
-                                if let Some(event_id) = event_id {
-                                    if event_id > last_event_id + 1
-                                        && !drain_until(
-                                            storage.clone(),
-                                            &session_id,
-                                            &mut last_event_id,
-                                            event_id - 1,
-                                            &event_tx,
-                                            &emitter,
-                                        )
-                                        .await
-                                    {
-                                        client_open = false;
-                                        emitter.close();
-                                    }
-                                    if event_id <= last_event_id {
-                                        reset_stream_poll_state(
-                                            &mut poll_interval,
-                                            &mut idle_rounds,
-                                            base_interval,
-                                        );
-                                        continue;
-                                    }
-                                }
-                                if let Err(_err) = event_tx.send(event).await {
-                                    client_open = false;
-                                    emitter.close();
-                                } else {
-                                    if let Some(event_id) = event_id {
-                                        last_event_id = event_id;
-                                    }
-                                    reset_stream_poll_state(
-                                        &mut poll_interval,
-                                        &mut idle_rounds,
-                                        base_interval,
-                                    );
-                                    continue;
-                                }
-                            }
-                            if let Some(event_id) = event_id {
-                                last_event_id = event_id;
-                            }
-                            reset_stream_poll_state(
-                                &mut poll_interval,
-                                &mut idle_rounds,
-                                base_interval,
-                            );
-                            continue;
-                        }
-                        Ok(None) => {
-                            closed = true;
-                        }
-                        Err(_) => {}
-                    }
-                }
-
-                if overflow_probe_pending {
-                    let overflow = load_overflow_events(
-                        storage.clone(),
-                        session_id.clone(),
-                        last_event_id,
-                        STREAM_EVENT_FETCH_LIMIT,
-                    )
-                    .await;
-                    if !overflow.is_empty() {
-                        let fetched = overflow.len();
-                        for event in overflow {
-                            let event_id = parse_stream_event_id(&event);
-                            if client_open && event_tx.send(event).await.is_err() {
-                                client_open = false;
+                        Some(StreamSignal::Event(event)) => {
+                            if event_tx.send(event).await.is_err() {
                                 emitter.close();
-                            }
-                            if let Some(event_id) = event_id {
-                                last_event_id = event_id;
+                                break;
                             }
                         }
-                        overflow_probe_pending = fetched as i64 >= STREAM_EVENT_FETCH_LIMIT;
-                        reset_stream_poll_state(
-                            &mut poll_interval,
-                            &mut idle_rounds,
-                            base_interval,
-                        );
-                        continue;
+                        None => {
+                            closed = true;
+                        }
                     }
-                    overflow_probe_pending = false;
                 }
-
-                if closed && runner.is_finished() && !overflow_probe_pending {
+                if closed && runner.is_finished() {
                     break;
                 }
-                if closed && queue_rx.is_closed() && !overflow_probe_pending {
+                if closed && queue_rx.is_closed() {
                     break;
                 }
-                if runner.is_finished() && queue_rx.is_empty() && !overflow_probe_pending {
+                if runner.is_finished() && queue_rx.is_empty() {
                     break;
                 }
-
-                backoff_stream_poll_interval(&mut poll_interval, &mut idle_rounds, base_interval);
             }
             let detach = thread_runtime.detach_subscriber(&session_id);
             if let Some(closed_event) = detach.closed {
@@ -664,74 +470,6 @@ impl Orchestrator {
             emitter.close();
         });
     }
-}
-
-fn parse_stream_event_id(event: &StreamEvent) -> Option<i64> {
-    event.id.as_ref().and_then(|text| text.parse::<i64>().ok())
-}
-
-async fn load_overflow_events(
-    storage: Arc<dyn StorageBackend>,
-    session_id: String,
-    after_event_id: i64,
-    limit: i64,
-) -> Vec<StreamEvent> {
-    let session_id = session_id.trim().to_string();
-    if session_id.is_empty() || limit <= 0 {
-        return Vec::new();
-    }
-    let after_event_id = after_event_id.max(0);
-    let session_id_for_log = session_id.clone();
-    match crate::core::blocking::run_db("orchestrator.event_stream.overflow_load", move || {
-        Ok(load_overflow_events_inner(
-            storage.as_ref(),
-            &session_id,
-            after_event_id,
-            limit,
-        ))
-    })
-    .await
-    {
-        Ok(events) => events,
-        Err(err) => {
-            warn!("failed to load overflow events for session {session_id_for_log}: {err}");
-            Vec::new()
-        }
-    }
-}
-
-fn load_overflow_events_inner(
-    storage: &dyn StorageBackend,
-    session_id: &str,
-    after_event_id: i64,
-    limit: i64,
-) -> Vec<StreamEvent> {
-    let records = crate::services::thread_log::replay(storage, session_id, after_event_id, limit)
-        .unwrap_or_default();
-    let mut events = Vec::new();
-    for record in records {
-        let event_id = record.get("event_id").and_then(Value::as_i64);
-        let event_type = record.get("event").and_then(Value::as_str).unwrap_or("");
-        if event_type.is_empty() {
-            continue;
-        }
-        // Recovery blocks replace text at their stored offsets. They must not
-        // become append-only deltas, including when only the active tail changed.
-        let data = record.get("data").cloned().unwrap_or(Value::Null);
-        let timestamp = record
-            .get("timestamp")
-            .and_then(Value::as_str)
-            .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
-            .map(|dt| dt.with_timezone(&Utc));
-        let event = StreamEvent {
-            event: event_type.to_string(),
-            data,
-            id: event_id.map(|value| value.to_string()),
-            timestamp,
-        };
-        events.push(event);
-    }
-    events
 }
 
 fn enrich_event_payload(data: Value, session_id: Option<&str>, timestamp: DateTime<Utc>) -> Value {
@@ -753,102 +491,6 @@ fn enrich_event_payload(data: Value, session_id: Option<&str>, timestamp: DateTi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::ThreadLogStore;
-
-    #[test]
-    fn replay_preserves_block_snapshot_offsets_and_reasoning() {
-        let dir = tempfile::tempdir().unwrap();
-        let storage = crate::storage::SqliteStorage::new(
-            dir.path()
-                .join("snapshot.db")
-                .to_string_lossy()
-                .into_owned(),
-        );
-        let accepted = storage
-            .accept_thread_turn("owner", "thread", &json!({"content":"request"}))
-            .unwrap();
-        storage
-            .append_thread_item(
-                "owner",
-                &json!({
-                    "session_id":"thread", "turn_id":accepted["turn_id"],
-                    "item_id":"text-item", "kind":"assistant_message", "visibility":"user",
-                    "content":"tail"
-                }),
-            )
-            .unwrap();
-        let data = json!({"item_id":"text-item","block_index":1,
-            "field":"content","content":"tail","content_offset":8});
-        storage
-            .upsert_thread_text_block(
-                "owner",
-                "thread",
-                &json!({
-                    "event":"thread_item_block","event_id":7,"item_id":"text-item",
-                    "block_index":1,"data":data
-                }),
-            )
-            .unwrap();
-        let events = load_overflow_events_inner(&storage, "thread", 0, 10);
-        let block = events
-            .iter()
-            .find(|event| event.event == "thread_item_block")
-            .expect("block snapshot");
-        assert_eq!(block.data, data);
-        assert!(block.data.get("delta").is_none());
-        assert!(events.iter().any(|event| event.event == "thread_change"));
-        let later = load_overflow_events_inner(&storage, "thread", 7, 10);
-        assert!(later.iter().any(|event| event.event == "thread_item_block"));
-        assert!(!later.iter().any(|event| event.event == "thread_change"));
-    }
-
-    #[test]
-    fn replay_restores_committed_lifecycle_changes() {
-        let dir = tempfile::tempdir().unwrap();
-        let storage = crate::storage::SqliteStorage::new(
-            dir.path()
-                .join("recovery.db")
-                .to_string_lossy()
-                .into_owned(),
-        );
-        let accepted = storage
-            .accept_thread_turn("owner", "thread", &json!({"content":"request"}))
-            .unwrap();
-        let turn_id = accepted["turn_id"].as_str().unwrap();
-        storage
-            .update_thread_turn("owner", "thread", turn_id, "running", "", &json!({}))
-            .unwrap();
-        let events = load_overflow_events_inner(&storage, "thread", 0, 10);
-        assert!(events
-            .iter()
-            .any(|event| event.event == "thread_change" && event.data["turn_id"] == turn_id));
-    }
-
-    #[test]
-    fn test_backoff_stream_poll_interval_starts_from_base_interval() {
-        let base_interval = Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
-        let mut poll_interval = base_interval;
-        let mut idle_rounds = 0_usize;
-
-        backoff_stream_poll_interval(&mut poll_interval, &mut idle_rounds, base_interval);
-
-        assert_eq!(idle_rounds, 1);
-        assert_eq!(poll_interval, base_interval);
-    }
-
-    #[test]
-    fn test_backoff_stream_poll_interval_caps_at_max_interval() {
-        let base_interval = Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
-        let mut poll_interval = base_interval;
-        let mut idle_rounds = 0_usize;
-
-        for _ in 0..12 {
-            backoff_stream_poll_interval(&mut poll_interval, &mut idle_rounds, base_interval);
-        }
-
-        assert!(poll_interval.as_secs_f64() <= STREAM_EVENT_RESUME_POLL_MAX_INTERVAL_S);
-        assert!(poll_interval.as_secs_f64() >= base_interval.as_secs_f64());
-    }
 
     #[test]
     fn online_llm_delta_uses_backpressure_instead_of_lossy_overflow() {

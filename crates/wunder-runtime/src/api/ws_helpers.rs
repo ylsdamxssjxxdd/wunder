@@ -116,8 +116,6 @@ pub(crate) struct WsFeatures {
     pub watch: bool,
     pub ping_pong: bool,
     pub goal: bool,
-    /// Change-stream v2: durable change feeder plus ephemeral item tails.
-    pub change_stream: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]

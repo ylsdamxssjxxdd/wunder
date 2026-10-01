@@ -222,7 +222,6 @@ async fn handle_ws(
         watch: true,
         ping_pong: true,
         goal: true,
-        change_stream: true,
     };
     let ready_payload = WsReadyPayload {
         connection_id: connection_id.clone(),
@@ -449,29 +448,6 @@ async fn handle_ws(
                             continue;
                         }
                         let stream = payload.stream.unwrap_or(true);
-                        let change_stream_requested = true;
-                        let accept_baseline = {
-                            let storage = state.storage.clone();
-                            let thread = session_id.clone();
-                            match crate::core::blocking::run_db(
-                                "chat_ws.accept_baseline",
-                                move || storage.latest_thread_change_seq_by_session(&thread),
-                            )
-                            .await
-                            {
-                                Ok(seq) => seq.max(0),
-                                Err(err) => {
-                                    let _ = send_ws_error(
-                                        &ws_tx,
-                                        Some(&request_id),
-                                        "THREAD_RECOVERY_FAILED",
-                                        err.to_string(),
-                                    )
-                                    .await;
-                                    continue;
-                                }
-                            }
-                        };
                         let mut request = match build_chat_request(
                             &state,
                             &user,
@@ -501,12 +477,6 @@ async fn handle_ws(
                                 continue;
                             }
                         };
-                        if change_stream_requested {
-                            let overrides =
-                                request.config_overrides.get_or_insert_with(|| json!({}));
-                            overrides["__change_stream"] = json!(true);
-                            overrides["__thread_log_resume_from_seq"] = json!(accept_baseline);
-                        }
                         let (approval_tx, approval_rx) = new_approval_channel();
                         request.approval_tx = Some(approval_tx);
 
