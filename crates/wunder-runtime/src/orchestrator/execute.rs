@@ -198,14 +198,20 @@ impl Orchestrator {
                     "status": "running",
                     "summary": display_question,
                 });
-                let _ = self.storage.update_thread_turn(
-                    &user_id,
-                    &session_id,
-                    &turn_id.to_string(),
-                    "running",
-                    &display_question,
-                    &payload,
-                );
+                if self
+                    .storage
+                    .update_thread_turn(
+                        &user_id,
+                        &session_id,
+                        &turn_id.to_string(),
+                        "running",
+                        &display_question,
+                        &payload,
+                    )
+                    .is_ok()
+                {
+                    self.publish_thread_change(&session_id);
+                }
             }
             // Child cancellation survives monitor registration resetting the turn flags.
             self.ensure_not_cancelled(&session_id)?;

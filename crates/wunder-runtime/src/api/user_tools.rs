@@ -1330,7 +1330,9 @@ async fn user_skills_delete(
         blocking::BlockingKind::Fs,
         "api.user_tools.delete_skill",
         SKILL_IMPORT_EXEC_TIMEOUT,
-        move || std::fs::remove_dir_all(&remove_root).map_err(|err| anyhow::anyhow!(err.to_string())),
+        move || {
+            std::fs::remove_dir_all(&remove_root).map_err(|err| anyhow::anyhow!(err.to_string()))
+        },
     )
     .await
     .map_err(|err| {

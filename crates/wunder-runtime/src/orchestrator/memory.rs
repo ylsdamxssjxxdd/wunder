@@ -1128,7 +1128,8 @@ impl Orchestrator {
             is_admin,
             start_event_id,
             None,
-        );
+        )
+        .with_change_hub(self.change_hub.clone());
         let manual_turn_started_at = std::time::Instant::now();
         let mut manual_turn_decode_speed =
             crate::core::llm_speed::TurnDecodeSpeedAccumulator::default();
@@ -1152,13 +1153,16 @@ impl Orchestrator {
                 self.storage
                     .update_thread_turn(user_id, session_id, turn, "running", "", &json!({}))
                     .map_err(|err| OrchestratorError::internal(err.to_string()))?;
-                self.storage.commit_thread_item(user_id, &json!({
+                self.publish_thread_change(session_id);
+                if self.storage.commit_thread_item(user_id, &json!({
                     "session_id":session_id, "turn_id":turn,
                     "item_id":format!("{turn}:manual-compaction"),
                     "kind":"assistant_message", "role":"assistant", "status":"running",
                     "user_round":round, "content":"",
                     "meta":{"type":"manual_compaction_marker","manual_compaction":true,"status":"running"}
-                })).map_err(|err| OrchestratorError::internal(err.to_string()))?;
+                })).map_err(|err| OrchestratorError::internal(err.to_string()))?.is_some() {
+                    self.publish_thread_change(session_id);
+                }
             }
         }
         let active_turn_id = if manage_runtime_turn {
@@ -1575,8 +1579,10 @@ impl Orchestrator {
                 "status":if status == "done" { "completed" } else { status },
                 "user_round":round_info.user_round, "content":content, "meta":marker_meta
             });
-            if let Err(err) = self.storage.commit_thread_item(user_id, &payload) {
-                warn!("persist manual compaction result failed: {err}");
+            match self.storage.commit_thread_item(user_id, &payload) {
+                Ok(Some(_)) => self.publish_thread_change(session_id),
+                Ok(None) => {}
+                Err(err) => warn!("persist manual compaction result failed: {err}"),
             }
         }
     }
@@ -1663,7 +1669,7 @@ impl Orchestrator {
                 Ok(()) => "completed",
                 Err(err) => turn_terminal_status_for_error(err),
             };
-            if let Err(err) = self.storage.update_thread_turn(
+            match self.storage.update_thread_turn(
                 user_id,
                 session_id,
                 &turn.to_string(),
@@ -1671,7 +1677,8 @@ impl Orchestrator {
                 "",
                 &json!({"status":status,"stop_reason":"manual_compaction"}),
             ) {
-                warn!("persist compaction terminal failed: {err}");
+                Ok(()) => self.publish_thread_change(session_id),
+                Err(err) => warn!("persist compaction terminal failed: {err}"),
             }
         }
         match outcome {

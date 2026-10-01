@@ -48,8 +48,7 @@ impl ThreadChangeFrame {
     pub fn seq(&self) -> i64 {
         match self {
             ThreadChangeFrame::Change { seq, .. } => *seq,
-            ThreadChangeFrame::SnapshotRequired { .. }
-            | ThreadChangeFrame::Overflow { .. } => 0,
+            ThreadChangeFrame::SnapshotRequired { .. } | ThreadChangeFrame::Overflow { .. } => 0,
         }
     }
 
@@ -99,9 +98,7 @@ pub async fn watch_thread_changes(
                         };
                         let data = record.get("data").cloned().unwrap_or(Value::Null);
                         if event == "thread_snapshot_required" {
-                            let _ = tx
-                                .send(ThreadChangeFrame::SnapshotRequired { data })
-                                .await;
+                            let _ = tx.send(ThreadChangeFrame::SnapshotRequired { data }).await;
                             return;
                         }
                         let seq = data.get("cursor").and_then(Value::as_i64).unwrap_or(0);
@@ -144,7 +141,8 @@ pub async fn watch_thread_changes(
             }
             if idle_rounds > 0 {
                 let backoff = (BASE_POLL_INTERVAL_MS as f64
-                    * BACKOFF_FACTOR.powi(idle_rounds.min(6) as i32)) as u64;
+                    * BACKOFF_FACTOR.powi(idle_rounds.min(6) as i32))
+                    as u64;
                 poll_interval = poll_interval.min(backoff.min(MAX_POLL_INTERVAL_MS));
             } else {
                 poll_interval = BASE_POLL_INTERVAL_MS;
@@ -289,11 +287,12 @@ mod tests {
                 break;
             }
         }
-        // accept + item_upsert + text_block(cursor+1) in non-decreasing order; a
-        // text_block row produces both a thread_item_block and a thread_change
-        // frame, so one change_seq may appear twice.
-        assert!(seqs.windows(2).all(|pair| pair[0] <= pair[1]), "seqs: {seqs:?}");
-        assert!(seqs.len() >= 2, "seqs: {seqs:?}");
+        // One immutable durable frame per change_seq, including text blocks.
+        assert!(
+            seqs.windows(2).all(|pair| pair[0] + 1 == pair[1]),
+            "seqs: {seqs:?}"
+        );
+        assert!(seqs.len() >= 3, "seqs: {seqs:?}");
         cancel.cancel();
     }
 

@@ -37,7 +37,8 @@ pub async fn load_chat_session_activity(
     let session = session_id.to_string();
     let (turns, current_monitor) = blocking::run_db("chat.activity.thread_log", move || {
         let owner = storage.get_chat_session_owner(&session)?;
-        let turns = owner.as_deref()
+        let turns = owner
+            .as_deref()
             .map(|user_id| storage.list_thread_turns(user_id, &session, None, 1))
             .transpose()?
             .unwrap_or_default();
@@ -88,7 +89,10 @@ fn monitor_fallback_is_active(monitor: Option<&Value>, turns: &[Value]) -> bool 
     if matches!(status, "queued" | "running" | "waiting_input") {
         return true;
     }
-    if !matches!(status, "completed" | "failed" | "cancelled" | "interrupted" | "rejected" | "stopped") {
+    if !matches!(
+        status,
+        "completed" | "failed" | "cancelled" | "interrupted" | "rejected" | "stopped"
+    ) {
         return true;
     }
     let monitor = monitor.expect("active monitor exists");
@@ -126,7 +130,10 @@ mod tests {
 
     #[test]
     fn later_activity_and_new_registration_preserve_running() {
-        assert!(monitor_fallback_is_active(Some(&monitor()), &[json!({"user_turn_index": 2, "status":"running"})]));
+        assert!(monitor_fallback_is_active(
+            Some(&monitor()),
+            &[json!({"user_turn_index": 2, "status":"running"})]
+        ));
         let mut later_round = monitor();
         later_round["user_rounds"] = json!(3);
         assert!(monitor_fallback_is_active(
@@ -164,6 +171,9 @@ mod tests {
                 expected
             );
         }
-        assert!(!monitor_fallback_is_active(Some(&json!({"status": "finished"})), &[]));
+        assert!(!monitor_fallback_is_active(
+            Some(&json!({"status": "finished"})),
+            &[]
+        ));
     }
 }

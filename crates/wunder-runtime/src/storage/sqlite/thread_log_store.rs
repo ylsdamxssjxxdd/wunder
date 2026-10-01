@@ -570,7 +570,12 @@ impl SqliteThreadLogStorage for SqliteStorage {
         )?;
         // A terminal root turn owns the lifecycle of every unfinished item.
         // The turn_upsert notification below invalidates the entire paged turn.
+        let mut settled_items = Vec::<String>::new();
         if bubble_status == "completed" {
+            let mut stmt = tx.prepare("SELECT item_id FROM thread_items WHERE session_id=? AND turn_id=? AND status IN ('running','queued','waiting_input') ORDER BY created_seq,item_index")?;
+            settled_items = stmt
+                .query_map(params![session_id, turn_id], |row| row.get(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
             tx.execute("UPDATE thread_items SET status=?1, payload=json_set(payload, '$.status', ?1), revision=revision+1, updated_time=?2 WHERE session_id=?3 AND turn_id=?4 AND status IN ('running','queued','waiting_input')", params![status,now,session_id,turn_id])?;
         }
         let change_type = "turn_upsert";
@@ -586,7 +591,18 @@ impl SqliteThreadLogStorage for SqliteStorage {
         if input_changed > 0 {
             seq += 1;
             let bubble_payload = committed_item_payload(&tx, session_id, &input_item_id)?;
-            tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,?,?)", params![session_id,seq,user_id,"item_upsert",turn_id,input_item_id,revision,bubble_payload,now])?;
+            let bubble_revision = bubble_payload.parse::<Value>()?["revision"]
+                .as_i64()
+                .unwrap_or(0);
+            tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,?,?)", params![session_id,seq,user_id,"item_upsert",turn_id,input_item_id,bubble_revision,bubble_payload,now])?;
+        }
+        for item_id in settled_items {
+            seq += 1;
+            let item_payload = committed_item_payload(&tx, session_id, &item_id)?;
+            let item_revision = item_payload.parse::<Value>()?["revision"]
+                .as_i64()
+                .unwrap_or(0);
+            tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,?,?)", params![session_id,seq,user_id,"item_upsert",turn_id,item_id,item_revision,item_payload,now])?;
         }
         tx.execute(
             "UPDATE thread_logs SET latest_change_seq=?,updated_time=? WHERE session_id=?",
@@ -914,10 +930,9 @@ impl SqliteThreadLogStorage for SqliteStorage {
         }
         let mut blocks = Vec::new();
         {
-            let mut stmt = tx.prepare("SELECT payload FROM thread_item_blocks WHERE session_id=? AND item_id IN (SELECT item_id FROM thread_items WHERE session_id=? AND visibility='user') ORDER BY item_id, field, block_index")?;
-            let rows = stmt.query_map(params![session_id, session_id], |r| {
-                Ok(serde_json::from_str::<Value>(&r.get::<_, String>(0)?)
-                    .unwrap_or(Value::Null))
+            let mut stmt = tx.prepare("SELECT payload FROM thread_item_blocks WHERE user_id=? AND session_id=? AND item_id IN (SELECT item_id FROM thread_items WHERE user_id=? AND session_id=? AND visibility='user') ORDER BY item_id, field, block_index")?;
+            let rows = stmt.query_map(params![user_id, session_id, user_id, session_id], |r| {
+                Ok(serde_json::from_str::<Value>(&r.get::<_, String>(0)?).unwrap_or(Value::Null))
             })?;
             for row in rows {
                 blocks.push(row?);
@@ -1121,7 +1136,7 @@ mod tests {
         assert_eq!(changes[0]["change_type"], "text_block");
         assert_eq!(
             changes[0]["payload"],
-            json!({"field":"reasoning","block_index":0})
+            json!({"item_id":"answer","field":"reasoning","block_index":0,"event_id":201,"data":{"reasoning":" thought "}})
         );
         message["status"] = json!("completed");
         message["content"] = json!("final answer");
@@ -1493,6 +1508,18 @@ mod tests {
             .unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0]["revision"], second["revision"]);
+        // The first change keeps its commit-time row even after the current
+        // item was updated. Replaying from its cursor must not re-read the
+        // mutable thread_items row and turn a historical running state into
+        // the later completed state.
+        let first_change = db
+            .list_thread_changes("owner", "thread", first["cursor"].as_i64().unwrap() - 1, 1)
+            .unwrap()
+            .pop()
+            .expect("first item change");
+        assert_eq!(first_change["revision"], 1);
+        assert_eq!(first_change["payload"]["status"], "running");
+        assert_eq!(first_change["payload"]["payload"]["status"], "running");
         assert!(db.commit_thread_item("other", &item).is_err());
         assert_eq!(
             db.list_thread_changes("owner", "thread", first["cursor"].as_i64().unwrap(), 10)

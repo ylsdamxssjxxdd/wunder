@@ -235,7 +235,8 @@ impl ThreadRegistry {
 
     /// Mark the start of a durable replay pass (resume suppression window, I6).
     pub(crate) fn mark_durable_replay_attempt(&mut self, session_id: &str) {
-        self.projection_mut(session_id).mark_durable_replay_attempt();
+        self.projection_mut(session_id)
+            .mark_durable_replay_attempt();
     }
 
     /// True when a durable replay pass started inside the suppression window.
@@ -549,7 +550,9 @@ mod tests {
         // Overflow on one background thread flags replay for that thread only.
         let overflowing = "stream-2";
         for sequence in 0..=(MAX_PENDING_EVENTS + 50) {
-            registry.projection_mut(overflowing).queue_event(delta_event(sequence));
+            registry
+                .projection_mut(overflowing)
+                .queue_event(delta_event(sequence));
             registry.record_event(overflowing, (sequence + 1) as i64);
         }
         assert!(registry.needs_replay(overflowing));

@@ -4,10 +4,10 @@ use crate::api::user_context::resolve_user;
 use crate::api::ws_helpers::{
     apply_ws_auth_headers, has_ws_protocol_token, negotiate_ws_protocol, parse_connect_payload,
     parse_payload, resolve_session_id, resume_queued_stream_events, resume_stream_events,
-    send_ws_error, send_ws_error_payload, send_ws_event, send_ws_live_event, send_ws_pong,
-    send_ws_ready, send_ws_tail_event, ws_error_payload_from_anyhow, ws_protocol_info, WsEnvelope,
-    WsFeatures, WsPolicy, WsQuery, WsReadyPayload, WsSender, WS_MAX_MESSAGE_BYTES,
-    WS_PROTOCOL_VERSION,
+    resume_thread_changes_v2, send_ws_error, send_ws_error_payload, send_ws_event,
+    send_ws_live_event, send_ws_pong, send_ws_ready, send_ws_tail_event,
+    ws_error_payload_from_anyhow, ws_protocol_info, WsEnvelope, WsFeatures, WsPolicy, WsQuery,
+    WsReadyPayload, WsSender, WS_MAX_MESSAGE_BYTES, WS_PROTOCOL_VERSION,
 };
 use crate::api::ws_log::{
     log_ws_close, log_ws_handshake, log_ws_handshake_error, log_ws_message, log_ws_open,
@@ -88,6 +88,10 @@ struct WsStartPayload {
 struct WsResumePayload {
     after_event_id: Option<i64>,
     #[serde(default)]
+    after_change_seq: Option<i64>,
+    #[serde(default)]
+    change_stream: bool,
+    #[serde(default)]
     session_id: Option<String>,
 }
 
@@ -95,6 +99,10 @@ struct WsResumePayload {
 struct WsWatchPayload {
     #[serde(default)]
     after_event_id: Option<i64>,
+    #[serde(default)]
+    after_change_seq: Option<i64>,
+    #[serde(default)]
+    change_stream: bool,
     #[serde(default)]
     session_id: Option<String>,
 }
@@ -454,6 +462,30 @@ async fn handle_ws(
                         }
                         let stream = payload.stream.unwrap_or(true);
                         let change_stream_requested = payload.change_stream == Some(true);
+                        let accept_baseline = if change_stream_requested {
+                            let storage = state.storage.clone();
+                            let thread = session_id.clone();
+                            match crate::core::blocking::run_db(
+                                "chat_ws.accept_baseline",
+                                move || storage.latest_thread_change_seq_by_session(&thread),
+                            )
+                            .await
+                            {
+                                Ok(seq) => seq.max(0),
+                                Err(err) => {
+                                    let _ = send_ws_error(
+                                        &ws_tx,
+                                        Some(&request_id),
+                                        "THREAD_RECOVERY_FAILED",
+                                        err.to_string(),
+                                    )
+                                    .await;
+                                    continue;
+                                }
+                            }
+                        } else {
+                            0
+                        };
                         let mut request = match build_chat_request(
                             &state,
                             &user,
@@ -487,6 +519,7 @@ async fn handle_ws(
                             let overrides =
                                 request.config_overrides.get_or_insert_with(|| json!({}));
                             overrides["__change_stream"] = json!(true);
+                            overrides["__thread_log_resume_from_seq"] = json!(accept_baseline);
                         }
                         let (approval_tx, approval_rx) = new_approval_channel();
                         request.approval_tx = Some(approval_tx);
@@ -626,8 +659,10 @@ async fn handle_ws(
                                                     if event.event == "thread_turn_started" {
                                                         if !feeder_started {
                                                             feeder_started = true;
-                                                            let change_cursor = event.data["change_cursor"]
+                                                            let change_cursor = event.data["resume_from_seq"]
                                                                 .as_i64()
+                                                                .or_else(|| event.data["change_cursor"]
+                                                                    .as_i64())
                                                                 .unwrap_or(0);
                                                             let ack = StreamEvent {
                                                                 event: "stream_started".into(),
@@ -641,11 +676,6 @@ async fn handle_ws(
                                                                 ack,
                                                             )
                                                             .await;
-                                                            let notify = state_snapshot
-                                                                .kernel
-                                                                .orchestrator
-                                                                .change_hub
-                                                                .subscribe(&session_id_cleanup);
                                                             let feeder_state = state_snapshot.clone();
                                                             let feeder_session =
                                                                 session_id_cleanup.clone();
@@ -656,15 +686,13 @@ async fn handle_ws(
                                                             long_task::spawn(
                                                                 "api.chat_ws.change_feeder",
                                                                 async move {
-                                                                    resume_stream_events(
+                                                                    resume_thread_changes_v2(
                                                                         feeder_state,
                                                                         feeder_session,
                                                                         change_cursor,
                                                                         Some(&feeder_request_id),
                                                                         feeder_tx,
                                                                         Some(feeder_cancel),
-                                                                        true,
-                                                                        Some(notify),
                                                                     )
                                                                     .await;
                                                                 },
@@ -779,7 +807,17 @@ async fn handle_ws(
                             Some(&session_id),
                         );
                         let after_event_id = payload.after_event_id.unwrap_or(0);
-                        if after_event_id <= 0 {
+                        if payload.change_stream && payload.after_change_seq.is_none() {
+                            let _ = send_ws_error(
+                                &ws_tx,
+                                Some(&request_id),
+                                "AFTER_CHANGE_SEQ_REQUIRED",
+                                i18n::t("error.param_required"),
+                            )
+                            .await;
+                            continue;
+                        }
+                        if !payload.change_stream && after_event_id <= 0 {
                             let _ = send_ws_error(
                                 &ws_tx,
                                 Some(&request_id),
@@ -801,7 +839,10 @@ async fn handle_ws(
                         }
                         let ws_tx_snapshot = ws_tx.clone();
                         let state_snapshot = state.clone();
-                        let notify = state.kernel.orchestrator.change_hub.subscribe(&session_id);
+                        let notify = (!payload.change_stream)
+                            .then(|| state.kernel.orchestrator.change_hub.subscribe(&session_id));
+                        let change_stream = payload.change_stream;
+                        let after_change_seq = payload.after_change_seq.unwrap_or(0).max(0);
                         let (cancel, task_id) =
                             register_ws_task(&tasks, &request_id, Some(session_id.clone()), false)
                                 .await;
@@ -809,17 +850,29 @@ async fn handle_ws(
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
                         long_task::spawn("api.chat_ws.resume_stream", async move {
-                            resume_stream_events(
-                                state_snapshot,
-                                session_id,
-                                after_event_id,
-                                Some(&request_id_cleanup),
-                                ws_tx_snapshot,
-                                Some(cancel.clone()),
-                                false,
-                                Some(notify),
-                            )
-                            .await;
+                            if change_stream {
+                                resume_thread_changes_v2(
+                                    state_snapshot,
+                                    session_id,
+                                    after_change_seq,
+                                    Some(&request_id_cleanup),
+                                    ws_tx_snapshot,
+                                    Some(cancel.clone()),
+                                )
+                                .await;
+                            } else {
+                                resume_stream_events(
+                                    state_snapshot,
+                                    session_id,
+                                    after_event_id,
+                                    Some(&request_id_cleanup),
+                                    ws_tx_snapshot,
+                                    Some(cancel.clone()),
+                                    false,
+                                    notify,
+                                )
+                                .await;
+                            }
                             let _ = cleanup_ws_task(
                                 &tasks_cleanup,
                                 &request_id_cleanup,
@@ -864,10 +917,33 @@ async fn handle_ws(
                             Some(&request_id),
                             Some(&session_id),
                         );
+                        if payload.change_stream && payload.after_change_seq.is_none() {
+                            let _ = send_ws_error(
+                                &ws_tx,
+                                Some(&request_id),
+                                "AFTER_CHANGE_SEQ_REQUIRED",
+                                i18n::t("error.param_required"),
+                            )
+                            .await;
+                            continue;
+                        }
+                        if !session_exists(&state, &user.user_id, &session_id) {
+                            let _ = send_ws_error(
+                                &ws_tx,
+                                Some(&request_id),
+                                "SESSION_NOT_FOUND",
+                                i18n::t("error.session_not_found"),
+                            )
+                            .await;
+                            continue;
+                        }
                         let after_event_id = payload.after_event_id.unwrap_or(0).max(0);
+                        let after_change_seq = payload.after_change_seq.unwrap_or(0).max(0);
+                        let change_stream = payload.change_stream;
                         let ws_tx_snapshot = ws_tx.clone();
                         let state_snapshot = state.clone();
-                        let notify = state.kernel.orchestrator.change_hub.subscribe(&session_id);
+                        let notify = (!change_stream)
+                            .then(|| state.kernel.orchestrator.change_hub.subscribe(&session_id));
                         let (cancel, task_id) =
                             register_ws_task(&tasks, &request_id, Some(session_id.clone()), false)
                                 .await;
@@ -875,17 +951,29 @@ async fn handle_ws(
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
                         long_task::spawn("api.chat_ws.watch_stream", async move {
-                            resume_stream_events(
-                                state_snapshot,
-                                session_id,
-                                after_event_id,
-                                Some(&request_id_cleanup),
-                                ws_tx_snapshot,
-                                Some(cancel.clone()),
-                                true,
-                                Some(notify),
-                            )
-                            .await;
+                            if change_stream {
+                                resume_thread_changes_v2(
+                                    state_snapshot,
+                                    session_id,
+                                    after_change_seq,
+                                    Some(&request_id_cleanup),
+                                    ws_tx_snapshot,
+                                    Some(cancel.clone()),
+                                )
+                                .await;
+                            } else {
+                                resume_stream_events(
+                                    state_snapshot,
+                                    session_id,
+                                    after_event_id,
+                                    Some(&request_id_cleanup),
+                                    ws_tx_snapshot,
+                                    Some(cancel.clone()),
+                                    true,
+                                    notify,
+                                )
+                                .await;
+                            }
                             let _ = cleanup_ws_task(
                                 &tasks_cleanup,
                                 &request_id_cleanup,

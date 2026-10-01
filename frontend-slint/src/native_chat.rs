@@ -233,6 +233,7 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         app.set_messages(ModelRc::default());
         std::thread::spawn(move || {
             let result = desktop.get_session(&id);
+            let durable = desktop.recover_session_durable_changes(&id);
             let _ = weak.upgrade_in_event_loop(move |app| {
                 if app.get_active_session_id() != id
                     || generation.load(Ordering::Relaxed) != request
@@ -272,6 +273,18 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                         // The web client always materializes one transient greeting before
                         // transcript history. It is presentation-only and never persisted.
                         projected.insert(0, greeting_message(&app));
+                        // I5 snapshot guard: if durable changes were trimmed, the history
+                        // snapshot is authoritative. Empty frames means snapshot-required.
+                        if durable.as_ref().map(|frames| frames.is_empty()).unwrap_or(false) {
+                            app.set_messages(ModelRc::new(VecModel::from(projected)));
+                            app.set_scroll_revision(app.get_scroll_revision().wrapping_add(1));
+                            app.set_status("历史快照已恢复".into());
+                            return;
+                        }
+                        // Heal durable item_upsert frames into the transcript: only
+                        // assistant_message / reasoning items embed authoritative content.
+                        // text_block frames are durable but recovered through item payload.
+                        apply_durable_heal_frames(&mut projected, durable.unwrap_or_default());
                         app.set_messages(ModelRc::new(VecModel::from(projected)));
                         app.set_scroll_revision(app.get_scroll_revision().wrapping_add(1));
                         app.set_status("内嵌运行时已就绪".into());
@@ -934,5 +947,79 @@ fn format_count_i64(value: i64) -> String {
         format!("{:.1}k", value as f64 / 1_000.0)
     } else {
         value.max(0).to_string()
+    }
+}
+
+/// Heal durable item_upsert frames into the desktop transcript.
+///
+/// Only assistant_message / reasoning items embed authoritative content in the
+/// embedded item payload. text_block frames are durable but recovered through
+/// the item payload (I3). Idempotent: same-kind content-contains check prevents
+/// double writes (过渡手段).
+fn apply_durable_heal_frames(projected: &mut Vec<ChatMessage>, frames: Vec<Value>) {
+    for record in &frames {
+        let Some(data) = record.get("data") else {
+            continue;
+        };
+        let change_type = data.get("change_type").and_then(Value::as_str).unwrap_or("");
+        if change_type != "item_upsert" {
+            continue;
+        }
+        let Some(item) = data.get("item") else {
+            continue;
+        };
+        let kind = item.get("kind").and_then(Value::as_str).unwrap_or("");
+        let payload = item.get("payload");
+        let role = payload
+            .and_then(|value| value.get("role"))
+            .and_then(Value::as_str)
+            .or_else(|| item.get("role").and_then(Value::as_str))
+            .unwrap_or("");
+        let content = payload
+            .and_then(|value| value.get("content"))
+            .or_else(|| item.get("content"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let reasoning = payload
+            .and_then(|value| {
+                value
+                    .get("reasoning")
+                    .or_else(|| value.get("reasoning_content"))
+            })
+            .and_then(Value::as_str)
+            .or_else(|| item.get("reasoning").and_then(Value::as_str))
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+
+        if kind.contains("reasoning") || role == "reasoning" {
+            if reasoning.is_empty() {
+                continue;
+            }
+            // Reasoning items: heal into the last assistant message's blocks or
+            // create a new reasoning row if none exists.
+            if let Some(last) = projected.last_mut() {
+                if !last.mine && last.state == "正在生成…" {
+                    let blocks = crate::message_blocks::from_text(&reasoning);
+                    last.blocks = blocks;
+                    last.text = reasoning.into();
+                }
+            }
+        } else if !content.is_empty() {
+            // Assistant message items: heal the authoritative content into the
+            // matching transcript row. Skip if already contains the content.
+            for msg in projected.iter_mut() {
+                if msg.mine || msg.state == "正在生成…" || msg.text.contains(&content) {
+                    continue;
+                }
+                if msg.text.is_empty() {
+                    msg.text = content.clone().into();
+                    msg.blocks = crate::message_blocks::from_text(&content);
+                    msg.state = "任务完成".into();
+                    break;
+                }
+            }
+        }
     }
 }

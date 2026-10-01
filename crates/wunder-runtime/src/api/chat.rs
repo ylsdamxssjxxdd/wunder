@@ -775,12 +775,21 @@ async fn compact_session(
     let owner = user_id.clone();
     let thread = session_id.clone();
     let accepted = crate::core::blocking::run_db("thread_log.accept.compact", move || {
-        storage.accept_thread_turn(&owner, &thread, &json!({
-            "role": "user", "content": "/compact",
-            "meta": {"type": "manual_compaction_command", "manual_compaction": true}
-        }))
-    }).await.map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let manual_user_round = accepted["user_turn_index"].as_i64().expect("accepted round");
+        storage.accept_thread_turn(
+            &owner,
+            &thread,
+            &json!({
+                "role": "user", "content": "/compact",
+                "meta": {"type": "manual_compaction_command", "manual_compaction": true}
+            }),
+        )
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let manual_user_round = accepted["user_turn_index"]
+        .as_i64()
+        .expect("accepted round");
+    state.kernel.orchestrator.publish_thread_change(&session_id);
     state.monitor.register_continuation(
         &session_id,
         &user_id,

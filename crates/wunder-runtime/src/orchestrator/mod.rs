@@ -65,6 +65,8 @@ use tracing::{error, warn};
 use uuid::Uuid;
 
 mod agent_messages;
+#[cfg(test)]
+mod change_stream_tests;
 mod compaction_policy;
 mod config;
 pub mod constants;
@@ -89,15 +91,12 @@ mod microcompaction;
 mod prompt;
 mod queue_handoff;
 #[cfg(test)]
-mod change_stream_tests;
-#[cfg(test)]
 mod queue_handoff_tests;
 mod quota;
 mod request;
 mod result_normalizer;
 mod retry_governor;
 mod runtime_snapshot;
-mod stream_persist;
 mod stream_timeout;
 mod thread_change_hub;
 mod thread_runtime;
@@ -121,7 +120,6 @@ pub(crate) use error::OrchestratorError;
 use event_stream::EventEmitter;
 use event_stream::StreamSignal;
 use limiter::RequestLimiter;
-pub(crate) use stream_persist::flush_stream_event_persist_queue;
 use thread_change_hub::ThreadChangeHub;
 use thread_runtime::ThreadRuntimeRegistry;
 use tool_calls::apply_tool_name_map;
@@ -160,6 +158,16 @@ pub struct Orchestrator {
 }
 
 impl Orchestrator {
+    /// Publish the durable cursor after a ThreadLog transaction succeeds.
+    /// The storage transaction serializes per-session change_seq; this helper
+    /// only wakes local feeders and never treats the hub as a source of truth.
+    pub(crate) fn publish_thread_change(&self, session_id: &str) {
+        let Ok(cursor) = self.storage.latest_thread_change_seq_by_session(session_id) else {
+            return;
+        };
+        self.change_hub.publish(session_id, cursor);
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config_store: ConfigStore,

@@ -70,7 +70,10 @@ fn worker_card_export_import_roundtrip() {
     assert_eq!(document["metadata"]["description"], "往返测试智能体");
     assert_eq!(document["extra_prompt"], "你是往返测试助手。");
     assert_eq!(document["runtime"]["model_name"], "test-model");
-    assert_eq!(document["interaction"]["preset_questions"][0], "帮我总结今天的进展");
+    assert_eq!(
+        document["interaction"]["preset_questions"][0],
+        "帮我总结今天的进展"
+    );
     // The document carries no secrets: the model config key is not an API key
     // and no token/authorization field may appear anywhere.
     let serialized = serde_json::to_string(&document).expect("serialize");
@@ -90,7 +93,9 @@ fn worker_card_export_import_roundtrip() {
         .iter()
         .all(|agent| agent.id != updated.id));
 
-    let outcomes = runtime.import_agent_from_file(&path, false).expect("import");
+    let outcomes = runtime
+        .import_agent_from_file(&path, false)
+        .expect("import");
     assert_eq!(outcomes.len(), 1);
     assert!(outcomes[0].created);
     let imported = &outcomes[0].agent;
@@ -101,7 +106,10 @@ fn worker_card_export_import_roundtrip() {
     assert_eq!(imported.icon_name, "robot");
     assert_eq!(imported.icon_color, "#3b82f6");
     assert!(imported.tool_names.contains(&catalog_tool));
-    assert_eq!(imported.preset_questions, vec!["帮我总结今天的进展".to_string()]);
+    assert_eq!(
+        imported.preset_questions,
+        vec!["帮我总结今天的进展".to_string()]
+    );
     assert_eq!(imported.approval_mode, "suggest");
     assert!(imported.preview_skill);
 
@@ -162,7 +170,9 @@ fn worker_card_import_reports_missing_dependencies() {
         "interaction": { "preset_questions": [] },
         "runtime": { "model_name": "", "approval_mode": "suggest" }
     });
-    let outcome = runtime.import_agent_document(&document, false).expect("import");
+    let outcome = runtime
+        .import_agent_document(&document, false)
+        .expect("import");
     assert!(outcome.created);
     assert_eq!(outcome.missing_tools, vec!["绝不存在的工具".to_string()]);
     assert_eq!(outcome.missing_skills, vec!["绝不存在的技能".to_string()]);
@@ -180,6 +190,10 @@ fn worker_card_export_writes_files_importable_by_listing() {
     let listed = runtime
         .list_agent_card_files(directory.path())
         .expect("list files");
-    assert!(listed.iter().any(|(file, label)| file == &path.display().to_string()
-        && label.contains("listing-card")));
+    assert!(
+        listed
+            .iter()
+            .any(|(file, label)| file == &path.display().to_string()
+                && label.contains("listing-card"))
+    );
 }

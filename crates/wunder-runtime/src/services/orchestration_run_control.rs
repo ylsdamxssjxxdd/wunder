@@ -82,7 +82,8 @@ pub fn worker_already_dispatched_in_round(
     ) else {
         return Ok(false);
     };
-    let history = storage.load_thread_context_items(user_id.trim(), worker_session_id.trim(), 0, false)?;
+    let history =
+        storage.load_thread_context_items(user_id.trim(), worker_session_id.trim(), 0, false)?;
     Ok(history.into_iter().any(|item| {
         matches!(chat_message_role(&item), Some("user"))
             && chat_message_timestamp(&item) >= round_created_at

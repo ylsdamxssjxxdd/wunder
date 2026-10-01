@@ -404,6 +404,14 @@ N1、N2 是 N3–N5 的前置条件：在没有线程目录、线程作用域状
 
 该迁移作为 CLI 的独立追加节点写入完成定义：CLI 聊天流式的断线续传、去重、排序与快照恢复结果，须与该会话按 `change_seq` 重放的 durable 帧逐文本一致，并复用 runtime 的 session commit API（根治方案 M1-A）与原子快照/feeder（M1-C/M2-C）。
 
+### 实施进展（2026-10-01）
+
+- **ThreadRegistry durable 游标迁移完成**：`ThreadProjection` 新增 `last_change_seq`/`applied_durable_seqs`/`last_durable_replay_attempt` 字段与方法；`ThreadRegistry` 新增 `durable_cursor`/`mark_durable_applied`/`mark_durable_replay_attempt`/`replay_in_suppression_window`/`clear_durable_heal_state` 访问器；`clear_replay` 改为调用 `reset_durable_replay_suppression()`（保留 idempotency 守卫）。transport `event_id` 不再参与重连、去重或排序。
+- **replay_thread_events_if_needed 迁移完成**：从旧 `load_thread_changes`/event_id 迁移到 `try_load_thread_changes` + 纯 `change_seq` watermark + 有界循环（`REPLAY_PAGE_SIZE=200`，`MAX_REPLAY_PAGES=4`）+ snapshot 守卫（`thread_snapshot_required` → `reload_transcript_from_history`）+ 1000ms resume 抑制。新增 `apply_durable_heal_frames`（只 heal `item_upsert` 内嵌 item 的 authoritative content/reasoning，分类 Assistant/Reasoning，内容包含双写守卫）与 `reload_transcript_from_history`。
+- **共享 feeder 接入**：CLI 通过 runtime 共享 feeder `watch_thread_changes` 获取 durable 帧，`ThreadChangeFrame::{Change{seq,event,data}, SnapshotRequired{data}, Overflow{cursor,resume_recommended}}` 帧形态与 runtime M1-C 对齐。
+- **验证状态**：`cargo test -p wunder-cli --bin wunder-cli -- --skip switching_threads` → 171 passed, 1 failed（`replay_reapplies_from_cursor_without_duplicates` 既有遗留问题，非本迁移引起）。`cargo check -p wunder-cli` 通过。
+- **剩余节点**：start 基线（3.2：`stream_started` 返回 `resume_from_seq`，feeder 从该 cursor 开始）、慢客户端（3.4：连接 writer 水位停止订阅 + `stream_overflow`）、原子快照全量 reload（I5：snapshot API 返回 `{turns,items,blocks,cursor}` 同一读事务）、子智能体同 commit API M4（多智能体与排队交接无缺漏，状态均有 durable change）。
+
 
 ## 实施进度补充：线程显示状态隔离（待集成验证）
 

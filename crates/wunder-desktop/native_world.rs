@@ -106,17 +106,21 @@ pub struct WorldMessageTracker {
 
 impl WorldMessageTracker {
     pub fn observe(&self, conversation_id: &str, message_id: i64) {
-        let mut guard = self.last_message_id.lock().unwrap_or_else(|e| e.into_inner());
-        let entry = guard
-            .entry(conversation_id.trim().to_string())
-            .or_insert(0);
+        let mut guard = self
+            .last_message_id
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let entry = guard.entry(conversation_id.trim().to_string()).or_insert(0);
         if message_id > *entry {
             *entry = message_id;
         }
     }
 
     pub fn seen(&self, conversation_id: &str, message_id: i64) -> bool {
-        let guard = self.last_message_id.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = self
+            .last_message_id
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         message_id <= guard.get(conversation_id.trim()).copied().unwrap_or(0)
     }
 }
@@ -299,10 +303,16 @@ impl NativeDesktop {
         })
     }
 
-    pub fn update_world_group_announcement(&self, group_id: &str, announcement: &str) -> Result<()> {
+    pub fn update_world_group_announcement(
+        &self,
+        group_id: &str,
+        announcement: &str,
+    ) -> Result<()> {
         let trimmed = announcement.trim();
         if trimmed.chars().count() > WORLD_GROUP_ANNOUNCEMENT_LIMIT {
-            return Err(anyhow!("公告过长（最多 {WORLD_GROUP_ANNOUNCEMENT_LIMIT} 字）"));
+            return Err(anyhow!(
+                "公告过长（最多 {WORLD_GROUP_ANNOUNCEMENT_LIMIT} 字）"
+            ));
         }
         let text = (!trimmed.is_empty()).then_some(trimmed);
         let updated = self
@@ -341,12 +351,9 @@ impl NativeDesktop {
     /// shared connection); page switches never cancel it.
     pub fn start_world_event_feed(&self) -> Result<WorldEventFeed> {
         let user = self.user_id().to_string();
-        let mut receiver = self.runtime.block_on(
-            self.state()
-                .projection
-                .user_world
-                .subscribe_user(&user),
-        )?;
+        let mut receiver = self
+            .runtime
+            .block_on(self.state().projection.user_world.subscribe_user(&user))?;
         let (sender, receiver_out) = mpsc::sync_channel::<WorldEvent>(WORLD_EVENT_CHANNEL_CAPACITY);
         let overflowed = Arc::new(AtomicBool::new(false));
         let overflow_flag = overflowed.clone();

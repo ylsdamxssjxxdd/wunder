@@ -33,7 +33,7 @@ pub(super) struct EventEmitter {
     overflow_version: Arc<AtomicU64>,
     client_message_id: Option<String>,
     turn_context: Arc<ParkingMutex<Value>>,
-    text_tail: Arc<ParkingMutex<crate::services::thread_log::TextTail>>,
+    text_tail: Arc<ParkingMutex<crate::services::thread_log::TextTails>>,
     /// Serializes the whole emit path (durable commits + queue enqueues) so
     /// change-cursor order == queue order == wire order for every emitter.
     emit_lock: Arc<tokio::sync::Mutex<()>>,
@@ -185,17 +185,6 @@ impl EventEmitter {
         let _ = queue.try_send(StreamSignal::Done);
     }
 
-    fn persist_event_on_emit(
-        &self,
-        _event_id: i64,
-        _event_type: &str,
-        _data: &Value,
-        _timestamp: DateTime<Utc>,
-    ) -> bool {
-        // ThreadLog commits and text blocks carry all durable chat state.
-        false
-    }
-
     pub(super) async fn emit(&self, event_type: &str, data: Value) -> StreamEvent {
         // Hold across the durable commits and the queue enqueues below so a
         // concurrent emitter (tool forwarder) can never interleave a change
@@ -239,7 +228,9 @@ impl EventEmitter {
                         Ok(Some(receipt)) => {
                             self.publish_change_cursor(&receipt);
                             if let Some(cursor) = receipt.get("cursor").and_then(Value::as_i64) {
-                                self.text_tail.lock().set_base_seq(cursor);
+                                self.text_tail
+                                    .lock()
+                                    .set_base_seq(&format!("{turn_id}:text-{model_round}"), cursor);
                             }
                             let change_event = StreamEvent {
                                 event: "thread_change".into(),
@@ -259,99 +250,109 @@ impl EventEmitter {
                 }
             }
         }
-        let (block, tail_events) = if event_type == "llm_output_delta" {
+        let (blocks_to_commit, tail_events) = if event_type == "llm_output_delta" {
             let mut tail = self.text_tail.lock();
-            let (item_id, content_offset, reasoning_offset) = tail.tail_annotation(&data);
-            let block = tail.append(&self.session_id, event_id, &data);
+            let (blocks, hints) = tail.append(&self.session_id, event_id, &data);
             let mut tail_events = Vec::new();
             if self.change_stream {
-                if let Some(item_id) = item_id {
-                    if let (Some(offset), Some(text)) = (
-                        content_offset,
-                        data.get("delta").and_then(Value::as_str),
-                    ) {
-                        tail_events.push(StreamEvent {
-                            event: "thread_item_tail".into(),
-                            data: json!({"item_id":item_id,"field":"content","offset":offset,"text":text}),
-                            id: None,
-                            timestamp: Some(timestamp),
-                        });
-                    }
-                    if let (Some(offset), Some(text)) = (
-                        reasoning_offset,
-                        data.get("reasoning_delta").and_then(Value::as_str),
-                    ) {
-                        tail_events.push(StreamEvent {
-                            event: "thread_item_tail".into(),
-                            data: json!({"item_id":item_id,"field":"reasoning","offset":offset,"text":text}),
-                            id: None,
-                            timestamp: Some(timestamp),
-                        });
-                    }
+                for (item_id, offset, field, text) in hints {
+                    tail_events.push(StreamEvent {
+                        event: "thread_item_tail".into(),
+                        data: json!({"item_id":item_id,"field":field,"offset":offset,"text":text}),
+                        id: None,
+                        timestamp: Some(timestamp),
+                    });
                 }
             }
-            (block, tail_events)
-        } else if matches!(
-            event_type,
-            "llm_output" | "llm_request" | "error" | "turn_terminal"
-        ) {
-            (self.text_tail.lock().flush(&self.session_id), Vec::new())
+            (blocks, tail_events)
+        } else if event_type == "llm_output" {
+            let item_id = data.get("turn_id").and_then(Value::as_str).map(|turn| {
+                format!(
+                    "{turn}:text-{}",
+                    data.get("model_round").and_then(Value::as_i64).unwrap_or(0)
+                )
+            });
+            let block = item_id
+                .as_deref()
+                .and_then(|id| self.text_tail.lock().flush_item(&self.session_id, id));
+            (block.into_iter().collect(), Vec::new())
+        } else if matches!(event_type, "llm_request" | "error" | "turn_terminal") {
+            (
+                self.text_tail.lock().flush_all(&self.session_id),
+                Vec::new(),
+            )
         } else {
-            (None, Vec::new())
+            (Vec::new(), Vec::new())
         };
         // Durable text blocks are committed through the same emitter gate as
         // lifecycle changes. Tail frames are held until their block commit is
         // visible, then carry that commit cursor as `base_seq`.
-        if let (Some(block), Some(storage)) = (block, self.storage.clone()) {
-            let blocks = block
-                .get("blocks")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_else(|| vec![block]);
-            for block in blocks {
-                let owner = self.user_id.clone();
-                let session = self.session_id.clone();
-                let block_for_write = block.clone();
-                match crate::core::blocking::run_db("thread_log.text_block", move || {
-                    storage.upsert_thread_text_block(&owner, &session, &block_for_write)
-                })
-                .await
-                {
-                    Ok(cursor) if cursor > 0 => {
-                        self.text_tail.lock().set_base_seq(cursor);
-                        self.publish_change_cursor(&json!({"cursor": cursor}));
-                        let turn_id = block
-                            .pointer("/data/turn_id")
-                            .or_else(|| block.get("turn_id"))
-                            .and_then(Value::as_str)
-                            .unwrap_or_default();
-                        let change_event = StreamEvent {
-                            event: "thread_change".into(),
-                            data: enrich_event_payload(
-                                json!({
-                                    "change_type": "text_block",
-                                    "turn_id": turn_id,
-                                    "item_id": block.get("item_id"),
-                                    "revision": 0,
-                                    "cursor": cursor,
-                                    "payload": block,
-                                }),
-                                Some(&self.session_id),
-                                timestamp,
-                            ),
-                            id: None,
-                            timestamp: Some(timestamp),
-                        };
-                        self.enqueue_event(&change_event, true).await;
+        if let Some(storage) = self.storage.clone() {
+            for flush in blocks_to_commit {
+                let blocks = flush
+                    .get("blocks")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_else(|| vec![flush]);
+                for block in blocks {
+                    let owner = self.user_id.clone();
+                    let session = self.session_id.clone();
+                    let block_for_write = block.clone();
+                    let storage_for_write = storage.clone();
+                    match crate::core::blocking::run_db("thread_log.text_block", move || {
+                        storage_for_write.upsert_thread_text_block(
+                            &owner,
+                            &session,
+                            &block_for_write,
+                        )
+                    })
+                    .await
+                    {
+                        Ok(cursor) if cursor > 0 => {
+                            if let Some(item_id) = block.get("item_id").and_then(Value::as_str) {
+                                self.text_tail.lock().set_base_seq(item_id, cursor);
+                            }
+                            self.publish_change_cursor(&json!({"cursor": cursor}));
+                            let turn_id = block
+                                .pointer("/data/turn_id")
+                                .or_else(|| block.get("turn_id"))
+                                .and_then(Value::as_str)
+                                .unwrap_or_default();
+                            let change_event = StreamEvent {
+                                event: "thread_change".into(),
+                                data: enrich_event_payload(
+                                    json!({
+                                        "change_type": "text_block",
+                                        "turn_id": turn_id,
+                                        "item_id": block.get("item_id"),
+                                        "revision": 0,
+                                        "cursor": cursor,
+                                        "payload": block,
+                                    }),
+                                    Some(&self.session_id),
+                                    timestamp,
+                                ),
+                                id: None,
+                                timestamp: Some(timestamp),
+                            };
+                            self.enqueue_event(&change_event, true).await;
+                        }
+                        Ok(_) => {}
+                        Err(error) => warn!("persist thread text block failed: {error}"),
                     }
-                    Ok(_) => {}
-                    Err(error) => warn!("persist thread text block failed: {error}"),
                 }
             }
         }
         for mut tail_event in tail_events {
             if let Some(map) = tail_event.data.as_object_mut() {
-                map.insert("base_seq".into(), json!(self.text_tail.lock().base_seq()));
+                let item_id = map
+                    .get("item_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                map.insert(
+                    "base_seq".into(),
+                    json!(self.text_tail.lock().base_seq(item_id)),
+                );
             }
             self.enqueue_tail(&tail_event).await;
         }
@@ -386,7 +387,6 @@ impl EventEmitter {
             self.monitor
                 .record_event(&self.session_id, event_type, &data);
         }
-        let persisted = self.persist_event_on_emit(event_id, event_type, &data, timestamp);
         if event_type.ends_with("_delta") {
             if let Some(map) = data.as_object_mut() {
                 // The shared envelope must retain the semantic stream type.
@@ -406,7 +406,7 @@ impl EventEmitter {
             id: Some(event_id.to_string()),
             timestamp: Some(timestamp),
         };
-        self.enqueue_event(&event, persisted).await;
+        self.enqueue_event(&event, false).await;
         event
     }
 

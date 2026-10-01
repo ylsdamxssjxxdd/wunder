@@ -44,6 +44,17 @@ interface ChatThreadRuntimeEntry {
 
 const registry = new Map<string, ChatThreadRuntimeEntry>();
 const REGISTRY_LIMIT = 64;
+// v2 is opt-in at both ends. The reducer can run before a socket is created,
+// so its unknown state remains enabled until a ready handshake says otherwise.
+let serverChangeStreamSupported: boolean | null = null;
+
+export const setChatChangeStreamServerSupported = (supported: boolean | null): void => {
+  serverChangeStreamSupported = supported === null ? null : supported === true;
+};
+
+/** True only after the active socket explicitly advertised v2. */
+export const isChatChangeStreamServerSupported = (): boolean =>
+  serverChangeStreamSupported === true;
 
 export const isChatChangeStreamEnabled = (): boolean => {
   if (isDesktopModeEnabled()) return false;
@@ -78,7 +89,7 @@ export const getChatThreadState = (key: string): ChatThreadState | null =>
   registry.get(key)?.state ?? null;
 
 export const isChatThreadV2Session = (key: string): boolean =>
-  Boolean(registry.get(key)?.v2);
+  Boolean(registry.get(key)?.v2) && isChatChangeStreamEnabled() && serverChangeStreamSupported !== false;
 
 export const markChatThreadFallback = (key: string, reason: string): void => {
   const entry = registry.get(key);

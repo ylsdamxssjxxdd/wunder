@@ -715,7 +715,11 @@ pub trait ChatSessionStore {
 pub trait SessionGoalStore {
     fn upsert_session_goal(&self, record: &SessionGoalRecord) -> Result<()>;
     /// Update an existing goal revision; never recreate a cleared/replaced goal.
-    fn update_session_goal(&self, record: &SessionGoalRecord, expected_updated_at: f64) -> Result<bool>;
+    fn update_session_goal(
+        &self,
+        record: &SessionGoalRecord,
+        expected_updated_at: f64,
+    ) -> Result<bool>;
     fn get_session_goal(
         &self,
         user_id: &str,

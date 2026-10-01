@@ -27,6 +27,12 @@ type MultiplexerOptions = {
   idleTimeoutMs?: number;
   connectTimeoutMs?: number;
   pingIntervalMs?: number;
+  /** Server handshake payload, delivered before request-scoped events. */
+  onReady?: (payload: Record<string, unknown>) => void;
+  /** Wait briefly for ready when request shape depends on server features. */
+  readyTimeoutMs?: number;
+  /** Clear connection-scoped capability state before a new handshake. */
+  onConnecting?: () => void;
 };
 
 type WsRequestPayload = {
@@ -39,7 +45,7 @@ type WsRequestPayload = {
   signal?: AbortSignal;
   cancelOnAbort?: boolean;
   sessionId?: string;
-  message: unknown;
+  message: unknown | (() => unknown);
 };
 
 type PendingEntry = {
@@ -354,6 +360,8 @@ export const createWsMultiplexer = (
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let pingTimer: ReturnType<typeof setInterval> | null = null;
   let socketAuthToken = '';
+  let readyReceived = false;
+  let readyWaiters: Array<() => void> = [];
 
   const clearConnectTimer = (): void => {
     if (connectTimer) {
@@ -416,6 +424,10 @@ export const createWsMultiplexer = (
     clearPingTimer();
     socket = null;
     socketAuthToken = '';
+    readyReceived = false;
+    const waiters = readyWaiters;
+    readyWaiters = [];
+    waiters.forEach(resolve => resolve());
     opened = false;
     connectPromise = null;
     connectResolve = null;
@@ -536,6 +548,14 @@ export const createWsMultiplexer = (
       return;
     }
     const type = String(payload?.type || '').toLowerCase();
+    if (type === 'ready') {
+      readyReceived = true;
+      options.onReady?.(asPayloadRecord(payload?.payload));
+      const waiters = readyWaiters;
+      readyWaiters = [];
+      waiters.forEach(resolve => resolve());
+      return;
+    }
     if (type === 'event') {
       const requestId = normalizeRequestId(payload?.request_id || payload?.requestId);
       if (!requestId) return;
@@ -629,6 +649,7 @@ export const createWsMultiplexer = (
     if (socket && socket.readyState === WebSocket.CONNECTING && connectPromise) {
       return connectPromise;
     }
+    options.onConnecting?.();
     socket = createSocket();
     socketAuthToken = extractAuthTokenFromSocket(socket);
     opened = false;
@@ -652,6 +673,26 @@ export const createWsMultiplexer = (
       cleanupSocket();
     }, connectTimeoutMs);
     return connectPromise;
+  };
+
+  const waitForReady = (): Promise<void> => {
+    if (readyReceived || !socket || socket.readyState !== WebSocket.OPEN) {
+      return Promise.resolve();
+    }
+    const timeoutMs = Math.max(0, Number(options.readyTimeoutMs ?? 0));
+    if (timeoutMs === 0) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        const index = readyWaiters.indexOf(done);
+        if (index >= 0) readyWaiters.splice(index, 1);
+        resolve();
+      }, timeoutMs);
+      readyWaiters.push(done);
+    });
   };
 
   const request = (payload: WsRequestPayload): Promise<void> =>
@@ -697,10 +738,15 @@ export const createWsMultiplexer = (
         entry.abortHandler = handleAbort;
         entry.signal.addEventListener('abort', handleAbort, { once: true });
       }
-      ensureConnected()
+      const readyGate = Number(options.readyTimeoutMs ?? 0) > 0
+        ? ensureConnected().then(waitForReady)
+        : ensureConnected();
+      readyGate
         .then(() => {
           try {
-            sendMessage(payload.message);
+            sendMessage(
+              typeof payload.message === 'function' ? payload.message() : payload.message
+            );
           } catch (error) {
             const source = error as { message?: string };
             rejectRequest(requestId, normalizeError(source?.message || '', opened ? 'stream' : 'connect'));

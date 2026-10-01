@@ -21,6 +21,12 @@ async fn queue_handoff_parks_original_turn_and_keeps_cancel_available() {
     )
     .unwrap();
     let orchestrator = state.kernel.orchestrator.clone();
+    let accepted = state
+        .storage
+        .accept_thread_turn("user-a", "session-a", &json!({"content":"input"}))
+        .unwrap();
+    let durable_turn = accepted["turn_id"].as_str().unwrap();
+    let mut wake = orchestrator.change_hub.subscribe("session-a");
     state
         .monitor
         .register("session-a", "user-a", "agent-a", "input", false);
@@ -41,7 +47,9 @@ async fn queue_handoff_parks_original_turn_and_keeps_cancel_available() {
         false,
         0,
         None,
-    );
+    )
+    .with_change_hub(orchestrator.change_hub.clone());
+    emitter.bind_turn(durable_turn, 1);
     orchestrator.scheduling.request_slot("session-b").unwrap();
     let worker = orchestrator.clone();
     let output = emitter.clone();
@@ -89,13 +97,27 @@ async fn queue_handoff_parks_original_turn_and_keeps_cancel_available() {
         ),
         (json!("running"), json!("turn-a"))
     );
-    flush_stream_event_persist_queue().await;
     let events = state
         .storage
-        .load_stream_events("session-a", 0, 100)
+        .list_thread_changes_by_session("session-a", 0, 100)
         .unwrap();
-    assert!(events.iter().any(|event| event["event"] == "queue_enter"));
-    assert!(events.iter().any(|event| event["event"] == "queue_start"));
+    let queue_items = events
+        .iter()
+        .filter(|event| event["payload"]["kind"] == "queue")
+        .collect::<Vec<_>>();
+    assert_eq!(queue_items.len(), 2);
+    assert_eq!(queue_items[0]["payload"]["status"], "queued");
+    assert_eq!(queue_items[1]["payload"]["status"], "running");
+    assert_eq!(queue_items[0]["item_id"], queue_items[1]["item_id"]);
+    assert_eq!(
+        *wake.borrow_and_update(),
+        events.last().unwrap()["change_seq"].as_i64().unwrap()
+    );
+    assert!(state
+        .storage
+        .load_stream_events("session-a", 0, 100)
+        .unwrap()
+        .is_empty());
 
     orchestrator.scheduling.request_slot("session-b").unwrap();
     let worker = orchestrator.clone();

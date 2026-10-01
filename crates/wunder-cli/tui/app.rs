@@ -4378,7 +4378,10 @@ impl TuiApp {
             return;
         }
         // I6: only one outstanding durable replay per suppression window.
-        if self.thread_registry.replay_in_suppression_window(session_id) {
+        if self
+            .thread_registry
+            .replay_in_suppression_window(session_id)
+        {
             return;
         }
         let after_seq = self.thread_registry.durable_cursor(session_id);
@@ -4431,7 +4434,8 @@ impl TuiApp {
             // the item payload).
             self.apply_durable_heal_frames(session_id, &records);
             if progressed {
-                self.thread_registry.mark_durable_applied(session_id, cursor);
+                self.thread_registry
+                    .mark_durable_applied(session_id, cursor);
             }
             // A short or non-progressing page means we reached the durable tip.
             if records.len() < REPLAY_PAGE_SIZE || !progressed {
@@ -4469,9 +4473,13 @@ impl TuiApp {
             };
             let cursor = data.get("cursor").and_then(Value::as_i64).unwrap_or(0);
             if cursor > 0 {
-                self.thread_registry.mark_durable_applied(session_id, cursor);
+                self.thread_registry
+                    .mark_durable_applied(session_id, cursor);
             }
-            let change_type = data.get("change_type").and_then(Value::as_str).unwrap_or("");
+            let change_type = data
+                .get("change_type")
+                .and_then(Value::as_str)
+                .unwrap_or("");
             if change_type != "item_upsert" {
                 continue;
             }
@@ -4505,7 +4513,10 @@ impl TuiApp {
             let (kind_log, text) = if kind.contains("reasoning") || role == "reasoning" {
                 (LogKind::Reasoning, reasoning)
             } else if (role.is_empty() || role == "assistant") && kind == "assistant_message" {
-                (LogKind::Assistant, sanitize_assistant_text(content.as_str()))
+                (
+                    LogKind::Assistant,
+                    sanitize_assistant_text(content.as_str()),
+                )
             } else {
                 continue;
             };

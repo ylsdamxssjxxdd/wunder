@@ -31,10 +31,10 @@ pub struct PromptSegmentContent {
 impl NativeDesktop {
     /// List the active pack id, all packs (built-ins first) and the editable
     /// segment keys, mirroring the server list endpoint.
-    pub fn list_prompt_packs(&self) -> Result<(String, Vec<PromptPackInfo>, Vec<(String, String)>)> {
-        let config = self
-            .runtime
-            .block_on(self.state().config_store.get());
+    pub fn list_prompt_packs(
+        &self,
+    ) -> Result<(String, Vec<PromptPackInfo>, Vec<(String, String)>)> {
+        let config = self.runtime.block_on(self.state().config_store.get());
         let active = user_prompt_templates::load_user_active_pack_id(&config, self.user_id());
         let packs_root = user_prompt_templates::resolve_user_packs_root(&config, self.user_id());
         let system_language_default = user_prompt_templates::resolve_default_user_pack_id();
@@ -78,7 +78,10 @@ impl NativeDesktop {
         packs.sort_by(|a, b| {
             b.builtin
                 .cmp(&a.builtin)
-                .then(b.is_system_language_default.cmp(&a.is_system_language_default))
+                .then(
+                    b.is_system_language_default
+                        .cmp(&a.is_system_language_default),
+                )
                 .then(a.id.to_lowercase().cmp(&b.id.to_lowercase()))
         });
         let segments = user_prompt_templates::SYSTEM_SEGMENTS
@@ -89,12 +92,9 @@ impl NativeDesktop {
     }
 
     pub fn set_active_prompt_pack(&self, pack_id: &str) -> Result<()> {
-        let config = self
-            .runtime
-            .block_on(self.state().config_store.get());
+        let config = self.runtime.block_on(self.state().config_store.get());
         let pack_id = user_prompt_templates::normalize_pack_id(Some(pack_id));
-        user_prompt_templates::validate_pack_id(&pack_id)
-            .map_err(|err| anyhow!("{err}"))?;
+        user_prompt_templates::validate_pack_id(&pack_id).map_err(|err| anyhow!("{err}"))?;
         if !user_prompt_templates::is_builtin_user_pack_id(&pack_id) {
             let root =
                 user_prompt_templates::resolve_user_pack_root(&config, self.user_id(), &pack_id);
@@ -113,12 +113,9 @@ impl NativeDesktop {
     /// pack); user packs read their own file, falling back to the system
     /// content as the editable starting point.
     pub fn read_prompt_segment(&self, pack_id: &str, key: &str) -> Result<PromptSegmentContent> {
-        let config = self
-            .runtime
-            .block_on(self.state().config_store.get());
+        let config = self.runtime.block_on(self.state().config_store.get());
         let pack_id = user_prompt_templates::normalize_pack_id(Some(pack_id));
-        user_prompt_templates::validate_pack_id(&pack_id)
-            .map_err(|err| anyhow!("{err}"))?;
+        user_prompt_templates::validate_pack_id(&pack_id).map_err(|err| anyhow!("{err}"))?;
         let key = key.trim();
         if key.is_empty() {
             bail!("分段标识为空");
@@ -128,12 +125,13 @@ impl NativeDesktop {
         let locale = user_prompt_templates::normalize_locale(None);
         let system_pack_id = user_prompt_templates::resolve_system_active_pack_id(&config);
         let system_root = user_prompt_templates::resolve_system_pack_root(&config, &system_pack_id);
-        let default_root =
-            user_prompt_templates::resolve_system_pack_root(&config, user_prompt_templates::DEFAULT_PACK_ID);
+        let default_root = user_prompt_templates::resolve_system_pack_root(
+            &config,
+            user_prompt_templates::DEFAULT_PACK_ID,
+        );
 
         if user_prompt_templates::is_builtin_user_pack_id(&pack_id) {
-            let mut content =
-                std::fs::read_to_string(system_root.join(&file)).unwrap_or_default();
+            let mut content = std::fs::read_to_string(system_root.join(&file)).unwrap_or_default();
             let mut source = system_pack_id.clone();
             if content.is_empty()
                 && !system_pack_id.eq_ignore_ascii_case(user_prompt_templates::DEFAULT_PACK_ID)
@@ -151,7 +149,8 @@ impl NativeDesktop {
             });
         }
 
-        let pack_root = user_prompt_templates::resolve_user_pack_root(&config, self.user_id(), &pack_id);
+        let pack_root =
+            user_prompt_templates::resolve_user_pack_root(&config, self.user_id(), &pack_id);
         if !pack_root.is_dir() {
             bail!("提示词包不存在");
         }
@@ -168,7 +167,9 @@ impl NativeDesktop {
         }
         let mut content = std::fs::read_to_string(system_root.join(&file)).unwrap_or_default();
         let mut source = system_pack_id.clone();
-        if content.is_empty() && !system_pack_id.eq_ignore_ascii_case(user_prompt_templates::DEFAULT_PACK_ID) {
+        if content.is_empty()
+            && !system_pack_id.eq_ignore_ascii_case(user_prompt_templates::DEFAULT_PACK_ID)
+        {
             content = std::fs::read_to_string(default_root.join(&file)).unwrap_or_default();
             source = user_prompt_templates::DEFAULT_PACK_ID.to_string();
         }
@@ -183,19 +184,17 @@ impl NativeDesktop {
 
     /// Write one editable segment. Built-in packs are readonly by definition.
     pub fn write_prompt_segment(&self, pack_id: &str, key: &str, content: &str) -> Result<()> {
-        let config = self
-            .runtime
-            .block_on(self.state().config_store.get());
+        let config = self.runtime.block_on(self.state().config_store.get());
         let pack_id = user_prompt_templates::normalize_pack_id(Some(pack_id));
-        user_prompt_templates::validate_pack_id(&pack_id)
-            .map_err(|err| anyhow!("{err}"))?;
+        user_prompt_templates::validate_pack_id(&pack_id).map_err(|err| anyhow!("{err}"))?;
         if user_prompt_templates::is_builtin_user_pack_id(&pack_id) {
             bail!("内置提示词包只读");
         }
         if content.chars().count() > MAX_SEGMENT_CHARS {
             bail!("分段内容过长（最多 {MAX_SEGMENT_CHARS} 字）");
         }
-        let pack_root = user_prompt_templates::resolve_user_pack_root(&config, self.user_id(), &pack_id);
+        let pack_root =
+            user_prompt_templates::resolve_user_pack_root(&config, self.user_id(), &pack_id);
         if !pack_root.is_dir() {
             bail!("提示词包不存在");
         }
@@ -208,16 +207,14 @@ impl NativeDesktop {
     }
 
     pub fn create_prompt_pack(&self, pack_id: &str) -> Result<()> {
-        let config = self
-            .runtime
-            .block_on(self.state().config_store.get());
+        let config = self.runtime.block_on(self.state().config_store.get());
         let pack_id = user_prompt_templates::normalize_pack_id(Some(pack_id));
-        user_prompt_templates::validate_pack_id(&pack_id)
-            .map_err(|err| anyhow!("{err}"))?;
+        user_prompt_templates::validate_pack_id(&pack_id).map_err(|err| anyhow!("{err}"))?;
         if user_prompt_templates::is_builtin_user_pack_id(&pack_id) {
             bail!("不能使用内置提示词包名称");
         }
-        let pack_root = user_prompt_templates::resolve_user_pack_root(&config, self.user_id(), &pack_id);
+        let pack_root =
+            user_prompt_templates::resolve_user_pack_root(&config, self.user_id(), &pack_id);
         if pack_root.exists() {
             bail!("提示词包已存在");
         }
@@ -226,16 +223,14 @@ impl NativeDesktop {
     }
 
     pub fn delete_prompt_pack(&self, pack_id: &str) -> Result<()> {
-        let config = self
-            .runtime
-            .block_on(self.state().config_store.get());
+        let config = self.runtime.block_on(self.state().config_store.get());
         let pack_id = user_prompt_templates::normalize_pack_id(Some(pack_id));
-        user_prompt_templates::validate_pack_id(&pack_id)
-            .map_err(|err| anyhow!("{err}"))?;
+        user_prompt_templates::validate_pack_id(&pack_id).map_err(|err| anyhow!("{err}"))?;
         if user_prompt_templates::is_builtin_user_pack_id(&pack_id) {
             bail!("内置提示词包不能删除");
         }
-        let pack_root = user_prompt_templates::resolve_user_pack_root(&config, self.user_id(), &pack_id);
+        let pack_root =
+            user_prompt_templates::resolve_user_pack_root(&config, self.user_id(), &pack_id);
         if !pack_root.is_dir() {
             bail!("提示词包不存在");
         }

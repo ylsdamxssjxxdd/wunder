@@ -173,6 +173,10 @@ pub(crate) async fn apply_goal_command(
         let user_round = accepted["user_turn_index"]
             .as_i64()
             .expect("accepted round");
+        state
+            .kernel
+            .orchestrator
+            .publish_thread_change(&session.session_id);
         state.monitor.register_continuation(
             &session.session_id,
             user_id,
@@ -218,6 +222,7 @@ pub(crate) async fn apply_goal_command(
         })
         .await
         .map_err(bad_request)?;
+        state.kernel.orchestrator.publish_thread_change(session_id);
     }
     let continuation = if should_schedule {
         schedule_goal_continuation(state, user_id, session_id).await

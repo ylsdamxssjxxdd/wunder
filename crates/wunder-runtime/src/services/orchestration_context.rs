@@ -1190,7 +1190,12 @@ pub fn copy_chat_history_until_round(
     target_session_id: &str,
     inclusive_round_index: i64,
 ) -> Result<()> {
-    storage.fork_thread_log(user_id.trim(), source_session_id.trim(), target_session_id.trim(), normalize_round_index(inclusive_round_index))
+    storage.fork_thread_log(
+        user_id.trim(),
+        source_session_id.trim(),
+        target_session_id.trim(),
+        normalize_round_index(inclusive_round_index),
+    )
 }
 
 pub fn active_orchestration_for_agent(

@@ -39,9 +39,18 @@ fn prompt_pack_lifecycle_roundtrip() {
 
     // A custom pack starts empty, becomes editable, and can be activated.
     runtime.create_prompt_pack("contract-pack").expect("create");
-    assert!(runtime.create_prompt_pack("contract-pack").is_err(), "duplicate");
-    assert!(runtime.create_prompt_pack("default-zh").is_err(), "builtin name");
-    assert!(runtime.create_prompt_pack("非法/名称").is_err(), "invalid id");
+    assert!(
+        runtime.create_prompt_pack("contract-pack").is_err(),
+        "duplicate"
+    );
+    assert!(
+        runtime.create_prompt_pack("default-zh").is_err(),
+        "builtin name"
+    );
+    assert!(
+        runtime.create_prompt_pack("非法/名称").is_err(),
+        "invalid id"
+    );
 
     // Reading an absent segment falls back to the system pack content.
     let fallback = runtime
@@ -49,25 +58,36 @@ fn prompt_pack_lifecycle_roundtrip() {
         .expect("read fallback");
     assert!(!fallback.readonly);
     assert!(!fallback.exists);
-    assert!(!fallback.content.is_empty(), "system fallback provides content");
+    assert!(
+        !fallback.content.is_empty(),
+        "system fallback provides content"
+    );
 
     let edited = "合同测试角色提示词。";
     runtime
         .write_prompt_segment("contract-pack", "role", edited)
         .expect("write");
-    let stored = runtime.read_prompt_segment("contract-pack", "role").expect("read");
+    let stored = runtime
+        .read_prompt_segment("contract-pack", "role")
+        .expect("read");
     assert!(stored.exists);
     assert_eq!(stored.content, edited);
 
-    runtime.set_active_prompt_pack("contract-pack").expect("activate");
+    runtime
+        .set_active_prompt_pack("contract-pack")
+        .expect("activate");
     let (active, _, _) = runtime.list_prompt_packs().expect("list");
     assert_eq!(active, "contract-pack");
     assert!(runtime.set_active_prompt_pack("missing-pack").is_err());
 
     // Built-in packs reject writes and deletion at the façade boundary.
-    assert!(runtime.write_prompt_segment("default-zh", "role", "x").is_err());
+    assert!(runtime
+        .write_prompt_segment("default-zh", "role", "x")
+        .is_err());
     assert!(runtime.delete_prompt_pack("default-zh").is_err());
-    runtime.write_prompt_segment("contract-pack", "role", "").expect("clear");
+    runtime
+        .write_prompt_segment("contract-pack", "role", "")
+        .expect("clear");
 
     runtime.delete_prompt_pack("contract-pack").expect("delete");
     let (active, packs, _) = runtime.list_prompt_packs().expect("list");
@@ -78,9 +98,17 @@ fn prompt_pack_lifecycle_roundtrip() {
 #[test]
 fn preferences_validate_and_persist() {
     let runtime = start_isolated().expect("isolated runtime");
-    assert!(runtime.save_preferences("dark", "enter").is_err(), "unknown theme");
-    assert!(runtime.save_preferences("light", "space").is_err(), "unknown send key");
-    let settings = runtime.save_preferences("light", "ctrl_enter").expect("save");
+    assert!(
+        runtime.save_preferences("dark", "enter").is_err(),
+        "unknown theme"
+    );
+    assert!(
+        runtime.save_preferences("light", "space").is_err(),
+        "unknown send key"
+    );
+    let settings = runtime
+        .save_preferences("light", "ctrl_enter")
+        .expect("save");
     assert_eq!(settings.theme, "light");
     assert_eq!(settings.send_key, "ctrl_enter");
     let reloaded = runtime.get_desktop_settings().expect("reload");
@@ -91,11 +119,16 @@ fn preferences_validate_and_persist() {
 fn diagnostics_export_is_secret_free() {
     let runtime = start_isolated().expect("isolated runtime");
     let directory = tempfile::tempdir().expect("tempdir");
-    let path = runtime.export_diagnostics(directory.path()).expect("export");
+    let path = runtime
+        .export_diagnostics(directory.path())
+        .expect("export");
     let text = std::fs::read_to_string(&path).expect("read bundle");
     assert!(text.contains("wunder-desktop-diagnostics"));
     let lowered = text.to_lowercase();
-    assert!(!lowered.contains("contract-secret"), "api key leaked into bundle");
+    assert!(
+        !lowered.contains("contract-secret"),
+        "api key leaked into bundle"
+    );
     assert!(!lowered.contains("api_key"), "key field name leaked");
     assert!(lowered.contains("counts"));
 }
@@ -106,10 +139,12 @@ fn reset_work_state_preserves_assets_and_reports_summary() {
     let created = runtime.create_agent("reset-agent").expect("agent created");
     let summary = runtime.reset_work_state().expect("reset");
     assert_eq!(summary.cancelled_sessions, 0);
-    assert!(runtime
-        .list_agents()
-        .expect("list")
-        .iter()
-        .any(|agent| agent.id == created.id),
-        "assets must survive the reset");
+    assert!(
+        runtime
+            .list_agents()
+            .expect("list")
+            .iter()
+            .any(|agent| agent.id == created.id),
+        "assets must survive the reset"
+    );
 }

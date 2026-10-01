@@ -4,8 +4,10 @@ import {
   applyChatThreadServerEvent,
   ensureChatThreadRuntime,
   getChatThreadState,
+  isChatChangeStreamServerSupported,
   isChatThreadV2Session,
-  registerChatThreadSnapshotLoader
+  registerChatThreadSnapshotLoader,
+  setChatChangeStreamServerSupported
 } from '@/realtime/chat/chatThreadRuntime';
 import { isChatSnapshotCurrent } from './chatSnapshotFreshness';
 import { defineStore } from 'pinia';
@@ -459,7 +461,7 @@ export const startSessionWatcher = (store, sessionId) => {
     const runWatchdogTick = async () => {
       if (controller.signal.aborted) return;
       const profile = resolveWatchdogProfile(store, key);
-      if (isChatThreadV2Session(key)) {
+      if (useChangeStream) {
         // M2-A: the v2 watchdog is a liveness probe only. It never loads or
         // overlays snapshots and never reconciles cursors — the reducer's
         // lastSeq owns the durable cursor. A running session silent past the
@@ -604,7 +606,7 @@ export const startSessionWatcher = (store, sessionId) => {
       return;
     }
     if (
-      isChatThreadV2Session(key) &&
+      useChangeStream &&
       applyChatThreadServerEvent(store, key, normalizedEventType || eventType, payload, {
         onSnapshotRequired: () => {
           // Runtime could not rebuild from the atomic snapshot (loader failed
@@ -701,15 +703,24 @@ export const startSessionWatcher = (store, sessionId) => {
   };
 
   const baseEventId = threadChangeCursor(runtime);
+  // Freeze the protocol branch for this watch request. A delayed ready frame
+  // can update the connection capability after a legacy watch has started;
+  // its handlers must never switch reducers mid-subscription.
+  let useChangeStream = isChatThreadV2Session(key);
   startWatchdog();
   const watchPromise = chatWsClient.request({
       requestId,
       sessionId: key,
-      message: {
-        type: 'watch',
-        request_id: requestId,
-        session_id: key,
-        payload: { after_event_id: isChatThreadV2Session(key) ? (getChatThreadState(key)?.lastSeq ?? 0) : baseEventId }
+      message: () => {
+        useChangeStream = isChatThreadV2Session(key) && isChatChangeStreamServerSupported();
+        return {
+          type: 'watch',
+          request_id: requestId,
+          session_id: key,
+          payload: useChangeStream
+            ? { change_stream: true, after_change_seq: getChatThreadState(key)?.lastSeq ?? 0 }
+            : { after_event_id: baseEventId }
+        };
       },
       onEvent,
       signal: controller.signal,
@@ -761,7 +772,17 @@ export const startSessionWatcher = (store, sessionId) => {
 export const chatWsClient = createWsMultiplexer(() => openChatSocket(), {
   idleTimeoutMs: 30000,
   connectTimeoutMs: 10000,
-  pingIntervalMs: 20000
+  pingIntervalMs: 20000,
+  readyTimeoutMs: 150,
+  onConnecting: () => setChatChangeStreamServerSupported(null),
+  onReady: (payload) => {
+    const features = payload?.features;
+    const supported = Boolean(
+      features && typeof features === 'object' && !Array.isArray(features) &&
+      (features as Record<string, unknown>).change_stream === true
+    );
+    setChatChangeStreamServerSupported(supported);
+  }
 });
 
 // v2 liveness probe threshold (plan §5 M2-A): a running session silent past

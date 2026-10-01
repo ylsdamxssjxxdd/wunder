@@ -175,6 +175,119 @@ impl WsSender {
             slow_warn_at: Arc::new(AtomicU64::new(0)),
         }
     }
+
+    pub(crate) fn remaining_capacity(&self) -> usize {
+        self.tx.capacity()
+    }
+}
+
+/// v2 durable feeder. Every frame comes from one immutable change row and is
+/// sent through the connection's bounded writer queue. If the writer is slow,
+/// stop this subscription; the client resumes from its last applied seq.
+pub(crate) async fn resume_thread_changes_v2(
+    state: Arc<AppState>,
+    session_id: String,
+    after_change_seq: i64,
+    request_id: Option<&str>,
+    tx: WsSender,
+    cancel: Option<CancellationToken>,
+) {
+    use crate::services::thread_change_feeder::{watch_thread_changes, ThreadChangeFrame};
+    let Ok(mut frames) =
+        watch_thread_changes(state, session_id.clone(), after_change_seq, cancel.clone()).await
+    else {
+        let _ = send_ws_error(
+            &tx,
+            request_id,
+            "THREAD_RECOVERY_FAILED",
+            "change feed unavailable".into(),
+        )
+        .await;
+        return;
+    };
+    let mut sent_seq = after_change_seq.max(0);
+    loop {
+        let frame = if let Some(token) = cancel.as_ref() {
+            tokio::select! {
+                _ = token.cancelled() => return,
+                frame = frames.recv() => frame,
+            }
+        } else {
+            frames.recv().await
+        };
+        let Some(frame) = frame else {
+            return;
+        };
+        if tx.remaining_capacity() <= STREAM_EVENT_SLOW_CLIENT_QUEUE_WATERMARK {
+            let overflow = StreamEvent {
+                event: "stream_overflow".into(),
+                data: json!({"session_id":session_id,"cursor":sent_seq,"resume_recommended":true}),
+                id: None,
+                timestamp: Some(Utc::now()),
+            };
+            // The queue has already crossed the durable-feed watermark.
+            // This is best effort only: waiting here would keep an obsolete
+            // subscription alive behind a slow writer.
+            let _ = try_send_ws_event(&tx, request_id, overflow);
+            return;
+        }
+        let (event, frame_seq) = match frame {
+            ThreadChangeFrame::Change { seq, event, data } => (
+                StreamEvent {
+                    event,
+                    data,
+                    id: None,
+                    timestamp: Some(Utc::now()),
+                },
+                seq,
+            ),
+            ThreadChangeFrame::SnapshotRequired { data } => (
+                StreamEvent {
+                    event: "thread_snapshot_required".into(),
+                    data,
+                    id: None,
+                    timestamp: Some(Utc::now()),
+                },
+                0,
+            ),
+            ThreadChangeFrame::Overflow {
+                cursor,
+                resume_recommended,
+            } => (
+                StreamEvent {
+                    event: "stream_overflow".into(),
+                    data: json!({"session_id":session_id,"cursor":cursor,"resume_recommended":resume_recommended}),
+                    id: None,
+                    timestamp: Some(Utc::now()),
+                },
+                0,
+            ),
+        };
+        let control = matches!(
+            event.event.as_str(),
+            "thread_snapshot_required" | "stream_overflow"
+        );
+        if try_send_ws_event(&tx, request_id, event).is_err() {
+            // The capacity check above and this enqueue are intentionally
+            // separate. A concurrent socket task may fill the last slot, in
+            // which case stop immediately; the durable cursor remains the
+            // recovery point and an overflow frame is only best effort.
+            let overflow = StreamEvent {
+                event: "stream_overflow".into(),
+                data: json!({"session_id":session_id,"cursor":sent_seq,"resume_recommended":true}),
+                id: None,
+                timestamp: Some(Utc::now()),
+            };
+            let _ = try_send_ws_event(&tx, request_id, overflow);
+            return;
+        }
+        if frame_seq > 0 {
+            sent_seq = frame_seq;
+        }
+        if control {
+            return;
+        }
+    }
 }
 
 pub(crate) fn apply_ws_auth_headers(headers: &HeaderMap, query: &WsQuery) -> HeaderMap {
@@ -397,6 +510,26 @@ pub(crate) async fn send_ws_pong(tx: &WsSender) -> Result<(), ()> {
     .await
 }
 
+/// Attempt one event enqueue without waiting for writer capacity. Durable
+/// feeders use this after their watermark check so a competing sender cannot
+/// turn a slow WebSocket into an unbounded task stall.
+pub(crate) fn try_send_ws_event(
+    tx: &WsSender,
+    request_id: Option<&str>,
+    event: StreamEvent,
+) -> Result<(), ()> {
+    let event_name = event.event.clone();
+    let event_id = event.id.clone();
+    let data = enrich_ws_event_data(event.data, event_id.as_deref());
+    let payload = json!({
+        "event": event_name,
+        "id": event_id,
+        "data": data,
+    });
+    let text = build_ws_text("event", request_id, Some(payload));
+    try_send_text_strict(tx, text).map_err(|_| ())
+}
+
 pub(crate) async fn send_ws_event(
     tx: &WsSender,
     request_id: Option<&str>,
@@ -459,7 +592,8 @@ pub(crate) async fn send_ws_live_event(
     tx: &WsSender,
     request_id: &str,
     event: StreamEvent,
-) -> Result<(), ()> {    if tx.tx.capacity() <= STREAM_EVENT_SLOW_CLIENT_QUEUE_WATERMARK {
+) -> Result<(), ()> {
+    if tx.tx.capacity() <= STREAM_EVENT_SLOW_CLIENT_QUEUE_WATERMARK {
         // Detach this live delivery with an explicit replay signal. Replay itself
         // stays lossless; silently dropping deltas there would skip its cursor.
         let warning = build_ws_text(

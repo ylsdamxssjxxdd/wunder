@@ -18,7 +18,9 @@ fn delta_event(event_id: i64, text: &str) -> StreamEvent {
 }
 
 fn thread_ids(count: usize) -> Vec<String> {
-    (0..count).map(|index| format!("load-thread-{index:03}")).collect()
+    (0..count)
+        .map(|index| format!("load-thread-{index:03}"))
+        .collect()
 }
 
 /// 20+ directory threads with 4 active streams: per-frame drain stays within
@@ -56,7 +58,11 @@ fn load_many_threads_keep_bounded_and_flag_replay_on_overflow() {
 
     for id in active_threads {
         assert!(
-            registry.projection(id).expect("projection").pending_events.len()
+            registry
+                .projection(id)
+                .expect("projection")
+                .pending_events
+                .len()
                 <= MAX_PENDING_EVENTS,
             "pending queue exceeded its bound"
         );
@@ -133,7 +139,11 @@ async fn switching_threads_keeps_background_streams_and_recovers_fully() {
         }
         let active = registry.active_thread_id().unwrap_or_default().to_string();
         for event in registry.take_pending_events(&active, 128) {
-            let event_id = event.id.as_deref().and_then(|id| id.parse::<i64>().ok()).unwrap_or(0);
+            let event_id = event
+                .id
+                .as_deref()
+                .and_then(|id| id.parse::<i64>().ok())
+                .unwrap_or(0);
             if registry.mark_event_applied(&active, event_id) {
                 let index = ids.iter().position(|id| *id == active).unwrap_or(0);
                 applied[index].push(event_id);
@@ -169,7 +179,11 @@ async fn switching_threads_keeps_background_streams_and_recovers_fully() {
     for (index, id) in ids.iter().enumerate() {
         registry.activate(id);
         for event in registry.take_pending_events(id, 2_048) {
-            let event_id = event.id.as_deref().and_then(|id| id.parse::<i64>().ok()).unwrap_or(0);
+            let event_id = event
+                .id
+                .as_deref()
+                .and_then(|id| id.parse::<i64>().ok())
+                .unwrap_or(0);
             if registry.mark_event_applied(id, event_id) {
                 applied[index].push(event_id);
             }
@@ -205,9 +219,15 @@ fn replay_reapplies_from_cursor_without_duplicates() {
     // First pass: apply events 1..=64.
     for event_id in 1..=64 {
         registry.record_event(id, event_id);
-        registry.projection_mut(id).queue_event(delta_event(event_id, "x"));
+        registry
+            .projection_mut(id)
+            .queue_event(delta_event(event_id, "x"));
         for event in registry.take_pending_events(id, 8) {
-            let parsed = event.id.as_deref().and_then(|id| id.parse::<i64>().ok()).unwrap_or(0);
+            let parsed = event
+                .id
+                .as_deref()
+                .and_then(|id| id.parse::<i64>().ok())
+                .unwrap_or(0);
             assert!(registry.mark_event_applied(id, parsed));
         }
     }
@@ -225,9 +245,15 @@ fn replay_reapplies_from_cursor_without_duplicates() {
     let mut new_applied = 0;
     for event_id in 1..=128 {
         registry.record_event(id, event_id);
-        registry.projection_mut(id).queue_event(delta_event(event_id, "y"));
+        registry
+            .projection_mut(id)
+            .queue_event(delta_event(event_id, "y"));
         for event in registry.take_pending_events(id, 16) {
-            let parsed = event.id.as_deref().and_then(|id| id.parse::<i64>().ok()).unwrap_or(0);
+            let parsed = event
+                .id
+                .as_deref()
+                .and_then(|id| id.parse::<i64>().ok())
+                .unwrap_or(0);
             if registry.mark_event_applied(id, parsed) {
                 new_applied += 1;
             }
@@ -237,7 +263,10 @@ fn replay_reapplies_from_cursor_without_duplicates() {
     registry.clear_replay(id);
     assert!(!registry.needs_replay(id));
     assert_eq!(
-        registry.projection(id).expect("projection").last_seen_event_id,
+        registry
+            .projection(id)
+            .expect("projection")
+            .last_seen_event_id,
         128
     );
 }

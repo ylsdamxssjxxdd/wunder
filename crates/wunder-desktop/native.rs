@@ -200,6 +200,60 @@ impl NativeDesktop {
         Ok((self.session_with_stats(record), messages))
     }
 
+    /// Recover durable changes from change_seq=0 to the latest cursor.
+    ///
+    /// Bounded replay: reads durable frames in pages of 200, up to 8 pages.
+    /// Snapshot guard: if the durable window was trimmed, returns empty vec
+    /// so the frontend can reload an atomic snapshot. I6 compliance: bounded
+    /// loop, no unbounded reads.
+    pub fn recover_session_durable_changes(&self, session_id: &str) -> Result<Vec<Value>> {
+        let cleaned = session_id.trim();
+        let workspace = self.desktop.state.workspace.clone();
+        let target = cleaned.to_string();
+        let mut cursor: i64 = 0;
+        let mut frames: Vec<Value> = Vec::new();
+        const MAX_PAGES: i64 = 8;
+        const PAGE_SIZE: i64 = 200;
+        for _ in 0..MAX_PAGES {
+            let workspace = workspace.clone();
+            let target = target.clone();
+            let page = self.runtime.block_on(wunder_server::blocking::run_fs(
+                "desktop.recover_changes",
+                move || workspace.try_load_thread_changes(&target, cursor, PAGE_SIZE),
+            ));
+            let records = match page {
+                Ok(records) => records,
+                Err(_) => break,
+            };
+            if records.is_empty() {
+                break;
+            }
+            if records.iter().any(|record| {
+                record.get("event").and_then(Value::as_str) == Some("thread_snapshot_required")
+            }) {
+                return Ok(Vec::new());
+            }
+            let mut progressed = false;
+            for record in &records {
+                let frame_cursor = record
+                    .get("data")
+                    .and_then(|data| data.get("cursor"))
+                    .and_then(Value::as_i64)
+                    .unwrap_or(cursor);
+                if frame_cursor > cursor {
+                    cursor = frame_cursor;
+                    progressed = true;
+                }
+            }
+            let page_len = records.len();
+            frames.extend(records);
+            if page_len < PAGE_SIZE as usize || !progressed {
+                break;
+            }
+        }
+        Ok(frames)
+    }
+
     pub fn create_session_for_agent(&self, agent_id: Option<&str>) -> Result<NativeSession> {
         let agent_id = agent_id
             .map(str::trim)

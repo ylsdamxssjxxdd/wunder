@@ -493,7 +493,8 @@ async fn admin_monitor_detail(
         .map(|user| user.username)
         .filter(|name| !name.trim().is_empty())
         .unwrap_or_else(|| user_id.clone());
-    let mut session = monitor.unwrap_or_else(|| json!({"session_id":cleaned,"user_id":user_id,"user_name":user_name}));
+    let mut session = monitor
+        .unwrap_or_else(|| json!({"session_id":cleaned,"user_id":user_id,"user_name":user_name}));
     if let Some(map) = session.as_object_mut() {
         map.entry("user_name").or_insert_with(|| json!(user_name));
     }
@@ -677,8 +678,12 @@ async fn admin_thread_changes(
     })
     .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let snapshot_required = changes.iter().any(|change| change.get("change_type").and_then(Value::as_str) == Some("snapshot_required"));
-    Ok(Json(json!({"data":{"session_id":session_id,"changes":changes,"frame":if snapshot_required {"thread_snapshot_required"} else {"thread_change"}}})))
+    let snapshot_required = changes.iter().any(|change| {
+        change.get("change_type").and_then(Value::as_str) == Some("snapshot_required")
+    });
+    Ok(Json(
+        json!({"data":{"session_id":session_id,"changes":changes,"frame":if snapshot_required {"thread_snapshot_required"} else {"thread_change"}}}),
+    ))
 }
 
 async fn admin_thread_item_content(
@@ -695,9 +700,21 @@ async fn admin_thread_item_content(
     let field_for_query = field.clone();
     let from_block = query.from_block.or(query.item_after).unwrap_or(0);
     let blocks = crate::core::blocking::run_db("api.admin.thread_log.item_content", move || {
-        storage.list_thread_item_blocks_page(&user_id, &lookup, &item_lookup, field_for_query.as_deref(), from_block, query.limit.unwrap_or(100).clamp(1, 100), true)
-    }).await.map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({"data":{"session_id":session_id,"item_id":item_id,"field":field,"blocks":blocks.0,"next_block":blocks.1,"has_more":blocks.2}})))
+        storage.list_thread_item_blocks_page(
+            &user_id,
+            &lookup,
+            &item_lookup,
+            field_for_query.as_deref(),
+            from_block,
+            query.limit.unwrap_or(100).clamp(1, 100),
+            true,
+        )
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(
+        json!({"data":{"session_id":session_id,"item_id":item_id,"field":field,"blocks":blocks.0,"next_block":blocks.1,"has_more":blocks.2}}),
+    ))
 }
 
 async fn admin_monitor_cancel(

@@ -57,11 +57,7 @@ impl ThreadLogStore for SqliteStorage {
     ) -> Result<i64> {
         self.upsert_thread_text_block_impl(user_id, session_id, block)
     }
-    fn thread_snapshot(
-        &self,
-        user_id: &str,
-        session_id: &str,
-    ) -> Result<Value> {
+    fn thread_snapshot(&self, user_id: &str, session_id: &str) -> Result<Value> {
         self.thread_snapshot_impl(user_id, session_id)
     }
     fn list_thread_text_blocks(
@@ -970,7 +966,11 @@ impl SessionGoalStore for SqliteStorage {
     fn upsert_session_goal(&self, record: &SessionGoalRecord) -> Result<()> {
         self.upsert_session_goal_impl(record)
     }
-    fn update_session_goal(&self, record: &SessionGoalRecord, expected_updated_at: f64) -> Result<bool> {
+    fn update_session_goal(
+        &self,
+        record: &SessionGoalRecord,
+        expected_updated_at: f64,
+    ) -> Result<bool> {
         let conn = self.open()?;
         Ok(conn.execute("UPDATE session_goals SET status=?, updated_at=?, completed_at=?, last_continued_at=?, source=?, user_round=?, approval_mode=? WHERE user_id=? AND session_id=? AND goal_id=? AND updated_at=?",
             rusqlite::params![record.status,record.updated_at,record.completed_at,record.last_continued_at,record.source,record.user_round,record.approval_mode,record.user_id,record.session_id,record.goal_id,expected_updated_at])? > 0)

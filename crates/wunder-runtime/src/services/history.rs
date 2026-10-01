@@ -137,9 +137,12 @@ impl HistoryManager {
     ) -> anyhow::Result<Vec<Value>> {
         blocking::run_fs("services.history.load_execution_messages", move || {
             let history = workspace.load_execution_history(&user_id, &session_id, &turn_id, 0)?;
-            Ok(materialize_history_items(&history).iter()
-                .filter_map(|item| build_message_from_item(item, true)).collect())
-        }).await
+            Ok(materialize_history_items(&history)
+                .iter()
+                .filter_map(|item| build_message_from_item(item, true))
+                .collect())
+        })
+        .await
     }
 
     pub fn build_compaction_candidates(history: &[Value]) -> (Vec<Value>, Vec<Value>) {

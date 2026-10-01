@@ -1297,67 +1297,28 @@ impl WorkspaceManager {
             limit.clamp(1, 500),
         )?;
         let mut frames = Vec::with_capacity(changes.len());
-        let user_id = self.storage.get_chat_session_owner(session_id)?;
         for change in changes {
             if change["change_type"] == "snapshot_required" {
                 frames.push(json!({"event":"thread_snapshot_required","data":change}));
                 break;
             }
             let cursor = change["change_seq"].as_i64().unwrap_or(0);
-            let mut embedded_item: Option<Value> = None;
-            if change["change_type"] == "item_upsert" {
-                if let (Some(owner), Some(item_id)) =
-                    (user_id.as_deref(), change["item_id"].as_str())
-                {
-                    match self
-                        .storage
-                        .get_thread_item(owner, session_id, item_id, false)
-                    {
-                        Ok(Some(item)) => {
-                            // Change-stream consumers apply items straight from
-                            // the frame, so embed the durable payload here.
-                            embedded_item = Some(item);
-                        }
-                        Ok(None) => {
-                            frames.push(json!({"event":"thread_change","data":{
-                                "change_type":"cursor", "cursor":cursor
-                            }}));
-                            continue;
-                        }
-                        Err(err) => {
-                            warn!("failed to load thread item {item_id} for change stream: {err}");
-                        }
-                    }
-                }
-            }
+            let mut payload = change["payload"].clone();
             if change["change_type"] == "text_block" {
-                if let Some(user_id) = user_id.as_deref() {
-                    let item_id = change["item_id"].as_str().unwrap_or_default();
-                    let index = change["payload"]["block_index"].as_i64().unwrap_or(0);
-                    let field = change["payload"]["field"].as_str();
-                    let (blocks, _, _) = self.storage.list_thread_item_blocks_page(
-                        user_id, session_id, item_id, field, index, 1, false,
-                    )?;
-                    for block in blocks {
-                        if block["block_index"].as_i64() != Some(index) {
-                            continue;
-                        }
-                        let mut data = block.get("data").cloned().unwrap_or_else(|| block.clone());
-                        data["cursor"] = json!(cursor);
-                        data["item_id"] = json!(item_id);
-                        data["message_id"] = json!(format!("item:{item_id}"));
-                        frames.push(json!({"event":"thread_item_block","data":data}));
-                    }
+                payload = payload.get("data").cloned().unwrap_or(payload);
+                if let Some(map) = payload.as_object_mut() {
+                    map.entry("field")
+                        .or_insert_with(|| change["payload"]["field"].clone());
+                    map.entry("block_index")
+                        .or_insert_with(|| change["payload"]["block_index"].clone());
+                    map.insert("item_id".into(), change["item_id"].clone());
                 }
             }
-            let mut frame = json!({"event":"thread_change","data":{
+            let frame = json!({"event":"thread_change","data":{
                 "change_type":change["change_type"], "turn_id":change["turn_id"],
                 "item_id":change["item_id"], "revision":change["revision"], "cursor":cursor,
-                "payload":change["payload"]
+                "payload":payload
             }});
-            if let Some(item) = embedded_item {
-                frame["data"]["item"] = item;
-            }
             frames.push(frame);
         }
         Ok(frames)
@@ -2742,12 +2703,12 @@ mod tests {
         let frames = workspace
             .try_load_thread_changes("thread", cursor, 100)
             .unwrap();
-        assert_eq!(frames.len(), 3);
-        assert_eq!(frames[0]["event"], "thread_item_block");
-        assert_eq!(frames[0]["data"]["message_id"], "item:answer");
-        assert_eq!(frames[0]["data"]["content"], "prefix");
-        assert_eq!(frames[1]["data"]["cursor"], cursor + 1);
-        assert_eq!(frames[2]["data"]["change_type"], "cursor");
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0]["event"], "thread_change");
+        assert_eq!(frames[0]["data"]["change_type"], "text_block");
+        assert_eq!(frames[0]["data"]["payload"]["content"], "prefix");
+        assert_eq!(frames[0]["data"]["cursor"], cursor + 1);
+        assert_eq!(frames[1]["data"]["change_type"], "item_upsert");
         assert!(frames.iter().all(|frame| frame.get("event_id").is_none()));
         assert_eq!(
             workspace

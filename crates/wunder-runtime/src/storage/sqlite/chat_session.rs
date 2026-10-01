@@ -555,10 +555,14 @@ mod child_directory_tests {
         }
         for index in 0..3 {
             let record = session(user, &format!("child-a-{index}"), Some("root-00"), 2_000.0);
-            storage.upsert_chat_session(&record).expect("upsert child a");
+            storage
+                .upsert_chat_session(&record)
+                .expect("upsert child a");
         }
         let record = session(user, "child-b-0", Some("root-01"), 2_100.0);
-        storage.upsert_chat_session(&record).expect("upsert child b");
+        storage
+            .upsert_chat_session(&record)
+            .expect("upsert child b");
 
         let (page, total) = storage
             .list_chat_sessions(user, None, None, 0, 10)
@@ -584,7 +588,9 @@ mod child_directory_tests {
         let counts = storage
             .count_child_chat_sessions(user, &parents)
             .expect("child counts");
-        let mut counts = counts.into_iter().collect::<std::collections::HashMap<_, _>>();
+        let mut counts = counts
+            .into_iter()
+            .collect::<std::collections::HashMap<_, _>>();
         assert_eq!(counts.remove("root-00"), Some(3));
         assert_eq!(counts.remove("root-01"), Some(1));
         // Parents without children simply have no row, per the trait contract.

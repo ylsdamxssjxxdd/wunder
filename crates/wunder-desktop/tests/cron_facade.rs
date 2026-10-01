@@ -135,10 +135,11 @@ fn cron_create_list_update_toggle_delete_roundtrip() {
 
     // Run records stay empty until an execution settles; the listing itself
     // must work for an unknown id without panicking.
-    assert!(runtime.list_cron_job_runs(&created.id).expect("runs").is_empty());
     assert!(runtime
-        .list_cron_job_runs("missing-cron-job")
-        .is_err());
+        .list_cron_job_runs(&created.id)
+        .expect("runs")
+        .is_empty());
+    assert!(runtime.list_cron_job_runs("missing-cron-job").is_err());
 
     runtime.delete_cron_job(&created.id).expect("delete");
     assert!(runtime.get_cron_job(&created.id).is_err());
@@ -223,8 +224,12 @@ fn cron_manual_run_records_a_run_entry() {
     let directory = tempfile::tempdir().expect("tempdir");
     let config = directory.path().join("runtime/config");
     std::fs::create_dir_all(&config).expect("config dir");
-    std::fs::write(config.join("wunder.yaml"), "{}
-").expect("wunder.yaml");
+    std::fs::write(
+        config.join("wunder.yaml"),
+        "{}
+",
+    )
+    .expect("wunder.yaml");
     let settings = serde_json::json!({
         "workspace_root": "", "desktop_token": "", "updated_at": 0,
         "lan_mesh": {"enabled": false},
@@ -239,7 +244,13 @@ fn cron_manual_run_records_a_run_entry() {
     )
     .expect("settings file");
     let mut args = DesktopArgs::native_defaults();
-    args.temp_root = Some(directory.path().join("runtime").canonicalize().expect("canonical"));
+    args.temp_root = Some(
+        directory
+            .path()
+            .join("runtime")
+            .canonicalize()
+            .expect("canonical"),
+    );
     args.workspace = Some(directory.path().join("workspace"));
     std::mem::forget(directory);
     let runtime = NativeDesktop::start_with_args(args).expect("isolated runtime");
@@ -307,7 +318,13 @@ fn model_context_probe_reads_context_length() {
     )
     .expect("settings file");
     let mut args = DesktopArgs::native_defaults();
-    args.temp_root = Some(directory.path().join("runtime").canonicalize().expect("canonical"));
+    args.temp_root = Some(
+        directory
+            .path()
+            .join("runtime")
+            .canonicalize()
+            .expect("canonical"),
+    );
     args.workspace = Some(directory.path().join("workspace"));
     std::mem::forget(directory);
     let runtime = NativeDesktop::start_with_args(args).expect("isolated runtime");
@@ -318,7 +335,9 @@ fn model_context_probe_reads_context_length() {
     assert_eq!(outcome.max_context, Some(32768));
     assert!(outcome.message.contains("32768"));
 
-    assert!(runtime.probe_model_context_window("missing-model", None).is_err());
+    assert!(runtime
+        .probe_model_context_window("missing-model", None)
+        .is_err());
     // TTS voice probing rejects non-tts models at the façade boundary.
     assert!(runtime.probe_model_voices("test-model", None).is_err());
 }

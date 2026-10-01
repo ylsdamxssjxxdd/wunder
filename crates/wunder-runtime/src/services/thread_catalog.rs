@@ -111,9 +111,9 @@ impl ThreadCatalogService {
                 .into_iter()
                 .filter(|record| searchable_text(record).contains(needle))
                 .filter(|record| {
-                    parent
-                        .as_deref()
-                        .is_none_or(|parent_id| record.parent_session_id.as_deref() == Some(parent_id))
+                    parent.as_deref().is_none_or(|parent_id| {
+                        record.parent_session_id.as_deref() == Some(parent_id)
+                    })
                 })
                 .collect();
             let total = matching.len() as i64;
@@ -141,10 +141,7 @@ impl ThreadCatalogService {
                 load_chat_session_activity(&self.state, &record.session_id, monitor.as_ref()).await;
             let status = normalize_status(&record.status, monitor.as_ref(), activity.running);
             items.push(ThreadSnapshot {
-                child_threads: child_counts
-                    .get(&record.session_id)
-                    .copied()
-                    .unwrap_or(0),
+                child_threads: child_counts.get(&record.session_id).copied().unwrap_or(0),
                 session_id: record.session_id,
                 title: record.title,
                 status,

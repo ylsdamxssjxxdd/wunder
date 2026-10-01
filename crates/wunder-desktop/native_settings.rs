@@ -117,8 +117,7 @@ impl NativeDesktop {
             .map_err(|_| anyhow!("配置锁不可用"))?;
         let config = self.runtime.block_on(self.state().config_store.get());
         let lan = self.read_lan_settings();
-        let persisted = load_desktop_settings(&self.desktop.settings_path)
-            .unwrap_or_default();
+        let persisted = load_desktop_settings(&self.desktop.settings_path).unwrap_or_default();
         Ok(project(
             &config,
             lan,
@@ -126,96 +125,86 @@ impl NativeDesktop {
         ))
     }
 
-/// Persisted UI preferences: theme and composer send key. Only "light" is
-/// rendered today; the value is stored so future themes need no migration.
+    /// Persisted UI preferences: theme and composer send key. Only "light" is
+    /// rendered today; the value is stored so future themes need no migration.
     pub fn save_preferences(&self, theme: &str, send_key: &str) -> Result<DesktopSettings> {
-    let theme = theme.trim();
-    let send_key = send_key.trim();
-    if !matches!(theme, "light") {
-        bail!("暂不支持该主题");
+        let theme = theme.trim();
+        let send_key = send_key.trim();
+        if !matches!(theme, "light") {
+            bail!("暂不支持该主题");
+        }
+        if !matches!(send_key, "enter" | "ctrl_enter") {
+            bail!("发送键设置无效");
+        }
+        let _guard = self
+            .settings_lock
+            .lock()
+            .map_err(|_| anyhow!("配置锁不可用"))?;
+        let mut settings = load_desktop_settings(&self.desktop.settings_path)?;
+        settings.theme = theme.to_string();
+        settings.send_key = send_key.to_string();
+        settings.updated_at = super::now_ts();
+        save_desktop_settings(&self.desktop.settings_path, &settings)?;
+        self.get_desktop_settings()
     }
-    if !matches!(send_key, "enter" | "ctrl_enter") {
-        bail!("发送键设置无效");
-    }
-    let _guard = self
-        .settings_lock
-        .lock()
-        .map_err(|_| anyhow!("配置锁不可用"))?;
-    let mut settings = load_desktop_settings(&self.desktop.settings_path)?;
-    settings.theme = theme.to_string();
-    settings.send_key = send_key.to_string();
-    settings.updated_at = super::now_ts();
-    save_desktop_settings(&self.desktop.settings_path, &settings)?;
-    self.get_desktop_settings()
-}
 
-/// Reset volatile work state (queues, running turns, temporary projections)
-/// through the shared runtime service. Assets, configuration, files and
-/// history are preserved by definition of the service.
-pub fn reset_work_state(
-    &self,
-) -> Result<wunder_server::ResetWorkStateSummary> {
-    let user = self.user_id().to_string();
-    self.runtime.block_on(async {
-        wunder_server::reset_user_work_state(
-            self.state(),
-            &user,
-            "desktop_reset_work_state",
-        )
-        .await
-    })
-}
-
-/// Export a secret-free diagnostics bundle (settings, counts, versions) into
-/// `directory` and return the file path. Mirrors the secret-free projection:
-/// no API keys, tokens or absolute remote endpoints are included.
-pub fn export_diagnostics(&self, directory: &std::path::Path) -> Result<std::path::PathBuf> {
-    let settings = self.get_desktop_settings()?;
-    let agents = self.list_agents().map(|items| items.len()).unwrap_or(0);
-    let sessions = self
-        .list_sessions()
-        .map(|items| items.len())
-        .unwrap_or(0);
-    let cron_jobs = self.list_cron_jobs().map(|items| items.len()).unwrap_or(0);
-    let models = settings
-        .models
-        .iter()
-        .map(|model| {
-            serde_json::json!({
-                "key": model.key,
-                "provider": model.provider,
-                "model": model.model,
-                "model_type": model.model_type,
-                "is_default": model.is_default,
-            })
+    /// Reset volatile work state (queues, running turns, temporary projections)
+    /// through the shared runtime service. Assets, configuration, files and
+    /// history are preserved by definition of the service.
+    pub fn reset_work_state(&self) -> Result<wunder_server::ResetWorkStateSummary> {
+        let user = self.user_id().to_string();
+        self.runtime.block_on(async {
+            wunder_server::reset_user_work_state(self.state(), &user, "desktop_reset_work_state")
+                .await
         })
-        .collect::<Vec<_>>();
-    let bundle = serde_json::json!({
-        "kind": "wunder-desktop-diagnostics",
-        "generated_at": chrono::Utc::now().to_rfc3339(),
-        "language": settings.language,
-        "theme": settings.theme,
-        "send_key": settings.send_key,
-        "counts": {
-            "agents": agents,
-            "active_sessions": sessions,
-            "cron_jobs": cron_jobs,
-            "models": models.len(),
-        },
-        "models": models,
-        "lan": {
-            "enabled": settings.lan.enabled,
-            "peer_id": settings.lan.peer_id,
-            "peer_count": settings.lan.peer_count,
-        },
-    });
-    std::fs::create_dir_all(directory)?;
-    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    let path = directory.join(format!("diagnostics-{stamp}.json"));
-    std::fs::write(&path, serde_json::to_vec_pretty(&bundle)?)?;
-    Ok(path)
-}
+    }
 
+    /// Export a secret-free diagnostics bundle (settings, counts, versions) into
+    /// `directory` and return the file path. Mirrors the secret-free projection:
+    /// no API keys, tokens or absolute remote endpoints are included.
+    pub fn export_diagnostics(&self, directory: &std::path::Path) -> Result<std::path::PathBuf> {
+        let settings = self.get_desktop_settings()?;
+        let agents = self.list_agents().map(|items| items.len()).unwrap_or(0);
+        let sessions = self.list_sessions().map(|items| items.len()).unwrap_or(0);
+        let cron_jobs = self.list_cron_jobs().map(|items| items.len()).unwrap_or(0);
+        let models = settings
+            .models
+            .iter()
+            .map(|model| {
+                serde_json::json!({
+                    "key": model.key,
+                    "provider": model.provider,
+                    "model": model.model,
+                    "model_type": model.model_type,
+                    "is_default": model.is_default,
+                })
+            })
+            .collect::<Vec<_>>();
+        let bundle = serde_json::json!({
+            "kind": "wunder-desktop-diagnostics",
+            "generated_at": chrono::Utc::now().to_rfc3339(),
+            "language": settings.language,
+            "theme": settings.theme,
+            "send_key": settings.send_key,
+            "counts": {
+                "agents": agents,
+                "active_sessions": sessions,
+                "cron_jobs": cron_jobs,
+                "models": models.len(),
+            },
+            "models": models,
+            "lan": {
+                "enabled": settings.lan.enabled,
+                "peer_id": settings.lan.peer_id,
+                "peer_count": settings.lan.peer_count,
+            },
+        });
+        std::fs::create_dir_all(directory)?;
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        let path = directory.join(format!("diagnostics-{stamp}.json"));
+        std::fs::write(&path, serde_json::to_vec_pretty(&bundle)?)?;
+        Ok(path)
+    }
 
     pub fn save_lan(&self, enabled: bool, display_name: &str) -> Result<DesktopSettings> {
         if display_name.chars().any(char::is_control) || display_name.chars().count() > 80 {
@@ -479,7 +468,6 @@ fn project(config: &Config, lan: LanSettings, preferences: (&str, &str)) -> Desk
     }
 }
 
-
 /// Secret-free probe result: the outcome message is user-facing and the
 /// resolved API key never leaves the process boundary.
 #[derive(Clone, Debug)]
@@ -521,7 +509,12 @@ impl NativeDesktop {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToString::to_string)
-            .or_else(|| entry.api_key.clone().filter(|value| !value.trim().is_empty()))
+            .or_else(|| {
+                entry
+                    .api_key
+                    .clone()
+                    .filter(|value| !value.trim().is_empty())
+            })
             .unwrap_or_default();
         let model = entry
             .model
@@ -530,7 +523,13 @@ impl NativeDesktop {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| anyhow!("该模型未配置模型名称"))?
             .to_string();
-        Ok((provider, base_url, secret, model, entry.model_type.clone().unwrap_or_default()))
+        Ok((
+            provider,
+            base_url,
+            secret,
+            model,
+            entry.model_type.clone().unwrap_or_default(),
+        ))
     }
 
     /// Probe the context window of one configured model through the shared
@@ -563,12 +562,14 @@ impl NativeDesktop {
                 message: "该提供方不支持上下文探测".into(),
             });
         }
-        let outcome = self.runtime.block_on(wunder_server::llm::probe_openai_context_window(
-            &base_url,
-            &secret,
-            model.trim(),
-            15,
-        ));
+        let outcome = self
+            .runtime
+            .block_on(wunder_server::llm::probe_openai_context_window(
+                &base_url,
+                &secret,
+                model.trim(),
+                15,
+            ));
         match outcome {
             Ok(Some(value)) => Ok(ModelProbeOutcome {
                 max_context: Some(value),
@@ -586,7 +587,11 @@ impl NativeDesktop {
     }
 
     /// Probe the voice list of one configured TTS model.
-    pub fn probe_model_voices(&self, model_key: &str, api_key: Option<&str>) -> Result<Vec<String>> {
+    pub fn probe_model_voices(
+        &self,
+        model_key: &str,
+        api_key: Option<&str>,
+    ) -> Result<Vec<String>> {
         let (provider, base_url, secret, model, model_type) =
             self.resolve_probe_target(model_key, api_key)?;
         if model_type != "tts" {

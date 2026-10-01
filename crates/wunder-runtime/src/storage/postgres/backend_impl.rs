@@ -57,11 +57,7 @@ impl ThreadLogStore for PostgresStorage {
     ) -> Result<i64> {
         self.upsert_thread_text_block_impl(user_id, session_id, block)
     }
-    fn thread_snapshot(
-        &self,
-        user_id: &str,
-        session_id: &str,
-    ) -> Result<Value> {
+    fn thread_snapshot(&self, user_id: &str, session_id: &str) -> Result<Value> {
         self.thread_snapshot_impl(user_id, session_id)
     }
     fn list_thread_text_blocks(
@@ -970,7 +966,11 @@ impl SessionGoalStore for PostgresStorage {
     fn upsert_session_goal(&self, record: &SessionGoalRecord) -> Result<()> {
         self.upsert_session_goal_impl(record)
     }
-    fn update_session_goal(&self, record: &SessionGoalRecord, expected_updated_at: f64) -> Result<bool> {
+    fn update_session_goal(
+        &self,
+        record: &SessionGoalRecord,
+        expected_updated_at: f64,
+    ) -> Result<bool> {
         let mut conn = self.conn()?;
         Ok(conn.execute("UPDATE session_goals SET status=$1, updated_at=$2, completed_at=$3, last_continued_at=$4, source=$5, user_round=$6, approval_mode=$7 WHERE user_id=$8 AND session_id=$9 AND goal_id=$10 AND updated_at=$11",
             &[&record.status,&record.updated_at,&record.completed_at,&record.last_continued_at,&record.source,&record.user_round,&record.approval_mode,&record.user_id,&record.session_id,&record.goal_id,&expected_updated_at])? > 0)

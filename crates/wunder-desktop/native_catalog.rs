@@ -235,10 +235,7 @@ impl NativeDesktop {
         let safe_name: String = name
             .chars()
             .map(|c| {
-                if matches!(
-                    c,
-                    '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
-                ) {
+                if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
                     '_'
                 } else {
                     c
@@ -311,7 +308,10 @@ impl NativeDesktop {
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default()
                 .to_string();
-            files.push((path.display().to_string(), format!("{name} · {exported_at}")));
+            files.push((
+                path.display().to_string(),
+                format!("{name} · {exported_at}"),
+            ));
             if files.len() >= WORKER_CARD_MAX_DOCUMENTS {
                 break;
             }
@@ -333,7 +333,9 @@ impl NativeDesktop {
         let (icon_name, icon_color) = card
             .pointer("/metadata/icon")
             .and_then(serde_json::Value::as_str)
-            .map(|icon| wunder_server::worker_card_settings::normalize_preset_icon_parts(Some(icon)))
+            .map(|icon| {
+                wunder_server::worker_card_settings::normalize_preset_icon_parts(Some(icon))
+            })
             .unwrap_or_default();
         let edit = AgentSettingsEdit {
             name: name.clone(),
@@ -404,7 +406,10 @@ impl NativeDesktop {
             None
         };
         let (agent, created) = match existing {
-            Some(existing) => (self.update_agent_settings(&existing.id, edit.clone())?, false),
+            Some(existing) => (
+                self.update_agent_settings(&existing.id, edit.clone())?,
+                false,
+            ),
             None => {
                 let created = self.create_agent(&name)?;
                 (self.update_agent_settings(&created.id, edit)?, true)
@@ -415,9 +420,9 @@ impl NativeDesktop {
             names
                 .iter()
                 .filter(|name| {
-                    !available.iter().any(|tool| {
-                        tool.name == **name && (!want_skill || tool.category == "技能")
-                    })
+                    !available
+                        .iter()
+                        .any(|tool| tool.name == **name && (!want_skill || tool.category == "技能"))
                 })
                 .cloned()
                 .collect()

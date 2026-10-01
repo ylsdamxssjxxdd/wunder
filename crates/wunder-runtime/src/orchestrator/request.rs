@@ -75,7 +75,14 @@ impl Orchestrator {
         // The accept transaction appends the first turn/item changes after
         // this cursor; start must replay them instead of starting at the
         // post-accept cursor.
-        let resume_from_seq = {
+        let reserved_resume_from_seq = request
+            .config_overrides
+            .as_ref()
+            .and_then(|fields| fields.get("__thread_log_resume_from_seq"))
+            .and_then(Value::as_i64);
+        let resume_from_seq = if let Some(seq) = reserved_resume_from_seq {
+            seq
+        } else {
             let storage = self.storage.clone();
             let thread = session_id.clone();
             crate::core::blocking::run_db("thread_log.resume_baseline", move || {
@@ -132,19 +139,9 @@ impl Orchestrator {
                     "client_message_id already accepted".to_string(),
                 ));
             }
-            // Wake active change feeders (other devices or an already-open
-            // watch) so the new user turn surfaces without waiting for their
-            // next poll tick.
-            let cursor_storage = self.storage.clone();
-            let cursor_session = session_id.clone();
-            if let Ok(cursor) = crate::core::blocking::run_db(
-                "thread_log.accept_cursor",
-                move || cursor_storage.latest_thread_change_seq_by_session(&cursor_session),
-            )
-            .await
-            {
-                self.change_hub.publish(&session_id, cursor);
-            }
+            // The durable transaction completed; wake local feeders. Polling
+            // remains the cross-instance fallback.
+            self.publish_thread_change(&session_id);
             (
                 accepted["turn_id"]
                     .as_str()
@@ -296,23 +293,6 @@ impl Orchestrator {
         if prepared.change_stream {
             // The change-stream ack anchors the client's feeder cursor. Emitted
             // through the pump so it is ordered before every turn event.
-            let cursor_storage = self.storage.clone();
-            let cursor_session = prepared.session_id.clone();
-            let change_cursor = match crate::core::blocking::run_db(
-                "orchestrator.request.change_cursor",
-                move || cursor_storage.latest_thread_change_seq_by_session(&cursor_session),
-            )
-            .await
-            {
-                Ok(value) => value,
-                Err(err) => {
-                    warn!(
-                        "failed to load change cursor for session {}: {err}",
-                        prepared.session_id
-                    );
-                    0
-                }
-            };
             emitter
                 .emit(
                     "thread_turn_started",

@@ -2793,7 +2793,8 @@ fn resolve_cancelled_round_suppression_range(
                     return None;
                 }
                 let created_at = message
-                    .get("created_at").or_else(|| message.get("timestamp"))
+                    .get("created_at")
+                    .or_else(|| message.get("timestamp"))
                     .map(parse_chat_message_time)
                     .unwrap_or(0.0);
                 if created_at <= 0.0
@@ -2854,7 +2855,8 @@ fn count_mother_user_rounds(
                 return false;
             }
             let created_at = message
-                .get("created_at").or_else(|| message.get("timestamp"))
+                .get("created_at")
+                .or_else(|| message.get("timestamp"))
                 .map(parse_chat_message_time)
                 .unwrap_or(0.0);
             if message_is_suppressed(round_state, created_at) {
@@ -2918,7 +2920,8 @@ fn load_or_migrate_round_state_by_orchestration_id(
             continue;
         }
         let created_at = message
-            .get("created_at").or_else(|| message.get("timestamp"))
+            .get("created_at")
+            .or_else(|| message.get("timestamp"))
             .map(parse_chat_message_time)
             .unwrap_or_else(now_ts);
         let suppression_probe = OrchestrationRoundState {

@@ -42,6 +42,10 @@ pub(super) fn router() -> Router<Arc<AppState>> {
             get(list_thread_changes),
         )
         .route(
+            "/wunder/chat/sessions/{session_id}/thread-log/snapshot",
+            get(get_thread_snapshot),
+        )
+        .route(
             "/wunder/chat/sessions/{session_id}/thread-log/items/{item_id}/content",
             get(get_thread_item_content),
         )
@@ -214,6 +218,23 @@ async fn list_thread_changes(
     Ok(Json(
         json!({"data":{"session_id":session_id,"changes":changes,"frame":if snapshot_required {"thread_snapshot_required"} else {"thread_change"}}}),
     ))
+}
+
+async fn get_thread_snapshot(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let session_id = session_id.trim().to_string();
+    let user_id = require_owned_thread(&state, &headers, &session_id).await?;
+    let storage = state.storage.clone();
+    let lookup_session = session_id.clone();
+    let snapshot = blocking::run_db("api.chat.thread_log.snapshot", move || {
+        storage.thread_snapshot(&user_id, &lookup_session)
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({"data": snapshot})))
 }
 
 async fn get_thread_item_content(
@@ -713,7 +734,13 @@ fn thread_item_workflow_event(item: &Value) -> Option<Value> {
     if !item_status.is_null() {
         data.entry("status".to_string()).or_insert(item_status);
     }
-    for key in ["kind", "turn_id", "root_turn_id", "user_round", "model_round"] {
+    for key in [
+        "kind",
+        "turn_id",
+        "root_turn_id",
+        "user_round",
+        "model_round",
+    ] {
         if let Some(value) = item.get(key).filter(|value| !value.is_null()) {
             data.entry(key.to_string()).or_insert_with(|| value.clone());
         }

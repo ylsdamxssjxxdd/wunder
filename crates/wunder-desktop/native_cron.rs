@@ -99,7 +99,9 @@ impl NativeDesktop {
                     return Err(anyhow!("执行间隔必须在 1..86400 秒之间"));
                 }
                 let first_run = edit.schedule_at.trim();
-                (!first_run.is_empty()).then(|| local_at_to_rfc3339(first_run)).transpose()?
+                (!first_run.is_empty())
+                    .then(|| local_at_to_rfc3339(first_run))
+                    .transpose()?
             }
             _ => None,
         };
@@ -203,13 +205,9 @@ impl NativeDesktop {
         let storage = self.state().storage.clone();
         let user = self.user_id().to_string();
         let job = cleaned.to_string();
-        let result = self.runtime.block_on(list_cron_runs(
-            storage,
-            &user,
-            &job,
-            None,
-            CRON_RUNS_LIMIT,
-        ))?;
+        let result =
+            self.runtime
+                .block_on(list_cron_runs(storage, &user, &job, None, CRON_RUNS_LIMIT))?;
         let mut runs = Vec::new();
         if let Some(items) = result.get("runs").and_then(Value::as_array) {
             for item in items {
@@ -358,9 +356,7 @@ fn local_at_to_rfc3339(value: &str) -> Result<String> {
     }
     let formats = ["%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y/%m/%d %H:%M"];
     for format in formats {
-        if let Ok(parsed) =
-            chrono::NaiveDateTime::parse_from_str(trimmed, format)
-        {
+        if let Ok(parsed) = chrono::NaiveDateTime::parse_from_str(trimmed, format) {
             let local = chrono_local_offset();
             return Ok(parsed
                 .and_local_timezone(local)

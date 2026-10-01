@@ -214,6 +214,14 @@ impl ThreadRuntime {
             "root_user_round": goal::goal_continuation_user_round(request.config_overrides.as_ref()),
         });
         let storage = self.user_store.storage_backend().clone();
+        let resume_from_seq = {
+            let storage = storage.clone();
+            let thread = session_id.clone();
+            crate::core::blocking::run_db("thread_log.accept_baseline", move || {
+                storage.latest_thread_change_seq_by_session(&thread)
+            })
+            .await?
+        };
         let owner = user_id.clone();
         let thread = session_id.clone();
         let accepted = crate::core::blocking::run_db("thread_log.accept", move || {
@@ -232,6 +240,10 @@ impl ThreadRuntime {
                 json!(thread_turn_id.to_string()),
             );
             map.insert("__thread_log_user_round".into(), json!(user_round));
+            map.insert(
+                "__thread_log_resume_from_seq".into(),
+                json!(resume_from_seq),
+            );
         }
         let session_id = Some(session_id);
         let mut lease = None;
@@ -511,14 +523,21 @@ impl ThreadRuntime {
                 .and_then(Value::as_str)
             {
                 let payload = json!({"session_id": task.session_id, "turn_id": turn_id, "status": "cancelled", "error": "cancelled"});
-                let _ = self.user_store.storage_backend().update_thread_turn(
-                    &task.user_id,
-                    &task.session_id,
-                    turn_id,
-                    "cancelled",
-                    "cancelled",
-                    &payload,
-                );
+                if self
+                    .user_store
+                    .storage_backend()
+                    .update_thread_turn(
+                        &task.user_id,
+                        &task.session_id,
+                        turn_id,
+                        "cancelled",
+                        "cancelled",
+                        &payload,
+                    )
+                    .is_ok()
+                {
+                    self.orchestrator.publish_thread_change(&task.session_id);
+                }
             }
         }
         self.user_store
@@ -1146,7 +1165,11 @@ impl ThreadRuntime {
         })
         .await
         {
-            Ok(Some(receipt)) => receipt.get("cursor").and_then(Value::as_i64).unwrap_or(0),
+            Ok(Some(receipt)) => {
+                let cursor = receipt.get("cursor").and_then(Value::as_i64).unwrap_or(0);
+                self.orchestrator.change_hub.publish(session_id, cursor);
+                cursor
+            }
             Ok(None) => 0,
             Err(error) => {
                 warn!("persist queue item failed: {error}");
@@ -1404,7 +1427,6 @@ impl ThreadRuntime {
                     }
                     // drain
                 }
-                crate::orchestrator::flush_stream_event_persist_queue().await;
                 if self.is_task_cancelled(&task.task_id) {
                     self.finish_thread(&task.thread_id).await;
                     let _ = self.queue_tx.try_send(());
@@ -1504,7 +1526,6 @@ impl ThreadRuntime {
     }
 
     async fn fail_task(&self, task: &AgentTaskRecord, message: String, status: &str) -> Result<()> {
-        crate::orchestrator::flush_stream_event_persist_queue().await;
         let now = now_ts();
         self.user_store
             .update_agent_task_status(UpdateAgentTaskStatusParams {
@@ -1528,14 +1549,21 @@ impl ThreadRuntime {
                 "failed"
             };
             let payload = json!({"session_id": task.session_id, "turn_id": turn_id, "status": terminal, "error": message});
-            let _ = self.user_store.storage_backend().update_thread_turn(
-                &task.user_id,
-                &task.session_id,
-                turn_id,
-                terminal,
-                &message,
-                &payload,
-            );
+            if self
+                .user_store
+                .storage_backend()
+                .update_thread_turn(
+                    &task.user_id,
+                    &task.session_id,
+                    turn_id,
+                    terminal,
+                    &message,
+                    &payload,
+                )
+                .is_ok()
+            {
+                self.orchestrator.publish_thread_change(&task.session_id);
+            }
         }
         if status == TASK_STATUS_CANCELLED {
             self.monitor.mark_cancelled(&task.session_id);
@@ -1651,6 +1679,49 @@ struct QueueStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn queue_commit_wakes_feeder_with_committed_cursor() {
+        use crate::state::{AppState, AppStateInitOptions};
+        let root = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.storage.backend = "sqlite".into();
+        config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+        config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
+        let store = ConfigStore::new(root.path().join("config.yaml"));
+        store
+            .update(|current| *current = config.clone())
+            .await
+            .unwrap();
+        let state = AppState::new_with_options(
+            store,
+            config,
+            AppStateInitOptions::cli_default().with_start_thread_runtime(false),
+        )
+        .unwrap();
+        let accepted = state
+            .storage
+            .accept_thread_turn("user-a", "session-a", &json!({"content":"input"}))
+            .unwrap();
+        let mut wake = state.kernel.orchestrator.change_hub.subscribe("session-a");
+        for event_type in ["queue_enter", "queue_start", "queue_finish"] {
+            let cursor = state.kernel.thread_runtime.emit_queue_event("session-a", "user-a", event_type,
+                json!({"session_id":"session-a", "turn_id":accepted["turn_id"], "queue_id":"queue-a"})).await;
+            assert!(cursor > 0);
+            assert!(wake.has_changed().unwrap());
+            assert_eq!(*wake.borrow_and_update(), cursor);
+            let changes = state
+                .storage
+                .list_thread_changes_by_session("session-a", cursor - 1, 1)
+                .unwrap();
+            assert_eq!(changes[0]["payload"]["payload"]["event_type"], event_type);
+        }
+        assert!(state
+            .storage
+            .load_stream_events("session-a", 0, 100)
+            .unwrap()
+            .is_empty());
+    }
 
     #[test]
     fn start_lease_enforces_global_capacity_and_releases_on_drop() {

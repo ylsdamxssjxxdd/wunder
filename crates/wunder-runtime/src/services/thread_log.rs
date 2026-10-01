@@ -145,6 +145,20 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
     let turn = data.get("turn_id")?.as_str()?;
     let model = data.get("model_round").and_then(Value::as_i64).unwrap_or(0);
     let (kind, key, status) = match event_type {
+        "queue_enter" | "queue_update" | "queue_start" => (
+            "queue",
+            format!(
+                "queue-{}",
+                data.get("queue_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("handoff")
+            ),
+            if event_type == "queue_start" {
+                "running"
+            } else {
+                "queued"
+            },
+        ),
         "tool_call" | "tool_result" => (
             "tool_call",
             format!("tool-{}", data.get("tool_call_id")?.as_str()?),
@@ -233,6 +247,88 @@ pub struct TextTail {
     /// clients never apply text before the corresponding durable item.
     base_seq: i64,
 }
+
+/// The number of interleaved text items retained by one emitter is bounded.
+/// Each item keeps only its active tail; completed blocks live in ThreadLog.
+#[derive(Default)]
+pub struct TextTails {
+    tails: std::collections::HashMap<String, TextTail>,
+}
+
+impl TextTails {
+    const MAX_ITEMS: usize = 16;
+
+    fn item_id(data: &Value) -> Option<String> {
+        let turn = data.get("turn_id")?.as_str()?;
+        let model = data.get("model_round").and_then(Value::as_i64).unwrap_or(0);
+        Some(format!("{turn}:text-{model}"))
+    }
+
+    pub fn set_base_seq(&mut self, item_id: &str, seq: i64) {
+        self.tails
+            .entry(item_id.to_string())
+            .or_default()
+            .set_base_seq(seq);
+    }
+
+    pub fn base_seq(&self, item_id: &str) -> i64 {
+        self.tails.get(item_id).map(TextTail::base_seq).unwrap_or(0)
+    }
+
+    pub fn append(
+        &mut self,
+        session_id: &str,
+        event_id: i64,
+        data: &Value,
+    ) -> (Vec<Value>, Vec<(String, i64, String, String)>) {
+        let Some(item_id) = Self::item_id(data) else {
+            return (Vec::new(), Vec::new());
+        };
+        let mut blocks = Vec::new();
+        if !self.tails.contains_key(&item_id) && self.tails.len() >= Self::MAX_ITEMS {
+            if let Some(oldest) = self.tails.keys().min().cloned() {
+                if let Some(mut old) = self.tails.remove(&oldest) {
+                    if let Some(flush) = old.flush(session_id) {
+                        blocks.push(flush);
+                    }
+                }
+            }
+        }
+        let tail = self.tails.entry(item_id.clone()).or_default();
+        let (_, content_offset, reasoning_offset) = tail.tail_annotation(data);
+        let mut hints = Vec::with_capacity(2);
+        if let (Some(offset), Some(text)) =
+            (content_offset, data.get("delta").and_then(Value::as_str))
+        {
+            if !text.is_empty() {
+                hints.push((item_id.clone(), offset, "content".into(), text.into()));
+            }
+        }
+        if let (Some(offset), Some(text)) = (
+            reasoning_offset,
+            data.get("reasoning_delta").and_then(Value::as_str),
+        ) {
+            if !text.is_empty() {
+                hints.push((item_id.clone(), offset, "reasoning".into(), text.into()));
+            }
+        }
+        if let Some(flush) = tail.append(session_id, event_id, data) {
+            blocks.push(flush);
+        }
+        (blocks, hints)
+    }
+
+    pub fn flush_item(&mut self, session_id: &str, item_id: &str) -> Option<Value> {
+        self.tails.get_mut(item_id)?.flush(session_id)
+    }
+
+    pub fn flush_all(&mut self, session_id: &str) -> Vec<Value> {
+        self.tails
+            .values_mut()
+            .filter_map(|tail| tail.flush(session_id))
+            .collect()
+    }
+}
 impl TextTail {
     pub fn set_base_seq(&mut self, seq: i64) {
         self.base_seq = self.base_seq.max(seq.max(0));
@@ -284,9 +380,15 @@ impl TextTail {
         let model = data.get("model_round").and_then(Value::as_i64).unwrap_or(0);
         let item_id = format!("{turn}:text-{model}");
         if self.item_id != item_id {
+            // `set_base_seq` can register this tail before its first delta.
+            // Keep that durable dependency when the first delta supplies the
+            // item's context; otherwise v2 tail frames could incorrectly use
+            // base_seq=0 and race ahead of the durable item_upsert.
+            let base_seq = self.base_seq;
             *self = Self {
                 item_id,
                 context: data.clone(),
+                base_seq,
                 ..Default::default()
             };
             if let Some(map) = self.context.as_object_mut() {

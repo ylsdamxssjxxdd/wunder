@@ -505,17 +505,31 @@ fn extract_persisted_message_stats(item: &Value) -> Option<Value> {
         .cloned()
         .unwrap_or_default();
     for key in [
-        "decode_output_tokens", "decode_tokens", "decode_duration_s",
-        "decode_speed_tps", "visible_decode_tokens", "visible_decode_duration_s",
-        "visible_decode_speed_tps", "prefill_duration_s", "prefill_speed_tps",
-        "stream_timing", "usage", "round_usage", "context_occupancy_tokens",
+        "decode_output_tokens",
+        "decode_tokens",
+        "decode_duration_s",
+        "decode_speed_tps",
+        "visible_decode_tokens",
+        "visible_decode_duration_s",
+        "visible_decode_speed_tps",
+        "prefill_duration_s",
+        "prefill_speed_tps",
+        "stream_timing",
+        "usage",
+        "round_usage",
+        "context_occupancy_tokens",
     ] {
         if let Some(value) = item.get(key) {
-            stats.entry(key.to_string()).or_insert_with(|| value.clone());
+            stats
+                .entry(key.to_string())
+                .or_insert_with(|| value.clone());
         }
     }
     if stats.get("visible_decode_tokens").is_none() {
-        if let Some(tokens) = item.get("decode_output_tokens").or_else(|| item.get("decode_tokens")) {
+        if let Some(tokens) = item
+            .get("decode_output_tokens")
+            .or_else(|| item.get("decode_tokens"))
+        {
             stats.insert("visible_decode_tokens".into(), tokens.clone());
         }
     }
@@ -532,7 +546,9 @@ fn extract_persisted_message_stats(item: &Value) -> Option<Value> {
     }
     if stats.get("visible_decode_speed_tps").is_none() {
         let tokens = stats.get("visible_decode_tokens").and_then(Value::as_f64);
-        let duration = stats.get("visible_decode_duration_s").and_then(Value::as_f64);
+        let duration = stats
+            .get("visible_decode_duration_s")
+            .and_then(Value::as_f64);
         if let (Some(tokens), Some(duration)) = (tokens, duration) {
             if tokens > 0.0 && duration > 0.0 {
                 stats.insert("visible_decode_speed_tps".into(), json!(tokens / duration));

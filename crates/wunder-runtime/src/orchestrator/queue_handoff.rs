@@ -13,8 +13,7 @@ impl Orchestrator {
             return Ok(());
         }
         self.ensure_not_cancelled(session_id)?;
-        // Flush durable output before releasing capacity; browser replay can restore the boundary.
-        flush_stream_event_persist_queue().await;
+        // Each preceding emit has already awaited its durable commits.
         let storage = self.storage.clone();
         let id = session_id.to_string();
         let suspended = crate::core::blocking::run_db("queue.suspend_lock", move || {
