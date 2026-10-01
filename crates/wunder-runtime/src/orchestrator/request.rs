@@ -255,23 +255,20 @@ impl Orchestrator {
         let language = prepared.language.clone();
         let (queue_tx, queue_rx) = mpsc::channel::<StreamSignal>(STREAM_EVENT_QUEUE_SIZE);
         let (event_tx, event_rx) = mpsc::channel::<StreamEvent>(STREAM_EVENT_QUEUE_SIZE);
-        let session_id = prepared.session_id.clone();
-        let storage = self.storage.clone();
-        let start_event_id =
-            match crate::core::blocking::run_db("orchestrator.request.stream_offset", move || {
+        // v2 uses the durable ThreadLog cursor as its only recovery baseline.
+        // v1 keeps its transport sequence for the compatibility pump, but the
+        // v2 branch never consults stream_events or derives ordering from it.
+        let start_event_id = if prepared.change_stream {
+            0
+        } else {
+            let session_id = prepared.session_id.clone();
+            let storage = self.storage.clone();
+            crate::core::blocking::run_db("orchestrator.request.v1_stream_offset", move || {
                 storage.get_max_stream_event_id(&session_id)
             })
             .await
-            {
-                Ok(value) => value,
-                Err(err) => {
-                    warn!(
-                        "failed to load stream event offset for session {}: {err}",
-                        prepared.session_id
-                    );
-                    0
-                }
-            };
+            .unwrap_or(0)
+        };
         let mut emitter = EventEmitter::new(
             prepared.session_id.clone(),
             prepared.user_id.clone(),

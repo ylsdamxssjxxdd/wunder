@@ -870,13 +870,19 @@ async fn submit_message_feedback(
         .set_thread_item_feedback(&resolved.user.user_id, &session_id, &item_id, vote)
         .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
     {
-        Some(feedback) => Ok(Json(json!({
-            "data": {
-                "session_id": session_id,
-                "item_id": item_id,
-                "feedback": feedback
-            }
-        }))),
+        Some(feedback) => {
+            // The durable item_upsert feedback change is committed; wake local
+            // feeders so connected clients observe the locked vote without
+            // waiting for the poll fallback.
+            state.kernel.orchestrator.publish_thread_change(&session_id);
+            Ok(Json(json!({
+                "data": {
+                    "session_id": session_id,
+                    "item_id": item_id,
+                    "feedback": feedback
+                }
+            })))
+        }
         None => Err(error_response(
             StatusCode::CONFLICT,
             "feedback already submitted".to_string(),

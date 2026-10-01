@@ -706,13 +706,20 @@ export const startSessionWatcher = (store, sessionId) => {
   // Freeze the protocol branch for this watch request. A delayed ready frame
   // can update the connection capability after a legacy watch has started;
   // its handlers must never switch reducers mid-subscription.
-  let useChangeStream = isChatThreadV2Session(key);
+  let useChangeStream = false;
+  let protocolChosen = false;
   startWatchdog();
   const watchPromise = chatWsClient.request({
       requestId,
       sessionId: key,
       message: () => {
-        useChangeStream = isChatThreadV2Session(key) && isChatChangeStreamServerSupported();
+        if (!protocolChosen) {
+          // The multiplexer waits for the ready capability before invoking
+          // this factory. Choose once for this watcher and never switch
+          // reducers if a later handshake or reconnect changes capability.
+          useChangeStream = isChatThreadV2Session(key) && isChatChangeStreamServerSupported();
+          protocolChosen = true;
+        }
         return {
           type: 'watch',
           request_id: requestId,

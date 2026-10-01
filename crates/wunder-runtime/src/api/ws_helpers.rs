@@ -290,6 +290,105 @@ pub(crate) async fn resume_thread_changes_v2(
     }
 }
 
+/// Queued v2 start uses the same durable feeder as normal turns, but stops
+/// after the matching queue Item reaches a terminal state. All frames are
+/// still forwarded to the session reducer so queue transitions and any
+/// interleaved durable work remain ordered by `change_seq`.
+pub(crate) async fn resume_queued_thread_changes_v2(
+    state: Arc<AppState>,
+    session_id: String,
+    queue_id: String,
+    after_change_seq: i64,
+    request_id: Option<&str>,
+    tx: WsSender,
+    cancel: Option<CancellationToken>,
+) {
+    use crate::services::thread_change_feeder::{watch_thread_changes, ThreadChangeFrame};
+    let Ok(mut frames) =
+        watch_thread_changes(state, session_id.clone(), after_change_seq, cancel.clone()).await
+    else {
+        let _ = send_ws_error(
+            &tx,
+            request_id,
+            "THREAD_RECOVERY_FAILED",
+            "change feed unavailable".into(),
+        )
+        .await;
+        return;
+    };
+    loop {
+        let frame = if let Some(token) = cancel.as_ref() {
+            tokio::select! {
+                _ = token.cancelled() => return,
+                frame = frames.recv() => frame,
+            }
+        } else {
+            frames.recv().await
+        };
+        let Some(frame) = frame else { return };
+        if tx.remaining_capacity() <= STREAM_EVENT_SLOW_CLIENT_QUEUE_WATERMARK {
+            let _ = try_send_ws_event(
+                &tx,
+                request_id,
+                StreamEvent {
+                    event: "stream_overflow".into(),
+                    data: json!({"session_id":session_id,"resume_recommended":true}),
+                    id: None,
+                    timestamp: Some(Utc::now()),
+                },
+            );
+            return;
+        }
+        let (event, terminal) = match frame {
+            ThreadChangeFrame::Change { event, data, .. } => {
+                let payload = data.get("payload").unwrap_or(&data);
+                let terminal = payload.get("kind").and_then(Value::as_str) == Some("queue")
+                    && payload
+                        .get("item_id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|item| item.ends_with(&format!(":queue-{queue_id}")))
+                    && matches!(
+                        payload.get("status").and_then(Value::as_str),
+                        Some("completed" | "failed" | "cancelled" | "dead" | "success")
+                    );
+                (
+                    StreamEvent {
+                        event,
+                        data,
+                        id: None,
+                        timestamp: Some(Utc::now()),
+                    },
+                    terminal,
+                )
+            }
+            ThreadChangeFrame::SnapshotRequired { data } => (
+                StreamEvent {
+                    event: "thread_snapshot_required".into(),
+                    data,
+                    id: None,
+                    timestamp: Some(Utc::now()),
+                },
+                true,
+            ),
+            ThreadChangeFrame::Overflow {
+                cursor,
+                resume_recommended,
+            } => (
+                StreamEvent {
+                    event: "stream_overflow".into(),
+                    data: json!({"session_id":session_id,"cursor":cursor,"resume_recommended":resume_recommended}),
+                    id: None,
+                    timestamp: Some(Utc::now()),
+                },
+                true,
+            ),
+        };
+        if try_send_ws_event(&tx, request_id, event).is_err() || terminal {
+            return;
+        }
+    }
+}
+
 pub(crate) fn apply_ws_auth_headers(headers: &HeaderMap, query: &WsQuery) -> HeaderMap {
     let mut auth_headers = headers.clone();
     if auth_headers.get(AUTHORIZATION).is_none() {

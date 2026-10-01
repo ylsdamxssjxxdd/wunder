@@ -12,7 +12,7 @@ import {
   resetChatThreadRuntime,
   getChatThreadState
 } from '../../src/realtime/chat/chatThreadRuntime';
-import { getThreadTurn } from '../../src/realtime/chat/chatThreadState';
+import { composeItemText, getThreadTurn } from '../../src/realtime/chat/chatThreadState';
 import {
   emptyChatThreadState,
   THREAD_GAP_MAX_FRAMES,
@@ -451,4 +451,420 @@ test('a failed or stale snapshot keeps the legacy fallback contract', async () =
   assert.equal(isChatThreadV2Session(SESSION), false);
 
   registerChatThreadSnapshotLoader(null);
+});
+
+test('out-of-order durable frames heal through the bounded gap buffer in seq order', () => {
+  resetChatThreadRuntime(SESSION);
+  ensureChatThreadRuntime(SESSION);
+  const store = new FakeStore();
+  const apply = (type: string, payload: unknown) =>
+    applyChatThreadServerEvent(store, SESSION, type, payload);
+
+  apply('thread_change', wireChange({
+    change_type: 'turn_upsert', turn_id: 'turn-g', cursor: 1, revision: 1,
+    payload: { turn_id: 'turn-g', status: 'running', user_round: 1 }
+  }));
+  apply('thread_change', wireChange({
+    change_type: 'item_upsert', turn_id: 'turn-g', cursor: 2, revision: 1,
+    item: {
+      item_id: 'turn-g:text-1', turn_id: 'turn-g', kind: 'assistant_message',
+      status: 'running', revision: 1, visibility: 'user',
+      payload: { model_round: 1, role: 'assistant', content: '', reasoning: '' }
+    }
+  }));
+
+  // Far-ahead frames wait in the gap buffer; lastSeq must not advance.
+  apply('thread_change', wireChange({
+    change_type: 'turn_status', turn_id: 'turn-g', cursor: 5,
+    payload: { turn_id: 'turn-g', status: 'e' }
+  }));
+  apply('thread_change', wireChange({
+    change_type: 'turn_status', turn_id: 'turn-g', cursor: 4,
+    payload: { turn_id: 'turn-g', status: 'd' }
+  }));
+  const stateBeforeHeal = getChatThreadState(SESSION)!;
+  assert.equal(stateBeforeHeal.lastSeq, 2);
+  assert.equal(stateBeforeHeal.gap.length, 2);
+
+  // The missing head lands: everything buffers forward in commit order.
+  apply('thread_change', wireChange({
+    change_type: 'turn_status', turn_id: 'turn-g', cursor: 3,
+    payload: { turn_id: 'turn-g', status: 'c' }
+  }));
+  const stateAfterHeal = getChatThreadState(SESSION)!;
+  assert.equal(stateAfterHeal.lastSeq, 5);
+  assert.equal(stateAfterHeal.gap.length, 0);
+  assert.equal(getThreadTurn(stateAfterHeal, 'turn-g')?.status, 'e');
+});
+
+test('revision rollback and same-revision replay never regress item state', () => {
+  resetChatThreadRuntime(SESSION);
+  ensureChatThreadRuntime(SESSION);
+  const store = new FakeStore();
+  const apply = (type: string, payload: unknown) =>
+    applyChatThreadServerEvent(store, SESSION, type, payload);
+
+  apply('thread_change', wireChange({
+    change_type: 'turn_upsert', turn_id: 'turn-r', cursor: 1, revision: 1,
+    payload: { turn_id: 'turn-r', status: 'running', user_round: 1 }
+  }));
+  apply('thread_change', wireChange({
+    change_type: 'item_upsert', turn_id: 'turn-r', cursor: 2, revision: 1,
+    item: {
+      item_id: 'turn-r:text-1', turn_id: 'turn-r', kind: 'assistant_message',
+      status: 'running', revision: 1, visibility: 'user',
+      payload: { model_round: 1, role: 'assistant', content: '一', reasoning: '' }
+    }
+  }));
+  // Higher seq but lower revision: stale rollback payload — ignored.
+  apply('thread_change', wireChange({
+    change_type: 'item_upsert', turn_id: 'turn-r', cursor: 2, revision: 0,
+    item: {
+      item_id: 'turn-r:text-1', turn_id: 'turn-r', kind: 'assistant_message',
+      status: 'running', revision: 0, visibility: 'user',
+      payload: { model_round: 1, role: 'assistant', content: '回退', reasoning: '' }
+    }
+  }));
+  assert.equal(getChatThreadState(SESSION)?.items.get('turn-r:text-1')?.revision, 1);
+
+  // Same revision replay (delivery retry): idempotent.
+  apply('thread_change', wireChange({
+    change_type: 'item_upsert', turn_id: 'turn-r', cursor: 2, revision: 1,
+    item: {
+      item_id: 'turn-r:text-1', turn_id: 'turn-r', kind: 'assistant_message',
+      status: 'running', revision: 1, visibility: 'user',
+      payload: { model_round: 1, role: 'assistant', content: '一-改', reasoning: '' }
+    }
+  }));
+  assert.equal(
+    getChatThreadState(SESSION)?.items.get('turn-r:text-1')?.content,
+    '一',
+    'same-revision replay must not mutate content'
+  );
+
+  // Forward revision applies.
+  apply('thread_change', wireChange({
+    change_type: 'item_upsert', turn_id: 'turn-r', cursor: 3, revision: 2,
+    item: {
+      item_id: 'turn-r:text-1', turn_id: 'turn-r', kind: 'assistant_message',
+      status: 'completed', revision: 2, visibility: 'user',
+      payload: { model_round: 1, role: 'assistant', content: '二', reasoning: '' }
+    }
+  }));
+  const messages = buildChatThreadMaterializedMessages(SESSION);
+  assert.equal((messages?.[0] as Record<string, unknown> | undefined)?.content, '二');
+});
+
+test('tail frames validate UTF-16 offsets: zero, continuous, hole, covered and -1', () => {
+  resetChatThreadRuntime(SESSION);
+  ensureChatThreadRuntime(SESSION);
+  const store = new FakeStore();
+  const apply = (type: string, payload: unknown) =>
+    applyChatThreadServerEvent(store, SESSION, type, payload);
+  const state = () => getChatThreadState(SESSION)!;
+
+  apply('thread_change', wireChange({
+    change_type: 'item_upsert', turn_id: 'turn-t', cursor: 1, revision: 1,
+    item: {
+      item_id: 'turn-t:text-1', turn_id: 'turn-t', kind: 'assistant_message',
+      status: 'running', revision: 1, visibility: 'user',
+      payload: { model_round: 1, role: 'assistant', content: '', reasoning: '' }
+    }
+  }));
+
+  // offset 0 at the durable block-end watermark 0.
+  apply('thread_item_tail', wireTail({
+    item_id: 'turn-t:text-1', field: 'content', offset: 0, text: '你好'
+  }));
+  assert.equal(composeItemText(state(), 'turn-t:text-1', 'content'), '你好');
+
+  // Continuous offset appends (你好=2 code units).
+  apply('thread_item_tail', wireTail({
+    item_id: 'turn-t:text-1', field: 'content', offset: 2, text: '，世界'
+  }));
+  assert.equal(composeItemText(state(), 'turn-t:text-1', 'content'), '你好，世界');
+
+  // UTF-16 code-unit counting: 😀 occupies two code units, offset 5 is exact.
+  apply('thread_item_tail', wireTail({
+    item_id: 'turn-t:text-1', field: 'content', offset: 5, text: '😀'
+  }));
+  assert.equal(composeItemText(state(), 'turn-t:text-1', 'content'), '你好，世界😀');
+
+  // Hole: offset ahead of the tail position is dropped until a block heals it.
+  apply('thread_item_tail', wireTail({
+    item_id: 'turn-t:text-1', field: 'content', offset: 12, text: '未来'
+  }));
+  assert.equal(composeItemText(state(), 'turn-t:text-1', 'content'), '你好，世界😀');
+
+  // Covered: offset behind the tail position is dropped as a replay.
+  apply('thread_item_tail', wireTail({
+    item_id: 'turn-t:text-1', field: 'content', offset: 3, text: '重复'
+  }));
+  assert.equal(composeItemText(state(), 'turn-t:text-1', 'content'), '你好，世界😀');
+
+  // offset -1 is arrival-order append (tool/command output without durable
+  // offsets) and builds on the field tail in arrival order.
+  apply('thread_change', wireChange({
+    change_type: 'item_upsert', turn_id: 'turn-t', cursor: 2, revision: 1,
+    item: {
+      item_id: 'turn-t:tool-1', turn_id: 'turn-t', kind: 'tool_call',
+      status: 'running', revision: 1, visibility: 'user',
+      payload: { model_round: 1, tool_call_id: 'call_t', name: 'tool' }
+    }
+  }));
+  apply('thread_item_tail', wireTail({
+    item_id: 'turn-t:tool-1', field: 'output', offset: -1, text: 'a'
+  }));
+  apply('thread_item_tail', wireTail({
+    item_id: 'turn-t:tool-1', field: 'output', offset: -1, text: 'b'
+  }));
+  assert.equal(composeItemText(state(), 'turn-t:tool-1', 'output'), 'ab');
+  // A durable block heals the -1 tail for its own field only.
+  apply('thread_change', wireChange({
+    change_type: 'text_block', turn_id: 'turn-t', item_id: 'turn-t:tool-1', cursor: 3,
+    payload: { item_id: 'turn-t:tool-1', field: 'output', block_index: 0, content_offset: 0, content: 'durable-output' }
+  }));
+  assert.equal(composeItemText(state(), 'turn-t:tool-1', 'output'), 'durable-output');
+  assert.equal(composeItemText(state(), 'turn-t:text-1', 'content'), '你好，世界😀');
+});
+
+test('tails stay isolated per (item_id, field) across interleaved model rounds', () => {
+  resetChatThreadRuntime(SESSION);
+  ensureChatThreadRuntime(SESSION);
+  const store = new FakeStore();
+  const apply = (type: string, payload: unknown) =>
+    applyChatThreadServerEvent(store, SESSION, type, payload);
+
+  apply('thread_change', wireChange({
+    change_type: 'turn_upsert', turn_id: 'turn-i', cursor: 1, revision: 1,
+    payload: { turn_id: 'turn-i', status: 'running', user_round: 1 }
+  }));
+  apply('thread_change', wireChange({
+    change_type: 'item_upsert', turn_id: 'turn-i', cursor: 2, revision: 1,
+    item: {
+      item_id: 'turn-i:text-1', turn_id: 'turn-i', kind: 'assistant_message',
+      status: 'running', revision: 1, visibility: 'user',
+      payload: { model_round: 1, role: 'assistant', content: '', reasoning: '' }
+    }
+  }));
+  apply('thread_change', wireChange({
+    change_type: 'item_upsert', turn_id: 'turn-i', cursor: 3, revision: 1,
+    item: {
+      item_id: 'turn-i:text-2', turn_id: 'turn-i', kind: 'assistant_message',
+      status: 'running', revision: 1, visibility: 'user',
+      payload: { model_round: 2, role: 'assistant', content: '', reasoning: '' }
+    }
+  }));
+
+  // Interleaved tails for round 2 and round 1 never cross.
+  apply('thread_item_tail', wireTail({ item_id: 'turn-i:text-2', field: 'content', offset: 0, text: '世界' }));
+  apply('thread_item_tail', wireTail({ item_id: 'turn-i:text-1', field: 'content', offset: 0, text: '你好' }));
+  apply('thread_item_tail', wireTail({ item_id: 'turn-i:text-2', field: 'content', offset: 2, text: '！' }));
+  apply('thread_item_tail', wireTail({ item_id: 'turn-i:text-1', field: 'content', offset: 2, text: '，我是' }));
+  apply('thread_item_tail', wireTail({ item_id: 'turn-i:text-1', field: 'reasoning', offset: 0, text: '思考' }));
+
+  const messages = buildChatThreadMaterializedMessages(SESSION);
+  assert.deepEqual(
+    messages?.map((message) => message.content),
+    ['你好，我是', '世界！']
+  );
+  assert.equal(
+    (messages?.[0] as Record<string, unknown> | undefined)?.reasoning,
+    '思考'
+  );
+});
+
+test('a stale atomic snapshot is refused and keeps the legacy fallback contract', async () => {
+  resetChatThreadRuntime(SESSION);
+  ensureChatThreadRuntime(SESSION);
+  const store = new FakeStore();
+  let appliedSnapshots = 0;
+  let legacyFallbacks = 0;
+  registerChatThreadSnapshotLoader(async () => ({
+    cursor: 1,
+    turns: [{ turn_id: 'turn-stale', user_round: 1, status: 'running' }],
+    items: [],
+    blocks: []
+  }));
+  const apply = (type: string, payload: unknown) =>
+    applyChatThreadServerEvent(store, SESSION, type, payload, {
+      onSnapshotApplied: () => { appliedSnapshots += 1; },
+      onSnapshotRequired: () => { legacyFallbacks += 1; }
+    });
+
+  apply('thread_change', wireChange({
+    change_type: 'turn_upsert', turn_id: 'turn-live', cursor: 1, revision: 1,
+    payload: { turn_id: 'turn-live', status: 'running', user_round: 1 }
+  }));
+  apply('thread_change', wireChange({
+    change_type: 'item_upsert', turn_id: 'turn-live', cursor: 2, revision: 1,
+    item: {
+      item_id: 'turn-live:text-1', turn_id: 'turn-live', kind: 'assistant_message',
+      status: 'running', revision: 1, visibility: 'user',
+      payload: { model_round: 1, role: 'assistant', content: '存活', reasoning: '' }
+    }
+  }));
+  assert.equal(getChatThreadState(SESSION)?.lastSeq, 2);
+
+  apply('thread_snapshot_required', { event: 'thread_snapshot_required', data: {
+    required_from_seq: 3, earliest_available_seq: 4
+  } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  // The atomic snapshot cursor (1) is behind the local durable cursor (2):
+  // refusing it must not overwrite newer state.
+  assert.equal(appliedSnapshots, 0);
+  assert.equal(legacyFallbacks, 1);
+  assert.equal(isChatThreadV2Session(SESSION), false);
+  assert.equal(getChatThreadState(SESSION)?.lastSeq, 2);
+  // The session fell back to legacy: the v2 projection is no longer served.
+  assert.equal(buildChatThreadMaterializedMessages(SESSION), null);
+
+  registerChatThreadSnapshotLoader(null);
+});
+
+test('gap overflow at the frame limit triggers one resume and clears the buffer', () => {
+  resetChatThreadRuntime(SESSION);
+  ensureChatThreadRuntime(SESSION);
+  const store = new FakeStore();
+  let clock = 8000;
+  let gapOverflows = 0;
+  const apply = (type: string, payload: unknown) =>
+    applyChatThreadServerEvent(store, SESSION, type, payload, {
+      now: () => clock,
+      onGapOverflow: () => { gapOverflows += 1; }
+    });
+
+  apply('thread_change', wireChange({
+    change_type: 'turn_upsert', turn_id: 'turn-q', cursor: 1, revision: 1,
+    payload: { turn_id: 'turn-q', status: 'running' }
+  }));
+
+  // Exactly the frame limit stays buffered without a resume.
+  for (let seq = 100; seq < 100 + THREAD_GAP_MAX_FRAMES; seq += 1) {
+    apply('thread_change', wireChange({
+      change_type: 'turn_status', turn_id: 'turn-q', cursor: seq,
+      payload: { turn_id: 'turn-q', status: 'waiting' }
+    }));
+  }
+  assert.equal(gapOverflows, 0);
+  assert.equal(getChatThreadState(SESSION)?.gap.length, THREAD_GAP_MAX_FRAMES);
+
+  // One frame past the limit overflows: single-flight resume, buffer cleared,
+  // durable cursor untouched (the resume replays from lastSeq).
+  apply('thread_change', wireChange({
+    change_type: 'turn_status', turn_id: 'turn-q', cursor: 100 + THREAD_GAP_MAX_FRAMES,
+    payload: { turn_id: 'turn-q', status: 'waiting' }
+  }));
+  assert.equal(gapOverflows, 1);
+  assert.equal(getChatThreadState(SESSION)?.gap.length, 0);
+  assert.equal(getChatThreadState(SESSION)?.lastSeq, 1);
+
+  // A burst past the limit collapses into the same single resume dispatch
+  // (overflow and gap overflow share one per-session cooldown).
+  for (let seq = 200; seq < 200 + THREAD_GAP_MAX_FRAMES + 4; seq += 1) {
+    apply('thread_change', wireChange({
+      change_type: 'turn_status', turn_id: 'turn-q', cursor: seq,
+      payload: { turn_id: 'turn-q', status: 'waiting' }
+    }));
+  }
+  assert.equal(gapOverflows, 1, 'burst inside the cooldown window is suppressed');
+
+  // Past the cooldown, a fresh overflow dispatches a new resume.
+  clock += THREAD_OVERFLOW_RESUME_COOLDOWN_MS + 1;
+  for (let seq = 300; seq < 300 + THREAD_GAP_MAX_FRAMES + 1; seq += 1) {
+    apply('thread_change', wireChange({
+      change_type: 'turn_status', turn_id: 'turn-q', cursor: seq,
+      payload: { turn_id: 'turn-q', status: 'waiting' }
+    }));
+  }
+  assert.equal(gapOverflows, 2);
+  assert.equal(getChatThreadState(SESSION)?.lastSeq, 1);
+  assert.ok(
+    (getChatThreadState(SESSION)?.gap.length ?? 0) <= THREAD_GAP_MAX_FRAMES,
+    'buffer stays bounded after the overflow dispatch'
+  );
+});
+
+test('duplicate stream_started acks bind the optimistic turn exactly once', () => {
+  resetChatThreadRuntime(SESSION);
+  ensureChatThreadRuntime(SESSION);
+  const store = new FakeStore();
+  const apply = (type: string, payload: unknown) =>
+    applyChatThreadServerEvent(store, SESSION, type, payload);
+
+  apply('stream_started', wireAck({
+    turn_id: 'turn-d', user_round: 1, resume_from_seq: 2,
+    client_message_id: 'cm-d'
+  }));
+  apply('stream_started', wireAck({
+    turn_id: 'turn-d', user_round: 1, resume_from_seq: 2,
+    client_message_id: 'cm-d'
+  }));
+  assert.equal(getChatThreadState(SESSION)?.turns.size, 1);
+  assert.equal(getThreadTurn(getChatThreadState(SESSION)!, 'turn-d')?.clientMessageId, 'cm-d');
+});
+
+test('long tail streaming reuses materialized rows without rebuilding history', () => {
+  resetChatThreadRuntime(SESSION);
+  ensureChatThreadRuntime(SESSION);
+  const store = new FakeStore();
+  const apply = (type: string, payload: unknown) =>
+    applyChatThreadServerEvent(store, SESSION, type, payload);
+
+  // Three settled turns plus one live turn (the 1000-token-class scenario).
+  for (let round = 1; round <= 3; round += 1) {
+    apply('thread_change', wireChange({
+      change_type: 'turn_upsert', turn_id: `turn-p${round}`, cursor: round * 2 - 1, revision: 1,
+      payload: { turn_id: `turn-p${round}`, status: 'completed', user_round: round }
+    }));
+    apply('thread_change', wireChange({
+      change_type: 'item_upsert', turn_id: `turn-p${round}`, cursor: round * 2, revision: 1,
+      item: {
+        item_id: `turn-p${round}:text-1`, turn_id: `turn-p${round}`, kind: 'assistant_message',
+        status: 'completed', revision: 1, visibility: 'user',
+        payload: { model_round: 1, role: 'assistant', content: `历史${round}`, reasoning: '' }
+      }
+    }));
+  }
+  apply('thread_change', wireChange({
+    change_type: 'turn_upsert', turn_id: 'turn-live', cursor: 7, revision: 1,
+    payload: { turn_id: 'turn-live', status: 'running', user_round: 4 }
+  }));
+  apply('thread_change', wireChange({
+    change_type: 'item_upsert', turn_id: 'turn-live', cursor: 8, revision: 1,
+    item: {
+      item_id: 'turn-live:text-1', turn_id: 'turn-live', kind: 'assistant_message',
+      status: 'running', revision: 1, visibility: 'user',
+      payload: { model_round: 1, role: 'assistant', content: '', reasoning: '' }
+    }
+  }));
+
+  // 1000 code units streamed as low-latency tails with continuous offsets.
+  let offset = 0;
+  for (let index = 0; index < 500; index += 1) {
+    apply('thread_item_tail', wireTail({
+      item_id: 'turn-live:text-1', field: 'content', offset, text: '你好'
+    }));
+    offset += 2;
+  }
+  const first = buildChatThreadMaterializedMessages(SESSION);
+  assert.equal(first?.length, 4);
+
+  // Another 500 tails: history rows and the active row keep their object
+  // identity — no per-token rebuild of the materialized history.
+  for (let index = 0; index < 500; index += 1) {
+    apply('thread_item_tail', wireTail({
+      item_id: 'turn-live:text-1', field: 'content', offset, text: '啊'
+    }));
+    offset += 1;
+  }
+  const second = buildChatThreadMaterializedMessages(SESSION);
+  assert.equal(second?.length, 4);
+  assert.equal(second?.[0], first?.[0], 'history row is reused');
+  assert.equal(second?.[1], first?.[1], 'history row is reused');
+  assert.equal(second?.[2], first?.[2], 'history row is reused');
+  assert.equal(second?.[3], first?.[3], 'active row is reused');
+  assert.equal(String(second?.[3]?.content).length, 1500);
+  assert.equal(String(second?.[0]?.content), '历史1');
 });

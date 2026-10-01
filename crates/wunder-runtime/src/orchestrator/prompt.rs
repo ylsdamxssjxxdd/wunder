@@ -321,12 +321,18 @@ impl Orchestrator {
                 None,
             )
             .await;
-        let _ = self.workspace.save_session_system_prompt(
+        if let Err(err) = self.workspace.save_session_system_prompt(
             user_id,
             session_id,
             &session_prompt,
             language,
-        );
+        ) {
+            warn!("freeze session system prompt failed for session {session_id}: {err}");
+        } else {
+            // The frozen prompt is a durable item append; wake local feeders so
+            // clients observe it without waiting for the poll fallback.
+            self.publish_thread_change(session_id);
+        }
         session_prompt
     }
 }

@@ -3,11 +3,11 @@ use crate::api::chat_goal::apply_goal_command;
 use crate::api::user_context::resolve_user;
 use crate::api::ws_helpers::{
     apply_ws_auth_headers, has_ws_protocol_token, negotiate_ws_protocol, parse_connect_payload,
-    parse_payload, resolve_session_id, resume_queued_stream_events, resume_stream_events,
-    resume_thread_changes_v2, send_ws_error, send_ws_error_payload, send_ws_event,
-    send_ws_live_event, send_ws_pong, send_ws_ready, send_ws_tail_event,
-    ws_error_payload_from_anyhow, ws_protocol_info, WsEnvelope, WsFeatures, WsPolicy, WsQuery,
-    WsReadyPayload, WsSender, WS_MAX_MESSAGE_BYTES, WS_PROTOCOL_VERSION,
+    parse_payload, resolve_session_id, resume_queued_stream_events,
+    resume_queued_thread_changes_v2, resume_stream_events, resume_thread_changes_v2, send_ws_error,
+    send_ws_error_payload, send_ws_event, send_ws_live_event, send_ws_pong, send_ws_ready,
+    send_ws_tail_event, ws_error_payload_from_anyhow, ws_protocol_info, WsEnvelope, WsFeatures,
+    WsPolicy, WsQuery, WsReadyPayload, WsSender, WS_MAX_MESSAGE_BYTES, WS_PROTOCOL_VERSION,
 };
 use crate::api::ws_log::{
     log_ws_close, log_ws_handshake, log_ws_handshake_error, log_ws_message, log_ws_open,
@@ -585,16 +585,29 @@ async fn handle_ws(
                                 let resume_tasks = tasks.clone();
                                 let resume_request_id_cleanup = request_id.clone();
                                 long_task::spawn("api.chat_ws.queued_auto_resume", async move {
-                                    resume_queued_stream_events(
-                                        resume_state,
-                                        resume_session,
-                                        queue_id,
-                                        queue_after_change_seq,
-                                        Some(&resume_request_id),
-                                        resume_tx,
-                                        Some(cancel),
-                                    )
-                                    .await;
+                                    if change_stream_requested {
+                                        resume_queued_thread_changes_v2(
+                                            resume_state,
+                                            resume_session,
+                                            queue_id,
+                                            queue_after_change_seq,
+                                            Some(&resume_request_id),
+                                            resume_tx,
+                                            Some(cancel),
+                                        )
+                                        .await;
+                                    } else {
+                                        resume_queued_stream_events(
+                                            resume_state,
+                                            resume_session,
+                                            queue_id,
+                                            queue_after_change_seq,
+                                            Some(&resume_request_id),
+                                            resume_tx,
+                                            Some(cancel),
+                                        )
+                                        .await;
+                                    }
                                     // cleanup: only remove if our task_id still owns
                                     // the entry (avoids clobbering a newer task).
                                     let _ = cleanup_ws_task(

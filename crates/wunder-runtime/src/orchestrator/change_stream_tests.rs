@@ -343,3 +343,123 @@ async fn thread_change_frames_embed_item_payloads() {
     assert_eq!(ahead.len(), 1);
     assert_eq!(ahead[0]["event"], "thread_snapshot_required");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn feedback_commit_wakes_feeder_with_snapshot_payload() {
+    let (state, _dir) = build_test_state("change_stream_feedback").await;
+    let turn = accept_turn(&state, "session-a", "user-a");
+    let item_id = format!("{turn}:answer");
+    state
+        .storage
+        .commit_thread_item(
+            "user-a",
+            &json!({
+                "session_id":"session-a", "turn_id":turn, "item_id":item_id,
+                "kind":"assistant_message", "status":"completed", "visibility":"user",
+                "role":"assistant", "content":"ok", "user_round":1
+            }),
+        )
+        .expect("commit assistant item")
+        .expect("item receipt");
+    let mut wake = state.kernel.orchestrator.change_hub.subscribe("session-a");
+
+    let feedback = state
+        .storage
+        .set_thread_item_feedback("user-a", "session-a", &item_id, "up")
+        .expect("feedback commit")
+        .expect("first feedback accepted");
+    assert_eq!(feedback["vote"], json!("up"));
+    // The API commit path publishes the durable cursor after success.
+    state.kernel.orchestrator.publish_thread_change("session-a");
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), wake.changed())
+        .await
+        .expect("hub wake")
+        .expect("hub open");
+    assert_eq!(
+        *wake.borrow(),
+        state
+            .storage
+            .latest_thread_change_seq_by_session("session-a")
+            .expect("latest durable cursor")
+    );
+
+    // The change payload must be the committed snapshot: it carries the locked
+    // feedback and never reads the mutable current item on replay.
+    let changes = state
+        .storage
+        .list_thread_changes_by_session("session-a", 0, 100)
+        .unwrap();
+    let feedback_change = changes
+        .iter()
+        .rev()
+        .find(|change| {
+            change["change_type"] == "item_upsert" && change["item_id"] == json!(item_id)
+        })
+        .expect("feedback item change");
+    assert_eq!(feedback_change["revision"], json!(2));
+    let payload = &feedback_change["payload"];
+    assert_eq!(payload["kind"], json!("assistant_message"));
+    assert_eq!(payload["payload"]["feedback"]["vote"], json!("up"));
+
+    // A repeated vote is a no-op: no new change and no wake.
+    let after = state
+        .storage
+        .latest_thread_change_seq_by_session("session-a")
+        .unwrap();
+    assert!(state
+        .storage
+        .set_thread_item_feedback("user-a", "session-a", &item_id, "down")
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        state
+            .storage
+            .latest_thread_change_seq_by_session("session-a")
+            .unwrap(),
+        after
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn freeze_system_prompt_append_wakes_feeder_with_snapshot() {
+    let (state, _dir) = build_test_state("change_stream_system_prompt").await;
+    let turn = accept_turn(&state, "session-a", "user-a");
+    let mut wake = state.kernel.orchestrator.change_hub.subscribe("session-a");
+
+    state
+        .workspace
+        .save_session_system_prompt("user-a", "session-a", "你是测试助手。", Some("zh"))
+        .expect("freeze system prompt");
+    // Mirrors the orchestrator prompt path: every durable ThreadLog append is
+    // followed by the latest-cursor wake.
+    state.kernel.orchestrator.publish_thread_change("session-a");
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), wake.changed())
+        .await
+        .expect("hub wake")
+        .expect("hub open");
+    assert_eq!(
+        *wake.borrow(),
+        state
+            .storage
+            .latest_thread_change_seq_by_session("session-a")
+            .expect("latest durable cursor")
+    );
+
+    let changes = state
+        .storage
+        .list_thread_changes_by_session("session-a", 0, 100)
+        .unwrap();
+    let prompt_change = changes
+        .iter()
+        .find(|change| {
+            change["change_type"] == "item_upsert"
+                && change["item_id"] == json!(format!("session-a:system-prompt"))
+        })
+        .expect("system prompt change");
+    let payload = &prompt_change["payload"];
+    assert_eq!(payload["kind"], json!("system_message"));
+    assert_eq!(payload["turn_id"], json!(turn));
+    assert_eq!(payload["payload"]["content"], json!("你是测试助手。"));
+}
