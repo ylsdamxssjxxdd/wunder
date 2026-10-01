@@ -1,8 +1,5 @@
-// Change-stream v2 pipeline hub: per-session thread state registry, server
-// frame normalization and render invalidation. Spec: docs/聊天流式管线根治方案.md §3.
-// The legacy pipeline stays the fallback: a session is sticky-v2 until the
-// runtime cannot recover on its own (snapshot rebuild failed and no loader
-// could be consulted) or the feature is disabled locally.
+// Durable chat pipeline hub: per-session thread state registry, server frame
+// normalization and render invalidation. Chat has one protocol and one reducer.
 import {
   applyChatThreadFrame,
   applyChatThreadSnapshot,
@@ -34,8 +31,6 @@ import {
 interface ChatThreadRuntimeEntry {
   key: string;
   state: ChatThreadState;
-  v2: boolean;
-  fallbackReason: string;
   /** Caller-owned persistent projection shell: keeps the materialize row cache alive across bumps. */
   renderProjection: ChatRuntimeProjection;
   /** Clock (ms) of the last resume dispatch; collapses control-frame bursts. */
@@ -44,26 +39,7 @@ interface ChatThreadRuntimeEntry {
 
 const registry = new Map<string, ChatThreadRuntimeEntry>();
 const REGISTRY_LIMIT = 64;
-// v2 is opt-in at both ends. The reducer can run before a socket is created,
-// so its unknown state remains enabled until a ready handshake says otherwise.
-let serverChangeStreamSupported: boolean | null = null;
-
-export const setChatChangeStreamServerSupported = (supported: boolean | null): void => {
-  serverChangeStreamSupported = supported === null ? null : supported === true;
-};
-
-/** True only after the active socket explicitly advertised v2. */
-export const isChatChangeStreamServerSupported = (): boolean =>
-  serverChangeStreamSupported === true;
-
-export const isChatChangeStreamEnabled = (): boolean => {
-  if (isDesktopModeEnabled()) return false;
-  try {
-    return globalThis.localStorage?.getItem('wunder.chatChangeStream') !== '0';
-  } catch {
-    return true;
-  }
-};
+export const isChatChangeStreamEnabled = (): boolean => !isDesktopModeEnabled();
 
 export const ensureChatThreadRuntime = (key: string): ChatThreadRuntimeEntry => {
   let entry = registry.get(key);
@@ -71,8 +47,6 @@ export const ensureChatThreadRuntime = (key: string): ChatThreadRuntimeEntry => 
     entry = {
       key,
       state: emptyChatThreadState(key),
-      v2: isChatChangeStreamEnabled(),
-      fallbackReason: '',
       renderProjection: { sessions: { [key]: { messages: [] } } } as unknown as ChatRuntimeProjection,
       lastResumeDispatchAt: 0
     };
@@ -89,24 +63,19 @@ export const getChatThreadState = (key: string): ChatThreadState | null =>
   registry.get(key)?.state ?? null;
 
 export const isChatThreadV2Session = (key: string): boolean =>
-  Boolean(registry.get(key)?.v2) && isChatChangeStreamEnabled() && serverChangeStreamSupported !== false;
+  Boolean(registry.get(key)) && isChatChangeStreamEnabled();
 
-export const markChatThreadFallback = (key: string, reason: string): void => {
-  const entry = registry.get(key);
-  if (entry?.v2) {
-    entry.v2 = false;
-    entry.fallbackReason = reason;
-  }
-};
+/** Deprecated API retained only so external test helpers compile; chat never falls back. */
+export const markChatThreadFallback = (_key: string, _reason: string): void => {};
 
-export const getChatThreadFallbackReason = (key: string): string =>
-  registry.get(key)?.fallbackReason ?? '';
+export const getChatThreadFallbackReason = (_key: string): string =>
+  '';
 
 export const resetChatThreadRuntime = (key: string): void => {
   registry.delete(key);
 };
 
-/** Events that must keep flowing to the legacy handlers even on a v2 session. */
+/** Interactive lifecycle events remain outside the durable item reducer. */
 const LEGACY_FALLTHROUGH =
   /^(approval_|queue_|queued$|goal_|session_|command_session_|heartbeat$|ping$|thread_status$|thread_closed$|slow_client$|error$)/;
 
@@ -129,7 +98,7 @@ const readSeq = (...values: unknown[]): number | undefined => {
  * - target contract: `{data: {change_type, turn_id, item_id, revision, cursor, payload}}`
  *   where `payload` is the immutable commit-time payload (for item_upsert a
  *   full item row with an embedded payload copy);
- * - legacy feeder: `{data: {..., item: <full item row>}}`;
+ * - feeder transition shape: `{data: {..., item: <full item row>}}`;
  * - emit-path frames: the change record nested once more under `data.data`.
  */
 export const toChatThreadFrame = (
@@ -221,7 +190,7 @@ export const toChatThreadFrame = (
       data = flattenThreadItemRow(itemRow);
     } else if (rowPayload) {
       // Target contract: the item_upsert payload is the full immutable item
-      // row (columns + embedded payload copy). Flat legacy payloads and the
+      // row (columns + embedded payload copy). Flat payloads and the
       // turn/block payloads pass through untouched.
       data = change_type === 'item_upsert' && hasEmbeddedItemPayload(rowPayload)
         ? flattenThreadItemRow(rowPayload)
@@ -274,7 +243,7 @@ const bumpInvalidation = (
  * - onSnapshotApplied: the runtime rebuilt the state from the atomic snapshot
  *   (lastSeq = snapshot cursor); the caller should re-watch from lastSeq.
  * - onSnapshotRequired: the runtime could NOT rebuild (no loader registered,
- *   load failed or snapshot stale); the caller runs its legacy full-reload path.
+ *   load failed or snapshot stale); the caller must stop and report recovery failure.
  * - onOverflow / onGapOverflow: the caller resumes the watch from lastSeq
  *   (abort + start; no full reload). Dispatches share one per-session cooldown
  *   (THREAD_OVERFLOW_RESUME_COOLDOWN_MS) so bursts collapse into one resume.
@@ -319,8 +288,6 @@ const dispatchSnapshotRequired = (
   const data = extractSnapshotRequiredData(payload);
   const loader = chatThreadSnapshotLoader;
   if (!loader) {
-    // No loader wired (standalone use): keep the legacy full-reload contract.
-    markChatThreadFallback(key, 'snapshot_required');
     hooks.onSnapshotRequired?.(data);
     return;
   }
@@ -328,14 +295,12 @@ const dispatchSnapshotRequired = (
     try {
       const snapshot = await loader(key);
       const entry = registry.get(key);
-      if (!entry?.v2) return; // session fell back while the load was in flight
+      if (!entry) return;
       const applied = applyChatThreadSnapshot(entry.state, snapshot, (hooks.now ?? Date.now)());
       if (!applied.changed) throw new Error('thread snapshot cursor is stale');
       markRuntimeProjectionChanged(store, { sessionId: key, reason: 'thread_structure' });
       hooks.onSnapshotApplied?.();
     } catch {
-      if (!isChatThreadV2Session(key)) return;
-      markChatThreadFallback(key, 'snapshot_required');
       hooks.onSnapshotRequired?.(data);
     }
   })();
@@ -360,7 +325,7 @@ const dispatchResume = (
 
 /**
  * Apply one server event to the v2 thread state. Returns true when the event
- * was consumed by this pipeline (caller must skip legacy application).
+ * was consumed by this pipeline (caller must skip duplicate application).
  */
 export const applyChatThreadServerEvent = (
   store: unknown,
@@ -369,7 +334,6 @@ export const applyChatThreadServerEvent = (
   payload: unknown,
   hooks: ChatThreadServerEventHooks = {}
 ): boolean => {
-  if (!isChatThreadV2Session(key)) return false;
   if (LEGACY_FALLTHROUGH.test(eventType)) return false;
   const entry = ensureChatThreadRuntime(key);
   if (eventType === 'thread_snapshot_required') {
@@ -416,14 +380,14 @@ export const applyChatThreadServerEvent = (
 };
 
 /**
- * Deterministic v2 render source: thread state -> projection bubbles ->
- * materialized rows. Returns null when the session is not on the v2 pipeline.
+ * Deterministic durable render source: thread state -> projection bubbles ->
+ * materialized rows.
  */
 export const buildChatThreadMaterializedMessages = (
   key: string
 ): ChatRuntimeMessageProjection[] | null => {
   const entry = registry.get(key);
-  if (!entry?.v2) return null;
+  if (!entry) return null;
   const messages = buildChatThreadRenderableMessages(entry.state);
   const session = (entry.renderProjection.sessions as Record<string, unknown>)[key] as
     | { messages: ChatRuntimeMessageProjection[] }

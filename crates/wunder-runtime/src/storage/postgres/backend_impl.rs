@@ -126,7 +126,7 @@ impl ThreadLogStore for PostgresStorage {
         status: &str,
         summary: &str,
         payload: &Value,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         self.update_thread_turn_impl(user_id, session_id, turn_id, status, summary, payload)
     }
     fn list_thread_changes_by_session(

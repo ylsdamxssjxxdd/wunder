@@ -107,7 +107,7 @@ pub async fn reset_user_work_state(
             if !cancelled_task_ids.insert(task.task_id.clone()) {
                 continue;
             }
-            state.kernel.thread_runtime.cancel_task(&task.task_id)?;
+            state.kernel.thread_runtime.cancel_task(&task.task_id).await?;
             cancelled_tasks = cancelled_tasks.saturating_add(1);
         }
     }

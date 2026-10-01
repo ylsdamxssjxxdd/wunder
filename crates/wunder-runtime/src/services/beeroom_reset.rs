@@ -93,7 +93,7 @@ pub async fn reset_beeroom_group(
             {
                 continue;
             }
-            state.kernel.thread_runtime.cancel_task(&task.task_id)?;
+            state.kernel.thread_runtime.cancel_task(&task.task_id).await?;
             cancelled_tasks += 1;
         }
     }

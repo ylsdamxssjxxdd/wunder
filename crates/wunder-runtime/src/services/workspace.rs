@@ -1525,16 +1525,21 @@ impl WorkspaceManager {
         self.storage.delete_meta_prefix(&key).unwrap_or(0) as i64
     }
 
-    pub fn save_session_system_prompt(
+    /// Build the durable frozen system-prompt item for a session. This only
+    /// reads the thread's first turn and assembles the item payload; it never
+    /// writes. The write must go through the unified ThreadLog commit exit so
+    /// the change cursor is published only on the real commit. Returns None for
+    /// an empty prompt (nothing durable to freeze).
+    pub fn build_session_system_prompt_item(
         &self,
         user_id: &str,
         session_id: &str,
         prompt: &str,
         language: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<Option<serde_json::Value>> {
         let content = prompt.trim();
         if content.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
         let payload = serde_json::json!({
             "role": "system",
@@ -1555,7 +1560,7 @@ impl WorkspaceManager {
             .next()
             .and_then(|turn| {
                 turn.get("turn_id")
-                    .and_then(Value::as_str)
+                    .and_then(serde_json::Value::as_str)
                     .map(str::to_owned)
             })
             .ok_or_else(|| {
@@ -1573,7 +1578,7 @@ impl WorkspaceManager {
             "content": content,
             "timestamp": payload["timestamp"].clone()
         });
-        self.storage.append_thread_item(user_id, &item)
+        Ok(Some(item))
     }
 
     pub fn get_user_usage_stats(&self) -> HashMap<String, HashMap<String, i64>> {

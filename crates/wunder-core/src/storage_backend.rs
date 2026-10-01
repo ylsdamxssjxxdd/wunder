@@ -118,6 +118,10 @@ pub trait ThreadLogStore {
     ) -> Result<Option<String>>;
     /// Atomically allocate a root user round or an execution attached to an existing root.
     fn accept_thread_turn(&self, user_id: &str, session_id: &str, input: &Value) -> Result<Value>;
+    /// Update a turn and settle its visible bubble / unfinished items in one
+    /// transaction. Returns true when the call allocated at least one durable
+    /// change (turn status change, user bubble sync, or settled terminal items).
+    /// An unchanged turn is a no-op: Ok(false) with no change_seq advance.
     fn update_thread_turn(
         &self,
         user_id: &str,
@@ -126,7 +130,7 @@ pub trait ThreadLogStore {
         status: &str,
         summary: &str,
         payload: &Value,
-    ) -> Result<()>;
+    ) -> Result<bool>;
     fn append_thread_item(&self, user_id: &str, payload: &Value) -> Result<()>;
     /// Return a committed change receipt; an idempotent no-op returns None.
     fn commit_thread_item(&self, user_id: &str, payload: &Value) -> Result<Option<Value>>;

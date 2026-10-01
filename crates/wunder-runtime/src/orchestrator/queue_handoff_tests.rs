@@ -48,7 +48,7 @@ async fn queue_handoff_parks_original_turn_and_keeps_cancel_available() {
         0,
         None,
     )
-    .with_change_hub(orchestrator.change_hub.clone());
+    .with_committer(orchestrator.committer.clone());
     emitter.bind_turn(durable_turn, 1);
     orchestrator.scheduling.request_slot("session-b").unwrap();
     let worker = orchestrator.clone();

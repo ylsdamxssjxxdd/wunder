@@ -114,7 +114,7 @@ async fn cancel_desktop_agent_tasks(
             if !task_ids.insert(task.task_id.clone()) {
                 continue;
             }
-            thread_runtime.cancel_task(&task.task_id)?;
+            thread_runtime.cancel_task(&task.task_id).await?;
             reset_thread_ids.insert(thread_id.clone());
         }
     }

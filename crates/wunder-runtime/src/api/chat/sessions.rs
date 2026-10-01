@@ -866,15 +866,22 @@ async fn submit_message_feedback(
     }
 
     match state
-        .storage
-        .set_thread_item_feedback(&resolved.user.user_id, &session_id, &item_id, vote)
+        .kernel
+        .orchestrator
+        .committer
+        .set_feedback(
+            &resolved.user.user_id,
+            &session_id,
+            &item_id,
+            vote,
+        )
+        .await
         .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
     {
         Some(feedback) => {
-            // The durable item_upsert feedback change is committed; wake local
-            // feeders so connected clients observe the locked vote without
-            // waiting for the poll fallback.
-            state.kernel.orchestrator.publish_thread_change(&session_id);
+            // The durable feedback change is committed and the unified exit has
+            // already woken local feeders; polling remains the cross-instance
+            // fallback.
             Ok(Json(json!({
                 "data": {
                     "session_id": session_id,

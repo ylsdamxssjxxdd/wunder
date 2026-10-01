@@ -37,7 +37,7 @@ pub(super) struct EventEmitter {
     /// Serializes the whole emit path (durable commits + queue enqueues) so
     /// change-cursor order == queue order == wire order for every emitter.
     emit_lock: Arc<tokio::sync::Mutex<()>>,
-    change_hub: Option<Arc<crate::orchestrator::thread_change_hub::ThreadChangeHub>>,
+    committer: Option<Arc<super::thread_log_committer::ThreadLogCommitter>>,
     /// Change-stream v2 marker: enables ephemeral tail frames. v1 clients
     /// never receive them.
     change_stream: bool,
@@ -51,26 +51,17 @@ impl EventEmitter {
         *self.turn_context.lock() = json!({"turn_id":turn_id,"user_round":user_round});
     }
 
-    pub(super) fn with_change_hub(
+    pub(super) fn with_committer(
         mut self,
-        hub: Arc<crate::orchestrator::thread_change_hub::ThreadChangeHub>,
+        committer: Arc<super::thread_log_committer::ThreadLogCommitter>,
     ) -> Self {
-        self.change_hub = Some(hub);
+        self.committer = Some(committer);
         self
     }
 
     pub(super) fn with_change_stream(mut self) -> Self {
         self.change_stream = true;
         self
-    }
-
-    fn publish_change_cursor(&self, receipt: &Value) {
-        if let Some(hub) = &self.change_hub {
-            hub.publish(
-                &self.session_id,
-                receipt.get("cursor").and_then(Value::as_i64).unwrap_or(0),
-            );
-        }
     }
 
     pub(super) fn session_id(&self) -> &str {
@@ -102,7 +93,7 @@ impl EventEmitter {
             turn_context: Arc::new(ParkingMutex::new(json!({}))),
             text_tail: Arc::new(ParkingMutex::new(Default::default())),
             emit_lock: Arc::new(tokio::sync::Mutex::new(())),
-            change_hub: None,
+            committer: None,
             change_stream: false,
             usage: Arc::new(ParkingMutex::new(TokenUsage {
                 reasoning: Some(0),
@@ -203,7 +194,7 @@ impl EventEmitter {
         // A text block is keyed by the stable assistant Item. Register it at
         // model-call admission, never once per token.
         if event_type == "llm_request" {
-            if let Some(storage) = self.storage.clone() {
+            if let Some(committer) = self.committer.clone() {
                 if let Some(turn_id) = data.get("turn_id").and_then(Value::as_str) {
                     let model_round = data.get("model_round").and_then(Value::as_i64).unwrap_or(0);
                     let item = json!({
@@ -220,13 +211,8 @@ impl EventEmitter {
                         "reasoning": ""
                     });
                     let owner = self.user_id.clone();
-                    match crate::core::blocking::run_db("thread_log.text_item", move || {
-                        storage.commit_thread_item(&owner, &item)
-                    })
-                    .await
-                    {
+                    match committer.commit_item(&owner, &item).await {
                         Ok(Some(receipt)) => {
-                            self.publish_change_cursor(&receipt);
                             if let Some(cursor) = receipt.get("cursor").and_then(Value::as_i64) {
                                 self.text_tail
                                     .lock()
@@ -287,7 +273,7 @@ impl EventEmitter {
         // Durable text blocks are committed through the same emitter gate as
         // lifecycle changes. Tail frames are held until their block commit is
         // visible, then carry that commit cursor as `base_seq`.
-        if let Some(storage) = self.storage.clone() {
+        if let Some(committer) = self.committer.clone() {
             for flush in blocks_to_commit {
                 let blocks = flush
                     .get("blocks")
@@ -298,21 +284,14 @@ impl EventEmitter {
                     let owner = self.user_id.clone();
                     let session = self.session_id.clone();
                     let block_for_write = block.clone();
-                    let storage_for_write = storage.clone();
-                    match crate::core::blocking::run_db("thread_log.text_block", move || {
-                        storage_for_write.upsert_thread_text_block(
-                            &owner,
-                            &session,
-                            &block_for_write,
-                        )
-                    })
-                    .await
+                    match committer
+                        .upsert_text_block(&owner, &session, &block_for_write)
+                        .await
                     {
                         Ok(cursor) if cursor > 0 => {
                             if let Some(item_id) = block.get("item_id").and_then(Value::as_str) {
                                 self.text_tail.lock().set_base_seq(item_id, cursor);
                             }
-                            self.publish_change_cursor(&json!({"cursor": cursor}));
                             let turn_id = block
                                 .pointer("/data/turn_id")
                                 .or_else(|| block.get("turn_id"))
@@ -359,15 +338,10 @@ impl EventEmitter {
         if let Some(item) =
             crate::services::thread_log::event_item(&self.session_id, event_type, &data)
         {
-            if let Some(storage) = self.storage.clone() {
+            if let Some(committer) = self.committer.clone() {
                 let owner = self.user_id.clone();
-                match crate::core::blocking::run_db("thread_log.event", move || {
-                    storage.commit_thread_item(&owner, &item)
-                })
-                .await
-                {
+                match committer.commit_item(&owner, &item).await {
                     Ok(Some(receipt)) => {
-                        self.publish_change_cursor(&receipt);
                         let change_event = StreamEvent {
                             event: "thread_change".into(),
                             data: enrich_event_payload(receipt, Some(&self.session_id), timestamp),

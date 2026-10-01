@@ -198,9 +198,11 @@ impl Orchestrator {
                     "status": "running",
                     "summary": display_question,
                 });
-                if self
-                    .storage
-                    .update_thread_turn(
+                // The unified commit exit persists the turn update and publishes
+                // the change cursor only when the write actually changed state.
+                let _ = self
+                    .committer
+                    .update_turn(
                         &user_id,
                         &session_id,
                         &turn_id.to_string(),
@@ -208,10 +210,7 @@ impl Orchestrator {
                         &display_question,
                         &payload,
                     )
-                    .is_ok()
-                {
-                    self.publish_thread_change(&session_id);
-                }
+                    .await;
             }
             // Child cancellation survives monitor registration resetting the turn flags.
             self.ensure_not_cancelled(&session_id)?;

@@ -136,10 +136,10 @@ test('v2 pipeline renders a full streaming turn from change frames', () => {
   assert.equal(apply('thread_status', { data: { thread_status: 'running' } }), false);
 });
 
-test('v2 pipeline falls back to legacy when snapshot recovery is unavailable, and idempotency holds', () => {
+test('durable pipeline reports unavailable snapshot recovery and preserves idempotency', () => {
   resetChatThreadRuntime(SESSION);
   ensureChatThreadRuntime(SESSION);
-  registerChatThreadSnapshotLoader(null); // no loader wired: legacy fallback contract
+  registerChatThreadSnapshotLoader(null); // no loader wired: durable recovery callback contract
   const store = new FakeStore();
   let snapshotFallbacks = 0;
   const apply = (type: string, payload: unknown) =>
@@ -178,14 +178,14 @@ test('v2 pipeline falls back to legacy when snapshot recovery is unavailable, an
     JSON.stringify(before?.map((message) => message.content))
   );
 
-  // snapshot_required without a loader flips the session back to the legacy
-  // pipeline and reports the recovery payload.
+  // snapshot_required without a loader reports the recovery payload; the
+  // durable protocol remains the only session protocol.
   assert.equal(apply('thread_snapshot_required', { event: 'thread_snapshot_required', data: {
     required_from_seq: 6, earliest_available_seq: 9
   } }), true);
   assert.equal(snapshotFallbacks, 1);
-  assert.equal(isChatThreadV2Session(SESSION), false);
-  assert.equal(apply('thread_change', wireChange({ change_type: 'item_upsert', cursor: 3 })), false);
+  assert.equal(isChatThreadV2Session(SESSION), true);
+  assert.equal(apply('thread_change', wireChange({ change_type: 'item_upsert', cursor: 3 })), true);
 });
 
 test('frame normalization accepts nested emit-path, flat feeder and target-contract shapes', () => {
@@ -424,7 +424,7 @@ test('snapshot_required rebuilds state from the injected atomic snapshot loader'
   registerChatThreadSnapshotLoader(null);
 });
 
-test('a failed or stale snapshot keeps the legacy fallback contract', async () => {
+test('a failed or stale snapshot keeps the durable protocol contract', async () => {
   resetChatThreadRuntime(SESSION);
   ensureChatThreadRuntime(SESSION);
   const store = new FakeStore();
@@ -448,7 +448,7 @@ test('a failed or stale snapshot keeps the legacy fallback contract', async () =
 
   assert.equal(appliedSnapshots, 0);
   assert.equal(legacyFallbacks, 1);
-  assert.equal(isChatThreadV2Session(SESSION), false);
+  assert.equal(isChatThreadV2Session(SESSION), true);
 
   registerChatThreadSnapshotLoader(null);
 });
@@ -674,7 +674,7 @@ test('tails stay isolated per (item_id, field) across interleaved model rounds',
   );
 });
 
-test('a stale atomic snapshot is refused and keeps the legacy fallback contract', async () => {
+test('a stale atomic snapshot is refused and keeps the durable protocol contract', async () => {
   resetChatThreadRuntime(SESSION);
   ensureChatThreadRuntime(SESSION);
   const store = new FakeStore();
@@ -715,10 +715,10 @@ test('a stale atomic snapshot is refused and keeps the legacy fallback contract'
   // refusing it must not overwrite newer state.
   assert.equal(appliedSnapshots, 0);
   assert.equal(legacyFallbacks, 1);
-  assert.equal(isChatThreadV2Session(SESSION), false);
+  assert.equal(isChatThreadV2Session(SESSION), true);
   assert.equal(getChatThreadState(SESSION)?.lastSeq, 2);
-  // The session fell back to legacy: the v2 projection is no longer served.
-  assert.equal(buildChatThreadMaterializedMessages(SESSION), null);
+  // A stale snapshot leaves the durable projection intact.
+  assert.equal(buildChatThreadMaterializedMessages(SESSION)?.length, 1);
 
   registerChatThreadSnapshotLoader(null);
 });

@@ -123,25 +123,22 @@ impl Orchestrator {
         let (id, round) = if let Some(reserved) = reserved {
             reserved
         } else {
-            let storage = self.storage.clone();
-            let owner = user_id.clone();
-            let thread = session_id.clone();
             let input = json!({"role":"user", "content":question, "attachments":attachments,
                 "client_message_id":client_message_id,
                 "root_user_round":crate::services::goal::goal_continuation_user_round(request.config_overrides.as_ref())});
-            let accepted = crate::core::blocking::run_db("thread_log.accept", move || {
-                storage.accept_thread_turn(&owner, &thread, &input)
-            })
-            .await
-            .map_err(|err| OrchestratorError::internal(err.to_string()))?;
+            let accepted = self
+                .committer
+                .accept_turn(user_id.as_str(), session_id.as_str(), &input)
+                .await
+                .map_err(|err| OrchestratorError::internal(err.to_string()))?;
             if accepted["created"] == false {
                 return Err(OrchestratorError::invalid_request(
                     "client_message_id already accepted".to_string(),
                 ));
             }
-            // The durable transaction completed; wake local feeders. Polling
-            // remains the cross-instance fallback.
-            self.publish_thread_change(&session_id);
+            // The durable transaction completed and the unified exit already
+            // published the change cursor; polling remains the cross-instance
+            // fallback.
             (
                 accepted["turn_id"]
                     .as_str()
@@ -235,7 +232,7 @@ impl Orchestrator {
             0,
             prepared.client_message_id.clone(),
         )
-        .with_change_hub(self.change_hub.clone());
+        .with_committer(self.committer.clone());
         emitter.bind_turn(
             &prepared.thread_turn_id.expect("accepted turn").to_string(),
             prepared.thread_user_round.expect("accepted round"),
@@ -279,7 +276,7 @@ impl Orchestrator {
             start_event_id,
             prepared.client_message_id.clone(),
         )
-        .with_change_hub(self.change_hub.clone());
+        .with_committer(self.committer.clone());
         if prepared.change_stream {
             emitter = emitter.with_change_stream();
         }

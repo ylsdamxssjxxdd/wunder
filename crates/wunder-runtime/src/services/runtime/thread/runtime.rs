@@ -204,7 +204,7 @@ impl ThreadRuntime {
         self.ensure_session_record(&user_id, &session_id, &agent_id)?;
         if !goal::is_goal_continuation(request.config_overrides.as_ref()) {
             self.cancel_pending_goal_continuation(&session_id);
-            self.cancel_queued_goal_continuations(&session_id)?;
+            self.cancel_queued_goal_continuations(&session_id).await?;
         }
         request.session_id = Some(session_id.clone());
         request.agent_id = (!agent_id.is_empty()).then_some(agent_id.clone());
@@ -222,12 +222,11 @@ impl ThreadRuntime {
             })
             .await?
         };
-        let owner = user_id.clone();
-        let thread = session_id.clone();
-        let accepted = crate::core::blocking::run_db("thread_log.accept", move || {
-            storage.accept_thread_turn(&owner, &thread, &input)
-        })
-        .await?;
+        let accepted = self
+            .orchestrator
+            .committer
+            .accept_turn(&user_id, &session_id, &input)
+            .await?;
         if accepted["created"] == false {
             return Err(anyhow!("client_message_id already accepted"));
         }
@@ -300,16 +299,14 @@ impl ThreadRuntime {
                 round
             } else {
                 let echo = format!("/goal {}", goal_record.objective);
-                let storage = self.user_store.storage_backend().clone();
-                let owner = user_id.to_string();
-                let thread = session.session_id.clone();
                 let input = json!({"role":"user","content":echo,
                     "client_message_id":format!("goal:{}",goal_record.goal_id),
                     "meta":{"type":"goal_command","goal_command":true}});
-                let accepted = blocking::run_db("thread_log.accept.goal", move || {
-                    storage.accept_thread_turn(&owner, &thread, &input)
-                })
-                .await?;
+                let accepted = self
+                    .orchestrator
+                    .committer
+                    .accept_turn(&user_id, &session.session_id, &input)
+                    .await?;
                 let round = accepted["user_turn_index"].as_i64().unwrap_or(1);
                 round
             };
@@ -483,7 +480,7 @@ impl ThreadRuntime {
         }
     }
 
-    fn cancel_queued_goal_continuations(&self, session_id: &str) -> Result<()> {
+    async fn cancel_queued_goal_continuations(&self, session_id: &str) -> Result<()> {
         let cleaned = session_id.trim();
         if cleaned.is_empty() {
             return Ok(());
@@ -498,7 +495,7 @@ impl ThreadRuntime {
                 continue;
             }
             if goal::is_goal_continuation(task.request_payload.get("config_overrides")) {
-                let _ = self.cancel_task(&task.task_id);
+                let _ = self.cancel_task(&task.task_id).await;
             }
         }
         Ok(())
@@ -514,7 +511,7 @@ impl ThreadRuntime {
             .list_agent_tasks_by_thread(thread_id, status, limit)
     }
 
-    pub fn cancel_task(&self, task_id: &str) -> Result<()> {
+    pub async fn cancel_task(&self, task_id: &str) -> Result<()> {
         let now = now_ts();
         if let Some(task) = self.user_store.get_agent_task(task_id)? {
             if let Some(turn_id) = task
@@ -523,10 +520,10 @@ impl ThreadRuntime {
                 .and_then(Value::as_str)
             {
                 let payload = json!({"session_id": task.session_id, "turn_id": turn_id, "status": "cancelled", "error": "cancelled"});
-                if self
-                    .user_store
-                    .storage_backend()
-                    .update_thread_turn(
+                let _ = self
+                    .orchestrator
+                    .committer
+                    .update_turn(
                         &task.user_id,
                         &task.session_id,
                         turn_id,
@@ -534,10 +531,7 @@ impl ThreadRuntime {
                         "cancelled",
                         &payload,
                     )
-                    .is_ok()
-                {
-                    self.orchestrator.publish_thread_change(&task.session_id);
-                }
+                    .await;
             }
         }
         self.user_store
@@ -642,7 +636,7 @@ impl ThreadRuntime {
                     }
                     let page_len = tasks.len();
                     for task in tasks {
-                        self.cancel_task(&task.task_id)?;
+                        self.cancel_task(&task.task_id).await?;
                         if status == TASK_STATUS_RUNNING {
                             running_tasks_marked_cancelled += 1;
                         } else {
@@ -1158,18 +1152,16 @@ impl ThreadRuntime {
             );
             map.insert("visibility".into(), json!("user"));
         }
-        let storage = self.user_store.storage_backend();
-        let owner = user_id.to_string();
-        match blocking::run_db("thread_log.queue", move || {
-            storage.commit_thread_item(&owner, &payload)
-        })
-        .await
+        // The queue item commit goes through the unified exit: the committer
+        // persists the upsert and publishes the receipt cursor only on a real
+        // change; no-op replays return 0 without waking feeders.
+        match self
+            .orchestrator
+            .committer
+            .commit_item(user_id, &payload)
+            .await
         {
-            Ok(Some(receipt)) => {
-                let cursor = receipt.get("cursor").and_then(Value::as_i64).unwrap_or(0);
-                self.orchestrator.change_hub.publish(session_id, cursor);
-                cursor
-            }
+            Ok(Some(receipt)) => receipt.get("cursor").and_then(Value::as_i64).unwrap_or(0),
             Ok(None) => 0,
             Err(error) => {
                 warn!("persist queue item failed: {error}");
@@ -1549,10 +1541,10 @@ impl ThreadRuntime {
                 "failed"
             };
             let payload = json!({"session_id": task.session_id, "turn_id": turn_id, "status": terminal, "error": message});
-            if self
-                .user_store
-                .storage_backend()
-                .update_thread_turn(
+            let _ = self
+                .orchestrator
+                .committer
+                .update_turn(
                     &task.user_id,
                     &task.session_id,
                     turn_id,
@@ -1560,10 +1552,7 @@ impl ThreadRuntime {
                     &message,
                     &payload,
                 )
-                .is_ok()
-            {
-                self.orchestrator.publish_thread_change(&task.session_id);
-            }
+                .await;
         }
         if status == TASK_STATUS_CANCELLED {
             self.monitor.mark_cancelled(&task.session_id);

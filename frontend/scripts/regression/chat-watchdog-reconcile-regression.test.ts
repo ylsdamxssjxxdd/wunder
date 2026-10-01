@@ -16,7 +16,7 @@ test('watchdog no longer depends on a content-level recovery helper', () => {
 test('watchdog drift is based on durable change cursor versus remote tail', () => {
   assert.ok(
     watcherSource.includes(
-      'Number.isSafeInteger(remoteCursor) && remoteCursor > threadChangeCursor(runtime)'
+      'Number.isSafeInteger(remoteCursor) && remoteCursor > threadLogCursor(runtime)'
     )
   );
 });

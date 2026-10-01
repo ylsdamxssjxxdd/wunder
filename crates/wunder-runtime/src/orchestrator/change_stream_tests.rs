@@ -71,7 +71,7 @@ async fn concurrent_emits_keep_change_cursor_order_in_queue() {
         0,
         None,
     )
-    .with_change_hub(state.kernel.orchestrator.change_hub.clone());
+    .with_committer(state.kernel.orchestrator.committer.clone());
     let turn = accept_turn(&state, "session-a", "user-a");
     emitter.bind_turn(&turn, 1);
 
@@ -132,9 +132,11 @@ async fn direct_turn_commit_publishes_latest_durable_cursor() {
     let turn = accept_turn(&state, "session-a", "user-a");
     let mut wake = state.kernel.orchestrator.change_hub.subscribe("session-a");
 
-    state
-        .storage
-        .update_thread_turn(
+    let changed = state
+        .kernel
+        .orchestrator
+        .committer
+        .update_turn(
             "user-a",
             "session-a",
             &turn,
@@ -142,8 +144,9 @@ async fn direct_turn_commit_publishes_latest_durable_cursor() {
             "",
             &json!({"status":"running"}),
         )
+        .await
         .expect("commit turn status");
-    state.kernel.orchestrator.publish_thread_change("session-a");
+    assert!(changed);
 
     tokio::time::timeout(std::time::Duration::from_secs(1), wake.changed())
         .await
@@ -172,7 +175,7 @@ async fn change_stream_emits_tail_frames_with_utf16_offsets() {
         0,
         None,
     )
-    .with_change_hub(state.kernel.orchestrator.change_hub.clone())
+    .with_committer(state.kernel.orchestrator.committer.clone())
     .with_change_stream();
     let turn = accept_turn(&state, "session-a", "user-a");
     emitter.bind_turn(&turn, 1);
@@ -229,7 +232,7 @@ async fn interleaved_model_tails_keep_item_offsets_and_durable_bases() {
         0,
         None,
     )
-    .with_change_hub(state.kernel.orchestrator.change_hub.clone())
+    .with_committer(state.kernel.orchestrator.committer.clone())
     .with_change_stream();
     let turn = accept_turn(&state, "session-a", "user-a");
     emitter.bind_turn(&turn, 1);
@@ -350,8 +353,10 @@ async fn feedback_commit_wakes_feeder_with_snapshot_payload() {
     let turn = accept_turn(&state, "session-a", "user-a");
     let item_id = format!("{turn}:answer");
     state
-        .storage
-        .commit_thread_item(
+        .kernel
+        .orchestrator
+        .committer
+        .commit_item(
             "user-a",
             &json!({
                 "session_id":"session-a", "turn_id":turn, "item_id":item_id,
@@ -359,18 +364,21 @@ async fn feedback_commit_wakes_feeder_with_snapshot_payload() {
                 "role":"assistant", "content":"ok", "user_round":1
             }),
         )
+        .await
         .expect("commit assistant item")
         .expect("item receipt");
     let mut wake = state.kernel.orchestrator.change_hub.subscribe("session-a");
 
     let feedback = state
-        .storage
-        .set_thread_item_feedback("user-a", "session-a", &item_id, "up")
+        .kernel
+        .orchestrator
+        .committer
+        .set_feedback("user-a", "session-a", &item_id, "up")
+        .await
         .expect("feedback commit")
         .expect("first feedback accepted");
     assert_eq!(feedback["vote"], json!("up"));
-    // The API commit path publishes the durable cursor after success.
-    state.kernel.orchestrator.publish_thread_change("session-a");
+    // The unified commit exit publishes the durable cursor after success.
 
     tokio::time::timeout(std::time::Duration::from_secs(1), wake.changed())
         .await
@@ -407,17 +415,24 @@ async fn feedback_commit_wakes_feeder_with_snapshot_payload() {
         .storage
         .latest_thread_change_seq_by_session("session-a")
         .unwrap();
-    assert!(state
-        .storage
-        .set_thread_item_feedback("user-a", "session-a", &item_id, "down")
-        .unwrap()
-        .is_none());
+    let noop = state
+        .kernel
+        .orchestrator
+        .committer
+        .set_feedback("user-a", "session-a", &item_id, "down")
+        .await
+        .expect("feedback commit");
+    assert!(noop.is_none());
     assert_eq!(
         state
             .storage
             .latest_thread_change_seq_by_session("session-a")
             .unwrap(),
         after
+    );
+    assert!(
+        !wake.has_changed().expect("wake watch open"),
+        "no-op feedback must not wake feeders"
     );
 }
 
@@ -427,13 +442,25 @@ async fn freeze_system_prompt_append_wakes_feeder_with_snapshot() {
     let turn = accept_turn(&state, "session-a", "user-a");
     let mut wake = state.kernel.orchestrator.change_hub.subscribe("session-a");
 
-    state
+    let item = state
         .workspace
-        .save_session_system_prompt("user-a", "session-a", "你是测试助手。", Some("zh"))
+        .build_session_system_prompt_item(
+            "user-a",
+            "session-a",
+            "你是测试助手。",
+            Some("zh"),
+        )
+        .expect("build system prompt item")
+        .expect("system prompt item");
+    // The unified commit exit persists the append and publishes the receipt
+    // cursor only on the real commit.
+    state
+        .kernel
+        .orchestrator
+        .committer
+        .append_item("user-a", &item)
+        .await
         .expect("freeze system prompt");
-    // Mirrors the orchestrator prompt path: every durable ThreadLog append is
-    // followed by the latest-cursor wake.
-    state.kernel.orchestrator.publish_thread_change("session-a");
 
     tokio::time::timeout(std::time::Duration::from_secs(1), wake.changed())
         .await

@@ -58,7 +58,7 @@ import {
   normalizeMessageFeedback,
   normalizeMessageFeedbackVote
 } from '@/utils/messageFeedback';
-import { applyChatThreadServerEvent, isChatThreadV2Session } from '@/realtime/chat/chatThreadRuntime';
+import { applyChatThreadServerEvent } from '@/realtime/chat/chatThreadRuntime';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
@@ -628,7 +628,7 @@ export const chatSendActions = {
           content,
           stream: true,
           client_message_id: clientMessageId,
-          ...(isChatThreadV2Session(sessionId) ? { change_stream: true } : {}),
+          change_stream: true,
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(desktopToolCallMode ? { tool_call_mode: desktopToolCallMode } : {}),
           ...(approvalMode ? { approval_mode: approvalMode } : {}),
@@ -651,7 +651,6 @@ export const chatSendActions = {
           // Change-stream v2 consumes bubble content here; only interactive
           // and lifecycle frames fall through to the legacy send path.
           if (
-            isChatThreadV2Session(sessionId) &&
             applyChatThreadServerEvent(this, sessionId, effectiveEventType, payload)
           ) {
             return;

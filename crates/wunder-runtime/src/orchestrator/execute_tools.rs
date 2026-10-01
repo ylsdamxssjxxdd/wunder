@@ -95,18 +95,19 @@ impl Orchestrator {
                 "error": err.message(),
                 "code": err.code(),
             });
-            match self.storage.update_thread_turn(
-                user_id,
-                session_id,
-                &thread_turn_id.to_string(),
-                status,
-                err.message(),
-                &payload,
-            ) {
-                Ok(()) => self.publish_thread_change(session_id),
-                Err(error) => {
-                    warn!("update failed thread turn failed for session {session_id}: {error}")
-                }
+            if let Err(error) = self
+                .committer
+                .update_turn(
+                    user_id,
+                    session_id,
+                    &thread_turn_id.to_string(),
+                    status,
+                    err.message(),
+                    &payload,
+                )
+                .await
+            {
+                warn!("update failed thread turn failed for session {session_id}: {error}")
             }
         }
         emit_turn_terminal_event(
@@ -214,18 +215,19 @@ impl Orchestrator {
                 "status": status,
                 "stop_reason": stop_reason,
             });
-            match self.storage.update_thread_turn(
-                user_id,
-                session_id,
-                &thread_turn_id.to_string(),
-                status,
-                answer,
-                &payload,
-            ) {
-                Ok(()) => self.publish_thread_change(session_id),
-                Err(error) => {
-                    warn!("update completed thread turn failed for session {session_id}: {error}")
-                }
+            if let Err(error) = self
+                .committer
+                .update_turn(
+                    user_id,
+                    session_id,
+                    &thread_turn_id.to_string(),
+                    status,
+                    answer,
+                    &payload,
+                )
+                .await
+            {
+                warn!("update completed thread turn failed for session {session_id}: {error}")
             }
         }
         emit_turn_terminal_event(

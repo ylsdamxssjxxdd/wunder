@@ -1,13 +1,10 @@
-import { advanceThreadChangeCursor, threadChangeCursor } from './chatThreadCursor';
+import { advanceThreadLogCursor, threadLogCursor } from './chatThreadCursor';
 import { selectVisibleMessageProjections } from '@/realtime/chat/chatRuntimeSelectors';
 import {
   applyChatThreadServerEvent,
   ensureChatThreadRuntime,
   getChatThreadState,
-  isChatChangeStreamServerSupported,
-  isChatThreadV2Session,
-  registerChatThreadSnapshotLoader,
-  setChatChangeStreamServerSupported
+  registerChatThreadSnapshotLoader
 } from '@/realtime/chat/chatThreadRuntime';
 import { isChatSnapshotCurrent } from './chatSnapshotFreshness';
 import { defineStore } from 'pinia';
@@ -128,7 +125,7 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 
 import { buildWorkflowItem, hydrateSessionCommandSessions, safeJsonParse } from './chatDemoPanels';
 import { applyGoalStreamEvent } from './chatPersist';
-import { SLOW_CLIENT_RESUME_DELAY_MS, WATCH_RECONCILE_COOLDOWN_MS, WATCH_RECONCILE_DELAY_MS, abortWatchStream, clearRuntimeInteractiveControllers, clearRuntimeResumeStreamState, clearRuntimeSendStreamState, clearSessionWatcher, clearSlowClientResume, clearWatchdog, recoverRuntimeInteractiveControllers, resolveLastAssistantStreamEventId, resolveLastStreamEventId, resolveMaxStreamEventId, resolveWatchdogProfile, setSessionLoading } from './chatRuntimeControls';
+import { SLOW_CLIENT_RESUME_DELAY_MS, WATCH_RECONCILE_COOLDOWN_MS, WATCH_RECONCILE_DELAY_MS, abortWatchStream, clearRuntimeInteractiveControllers, clearRuntimeResumeStreamState, clearRuntimeSendStreamState, clearSessionWatcher, clearSlowClientResume, clearWatchdog, recoverRuntimeInteractiveControllers, resolveWatchdogProfile, setSessionLoading } from './chatRuntimeControls';
 import { applyCanonicalSessionEventsSnapshot, applyCanonicalStreamRuntimeEvent, applySessionRuntimeEvent, applySessionRuntimeSnapshot, buildLatestAssistantRuntimeDebugSnapshot, buildRuntimeDebugSnapshot, cacheSessionMessages, syncChatRuntimeProjectionFromSnapshot, clearRuntimeProjectionInvalidation, clearSessionEventsSnapshot, countAssistantStreamingMessages, ensureRuntime, getRuntime, getSessionMessages, hasKnownSessionInStore, isSessionUnavailableStatus, loadSessionEventsSnapshot, notifySessionSnapshot, purgeUnavailableSession, refreshRuntimeStreamLifecycle, resolveChatHttpStatus, resolveSessionKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionDetailSnapshotCache, sessionDetailWarmState, sessionEventsSnapshotCache, sessionEventsSnapshotInFlight, sessionHistoryState, sessionHydratedMessageVersion, sessionListCache, sessionListCacheInFlight, sessionMessages, sessionProtectedRealtimeMessages, sessionRuntime, sessionRuntimeShadowState, sessionSubagentsCache, sessionSubagentsInFlight } from './chatRuntimeState';
 import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
 import { chatWatcherSharedState } from './chatSharedState';
@@ -164,18 +161,9 @@ export const startSessionWatcher = (store, sessionId) => {
   runtime.watchRequestId = requestId;
   let sessionMessagesRef = resolveSessionMessageArray(store, key, store.messages);
   cacheSessionMessages(key, sessionMessagesRef);
-  const tailEventId =
-    resolveLastStreamEventId(sessionMessagesRef) ||
-    resolveLastAssistantStreamEventId(sessionMessagesRef) ||
-    resolveMaxStreamEventId(sessionMessagesRef) ||
-    0;
-  const hasProjectionSession = Boolean(store?.runtimeProjection?.sessions?.[key]);
-  const projectionLastEventId = selectRuntimeLastAppliedEventId(store?.runtimeProjection, key);
   const runtimeLastEventId = getRuntimeLastEventId(runtime);
   const runtimeRemoteLastEventId = normalizeStreamEventId(runtime?.remoteLastEventId) || 0;
-  let lastEventId = hasProjectionSession
-    ? Math.max(projectionLastEventId, runtimeLastEventId, runtimeRemoteLastEventId, tailEventId)
-    : Math.max(runtimeLastEventId, runtimeRemoteLastEventId, tailEventId);
+  let lastEventId = Math.max(runtimeLastEventId, runtimeRemoteLastEventId);
 
   const refreshLastAppliedEventId = () => {
     const appliedEventId = selectRuntimeLastAppliedEventId(store?.runtimeProjection, key);
@@ -367,7 +355,7 @@ export const startSessionWatcher = (store, sessionId) => {
     try {
       await task;
       if (!controller.signal.aborted) {
-        advanceThreadChangeCursor(runtime, Math.max(...changes.map(change => Number(change.cursor) || 0)));
+        advanceThreadLogCursor(runtime, Math.max(...changes.map(change => Number(change.cursor) || 0)));
         if (!pendingThreadChanges.size && pendingThreadStatus) {
           applyRecoveredThreadStatus(pendingThreadStatus);
           pendingThreadStatus = null;
@@ -532,7 +520,7 @@ export const startSessionWatcher = (store, sessionId) => {
         });
         const remoteCursor = Number(payload?.thread_change_cursor);
         const shouldReconcileRemoteDrift =
-          Number.isSafeInteger(remoteCursor) && remoteCursor > threadChangeCursor(runtime);
+          Number.isSafeInteger(remoteCursor) && remoteCursor > threadLogCursor(runtime);
         if (shouldReconcileRemoteDrift) {
           scheduleWatchReconcile(running === false ? 0 : WATCH_RECONCILE_DELAY_MS);
         }
@@ -570,7 +558,7 @@ export const startSessionWatcher = (store, sessionId) => {
 
   // v2 recovery (plan §5 M2-A/M2-C): the reducer owns the durable cursor, so
   // overflow, gap overflow and a freshly applied atomic snapshot all recover
-  // by restarting the watch — its after_event_id is already state.lastSeq.
+  // by restarting the watch — its after_change_seq is already state.lastSeq.
   // No full reload, and the runtime's cooldown collapses duplicate bursts.
   const resumeWatchFromLastSeq = () => {
     if (controller.signal.aborted || threadResumeTimer) return;
@@ -609,12 +597,10 @@ export const startSessionWatcher = (store, sessionId) => {
       useChangeStream &&
       applyChatThreadServerEvent(store, key, normalizedEventType || eventType, payload, {
         onSnapshotRequired: () => {
-          // Runtime could not rebuild from the atomic snapshot (loader failed
-          // or stale): keep the legacy full-reload fallback path.
+          // A durable snapshot is mandatory. Do not fall back to the removed
+          // transport-event/full-session recovery path.
           threadRecoveryFailed = true;
-          void store.loadSessionDetail(key, { preserveWatcher: true, startWatcherAfterHydration: false })
-            .then(() => { if (!controller.signal.aborted) startSessionWatcher(store, key); })
-            .catch(() => scheduleWatchReconcile(0));
+          controller.abort();
         },
         onSnapshotApplied: () => resumeWatchFromLastSeq(),
         onOverflow: () => resumeWatchFromLastSeq(),
@@ -629,9 +615,7 @@ export const startSessionWatcher = (store, sessionId) => {
     }
     if (normalizedEventType === 'thread_snapshot_required') {
       threadRecoveryFailed = true;
-      void store.loadSessionDetail(key, { preserveWatcher: true, startWatcherAfterHydration: false })
-        .then(() => { if (!controller.signal.aborted) startSessionWatcher(store, key); })
-        .catch(() => scheduleWatchReconcile(0));
+      controller.abort();
       return;
     }
     if (normalizedEventType === 'thread_status' && data?.recovery === true) {
@@ -702,31 +686,18 @@ export const startSessionWatcher = (store, sessionId) => {
     return;
   };
 
-  const baseEventId = threadChangeCursor(runtime);
-  // Freeze the protocol branch for this watch request. A delayed ready frame
-  // can update the connection capability after a legacy watch has started;
-  // its handlers must never switch reducers mid-subscription.
-  let useChangeStream = false;
-  let protocolChosen = false;
+  // Chat uses one durable protocol. The reducer owns the only recovery cursor.
+  const useChangeStream = true;
   startWatchdog();
   const watchPromise = chatWsClient.request({
       requestId,
       sessionId: key,
       message: () => {
-        if (!protocolChosen) {
-          // The multiplexer waits for the ready capability before invoking
-          // this factory. Choose once for this watcher and never switch
-          // reducers if a later handshake or reconnect changes capability.
-          useChangeStream = isChatThreadV2Session(key) && isChatChangeStreamServerSupported();
-          protocolChosen = true;
-        }
         return {
           type: 'watch',
           request_id: requestId,
           session_id: key,
-          payload: useChangeStream
-            ? { change_stream: true, after_change_seq: getChatThreadState(key)?.lastSeq ?? 0 }
-            : { after_event_id: baseEventId }
+          payload: { after_change_seq: getChatThreadState(key)?.lastSeq ?? 0 }
         };
       },
       onEvent,
@@ -781,15 +752,8 @@ export const chatWsClient = createWsMultiplexer(() => openChatSocket(), {
   connectTimeoutMs: 10000,
   pingIntervalMs: 20000,
   readyTimeoutMs: 150,
-  onConnecting: () => setChatChangeStreamServerSupported(null),
-  onReady: (payload) => {
-    const features = payload?.features;
-    const supported = Boolean(
-      features && typeof features === 'object' && !Array.isArray(features) &&
-      (features as Record<string, unknown>).change_stream === true
-    );
-    setChatChangeStreamServerSupported(supported);
-  }
+  onConnecting: () => undefined,
+  onReady: () => undefined
 });
 
 // v2 liveness probe threshold (plan §5 M2-A): a running session silent past

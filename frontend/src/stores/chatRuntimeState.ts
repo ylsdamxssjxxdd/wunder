@@ -1073,7 +1073,7 @@ export const ensureRuntime = (sessionId) => {
       pendingManualCompaction: null,
       lastEventId: 0,
       remoteLastEventId: 0,
-      threadChangeCursor: 0,
+      threadLogCursor: 0,
       threadStatus: 'not_loaded',
       loaded: false,
       activeTurnId: '',

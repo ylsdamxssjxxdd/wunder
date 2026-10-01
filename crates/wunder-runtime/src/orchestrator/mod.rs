@@ -99,6 +99,7 @@ mod retry_governor;
 mod runtime_snapshot;
 mod stream_timeout;
 mod thread_change_hub;
+mod thread_log_committer;
 mod thread_runtime;
 mod tool_calls;
 mod tool_exec;
@@ -121,6 +122,7 @@ use event_stream::EventEmitter;
 use event_stream::StreamSignal;
 use limiter::RequestLimiter;
 use thread_change_hub::ThreadChangeHub;
+use thread_log_committer::ThreadLogCommitter;
 use thread_runtime::ThreadRuntimeRegistry;
 use tool_calls::apply_tool_name_map;
 use tool_calls::collect_tool_calls_from_output;
@@ -151,6 +153,7 @@ pub struct Orchestrator {
     active_turns: Arc<ActiveTurnRegistry>,
     thread_runtime: Arc<ThreadRuntimeRegistry>,
     pub(crate) change_hub: Arc<ThreadChangeHub>,
+    pub(crate) committer: Arc<ThreadLogCommitter>,
     user_world: Arc<UserWorldService>,
     beeroom_realtime: Arc<BeeroomRealtimeService>,
     cron_wake_signal: Option<CronWakeSignal>,
@@ -158,16 +161,6 @@ pub struct Orchestrator {
 }
 
 impl Orchestrator {
-    /// Publish the durable cursor after a ThreadLog transaction succeeds.
-    /// The storage transaction serializes per-session change_seq; this helper
-    /// only wakes local feeders and never treats the hub as a source of truth.
-    pub(crate) fn publish_thread_change(&self, session_id: &str) {
-        let Ok(cursor) = self.storage.latest_thread_change_seq_by_session(session_id) else {
-            return;
-        };
-        self.change_hub.publish(session_id, cursor);
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config_store: ConfigStore,
@@ -187,6 +180,8 @@ impl Orchestrator {
         beeroom_realtime: Arc<BeeroomRealtimeService>,
         cron_wake_signal: Option<CronWakeSignal>,
     ) -> Self {
+        let change_hub = Arc::new(ThreadChangeHub::new());
+        let committer = Arc::new(ThreadLogCommitter::new(storage.clone(), change_hub.clone()));
         Self {
             task_runtime: Arc::default(),
             scheduling: Arc::new(Default::default()),
@@ -205,7 +200,8 @@ impl Orchestrator {
             command_sessions,
             active_turns: Arc::new(ActiveTurnRegistry::new()),
             thread_runtime: Arc::new(ThreadRuntimeRegistry::new()),
-            change_hub: Arc::new(ThreadChangeHub::new()),
+            change_hub,
+            committer,
             user_world,
             beeroom_realtime,
             cron_wake_signal,

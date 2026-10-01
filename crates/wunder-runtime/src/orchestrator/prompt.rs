@@ -321,17 +321,22 @@ impl Orchestrator {
                 None,
             )
             .await;
-        if let Err(err) = self.workspace.save_session_system_prompt(
+        match self.workspace.build_session_system_prompt_item(
             user_id,
             session_id,
             &session_prompt,
             language,
         ) {
-            warn!("freeze session system prompt failed for session {session_id}: {err}");
-        } else {
-            // The frozen prompt is a durable item append; wake local feeders so
-            // clients observe it without waiting for the poll fallback.
-            self.publish_thread_change(session_id);
+            Err(err) => warn!("freeze session system prompt failed for session {session_id}: {err}"),
+            Ok(Some(item)) => {
+                // The frozen prompt is a durable item append through the unified
+                // commit exit, which publishes the change cursor only on the
+                // real commit; polling remains the cross-instance fallback.
+                if let Err(err) = self.committer.append_item(user_id, &item).await {
+                    warn!("freeze session system prompt failed for session {session_id}: {err}");
+                }
+            }
+            Ok(None) => {}
         }
         session_prompt
     }

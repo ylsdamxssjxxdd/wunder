@@ -1,6 +1,6 @@
 import { sessionCatalogCheckIds, sessionCatalogCandidateIds, mergeSessionCatalogPage, cacheSessionCatalog } from './chatSessionCatalog';
 import { isSessionUnavailable } from './chatSessionAvailability';
-import { normalizeThreadChangeCursor } from './chatThreadCursor';
+import { normalizeThreadLogCursor } from './chatThreadCursor';
 import { isChatSnapshotCurrent, readChatRealtimeRevision } from './chatSnapshotFreshness';
 import { defineStore } from 'pinia';
 
@@ -1104,9 +1104,9 @@ export const chatSessionOpenLoadActions = {
           setSessionLoading(this, targetSessionId, false);
         }
         writeSessionHydratedMessageVersion(targetSessionId, hydratedVersion);
-        const snapshotCursor = normalizeThreadChangeCursor(sessionDetail?.thread_change_cursor);
+        const snapshotCursor = normalizeThreadLogCursor(sessionDetail?.thread_change_cursor);
         if (runtime && snapshotCursor !== null && sessionDetail?.history_incomplete !== true) {
-          runtime.threadChangeCursor = snapshotCursor;
+          runtime.threadLogCursor = snapshotCursor;
         }
         markSessionDetailWarm(targetSessionId);
         // Ignore stale async response: keep current foreground conversation state untouched.

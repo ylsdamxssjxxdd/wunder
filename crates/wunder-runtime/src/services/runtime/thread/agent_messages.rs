@@ -202,7 +202,7 @@ impl ThreadRuntime {
             .is_cancelled(request.session_id.as_deref().unwrap_or_default())
             || message.cancelled()
         {
-            self.cancel_task(&task_id)?;
+            self.cancel_task(&task_id).await?;
             return Err(anyhow!("parent or message source was interrupted"));
         }
         self.clone().start();

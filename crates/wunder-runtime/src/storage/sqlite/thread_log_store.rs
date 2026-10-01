@@ -79,7 +79,7 @@ pub(super) trait SqliteThreadLogStorage {
         status: &str,
         summary: &str,
         payload: &Value,
-    ) -> Result<()>;
+    ) -> Result<bool>;
     fn delete_thread_log_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn append_thread_item_impl(&self, user_id: &str, payload: &Value) -> Result<Option<Value>>;
     fn list_thread_turns_impl(
@@ -528,7 +528,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         status: &str,
         _summary: &str,
         payload: &Value,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         self.ensure_initialized()?;
         let now = Self::now_ts();
         let mut conn = self.open()?;
@@ -550,7 +550,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         let changed=tx.execute("UPDATE thread_turns SET status=?,payload=?,updated_time=? WHERE session_id=? AND turn_id=? AND status IN ('queued','running','waiting_input') AND (status<>? OR payload<>?)", params![status,text,now,session_id,turn_id,status,text])?;
         if changed == 0 {
             tx.commit()?;
-            return Ok(());
+            return Ok(false);
         }
         // Keep the visible user bubble in sync with its durable turn.  The
         // bubble is created as running when the request is admitted, so a
@@ -596,6 +596,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
                 .unwrap_or(0);
             tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,?,?)", params![session_id,seq,user_id,"item_upsert",turn_id,input_item_id,bubble_revision,bubble_payload,now])?;
         }
+        let had_settled = !settled_items.is_empty();
         for item_id in settled_items {
             seq += 1;
             let item_payload = committed_item_payload(&tx, session_id, &item_id)?;
@@ -614,7 +615,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
             params![session_id, seq.saturating_sub(4096)],
         )?;
         tx.commit()?;
-        Ok(())
+        Ok(changed > 0 || input_changed > 0 || had_settled)
     }
     fn append_thread_item_impl(&self, user_id: &str, payload: &Value) -> Result<Option<Value>> {
         self.ensure_initialized()?;

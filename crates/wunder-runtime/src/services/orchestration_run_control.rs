@@ -144,7 +144,7 @@ pub async fn cancel_team_run_record(
                 state
                     .kernel
                     .thread_runtime
-                    .cancel_task(&agent_task.task_id)?;
+                    .cancel_task(&agent_task.task_id).await?;
             }
         }
     }

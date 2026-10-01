@@ -79,7 +79,7 @@ pub(super) trait PostgresThreadLogStorage {
         status: &str,
         summary: &str,
         payload: &Value,
-    ) -> Result<()>;
+    ) -> Result<bool>;
     fn delete_thread_log_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn append_thread_item_impl(&self, user_id: &str, payload: &Value) -> Result<Option<Value>>;
     fn list_thread_turns_impl(
@@ -516,7 +516,7 @@ impl PostgresThreadLogStorage for PostgresStorage {
         status: &str,
         _summary: &str,
         payload: &Value,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         self.ensure_initialized()?;
         let now = Self::now_ts();
         let mut conn = self.conn()?;
@@ -537,7 +537,7 @@ impl PostgresThreadLogStorage for PostgresStorage {
         let changed=tx.execute("UPDATE thread_turns SET status=$1,payload=$2,updated_time=$3 WHERE session_id=$4 AND turn_id=$5 AND status IN ('queued','running','waiting_input') AND (status<>$6 OR payload<>$7)", &[&status,&text,&now,&session_id,&turn_id,&status,&text])?;
         if changed == 0 {
             tx.commit()?;
-            return Ok(());
+            return Ok(false);
         }
         // Keep the visible user bubble in sync with its durable turn.
         let bubble_status = if matches!(
@@ -589,6 +589,7 @@ impl PostgresThreadLogStorage for PostgresStorage {
                 .unwrap_or(0);
             tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", &[&session_id,&seq,&user_id,&"item_upsert",&turn_id,&input_item_id,&bubble_revision,&bubble_payload,&now])?;
         }
+        let had_settled = !settled_items.is_empty();
         for item_id in settled_items {
             seq += 1;
             let row = tx.query_one("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility,root_turn_id,created_seq FROM thread_items WHERE session_id=$1 AND item_id=$2", &[&session_id,&item_id])?;
@@ -613,7 +614,7 @@ impl PostgresThreadLogStorage for PostgresStorage {
             &[&session_id, &seq.saturating_sub(4096)],
         )?;
         tx.commit()?;
-        Ok(())
+        Ok(changed > 0 || input_changed > 0 || had_settled)
     }
     fn append_thread_item_impl(&self, user_id: &str, payload: &Value) -> Result<Option<Value>> {
         self.ensure_initialized()?;
