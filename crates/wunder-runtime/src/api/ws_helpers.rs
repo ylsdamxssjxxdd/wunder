@@ -116,6 +116,8 @@ pub(crate) struct WsFeatures {
     pub watch: bool,
     pub ping_pong: bool,
     pub goal: bool,
+    /// Change-stream v2: durable change feeder plus ephemeral item tails.
+    pub change_stream: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -433,12 +435,31 @@ pub(crate) async fn send_ws_event(
     }
 }
 
+/// Best-effort delivery for ephemeral tail frames. A full out-queue drops the
+/// frame silently: tails carry explicit offsets and the next durable text
+/// block heals the gap, so no slow-client warning is warranted.
+pub(crate) async fn send_ws_tail_event(
+    tx: &WsSender,
+    request_id: Option<&str>,
+    event: StreamEvent,
+) -> Result<(), ()> {
+    let event_name = event.event.clone();
+    let event_id = event.id.clone();
+    let data = enrich_ws_event_data(event.data, event_id.as_deref());
+    let payload = json!({
+        "event": event_name,
+        "id": event_id,
+        "data": data,
+    });
+    let text = build_ws_text("event", request_id, Some(payload));
+    try_send_text_strict(tx, text).map(|_| ()).map_err(|_| ())
+}
+
 pub(crate) async fn send_ws_live_event(
     tx: &WsSender,
     request_id: &str,
     event: StreamEvent,
-) -> Result<(), ()> {
-    if tx.tx.capacity() <= STREAM_EVENT_SLOW_CLIENT_QUEUE_WATERMARK {
+) -> Result<(), ()> {    if tx.tx.capacity() <= STREAM_EVENT_SLOW_CLIENT_QUEUE_WATERMARK {
         // Detach this live delivery with an explicit replay signal. Replay itself
         // stays lossless; silently dropping deltas there would skip its cursor.
         let warning = build_ws_text(
@@ -581,6 +602,7 @@ pub(crate) async fn resume_stream_events(
     tx: WsSender,
     cancel: Option<CancellationToken>,
     keep_alive: bool,
+    mut notify: Option<tokio::sync::watch::Receiver<i64>>,
 ) {
     let workspace = state.workspace.clone();
     let monitor = state.monitor.clone();
@@ -717,13 +739,44 @@ pub(crate) async fn resume_stream_events(
                 };
                 poll_interval = std::time::Duration::from_secs_f64(next.min(max_interval));
             }
+            let changed = {
+                let mut notify = notify.clone();
+                async move {
+                    match notify.as_mut() {
+                        Some(receiver) => {
+                            let _ = receiver.changed().await;
+                        }
+                        None => std::future::pending::<()>().await,
+                    }
+                }
+            };
             if let Some(token) = cancel.as_ref() {
                 tokio::select! {
                     _ = token.cancelled() => return,
+                    _ = changed => {
+                        // Durable progress landed while we were idle: read
+                        // immediately instead of waiting out the backoff.
+                        if let Some(receiver) = notify.as_mut() {
+                            if *receiver.borrow_and_update() > last_change_seq {
+                                idle_rounds = 0;
+                                poll_interval = base_interval;
+                            }
+                        }
+                    }
                     _ = tokio::time::sleep(poll_interval) => {}
                 }
             } else {
-                tokio::time::sleep(poll_interval).await;
+                tokio::select! {
+                    _ = changed => {
+                        if let Some(receiver) = notify.as_mut() {
+                            if *receiver.borrow_and_update() > last_change_seq {
+                                idle_rounds = 0;
+                                poll_interval = base_interval;
+                            }
+                        }
+                    }
+                    _ = tokio::time::sleep(poll_interval) => {}
+                }
             }
         } else {
             last_heartbeat = std::time::Instant::now();

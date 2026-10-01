@@ -25,6 +25,12 @@ pub(super) struct PreparedRequest {
     pub(super) approval_tx: Option<ApprovalRequestTx>,
     pub(super) thread_turn_id: Option<Uuid>,
     pub(super) thread_user_round: Option<i64>,
+    /// Durable cursor observed immediately before accepting this turn.
+    /// Change-stream feeders start here so the accept transaction's changes
+    /// are replayed instead of skipped.
+    pub(super) thread_resume_from_seq: i64,
+    /// Change-stream v2 opt-in from the WS start payload.
+    pub(super) change_stream: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]

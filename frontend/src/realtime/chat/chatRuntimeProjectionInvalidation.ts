@@ -100,7 +100,7 @@ const flushRuntimeProjectionContentVersion = (store: ProjectionVersionStore) => 
   }
 };
 
-const markRuntimeProjectionContentChanged = (
+export const markRuntimeProjectionContentChanged = (
   store: ProjectionVersionStore | null | undefined,
   messageIds: Iterable<unknown>,
   options: { immediate?: boolean } = {}
@@ -150,7 +150,7 @@ const flushRuntimeProjectionReasoningVersion = (store: ProjectionVersionStore) =
   }
 };
 
-const markRuntimeProjectionReasoningChanged = (
+export const markRuntimeProjectionReasoningChanged = (
   store: ProjectionVersionStore | null | undefined,
   messageIds: Iterable<unknown>,
   options: { immediate?: boolean } = {}

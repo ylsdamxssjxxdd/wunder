@@ -138,6 +138,8 @@ ThreadCatalogService::snapshot(session_id) -> ThreadSnapshot
 ThreadCatalogService::events(session_id, after_event_id, limit) -> ThreadEventPage
 ```
 
+> 说明：`after_event_id` 是本方案现有 v1 兼容游标。按《聊天流式管线根治方案》，最终 durable 游标应迁移为 `thread_log_changes.change_seq`（见第 10 节），接口在独立迁移节点改为按 `change_seq` 分页。
+
 `ThreadListQuery` 至少包含用户范围、游标、1–100 的页大小、状态筛选、关键词、父线程筛选和排序键。`ThreadSnapshot` 至少包含以下字段：
 
 - `session_id`、标题、智能体 ID、模型、工作目录、创建/最近活动时间；
@@ -277,7 +279,7 @@ struct ToolCallKey {
 
 - A 线程流式输出期间切换到 B，A 继续完成；返回 A 后文本完整且顺序正确。
 - A、B 同时运行同名工具时，每张卡只接收所属线程的结果。
-- 事件积压、断线重连或投影淘汰后，按事件 ID 补齐，不重复、不丢失、不跨线程。
+- 事件积压、断线重连或投影淘汰后补齐，不重复、不丢失、不跨线程。迁移前以事件 ID 补齐；按根治方案迁移后以 `change_seq` durable 重放为最终验收真相（见第 10 节）。
 - 内存与队列均有上限；达到上限时可通过回放恢复，测试证明没有静默丢字。
 
 ### N3：转录单元和 Codex 风格主布局
@@ -347,7 +349,7 @@ struct ToolCallKey {
 | 目录读取 | 分页，单页 1–100 条；UI 只渲染可视行及少量预取，不全量加载所有会话 |
 | 内存 | 目录摘要、线程投影、工具预览、命令输出、事件队列都必须有上限；完整原文按需读取 |
 | 流式刷新 | token/delta 在约 16–33 ms 合并；不为每个 token 重建全 transcript 或完整 Markdown |
-| 事件完整性 | 通道背压 + 持久事件 ID + 补水；不得以丢弃文本作为常态降压策略 |
+| 事件完整性 | 通道背压 + durable 游标 + 补水；不得以丢弃文本作为常态降压策略。现状按事件 ID 去重，迁移后以 `change_seq` 为唯一 durable 真相，ephemeral 增量允许丢弃（见第 10 节） |
 | 切换 | 保存每线程草稿/滚动锚点；只加载目标线程必要窗口；后台线程持续归档事件 |
 | 锁 | 线程目录读取不持有长时间全局锁；运行、审批、取消和状态均按 session ID 隔离 |
 | 重放 | 使用事件游标去重；完成块稳定，活动尾块增量更新；保留期外有诚实降级 |
@@ -387,6 +389,20 @@ N1、N2 是 N3–N5 的前置条件：在没有线程目录、线程作用域状
 - `codex-rs/tui/src/chatwidget/rendering.rs` 与 `styles.md`：连续 transcript、composer、快捷键与终端配色准则；
 - `crates/wunder-cli/tui/app.rs`、`command_session_display.rs`、`tool_display.rs`、`tui/markdown_stream.rs`：应复用或迁移的 Wunder 现有能力；
 - `crates/wunder-runtime/src/services/stream_events.rs`、线程运行时和会话存储：目录服务与可回放事件的权威来源。
+- `docs/聊天流式管线根治方案.md`：聊天流式 durable 游标（`change_seq`）、durable/ephemeral 分工、原子快照与单 reducer 的正确性基线（见第 10 节）。
+
+
+## 10. 聊天流式游标对齐：《聊天流式管线根治方案》带来的新要求（待独立迁移）
+
+`docs/聊天流式管线根治方案.md` 把“一会话、一份线程日志、一个 durable 游标 `change_seq`、一条确定性渲染路径”确立为用户聊天流式的唯一正确性基线，并明确只改用户聊天 WebSocket 的 v2 主路径；`orchestrator.stream()` 的其他消费者（含 CLI）在**单独审计与迁移前保持原行为**。因此本方案以下现状应作为“预迁移基线”保留，在独立迁移节点完成对齐，不得据此宣布聊天流式已按根治方案验收：
+
+- **durable 游标**：现用 `stream_events.event_id` 作为重放/去重/排序的 durable 游标（`last_seen_event_id`、`replay_from`、`applied_event_ids`、`ThreadCatalogService::events(after_event_id)`）。根治方案要求唯一 durable 游标是 `thread_log_changes.change_seq`；transport `event_id` 只保留于 v1 兼容，绝不参与 v2 重连、去重或排序。迁移后 `ThreadRegistry` 的 replay 游标与目录服务的分页参数均改为按 `change_seq`。
+- **durable / ephemeral 分工**：token delta 属可丢弃的 `thread_item_tail`（按 `(item_id, field, offset, base_seq)` 分片、有界），最终正确性由 durable `text_block` 重放保证。“不丢字 / 不串线程”必须以 durable 重放为验收真相；tail 未达其 `base_seq` 前不得应用，切换 item/field 前需提交旧 tail。
+- **身份与顺序由服务端定义**：转录/工具单元的顺序来自持久化 `created_seq`/`item_index`，身份来自稳定 `item_id`，不使用客户端到达顺序、字符串匹配、评分或 localeCompare 推测关系（与本方案 N3/N4 已推进的稳定 `ToolCallKey` 方向一致）。
+- **原子快照 + cursor 守卫**：进入线程的快照须与服务端在同一读事务取得并携带 snapshot cursor；客户端只接受 `snapshot_cursor >= 本地 lastSeq` 的快照，快照后从该 cursor 续看。
+- **单 reducer**：`ThreadProjection` 只从 durable 帧做幂等折叠 + 按 offset 校验的 tail，不在渲染路径引入多条写入路径或启发式合并。
+
+该迁移作为 CLI 的独立追加节点写入完成定义：CLI 聊天流式的断线续传、去重、排序与快照恢复结果，须与该会话按 `change_seq` 重放的 durable 帧逐文本一致，并复用 runtime 的 session commit API（根治方案 M1-A）与原子快照/feeder（M1-C/M2-C）。
 
 
 ## 实施进度补充：线程显示状态隔离（待集成验证）
@@ -418,3 +434,9 @@ N1、N2 是 N3–N5 的前置条件：在没有线程目录、线程作用域状
 - **N1 目录服务修正**：关键词搜索从“分页后过滤”改为服务层分页执行（有界扫描最多 10 页 × 100 条，扫描外的匹配不返回）；`ThreadCatalogService::snapshot` 改为按会话 ID 直接读取并用父线程筛选统计子线程数，不再用搜索模拟。存储层新增 `count_child_chat_sessions` 批量子线程计数（SQLite/PostgreSQL 双实现，`UserStore` 委托）。
 - **N5/N6 呈现**：命令中心搜索按 Enter 后走目录服务查询（本地输入仍对已加载页即时过滤）；详情栏新增“子线程”计数。类型化审批/询问单元已由 `LogKind::Approval` / `LogKind::Inquiry` 承载（`!` / `?` 前缀）。
 - 验证状态：`cargo check --workspace` 通过；`cargo test -p wunder-cli` 169 项通过（含新增 ToolCallKey/临时卡匹配测试），`cargo test -p wunder-core --lib` 80 项通过；`cargo test -p wunder-runtime` 存在 15 项与本方案无关的既有失败（tools/catalog、prompting、worker_card 区域，属并行开发中的路径解析与文案断言）。剩余发布门禁：多线程高频 delta 压测、Windows 7 x86 与 Ubuntu 18.04 目标构建仍待执行。
+
+### N6 压测与帮助可发现性进展（2026-09-30）
+
+- **多线程高频压测落地**：新增 `tui/thread_registry_load_tests.rs` 三个门禁测试——① 24 个目录线程 + 4 条活跃流高频灌入：单帧抽取预算被严格遵守、后台线程未读计数准确、队列越界时 `needs_replay` 与诚实游标（`last_applied_event_id`）正确置位；② 4 条流各 300 事件的模拟帧循环：切换线程不打断生产者，最终逐线程 300 事件全部到达、无重复、无乱序；③ 回放重放 1..=128 且 1..=64 已应用：仅补齐缺失的 64 项，`clear_replay` 后状态复位。测试只依赖有界注册表结构，不需要模型连接。
+- **帮助可发现性**：composer footer 新增 `← 线程中心 /threads` 提示项（窄终端时先截断说明文字、保留键位，符合 §3.1 降级顺序）；`/threads` 与 command center 内键位帮助此前已覆盖。
+- 验证状态：压测已编写并注册，等待并行开发中的 wunder-runtime thread-log store trait 扩展（`thread_snapshot`/`upsert_thread_text_block` 返回值变更）在测试 feature 集下编译收敛后执行；本记录不代表 N6 发布门禁完成，Win7 x86 与 Ubuntu 18.04 目标构建仍待执行。

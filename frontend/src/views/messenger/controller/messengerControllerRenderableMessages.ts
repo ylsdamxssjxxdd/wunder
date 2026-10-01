@@ -181,8 +181,13 @@ import { buildMessageIdentityDebugList } from '@/utils/chatMessageDebug';
 import {
   buildChatRuntimeRenderableMessages,
   isChatRuntimeProjectionRenderShadowEnabled,
+  resolveChatRuntimeMessageRenderKey,
   summarizeChatRuntimeRenderableMessages
 } from '@/realtime/chat/chatRuntimeRenderAdapter';
+import {
+  buildChatThreadMaterializedMessages,
+  isChatThreadV2Session
+} from '@/realtime/chat/chatThreadRuntime';
 import {
   invalidateAllUserToolsCaches,
   invalidateUserSkillsCache,
@@ -681,6 +686,28 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       const shadowEnabled = isChatRuntimeProjectionRenderShadowEnabled();
       const _projectionRenderVersion = ctx.chatStore.runtimeProjectionVersionBySession?.[ctx.chatStore.activeSessionId] || 0;
       const syntheticGreeting = resolveSyntheticGreetingRenderable();
+      // Change-stream v2: bubbles come from the deterministic thread
+      // projection; ordering, identity and dedup are server-defined.
+      const threadRenderable = isChatThreadV2Session(ctx.chatStore.activeSessionId)
+        ? buildChatThreadMaterializedMessages(ctx.chatStore.activeSessionId)
+        : null;
+      if (Array.isArray(threadRenderable)) {
+          const displayV2Renderable = mergeProjectionRenderableWithSyntheticUiMessages(
+              syntheticGreeting,
+              threadRenderable
+                  .filter((message) => typeof ctx.shouldRenderAgentMessage !== 'function' || ctx.shouldRenderAgentMessage(message))
+                  .map((message) => ({
+                      key: resolveChatRuntimeMessageRenderKey(message),
+                      sourceIndex: 0,
+                      message
+                  })) as AgentRenderableMessage[]
+          );
+          logAgentRenderSource('thread-source', {
+              activeSessionId: ctx.chatStore.activeSessionId,
+              ...summarizeChatRuntimeRenderableMessages(displayV2Renderable)
+          }, displayV2Renderable);
+          return displayV2Renderable;
+      }
       const projection = toRaw(ctx.chatStore.runtimeProjection);
       const projectionRenderable = buildChatRuntimeRenderableMessages({
         projection,

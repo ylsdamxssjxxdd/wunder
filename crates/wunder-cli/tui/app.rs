@@ -33,7 +33,10 @@ use crate::tui::thread_registry::ThreadRegistry;
 const MAX_LOG_ENTRIES: usize = super::transcript::MAX_TRANSCRIPT_CELLS;
 const MAX_LOG_TOTAL_CHARS: usize = super::transcript::MAX_TRANSCRIPT_CHARS;
 const MAX_PENDING_TEMP_TOOL_CELLS: usize = 32;
-const REPLAY_PAGE_SIZE: usize = 512;
+/// Durable replay page size; aligned with the shared feeder (根治方案 §3.3).
+const REPLAY_PAGE_SIZE: usize = 200;
+/// Bounded pages per replay pass so a stalled read never pins the UI (I6).
+const MAX_REPLAY_PAGES: usize = 4;
 const MAX_DRAIN_MESSAGES_PER_TICK_BASE: usize = 400;
 const MAX_DRAIN_MESSAGES_PER_TICK_CATCHUP: usize = 1400;
 const STREAM_CATCHUP_ENTER_DEPTH: usize = 120;
@@ -4374,60 +4377,150 @@ impl TuiApp {
         if !self.thread_registry.needs_replay(session_id) {
             return;
         }
-        let after_event_id = self.thread_registry.replay_from(session_id).unwrap_or(0);
-        let workspace = self.runtime.state.workspace.clone();
-        let target = session_id.to_string();
-        let result = tokio::task::spawn_blocking(move || {
-            let records = workspace.load_thread_changes(
-                &target,
-                after_event_id.max(0),
-                REPLAY_PAGE_SIZE as i64,
-            );
-            let watermark = records
-                .iter()
-                .filter_map(|record| record.get("event_id").and_then(Value::as_i64))
-                .max()
-                .unwrap_or(after_event_id);
-            anyhow::Ok((records, watermark))
-        })
-        .await;
-        let (records, watermark) = match result {
-            Ok(Ok(pair)) => pair,
-            _ => {
-                // Retain the cursor: a failed read must never acknowledge replay.
-                return;
-            }
-        };
-        // Delta frames occupy event IDs without being persisted, so ID gaps in a
-        // replay page are normal. The honest retention signal is narrower: this
-        // view already applied events, but the durable stream holds nothing at
-        // all — the retention window removed them. Degrade visibly instead of
-        // presenting a silently shortened history.
-        if records.is_empty() && watermark <= 0 && after_event_id > 0 {
-            self.notify_replay_history_expired(session_id);
-            self.thread_registry.clear_replay(session_id);
+        // I6: only one outstanding durable replay per suppression window.
+        if self.thread_registry.replay_in_suppression_window(session_id) {
             return;
         }
-        let full_page = records.len() == REPLAY_PAGE_SIZE;
-        let mut cursor = after_event_id;
-        for record in records {
-            let event_cursor = record
-                .get("event_id")
-                .and_then(Value::as_i64)
-                .or_else(|| record.get("change_seq").and_then(Value::as_i64));
-            cursor = cursor.max(event_cursor.unwrap_or(cursor));
-            // ThreadLog replay is an identity/change projection. The transcript
-            // snapshot is loaded separately; only advance the durable cursor here.
-            if record.get("event").and_then(Value::as_str) == Some("thread_snapshot_required") {
+        let after_seq = self.thread_registry.durable_cursor(session_id);
+        self.thread_registry.mark_durable_replay_attempt(session_id);
+        let workspace = self.runtime.state.workspace.clone();
+        let target = session_id.to_string();
+        let mut cursor = after_seq;
+        for _ in 0..MAX_REPLAY_PAGES {
+            let workspace = workspace.clone();
+            let target = target.clone();
+            let page = tokio::task::spawn_blocking(move || {
+                workspace.try_load_thread_changes(&target, cursor, REPLAY_PAGE_SIZE as i64)
+            })
+            .await;
+            let records = match page {
+                Ok(Ok(records)) => records,
+                // Retain the cursor: a failed read must never acknowledge replay.
+                _ => return,
+            };
+            if records.is_empty() {
+                // Caught up to the durable tip.
+                self.thread_registry.clear_replay(session_id);
+                return;
+            }
+            // I5 snapshot guard: the durable window was trimmed; reload an atomic
+            // snapshot instead of guessing at a cursor.
+            if records.iter().any(|record| {
+                record.get("event").and_then(Value::as_str) == Some("thread_snapshot_required")
+            }) {
                 self.notify_replay_history_expired(session_id);
+                self.reload_transcript_from_history(session_id).await;
+                self.thread_registry.clear_replay(session_id);
+                return;
+            }
+            let mut progressed = false;
+            for record in &records {
+                let frame_cursor = record
+                    .get("data")
+                    .and_then(|data| data.get("cursor"))
+                    .and_then(Value::as_i64)
+                    .unwrap_or(cursor);
+                if frame_cursor > cursor {
+                    cursor = frame_cursor;
+                    progressed = true;
+                }
+            }
+            // Heal durable frames into the transcript: only item_upsert frames
+            // embed the authoritative item content/reasoning; text_block frames
+            // are durable but are skipped here per I3 (they are recovered through
+            // the item payload).
+            self.apply_durable_heal_frames(session_id, &records);
+            if progressed {
+                self.thread_registry.mark_durable_applied(session_id, cursor);
+            }
+            // A short or non-progressing page means we reached the durable tip.
+            if records.len() < REPLAY_PAGE_SIZE || !progressed {
                 self.thread_registry.clear_replay(session_id);
                 return;
             }
         }
-        if full_page && cursor > after_event_id {
-            self.thread_registry.projection_mut(session_id).replay_from = Some(cursor);
-        } else if !full_page {
-            self.thread_registry.clear_replay(session_id);
+        // Bounded loop exhausted: keep needs_replay so the next resume retries,
+        // but retain the cursor so we never acknowledge more than we applied.
+    }
+
+    /// Reload the transcript from an atomic history snapshot (I5). Used when the
+    /// durable change window was trimmed and no cursor can safely replay.
+    async fn reload_transcript_from_history(&mut self, session_id: &str) {
+        let history = crate::load_session_history_entries(&self.runtime, session_id, 0)
+            .await
+            .unwrap_or_default();
+        self.logs.clear();
+        self.active_assistant = None;
+        self.active_reasoning = None;
+        // The transcript is rebuilt from an atomic snapshot; drop the per-projection
+        // durable healing state so a later watch re-establishes from the snapshot.
+        self.thread_registry.clear_durable_heal_state(session_id);
+        self.restore_transcript_from_history(history);
+    }
+
+    /// Heal durable item_upsert frames into the transcript. Idempotent: the applied
+    /// durable seq guard plus a same-kind content-contains check prevent double
+    /// writes (过渡手段). Only assistant_message / reasoning items are healed; the
+    /// authoritative content is read from the embedded item payload.
+    fn apply_durable_heal_frames(&mut self, session_id: &str, frames: &[Value]) {
+        for record in frames {
+            let Some(data) = record.get("data") else {
+                continue;
+            };
+            let cursor = data.get("cursor").and_then(Value::as_i64).unwrap_or(0);
+            if cursor > 0 {
+                self.thread_registry.mark_durable_applied(session_id, cursor);
+            }
+            let change_type = data.get("change_type").and_then(Value::as_str).unwrap_or("");
+            if change_type != "item_upsert" {
+                continue;
+            }
+            let Some(item) = data.get("item") else {
+                continue;
+            };
+            let kind = item.get("kind").and_then(Value::as_str).unwrap_or("");
+            let payload = item.get("payload");
+            let role = payload
+                .and_then(|value| value.get("role"))
+                .and_then(Value::as_str)
+                .or_else(|| item.get("role").and_then(Value::as_str))
+                .unwrap_or("");
+            let content = history_content_to_text(
+                payload
+                    .and_then(|value| value.get("content"))
+                    .or_else(|| item.get("content")),
+            );
+            let reasoning = payload
+                .and_then(|value| {
+                    value
+                        .get("reasoning")
+                        .or_else(|| value.get("reasoning_content"))
+                })
+                .and_then(Value::as_str)
+                .or_else(|| item.get("reasoning").and_then(Value::as_str))
+                .map(str::trim)
+                .unwrap_or_default()
+                .to_string();
+
+            let (kind_log, text) = if kind.contains("reasoning") || role == "reasoning" {
+                (LogKind::Reasoning, reasoning)
+            } else if (role.is_empty() || role == "assistant") && kind == "assistant_message" {
+                (LogKind::Assistant, sanitize_assistant_text(content.as_str()))
+            } else {
+                continue;
+            };
+            if text.trim().is_empty() {
+                continue;
+            }
+            // Double-write guard: skip when an identical same-kind entry already exists.
+            if self
+                .logs
+                .iter()
+                .any(|entry| entry.kind == kind_log && entry.text.contains(text.trim()))
+            {
+                continue;
+            }
+            self.push_log(kind_log, text);
         }
     }
 

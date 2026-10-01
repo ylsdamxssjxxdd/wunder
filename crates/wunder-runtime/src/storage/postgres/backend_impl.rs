@@ -54,8 +54,15 @@ impl ThreadLogStore for PostgresStorage {
         user_id: &str,
         session_id: &str,
         block: &Value,
-    ) -> Result<()> {
+    ) -> Result<i64> {
         self.upsert_thread_text_block_impl(user_id, session_id, block)
+    }
+    fn thread_snapshot(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<Value> {
+        self.thread_snapshot_impl(user_id, session_id)
     }
     fn list_thread_text_blocks(
         &self,

@@ -128,9 +128,10 @@ export const buildIgnoredMissingDependencyPayload = (
 ) => {
   const payload = buildDeclaredDependencyPayload(selectedToolNames, source, catalog);
   const { availableToolNames, availableSkillNames } = collectAvailableNames(catalog);
-
   return {
-    tool_names: payload.tool_names,
+    // 忽略缺失依赖时，缺失/不可用的名字也要从选中列表剔除。前后端都会从 tool_names
+    // 重建 declared_tool_names，若不剔除，保存后缺失项会被重新声明，提示去不掉。
+    tool_names: payload.tool_names.filter((name) => availableToolNames.has(name)),
     declared_tool_names: payload.declared_tool_names.filter((name) => availableToolNames.has(name)),
     declared_skill_names: payload.declared_skill_names.filter((name) => availableSkillNames.has(name))
   };

@@ -34,6 +34,13 @@ pub(super) struct EventEmitter {
     client_message_id: Option<String>,
     turn_context: Arc<ParkingMutex<Value>>,
     text_tail: Arc<ParkingMutex<crate::services::thread_log::TextTail>>,
+    /// Serializes the whole emit path (durable commits + queue enqueues) so
+    /// change-cursor order == queue order == wire order for every emitter.
+    emit_lock: Arc<tokio::sync::Mutex<()>>,
+    change_hub: Option<Arc<crate::orchestrator::thread_change_hub::ThreadChangeHub>>,
+    /// Change-stream v2 marker: enables ephemeral tail frames. v1 clients
+    /// never receive them.
+    change_stream: bool,
     usage: Arc<ParkingMutex<TokenUsage>>,
     model_requests: Arc<ParkingMutex<i64>>,
     account_credits_consumed: Arc<ParkingMutex<i64>>,
@@ -42,6 +49,28 @@ pub(super) struct EventEmitter {
 impl EventEmitter {
     pub(super) fn bind_turn(&self, turn_id: &str, user_round: i64) {
         *self.turn_context.lock() = json!({"turn_id":turn_id,"user_round":user_round});
+    }
+
+    pub(super) fn with_change_hub(
+        mut self,
+        hub: Arc<crate::orchestrator::thread_change_hub::ThreadChangeHub>,
+    ) -> Self {
+        self.change_hub = Some(hub);
+        self
+    }
+
+    pub(super) fn with_change_stream(mut self) -> Self {
+        self.change_stream = true;
+        self
+    }
+
+    fn publish_change_cursor(&self, receipt: &Value) {
+        if let Some(hub) = &self.change_hub {
+            hub.publish(
+                &self.session_id,
+                receipt.get("cursor").and_then(Value::as_i64).unwrap_or(0),
+            );
+        }
     }
 
     pub(super) fn session_id(&self) -> &str {
@@ -72,6 +101,9 @@ impl EventEmitter {
             client_message_id,
             turn_context: Arc::new(ParkingMutex::new(json!({}))),
             text_tail: Arc::new(ParkingMutex::new(Default::default())),
+            emit_lock: Arc::new(tokio::sync::Mutex::new(())),
+            change_hub: None,
+            change_stream: false,
             usage: Arc::new(ParkingMutex::new(TokenUsage {
                 reasoning: Some(0),
                 ..Default::default()
@@ -165,6 +197,10 @@ impl EventEmitter {
     }
 
     pub(super) async fn emit(&self, event_type: &str, data: Value) -> StreamEvent {
+        // Hold across the durable commits and the queue enqueues below so a
+        // concurrent emitter (tool forwarder) can never interleave a change
+        // cursor ahead of its own event in the wire queue.
+        let _emit_guard = self.emit_lock.lock().await;
         let timestamp = Utc::now();
         let event_id = self.next_event_id.fetch_add(1, AtomicOrdering::SeqCst);
         let mut data = self.with_client_message_id(data);
@@ -201,6 +237,10 @@ impl EventEmitter {
                     .await
                     {
                         Ok(Some(receipt)) => {
+                            self.publish_change_cursor(&receipt);
+                            if let Some(cursor) = receipt.get("cursor").and_then(Value::as_i64) {
+                                self.text_tail.lock().set_base_seq(cursor);
+                            }
                             let change_event = StreamEvent {
                                 event: "thread_change".into(),
                                 data: enrich_event_payload(
@@ -219,18 +259,49 @@ impl EventEmitter {
                 }
             }
         }
-        let block = if event_type == "llm_output_delta" {
-            self.text_tail
-                .lock()
-                .append(&self.session_id, event_id, &data)
+        let (block, tail_events) = if event_type == "llm_output_delta" {
+            let mut tail = self.text_tail.lock();
+            let (item_id, content_offset, reasoning_offset) = tail.tail_annotation(&data);
+            let block = tail.append(&self.session_id, event_id, &data);
+            let mut tail_events = Vec::new();
+            if self.change_stream {
+                if let Some(item_id) = item_id {
+                    if let (Some(offset), Some(text)) = (
+                        content_offset,
+                        data.get("delta").and_then(Value::as_str),
+                    ) {
+                        tail_events.push(StreamEvent {
+                            event: "thread_item_tail".into(),
+                            data: json!({"item_id":item_id,"field":"content","offset":offset,"text":text}),
+                            id: None,
+                            timestamp: Some(timestamp),
+                        });
+                    }
+                    if let (Some(offset), Some(text)) = (
+                        reasoning_offset,
+                        data.get("reasoning_delta").and_then(Value::as_str),
+                    ) {
+                        tail_events.push(StreamEvent {
+                            event: "thread_item_tail".into(),
+                            data: json!({"item_id":item_id,"field":"reasoning","offset":offset,"text":text}),
+                            id: None,
+                            timestamp: Some(timestamp),
+                        });
+                    }
+                }
+            }
+            (block, tail_events)
         } else if matches!(
             event_type,
             "llm_output" | "llm_request" | "error" | "turn_terminal"
         ) {
-            self.text_tail.lock().flush(&self.session_id)
+            (self.text_tail.lock().flush(&self.session_id), Vec::new())
         } else {
-            None
+            (None, Vec::new())
         };
+        // Durable text blocks are committed through the same emitter gate as
+        // lifecycle changes. Tail frames are held until their block commit is
+        // visible, then carry that commit cursor as `base_seq`.
         if let (Some(block), Some(storage)) = (block, self.storage.clone()) {
             let blocks = block
                 .get("blocks")
@@ -238,15 +309,51 @@ impl EventEmitter {
                 .cloned()
                 .unwrap_or_else(|| vec![block]);
             for block in blocks {
-                super::stream_persist::enqueue_stream_event_persist(
-                    storage.clone(),
-                    self.session_id.clone(),
-                    self.user_id.clone(),
-                    block["event_id"].as_i64().unwrap_or(event_id),
-                    block,
-                    "thread_item_block".into(),
-                );
+                let owner = self.user_id.clone();
+                let session = self.session_id.clone();
+                let block_for_write = block.clone();
+                match crate::core::blocking::run_db("thread_log.text_block", move || {
+                    storage.upsert_thread_text_block(&owner, &session, &block_for_write)
+                })
+                .await
+                {
+                    Ok(cursor) if cursor > 0 => {
+                        self.text_tail.lock().set_base_seq(cursor);
+                        self.publish_change_cursor(&json!({"cursor": cursor}));
+                        let turn_id = block
+                            .pointer("/data/turn_id")
+                            .or_else(|| block.get("turn_id"))
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        let change_event = StreamEvent {
+                            event: "thread_change".into(),
+                            data: enrich_event_payload(
+                                json!({
+                                    "change_type": "text_block",
+                                    "turn_id": turn_id,
+                                    "item_id": block.get("item_id"),
+                                    "revision": 0,
+                                    "cursor": cursor,
+                                    "payload": block,
+                                }),
+                                Some(&self.session_id),
+                                timestamp,
+                            ),
+                            id: None,
+                            timestamp: Some(timestamp),
+                        };
+                        self.enqueue_event(&change_event, true).await;
+                    }
+                    Ok(_) => {}
+                    Err(error) => warn!("persist thread text block failed: {error}"),
+                }
             }
+        }
+        for mut tail_event in tail_events {
+            if let Some(map) = tail_event.data.as_object_mut() {
+                map.insert("base_seq".into(), json!(self.text_tail.lock().base_seq()));
+            }
+            self.enqueue_tail(&tail_event).await;
         }
         if let Some(item) =
             crate::services::thread_log::event_item(&self.session_id, event_type, &data)
@@ -259,6 +366,7 @@ impl EventEmitter {
                 .await
                 {
                     Ok(Some(receipt)) => {
+                        self.publish_change_cursor(&receipt);
                         let change_event = StreamEvent {
                             event: "thread_change".into(),
                             data: enrich_event_payload(receipt, Some(&self.session_id), timestamp),
@@ -335,6 +443,19 @@ impl EventEmitter {
                     }
                 }
             }
+        }
+    }
+
+    /// Ephemeral tail frames are droppable by design: they carry explicit
+    /// offsets and the next durable text block heals any gap. Dropping one
+    /// must not bump the overflow probe, which exists for lost durable
+    /// events, so tails bypass the accounting entirely.
+    async fn enqueue_tail(&self, event: &StreamEvent) {
+        if self.closed.load(AtomicOrdering::SeqCst) {
+            return;
+        }
+        if let Some(queue) = &self.queue {
+            let _ = queue.try_send(StreamSignal::Event(event.clone()));
         }
     }
 

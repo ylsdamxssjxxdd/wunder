@@ -203,6 +203,45 @@ export const buildChatRuntimeRenderableMessages = (
   }, []);
 };
 
+/**
+ * Materialize an already-projected message list without running the legacy
+ * visible-message selector. The change-stream pipeline produces its bubbles
+ * deterministically (chatThreadProjection); this entry point keeps the row
+ * cache so streaming updates reuse stable DOM-facing objects. `projection`
+ * must be a caller-owned persistent object so the cache survives calls.
+ */
+export const materializeChatRuntimeProjectionList = (
+  projection: ChatRuntimeProjection,
+  sessionId: unknown,
+  projectedMessages: ChatRuntimeMessageProjection[],
+  options: MaterializeChatRuntimeMessagesOptions = {}
+): ChatMessageLike[] => {
+  const sessionCache = resolveMaterializedSessionMessageCache(projection, sessionId);
+  const workflowTarget = resolveWorkflowMaterializationTarget(
+    projectedMessages,
+    undefined
+  );
+  const activeMessageIds = new Set<string>();
+  let userRound = 0;
+  const materialized = projectedMessages
+    .map((message) => {
+      activeMessageIds.add(message.id);
+      if (message.role === 'user') {
+        userRound += 1;
+      }
+      const result = materializeChatRuntimeMessageWithCache(sessionCache, message, {
+        workflowActive: message.id === workflowTarget.placeholderMessageId && workflowTarget.workflowActive
+      }, options.trustProjectionVersions === true);
+      if (result && message.role === 'assistant' && userRound > 0) {
+        result.__runtime_user_round = userRound;
+      }
+      return result;
+    })
+    .filter((message): message is ChatMessageLike => Boolean(message));
+  pruneMaterializedSessionMessageCache(sessionCache, activeMessageIds);
+  return materialized;
+};
+
 export const hasChatRuntimeRenderSession = (
   projection: ChatRuntimeProjection | null | undefined,
   sessionId: unknown

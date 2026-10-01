@@ -89,6 +89,8 @@ mod microcompaction;
 mod prompt;
 mod queue_handoff;
 #[cfg(test)]
+mod change_stream_tests;
+#[cfg(test)]
 mod queue_handoff_tests;
 mod quota;
 mod request;
@@ -97,6 +99,7 @@ mod retry_governor;
 mod runtime_snapshot;
 mod stream_persist;
 mod stream_timeout;
+mod thread_change_hub;
 mod thread_runtime;
 mod tool_calls;
 mod tool_exec;
@@ -119,6 +122,7 @@ use event_stream::EventEmitter;
 use event_stream::StreamSignal;
 use limiter::RequestLimiter;
 pub(crate) use stream_persist::flush_stream_event_persist_queue;
+use thread_change_hub::ThreadChangeHub;
 use thread_runtime::ThreadRuntimeRegistry;
 use tool_calls::apply_tool_name_map;
 use tool_calls::collect_tool_calls_from_output;
@@ -148,6 +152,7 @@ pub struct Orchestrator {
     command_sessions: Arc<CommandSessionBroker>,
     active_turns: Arc<ActiveTurnRegistry>,
     thread_runtime: Arc<ThreadRuntimeRegistry>,
+    pub(crate) change_hub: Arc<ThreadChangeHub>,
     user_world: Arc<UserWorldService>,
     beeroom_realtime: Arc<BeeroomRealtimeService>,
     cron_wake_signal: Option<CronWakeSignal>,
@@ -192,6 +197,7 @@ impl Orchestrator {
             command_sessions,
             active_turns: Arc::new(ActiveTurnRegistry::new()),
             thread_runtime: Arc::new(ThreadRuntimeRegistry::new()),
+            change_hub: Arc::new(ThreadChangeHub::new()),
             user_world,
             beeroom_realtime,
             cron_wake_signal,

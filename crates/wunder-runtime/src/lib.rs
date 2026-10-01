@@ -32,6 +32,7 @@ pub use services::subagents::list_parent_subagents;
 pub use services::thread_catalog::{
     ThreadCatalogService, ThreadListQuery, ThreadPage, ThreadSnapshot, ThreadStatus,
 };
+pub use services::thread_change_feeder::{ThreadChangeFrame, watch_thread_changes};
 pub use services::worker_card_settings;
 pub use services::{
     a2a_store, admin_skills, agent_management, attachment, beeroom_realtime, browser, cron,

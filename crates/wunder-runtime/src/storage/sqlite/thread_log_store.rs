@@ -32,7 +32,7 @@ pub(super) trait SqliteThreadLogStorage {
         user_id: &str,
         session_id: &str,
         block: &Value,
-    ) -> Result<()>;
+    ) -> Result<i64>;
     fn list_thread_text_blocks_impl(
         &self,
         session_id: &str,
@@ -126,6 +126,7 @@ pub(super) trait SqliteThreadLogStorage {
         limit: i64,
     ) -> Result<Vec<Value>>;
     fn latest_thread_change_seq_by_session_impl(&self, session_id: &str) -> Result<i64>;
+    fn thread_snapshot_impl(&self, user_id: &str, session_id: &str) -> Result<Value>;
     fn list_thread_changes_impl(
         &self,
         user_id: &str,
@@ -246,7 +247,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         user_id: &str,
         session_id: &str,
         block: &Value,
-    ) -> Result<()> {
+    ) -> Result<i64> {
         self.ensure_initialized()?;
         let mut conn = self.open()?;
         let conn = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -259,6 +260,9 @@ impl SqliteThreadLogStorage for SqliteStorage {
             .or_else(|| block.pointer("/data/field").and_then(Value::as_str))
             .unwrap_or("content");
         let event_id = block["event_id"].as_i64().unwrap_or(0);
+        // The change payload reuses the exact block JSON stored in
+        // thread_item_blocks so a replayed text_block change is byte-identical
+        // to the durable block row (完整文本与 UTF-16 offset 一并携带).
         let text = serde_json::to_string(block)?;
         let item_exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM thread_items WHERE session_id=? AND user_id=? AND item_id=?)",
@@ -267,13 +271,13 @@ impl SqliteThreadLogStorage for SqliteStorage {
         )?;
         anyhow::ensure!(item_exists, "thread item does not exist for block");
         let written = conn.execute("INSERT INTO thread_item_blocks(session_id,user_id,item_id,field,block_index,event_id,payload) VALUES (?,?,?,?,?,?,?) ON CONFLICT(session_id,item_id,field,block_index) DO UPDATE SET event_id=excluded.event_id,payload=excluded.payload WHERE thread_item_blocks.event_id<=excluded.event_id AND thread_item_blocks.payload<>excluded.payload",params![session_id,user_id,item_id,field,index,event_id,text])?;
+        let mut change_seq = 0i64;
         if written > 0 {
             let (seq, turn_id): (i64, String) = conn.query_row(
                 "SELECT l.latest_change_seq+1,i.turn_id FROM thread_logs l JOIN thread_items i ON i.session_id=l.session_id WHERE l.session_id=? AND i.item_id=?",
                 params![session_id,item_id], |r| Ok((r.get(0)?,r.get(1)?)))?;
-            let reference = json!({"field":field,"block_index":index}).to_string();
             let now = Self::now_ts();
-            conn.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,'text_block',?,?,0,?,?)", params![session_id,seq,user_id,turn_id,item_id,reference,now])?;
+            conn.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,'text_block',?,?,0,?,?)", params![session_id,seq,user_id,turn_id,item_id,text,now])?;
             conn.execute(
                 "UPDATE thread_logs SET latest_change_seq=?,updated_time=? WHERE session_id=?",
                 params![seq, now, session_id],
@@ -282,9 +286,10 @@ impl SqliteThreadLogStorage for SqliteStorage {
                 "DELETE FROM thread_log_changes WHERE session_id=? AND change_seq<=?",
                 params![session_id, seq.saturating_sub(4096)],
             )?;
+            change_seq = seq;
         }
         conn.commit()?;
-        Ok(())
+        Ok(change_seq)
     }
     fn list_thread_text_blocks_impl(
         &self,
@@ -483,13 +488,22 @@ impl SqliteThreadLogStorage for SqliteStorage {
             params![session_id],
             |r| r.get(0),
         )?;
-        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,'{}',?)", params![session_id,seq,user_id,change_type,turn_id,change_item,revision,now])?;
+        let change_payload = serde_json::to_string(&json!({
+            "turn_id": turn_id,
+            "status": "queued",
+            "user_round": round,
+            "client_message_id": client_id,
+        }))?;
+        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,?,?)", params![session_id,seq,user_id,change_type,turn_id,change_item,revision,change_payload,now])?;
         tx.execute(
             "UPDATE thread_logs SET latest_change_seq=?,updated_time=? WHERE session_id=?",
             params![seq, now, session_id],
         )?;
         let item_seq = seq + 1;
-        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,'{}',?)", params![session_id,item_seq,user_id,"item_upsert",turn_id,item_id,revision,now])?;
+        // The change payload is the complete committed item row so a replayed
+        // frame can apply it without consulting the mutable current row.
+        let item_change_payload = committed_item_payload(&tx, session_id, &item_id)?;
+        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,?,?)", params![session_id,item_seq,user_id,"item_upsert",turn_id,item_id,revision,item_change_payload,now])?;
         tx.execute(
             "UPDATE thread_logs SET latest_change_seq=? WHERE session_id=?",
             params![item_seq, session_id],
@@ -567,10 +581,12 @@ impl SqliteThreadLogStorage for SqliteStorage {
             |r| r.get(0),
         )?;
         let revision = seq;
-        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,'{}',?)", params![session_id,seq,user_id,change_type,turn_id,change_item,revision,now])?;
+        let change_payload = serde_json::to_string(&json!({"turn_id": turn_id, "status": status}))?;
+        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,?,?)", params![session_id,seq,user_id,change_type,turn_id,change_item,revision,change_payload,now])?;
         if input_changed > 0 {
             seq += 1;
-            tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) SELECT session_id,?,user_id,'item_upsert',turn_id,item_id,revision,'{}',? FROM thread_items WHERE session_id=? AND item_id=?", params![seq,now,session_id,input_item_id])?;
+            let bubble_payload = committed_item_payload(&tx, session_id, &input_item_id)?;
+            tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,?,?)", params![session_id,seq,user_id,"item_upsert",turn_id,input_item_id,revision,bubble_payload,now])?;
         }
         tx.execute(
             "UPDATE thread_logs SET latest_change_seq=?,updated_time=? WHERE session_id=?",
@@ -664,7 +680,8 @@ impl SqliteThreadLogStorage for SqliteStorage {
             params![session_id],
             |r| r.get(0),
         )?;
-        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,'{}',?)", params![session_id,seq,user_id,change_type,turn_id,change_item,revision,now])?;
+        let change_payload = committed_item_payload(&tx, session_id, item_id)?;
+        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,?,?)", params![session_id,seq,user_id,change_type,turn_id,change_item,revision,change_payload,now])?;
         tx.execute(
             "UPDATE thread_logs SET latest_change_seq=?,updated_time=? WHERE session_id=?",
             params![seq, now, session_id],
@@ -848,13 +865,72 @@ impl SqliteThreadLogStorage for SqliteStorage {
             params![session_id],
             |row| row.get(0),
         )?;
-        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,'{}',?)", params![session_id,seq,user_id,"item_upsert",turn_id,item_id,revision,now])?;
+        let feedback_payload = committed_item_payload(&tx, session_id, item_id)?;
+        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,?,?)", params![session_id,seq,user_id,"item_upsert",turn_id,item_id,revision,feedback_payload,now])?;
         tx.execute(
             "UPDATE thread_logs SET latest_change_seq=?,updated_time=? WHERE session_id=?",
             params![seq, now, session_id],
         )?;
         tx.commit()?;
         Ok(Some(feedback))
+    }
+    fn thread_snapshot_impl(&self, user_id: &str, session_id: &str) -> Result<Value> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let tx = conn.unchecked_transaction()?;
+        let owner: Option<String> = tx
+            .query_row(
+                "SELECT user_id FROM thread_logs WHERE session_id=?",
+                params![session_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        ensure!(owner.as_deref() == Some(user_id), "thread owner mismatch");
+        let cursor: i64 = tx.query_row(
+            "SELECT latest_change_seq FROM thread_logs WHERE session_id=?",
+            params![session_id],
+            |r| r.get(0),
+        )?;
+        let mut turns = Vec::new();
+        {
+            let mut stmt = tx.prepare("SELECT turn_id,user_turn_index,status,summary,payload,updated_time,root_turn_id,trigger_kind FROM thread_turns WHERE user_id=? AND session_id=? AND trigger_kind='user' ORDER BY user_turn_index ASC")?;
+            let rows = stmt.query_map(params![user_id, session_id], turn_row)?;
+            for row in rows {
+                turns.push(row?);
+            }
+        }
+        let mut items = Vec::new();
+        {
+            let mut stmt = tx.prepare("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility,root_turn_id,created_seq FROM thread_items WHERE user_id=? AND session_id=? AND visibility='user' ORDER BY created_seq ASC, item_index ASC")?;
+            let rows = stmt.query_map(params![user_id, session_id], change_item_row)?;
+            for row in rows {
+                let mut item = row?;
+                if let Some(map) = item["payload"].as_object_mut() {
+                    map.remove("model_content");
+                    map.remove("config_overrides");
+                }
+                items.push(item);
+            }
+        }
+        let mut blocks = Vec::new();
+        {
+            let mut stmt = tx.prepare("SELECT payload FROM thread_item_blocks WHERE session_id=? AND item_id IN (SELECT item_id FROM thread_items WHERE session_id=? AND visibility='user') ORDER BY item_id, field, block_index")?;
+            let rows = stmt.query_map(params![session_id, session_id], |r| {
+                Ok(serde_json::from_str::<Value>(&r.get::<_, String>(0)?)
+                    .unwrap_or(Value::Null))
+            })?;
+            for row in rows {
+                blocks.push(row?);
+            }
+        }
+        tx.commit()?;
+        Ok(json!({
+            "cursor": cursor,
+            "turns": turns,
+            "items": items,
+            "blocks": blocks,
+            "item_total": items.len(),
+        }))
     }
     fn list_thread_changes_by_session_impl(
         &self,
@@ -948,6 +1024,35 @@ fn item_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     Ok(
         json!({"item_id":r.get::<_,String>(0)?,"item_index":r.get::<_,i64>(1)?,"kind":r.get::<_,String>(2)?,"status":r.get::<_,String>(3)?,"revision":r.get::<_,i64>(4)?,"payload":serde_json::from_str::<Value>(&r.get::<_,String>(5)?).unwrap_or(Value::Null),"created_time":r.get::<_,f64>(6)?,"updated_time":r.get::<_,f64>(7)?,"turn_id":r.get::<_,String>(8)?,"visibility":r.get::<_,String>(9)?}),
     )
+}
+/// Full committed row projection for immutable change payloads and the atomic
+/// snapshot. Superset of `item_row`: adds root_turn_id and created_seq.
+fn change_item_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+    Ok(
+        json!({"item_id":r.get::<_,String>(0)?,"item_index":r.get::<_,i64>(1)?,"kind":r.get::<_,String>(2)?,"status":r.get::<_,String>(3)?,"revision":r.get::<_,i64>(4)?,"payload":serde_json::from_str::<Value>(&r.get::<_,String>(5)?).unwrap_or(Value::Null),"created_time":r.get::<_,f64>(6)?,"updated_time":r.get::<_,f64>(7)?,"turn_id":r.get::<_,String>(8)?,"visibility":r.get::<_,String>(9)?,"root_turn_id":r.get::<_,String>(10)?,"created_seq":r.get::<_,i64>(11)?}),
+    )
+}
+/// Serialize the committed row of one item inside the writing transaction.
+/// I1: change payloads must be complete and immutable at commit time; replay
+/// must never re-read the current row, which later revisions overwrite.
+fn committed_item_payload(
+    tx: &rusqlite::Transaction<'_>,
+    session_id: &str,
+    item_id: &str,
+) -> Result<String> {
+    let mut stmt = tx.prepare(
+        "SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility,root_turn_id,created_seq FROM thread_items WHERE session_id=? AND item_id=?",
+    )?;
+    let mut row = stmt.query_row(params![session_id, item_id], change_item_row)?;
+    // User-visible change payloads match get_thread_item's projection: the
+    // prompt-side fields never leave the model boundary.
+    if row["visibility"] == json!("user") {
+        if let Some(map) = row["payload"].as_object_mut() {
+            map.remove("model_content");
+            map.remove("config_overrides");
+        }
+    }
+    Ok(serde_json::to_string(&row)?)
 }
 fn change_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     Ok(

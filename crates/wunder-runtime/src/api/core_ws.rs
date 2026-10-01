@@ -172,6 +172,7 @@ async fn handle_ws(
         watch: false,
         ping_pong: true,
         goal: false,
+        change_stream: false,
     };
     let ready_payload = WsReadyPayload {
         connection_id: connection_id.clone(),
@@ -620,6 +621,7 @@ async fn handle_ws(
                                 ws_tx_snapshot,
                                 Some(cancel.clone()),
                                 false,
+                                None,
                             )
                             .await;
                             let _ = cleanup_ws_task(

@@ -1,5 +1,12 @@
 import { advanceThreadChangeCursor, threadChangeCursor } from './chatThreadCursor';
 import { selectVisibleMessageProjections } from '@/realtime/chat/chatRuntimeSelectors';
+import {
+  applyChatThreadServerEvent,
+  ensureChatThreadRuntime,
+  getChatThreadState,
+  isChatThreadV2Session,
+  registerChatThreadSnapshotLoader
+} from '@/realtime/chat/chatThreadRuntime';
 import { isChatSnapshotCurrent } from './chatSnapshotFreshness';
 import { defineStore } from 'pinia';
 
@@ -15,6 +22,7 @@ import {
   getSessionEvents,
   getSessionHistoryPage,
   getSessionSubagents,
+  getThreadLogSnapshot,
   getThreadLogTurn,
   listSessions,
   openChatSocket,
@@ -139,6 +147,9 @@ export const startSessionWatcher = (store, sessionId) => {
   chatWatcherSharedState.sessionWatchSessionId = key;
   const runtime = ensureRuntime(key);
   if (!runtime) return;
+  // Change-stream v2 state lives per session; the watch cursor resumes from
+  // its lastSeq so reconnects never replay what the reducer already applied.
+  ensureChatThreadRuntime(key);
   recoverRuntimeInteractiveControllers(store, key, runtime);
   refreshRuntimeStreamLifecycle(runtime);
   runtime.watchController = new AbortController();
@@ -175,6 +186,7 @@ export const startSessionWatcher = (store, sessionId) => {
 
   const pendingThreadChanges = new Map<string, Record<string, unknown>>();
   let threadReconcileTimer: ReturnType<typeof setTimeout> | null = null;
+  let threadResumeTimer: ReturnType<typeof setTimeout> | null = null;
   let threadReconcileInFlight: Promise<void> | null = null;
   let pendingThreadStatus: Record<string, any> | null = null;
   let threadRecoveryFailed = false;
@@ -394,6 +406,7 @@ export const startSessionWatcher = (store, sessionId) => {
 
   controller.signal.addEventListener('abort', () => {
     if (threadReconcileTimer) clearTimeout(threadReconcileTimer);
+    if (threadResumeTimer) clearTimeout(threadResumeTimer);
     pendingThreadChanges.clear();
   }, { once: true });
 
@@ -446,6 +459,28 @@ export const startSessionWatcher = (store, sessionId) => {
     const runWatchdogTick = async () => {
       if (controller.signal.aborted) return;
       const profile = resolveWatchdogProfile(store, key);
+      if (isChatThreadV2Session(key)) {
+        // M2-A: the v2 watchdog is a liveness probe only. It never loads or
+        // overlays snapshots and never reconciles cursors — the reducer's
+        // lastSeq owns the durable cursor. A running session silent past the
+        // threshold means the connection is dead: force a reconnect; the new
+        // watch resumes from lastSeq without any full reload.
+        const lastEventAt = Number(runtime.watchLastEventAt) || 0;
+        const livenessIdleMs = Math.max(Number(profile.idleMs) || 0, WATCHDOG_V2_LIVENESS_IDLE_MS);
+        const running = isThreadRuntimeBusy(runtime?.threadStatus) ||
+          hasRunningAssistantMessage(sessionMessagesRef);
+        if (running && lastEventAt && Date.now() - lastEventAt >= livenessIdleMs &&
+            !runtime.sendController && !runtime.resumeController && !runtime.watchdogBusy) {
+          if (chatPerf.enabled()) {
+            chatPerf.count('chat_watch_v2_liveness_reconnect', 1, { sessionId: key });
+          }
+          controller.abort();
+          startSessionWatcher(store, key);
+          return;
+        }
+        scheduleNext(profile.intervalMs);
+        return;
+      }
       const localLastEventId = refreshLastAppliedEventId();
       recoverRuntimeInteractiveControllers(store, key, runtime, {
         localLastEventId
@@ -531,6 +566,20 @@ export const startSessionWatcher = (store, sessionId) => {
     applySessionRuntimeEvent(store, key, data, 'thread_status');
   };
 
+  // v2 recovery (plan §5 M2-A/M2-C): the reducer owns the durable cursor, so
+  // overflow, gap overflow and a freshly applied atomic snapshot all recover
+  // by restarting the watch — its after_event_id is already state.lastSeq.
+  // No full reload, and the runtime's cooldown collapses duplicate bursts.
+  const resumeWatchFromLastSeq = () => {
+    if (controller.signal.aborted || threadResumeTimer) return;
+    threadResumeTimer = setTimeout(() => {
+      threadResumeTimer = null;
+      if (controller.signal.aborted) return;
+      if (runtime.watchController !== controller) return; // already replaced
+      startSessionWatcher(store, key);
+    }, 0);
+  };
+
   const onEvent = (eventType, dataText, eventId) => {
     const currentSessionMessagesRef = resolveSessionMessageArray(store, key, sessionMessagesRef);
     if (currentSessionMessagesRef !== sessionMessagesRef) {
@@ -552,6 +601,24 @@ export const startSessionWatcher = (store, sessionId) => {
       clearSessionEventsSnapshot(key, { keepInFlight: true });
     }
     if (applyGoalStreamEvent(store, key, normalizedEventType, data ?? payload)) {
+      return;
+    }
+    if (
+      isChatThreadV2Session(key) &&
+      applyChatThreadServerEvent(store, key, normalizedEventType || eventType, payload, {
+        onSnapshotRequired: () => {
+          // Runtime could not rebuild from the atomic snapshot (loader failed
+          // or stale): keep the legacy full-reload fallback path.
+          threadRecoveryFailed = true;
+          void store.loadSessionDetail(key, { preserveWatcher: true, startWatcherAfterHydration: false })
+            .then(() => { if (!controller.signal.aborted) startSessionWatcher(store, key); })
+            .catch(() => scheduleWatchReconcile(0));
+        },
+        onSnapshotApplied: () => resumeWatchFromLastSeq(),
+        onOverflow: () => resumeWatchFromLastSeq(),
+        onGapOverflow: () => resumeWatchFromLastSeq()
+      })
+    ) {
       return;
     }
     if (normalizedEventType === 'thread_change') {
@@ -642,7 +709,7 @@ export const startSessionWatcher = (store, sessionId) => {
         type: 'watch',
         request_id: requestId,
         session_id: key,
-        payload: { after_event_id: baseEventId }
+        payload: { after_event_id: isChatThreadV2Session(key) ? (getChatThreadState(key)?.lastSeq ?? 0) : baseEventId }
       },
       onEvent,
       signal: controller.signal,
@@ -696,6 +763,29 @@ export const chatWsClient = createWsMultiplexer(() => openChatSocket(), {
   connectTimeoutMs: 10000,
   pingIntervalMs: 20000
 });
+
+// v2 liveness probe threshold (plan §5 M2-A): a running session silent past
+// this floor gets its watch reconnected; idle sessions are left alone.
+const WATCHDOG_V2_LIVENESS_IDLE_MS = 6000;
+
+// Atomic thread-log snapshot loader for the v2 pipeline (plan §5 M2-C). The
+// runtime module stays API-free; this module owns the real implementation and
+// tests can replace it via registerChatThreadSnapshotLoader.
+registerChatThreadSnapshotLoader(async (sessionKey) => {
+  const response = await getThreadLogSnapshot(sessionKey);
+  const body = response?.data?.data ?? response?.data ?? {};
+  const cursor = Number(body?.cursor);
+  if (!Number.isSafeInteger(cursor) || cursor <= 0) {
+    throw new Error('thread snapshot cursor missing');
+  }
+  return {
+    cursor,
+    turns: Array.isArray(body?.turns) ? body.turns : [],
+    items: Array.isArray(body?.items) ? body.items : [],
+    blocks: Array.isArray(body?.blocks) ? body.blocks : []
+  };
+});
+
 let wsRequestSeq = 0;
 
 export const buildWsRequestId = () => {

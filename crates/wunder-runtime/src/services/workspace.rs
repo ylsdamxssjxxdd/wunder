@@ -1304,19 +1304,29 @@ impl WorkspaceManager {
                 break;
             }
             let cursor = change["change_seq"].as_i64().unwrap_or(0);
+            let mut embedded_item: Option<Value> = None;
             if change["change_type"] == "item_upsert" {
                 if let (Some(owner), Some(item_id)) =
                     (user_id.as_deref(), change["item_id"].as_str())
                 {
-                    if self
+                    match self
                         .storage
-                        .get_thread_item(owner, session_id, item_id, false)?
-                        .is_none()
+                        .get_thread_item(owner, session_id, item_id, false)
                     {
-                        frames.push(json!({"event":"thread_change","data":{
-                            "change_type":"cursor", "cursor":cursor
-                        }}));
-                        continue;
+                        Ok(Some(item)) => {
+                            // Change-stream consumers apply items straight from
+                            // the frame, so embed the durable payload here.
+                            embedded_item = Some(item);
+                        }
+                        Ok(None) => {
+                            frames.push(json!({"event":"thread_change","data":{
+                                "change_type":"cursor", "cursor":cursor
+                            }}));
+                            continue;
+                        }
+                        Err(err) => {
+                            warn!("failed to load thread item {item_id} for change stream: {err}");
+                        }
                     }
                 }
             }
@@ -1340,10 +1350,15 @@ impl WorkspaceManager {
                     }
                 }
             }
-            frames.push(json!({"event":"thread_change","data":{
+            let mut frame = json!({"event":"thread_change","data":{
                 "change_type":change["change_type"], "turn_id":change["turn_id"],
-                "item_id":change["item_id"], "revision":change["revision"], "cursor":cursor
-            }}));
+                "item_id":change["item_id"], "revision":change["revision"], "cursor":cursor,
+                "payload":change["payload"]
+            }});
+            if let Some(item) = embedded_item {
+                frame["data"]["item"] = item;
+            }
+            frames.push(frame);
         }
         Ok(frames)
     }

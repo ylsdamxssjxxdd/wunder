@@ -195,6 +195,7 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
         "final"
         | "thread_status"
         | "thread_closed"
+        | "thread_turn_started"
         | "quota_usage"
         | "token_usage"
         | "round_usage"
@@ -227,8 +228,57 @@ pub struct TextTail {
     context: Value,
     last_flush: Option<std::time::Instant>,
     dirty: bool,
+    /// Durable cursor the active tail depends on (item registration or the
+    /// most recent text block). Ephemeral frames carry this as `base_seq` so
+    /// clients never apply text before the corresponding durable item.
+    base_seq: i64,
 }
 impl TextTail {
+    pub fn set_base_seq(&mut self, seq: i64) {
+        self.base_seq = self.base_seq.max(seq.max(0));
+    }
+
+    pub fn base_seq(&self) -> i64 {
+        self.base_seq
+    }
+    /// UTF-16 offsets at which the incoming delta would append, used by the
+    /// ephemeral tail frames of the change stream. Returns
+    /// `(item_id, content_offset, reasoning_offset)`; an offset is None when
+    /// the payload carries no text for that field. A fresh item (first delta
+    /// after a switch) reports offset 0 instead of the previous item's tail.
+    pub fn tail_annotation(&self, data: &Value) -> (Option<String>, Option<i64>, Option<i64>) {
+        let turn = match data.get("turn_id").and_then(Value::as_str) {
+            Some(turn) if !turn.is_empty() => turn,
+            _ => return (None, None, None),
+        };
+        let model = data.get("model_round").and_then(Value::as_i64).unwrap_or(0);
+        let incoming = format!("{turn}:text-{model}");
+        let fresh = self.item_id != incoming;
+        let content_offset = data
+            .get("delta")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(|_| {
+                if fresh {
+                    0
+                } else {
+                    (self.content_offset + self.content.encode_utf16().count()) as i64
+                }
+            });
+        let reasoning_offset = data
+            .get("reasoning_delta")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(|_| {
+                if fresh {
+                    0
+                } else {
+                    (self.reasoning_offset + self.reasoning.encode_utf16().count()) as i64
+                }
+            });
+        (Some(incoming), content_offset, reasoning_offset)
+    }
+
     pub fn append(&mut self, session_id: &str, event_id: i64, data: &Value) -> Option<Value> {
         let turn = data.get("turn_id")?.as_str()?;
         let model = data.get("model_round").and_then(Value::as_i64).unwrap_or(0);
@@ -365,7 +415,7 @@ pub fn replay(
             .unwrap_or(0);
         change["event"] = json!("thread_change");
         change["event_id"] = json!(cursor);
-        change["data"] = json!({"change_type":change.get("change_type").cloned().unwrap_or(Value::Null),"turn_id":change.get("turn_id").cloned().unwrap_or(Value::Null),"item_id":change.get("item_id").cloned().unwrap_or(Value::Null),"revision":change.get("revision").cloned().unwrap_or(Value::Null),"cursor":cursor});
+        change["data"] = json!({"change_type":change.get("change_type").cloned().unwrap_or(Value::Null),"turn_id":change.get("turn_id").cloned().unwrap_or(Value::Null),"item_id":change.get("item_id").cloned().unwrap_or(Value::Null),"revision":change.get("revision").cloned().unwrap_or(Value::Null),"cursor":cursor,"payload":change.get("payload").cloned().unwrap_or(Value::Null)});
         records.push(change);
     }
     // The caller's event cursor does not apply to block event IDs. Return a

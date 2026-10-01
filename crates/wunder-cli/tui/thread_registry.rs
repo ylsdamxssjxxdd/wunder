@@ -5,6 +5,7 @@
 //! demand when a thread becomes visible.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::Instant;
 use tokio::sync::mpsc::Receiver;
 use wunder_server::approval::ApprovalRequestRx;
 use wunder_server::schemas::StreamEvent;
@@ -13,6 +14,11 @@ use super::app::StreamMessage;
 
 pub(crate) const MAX_THREAD_PROJECTIONS: usize = 32;
 pub(crate) const MAX_PENDING_EVENTS: usize = 2048;
+
+/// Bounds for the durable healing state (聊天流式管线根治方案 I6：有界增量投影).
+pub(crate) const MAX_APPLIED_DURABLE_SEQS: usize = 4096;
+/// Resume suppression window: only one outstanding durable replay per 1000 ms (I6).
+pub(crate) const DURABLE_REPLAY_GAP_MS: u64 = 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ThreadRunState {
@@ -35,6 +41,9 @@ pub(crate) struct ThreadProjection {
     pub draft: String,
     pub scroll_from_bottom: usize,
     pub last_seen_event_id: i64,
+    /// 唯一 durable 游标：`thread_log_changes.change_seq`（根治方案 I5）。
+    /// `last_seen_event_id` / `replay_from` 仅是 v1 兼容残留，不参与去重或排序。
+    pub last_change_seq: i64,
     pub status: ThreadRunState,
     pub unread: UnreadState,
     pub pending_events: VecDeque<StreamEvent>,
@@ -42,6 +51,10 @@ pub(crate) struct ThreadProjection {
     pub replay_from: Option<i64>,
     applied_event_ids: HashSet<i64>,
     last_applied_event_id: i64,
+    /// change_seqs already folded into the projection; idempotent healing guard.
+    applied_durable_seqs: VecDeque<i64>,
+    /// When the last durable replay pass started (resume suppression window).
+    last_durable_replay_attempt: Option<Instant>,
 }
 
 impl ThreadProjection {
@@ -51,6 +64,7 @@ impl ThreadProjection {
             draft: String::new(),
             scroll_from_bottom: 0,
             last_seen_event_id: 0,
+            last_change_seq: 0,
             status: ThreadRunState::Ready,
             unread: UnreadState::default(),
             pending_events: VecDeque::new(),
@@ -58,6 +72,8 @@ impl ThreadProjection {
             replay_from: None,
             applied_event_ids: HashSet::new(),
             last_applied_event_id: 0,
+            applied_durable_seqs: VecDeque::new(),
+            last_durable_replay_attempt: None,
         }
     }
 
@@ -82,6 +98,46 @@ impl ThreadProjection {
             self.replay_from.get_or_insert(self.last_applied_event_id);
         }
         self.pending_events.push_back(event);
+    }
+
+    pub(crate) fn durable_cursor(&self) -> i64 {
+        self.last_change_seq
+    }
+
+    /// Record an applied durable cursor; returns false when this seq was already
+    /// folded (idempotent replay).
+    pub(crate) fn mark_durable_applied(&mut self, seq: i64) -> bool {
+        if seq <= 0 || self.applied_durable_seqs.contains(&seq) {
+            return false;
+        }
+        self.applied_durable_seqs.push_back(seq);
+        while self.applied_durable_seqs.len() > MAX_APPLIED_DURABLE_SEQS {
+            self.applied_durable_seqs.pop_front();
+        }
+        self.last_change_seq = self.last_change_seq.max(seq);
+        true
+    }
+
+    /// Healing state is per-projection; drop it when the projection is rebuilt.
+    pub(crate) fn clear_durable_heal_state(&mut self) {
+        self.applied_durable_seqs.clear();
+        self.last_durable_replay_attempt = None;
+    }
+
+    /// True when a durable replay pass started inside the suppression window.
+    pub(crate) fn durable_replay_in_suppression_window(&self) -> bool {
+        self.last_durable_replay_attempt
+            .is_some_and(|attempt| attempt.elapsed().as_millis() < DURABLE_REPLAY_GAP_MS as u128)
+    }
+
+    pub(crate) fn mark_durable_replay_attempt(&mut self) {
+        self.last_durable_replay_attempt = Some(Instant::now());
+    }
+
+    /// Reset only the resume-suppression window. The applied durable seq guard
+    /// is retained so a future pass cannot re-fold the same frames (I6 idempotency).
+    pub(crate) fn reset_durable_replay_suppression(&mut self) {
+        self.last_durable_replay_attempt = None;
     }
 }
 
@@ -161,6 +217,37 @@ impl ThreadRegistry {
         let projection = self.projection_mut(session_id);
         projection.needs_replay = false;
         projection.replay_from = None;
+        // Reset the resume-suppression window so a later replay can start, but
+        // retain the applied durable seq guard for idempotency (I6).
+        projection.reset_durable_replay_suppression();
+    }
+
+    pub(crate) fn durable_cursor(&self, session_id: &str) -> i64 {
+        self.projection(session_id)
+            .map(|projection| projection.durable_cursor())
+            .unwrap_or(0)
+    }
+
+    /// Record a durable cursor folded into the projection; false when already applied.
+    pub(crate) fn mark_durable_applied(&mut self, session_id: &str, seq: i64) -> bool {
+        self.projection_mut(session_id).mark_durable_applied(seq)
+    }
+
+    /// Mark the start of a durable replay pass (resume suppression window, I6).
+    pub(crate) fn mark_durable_replay_attempt(&mut self, session_id: &str) {
+        self.projection_mut(session_id).mark_durable_replay_attempt();
+    }
+
+    /// True when a durable replay pass started inside the suppression window.
+    pub(crate) fn replay_in_suppression_window(&self, session_id: &str) -> bool {
+        self.projection(session_id)
+            .is_some_and(|projection| projection.durable_replay_in_suppression_window())
+    }
+
+    /// Drop all durable healing state (idempotency guard + suppression window).
+    /// Used when a projection is rebuilt from a fresh snapshot (I5).
+    pub(crate) fn clear_durable_heal_state(&mut self, session_id: &str) {
+        self.projection_mut(session_id).clear_durable_heal_state();
     }
 
     pub(crate) fn projection_mut(&mut self, session_id: &str) -> &mut ThreadProjection {
@@ -332,6 +419,30 @@ mod tests {
         assert_eq!(registry.projection("b").unwrap().unread.events, 1);
         registry.activate("b");
         assert_eq!(registry.projection("b").unwrap().unread.events, 0);
+    }
+
+    /// The durable cursor is the single change_seq watermark (根治方案 I5/I6). It
+    /// advances monotonically, is idempotent across replays, and the resume
+    /// suppression window blocks back-to-back durable replays.
+    #[test]
+    fn durable_cursor_advances_idempotently_and_suppresses_repeated_replay() {
+        let mut registry = ThreadRegistry::new("a");
+        assert_eq!(registry.durable_cursor("b"), 0);
+        assert!(registry.mark_durable_applied("b", 12));
+        assert!(!registry.mark_durable_applied("b", 12));
+        assert_eq!(registry.durable_cursor("b"), 12);
+        // A lower or equal seq never rewinds the watermark.
+        assert!(registry.mark_durable_applied("b", 7));
+        assert_eq!(registry.durable_cursor("b"), 12);
+        assert!(registry.mark_durable_applied("b", 40));
+        assert_eq!(registry.durable_cursor("b"), 40);
+
+        registry.mark_durable_replay_attempt("b");
+        assert!(registry.replay_in_suppression_window("b"));
+        // The suppression window clears with a replay reset, keeping the cursor.
+        registry.clear_durable_heal_state("b");
+        assert_eq!(registry.durable_cursor("b"), 40);
+        assert!(!registry.replay_in_suppression_window("b"));
     }
 
     #[test]

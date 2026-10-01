@@ -5,8 +5,9 @@ use crate::api::ws_helpers::{
     apply_ws_auth_headers, has_ws_protocol_token, negotiate_ws_protocol, parse_connect_payload,
     parse_payload, resolve_session_id, resume_queued_stream_events, resume_stream_events,
     send_ws_error, send_ws_error_payload, send_ws_event, send_ws_live_event, send_ws_pong,
-    send_ws_ready, ws_error_payload_from_anyhow, ws_protocol_info, WsEnvelope, WsFeatures,
-    WsPolicy, WsQuery, WsReadyPayload, WsSender, WS_MAX_MESSAGE_BYTES, WS_PROTOCOL_VERSION,
+    send_ws_ready, send_ws_tail_event, ws_error_payload_from_anyhow, ws_protocol_info, WsEnvelope,
+    WsFeatures, WsPolicy, WsQuery, WsReadyPayload, WsSender, WS_MAX_MESSAGE_BYTES,
+    WS_PROTOCOL_VERSION,
 };
 use crate::api::ws_log::{
     log_ws_close, log_ws_handshake, log_ws_handshake_error, log_ws_message, log_ws_open,
@@ -55,6 +56,9 @@ struct WsStartPayload {
     client_message_id: Option<String>,
     #[serde(default)]
     stream: Option<bool>,
+    /// Change-stream v2 opt-in: durable change feeder + ephemeral item tails.
+    #[serde(default, alias = "changeStream")]
+    change_stream: Option<bool>,
     // Deprecated compatibility field: parsed for older clients but ignored;
     // request logging is unified to the compact profile.
     #[serde(default, alias = "debugPayload", alias = "debug_payload")]
@@ -222,6 +226,7 @@ async fn handle_ws(
         watch: true,
         ping_pong: true,
         goal: true,
+        change_stream: true,
     };
     let ready_payload = WsReadyPayload {
         connection_id: connection_id.clone(),
@@ -448,6 +453,7 @@ async fn handle_ws(
                             continue;
                         }
                         let stream = payload.stream.unwrap_or(true);
+                        let change_stream_requested = payload.change_stream == Some(true);
                         let mut request = match build_chat_request(
                             &state,
                             &user,
@@ -477,6 +483,11 @@ async fn handle_ws(
                                 continue;
                             }
                         };
+                        if change_stream_requested {
+                            let overrides =
+                                request.config_overrides.get_or_insert_with(|| json!({}));
+                            overrides["__change_stream"] = json!(true);
+                        }
                         let (approval_tx, approval_rx) = new_approval_channel();
                         request.approval_tx = Some(approval_tx);
 
@@ -594,6 +605,7 @@ async fn handle_ws(
                                     tokio::pin!(stream);
                                     let mut goal_continue_ready = false;
                                     let mut ws_delivery_open = true;
+                                    let mut feeder_started = false;
                                     loop {
                                         tokio::select! {
                                             _ = cancel.cancelled() => {
@@ -609,6 +621,71 @@ async fn handle_ws(
                                                 };
                                                 if event.event == "goal_continuation_ready" {
                                                     goal_continue_ready = true;
+                                                }
+                                                if change_stream_requested {
+                                                    if event.event == "thread_turn_started" {
+                                                        if !feeder_started {
+                                                            feeder_started = true;
+                                                            let change_cursor = event.data["change_cursor"]
+                                                                .as_i64()
+                                                                .unwrap_or(0);
+                                                            let ack = StreamEvent {
+                                                                event: "stream_started".into(),
+                                                                data: event.data.clone(),
+                                                                id: None,
+                                                                timestamp: Some(Utc::now()),
+                                                            };
+                                                            let _ = send_ws_event(
+                                                                &ws_tx_snapshot,
+                                                                Some(&request_id_cleanup),
+                                                                ack,
+                                                            )
+                                                            .await;
+                                                            let notify = state_snapshot
+                                                                .kernel
+                                                                .orchestrator
+                                                                .change_hub
+                                                                .subscribe(&session_id_cleanup);
+                                                            let feeder_state = state_snapshot.clone();
+                                                            let feeder_session =
+                                                                session_id_cleanup.clone();
+                                                            let feeder_tx = ws_tx_snapshot.clone();
+                                                            let feeder_request_id =
+                                                                request_id_cleanup.clone();
+                                                            let feeder_cancel = cancel.clone();
+                                                            long_task::spawn(
+                                                                "api.chat_ws.change_feeder",
+                                                                async move {
+                                                                    resume_stream_events(
+                                                                        feeder_state,
+                                                                        feeder_session,
+                                                                        change_cursor,
+                                                                        Some(&feeder_request_id),
+                                                                        feeder_tx,
+                                                                        Some(feeder_cancel),
+                                                                        true,
+                                                                        Some(notify),
+                                                                    )
+                                                                    .await;
+                                                                },
+                                                            );
+                                                        }
+                                                        continue;
+                                                    }
+                                                    if event.event == "thread_item_tail" {
+                                                        // Ephemeral: drop under backpressure,
+                                                        // the next durable block heals.
+                                                        let _ = send_ws_tail_event(
+                                                            &ws_tx_snapshot,
+                                                            Some(&request_id_cleanup),
+                                                            event,
+                                                        )
+                                                        .await;
+                                                        continue;
+                                                    }
+                                                    // Durable content reaches change-stream
+                                                    // clients only through the feeder.
+                                                    continue;
                                                 }
                                                 if ws_delivery_open {
                                                     if send_ws_live_event(
@@ -724,6 +801,7 @@ async fn handle_ws(
                         }
                         let ws_tx_snapshot = ws_tx.clone();
                         let state_snapshot = state.clone();
+                        let notify = state.kernel.orchestrator.change_hub.subscribe(&session_id);
                         let (cancel, task_id) =
                             register_ws_task(&tasks, &request_id, Some(session_id.clone()), false)
                                 .await;
@@ -739,6 +817,7 @@ async fn handle_ws(
                                 ws_tx_snapshot,
                                 Some(cancel.clone()),
                                 false,
+                                Some(notify),
                             )
                             .await;
                             let _ = cleanup_ws_task(
@@ -788,6 +867,7 @@ async fn handle_ws(
                         let after_event_id = payload.after_event_id.unwrap_or(0).max(0);
                         let ws_tx_snapshot = ws_tx.clone();
                         let state_snapshot = state.clone();
+                        let notify = state.kernel.orchestrator.change_hub.subscribe(&session_id);
                         let (cancel, task_id) =
                             register_ws_task(&tasks, &request_id, Some(session_id.clone()), false)
                                 .await;
@@ -803,6 +883,7 @@ async fn handle_ws(
                                 ws_tx_snapshot,
                                 Some(cancel.clone()),
                                 true,
+                                Some(notify),
                             )
                             .await;
                             let _ = cleanup_ws_task(

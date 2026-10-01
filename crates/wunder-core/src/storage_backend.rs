@@ -73,12 +73,15 @@ pub trait ThreadLogStore {
         limit: i64,
     ) -> Result<Vec<Value>>;
 
+    /// Persist one immutable text block and its durable `text_block` change.
+    /// Returns the allocated `change_seq`; an idempotent replay (event_id not
+    /// ahead of the stored block) returns 0 without allocating a cursor.
     fn upsert_thread_text_block(
         &self,
         user_id: &str,
         session_id: &str,
         block: &Value,
-    ) -> Result<()>;
+    ) -> Result<i64>;
     fn list_thread_text_blocks(
         &self,
         session_id: &str,
@@ -186,6 +189,10 @@ pub trait ThreadLogStore {
     ) -> Result<Vec<Value>>;
     /// Return the latest durable ThreadLog change cursor without materializing changes.
     fn latest_thread_change_seq_by_session(&self, session_id: &str) -> Result<i64>;
+    /// Atomic thread snapshot for v2 resume (根治方案 I5): cursor, turns,
+    /// items and text blocks read inside one transaction so a concurrent
+    /// commit can never produce a torn projection.
+    fn thread_snapshot(&self, user_id: &str, session_id: &str) -> Result<Value>;
     fn delete_thread_log_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
 }
 

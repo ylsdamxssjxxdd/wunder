@@ -71,6 +71,19 @@ impl Orchestrator {
             .clone()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| Uuid::new_v4().simple().to_string());
+        // Capture the exclusive durable baseline before accept_thread_turn.
+        // The accept transaction appends the first turn/item changes after
+        // this cursor; start must replay them instead of starting at the
+        // post-accept cursor.
+        let resume_from_seq = {
+            let storage = self.storage.clone();
+            let thread = session_id.clone();
+            crate::core::blocking::run_db("thread_log.resume_baseline", move || {
+                storage.latest_thread_change_seq_by_session(&thread)
+            })
+            .await
+            .map_err(|err| OrchestratorError::internal(err.to_string()))?
+        };
         let tool_names = if request.tool_names.is_empty() {
             None
         } else {
@@ -119,6 +132,19 @@ impl Orchestrator {
                     "client_message_id already accepted".to_string(),
                 ));
             }
+            // Wake active change feeders (other devices or an already-open
+            // watch) so the new user turn surfaces without waiting for their
+            // next poll tick.
+            let cursor_storage = self.storage.clone();
+            let cursor_session = session_id.clone();
+            if let Ok(cursor) = crate::core::blocking::run_db(
+                "thread_log.accept_cursor",
+                move || cursor_storage.latest_thread_change_seq_by_session(&cursor_session),
+            )
+            .await
+            {
+                self.change_hub.publish(&session_id, cursor);
+            }
             (
                 accepted["turn_id"]
                     .as_str()
@@ -152,6 +178,12 @@ impl Orchestrator {
             approval_tx: request.approval_tx.clone(),
             thread_turn_id,
             thread_user_round,
+            thread_resume_from_seq: resume_from_seq.max(0),
+            change_stream: request
+                .config_overrides
+                .as_ref()
+                .and_then(|fields| fields.get("__change_stream").and_then(Value::as_bool))
+                .unwrap_or(false),
         })
     }
 
@@ -205,7 +237,8 @@ impl Orchestrator {
             prepared.is_admin,
             0,
             prepared.client_message_id.clone(),
-        );
+        )
+        .with_change_hub(self.change_hub.clone());
         emitter.bind_turn(
             &prepared.thread_turn_id.expect("accepted turn").to_string(),
             prepared.thread_user_round.expect("accepted round"),
@@ -242,7 +275,7 @@ impl Orchestrator {
                     0
                 }
             };
-        let emitter = EventEmitter::new(
+        let mut emitter = EventEmitter::new(
             prepared.session_id.clone(),
             prepared.user_id.clone(),
             Some(queue_tx),
@@ -251,11 +284,49 @@ impl Orchestrator {
             prepared.is_admin,
             start_event_id,
             prepared.client_message_id.clone(),
-        );
+        )
+        .with_change_hub(self.change_hub.clone());
+        if prepared.change_stream {
+            emitter = emitter.with_change_stream();
+        }
         emitter.bind_turn(
             &prepared.thread_turn_id.expect("accepted turn").to_string(),
             prepared.thread_user_round.expect("accepted round"),
         );
+        if prepared.change_stream {
+            // The change-stream ack anchors the client's feeder cursor. Emitted
+            // through the pump so it is ordered before every turn event.
+            let cursor_storage = self.storage.clone();
+            let cursor_session = prepared.session_id.clone();
+            let change_cursor = match crate::core::blocking::run_db(
+                "orchestrator.request.change_cursor",
+                move || cursor_storage.latest_thread_change_seq_by_session(&cursor_session),
+            )
+            .await
+            {
+                Ok(value) => value,
+                Err(err) => {
+                    warn!(
+                        "failed to load change cursor for session {}: {err}",
+                        prepared.session_id
+                    );
+                    0
+                }
+            };
+            emitter
+                .emit(
+                    "thread_turn_started",
+                    json!({
+                        "turn_id": prepared.thread_turn_id.expect("accepted turn").to_string(),
+                        "user_round": prepared.thread_user_round.expect("accepted round"),
+                        "change_cursor": prepared.thread_resume_from_seq,
+                        "resume_from_seq": prepared.thread_resume_from_seq,
+                        "content": prepared.question,
+                        "client_message_id": prepared.client_message_id,
+                    }),
+                )
+                .await;
+        }
         let _ = self.thread_runtime.attach_subscriber(&prepared.session_id);
         let runner = {
             let orchestrator = self.clone();

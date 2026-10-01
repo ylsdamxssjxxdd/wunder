@@ -31,7 +31,8 @@ pub(super) trait PostgresThreadLogStorage {
         user_id: &str,
         session_id: &str,
         block: &Value,
-    ) -> Result<()>;
+    ) -> Result<i64>;
+    fn thread_snapshot_impl(&self, user_id: &str, session_id: &str) -> Result<Value>;
     fn list_thread_text_blocks_impl(
         &self,
         session_id: &str,
@@ -201,7 +202,7 @@ impl PostgresThreadLogStorage for PostgresStorage {
         user_id: &str,
         session_id: &str,
         block: &Value,
-    ) -> Result<()> {
+    ) -> Result<i64> {
         self.ensure_initialized()?;
         let mut client = self.conn()?;
         let mut conn = client.transaction()?;
@@ -227,13 +228,15 @@ impl PostgresThreadLogStorage for PostgresStorage {
             .get(0);
         anyhow::ensure!(item_exists, "thread item does not exist for block");
         let written = conn.execute("INSERT INTO thread_item_blocks(session_id,user_id,item_id,field,block_index,event_id,payload) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(session_id,item_id,field,block_index) DO UPDATE SET event_id=excluded.event_id,payload=excluded.payload WHERE thread_item_blocks.event_id<=excluded.event_id AND thread_item_blocks.payload<>excluded.payload",&[&session_id,&user_id,&item_id,&field,&index,&event_id,&text])?;
+        let mut change_seq = 0i64;
         if written > 0 {
             let row = conn.query_one("SELECT l.latest_change_seq+1,i.turn_id FROM thread_logs l JOIN thread_items i ON i.session_id=l.session_id WHERE l.session_id=$1 AND i.item_id=$2", &[&session_id,&item_id])?;
             let seq: i64 = row.get(0);
             let turn_id: String = row.get(1);
-            let reference = json!({"field":field,"block_index":index}).to_string();
+            // I1: the change payload is the exact block JSON so a replayed
+            // text_block change is byte-identical to the durable block row.
             let now = Self::now_ts();
-            conn.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,'text_block',$4,$5,0,$6,$7)", &[&session_id,&seq,&user_id,&turn_id,&item_id,&reference,&now])?;
+            conn.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,'text_block',$4,$5,0,$6,$7)", &[&session_id,&seq,&user_id,&turn_id,&item_id,&text,&now])?;
             conn.execute(
                 "UPDATE thread_logs SET latest_change_seq=$1,updated_time=$2 WHERE session_id=$3",
                 &[&seq, &now, &session_id],
@@ -242,9 +245,54 @@ impl PostgresThreadLogStorage for PostgresStorage {
                 "DELETE FROM thread_log_changes WHERE session_id=$1 AND change_seq<=$2",
                 &[&session_id, &seq.saturating_sub(4096)],
             )?;
+            change_seq = seq;
         }
         conn.commit()?;
-        Ok(())
+        Ok(change_seq)
+    }
+    fn thread_snapshot_impl(&self, user_id: &str, session_id: &str) -> Result<Value> {
+        self.ensure_initialized()?;
+        let mut client = self.conn()?;
+        let tx = client.transaction()?;
+        let owner: Option<String> = tx
+            .query_opt(
+                "SELECT user_id FROM thread_logs WHERE session_id=$1",
+                &[&session_id],
+            )?
+            .map(|r| r.get(0));
+        ensure!(owner.as_deref() == Some(user_id), "thread owner mismatch");
+        let cursor: i64 = tx
+            .query_one(
+                "SELECT latest_change_seq FROM thread_logs WHERE session_id=$1",
+                &[&session_id],
+            )?
+            .get(0);
+        let turns = tx.query("SELECT turn_id,user_turn_index,status,summary,payload,updated_time,root_turn_id,trigger_kind FROM thread_turns WHERE user_id=$1 AND session_id=$2 AND trigger_kind='user' ORDER BY user_turn_index ASC", &[&user_id, &session_id])?
+            .into_iter().map(turn_row).collect::<Vec<_>>();
+        let items = tx.query("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility,root_turn_id,created_seq FROM thread_items WHERE user_id=$1 AND session_id=$2 AND visibility='user' ORDER BY created_seq ASC, item_index ASC", &[&user_id, &session_id])?
+            .into_iter()
+            .map(|row| {
+                let mut item = change_item_row_pg(&row);
+                if let Some(map) = item["payload"].as_object_mut() {
+                    map.remove("model_content");
+                    map.remove("config_overrides");
+                }
+                item
+            })
+            .collect::<Vec<_>>();
+        let item_total = items.len() as i64;
+        let blocks = tx.query("SELECT payload FROM thread_item_blocks WHERE session_id=$1 AND item_id IN (SELECT item_id FROM thread_items WHERE session_id=$1 AND visibility='user') ORDER BY item_id, field, block_index", &[&session_id])?
+            .into_iter()
+            .filter_map(|r| serde_json::from_str(&r.get::<_, String>(0)).ok())
+            .collect::<Vec<_>>();
+        tx.commit()?;
+        Ok(json!({
+            "cursor": cursor,
+            "turns": turns,
+            "items": items,
+            "blocks": blocks,
+            "item_total": item_total,
+        }))
     }
     fn list_thread_text_blocks_impl(
         &self,
@@ -419,13 +467,30 @@ impl PostgresThreadLogStorage for PostgresStorage {
                 &[&session_id],
             )?
             .get(0);
-        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,$4,$5,$6,$7,'{}',$8)", &[&session_id,&seq,&user_id,&change_type,&turn_id,&change_item,&revision,&now])?;
+        let change_payload = serde_json::to_string(&serde_json::json!({
+            "turn_id": turn_id,
+            "status": "queued",
+            "user_round": round,
+            "client_message_id": client_id,
+        }))?;
+        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", &[&session_id,&seq,&user_id,&change_type,&turn_id,&change_item,&revision,&change_payload,&now])?;
         tx.execute(
             "UPDATE thread_logs SET latest_change_seq=$1,updated_time=$2 WHERE session_id=$3",
             &[&seq, &now, &session_id],
         )?;
         let item_seq = seq + 1;
-        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,$4,$5,$6,$7,'{}',$8)", &[&session_id,&item_seq,&user_id,&"item_upsert",&turn_id,&item_id,&revision,&now])?;
+        let item_change_payload = {
+            let row = tx.query_one("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility,root_turn_id,created_seq FROM thread_items WHERE session_id=$1 AND item_id=$2", &[&session_id, &item_id])?;
+            let mut item = change_item_row_pg(&row);
+            if item["visibility"] == json!("user") {
+                if let Some(map) = item["payload"].as_object_mut() {
+                    map.remove("model_content");
+                    map.remove("config_overrides");
+                }
+            }
+            serde_json::to_string(&item)?
+        };
+        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", &[&session_id,&item_seq,&user_id,&"item_upsert",&turn_id,&item_id,&revision,&item_change_payload,&now])?;
         tx.execute(
             "UPDATE thread_logs SET latest_change_seq=$1 WHERE session_id=$2",
             &[&item_seq, &session_id],
@@ -499,10 +564,22 @@ impl PostgresThreadLogStorage for PostgresStorage {
             )?
             .get(0);
         let revision = seq;
-        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,$4,$5,$6,$7,'{}',$8)", &[&session_id,&seq,&user_id,&change_type,&turn_id,&change_item,&revision,&now])?;
+        let change_payload = serde_json::to_string(&serde_json::json!({"turn_id": turn_id, "status": status}))?;
+        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", &[&session_id,&seq,&user_id,&change_type,&turn_id,&change_item,&revision,&change_payload,&now])?;
         if input_changed > 0 {
             seq += 1;
-            tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) SELECT session_id,$1,user_id,'item_upsert',turn_id,item_id,revision,'{}',$2 FROM thread_items WHERE session_id=$3 AND item_id=$4", &[&seq,&now,&session_id,&input_item_id])?;
+            let bubble_payload = {
+                let row = tx.query_one("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility,root_turn_id,created_seq FROM thread_items WHERE session_id=$1 AND item_id=$2", &[&session_id, &input_item_id])?;
+                let mut item = change_item_row_pg(&row);
+                if item["visibility"] == json!("user") {
+                    if let Some(map) = item["payload"].as_object_mut() {
+                        map.remove("model_content");
+                        map.remove("config_overrides");
+                    }
+                }
+                serde_json::to_string(&item)?
+            };
+            tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", &[&session_id,&seq,&user_id,&"item_upsert",&turn_id,&input_item_id,&revision,&bubble_payload,&now])?;
         }
         tx.execute(
             "UPDATE thread_logs SET latest_change_seq=$1,updated_time=$2 WHERE session_id=$3",
@@ -750,7 +827,18 @@ impl PostgresThreadLogStorage for PostgresStorage {
                 &[&session_id],
             )?
             .get(0);
-        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,$4,$5,$6,$7,'{}',$8)", &[&session_id,&seq,&user_id,&"item_upsert",&turn_id,&item_id,&revision,&now])?;
+        let change_payload = {
+            let row = tx.query_one("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility,root_turn_id,created_seq FROM thread_items WHERE session_id=$1 AND item_id=$2", &[&session_id, &item_id])?;
+            let mut item = change_item_row_pg(&row);
+            if item["visibility"] == json!("user") {
+                if let Some(map) = item["payload"].as_object_mut() {
+                    map.remove("model_content");
+                    map.remove("config_overrides");
+                }
+            }
+            serde_json::to_string(&item)?
+        };
+        tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", &[&session_id,&seq,&user_id,"item_upsert",&turn_id,&item_id,&revision,&change_payload,&now])?;
         tx.execute(
             "UPDATE thread_logs SET latest_change_seq=$1,updated_time=$2 WHERE session_id=$3",
             &[&seq, &now, &session_id],
@@ -849,6 +937,9 @@ fn turn_row(r: tokio_postgres::Row) -> Value {
 }
 fn item_row(r: tokio_postgres::Row) -> Value {
     json!({"item_id":r.get::<_,String>(0),"item_index":r.get::<_,i64>(1),"kind":r.get::<_,String>(2),"status":r.get::<_,String>(3),"revision":r.get::<_,i64>(4),"payload":serde_json::from_str::<Value>(&r.get::<_,String>(5)).unwrap_or(Value::Null),"created_time":r.get::<_,f64>(6),"updated_time":r.get::<_,f64>(7),"turn_id":r.get::<_,String>(8),"visibility":r.get::<_,String>(9)})
+}
+fn change_item_row_pg(r: &tokio_postgres::Row) -> Value {
+    json!({"item_id":r.get::<_,String>(0),"item_index":r.get::<_,i64>(1),"kind":r.get::<_,String>(2),"status":r.get::<_,String>(3),"revision":r.get::<_,i64>(4),"payload":serde_json::from_str::<Value>(&r.get::<_,String>(5)).unwrap_or(Value::Null),"created_time":r.get::<_,f64>(6),"updated_time":r.get::<_,f64>(7),"turn_id":r.get::<_,String>(8),"visibility":r.get::<_,String>(9),"root_turn_id":r.get::<_,String>(10),"created_seq":r.get::<_,i64>(11)})
 }
 fn change_row(r: tokio_postgres::Row) -> Value {
     json!({"change_seq":r.get::<_,i64>(0),"change_type":r.get::<_,String>(1),"turn_id":r.get::<_,String>(2),"item_id":r.get::<_,Option<String>>(3),"revision":r.get::<_,i64>(4),"payload":serde_json::from_str::<Value>(&r.get::<_,String>(5)).unwrap_or(Value::Null),"created_time":r.get::<_,f64>(6)})
