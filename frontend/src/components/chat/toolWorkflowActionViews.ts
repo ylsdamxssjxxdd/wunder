@@ -106,19 +106,7 @@ const buildStream = (
 };
 
 export const buildCommandCardView = (input: CommandCardInput, t: Translate): ToolWorkflowCommandView => {
-  const metrics = [
-    buildMetric(
-      'commandCount',
-      input.commandCount > 1 ? t('chat.toolWorkflow.detail.commands') : t('chat.toolWorkflow.detail.command'),
-      input.commandCount > 1 ? input.commandCount : ''
-    ),
-    buildMetric('workdir', t('chat.toolWorkflow.detail.workdir'), input.workdir),
-    buildMetric('timeout', t('chat.toolWorkflow.detail.timeout'), input.timeout),
-    buildMetric('exitCode', t('chat.toolWorkflow.detail.exitCode'), input.exitCode === null ? '' : input.exitCode),
-    buildMetric('truncatedCommands', t('chat.toolWorkflow.detail.truncatedCommands'), input.truncatedCommands || '', 'warning'),
-    buildMetric('totalBytes', t('chat.toolWorkflow.detail.totalBytes'), input.totalBytes),
-    buildMetric('omittedBytes', t('chat.toolWorkflow.detail.omittedBytes'), input.omittedBytes, 'warning')
-  ].filter(Boolean) as ToolWorkflowStructuredMetric[];
+  const metrics: ToolWorkflowStructuredMetric[] = [];
 
   const streams = [
     buildStream('stdout', 'stdout', input.stdout, 'default'),
@@ -198,7 +186,7 @@ export const buildPatchResultView = (
   files: PatchFileCard[],
   t: Translate
 ): ToolWorkflowPatchView => ({
-  metrics: buildPatchMetrics(counts, t, true),
+  metrics: buildPatchMetrics(counts, t, true).filter(metric => ['changedFiles', 'addedLines', 'deletedLines'].includes(metric.key)),
   files
 });
 

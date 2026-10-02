@@ -65,6 +65,7 @@ pub mod thread_catalog;
 pub mod thread_change_feeder;
 pub mod thread_log;
 pub mod tools;
+pub mod tool_result_display;
 pub mod user_access;
 pub mod user_agent_presets;
 pub mod user_leveling;

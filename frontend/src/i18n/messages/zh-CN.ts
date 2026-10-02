@@ -1758,6 +1758,8 @@ export default {
   'chat.toolWorkflow.statusSuccess': '成功',
   'chat.toolWorkflow.statusFailed': '失败',
   'chat.toolWorkflow.toolResultSection': '结果',
+  'chat.toolWorkflow.statusCancelled': '已取消',
+  'chat.toolWorkflow.statusLoading': '运行中',
   'chat.toolWorkflow.resultDone': '已完成',
   'chat.toolWorkflow.resultFailed': '执行失败',
   'chat.toolWorkflow.resultRead': '已读取',

@@ -134,6 +134,7 @@ async fn run(
     tokio::pin!(stream);
     let mut stopped = false;
     let mut goal_ready = false;
+    let mut display_args: std::collections::VecDeque<(String, Value)> = std::collections::VecDeque::new();
     loop {
         tokio::select! {
             biased;
@@ -147,7 +148,36 @@ async fn run(
                 // Awaiting capacity yields the Tokio worker. Closing the receiver
                 // only disables delivery; the stream is still drained to settlement.
                 if !output.is_closed() {
-                    let value = json!({"event":event.event,"data":event.data,"id":event.id});
+                    let mut value = json!({"event":event.event,"data":event.data,"id":event.id});
+                    if matches!(event.event.as_str(), "tool_call" | "tool_start" | "tool_result" | "tool_output") {
+                        let payload = value["data"].get("data").filter(|_| value["data"].get("tool").is_none()).unwrap_or(&value["data"]);
+                        let tool = payload.get("tool").or_else(|| payload.get("tool_name"))
+                            .and_then(Value::as_str).unwrap_or("工具");
+                        let tool = tool.to_string();
+                        let pending = matches!(event.event.as_str(), "tool_call" | "tool_start");
+                        let id = payload.get("tool_call_id").and_then(Value::as_str).unwrap_or_default().to_string();
+                        let mut display_payload = payload.clone();
+                        if pending && !id.is_empty() {
+                            // Retain only short file/command arguments needed to render
+                            // a terminal result, never an unbounded full call payload.
+                            let args = payload.get("args").or_else(|| payload.get("arguments"));
+                            let mut compact = serde_json::Map::new();
+                            for key in ["path", "file_path", "command", "cmd", "content", "text"] {
+                                if let Some(text) = args.and_then(|v| v.get(key)).and_then(Value::as_str) {
+                                    compact.insert(key.into(), json!(wunder_server::tool_result_display::preview(text)));
+                                }
+                            }
+                            if display_args.len() >= 24 { display_args.pop_front(); }
+                            display_args.push_back((id.clone(), Value::Object(compact)));
+                        } else if let Some(index) = display_args.iter().position(|row| row.0 == id) {
+                            if let Some((_, args)) = display_args.remove(index) {
+                                display_payload["args"] = args;
+                            }
+                        }
+                        value["display_result"] = json!(wunder_server::tool_result_display::tool_result_display(
+                            &tool, &display_payload, pending
+                        ));
+                    }
                     tokio::select! {
                         biased;
                         _ = cancel.cancelled(), if !stopped => {

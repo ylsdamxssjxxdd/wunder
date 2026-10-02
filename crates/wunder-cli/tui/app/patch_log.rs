@@ -1250,9 +1250,9 @@ pub(super) fn build_completed_tool_log(tool_name: &str, payload: &Value) -> Spec
     } else if !(data.is_null()
         || data.is_object() && data.as_object().is_some_and(|map| map.is_empty()))
     {
-        Some(compact_json(data))
+        Some(wunder_server::tool_result_display::tool_result_display(tool_name, payload, false))
     } else if details.is_empty() {
-        Some("{}".to_string())
+        None
     } else {
         None
     };

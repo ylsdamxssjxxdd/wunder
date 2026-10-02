@@ -9,6 +9,11 @@ const PREVIEW_STRING_LIMIT = 360;
 const PREVIEW_ARRAY_LIMIT = 6;
 const PREVIEW_OBJECT_LIMIT = 12;
 const PREVIEW_DEPTH_LIMIT = 3;
+const INTERNAL_RESULT_KEYS = new Set([
+  'query_handle', 'cursor', 'next_cursor', 'event_type', 'session_id', 'turn_id',
+  'item_id', 'tool_call_id', 'revision', 'request_usage', 'request_context_tokens',
+  'args', 'arguments', 'meta'
+]);
 
 const asObject = (value: unknown): UnknownObject | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -96,7 +101,7 @@ const compactPreviewValue = (value: unknown, depth = 0): unknown => {
   }
   const obj = asObject(value);
   if (obj) {
-    const keys = Object.keys(obj);
+    const keys = Object.keys(obj).filter(key => !INTERNAL_RESULT_KEYS.has(key));
     const output: UnknownObject = {};
     keys.slice(0, PREVIEW_OBJECT_LIMIT).forEach((key) => {
       output[key] = compactPreviewValue(obj[key], depth + 1);

@@ -11,6 +11,7 @@ mod orchestrator;
 pub mod request_limits;
 pub mod sandbox;
 mod services;
+pub use services::tool_result_display;
 pub mod storage;
 
 pub use api::{build_desktop_router, build_router};

@@ -317,7 +317,7 @@ export const buildCompactionDisplay = (
 ): CompactionDisplay => {
   const normalizedStatus = pickString(detailObject?.status, status).toLowerCase();
   const normalizedStage = pickString(detailObject?.stage).toLowerCase();
-  const isRunning = normalizedStatus === 'loading' || normalizedStatus === 'pending';
+  const isRunning = ['loading', 'pending', 'running', 'streaming'].includes(normalizedStatus);
   const isCancelled = normalizedStatus === 'cancelled' || normalizedStatus === 'canceled';
   const isFailed = normalizedStatus === 'failed' || normalizedStatus === 'error' || normalizedStatus === 'timeout';
   const reason = pickString(detailObject?.reason).toLowerCase();

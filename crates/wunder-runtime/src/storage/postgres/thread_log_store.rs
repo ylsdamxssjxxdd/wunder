@@ -261,6 +261,11 @@ impl PostgresThreadLogStorage for PostgresStorage {
                 &[&session_id],
             )?
             .map(|r| r.get(0));
+        // Match SQLite: an owned chat session can exist before its first turn.
+        // Session authorization remains at the API boundary.
+        if owner.is_none() {
+            return Ok(json!({"cursor":0,"turns":[],"items":[],"blocks":[],"item_total":0}));
+        }
         ensure!(owner.as_deref() == Some(user_id), "thread owner mismatch");
         let cursor: i64 = tx
             .query_one(

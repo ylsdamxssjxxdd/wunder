@@ -18,10 +18,10 @@ type SearchHit = {
   after: string[];
 };
 
-const READ_FILE_LIMIT = 8;
-const LIST_ITEM_LIMIT = 80;
+const READ_FILE_LIMIT = 4;
+const LIST_ITEM_LIMIT = 16;
 const SEARCH_GROUP_LIMIT = 8;
-const SEARCH_HIT_LIMIT = 24;
+const SEARCH_HIT_LIMIT = 12;
 const DATABASE_ROW_LIMIT = 12;
 const DATABASE_CELL_LIMIT = 160;
 const KNOWLEDGE_CHUNK_LIMIT = 8;
@@ -84,10 +84,7 @@ const normalizeListFileItems = (
         rows.push(pathLike);
         continue;
       }
-      const serialized = JSON.stringify(obj);
-      if (serialized && serialized !== '{}') {
-        rows.push(serialized);
-      }
+
       continue;
     }
     const text = String(item ?? '').trim();
@@ -203,6 +200,7 @@ const buildReadStructuredView = (
   const content = pickString(dataObject.content);
   const sections = parseReadSections(content);
 
+  if (!sections.length && content) sections.push({ path: pickString(dataObject.path), body: content });
   if (!sections.length) return null;
 
   const groups: ToolWorkflowStructuredGroup[] = sections.slice(0, READ_FILE_LIMIT).map((section, index) => {
@@ -211,7 +209,7 @@ const buildReadStructuredView = (
       rows: [
         {
           key: `read-row-${index}`,
-          title: '',
+          title: section.path,
           body: truncateText(section.body),
           mono: true
         }
@@ -246,8 +244,8 @@ const buildListStructuredView = (
       title,
       mono: true
     }));
-  if (normalized.omittedItems > 0 || hiddenByCount > 0) {
-    const omitted = normalized.omittedItems + hiddenByCount;
+  if (normalized.omittedItems > 0 || hiddenByCount > 0 || normalized.rows.length > rows.length) {
+    const omitted = normalized.omittedItems + hiddenByCount + Math.max(0, normalized.rows.length - rows.length);
     rows.push({
       key: 'list-omitted-items',
       title: `... (+${omitted} items omitted)`,
@@ -422,6 +420,14 @@ const buildWriteStructuredView = (
     )
   );
   if (!preview) return null;
+  const path = pickString(
+    dataObject.path,
+    dataObject.file,
+    dataObject.file_path,
+    callArgs?.path,
+    callArgs?.file,
+    callArgs?.file_path
+  );
   return {
     variant: 'write',
     metrics: [],
@@ -431,7 +437,7 @@ const buildWriteStructuredView = (
         rows: [
           {
             key: 'write-row',
-            title: '',
+            title: path,
             body: preview,
             mono: true
           }

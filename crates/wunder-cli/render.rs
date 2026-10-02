@@ -956,7 +956,7 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value) -> Vec<String> {
     }
 
     if lines.len() == 1 {
-        push_tree_line(&mut lines, compact_json(data));
+        push_tree_line(&mut lines, wunder_server::tool_result_display::tool_result_display(tool, payload, false));
     }
     lines
 }
@@ -1285,8 +1285,7 @@ fn format_generic_tool_result_lines(tool: &str, payload: &Value) -> Vec<String> 
             push_tree_line(&mut lines, text);
         }
     } else if lines.len() == 1 {
-        let data = extract_tool_result_data(result);
-        push_tree_line(&mut lines, compact_json(data));
+        push_tree_line(&mut lines, wunder_server::tool_result_display::tool_result_display(tool, payload, false));
     }
     lines
 }
@@ -1439,6 +1438,16 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("3 items")));
         assert!(lines.iter().any(|line| line.contains("src/main.rs")));
         assert!(!lines.iter().any(|line| line.contains("\"items\"")));
+    }
+
+    #[test]
+    fn unknown_results_keep_user_text_without_protocol_json() {
+        let output = format_generic_tool_result_lines("custom_tool", &serde_json::json!({
+            "ok": true, "data": {"message": "Useful result", "query_handle": "hidden", "cursor": 999}
+        })).join("\n");
+        assert!(output.contains("Useful result"));
+        assert!(!output.contains("hidden"));
+        assert!(!output.contains("999"));
     }
 
     #[test]

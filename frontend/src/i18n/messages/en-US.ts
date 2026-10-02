@@ -1797,6 +1797,8 @@ export default {
   'chat.toolWorkflow.statusSuccess': 'Success',
   'chat.toolWorkflow.statusFailed': 'Failed',
   'chat.toolWorkflow.toolResultSection': 'Result',
+  'chat.toolWorkflow.statusCancelled': 'Cancelled',
+  'chat.toolWorkflow.statusLoading': 'Running',
   'chat.toolWorkflow.resultDone': 'Completed',
   'chat.toolWorkflow.resultFailed': 'Failed',
   'chat.toolWorkflow.resultRead': 'Read',

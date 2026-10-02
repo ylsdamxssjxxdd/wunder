@@ -86,6 +86,8 @@ pub struct NativeSession {
 
 #[derive(Debug, Clone)]
 pub struct NativeMessage {
+    pub turn_id: String,
+    pub workflow_detail: String,
     pub text: String,
     pub mine: bool,
     pub created_at: f64,
@@ -206,7 +208,32 @@ impl NativeDesktop {
                 .state
                 .workspace
                 .load_history(&self.desktop.user_id, cleaned, 100)?;
-        let messages = history.into_iter().filter_map(message_from_value).collect();
+        let mut messages: Vec<_> = history.into_iter().filter_map(message_from_value).collect();
+        // Load bounded durable tool rows for the visible turns, independently of
+        // the model-context history (which intentionally excludes tool_call rows).
+        let mut seen = std::collections::HashSet::new();
+        for message in messages.iter_mut().rev().filter(|message| !message.mine) {
+            if message.turn_id.is_empty() || !seen.insert(message.turn_id.clone()) { continue; }
+            if seen.len() > 32 { break; }
+            if let Some(turn) = self.desktop.state.storage.get_thread_turn(
+                &self.desktop.user_id, cleaned, &message.turn_id, 0, 100, false
+            )? {
+                let mut display = Vec::new();
+                if let Some(items) = turn.get("items").and_then(Value::as_array) {
+                    for item in items.iter().filter(|item| item["kind"] == "tool_call").take(24) {
+                        let payload = item.get("payload").unwrap_or(item);
+                        let tool = payload.get("tool").or_else(|| payload.get("tool_name"))
+                            .and_then(Value::as_str).unwrap_or("工具");
+                        let pending = matches!(item["status"].as_str(), Some("running" | "pending"));
+                        display.push(wunder_server::tool_result_display::tool_result_display(tool, payload, pending));
+                    }
+                    if turn.get("has_more").and_then(Value::as_bool) == Some(true) {
+                        display.push("… 更多步骤见线程日志".into());
+                    }
+                }
+                message.workflow_detail = display.join("\n\n");
+            }
+        }
         Ok((self.session_with_stats(record), messages))
     }
 
@@ -418,6 +445,8 @@ fn message_from_value(value: Value) -> Option<NativeMessage> {
         .or_else(|| value.pointer("/meta/message_stats"))
         .unwrap_or(&Value::Null);
     Some(NativeMessage {
+        turn_id: value.get("turn_id").and_then(Value::as_str).unwrap_or_default().to_string(),
+        workflow_detail: String::new(),
         text: value.get("content").and_then(Value::as_str)?.to_string(),
         mine: role == "user",
         created_at: value

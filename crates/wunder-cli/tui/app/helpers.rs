@@ -1595,7 +1595,7 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value) -> Vec<String> {
     }
 
     if lines.len() == 1 {
-        push_tree_line(&mut lines, compact_json(data));
+        push_tree_line(&mut lines, wunder_server::tool_result_display::tool_result_display(tool, payload, false));
     }
     lines
 }
@@ -1654,8 +1654,7 @@ pub(super) fn format_tool_result_lines(tool: &str, payload: &Value) -> Vec<Strin
             push_tree_line(&mut lines, text);
         }
     } else {
-        let data = extract_tool_result_data(result);
-        push_tree_line(&mut lines, compact_json(data));
+        push_tree_line(&mut lines, wunder_server::tool_result_display::tool_result_display(tool, payload, false));
     }
     lines
 }

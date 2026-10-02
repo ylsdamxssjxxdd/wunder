@@ -140,6 +140,10 @@ fn summarize_write_file(result: &Value, data: &Value) -> Option<ToolDisplaySumma
         .filter(|value| !value.is_empty())?;
     let bytes = number_value(result.get("bytes")).max(number_value(data.get("bytes")));
     let mut details = Vec::new();
+    if let Some(content) = data.get("content_preview").or_else(|| data.get("content"))
+        .or_else(|| result.pointer("/args/content")).and_then(Value::as_str) {
+        append_text_preview(&mut details, None, content, MAX_PREVIEW_LINES, MAX_PREVIEW_CHARS, false);
+    }
     if let Some(bytes) = bytes {
         details.push(ToolDisplayLine {
             label: Some("bytes:".to_string()),

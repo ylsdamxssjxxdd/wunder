@@ -902,6 +902,11 @@ impl SqliteThreadLogStorage for SqliteStorage {
                 |r| r.get(0),
             )
             .optional()?;
+        // A newly created chat session has no ThreadLog until its first turn.
+        // The API already checks session ownership; absent logs contain no data.
+        if owner.is_none() {
+            return Ok(json!({"cursor":0,"turns":[],"items":[],"blocks":[],"item_total":0}));
+        }
         ensure!(owner.as_deref() == Some(user_id), "thread owner mismatch");
         let cursor: i64 = tx.query_row(
             "SELECT latest_change_seq FROM thread_logs WHERE session_id=?",
@@ -1082,6 +1087,17 @@ mod tests {
     use std::sync::Arc;
     fn input(id: usize) -> Value {
         json!({"role":"user","content":format!("message {id}"),"client_message_id":format!("message-{id}")})
+    }
+    #[test]
+    fn thread_snapshot_before_first_turn_is_empty_and_existing_owner_is_checked() {
+        use wunder_core::storage_backend::ThreadLogStore;
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteStorage::new(dir.path().join("empty.db").to_string_lossy().into_owned());
+        assert_eq!(db.thread_snapshot("owner", "thread").unwrap(),
+            json!({"cursor":0,"turns":[],"items":[],"blocks":[],"item_total":0}));
+        db.accept_thread_turn("owner", "thread", &input(1)).unwrap();
+        assert!(db.thread_snapshot("owner", "thread").unwrap()["cursor"].as_i64().unwrap() > 0);
+        assert!(db.thread_snapshot("other", "thread").is_err());
     }
     #[test]
     fn active_text_recovery_pages_fields_and_commits_idempotent_change_cursors() {

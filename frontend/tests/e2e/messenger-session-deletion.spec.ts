@@ -42,6 +42,21 @@ test('complete catalog removes deleted rows from the actual work thread componen
   await expect(page.locator('.messenger-task-select[title^="Removed"]')).toHaveCount(0);
 });
 
+test('opening an empty thread completes without an error notification', async ({ page }) => {
+  await prepare(page);
+  await page.route('**/wunder/chat/sessions/perf-session-b**', route => {
+    const path = new URL(route.request().url()).pathname;
+    const data = path.endsWith('/thread-log/snapshot') ? { cursor: 0, turns: [], items: [] }
+      : path.endsWith('/events') ? { events: [], rounds: [], running: false, runtime: { status: 'idle' } }
+      : { id: 'perf-session-b', agent_id: 'perf-agent', title: 'Session B', transcript: [] };
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data }) });
+  });
+  await page.locator('.messenger-task-select[title="Session B"]').click();
+  await expect(page.locator('.messenger-task-select[title="Session B"]')).toHaveAttribute('aria-current', 'true');
+  await page.waitForTimeout(600);
+  await expect(page.locator('.el-message--error')).toHaveCount(0);
+});
+
 test('clicking a deleted row removes it, explains the failure, and clears its route', async ({ page }) => {
   await prepare(page);
   await page.evaluate(() => (window as any).__catalogStore.sessions.push({ id: 'removed-thread', agent_id: 'perf-agent', title: 'Removed thread' }));

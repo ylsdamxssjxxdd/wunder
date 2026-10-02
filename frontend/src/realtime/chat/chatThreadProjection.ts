@@ -133,6 +133,7 @@ const buildUserBubble = (
     failed: false,
     cancelled: false,
     raw: {
+      client_message_id: turn.clientMessageId,
       turn_id: turn.turnId,
       item_id: `${turn.turnId}:user`,
       kind: 'user_message',
@@ -261,12 +262,14 @@ const buildAssistantBubbleRaw = (
   textItem: ThreadItemState | null
 ): Record<string, unknown> => {
   const base: Record<string, unknown> = {
+    client_message_id: turn.clientMessageId,
     turn_id: turn.turnId,
     model_round: textItem?.modelRound ?? 0
   };
   if (!textItem) return base;
   return {
     ...textItem.raw,
+    ...base,
     item_id: textItem.itemId,
     turn_id: turn.turnId,
     model_round: textItem.modelRound,
@@ -303,9 +306,8 @@ const resolveBubbleStatus = (
   if (textItems.some((item) => isActiveItemStatus(item.status))) {
     return { status: 'streaming', final: false, failed: false, cancelled: false };
   }
-  if (textItems.length > 0 && textItems.every((item) => normalizeStatus(item.status) === 'completed')) {
-    return { status: 'final', final: true, failed: false, cancelled: false };
-  }
+  // Model output and tools settle independently inside a user turn. Only
+  // the durable turn terminal above may mark the assistant bubble complete.
   return { status: 'streaming', final: false, failed: false, cancelled: false };
 };
 
@@ -323,7 +325,11 @@ const buildWorkflowRecord = (
   if (cached?.revision === item.revision && cached.modelTurnId === modelTurnId) return cached.record;
   const payload = item.raw ?? {};
   const eventType = resolveWorkflowEventType(item);
-  const toolName = firstText(payload.tool, payload.tool_name, payload.name, payload.toolName);
+  // Compaction is a workflow activity, not a model tool call. Its payload
+  // need not contain a tool name; never infer its identity from a generic title.
+  const toolName = item.kind === 'compaction'
+    ? 'context_compaction'
+    : firstText(payload.tool, payload.tool_name, payload.name, payload.toolName);
   const record: WorkflowItemRecord = {
     ...payload,
     ...(payload.request_usage ? { usage: payload.request_usage } : {}),

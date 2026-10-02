@@ -100,7 +100,11 @@ const isCommandSessionWorkflowItem = (item: WorkflowItem): boolean =>
 const resolveWorkflowPrimaryRef = (item: WorkflowItem): string => {
   const toolCallRef = resolveWorkflowToolCallRef(item);
   const commandSessionRef = resolveWorkflowCommandSessionRef(item);
-  return toolCallRef || commandSessionRef;
+  // Durable compaction activities have their own item identity and must not
+  // be paired with an unrelated tool that happens to be pending.
+  const activityRef = resolveWorkflowEventType(item).startsWith('compaction')
+    ? resolveWorkflowItemId(item) : '';
+  return toolCallRef || commandSessionRef || activityRef;
 };
 
 const resolveWorkflowAliasRefs = (item: WorkflowItem): string[] => {
@@ -140,6 +144,9 @@ export const resolveWorkflowToolFunctionName = (item: WorkflowItem): string =>
   );
 
 export const resolveWorkflowToolName = (item: WorkflowItem): string => {
+  if (['compaction', 'compaction_progress', 'compaction_notice'].includes(resolveWorkflowEventType(item))) {
+    return 'context_compaction';
+  }
   const direct = normalizeWorkflowText(item.toolName ?? item.tool ?? item.tool_name ?? item.name);
   if (direct) return direct;
   const runtimeName = resolveWorkflowToolRuntimeName(item);
@@ -408,7 +415,7 @@ export const buildWorkflowToolRuns = (items: WorkflowItem[]): RawToolRun[] => {
 
     if (kind === 'output') {
       let targetIndex =
-        (toolCallId ? rowIndexByCallId.get(toolCallId) : undefined) ?? pickPendingForOutput(toolKey);
+        toolCallId ? (rowIndexByCallId.get(toolCallId) ?? -1) : pickPendingForOutput(toolKey);
       if (targetIndex < 0 && toolCallId) {
         targetIndex = ensureRowForCallRef(toolCallId, toolName, itemId);
       }
@@ -435,7 +442,7 @@ export const buildWorkflowToolRuns = (items: WorkflowItem[]): RawToolRun[] => {
     }
 
     let targetIndex =
-      (toolCallId ? rowIndexByCallId.get(toolCallId) : undefined) ?? pickPendingForResult(toolKey);
+      toolCallId ? (rowIndexByCallId.get(toolCallId) ?? -1) : pickPendingForResult(toolKey);
     if (typeof targetIndex === 'number' && targetIndex >= 0 && toolCallId) {
       removePendingIndex(toolKey, targetIndex);
     }

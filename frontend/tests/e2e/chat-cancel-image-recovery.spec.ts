@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 import { ChatMockService, MOCK_SESSION } from '../support/chatMockService';
 
 test('cancelled durable blocks and both workspace images survive reload and page return', async ({ page }) => {
@@ -28,8 +29,7 @@ test('cancelled durable blocks and both workspace images survive reload and page
   await page.route('**/workspace/download?**', async route => {
     downloads++;
     await downloadGate;
-    await route.fulfill({ contentType: 'image/png', body: Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6iXcAAAAASUVORK5CYII=', 'base64') });
+    await route.fulfill({ contentType: 'image/png', body: readFileSync('tests/e2e/fixtures/preview-wide.png') });
   });
   try {
     await page.setViewportSize({ width: 1600, height: 1200 });
@@ -49,6 +49,17 @@ test('cancelled durable blocks and both workspace images survive reload and page
       await expect(page.locator('.messenger-message[data-turn-id^="recovery-turn-"]:not(.mine)')).toHaveCount(3);
     };
     await assertRestored();
+    await page.locator('.ai-resource-card img').first().click();
+    const preview = page.locator('.messenger-image-preview-dialog .zoomable-image');
+    await expect(preview).toBeVisible();
+    const ratio = () => preview.evaluate(image => {
+      const rect = image.getBoundingClientRect();
+      return rect.width / rect.height;
+    });
+    await expect.poll(ratio).toBeCloseTo(3, 1);
+    await page.locator('.messenger-image-preview-dialog .zoomable-image-btn--label').click();
+    await expect.poll(ratio).toBeCloseTo(3, 1);
+    await page.locator('.messenger-image-preview-dialog .messenger-dialog-close').click();
     for (let attempt = 0; attempt < 2; attempt++) {
       await page.locator('.messenger-avatar-btn--profile').click();
       await expect(page.locator('.ai-resource-card')).toHaveCount(0);

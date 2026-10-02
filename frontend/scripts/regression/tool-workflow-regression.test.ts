@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { buildCommandCardView, buildPatchResultView } from '../../src/components/chat/toolWorkflowActionViews';
 
 import {
   buildStructuredToolResultNote,
@@ -26,6 +27,18 @@ import {
   resolveWorkflowEntryDurationMs
 } from '../../src/utils/toolWorkflowTiming';
 
+test('compaction identity overrides generic titles and stays separate from pending tools', () => {
+  const runs = buildWorkflowToolRuns([
+    { id: 'pending', eventType: 'tool_call', toolName: 'write_file', status: 'running' },
+    { id: 'compact', eventType: 'compaction', title: 'tool_call', status: 'completed' }
+  ]);
+  assert.equal(runs.length, 2);
+  assert.equal(runs[0].toolName, 'write_file');
+  assert.equal(runs[0].resultItem, null);
+  assert.equal(runs[1].toolName, 'context_compaction');
+  assert.equal(runs[1].resultItem?.id, 'compact');
+});
+
 const messages: Record<string, string> = {
   'chat.toolWorkflow.detail.hits': 'Hits',
   'chat.toolWorkflow.detail.hit': 'Hit',
@@ -45,6 +58,28 @@ const messages: Record<string, string> = {
 };
 
 const t = (key: string): string => messages[key] || key;
+
+test('command and patch cards retain result content without internal metrics', () => {
+  const command = buildCommandCardView({ command: 'echo sample', shell: 'sh', exitCode: 0,
+    stdout: 'sample output', stderr: '', preview: '', workdir: 'hidden-workdir', timeout: '99',
+    commandCount: 1, truncatedCommands: 0, totalBytes: '100', omittedBytes: '', errorText: '' }, t);
+  assert.equal(command.command, 'echo sample');
+  assert.equal(command.terminalText, 'sample output');
+  assert.deepEqual(command.metrics, []);
+  const patch = buildPatchResultView({ changedFiles: 1, hunks: 2, added: 0, updated: 1,
+    deleted: 0, moved: 0, addedLines: 1, deletedLines: 1 }, [
+    { key: 'file', title: 'sample.txt', lines: [{ key: 'add', kind: 'add', text: 'new' }] }
+  ], t);
+  assert.deepEqual(patch.metrics.map(metric => metric.key), ['changedFiles', 'addedLines', 'deletedLines']);
+  assert.equal(patch.files[0].lines[0].text, 'new');
+});
+
+test('list results remain bounded and disclose omitted items', () => {
+  const view = buildStructuredToolResultView('list_files', null,
+    { items: Array.from({ length: 40 }, (_, index) => `sample-${index}.txt`) }, t);
+  assert.equal(view?.groups[0].rows.length, 17);
+  assert.ok(view?.groups[0].rows.at(-1)?.title.includes('24'));
+});
 
 test('search structured view keeps local-only guidance when there are zero hits', () => {
   const data = {
@@ -93,9 +128,9 @@ test('write structured view only renders written content', () => {
   assert.equal(view?.variant, 'write');
   assert.deepEqual(view?.metrics, []);
   const row = view?.groups[0]?.rows[0];
-  assert.equal(row?.title, '');
+  assert.equal(row?.title, './notes/todo.md');
   assert.equal(row?.body, '# Todo\n- one\n- two');
-  assert.equal(JSON.stringify(view).includes('./notes/todo.md'), false);
+  assert.equal(JSON.stringify(view).includes('./notes/todo.md'), true);
   assert.equal(JSON.stringify(view).includes('19'), false);
   assert.equal(buildStructuredToolResultNote('write_file', null, data, t), '');
 });
@@ -118,11 +153,11 @@ test('read structured view only renders file content', () => {
   assert.equal(view?.variant, 'read');
   assert.deepEqual(view?.metrics, []);
   const row = view?.groups[0]?.rows[0];
-  assert.equal(row?.title, '');
+  assert.equal(row?.title, './notes/todo.md');
   assert.equal(row?.meta, undefined);
   assert.equal(row?.body, '# Todo\n- one\n- two');
   const serialized = JSON.stringify(view);
-  assert.equal(serialized.includes('./notes/todo.md'), false);
+  assert.equal(serialized.includes('./notes/todo.md'), true);
   assert.equal(serialized.includes('read_lines'), false);
 });
 
@@ -145,7 +180,7 @@ test('read structured view unwraps nested tool data envelopes', () => {
   assert.ok(view);
   assert.equal(view?.variant, 'read');
   const row = view?.groups[0]?.rows[0];
-  assert.equal(row?.title, '');
+  assert.equal(row?.title, './sample.py');
   assert.equal(row?.body, '1: print("ok")\n2: done');
   const serialized = JSON.stringify(view);
   assert.equal(serialized.includes('budget_file_limit_hit'), false);

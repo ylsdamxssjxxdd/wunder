@@ -12,6 +12,7 @@ import MessengerView from '@/views/MessengerView.vue';
 import { runChatWorkerProbe } from './chatWorkerProbe';
 import { runMessengerTwoTurnProbe } from './messengerTwoTurnProbe';
 import { runMessengerReasoningProbe } from './messengerReasoningProbe';
+import { installToolResultsProbe } from './toolResultsProbe';
 import { createMessengerToolRetryProbe } from './messengerToolRetryProbe';
 import { createMessengerWorkflowMetricsProbe } from './messengerWorkflowMetricsProbe';
 import { enableWorkflowHistoryFixture, readWorkflowHistoryFixture } from './messengerWorkflowHistoryFixture';
@@ -457,6 +458,7 @@ onMounted(async () => {
   collectMetrics();
   (window as Window & { __messengerViewPerformanceE2E?: unknown }).__messengerViewPerformanceE2E = {
     runChatWorkerProbe,
+    installToolResultsProbe,
     installSession,
     installWorkflowHistory: async () => { enableWorkflowHistoryFixture(); await installSession(SESSION_A); },
     runTwoTurnProbe: () => runMessengerTwoTurnProbe(SESSION_A),

@@ -1,7 +1,8 @@
 <template>
   <div class="tool-workflow-command-card">
+    <pre v-if="view.command" class="tool-workflow-command-stream-body">$ {{ view.command }}</pre>
     <div
-      v-if="(view.exitCode !== null && view.showExitCode !== false) || view.metrics?.length"
+      v-if="view.status || view.exitCode !== null"
       class="tool-workflow-command-head"
     >
       <span v-if="view.exitCode !== null && view.showExitCode !== false" class="tool-workflow-command-exit">
@@ -14,11 +15,6 @@
     </div>
 
     <div v-if="view.terminalText || view.streams?.length" class="tool-workflow-command-terminal">
-      <div class="tool-workflow-command-terminal-head">
-        <span class="tool-workflow-command-dot"></span>
-        <span class="tool-workflow-command-dot"></span>
-        <span class="tool-workflow-command-dot"></span>
-      </div>
       <pre
         v-if="view.terminalText"
         class="tool-workflow-command-stream-body"
@@ -47,6 +43,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from '@/i18n';
 import type { ComponentPublicInstance } from 'vue';
 
 import type { ToolWorkflowCommandView } from './toolWorkflowTypes';
@@ -59,11 +56,13 @@ const props = defineProps<{
   onStreamBodyScroll?: (stream: CommandStreamName, event: Event) => void;
 }>();
 
+const { t } = useI18n();
 const statusLabel = computed(() => {
   const status = String(props.view.status || '').trim().toLowerCase();
-  if (status === 'failed') return 'failed';
-  if (status === 'completed') return 'done';
-  return 'running';
+  if (status === 'failed') return t('chat.toolWorkflow.resultFailed');
+  if (status === 'completed') return t('chat.toolWorkflow.resultDone');
+  if (status === 'cancelled' || status === 'canceled') return t('chat.toolWorkflow.statusCancelled');
+  return t('chat.toolWorkflow.statusLoading');
 });
 
 const terminalFallbackStreams = computed(() => props.view.streams || []);

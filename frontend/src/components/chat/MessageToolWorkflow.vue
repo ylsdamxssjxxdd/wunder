@@ -136,9 +136,13 @@ import {
 } from '@/stores/commandSessions';
 import {
   buildCommandCardView,
+  buildPatchResultView,
 } from './toolWorkflowActionViews';
 import { buildApplyPatchEmptyPreviewText } from './toolWorkflowPatchPreview';
 import { buildToolResultPreview } from './toolWorkflowPreview';
+import {
+  buildStructuredToolResultView
+} from './toolWorkflowStructuredView';
 import {
   buildWorkflowToolCallDebugText,
   extractWorkflowCallArgs
@@ -261,8 +265,8 @@ const FILE_HINT_LIMIT = 5;
 const FILE_HINT_SUMMARY_LIMIT = 2;
 const PATCH_RESULT_FILE_LIMIT = 10;
 const PATCH_RENDER_FILE_LIMIT = 6;
-const PATCH_RENDER_LINE_LIMIT = 80;
-const PATCH_RENDER_HEAD_LINE_LIMIT = 56;
+const PATCH_RENDER_LINE_LIMIT = 24;
+const PATCH_RENDER_HEAD_LINE_LIMIT = 16;
 const DETAIL_PARSE_CACHE_LIMIT = 120;
 const PREVIEW_CACHE_LIMIT = 120;
 const WORKFLOW_STATE_CACHE_LIMIT = 120;
@@ -736,6 +740,7 @@ const asObject = (value: unknown): UnknownObject | null => {
 
 const normalizeStatus = (status: unknown): string => {
   const value = String(status || '').trim().toLowerCase();
+  if (value === 'cancelled' || value === 'canceled') return 'cancelled';
   if (value === 'loading' || value === 'pending' || value === 'failed' || value === 'completed') {
     return value;
   }
@@ -2434,6 +2439,7 @@ const resolveSummaryToolDisplay = (toolName: string, fallback: string): string =
 };
 
 const resolveEntryToolDisplayName = (entry: RawEntry): string => {
+  if (isCompactionEntry(entry)) return t('chat.toolWorkflow.compaction.title');
   const configured = pickString(entry.toolDisplayName);
   return resolveSummaryToolDisplay(
     entry.toolName,
@@ -3147,8 +3153,8 @@ const buildExecuteCommandTerminalText = (
     lines.push(`$ ${command}`);
   }
 
-  const stdout = buildTerminalStream(stdoutRaw, status, 140, 18000);
-  const stderr = buildTerminalStream(stderrRaw, status, 100, 12000);
+  const stdout = buildTerminalStream(stdoutRaw, status, 14, 2000);
+  const stderr = buildTerminalStream(stderrRaw, status, 8, 1000);
   if (stdout) {
     lines.push(stdout);
   }
@@ -3166,7 +3172,7 @@ const buildExecuteCommandTerminalText = (
       previewTrimmed.includes('"returncode"'));
 
   if (!stdout && !stderr && previewRaw && !previewLooksLikeJson) {
-    lines.push(buildTerminalStream(previewRaw, status, 320, 20000));
+    lines.push(buildTerminalStream(previewRaw, status, 14, 2000));
   }
   if (errorText) {
     if (lines.length > 0) lines.push('');
@@ -3324,7 +3330,7 @@ const buildExecuteCommandView = (
       totalBytes,
       omittedBytes,
       errorText,
-      showExitCode: false
+      showExitCode: true
     },
     t
   );
@@ -3332,6 +3338,9 @@ const buildExecuteCommandView = (
   return {
     ...commandView,
     status,
+    metrics: [],
+    previewBody: '',
+    streams: [],
     terminalText: buildExecuteCommandTerminalText(
       commandText,
       displayStdout,
@@ -3482,6 +3491,7 @@ const buildResultOnlyText = (
   detailObjects: UnknownObject[]
 ): string => {
   if (status === 'failed') return errorText || t('chat.toolWorkflow.resultFailed');
+  if (status === 'loading' || status === 'pending') return t('chat.toolWorkflow.toolResultPending');
 
   const args = extractCallArgs(entry.callItem);
   const path = pickString(
@@ -3526,18 +3536,7 @@ const buildResultOnlyText = (
       dataObject?.matches_count,
       resultObject?.count
     );
-    return count > 0 ? `${t('chat.toolWorkflow.resultFound')}: ${count}` : summary || t('chat.toolWorkflow.resultDone');
-  }
-  if (isApplyPatchTool(entry.toolName)) {
-    const changed = toInt(dataObject?.changed_files, dataObject?.files_changed, resultObject?.changed_files);
-    return changed > 0
-      ? `${t('chat.toolWorkflow.resultPatched')}: ${changed}`
-      : summary || t('chat.toolWorkflow.resultDone');
-  }
-  if (isExecuteCommandTool(entry.toolName)) {
-    const observation = pickObservationText(...detailObjects, dataObject, resultObject);
-    const formatted = observation ? formatToolObservationText(observation) : '';
-    return formatted ? buildTextPreview(formatted, 6, 900, '') : summary || t('chat.toolWorkflow.resultDone');
+    return summary || `${t('chat.toolWorkflow.resultFound')}: ${count}`;
   }
 
   const observation = pickObservationText(...detailObjects, dataObject, resultObject);
@@ -3545,7 +3544,11 @@ const buildResultOnlyText = (
     const formatted = formatToolObservationText(observation);
     if (formatted && !/^\s*[\[{]/u.test(formatted)) return buildTextPreview(formatted, 6, 900, '');
   }
-  return summary || t('chat.toolWorkflow.resultDone');
+  const content = pickString(dataObject?.content, dataObject?.text, dataObject?.output, dataObject?.result,
+    resultObject?.content, resultObject?.text);
+  return buildPreviewBlockWithCache(entry.resultItem?.detail, dataObject, null)
+    || summary || buildTextPreview(content, 8, 1400, '')
+    || t('chat.toolWorkflow.resultDone');
 };
 
 const buildToolResultSection = (
@@ -3555,132 +3558,61 @@ const buildToolResultSection = (
   commandSession: CommandSessionRuntimeEntry | null,
   command: string,
   errorText: string
-): ToolWorkflowDetailSection | null => {
-  const sectionKey = `${entry.key}-tool-result`;
-  const sectionTitle = t('chat.toolWorkflow.toolResultSection');
-
-  const detailObjects = readWorkflowDetailObjects(entry.resultItem, entry.outputItem, entry.callItem);
+): ToolWorkflowDetailSection => {
+  const base = {
+    key: `${entry.key}-tool-result`, title: t('chat.toolWorkflow.toolResultSection'),
+    commandView: null, patchLines: []
+  };
+  const textSection = (body: string): ToolWorkflowDetailSection => ({
+    ...base, kind: 'text', body, copyText: body
+  });
   const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
-
-  // Keep the expanded row focused on the outcome.  Detailed arguments and
-  // payloads are intentionally available only from the debug context menu.
-  const resultOnlyText = buildResultOnlyText(
-    entry,
-    status,
-    errorText,
-    resultObject,
-    dataObject,
-    detailObjects
-  );
-
-  if (isReadFileTool(entry.toolName)) {
-    const body = resultOnlyText;
-    if (body) {
-      return {
-        key: sectionKey,
-        title: sectionTitle,
-        kind: 'text',
-        body,
-        copyText: body,
-        commandView: null,
-        patchLines: []
-      };
-    }
-    return null;
-  }
-
-  if (isWriteFileTool(entry.toolName)) {
-    const body = resultOnlyText;
-    if (body) {
-      return {
-        key: sectionKey,
-        title: sectionTitle,
-        kind: 'text',
-        body,
-        copyText: body,
-        commandView: null,
-        patchLines: []
-      };
-    }
-    return null;
-  }
-
-  if (isExecuteCommandTool(entry.toolName)) {
-    const compactBody = resultOnlyText || buildExecuteCommandCompactResultText(entry, command, status, errorText);
-    if (compactBody) {
-      return {
-        key: sectionKey,
-        title: sectionTitle,
-        kind: 'text',
-        summary: truncateSingleLine(compactBody, 80),
-        body: compactBody,
-        copyText: compactBody,
-        commandView: null,
-        patchLines: []
-      };
-    }
-  }
-
-  if (isApplyPatchTool(entry.toolName)) {
-    const copyText = resultOnlyText;
-    return {
-      key: sectionKey,
-      title: sectionTitle,
-      kind: 'text',
-      summary: resultOnlyText,
-      body: resultOnlyText,
-      copyText: copyText || undefined,
-      commandView: null,
-      patchLines: []
-    };
-  }
-
-  const observation = resultOnlyText;
-  if (observation) {
-    return {
-      key: sectionKey,
-      title: sectionTitle,
-      kind: 'text',
-      body: observation,
-      copyText: observation,
-      commandView: null,
-      patchLines: []
-    };
-  }
-
   if (compactionDisplay) {
-    const detailBody = compactionDisplay.copyBody || compactionDisplay.resultBody;
-    return {
-      key: sectionKey,
-      title: sectionTitle,
-      kind: 'compaction',
-      summary: compactionDisplay.resultSummary,
-      body: detailBody,
-      copyText: detailBody,
-      commandView: null,
-      patchLines: [],
-      compactionView: compactionDisplay.view
-    };
+    return { ...base, kind: 'compaction', body: compactionDisplay.resultBody,
+      compactionView: compactionDisplay.view, copyText: compactionDisplay.copyBody };
   }
-
-  // Never fall back to rendering raw JSON in the user view.
-  if (resultOnlyText) {
-    return {
-      key: sectionKey,
-      title: sectionTitle,
-      kind: 'text',
-      body: resultOnlyText,
-      copyText: resultOnlyText,
-      commandView: null,
-      patchLines: []
-    };
+  if (isExecuteCommandTool(entry.toolName)) {
+    const commandView = buildExecuteCommandView(entry, command, status, errorText, commandSession, true);
+    return { ...base, kind: 'command', body: '', commandView,
+      copyText: [commandView.command, commandView.terminalText].filter(Boolean).join('\n') };
   }
-
-  const placeholder =
-    status === 'loading' || status === 'pending'
-      ? t('chat.toolWorkflow.toolResultPending')
-      : t('chat.toolWorkflow.toolResultMissing');
-  return buildEmptySection(sectionKey, sectionTitle, placeholder);
+  // A failed or unconfirmed write must never display the proposed content as applied.
+  if (status === 'cancelled' || status === 'canceled') return textSection(t('chat.toolWorkflow.statusCancelled'));
+  if (status === 'failed') return textSection([
+    errorText || t('chat.toolWorkflow.resultFailed'),
+    buildPreviewBlockWithCache(entry.resultItem?.detail, dataObject, null)
+  ].filter(Boolean).join('\n\n'));
+  if (!entry.resultItem && !entry.outputItem) {
+    return buildEmptySection(base.key, base.title, t('chat.toolWorkflow.toolResultPending'));
+  }
+  if (isApplyPatchTool(entry.toolName)) {
+    const patchEntries = buildApplyPatchEntries(entry.resultItem, entry.toolName);
+    const patchDiffBlocks = buildApplyPatchDiffBlocks(entry.callItem, entry.toolName);
+    const resultFiles = buildApplyPatchResultFilesFromDiffBlocks(entry.resultItem, entry.toolName, '');
+    const files = resultFiles.length ? resultFiles
+      : mergeApplyPatchResultFilesWithPreview(patchEntries, patchDiffBlocks, '');
+    const counts = resolveApplyPatchCounts(entry, patchDiffBlocks);
+    const limited = limitPatchFileViews(files);
+    const patchView = {
+      ...buildPatchResultView(counts, limited.files, t),
+      previewOnly: dataObject?.dry_run === true,
+      omittedFiles: Math.max(counts.changedFiles - limited.files.length, limited.omittedFiles)
+    };
+    return { ...base, kind: 'patch', body: '', patchView,
+      copyText: limited.files.map(file => [file.title, ...file.lines.map(line =>
+        `${line.kind === 'add' ? '+' : line.kind === 'delete' ? '-' : ' '}${line.text}`)].join('\n')).join('\n\n') };
+  }
+  const structuredView = buildStructuredToolResultView(
+    entry.toolName, resultObject, dataObject, t, extractCallArgs(entry.callItem)
+  );
+  if (structuredView) {
+    return { ...base, kind: 'structured', body: '', structuredView,
+      copyText: structuredView.groups.map(group => [group.title,
+        ...group.rows.map(row => [row.title, row.body].filter(Boolean).join('\n'))
+      ].filter(Boolean).join('\n')).join('\n\n') };
+  }
+  const detailObjects = readWorkflowDetailObjects(entry.resultItem, entry.outputItem);
+  return textSection(buildResultOnlyText(entry, status, errorText, resultObject, dataObject, detailObjects));
 };
 
 const buildErrorText = (
@@ -3768,7 +3700,7 @@ const buildEntryView = (entry: RawEntry, includeDetails: boolean): ToolEntryView
   const isPatch = isApplyPatchTool(entry.toolName);
   const toolDisplay = resolveEntryToolDisplayName(entry);
   const status =
-    isPatch && isToolResultPayloadFailed(entry.resultItem)
+    isToolResultPayloadFailed(entry.resultItem)
       ? 'failed'
       : resolveEntryStatus(entry, commandSession);
   const isCompaction = isCompactionEntry(entry);

@@ -8,11 +8,47 @@ import type {
   ThreadItemTailFrame
 } from '../../src/realtime/chat/chatThreadTypes';
 import { emptyChatThreadState } from '../../src/realtime/chat/chatThreadTypes';
-import { applyChatThreadFrame } from '../../src/realtime/chat/chatThreadState';
+import { applyChatThreadFrame, applyChatThreadSnapshot, bindStreamStarted } from '../../src/realtime/chat/chatThreadState';
 import { buildChatThreadRenderableMessages } from '../../src/realtime/chat/chatThreadProjection';
 import { materializeChatRuntimeMessage } from '../../src/realtime/chat/chatRuntimeRenderAdapter';
 
 type TestFrame = ChatThreadFrame;
+
+test('assistant stays active between model and tool rounds and retains its render key on ack', () => {
+  const state = emptyChatThreadState('identity-session');
+  state.turns.set('pending:client-1', { turnId: 'pending:client-1', clientMessageId: 'client-1',
+    userRound: 1, userContent: 'Fixture request', status: 'running' });
+  const assistant = () => materializeChatRuntimeMessage(buildChatThreadRenderableMessages(state)
+    .find(message => message.role === 'assistant'))!;
+  const initialKey = assistant().__runtime_render_key;
+  bindStreamStarted(state, { event: 'stream_started', turn_id: 'turn-1', client_message_id: 'client-1' });
+  assert.equal(assistant().__runtime_render_key, initialKey);
+  applyFrames(state, [itemUpsert(1, textItemData('turn-1', 1, { content: 'Preparing tool.' })),
+    itemUpsert(2, toolItemData('turn-1', 'skill', { status: 'completed', tool: 'skill_call' }))]);
+  assert.equal(assistant().state, 'running');
+  assert.notEqual(assistant().status, 'final');
+  applyFrames(state, [turnStatus(3, 'turn-1', 'completed')]);
+  assert.equal(assistant().state, 'done');
+  assert.equal(assistant().__runtime_render_key, initialKey);
+});
+
+test('manual compaction keeps its activity identity live and after snapshot reload', () => {
+  const state = emptyChatThreadState('compaction-session');
+  const turn = { turn_id: 'compact-turn', user_round: 1, status: 'running', content: '/compact' };
+  const item = { item_id: 'compact-turn:compaction', turn_id: turn.turn_id,
+    kind: 'compaction', event_type: 'compaction', trigger_mode: 'manual',
+    status: 'running', visibility: 'user', revision: 1, title: 'tool_call' };
+  applyFrames(state, [turnUpsert(1, turn), itemUpsert(2, item)]);
+  const readActivity = () => buildChatThreadRenderableMessages(state)
+    .find(message => message.role === 'assistant')?.workflowItems?.[0];
+  assert.equal(readActivity()?.toolName, 'context_compaction');
+  applyFrames(state, [itemUpsert(3, { ...item, status: 'completed', revision: 2 })]);
+  assert.equal(readActivity()?.toolName, 'context_compaction');
+  applyChatThreadSnapshot(state, { cursor: 3, turns: [{ ...turn, status: 'completed' }],
+    items: [{ ...item, status: 'completed', revision: 2, payload: { trigger_mode: 'manual' } }] });
+  assert.equal(readActivity()?.toolName, 'context_compaction');
+  assert.equal(readActivity()?.eventType, 'compaction');
+});
 
 const itemUpsert = (seq: number, data: Record<string, unknown>): ThreadChangeFrame => {
   const frame: ThreadChangeFrame = { event: 'thread_change', seq, change_type: 'item_upsert', data };

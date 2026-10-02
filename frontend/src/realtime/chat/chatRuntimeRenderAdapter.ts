@@ -652,7 +652,9 @@ export const resolveChatRuntimeMessageRenderKey = (
 
 const resolveChatRuntimeProjectionKey = (
   message: ChatRuntimeMessageProjection
-): string => `runtime:${message.role}:${message.id}`;
+): string => message.id.startsWith('tturn:') && message.raw?.client_message_id
+  ? `runtime:${message.role}:client:${message.raw.client_message_id}`
+  : `runtime:${message.role}:${message.id}`;
 
 const resolveProjectedWorkflowStreaming = (
   message: ChatRuntimeMessageProjection

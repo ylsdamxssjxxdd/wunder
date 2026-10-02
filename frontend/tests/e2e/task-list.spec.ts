@@ -29,7 +29,7 @@ test.beforeEach(async ({ page }) => {
 
 test('thread icons share status shapes, animation and terminal precedence', async ({ page }) => {
   const rows = page.locator('.messenger-task-item');
-  for (const [index, state] of ['idle', 'running', 'done', 'pending', 'error'].entries()) {
+  for (const [index, state] of ['idle', 'running', 'idle', 'pending', 'error'].entries()) {
     const icon = rows.nth(index).locator('.messenger-agent-avatar');
     await expect(icon).toHaveClass(new RegExp(`state-${state}`));
     const badge = icon.locator('.messenger-agent-avatar-status');
@@ -42,7 +42,7 @@ test('thread icons share status shapes, animation and terminal precedence', asyn
   await page.evaluate(() => (window as any).taskListFixture.setStatus('thread-1', 'idle'));
   await expect(rows.nth(1).locator('.messenger-agent-avatar')).toHaveClass(/state-idle/);
   await page.evaluate(() => (window as any).taskListFixture.setStatus('thread-1', 'completed', true));
-  await expect(rows.nth(1).locator('.messenger-agent-avatar')).toHaveClass(/state-done/);
+  await expect(rows.nth(1).locator('.messenger-agent-avatar')).toHaveClass(/state-idle/);
   await page.screenshot({ path: '../temp_dir/task-list-browser.png' });
 });
 

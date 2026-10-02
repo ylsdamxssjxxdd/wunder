@@ -15,7 +15,7 @@ export function resolveTaskRuntimeState(
   if (normalized === 'running' || status === 'finalizing' || status === 'resuming') return 'running';
   if (normalized !== 'idle') {
     const terminal = resolveAgentRuntimeTerminalStateFromSessionStatus(normalized);
-    if (terminal) return terminal;
+    if (terminal) return terminal === 'done' ? 'idle' : terminal;
   }
   return loading ? 'running' : 'idle';
 }

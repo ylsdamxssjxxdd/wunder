@@ -30,6 +30,8 @@ struct Active {
     stats_quota: String,
     stats_tools: String,
     stats_credits: String,
+    workflow: Vec<(String, String)>,
+    workflow_dirty: bool,
 }
 
 struct State {
@@ -253,6 +255,8 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                         let mut projected = messages
                             .into_iter()
                             .map(|message| ChatMessage {
+                                workflow: !message.workflow_detail.is_empty(),
+                                workflow_detail: message.workflow_detail.into(),
                                 text: message.text.clone().into(),
                                 mine: message.mine,
                                 time: format_time(message.created_at).into(),
@@ -460,6 +464,8 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             stats_quota: String::new(),
             stats_tools: String::new(),
             stats_credits: String::new(),
+            workflow: Vec::new(),
+            workflow_dirty: false,
         });
         start_timer(&app, state.clone());
     });
@@ -738,7 +744,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
 fn apply_event(active: &mut Active, event: &Value) -> Result<bool, String> {
     let raw_kind = event["event"].as_str().unwrap_or("");
     let envelope = &event["data"];
-    let data = envelope.get("data").unwrap_or(envelope);
+    let data = if envelope.get("tool").is_some() || envelope.get("tool_name").is_some() { envelope } else { envelope.get("data").unwrap_or(envelope) };
     // The runtime collapses every online *_delta frame into thread_item_delta
     // and keeps the semantic type in data.source_event.
     let kind = if raw_kind == "thread_item_delta" {
@@ -763,6 +769,7 @@ fn apply_event(active: &mut Active, event: &Value) -> Result<bool, String> {
         previous.state = "步骤完成".into();
         active.model.set_row_data(active.row, previous);
         active.blocks = Blocks::new();
+        active.workflow_dirty = true;
         if active.model.row_count() >= 100 {
             active.model.remove(0);
         }
@@ -802,7 +809,22 @@ fn apply_event(active: &mut Active, event: &Value) -> Result<bool, String> {
             .into();
         }
         "queue_finish" => active.state = "任务完成".into(),
-        "tool_call" | "tool_start" => active.state = "正在执行工具…".into(),
+        "tool_call" | "tool_start" | "tool_result" | "tool_output" => {
+            let pending = matches!(kind, "tool_call" | "tool_start");
+            if pending { active.state = "正在执行工具…".into(); }
+            let id = data.get("tool_call_id").or_else(|| data.get("item_id"))
+                .and_then(Value::as_str).unwrap_or_default();
+            // Background native stream already produced the bounded display.
+            if let Some(detail) = event.get("display_result").and_then(Value::as_str) {
+                if let Some(row) = active.workflow.iter_mut().find(|row| !id.is_empty() && row.0 == id) {
+                    row.1 = detail.into();
+                } else {
+                    if active.workflow.len() >= 24 { active.workflow.remove(0); }
+                    active.workflow.push((id.into(), detail.into()));
+                }
+                active.workflow_dirty = true;
+            }
+        }
         "error" | "queue_fail" => {
             active.state = data["message"].as_str().unwrap_or("执行失败").into()
         }
@@ -878,6 +900,11 @@ fn update_message_stats_row(active: &mut Active) {
     message.stats_quota = active.stats_quota.as_str().into();
     message.stats_tools = active.stats_tools.as_str().into();
     message.stats_credits = active.stats_credits.as_str().into();
+    if active.workflow_dirty {
+        message.workflow = !active.workflow.is_empty();
+        message.workflow_detail = active.workflow.iter().map(|row| row.1.as_str()).collect::<Vec<_>>().join("\n\n").into();
+        active.workflow_dirty = false;
+    }
     active.model.set_row_data(active.row, message);
 }
 

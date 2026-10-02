@@ -82,7 +82,7 @@ test('thread icons honor live settlement, queue priority and terminal state over
     resolveTaskRuntimeState('cancelled', 'running', false),
     resolveTaskRuntimeState('finalizing', 'idle', false),
     resolveTaskRuntimeState('not_loaded', 'active', true)
-  ], ['idle', 'pending', 'pending', 'done', 'error', 'done', 'running', 'running']);
+  ], ['idle', 'pending', 'pending', 'idle', 'error', 'idle', 'running', 'running']);
 });
 
 test('activity filter finds offscreen threads and follows settlement without losing the full order', () => {

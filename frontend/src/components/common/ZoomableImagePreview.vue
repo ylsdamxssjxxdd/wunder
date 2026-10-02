@@ -147,7 +147,10 @@ const imageStyle = computed(() => {
   }
   return {
     width: `${Math.max(1, Math.round(renderedWidth.value))}px`,
-    maxWidth: 'none'
+    height: `${Math.max(1, Math.round(renderedHeight.value))}px`,
+    maxWidth: 'none',
+    maxHeight: 'none',
+    flexShrink: 0
   };
 });
 
