@@ -1346,6 +1346,26 @@ impl MonitorState {
         session_id: &str,
         parent: &str,
     ) -> anyhow::Result<crate::services::runtime::thread::child_runs::ChildRunGuard> {
+        // Keep durable ancestry when a sibling dispatches work or ancestors are unloaded.
+        // Database reads stay outside the monitor lock.
+        let parent_user = self
+            .sessions
+            .lock()
+            .get(parent)
+            .map(|record| record.user_id.clone());
+        let durable_ancestors = if let Some(user) = parent_user.as_deref() {
+            if self.storage.get_chat_session(user, session_id)?.is_some() {
+                crate::services::subagents::tree::ancestors(
+                    self.storage.as_ref(),
+                    user,
+                    session_id,
+                )?
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
         let sessions = self.sessions.lock();
         if sessions
             .get(parent)
@@ -1353,7 +1373,8 @@ impl MonitorState {
         {
             anyhow::bail!("parent run was interrupted");
         }
-        self.child_runs.register(session_id, parent)
+        self.child_runs
+            .register_with_ancestors(session_id, parent, &durable_ancestors)
     }
 
     pub fn cancel(&self, session_id: &str) -> bool {

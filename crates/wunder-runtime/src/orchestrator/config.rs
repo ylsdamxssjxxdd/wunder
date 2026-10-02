@@ -1,6 +1,30 @@
 use super::*;
 
 impl Orchestrator {
+    pub(crate) async fn resolve_frozen_session_tool_overrides(
+        &self,
+        session: &crate::storage::ChatSessionRecord,
+        agent: Option<&crate::storage::UserAgentRecord>,
+    ) -> Vec<String> {
+        let frozen = self
+            .workspace
+            .load_session_frozen_tool_overrides_async(&session.user_id, &session.session_id)
+            .await;
+        let overrides = crate::services::agent_execution::resolve_session_tool_overrides(
+            session,
+            frozen.as_deref(),
+            agent,
+        );
+        if frozen.is_none() {
+            self.workspace.save_session_frozen_tool_overrides(
+                &session.user_id,
+                &session.session_id,
+                &overrides,
+            );
+        }
+        overrides
+    }
+
     pub(super) async fn resolve_config(&self, overrides: Option<&Value>) -> Config {
         let base = self.config_store.get().await;
         let Some(overrides) = overrides else {

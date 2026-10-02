@@ -119,6 +119,36 @@ fn now_ts() -> f64 {
     chrono::Utc::now().timestamp_millis() as f64 / 1000.0
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn disabled_channel_settings_are_readable_without_enabling_runtime() {
+    let context = build_test_context("fixture_channel_reader").await;
+    context.state.config_store.update(|config| {
+        config.channels.enabled = false;
+        config.gateway.enabled = false;
+    }).await.unwrap();
+
+    for path in ["/wunder/channels/accounts", "/wunder/channels/runtime_logs?limit=80"] {
+        let (status, payload) = send_json(&context.app, &context.token, Method::GET, path, None).await;
+        assert_eq!(status, StatusCode::OK, "{payload}");
+        assert_eq!(payload["data"]["runtime_enabled"], false);
+        assert_eq!(payload["data"]["items"], json!([]));
+        if path.ends_with("accounts") {
+            assert!(!payload["data"]["supported_channels"].as_array().unwrap().is_empty());
+        }
+    }
+    let (status, _) = send_json(&context.app, &context.token, Method::GET,
+        "/wunder/channels/bindings", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send_json(&context.app, &context.token, Method::POST,
+        "/wunder/channels/accounts", Some(json!({"channel":"qqbot","create_new":true}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = send_json(&context.app, "fixture-invalid-token", Method::GET,
+        "/wunder/channels/accounts", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let config = context.state.config_store.get().await;
+    assert!(!config.channels.enabled && !config.gateway.enabled);
+}
+
 fn make_user_binding_id(
     user_id: &str,
     channel: &str,

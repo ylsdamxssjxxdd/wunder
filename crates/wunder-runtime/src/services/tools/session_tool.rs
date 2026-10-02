@@ -147,17 +147,35 @@ pub(crate) async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Re
         true,
     )?;
     let tool_names = build_effective_tool_names(context, user_id, &record, agent_record.as_ref())?;
-    if record.status == "closed" {
-        record.status = "active".to_string();
-        context.storage.upsert_chat_session(&record)?;
-    }
     let agent_prompt = agent_record
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
         .filter(|value| !value.is_empty());
-    let model_name = agent_record
+    subagents::recovery::recover(context.storage.as_ref(), user_id, &session_id)?;
+    let previous_run = context
+        .storage
+        .list_session_runs_by_session(user_id, &session_id, 1)?
+        .into_iter()
+        .next();
+    if previous_run.as_ref().is_some_and(|run| {
+        run.run_kind.as_deref() == Some("subagent")
+            && matches!(run.status.as_str(), "queued" | "running" | "waiting")
+    }) {
+        return Err(anyhow!("child execution is still active or recovering; wait for settlement before sending again"));
+    }
+    if record.status == "closed" {
+        record.status = "active".to_string();
+        context.storage.upsert_chat_session(&record)?;
+    }
+    let model_name = previous_run
         .as_ref()
-        .and_then(|record| normalize_optional_string(record.model_name.clone()));
+        .filter(|_| subagents::tree::is_child(&record))
+        .and_then(|run| run.model_name.clone())
+        .or_else(|| {
+            agent_record
+                .as_ref()
+                .and_then(|record| normalize_optional_string(record.model_name.clone()))
+        });
     let now = now_ts();
     let _ = context
         .storage
@@ -351,10 +369,19 @@ pub(crate) async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> R
     let payload: SessionSpawnArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let parent_session_id = context.session_id.trim().to_string();
+    let options = serde_json::from_value::<subagents::context::ContextOptions>(args.clone())?;
+    let store = context.storage.clone();
+    let user = context.user_id.to_string();
+    let parent = parent_session_id.clone();
+    let task = payload.task.clone();
+    let (task, context_metadata) = crate::core::blocking::run_db("subagent.context", move || {
+        subagents::context::prepare(store.as_ref(), &user, &parent, &task, &options)
+    })
+    .await?;
     let prepared = prepare_child_session(
         context,
         &parent_session_id,
-        &payload.task,
+        &task,
         payload.label.clone(),
         payload.agent_id.clone(),
         payload.model.clone(),
@@ -376,6 +403,7 @@ pub(crate) async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> R
         Some(&mut run_metadata),
         should_auto_wake_parent_after_child_run(false, wait_seconds),
     );
+    insert_run_metadata_field(&mut run_metadata, "context_inheritance", context_metadata);
     insert_run_metadata_field(&mut run_metadata, "spawn_mode", json!("single"));
     insert_run_metadata_field(
         &mut run_metadata,

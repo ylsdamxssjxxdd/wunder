@@ -92,7 +92,7 @@ const ensureBrowserRuntimeStub = (): void => {
   }
 };
 
-test('message stats do not present a user-round aggregate as visible reply speed', () => {
+test('message stats present the user-round aggregate speed for the whole bubble', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -111,10 +111,10 @@ test('message stats do not present a user-round aggregate as visible reply speed
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Speed'), '-');
+  assert.equal(findEntryValue(entries, 'Speed'), '1050.5 token/s');
 });
 
-test('normalized message stats retain the visible reply decode speed', async () => {
+test('normalized message stats prefer the user-round aggregate decode speed', async () => {
   ensureBrowserRuntimeStub();
   const { normalizeMessageStats } = await import('../../src/stores/chatStats');
   const stats = normalizeMessageStats({
@@ -128,7 +128,7 @@ test('normalized message stats retain the visible reply decode speed', async () 
 
   assert.equal(stats?.visible_decode_tokens, 84);
   assert.equal(stats?.visible_decode_duration_s, 1.2);
-  assert.equal(findEntryValue(entries, 'Speed'), '70.0 token/s');
+  assert.equal(findEntryValue(entries, 'Speed'), '280.0 token/s');
 });
 
 test('message stats derive visible reply speed from stream timing when explicit speed is absent', () => {
@@ -211,7 +211,7 @@ test('message stats recover a legacy zero account charge from request count', ()
   assert.equal(findEntryValue(entries, 'Credits'), '1');
 });
 
-test('message stats hide speed when only the aggregate field is available', () => {
+test('message stats show aggregate speed when it has measured rounds', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -224,7 +224,7 @@ test('message stats hide speed when only the aggregate field is available', () =
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Speed'), '-');
+  assert.equal(findEntryValue(entries, 'Speed'), '1050.5 token/s');
 });
 
 test('message stats keeps persisted aggregate duration after history refresh', () => {

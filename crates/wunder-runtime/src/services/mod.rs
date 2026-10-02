@@ -3,6 +3,7 @@ pub mod abilities;
 pub mod admin_skills;
 pub mod agent_abilities;
 pub mod agent_management;
+pub(crate) mod agent_execution;
 pub mod agent_runtime_projection;
 pub mod archive_extract;
 pub mod attachment;

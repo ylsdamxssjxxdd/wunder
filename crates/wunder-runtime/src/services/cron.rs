@@ -7,6 +7,9 @@ use crate::core::{blocking, runtime_metrics};
 use crate::i18n;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
+use crate::services::agent_execution::{
+    apply_tool_overrides, finalize_tool_names, resolve_agent_tool_defaults, resolve_chat_model_name,
+};
 use crate::services::cron_schedule::{
     normalize_every_ms, parse_schedule_text, validate_cron_expr, validate_message, validate_name,
     validate_schedule_at, ParsedScheduleText, MIN_EVERY_MS,
@@ -25,7 +28,6 @@ use chrono_tz::Tz;
 use cron::Schedule;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -46,7 +48,6 @@ where
     blocking::run_db(label, task).await
 }
 
-const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 const DEFAULT_SESSION_TITLE: &str = "新会话";
 const SUMMARY_MAX_CHARS: usize = 200;
 const DEFAULT_MAX_CONSECUTIVE_FAILURES: usize = 5;
@@ -191,7 +192,9 @@ pub async fn handle_cron_action(
             .await?;
             let jobs = filter_jobs_by_agent_scope(jobs, scoped_agent_id.as_deref());
             let items = jobs.iter().map(cron_job_to_value).collect::<Vec<_>>();
-            Ok(json!({ "action": "list", "jobs": items, "scheduler": { "enabled": config.cron.enabled } }))
+            Ok(
+                json!({ "action": "list", "jobs": items, "scheduler": { "enabled": config.cron.enabled } }),
+            )
         }
         "get" => {
             let job_id = payload
@@ -1125,7 +1128,11 @@ fn format_ts(value: Option<f64>) -> Option<String> {
 fn normalize_agent_id(agent_id: Option<&str>) -> Option<String> {
     agent_id
         .map(str::trim)
-        .filter(|value| !value.is_empty() && *value != "__default__" && *value != "default")
+        .filter(|value| {
+            !value.is_empty()
+                && !value.eq_ignore_ascii_case("__default__")
+                && !value.eq_ignore_ascii_case("default")
+        })
         .map(|value| value.to_string())
 }
 
@@ -1196,82 +1203,23 @@ fn filter_jobs_by_agent_scope(
 
 fn resolve_agent_record(
     user_store: &UserStore,
+    storage: &dyn StorageBackend,
     user: &UserAccountRecord,
     agent_id: Option<&str>,
-) -> Option<UserAgentRecord> {
-    let agent_id = agent_id.map(str::trim).filter(|value| !value.is_empty())?;
-    let record = user_store.get_user_agent_by_id(agent_id).ok().flatten()?;
-    let access = user_store
-        .get_user_agent_access(&user.user_id)
-        .ok()
-        .flatten();
+) -> Result<UserAgentRecord> {
+    let agent_id = normalize_agent_id(agent_id);
+    let Some(agent_id) = agent_id else {
+        return crate::user_store::build_default_agent_record_from_storage(storage, &user.user_id);
+    };
+    let record = user_store
+        .get_user_agent_by_id(&agent_id)?
+        .ok_or_else(|| anyhow!(i18n::t("error.agent_not_found")))?;
+    let access = user_store.get_user_agent_access(&user.user_id)?;
     if is_agent_allowed(user, access.as_ref(), &record) {
-        Some(record)
+        Ok(record)
     } else {
-        None
+        Err(anyhow!(i18n::t("error.agent_not_found")))
     }
-}
-
-fn resolve_session_tool_overrides(
-    record: &ChatSessionRecord,
-    agent: Option<&UserAgentRecord>,
-) -> Vec<String> {
-    if !record.tool_overrides.is_empty() {
-        normalize_tool_overrides(record.tool_overrides.clone())
-    } else {
-        agent
-            .map(|record| record.tool_names.clone())
-            .unwrap_or_default()
-    }
-}
-
-fn normalize_tool_overrides(values: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut output = Vec::new();
-    let mut has_none = false;
-    for raw in values {
-        let name = raw.trim().to_string();
-        if name.is_empty() || seen.contains(&name) {
-            continue;
-        }
-        if name == TOOL_OVERRIDE_NONE {
-            has_none = true;
-        }
-        seen.insert(name.clone());
-        output.push(name);
-    }
-    if has_none {
-        vec![TOOL_OVERRIDE_NONE.to_string()]
-    } else {
-        output
-    }
-}
-
-fn apply_tool_overrides(allowed: HashSet<String>, overrides: &[String]) -> HashSet<String> {
-    if overrides.is_empty() {
-        return allowed;
-    }
-    if overrides.iter().any(|name| name == TOOL_OVERRIDE_NONE) {
-        return HashSet::new();
-    }
-    let override_set: HashSet<String> = overrides
-        .iter()
-        .map(|name| name.trim().to_string())
-        .filter(|name| !name.is_empty())
-        .collect();
-    allowed
-        .intersection(&override_set)
-        .cloned()
-        .collect::<HashSet<_>>()
-}
-
-fn finalize_tool_names(mut allowed: HashSet<String>) -> Vec<String> {
-    if allowed.is_empty() {
-        return vec![TOOL_OVERRIDE_NONE.to_string()];
-    }
-    let mut list = allowed.drain().collect::<Vec<_>>();
-    list.sort();
-    list
 }
 
 fn should_auto_title(title: &str) -> bool {
@@ -1671,21 +1619,26 @@ impl CronRuntime {
         let turn = accepted["turn_id"]
             .as_str()
             .ok_or_else(|| anyhow!("missing result turn"))?;
-        self.orchestrator
-            .committer
-            .commit_item(
-                &job.user_id,
-                &json!({
-                    "session_id":routing.deliver_session_id, "turn_id":turn,
-                    "item_id":format!("{turn}:text-0"), "model_round":0,
-                    "kind":"assistant_message", "role":"assistant", "status":"completed",
-                    "visibility":"user", "content":answer,
-                    "meta":{"type":"scheduled_result", "job_id":job.job_id,
-                        "run_session_id":routing.run_session_id,
-                        "message_stats":{"interaction_duration_s":elapsed_s}}
-                }),
-            )
+        let copied = self
+            .copy_isolated_execution_items(job, routing, turn, elapsed_s)
             .await?;
+        if !copied {
+            self.orchestrator
+                .committer
+                .commit_item(
+                    &job.user_id,
+                    &json!({
+                        "session_id":routing.deliver_session_id, "turn_id":turn,
+                        "item_id":format!("{turn}:text-0"), "model_round":0,
+                        "kind":"assistant_message", "role":"assistant", "status":"completed",
+                        "visibility":"user", "content":answer,
+                        "meta":{"type":"scheduled_result", "job_id":job.job_id,
+                            "run_session_id":routing.run_session_id,
+                            "message_stats":{"interaction_duration_s":elapsed_s}}
+                    }),
+                )
+                .await?;
+        }
         self.orchestrator
             .committer
             .update_turn(
@@ -1698,6 +1651,115 @@ impl CronRuntime {
             )
             .await?;
         Ok(())
+    }
+
+    /// Isolated runs execute in a private durable thread, but their visible
+    /// execution belongs to the scheduled-result turn in the bound thread.
+    /// Copy the durable workflow items in order so the new bubble contains the
+    /// model rounds and tool calls instead of only a synthetic final sentence.
+    async fn copy_isolated_execution_items(
+        &self,
+        job: &CronJobRecord,
+        routing: &CronSessionRouting,
+        destination_turn: &str,
+        elapsed_s: f64,
+    ) -> Result<bool> {
+        let source_turns =
+            self.storage
+                .list_thread_turns(&job.user_id, &routing.run_session_id, None, 4)?;
+        let Some(source_turn) = source_turns.first() else {
+            return Ok(false);
+        };
+        let source_turn_id = source_turn
+            .get("turn_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if source_turn_id.is_empty() {
+            return Ok(false);
+        }
+        let page = self
+            .storage
+            .get_thread_turn(
+                &job.user_id,
+                &routing.run_session_id,
+                source_turn_id,
+                -1,
+                100,
+                true,
+            )?
+            .ok_or_else(|| anyhow!("isolated scheduled turn disappeared"))?;
+        let mut copied = false;
+        for source in page["items"].as_array().into_iter().flatten() {
+            let kind = source
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if matches!(kind, "user_message" | "terminal") {
+                continue;
+            }
+            if !matches!(
+                kind,
+                "assistant_message"
+                    | "tool_call"
+                    | "tool_message"
+                    | "progress"
+                    | "model_usage"
+                    | "compaction"
+                    | "plan"
+            ) {
+                continue;
+            }
+            let Some(source_item_id) = source.get("item_id").and_then(Value::as_str) else {
+                continue;
+            };
+            let suffix = source_item_id
+                .split_once(':')
+                .map(|(_, suffix)| suffix)
+                .unwrap_or(source_item_id);
+            let mut payload = source.get("payload").cloned().unwrap_or_else(|| json!({}));
+            let Some(map) = payload.as_object_mut() else {
+                continue;
+            };
+            map.insert(
+                "session_id".into(),
+                Value::String(routing.deliver_session_id.clone()),
+            );
+            map.insert(
+                "turn_id".into(),
+                Value::String(destination_turn.to_string()),
+            );
+            map.insert(
+                "item_id".into(),
+                Value::String(format!("{destination_turn}:cron:{suffix}")),
+            );
+            map.insert("kind".into(), Value::String(kind.to_string()));
+            if let Some(status) = source.get("status").and_then(Value::as_str) {
+                map.insert("status".into(), Value::String(status.to_string()));
+            }
+            if kind == "assistant_message" {
+                let meta = map.entry("meta").or_insert_with(|| json!({}));
+                if let Some(meta) = meta.as_object_mut() {
+                    meta.insert("type".into(), Value::String("scheduled_result".into()));
+                    meta.insert("job_id".into(), Value::String(job.job_id.clone()));
+                    meta.insert(
+                        "run_session_id".into(),
+                        Value::String(routing.run_session_id.clone()),
+                    );
+                    if !meta.contains_key("message_stats") {
+                        meta.insert(
+                            "message_stats".into(),
+                            json!({"interaction_duration_s": elapsed_s}),
+                        );
+                    }
+                }
+            }
+            self.orchestrator
+                .committer
+                .commit_item(&job.user_id, &payload)
+                .await?;
+            copied = true;
+        }
+        Ok(copied)
     }
 
     async fn run_stream_request(
@@ -1793,6 +1855,10 @@ impl CronRuntime {
             .user_store
             .get_user_by_id(user_id)?
             .unwrap_or_else(|| build_virtual_user(user_id));
+        let parent = parent_session_id
+            .map(|id| self.user_store.get_chat_session(&user.user_id, id))
+            .transpose()?
+            .flatten();
         let mut record = self
             .user_store
             .get_chat_session(&user.user_id, cleaned_session)?
@@ -1805,7 +1871,10 @@ impl CronRuntime {
                 updated_at: now,
                 last_message_at: now,
                 agent_id: agent_id.map(|value| value.to_string()),
-                tool_overrides: Vec::new(),
+                tool_overrides: parent
+                    .as_ref()
+                    .map(|p| p.tool_overrides.clone())
+                    .unwrap_or_default(),
                 parent_session_id: parent_session_id.map(|value| value.to_string()),
                 parent_message_id: None,
                 spawn_label: None,
@@ -1817,23 +1886,29 @@ impl CronRuntime {
         if record.parent_session_id.is_none() && parent_session_id.is_some() {
             record.parent_session_id = parent_session_id.map(|value| value.to_string());
         }
+        let agent_record = resolve_agent_record(
+            &self.user_store,
+            self.storage.as_ref(),
+            &user,
+            record.agent_id.as_deref(),
+        )?;
         self.user_store.upsert_chat_session(&record)?;
-
-        let agent_record =
-            resolve_agent_record(&self.user_store, &user, record.agent_id.as_deref());
         let user_context = self.build_user_tool_context(&user.user_id).await;
         let mut allowed = compute_allowed_tool_names(&user, &user_context);
-        let overrides = resolve_session_tool_overrides(&record, agent_record.as_ref());
-        allowed = apply_tool_overrides(allowed, &overrides);
+        let defaults = resolve_agent_tool_defaults(Some(&agent_record));
+        let overrides = self
+            .orchestrator
+            .resolve_frozen_session_tool_overrides(&record, Some(&agent_record))
+            .await;
+        allowed = apply_tool_overrides(allowed, &overrides, &defaults);
         let tool_names = finalize_tool_names(allowed);
-        let agent_prompt = agent_record
-            .as_ref()
+        let agent_prompt = Some(&agent_record)
             .map(|record| record.system_prompt.trim().to_string())
             .filter(|value| !value.is_empty());
-        let preview_skill = agent_record
-            .as_ref()
-            .map(|record| record.preview_skill)
-            .unwrap_or(false);
+        let preview_skill = agent_record.preview_skill;
+        let approval_mode = crate::services::user_agent_presets::normalize_agent_approval_mode(
+            Some(&agent_record.approval_mode),
+        );
 
         if should_auto_title(&record.title) {
             if let Some(title) = build_session_title(message) {
@@ -1858,10 +1933,10 @@ impl CronRuntime {
             stream: true,
             session_id: Some(cleaned_session.to_string()),
             agent_id: record.agent_id.clone(),
-            workspace_container_id: None,
-            model_name: None,
+            workspace_container_id: Some(agent_record.sandbox_container_id),
+            model_name: resolve_chat_model_name(&self.config, Some(&agent_record)),
             language: None,
-            config_overrides: None,
+            config_overrides: Some(json!({"security": {"approval_mode": approval_mode}})),
             agent_prompt,
             preview_skill,
             attachments: None,
@@ -2270,9 +2345,11 @@ mod tests {
 
     #[test]
     fn cron_partial_config_keeps_scheduler_enabled() {
-        let config: crate::config::CronConfig = serde_json::from_value(json!({"max_concurrent_runs": 2})).unwrap();
+        let config: crate::config::CronConfig =
+            serde_json::from_value(json!({"max_concurrent_runs": 2})).unwrap();
         assert!(config.enabled);
-        let disabled: crate::config::CronConfig = serde_json::from_value(json!({"enabled": false})).unwrap();
+        let disabled: crate::config::CronConfig =
+            serde_json::from_value(json!({"enabled": false})).unwrap();
         assert!(!disabled.enabled);
     }
 
@@ -2316,6 +2393,10 @@ mod tests {
         config.storage.db_path = dir.path().join("cron.db").to_string_lossy().into_owned();
         config.workspace.root = dir.path().join("workspace").to_string_lossy().into_owned();
         config.agent_queue.enabled = true;
+        config.tools.builtin.enabled = ["execute_command", "ptc", "read_file"]
+            .into_iter()
+            .map(crate::tools::resolve_tool_name)
+            .collect();
         let store = crate::config_store::ConfigStore::new(dir.path().join("config.yaml"));
         store
             .update(|current| *current = config.clone())
@@ -2342,7 +2423,205 @@ mod tests {
             .storage
             .upsert_chat_session(&build_chat_session("bound", "agent_a", now_ts_test()))
             .unwrap();
+        let mut agent = crate::user_store::build_default_agent_record_from_storage(
+            state.storage.as_ref(),
+            "cron_user",
+        )
+        .unwrap();
+        agent.agent_id = "agent_a".into();
+        state.user_store.upsert_user_agent(&agent).unwrap();
         (runtime, state, dir)
+    }
+
+    #[tokio::test]
+    async fn cron_default_agent_inherits_approval_and_tools_without_cross_user_lookup() {
+        let (runtime, state, _dir) = runtime_fixture().await;
+        let mut agent = crate::user_store::build_default_agent_record_from_storage(
+            state.storage.as_ref(),
+            "cron_user",
+        )
+        .unwrap();
+        agent.approval_mode = "full_auto".into();
+        agent.tool_names = vec!["execute_command".into(), "ptc".into()];
+        agent.declared_tool_names = agent.tool_names.clone();
+        agent.sandbox_container_id = 2;
+        let snapshot =
+            crate::services::default_agent_protocol::default_agent_config_from_record(&agent);
+        state
+            .user_store
+            .set_meta(
+                "default_agent:cron_user",
+                &serde_json::to_string(&snapshot).unwrap(),
+            )
+            .unwrap();
+        let mut other = snapshot;
+        other.approval_mode = "suggest".into();
+        state
+            .user_store
+            .set_meta(
+                "default_agent:other_fixture_user",
+                &serde_json::to_string(&other).unwrap(),
+            )
+            .unwrap();
+        let mut bound = build_chat_session("default-bound", "__default__", now_ts_test());
+        bound.tool_overrides.clear();
+        state.storage.upsert_chat_session(&bound).unwrap();
+        let user = super::build_virtual_user("cron_user");
+        let interactive = crate::api::chat::build_chat_request(
+            &state,
+            &user,
+            "default-bound",
+            "fixture".into(),
+            None,
+            true,
+            None,
+            crate::api::chat::ChatRequestOverrides {
+                tool_call_mode: None,
+                approval_mode: None,
+                reasoning_effort: None,
+            },
+        )
+        .await
+        .unwrap();
+        for alias in [None, Some("__default__"), Some("default")] {
+            let request = runtime
+                .build_request("cron_user", "fixture-child", alias, "fixture", None)
+                .await
+                .unwrap();
+            assert_eq!(request.tool_names, interactive.tool_names);
+            assert_eq!(request.config_overrides, interactive.config_overrides);
+            assert_eq!(
+                request.config_overrides.as_ref().unwrap()["security"]["approval_mode"],
+                "full_auto"
+            );
+            assert_eq!(request.workspace_container_id, Some(2));
+            let mut effective = runtime.config.clone();
+            effective.security.approval_mode = request.config_overrides.as_ref().unwrap()
+                ["security"]["approval_mode"]
+                .as_str()
+                .map(str::to_string);
+            for tool in ["execute_command", "ptc"] {
+                let tool = crate::tools::resolve_tool_name(tool);
+                assert!(
+                    request
+                        .tool_names
+                        .iter()
+                        .any(|name| crate::tools::resolve_tool_name(name) == tool),
+                    "missing {tool}"
+                );
+                let decision = crate::exec_policy::evaluate_tool_call(
+                    &effective,
+                    &tool,
+                    &json!({"content":"echo fixture"}),
+                    Some("fixture-child"),
+                    Some("cron_user"),
+                );
+                assert!(
+                    decision.is_none_or(|decision| decision.allowed && !decision.requires_approval)
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn cron_custom_agent_preserves_restrictions_and_rejects_missing_agent() {
+        let (runtime, state, _dir) = runtime_fixture().await;
+        let mut agent = state
+            .user_store
+            .get_user_agent_by_id("agent_a")
+            .unwrap()
+            .unwrap();
+        agent.approval_mode = "suggest".into();
+        agent.tool_names = vec!["execute_command".into(), "read_file".into()];
+        agent.declared_tool_names = agent.tool_names.clone();
+        state.user_store.upsert_user_agent(&agent).unwrap();
+        let mut parent = build_chat_session("bound", "agent_a", now_ts_test());
+        parent.tool_overrides = vec!["read_file".into()];
+        state.storage.upsert_chat_session(&parent).unwrap();
+        let request = runtime
+            .build_request(
+                "cron_user",
+                "restricted-child",
+                Some("agent_a"),
+                "fixture",
+                Some("bound"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            request
+                .tool_names
+                .iter()
+                .map(|name| crate::tools::resolve_tool_name(name))
+                .collect::<Vec<_>>(),
+            vec![crate::tools::resolve_tool_name("read_file")]
+        );
+        assert_eq!(
+            request.config_overrides.unwrap()["security"]["approval_mode"],
+            "suggest"
+        );
+        parent.tool_overrides = vec!["__no_tools__".into()];
+        state.storage.upsert_chat_session(&parent).unwrap();
+        let request = runtime
+            .build_request(
+                "cron_user",
+                "no-tools-child",
+                Some("agent_a"),
+                "fixture",
+                Some("bound"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(request.tool_names, vec!["__no_tools__"]);
+        // Explicit user restrictions still bound the inherited agent tool set.
+        state
+            .user_store
+            .set_user_tool_access(
+                "cron_user",
+                Some(&vec![crate::tools::resolve_tool_name("read_file")]),
+            )
+            .unwrap();
+        let request = runtime
+            .build_request(
+                "cron_user",
+                "user-restricted-child",
+                Some("agent_a"),
+                "fixture",
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            request
+                .tool_names
+                .iter()
+                .map(|name| crate::tools::resolve_tool_name(name))
+                .collect::<Vec<_>>(),
+            vec![crate::tools::resolve_tool_name("read_file")]
+        );
+        // A selected agent owned by someone else must not fall back to all tools.
+        agent.user_id = "other_fixture_user".into();
+        state.user_store.upsert_user_agent(&agent).unwrap();
+        assert!(runtime
+            .build_request(
+                "cron_user",
+                "denied-child",
+                Some("agent_a"),
+                "fixture",
+                None
+            )
+            .await
+            .is_err());
+        assert!(runtime
+            .build_request(
+                "cron_user",
+                "missing-child",
+                Some("missing-agent"),
+                "fixture",
+                None
+            )
+            .await
+            .is_err());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2359,17 +2638,28 @@ mod tests {
         let task = tokio::spawn(scheduler.run_loop());
         let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
-                let stored = state.storage.get_cron_job("cron_user", &job.job_id).unwrap().unwrap();
-                if stored.last_run_at.is_some() { break stored; }
+                let stored = state
+                    .storage
+                    .get_cron_job("cron_user", &job.job_id)
+                    .unwrap()
+                    .unwrap();
+                if stored.last_run_at.is_some() {
+                    break stored;
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(25)).await;
             }
-        }).await;
+        })
+        .await;
         task.abort();
-        let stored = result.expect("actual scheduler must execute a due task without a service or model");
+        let stored =
+            result.expect("actual scheduler must execute a due task without a service or model");
         assert_eq!(stored.last_status.as_deref(), Some("error"));
         assert!(stored.last_error.as_deref().unwrap().contains("routing"));
         assert!(stored.running_at.is_none());
-        let runs = state.storage.list_cron_runs("cron_user", &job.job_id, 10).unwrap();
+        let runs = state
+            .storage
+            .list_cron_runs("cron_user", &job.job_id, 10)
+            .unwrap();
         assert_eq!(runs.len(), 1);
     }
 
@@ -2377,11 +2667,27 @@ mod tests {
     async fn cron_disabled_cannot_acknowledge_a_new_schedule() {
         let (mut runtime, _state, _dir) = runtime_fixture().await;
         runtime.config.cron.enabled = false;
-        let result = super::handle_cron_action(runtime.config, runtime.storage,
-            Some(runtime.orchestrator), Some(runtime.wake_signal), runtime.user_store,
-            runtime.user_tool_manager, runtime.skills, "cron_user", Some("bound"), Some("agent_a"),
-            super::CronActionRequest { action: "add".into(), job: None }).await;
-        assert!(result.unwrap_err().to_string().contains("cron.enabled=false"));
+        let result = super::handle_cron_action(
+            runtime.config,
+            runtime.storage,
+            Some(runtime.orchestrator),
+            Some(runtime.wake_signal),
+            runtime.user_store,
+            runtime.user_tool_manager,
+            runtime.skills,
+            "cron_user",
+            Some("bound"),
+            Some("agent_a"),
+            super::CronActionRequest {
+                action: "add".into(),
+                job: None,
+            },
+        )
+        .await;
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cron.enabled=false"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2493,6 +2799,74 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(page["items"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn isolated_result_copies_child_workflow_into_delivery_turn() {
+        let (runtime, state, _dir) = runtime_fixture().await;
+        let job = build_job("bound", "isolated", now_ts_test());
+        let routing = runtime.resolve_session_routing(&job).unwrap();
+        state
+            .storage
+            .upsert_chat_session(&build_chat_session(
+                &routing.run_session_id,
+                "agent_a",
+                now_ts_test(),
+            ))
+            .unwrap();
+        let accepted = state
+            .storage
+            .accept_thread_turn(
+                "cron_user",
+                &routing.run_session_id,
+                &json!({"role":"user","content":"child fixture"}),
+            )
+            .unwrap();
+        let source_turn = accepted["turn_id"].as_str().unwrap();
+        state
+            .storage
+            .commit_thread_item(
+                "cron_user",
+                &json!({
+                    "session_id": routing.run_session_id, "turn_id": source_turn,
+                    "item_id": format!("{source_turn}:assistant-1"), "kind": "assistant_message",
+                    "role":"assistant", "status":"completed", "visibility":"user",
+                    "content":"child answer", "model_round": 1
+                }),
+            )
+            .unwrap();
+        state
+            .storage
+            .commit_thread_item(
+                "cron_user",
+                &json!({
+                    "session_id": routing.run_session_id, "turn_id": source_turn,
+                    "item_id": format!("{source_turn}:tool-1"), "kind": "tool_message",
+                    "role":"tool", "status":"completed", "visibility":"user",
+                    "content":"tool result"
+                }),
+            )
+            .unwrap();
+        runtime
+            .publish_isolated_result(&job, &routing, "child answer", 0.4)
+            .await
+            .unwrap();
+        let turns = state
+            .storage
+            .list_thread_turns("cron_user", "bound", None, 10)
+            .unwrap();
+        let destination = turns.first().unwrap()["turn_id"].as_str().unwrap();
+        let page = state
+            .storage
+            .get_thread_turn("cron_user", "bound", destination, -1, 100, true)
+            .unwrap()
+            .unwrap();
+        let items = page["items"].as_array().unwrap();
+        assert!(items.iter().any(|item| item["kind"] == "tool_message"));
+        assert!(items
+            .iter()
+            .any(|item| item.pointer("/payload/content") == Some(&json!("child answer"))));
+        assert!(items.iter().all(|item| item["turn_id"] == destination));
     }
 
     fn build_chat_session(session_id: &str, agent_id: &str, now: f64) -> ChatSessionRecord {

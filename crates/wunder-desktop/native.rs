@@ -406,10 +406,7 @@ fn message_from_value(value: Value) -> Option<NativeMessage> {
             stats,
             &["interaction_duration_s", "duration_s", "elapsed_s"],
         )),
-        stats_speed: format_speed(stats_value(
-            stats,
-            &["visible_decode_speed_tps", "decode_speed_tps"],
-        )),
+        stats_speed: format_speed(stats_speed_value(stats)),
         stats_context: format_count(stats_value(
             stats,
             &[
@@ -443,6 +440,24 @@ fn message_from_value(value: Value) -> Option<NativeMessage> {
 
 fn stats_value<'a>(stats: &'a Value, keys: &[&str]) -> Option<&'a Value> {
     keys.iter().find_map(|key| stats.get(*key))
+}
+
+fn stats_speed_value(stats: &Value) -> Option<&Value> {
+    let aggregate_rounds = stats
+        .get("avg_model_round_speed_rounds")
+        .or_else(|| stats.get("avgModelRoundSpeedRounds"))
+        .and_then(|value| value.as_f64())
+        .unwrap_or_default();
+    if aggregate_rounds > 0.0 {
+        if let Some(value) = stats
+            .get("avg_model_round_speed_tps")
+            .or_else(|| stats.get("avg_model_round_decode_speed_tps"))
+            .filter(|value| value.as_f64().is_some_and(|speed| speed > 0.0))
+        {
+            return Some(value);
+        }
+    }
+    stats_value(stats, &["visible_decode_speed_tps", "decode_speed_tps"])
 }
 
 fn format_count(value: Option<&Value>) -> Option<String> {

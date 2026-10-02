@@ -4,6 +4,14 @@ use anyhow::Result;
 use rusqlite::{params, OptionalExtension};
 
 pub(super) trait SqliteSessionRunStorage {
+    fn touch_session_run_impl(&self, user_id: &str, run_id: &str, now: f64) -> Result<()>;
+    fn interrupt_stale_session_runs_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        cutoff: f64,
+        now: f64,
+    ) -> Result<i64>;
     fn upsert_session_run_impl(&self, record: &SessionRunRecord) -> Result<()>;
     fn get_session_run_impl(&self, run_id: &str) -> Result<Option<SessionRunRecord>>;
     fn list_session_runs_by_session_impl(
@@ -27,6 +35,22 @@ pub(super) trait SqliteSessionRunStorage {
 }
 
 impl SqliteSessionRunStorage for SqliteStorage {
+    fn touch_session_run_impl(&self, user_id: &str, run_id: &str, now: f64) -> Result<()> {
+        self.ensure_initialized()?;
+        self.open()?.execute("UPDATE session_runs SET updated_time = MAX(updated_time, ?) WHERE user_id=? AND run_id=? AND status IN ('queued','running','waiting')", params![now, user_id, run_id])?;
+        Ok(())
+    }
+    fn interrupt_stale_session_runs_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        cutoff: f64,
+        now: f64,
+    ) -> Result<i64> {
+        self.ensure_initialized()?;
+        Ok(self.open()?.execute("UPDATE session_runs SET status='cancelled', error='execution lease expired; send a new task to continue', finished_time=?, updated_time=? WHERE user_id=? AND session_id=? AND run_kind='subagent' AND status IN ('queued','running','waiting') AND updated_time < ?", params![now,now,user_id,session_id,cutoff])? as i64)
+    }
+
     fn upsert_session_run_impl(&self, record: &SessionRunRecord) -> Result<()> {
         self.ensure_initialized()?;
         let conn = self.open()?;
@@ -40,7 +64,7 @@ impl SqliteSessionRunStorage for SqliteStorage {
              agent_id = excluded.agent_id, model_name = excluded.model_name, status = excluded.status, \
              queued_time = excluded.queued_time, started_time = excluded.started_time, finished_time = excluded.finished_time, \
              elapsed_s = excluded.elapsed_s, result = excluded.result, error = excluded.error, updated_time = excluded.updated_time, \
-             metadata = excluded.metadata",
+             metadata = excluded.metadata WHERE session_runs.error IS NULL OR session_runs.error <> 'execution lease expired; send a new task to continue'",
             params![
                 record.run_id,
                 record.session_id,

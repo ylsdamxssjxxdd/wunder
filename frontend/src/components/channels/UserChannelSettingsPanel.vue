@@ -7,7 +7,7 @@
           <button
             class="channel-refresh-btn"
             type="button"
-            :disabled="loading || saving || permissionDenied"
+            :disabled="loading || saving || permissionDenied || !channelRuntimeEnabled"
             @click="startCreate"
           >
             {{ t('channels.action.add') }}
@@ -108,7 +108,7 @@
             v-if="createForm.channel !== 'weixin'"
             class="channel-action-btn"
             type="button"
-            :disabled="createSaving"
+            :disabled="createSaving || !channelRuntimeEnabled"
             @click="createAccount"
           >
             {{ createSaving ? t('common.saving') : t('channels.create.create') }}
@@ -142,12 +142,15 @@
     </div>
 
     <div class="channel-content">
+      <div v-if="!channelRuntimeEnabled" class="channel-empty" role="status">
+        {{ t('channels.runtime.serviceDisabled') }}
+      </div>
       <div class="channel-content-header">
         <div class="channel-content-title">
           {{ selectedAccount ? selectedAccount.title : t('channels.detail.empty') }}
         </div>
         <div class="channel-actions">
-          <button class="channel-action-btn" type="button" :disabled="saving || !selectedAccount" @click="saveAccount">
+          <button class="channel-action-btn" type="button" :disabled="saving || !selectedAccount || !channelRuntimeEnabled" @click="saveAccount">
             {{ saving ? t('common.saving') : t('common.save') }}
           </button>
           <button class="channel-action-btn danger" type="button" :disabled="saving || !selectedAccount" @click="removeAccount">
@@ -198,7 +201,7 @@
               <button
                 class="channel-refresh-btn subtle"
                 type="button"
-                :disabled="runtimeReconnectLoading || runtimeLogsLoading"
+                :disabled="runtimeReconnectLoading || runtimeLogsLoading || !channelRuntimeEnabled"
                 @click="reconnectXmppAccount"
               >
                 {{ runtimeReconnectLoading ? t('common.saving') : t('channels.runtime.reconnect') }}
@@ -243,7 +246,7 @@
                 <button
                   class="channel-refresh-btn subtle"
                   type="button"
-                  :disabled="saving || editWeixinQrState.loadingStart || editWeixinQrState.loadingWait"
+                  :disabled="saving || editWeixinQrState.loadingStart || editWeixinQrState.loadingWait || !channelRuntimeEnabled"
                   @click="startEditWeixinQr"
                 >
                   {{
@@ -307,7 +310,7 @@
             <button
               class="channel-refresh-btn subtle"
               type="button"
-              :disabled="runtimeProbeLoading || runtimeLogsLoading"
+              :disabled="runtimeProbeLoading || runtimeLogsLoading || !channelRuntimeEnabled"
               @click="writeRuntimeProbe"
             >
               {{ runtimeProbeLoading ? t('common.saving') : t('channels.runtime.probe') }}
@@ -1001,6 +1004,7 @@ const saving = ref(false);
 const createSaving = ref(false);
 const creating = ref(false);
 const permissionDenied = ref(false);
+const channelRuntimeEnabled = ref(true);
 const accounts = ref<ChannelAccountItem[]>([]);
 const supportedChannels = ref<SupportedChannelItem[]>([]);
 const selectedKey = ref('');
@@ -2103,6 +2107,7 @@ const refreshRuntimeLogs = async (silent = false) => {
     if (requestId !== runtimeLogsRequestId || disposed.value) {
       return;
     }
+    channelRuntimeEnabled.value = data?.data?.runtime_enabled !== false;
     const rows = Array.isArray(data?.data?.items) ? data.data.items : [];
     runtimeStatus.value = normalizeRuntimeStatus(data?.data?.status);
     runtimeLogs.value = rows
@@ -2176,6 +2181,7 @@ const loadAccounts = async (preferred = undefined) => {
     }
     const data = accountsResp?.data;
     const payload = data?.data || {};
+    channelRuntimeEnabled.value = payload.runtime_enabled !== false;
     const items = Array.isArray(payload.items) ? payload.items : [];
     const channels = Array.isArray(payload.supported_channels) ? payload.supported_channels : [];
     const bindingItems = Array.isArray(bindingsResp?.data?.data?.items)

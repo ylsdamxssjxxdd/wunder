@@ -1,7 +1,19 @@
 <template>
   <section class="tool-workflow-section" :class="{ 'is-empty': section.empty }">
     <div class="tool-workflow-section-header">
-      <span class="tool-workflow-section-title">{{ section.title }}</span>
+      <div class="tool-workflow-section-heading">
+        <span class="tool-workflow-section-title">{{ section.title }}</span>
+        <span v-if="headerMetrics.length" class="tool-workflow-section-metrics">
+          <span
+            v-for="metric in headerMetrics"
+            :key="metric.key"
+            :class="['tool-workflow-section-metric', metric.tone ? `is-${metric.tone}` : '']"
+          >
+            <span class="tool-workflow-section-metric-label">{{ metric.label }}</span>
+            <span class="tool-workflow-section-metric-value">{{ metric.value }}</span>
+          </span>
+        </span>
+      </div>
       <button
         v-if="section.copyText"
         class="tool-workflow-section-copy"
@@ -65,6 +77,7 @@
 
 <script setup lang="ts">
 import type { ComponentPublicInstance } from 'vue';
+import { computed } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import { useI18n } from '@/i18n';
@@ -84,6 +97,16 @@ const props = defineProps<{
 }>();
 
 const { t } = useI18n();
+
+const headerMetrics = computed(() => {
+  if (props.section.kind === 'structured') {
+    return props.section.structuredView?.metrics || [];
+  }
+  if (props.section.kind === 'patch') {
+    return props.section.patchView?.metrics || [];
+  }
+  return [];
+});
 
 const handleCopySection = async () => {
   if (!props.section.copyText) return;
@@ -112,6 +135,58 @@ const handleCopySection = async () => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.tool-workflow-section-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tool-workflow-section-metrics {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tool-workflow-section-metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--workflow-term-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.tool-workflow-section-metric + .tool-workflow-section-metric::before {
+  content: '·';
+  margin-right: 4px;
+  color: var(--workflow-term-muted);
+}
+
+.tool-workflow-section-metric-label {
+  font-weight: 600;
+}
+
+.tool-workflow-section-metric-value {
+  color: var(--workflow-term-text);
+}
+
+.tool-workflow-section-metric.is-success .tool-workflow-section-metric-value {
+  color: #86efac;
+}
+
+.tool-workflow-section-metric.is-warning .tool-workflow-section-metric-value {
+  color: #fcd34d;
+}
+
+.tool-workflow-section-metric.is-danger .tool-workflow-section-metric-value {
+  color: #fca5a5;
 }
 
 .tool-workflow-section-title {

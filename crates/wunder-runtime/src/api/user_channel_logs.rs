@@ -88,6 +88,8 @@ pub async fn list_user_channel_runtime_logs(
     agent_id: Option<&str>,
     limit: Option<usize>,
 ) -> ChannelServiceResult<Value> {
+    let config = state.config_store.get().await;
+    let runtime_enabled = config.channels.enabled || config.gateway.enabled;
     let channel_filter = channel
         .map(|value| normalize_user_channel(Some(value)))
         .transpose()?;
@@ -109,6 +111,7 @@ pub async fn list_user_channel_runtime_logs(
     )?;
     if account_keys.is_empty() {
         return Ok(json!({
+            "runtime_enabled": runtime_enabled,
             "items": [],
             "total": 0,
             "status": runtime_log_status_payload(0, 0),
@@ -118,6 +121,7 @@ pub async fn list_user_channel_runtime_logs(
         let channel = channel_filter.clone().unwrap_or_default();
         if !channel.is_empty() && !account_keys.contains(&(channel, account_id.to_string())) {
             return Ok(json!({
+                "runtime_enabled": runtime_enabled,
                 "items": [],
                 "total": 0,
                 "status": runtime_log_status_payload(account_keys.len(), 0),
@@ -178,6 +182,7 @@ pub async fn list_user_channel_runtime_logs(
     }
 
     Ok(json!({
+        "runtime_enabled": runtime_enabled,
         "items": items,
         "total": items.len(),
         "status": status,
@@ -191,14 +196,6 @@ async fn list_channel_runtime_logs(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
-
-    let config = state.config_store.get().await;
-    if !config.channels.enabled && !config.gateway.enabled {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            "channels disabled".to_string(),
-        ));
-    }
 
     let data = list_user_channel_runtime_logs(
         &state,

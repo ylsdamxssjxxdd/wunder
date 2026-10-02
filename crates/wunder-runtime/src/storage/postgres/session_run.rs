@@ -3,6 +3,14 @@ use crate::storage::{SessionRunRecord, StorageLifecycle};
 use anyhow::Result;
 
 pub(super) trait PostgresSessionRunStorage {
+    fn touch_session_run_impl(&self, user_id: &str, run_id: &str, now: f64) -> Result<()>;
+    fn interrupt_stale_session_runs_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        cutoff: f64,
+        now: f64,
+    ) -> Result<i64>;
     fn upsert_session_run_impl(&self, record: &SessionRunRecord) -> Result<()>;
     fn get_session_run_impl(&self, run_id: &str) -> Result<Option<SessionRunRecord>>;
     fn list_session_runs_by_session_impl(
@@ -26,6 +34,22 @@ pub(super) trait PostgresSessionRunStorage {
 }
 
 impl PostgresSessionRunStorage for PostgresStorage {
+    fn touch_session_run_impl(&self, user_id: &str, run_id: &str, now: f64) -> Result<()> {
+        self.ensure_initialized()?;
+        self.conn()?.execute("UPDATE session_runs SET updated_time = GREATEST(updated_time, $1) WHERE user_id=$2 AND run_id=$3 AND status IN ('queued','running','waiting')", &[&now, &user_id, &run_id])?;
+        Ok(())
+    }
+    fn interrupt_stale_session_runs_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        cutoff: f64,
+        now: f64,
+    ) -> Result<i64> {
+        self.ensure_initialized()?;
+        Ok(self.conn()?.execute("UPDATE session_runs SET status='cancelled', error='execution lease expired; send a new task to continue', finished_time=$1, updated_time=$1 WHERE user_id=$2 AND session_id=$3 AND run_kind='subagent' AND status IN ('queued','running','waiting') AND updated_time < $4", &[&now,&user_id,&session_id,&cutoff])? as i64)
+    }
+
     fn upsert_session_run_impl(&self, record: &SessionRunRecord) -> Result<()> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
@@ -39,7 +63,7 @@ impl PostgresSessionRunStorage for PostgresStorage {
              agent_id = EXCLUDED.agent_id, model_name = EXCLUDED.model_name, status = EXCLUDED.status, \
              queued_time = EXCLUDED.queued_time, started_time = EXCLUDED.started_time, finished_time = EXCLUDED.finished_time, \
              elapsed_s = EXCLUDED.elapsed_s, result = EXCLUDED.result, error = EXCLUDED.error, updated_time = EXCLUDED.updated_time, \
-             metadata = EXCLUDED.metadata",
+             metadata = EXCLUDED.metadata WHERE session_runs.error IS NULL OR session_runs.error <> 'execution lease expired; send a new task to continue'",
             &[
                 &record.run_id,
                 &record.session_id,

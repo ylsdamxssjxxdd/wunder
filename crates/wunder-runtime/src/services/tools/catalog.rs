@@ -832,13 +832,17 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "message": {"type": "string", "description": t("tool.spec.subagent_control.args.message"), "minLength": 1, "maxLength": 20000},
                     "message_id": {"type":"string", "maxLength":128, "description":"Optional retry id for running-turn messages or reports. Reuse the same id only for the same message."},
                     "timeout_seconds": {"type": "number", "description": t("tool.spec.sessions_send.args.timeout")},
+                    "fork_turns": {"type":"integer", "minimum":0, "maximum":16, "description":"For spawn/batch_spawn: copy up to N recent user turns as quoted background, default 0. At most 256 history items and 64 KiB; truncation is recorded. Does not alter the system prompt."},
+                    "context_summary": {"type":"string", "maxLength":16384, "description":"Optional selected background for spawn/batch_spawn, at most 16384 UTF-8 bytes. Reference data, not system instructions; persists with the first task only."},
                     "task": {"type": "string", "description": t("tool.spec.subagent_control.args.task")},
                     "tasks": {
-                        "type": "array",
+                        "type": "array", "maxItems":64,
                         "description": t("tool.spec.subagent_control.args.tasks"),
                         "items": {
                             "type": "object",
                             "properties": {
+                                "fork_turns": {"type":"integer", "minimum":0, "maximum":16, "description":"Override the batch context turn count for this worker."},
+                                "context_summary": {"type":"string", "maxLength":16384, "description":"Override the batch background summary for this worker."},
                                 "task": {"type": "string", "description": t("tool.spec.sessions_spawn.args.task")},
                                 "label": {"type": "string", "description": t("tool.spec.sessions_spawn.args.label")},
                                 "agent_id": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},

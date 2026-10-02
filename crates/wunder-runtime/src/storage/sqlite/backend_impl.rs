@@ -49,6 +49,14 @@ impl ConversationLogStore for SqliteStorage {
 }
 
 impl ThreadLogStore for SqliteStorage {
+    fn load_subagent_context(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turns: i64,
+    ) -> Result<Vec<Value>> {
+        self.load_subagent_context_impl(user_id, session_id, turns)
+    }
     fn upsert_thread_text_block(
         &self,
         user_id: &str,
@@ -1468,6 +1476,18 @@ impl MediaStore for SqliteStorage {
 }
 
 impl SessionRunStore for SqliteStorage {
+    fn touch_session_run(&self, user_id: &str, run_id: &str, now: f64) -> Result<()> {
+        self.touch_session_run_impl(user_id, run_id, now)
+    }
+    fn interrupt_stale_session_runs(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        cutoff: f64,
+        now: f64,
+    ) -> Result<i64> {
+        self.interrupt_stale_session_runs_impl(user_id, session_id, cutoff, now)
+    }
     fn upsert_session_run(&self, record: &SessionRunRecord) -> Result<()> {
         self.upsert_session_run_impl(record)
     }

@@ -12,9 +12,14 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock};
 use tracing::warn;
 
+pub(crate) mod context;
+#[cfg(test)]
+mod lifecycle_tests;
 #[path = "subagents/message_payload.rs"]
 mod message_payload;
+pub(crate) mod recovery;
 pub(crate) mod runtime_progress;
+pub(crate) mod tree;
 
 pub const AUTO_WAKE_CONFIG_KEY: &str = "_subagent_auto_wake";
 pub const HIDE_START_QUESTION_CONFIG_KEY: &str = "_subagent_hide_start_question";
@@ -1006,6 +1011,7 @@ fn build_runtime_item(
     user_id: &str,
     session: ChatSessionRecord,
 ) -> Result<SubagentRuntimeItem> {
+    recovery::recover(storage, user_id, &session.session_id)?;
     let run = storage
         .list_session_runs_by_session(user_id, &session.session_id, 1)?
         .into_iter()

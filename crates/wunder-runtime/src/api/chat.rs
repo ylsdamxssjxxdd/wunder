@@ -3,14 +3,19 @@ use crate::core::long_task;
 use crate::i18n;
 use crate::orchestrator::OrchestratorError;
 use crate::schemas::{AttachmentPayload, WunderRequest};
-use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
-use crate::services::llm::{is_llm_model, normalize_reasoning_effort};
+pub(crate) use crate::services::agent_execution::{
+    apply_tool_overrides, finalize_tool_names, normalize_tool_overrides,
+    resolve_agent_tool_defaults, resolve_chat_model_name, resolve_override_name_with_allowed,
+    resolve_session_tool_overrides,
+};
+use crate::services::llm::normalize_reasoning_effort;
 use crate::services::orchestration_context::{
     build_locked_thread_message, repair_orchestration_session_context,
     session_orchestration_lock_info, ORCHESTRATION_THREAD_LOCKED_CODE,
 };
 use crate::services::runtime::thread::ThreadSubmitOutcome;
 use crate::services::subagents;
+use crate::services::user_agent_presets::normalize_agent_approval_mode;
 use crate::state::AppState;
 use crate::user_access::{build_user_tool_context, compute_allowed_tool_names, is_agent_allowed};
 use crate::user_store::UserStore;
@@ -445,23 +450,12 @@ pub(crate) async fn build_chat_request(
 
     let user_context = build_user_tool_context(state, &user.user_id).await;
     let agent_record = fetch_agent_record(state, user, record.agent_id.as_deref(), true).await?;
-    let frozen_tool_overrides = state
-        .workspace
-        .load_session_frozen_tool_overrides_async(&user.user_id, &session_id)
-        .await;
     let mut allowed = compute_allowed_tool_names(user, &user_context);
-    let overrides = resolve_session_tool_overrides(
-        &record,
-        frozen_tool_overrides.as_deref(),
-        agent_record.as_ref(),
-    );
-    if frozen_tool_overrides.is_none() {
-        // Freeze the agent-default tool baseline on the first accepted user
-        // message so later agent edits cannot silently drift an existing thread.
-        state
-            .workspace
-            .save_session_frozen_tool_overrides(&user.user_id, &session_id, &overrides);
-    }
+    let overrides = state
+        .kernel
+        .orchestrator
+        .resolve_frozen_session_tool_overrides(&record, agent_record.as_ref())
+        .await;
     let agent_defaults = resolve_agent_tool_defaults(agent_record.as_ref());
     allowed = apply_tool_overrides(allowed, &overrides, &agent_defaults);
     let tool_names = finalize_tool_names(allowed);
@@ -648,16 +642,6 @@ fn normalize_tool_call_mode(raw: Option<&str>) -> Result<Option<String>, Respons
         StatusCode::BAD_REQUEST,
         "invalid tool_call_mode, expected tool_call/function_call/freeform_call".to_string(),
     ))
-}
-
-fn normalize_agent_approval_mode(raw: Option<&str>) -> String {
-    let cleaned = raw.unwrap_or("").trim().to_ascii_lowercase();
-    match cleaned.as_str() {
-        "suggest" => "suggest".to_string(),
-        "auto_edit" | "auto-edit" => "auto_edit".to_string(),
-        "full_auto" | "full-auto" => "full_auto".to_string(),
-        _ => "full_auto".to_string(),
-    }
 }
 
 fn normalize_optional_approval_mode(raw: Option<&str>) -> Option<String> {
@@ -930,57 +914,6 @@ pub(crate) fn reject_or_repair_orchestration_dispatch(
     Ok(())
 }
 
-pub(super) fn resolve_chat_model_name(
-    config: &crate::config::Config,
-    agent_record: Option<&crate::storage::UserAgentRecord>,
-) -> Option<String> {
-    if let Some(name) =
-        agent_record.and_then(|record| normalize_optional_model_name(record.model_name.as_deref()))
-    {
-        if config
-            .llm
-            .models
-            .get(&name)
-            .is_some_and(crate::services::llm::is_llm_model)
-        {
-            return Some(name);
-        }
-    }
-    resolve_default_model_key(config)
-}
-
-fn resolve_default_model_key(config: &crate::config::Config) -> Option<String> {
-    let default_key = config.llm.default.trim();
-    if !default_key.is_empty() && config.llm.models.get(default_key).is_some_and(is_llm_model) {
-        return Some(default_key.to_string());
-    }
-    for (key, cfg) in config.llm.models.iter() {
-        if !is_llm_model(cfg) {
-            continue;
-        }
-        let trimmed = key.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
-    }
-    None
-}
-
-fn normalize_optional_model_name(raw: Option<&str>) -> Option<String> {
-    raw.map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-}
-
-pub(super) fn finalize_tool_names(mut allowed: HashSet<String>) -> Vec<String> {
-    if allowed.is_empty() {
-        return vec!["__no_tools__".to_string()];
-    }
-    let mut list = allowed.drain().collect::<Vec<_>>();
-    list.sort();
-    list
-}
-
 pub(super) async fn fetch_agent_record(
     state: &Arc<AppState>,
     user: &crate::storage::UserAccountRecord,
@@ -1028,33 +961,6 @@ pub(super) async fn fetch_agent_record(
     Ok(Some(record))
 }
 
-pub(super) fn resolve_session_tool_overrides(
-    record: &crate::storage::ChatSessionRecord,
-    frozen_tool_overrides: Option<&[String]>,
-    agent: Option<&crate::storage::UserAgentRecord>,
-) -> Vec<String> {
-    if !record.tool_overrides.is_empty() {
-        normalize_tool_overrides(record.tool_overrides.clone())
-    } else if let Some(snapshot) = frozen_tool_overrides {
-        normalize_tool_overrides(snapshot.to_vec())
-    } else {
-        resolve_agent_tool_defaults(agent)
-    }
-}
-
-pub(super) fn resolve_agent_tool_defaults(
-    agent: Option<&crate::storage::UserAgentRecord>,
-) -> Vec<String> {
-    let Some(record) = agent else {
-        return Vec::new();
-    };
-    resolve_agent_runtime_tool_names(
-        &record.tool_names,
-        &record.declared_tool_names,
-        &record.declared_skill_names,
-    )
-}
-
 pub(super) fn resolve_agent_workspace_id(
     state: &AppState,
     user_id: &str,
@@ -1097,28 +1003,6 @@ fn is_default_agent_alias(agent_id: Option<&str>) -> bool {
     cleaned.eq_ignore_ascii_case("__default__") || cleaned.eq_ignore_ascii_case("default")
 }
 
-pub(super) fn normalize_tool_overrides(values: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut output = Vec::new();
-    let mut has_none = false;
-    for raw in values {
-        let name = raw.trim().to_string();
-        if name.is_empty() || seen.contains(&name) {
-            continue;
-        }
-        if name == TOOL_OVERRIDE_NONE {
-            has_none = true;
-        }
-        seen.insert(name.clone());
-        output.push(name);
-    }
-    if has_none {
-        vec![TOOL_OVERRIDE_NONE.to_string()]
-    } else {
-        output
-    }
-}
-
 fn filter_tool_overrides(values: Vec<String>, allowed: &HashSet<String>) -> Vec<String> {
     if values.iter().any(|name| name == TOOL_OVERRIDE_NONE) {
         return vec![TOOL_OVERRIDE_NONE.to_string()];
@@ -1133,64 +1017,6 @@ fn filter_tool_overrides(values: Vec<String>, allowed: &HashSet<String>) -> Vec<
         }
     }
     output
-}
-
-pub(super) fn apply_tool_overrides(
-    allowed: HashSet<String>,
-    overrides: &[String],
-    agent_defaults: &[String],
-) -> HashSet<String> {
-    if overrides.is_empty() {
-        return allowed;
-    }
-    if overrides.iter().any(|name| name == TOOL_OVERRIDE_NONE) {
-        return HashSet::new();
-    }
-    let scoped_defaults: HashSet<String> = agent_defaults
-        .iter()
-        .map(String::as_str)
-        .filter_map(|name| resolve_override_name_with_allowed(name, &allowed))
-        .collect();
-    let mut filtered = HashSet::new();
-    for raw in overrides {
-        if let Some(mapped) = resolve_override_name_with_allowed(raw, &allowed) {
-            if !scoped_defaults.is_empty() && !scoped_defaults.contains(&mapped) {
-                continue;
-            }
-            filtered.insert(mapped);
-        }
-    }
-    filtered
-}
-
-fn resolve_override_name_with_allowed(raw: &str, allowed: &HashSet<String>) -> Option<String> {
-    let allowed_canonical: HashSet<String> = allowed
-        .iter()
-        .map(|name| crate::tools::resolve_tool_name(name.trim()))
-        .filter(|name| !name.is_empty())
-        .collect();
-    let cleaned = raw.trim();
-    if cleaned.is_empty() {
-        return None;
-    }
-    if allowed.contains(cleaned) {
-        return Some(cleaned.to_string());
-    }
-    let canonical = crate::tools::resolve_tool_name(cleaned);
-    if canonical != cleaned && allowed_canonical.contains(&canonical) {
-        return Some(canonical);
-    }
-    for (index, _) in cleaned.match_indices('@') {
-        let suffix = cleaned[index + 1..].trim();
-        if !suffix.is_empty() && allowed.contains(suffix) {
-            return Some(suffix.to_string());
-        }
-        let canonical_suffix = crate::tools::resolve_tool_name(suffix);
-        if !suffix.is_empty() && allowed_canonical.contains(&canonical_suffix) {
-            return Some(canonical_suffix);
-        }
-    }
-    None
 }
 
 fn should_auto_title(title: &str) -> bool {

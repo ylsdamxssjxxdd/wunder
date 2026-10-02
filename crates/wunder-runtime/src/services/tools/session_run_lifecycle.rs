@@ -24,7 +24,6 @@ use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::sync::oneshot;
-use tokio::time::sleep;
 use tracing::warn;
 use uuid::Uuid;
 
@@ -191,6 +190,16 @@ pub(crate) fn prepare_child_session(
         return Err(anyhow!(i18n::t("error.session_not_found")));
     }
 
+    if matches!(tool_mode, ChildSessionToolMode::InheritParentSession) {
+        let identity = subagents::tree::identity(
+            context.storage.as_ref(),
+            user_id,
+            cleaned_parent_session_id,
+        )?;
+        if identity.depth >= subagents::tree::MAX_DEPTH {
+            return Err(anyhow!("subagent nesting exceeds 32 levels"));
+        }
+    }
     let label = normalize_optional_string(label);
     let agent_id = normalize_optional_string(agent_id);
     let model_name = normalize_optional_string(model_name);
@@ -547,28 +556,47 @@ pub(crate) async fn spawn_session_run(
                 .await
         });
         let mut timeout_triggered = false;
-        let run_result = if let Some(timeout_s) = run_timeout_s.filter(|value| *value > 0.0) {
-            let timeout_duration = Duration::from_secs_f64(timeout_s);
+        let mut heartbeat = tokio::time::interval(Duration::from_secs(15));
+        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let deadline = run_timeout_s
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .map(|seconds| {
+                tokio::time::Instant::now() + Duration::from_secs_f64(seconds.min(86400.0))
+            });
+        let run_result = loop {
             tokio::select! {
-                res = &mut run_handle => match res {
+                res = &mut run_handle => break match res {
                     Ok(value) => value,
                     Err(err) => Err(anyhow!(err.to_string())),
                 },
-                _ = sleep(timeout_duration) => {
-                    timeout_triggered = true;
-                    if let Some(monitor) = monitor.as_ref() {
-                        let _ = monitor.cancel(&session_id);
+                _ = heartbeat.tick() => {
+                    let store = storage.clone();
+                    let user = user_id.clone();
+                    let run = run_id.clone();
+                    let renewed = blocking::run_db("subagent.heartbeat", move || {
+                        store.touch_session_run(&user, &run, now_ts())?;
+                        Ok(store.get_session_run(&run)?.is_some_and(|record|
+                            matches!(record.status.as_str(), "queued" | "running" | "waiting")))
+                    }).await;
+                    match renewed {
+                        Ok(false) => { if let Some(monitor) = monitor.as_ref() { let _ = monitor.cancel(&session_id); } },
+                        Err(error) => warn!("child execution heartbeat failed: {error}"),
+                        Ok(true) => {},
                     }
-                    // Keep admission ownership until the actual worker exits.
-                    // Dropping the event stream would leave its orchestrator pump detached.
-                    let _ = (&mut run_handle).await;
-                    Err(anyhow!("timeout"))
+                    if !timeout_triggered && deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
+                        timeout_triggered = true;
+                        if let Some(monitor) = monitor.as_ref() { let _ = monitor.cancel(&session_id); }
+                    }
+                },
+                _ = async {
+                    match deadline {
+                        Some(deadline) => tokio::time::sleep_until(deadline).await,
+                        None => std::future::pending::<()>().await,
+                    }
+                }, if !timeout_triggered => {
+                    timeout_triggered = true;
+                    if let Some(monitor) = monitor.as_ref() { let _ = monitor.cancel(&session_id); }
                 }
-            }
-        } else {
-            match run_handle.await {
-                Ok(value) => value,
-                Err(err) => Err(anyhow!(err.to_string())),
             }
         };
         let finished = now_ts();
@@ -579,7 +607,9 @@ pub(crate) async fn spawn_session_run(
             || monitor
                 .as_ref()
                 .is_some_and(|monitor| monitor.is_cancelled(&session_id));
-        let (status, answer, error) = if interrupted && !timeout_triggered {
+        let (status, answer, error) = if timeout_triggered {
+            ("timeout".to_string(), None, Some("timeout".to_string()))
+        } else if interrupted {
             (
                 "cancelled".to_string(),
                 None,
@@ -629,6 +659,16 @@ pub(crate) async fn spawn_session_run(
             })
             .await;
         }
+        // Recovery may have fenced this execution while it was finishing.
+        // Publish only the committed outcome, never the late worker's success.
+        let finished_record = storage
+            .get_session_run(&run_id)
+            .ok()
+            .flatten()
+            .unwrap_or(finished_record);
+        let status = finished_record.status.clone();
+        let answer = finished_record.result.clone();
+        let error = finished_record.error.clone();
         if let Some(team_task_id) = swarm_team_task_id.as_deref() {
             if let Err(err) = reconcile_swarm_task_from_session_run(
                 storage.as_ref(),

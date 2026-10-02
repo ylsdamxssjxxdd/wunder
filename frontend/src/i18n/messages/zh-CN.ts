@@ -647,6 +647,7 @@ export default {
   'channels.config.removeSuccess': '渠道账号已删除',
   'channels.config.removeFailed': '渠道账号删除失败',
   'channels.status.enabled': '已启用',
+  'channels.runtime.serviceDisabled': '渠道服务尚未启用，可查看已有配置。请联系管理员启用后再添加、保存或连接渠道。',
   'channels.status.disabled': '未启用',
   'channels.action.add': '新增',
   'channels.action.delete': '删除',

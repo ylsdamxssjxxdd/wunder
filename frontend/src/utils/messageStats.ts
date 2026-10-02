@@ -339,6 +339,24 @@ const resolveDurationSeconds = (stats: Record<string, any>): number | null => {
 };
 
 const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
+  // A bubble represents one user round.  When several model requests happen
+  // in that round (for example tool/reasoning continuations), the durable
+  // aggregate is the only speed that describes the whole bubble: total
+  // measured output tokens divided by total measured decode time.  Prefer it
+  // whenever at least one decode round was measured.
+  const aggregateRounds = Number(
+    stats?.avg_model_round_speed_rounds ?? stats?.avgModelRoundSpeedRounds
+  );
+  const aggregateSpeed = normalizeSpeed(Number(
+    stats?.avg_model_round_speed_tps ??
+      stats?.avg_model_round_decode_speed_tps ??
+      stats?.avgModelRoundSpeedTps ??
+      stats?.avgModelRoundDecodeSpeedTps
+  ));
+  if (aggregateSpeed !== null && Number.isFinite(aggregateRounds) && aggregateRounds > 0) {
+    return aggregateSpeed;
+  }
+
   // Tool/reasoning rounds often have no visible prose. A false visible-body
   // flag only rules out a body-derived estimate; it must not hide the durable
   // decode timing recorded for the round itself.

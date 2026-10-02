@@ -8,6 +8,9 @@ use uuid::Uuid;
 mod flow;
 mod messaging;
 mod targeting;
+#[cfg(test)]
+mod tree_tests;
+use crate::services::subagents::tree;
 use flow::*;
 use targeting::*;
 
@@ -149,6 +152,8 @@ struct SubagentSessionControlArgs {
 
 #[derive(Debug, Deserialize, Clone)]
 struct SubagentBatchTaskArgs {
+    #[serde(flatten)]
+    context: crate::services::subagents::context::ContextOptions,
     #[serde(alias = "message", alias = "prompt")]
     task: String,
     #[serde(default)]
@@ -165,6 +170,8 @@ struct SubagentBatchTaskArgs {
 
 #[derive(Debug, Deserialize)]
 struct SubagentBatchSpawnArgs {
+    #[serde(flatten)]
+    context: crate::services::subagents::context::ContextOptions,
     #[serde(default)]
     tasks: Vec<SubagentBatchTaskArgs>,
     #[serde(default, alias = "message", alias = "prompt")]
@@ -248,6 +255,8 @@ fn compact_subagent_item_for_model(item: &Value) -> Value {
         .or_else(|| item.pointer("/agent_state/message").cloned())
         .unwrap_or(Value::Null);
     json!({
+        "root_session_id": item.get("root_session_id").cloned().unwrap_or(Value::Null),
+        "task_path": item.get("task_path").cloned().unwrap_or(Value::Null),
         "index": item.get("index").cloned().unwrap_or(Value::Null),
         "dispatch_id": item.get("dispatch_id").cloned().unwrap_or(Value::Null),
         "run_id": item.get("run_id").cloned().unwrap_or(Value::Null),
@@ -440,13 +449,39 @@ async fn list(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: super::SessionListArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let parent_session_id = resolve_subagent_parent_scope(payload.parent_id, context.session_id)?;
-    let items = crate::services::subagents::list_parent_subagents(
+    let parent_session_id = tree::resolve(
+        context.storage.as_ref(),
+        context.user_id,
+        context.session_id,
+        &parent_session_id,
+    )?;
+    tree::authorize(
+        context.storage.as_ref(),
+        context.user_id,
+        context.session_id,
+        &parent_session_id,
+        true,
+    )?;
+    let mut items = crate::services::subagents::list_parent_subagents(
         context.storage.as_ref(),
         context.monitor.as_deref(),
         context.user_id,
         &parent_session_id,
         payload.limit,
     )?;
+    for item in &mut items {
+        if let Some(id) = item["session_id"].as_str() {
+            let identity = tree::authorize(
+                context.storage.as_ref(),
+                context.user_id,
+                context.session_id,
+                id,
+                false,
+            )?;
+            item["root_session_id"] = json!(identity.root);
+            item["task_path"] = json!(identity.path);
+        }
+    }
     Ok(build_subagent_list_result(
         json!({"items": items, "total": items.len()}),
     ))
@@ -470,6 +505,9 @@ async fn send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: SubagentSendArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let session_id = resolve_single_child_session_target(context, &payload.target, "send")?;
+    if session_id == context.session_id {
+        return Err(anyhow!("send must target another worker"));
+    }
     let message = messaging::message(context, args, "guide")?;
     if messaging::steer(context, &session_id, &message)? {
         return Ok(messaging::receipt(
@@ -502,6 +540,7 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     if tasks.is_empty() {
         if let Some(task) = normalize_optional_string(payload.task.clone()) {
             tasks.push(SubagentBatchTaskArgs {
+                context: payload.context.clone(),
                 task,
                 label: payload.label.clone(),
                 agent_id: payload.agent_id.clone(),
@@ -514,15 +553,46 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     if tasks.is_empty() {
         return Err(anyhow!("batch_spawn requires at least one task"));
     }
+    if tasks.len() > 64 {
+        return Err(anyhow!("batch_spawn accepts at most 64 tasks"));
+    }
     let parent_session_id = context.session_id.trim().to_string();
     if parent_session_id.is_empty() {
         return Err(anyhow!(i18n::t("error.session_not_found")));
     }
 
+    // Validate every context before dispatching any worker; failure cannot hide a partial batch.
+    let mut prepared_tasks = Vec::with_capacity(tasks.len());
+    for task in tasks {
+        let options = crate::services::subagents::context::ContextOptions {
+            fork_turns: task.context.fork_turns.or(payload.context.fork_turns),
+            context_summary: task
+                .context
+                .context_summary
+                .clone()
+                .or_else(|| payload.context.context_summary.clone()),
+        };
+        let store = context.storage.clone();
+        let user = context.user_id.to_string();
+        let parent = parent_session_id.clone();
+        let task_text = task.task.clone();
+        let (task_text, context_metadata) =
+            crate::core::blocking::run_db("subagent.context", move || {
+                crate::services::subagents::context::prepare(
+                    store.as_ref(),
+                    &user,
+                    &parent,
+                    &task_text,
+                    &options,
+                )
+            })
+            .await?;
+        prepared_tasks.push((task, task_text, context_metadata));
+    }
     let dispatch_id = format!("dispatch_{}", Uuid::new_v4().simple());
     let dispatch_label = normalize_optional_string(payload.dispatch_label.clone())
         .or_else(|| normalize_optional_string(payload.label.clone()));
-    let task_total = tasks.len() as i64;
+    let task_total = prepared_tasks.len() as i64;
     let wait_seconds = payload.wait_seconds.unwrap_or(0.0).max(0.0);
     emit_dispatch_start(
         context,
@@ -533,10 +603,10 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         remaining_action,
     );
 
-    let mut startup_items = Vec::with_capacity(tasks.len());
+    let mut startup_items = Vec::with_capacity(prepared_tasks.len());
     let mut startup_failed_items = Vec::new();
     let mut run_ids = Vec::new();
-    for (index, task) in tasks.into_iter().enumerate() {
+    for (index, (task, task_text, context_metadata)) in prepared_tasks.into_iter().enumerate() {
         let label = normalize_optional_string(task.label.clone())
             .or_else(|| normalize_optional_string(payload.label.clone()));
         let agent_id = normalize_optional_string(task.agent_id.clone())
@@ -553,7 +623,7 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         let item = match super::prepare_child_session(
             context,
             &parent_session_id,
-            &task.task,
+            &task_text,
             label.clone(),
             agent_id,
             model_name,
@@ -587,6 +657,11 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
                     super::should_auto_wake_parent_after_child_run(false, wait_seconds),
                 );
                 announce.persist_history_message = false;
+                super::insert_run_metadata_field(
+                    &mut run_metadata,
+                    "context_inheritance",
+                    context_metadata,
+                );
                 super::insert_run_metadata_field(&mut run_metadata, "spawn_mode", json!("batch"));
                 super::insert_run_metadata_field(
                     &mut run_metadata,
@@ -985,9 +1060,9 @@ mod tests {
     use std::sync::Arc;
     use tempfile::{tempdir, TempDir};
 
-    struct SubagentTestHarness {
+    pub(super) struct SubagentTestHarness {
         _dir: TempDir,
-        storage: Arc<dyn StorageBackend>,
+        pub(super) storage: Arc<dyn StorageBackend>,
         workspace: Arc<WorkspaceManager>,
         lsp_manager: Arc<LspManager>,
         config: Config,
@@ -997,7 +1072,7 @@ mod tests {
     }
 
     impl SubagentTestHarness {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             let dir = tempdir().expect("tempdir");
             let db_path = dir.path().join("subagent-control-tests.db");
             let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
@@ -1022,11 +1097,11 @@ mod tests {
             }
         }
 
-        fn upsert_session(&self, session_id: &str, parent_session_id: Option<&str>) {
+        pub(super) fn upsert_session(&self, session_id: &str, parent_session_id: Option<&str>) {
             self.storage
                 .upsert_chat_session(&ChatSessionRecord {
                     session_id: session_id.to_string(),
-                    user_id: "alice".to_string(),
+                    user_id: "fixture-owner".to_string(),
                     title: session_id.to_string(),
                     status: "active".to_string(),
                     created_at: 1.0,
@@ -1037,18 +1112,23 @@ mod tests {
                     parent_session_id: parent_session_id.map(str::to_string),
                     parent_message_id: None,
                     spawn_label: None,
-                    spawned_by: None,
+                    spawned_by: parent_session_id.map(|_| "model".to_string()),
                 })
                 .expect("upsert chat session");
         }
 
-        fn upsert_run(&self, run_id: &str, session_id: &str, parent_session_id: Option<&str>) {
+        pub(super) fn upsert_run(
+            &self,
+            run_id: &str,
+            session_id: &str,
+            parent_session_id: Option<&str>,
+        ) {
             self.storage
                 .upsert_session_run(&SessionRunRecord {
                     run_id: run_id.to_string(),
                     session_id: session_id.to_string(),
                     parent_session_id: parent_session_id.map(str::to_string),
-                    user_id: "alice".to_string(),
+                    user_id: "fixture-owner".to_string(),
                     dispatch_id: None,
                     run_kind: Some("subagent".to_string()),
                     requested_by: Some("subagent_control".to_string()),
@@ -1067,9 +1147,9 @@ mod tests {
                 .expect("upsert session run");
         }
 
-        fn context<'a>(&'a self, session_id: &'a str) -> ToolContext<'a> {
+        pub(super) fn context<'a>(&'a self, session_id: &'a str) -> ToolContext<'a> {
             ToolContext {
-                user_id: "alice",
+                user_id: "fixture-owner",
                 session_id,
                 workspace_id: "workspace-test",
                 agent_id: Some("agent_parent"),

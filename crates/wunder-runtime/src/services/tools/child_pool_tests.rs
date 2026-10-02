@@ -434,7 +434,21 @@ async fn run_child_pool_scenario(messaging: bool, postgres: Option<String>) {
         .monitor
         .register(&parent_id, &user.user_id, "", "next", true);
     context.user_round = Some(2);
+    let sibling_id = format!("sibling_{}", uuid::Uuid::new_v4().simple());
+    let mut sibling = state
+        .storage
+        .get_chat_session(&user.user_id, &child_id)
+        .unwrap()
+        .unwrap();
+    sibling.session_id = sibling_id.clone();
+    state.storage.upsert_chat_session(&sibling).unwrap();
     for (action, message) in [("resume", "second"), ("send", "third")] {
+        if message == "third" {
+            context.session_id = &sibling_id;
+            state
+                .monitor
+                .register(&sibling_id, &user.user_id, "", "Fixture follow-up", true);
+        }
         let result = subagent_control::execute(
             &context,
             &json!({"action":action,"session_id":child_id,"message":message,"timeout_seconds":15}),
@@ -454,6 +468,16 @@ async fn run_child_pool_scenario(messaging: bool, postgres: Option<String>) {
             .unwrap()
             .unwrap();
         assert_eq!(run.metadata.unwrap()["parent_user_round"], 2);
+        assert_eq!(
+            state
+                .storage
+                .get_chat_session(&user.user_id, &child_id)
+                .unwrap()
+                .unwrap()
+                .parent_session_id
+                .as_deref(),
+            Some(parent_id.as_str())
+        );
     }
     let captured = observed.lock().unwrap();
     assert_eq!(captured.len(), 3);

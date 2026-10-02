@@ -1,4 +1,5 @@
 use super::*;
+use crate::services::subagents::tree;
 use std::collections::{HashSet, VecDeque};
 
 #[derive(Debug, Clone)]
@@ -116,7 +117,16 @@ pub(super) fn resolve_single_child_session_target(
             &requested_session_id,
             action,
         )? {
-            Some(session_id) => resolved_session_ids.push(session_id),
+            Some(session_id) => {
+                tree::authorize(
+                    context.storage.as_ref(),
+                    user_id,
+                    current_session_id,
+                    &session_id,
+                    false,
+                )?;
+                resolved_session_ids.push(session_id);
+            }
             None => {
                 return Err(build_child_session_target_error(
                     action,
@@ -158,6 +168,7 @@ pub(super) fn resolve_single_child_session_target(
             if let Some(session_id) =
                 find_single_direct_child_session_id(context, user_id, current_session_id)?
             {
+                tree::authorize(context.storage.as_ref(), user_id, current_session_id, &session_id, false)?;
                 return Ok(session_id);
             }
             Err(build_child_session_target_error(
@@ -176,9 +187,15 @@ pub(super) fn resolve_direct_child_session_id(
     user_id: &str,
     current_session_id: &str,
     requested_session_id: &str,
-    action: &str,
+    _action: &str,
 ) -> Result<Option<String>> {
-    let requested_session_id = requested_session_id.trim();
+    let resolved = tree::resolve(
+        context.storage.as_ref(),
+        user_id,
+        current_session_id,
+        requested_session_id.trim(),
+    )?;
+    let requested_session_id = resolved.as_str();
     if requested_session_id.is_empty() {
         return Ok(None);
     }
@@ -186,11 +203,13 @@ pub(super) fn resolve_direct_child_session_id(
         .storage
         .get_chat_session(user_id, requested_session_id)?
     {
-        if !is_direct_child_session(record.parent_session_id.as_deref(), current_session_id) {
-            return Err(anyhow!(
-                "subagent_control {action} requires a direct child session of the current session"
-            ));
-        }
+        tree::authorize(
+            context.storage.as_ref(),
+            user_id,
+            current_session_id,
+            &record.session_id,
+            false,
+        )?;
         return Ok(Some(record.session_id));
     }
     let similar =
@@ -270,11 +289,13 @@ pub(super) fn resolve_direct_child_run_id(
         return Ok(None);
     }
     if let Some(record) = context.storage.get_session_run(requested_run_id)? {
-        if !is_direct_child_session(record.parent_session_id.as_deref(), current_session_id) {
-            return Err(anyhow!(
-                "subagent_control {action} requires a direct child run of the current session"
-            ));
-        }
+        tree::authorize(
+            context.storage.as_ref(),
+            user_id,
+            current_session_id,
+            &record.session_id,
+            false,
+        )?;
         if record.user_id.trim() != user_id {
             return Err(build_child_run_target_error(action, Some(requested_run_id)));
         }
@@ -298,11 +319,13 @@ pub(super) fn ensure_direct_child_session_id(
     let Some(record) = context.storage.get_chat_session(user_id, session_id)? else {
         return Err(build_child_session_target_error(action, Some(session_id)));
     };
-    if !is_direct_child_session(record.parent_session_id.as_deref(), current_session_id) {
-        return Err(anyhow!(
-            "subagent_control {action} requires a direct child session of the current session"
-        ));
-    }
+    tree::authorize(
+        context.storage.as_ref(),
+        user_id,
+        current_session_id,
+        &record.session_id,
+        false,
+    )?;
     Ok(record.session_id)
 }
 
@@ -542,6 +565,9 @@ pub(super) fn resolve_targets(
     let dispatch_id = normalize_optional_string(payload.dispatch_id.clone());
     let run_ids = dedupe_non_empty_strings(run_ids);
     let session_ids = dedupe_non_empty_strings(session_ids);
+    if run_ids.len() + session_ids.len() > MAX_SESSION_LIST_ITEMS as usize {
+        return Err(anyhow!("too many subagent targets"));
+    }
     let mut parent_id = normalize_optional_string(payload.parent_id.clone());
     if run_ids.is_empty() && session_ids.is_empty() && dispatch_id.is_none() && parent_id.is_none()
     {
@@ -569,6 +595,9 @@ pub(super) fn collect_snapshots(
     if user_id.is_empty() {
         return Err(anyhow!(i18n::t("error.user_id_required")));
     }
+    if selector.run_ids.len() + selector.session_ids.len() > MAX_SESSION_LIST_ITEMS as usize {
+        return Err(anyhow!("too many subagent targets"));
+    }
     let mut run_ids = selector.run_ids.clone();
     if let Some(dispatch_id) = selector.dispatch_id.as_deref() {
         let records =
@@ -578,10 +607,23 @@ pub(super) fn collect_snapshots(
         run_ids.extend(records.into_iter().map(|record| record.run_id));
     }
     if let Some(parent_id) = selector.parent_id.as_deref() {
+        let parent_id = tree::resolve(
+            context.storage.as_ref(),
+            user_id,
+            context.session_id,
+            parent_id,
+        )?;
+        tree::authorize(
+            context.storage.as_ref(),
+            user_id,
+            context.session_id,
+            &parent_id,
+            true,
+        )?;
         let records =
             context
                 .storage
-                .list_session_runs_by_parent(user_id, parent_id, selector.limit)?;
+                .list_session_runs_by_parent(user_id, &parent_id, selector.limit)?;
         let mut seen_sessions = HashSet::new();
         for record in records {
             if seen_sessions.insert(record.session_id.clone()) {
@@ -631,6 +673,25 @@ pub(super) fn build_run_snapshot(
 ) -> Result<SubagentRunSnapshot> {
     let user_id = context.user_id.trim();
     if let Some(record) = context.storage.get_session_run(run_id)? {
+        if record.user_id != user_id {
+            return Err(anyhow!("subagent run not found"));
+        }
+        tree::authorize(
+            context.storage.as_ref(),
+            user_id,
+            context.session_id,
+            &record.session_id,
+            false,
+        )?;
+        crate::services::subagents::recovery::recover(
+            context.storage.as_ref(),
+            user_id,
+            &record.session_id,
+        )?;
+        let record = context
+            .storage
+            .get_session_run(run_id)?
+            .ok_or_else(|| anyhow!("run not found"))?;
         let session = context
             .storage
             .get_chat_session(user_id, &record.session_id)
@@ -793,6 +854,13 @@ pub(super) fn build_session_snapshot(
     session_id: &str,
 ) -> Result<SubagentRunSnapshot> {
     let user_id = context.user_id.trim();
+    let resolved = tree::resolve(
+        context.storage.as_ref(),
+        user_id,
+        context.session_id,
+        session_id,
+    )?;
+    let session_id = resolved.as_str();
     let Some(session) = context.storage.get_chat_session(user_id, session_id)? else {
         return Ok(SubagentRunSnapshot {
             key: session_id.trim().to_string(),
@@ -809,6 +877,13 @@ pub(super) fn build_session_snapshot(
             }),
         });
     };
+    tree::authorize(
+        context.storage.as_ref(),
+        user_id,
+        context.session_id,
+        &session.session_id,
+        false,
+    )?;
     if let Some(record) = context
         .storage
         .list_session_runs_by_session(user_id, &session.session_id, 1)?
@@ -883,7 +958,23 @@ pub(super) fn collect_target_session_ids(
     selector: &ResolvedTargetSet,
     cascade: bool,
 ) -> Result<Vec<String>> {
-    let mut session_ids = selector.session_ids.clone();
+    let mut session_ids = Vec::new();
+    for id in &selector.session_ids {
+        let id = tree::resolve(
+            context.storage.as_ref(),
+            context.user_id,
+            context.session_id,
+            id,
+        )?;
+        tree::authorize(
+            context.storage.as_ref(),
+            context.user_id,
+            context.session_id,
+            &id,
+            false,
+        )?;
+        session_ids.push(id);
+    }
     for snapshot in collect_snapshots(context, selector)? {
         if let Some(session_id) = snapshot
             .payload
@@ -924,6 +1015,13 @@ pub(super) fn collect_descendant_session_ids(
         for child in children {
             if seen.insert(child.session_id.clone()) {
                 queue.push_back(child.session_id.clone());
+                tree::authorize(
+                    context.storage.as_ref(),
+                    user_id,
+                    context.session_id,
+                    &child.session_id,
+                    false,
+                )?;
                 output.push(child.session_id);
                 if output.len() >= limit as usize {
                     return Ok(output);
@@ -944,6 +1042,13 @@ pub(super) fn update_session_status(
     let Some(mut record) = context.storage.get_chat_session(user_id, session_id)? else {
         return Ok(json!({ "session_id": session_id, "status": "not_found", "updated": false }));
     };
+    tree::authorize(
+        context.storage.as_ref(),
+        user_id,
+        context.session_id,
+        session_id,
+        false,
+    )?;
     let updated = record.status.trim() != next_status;
     if cancel_running {
         if let Some(monitor) = context.monitor.as_ref() {

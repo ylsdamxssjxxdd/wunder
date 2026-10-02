@@ -601,8 +601,8 @@ async fn render_weixin_qr_image(
     ))
 }
 
-/// The user channel surface is only available when channels or the gateway is
-/// enabled; both the HTTP handlers and the façade share this gate.
+/// Runtime mutations require an enabled service. Reading configuration remains
+/// available so users can inspect setup even when the runtime is disabled.
 async fn ensure_user_channels_enabled(state: &Arc<AppState>) -> ChannelServiceResult<()> {
     let config = state.config_store.get().await;
     if !config.channels.enabled && !config.gateway.enabled {
@@ -649,9 +649,11 @@ pub async fn list_user_channel_accounts(
         ));
     }
 
+    let config = state.config_store.get().await;
     Ok(json!({
         "items": items,
         "supported_channels": supported_user_channel_items(),
+        "runtime_enabled": config.channels.enabled || config.gateway.enabled,
     }))
 }
 
@@ -662,9 +664,6 @@ async fn list_channel_accounts(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
-    ensure_user_channels_enabled(&state)
-        .await
-        .map_err(channel_service_response)?;
     let data = list_user_channel_accounts(&state, &user_id, query.channel.as_deref())
         .await
         .map_err(channel_service_response)?;
@@ -680,6 +679,7 @@ pub async fn upsert_user_channel_account(
     user_id: &str,
     payload: ChannelAccountUpsertRequest,
 ) -> ChannelServiceResult<Value> {
+    ensure_user_channels_enabled(state).await?;
     let channel = normalize_user_channel(Some(payload.channel.as_str()))?;
     let requested_agent_id = payload
         .agent_id
@@ -1586,9 +1586,6 @@ async fn upsert_channel_account(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
-    ensure_user_channels_enabled(&state)
-        .await
-        .map_err(channel_service_response)?;
     let item = upsert_user_channel_account(&state, &resolved.user, &user_id, payload)
         .await
         .map_err(channel_service_response)?;

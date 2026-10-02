@@ -28,6 +28,9 @@ fn child_cancellation_survives_monitor_registration_and_keeps_history_identity()
         dir.path().join("test.db").to_string_lossy().into(),
     ));
     let child = record("child", Some("parent"), Some("model"));
+    storage
+        .upsert_chat_session(&record("parent", None, None))
+        .unwrap();
     storage.upsert_chat_session(&child).unwrap();
     let monitor = MonitorState::new(
         storage.clone(),

@@ -35,6 +35,15 @@ pub trait ConversationLogStore {
 /// from the short lived stream event buffer: turns are the pagination unit and
 /// items are stable, idempotently replaceable records.
 pub trait ThreadLogStore {
+    /// Bounded quoted background: visible user/assistant text from recent root user turns.
+    /// Implementations truncate text in SQL before materializing rows.
+    fn load_subagent_context(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turns: i64,
+    ) -> Result<Vec<Value>>;
+
     /// Build a bounded model-context projection from durable Turn/Item rows.
     /// Implementations keep pagination in the storage layer; callers never
     /// reconstruct context by replaying stream events.
@@ -1023,6 +1032,16 @@ pub trait MediaStore {
 
 /// Session run storage.
 pub trait SessionRunStore {
+    /// Renew an active execution lease without overwriting its metadata or terminal state.
+    fn touch_session_run(&self, user_id: &str, run_id: &str, now: f64) -> Result<()>;
+    /// Atomically settle expired temporary workers. Never re-execute their tools.
+    fn interrupt_stale_session_runs(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        cutoff: f64,
+        now: f64,
+    ) -> Result<i64>;
     fn upsert_session_run(&self, record: &SessionRunRecord) -> Result<()>;
     fn get_session_run(&self, run_id: &str) -> Result<Option<SessionRunRecord>>;
     fn list_session_runs_by_session(

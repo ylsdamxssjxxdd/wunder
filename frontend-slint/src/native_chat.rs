@@ -960,9 +960,24 @@ fn update_active_stats(active: &mut TurnOutput, event: &Value) {
     {
         active.stats_duration = format_duration_value(seconds);
     }
-    if let Some(speed) =
-        number(&["visible_decode_speed_tps", "decode_speed_tps"]).filter(|value| *value > 0.0)
-    {
+    let aggregate_rounds = number(&["avg_model_round_speed_rounds", "avgModelRoundSpeedRounds"])
+        .unwrap_or_default();
+    let speed_keys = if aggregate_rounds > 0.0 {
+        [
+            "avg_model_round_speed_tps",
+            "avg_model_round_decode_speed_tps",
+            "visible_decode_speed_tps",
+            "decode_speed_tps",
+        ]
+    } else {
+        [
+            "visible_decode_speed_tps",
+            "decode_speed_tps",
+            "avg_model_round_speed_tps",
+            "avg_model_round_decode_speed_tps",
+        ]
+    };
+    if let Some(speed) = number(&speed_keys).filter(|value| *value > 0.0) {
         active.stats_speed = format!("{speed:.1}/s");
     }
     if let Some(tokens) = number(&[

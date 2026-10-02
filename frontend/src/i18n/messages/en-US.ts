@@ -668,6 +668,7 @@ export default {
   'channels.config.removeSuccess': 'Channel account removed',
   'channels.config.removeFailed': 'Failed to remove channel account',
   'channels.status.enabled': 'Enabled',
+  'channels.runtime.serviceDisabled': 'The channel service is disabled. Existing settings remain visible. Ask an administrator to enable it before adding, saving, or connecting channels.',
   'channels.status.disabled': 'Disabled',
   'channels.action.add': 'Add',
   'channels.action.delete': 'Delete',

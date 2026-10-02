@@ -32,6 +32,15 @@ impl ChildRuns {
         session_id: &str,
         parent: &str,
     ) -> Result<ChildRunGuard> {
+        self.register_with_ancestors(session_id, parent, &[])
+    }
+
+    pub(crate) fn register_with_ancestors(
+        self: &Arc<Self>,
+        session_id: &str,
+        parent: &str,
+        durable_ancestors: &[String],
+    ) -> Result<ChildRunGuard> {
         let mut entries = self.entries.lock();
         // A child has one active execution. Reuse is allowed only after it settles.
         if entries.get(session_id).is_some_and(|entry| entry.executing) {
@@ -56,6 +65,11 @@ impl ChildRuns {
             bail!("child run nesting exceeds 32 levels");
         }
         ancestors.push(parent.to_string());
+        for ancestor in durable_ancestors {
+            if !ancestors.contains(ancestor) {
+                ancestors.push(ancestor.clone());
+            }
+        }
         if let Some(previous) = entries.insert(
             session_id.to_string(),
             Entry {
@@ -132,6 +146,17 @@ impl Drop for ChildRunGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sibling_dispatch_keeps_unloaded_durable_ancestors_cancellable() {
+        let registry = Arc::new(ChildRuns::default());
+        let worker = registry
+            .register_with_ancestors("nested", "sibling", &["root".into(), "parent".into()])
+            .unwrap();
+        assert_eq!(registry.cancel_tree("parent"), 1);
+        assert!(worker.token.is_cancelled());
+        assert!(registry.register("nested", "sibling").is_err());
+    }
 
     #[test]
     fn child_reassignment_invalidates_old_wake_without_releasing_new_run() {

@@ -4,6 +4,12 @@ use anyhow::{ensure, Result};
 use serde_json::{json, Value};
 use uuid::Uuid;
 pub(super) trait PostgresThreadLogStorage {
+    fn load_subagent_context_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turns: i64,
+    ) -> Result<Vec<Value>>;
     fn fork_thread_log_impl(
         &self,
         user_id: &str,
@@ -135,6 +141,23 @@ pub(super) trait PostgresThreadLogStorage {
     ) -> Result<Vec<Value>>;
 }
 impl PostgresThreadLogStorage for PostgresStorage {
+    fn load_subagent_context_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turns: i64,
+    ) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let rows = conn.query("SELECT i.root_turn_id, i.kind, substring(i.payload::jsonb->>'content' from 1 for 16384), length(i.payload::jsonb->>'content') FROM thread_items i WHERE i.user_id=$1 AND i.session_id=$2 AND i.visibility='user' AND i.kind IN ('user_message','assistant_message') AND i.root_turn_id IN (SELECT root_turn_id FROM thread_turns WHERE user_id=$1 AND session_id=$2 AND trigger_kind='user' ORDER BY user_turn_index DESC LIMIT $3) ORDER BY i.created_seq DESC LIMIT 257", &[&user_id,&session_id,&turns.clamp(0,16)])?;
+        Ok(rows.into_iter().rev().map(|row| {
+            let kind: String = row.get(1);
+            let content: Option<String> = row.get(2);
+            let length: Option<i32> = row.get(3);
+            json!({"root_turn_id":row.get::<_,String>(0), "role":if kind=="user_message" {"user"} else {"assistant"}, "content":content.unwrap_or_default(), "truncated":length.unwrap_or(0)>16384})
+        }).collect())
+    }
+
     fn fork_thread_log_impl(
         &self,
         user_id: &str,

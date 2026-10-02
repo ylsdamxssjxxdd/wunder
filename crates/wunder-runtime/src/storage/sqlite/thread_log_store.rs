@@ -5,6 +5,12 @@ use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 use uuid::Uuid;
 pub(super) trait SqliteThreadLogStorage {
+    fn load_subagent_context_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turns: i64,
+    ) -> Result<Vec<Value>>;
     fn fork_thread_log_impl(
         &self,
         user_id: &str,
@@ -136,6 +142,25 @@ pub(super) trait SqliteThreadLogStorage {
     ) -> Result<Vec<Value>>;
 }
 impl SqliteThreadLogStorage for SqliteStorage {
+    fn load_subagent_context_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turns: i64,
+    ) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut stmt = conn.prepare("SELECT i.root_turn_id, i.kind, substr(json_extract(i.payload,'$.content'),1,16384), length(json_extract(i.payload,'$.content')) FROM thread_items i WHERE i.user_id=?1 AND i.session_id=?2 AND i.visibility='user' AND i.kind IN ('user_message','assistant_message') AND i.root_turn_id IN (SELECT root_turn_id FROM thread_turns WHERE user_id=?1 AND session_id=?2 AND trigger_kind='user' ORDER BY user_turn_index DESC LIMIT ?3) ORDER BY i.created_seq DESC LIMIT 257")?;
+        let mut rows = stmt.query_map(params![user_id, session_id, turns.clamp(0,16)], |row| {
+            let kind: String = row.get(1)?;
+            let content: Option<String> = row.get(2)?;
+            let length: Option<i64> = row.get(3)?;
+            Ok(json!({"root_turn_id":row.get::<_,String>(0)?, "role":if kind=="user_message" {"user"} else {"assistant"}, "content":content.unwrap_or_default(), "truncated":length.unwrap_or(0)>16384}))
+        })?.collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.reverse();
+        Ok(rows)
+    }
+
     fn fork_thread_log_impl(
         &self,
         user_id: &str,

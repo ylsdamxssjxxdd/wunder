@@ -170,3 +170,12 @@ These actions focus on which child sessions were updated:
 - `status` is for snapshots
 - `wait` is for convergence
 - if `next_step_hint` exists, the system is explicitly telling you to follow up rather than wrap up
+
+
+## Task tree and bounded background
+
+All selectors are restricted to the same user and root task tree. Independent user forks and swarm threads remain separate scopes. `list` defaults to direct children; `parent_id=/root` selects the root children. Results expose stable `root_session_id` and `task_path`; `session_id` also accepts that path. Same-tree workers can send guidance/tasks to one another. Reports still target the durable direct parent; a new dispatched task reports completion to its dispatcher without reparenting the worker.
+
+`spawn` and `batch_spawn` accept `fork_turns` (integer 0–16, default 0) and `context_summary` (at most 16 KiB UTF-8). Per-task values override batch defaults; batches accept at most 64 tasks and validate all background before dispatch. Only visible user/assistant text is copied, grouped by root user turn, with at most 256 items, 16384 characters per database row and 64 KiB total background. System/tool/internal messages are excluded. Truncation is recorded. Background is quoted data in the initial task, never a change to the frozen system prompt or a recurring injection.
+
+Executions renew a heartbeat every 15 seconds. After five minutes without renewal, list/status/send lazily settles an expired child as interrupted, preserving history, model selection and tree identity. Recovery is idempotent and fences late writes. It never replays tools automatically. Send a new task (or resume with a message) to continue in the same session with a new run ID; before expiry, wait for settlement.

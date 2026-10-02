@@ -2700,8 +2700,8 @@
     "zh-CN": "写入文件内容，已存在文件会被覆盖。常用 path 和 content；dry_run 仅用于预览，不会真正落盘。"
   },
   "tool.spec.subagent_control.description": {
-    "zh-CN": "管理当前会话的持久子智能体池。先 list 查找可复用线程；spawn(task) 创建并派发首轮任务，默认后台执行。send(session_id,message) 向运行中的子线程追加指导，在下一模型动作边界接收；向已结束的子线程发送则复用历史执行新任务。resume 带 message 等同 send，不带消息只重新开放。子智能体用 report(message) 主动汇报给自己的直接父线程；父线程运行中接收，空闲时排队唤醒。accepted 仅表示接收，非处理完成；收尾窗口或队列已满时会拒绝，应稍后重试。主会话中断级联取消后代，保留历史，后续按需恢复。蜂群协作使用 agent_swarm。",
-    "en-US": "Manage the current session persistent child pool. List before spawning. spawn(task) creates and dispatches a background child. send(session_id,message) guides a running child at the next model action boundary, or reuses a settled child for new work. resume with message equals send; without message only reopens. A child uses report(message) to notify its direct parent: delivered in the current turn or durably queued for an idle parent. accepted is not completed. Closing or full mailboxes reject input; retry later. Parent interruption cancels descendants and preserves history for selective reuse. Use agent_swarm for existing agents."
+    "zh-CN": "管理当前会话所属任务树的持久子智能体。流程 spawn(task) -> wait/status -> history；先 list 查找可复用线程，默认列出直属子线程，parent_id=/root 查看根的直属子线程。所有查询和控制仅限同一用户、同一根任务树；独立会话和蜂群线程不能接管。send(session_id,message) 向运行中的工作线程追加指导，空闲时复用历史开始新任务；resume 带消息等同 send，不带消息只重新开放。fork_turns=0..16 和 context_summary 控制首次派生的有界背景继承，不改写系统提示词。report 仍向直属父线程汇报。中断保留历史；执行心跳过期后按中断恢复，须显式 send 继续，不自动重放工具。accepted 仅表示接收，收尾或邮箱满时稍后重试。",
+    "en-US": "Manage persistent workers in the current root task tree. Use spawn(task) -> wait/status -> history; list before reuse. list defaults to direct children; parent_id=/root selects root children. Every selector is scoped to the same user and root tree; independent and swarm threads cannot be adopted. send guides a running worker or starts new work in a settled thread; resume with a message equals send, otherwise only reopens. fork_turns=0..16 and context_summary provide bounded initial background without changing the system prompt. report targets the direct parent. Expired execution heartbeats settle as interrupted; explicitly send to continue, never automatically replay tools. accepted is not completion; retry closing or full mailboxes later."
   },
   "tool.spec.subagent_control.args.action": {
     "zh-CN": "动作：list/history/send/report/spawn/batch_spawn/status/wait/interrupt/close/resume。report 仅子智能体可用，目标固定为直接父线程。",
@@ -2936,12 +2936,12 @@
     "zh-CN": "结束行（包含）。省略则读到文件末尾。"
   },
   "tool.spec.subagent_control.args.parent_id": {
-    "en-US": "Parent session id. list/status/wait default to the current session when omitted.",
-    "zh-CN": "父会话 ID；list/status/wait 不填时默认当前会话。"
+    "zh-CN": "默认当前会话；可指定同根任务树内的父线程 ID 或 /root。仅列其直属子会话，不允许查询无关根线程。",
+    "en-US": "Defaults to the current thread. A same-tree parent ID or /root selects its direct children. Unrelated roots are rejected."
   },
   "tool.spec.subagent_control.args.session_id": {
-    "en-US": "Single child session id. Prefer the session_id returned by spawn.",
-    "zh-CN": "单个子会话 ID。优先使用 spawn 返回的 session_id。"
+    "zh-CN": "list 返回的精确子会话 session_id 或 task_path；允许同根任务树内的工作线程，禁止根线程及独立会话。",
+    "en-US": "Exact worker session_id or task_path from list, within the same root task tree. Roots and independent threads are not worker targets."
   },
   "tool.spec.subagent_control.args.session_ids": {
     "en-US": "Use multiple child session ids only for batch status/wait.",
