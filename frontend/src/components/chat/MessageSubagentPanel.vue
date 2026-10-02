@@ -11,12 +11,15 @@
     </header>
 
     <div class="subagent-panel__list">
-      <button
+      <div
         v-for="item in items"
         :key="item.key"
-        type="button"
+        role="button"
+        tabindex="0"
         class="subagent-panel__item"
         @click="openDetail(item)"
+        @keydown.enter.self="openDetail(item)"
+        @keydown.space.self.prevent="openDetail(item)"
       >
         <div class="subagent-panel__item-main">
           <div class="subagent-panel__item-top">
@@ -25,16 +28,12 @@
               {{ statusText(item.status, item) }}
             </span>
           </div>
-          <div v-if="userPreview(item)" class="subagent-panel__summary">
-            <span class="subagent-panel__role">U:</span>{{ userPreview(item) }}
-          </div>
-          <div v-if="assistantPreview(item)" class="subagent-panel__summary">
-            <span class="subagent-panel__role">A:</span>{{ assistantPreview(item) }}
-          </div>
-          <div v-else-if="item.summary" class="subagent-panel__summary">{{ item.summary }}</div>
+          <div class="subagent-panel__summary">{{ latestPreview(item) || '等待消息…' }}</div>
           <div class="subagent-panel__detail-line">
-            <span v-if="item.run_id">Run {{ item.run_id }}</span>
-            <span v-if="item.updated_at">{{ formatTime(item.updated_at) }}</span>
+            <span>工具 {{ metric(item, 'tool_calls') }} 次</span>
+            <span>额度 {{ metric(item, 'account_credits_consumed') }}</span>
+            <span>上下文 {{ contextUsage(item) }}</span>
+            <span>模型请求 {{ metric(item, 'model_request_count') }} 次</span>
           </div>
         </div>
         <div class="subagent-panel__item-actions" @click.stop>
@@ -48,7 +47,7 @@
             {{ terminatingKeys.has(item.key) ? '中断中' : '中断' }}
           </button>
         </div>
-      </button>
+      </div>
     </div>
 
     <el-dialog
@@ -67,8 +66,16 @@
             {{ statusText(activeItem.status, activeItem) }}
           </span>
         </div>
-        <div v-if="activeItem.summary" class="subagent-detail__summary">{{ activeItem.summary }}</div>
-        <pre class="subagent-detail__payload">{{ formatPayload(activeItem.detail) }}</pre>
+        <div class="subagent-panel__detail-line">
+          <span>工具 {{ metric(activeItem, 'tool_calls') }} 次</span>
+          <span>额度 {{ metric(activeItem, 'account_credits_consumed') }}</span>
+          <span>上下文 {{ contextUsage(activeItem) }}</span>
+        </div>
+        <div class="subagent-detail__timeline">
+          <SubagentRunDetail v-if="detailVisible && activeItem.session_id"
+            :session-id="activeItem.session_id" :run-id="activeItem.run_id || activeItem.key"
+            :turn-id="childTurnId(activeItem)" />
+        </div>
       </div>
     </el-dialog>
   </section>
@@ -77,6 +84,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useChatStore } from '@/stores/chat';
+import SubagentRunDetail from './SubagentRunDetail.vue';
 import {
   isSubagentItemActive,
   isSubagentStatusFailed,
@@ -104,7 +112,8 @@ const props = defineProps<{
 
 const chatStore = useChatStore();
 const detailVisible = ref(false);
-const activeItem = ref<SubagentPanelItem | null>(null);
+const activeKey = ref('');
+const activeItem = computed(() => items.value.find(item => item.key === activeKey.value) ?? null);
 const terminatingKeys = ref<Set<string>>(new Set());
 
 const items = computed<SubagentPanelItem[]>(() =>
@@ -146,14 +155,6 @@ const statusClass = (value: unknown, item: SubagentPanelItem | null = null) => {
   return 'is-running';
 };
 
-const formatTime = (value: unknown) => {
-  const text = String(value || '').trim();
-  if (!text) return '';
-  const parsed = new Date(text);
-  if (Number.isNaN(parsed.getTime())) return text;
-  return parsed.toLocaleString();
-};
-
 const resolveItemDetail = (item: SubagentPanelItem): Record<string, unknown> => {
   const detail = item?.detail;
   return detail && typeof detail === 'object' ? (detail as Record<string, unknown>) : {};
@@ -170,22 +171,30 @@ const pickSubagentText = (item: SubagentPanelItem, ...keys: string[]): string =>
   return '';
 };
 
-const userPreview = (item: SubagentPanelItem) =>
-  pickSubagentText(item, 'user_message', 'userMessage');
+const latestPreview = (item: SubagentPanelItem) =>
+  pickSubagentText(item, 'latest_message', 'assistant_message', 'summary', 'user_message');
 
-const assistantPreview = (item: SubagentPanelItem) =>
-  pickSubagentText(item, 'assistant_message', 'assistantMessage');
-
-const formatPayload = (value: unknown) => {
-  try {
-    return JSON.stringify(value ?? {}, null, 2);
-  } catch (error) {
-    return String(value || '');
-  }
+const metric = (item: SubagentPanelItem, key: string): string => {
+  const metrics = (item.metrics ?? resolveItemDetail(item).metrics) as Record<string, unknown> | undefined;
+  const value = metrics?.[key];
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value.toLocaleString() : '--';
 };
 
+const contextUsage = (item: SubagentPanelItem): string => {
+  const metrics = item.metrics as Record<string, unknown> | undefined;
+  const current = metric(item, 'context_tokens');
+  const limit = metrics?.max_context;
+  return typeof limit === 'number' && limit > 0 && typeof metrics?.context_tokens === 'number'
+    ? `${current} / ${limit.toLocaleString()} Token (${Math.round(metrics.context_tokens / limit * 100)}%)`
+    : `${current} Token`;
+};
+
+const childTurnId = (item: SubagentPanelItem): string =>
+  String((item.metrics as Record<string, unknown> | undefined)?.child_turn_id || '');
+
 const openDetail = (item: SubagentPanelItem) => {
-  activeItem.value = item;
+  activeKey.value = item.key;
   detailVisible.value = true;
 };
 
@@ -234,7 +243,7 @@ const terminate = async (item: SubagentPanelItem) => {
 .subagent-panel__list {
   display: flex;
   flex-direction: column;
-  max-height: 120px;
+  max-height: 280px;
   overflow-y: auto;
 }
 
@@ -303,6 +312,7 @@ const terminate = async (item: SubagentPanelItem) => {
 
 .subagent-panel__detail-line {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   margin-top: 3px;
   font-size: 10px;
@@ -399,17 +409,11 @@ const terminate = async (item: SubagentPanelItem) => {
   color: var(--chat-text-secondary, #6b7280);
 }
 
-.subagent-detail__payload {
-  margin-top: 14px;
-  padding: 14px;
-  border-radius: 12px;
-  background: rgba(15, 23, 42, 0.94);
-  color: #dce7f7;
-  font-size: 12px;
-  line-height: 1.55;
+.subagent-detail__timeline {
+  margin-top: 12px;
   flex: 1 1 auto;
   min-height: 0;
-  max-height: none;
+  max-height: 65vh;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;

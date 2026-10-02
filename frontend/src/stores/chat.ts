@@ -164,7 +164,7 @@ export const useChatStore = defineStore('chat', {
       const messages = activeKey === key ? state.messages : getSessionMessages(key);
       const runtime = getRuntime(key);
       const durableStatus = getChatThreadStatus(key);
-      if (durableStatus) return ['running', 'queued', 'waiting_approval', 'waiting_user_input'].includes(durableStatus);
+      if (durableStatus) return ['running', 'queued', 'waiting', 'cancelling', 'waiting_approval', 'waiting_user_input', 'waiting_input'].includes(durableStatus);
       return resolveMergedSessionBusy({
         projection: state.runtimeProjection,
         sessionId: key,

@@ -17,7 +17,7 @@ export const flattenItem = (row: Row): Row => ({ ...row.payload, ...row,
   model_round: row.model_round ?? row.payload?.model_round,
   content: row.content ?? row.payload?.content,
   meta: row.meta ?? row.payload?.meta });
-const terminal = new Set(['completed', 'cancelled', 'failed']);
+const terminal = new Set(['completed', 'cancelled', 'failed', 'rejected', 'interrupted', 'stopped']);
 const active = new Set(['running', 'queued', 'pending', 'loading', 'streaming']);
 
 export function analyzeChatEvidence(evidence: ChatEvidence) {
@@ -30,7 +30,7 @@ export function analyzeChatEvidence(evidence: ChatEvidence) {
   const items = snapshot.items.map(flattenItem);
   const byTurn = new Map(turns.map(turn => [turn.turn_id, turn]));
   const round = (turn: Row) => turn.user_round ?? turn.user_turn_index;
-  const userTurns = turns.filter(turn => Number(round(turn)) > 0);
+  const userTurns = turns.filter(turn => Number(round(turn)) > 0 && turn.trigger_kind !== 'continuation');
   add('duplicate-turn-id', turns.length - byTurn.size);
   add('duplicate-user-round', userTurns.length - new Set(userTurns.map(round)).size);
   add('duplicate-item-id', items.length - new Set(items.map(item => item.item_id)).size);
@@ -47,7 +47,8 @@ export function analyzeChatEvidence(evidence: ChatEvidence) {
     add('user-item-count', Number(items.filter(item => item.turn_id === turn.turn_id &&
       item.kind === 'user_message').length !== 1));
     if (turn.status === 'completed') {
-      const texts = stable.filter(item => item.turn_id === turn.turn_id);
+      const texts = stable.filter(item => item.turn_id === turn.turn_id ||
+        byTurn.get(item.turn_id)?.root_turn_id === turn.turn_id);
       add('missing-stable-assistant', Number(texts.length === 0));
       const last = texts.sort((a, b) => a.model_round - b.model_round).at(-1);
       if (last) add('missing-terminal-stats', Number(!last.meta?.message_stats && !last.stats), 'warning');

@@ -123,6 +123,7 @@ export interface ThreadBlockUpsertPayload {
 
 /** change_type === 'turn_upsert' — turn accepted (user bubble content included). */
 export interface ThreadTurnUpsertPayload {
+  root_turn_id?: string;
   turn_id: string;
   user_round?: number;
   status?: string;
@@ -156,6 +157,8 @@ export function flattenThreadItemRow(row: Record<string, unknown>): Record<strin
     ...payload,
     item_id: row.item_id ?? payload.item_id,
     turn_id: row.turn_id ?? payload.turn_id,
+    root_turn_id: row.root_turn_id ?? payload.root_turn_id,
+    created_seq: row.created_seq ?? payload.created_seq,
     kind: row.kind ?? payload.kind,
     status: row.status ?? payload.status,
     revision: row.revision ?? payload.revision,
@@ -174,6 +177,7 @@ export function hasEmbeddedItemPayload(row: Record<string, unknown>): boolean {
 // ---------------------------------------------------------------------------
 
 export interface ThreadTurnState {
+  rootTurnId?: string;
   turnId: string;
   userRound: number | null;
   status: string | null;

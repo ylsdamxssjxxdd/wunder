@@ -1,79 +1,72 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { emptyChatThreadState } from '../../src/realtime/chat/chatThreadTypes';
+import { applyChatThreadFrame, applyChatThreadSnapshot } from '../../src/realtime/chat/chatThreadState';
+import { buildChatThreadTurnSlots } from '../../src/realtime/chat/chatThreadProjection';
 
-import { enforceOneBubblePerChatTurn } from '../../src/realtime/chat/chatBubbleTopology';
-
-const row = (key: string, message: Record<string, unknown>) => ({ key, sourceIndex: 0, message });
-
-test('chat surface enforces one user and one assistant bubble for a durable turn', () => {
-  const rows = enforceOneBubblePerChatTurn([
-    row('legacy-user', { role: 'user', user_turn_id: 'turn-1', content: 'request' }),
-    row('legacy-assistant', {
-      role: 'assistant', user_turn_id: 'turn-1', content: 'first fragment',
-      status: 'streaming', workflowItems: [{ id: 'tool-1', status: 'loading' }]
-    }),
-    row('durable-user', {
-      role: 'user', __runtime_projected: true, __runtime_user_turn_id: 'turn-1',
-      content: 'request', attachments: [{ id: 'attachment-1' }]
-    }),
-    row('durable-assistant', {
-      role: 'assistant', __runtime_projected: true, __runtime_user_turn_id: 'turn-1',
-      content: 'final response', reasoning: 'final reasoning', status: 'final', final: true,
-      stats: { interaction_duration_s: 1.5, visible_decode_speed_tps: 20 },
-      workflowItems: [{ id: 'tool-1', status: 'completed' }, { id: 'tool-2', status: 'completed' }]
-    }),
-    row('stale-running', {
-      role: 'assistant', user_turn_id: 'turn-1', content: '', status: 'streaming',
-      stream_incomplete: true
-    }),
-    row('next-user', { role: 'user', user_turn_id: 'turn-2', content: 'next request' }),
-    row('next-assistant', { role: 'assistant', user_turn_id: 'turn-2', content: 'next response', status: 'final' })
-  ]);
-
-  assert.deepEqual(rows.map((item) => item.key), [
-    'durable-user', 'durable-assistant', 'next-user', 'next-assistant'
-  ]);
-  assert.equal(rows[1].message.status, 'final');
-  assert.equal(rows[1].message.stream_incomplete, false);
-  assert.equal(rows[1].message.content, 'first fragment\n\nfinal response');
-  assert.equal(rows[1].message.reasoning, 'final reasoning');
-  assert.deepEqual((rows[1].message.workflowItems as Array<Record<string, unknown>>).map((item) => item.id), ['tool-1', 'tool-2']);
-  assert.deepEqual(rows[1].message.stats, {
-    interaction_duration_s: 1.5,
-    visible_decode_speed_tps: 20
-  });
+// Adversarial transport order, not a second implementation of the renderer.
+test('fixed turn slots survive reordered, duplicated execution records at every frame', () => {
+  for (let seed = 1; seed <= 24; seed++) {
+    const state = emptyChatThreadState('fixture-thread');
+    const frames: any[] = [];
+    const emit = (change_type: string, data: Record<string, unknown>) => frames.push({
+      event: 'thread_change', seq: frames.length + 1, change_type, data
+    });
+    for (let round = 1; round <= 4; round++) {
+      const root = `fixture-root-${round}`;
+      emit('turn_upsert', { turn_id: root, root_turn_id: root, user_round: round, status: 'queued' });
+      emit('item_upsert', { item_id: `${root}:user`, turn_id: root, kind: 'user_message',
+        content: `Fixture input ${round}`, user_round: round, revision: 1, visibility: 'user' });
+      emit('turn_status', { turn_id: root, status: 'completed' });
+      for (let execution = 1; execution <= 3; execution++) {
+        const child = `${root}-execution-${execution}`;
+        emit('turn_upsert', { turn_id: child, root_turn_id: root, user_round: round, status: 'running' });
+        emit('item_upsert', { item_id: `${child}:user`, turn_id: child, root_turn_id: root,
+          kind: 'user_message', content: 'Internal continuation', visibility: 'model_internal', revision: 1 });
+        emit('item_upsert', { item_id: `${child}:text-1`, turn_id: child, root_turn_id: root,
+          kind: 'assistant_message', model_round: 1, content: 'Fixture answer', status: 'completed', revision: 1 });
+        emit('turn_status', { turn_id: child, status: execution === 3 && round === 2 ? 'cancelled' : 'completed' });
+      }
+    }
+    let random = seed;
+    const next = () => (random = (random * 1664525 + 1013904223) >>> 0);
+    const check = () => {
+      const slots = buildChatThreadTurnSlots(state);
+      assert.equal(new Set(slots.map(slot => slot.rootTurnId)).size, slots.length);
+      for (const slot of slots) {
+        assert.match(slot.rootTurnId, /^fixture-root-[1-4]$/);
+        assert.equal(slot.user.role, 'user');
+        assert.equal(slot.assistant.role, 'assistant');
+        assert.equal(slot.user.userTurnId, slot.rootTurnId);
+        assert.equal(slot.assistant.userTurnId, slot.rootTurnId);
+      }
+    };
+    for (let offset = 0; offset < frames.length; offset += 8) {
+      const chunk = frames.slice(offset, offset + 8);
+      for (let i = chunk.length - 1; i > 0; i--) {
+        const j = next() % (i + 1); [chunk[i], chunk[j]] = [chunk[j], chunk[i]];
+      }
+      for (const frame of chunk) {
+        applyChatThreadFrame(state, frame, 0); check();
+        applyChatThreadFrame(state, frame, 0); check();
+      }
+    }
+    assert.equal(buildChatThreadTurnSlots(state).length, 4);
+  }
 });
 
-test('chat surface preserves one assistant-only greeting and folds optimistic rows into their user turn', () => {
-  const rows = enforceOneBubblePerChatTurn([
-    row('greeting-a', { role: 'assistant', isGreeting: true, content: 'Hello' }),
-    row('greeting-b', { role: 'assistant', isGreeting: true, content: 'Hello' }),
-    row('local-user', { role: 'user', content: 'draft request' }),
-    row('local-assistant-a', { role: 'assistant', content: 'draft fragment', status: 'streaming' }),
-    row('local-assistant-b', { role: 'assistant', content: 'draft completion', status: 'final' })
-  ]);
-
-  assert.deepEqual(rows.map((item) => item.key), ['greeting-a', 'local-user', 'local-assistant-b']);
-  assert.equal(rows[2].message.content, 'draft fragment\n\ndraft completion');
-  assert.equal(rows[2].message.status, 'final');
-});
-
-
-test('chat surface keeps the later model round live inside the same assistant bubble', () => {
-  const rows = enforceOneBubblePerChatTurn([
-    row('user', { role: 'user', user_turn_id: 'turn-loop', content: 'request' }),
-    row('model-one', {
-      role: 'assistant', user_turn_id: 'turn-loop', model_turn_id: 'model-one',
-      content: 'first model result', status: 'final', final: true
-    }),
-    row('model-two', {
-      role: 'assistant', user_turn_id: 'turn-loop', model_turn_id: 'model-two',
-      content: 'second model is working', status: 'streaming', stream_incomplete: true
-    })
-  ]);
-
-  assert.deepEqual(rows.map((item) => item.key), ['user', 'model-two']);
-  assert.equal(rows[1].message.content, 'first model result\n\nsecond model is working');
-  assert.equal(rows[1].message.status, 'streaming');
-  assert.equal(rows[1].message.stream_incomplete, true);
+test('unowned assistant/tool rows cannot create page structure; empty user input can', () => {
+  const state = emptyChatThreadState('fixture-thread');
+  applyChatThreadSnapshot(state, { cursor: 10, turns: [{ turn_id: 'orphan', status: 'completed' }],
+    items: [{ item_id: 'orphan:text-1', turn_id: 'orphan', kind: 'assistant_message', model_round: 1,
+      content: 'Fixture orphan', revision: 1 }], blocks: [] }, 0);
+  assert.deepEqual(buildChatThreadTurnSlots(state), []);
+  applyChatThreadFrame(state, { event: 'thread_change', seq: 11, change_type: 'item_upsert', data: {
+    item_id: 'root:user', turn_id: 'root', kind: 'user_message', content: '', revision: 1,
+    attachments: [{ name: 'fixture.txt' }]
+  } }, 0);
+  const [slot] = buildChatThreadTurnSlots(state);
+  assert.equal(slot.rootTurnId, 'root');
+  assert.equal(slot.user.content, '');
+  assert.equal(slot.assistant.role, 'assistant');
 });

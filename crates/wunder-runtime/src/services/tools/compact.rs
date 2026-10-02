@@ -13,7 +13,13 @@ pub(crate) fn compact_tool_spec_for_model(spec: &ToolSpec) -> ToolSpec {
         name: spec.name.clone(),
         title: None,
         description: compact_tool_description(&spec.name, &spec.description),
-        input_schema: compact_schema(&spec.input_schema),
+        // Scheduling units and thread routing cannot be inferred from JSON
+        // types. Keep their descriptions in the actual model-facing schema.
+        input_schema: if matches!(spec.name.as_str(), "定时任务" | "schedule_task") {
+            spec.input_schema.clone()
+        } else {
+            compact_schema(&spec.input_schema)
+        },
     }
 }
 
@@ -31,7 +37,9 @@ fn compact_tool_description(name: &str, original: &str) -> String {
         .to_ascii_lowercase();
     let fixed = match canonical.as_str() {
         "最终回复" | "final_response" => Some("提交最终回复；content 必填。"),
-        "定时任务" | "schedule_task" => Some("管理定时任务；action 必填。"),
+        "定时任务" | "schedule_task" => Some(
+            "管理定时任务；action 必填。add/update/remove/enable/disable/get/list/status 是同步管理操作，run 只会排队触发并立即返回，不代表任务已完成。时间 at 必须是 ISO 8601。session=main 使用创建任务时绑定的任务线程；session=isolated 在独立子线程执行，完成后发布独立结果轮次到绑定线程，不再调用模型。不要轮询 status 等待完成，使用 get/list 查看 last_status/last_error。仅在用户明确要求时创建、修改、立即运行或删除任务。",
+        ),
         "记忆管理" | "memory_manager" => {
             Some("管理长期记忆；系统提示词只放索引，详情按需读取。")
         }
@@ -256,6 +264,24 @@ mod tests {
             json!(["csv", "xlsx"])
         );
         assert_eq!(compact.input_schema["additionalProperties"], json!(false));
+    }
+
+    #[test]
+    fn scheduled_tool_keeps_model_facing_routing_and_async_contract() {
+        let spec = ToolSpec {
+            name: "schedule_task".into(),
+            title: None,
+            description: String::new(),
+            input_schema: json!({"properties":{"session":{"type":"string", "description":"bound task thread"}}}),
+        };
+        let compact = compact_tool_spec_for_model(&spec);
+        assert_eq!(
+            compact.input_schema["properties"]["session"]["description"],
+            "bound task thread"
+        );
+        assert!(compact.description.contains("ISO 8601"));
+        assert!(compact.description.contains("不要轮询"));
+        assert!(compact.description.contains("绑定"));
     }
 
     #[test]

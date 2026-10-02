@@ -41,6 +41,8 @@ export struct ChatMessage {
     avatar-tone: int
 }
 
+export struct ChatTurn { root-id: string, user: ChatMessage, assistant: ChatMessage }
+
 // Stable desktop navigation identifiers. Keep presentation pages independent
 // from their position in the rail so deep links and native controllers never
 // rely on an integer slot.

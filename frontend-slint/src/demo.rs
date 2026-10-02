@@ -1,5 +1,5 @@
 //! Bounded, in-memory UI fixtures. No runtime, network, or file operations.
-use crate::{ChatMessage, MainWindow};
+use crate::{ChatMessage, ChatTurn, MainWindow};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{cell::RefCell, rc::Rc};
 
@@ -17,24 +17,24 @@ pub fn install(app: &MainWindow) {
     let weak = app.as_weak();
     app.on_copy_message(move |index| {
         if let Some(app) = weak.upgrade() {
-            if let Some(row) = app.get_messages().row_data(index.max(0) as usize) {
-                app.invoke_copy_raw(row.text);
+            if let Some(row) = app.get_turns().row_data(index.max(0) as usize) {
+                app.invoke_copy_raw(row.assistant.text);
             }
         }
     });
-    let initial: Vec<_> = app.get_messages().iter().collect();
-    let models: Rc<Vec<Rc<VecModel<ChatMessage>>>> = Rc::new(
+    let initial: Vec<_> = app.get_turns().iter().collect();
+    let models: Rc<Vec<Rc<VecModel<ChatTurn>>>> = Rc::new(
         (0..9)
             .map(|index| {
                 Rc::new(VecModel::from(if index == 0 {
                     initial.clone()
                 } else {
-                    vec![reply("你好，可以开始新的对话。")]
+                    vec![]
                 }))
             })
             .collect(),
     );
-    app.set_messages(ModelRc::from(models[0].clone()));
+    app.set_turns(ModelRc::from(models[0].clone()));
     let drafts = Rc::new(RefCell::new(vec![String::new(); 9]));
 
     let weak = app.as_weak();
@@ -53,10 +53,10 @@ pub fn install(app: &MainWindow) {
         let index = slot(&app);
         let model = &send_models[index];
         // Evict the oldest pair before appending so the preview stays bounded.
-        while model.row_count() + 2 > MAX_MESSAGES {
+        while model.row_count() >= MAX_MESSAGES / 2 {
             model.remove(0);
         }
-        model.push(ChatMessage {
+        let user = ChatMessage {
             blocks: crate::message_blocks::from_text(text),
             text: text.into(),
             mine: true,
@@ -73,10 +73,14 @@ pub fn install(app: &MainWindow) {
             stats_credits: "".into(),
             avatar_glyph: "".into(),
             avatar_tone: 0,
+        };
+        model.push(ChatTurn {
+            user,
+            assistant: reply(
+                "已收到。这是一条本地演示回复，可以继续检查输入、滚动与会话切换效果。",
+            ),
+            ..Default::default()
         });
-        model.push(reply(
-            "已收到。这是一条本地演示回复，可以继续检查输入、滚动与会话切换效果。",
-        ));
         app.set_draft("".into());
         app.set_status("本地演示 · 消息未发送至后端".into());
         scroll_to_end(&app);
@@ -96,7 +100,7 @@ pub fn install(app: &MainWindow) {
             app.set_heading(conversation.title);
         }
         app.set_active_task(0);
-        app.set_messages(ModelRc::from(select_models[slot(&app)].clone()));
+        app.set_turns(ModelRc::from(select_models[slot(&app)].clone()));
         app.set_draft(select_drafts.borrow()[slot(&app)].as_str().into());
         scroll_to_end(&app);
     });
@@ -110,7 +114,7 @@ pub fn install(app: &MainWindow) {
         }
         drafts.borrow_mut()[slot(&app)] = app.get_draft().to_string();
         app.set_active_task(index);
-        app.set_messages(ModelRc::from(task_models[slot(&app)].clone()));
+        app.set_turns(ModelRc::from(task_models[slot(&app)].clone()));
         app.set_draft(drafts.borrow()[slot(&app)].as_str().into());
         scroll_to_end(&app);
     });
@@ -119,8 +123,8 @@ pub fn install(app: &MainWindow) {
     app.on_new_thread(move || {
         let Some(app) = weak.upgrade() else { return };
         app.set_active_task(0);
-        models[slot(&app)].set_vec(vec![reply("新任务已就绪，请输入消息。")]);
-        app.set_messages(ModelRc::from(models[slot(&app)].clone()));
+        models[slot(&app)].set_vec(vec![]);
+        app.set_turns(ModelRc::from(models[slot(&app)].clone()));
         app.set_draft("".into());
         app.set_status("已重置当前演示任务".into());
         scroll_to_end(&app);
@@ -138,7 +142,7 @@ fn reply(text: &str) -> ChatMessage {
         mine: false,
         time: "现在".into(),
         workflow: false,
-            workflow_detail: "".into(),
+        workflow_detail: "".into(),
         state: "".into(),
         stats_status: "任务完成".into(),
         stats_duration: "1.2s".into(),

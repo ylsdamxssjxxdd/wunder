@@ -6,7 +6,7 @@ import {
   bindStreamStarted,
   type ChatThreadSnapshot
 } from './chatThreadState';
-import { buildChatThreadRenderableMessages } from './chatThreadProjection';
+import { buildChatThreadTurnSlots } from './chatThreadProjection';
 import {
   emptyChatThreadState,
   flattenThreadItemRow,
@@ -77,7 +77,10 @@ export const getChatThreadStatus = (key: string): string | null => {
   let active = null;
   for (const turn of state.turns.values()) {
     if (!latest || (turn.userRound ?? 0) >= (latest.userRound ?? 0)) latest = turn;
-    if (turn.status && !['completed', 'failed', 'cancelled', 'interrupted'].includes(turn.status)) active = turn;
+    // `rejected` is a terminal admission result (for example USER_BUSY).
+    // Treating it as active leaves the composer in a permanent busy state and
+    // makes the next error appear to belong to the previous assistant bubble.
+    if (turn.status && !['completed', 'failed', 'cancelled', 'interrupted', 'rejected', 'stopped'].includes(turn.status)) active = turn;
   }
   return active?.status ?? latest?.status ?? null;
 };
@@ -253,7 +256,10 @@ const bumpInvalidation = (
   if (frame.event === 'thread_item_tail') {
     // Each user turn owns one assistant bubble. A tail therefore invalidates
     // its turn-level row rather than a transient model-round row.
-    const turnId = String(frame.item_id || '').split(':', 1)[0];
+    const state = getChatThreadState(key);
+    const item = state?.items.get(frame.item_id);
+    const executionId = item?.turnId || String(frame.item_id || '').split(':', 1)[0];
+    const turnId = String(item?.raw.root_turn_id || state?.turns.get(executionId)?.rootTurnId || executionId);
     const messageId = turnId ? `tturn:${turnId}:assistant` : `titem:${frame.item_id}`;
     if (frame.field === 'reasoning') {
       markRuntimeProjectionReasoningChanged(store, [messageId]);
@@ -398,20 +404,28 @@ export const applyChatThreadServerEvent = (
  * Deterministic durable render source: thread state -> projection bubbles ->
  * materialized rows.
  */
-export const buildChatThreadMaterializedMessages = (
-  key: string
-): ChatRuntimeMessageProjection[] | null => {
+export type ChatThreadMaterializedSlot = {
+  key: string;
+  rootTurnId: string;
+  user: Record<string, any>;
+  assistant: Record<string, any>;
+};
+
+export const buildChatThreadMaterializedSlots = (key: string): ChatThreadMaterializedSlot[] | null => {
   const entry = registry.get(key);
   if (!entry) return null;
-  const messages = buildChatThreadRenderableMessages(entry.state);
-  const session = (entry.renderProjection.sessions as Record<string, unknown>)[key] as
-    | { messages: ChatRuntimeMessageProjection[] }
-    | undefined;
+  const slots = buildChatThreadTurnSlots(entry.state);
+  const messages = slots.flatMap(slot => [slot.user, slot.assistant]);
+  const session = (entry.renderProjection.sessions as unknown as Record<string, { messages: ChatRuntimeMessageProjection[] }>)[key];
   if (session) session.messages = messages;
-  return materializeChatRuntimeProjectionList(
-    entry.renderProjection,
-    key,
-    messages,
-    { trustProjectionVersions: true }
-  ) as unknown as ChatRuntimeMessageProjection[];
+  const materialized = materializeChatRuntimeProjectionList(
+    entry.renderProjection, key, messages, { trustProjectionVersions: true }
+  );
+  return slots.map((slot, index) => ({ key: slot.key, rootTurnId: slot.rootTurnId,
+    user: materialized[index * 2], assistant: materialized[index * 2 + 1] }));
+};
+
+export const buildChatThreadMaterializedMessages = (key: string): ChatRuntimeMessageProjection[] | null => {
+  const slots = buildChatThreadMaterializedSlots(key);
+  return slots?.flatMap(slot => [slot.user, slot.assistant]) as ChatRuntimeMessageProjection[] ?? null;
 };

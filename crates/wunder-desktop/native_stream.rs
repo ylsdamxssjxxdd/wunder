@@ -10,6 +10,9 @@ use wunder_server::{
     api::chat::build_native_chat_request, blocking, state::AppState, ThreadSubmitOutcome,
 };
 
+#[path = "native_follow.rs"]
+mod follow;
+
 const CAPACITY: usize = 128;
 
 #[derive(Debug)]
@@ -129,12 +132,20 @@ async fn run(
         }
     };
     // Retain the lease until the stream pump completes, including durable writes.
-    let _lease = lease;
+    let lease = lease;
+    let root_id = request
+        .config_overrides
+        .as_ref()
+        .and_then(|v| v.get("__thread_log_turn_id"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     let stream = state.kernel.orchestrator.stream(request).await?;
     tokio::pin!(stream);
     let mut stopped = false;
     let mut goal_ready = false;
-    let mut display_args: std::collections::VecDeque<(String, Value)> = std::collections::VecDeque::new();
+    let mut display_args: std::collections::VecDeque<(String, Value)> =
+        std::collections::VecDeque::new();
     loop {
         tokio::select! {
             biased;
@@ -195,6 +206,7 @@ async fn run(
             }
         }
     }
+    drop(lease);
     if stopped {
         let _ = output
             .send(NativeChatEvent::Event(
@@ -202,10 +214,21 @@ async fn run(
             ))
             .await;
     } else if goal_ready {
+        // Capture the boundary before scheduling: no continuation write can be lost.
+        let storage = state.storage.clone();
+        let target = session.clone();
+        let cursor = blocking::run_db("native.goal.baseline", move || {
+            storage.latest_thread_change_seq_by_session(&target)
+        })
+        .await?;
         state
             .kernel
             .thread_runtime
-            .spawn_goal_continuation_after_cooldown(user_id, session);
+            .spawn_goal_continuation_after_cooldown(user_id.clone(), session.clone());
+        follow::watch(
+            &state, &user_id, &session, &root_id, cursor, output, cancel, true,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -236,34 +259,32 @@ async fn replay_queue(
     output: &mpsc::Sender<NativeChatEvent>,
     cancel: &CancellationToken,
 ) -> Result<()> {
-    let mut last_status = String::new();
-    loop {
-        if cancel.is_cancelled() {
-            cancel_chat(state, user, &info.session_id).await?;
-            return Ok(());
-        }
-        if output.is_closed() {
-            return Ok(());
-        }
-        let task = state.user_store.get_agent_task(&info.task_id)?;
-        let Some(task) = task else {
-            return Ok(());
-        };
-        let status = task.status.trim().to_string();
-        if status != last_status {
-            let event = match status.as_str() {
-                "pending" | "retry" => "queued",
-                "running" => "queue_start",
-                "success" => "queue_finish",
-                "failed" | "cancelled" | "dead" => "queue_fail",
-                _ => "queue_update",
-            };
-            output.send(NativeChatEvent::Event(json!({"event":event,"data":{"queue_id":info.task_id,"thread_id":task.thread_id,"session_id":task.session_id,"status":status}}))).await.ok();
-            last_status = status.clone();
-        }
-        if matches!(status.as_str(), "success" | "failed" | "cancelled" | "dead") {
-            return Ok(());
-        }
-        tokio::select! { _ = cancel.cancelled() => {}, _ = output.closed() => return Ok(()), _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {} }
-    }
+    let store = state.user_store.clone();
+    let task_id = info.task_id.clone();
+    let task = blocking::run_db("native.queue.identity", move || {
+        store.get_agent_task(&task_id)
+    })
+    .await?
+    .ok_or_else(|| anyhow!("queued task disappeared"))?;
+    let root = task
+        .request_payload
+        .pointer("/config_overrides/__thread_log_turn_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("queued turn identity missing"))?;
+    let cursor = task
+        .request_payload
+        .pointer("/config_overrides/__thread_log_resume_from_seq")
+        .and_then(Value::as_i64)
+        .unwrap_or(info.queue_after_change_seq);
+    follow::watch(
+        state,
+        user,
+        &info.session_id,
+        root,
+        cursor,
+        output,
+        cancel,
+        false,
+    )
+    .await
 }

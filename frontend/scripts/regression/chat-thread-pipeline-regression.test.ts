@@ -39,7 +39,7 @@ test('cancelled partial text survives reload using the persisted backend block e
   resetChatThreadRuntime(SESSION);
   ensureChatThreadRuntime(SESSION);
   const store = new FakeStore();
-  const turn = { turn_id: 'turn-cancel-block', user_round: 1, status: 'running' };
+  const turn = { turn_id: 'turn-cancel-block', user_round: 1, status: 'running', content: 'Fixture input' };
   const item = { item_id: `${turn.turn_id}:text-1`, turn_id: turn.turn_id,
     kind: 'assistant_message', status: 'running', revision: 1, visibility: 'user',
     payload: { model_round: 1, role: 'assistant', content: '', reasoning: '' } };
@@ -229,7 +229,7 @@ test('durable pipeline reports unavailable snapshot recovery and preserves idemp
 
   apply('thread_change', wireChange({
     change_type: 'turn_upsert', turn_id: 'turn-2', cursor: 1, revision: 1,
-    payload: { turn_id: 'turn-2', status: 'running', user_round: 1 }
+    payload: { turn_id: 'turn-2', status: 'running', user_round: 1, content: 'Fixture input' }
   }));
   apply('thread_change', wireChange({
     change_type: 'item_upsert', turn_id: 'turn-2', cursor: 2, revision: 1,
@@ -240,7 +240,7 @@ test('durable pipeline reports unavailable snapshot recovery and preserves idemp
     }
   }));
   const before = buildChatThreadMaterializedMessages(SESSION);
-  assert.equal(before?.length, 1);
+  assert.equal(before?.length, 2);
 
   // Duplicate frame (same cursor) must be a no-op.
   apply('thread_change', wireChange({
@@ -252,7 +252,7 @@ test('durable pipeline reports unavailable snapshot recovery and preserves idemp
     }
   }));
   const after = buildChatThreadMaterializedMessages(SESSION);
-  assert.equal(after?.length, 1);
+  assert.equal(after?.length, 2);
   assert.deepEqual(
     JSON.stringify(after?.map((message) => message.content)),
     JSON.stringify(before?.map((message) => message.content))
@@ -370,6 +370,9 @@ test('tail frames ahead of the replay cursor are dropped until their base seq la
   const apply = (type: string, payload: unknown) =>
     applyChatThreadServerEvent(store, SESSION, type, payload);
 
+  applyChatThreadSnapshot(getChatThreadState(SESSION)!, { cursor: 0,
+    turns: [{ turn_id: 'turn-3', user_round: 1, status: 'running', content: 'Fixture input' }], items: [], blocks: [] });
+
   apply('thread_change', wireChange({
     change_type: 'item_upsert', turn_id: 'turn-3', cursor: 1, revision: 1,
     item: {
@@ -383,7 +386,7 @@ test('tail frames ahead of the replay cursor are dropped until their base seq la
     item_id: 'turn-3:text-1', field: 'content', offset: 0, base_seq: 5, text: 'early'
   })), true);
   let messages = buildChatThreadMaterializedMessages(SESSION);
-  assert.equal((messages?.[0] as Record<string, unknown> | undefined)?.content ?? '', '');
+  assert.equal((messages?.find(row => row.role === 'assistant') as Record<string, unknown> | undefined)?.content ?? '', '');
 
   // The durable frames up to the tail's base seq land; the tail now applies.
   assert.equal(apply('thread_change', wireChange({
@@ -398,7 +401,7 @@ test('tail frames ahead of the replay cursor are dropped until their base seq la
     item_id: 'turn-3:text-1', field: 'content', offset: 5, base_seq: 3, text: '+tail'
   })), true);
   messages = buildChatThreadMaterializedMessages(SESSION);
-  assert.equal((messages?.[0] as Record<string, unknown> | undefined)?.content, 'fixed+tail');
+  assert.equal((messages?.find(row => row.role === 'assistant') as Record<string, unknown> | undefined)?.content, 'fixed+tail');
 });
 
 test('stream_overflow resumes once per cooldown window and shares it with gap overflow', () => {
@@ -455,7 +458,7 @@ test('snapshot_required rebuilds state from the injected atomic snapshot loader'
     assert.equal(sessionKey, SESSION);
     return {
       cursor: 20,
-      turns: [{ turn_id: 'turn-s', user_round: 1, status: 'running', client_message_id: 'cm-s' }],
+      turns: [{ turn_id: 'turn-s', user_round: 1, status: 'running', content: 'Fixture input', client_message_id: 'cm-s' }],
       items: [
         // Atomic snapshot rows carry the embedded payload copy.
         {
@@ -498,7 +501,7 @@ test('snapshot_required rebuilds state from the injected atomic snapshot loader'
     payload: { item_id: 'turn-s:text-1', field: 'content', block_index: 1, content_offset: 5, content: '续传' }
   })), true);
   const messages = buildChatThreadMaterializedMessages(SESSION);
-  assert.equal((messages?.[0] as Record<string, unknown> | undefined)?.content, '快照文本 续传');
+  assert.equal((messages?.find(row => row.role === 'assistant') as Record<string, unknown> | undefined)?.content, '快照文本 续传');
 
   registerChatThreadSnapshotLoader(null);
 });
@@ -585,7 +588,7 @@ test('revision rollback and same-revision replay never regress item state', () =
 
   apply('thread_change', wireChange({
     change_type: 'turn_upsert', turn_id: 'turn-r', cursor: 1, revision: 1,
-    payload: { turn_id: 'turn-r', status: 'running', user_round: 1 }
+    payload: { turn_id: 'turn-r', status: 'running', user_round: 1, content: 'Fixture input' }
   }));
   apply('thread_change', wireChange({
     change_type: 'item_upsert', turn_id: 'turn-r', cursor: 2, revision: 1,
@@ -631,7 +634,7 @@ test('revision rollback and same-revision replay never regress item state', () =
     }
   }));
   const messages = buildChatThreadMaterializedMessages(SESSION);
-  assert.equal((messages?.[0] as Record<string, unknown> | undefined)?.content, '二');
+  assert.equal((messages?.find(row => row.role === 'assistant') as Record<string, unknown> | undefined)?.content, '二');
 });
 
 test('tail frames validate UTF-16 offsets: zero, continuous, hole, covered and -1', () => {
@@ -716,7 +719,7 @@ test('interleaved model-round tails remain isolated inside one turn assistant bu
 
   apply('thread_change', wireChange({
     change_type: 'turn_upsert', turn_id: 'turn-i', cursor: 1, revision: 1,
-    payload: { turn_id: 'turn-i', status: 'running', user_round: 1 }
+    payload: { turn_id: 'turn-i', status: 'running', user_round: 1, content: 'Fixture input' }
   }));
   apply('thread_change', wireChange({
     change_type: 'item_upsert', turn_id: 'turn-i', cursor: 2, revision: 1,
@@ -744,11 +747,11 @@ test('interleaved model-round tails remain isolated inside one turn assistant bu
 
   const messages = buildChatThreadMaterializedMessages(SESSION);
   assert.deepEqual(
-    messages?.map((message) => message.content),
-    ['你好，我是\n\n世界！']
+    messages?.filter(row => row.role === 'assistant').map((message) => message.content),
+    ['世界！']
   );
   assert.equal(
-    (messages?.[0] as Record<string, unknown> | undefined)?.reasoning,
+    (messages?.find(row => row.role === 'assistant') as Record<string, unknown> | undefined)?.reasoning,
     '思考'
   );
 });
@@ -793,7 +796,7 @@ test('each turn materializes one assistant bubble and ignores random history sna
   assert.equal(messages?.length, 2);
   const assistant = messages?.[1] as Record<string, unknown>;
   assert.equal(assistant.__runtime_message_id, 'tturn:turn-one:assistant');
-  assert.equal(assistant.content, '第一轮\n\n最终答复');
+  assert.equal(assistant.content, '最终答复');
   assert.equal(assistant.runtime_status, 'final');
 });
 
@@ -817,7 +820,7 @@ test('a stale atomic snapshot is refused and keeps the durable protocol contract
 
   apply('thread_change', wireChange({
     change_type: 'turn_upsert', turn_id: 'turn-live', cursor: 1, revision: 1,
-    payload: { turn_id: 'turn-live', status: 'running', user_round: 1 }
+    payload: { turn_id: 'turn-live', status: 'running', user_round: 1, content: 'Fixture input' }
   }));
   apply('thread_change', wireChange({
     change_type: 'item_upsert', turn_id: 'turn-live', cursor: 2, revision: 1,
@@ -841,7 +844,7 @@ test('a stale atomic snapshot is refused and keeps the durable protocol contract
   assert.equal(isChatThreadV2Session(SESSION), true);
   assert.equal(getChatThreadState(SESSION)?.lastSeq, 2);
   // A stale snapshot leaves the durable projection intact.
-  assert.equal(buildChatThreadMaterializedMessages(SESSION)?.length, 1);
+  assert.equal(buildChatThreadMaterializedMessages(SESSION)?.length, 2);
 
   registerChatThreadSnapshotLoader(null);
 });
@@ -939,7 +942,7 @@ test('long tail streaming reuses materialized rows without rebuilding history', 
   for (let round = 1; round <= 3; round += 1) {
     apply('thread_change', wireChange({
       change_type: 'turn_upsert', turn_id: `turn-p${round}`, cursor: round * 2 - 1, revision: 1,
-      payload: { turn_id: `turn-p${round}`, status: 'completed', user_round: round }
+      payload: { turn_id: `turn-p${round}`, status: 'completed', user_round: round, content: 'Fixture input' }
     }));
     apply('thread_change', wireChange({
       change_type: 'item_upsert', turn_id: `turn-p${round}`, cursor: round * 2, revision: 1,
@@ -952,7 +955,7 @@ test('long tail streaming reuses materialized rows without rebuilding history', 
   }
   apply('thread_change', wireChange({
     change_type: 'turn_upsert', turn_id: 'turn-live', cursor: 7, revision: 1,
-    payload: { turn_id: 'turn-live', status: 'running', user_round: 4 }
+    payload: { turn_id: 'turn-live', status: 'running', user_round: 4, content: 'Fixture input' }
   }));
   apply('thread_change', wireChange({
     change_type: 'item_upsert', turn_id: 'turn-live', cursor: 8, revision: 1,
@@ -971,7 +974,7 @@ test('long tail streaming reuses materialized rows without rebuilding history', 
     }));
     offset += 2;
   }
-  const first = buildChatThreadMaterializedMessages(SESSION);
+  const first = buildChatThreadMaterializedMessages(SESSION)?.filter(row => row.role === 'assistant');
   assert.equal(first?.length, 4);
 
   // Another 500 tails: history rows and the active row keep their object
@@ -982,7 +985,7 @@ test('long tail streaming reuses materialized rows without rebuilding history', 
     }));
     offset += 1;
   }
-  const second = buildChatThreadMaterializedMessages(SESSION);
+  const second = buildChatThreadMaterializedMessages(SESSION)?.filter(row => row.role === 'assistant');
   assert.equal(second?.length, 4);
   assert.equal(second?.[0], first?.[0], 'history row is reused');
   assert.equal(second?.[1], first?.[1], 'history row is reused');

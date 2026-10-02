@@ -173,6 +173,11 @@ export const resolveAssistantFailureNotice = (
   const status = normalizeStatus(message.status);
   if (status === 'final' || SUCCESS_STATUSES.has(status) || status === 'cancelled') return null;
   if (isAssistantMessageRunning(message) || hasActiveSubagentItems(message.subagents)) return null;
+  // Admission failures can terminate before any model/tool item exists.
+  // Their reason is attached by durable turn identity, never by latest bubble.
+  if (status === 'failed' && typeof message.failureDetail === 'string' && message.failureDetail.trim()) {
+    return resolveFailureDetail({ detail: message.failureDetail }, t);
+  }
   const terminal = resolveLatestTerminalWorkflowItem(message);
   if (!terminal) return null;
   if (SUCCESS_STATUSES.has(terminal.status)) return null;

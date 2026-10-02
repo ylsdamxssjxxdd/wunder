@@ -100,11 +100,7 @@ impl Orchestrator {
         }
         let _ = self.workspace.flush_writes_async().await;
         if let Some(thread_turn_id) = active_turn_round.thread_turn_id {
-            let status = if err.code() == "CANCELLED" {
-                "cancelled"
-            } else {
-                "failed"
-            };
+            let status = turn_terminal_status_for_error(err);
             let payload = json!({
                 "session_id": session_id,
                 "turn_id": thread_turn_id.to_string(),

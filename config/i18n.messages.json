@@ -2120,8 +2120,8 @@
     "zh-CN": "推荐快捷写法。可填自然语言或 cron 文本，例如“every 5 minutes”或“0 9 * * *”。"
   },
   "tool.spec.schedule_task.args.job.session": {
-    "en-US": "main sends the trigger into the job's bound task thread at run time. isolated runs in a fresh thread, then sends the result back to the bound task thread.",
-    "zh-CN": "main 表示触发时把消息送入该定时任务绑定的线程。isolated 表示先在新线程执行，再把结果回送到绑定的任务线程。"
+    "en-US": "main sends the trigger into the job's bound task thread at run time. isolated runs in a fresh child thread and publishes a completed result turn to the bound thread without another model call. Switching threads does not change the binding.",
+    "zh-CN": "main 表示触发时把消息送入该定时任务绑定的线程。isolated 表示在新子线程执行，完成后发布独立结果轮次，不再调用模型。切换线程不会改变任务绑定。"
   },
   "tool.spec.schedule_task.args.job.payload": {
     "en-US": "Payload (message).",
@@ -2148,8 +2148,8 @@
     "zh-CN": "去重key。"
   },
   "tool.spec.schedule_task.description": {
-    "en-US": "Create and manage scheduled jobs. Prefer flat fields like action, job_id, schedule_text, message, session, and enabled. Use session=main to inject the trigger into the job's bound task thread at fire time; use session=isolated to run in a fresh thread and send the result back. Recurring jobs keep at most one active run and skip missed ticks instead of piling up every overdue interval.",
-    "zh-CN": "创建和管理定时任务。优先使用扁平字段 action、job_id、schedule_text、message、session、enabled。session=main 会在触发时把消息注入该定时任务绑定的线程；session=isolated 会先在新线程执行，再把结果回送到绑定的任务线程。循环任务同一时刻最多只有一个活跃执行，不会把所有逾期 tick 全部堆积起来。"
+    "en-US": "Create and manage scheduled jobs. Prefer flat fields like action, job_id, schedule_text, message, session, and enabled. Use session=main to inject the trigger into the job's bound task thread at fire time; use session=isolated to run in a fresh child thread and publish a completed result turn. run is asynchronous: queued means accepted, not completed; finish the current reply instead of polling. schedule.at must be ISO 8601. Recurring jobs keep at most one active run and skip missed ticks instead of piling up every overdue interval.",
+    "zh-CN": "创建和管理定时任务。优先使用扁平字段 action、job_id、schedule_text、message、session、enabled。session=main 会在触发时把消息注入该定时任务绑定的线程；session=isolated 在新子线程执行，完成后发布独立结果轮次。run 是异步触发，queued 仅代表受理；应结束当前回复，不要轮询等完成。schedule.at 必须是 ISO 8601。循环任务同一时刻最多只有一个活跃执行，不会把所有逾期 tick 全部堆积起来。"
   },
   "tool.spec.user_world.args.action": {
     "en-US": "Action: list_users/send_message.",

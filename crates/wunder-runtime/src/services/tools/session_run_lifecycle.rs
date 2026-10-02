@@ -517,6 +517,7 @@ pub(crate) async fn spawn_session_run(
             let _ = subagents::emit_child_runtime_update(
                 storage.clone(),
                 monitor.as_ref().map(Arc::clone),
+                &orchestrator,
                 &user_id,
                 &config.parent_session_id,
                 &session_id,
@@ -530,9 +531,20 @@ pub(crate) async fn spawn_session_run(
         let child_orchestrator = orchestrator.clone();
         let child_token = _child_run.as_ref().map(|guard| guard.token.clone());
         let execution_guard = _child_run.clone();
+        let progress = announce_for_start
+            .as_ref()
+            .filter(|entry| entry.emit_parent_events)
+            .map(|_| {
+                subagents::runtime_progress::RuntimeProgress::new(
+                    storage.clone(),
+                    monitor.clone(),
+                    running.clone(),
+                )
+            });
         let mut run_handle = session_run_runtime().spawn(async move {
             let _execution_guard = execution_guard;
-            session_run_stream::run_request(child_orchestrator, run_request, child_token).await
+            session_run_stream::run_request(child_orchestrator, run_request, child_token, progress)
+                .await
         });
         let mut timeout_triggered = false;
         let run_result = if let Some(timeout_s) = run_timeout_s.filter(|value| *value > 0.0) {
@@ -600,6 +612,12 @@ pub(crate) async fn spawn_session_run(
             result: answer.clone(),
             error: error.clone(),
             updated_time: finished,
+            metadata: storage
+                .get_session_run(&run_id)
+                .ok()
+                .flatten()
+                .and_then(|record| record.metadata)
+                .or_else(|| running.metadata.clone()),
             ..running
         };
         {

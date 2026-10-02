@@ -20,7 +20,7 @@ test('work thread list excludes archived and subagent sessions', () => {
       { id: 'archived', agent_id: 'agent', status: 'archived', created_at: 3 },
       { id: 'child', agent_id: 'agent', parent_session_id: 'root', spawned_by: 'model', created_at: 4 }
     ], 'agent', 'New'),
-    [{ id: 'active', title: 'New', locked: false, runtimeStatus: 'active', createdAt: 2, consumedTokens: 0, toolCalls: 0, quotaUsed: null }]
+    [{ id: 'active', title: 'New', locked: false, runtimeStatus: 'active', createdAt: 2, consumedTokens: 0, toolCalls: 0, modelRequestCount: null, quotaUsed: null }]
   );
 });
 
@@ -59,17 +59,23 @@ test('newer threads are promoted above a manually ordered older thread', () => {
   );
 });
 
-test('thread quota uses server totals independently of tokens, message history and replay', () => {
+test('thread model request counts use server totals independently of tokens, credits and replay', () => {
   const sessions = [{ id: 'thread', consumed_tokens: 9000, quota_used: 0 }];
-  assert.equal(applySessionQuotaUsage(sessions, 'thread', { session_quota_used: 3, consumed: 1 }), true);
+  assert.equal(applySessionQuotaUsage(sessions, 'thread', {
+    session_request_count: 3, session_quota_used: 999, consumed: 1, account_credits_consumed: 42
+  }), true);
+  assert.equal(applySessionQuotaUsage(sessions, 'thread', { session_request_count: 3 }), false);
+  // Historical events carry the same absolute model count in session_quota_used.
   assert.equal(applySessionQuotaUsage(sessions, 'thread', { session_quota_used: 3, consumed: 1 }), false);
   assert.equal(applySessionQuotaUsage(sessions, 'thread', { session_quota_used: 2 }), false);
   assert.equal(applySessionQuotaUsage(sessions, 'thread', { used: 999, consumed: 1 }), false);
-  assert.deepEqual(sessions, [{ id: 'thread', consumed_tokens: 9000, quota_used: 3 }]);
+  assert.deepEqual(sessions, [{ id: 'thread', consumed_tokens: 9000, model_request_count: 3, quota_used: 3 }]);
   assert.deepEqual(mergeSessionRuntimeFields(sessions[0], { quota_used: 1 }), sessions[0]);
   assert.deepEqual(buildTaskList([
-    { id: 'a', quota_used: 0 }, { id: 'b', quota_used: 1200 }, { id: 'c', consumed_tokens: 1234 }
-  ], '', '').map(item => item.quotaUsed), [0, 1200, null]);
+    { id: 'a', model_request_count: 0, quota_used: 5 },
+    { id: 'b', quota_used: 1200 },
+    { id: 'c', consumed_tokens: 1234, account_credits_consumed: 42 }
+  ], '', '').map(item => [item.modelRequestCount, item.quotaUsed]), [[0, 0], [1200, 1200], [null, null]]);
 });
 
 test('thread icons honor live settlement, queue priority and terminal state over stale loading', () => {

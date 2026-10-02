@@ -124,3 +124,34 @@ test('production send callback binds its pending pair and settles from server tu
     cleanup();
   }
 });
+
+
+test('scheduled rejection preserves Stop for active work and terminal bubbles retain their own output', async () => {
+  const { chat, apply, cleanup } = await setup();
+  try {
+    apply(1, 'turn_upsert', { turn_id: 'active-turn', user_round: 1, status: 'running', content: 'Fixture task' });
+    apply(2, 'item_upsert', { turn_id: 'active-turn', item_id: 'active-turn:text-1', kind: 'assistant_message',
+      role: 'assistant', model_round: 1, revision: 1, status: 'running', content: 'Retained partial reply' });
+    apply(3, 'turn_upsert', { turn_id: 'scheduled-turn', user_round: 2, status: 'queued', content: 'Fixture schedule' });
+    apply(4, 'turn_upsert', { turn_id: 'scheduled-turn', status: 'rejected' });
+    apply(5, 'item_upsert', { turn_id: 'scheduled-turn', item_id: 'scheduled-turn:terminal', kind: 'terminal',
+      revision: 1, status: 'rejected', error: { code: 'USER_BUSY', message: 'Fixture busy' } });
+    assert.equal(chat.isSessionBusy(key), true);
+    let rows = buildChatThreadMaterializedMessages(key)!;
+    assert.equal(rows[1].content, 'Retained partial reply');
+    assert.equal(rows[1].status, 'streaming');
+    assert.equal(rows[3].status, 'failed');
+    apply(6, 'turn_upsert', { turn_id: 'active-turn', status: 'cancelled' });
+    assert.equal(chat.isSessionBusy(key), false);
+    rows = buildChatThreadMaterializedMessages(key)!;
+    assert.equal(rows[1].content, 'Retained partial reply');
+    assert.equal(rows[1].status, 'cancelled');
+    assert.equal(rows[3].status, 'failed');
+    apply(7, 'turn_upsert', { turn_id: 'result-turn', user_round: 3, status: 'completed', content: 'Fixture result input' });
+    apply(8, 'item_upsert', { turn_id: 'result-turn', item_id: 'result-turn:text-0', kind: 'assistant_message',
+      role: 'assistant', model_round: 0, revision: 1, status: 'completed', content: 'Fixture isolated result' });
+    assert.equal(chat.isSessionBusy(key), false);
+    assert.deepEqual(buildChatThreadMaterializedMessages(key)!.filter(row => row.role === 'assistant')
+      .map(row => row.status), ['cancelled', 'failed', 'final']);
+  } finally { cleanup(); }
+});

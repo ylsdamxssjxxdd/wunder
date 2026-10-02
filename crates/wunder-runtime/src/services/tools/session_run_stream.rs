@@ -13,6 +13,7 @@ pub(super) fn run_request(
     orchestrator: Arc<Orchestrator>,
     request: WunderRequest,
     cancellation: Option<tokio_util::sync::CancellationToken>,
+    mut progress: Option<crate::services::subagents::runtime_progress::RuntimeProgress>,
 ) -> futures::future::BoxFuture<'static, Result<SessionRunStreamOutcome>> {
     // Box the recursive tool -> child -> orchestrator future at this boundary.
     Box::pin(async move {
@@ -22,7 +23,7 @@ pub(super) fn run_request(
         {
             return Err(anyhow!("interrupted"));
         }
-        let mut stream = Box::pin(orchestrator.stream(request).await?);
+        let mut stream = Box::pin(orchestrator.clone().stream(request).await?);
         let mut outcome = None;
         let mut failure = None;
         while let Some(event) = stream.next().await {
@@ -36,6 +37,11 @@ pub(super) fn run_request(
                 .cloned()
                 .unwrap_or_else(|| event.data.clone());
             let event_name = event.event.trim().to_ascii_lowercase();
+            if let Some(progress) = progress.as_mut() {
+                if let Err(error) = progress.observe(&orchestrator, &event_name, &payload).await {
+                    tracing::warn!("publish child progress failed: {error}");
+                }
+            }
             if event_name == "error" {
                 failure = Some(extract_error_text(&payload, &event.data));
                 continue;
@@ -57,6 +63,11 @@ pub(super) fn run_request(
             outcome = Some(SessionRunStreamOutcome { answer });
         }
         // Drain settlement before releasing ownership of the reusable child session.
+        if let Some(progress) = progress.as_mut() {
+            if let Err(error) = progress.flush(&orchestrator).await {
+                tracing::warn!("flush child progress failed: {error}");
+            }
+        }
         if let Some(failure) = failure {
             return Err(anyhow!(failure));
         }

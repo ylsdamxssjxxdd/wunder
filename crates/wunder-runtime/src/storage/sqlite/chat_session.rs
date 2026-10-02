@@ -458,15 +458,18 @@ impl SqliteChatSessionStorage for SqliteStorage {
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
             return Ok(0);
         }
-        let conn = self.open()?;
-        let _ = conn.execute(
+        let mut conn = self.open()?;
+        let tx = conn.transaction()?;
+        tx.execute(
             "DELETE FROM session_goals WHERE user_id = ? AND session_id = ?",
             params![cleaned_user, cleaned_session],
-        );
-        let affected = conn.execute(
+        )?;
+        let affected = tx.execute(
             "DELETE FROM chat_sessions WHERE user_id = ? AND session_id = ?",
             params![cleaned_user, cleaned_session],
         )?;
+        tx.execute("DELETE FROM channel_sessions WHERE user_id = ? AND session_id = ?", params![cleaned_user, cleaned_session])?;
+        tx.commit()?;
         Ok(affected as i64)
     }
 }
@@ -536,6 +539,27 @@ mod child_directory_tests {
             spawn_label: parent.map(|_| "subagent".to_string()),
             spawned_by: None,
         }
+    }
+
+    #[test]
+    fn deleting_channel_thread_removes_only_its_owned_route() {
+        let storage = build_storage();
+        let user = "fixture-owner";
+        for id in ["fixture-deleted", "fixture-retained"] {
+            storage.upsert_chat_session(&session(user, id, None, 1.0)).unwrap();
+            storage.upsert_channel_session(&ChannelSessionRecord {
+                channel: "fixture-channel".into(), account_id: "fixture-account".into(),
+                peer_kind: "direct".into(), peer_id: id.into(), thread_id: None,
+                session_id: id.into(), agent_id: None, user_id: user.into(),
+                tts_enabled: None, tts_voice: None, metadata: None,
+                last_message_at: 1.0, created_at: 1.0, updated_at: 1.0,
+            }).unwrap();
+        }
+        storage.delete_chat_session("fixture-other", "fixture-deleted").unwrap();
+        assert!(storage.get_channel_session("fixture-channel", "fixture-account", "direct", "fixture-deleted", None).unwrap().is_some());
+        storage.delete_chat_session(user, "fixture-deleted").unwrap();
+        assert!(storage.get_channel_session("fixture-channel", "fixture-account", "direct", "fixture-deleted", None).unwrap().is_none());
+        assert!(storage.get_channel_session("fixture-channel", "fixture-account", "direct", "fixture-retained", None).unwrap().is_some());
     }
 
     /// Directory load gate: a 24-thread catalog pages with correct totals and

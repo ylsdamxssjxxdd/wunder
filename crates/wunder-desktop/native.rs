@@ -13,6 +13,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 #[path = "native_stream.rs"]
 mod stream;
+#[path = "native_chat_turns.rs"]
+mod chat_turns;
+pub use chat_turns::NativeChatTurn;
 pub use stream::{NativeChatEvent, NativeStream};
 #[path = "native_catalog.rs"]
 mod catalog;
@@ -196,6 +199,11 @@ impl NativeDesktop {
     }
 
     pub fn get_session(&self, session_id: &str) -> Result<(NativeSession, Vec<NativeMessage>)> {
+        let (session, turns) = self.get_session_turns(session_id)?;
+        Ok((session, turns.into_iter().flat_map(|turn| [turn.user, turn.assistant]).collect()))
+    }
+
+    pub fn get_session_turns(&self, session_id: &str) -> Result<(NativeSession, Vec<NativeChatTurn>)> {
         let cleaned = session_id.trim();
         let record = self
             .desktop
@@ -203,93 +211,10 @@ impl NativeDesktop {
             .user_store
             .get_chat_session(&self.desktop.user_id, cleaned)?
             .ok_or_else(|| anyhow!("chat session not found"))?;
-        let history =
-            self.desktop
-                .state
-                .workspace
-                .load_history(&self.desktop.user_id, cleaned, 100)?;
-        let mut messages: Vec<_> = history.into_iter().filter_map(message_from_value).collect();
-        // Load bounded durable tool rows for the visible turns, independently of
-        // the model-context history (which intentionally excludes tool_call rows).
-        let mut seen = std::collections::HashSet::new();
-        for message in messages.iter_mut().rev().filter(|message| !message.mine) {
-            if message.turn_id.is_empty() || !seen.insert(message.turn_id.clone()) { continue; }
-            if seen.len() > 32 { break; }
-            if let Some(turn) = self.desktop.state.storage.get_thread_turn(
-                &self.desktop.user_id, cleaned, &message.turn_id, 0, 100, false
-            )? {
-                let mut display = Vec::new();
-                if let Some(items) = turn.get("items").and_then(Value::as_array) {
-                    for item in items.iter().filter(|item| item["kind"] == "tool_call").take(24) {
-                        let payload = item.get("payload").unwrap_or(item);
-                        let tool = payload.get("tool").or_else(|| payload.get("tool_name"))
-                            .and_then(Value::as_str).unwrap_or("工具");
-                        let pending = matches!(item["status"].as_str(), Some("running" | "pending"));
-                        display.push(wunder_server::tool_result_display::tool_result_display(tool, payload, pending));
-                    }
-                    if turn.get("has_more").and_then(Value::as_bool) == Some(true) {
-                        display.push("… 更多步骤见线程日志".into());
-                    }
-                }
-                message.workflow_detail = display.join("\n\n");
-            }
-        }
-        Ok((self.session_with_stats(record), messages))
+        let turns = self.load_chat_turns(cleaned)?;
+        Ok((self.session_with_stats(record), turns))
     }
 
-    /// Recover durable changes from change_seq=0 to the latest cursor.
-    ///
-    /// Bounded replay: reads durable frames in pages of 200, up to 8 pages.
-    /// Snapshot guard: if the durable window was trimmed, returns empty vec
-    /// so the frontend can reload an atomic snapshot. I6 compliance: bounded
-    /// loop, no unbounded reads.
-    pub fn recover_session_durable_changes(&self, session_id: &str) -> Result<Vec<Value>> {
-        let cleaned = session_id.trim();
-        let workspace = self.desktop.state.workspace.clone();
-        let target = cleaned.to_string();
-        let mut cursor: i64 = 0;
-        let mut frames: Vec<Value> = Vec::new();
-        const MAX_PAGES: i64 = 8;
-        const PAGE_SIZE: i64 = 200;
-        for _ in 0..MAX_PAGES {
-            let workspace = workspace.clone();
-            let target = target.clone();
-            let page = self.runtime.block_on(wunder_server::blocking::run_fs(
-                "desktop.recover_changes",
-                move || workspace.try_load_thread_changes(&target, cursor, PAGE_SIZE),
-            ));
-            let records = match page {
-                Ok(records) => records,
-                Err(_) => break,
-            };
-            if records.is_empty() {
-                break;
-            }
-            if records.iter().any(|record| {
-                record.get("event").and_then(Value::as_str) == Some("thread_snapshot_required")
-            }) {
-                return Ok(Vec::new());
-            }
-            let mut progressed = false;
-            for record in &records {
-                let frame_cursor = record
-                    .get("data")
-                    .and_then(|data| data.get("cursor"))
-                    .and_then(Value::as_i64)
-                    .unwrap_or(cursor);
-                if frame_cursor > cursor {
-                    cursor = frame_cursor;
-                    progressed = true;
-                }
-            }
-            let page_len = records.len();
-            frames.extend(records);
-            if page_len < PAGE_SIZE as usize || !progressed {
-                break;
-            }
-        }
-        Ok(frames)
-    }
 
     pub fn create_session_for_agent(&self, agent_id: Option<&str>) -> Result<NativeSession> {
         let agent_id = agent_id

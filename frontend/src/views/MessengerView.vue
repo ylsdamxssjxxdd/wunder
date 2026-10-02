@@ -1412,7 +1412,6 @@ const agentQuickCreateVisible = controller.agentQuickCreateVisible;
 const agentRenderableMessages = controller.agentRenderableMessages;
 const agentRenderableContextMessages = controller.agentRenderableContextMessages;
 const agentVirtualBottomSpacer = controller.agentVirtualBottomSpacer;
-const agentVirtualGroups = controller.agentVirtualGroups;
 const agentVirtualTopSpacer = controller.agentVirtualTopSpacer;
 const AgentRuntimeRecordsPanel = controller.AgentRuntimeRecordsPanel;
 const agentRuntimeStateHydrated = controller.agentRuntimeStateHydrated;

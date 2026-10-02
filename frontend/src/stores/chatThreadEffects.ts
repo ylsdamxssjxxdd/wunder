@@ -5,7 +5,7 @@ import { ensureRuntime, applyCanonicalStreamSideEffects, getSessionMessages } fr
 import { settleTerminalAssistantArtifacts } from './chatTerminalArtifacts';
 import { emitAgentRuntimeRefresh, type AgentRuntimeCompletion } from '@/utils/workspaceEvents';
 
-const terminal = (status: unknown) => ['completed', 'failed', 'cancelled', 'interrupted'].includes(String(status));
+const terminal = (status: unknown) => ['completed', 'failed', 'cancelled', 'interrupted', 'rejected', 'stopped'].includes(String(status));
 
 /** Bridge committed state to shell controls. Never feed timeline data into another reducer. */
 export const syncChatThreadShell = (store, key: string): string | null => {

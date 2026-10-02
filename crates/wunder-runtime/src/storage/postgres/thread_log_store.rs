@@ -273,8 +273,14 @@ impl PostgresThreadLogStorage for PostgresStorage {
                 &[&session_id],
             )?
             .get(0);
-        let turns = tx.query("SELECT turn_id,user_turn_index,status,summary,payload,updated_time,root_turn_id,trigger_kind FROM thread_turns WHERE user_id=$1 AND session_id=$2 AND trigger_kind='user' ORDER BY user_turn_index ASC", &[&user_id, &session_id])?
-            .into_iter().map(turn_row).collect::<Vec<_>>();
+        let turns = tx.query("SELECT turn_id,user_turn_index,status,summary,payload,updated_time,root_turn_id,trigger_kind FROM thread_turns WHERE user_id=$1 AND session_id=$2 ORDER BY user_turn_index ASC, created_time ASC, turn_id ASC", &[&user_id, &session_id])?
+            .into_iter().map(|row| {
+                let mut turn = turn_row(row);
+                if turn["trigger_kind"] == "continuation" {
+                    turn["summary"] = json!("");
+                }
+                turn
+            }).collect::<Vec<_>>();
         let items = tx.query("SELECT item_id,item_index,kind,status,revision,payload,created_time,updated_time,turn_id,visibility,root_turn_id,created_seq FROM thread_items WHERE user_id=$1 AND session_id=$2 AND visibility='user' ORDER BY created_seq ASC, item_index ASC", &[&user_id, &session_id])?
             .into_iter()
             .map(|row| {
@@ -475,6 +481,8 @@ impl PostgresThreadLogStorage for PostgresStorage {
             .get(0);
         let change_payload = serde_json::to_string(&serde_json::json!({
             "turn_id": turn_id,
+            "root_turn_id": root_id,
+            "trigger_kind": trigger,
             "status": "queued",
             "user_round": round,
             "client_message_id": client_id,
@@ -573,8 +581,13 @@ impl PostgresThreadLogStorage for PostgresStorage {
             )?
             .get(0);
         let revision = seq;
-        let change_payload =
-            serde_json::to_string(&serde_json::json!({"turn_id": turn_id, "status": status}))?;
+        let identity = tx.query_one(
+            "SELECT root_turn_id,trigger_kind,user_turn_index FROM thread_turns WHERE session_id=$1 AND turn_id=$2",
+            &[&session_id, &turn_id],
+        )?;
+        let change_payload = serde_json::to_string(&serde_json::json!({"turn_id": turn_id, "status": status,
+            "root_turn_id": identity.get::<_, String>(0), "trigger_kind": identity.get::<_, String>(1),
+            "user_round": identity.get::<_, i64>(2)}))?;
         tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", &[&session_id,&seq,&user_id,&change_type,&turn_id,&change_item,&revision,&change_payload,&now])?;
         if input_changed > 0 {
             seq += 1;

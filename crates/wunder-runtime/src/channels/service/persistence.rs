@@ -12,7 +12,6 @@ use crate::storage::{
     UpdateChannelOutboxStatusParams, UserAgentRecord,
 };
 use anyhow::{anyhow, Result};
-use chrono::{Local, Utc};
 use serde_json::{json, Value};
 use tracing::warn;
 use uuid::Uuid;
@@ -145,120 +144,57 @@ impl ChannelHub {
         .await
     }
 
-    pub(super) async fn append_channel_chat(
+    /// Admit once before slow media/model work; every response keeps this identity.
+    pub(super) async fn accept_channel_turn(
         &self,
-        user_id: &str,
-        session_id: &str,
-        role: &str,
+        info: &mut super::ChannelSessionInfo,
         content: &str,
-    ) {
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        let cleaned_role = role.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() || cleaned_role.is_empty() {
-            return;
-        }
-        let stream_event_id = self
-            .append_channel_stream_event_message(
-                cleaned_user,
-                cleaned_session,
-                cleaned_role,
-                content,
-            )
-            .await;
-        self.append_channel_chat_history(
-            cleaned_user,
-            cleaned_session,
-            cleaned_role,
-            content,
-            stream_event_id,
-        )
-        .await;
-    }
-
-    pub(super) async fn append_channel_chat_history(
-        &self,
-        user_id: &str,
-        session_id: &str,
-        role: &str,
-        content: &str,
-        stream_event_id: Option<i64>,
-    ) {
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        let cleaned_role = role.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() || cleaned_role.is_empty() {
-            return;
-        }
-        let mut payload = json!({
-            "role": cleaned_role,
-            "content": content,
-            "session_id": cleaned_session,
-            "timestamp": Local::now().to_rfc3339(),
-        });
-        if let Some(event_id) = stream_event_id {
-            if let Some(payload_obj) = payload.as_object_mut() {
-                payload_obj.insert("stream_event_id".to_string(), json!(event_id));
-            }
-        }
-        let storage = self.storage.clone();
-        let user_id = cleaned_user.to_string();
-        let outcome = run_channel_db(
-            "channels.persistence.append_channel_chat_history",
-            move || storage.append_chat(&user_id, &payload),
-        )
-        .await;
-        if let Err(err) = outcome {
-            warn!(
-                "append channel chat history failed: user_id={}, session_id={}, role={}, error={err}",
-                cleaned_user, cleaned_session, cleaned_role
+    ) -> Result<()> {
+        if info.accepted_turn.is_none() {
+            info.accepted_turn = Some(
+                self.orchestrator
+                    .committer
+                    .accept_turn(
+                        &info.user_id,
+                        &info.session_id,
+                        &json!({"role": "user", "content": content}),
+                    )
+                    .await?,
             );
         }
+        Ok(())
     }
 
-    pub(super) async fn append_channel_stream_event_message(
+    pub(super) async fn finish_channel_turn(
         &self,
-        user_id: &str,
-        session_id: &str,
-        role: &str,
+        info: &super::ChannelSessionInfo,
         content: &str,
-    ) -> Option<i64> {
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        let cleaned_role = role.trim().to_ascii_lowercase();
-        let cleaned_content = content.trim();
-        if cleaned_user.is_empty()
-            || cleaned_session.is_empty()
-            || cleaned_content.is_empty()
-            || cleaned_role.is_empty()
-        {
-            return None;
-        }
-        let payload = json!({
-            "event": "channel_message",
-            "data": {
-                "role": cleaned_role,
-                "content": cleaned_content,
-                "source": "channel_inbound",
-            },
-            "timestamp": Utc::now().to_rfc3339(),
-        });
-        let stream_events = self.stream_events.clone();
-        let user_id = cleaned_user.to_string();
-        let session_id = cleaned_session.to_string();
-        let outcome = stream_events
-            .append_event(&session_id, &user_id, payload)
-            .await;
-        match outcome {
-            Ok(event_id) => Some(event_id),
-            Err(err) => {
-                warn!(
-                    "append channel stream event failed: user_id={}, session_id={}, role={}, error={err}",
-                    cleaned_user, cleaned_session, cleaned_role
-                );
-                None
-            }
-        }
+        status: &str,
+    ) -> Result<()> {
+        let accepted = info
+            .accepted_turn
+            .as_ref()
+            .ok_or_else(|| anyhow!("channel turn not accepted"))?;
+        let turn = accepted["turn_id"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing channel turn identity"))?;
+        let item = channel_reply_item(info, turn, content, status);
+        self.orchestrator
+            .committer
+            .commit_item(&info.user_id, &item)
+            .await?;
+        self.orchestrator
+            .committer
+            .update_turn(
+                &info.user_id,
+                &info.session_id,
+                turn,
+                status,
+                "",
+                &json!({"source": "channel"}),
+            )
+            .await?;
+        Ok(())
     }
 
     pub(super) async fn touch_chat_session_activity(&self, user_id: &str, session_id: &str) {
@@ -309,40 +245,6 @@ impl ChannelHub {
             }
             if let Some(text) = extract_chat_content(&item) {
                 return Some(text);
-            }
-        }
-        None
-    }
-
-    pub(super) async fn load_latest_assistant_message(
-        &self,
-        user_id: &str,
-        session_id: &str,
-    ) -> Option<String> {
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return None;
-        }
-        let storage = self.storage.clone();
-        let user_id = cleaned_user.to_string();
-        let session_id = cleaned_session.to_string();
-        let history = run_channel_db(
-            "channels.persistence.load_latest_assistant_message",
-            move || storage.load_thread_context_items(&user_id, &session_id, 20, false),
-        )
-        .await
-        .ok()?;
-        for item in history.iter().rev() {
-            let role = item.get("role").and_then(Value::as_str).unwrap_or("");
-            if !role.eq_ignore_ascii_case("assistant") {
-                continue;
-            }
-            if let Some(text) = extract_chat_content(item) {
-                let cleaned = text.trim();
-                if !cleaned.is_empty() {
-                    return Some(cleaned.to_string());
-                }
             }
         }
         None
@@ -562,5 +464,88 @@ impl ChannelHub {
             user_store.get_user_agent_by_id(&agent_id)
         })
         .await
+    }
+}
+
+// Direct channel replies have the same stable output identity as model replies.
+fn channel_reply_item(
+    info: &super::ChannelSessionInfo,
+    turn: &str,
+    content: &str,
+    status: &str,
+) -> Value {
+    json!({"session_id": info.session_id, "turn_id": turn,
+        "item_id": format!("{turn}:text-0"), "model_round": 0,
+        "kind": "assistant_message", "role": "assistant", "visibility": "user",
+        "status": status, "content": content, "source": "channel"})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::SqliteStorage;
+    use wunder_core::storage_backend::ThreadLogStore;
+
+    #[test]
+    fn channel_direct_replies_restore_one_settled_pair_per_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteStorage::new(dir.path().join("fixture.db").to_string_lossy().into_owned());
+        let mut info = super::super::ChannelSessionInfo {
+            session_id: "fixture-thread".into(),
+            user_id: "fixture-user".into(),
+            accepted_turn: None,
+            tts_enabled: None,
+            tts_voice: None,
+        };
+        for (input, reply, status) in [
+            ("/help", "Fixture help", "completed"),
+            ("Fixture upload", "Fixture file received", "completed"),
+            ("Fixture busy input", "Fixture busy reply", "completed"),
+            ("Fixture failed input", "Fixture failure", "failed"),
+        ] {
+            let accepted = db
+                .accept_thread_turn(&info.user_id, &info.session_id, &json!({"content": input}))
+                .unwrap();
+            let turn = accepted["turn_id"].as_str().unwrap().to_string();
+            info.accepted_turn = Some(accepted);
+            let item = channel_reply_item(&info, &turn, reply, status);
+            db.commit_thread_item(&info.user_id, &item).unwrap();
+            db.update_thread_turn(
+                &info.user_id,
+                &info.session_id,
+                &turn,
+                status,
+                "",
+                &json!({}),
+            )
+            .unwrap();
+        }
+        let snapshot = db.thread_snapshot(&info.user_id, &info.session_id).unwrap();
+        assert_eq!(snapshot["turns"].as_array().unwrap().len(), 4);
+        let items = snapshot["items"].as_array().unwrap();
+        assert_eq!(
+            items
+                .iter()
+                .filter(|item| item["kind"] == "user_message")
+                .count(),
+            4
+        );
+        let replies: Vec<_> = items
+            .iter()
+            .filter(|item| item["kind"] == "assistant_message")
+            .collect();
+        assert_eq!(replies.len(), 4);
+        for item in replies {
+            assert_eq!(
+                item["item_id"],
+                format!("{}:text-0", item["turn_id"].as_str().unwrap())
+            );
+            assert!(!item["payload"]["content"].as_str().unwrap().is_empty());
+        }
+        assert!(snapshot["turns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|turn| matches!(turn["status"].as_str(), Some("completed" | "failed"))));
     }
 }

@@ -34,7 +34,6 @@ use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
 use crate::services::bridge::{append_bridge_meta, resolve_inbound_bridge_route, BridgeRuntime};
 use crate::services::runtime::thread::ThreadRuntime;
-use crate::services::stream_events::StreamEventService;
 use crate::storage::{
     ChannelAccountRecord, ChannelSessionRecord, ChatSessionRecord, StorageBackend,
 };
@@ -181,7 +180,6 @@ pub struct ChannelHub {
     approval_registry: Arc<PendingApprovalRegistry>,
     runtime_logs: Arc<Mutex<ChannelRuntimeLogBuffer>>,
     inbound_queue_tx: TokioSender<ChannelInboundEnvelope>,
-    stream_events: Arc<StreamEventService>,
 }
 
 impl ChannelHub {
@@ -196,7 +194,6 @@ impl ChannelHub {
     ) -> Self {
         let (inbound_queue_tx, inbound_queue_rx) =
             new_inbound_channel(CHANNEL_INBOUND_QUEUE_CAPACITY);
-        let stream_events = Arc::new(StreamEventService::new(storage.clone()));
         let hub = Self {
             config_store,
             storage,
@@ -216,7 +213,6 @@ impl ChannelHub {
                 CHANNEL_RUNTIME_LOG_FLOOD_WINDOW_S,
             ))),
             inbound_queue_tx,
-            stream_events,
         };
         let inbound_worker = hub.clone();
         let inbound_processor: ChannelInboundProcessor = Arc::new(move |envelope| {
@@ -637,7 +633,7 @@ impl ChannelHub {
                 .get_channel_account_owner(&message.channel, &message.account_id)
                 .await?;
         }
-        let session_info = self
+        let mut session_info = self
             .resolve_channel_session(
                 &message,
                 resolved_agent_id.as_deref(),
@@ -756,17 +752,8 @@ impl ChannelHub {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
-        if let Some(content) = display_question.as_deref() {
-            // Push the inbound user turn to the live session stream before model execution
-            // starts so channel-originated messages render immediately in the active thread.
-            let _ = self
-                .append_channel_stream_event_message(
-                    &session_info.user_id,
-                    &session_info.session_id,
-                    "user",
-                    content,
-                )
-                .await;
+        if let Some(content) = display_question.as_deref().filter(|_| inbound_has_meaningful_text) {
+            self.accept_channel_turn(&mut session_info, content).await?;
         }
 
         let mut processing_ack_message_id = None;
@@ -978,13 +965,14 @@ impl ChannelHub {
         if !has_user_text {
             if !incoming_files.is_empty() {
                 let user_text = format_pending_upload_preview(&incoming_files);
-                self.append_channel_chat(
-                    &session_info.user_id,
-                    &session_info.session_id,
-                    "user",
-                    &user_text,
+                self.accept_channel_turn(&mut session_info, &user_text)
+                    .await?;
+                self.finish_channel_turn(
+                    &session_info,
+                    "文件已收到，发送消息后将结合文件处理。",
+                    "completed",
                 )
-                .await;
+                .await?;
                 self.monitor.record_event(
                     &session_info.session_id,
                     "channel_file_buffered",
@@ -1003,10 +991,22 @@ impl ChannelHub {
         }
 
         let question = build_channel_question_with_files(message.text.as_deref(), &pending_files);
-        let config_overrides = merge_channel_request_overrides(
+        let mut config_overrides = merge_channel_request_overrides(
             channel_test_request_overrides(),
             display_question.as_deref(),
         );
+        // Internal reservation prevents prepare_request from admitting a second user bubble.
+        if session_info.accepted_turn.is_none() {
+            self.accept_channel_turn(&mut session_info, &question)
+                .await?;
+        }
+        let accepted = session_info
+            .accepted_turn
+            .as_ref()
+            .expect("accepted channel turn");
+        let overrides = config_overrides.get_or_insert_with(|| json!({}));
+        overrides["__thread_log_turn_id"] = accepted["turn_id"].clone();
+        overrides["__thread_log_user_round"] = accepted["user_turn_index"].clone();
         let mut meta_probe_message = message.clone();
         meta_probe_message.attachments.clear();
         meta_probe_message.location = None;
@@ -1049,7 +1049,7 @@ impl ChannelHub {
             attachments: None,
             allow_queue: false,
             is_admin: false,
-            enforce_runtime_queue: false,
+            enforce_runtime_queue: true,
             approval_tx: None,
         };
         let approval_task = if CHANNEL_OPEN_APPROVAL_FOR_TEST {
@@ -1081,8 +1081,6 @@ impl ChannelHub {
         let response = match self
             .run_channel_request(
                 request,
-                &session_info.user_id,
-                &session_info.session_id,
                 &message,
                 &session_info,
                 resolved_binding.as_ref(),
@@ -1327,13 +1325,17 @@ impl ChannelHub {
             .text
             .as_deref()
             .is_some_and(|text| text.trim() == "/new");
-        let session_id = existing
+        let mut session_id = existing
             .as_ref()
             .filter(|_| !new_thread)
             .map(|record| record.session_id.clone())
             .unwrap_or_else(|| format!("sess_{}", Uuid::new_v4().simple()));
 
         let existing_chat = self.get_chat_session(&user_id, &session_id).await?;
+        // A stale mapping must never resurrect a deleted task identity.
+        if existing_chat.is_none() && existing.is_some() && !new_thread {
+            session_id = format!("sess_{}", Uuid::new_v4().simple());
+        }
         let mut title = message
             .peer
             .name
@@ -1342,7 +1344,7 @@ impl ChannelHub {
             .unwrap_or(DEFAULT_SESSION_TITLE)
             .to_string();
         let mut resolved_tool_overrides = tool_overrides.to_vec();
-        let mut created_at = existing.as_ref().map(|r| r.created_at).unwrap_or(now);
+        let mut created_at = now;
         if let Some(chat_record) = existing_chat.as_ref() {
             {
                 if !chat_record.title.trim().is_empty() {
@@ -1402,6 +1404,7 @@ impl ChannelHub {
         };
         self.upsert_channel_session(&record).await?;
         Ok(ChannelSessionInfo {
+            accepted_turn: None,
             session_id,
             user_id,
             tts_enabled,
@@ -1695,20 +1698,22 @@ impl ChannelHub {
     async fn run_channel_request(
         &self,
         request: WunderRequest,
-        user_id: &str,
-        session_id: &str,
         message: &ChannelMessage,
         session_info: &ChannelSessionInfo,
         resolved_binding: Option<&BindingResolution>,
     ) -> Result<ChannelModelResult> {
-        let session_id_owned = session_id.to_string();
         let mut stream = self.orchestrator.stream(request).await?;
         let mut final_answer: Option<String> = None;
+        let mut failure = None;
+        let mut busy = false;
         let mut compaction_notice_sent = false;
         while let Some(event) = stream.next().await {
             let event = match event {
                 Ok(item) => item,
-                Err(_) => continue,
+                Err(error) => {
+                    failure = Some(anyhow!("channel stream interrupted: {error}"));
+                    continue;
+                }
             };
             let event_payload = event
                 .data
@@ -1736,7 +1741,8 @@ impl ChannelHub {
                     .or_else(|| event.data.get("code").and_then(Value::as_str))
                     .unwrap_or_default();
                 if code == "USER_BUSY" {
-                    return Ok(ChannelModelResult::Busy);
+                    busy = true;
+                    continue;
                 }
                 let message = event_payload
                     .get("message")
@@ -1748,7 +1754,7 @@ impl ChannelHub {
                 } else {
                     message.to_string()
                 };
-                return Err(anyhow!("channel stream run failed: {detail}"));
+                failure = Some(anyhow!("channel stream run failed: {detail}"));
             }
             if event.event == "final" {
                 let answer = event_payload
@@ -1760,19 +1766,18 @@ impl ChannelHub {
                     .unwrap_or_default()
                     .to_string();
                 final_answer = Some(answer);
-                break;
             }
         }
-        let mut answer = match final_answer {
-            Some(answer) if !answer.trim().is_empty() => answer,
-            _ => self
-                .load_latest_assistant_message(user_id, &session_id_owned)
-                .await
-                .unwrap_or_default(),
-        };
-        if answer.trim().is_empty() {
-            answer = "Model returned an empty response. Please try again shortly.".to_string();
+        if busy {
+            return Ok(ChannelModelResult::Busy);
         }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        // Never reuse the preceding turn's answer when this request fails.
+        let answer = final_answer
+            .filter(|answer| !answer.trim().is_empty())
+            .ok_or_else(|| anyhow!("channel stream ended without a final answer"))?;
         Ok(ChannelModelResult::Answer(answer))
     }
 
@@ -1822,13 +1827,8 @@ impl ChannelHub {
                 "error": detail.clone(),
             }),
         );
-        self.append_channel_chat(
-            &session_info.user_id,
-            &session_info.session_id,
-            "assistant",
-            &reply,
-        )
-        .await;
+        self.finish_channel_turn(session_info, &reply, "failed")
+            .await?;
         let mut extra_meta = json!({
             "model_error": true,
             "error_detail": detail.clone(),
@@ -1864,6 +1864,7 @@ impl ChannelHub {
 pub(super) struct ChannelSessionInfo {
     pub(super) session_id: String,
     pub(super) user_id: String,
+    pub(super) accepted_turn: Option<Value>,
     tts_enabled: Option<bool>,
     tts_voice: Option<String>,
 }

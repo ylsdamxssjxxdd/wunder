@@ -594,7 +594,7 @@ export function installMessengerControllerLifecycleMessageViewport(ctx: Messenge
       isWorldConversationActive: ctx.isWorldConversationActive,
       activeConversationKey: computed(() => String(ctx.sessionHub.activeConversationKey || '')),
       shouldVirtualizeMessages: ctx.shouldVirtualizeMessages,
-      agentRenderableMessages: ctx.agentRenderableMessages,
+      agentRenderableMessages: computed(() => ctx.agentConversationRows.value.map(row => ({ key: row.key, message: row.assistant.message }))),
       worldRenderableMessages: ctx.worldRenderableMessages,
       messageVirtualHeightCache: ctx.messageVirtualHeightCache,
       messageVirtualLayoutVersion: ctx.messageVirtualLayoutVersion,

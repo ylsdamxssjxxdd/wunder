@@ -14,6 +14,94 @@ import { materializeChatRuntimeMessage } from '../../src/realtime/chat/chatRunti
 
 type TestFrame = ChatThreadFrame;
 
+test('durable subagents retain run identity, progress and independent lifecycle across replay and reload', () => {
+  const state = emptyChatThreadState('fixture-session');
+  const turn = { turn_id: 'fixture-parent', user_round: 1, status: 'completed', content: 'Fixture task' };
+  const other = { turn_id: 'fixture-other', user_round: 2, status: 'running', content: 'Another task' };
+  const child = (run: string, revision: number, latest: string) => ({
+    item_id: `${turn.turn_id}:subagent-${run}`, turn_id: turn.turn_id, kind: 'subagent_run',
+    status: 'completed', visibility: 'user', revision,
+    runtime: { run_id: run, session_id: `session-${run}`, status: 'running', terminal: false,
+      can_terminate: true, latest_message: latest,
+      metrics: { tool_calls: revision, account_credits_consumed: 0, context_tokens: 2048, model_request_count: 3 } }
+  });
+  const first = child('run-a', 1, 'First update');
+  const second = child('run-b', 1, 'Parallel update');
+  const updated = child('run-a', 2, 'Latest update');
+  const frames = [turnUpsert(1, turn), turnUpsert(2, other), itemUpsert(3, first),
+    itemUpsert(4, second), itemUpsert(5, updated)];
+  applyFrames(state, frames);
+  applyFrames(state, frames);
+  const read = () => buildChatThreadRenderableMessages(state).filter(row => row.role === 'assistant');
+  assert.equal(read()[0].subagents?.length, 2);
+  assert.equal(read()[1].subagents?.length, 0);
+  assert.equal(read()[0].subagents?.[0].latest_message, 'Latest update');
+  const materialized = materializeChatRuntimeMessage(read()[0])!;
+  assert.equal(materialized.subagents[0].status, 'running');
+  assert.equal(materialized.subagents[0].canTerminate, true);
+  assert.equal(materialized.subagents[0].metrics.account_credits_consumed, 0);
+  const expected = read()[0].subagents;
+  applyChatThreadSnapshot(state, { cursor: 5, turns: [turn, other], items: [updated, second] });
+  assert.deepEqual(read()[0].subagents, expected);
+});
+
+test('goal continuations share the root bubble live, after replay and after snapshot reload', () => {
+  const state = emptyChatThreadState('fixture-goal-session');
+  const root = { turn_id: 'fixture-root', root_turn_id: 'fixture-root', user_round: 5,
+    status: 'completed', content: '/goal Fixture objective' };
+  const child = { turn_id: 'fixture-child', root_turn_id: root.turn_id, user_round: 5, status: 'running' };
+  const user = { item_id: `${root.turn_id}:user`, turn_id: root.turn_id, kind: 'user_message',
+    status: 'completed', visibility: 'user', content: root.content, user_round: 5, revision: 1 };
+  const text = textItemData(child.turn_id, 4, { root_turn_id: root.turn_id, content: 'Fixture first result' });
+  const tool = toolItemData(child.turn_id, 'fixture-call', { root_turn_id: root.turn_id, status: 'completed' });
+  const frames = [turnUpsert(1, root), itemUpsert(2, user), turnUpsert(3, child),
+    itemUpsert(4, text), itemUpsert(5, tool)];
+  const read = () => buildChatThreadRenderableMessages(state);
+  applyFrames(state, frames);
+  assert.deepEqual(read().map(row => [row.role, row.userTurnId]), [['user', root.turn_id], ['assistant', root.turn_id]]);
+  assert.equal(read()[1].status, 'streaming');
+  const stableId = read()[1].id;
+  applyFrames(state, [turnStatus(6, child.turn_id, 'completed')]);
+  const next = { turn_id: 'fixture-next', root_turn_id: root.turn_id, user_round: 5, status: 'running' };
+  const nextText = textItemData(next.turn_id, 1, { root_turn_id: root.turn_id, content: 'Fixture final result' });
+  applyFrames(state, [turnUpsert(7, next), itemUpsert(8, nextText), turnStatus(9, next.turn_id, 'completed')]);
+  applyFrames(state, frames); // duplicate transport replay cannot add a bubble
+  assert.equal(read().length, 2);
+  assert.equal(read()[1].id, stableId);
+  assert.equal(read()[1].content, 'Fixture final result'); // model round resets per execution
+  assert.equal(read()[1].workflowItems?.length, 1);
+  assert.equal(read()[1].status, 'final');
+  const before = read().map(row => [row.id, row.content, row.status]);
+  applyChatThreadSnapshot(state, { cursor: 9,
+    turns: [root, { ...child, status: 'completed' }, { ...next, status: 'completed' }],
+    items: [user, text, tool, nextText], blocks: [] }, 0);
+  assert.deepEqual(read().map(row => [row.id, row.content, row.status]), before);
+});
+
+test('tool commentary stays out of the final body through streaming and snapshot recovery', () => {
+  const state = emptyChatThreadState('reply-session');
+  const turn = { turn_id: 'turn-1', user_round: 1, status: 'running', content: 'Fixture request' };
+  const commentary = textItemData('turn-1', 1, { content: 'Preparing a fixture.',
+    tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'ptc', arguments: '{}' } }] });
+  applyFrames(state, [turnUpsert(1, turn), itemUpsert(2, commentary)]);
+  const reply = () => buildChatThreadRenderableMessages(state).find(message => message.role === 'assistant')!;
+  assert.equal(reply().content, '');
+  const final = textItemData('turn-1', 2, { status: 'running', content: '' });
+  applyFrames(state, [itemUpsert(3, final), tailFrame('turn-1:text-2', 'content', 0, 'Final fixture answer.')]);
+  assert.equal(reply().content, 'Final fixture answer.');
+  // A late tail from a prior round cannot contaminate the active reply.
+  applyFrames(state, [tailFrame('turn-1:text-1', 'content', -1, ' More preparation.')]);
+  assert.equal(reply().content, 'Final fixture answer.');
+  applyChatThreadSnapshot(state, { cursor: 4, turns: [{ ...turn, status: 'completed' }],
+    items: [commentary, { ...final, status: 'completed', content: 'Final fixture answer.' }] });
+  assert.equal(reply().content, 'Final fixture answer.');
+  assert.equal(state.items.get('turn-1:text-1')?.content, 'Preparing a fixture.');
+  // An empty final round must not resurrect earlier execution commentary.
+  applyChatThreadSnapshot(state, { cursor: 5, turns: [{ ...turn, status: 'completed' }],
+    items: [commentary, { ...final, status: 'completed' }] });
+  assert.equal(reply().content, '');
+});
+
 test('assistant stays active between model and tool rounds and retains its render key on ack', () => {
   const state = emptyChatThreadState('identity-session');
   state.turns.set('pending:client-1', { turnId: 'pending:client-1', clientMessageId: 'client-1',
@@ -174,9 +262,9 @@ test('chat thread projection emits one assistant bubble per user turn', () => {
   ]);
   assert.deepEqual(messages.map((message) => message.content), [
     'question',
-    'round zero\n\nround one'
+    'round one'
   ]);
-  // Model rounds are sections within the one durable turn bubble.
+  // The latest model reply owns the body of the one durable turn bubble.
   assert.equal(messages[1].role, 'assistant');
   assert.equal(messages[1].userTurnId, 'turn-1');
   assert.equal(messages[1].modelTurnId, 'turn-1:assistant');
@@ -291,6 +379,27 @@ test('chat thread projection merges legacy history stats into the stable output 
   });
 });
 
+test('child-agent tool rounds retain terminal generation speed when history row omits model round', () => {
+  const state = emptyChatThreadState('session-child-agent-speed');
+  applyFrames(state, [
+    turnUpsert(1, { turn_id: 'turn-1', user_round: 1, status: 'completed', content: 'delegate' }),
+    itemUpsert(2, textItemData('turn-1', 1, {
+      content: 'final child summary', tool_calls: [], status: 'completed'
+    })),
+    // The terminal append_chat row produced after the child run has no
+    // model_round on older records, but message_stats owns the real speed.
+    itemUpsert(3, {
+      item_id: 'history-child-final', turn_id: 'turn-1', model_round: 0,
+      kind: 'assistant_message', role: 'assistant', visibility: 'user',
+      status: 'completed', revision: 1, content: 'final child summary',
+      meta: { message_stats: { interaction_duration_s: 4.2, visible_decode_speed_tps: 37.5 } }
+    })
+  ]);
+  const bubble = buildChatThreadRenderableMessages(state).find((message) => message.role === 'assistant');
+  assert.equal(bubble?.display?.stats?.visible_decode_speed_tps, 37.5);
+  assert.equal(bubble?.display?.stats?.interaction_duration_s, 4.2);
+});
+
 test('chat thread projection groups all workflow items into the turn bubble', () => {
   const state = emptyChatThreadState('session-projection-workflow');
   applyFrames(state, [
@@ -366,36 +475,16 @@ test('chat thread projection groups all workflow items into the turn bubble', ()
   assert.equal(turnAssistant.status, 'tooling');
 });
 
-test('chat thread projection keeps workflow-only rounds and standalone workflow turns', () => {
-  const state = emptyChatThreadState('session-projection-standalone');
-  applyFrames(state, [
-    turnUpsert(1, { turn_id: 'turn-1', user_round: 0, status: 'running' }),
-    // Rounded workflow with no text item yet: workflow-only bubble on that round.
-    itemUpsert(2, toolItemData('turn-1', 'call-a', {
-      model_round: 2,
-      event_type: 'tool_call',
-      tool: 'lookup'
-    })),
-    turnUpsert(3, { turn_id: 'turn-2', user_round: 1, status: 'running' }),
-    // Orphan workflow with no text and no rounds anywhere: standalone bubble.
-    itemUpsert(4, toolItemData('turn-2', 'call-b', {
-      event_type: 'tool_call',
-      tool: 'probe'
-    }))
-  ]);
-
+test('execution-only records stay off the page until their user input is known', () => {
+  const state = emptyChatThreadState('fixture-orphan');
+  applyFrames(state, [turnUpsert(1, { turn_id: 'turn-1', status: 'running' }),
+    itemUpsert(2, toolItemData('turn-1', 'call-a', { tool: 'lookup' }))]);
+  assert.deepEqual(buildChatThreadRenderableMessages(state), []);
+  assert.equal(state.items.size, 1); // retained, not silently discarded
+  applyFrames(state, [turnUpsert(3, { turn_id: 'turn-1', status: 'running', content: 'Fixture request' })]);
   const messages = buildChatThreadRenderableMessages(state);
-  const assistants = messages.filter((message) => message.role === 'assistant');
-
-  assert.deepEqual(assistants.map((message) => message.id), [
-    'tturn:turn-1:assistant',
-    'tturn:turn-2:assistant'
-  ]);
-  assert.equal(assistants[0].content, '');
-  assert.deepEqual(workflowIds(assistants[0]), ['turn-1:tool-call-a']);
-  assert.equal(assistants[0].status, 'tooling');
-  assert.deepEqual(workflowIds(assistants[1]), ['turn-2:tool-call-b']);
-  assert.equal(assistants[1].status, 'tooling');
+  assert.deepEqual(messages.map(row => row.role), ['user', 'assistant']);
+  assert.deepEqual(workflowIds(messages[1]), ['turn-1:tool-call-a']);
 });
 
 test('chat thread projection excludes admin and internal items', () => {
@@ -475,11 +564,9 @@ test('chat thread projection is deterministic across item registration order', (
   assert.deepEqual(projectionShape(replay), projectionShape(first));
   assert.deepEqual(first.map((message) => message.id), [
     'tturn:turn-1:user',
-    'tturn:turn-1:assistant',
-    'tturn:turn-2:assistant'
+    'tturn:turn-1:assistant'
   ]);
-  // The null user_round turn sorts last deterministically.
-  assert.equal(first[2].userTurnId, 'turn-2');
+  // An execution without a user input cannot create an extra page row.
   assert.deepEqual(workflowIds(first[1]), [
     'turn-1:tool-call-a', 'turn-1:tool-call-b', 'turn-1:tool-call-c'
   ]);
@@ -500,7 +587,8 @@ test('chat thread projection handles empty states without throwing', () => {
   applyFrames(turnOnly, [
     turnUpsert(1, { turn_id: 'turn-1', user_round: 0, status: 'running', content: '' })
   ]);
-  assert.deepEqual(buildChatThreadRenderableMessages(turnOnly), []);
+  // An accepted empty input (e.g. attachments) still owns two fixed slots.
+  assert.deepEqual(buildChatThreadRenderableMessages(turnOnly).map(row => row.role), ['user', 'assistant']);
 
   const userOnly = emptyChatThreadState('session-user-only');
   applyFrames(userOnly, [

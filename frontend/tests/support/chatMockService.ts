@@ -36,7 +36,8 @@ export class ChatMockService {
   }
 
   snapshot() { return { cursor: this.changes.length, turns: this.turns.map(turn => ({
-    turn_id: turn.turn_id, user_turn_index: turn.user_round, status: turn.status, payload: structuredClone(turn) })),
+    turn_id: turn.turn_id, root_turn_id: turn.root_turn_id ?? turn.turn_id,
+    trigger_kind: turn.trigger_kind ?? 'user', user_turn_index: turn.user_round, status: turn.status, payload: structuredClone(turn) })),
     items: [...this.items.values()].map(item => ({ item_id: item.item_id, turn_id: item.turn_id,
       kind: item.kind, status: item.status, revision: item.revision, visibility: item.visibility, payload: structuredClone(item) })), blocks: structuredClone([...this.blocks.values()]) }; }
   export() { return [{ record_type: 'thread_meta', export_schema_version: 5, evidence_mode: 'mock-service', session_id: MOCK_SESSION },
@@ -100,7 +101,7 @@ export class ChatMockService {
     this.agentRuntimeState = 'running';
     const task = this.run(turn).catch(error => { this.failures.push(String(error)); }).finally(() => {
       this.tasks.delete(task);
-      if (this.active === turn) this.active = null;
+      if (this.active === turn || this.active?.root_turn_id === turn.turn_id) this.active = null;
       if (!this.active && !this.queue.length && !this.queueHeld) this.agentRuntimeState = 'idle';
       this.schedule();
     });
@@ -110,6 +111,19 @@ export class ChatMockService {
   private async run(turn: Row) {
     await this.pause();
     if (this.stopped || turn.status === 'cancelled') return;
+    if (turn.content.startsWith('/goal')) {
+      // Production accepts the command, then starts a separate internal
+      // execution turn under the SAME user round. Do not flatten this in mocks.
+      const root = turn;
+      this.state(root, 'completed');
+      turn = { ...root, turn_id: `${root.turn_id}-continuation`, root_turn_id: root.turn_id,
+        trigger_kind: 'continuation', content: '', client_message_id: '', status: 'queued', goalRun: true };
+      this.turns.push(turn);
+      this.active = turn;
+      this.commit('turn_upsert', turn);
+      this.item(turn, 'user', 'user_message', 'completed', { role: 'user',
+        content: 'Internal fixture continuation.', visibility: 'model_internal', root_turn_id: root.turn_id });
+    }
     this.state(turn, 'running');
     if (this.items.has(`${turn.turn_id}:queue`)) this.item(turn, 'queue', 'queue', 'completed', {
       event_type: 'queue_start', queue_ahead: 0, wait_ahead: 0 });
@@ -144,7 +158,7 @@ export class ChatMockService {
       this.item(turn, 'compaction', 'compaction', 'completed', { trigger_mode: compact ? 'manual' : 'auto',
         summary_text: 'Retained fixture summary.', event_type: 'compaction' });
     }
-    if (turn.content.startsWith('/goal')) {
+    if (turn.goalRun) {
       this.goal = { status: 'complete', objective: 'Fixture objective' };
       this.item(turn, 'goal', 'plan', 'completed', { event_type: 'goal_completed', goal: this.goal });
     }
@@ -169,6 +183,30 @@ export class ChatMockService {
     // Cancellation is not a successful task completion. Keep the runtime hot
     // until the worker exits so the next real completion still has a running →
     // idle edge, while no cancellation toast is generated.
+  }
+  /** Background scheduler uses durable events; it has no foreground start request. */
+  scheduledTurn(status: 'queued' | 'rejected' | 'completed') {
+    const turn = { turn_id: `fixture-turn-${++this.round}`, user_round: this.round,
+      content: 'Scheduled fixture task', status };
+    this.turns.push(turn);
+    this.commit('turn_upsert', turn);
+    this.item(turn, 'user', 'user_message', 'completed', { role: 'user', content: turn.content });
+    if (status === 'rejected') this.item(turn, 'terminal', 'terminal', status,
+      { error: { code: 'USER_BUSY', message: 'Fixture admission rejected' } });
+    if (status === 'queued') this.item(turn, 'queue', 'queue', status,
+      { event_type: 'queue_enter', queue_ahead: 2, wait_ahead: 2, queue_total: 3 });
+    if (status === 'completed') this.item(turn, 'text-0', 'assistant_message', status,
+      { role: 'assistant', model_round: 0, content: 'Scheduled fixture result',
+        meta: { message_stats: { interaction_duration_s: 0.8 } } });
+    return turn;
+  }
+  settleScheduled(turn: Row, status: 'cancelled' | 'completed') {
+    for (const item of [...this.items.values()]) {
+      if (item.turn_id === turn.turn_id && item.status === 'queued') {
+        this.item(turn, item.item_id.slice(turn.turn_id.length + 1), item.kind, status);
+      }
+    }
+    this.state(turn, status);
   }
   release() { if (this.active) this.active.held = false; this.queueHeld = false; this.schedule(); }
   disconnect() {

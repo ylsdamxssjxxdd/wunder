@@ -47,56 +47,56 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
             "rail navigation required another click",
         )?;
     }
-    let count = app.get_messages().row_count();
+    let count = app.get_turns().row_count();
     app.set_draft("  \n ".into());
     app.invoke_send_message();
     require(
-        app.get_messages().row_count() == count,
+        app.get_turns().row_count() == count,
         "blank input appended",
     )?;
     app.set_draft("a".repeat(16_385).into());
     app.invoke_send_message();
     require(
-        app.get_messages().row_count() == count,
+        app.get_turns().row_count() == count,
         "oversized input appended",
     )?;
     app.set_draft("测试消息".into());
     app.invoke_send_message();
     require(
-        app.get_messages().row_count() == count + 2 && app.get_draft().is_empty(),
+        app.get_turns().row_count() == count + 1 && app.get_draft().is_empty(),
         "send failed",
     )?;
     require(
-        app.get_messages()
+        app.get_turns()
             .row_data(count)
-            .is_some_and(|message| message.mine && message.text == "测试消息"),
+            .is_some_and(|message| message.user.mine && message.user.text == "测试消息"),
         "sent text changed",
     )?;
     app.set_draft("未发送内容".into());
     app.invoke_select_conversation(1);
     require(
-        app.get_messages().row_count() == 1 && app.get_draft().is_empty(),
+        app.get_turns().row_count() == 0 && app.get_draft().is_empty(),
         "conversation isolation failed",
     )?;
     app.invoke_select_conversation(0);
     require(
-        app.get_draft() == "未发送内容" && app.get_messages().row_count() == count + 2,
+        app.get_draft() == "未发送内容" && app.get_turns().row_count() == count + 1,
         "conversation restore failed",
     )?;
     app.invoke_select_task(1);
-    require(app.get_messages().row_count() == 1, "task isolation failed")?;
+    require(app.get_turns().row_count() == 0, "task isolation failed")?;
     app.invoke_select_task(0);
     for _ in 0..55 {
         app.set_draft("测试".into());
         app.invoke_send_message();
     }
     require(
-        app.get_messages().row_count() <= 100,
+        app.get_turns().row_count() <= 50,
         "history exceeded limit",
     )?;
     app.invoke_new_thread();
     require(
-        app.get_messages().row_count() == 1 && app.get_draft().is_empty(),
+        app.get_turns().row_count() == 0 && app.get_draft().is_empty(),
         "new task failed",
     )?;
     // The prototype follows the original light visual and no longer exposes

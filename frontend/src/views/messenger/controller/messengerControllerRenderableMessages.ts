@@ -182,10 +182,9 @@ import {
   summarizeChatRuntimeRenderableMessages
 } from '@/realtime/chat/chatRuntimeRenderAdapter';
 import {
-  buildChatThreadMaterializedMessages,
+  buildChatThreadMaterializedSlots,
   isChatThreadV2Session
 } from '@/realtime/chat/chatThreadRuntime';
-import { enforceOneBubblePerChatTurn } from '@/realtime/chat/chatBubbleTopology';
 import {
   invalidateAllUserToolsCaches,
   invalidateUserSkillsCache,
@@ -643,88 +642,29 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       return null;
   };
 
-  const mergeProjectionRenderableWithSyntheticUiMessages = (
-      syntheticGreeting: AgentRenderableMessage | null,
-      projectionRenderable: AgentRenderableMessage[]
-  ): AgentRenderableMessage[] => {
-      const projectedWithoutGreeting = projectionRenderable.filter((item) => !ctx.isGreetingMessage(item.message as Record<string, unknown>));
-      return syntheticGreeting ? [syntheticGreeting, ...projectedWithoutGreeting] : projectedWithoutGreeting;
-  };
-
-  let lastAgentRenderSourceSignature = '';
-  const logAgentRenderSource = (
-      event: string,
-      payload: Record<string, unknown>,
-      renderable: AgentRenderableMessage[] = []
-  ) => {
-      if (!isChatDebugEnabled())
-          return;
-      const signature = [
-          event,
-          String(payload.activeSessionId || ''),
-          String(payload.count || payload.legacyCount || 0),
-          Array.isArray(payload.keys) ? payload.keys.join('|') : ''
-      ].join('::');
-      if (signature === lastAgentRenderSourceSignature)
-          return;
-      lastAgentRenderSourceSignature = signature;
-      chatDebugLog('chat.runtime.render', event, {
-          ...payload,
-          ...(isChatDebugVerboseEnabled()
-              ? {
-                  messages: buildMessageIdentityDebugList(
-                      renderable.map((item) => item.message as Record<string, unknown>)
-                  )
-              }
-              : {})
-      });
-  };
-
-  ctx.agentRenderableMessages = computed<AgentRenderableMessage[]>(() => {
-      const shadowEnabled = isChatRuntimeProjectionRenderShadowEnabled();
-      const _projectionRenderVersion = ctx.chatStore.runtimeProjectionVersionBySession?.[ctx.chatStore.activeSessionId] || 0;
-      const syntheticGreeting = resolveSyntheticGreetingRenderable();
-      // Change-stream v2: bubbles come from the deterministic thread
-      // projection; ordering, identity and dedup are server-defined.
-      const threadRenderable = isChatThreadV2Session(ctx.chatStore.activeSessionId)
-        ? buildChatThreadMaterializedMessages(ctx.chatStore.activeSessionId)
-        : null;
-      if (Array.isArray(threadRenderable)) {
-          const displayV2Renderable = mergeProjectionRenderableWithSyntheticUiMessages(
-              syntheticGreeting,
-              threadRenderable
-                  .filter((message) => typeof ctx.shouldRenderAgentMessage !== 'function' || ctx.shouldRenderAgentMessage(message))
-                  .map((message) => ({
-                      key: resolveChatRuntimeMessageRenderKey(message),
-                      sourceIndex: 0,
-                      message
-                  })) as AgentRenderableMessage[]
-          );
-          const constrainedV2Renderable = displayV2Renderable;
-          logAgentRenderSource('thread-source', {
-              activeSessionId: ctx.chatStore.activeSessionId,
-              ...summarizeChatRuntimeRenderableMessages(constrainedV2Renderable)
-          }, constrainedV2Renderable);
-          return constrainedV2Renderable;
-      }
-      const projection = toRaw(ctx.chatStore.runtimeProjection);
-      const projectionRenderable = buildChatRuntimeRenderableMessages({
-        projection,
-        sessionId: ctx.chatStore.activeSessionId,
-        shouldRenderMessage: ctx.shouldRenderAgentMessage
-      }) as AgentRenderableMessage[];
-      const displayProjectionRenderable = mergeProjectionRenderableWithSyntheticUiMessages(
-          syntheticGreeting,
-          projectionRenderable
-      );
-      const constrainedProjectionRenderable = enforceOneBubblePerChatTurn(displayProjectionRenderable);
-      logAgentRenderSource('projection-source', {
-          activeSessionId: ctx.chatStore.activeSessionId,
-          shadowEnabled,
-          ...summarizeChatRuntimeRenderableMessages(constrainedProjectionRenderable)
-      }, constrainedProjectionRenderable);
-      return constrainedProjectionRenderable;
+  const wrapSlotMessage = (message: Record<string, unknown>): AgentRenderableMessage => ({
+      key: resolveChatRuntimeMessageRenderKey(message), sourceIndex: 0, message
   });
+
+  // The page source is a list of fixed user turns, never a list of messages.
+  ctx.agentTurnSlots = computed(() => {
+      const version = ctx.chatStore.runtimeProjectionVersionBySession?.[ctx.chatStore.activeSessionId] || 0;
+      void version;
+      return (buildChatThreadMaterializedSlots(ctx.chatStore.activeSessionId) ?? []).map(slot => ({
+          key: slot.key, rootTurnId: slot.rootTurnId, kind: 'turn',
+          user: wrapSlotMessage(slot.user), assistant: wrapSlotMessage(slot.assistant)
+      }));
+  });
+  ctx.agentConversationRows = computed(() => {
+      const greeting = resolveSyntheticGreetingRenderable();
+      return greeting
+          ? [{ key: 'conversation-greeting', kind: 'greeting', assistant: greeting }, ...ctx.agentTurnSlots.value]
+          : ctx.agentTurnSlots.value;
+  });
+  // Compatibility view for composer, attachments and diagnostics only.
+  ctx.agentRenderableMessages = computed<AgentRenderableMessage[]>(() =>
+      ctx.agentConversationRows.value.flatMap(row => row.kind === 'greeting'
+          ? [row.assistant] : [row.user, row.assistant]));
 
   ctx.resolveActiveAgentRenderableMessageRecords = (): Record<string, unknown>[] => {
       const renderable = ctx.agentRenderableMessages?.value;
@@ -909,7 +849,7 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       if (!normalized) {
           return ctx.MESSAGE_VIRTUAL_ESTIMATED_HEIGHT;
       }
-      return ctx.messageVirtualHeightCache.get(normalized) || ctx.MESSAGE_VIRTUAL_ESTIMATED_HEIGHT;
+      return ctx.messageVirtualHeightCache.get(normalized) || ctx.MESSAGE_VIRTUAL_ESTIMATED_HEIGHT * (normalized.startsWith('turn:') ? 2 : 1);
   };
 
   ctx.estimateVirtualOffsetTop = (keys: string[], index: number): number => resolveVirtualOffsetTop(
@@ -919,13 +859,13 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
   );
 
   ctx.agentVirtualWindow = computed(() => buildMessageVirtualWindow({
-      items: ctx.agentRenderableMessages.value,
+      items: ctx.agentConversationRows.value,
       enabled: ctx.shouldVirtualizeMessages.value && ctx.isAgentConversationActive.value,
       scrollTop: ctx.messageVirtualScrollTop.value,
       viewportHeight: ctx.messageVirtualViewportHeight.value,
       overscan: ctx.MESSAGE_VIRTUAL_OVERSCAN,
       tailPinCount: ctx.MESSAGE_VIRTUAL_TAIL_PIN_COUNT,
-      estimatedHeight: ctx.MESSAGE_VIRTUAL_ESTIMATED_HEIGHT,
+      estimatedHeight: ctx.MESSAGE_VIRTUAL_ESTIMATED_HEIGHT * 2,
       resolveHeight: ctx.resolveVirtualMessageHeight,
       layoutVersion: ctx.messageVirtualLayoutVersion.value
   }));
@@ -946,17 +886,15 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       }
       : null);
 
-  ctx.visibleAgentRenderableMessages = computed<AgentRenderableMessage[]>(() => ctx.agentVirtualWindow.value.enabled
-      ? ctx.agentVirtualWindow.value.visibleItems
-      : ctx.agentRenderableMessages.value);
-
-  ctx.pinnedAgentRenderableMessages = computed<AgentRenderableMessage[]>(() => ctx.agentVirtualWindow.value.enabled
-      ? ctx.agentVirtualWindow.value.tailItems
-      : []);
-
-  ctx.agentVirtualGroups = computed<AgentRenderableMessage[][]>(() => ctx.agentVirtualWindow.value.enabled
-      ? [ctx.visibleAgentRenderableMessages.value, ctx.pinnedAgentRenderableMessages.value]
-      : [ctx.visibleAgentRenderableMessages.value]);
+  const flattenConversationRows = (rows) => rows.flatMap(row => row.kind === 'greeting'
+      ? [row.assistant] : [row.user, row.assistant]);
+  ctx.visibleAgentRenderableMessages = computed(() => flattenConversationRows(ctx.agentVirtualWindow.value.visibleItems));
+  ctx.pinnedAgentRenderableMessages = computed(() => flattenConversationRows(ctx.agentVirtualWindow.value.tailItems));
+  ctx.agentVirtualRows = computed(() => {
+      const window = ctx.agentVirtualWindow.value;
+      const gap = ctx.agentVirtualBottomSpacer.value;
+      return [...window.visibleItems, ...(gap ? [{ ...gap, kind: 'spacer' }] : []), ...window.tailItems];
+  });
 
   ctx.buildMessageVirtualDebugSnapshot = () => {
       const agentWindow = ctx.agentVirtualWindow.value;

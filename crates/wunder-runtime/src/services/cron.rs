@@ -452,6 +452,8 @@ pub async fn handle_cron_action(
                     "job": cron_job_to_value(&record)
                 }));
             }
+            let orchestrator = orchestrator
+                .ok_or_else(|| anyhow!("task runtime is unavailable; job was not started"))?;
             let manual_runner_id = format!("manual_{}", Uuid::new_v4().simple());
             let manual_run_token = Uuid::new_v4().simple().to_string();
             assign_cron_job_lease(
@@ -472,13 +474,6 @@ pub async fn handle_cron_action(
             if let Some(signal) = wake_signal.clone() {
                 signal.notify();
             }
-            let Some(orchestrator) = orchestrator else {
-                return Ok(json!({
-                    "action": "run",
-                    "queued": true,
-                    "job": cron_job_to_value(&record)
-                }));
-            };
             let runtime = CronRuntime::from_parts(
                 config,
                 storage.clone(),
@@ -496,9 +491,13 @@ pub async fn handle_cron_action(
                 })
                 .await;
             });
-            Ok(
-                json!({ "action": "run", "queued": true, "job": cron_job_to_value(&record_for_response) }),
-            )
+            Ok(json!({
+                "action": "run",
+                "queued": true,
+                "resolved_session_id": record_for_response.session_id,
+                "delivery_session_id": record_for_response.session_id,
+                "job": cron_job_to_value(&record_for_response)
+            }))
         }
         _ => Err(anyhow!("unsupported action: {}", payload.action)),
     }
@@ -1148,12 +1147,16 @@ fn resolve_cron_delivery_session_id(
     storage: &dyn StorageBackend,
     job: &CronJobRecord,
 ) -> Result<String> {
-    let id = job.session_id.trim();
+    // Jobs bind to a task thread, never to the latest viewed/active agent thread.
     let record = storage
-        .get_chat_session(&job.user_id, id)?
+        .get_chat_session(&job.user_id, job.session_id.trim())?
+        .filter(|record| !record.status.eq_ignore_ascii_case("archived"))
         .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
-    if record.status == "archived" {
-        return Err(anyhow!(i18n::t("error.session_not_found")));
+    if normalize_agent_id(record.agent_id.as_deref()) != normalize_agent_id(job.agent_id.as_deref())
+    {
+        return Err(anyhow!(
+            "scheduled task agent does not match its bound thread"
+        ));
     }
     Ok(record.session_id)
 }
@@ -1320,14 +1323,40 @@ fn truncate_text(text: &str, max_chars: usize) -> String {
     output
 }
 
-fn is_user_busy(err: &anyhow::Error) -> bool {
-    err.downcast_ref::<crate::orchestrator::OrchestratorError>()
-        .map(|err| err.code() == "USER_BUSY")
-        .unwrap_or(false)
-}
-
 fn now_ts() -> f64 {
     Utc::now().timestamp_millis() as f64 / 1000.0
+}
+
+fn read_cron_turn_answer(
+    storage: &dyn StorageBackend,
+    user: &str,
+    session: &str,
+    turn: &str,
+) -> Result<String> {
+    let mut after = -1;
+    let mut answer = String::new();
+    loop {
+        let page = storage
+            .get_thread_turn(user, session, turn, after, 100, false)?
+            .ok_or_else(|| anyhow!("scheduled turn disappeared"))?;
+        for item in page["items"].as_array().into_iter().flatten() {
+            if item["turn_id"] == turn && item["kind"] == "assistant_message" {
+                if let Some(content) = item.pointer("/payload/content").and_then(Value::as_str) {
+                    if !content.is_empty() {
+                        answer = content.to_string();
+                    }
+                }
+            }
+        }
+        if page["has_more"] != true {
+            return Ok(answer);
+        }
+        let next = page["next_after"]
+            .as_i64()
+            .filter(|next| *next > after)
+            .ok_or_else(|| anyhow!("scheduled result cursor did not advance"))?;
+        after = next;
+    }
 }
 
 #[derive(Clone)]
@@ -1502,14 +1531,12 @@ impl CronRuntime {
             Ok(response) => {
                 summary = Some(truncate_text(&response.answer, SUMMARY_MAX_CHARS));
                 if is_isolated {
-                    let deliver_message = response.answer.clone();
                     let deliver_result = self
-                        .run_request_when_idle(
-                            &job.user_id,
-                            &routing.deliver_session_id,
-                            job.agent_id.as_deref(),
-                            &deliver_message,
-                            None,
+                        .publish_isolated_result(
+                            &job,
+                            &routing,
+                            &response.answer,
+                            started.elapsed().as_secs_f64(),
                         )
                         .await;
                     if let Err(err) = deliver_result {
@@ -1524,8 +1551,12 @@ impl CronRuntime {
             }
         }
 
+        // Execution history links to the real child thread for isolated runs.
+        // The stored job binding is reloaded by finish_job and stays unchanged.
+        let mut executed_job = job;
+        executed_job.session_id = routing.run_session_id;
         self.finish_job(
-            job,
+            executed_job,
             trigger,
             &status,
             &summary,
@@ -1552,27 +1583,116 @@ impl CronRuntime {
         let request = self
             .build_request(user_id, session_id, agent_id, message, parent_session_id)
             .await?;
-        let retry_ms = self.config.cron.idle_retry_ms.max(200);
-        let max_busy_wait_ms = self.config.cron.max_busy_wait_ms.max(retry_ms);
-        let wait_deadline = Instant::now() + Duration::from_millis(max_busy_wait_ms);
-        loop {
-            match self.run_stream_request(request.clone()).await {
-                Ok(response) => return Ok(response),
-                Err(err) => {
-                    if is_user_busy(&err) {
-                        let now = Instant::now();
-                        if now >= wait_deadline {
-                            return Err(anyhow!("USER_BUSY timeout after {max_busy_wait_ms}ms"));
-                        }
-                        let remaining = wait_deadline.saturating_duration_since(now);
-                        let delay = remaining.min(Duration::from_millis(retry_ms));
-                        sleep(delay).await;
-                        continue;
-                    }
-                    return Err(err);
-                }
+        let runtime = self
+            .orchestrator
+            .task_runtime
+            .read()
+            .upgrade()
+            .ok_or_else(|| anyhow!("task runtime is unavailable"))?;
+        // One admission, one durable identity. Busy threads enter the normal
+        // cancellable queue instead of manufacturing a rejected turn per retry.
+        match runtime.submit_user_request(request).await? {
+            crate::services::runtime::thread::ThreadSubmitOutcome::Run(request, lease) => {
+                let _lease = lease;
+                self.run_stream_request(*request).await
             }
+            crate::services::runtime::thread::ThreadSubmitOutcome::Queued(info) => loop {
+                let db = self.storage.clone();
+                let id = info.task_id.clone();
+                let task = run_cron_db("cron.wait.task", move || db.get_agent_task(&id))
+                    .await?
+                    .ok_or_else(|| anyhow!("scheduled task disappeared"))?;
+                match task.status.as_str() {
+                    "success" => {
+                        let turn = task
+                            .request_payload
+                            .pointer("/config_overrides/__thread_log_turn_id")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| anyhow!("missing scheduled turn identity"))?;
+                        let db = self.storage.clone();
+                        let owner = user_id.to_string();
+                        let thread = session_id.to_string();
+                        let turn = turn.to_string();
+                        let answer = run_cron_db("cron.wait.result", move || {
+                            read_cron_turn_answer(db.as_ref(), &owner, &thread, &turn)
+                        })
+                        .await?;
+                        return Ok(crate::schemas::WunderResponse {
+                            session_id: session_id.to_string(),
+                            answer,
+                            usage: None,
+                            stop_reason: None,
+                            uid: None,
+                            a2ui: None,
+                        });
+                    }
+                    "failed" | "dead" | "cancelled" => {
+                        return Err(anyhow!(
+                            "scheduled task {}: {}",
+                            task.status,
+                            task.last_error.unwrap_or_default()
+                        ))
+                    }
+                    _ => {
+                        sleep(Duration::from_millis(
+                            self.config.cron.idle_retry_ms.max(200),
+                        ))
+                        .await
+                    }
+                }
+            },
         }
+    }
+
+    async fn publish_isolated_result(
+        &self,
+        job: &CronJobRecord,
+        routing: &CronSessionRouting,
+        answer: &str,
+        elapsed_s: f64,
+    ) -> Result<()> {
+        let accepted = self
+            .orchestrator
+            .committer
+            .accept_turn(
+                &job.user_id,
+                &routing.deliver_session_id,
+                &json!({"role":"user", "content":job.payload["message"],
+                "client_message_id":format!("cron-result:{}", routing.run_session_id),
+                "meta":{"type":"scheduled_result", "job_id":job.job_id,
+                    "run_session_id":routing.run_session_id}}),
+            )
+            .await?;
+        let turn = accepted["turn_id"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing result turn"))?;
+        self.orchestrator
+            .committer
+            .commit_item(
+                &job.user_id,
+                &json!({
+                    "session_id":routing.deliver_session_id, "turn_id":turn,
+                    "item_id":format!("{turn}:text-0"), "model_round":0,
+                    "kind":"assistant_message", "role":"assistant", "status":"completed",
+                    "visibility":"user", "content":answer,
+                    "meta":{"type":"scheduled_result", "job_id":job.job_id,
+                        "run_session_id":routing.run_session_id,
+                        "message_stats":{"interaction_duration_s":elapsed_s}}
+                }),
+            )
+            .await?;
+        self.orchestrator
+            .committer
+            .update_turn(
+                &job.user_id,
+                &routing.deliver_session_id,
+                turn,
+                "completed",
+                "",
+                &json!({"source":"scheduled_result"}),
+            )
+            .await?;
+        Ok(())
     }
 
     async fn run_stream_request(
@@ -1742,7 +1862,7 @@ impl CronRuntime {
             attachments: None,
             allow_queue: true,
             is_admin: UserStore::is_admin(&user),
-            enforce_runtime_queue: false,
+            enforce_runtime_queue: true,
             approval_tx: None,
         })
     }
@@ -2132,6 +2252,182 @@ mod tests {
 
     fn now_ts_test() -> f64 {
         chrono::Utc::now().timestamp_millis() as f64 / 1000.0
+    }
+
+    #[test]
+    fn cron_routing_stays_bound_with_multiple_agent_threads() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteStorage::new(dir.path().join("routing.db").to_string_lossy().into_owned());
+        let now = now_ts_test();
+        db.upsert_chat_session(&build_chat_session("bound", "agent_a", now))
+            .unwrap();
+        db.upsert_chat_session(&build_chat_session("newer", "agent_a", now + 100.0))
+            .unwrap();
+        let main =
+            super::resolve_cron_session_routing(&db, &build_job("bound", "main", now)).unwrap();
+        assert_eq!(main.run_session_id, "bound");
+        let isolated =
+            super::resolve_cron_session_routing(&db, &build_job("bound", "isolated", now)).unwrap();
+        assert_eq!(isolated.deliver_session_id, "bound");
+        assert_eq!(isolated.parent_session_id.as_deref(), Some("bound"));
+        assert_ne!(isolated.run_session_id, "bound");
+        let mut archived = build_chat_session("bound", "agent_a", now);
+        archived.status = "archived".into();
+        db.upsert_chat_session(&archived).unwrap();
+        assert!(
+            super::resolve_cron_session_routing(&db, &build_job("bound", "main", now)).is_err()
+        );
+    }
+
+    async fn runtime_fixture() -> (
+        super::CronRuntime,
+        std::sync::Arc<crate::state::AppState>,
+        tempfile::TempDir,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.storage.backend = "sqlite".into();
+        config.storage.db_path = dir.path().join("cron.db").to_string_lossy().into_owned();
+        config.workspace.root = dir.path().join("workspace").to_string_lossy().into_owned();
+        config.agent_queue.enabled = true;
+        let store = crate::config_store::ConfigStore::new(dir.path().join("config.yaml"));
+        store
+            .update(|current| *current = config.clone())
+            .await
+            .unwrap();
+        let state = std::sync::Arc::new(
+            crate::state::AppState::new_with_options(
+                store,
+                config.clone(),
+                crate::state::AppStateInitOptions::cli_default().with_start_thread_runtime(false),
+            )
+            .unwrap(),
+        );
+        let runtime = super::CronRuntime::from_parts(
+            config,
+            state.storage.clone(),
+            state.kernel.orchestrator.clone(),
+            super::CronWakeSignal::default(),
+            state.user_store.clone(),
+            state.user_tool_manager.clone(),
+            state.skills.clone(),
+        );
+        state
+            .storage
+            .upsert_chat_session(&build_chat_session("bound", "agent_a", now_ts_test()))
+            .unwrap();
+        (runtime, state, dir)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cron_busy_thread_queues_once_and_cancel_settles_only_scheduled_turn() {
+        let (runtime, state, _dir) = runtime_fixture().await;
+        let old = state
+            .storage
+            .accept_thread_turn("cron_user", "bound", &json!({"content":"existing task"}))
+            .unwrap();
+        state
+            .storage
+            .update_thread_turn(
+                "cron_user",
+                "bound",
+                old["turn_id"].as_str().unwrap(),
+                "running",
+                "",
+                &json!({}),
+            )
+            .unwrap();
+        state
+            .storage
+            .try_acquire_session_lock("bound", "cron_user", "agent_a", 60.0, 10)
+            .unwrap();
+        let task = tokio::spawn(async move {
+            runtime
+                .run_request_when_idle(
+                    "cron_user",
+                    "bound",
+                    Some("agent_a"),
+                    "scheduled fixture",
+                    None,
+                )
+                .await
+        });
+        let queued = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Some(task) = state
+                    .user_store
+                    .list_agent_tasks_by_thread("thread_bound", None, 10)
+                    .unwrap()
+                    .pop()
+                {
+                    break task;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(queued.status, "pending");
+        assert_eq!(
+            state
+                .storage
+                .list_thread_turns("cron_user", "bound", None, 10)
+                .unwrap()
+                .len(),
+            2
+        );
+        state
+            .kernel
+            .thread_runtime
+            .cancel_task(&queued.task_id)
+            .await
+            .unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(result.unwrap_err().to_string().contains("cancelled"));
+        let turns = state
+            .storage
+            .list_thread_turns("cron_user", "bound", None, 10)
+            .unwrap();
+        assert_eq!(turns[0]["status"], "cancelled");
+        assert_eq!(turns[1]["status"], "running");
+        assert_eq!(turns[1]["turn_id"], old["turn_id"]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cron_isolated_result_is_idempotent_completed_pair_without_model_execution() {
+        let (runtime, state, _dir) = runtime_fixture().await;
+        let job = build_job("bound", "isolated", now_ts_test());
+        let routing = runtime.resolve_session_routing(&job).unwrap();
+        // No model configured: publication must still work and never acquire a model/session lock.
+        runtime
+            .publish_isolated_result(&job, &routing, "fixture result", 0.2)
+            .await
+            .unwrap();
+        runtime
+            .publish_isolated_result(&job, &routing, "fixture result", 0.2)
+            .await
+            .unwrap();
+        let turns = state
+            .storage
+            .list_thread_turns("cron_user", "bound", None, 10)
+            .unwrap();
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0]["status"], "completed");
+        let turn = turns[0]["turn_id"].as_str().unwrap();
+        assert_eq!(
+            super::read_cron_turn_answer(state.storage.as_ref(), "cron_user", "bound", turn)
+                .unwrap(),
+            "fixture result"
+        );
+        let page = state
+            .storage
+            .get_thread_turn("cron_user", "bound", turn, -1, 100, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(page["items"].as_array().unwrap().len(), 2);
     }
 
     fn build_chat_session(session_id: &str, agent_id: &str, now: f64) -> ChatSessionRecord {

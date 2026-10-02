@@ -14,6 +14,7 @@ use tracing::warn;
 
 #[path = "subagents/message_payload.rs"]
 mod message_payload;
+pub(crate) mod runtime_progress;
 
 pub const AUTO_WAKE_CONFIG_KEY: &str = "_subagent_auto_wake";
 pub const HIDE_START_QUESTION_CONFIG_KEY: &str = "_subagent_hide_start_question";
@@ -71,6 +72,7 @@ struct SubagentRuntimeItem {
     assistant_message: Option<String>,
     error_message: Option<String>,
     updated_time: f64,
+    progress: Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -570,13 +572,12 @@ pub async fn handle_child_completion(
     };
 
     if dispatch.emit_parent_events {
-        let payload = runtime_item_payload(parent_item.clone());
-        let _ = append_parent_stream_event(
-            storage.clone(),
+        let _ = publish_runtime_item(
+            storage.as_ref(),
+            &orchestrator,
             &user_id,
             &cleaned_parent,
-            "subagent_dispatch_item_update",
-            payload,
+            parent_item.clone(),
         )
         .await;
     }
@@ -722,6 +723,7 @@ pub async fn handle_child_completion(
 pub async fn emit_child_runtime_update(
     storage: Arc<dyn StorageBackend>,
     monitor: Option<Arc<MonitorState>>,
+    orchestrator: &Orchestrator,
     user_id: &str,
     parent_session_id: &str,
     child_session_id: &str,
@@ -745,16 +747,67 @@ pub async fn emit_child_runtime_update(
         return Ok(());
     }
     let item = build_runtime_item(storage.as_ref(), monitor.as_deref(), cleaned_user, session)?;
-    let payload = runtime_item_payload(item);
-    let _ = append_parent_stream_event(
-        storage,
+    publish_runtime_item(
+        storage.as_ref(),
+        orchestrator,
         cleaned_user,
         cleaned_parent,
-        "subagent_dispatch_item_update",
-        payload,
+        item,
     )
     .await?;
     Ok(())
+}
+
+async fn publish_runtime_item(
+    storage: &dyn StorageBackend,
+    orchestrator: &Orchestrator,
+    user_id: &str,
+    parent_session_id: &str,
+    item: SubagentRuntimeItem,
+) -> Result<()> {
+    let Some(payload) = runtime_thread_item(storage, user_id, parent_session_id, item)? else {
+        return Ok(());
+    };
+    orchestrator
+        .committer
+        .commit_item(user_id, &payload)
+        .await?;
+    Ok(())
+}
+
+fn runtime_thread_item(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    parent_session_id: &str,
+    item: SubagentRuntimeItem,
+) -> Result<Option<Value>> {
+    if !should_include_parent_subagent_runtime_item(&item) {
+        return Ok(None);
+    }
+    let mut runtime = runtime_item_payload(item);
+    // Cards retain previews and counters, not a second copy of full child
+    // results or execution configuration on every progress revision.
+    if let Some(object) = runtime.as_object_mut() {
+        for key in ["result", "error", "metadata"] {
+            object.remove(key);
+        }
+    }
+    let Some(round) = payload_parent_user_round(&runtime) else {
+        return Ok(None);
+    };
+    let Some(turn) = storage.find_thread_turn_id(user_id, parent_session_id, round)? else {
+        return Ok(None);
+    };
+    let Some(run_id) = runtime["run_id"].as_str() else {
+        return Ok(None);
+    };
+    // The record is a completed observation, while runtime.status belongs to
+    // the child. Settling the parent must never settle a background child.
+    Ok(Some(json!({
+        "session_id": parent_session_id, "turn_id": turn, "user_round": round,
+        "item_id": format!("{turn}:subagent-{run_id}"), "kind": "subagent_run",
+        "status": "completed", "visibility": "user", "runtime": runtime,
+    })))
 }
 
 async fn append_parent_stream_event(
@@ -986,10 +1039,17 @@ fn build_runtime_item(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|text| truncate_text(text, AUTO_WAKE_OBSERVATION_MAX_CHARS));
+    let progress = run
+        .as_ref()
+        .and_then(|record| record.metadata.as_ref())
+        .and_then(|meta| meta.get("subagent_progress"))
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     let assistant_message = run
         .as_ref()
         .and_then(|record| record.result.as_deref())
-        .map(|text| truncate_text(text, AUTO_WAKE_OBSERVATION_MAX_CHARS));
+        .map(|text| truncate_text(text, AUTO_WAKE_OBSERVATION_MAX_CHARS))
+        .or_else(|| progress["latest_message"].as_str().map(str::to_owned));
     let error_message = run
         .as_ref()
         .and_then(|record| record.error.as_deref())
@@ -1012,6 +1072,7 @@ fn build_runtime_item(
         assistant_message,
         error_message,
         updated_time,
+        progress,
     })
 }
 
@@ -1061,6 +1122,8 @@ fn runtime_item_payload(item: SubagentRuntimeItem) -> Value {
         "summary": item.summary,
         "user_message": item.user_message,
         "assistant_message": item.assistant_message,
+        "latest_message": item.assistant_message,
+        "metrics": item.progress,
         "error_message": item.error_message,
         "updated_time": item.updated_time,
         "queued_time": run.as_ref().map(|record| record.queued_time),
@@ -1732,6 +1795,70 @@ mod tests {
             dir,
             SqliteStorage::new(db_path.to_string_lossy().to_string()),
         )
+    }
+
+    #[test]
+    fn child_progress_snapshot_keeps_parent_identity_and_latest_metrics() {
+        let (_dir, storage) = build_storage();
+        let user = "fixture-user";
+        let parent = "fixture-parent";
+        let child = "fixture-child";
+        upsert_parent_session(&storage, user, parent);
+        let accepted = storage
+            .accept_thread_turn(
+                user,
+                parent,
+                &json!({"content": "Fixture task", "client_message_id": "fixture-message"}),
+            )
+            .unwrap();
+        upsert_child_session(&storage, user, parent, child, 1.0, None);
+        upsert_session_run(
+            &storage,
+            user,
+            parent,
+            child,
+            "fixture-run",
+            1.0,
+            None,
+            Some(json!({"parent_user_round": 1, "subagent_progress": {
+                "tool_calls": 2, "account_credits_consumed": 0, "context_tokens": 1024
+            }})),
+        );
+        let session = storage.get_chat_session(user, child).unwrap().unwrap();
+        let runtime = super::build_runtime_item(&storage, None, user, session.clone()).unwrap();
+        let payload = super::runtime_thread_item(&storage, user, parent, runtime)
+            .unwrap()
+            .unwrap();
+        assert_eq!(payload["turn_id"], accepted["turn_id"]);
+        let first = storage.commit_thread_item(user, &payload).unwrap().unwrap();
+        let mut record = storage.get_session_run("fixture-run").unwrap().unwrap();
+        record.metadata.as_mut().unwrap()["subagent_progress"]["tool_calls"] = json!(4);
+        record.result = Some("Latest fixture reply".into());
+        storage.upsert_session_run(&record).unwrap();
+        let runtime = super::build_runtime_item(&storage, None, user, session).unwrap();
+        let updated = super::runtime_thread_item(&storage, user, parent, runtime)
+            .unwrap()
+            .unwrap();
+        let second = storage.commit_thread_item(user, &updated).unwrap().unwrap();
+        assert_eq!(first["item_id"], second["item_id"]);
+        assert!(second["cursor"].as_i64() > first["cursor"].as_i64());
+        let snapshot = storage.thread_snapshot(user, parent).unwrap();
+        let items: Vec<_> = snapshot["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["kind"] == "subagent_run")
+            .collect();
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0]["payload"]["runtime"]["latest_message"],
+            "Latest fixture reply"
+        );
+        assert_eq!(items[0]["payload"]["runtime"]["metrics"]["tool_calls"], 4);
+        assert_eq!(
+            items[0]["payload"]["runtime"]["metrics"]["account_credits_consumed"],
+            0
+        );
     }
 
     fn upsert_parent_session(storage: &dyn StorageBackend, user_id: &str, session_id: &str) {

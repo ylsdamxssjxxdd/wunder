@@ -105,6 +105,18 @@ fn compact_cron_tool_result(value: Value) -> Value {
     if let Some(queued) = value.get("queued") {
         output["queued"] = queued.clone();
     }
+    for key in [
+        "running",
+        "resolved_session_id",
+        "run_session_id",
+        "delivery_session_id",
+        "last_status",
+        "last_error",
+    ] {
+        if let Some(value) = value.get(key) {
+            output[key] = value.clone();
+        }
+    }
     if let Some(reason) = value.get("reason") {
         output["reason"] = reason.clone();
     }
@@ -157,10 +169,14 @@ fn compact_cron_job(job: &Value) -> Value {
         "job_id": job.get("job_id").cloned().unwrap_or(Value::Null),
         "name": job.get("name").cloned().unwrap_or(Value::Null),
         "enabled": job.get("enabled").cloned().unwrap_or(Value::Null),
+        "running": job.get("running").cloned().unwrap_or(Value::Null),
         "schedule": schedule,
         "next_run_at": next_run,
         "last_run_at": last_run,
-        "last_status": job.get("last_status").cloned().unwrap_or(Value::Null)
+        "last_status": job.get("last_status").cloned().unwrap_or(Value::Null),
+        "last_error": job.get("last_error").cloned().unwrap_or(Value::Null),
+        "session_target": job.get("session_target").cloned().unwrap_or(Value::Null),
+        "session_id": job.get("session_id").cloned().unwrap_or(Value::Null)
     })
 }
 
@@ -168,6 +184,16 @@ fn compact_cron_job(job: &Value) -> Value {
 mod tests {
     use super::normalize_cron_action_args;
     use serde_json::json;
+
+    #[test]
+    fn cron_result_keeps_routing_running_and_failure_diagnostics() {
+        let result = super::compact_cron_tool_result(json!({"action":"get", "job":{
+            "session_id":"fixture-thread", "session_target":"isolated", "running":true,
+            "last_status":"error", "last_error":"fixture failure"}}));
+        assert_eq!(result["job"]["session_id"], "fixture-thread");
+        assert_eq!(result["job"]["running"], true);
+        assert_eq!(result["job"]["last_error"], "fixture failure");
+    }
 
     #[test]
     fn normalize_cron_action_args_flattens_message_into_job_payload() {

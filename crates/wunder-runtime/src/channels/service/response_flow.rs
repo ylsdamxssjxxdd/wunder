@@ -21,7 +21,7 @@ impl ChannelHub {
         message: &ChannelMessage,
         session_info: &ChannelSessionInfo,
         resolved_binding: Option<&BindingResolution>,
-        append_user_turn: bool,
+        _append_user_turn: bool,
         agent_display_name: Option<&str>,
         processing_ack_message_id: Option<&str>,
     ) -> Result<ChannelInboundResult> {
@@ -40,31 +40,10 @@ impl ChannelHub {
             format!("正在忙：{preview}（{agent_display_name}）。")
         };
         let user_text = message_preview_text(message);
-        if append_user_turn {
-            self.append_channel_chat(
-                &session_info.user_id,
-                &session_info.session_id,
-                "user",
-                &user_text,
-            )
-            .await;
-        } else {
-            self.append_channel_chat_history(
-                &session_info.user_id,
-                &session_info.session_id,
-                "user",
-                &user_text,
-                None,
-            )
-            .await;
-        }
-        self.append_channel_chat(
-            &session_info.user_id,
-            &session_info.session_id,
-            "assistant",
-            &busy_text,
-        )
-        .await;
+        let mut info = session_info.clone();
+        self.accept_channel_turn(&mut info, &user_text).await?;
+        self.finish_channel_turn(&info, &busy_text, "completed")
+            .await?;
         let mut outbound_meta = json!({
             "session_id": session_info.session_id,
             "binding_id": resolved_binding.and_then(|b| b.binding_id.clone()),
@@ -211,7 +190,6 @@ impl ChannelHub {
         _tts_voice: Option<&str>,
         _session_strategy: ChannelSessionStrategy,
     ) -> Result<ChannelInboundResult> {
-        let user_id = session_info.user_id.clone();
         let command_text = message.text.as_deref().map(str::trim).unwrap_or("");
         let (target_session_id, reply_text) = match command {
             // The inbound resolver has already created and bound the new task.
@@ -226,7 +204,18 @@ impl ChannelHub {
                     ApprovalResponse::Deny,
                 )
                 .await;
-                let cancelled = self.monitor.cancel(&session_info.session_id);
+                let settlement = self
+                    .thread_runtime
+                    .cancel_session_activity(
+                        &session_info.user_id,
+                        &session_info.session_id,
+                        "channel_stop",
+                    )
+                    .await?;
+                let cancelled = settlement.monitor_cancelled
+                    || settlement.queued_tasks_cancelled > 0
+                    || settlement.child_sessions_cancelled > 0
+                    || settlement.running_tasks_marked_cancelled > 0;
                 (
                     session_info.session_id.clone(),
                     if cancelled {
@@ -243,12 +232,10 @@ impl ChannelHub {
             ),
         };
 
-        if !command_text.is_empty() {
-            self.append_channel_chat(&user_id, &target_session_id, "user", command_text)
-                .await;
-        }
-        self.append_channel_chat(&user_id, &target_session_id, "assistant", &reply_text)
-            .await;
+        let mut info = session_info.clone();
+        self.accept_channel_turn(&mut info, command_text).await?;
+        self.finish_channel_turn(&info, &reply_text, "completed")
+            .await?;
 
         let mut outbound_meta = json!({
             "session_id": target_session_id,

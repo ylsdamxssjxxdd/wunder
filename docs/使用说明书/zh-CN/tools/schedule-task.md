@@ -6,7 +6,7 @@ read_when:
 source_docs:
   - src/services/tools/dispatch.rs
   - src/services/cron.rs
-updated_at: 2026-04-29
+updated_at: 2026-10-02
 ---
 
 # 定时任务
@@ -77,13 +77,14 @@ updated_at: 2026-04-29
 ## `session` 语义
 
 - `main`
-  触发时把消息发送到该智能体**当前任务线程**。
-  不是任务创建时记住的旧线程。
+  在任务记录的 `session_id` 所绑定的线程执行；默认绑定创建任务的线程。切换页面、创建其它线程或其它线程变活跃都不会改变绑定。忙碌时进入统一任务队列，可从绑定线程停止。
 
 - `isolated`
-  触发时先新建干净线程执行任务，再把结果回送到该智能体**当前任务线程**。
+  在绑定线程下新建干净子线程执行。完成结果以独立的已完成轮次投递到绑定线程，不再把结果作为用户指令调用模型。子线程与结果轮次均有独立标识，错误不会写入上一轮助手气泡。
 
-如果任务没有绑定智能体任务线程，则回退到任务记录里的 `session_id`。
+绑定线程被归档、删除或所属智能体不匹配时，任务明确失败，不猜测其它线程。`get/list` 返回 `session_id`、`session_target`、`running`、`last_status` 和 `last_error`。
+
+`run` 返回 `queued: true` 只表示异步执行已受理，不代表完成。不要在创建任务的模型轮次里反复查询等待；结束当前回复，让队列继续执行。
 
 ## 循环任务是否会堆积
 
@@ -165,3 +166,9 @@ updated_at: 2026-04-29
 - `schedule_text` 和 `schedule` 同时传入时，以 `schedule` 为准。
 - `schedule.every_ms` 最小为 `1000`。
 - 参数必须是完整 JSON 对象；如果 JSON 没闭合，工具会直接报参数无效。
+
+## 离线回归验收
+
+`npm run test:chat` 包含定时任务后台轮次场景：旧轮次运行、新轮次拒绝、停止、排队、独立结果投递及刷新恢复。HTTP/WebSocket 使用合成协议对端，页面操作和渲染使用真实浏览器，不启动正式服务或调用真实模型。
+
+查看 `temp_dir/chat-scheduled-review/conversation/index.html` 的分屏截图，以及同目录上一级的 `thread-export.jsonl`、`thread-changes.jsonl`、`performance.json` 和 `analysis.json`。后端定向运行 `cargo test -p wunder-runtime cron --lib`，覆盖真实 SQLite 与任务队列准入、取消和结果投递。两类测试分别验证后端状态和浏览器呈现，不宣称覆盖真实模型行为。

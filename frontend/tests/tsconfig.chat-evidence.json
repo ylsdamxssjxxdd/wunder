@@ -6,6 +6,7 @@
   "include": [
     "support/chat*.ts",
     "e2e/chat-user-lifecycle.spec.ts",
+    "e2e/chat-scheduled-task.spec.ts",
     "e2e/chat-durable-stream-performance.spec.ts"
   ]
 }

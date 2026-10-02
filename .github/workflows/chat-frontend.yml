@@ -2,9 +2,9 @@ name: Chat frontend contract
 
 on:
   pull_request:
-    paths: ['frontend/**', 'package*.json', '.github/workflows/chat-frontend.yml']
+    paths: ['frontend/**', 'crates/wunder-runtime/src/storage/**', 'crates/wunder-runtime/src/services/**', 'package*.json', '.github/workflows/chat-frontend.yml']
   push:
-    paths: ['frontend/**', 'package*.json', '.github/workflows/chat-frontend.yml']
+    paths: ['frontend/**', 'crates/wunder-runtime/src/storage/**', 'crates/wunder-runtime/src/services/**', 'package*.json', '.github/workflows/chat-frontend.yml']
   workflow_dispatch:
 
 permissions:

@@ -40,6 +40,7 @@ import type {
 } from './chatThreadTypes';
 
 export interface ChatThreadSnapshotTurn {
+  root_turn_id?: string;
   turn_id: string;
   user_round?: number;
   status?: string;
@@ -296,7 +297,9 @@ function applyItemUpsert(state: ChatThreadState, frame: ThreadChangeFrame): Chat
   // partial text a user explicitly stopped. Tool items settle independently.
   const preserveStoppedText = existing.kind === 'assistant_message' &&
     isCancelledTurnStatus(state.turns.get(existing.turnId)?.status);
-  let structural = false;
+  // Child progress is card metadata, never a token tail. A revision must
+  // invalidate the parent row even while its own turn is already terminal.
+  let structural = existing.kind === 'subagent_run';
   existing.revision = revision;
   existing.raw = data;
   const modelRound = firstNumber(data.model_round);
@@ -404,6 +407,7 @@ function applyTurnUpsert(state: ChatThreadState, frame: ThreadChangeFrame): Chat
   if (!existing) {
     state.turns.set(turnId, {
       turnId,
+      rootTurnId: firstString(data.root_turn_id),
       userRound: firstNumber(data.user_round) ?? null,
       status: firstString(data.status) ?? null,
       clientMessageId: firstString(data.client_message_id) ?? null,
@@ -414,6 +418,12 @@ function applyTurnUpsert(state: ChatThreadState, frame: ThreadChangeFrame): Chat
 
   let changed = false;
   let structural = false;
+  const rootTurnId = firstString(data.root_turn_id);
+  if (rootTurnId && rootTurnId !== existing.rootTurnId) {
+    existing.rootTurnId = rootTurnId;
+    changed = true;
+    structural = true;
+  }
   const userRound = firstNumber(data.user_round);
   if (userRound !== undefined && userRound !== existing.userRound) {
     existing.userRound = userRound;
@@ -586,6 +596,7 @@ export function applyChatThreadSnapshot(
     if (!turnId) continue;
     state.turns.set(turnId, {
       turnId,
+      rootTurnId: firstString(entry.root_turn_id),
       userRound: firstNumber(entry.user_round, entry.user_turn_index, entry.payload?.user_round) ?? null,
       status: firstString(entry.status) ?? null,
       clientMessageId: firstString(entry.client_message_id, entry.payload?.client_message_id) ?? null,

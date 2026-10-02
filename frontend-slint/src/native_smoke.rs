@@ -227,7 +227,7 @@ fn advance(
             // The UI materializes one presentation-only greeting before the
             // transcript; a new session must not contain anything else.
             ensure(
-                app.get_messages().row_count() <= 1,
+                app.get_turns().row_count() == 0,
                 "new session contains messages",
             )?;
             app.set_draft("native-long".into());
@@ -238,9 +238,9 @@ fn advance(
         3 => {
             let expected = DELTA.repeat(600);
             let answer = app
-                .get_messages()
+                .get_turns()
                 .iter()
-                .filter(|message| !message.mine)
+                .map(|turn| turn.assistant)
                 .last()
                 .ok_or("answer missing")?;
             ensure(
@@ -265,9 +265,9 @@ fn advance(
         4 => {
             let expected = DELTA.repeat(600);
             ensure(
-                app.get_messages()
+                app.get_turns()
                     .iter()
-                    .any(|row| !row.mine && row.text.as_str() == expected.trim_end()),
+                    .any(|row| row.assistant.text.as_str() == expected.trim_end()),
                 "history differs from stream",
             )?;
             app.invoke_new_thread();

@@ -5,8 +5,8 @@
 // buildChatThreadRenderableMessages is a pure function of ChatThreadState:
 // the same state always produces a deep-equal projection array. Ordering is
 // defined, never guessed: turns by userRound and records by registration order
-// (change_seq arrival). A user turn has exactly one user bubble and at most one
-// assistant bubble; model rounds are sections inside that assistant bubble.
+// (change_seq arrival). A user turn has exactly one user slot and one
+// assistant slot; model rounds are sections inside that assistant bubble.
 // No scoring, no string
 // pattern matching, no localeCompare, no cross-call caching.
 
@@ -37,60 +37,96 @@ const HIDDEN_ITEM_VISIBILITIES = new Set(['admin', 'model_internal']);
 
 type WorkflowItemRecord = ChatRuntimeWorkflowItemProjection;
 
-export const buildChatThreadRenderableMessages = (
+/** Fixed page schema: executions/items cannot add another assistant field. */
+export interface ChatThreadTurnSlot {
+  rootTurnId: string;
+  key: string;
+  user: ChatRuntimeMessageProjection;
+  assistant: ChatRuntimeMessageProjection;
+}
+
+export const buildChatThreadTurnSlots = (
   state: ChatThreadState | null | undefined
-): ChatRuntimeMessageProjection[] => {
+): ChatThreadTurnSlot[] => {
   if (!state) return [];
-  const itemsByTurn = bucketVisibleItemsByTurn(state);
-  const messages: ChatRuntimeMessageProjection[] = [];
+  // Execution turns (goal continuations) retain their own item identities,
+  // but belong to the initiating user's single assistant bubble.
+  const roots = new Map<string, string>();
+  for (const turn of state.turns.values()) roots.set(turn.turnId, turn.rootTurnId || turn.turnId);
+  for (const item of state.items.values()) {
+    if (typeof item.raw.root_turn_id === 'string' && item.raw.root_turn_id) {
+      roots.set(item.turnId, item.raw.root_turn_id);
+    }
+  }
+  const itemsByTurn = bucketVisibleItemsByTurn(state, roots);
+  const executions = new Map<string, ThreadTurnState[]>();
+  for (const turn of state.turns.values()) {
+    const root = roots.get(turn.turnId) || turn.turnId;
+    const group = executions.get(root) ?? [];
+    group.push(turn);
+    executions.set(root, group);
+  }
+  const slots: ChatThreadTurnSlot[] = [];
   const turns = [...state.turns.values()].sort(compareTurns);
   for (const turn of turns) {
+    if (roots.get(turn.turnId) !== turn.turnId) continue;
     const items = itemsByTurn.get(turn.turnId) ?? [];
-    appendTurnMessages(messages, state, turn, items);
+    const group = executions.get(turn.turnId) ?? [turn];
+    // Map insertion follows durable acceptance order, including after reload.
+    const latest = group[group.length - 1];
+    const active = group.find(entry => entry.status && !['completed', 'failed', 'cancelled', 'interrupted', 'rejected', 'stopped'].includes(entry.status));
+    // Only an accepted user input owns a page slot. Orphan execution data is
+    // retained by the reducer until its root input arrives; never invent a row.
+    if (turn.userContent === null) continue;
+    slots.push(buildTurnSlot(state, { ...turn, status: (active ?? latest).status }, items));
   }
-  return messages;
+  return slots;
 };
+
+/** Compatibility view for non-page consumers; the page consumes slots directly. */
+export const buildChatThreadRenderableMessages = (
+  state: ChatThreadState | null | undefined
+): ChatRuntimeMessageProjection[] => buildChatThreadTurnSlots(state).flatMap(slot => [slot.user, slot.assistant]);
 
 // ---------------------------------------------------------------------------
 // Turn assembly
 // ---------------------------------------------------------------------------
 
-const appendTurnMessages = (
-  messages: ChatRuntimeMessageProjection[],
+const buildTurnSlot = (
   state: ChatThreadState,
   turn: ThreadTurnState,
   items: ThreadItemState[]
-): void => {
-  const userContent = turn.userContent ?? '';
-  if (userContent.length > 0) {
-    messages.push(buildUserBubble(turn, state));
-  }
-
+): ChatThreadTurnSlot => {
   const textItems: ThreadItemState[] = [];
   const workflows: ThreadItemState[] = [];
   for (const item of items) {
     // EventEmitter owns visible output with this stable identity. Execution
     // history snapshots use random ids and must never become duplicate bubbles.
-    if (item.kind === 'assistant_message' && item.itemId === textItemId(turn.turnId, item.modelRound)) {
+    if (item.kind === 'assistant_message' && item.itemId === textItemId(item.turnId, item.modelRound)) {
       textItems.push(item);
     } else if (WORKFLOW_ITEM_KINDS.has(item.kind)) {
       workflows.push(item);
     }
   }
-  if (userContent.length > 0 || textItems.length > 0 || workflows.length > 0) {
-    messages.push(buildAssistantBubble(state, turn, items, textItems, workflows));
-  }
+  return {
+    rootTurnId: turn.turnId,
+    key: turn.clientMessageId ? `turn:client:${turn.clientMessageId}` : `turn:${turn.turnId}`,
+    user: buildUserBubble(turn, state),
+    assistant: buildAssistantBubble(state, turn, items, textItems, workflows)
+  };
 };
 
 const bucketVisibleItemsByTurn = (
-  state: ChatThreadState
+  state: ChatThreadState,
+  roots: Map<string, string>
 ): Map<string, ThreadItemState[]> => {
   const byTurn = new Map<string, ThreadItemState[]>();
   for (const item of state.items.values()) {
     if (item.visibility !== null && HIDDEN_ITEM_VISIBILITIES.has(item.visibility)) continue;
-    const bucket = byTurn.get(item.turnId);
+    const root = roots.get(item.turnId) || item.turnId;
+    const bucket = byTurn.get(root);
     if (bucket) bucket.push(item);
-    else byTurn.set(item.turnId, [item]);
+    else byTurn.set(root, [item]);
   }
   return byTurn;
 };
@@ -151,7 +187,14 @@ const buildAssistantBubble = (
   workflows: ThreadItemState[]
 ): ChatRuntimeMessageProjection => {
   const turnId = turn.turnId;
-  const orderedTextItems = textItems.slice().sort(compareModelItems);
+  const executionOrder = new Map<string, number>();
+  for (const item of turnItems) {
+    const order = Number(item.raw.created_seq) || item.order;
+    executionOrder.set(item.turnId, Math.min(executionOrder.get(item.turnId) ?? order, order));
+  }
+  const compareExecutions = (a: ThreadItemState, b: ThreadItemState): number =>
+    a.turnId === b.turnId ? 0 : (executionOrder.get(a.turnId) ?? 0) - (executionOrder.get(b.turnId) ?? 0);
+  const orderedTextItems = textItems.slice().sort((a, b) => compareExecutions(a, b) || compareModelItems(a, b));
   const latestTextItem = orderedTextItems[orderedTextItems.length - 1] ?? null;
   // `append_chat` still records an immutable conversation-history snapshot
   // after a model round. It has no stable thread item id, so it is never a
@@ -159,11 +202,16 @@ const buildAssistantBubble = (
   // presentation metadata for the matching stable output item.
   const stats = resolveTurnAssistantStats(turnItems, orderedTextItems);
   const modelTurnId = `${turnId}:assistant`;
-  const content = composeTurnText(state, orderedTextItems, 'content');
+  // A user turn has one reply body. Earlier model rounds are execution
+  // commentary, retained in ThreadLog rather than concatenated into the answer.
+  // Do not fall back to an earlier round when the new reply has no text yet.
+  const content = latestTextItem && !hasToolCalls(latestTextItem)
+    ? composeItemText(state, latestTextItem.itemId, 'content')
+    : '';
   const reasoning = composeTurnText(state, orderedTextItems, 'reasoning');
   const records = workflows
     .slice()
-    .sort(compareWorkflowItems)
+    .sort((a, b) => compareExecutions(a, b) || compareWorkflowItems(a, b))
     .map((item) => buildWorkflowRecord(item, modelTurnId));
   const createdSeq = orderedTextItems[0]?.order ?? (workflows.length > 0 ? minItemOrder(workflows) : 0);
   const updatedSeq = Math.max(
@@ -186,7 +234,13 @@ const buildAssistantBubble = (
     failed: resolved.failed,
     cancelled: resolved.cancelled,
     workflowItems: records,
-    subagents: [],
+    subagents: turnItems.filter(item => item.kind === 'subagent_run' && isPlainRecord(item.raw.runtime))
+      .map(item => {
+        const runtime = item.raw.runtime as Record<string, unknown>;
+        return { ...runtime, key: item.itemId, updatedSeq: item.revision, durable: true, detail: runtime,
+          canTerminate: runtime.can_terminate === true,
+          updated_at: typeof runtime.updated_time === 'number' ? new Date(runtime.updated_time * 1000).toISOString() : '' };
+      }),
     raw: buildAssistantBubbleRaw(turn, latestTextItem)
   };
   if (turn.userRound !== null || stats) {
@@ -203,6 +257,14 @@ const buildAssistantBubble = (
       stopped: true,
       stop_reason: 'user_stop'
     };
+  }
+  if (resolved.failed) {
+    const failure = [...turnItems].reverse().find(item => item.kind === 'terminal' || item.kind === 'error');
+    if (failure) {
+      const error = failure.raw.error;
+      const detail = typeof error === 'string' ? error : isPlainRecord(error) ? firstText(error.message, error.code) : '';
+      message.display = { ...(message.display ?? {}), failureDetail: detail || firstText(failure.raw.message, failure.raw.code) };
+    }
   }
   return message;
 };
@@ -221,15 +283,30 @@ const resolveTurnAssistantStats = (
   if (!latestStable) return null;
   const direct = extractItemStats(latestStable.raw);
   let persisted: Record<string, unknown> | null = null;
+  let fallbackPersisted: Record<string, unknown> | null = null;
   for (const item of items) {
     if (item === latestStable || item.kind !== 'assistant_message' || item.role !== 'assistant') continue;
-    if (item.modelRound !== latestStable.modelRound) continue;
+    if (item.turnId !== latestStable.turnId) continue;
     const stats = extractPersistedMessageStats(item.raw);
-    if (stats) persisted = stats;
+    if (!stats) continue;
+    // append_chat history rows from tool/child-agent rounds can omit
+    // model_round even though they carry the authoritative terminal timing.
+    // Keep that row as a fallback for generation speed, but prefer an exact
+    // stable-round match when available.
+    if (item.modelRound === latestStable.modelRound) persisted = stats;
+    if (hasGenerationSpeed(stats)) fallbackPersisted = stats;
   }
+  persisted = persisted ?? fallbackPersisted;
   if (!direct && !persisted) return null;
   return { ...(direct ?? {}), ...(persisted ?? {}) };
 };
+
+const hasGenerationSpeed = (stats: Record<string, unknown>): boolean =>
+  ['visible_decode_speed_tps', 'decode_speed_tps', 'avg_model_round_speed_tps',
+    'avg_model_round_decode_speed_tps'].some((key) => {
+      const value = Number(stats[key]);
+      return Number.isFinite(value) && value >= 0;
+    });
 
 const extractPersistedMessageStats = (payload: Record<string, unknown>): Record<string, unknown> | null => {
   const meta = isPlainRecord(payload.meta) ? payload.meta : null;
@@ -295,8 +372,8 @@ const resolveBubbleStatus = (
 ): ResolvedBubbleStatus => {
   const turnStatus = normalizeStatus(turn.status);
   if (turnStatus === 'completed') return { status: 'final', final: true, failed: false, cancelled: false };
-  if (turnStatus === 'failed') return { status: 'failed', final: false, failed: true, cancelled: false };
-  if (turnStatus === 'cancelled') return { status: 'cancelled', final: false, failed: false, cancelled: true };
+  if (turnStatus === 'failed' || turnStatus === 'rejected') return { status: 'failed', final: false, failed: true, cancelled: false };
+  if (['cancelled', 'interrupted', 'stopped'].includes(turnStatus)) return { status: 'cancelled', final: false, failed: false, cancelled: true };
   if (textItems.some((item) => item.status === 'failed')) return { status: 'failed', final: false, failed: true, cancelled: false };
   if (textItems.some((item) => item.status === 'cancelled')) return { status: 'cancelled', final: false, failed: false, cancelled: true };
   if (turnStatus === 'queued') return { status: 'queued', final: false, failed: false, cancelled: false };
@@ -317,7 +394,7 @@ const resolveBubbleStatus = (
 
 const workflowRecordCache = new WeakMap<ThreadItemState, { revision: number; modelTurnId: string; record: WorkflowItemRecord }>();
 
-const buildWorkflowRecord = (
+export const buildWorkflowRecord = (
   item: ThreadItemState,
   modelTurnId: string
 ): WorkflowItemRecord => {
@@ -467,6 +544,9 @@ const composeTurnText = (
   .map((item) => composeItemText(state, item.itemId, field))
   .filter((text) => text.length > 0)
   .join('\n\n');
+
+const hasToolCalls = (item: ThreadItemState): boolean =>
+  Array.isArray(item.raw.tool_calls) && item.raw.tool_calls.length > 0;
 
 const minItemOrder = (items: ThreadItemState[]): number =>
   items.reduce((min, item) => (item.order < min ? item.order : min), items[0]?.order ?? 0);

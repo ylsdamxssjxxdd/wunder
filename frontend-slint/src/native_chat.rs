@@ -1,6 +1,6 @@
 //! Native chat projection for the in-process desktop runtime.
 
-use crate::{message_blocks::Blocks, ChatMessage, Conversation, MainWindow};
+use crate::{message_blocks::Blocks, ChatMessage, ChatTurn, Conversation, MainWindow};
 use serde_json::Value;
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 use std::{
@@ -18,10 +18,14 @@ use wunder_desktop::{
 
 struct Active {
     stream: NativeStream,
+    output: TurnOutput,
+}
+
+struct TurnOutput {
     session: String,
     blocks: Blocks,
     row: usize,
-    model: Rc<VecModel<ChatMessage>>,
+    model: Rc<VecModel<ChatTurn>>,
     state: String,
     round: i64,
     stats_duration: String,
@@ -32,6 +36,18 @@ struct Active {
     stats_credits: String,
     workflow: Vec<(String, String)>,
     workflow_dirty: bool,
+}
+
+impl std::ops::Deref for Active {
+    type Target = TurnOutput;
+    fn deref(&self) -> &TurnOutput {
+        &self.output
+    }
+}
+impl std::ops::DerefMut for Active {
+    fn deref_mut(&mut self) -> &mut TurnOutput {
+        &mut self.output
+    }
 }
 
 struct State {
@@ -64,7 +80,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     app.set_connected(true);
     app.set_status("正在加载内嵌运行时…".into());
     app.set_conversations(ModelRc::default());
-    app.set_messages(ModelRc::default());
+    app.set_turns(ModelRc::default());
     app.set_agents(ModelRc::default());
     app.set_tools(ModelRc::default());
     app.set_models(ModelRc::default());
@@ -103,9 +119,9 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             .filter(|active| active.row == index as usize)
             .map(|active| active.blocks.raw.clone())
             .or_else(|| {
-                app.get_messages()
+                app.get_turns()
                     .row_data(index as usize)
-                    .map(|row| row.text.to_string())
+                    .map(|row| row.assistant.text.to_string())
             });
         if let Some(text) = text {
             app.invoke_copy_raw(text.into());
@@ -189,15 +205,6 @@ fn agent_avatar_tone(app: &MainWindow) -> i32 {
         .unwrap_or(1)
 }
 
-fn agent_avatar_glyph_from_row(row: Option<ChatMessage>) -> slint::SharedString {
-    row.map(|message| message.avatar_glyph)
-        .unwrap_or_else(|| "✦".into())
-}
-
-fn agent_avatar_tone_from_row(row: Option<ChatMessage>) -> i32 {
-    row.map(|message| message.avatar_tone).unwrap_or(1)
-}
-
 fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
     app.on_select_conversation(move |index| {
@@ -232,10 +239,9 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         app.set_active_session_id(id.clone().into());
         app.set_heading(row.title);
         app.set_session_loading(true);
-        app.set_messages(ModelRc::default());
+        app.set_turns(ModelRc::default());
         std::thread::spawn(move || {
-            let result = desktop.get_session(&id);
-            let durable = desktop.recover_session_durable_changes(&id);
+            let result = desktop.get_session_turns(&id);
             let _ = weak.upgrade_in_event_loop(move |app| {
                 if app.get_active_session_id() != id
                     || generation.load(Ordering::Relaxed) != request
@@ -244,7 +250,7 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                 }
                 app.set_session_loading(false);
                 match result {
-                    Ok((session, messages)) => {
+                    Ok((session, turns)) => {
                         let agent = session.agent_id.unwrap_or_else(|| "__default__".into());
                         if app.get_active_agent_id() != agent {
                             app.set_active_agent_id(agent.clone().into());
@@ -252,9 +258,8 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                         }
                         crate::entity_state::restore_agent(&app, &agent);
                         app.set_heading(session.title.into());
-                        let mut projected = messages
-                            .into_iter()
-                            .map(|message| ChatMessage {
+                        let map_message =
+                            |message: wunder_desktop::native::NativeMessage| ChatMessage {
                                 workflow: !message.workflow_detail.is_empty(),
                                 workflow_detail: message.workflow_detail.into(),
                                 text: message.text.clone().into(),
@@ -271,25 +276,17 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                                 blocks: crate::message_blocks::from_text(&message.text),
                                 avatar_glyph: agent_avatar_glyph(&app),
                                 avatar_tone: agent_avatar_tone(&app),
-                                ..Default::default()
+                            };
+                        let projected = turns
+                            .into_iter()
+                            .map(|turn| ChatTurn {
+                                root_id: turn.root_id.into(),
+                                user: map_message(turn.user),
+                                assistant: map_message(turn.assistant),
                             })
                             .collect::<Vec<_>>();
-                        // The web client always materializes one transient greeting before
-                        // transcript history. It is presentation-only and never persisted.
-                        projected.insert(0, greeting_message(&app));
-                        // I5 snapshot guard: if durable changes were trimmed, the history
-                        // snapshot is authoritative. Empty frames means snapshot-required.
-                        if durable.as_ref().map(|frames| frames.is_empty()).unwrap_or(false) {
-                            app.set_messages(ModelRc::new(VecModel::from(projected)));
-                            app.set_scroll_revision(app.get_scroll_revision().wrapping_add(1));
-                            app.set_status("历史快照已恢复".into());
-                            return;
-                        }
-                        // Heal durable item_upsert frames into the transcript: only
-                        // assistant_message / reasoning items embed authoritative content.
-                        // text_block frames are durable but recovered through item payload.
-                        apply_durable_heal_frames(&mut projected, durable.unwrap_or_default());
-                        app.set_messages(ModelRc::new(VecModel::from(projected)));
+                        app.set_greeting(greeting_message(&app));
+                        app.set_turns(ModelRc::new(VecModel::from(projected)));
                         app.set_scroll_revision(app.get_scroll_revision().wrapping_add(1));
                         app.set_status("内嵌运行时已就绪".into());
                     }
@@ -415,31 +412,33 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                 return;
             }
         };
-        let mut rows = app.get_messages().iter().collect::<Vec<_>>();
-        if rows.len() > 98 {
-            rows.drain(..rows.len() - 98);
+        let mut rows = app.get_turns().iter().collect::<Vec<_>>();
+        if rows.len() >= 50 {
+            rows.remove(0);
         }
-        rows.push(ChatMessage {
+        let user = ChatMessage {
             text: display_content.clone().into(),
             mine: true,
             time: "刚刚".into(),
             blocks: crate::message_blocks::from_text(&display_content),
-            avatar_glyph: "".into(),
-            avatar_tone: 0,
             ..Default::default()
-        });
+        };
         let blocks = Blocks::new();
         let row = rows.len();
-        rows.push(ChatMessage {
-            time: "刚刚".into(),
-            state: "正在生成…".into(),
-            blocks: ModelRc::from(blocks.model.clone()),
-            avatar_glyph: agent_avatar_glyph(&app),
-            avatar_tone: agent_avatar_tone(&app),
+        rows.push(ChatTurn {
+            user,
+            assistant: ChatMessage {
+                time: "刚刚".into(),
+                state: "正在生成…".into(),
+                blocks: ModelRc::from(blocks.model.clone()),
+                avatar_glyph: agent_avatar_glyph(&app),
+                avatar_tone: agent_avatar_tone(&app),
+                ..Default::default()
+            },
             ..Default::default()
         });
         let model = Rc::new(VecModel::from(rows));
-        app.set_messages(ModelRc::from(model.clone()));
+        app.set_turns(ModelRc::from(model.clone()));
         app.set_draft("".into());
         app.set_pending_attachments(ModelRc::default());
         app.set_busy(true);
@@ -452,20 +451,22 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         app.set_context_usage(0.0);
         state.borrow_mut().active = Some(Active {
             stream,
-            session,
-            blocks,
-            row,
-            model,
-            state: "正在生成…".into(),
-            round: 0,
-            stats_duration: String::new(),
-            stats_speed: String::new(),
-            stats_context: String::new(),
-            stats_quota: String::new(),
-            stats_tools: String::new(),
-            stats_credits: String::new(),
-            workflow: Vec::new(),
-            workflow_dirty: false,
+            output: TurnOutput {
+                session,
+                blocks,
+                row,
+                model,
+                state: "正在生成…".into(),
+                round: 0,
+                stats_duration: String::new(),
+                stats_speed: String::new(),
+                stats_context: String::new(),
+                stats_quota: String::new(),
+                stats_tools: String::new(),
+                stats_credits: String::new(),
+                workflow: Vec::new(),
+                workflow_dirty: false,
+            },
         });
         start_timer(&app, state.clone());
     });
@@ -639,9 +640,11 @@ fn bind_stop(app: &MainWindow, state: Rc<RefCell<State>>) {
         if app.get_stopping() {
             return;
         }
-        if let Some(active) = state.borrow().active.as_ref() {
+        if let Some(active) = state.borrow_mut().active.as_mut() {
             app.set_stopping(true);
             active.stream.cancel();
+            active.state = "已停止".into();
+            update_message_stats_row(active);
             app.set_status("正在停止…".into());
         }
     });
@@ -723,10 +726,11 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 if active.state == "正在生成…" {
                     active.state = "输出已结束".into();
                 }
-                let mut message = active.model.row_data(active.row).unwrap_or_default();
+                let mut turn = active.model.row_data(active.row).unwrap_or_default();
+                let message = &mut turn.assistant;
                 message.text = active.blocks.raw.as_str().into();
                 message.state = active.state.as_str().into();
-                active.model.set_row_data(active.row, message);
+                active.model.set_row_data(active.row, turn);
                 update_message_stats_row(active);
                 app.set_busy(false);
                 app.set_stopping(false);
@@ -741,10 +745,14 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
         });
 }
 
-fn apply_event(active: &mut Active, event: &Value) -> Result<bool, String> {
+fn apply_event(active: &mut TurnOutput, event: &Value) -> Result<bool, String> {
     let raw_kind = event["event"].as_str().unwrap_or("");
     let envelope = &event["data"];
-    let data = if envelope.get("tool").is_some() || envelope.get("tool_name").is_some() { envelope } else { envelope.get("data").unwrap_or(envelope) };
+    let data = if envelope.get("tool").is_some() || envelope.get("tool_name").is_some() {
+        envelope
+    } else {
+        envelope.get("data").unwrap_or(envelope)
+    };
     // The runtime collapses every online *_delta frame into thread_item_delta
     // and keeps the semantic type in data.source_event.
     let kind = if raw_kind == "thread_item_delta" {
@@ -758,32 +766,76 @@ fn apply_event(active: &mut Active, event: &Value) -> Result<bool, String> {
     {
         return Ok(false);
     }
+    if active.state == "已停止" {
+        return Ok(false);
+    }
     let round = data["model_round"].as_i64().unwrap_or(active.round);
+    if let Some(id) = data["root_turn_id"]
+        .as_str()
+        .or_else(|| data["turn_id"].as_str())
+    {
+        let mut turn = active.model.row_data(active.row).unwrap_or_default();
+        if turn.root_id.is_empty() {
+            turn.root_id = id.into();
+            active.model.set_row_data(active.row, turn);
+        }
+    }
     if round > active.round
         && active.round > 0
         && matches!(kind, "llm_output_delta" | "llm_request")
     {
-        active.blocks.flush();
-        let mut previous = active.model.row_data(active.row).unwrap_or_default();
-        previous.text = active.blocks.raw.as_str().into();
-        previous.state = "步骤完成".into();
-        active.model.set_row_data(active.row, previous);
-        active.blocks = Blocks::new();
-        active.workflow_dirty = true;
-        if active.model.row_count() >= 100 {
-            active.model.remove(0);
+        // Model actions replace the active answer inside the same fixed slot.
+        if !active.blocks.raw.is_empty() {
+            if active.workflow.len() >= 24 {
+                active.workflow.remove(0);
+            }
+            active.workflow.push((
+                format!("model-{}", active.round),
+                wunder_server::tool_result_display::preview(&active.blocks.raw),
+            ));
+            active.workflow_dirty = true;
         }
-        active.row = active.model.row_count();
-        active.model.push(ChatMessage {
-            time: "刚刚".into(),
-            blocks: ModelRc::from(active.blocks.model.clone()),
-            avatar_glyph: agent_avatar_glyph_from_row(active.model.row_data(active.row)),
-            avatar_tone: agent_avatar_tone_from_row(active.model.row_data(active.row)),
-            ..Default::default()
-        });
+        active.blocks.replace("")?;
     }
-    active.round = round;
+    if round < active.round && matches!(kind, "llm_output_delta" | "llm_output" | "delta") {
+        return Ok(false);
+    }
+    if matches!(
+        kind,
+        "llm_output_delta" | "llm_output" | "llm_request" | "delta" | "final"
+    ) {
+        active.round = active.round.max(round);
+    }
     match kind {
+        "native_execution_started" => {
+            // Background goal executions restart model_round at one, while
+            // retaining the same user/assistant pair and completed tool list.
+            active.round = 0;
+            if !active.blocks.raw.is_empty() {
+                if active.workflow.len() >= 24 {
+                    active.workflow.remove(0);
+                }
+                active.workflow.push((
+                    data["turn_id"].as_str().unwrap_or("execution").into(),
+                    wunder_server::tool_result_display::preview(&active.blocks.raw),
+                ));
+                active.workflow_dirty = true;
+            }
+            active.blocks.replace("")?;
+            active.state = "目标继续执行…".into();
+        }
+        "native_execution_status" => {
+            active.state = match data["status"].as_str() {
+                Some("queued") => "正在排队",
+                Some("running") => "正在生成…",
+                Some("cancelled" | "interrupted") => "已停止",
+                Some("failed") => "执行失败",
+                Some("waiting_input" | "waiting_user_input") => "等待用户输入",
+                _ => "目标继续执行…",
+            }
+            .into();
+        }
+        "native_stats" => return Ok(true),
         "llm_output_delta" | "delta" => {
             if let Some(delta) = data["delta"].as_str() {
                 active.blocks.append(delta)?;
@@ -804,22 +856,56 @@ fn apply_event(active: &mut Active, event: &Value) -> Result<bool, String> {
             active.state = match data["status"].as_str() {
                 Some("cancelled" | "canceled") => "已停止",
                 Some("failed" | "error" | "rejected") => "执行失败",
+                Some("waiting_input" | "waiting_user_input") => "等待用户输入",
                 _ => "任务完成",
             }
             .into();
         }
+        "queued" | "queue_update" => {
+            active.state = data["queue_ahead"]
+                .as_i64()
+                .map(|ahead| format!("正在排队 · 前方 {ahead} 名"))
+                .unwrap_or_else(|| "正在排队".into());
+        }
+        "queue_start" => active.state = "正在生成…".into(),
+        "compaction" | "compaction_completed" | "compaction_start" => {
+            let summary = data["summary_text"].as_str().unwrap_or("上下文压缩中…");
+            if let Some(entry) = active
+                .workflow
+                .iter_mut()
+                .find(|entry| entry.0 == "compaction")
+            {
+                entry.1 = format!("上下文压缩\n{summary}");
+            } else {
+                active
+                    .workflow
+                    .push(("compaction".into(), format!("上下文压缩\n{summary}")));
+            }
+            active.workflow_dirty = true;
+        }
         "queue_finish" => active.state = "任务完成".into(),
         "tool_call" | "tool_start" | "tool_result" | "tool_output" => {
             let pending = matches!(kind, "tool_call" | "tool_start");
-            if pending { active.state = "正在执行工具…".into(); }
-            let id = data.get("tool_call_id").or_else(|| data.get("item_id"))
-                .and_then(Value::as_str).unwrap_or_default();
+            if pending {
+                active.state = "正在执行工具…".into();
+            }
+            let id = data
+                .get("tool_call_id")
+                .or_else(|| data.get("item_id"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             // Background native stream already produced the bounded display.
             if let Some(detail) = event.get("display_result").and_then(Value::as_str) {
-                if let Some(row) = active.workflow.iter_mut().find(|row| !id.is_empty() && row.0 == id) {
+                if let Some(row) = active
+                    .workflow
+                    .iter_mut()
+                    .find(|row| !id.is_empty() && row.0 == id)
+                {
                     row.1 = detail.into();
                 } else {
-                    if active.workflow.len() >= 24 { active.workflow.remove(0); }
+                    if active.workflow.len() >= 24 {
+                        active.workflow.remove(0);
+                    }
                     active.workflow.push((id.into(), detail.into()));
                 }
                 active.workflow_dirty = true;
@@ -853,7 +939,7 @@ fn stats_source(data: &Value) -> Vec<&Value> {
     sources
 }
 
-fn update_active_stats(active: &mut Active, event: &Value) {
+fn update_active_stats(active: &mut TurnOutput, event: &Value) {
     let data = event_data(event);
     let sources = stats_source(data);
     let number = |keys: &[&str]| sources.iter().find_map(|source| stat_number(source, keys));
@@ -891,8 +977,9 @@ fn update_active_stats(active: &mut Active, event: &Value) {
     }
 }
 
-fn update_message_stats_row(active: &mut Active) {
-    let mut message = active.model.row_data(active.row).unwrap_or_default();
+fn update_message_stats_row(active: &mut TurnOutput) {
+    let mut turn = active.model.row_data(active.row).unwrap_or_default();
+    let message = &mut turn.assistant;
     message.stats_status = active.state.as_str().into();
     message.stats_duration = active.stats_duration.as_str().into();
     message.stats_speed = active.stats_speed.as_str().into();
@@ -902,10 +989,16 @@ fn update_message_stats_row(active: &mut Active) {
     message.stats_credits = active.stats_credits.as_str().into();
     if active.workflow_dirty {
         message.workflow = !active.workflow.is_empty();
-        message.workflow_detail = active.workflow.iter().map(|row| row.1.as_str()).collect::<Vec<_>>().join("\n\n").into();
+        message.workflow_detail = active
+            .workflow
+            .iter()
+            .map(|row| row.1.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+            .into();
         active.workflow_dirty = false;
     }
-    active.model.set_row_data(active.row, message);
+    active.model.set_row_data(active.row, turn);
 }
 
 fn format_count_value(value: f64) -> String {
@@ -977,76 +1070,90 @@ fn format_count_i64(value: i64) -> String {
     }
 }
 
-/// Heal durable item_upsert frames into the desktop transcript.
-///
-/// Only assistant_message / reasoning items embed authoritative content in the
-/// embedded item payload. text_block frames are durable but recovered through
-/// the item payload (I3). Idempotent: same-kind content-contains check prevents
-/// double writes (过渡手段).
-fn apply_durable_heal_frames(projected: &mut Vec<ChatMessage>, frames: Vec<Value>) {
-    for record in &frames {
-        let Some(data) = record.get("data") else {
-            continue;
+#[cfg(test)]
+mod turn_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn model_actions_queue_compaction_and_stop_keep_fixed_pair() {
+        let blocks = Blocks::new();
+        let model = Rc::new(VecModel::from(vec![ChatTurn {
+            root_id: "fixture-root".into(),
+            user: ChatMessage {
+                mine: true,
+                text: "Fixture input".into(),
+                ..Default::default()
+            },
+            assistant: ChatMessage {
+                blocks: ModelRc::from(blocks.model.clone()),
+                ..Default::default()
+            },
+        }]));
+        let mut output = TurnOutput {
+            session: "fixture-session".into(),
+            blocks,
+            row: 0,
+            model: model.clone(),
+            state: String::new(),
+            round: 0,
+            stats_duration: String::new(),
+            stats_speed: String::new(),
+            stats_context: String::new(),
+            stats_quota: String::new(),
+            stats_tools: String::new(),
+            stats_credits: String::new(),
+            workflow: vec![],
+            workflow_dirty: false,
         };
-        let change_type = data.get("change_type").and_then(Value::as_str).unwrap_or("");
-        if change_type != "item_upsert" {
-            continue;
+        for round in 1..=12 {
+            apply_event(&mut output, &json!({"event":"llm_output_delta", "data":{"model_round":round,"delta":"Fixture partial"}})).unwrap();
+            output.blocks.flush();
+            update_message_stats_row(&mut output);
+            assert_eq!(model.row_count(), 1);
+            assert_eq!(output.blocks.raw, "Fixture partial");
         }
-        let Some(item) = data.get("item") else {
-            continue;
-        };
-        let kind = item.get("kind").and_then(Value::as_str).unwrap_or("");
-        let payload = item.get("payload");
-        let role = payload
-            .and_then(|value| value.get("role"))
-            .and_then(Value::as_str)
-            .or_else(|| item.get("role").and_then(Value::as_str))
-            .unwrap_or("");
-        let content = payload
-            .and_then(|value| value.get("content"))
-            .or_else(|| item.get("content"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        let reasoning = payload
-            .and_then(|value| {
-                value
-                    .get("reasoning")
-                    .or_else(|| value.get("reasoning_content"))
-            })
-            .and_then(Value::as_str)
-            .or_else(|| item.get("reasoning").and_then(Value::as_str))
-            .map(str::trim)
-            .unwrap_or_default()
-            .to_string();
-
-        if kind.contains("reasoning") || role == "reasoning" {
-            if reasoning.is_empty() {
-                continue;
-            }
-            // Reasoning items: heal into the last assistant message's blocks or
-            // create a new reasoning row if none exists.
-            if let Some(last) = projected.last_mut() {
-                if !last.mine && last.state == "正在生成…" {
-                    let blocks = crate::message_blocks::from_text(&reasoning);
-                    last.blocks = blocks;
-                    last.text = reasoning.into();
-                }
-            }
-        } else if !content.is_empty() {
-            // Assistant message items: heal the authoritative content into the
-            // matching transcript row. Skip if already contains the content.
-            for msg in projected.iter_mut() {
-                if msg.mine || msg.state == "正在生成…" || msg.text.contains(&content) {
-                    continue;
-                }
-                if msg.text.is_empty() {
-                    msg.text = content.clone().into();
-                    msg.blocks = crate::message_blocks::from_text(&content);
-                    msg.state = "任务完成".into();
-                    break;
-                }
-            }
-        }
+        apply_event(&mut output, &json!({"event":"native_execution_started","data":{"root_turn_id":"fixture-root","turn_id":"fixture-child"}})).unwrap();
+        apply_event(&mut output, &json!({"event":"llm_output_delta","data":{"model_round":1,"delta":"Continuation partial"}})).unwrap();
+        assert_eq!(model.row_count(), 1);
+        assert_eq!(model.row_data(0).unwrap().root_id, "fixture-root");
+        assert_eq!(output.blocks.raw, "Continuation partial");
+        output.blocks.replace("Fixture partial").unwrap();
+        apply_event(
+            &mut output,
+            &json!({"event":"queue_update", "data":{"queue_ahead":3}}),
+        )
+        .unwrap();
+        assert!(output.state.contains("3"));
+        apply_event(
+            &mut output,
+            &json!({"event":"compaction", "data":{"summary_text":"Fixture summary"}}),
+        )
+        .unwrap();
+        apply_event(
+            &mut output,
+            &json!({"event":"turn_terminal", "data":{"status":"cancelled"}}),
+        )
+        .unwrap();
+        apply_event(
+            &mut output,
+            &json!({"event":"final", "data":{"content":"Late answer"}}),
+        )
+        .unwrap();
+        update_message_stats_row(&mut output);
+        assert_eq!(model.row_count(), 1);
+        assert_eq!(output.blocks.raw, "Fixture partial");
+        let turn = model.row_data(0).unwrap();
+        assert!(turn.user.mine && !turn.assistant.mine);
+        assert_eq!(turn.assistant.stats_status, "已停止");
+        assert!(turn.assistant.workflow_detail.contains("Fixture summary"));
+        model.push(ChatTurn {
+            user: ChatMessage {
+                mine: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert_eq!(model.row_count(), 2);
+        assert_eq!(model.row_data(0).unwrap().assistant.stats_status, "已停止");
     }
 }

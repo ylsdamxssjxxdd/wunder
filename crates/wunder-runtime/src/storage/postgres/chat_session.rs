@@ -451,14 +451,17 @@ impl PostgresChatSessionStorage for PostgresStorage {
             return Ok(0);
         }
         let mut conn = self.conn()?;
-        let _ = conn.execute(
+        let mut tx = conn.transaction()?;
+        tx.execute(
             "DELETE FROM session_goals WHERE user_id = $1 AND session_id = $2",
             &[&cleaned_user, &cleaned_session],
-        );
-        let affected = conn.execute(
+        )?;
+        let affected = tx.execute(
             "DELETE FROM chat_sessions WHERE user_id = $1 AND session_id = $2",
             &[&cleaned_user, &cleaned_session],
         )?;
+        tx.execute("DELETE FROM channel_sessions WHERE user_id = $1 AND session_id = $2", &[&cleaned_user, &cleaned_session])?;
+        tx.commit()?;
         Ok(affected as i64)
     }
 }

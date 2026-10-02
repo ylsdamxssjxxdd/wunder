@@ -271,7 +271,7 @@ export const createMessageViewportRuntime = (
         scheduleObservedMessageResizeRefresh(changes);
       });
     }
-    const nodes = container.querySelectorAll<HTMLElement>('.messenger-message[data-virtual-key]');
+    const nodes = container.querySelectorAll<HTMLElement>('[data-chat-measure], .messenger-message[data-virtual-key]:not(.messenger-turn .messenger-message):not(.messenger-greeting-region .messenger-message)');
     const nextNodes = new Map<string, HTMLElement>();
     nodes.forEach((node) => {
       const key = String(node?.dataset?.virtualKey || '').trim();
@@ -334,12 +334,13 @@ export const createMessageViewportRuntime = (
     }
     const normalizedTargetKeys = collectMeasureKeys(targetKeys);
     const targetKeySet = normalizedTargetKeys.length ? new Set(normalizedTargetKeys) : null;
-    const nodes = container.querySelectorAll<HTMLElement>('.messenger-message[data-virtual-key]');
+    const nodes = container.querySelectorAll<HTMLElement>('[data-chat-measure], .messenger-message[data-virtual-key]:not(.messenger-turn .messenger-message):not(.messenger-greeting-region .messenger-message)');
     const changes: Array<{ key: string; previous: number | null; next: number }> = [];
     nodes.forEach((node) => {
       const key = String(node.dataset.virtualKey || '').trim();
       if (!key) return;
-      if (targetKeySet && !targetKeySet.has(key)) {
+      if (targetKeySet && !targetKeySet.has(key) &&
+          !Array.from(node.querySelectorAll<HTMLElement>('[data-virtual-key]')).some(child => targetKeySet.has(child.dataset.virtualKey || ''))) {
         return;
       }
       const change = measureMessageNode(node);

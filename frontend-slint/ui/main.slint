@@ -1,4 +1,4 @@
-import { Theme, DesktopPage, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, CronCard, CronRunCard, AgentCardFile, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, PlazaItemCard } from "theme.slint";
+import { Theme, DesktopPage, Conversation, TextBlock, ChatTurn, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, CronCard, CronRunCard, AgentCardFile, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, PlazaItemCard } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, SearchField, FormField, MiddleHeader, MiddleFooter } from "components.slint";
 import { Composer } from "composer.slint";
 import { MessageRow } from "message.slint";
@@ -11,7 +11,7 @@ import { ChannelsPage } from "channels_page.slint";
 import { PlazaPage } from "plaza_page.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { ListView, ScrollView, ComboBox } from "std-widgets.slint";
-export { Theme, DesktopPage, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, CronCard, CronRunCard, AgentCardFile, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, PlazaItemCard }
+export { Theme, DesktopPage, Conversation, TextBlock, ChatTurn, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, CronCard, CronRunCard, AgentCardFile, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, PlazaItemCard }
 export { AppTray } from "tray.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
 
@@ -83,11 +83,8 @@ export component MainWindow inherits Window {
         { id: "demo-2", title: "智能体 02", preview: "暂无新消息", time: "昨天" }
     ];
     in-out property <[FileCard]> files: [];
-    in-out property <[ChatMessage]> messages: [
-        { text: "你好，我是你的默认智能体。有什么可以帮助你的吗？", mine: false, time: "09:41", workflow: false, state: "", stats-status: "任务完成", stats-duration: "1.2s", stats-speed: "42.0/s", stats-context: "2.4k", stats-quota: "320", stats-tools: "2", stats-credits: "1", avatar-glyph: "✦", avatar-tone: 1 },
-        { text: "请帮我整理一下当前内容。", mine: true, time: "09:42", workflow: false, state: "", stats-status: "", stats-duration: "", stats-speed: "", stats-context: "", stats-quota: "", stats-tools: "", stats-credits: "", avatar-glyph: "", avatar-tone: 0 },
-        { text: "已经整理好了。\n\n• 内容已按顺序归纳，便于继续查看。\n• 相关文件可在右侧工作目录中预览。\n• 你可以继续提问，或新建一个任务。\n\n如果需要进一步调整，可以直接告诉我。", mine: false, time: "09:42", workflow: true, state: "", stats-status: "任务完成", stats-duration: "3.4s", stats-speed: "38.0/s", stats-context: "4.1k", stats-quota: "680", stats-tools: "3", stats-credits: "1", avatar-glyph: "✦", avatar-tone: 1 }
-    ];
+    in-out property <ChatMessage> greeting: { text: "你好，可以开始新的对话。", avatar-glyph: "✦", avatar-tone: 1 };
+    in-out property <[ChatTurn]> turns: [];
     in-out property <[AgentCard]> agents: [
         { id: "demo-agent", name: "默认智能体", description: "帮助你处理日常任务。", model: "默认模型", system-prompt: "", status: "active", icon-name: "spark", icon-color: "#f97316", icon-glyph: "✦", icon-tone: 1, tool-count: 2, tool-names: ["文件操作"], preset-questions: [], sandbox-container-id: 1, approval-mode: "suggest", preview-skill: false, silent: false, prefer-mother: false, preset-question-count: 0, is-shared: false, group-name: "默认蜂房" }
     ];
@@ -468,12 +465,28 @@ export component MainWindow inherits Window {
                 messages-view := ListView {
                     vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                     scrolled => { root.follow-output = self.content-height + self.content-y <= self.visible-height + 32px; }
-                    for message[index] in root.messages : Rectangle {
-                        height: message-row.height + 14px;
-                        message-row := MessageRow {
+                    for index in root.turns.length + 1 : Rectangle {
+                        property <ChatTurn> turn: root.turns[max(0, index - 1)];
+                        height: index == 0 ? greeting-row.height + 14px : user-row.height + assistant-row.height + 28px;
+                        greeting-row := MessageRow {
+                            visible: index == 0;
                             x: 22px; y: 14px; width: parent.width - 44px;
-                            message: message; copy => { root.copy-message(index); } author: root.selected-agent-name == "" ? root.heading : root.selected-agent-name;
+                            message: root.greeting; author: root.selected-agent-name;
                             avatar: @image-url("../assets/avatar.png");
+                            copy => { root.copy-raw(root.greeting.text); }
+                        }
+                        user-row := MessageRow {
+                            visible: index > 0;
+                            x: 22px; y: 14px; width: parent.width - 44px;
+                            message: turn.user; author: "你";
+                            copy => { root.copy-raw(turn.user.text); }
+                        }
+                        assistant-row := MessageRow {
+                            visible: index > 0;
+                            x: 22px; y: user-row.y + user-row.height + 14px; width: parent.width - 44px;
+                            message: turn.assistant; author: root.selected-agent-name == "" ? root.heading : root.selected-agent-name;
+                            avatar: @image-url("../assets/avatar.png");
+                            copy => { root.copy-message(index - 1); }
                         }
                     }
                 }

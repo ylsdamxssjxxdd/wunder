@@ -193,7 +193,7 @@ export const startSessionWatcher = (store, sessionId) => {
         const durableRunning = threadState && threadState.turns.size > 0
           ? Array.from(threadState.turns.values()).some((turn) => {
               const status = String(turn.status ?? '').trim().toLowerCase();
-              return !['completed', 'failed', 'cancelled', 'interrupted'].includes(status);
+              return !['completed', 'failed', 'cancelled', 'interrupted', 'rejected', 'stopped'].includes(status);
             })
           : null;
         const running = durableRunning ?? (
@@ -234,7 +234,7 @@ export const startSessionWatcher = (store, sessionId) => {
     // Only non-timeline controls remain outside the durable reducer.
     if (normalizedEventType === 'thread_status' || normalizedEventType === 'thread_closed') {
       applySessionRuntimeEvent(store, key, data ?? payload, normalizedEventType);
-      if (['completed', 'failed', 'cancelled', 'interrupted'].includes(String(data?.status ?? data?.thread_status ?? '').toLowerCase())) {
+      if (['completed', 'failed', 'cancelled', 'interrupted', 'rejected', 'stopped'].includes(String(data?.status ?? data?.thread_status ?? '').toLowerCase())) {
         setSessionLoading(store, key, false);
       }
       return;

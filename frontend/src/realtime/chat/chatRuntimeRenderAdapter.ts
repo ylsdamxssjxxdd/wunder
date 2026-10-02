@@ -433,11 +433,13 @@ const syncMaterializedProjectionRecords = (
   const existingByKey = new Map(
     existing.map((record, index) => [resolveMaterializedProjectionRecordKey(record, index), record])
   );
+  let recordsChanged = incoming.length !== existing.length;
   const next = incoming.map((record, index) => {
     const key = resolveMaterializedProjectionRecordKey(record, index);
     const previous = existingByKey.get(key);
-    if (!previous) return record;
+    if (!previous) { recordsChanged = true; return record; }
     if (buildMaterializedProjectionRecordRevision(previous) !== buildMaterializedProjectionRecordRevision(record)) {
+      recordsChanged = true;
       Object.keys(previous).forEach((property) => {
         if (record[property] === undefined) delete previous[property];
       });
@@ -445,6 +447,12 @@ const syncMaterializedProjectionRecords = (
     }
     return previous;
   });
+  // These records live outside Vue's reactive store. Publish a new list only
+  // when a child revision changes so the panel receives a changed prop.
+  if (field === 'subagents' && recordsChanged) {
+    target[field] = next;
+    return;
+  }
   if (!Array.isArray(target[field])) {
     target[field] = next;
     return;
@@ -708,6 +716,9 @@ const settleTerminalMaterializedArtifacts = (
   if (Array.isArray(message.subagents)) {
     message.subagents.forEach((item) => {
       if (!isPlainRecord(item)) return;
+      // Durable child observations own their lifecycle, including background
+      // runs that continue after the parent has answered.
+      if (item.durable === true) return;
       const agentState = isPlainRecord(item.agent_state)
         ? item.agent_state
         : isPlainRecord(item.agentState)

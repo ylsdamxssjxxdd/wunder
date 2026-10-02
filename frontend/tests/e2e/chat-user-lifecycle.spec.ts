@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { resolve } from 'node:path';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { installChatTurnDomAudit } from '../support/chatTurnDomAudit';
 import { redactEvidence } from '../support/chatEvidenceRedaction';
 import { ChatMockService, MOCK_SESSION } from '../support/chatMockService';
 import { captureConversation, saveChatEvidence } from '../support/chatEvidenceCapture';
@@ -20,34 +21,7 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
   page.on('console', message => {
     if (message.type() === 'error' || message.text().startsWith('[Vue warn]')) errors.push(message.text());
   });
-  await page.addInitScript(() => {
-    const states = new Map<string, string>();
-    const completionNodes = new Set<Element>();
-    const audit = { duplicate: 0, revived: 0, completionNotices: 0, completionEvents: 0 };
-    (window as any).__chatRenderAudit = audit;
-    window.addEventListener('wunder:agent-runtime-refresh', (event) => {
-      if ((event as CustomEvent).detail?.completedTurns?.length) audit.completionEvents += (event as CustomEvent).detail.completedTurns.length;
-    });
-    new MutationObserver(() => {
-      document.querySelectorAll('.el-message--success').forEach((node) => {
-        if (completionNodes.has(node) || !/(has completed the task|已完成任务)/.test(node.textContent || '')) return;
-        completionNodes.add(node);
-        audit.completionNotices++;
-      });
-    }).observe(document, { childList: true, subtree: true, characterData: true });
-    setInterval(() => {
-      const seen = new Set<string>();
-      document.querySelectorAll<HTMLElement>('.messenger-message[data-turn-id]:not(.mine)').forEach(row => {
-        const key = row.dataset.turnId;
-        if (!key) return;
-        if (seen.has(key)) audit.duplicate++;
-        seen.add(key);
-        const status = row.dataset.messageStatus ?? '';
-        if (['final', 'cancelled', 'failed'].includes(states.get(key) ?? '') && !['final', 'cancelled', 'failed'].includes(status)) audit.revived++;
-        if (states.size < 1000) states.set(key, status);
-      });
-    }, 50);
-  });
+  await page.addInitScript(installChatTurnDomAudit);
   try {
     await page.goto('/login');
     await page.locator('input[autocomplete="username"]').fill('fixture-user');
@@ -70,6 +44,10 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     const completed = async (round: number, requireNotice = true) => {
       await expect(page.getByTestId('messenger-message-list')).toContainText(`Completed reply ${round}.`);
       await expect(page.getByTestId('chat-composer-send')).toHaveAttribute('data-mode', 'send');
+      const assistant = page.locator(`.messenger-turn[data-root-turn-id="fixture-turn-${round}"] [data-turn-slot="assistant"] .messenger-message`);
+      await expect(assistant).toHaveAttribute('data-message-status', 'final');
+      await expect(assistant.locator('.messenger-message-stats')).toContainText('token/s');
+      await expect(assistant.locator('.messenger-message-stats')).not.toContainText('Queued');
       if (requireNotice) {
         await expect(page.locator('.el-message--success')
           .filter({ hasText: /has completed the task|已完成任务/ }).last()).toBeVisible();
@@ -77,6 +55,19 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
       }
     };
     await send('Inspect the fixture.'); await completed(1);
+    // Prove the independent inspector rejects an extra assistant DOM region.
+    const mutationProof = await page.evaluate(() => {
+      const copy = document.querySelector('.messenger-turn')!.cloneNode(true) as HTMLElement;
+      const container = document.createElement('div');
+      container.append(copy);
+      const inspect = (window as any).__chatInspectTurns;
+      const valid = inspect(container);
+      copy.lastElementChild!.append(copy.querySelector('[data-turn-slot="assistant"] .messenger-message')!.cloneNode(true));
+      return { valid, invalid: inspect(container) };
+    });
+    expect(mutationProof.valid).toBe(0);
+    expect(mutationProof.invalid).toBeGreaterThan(0);
+    coverage.structureMutation = true;
     await send('Verify the fixture.'); await completed(2);
     service.holdNext = true;
     await send('Begin a longer fixture task.');
@@ -93,7 +84,17 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     await expect(page.getByTestId('messenger-message-list')).toContainText('Retained fixture summary.');
     await expect(page.getByTestId('chat-composer-send')).toHaveAttribute('data-mode', 'send');
     await send('Verify the retained fixture.'); await completed(7);
-    await send('/goal Verify the fixture objective.'); await completed(8);
+    service.holdNext = true;
+    await send('/goal Verify the fixture objective.');
+    await expect(page.getByTestId('messenger-message-list')).toContainText('Partial reply 8.');
+    await expect(page.locator('.messenger-turn[data-root-turn-id="fixture-turn-8"]')).toHaveCount(1);
+    await expect(page.locator('.messenger-turn[data-root-turn-id="fixture-turn-8-continuation"]')).toHaveCount(0);
+    await page.screenshot({ path: resolve(directory, 'goal-running.png') });
+    service.release();
+    await completed(8);
+    await expect(page.locator('.messenger-message[data-turn-id="fixture-turn-8"]:not(.mine)')).toHaveCount(1);
+    await expect(page.locator('.messenger-message[data-turn-id="fixture-turn-8-continuation"]')).toHaveCount(0);
+    await page.screenshot({ path: resolve(directory, 'goal-completed.png') });
     service.holdNext = true;
     await send('Prepare the final fixture check.');
     await expect(page.getByTestId('messenger-message-list')).toContainText('Partial reply 9.');
@@ -156,7 +157,7 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
         // The visible workflow may show a compact "Read" label while the
         // durable export contains the full result. Verify both sources
         // without making screenshot text formatting a protocol requirement.
-        const durableTool = service.items.get(`fixture-turn-${round}:tool-${index}`);
+        const durableTool = service.items.get(`fixture-turn-${round}${round === 8 ? '-continuation' : ''}:tool-${index}`);
         expect(durableTool?.result?.content).toBe(round === 11 && index === 2
           ? 'Fixture tool unavailable.'
           : `Fixture result ${round}-${index}`);
@@ -169,7 +170,9 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     coverage.goal = true;
     await expect(page.locator('.message-compaction-divider')).toHaveCount(0);
     const audit = await page.evaluate(() => (window as any).__chatRenderAudit);
-    transientErrors = audit.duplicate + audit.revived;
+    transientErrors = audit.duplicate + audit.structure;
+    expect(audit.samples).toBeGreaterThan(0);
+    expect(transientErrors).toBe(0);
     expect([...completedNoticeRounds].sort((left, right) => left - right)).toEqual([1, 2, 4, 5, 7, 8, 10, 11]);
     coverage.completionNotice = completedNoticeRounds.size === 8;
     await page.reload();
@@ -177,12 +180,18 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     const after = await captureConversation(page, resolve(directory, 'reloaded'));
     expect(after.map(row => [row.turnId, row.role, row.content])).toEqual(before.map(row => [row.turnId, row.role, row.content]));
     expect(service.failures).toEqual([]);
+    const finalAudit = await page.evaluate(() => (window as any).__chatRenderAudit);
+    transientErrors = finalAudit.duplicate + finalAudit.structure;
+    expect(finalAudit.samples).toBeGreaterThan(audit.samples);
+    expect(transientErrors).toBe(0);
     coverage.reload = true;
   } catch (error) {
     service.failures.push('scenario-did-not-complete');
     await page.screenshot({ path: resolve(directory, 'failure.png'), timeout: 2000 }).catch(() => undefined);
     throw error;
   } finally {
+    const finalAudit = await page.evaluate(() => (window as any).__chatRenderAudit).catch(() => null);
+    if (finalAudit) transientErrors = finalAudit.duplicate + finalAudit.structure;
     await service.dispose();
     const performance = await page.evaluate(() => {
       (window as any).wunderPerf?.stop(); return (window as any).wunderPerf?.snapshot();
@@ -190,7 +199,7 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     const analysis = await saveChatEvidence(directory, { mode: 'mock-service', snapshot: service.snapshot(),
       changes: service.changes, performance, expectedUserTurns: 11, collectionErrors: service.failures,
       browserErrors: errors.length, transientRenderingErrors: transientErrors, coverage,
-      requiredCoverage: ['greeting', 'stop', 'reconnect', 'queue', 'render', 'tools', 'compaction', 'goal', 'reload', 'completionNotice'] }, service.export());
+      requiredCoverage: ['greeting', 'stop', 'reconnect', 'queue', 'render', 'tools', 'compaction', 'goal', 'reload', 'completionNotice', 'structureMutation'] }, service.export());
     await writeFile(resolve(directory, 'transport.json'), JSON.stringify(redactEvidence({ requests: service.requests, connections: service.connections, errors }), null, 2));
     await testInfo.attach('analysis', { body: JSON.stringify(analysis), contentType: 'application/json' });
     expect.soft(analysis.findings.filter(item => item.severity === 'error')).toEqual([]);

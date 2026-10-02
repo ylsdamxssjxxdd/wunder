@@ -490,6 +490,8 @@ impl SqliteThreadLogStorage for SqliteStorage {
         )?;
         let change_payload = serde_json::to_string(&json!({
             "turn_id": turn_id,
+            "root_turn_id": root_id,
+            "trigger_kind": trigger,
             "status": "queued",
             "user_round": round,
             "client_message_id": client_id,
@@ -586,7 +588,12 @@ impl SqliteThreadLogStorage for SqliteStorage {
             |r| r.get(0),
         )?;
         let revision = seq;
-        let change_payload = serde_json::to_string(&json!({"turn_id": turn_id, "status": status}))?;
+        let (root_id, trigger, user_round): (String, String, i64) = tx.query_row(
+            "SELECT root_turn_id,trigger_kind,user_turn_index FROM thread_turns WHERE session_id=? AND turn_id=?",
+            params![session_id, turn_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        let change_payload = serde_json::to_string(&json!({"turn_id": turn_id, "status": status,
+            "root_turn_id": root_id, "trigger_kind": trigger, "user_round": user_round}))?;
         tx.execute("INSERT INTO thread_log_changes(session_id,change_seq,user_id,change_type,turn_id,item_id,revision,payload,created_time) VALUES(?,?,?,?,?,?,?,?,?)", params![session_id,seq,user_id,change_type,turn_id,change_item,revision,change_payload,now])?;
         if input_changed > 0 {
             seq += 1;
@@ -915,10 +922,15 @@ impl SqliteThreadLogStorage for SqliteStorage {
         )?;
         let mut turns = Vec::new();
         {
-            let mut stmt = tx.prepare("SELECT turn_id,user_turn_index,status,summary,payload,updated_time,root_turn_id,trigger_kind FROM thread_turns WHERE user_id=? AND session_id=? AND trigger_kind='user' ORDER BY user_turn_index ASC")?;
+            let mut stmt = tx.prepare("SELECT turn_id,user_turn_index,status,summary,payload,updated_time,root_turn_id,trigger_kind FROM thread_turns WHERE user_id=? AND session_id=? ORDER BY user_turn_index ASC, created_time ASC, turn_id ASC")?;
             let rows = stmt.query_map(params![user_id, session_id], turn_row)?;
             for row in rows {
-                turns.push(row?);
+                let mut turn = row?;
+                if turn["trigger_kind"] == "continuation" {
+                    // Only lifecycle/identity is needed by the render projection.
+                    turn["summary"] = json!("");
+                }
+                turns.push(turn);
             }
         }
         let mut items = Vec::new();
@@ -1252,6 +1264,28 @@ mod tests {
             .unwrap();
         assert_ne!(root["turn_id"], next["turn_id"]);
         assert_eq!(next["root_turn_id"], root["turn_id"]);
+        db.update_thread_turn_impl(
+            "owner", "thread", next["turn_id"].as_str().unwrap(), "running", "", &json!({}),
+        ).unwrap();
+        let changes = db.list_thread_changes_impl("owner", "thread", 0, 100).unwrap();
+        for status in ["queued", "running"] {
+            let change = changes.iter().find(|change|
+                change["turn_id"] == next["turn_id"] && change["change_type"] == "turn_upsert"
+                    && change["payload"]["status"] == status
+            ).unwrap();
+            assert_eq!(change["payload"]["root_turn_id"], root["turn_id"]);
+            assert_eq!(change["payload"]["trigger_kind"], "continuation");
+            assert_eq!(change["payload"]["user_round"], 1);
+        }
+        let snapshot = db.thread_snapshot_impl("owner", "thread").unwrap();
+        assert_eq!(snapshot["turns"].as_array().unwrap().len(), 2);
+        let continuation = snapshot["turns"].as_array().unwrap().iter()
+            .find(|turn| turn["turn_id"] == next["turn_id"]).unwrap();
+        assert_eq!(continuation["root_turn_id"], root["turn_id"]);
+        assert_eq!(continuation["trigger_kind"], "continuation");
+        // Internal continuation input is excluded even though its lifecycle
+        // must be present to rebuild the user bubble after reconnect.
+        assert_eq!(snapshot["items"].as_array().unwrap().len(), 1);
         assert_eq!(
             db.list_thread_turns_impl("owner", "thread", None, 100)
                 .unwrap()
