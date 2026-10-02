@@ -109,9 +109,12 @@ fn check_queue_and_detach(desktop: &NativeDesktop) -> Result<(), Box<dyn std::er
         ensure(Instant::now() < deadline, "queued request did not settle")?;
         match second.try_recv()? {
             Some(NativeChatEvent::Queued) => queued = true,
-            Some(NativeChatEvent::Event(event)) if event["event"] == "final" => {
+            // The durable follower replays the queued turn's committed item as
+            // one authoritative llm_output; each commit overwrites the answer.
+            Some(NativeChatEvent::Event(event)) if event["event"] == "llm_output" => {
                 let envelope = &event["data"];
-                answer = envelope.get("data").unwrap_or(envelope)["answer"]
+                let data = envelope.get("data").unwrap_or(envelope);
+                answer = data["content"]
                     .as_str()
                     .unwrap_or_default()
                     .to_string();
@@ -264,11 +267,29 @@ fn advance(
         }
         4 => {
             let expected = DELTA.repeat(600);
+            // The passive observer rehydrates history asynchronously after the
+            // active stream detaches; wait for its reset before comparing.
+            if app.get_turns().row_count() == 0 {
+                ensure(!app.get_status().starts_with("无法"), "history reload failed")?;
+                return Ok(false);
+            }
+            let actual = app
+                .get_turns()
+                .iter()
+                .map(|row| row.assistant.text.to_string())
+                .find(|text| !text.is_empty())
+                .unwrap_or_default();
             ensure(
-                app.get_turns()
-                    .iter()
-                    .any(|row| row.assistant.text.as_str() == expected.trim_end()),
-                "history differs from stream",
+                actual.as_str() == expected.trim_end(),
+                &format!(
+                    "history differs from stream: rows={} status={:?} got {} bytes want {} bytes; got_start={:?} got_end={:?}",
+                    app.get_turns().row_count(),
+                    app.get_status(),
+                    actual.len(),
+                    expected.trim_end().len(),
+                    &actual.chars().take(24).collect::<String>(),
+                    actual.chars().rev().take(24).collect::<String>()
+                ),
             )?;
             app.invoke_new_thread();
         }

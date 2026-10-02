@@ -55,6 +55,35 @@ test('fixed turn slots survive reordered, duplicated execution records at every 
   }
 });
 
+test('scheduled delivery keeps a separate root slot while the prior turn is active', () => {
+  const state = emptyChatThreadState('fixture-thread');
+  const apply = (seq: number, changeType: string, data: Record<string, unknown>) =>
+    applyChatThreadFrame(state, { event: 'thread_change', seq, change_type: changeType, data }, 0);
+  // This is the failure shape from a busy main thread: an already-running
+  // user turn and an independent scheduled delivery accepted while it runs.
+  apply(1, 'turn_upsert', { turn_id: 'interactive', root_turn_id: 'interactive', user_round: 1, status: 'running' });
+  apply(2, 'item_upsert', { item_id: 'interactive:user', turn_id: 'interactive', kind: 'user_message',
+    content: 'Fixture interactive input', user_round: 1, revision: 1, visibility: 'user' });
+  apply(3, 'turn_upsert', { turn_id: 'scheduled', root_turn_id: 'scheduled', user_round: 2, status: 'queued' });
+  apply(4, 'item_upsert', { item_id: 'scheduled:user', turn_id: 'scheduled', kind: 'user_message',
+    content: 'Fixture scheduled input', user_round: 2, revision: 1, visibility: 'user' });
+  apply(5, 'item_upsert', { item_id: 'scheduled:queue-fixture', turn_id: 'scheduled', kind: 'queue',
+    status: 'queued', revision: 1, visibility: 'user', queue_ahead: 1 });
+  let slots = buildChatThreadTurnSlots(state);
+  assert.deepEqual(slots.map(slot => [slot.rootTurnId, slot.assistant.status]), [
+    ['interactive', 'streaming'], ['scheduled', 'queued']
+  ]);
+  // Late execution output belongs only to the accepted scheduled root.
+  apply(6, 'item_upsert', { item_id: 'scheduled:text-1', turn_id: 'scheduled', kind: 'assistant_message',
+    model_round: 1, content: 'Fixture scheduled result', status: 'completed', revision: 1, visibility: 'user' });
+  apply(7, 'turn_upsert', { turn_id: 'scheduled', root_turn_id: 'scheduled', user_round: 2, status: 'completed' });
+  slots = buildChatThreadTurnSlots(state);
+  assert.equal(slots.length, 2);
+  assert.equal(slots[0].assistant.content, '');
+  assert.equal(slots[1].assistant.content, 'Fixture scheduled result');
+  assert.equal(slots[1].assistant.status, 'final');
+});
+
 test('unowned assistant/tool rows cannot create page structure; empty user input can', () => {
   const state = emptyChatThreadState('fixture-thread');
   applyChatThreadSnapshot(state, { cursor: 10, turns: [{ turn_id: 'orphan', status: 'completed' }],

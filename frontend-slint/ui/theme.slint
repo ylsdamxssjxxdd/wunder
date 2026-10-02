@@ -55,6 +55,7 @@ export struct WorldContactCard { user-id: string, username: string, online: bool
 export struct WorldGroupCard { group-id: string, conversation-id: string, name: string, members: int, preview: string, unread: int }
 export struct WorldMessageCard { content: string, mine: bool, sender: string }
 export struct WorldPickRow { user-id: string, username: string, selected: bool }
+export struct WorldGroupMemberCard { user-id: string, username: string, is-owner: bool }
 export struct CronCard { id: string, name: string, enabled: bool, schedule: string, next-run: string, last-status: string, last-error: string }
 export struct CronRunCard { run-id: string, status: string, trigger: string, summary: string, error: string, duration: string, created-at: string }
 export struct AgentCardFile { path: string, label: string }

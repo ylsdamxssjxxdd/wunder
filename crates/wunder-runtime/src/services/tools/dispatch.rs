@@ -5,9 +5,7 @@ use super::command_tool;
 use super::context::ToolContext;
 use super::file_tool;
 use super::knowledge_tool;
-use super::lsp_tool;
 use super::multimodal_generation_tool;
-use super::node_invoke_tool;
 use super::panel_tools;
 use super::schedule_task_tool;
 use super::search_content_tool::search_content;
@@ -93,11 +91,9 @@ pub async fn execute_builtin_tool(
         "写入文件" => file_tool::write_file(context, args).await,
         "文本编辑" => edit_file2(context, args).await,
         "应用补丁" => apply_patch_tool::apply_patch(context, args).await,
-        "LSP查询" => lsp_tool::lsp_query(context, args).await,
         "子智能体控制" => subagent_control(context, args).await,
         "会话线程控制" => execute_thread_control_tool(context, args).await,
         "\u{667a}\u{80fd}\u{4f53}\u{8702}\u{7fa4}" => agent_swarm(context, args).await,
-        "节点调用" => node_invoke_tool::execute_node_invoke_tool(context, args).await,
         web_search_tool::TOOL_WEB_SEARCH => web_search_tool::tool_web_search(context, args).await,
         web_fetch_tool::TOOL_WEB_FETCH => web_fetch_tool::tool_web_fetch(context, args).await,
         browser_tool::TOOL_BROWSER => {

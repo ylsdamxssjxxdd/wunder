@@ -1727,33 +1727,45 @@
     "en-US": "Replace exact text in one text file. Use this for one small, obvious replacement after reading the current file: provide only path, old_text, and new_text. The tool tolerates accidental read_file line numbers and line-ending differences, and treats a unique already-applied replacement as success. If old_text matches multiple places, make old_text longer or set expected_count intentionally. For multi-step edits, conditional replacements, regex, marker-based changes, or anything hard to express as one exact replacement, use programmatic_tool_call with a small Python script instead.",
     "zh-CN": "在一个文本文件里只做一次精确替换。适合 read_file 后的小范围明确替换：只提供 path、old_text、new_text。工具会容忍误带 read_file 行号、换行符差异，并把唯一的已完成替换视为成功。old_text 匹配多处时，请扩大 old_text 上下文，或明确设置 expected_count。多步骤修改、条件替换、正则替换、标记间替换或任何难以写成一次精确替换的情况，请改用 programmatic_tool_call 写一个小 Python 脚本。"
   },
-  "tool.spec.lsp.args.operation": {
-    "en-US": "LSP operation: definition/references/hover/document_symbol/workspace_symbol/implementation/call_hierarchy.",
-    "zh-CN": "LSP 操作类型：definition/references/hover/document_symbol/workspace_symbol/implementation/call_hierarchy。"
+  "tool.spec.command_session.description": {
+    "en-US": "Poll a background command or write its stdin. Use the command_session_id returned by execute_command with run_in_background=true. A poll may wait up to 60000 ms with yield_time_ms; confirm the command has exited before reporting completion and never use sleep to wait.",
+    "zh-CN": "轮询后台命令或写入其 stdin。使用 execute_command 开启后台模式返回的 command_session_id；yield_time_ms 最长 60000 毫秒，可让一次轮询等待命令结束。报告完成前必须确认命令已退出，不要使用 sleep 空等。"
   },
-  "tool.spec.lsp.args.path": {
-    "en-US": "File path within the workspace.",
-    "zh-CN": "工作区内的文件路径。"
+  "tool.spec.command_session.args.action": {
+    "en-US": "Action: poll reads status and output; write_stdin sends input and then reads status and output.",
+    "zh-CN": "操作：poll 读取状态和输出；write_stdin 写入输入后再读取状态和输出。"
   },
-  "tool.spec.lsp.args.line": {
-    "en-US": "Line number (1-based, required for position-based operations).",
-    "zh-CN": "行号（从 1 开始，定位类操作必填）。"
+  "tool.spec.command_session.args.id": {
+    "en-US": "Background command session ID returned by execute_command.",
+    "zh-CN": "execute_command 返回的后台命令会话 ID。"
   },
-  "tool.spec.lsp.args.character": {
-    "en-US": "Character offset (1-based, required for position-based operations).",
-    "zh-CN": "列号（从 1 开始，定位类操作必填）。"
+  "tool.spec.command_session.args.input": {
+    "en-US": "Text to send to stdin; use only with write_stdin.",
+    "zh-CN": "写入 stdin 的文本，仅用于 write_stdin。"
   },
-  "tool.spec.lsp.args.query": {
-    "en-US": "Workspace symbol search query (required for workspace_symbol).",
-    "zh-CN": "工作区符号搜索关键词（workspace_symbol 必填）。"
+  "tool.spec.command_session.args.after_seq": {
+    "en-US": "Last sandbox output sequence already consumed; omit on the first poll.",
+    "zh-CN": "已经消费的沙盒输出序号；第一次轮询时省略。"
   },
-  "tool.spec.lsp.args.call_hierarchy_direction": {
-    "en-US": "Call hierarchy direction: incoming/outgoing.",
-    "zh-CN": "调用层级方向：incoming/outgoing。"
+  "tool.spec.command_session.args.yield_time_ms": {
+    "en-US": "Poll wait window in milliseconds; default 500 and maximum 60000. Prefer one long poll over sleep.",
+    "zh-CN": "轮询等待窗口，单位为毫秒；默认 500，最大 60000。等待命令时优先使用一次较长轮询，不要使用 sleep。"
   },
-  "tool.spec.lsp.description": {
-    "en-US": "Query code intelligence. definition/references/hover/implementation/call_hierarchy usually need path + line + character; workspace_symbol usually needs query; call_hierarchy_direction is only for call_hierarchy.",
-    "zh-CN": "查询代码智能信息。definition/references/hover/implementation/call_hierarchy 常用 path + line + character；workspace_symbol 常用 query；call_hierarchy_direction 仅用于 call_hierarchy。"
+  "tool.command_session.summary": {
+    "en-US": "Command session status and bounded output preview.",
+    "zh-CN": "命令会话状态与有界输出预览。"
+  },
+  "tool.command_session.id_required": {
+    "en-US": "command_session_id is required",
+    "zh-CN": "请提供 command_session_id。"
+  },
+  "tool.command_session.sandbox_unavailable": {
+    "en-US": "Sandbox command session is unavailable.",
+    "zh-CN": "沙盒命令会话不可用。"
+  },
+  "tool.command_session.unavailable": {
+    "en-US": "Command sessions are unavailable in this runtime.",
+    "zh-CN": "当前运行环境不支持命令会话。"
   },
   "tool.exec.background_next_step": {
     "en-US": "The command is running in the background. Poll the command_session tool with this command_session_id (yield_time_ms up to 60000 waits for output or exit in one call); confirm it has exited before reporting completion; do not use sleep to wait.",
@@ -2742,34 +2754,6 @@
   "tool.spec.agent_swarm.args.poll_interval": {
     "en-US": "Polling interval in seconds.",
     "zh-CN": "轮询间隔（秒）。"
-  },
-  "tool.spec.node_invoke.description": {
-    "en-US": "List gateway nodes or invoke a command on a node. list inspects nodes only; invoke usually uses node_id, command, args, and timeout_s.",
-    "zh-CN": "查询节点或向节点下发命令。list 只看节点列表；invoke 常用 node_id、command、args、timeout_s。"
-  },
-  "tool.spec.node_invoke.args.action": {
-    "en-US": "Action type: list to discover nodes, invoke to execute a node command.",
-    "zh-CN": "操作类型：list 用于列出可用节点，invoke 用于执行节点命令。"
-  },
-  "tool.spec.node_invoke.args.node_id": {
-    "en-US": "Target node_id (required when action=invoke).",
-    "zh-CN": "目标 node_id（action=invoke 时必填）。"
-  },
-  "tool.spec.node_invoke.args.command": {
-    "en-US": "Node command name (required when action=invoke).",
-    "zh-CN": "节点命令名称（action=invoke 时必填）。"
-  },
-  "tool.spec.node_invoke.args.args": {
-    "en-US": "Optional command arguments payload.",
-    "zh-CN": "可选的命令参数 Payload。"
-  },
-  "tool.spec.node_invoke.args.timeout": {
-    "en-US": "Optional timeout (seconds).",
-    "zh-CN": "可选，超时秒数。"
-  },
-  "tool.spec.node_invoke.args.metadata": {
-    "en-US": "Optional metadata for node invocation.",
-    "zh-CN": "可选，节点调用的元数据。"
   },
   "tool.spec.sessions_list.description": {
     "en-US": "List chat sessions for the current user.",

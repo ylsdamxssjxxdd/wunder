@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-09-28T05:07:50.362488+00:00",
+  "generated_at": "2026-10-02T21:26:41.301592+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -216,12 +216,6 @@
                     "url": "/docs/zh-CN/tools/read-image/"
                   },
                   {
-                    "slug": "zh-CN/tools/lsp",
-                    "title": "LSP 查询",
-                    "summary": "`lsp_query` 的操作类型、位置参数与返回结构。",
-                    "url": "/docs/zh-CN/tools/lsp/"
-                  },
-                  {
                     "slug": "zh-CN/tools/skill-call",
                     "title": "技能调用",
                     "summary": "`skill_call` 如何把技能正文、根目录和一级文件树返回给模型。",
@@ -336,12 +330,6 @@
                     "title": "A2A 工具",
                     "summary": "`a2a@service`、`a2a_observe`、`a2a_wait` 的当前返回结构。",
                     "url": "/docs/zh-CN/tools/a2a-tools/"
-                  },
-                  {
-                    "slug": "zh-CN/tools/node-invoke",
-                    "title": "节点调用",
-                    "summary": "网关节点列表与命令调用。",
-                    "url": "/docs/zh-CN/tools/node-invoke/"
                   }
                 ]
               }
@@ -932,12 +920,6 @@
                     "url": "/docs/en/tools/read-image/"
                   },
                   {
-                    "slug": "en/tools/lsp",
-                    "title": "LSP Query",
-                    "summary": "The operation types, position arguments, and return structure of `lsp_query`.",
-                    "url": "/docs/en/tools/lsp/"
-                  },
-                  {
                     "slug": "en/tools/skill-call",
                     "title": "Skill Call",
                     "summary": "How `skill_call` returns the skill body, root directory, and top-level file tree to the model.",
@@ -1052,12 +1034,6 @@
                     "title": "A2A Tools",
                     "summary": "The current return structures of `a2a@service`, `a2a_observe`, and `a2a_wait`.",
                     "url": "/docs/en/tools/a2a-tools/"
-                  },
-                  {
-                    "slug": "en/tools/node-invoke",
-                    "title": "Node Invoke",
-                    "summary": "Gateway node listing and command invocation.",
-                    "url": "/docs/en/tools/node-invoke/"
                   }
                 ]
               }
@@ -1477,7 +1453,6 @@
     "zh-CN/tools/ptc",
     "zh-CN/tools/apply-patch",
     "zh-CN/tools/read-image",
-    "zh-CN/tools/lsp",
     "zh-CN/tools/skill-call",
     "zh-CN/tools/web-fetch",
     "zh-CN/tools/browser",
@@ -1494,7 +1469,6 @@
     "zh-CN/tools/self-status",
     "zh-CN/tools/user-world",
     "zh-CN/tools/a2a-tools",
-    "zh-CN/tools/node-invoke",
     "zh-CN/integration/index",
     "zh-CN/integration/wunder-api",
     "zh-CN/integration/chat-ws",
@@ -1569,7 +1543,6 @@
     "en/tools/ptc",
     "en/tools/apply-patch",
     "en/tools/read-image",
-    "en/tools/lsp",
     "en/tools/skill-call",
     "en/tools/web-fetch",
     "en/tools/browser",
@@ -1586,7 +1559,6 @@
     "en/tools/self-status",
     "en/tools/user-world",
     "en/tools/a2a-tools",
-    "en/tools/node-invoke",
     "en/integration/index",
     "en/integration/wunder-api",
     "en/integration/chat-ws",
@@ -4006,64 +3978,9 @@
         }
       ],
       "prev_slug": "zh-CN/tools/apply-patch",
-      "next_slug": "zh-CN/tools/lsp",
+      "next_slug": "zh-CN/tools/skill-call",
       "source_path": "zh-CN/tools/read-image.md",
       "output_path": "zh-CN/tools/read-image/index.html"
-    },
-    "zh-CN/tools/lsp": {
-      "slug": "zh-CN/tools/lsp",
-      "language": "zh-CN",
-      "title": "LSP 查询",
-      "summary": "`lsp_query` 的操作类型、位置参数与返回结构。",
-      "updated_at": "2026-04-10",
-      "read_when": [
-        "用户要查定义、引用、悬停、实现、调用层级或符号"
-      ],
-      "source_docs": [
-        "src/services/tools.rs"
-      ],
-      "tab": "工具",
-      "group": "文件与代码",
-      "group_path": [
-        "文件与代码"
-      ],
-      "url": "/docs/zh-CN/tools/lsp/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "LSP 查询"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "最小参数"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "支持的主要操作"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "成功返回"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "注意点"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "不适用场景"
-        }
-      ],
-      "prev_slug": "zh-CN/tools/read-image",
-      "next_slug": "zh-CN/tools/skill-call",
-      "source_path": "zh-CN/tools/lsp.md",
-      "output_path": "zh-CN/tools/lsp/index.html"
     },
     "zh-CN/tools/skill-call": {
       "slug": "zh-CN/tools/skill-call",
@@ -4110,7 +4027,7 @@
           "text": "常见失败"
         }
       ],
-      "prev_slug": "zh-CN/tools/lsp",
+      "prev_slug": "zh-CN/tools/read-image",
       "next_slug": "zh-CN/tools/web-fetch",
       "source_path": "zh-CN/tools/skill-call.md",
       "output_path": "zh-CN/tools/skill-call/index.html"
@@ -4408,7 +4325,7 @@
       "language": "zh-CN",
       "title": "定时任务",
       "summary": "`schedule_task` 的推荐写法、线程投递语义与调度行为。",
-      "updated_at": "2026-04-29",
+      "updated_at": "2026-10-02",
       "read_when": [
         "用户要新增、更新、查询或触发定时任务"
       ],
@@ -4477,6 +4394,16 @@
           "id": "section-11",
           "level": 2,
           "text": "注意"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "离线回归验收"
+        },
+        {
+          "id": "section-13",
+          "level": 3,
+          "text": "调度状态与页面统计"
         }
       ],
       "prev_slug": "zh-CN/tools/panels-and-a2ui",
@@ -4713,6 +4640,16 @@
           "id": "section-13",
           "level": 2,
           "text": "执行中的指导与汇报"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "任务树范围与上下文继承"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "进程重启与继续执行"
         }
       ],
       "prev_slug": "zh-CN/tools/thread-control",
@@ -5052,54 +4989,9 @@
         }
       ],
       "prev_slug": "zh-CN/tools/user-world",
-      "next_slug": "zh-CN/tools/node-invoke",
+      "next_slug": "zh-CN/integration/index",
       "source_path": "zh-CN/tools/a2a-tools.md",
       "output_path": "zh-CN/tools/a2a-tools/index.html"
-    },
-    "zh-CN/tools/node-invoke": {
-      "slug": "zh-CN/tools/node-invoke",
-      "language": "zh-CN",
-      "title": "节点调用",
-      "summary": "网关节点列表与命令调用。",
-      "updated_at": "2026-04-10",
-      "read_when": [
-        "用户要列出可用节点或向指定节点发送命令"
-      ],
-      "source_docs": [
-        "src/services/tools.rs"
-      ],
-      "tab": "工具",
-      "group": "系统桥接",
-      "group_path": [
-        "系统桥接"
-      ],
-      "url": "/docs/zh-CN/tools/node-invoke/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "节点调用"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "list"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "invoke"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "重点"
-        }
-      ],
-      "prev_slug": "zh-CN/tools/a2a-tools",
-      "next_slug": "zh-CN/integration/index",
-      "source_path": "zh-CN/tools/node-invoke.md",
-      "output_path": "zh-CN/tools/node-invoke/index.html"
     },
     "zh-CN/integration/index": {
       "slug": "zh-CN/integration/index",
@@ -5198,7 +5090,7 @@
           "text": "下一步"
         }
       ],
-      "prev_slug": "zh-CN/tools/node-invoke",
+      "prev_slug": "zh-CN/tools/a2a-tools",
       "next_slug": "zh-CN/integration/wunder-api",
       "source_path": "zh-CN/integration/index.md",
       "output_path": "zh-CN/integration/index.html"
@@ -12541,64 +12433,9 @@
         }
       ],
       "prev_slug": "en/tools/apply-patch",
-      "next_slug": "en/tools/lsp",
+      "next_slug": "en/tools/skill-call",
       "source_path": "en/tools/read-image.md",
       "output_path": "en/tools/read-image/index.html"
-    },
-    "en/tools/lsp": {
-      "slug": "en/tools/lsp",
-      "language": "en",
-      "title": "LSP Query",
-      "summary": "The operation types, position arguments, and return structure of `lsp_query`.",
-      "updated_at": "2026-04-10",
-      "read_when": [
-        "You need definitions, references, hover info, implementations, call hierarchies, or symbols"
-      ],
-      "source_docs": [
-        "src/services/tools.rs"
-      ],
-      "tab": "Tools",
-      "group": "Files and Code",
-      "group_path": [
-        "Files and Code"
-      ],
-      "url": "/docs/en/tools/lsp/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "LSP Query"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "Minimum arguments"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "Main supported operations"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "Success result"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "Notes"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "When not to use it"
-        }
-      ],
-      "prev_slug": "en/tools/read-image",
-      "next_slug": "en/tools/skill-call",
-      "source_path": "en/tools/lsp.md",
-      "output_path": "en/tools/lsp/index.html"
     },
     "en/tools/skill-call": {
       "slug": "en/tools/skill-call",
@@ -12645,7 +12482,7 @@
           "text": "Common failures"
         }
       ],
-      "prev_slug": "en/tools/lsp",
+      "prev_slug": "en/tools/read-image",
       "next_slug": "en/tools/web-fetch",
       "source_path": "en/tools/skill-call.md",
       "output_path": "en/tools/skill-call/index.html"
@@ -13238,6 +13075,11 @@
           "id": "section-11",
           "level": 2,
           "text": "Key interpretation"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Task tree and bounded background"
         }
       ],
       "prev_slug": "en/tools/thread-control",
@@ -13577,54 +13419,9 @@
         }
       ],
       "prev_slug": "en/tools/user-world",
-      "next_slug": "en/tools/node-invoke",
+      "next_slug": "en/integration/index",
       "source_path": "en/tools/a2a-tools.md",
       "output_path": "en/tools/a2a-tools/index.html"
-    },
-    "en/tools/node-invoke": {
-      "slug": "en/tools/node-invoke",
-      "language": "en",
-      "title": "Node Invoke",
-      "summary": "Gateway node listing and command invocation.",
-      "updated_at": "2026-04-10",
-      "read_when": [
-        "You need to list available nodes or send a command to a specific node"
-      ],
-      "source_docs": [
-        "src/services/tools.rs"
-      ],
-      "tab": "Tools",
-      "group": "System Bridges",
-      "group_path": [
-        "System Bridges"
-      ],
-      "url": "/docs/en/tools/node-invoke/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "Node Invoke"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "list"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "invoke"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "Key points"
-        }
-      ],
-      "prev_slug": "en/tools/a2a-tools",
-      "next_slug": "en/integration/index",
-      "source_path": "en/tools/node-invoke.md",
-      "output_path": "en/tools/node-invoke/index.html"
     },
     "en/integration/index": {
       "slug": "en/integration/index",
@@ -13723,7 +13520,7 @@
           "text": "Next Steps"
         }
       ],
-      "prev_slug": "en/tools/node-invoke",
+      "prev_slug": "en/tools/a2a-tools",
       "next_slug": "en/integration/wunder-api",
       "source_path": "en/integration/index.md",
       "output_path": "en/integration/index.html"
@@ -16501,7 +16298,7 @@
       "language": "en",
       "title": "Architecture",
       "summary": "wunder uses one unified orchestration kernel. Hive is how users reach that kernel; the deployment form decides where the kernel runs.",
-      "updated_at": "2026-06-30",
+      "updated_at": "2026-10-01",
       "read_when": [
         "You want to understand wunder as a whole system",
         "You need to see how APIs, orchestration, tools, frontends, and storage cooperate"

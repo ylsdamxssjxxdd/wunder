@@ -67,14 +67,12 @@ fn compact_tool_description(name: &str, original: &str) -> String {
             Some("按文本匹配编辑文件；路径受限，支持 dry_run。")
         }
         "应用补丁" | "apply_patch" => Some("应用精确补丁；文件路径受限，支持 dry_run。"),
-        "lsp查询" | "lsp_query" => Some("查询代码定义、引用和符号；路径受限。"),
         "子智能体控制" | "subagent_control" => Some(
             "管理当前根任务树的子智能体；list 默认直属子线程，parent_id=/root 查根的子线程。只能操作同一用户同一树的工作线程，独立会话不可接管。send 在运行中追加指导、空闲时派发新任务；resume 带消息等同 send，无消息只开放；report 汇报直属父线程。spawn/batch_spawn 可用 fork_turns=0..16、context_summary 提供有界背景。wait/status/history 检查结果，accepted 不等于完成。父线程中断取消后代；过期运行按中断恢复，显式 send 继续，不重放工具。",
         ),
         "智能体蜂群" | "agent_swarm" => {
             Some("调用已存在的智能体协作；默认阻塞并汇总，不等同子智能体。")
         }
-        "节点调用" | "node_invoke" => Some("调用已授权节点；受权限、参数和超时限制。"),
         "网页搜索" | "web_search" => Some("搜索网页；query 必填，结果限量。"),
         "网页抓取" | "web_fetch" => Some("抓取明确 URL；不是搜索，不猜测 URL。"),
         "浏览器" | "browser" => Some("操作浏览器；受会话、域名和超时限制。"),

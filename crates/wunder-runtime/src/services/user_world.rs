@@ -14,6 +14,8 @@ const DEFAULT_CONTACT_LIMIT: i64 = 100;
 const MAX_CONTACT_FETCH: i64 = 10_000;
 const DEFAULT_LIST_LIMIT: i64 = 50;
 const MAX_GROUP_ANNOUNCEMENT_LEN: usize = 4_000;
+const MAX_UNREAD_PAGE: i64 = 500;
+const MAX_UNREAD_PAGES: usize = 20;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UserWorldContact {
@@ -358,6 +360,34 @@ impl UserWorldService {
             .map(Self::map_conversation_summary)
             .collect::<Vec<_>>();
         Ok((output, total))
+    }
+
+    /// Total unread messages across every conversation of a user. The scan is
+    /// bounded: at most `MAX_UNREAD_PAGES` pages of 500 summaries are read, so
+    /// a pathological account can never turn this into an unbounded query.
+    pub fn total_unread(&self, user_id: &str) -> Result<i64> {
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(0);
+        }
+        let mut total_unread: i64 = 0;
+        let mut scanned: i64 = 0;
+        for _ in 0..MAX_UNREAD_PAGES {
+            let (items, total) = self.storage.list_user_world_conversations(
+                cleaned_user,
+                scanned,
+                MAX_UNREAD_PAGE,
+            )?;
+            let page_len = items.len() as i64;
+            for item in &items {
+                total_unread += item.unread_count_cache.max(0);
+            }
+            scanned += page_len;
+            if page_len == 0 || scanned >= total {
+                break;
+            }
+        }
+        Ok(total_unread)
     }
 
     pub fn get_conversation(

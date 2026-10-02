@@ -195,11 +195,6 @@ const TOOL_HEATMAP_ICON_RULES: ReadonlyArray<{ keyword: string; icon: string }> 
   { keyword: 'browser_type', icon: 'fa-window-maximize' },
   { keyword: 'browser_screenshot', icon: 'fa-window-maximize' },
   { keyword: 'browser_read_page', icon: 'fa-window-maximize' },
-  { keyword: '节点调用', icon: 'fa-diagram-project' },
-  { keyword: 'node.invoke', icon: 'fa-diagram-project' },
-  { keyword: 'node_invoke', icon: 'fa-diagram-project' },
-  { keyword: 'node invoke', icon: 'fa-diagram-project' },
-  { keyword: 'gateway_invoke', icon: 'fa-diagram-project' },
   { keyword: '技能调用', icon: 'fa-book-open' },
   { keyword: 'skill_call', icon: 'fa-book-open' },
   { keyword: 'skill_get', icon: 'fa-book-open' },
@@ -248,9 +243,9 @@ const TOOL_HEATMAP_ICON_RULES: ReadonlyArray<{ keyword: string; icon: string }> 
   { keyword: '应用补丁', icon: 'fa-pen-to-square' },
   { keyword: 'apply patch', icon: 'fa-pen-to-square' },
   { keyword: 'apply_patch', icon: 'fa-pen-to-square' },
-  { keyword: 'LSP查询', icon: 'fa-code' },
-  { keyword: 'lsp query', icon: 'fa-code' },
-  { keyword: 'lsp', icon: 'fa-code' }
+  { keyword: '命令会话', icon: 'fa-terminal' },
+  { keyword: 'command_session', icon: 'fa-terminal' },
+  { keyword: 'command session', icon: 'fa-terminal' }
 ];
 
 const trendChartRef = ref<HTMLElement | null>(null);

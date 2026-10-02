@@ -190,7 +190,26 @@ impl Projection {
                 if end <= self.offset {
                     return Ok(events);
                 }
-                ensure!(offset == self.offset, "native text block gap");
+                // The emitter re-flushes the active tail block in place: the
+                // same block_index returns with an identical start offset and
+                // longer text under a new change_seq. The durable block is
+                // authoritative, so the applied text is grown from the block
+                // start and the UI only receives the newly added suffix.
+                let delta = if offset < self.offset {
+                    let skip = self.offset - offset;
+                    let split = utf16_byte_index(text, skip)
+                        .ok_or_else(|| anyhow!("native text block rewrite boundary"))?;
+                    ensure!(
+                        self.text.ends_with(&text[..split]),
+                        "native text block rewrite mismatch"
+                    );
+                    self.text
+                        .truncate(self.text.len() - text[..split].len());
+                    &text[split..]
+                } else {
+                    ensure!(offset == self.offset, "native text block gap");
+                    text
+                };
                 ensure!(
                     self.text.len() + text.len() <= 8 * 1024 * 1024,
                     "native text limit exceeded"
@@ -199,7 +218,7 @@ impl Projection {
                 self.offset = end;
                 let round = self.items.get(id).map(|v| v.2).unwrap_or(1);
                 events.push(
-                    json!({"event":"llm_output_delta","data":{"delta":text,"model_round":round}}),
+                    json!({"event":"llm_output_delta","data":{"delta":delta,"model_round":round}}),
                 );
             }
             _ => {}
@@ -213,6 +232,22 @@ impl Projection {
             "failed" | "cancelled" | "interrupted" | "waiting_input" | "waiting_user_input"
         ) || (self.status == "completed" && !goal_active)
     }
+}
+
+/// Byte offset of the given UTF-16 code-unit index inside `text`, or `None`
+/// when the index falls inside a multi-unit character (surrogate pair).
+fn utf16_byte_index(text: &str, units: usize) -> Option<usize> {
+    let mut walked = 0usize;
+    for (index, ch) in text.char_indices() {
+        if walked == units {
+            return Some(index);
+        }
+        walked += ch.len_utf16();
+        if walked > units {
+            return None;
+        }
+    }
+    (walked == units).then_some(text.len())
 }
 
 pub(super) async fn watch(
@@ -356,6 +391,53 @@ mod tests {
         p.apply(&json!({"cursor":3,"change_type":"turn_upsert","turn_id":"other","payload":{"status":"queued"}})).unwrap();
         assert_eq!(p.execution, "fixture-child");
         assert_eq!(p.text, "🐣");
+    }
+
+    #[test]
+    fn tail_block_rewrite_extends_text_and_streams_only_suffix() {
+        let mut p = Projection {
+            root: "fixture-root".into(),
+            execution: "fixture-child".into(),
+            ..Default::default()
+        };
+        let item = json!({"cursor":1,"change_type":"item_upsert","turn_id":"fixture-child","payload":{"item_id":"fixture-child:text-1","kind":"assistant_message","revision":1,"payload":{"content":"","model_round":1}}});
+        p.apply(&item).unwrap();
+        // First due-flush of the active tail block.
+        let short = json!({"cursor":2,"change_type":"text_block","turn_id":"fixture-child","item_id":"fixture-child:text-1","payload":{"content":"你好，","content_offset":0,"field":"content"}});
+        let events = p.apply(&short).unwrap();
+        assert_eq!(events[0]["data"]["delta"], "你好，");
+        // The emitter re-flushes the same block_index with longer text under a
+        // new change_seq; the suffix is streamed and the text stays identical
+        // to the durable block content.
+        let longer = json!({"cursor":3,"change_type":"text_block","turn_id":"fixture-child","item_id":"fixture-child:text-1","payload":{"content":"你好，世界","content_offset":0,"field":"content"}});
+        let events = p.apply(&longer).unwrap();
+        assert_eq!(events[0]["data"]["delta"], "世界");
+        assert_eq!(p.text, "你好，世界");
+        assert_eq!(p.offset, 5);
+        // A finalized later block continues from the rewritten tail.
+        let next = json!({"cursor":4,"change_type":"text_block","turn_id":"fixture-child","item_id":"fixture-child:text-1","payload":{"content":"！","content_offset":5,"field":"content"}});
+        let events = p.apply(&next).unwrap();
+        assert_eq!(events[0]["data"]["delta"], "！");
+        assert_eq!(p.text, "你好，世界！");
+        // A rewrite that would alter already-applied text is rejected.
+        let corrupted = json!({"cursor":5,"change_type":"text_block","turn_id":"fixture-child","item_id":"fixture-child:text-1","payload":{"content":"完全不同的内容","content_offset":0,"field":"content"}});
+        assert!(p.apply(&corrupted).is_err());
+        // A genuine offset gap stays an error.
+        let gap = json!({"cursor":6,"change_type":"text_block","turn_id":"fixture-child","item_id":"fixture-child:text-1","payload":{"content":"跳","content_offset":9,"field":"content"}});
+        assert!(p.apply(&gap).is_err());
+    }
+
+    #[test]
+    fn utf16_byte_index_maps_boundaries_and_rejects_surrogate_splits() {
+        assert_eq!(utf16_byte_index("你好", 0), Some(0));
+        assert_eq!(utf16_byte_index("你好", 1), Some(3));
+        assert_eq!(utf16_byte_index("你好", 2), Some(6));
+        // Out-of-range and mid-character indexes have no byte position.
+        assert_eq!(utf16_byte_index("你好", 5), None);
+        // A surrogate pair occupies two UTF-16 units; splitting it is invalid.
+        assert_eq!(utf16_byte_index("🐣x", 1), None);
+        assert_eq!(utf16_byte_index("🐣x", 2), Some(4));
+        assert_eq!(utf16_byte_index("abc", 3), Some(3));
     }
 
     #[test]

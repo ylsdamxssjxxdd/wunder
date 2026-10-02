@@ -81,3 +81,9 @@ test('ability visuals keep MCP sources on plug icon over skill-like wording', ()
     'fa-plug'
   );
 });
+
+
+test('command session uses the terminal icon in both localized and runtime names', () => {
+  assert.equal(resolveToolIconClass({ name: '命令会话' }), 'fa-terminal');
+  assert.equal(resolveToolIconClass({ name: 'command_session' }), 'fa-terminal');
+});

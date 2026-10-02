@@ -139,9 +139,14 @@ async fn disabled_channel_settings_are_readable_without_enabling_runtime() {
     let (status, _) = send_json(&context.app, &context.token, Method::GET,
         "/wunder/channels/bindings", None).await;
     assert_eq!(status, StatusCode::OK);
-    let (status, _) = send_json(&context.app, &context.token, Method::POST,
-        "/wunder/channels/accounts", Some(json!({"channel":"qqbot","create_new":true}))).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, payload) = send_json(&context.app, &context.token, Method::POST,
+        "/wunder/channels/accounts", Some(json!({
+            "channel":"qqbot",
+            "create_new":true,
+            "config":{"qqbot":{"app_id":"fixture-app","client_secret":"fixture-secret"}}
+        }))).await;
+    assert_eq!(status, StatusCode::OK, "{payload}");
+    assert!(payload["data"]["account_id"].as_str().is_some());
     let (status, _) = send_json(&context.app, "fixture-invalid-token", Method::GET,
         "/wunder/channels/accounts", None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);

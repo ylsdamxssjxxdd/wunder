@@ -21,7 +21,9 @@ test('disabled channel runtime opens settings with a clear status', async ({ pag
     await page.locator('.messenger-inline-actions--agent-settings').getByRole('button', { name: 'Channels', exact: true }).click();
     const panel = page.locator('.channel-manager-page');
     await expect(panel.getByRole('status')).toContainText('The channel service is disabled');
-    await expect(panel.locator('.channel-sidebar-actions button').first()).toBeDisabled();
+    await expect(panel.locator('.channel-sidebar-actions button').first()).toBeEnabled();
+    await panel.locator('.channel-sidebar-actions button').first().click();
+    await expect(panel.locator('.channel-create-card')).toBeVisible();
     await expect(page.locator('.el-message--error')).toHaveCount(0);
     await panel.locator('.channel-sidebar-actions button').last().click();
     await expect(panel.getByRole('status')).toContainText('The channel service is disabled');

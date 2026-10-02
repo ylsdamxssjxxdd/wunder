@@ -84,7 +84,6 @@
                   "zh-CN/tools/ptc",
                   "zh-CN/tools/apply-patch",
                   "zh-CN/tools/read-image",
-                  "zh-CN/tools/lsp",
                   "zh-CN/tools/skill-call"
                 ]
               },
@@ -120,8 +119,7 @@
                 "group": "系统桥接",
                 "pages": [
                   "zh-CN/tools/user-world",
-                  "zh-CN/tools/a2a-tools",
-                  "zh-CN/tools/node-invoke"
+                  "zh-CN/tools/a2a-tools"
                 ]
               }
             ]
@@ -332,7 +330,6 @@
                   "en/tools/ptc",
                   "en/tools/apply-patch",
                   "en/tools/read-image",
-                  "en/tools/lsp",
                   "en/tools/skill-call"
                 ]
               },
@@ -368,8 +365,7 @@
                 "group": "System Bridges",
                 "pages": [
                   "en/tools/user-world",
-                  "en/tools/a2a-tools",
-                  "en/tools/node-invoke"
+                  "en/tools/a2a-tools"
                 ]
               }
             ]

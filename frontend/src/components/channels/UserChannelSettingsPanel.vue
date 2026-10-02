@@ -7,7 +7,7 @@
           <button
             class="channel-refresh-btn"
             type="button"
-            :disabled="loading || saving || permissionDenied || !channelRuntimeEnabled"
+            :disabled="loading || saving || permissionDenied"
             @click="startCreate"
           >
             {{ t('channels.action.add') }}
@@ -108,7 +108,7 @@
             v-if="createForm.channel !== 'weixin'"
             class="channel-action-btn"
             type="button"
-            :disabled="createSaving || !channelRuntimeEnabled"
+            :disabled="createSaving"
             @click="createAccount"
           >
             {{ createSaving ? t('common.saving') : t('channels.create.create') }}
@@ -150,7 +150,7 @@
           {{ selectedAccount ? selectedAccount.title : t('channels.detail.empty') }}
         </div>
         <div class="channel-actions">
-          <button class="channel-action-btn" type="button" :disabled="saving || !selectedAccount || !channelRuntimeEnabled" @click="saveAccount">
+          <button class="channel-action-btn" type="button" :disabled="saving || !selectedAccount" @click="saveAccount">
             {{ saving ? t('common.saving') : t('common.save') }}
           </button>
           <button class="channel-action-btn danger" type="button" :disabled="saving || !selectedAccount" @click="removeAccount">

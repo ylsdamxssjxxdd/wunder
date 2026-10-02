@@ -219,7 +219,6 @@ Use it to discover candidate URLs. When a source needs verification or full read
 - [Execute Command](/docs/en/tools/exec/)
 - [Apply Patch](/docs/en/tools/apply-patch/)
 - [ptc](/docs/en/tools/ptc/)
-- [LSP Query](/docs/en/tools/lsp/)
 - [Skill Call](/docs/en/tools/skill-call/)
 - [Read Image](/docs/en/tools/read-image/)
 
@@ -242,7 +241,6 @@ Use it to discover candidate URLs. When a source needs verification or full read
 - [User World](/docs/en/tools/user-world/)
 - [Channel Tool](/docs/en/tools/channel/)
 - [A2A Tools](/docs/en/tools/a2a-tools/)
-- [Node Invoke](/docs/en/tools/node-invoke/)
 - [Schedule Task](/docs/en/tools/schedule-task/)
 
 ## Selection guidance
@@ -265,7 +263,6 @@ The usual sequence is:
 
 1. Use [Workspace Files](/docs/en/tools/workspace-files/) to list directories or search first
 2. Use [Workspace Files](/docs/en/tools/workspace-files/) again to read targeted ranges
-3. Use [LSP Query](/docs/en/tools/lsp/) only when symbol-level understanding is needed
 
 ### Edit code
 

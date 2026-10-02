@@ -1162,7 +1162,7 @@ pub(crate) async fn command_session_control(
         .trim();
     if session_id.is_empty() {
         return Ok(build_failed_tool_result(
-            "command_session_id is required",
+            &crate::i18n::t("tool.command_session.id_required"),
             json!({}),
             ToolErrorMeta::new("TOOL_COMMAND_SESSION_ID_REQUIRED", None, false, None),
             false,
@@ -1190,7 +1190,7 @@ pub(crate) async fn command_session_control(
         .await
         else {
             return Ok(build_failed_tool_result(
-                "sandbox command session is unavailable",
+                &crate::i18n::t("tool.command_session.sandbox_unavailable"),
                 json!({"command_session_id": session_id}),
                 ToolErrorMeta::new("TOOL_COMMAND_SESSION_UNAVAILABLE", None, true, Some(200)),
                 false,
@@ -1251,13 +1251,13 @@ pub(crate) async fn command_session_control(
             } else {
                 "completed"
             },
-            "Sandbox command session status and bounded output preview.",
+            crate::i18n::t("tool.command_session.summary"),
             data,
         ));
     }
     let Some(broker) = context.command_sessions.as_ref() else {
         return Ok(build_failed_tool_result(
-            "command sessions are unavailable in this runtime",
+            &crate::i18n::t("tool.command_session.unavailable"),
             json!({}),
             ToolErrorMeta::new("TOOL_COMMAND_SESSION_UNAVAILABLE", None, false, None),
             false,
@@ -1290,7 +1290,7 @@ pub(crate) async fn command_session_control(
         } else {
             "completed"
         },
-        "Command session status and bounded output preview.",
+        crate::i18n::t("tool.command_session.summary"),
         json!({
             "command_session_id": snapshot.command_session_id,
             "status": snapshot.status,

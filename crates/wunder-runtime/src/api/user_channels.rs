@@ -601,19 +601,6 @@ async fn render_weixin_qr_image(
     ))
 }
 
-/// Runtime mutations require an enabled service. Reading configuration remains
-/// available so users can inspect setup even when the runtime is disabled.
-async fn ensure_user_channels_enabled(state: &Arc<AppState>) -> ChannelServiceResult<()> {
-    let config = state.config_store.get().await;
-    if !config.channels.enabled && !config.gateway.enabled {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            "channels disabled".to_string(),
-        ));
-    }
-    Ok(())
-}
-
 /// Shared user-channel service: lists accounts owned by the user with
 /// secret-free config previews. The HTTP handler and the native desktop façade
 /// both go through this function.
@@ -670,16 +657,17 @@ async fn list_channel_accounts(
     Ok(Json(json!({ "data": data })))
 }
 
-/// Shared user-channel service: creates or updates one owned account. Field
-/// validation, secret retention (an empty secret keeps the stored value) and
-/// default binding sync stay identical to the HTTP path.
+/// Shared user-channel service: creates or updates one owned account. Channel
+/// configuration is intentionally available while the runtime is disabled;
+/// the switch controls delivery/connection work, not whether users can prepare
+/// credentials. Field validation, secret retention (an empty secret keeps the
+/// stored value) and default binding sync stay identical to the HTTP path.
 pub async fn upsert_user_channel_account(
     state: &Arc<AppState>,
     user: &crate::storage::UserAccountRecord,
     user_id: &str,
     payload: ChannelAccountUpsertRequest,
 ) -> ChannelServiceResult<Value> {
-    ensure_user_channels_enabled(state).await?;
     let channel = normalize_user_channel(Some(payload.channel.as_str()))?;
     let requested_agent_id = payload
         .agent_id

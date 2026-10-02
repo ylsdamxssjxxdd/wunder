@@ -26,11 +26,10 @@ mod edit_file2_tool;
 mod file_tool;
 mod freeform;
 mod knowledge_tool;
-mod lsp_tool;
+mod lsp_support;
 mod mcp_pack;
 mod memory_manager_tool;
 mod multimodal_generation_tool;
-mod node_invoke_tool;
 mod panel_tools;
 pub(crate) mod ptc_script;
 mod read_file_guard;
@@ -94,7 +93,7 @@ pub(crate) use freeform::{
     build_responses_freeform_tool, extract_freeform_tool_input, is_freeform_tool_name,
     render_prompt_tool_spec,
 };
-pub(crate) use lsp_tool::touch_lsp_file;
+pub(crate) use lsp_support::touch_lsp_file;
 pub(crate) use mcp_pack::{
     runtime_name as mcp_pack_runtime_name, schema as mcp_pack_schema,
     spec_for_server as mcp_pack_spec_for_server, MCP_PACK_TOOL_NAME,

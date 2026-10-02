@@ -168,9 +168,24 @@ impl ThreadRuntime {
         let _ = self.queue_tx.try_send(());
     }
 
-    pub async fn submit_user_request(
+    pub async fn submit_user_request(&self, request: WunderRequest) -> Result<ThreadSubmitOutcome> {
+        self.submit_request(request, false).await
+    }
+
+    /// Trusted background deliveries must always get a durable queue entry.
+    /// This prevents a timed message from racing an active thread's lock after
+    /// its own user turn has already been accepted.
+    pub(crate) async fn submit_scheduled_request(
+        &self,
+        request: WunderRequest,
+    ) -> Result<ThreadSubmitOutcome> {
+        self.submit_request(request, true).await
+    }
+
+    async fn submit_request(
         &self,
         mut request: WunderRequest,
+        force_runtime_queue: bool,
     ) -> Result<ThreadSubmitOutcome> {
         let user_id = request.user_id.trim().to_string();
         if user_id.is_empty() {
@@ -247,9 +262,14 @@ impl ThreadRuntime {
         let session_id = Some(session_id);
         let mut lease = None;
         let config = self.config_store.get().await;
-        if config.agent_queue.enabled {
+        if config.agent_queue.enabled || force_runtime_queue {
             if let Some(session_id) = session_id.as_deref() {
-                if self.should_queue(&user_id, Some(session_id)).await
+                // A background scheduled message always enters the durable
+                // queue. This makes acceptance atomic from the chat page's
+                // point of view: it owns a fresh turn before any execution
+                // may start, and can never be attached to the active turn.
+                if force_runtime_queue
+                    || self.should_queue(&user_id, Some(session_id)).await
                     || self.user_store.count_pending_agent_tasks()? > 0
                     || self.orchestrator.scheduling.suspended_count() > 0
                 {

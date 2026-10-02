@@ -42,7 +42,6 @@ const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['桌面控制器'], icon: 'fa-computer-mouse', tone: 'general' },
   { keywords: ['桌面监视器'], icon: 'fa-display', tone: 'general' },
   { keywords: ['渠道工具', 'channel_tool', 'channel tool', 'channel_send', 'channel_contacts'], icon: 'fa-comments', tone: 'general' },
-  { keywords: ['LSP查询', 'lsp query', 'lsp'], icon: 'fa-code', tone: 'file' },
   {
     keywords: ['最终回复', 'final response', 'final answer', 'final reply', 'final_response'],
     icon: 'fa-paper-plane',
@@ -62,11 +61,6 @@ const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['a2a_wait', 'a2a wait', 'a2a等待'], icon: 'fa-clock', tone: 'automation' },
   { keywords: ['agent_swarm', 'swarm_control', '智能体蜂群'], icon: 'fa-bee', tone: 'automation' },
   { keywords: ['subagent_control', '子智能体控制'], icon: 'fa-diagram-project', tone: 'automation' },
-  {
-    keywords: ['node.invoke', 'node_invoke', 'node invoke', 'gateway_invoke', 'gateway invoke'],
-    icon: 'fa-diagram-project',
-    tone: 'automation'
-  },
   { keywords: ['thread_control', 'session_thread', '会话线程控制'], icon: 'fa-code-branch', tone: 'automation' },
   { keywords: ['skill_call', 'skill_get', '技能调用'], icon: 'fa-book-open', tone: 'skill' },
   { keywords: ['cron', 'schedule_task', 'scheduled task', 'timer'], icon: 'fa-clock', tone: 'automation' },
@@ -76,11 +70,7 @@ const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['memory_manager', 'memory_manage', 'memory manager', 'memory'], icon: 'fa-memory', tone: 'automation' },
   { keywords: ['记忆管理'], icon: 'fa-memory', tone: 'automation' },
   { keywords: ['thread_control', 'session_thread', 'thread'], icon: 'fa-code-branch', tone: 'automation' },
-  {
-    keywords: ['subagent_control', 'node.invoke', 'node_invoke', 'gateway_invoke', 'a2a', 'subagent', 'swarm'],
-    icon: 'fa-diagram-project',
-    tone: 'automation'
-  },
+  { keywords: ['subagent_control', 'a2a', 'subagent', 'swarm'], icon: 'fa-diagram-project', tone: 'automation' },
   { keywords: ['web_fetch', 'web fetch', 'webfetch', 'browse'], icon: 'fa-globe', tone: 'search' },
   { keywords: ['网页抓取'], icon: 'fa-globe', tone: 'search' },
   { keywords: ['list_files', 'list_file', 'list files'], icon: 'fa-folder-open', tone: 'file' },
@@ -93,6 +83,7 @@ const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['edit_file2', 'text edit', 'text_editor', 'text editor', '文本编辑'], icon: 'fa-file-pen', tone: 'file' },
   { keywords: ['apply_patch', 'apply patch'], icon: 'fa-pen-to-square', tone: 'file' },
   { keywords: ['应用补丁'], icon: 'fa-pen-to-square', tone: 'file' },
+  { keywords: ['命令会话', 'command_session', 'command session', 'write_command_stdin'], icon: 'fa-terminal', tone: 'terminal' },
   { keywords: ['programmatic_tool_call', 'ptc'], icon: 'fa-code', tone: 'file' },
   { keywords: ['write_file', 'write file'], icon: 'fa-file-circle-plus', tone: 'file' },
   {

@@ -89,6 +89,8 @@ export component RailButton inherits Rectangle {
     in property <image> icon;
     in property <string> label;
     in property <bool> active: false;
+    // Global badge (e.g. unread messages). Values above 99 render as "99+".
+    in property <int> badge: 0;
     callback clicked();
     width: 46px;
     height: 50px;
@@ -99,6 +101,11 @@ export component RailButton inherits Rectangle {
     background: root.active || rail-touch.has-hover ? #ffffff33 : transparent;
     border-width: rail-focus.has-focus ? 1px : 0px; border-color: white;
     Image { y: 8px; width: 16px; height: 16px; source: root.icon; image-fit: contain; colorize: #ffffff; }
+    if root.badge > 0 : Rectangle {
+        x: parent.width - 20px; y: 3px; width: badge-text.text == "99+" ? 24px : 16px; height: 13px;
+        border-radius: 7px; background: #b63a22; border-width: 1px; border-color: #ffffffcc;
+        badge-text := Text { width: parent.width; height: parent.height; text: root.badge > 99 ? "99+" : root.badge; color: white; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
+    }
     Text { y: 30px; width: parent.width; height: 14px; text: root.label; color: #ffffffe6; font-size: 10px; horizontal-alignment: center; }
     rail-focus := FocusScope {
         key-pressed(event) => {

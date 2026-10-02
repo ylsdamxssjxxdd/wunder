@@ -1542,9 +1542,13 @@ impl CronRuntime {
             .read()
             .upgrade()
             .ok_or_else(|| anyhow!("task runtime is unavailable"))?;
+        // The scheduler can run in test/local profiles where the interactive
+        // queue has not yet received a request. Starting is idempotent and
+        // ensures this accepted delivery has a consumer.
+        runtime.clone().start();
         // One admission, one durable identity. Busy threads enter the normal
         // cancellable queue instead of manufacturing a rejected turn per retry.
-        match runtime.submit_user_request(request).await? {
+        match runtime.submit_scheduled_request(request).await? {
             crate::services::runtime::thread::ThreadSubmitOutcome::Run(request, lease) => {
                 let _lease = lease;
                 self.run_stream_request(*request).await
@@ -2693,6 +2697,13 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cron_busy_thread_queues_once_and_cancel_settles_only_scheduled_turn() {
         let (runtime, state, _dir) = runtime_fixture().await;
+        // Scheduled delivery is protected even if an operator disables normal
+        // interactive queueing. The job itself is still a durable inbox event.
+        state
+            .config_store
+            .update(|config| config.agent_queue.enabled = false)
+            .await
+            .unwrap();
         let old = state
             .storage
             .accept_thread_turn("cron_user", "bound", &json!({"content":"existing task"}))
@@ -2739,14 +2750,18 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(queued.status, "pending");
-        assert_eq!(
-            state
-                .storage
-                .list_thread_turns("cron_user", "bound", None, 10)
-                .unwrap()
-                .len(),
-            2
-        );
+        let accepted_turns = state
+            .storage
+            .list_thread_turns("cron_user", "bound", None, 10)
+            .unwrap();
+        assert_eq!(accepted_turns.len(), 2);
+        let scheduled_turn = accepted_turns
+            .iter()
+            .find(|turn| turn["turn_id"] != old["turn_id"])
+            .expect("scheduled delivery owns a distinct turn");
+        assert_eq!(scheduled_turn["trigger_kind"], "user");
+        assert_eq!(scheduled_turn["root_turn_id"], scheduled_turn["turn_id"]);
+        assert_eq!(scheduled_turn["status"], "queued");
         state
             .kernel
             .thread_runtime

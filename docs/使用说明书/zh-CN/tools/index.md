@@ -219,7 +219,6 @@ wunder 的内置工具已经不再是“每个工具各回各的格式”。大�
 - [执行命令](/docs/zh-CN/tools/exec/)
 - [应用补丁](/docs/zh-CN/tools/apply-patch/)
 - [ptc](/docs/zh-CN/tools/ptc/)
-- [LSP 查询](/docs/zh-CN/tools/lsp/)
 - [技能调用](/docs/zh-CN/tools/skill-call/)
 - [读图工具](/docs/zh-CN/tools/read-image/)
 
@@ -242,7 +241,6 @@ wunder 的内置工具已经不再是“每个工具各回各的格式”。大�
 - [用户世界工具](/docs/zh-CN/tools/user-world/)
 - [渠道工具](/docs/zh-CN/tools/channel/)
 - [A2A 工具](/docs/zh-CN/tools/a2a-tools/)
-- [节点调用](/docs/zh-CN/tools/node-invoke/)
 - [定时任务](/docs/zh-CN/tools/schedule-task/)
 
 ## 选型建议
@@ -265,7 +263,6 @@ wunder 的内置工具已经不再是“每个工具各回各的格式”。大�
 
 1. [工作区文件](/docs/zh-CN/tools/workspace-files/) 先列目录或搜索
 2. [工作区文件](/docs/zh-CN/tools/workspace-files/) 再读片段
-3. 需要符号级理解时再用 [LSP 查询](/docs/zh-CN/tools/lsp/)
 
 ### 要改代码
 

@@ -49,6 +49,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let Some(app) = weak.upgrade() else { return };
         refresh_lists(&app, &contact_api, groups);
     });
+    refresh_unread_badge(app, &api);
     let weak = app.as_weak();
     let open_api = api.clone();
     app.on_open_world_contact(move |index| {
@@ -231,22 +232,23 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let weak = app.as_weak();
         let api = announce_api.clone();
         let text = text.to_string();
-        std::thread::spawn(move || {
-            let result = api
-                .update_world_group_announcement(&group, &text)
-                .and_then(|_| api.get_world_group_detail(&group));
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_world_loading(false);
-                match result {
-                    Ok(detail) => {
-                        app.set_world_announcement(detail.announcement.into());
-                        app.set_world_announcement_editing(false);
-                        app.set_status("公告已更新".into());
-                    }
-                    Err(error) => app.set_status(format!("公告保存失败：{error}").into()),
+    std::thread::spawn(move || {
+        let result = api
+            .update_world_group_announcement(&group, &text)
+            .and_then(|_| api.get_world_group_detail(&group));
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            app.set_world_loading(false);
+            match result {
+                Ok(detail) => {
+                    app.set_world_announcement(detail.announcement.clone().into());
+                    apply_group_detail(&app, detail);
+                    app.set_world_announcement_editing(false);
+                    app.set_status("公告已更新".into());
                 }
-            });
+                Err(error) => app.set_status(format!("公告保存失败：{error}").into()),
+            }
         });
+    });
     });
     let weak = app.as_weak();
     let earlier_api = api.clone();
@@ -302,6 +304,41 @@ fn current_messages(app: &MainWindow) -> Vec<WorldMessageCard> {
     app.get_world_messages().iter().collect()
 }
 
+/// Recompute the rail unread badge from storage in the background. Runs after
+/// list refreshes and at startup; live events reach it through refresh_lists.
+fn refresh_unread_badge(app: &MainWindow, api: &Arc<NativeDesktop>) {
+    let weak = app.as_weak();
+    let api = api.clone();
+    std::thread::spawn(move || {
+        let total = api.total_world_unread().unwrap_or(0);
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            app.set_world_unread(total.min(i32::MAX as i64) as i32);
+        });
+    });
+}
+
+/// Project the group detail (members) into the UI and drop any stale member
+/// panel state left over from a previously opened conversation.
+fn apply_group_detail(app: &MainWindow, detail: wunder_desktop::WorldGroupDetail) {
+    app.set_world_group_members(ModelRc::new(VecModel::from(
+        detail
+            .members
+            .into_iter()
+            .map(|member| crate::WorldGroupMemberCard {
+                user_id: member.user_id.into(),
+                username: member.username.into(),
+                is_owner: member.is_owner,
+            })
+            .collect::<Vec<_>>(),
+    )));
+    app.set_world_members_open(false);
+}
+
+fn clear_group_detail(app: &MainWindow) {
+    app.set_world_group_members(ModelRc::default());
+    app.set_world_members_open(false);
+}
+
 fn refresh_lists(app: &MainWindow, api: &Arc<NativeDesktop>, groups: bool) {
     if app.get_world_loading() {
         return;
@@ -351,6 +388,7 @@ fn refresh_lists(app: &MainWindow, api: &Arc<NativeDesktop>, groups: bool) {
                 }
                 Err(error) => app.set_status(format!("无法读取用户世界：{error}").into()),
             }
+            refresh_unread_badge(&app, &api);
         });
     });
 }
@@ -365,6 +403,7 @@ fn open_direct_conversation(
     app.set_world_active_group("".into());
     app.set_world_announcement("".into());
     app.set_world_announcement_editing(false);
+    clear_group_detail(app);
     let weak = app.as_weak();
     let api = api.clone();
     let peer = peer.to_string();
@@ -404,6 +443,7 @@ fn open_group_conversation(
     app.set_world_active_group(group_id.into());
     app.set_world_announcement("".into());
     app.set_world_announcement_editing(false);
+    clear_group_detail(app);
     let weak = app.as_weak();
     let api = api.clone();
     let conversation = conversation_id.to_string();
@@ -423,7 +463,10 @@ fn open_group_conversation(
                 Err(error) => app.set_status(format!("无法加载群组消息：{error}").into()),
             }
             match detail {
-                Ok(detail) => app.set_world_announcement(detail.announcement.into()),
+                Ok(detail) => {
+                    app.set_world_announcement(detail.announcement.clone().into());
+                    apply_group_detail(&app, detail);
+                }
                 Err(error) => app.set_status(format!("无法读取群公告：{error}").into()),
             }
         });
@@ -556,7 +599,8 @@ fn reload_active_conversation(app: &MainWindow, api: &Arc<NativeDesktop>, conver
                 Err(error) => app.set_status(format!("无法恢复会话：{error}").into()),
             }
             if let Some(Ok(detail)) = detail {
-                app.set_world_announcement(detail.announcement.into());
+                app.set_world_announcement(detail.announcement.clone().into());
+                apply_group_detail(&app, detail);
             }
         });
     });

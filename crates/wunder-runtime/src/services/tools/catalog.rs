@@ -497,15 +497,15 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         ToolSpec {
             name: "命令会话".to_string(),
             title: None,
-            description: "Poll a background command or write its stdin. Use the command_session_id returned by execute_command with run_in_background=true. To wait for a long-running background command, pass yield_time_ms (up to 60000) so one poll blocks until output or exit; never use sleep to wait. Confirm the command has exited before reporting completion. Pass after_seq from the prior poll to receive only newer sandbox output.".to_string(),
+            description: t("tool.spec.command_session.description"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["poll", "write_stdin"], "description": "poll reads status/output; write_stdin sends input then reads status/output."},
-                    "command_session_id": {"type": "string", "description": "Background command session ID."},
-                    "input": {"type": "string", "description": "Text sent to stdin only with write_stdin."},
-                    "after_seq": {"type": "integer", "minimum": 0, "description": "Last sandbox output sequence already consumed; omit on the first poll."},
-                    "yield_time_ms": {"type": "integer", "minimum": 0, "maximum": 60000, "description": "Poll wait window in ms; default 500, max 60000. Prefer one poll with a long window over any sleep when waiting for a background command to finish."}
+                    "action": {"type": "string", "enum": ["poll", "write_stdin"], "description": t("tool.spec.command_session.args.action")},
+                    "command_session_id": {"type": "string", "description": t("tool.spec.command_session.args.id")},
+                    "input": {"type": "string", "description": t("tool.spec.command_session.args.input")},
+                    "after_seq": {"type": "integer", "minimum": 0, "description": t("tool.spec.command_session.args.after_seq")},
+                    "yield_time_ms": {"type": "integer", "minimum": 0, "maximum": 60000, "description": t("tool.spec.command_session.args.yield_time_ms")}
                 },
                 "required": ["command_session_id"],
                 "additionalProperties": false
@@ -766,40 +766,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             }),
         },
         ToolSpec {
-            name: "LSP查询".to_string(),
-            title: None,
-            description: t("tool.spec.lsp.description"),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "description": t("tool.spec.lsp.args.operation"),
-                        "enum": [
-                            "definition",
-                            "references",
-                            "hover",
-                            "document_symbol",
-                            "workspace_symbol",
-                            "implementation",
-                            "call_hierarchy"
-                        ]
-                    },
-                    "path": {"type": "string", "description": t("tool.spec.lsp.args.path")},
-                    "line": {"type": "integer", "description": t("tool.spec.lsp.args.line"), "minimum": 1},
-                    "character": {"type": "integer", "description": t("tool.spec.lsp.args.character"), "minimum": 1},
-                    "query": {"type": "string", "description": t("tool.spec.lsp.args.query")},
-                    "call_hierarchy_direction": {
-                        "type": "string",
-                        "description": t("tool.spec.lsp.args.call_hierarchy_direction"),
-                        "enum": ["incoming", "outgoing"]
-                    }
-                },
-                "required": ["operation", "path"],
-                "additionalProperties": false
-            }),
-        },
-        ToolSpec {
             name: "子智能体控制".to_string(),
             title: None,
             description: t("tool.spec.subagent_control.description"),
@@ -960,27 +926,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     {"action": "batch_send", "tasks": [{"agent_name": "worker_a", "message": "请完成任务 A。"}, {"agent_name": "worker_b", "message": "请完成任务 B。"}]},
                     {"action": "wait", "run_ids": ["run_demo_1"]}
                 ]
-            }),
-        },
-        ToolSpec {
-            name: "节点调用".to_string(),
-            title: None,
-            description: t("tool.spec.node_invoke.description"),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "description": t("tool.spec.node_invoke.args.action"),
-                        "enum": ["list", "invoke"]
-                    },
-                    "node_id": {"type": "string", "description": t("tool.spec.node_invoke.args.node_id")},
-                    "command": {"type": "string", "description": t("tool.spec.node_invoke.args.command")},
-                    "args": {"type": "object", "description": t("tool.spec.node_invoke.args.args")},
-                    "timeout_s": {"type": "number", "description": t("tool.spec.node_invoke.args.timeout")}
-                },
-                "required": ["action"],
-                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -1299,7 +1244,6 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("write_file".to_string(), "写入文件".to_string());
     map.insert("edit_file2".to_string(), "文本编辑".to_string());
     map.insert("apply_patch".to_string(), "应用补丁".to_string());
-    map.insert("lsp".to_string(), "LSP查询".to_string());
     map.insert("subagent_control".to_string(), "子智能体控制".to_string());
     map.insert(
         thread_control_tool::TOOL_THREAD_CONTROL_ALIAS.to_string(),
@@ -1317,8 +1261,6 @@ pub fn builtin_aliases() -> HashMap<String, String> {
         "swarm_control".to_string(),
         "\u{667a}\u{80fd}\u{4f53}\u{8702}\u{7fa4}".to_string(),
     );
-    map.insert("node.invoke".to_string(), "节点调用".to_string());
-    map.insert("node_invoke".to_string(), "节点调用".to_string());
     map.insert(
         web_search_tool::TOOL_WEB_SEARCH_ALIAS.to_string(),
         web_search_tool::TOOL_WEB_SEARCH.to_string(),
@@ -1551,7 +1493,6 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
             Some(thread_control_tool::TOOL_THREAD_CONTROL_ALIAS)
         }
         "智能体蜂群" => Some("agent_swarm"),
-        "节点调用" => Some("node_invoke"),
         "用户世界工具" => Some("user_world"),
         channel_tool::TOOL_CHANNEL => Some("channel_tool"),
         "记忆管理" => Some("memory_manager"),
@@ -1997,6 +1938,31 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
+    fn command_session_catalog_is_localized_and_removed_tools_are_not_exposed() {
+        let zh = builtin_tool_specs_with_language("zh-CN");
+        let zh_session = zh
+            .iter()
+            .find(|spec| spec.name == "命令会话")
+            .expect("Chinese command session spec");
+        assert!(zh_session.description.contains("轮询后台命令"));
+        assert!(zh_session.input_schema["properties"]["action"]["description"]
+            .as_str()
+            .is_some_and(|value| value.contains("操作")));
+        assert!(zh.iter().all(|spec| spec.name != "LSP查询" && spec.name != "节点调用"));
+
+        let en_session = builtin_tool_specs_with_language("en-US")
+            .into_iter()
+            .find(|spec| spec.name == "命令会话")
+            .expect("English command session spec");
+        assert!(en_session.description.contains("Poll a background command"));
+        assert!(en_session.input_schema["properties"]["action"]["description"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("Action:")));
+        assert_eq!(resolve_tool_name("lsp"), "lsp");
+        assert_eq!(resolve_tool_name("node_invoke"), "node_invoke");
+    }
+
+    #[test]
     fn read_file_spec_clarifies_plain_text_only_in_english() {
         let spec = builtin_tool_specs_with_language("en-US")
             .into_iter()
@@ -2286,30 +2252,6 @@ mod tests {
     }
 
     #[test]
-    fn lsp_schema_uses_canonical_snake_case_operations() {
-        let canonical_name = resolve_tool_name("lsp");
-        let spec = builtin_tool_specs_with_language("zh-CN")
-            .into_iter()
-            .find(|spec| spec.name == canonical_name)
-            .expect("lsp spec");
-        assert!(spec.description.contains("path + line + character"));
-        assert!(spec.description.contains("workspace_symbol"));
-        let operations = spec.input_schema["properties"]["operation"]["enum"]
-            .as_array()
-            .expect("lsp operations");
-        assert!(operations.iter().any(|item| item == "document_symbol"));
-        assert!(operations.iter().any(|item| item == "workspace_symbol"));
-        assert!(operations.iter().any(|item| item == "call_hierarchy"));
-        assert!(operations.iter().all(|item| item != "documentSymbol"));
-        assert!(operations.iter().all(|item| item != "workspaceSymbol"));
-        assert!(operations.iter().all(|item| item != "callHierarchy"));
-        assert_eq!(
-            spec.input_schema["additionalProperties"].as_bool(),
-            Some(false)
-        );
-    }
-
-    #[test]
     fn web_fetch_schema_disallows_extra_model_side_fields() {
         let canonical_name = resolve_tool_name("web_fetch");
         let spec = builtin_tool_specs_with_language("zh-CN")
@@ -2570,29 +2512,6 @@ mod tests {
         assert!(wait.input_schema["properties"]["tasks"].is_null());
         assert!(wait.input_schema["properties"]["refresh"].is_null());
         assert!(wait.input_schema["properties"]["timeout_s"].is_null());
-    }
-
-    #[test]
-    fn node_invoke_schema_requires_explicit_action_on_model_side() {
-        let spec = builtin_tool_specs_with_language("zh-CN")
-            .into_iter()
-            .find(|spec| spec.name == "节点调用")
-            .expect("node invoke spec");
-        assert!(spec.description.contains("list"));
-        assert!(spec.description.contains("invoke"));
-        assert!(spec.input_schema["properties"]["action"].is_object());
-        assert!(spec.input_schema["properties"]["node_id"].is_object());
-        assert!(spec.input_schema["properties"]["command"].is_object());
-        assert!(spec.input_schema["properties"]["metadata"].is_null());
-        assert!(spec.input_schema["required"]
-            .as_array()
-            .is_some_and(|items| items.iter().any(|item| item == "action")));
-        assert!(spec.input_schema["allOf"].is_null());
-        assert!(spec.input_schema["anyOf"].is_null());
-        assert_eq!(
-            spec.input_schema["additionalProperties"].as_bool(),
-            Some(false)
-        );
     }
 
     #[test]

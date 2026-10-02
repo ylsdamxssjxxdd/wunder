@@ -126,11 +126,9 @@ Tool surface 决定了当前线程、当前模型能看到哪些工具。它由�
 | `技能调用` | `skill_call` `skill_get` | 能力组织 | 是 | 读取 Skill 手册或调起技能能力。 |
 | `写入文件` | `write_file` | 文件与代码 | 是 | 写入、创建或覆盖文件。 |
 | `应用补丁` | `apply_patch` | 文件与代码 | 是 | 以结构化 patch 修改一个或多个文件。 |
-| `LSP查询` | `lsp` | 文件与代码 | 否 | 获取语言服务诊断、定位和符号信息。 |
 | `子智能体控制` | `subagent_control` | 智能体协作 | 否 | 派生、发送、等待单个子智能体。 |
 | `会话线程控制` | `thread_control` `session_thread` | 智能体协作 | 否 | 枚举、切换、创建和等待会话线程。 |
 | `智能体蜂群` | `agent_swarm` `swarm_control` | 智能体协作 | 否 | 面向多智能体并发派发与结果聚合。 |
-| `节点调用` | `node.invoke` `node_invoke` | 平台集成 | 否 | 调用网关节点或远端节点能力。 |
 | `网页抓取` | `web_fetch` | 外部信息 | 是 | 抓取网页正文、链接与页面摘要。 |
 | `浏览器` | `browser` `browser_tool` | 外部信息 | 否 | 控制浏览器会话、页面导航、交互与截图；兼容 `browser_navigate`、`browser_click`、`browser_type`、`browser_screenshot`、`browser_read_page`、`browser_close`。 |
 | `桌面控制器` | `desktop_controller` `controller` | 桌面能力 | 否 | 执行桌面点击、输入、快捷键等控制动作。 |

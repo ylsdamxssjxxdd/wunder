@@ -1,5 +1,6 @@
-import { Theme, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow } from "theme.slint";
+import { Theme, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, WorldGroupMemberCard } from "theme.slint";
 import { Action, SearchField, MiddleHeader, MiddleFooter } from "components.slint";
+import { TextEditBase } from "textedit-base.slint";
 import { CheckBox, ScrollView } from "std-widgets.slint";
 
 export component WorldPage inherits Rectangle {
@@ -17,6 +18,8 @@ export component WorldPage inherits Rectangle {
     in property <bool> has-earlier: false;
     in property <bool> group-creator-open: false;
     in property <[WorldPickRow]> picks;
+    in property <[WorldGroupMemberCard]> group-members: [];
+    in property <bool> members-open: false;
     in property <string> status;
     callback refresh();
     callback open-contact(int);
@@ -31,6 +34,7 @@ export component WorldPage inherits Rectangle {
     callback cancel-announcement();
     callback save-announcement(string);
     callback load-earlier();
+    callback toggle-members();
     private property <string> keyword;
     private property <string> draft;
     private property <string> announcement-draft;
@@ -110,15 +114,34 @@ export component WorldPage inherits Rectangle {
                 }
                 Rectangle { height: 1px; background: Theme.border; }
                 if root.conversation-open && root.groups : Rectangle {
-                    height: root.announcement-editing ? 40px : 34px;
-                    HorizontalLayout {
+                    height: root.announcement-editing ? 148px : 34px;
+                    if !root.announcement-editing : HorizontalLayout {
                         padding-left: 22px; padding-right: 22px; spacing: 8px;
                         Text { width: 34px; text: "公告"; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
-                        if !root.announcement-editing : Text { horizontal-stretch: 1; text: root.announcement == "" ? "暂无公告" : root.announcement; color: Theme.text; font-size: 11px; wrap: word-wrap; overflow: elide; vertical-alignment: center; }
-                        if !root.announcement-editing : Action { width: 56px; height: 24px; label: "编辑"; show-label: true; enabled: !root.loading; clicked => { root.announcement-draft = root.announcement; root.edit-announcement(); } }
-                        if root.announcement-editing : TextInput { horizontal-stretch: 1; text <=> root.announcement-draft; color: Theme.text; font-size: 11px; }
-                        if root.announcement-editing : Action { width: 56px; height: 24px; label: "保存"; show-label: true; primary: true; enabled: !root.loading; clicked => { root.save-announcement(root.announcement-draft); } }
-                        if root.announcement-editing : Action { width: 56px; height: 24px; label: "取消"; show-label: true; enabled: !root.loading; clicked => { root.cancel-announcement(); } }
+                        Text { horizontal-stretch: 1; text: root.announcement == "" ? "暂无公告" : root.announcement; color: Theme.text; font-size: 11px; wrap: word-wrap; overflow: elide; vertical-alignment: center; }
+                        Action { width: 56px; height: 24px; icon: @image-url("../assets/icons/comments.svg"); label: "成员"; show-label: true; enabled: !root.loading; selected: root.members-open; clicked => { root.toggle-members(); } }
+                        Action { width: 56px; height: 24px; label: "编辑"; show-label: true; enabled: !root.loading; clicked => { root.announcement-draft = root.announcement; root.edit-announcement(); } }
+                    }
+                    if root.announcement-editing : VerticalLayout {
+                        padding-left: 22px; padding-right: 22px; padding-top: 7px; padding-bottom: 8px; spacing: 6px;
+                        HorizontalLayout { height: 16px; spacing: 8px;
+                            Text { text: "公告"; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
+                            Text { horizontal-stretch: 1; text: "支持多行，最多 4000 字"; color: Theme.muted; font-size: 10px; vertical-alignment: center; horizontal-alignment: right; }
+                        }
+                        Rectangle {
+                            height: 80px; border-radius: 8px; background: Theme.panel; border-width: 1px; border-color: announcement-editor.has-focus ? Theme.accent : Theme.border;
+                            clip: true;
+                            announcement-editor := TextEditBase {
+                                x: 8px; width: parent.width - 16px; height: parent.height;
+                                text <=> root.announcement-draft;
+                                foreground: Theme.text; font-size: 11px;
+                                selection-background-color: Theme.accent-soft; selection-foreground-color: Theme.text;
+                            }
+                        }
+                        HorizontalLayout { height: 24px; spacing: 8px; Rectangle { horizontal-stretch: 1; }
+                            Action { width: 56px; height: 24px; label: "保存"; show-label: true; primary: true; enabled: !root.loading; clicked => { root.save-announcement(root.announcement-draft); } }
+                            Action { width: 56px; height: 24px; label: "取消"; show-label: true; enabled: !root.loading; clicked => { root.cancel-announcement(); } }
+                        }
                     }
                 }
                 if !root.conversation-open : Text { vertical-stretch: 1; text: root.groups ? "选择一个普通用户群组查看消息。" : "选择联系人开始单聊。"; color: Theme.muted; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
@@ -133,6 +156,34 @@ export component WorldPage inherits Rectangle {
                     height: 52px; padding-left: 22px; padding-right: 22px; padding-bottom: 14px; spacing: 8px;
                     TextInput { horizontal-stretch: 1; height: 38px; text <=> root.draft; color: Theme.text; font-size: 12px; }
                     Action { width: 68px; height: 38px; label: "发送"; show-label: true; primary: true; enabled: root.draft != "" && !root.loading; clicked => { root.send-message(root.draft); root.draft = ""; } }
+                }
+            }
+        }
+        if root.members-open && root.groups && root.conversation-open : Rectangle {
+            width: 200px;
+            background: Theme.middle;
+            Rectangle { x: 0px; width: 1px; background: Theme.border; }
+            VerticalLayout {
+                spacing: 0px;
+                HorizontalLayout {
+                    height: 40px; padding-left: 14px; padding-right: 8px; spacing: 6px;
+                    Text { horizontal-stretch: 1; text: "群成员 · " + root.group-members.length; color: Theme.text; font-size: 12px; font-weight: 600; vertical-alignment: center; overflow: elide; }
+                    Action { width: 26px; height: 26px; icon: @image-url("../assets/icons/xmark.svg"); label: "收起成员列表"; clicked => { root.toggle-members(); } }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                ScrollView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { alignment: start; spacing: 2px;
+                        for member in root.group-members : Rectangle {
+                            height: 32px;
+                            Text { x: 12px; width: parent.width - 58px; height: parent.height; text: member.username; color: Theme.text; font-size: 11px; vertical-alignment: center; overflow: elide; }
+                            if member.is-owner : Rectangle {
+                                x: parent.width - 44px; y: 8px; width: 34px; height: 16px; border-radius: 8px; background: Theme.accent-soft;
+                                Text { width: parent.width; height: parent.height; text: "群主"; color: Theme.accent-deep; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                        }
+                        if root.group-members.length == 0 : Text { height: 60px; text: root.loading ? "正在加载成员…" : "暂无成员信息"; color: Theme.muted; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
                 }
             }
         }

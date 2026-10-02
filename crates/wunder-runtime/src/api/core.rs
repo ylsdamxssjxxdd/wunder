@@ -766,7 +766,6 @@ fn select_english_alias(canonical: &str, aliases: &[String]) -> Option<String> {
         "技能调用" => Some("skill_call"),
         "会话线程控制" => Some("thread_control"),
         "智能体蜂群" => Some("agent_swarm"),
-        "节点调用" => Some("node_invoke"),
         _ => None,
     };
     if let Some(preferred) = preferred.filter(|value| aliases.iter().any(|alias| alias == *value)) {

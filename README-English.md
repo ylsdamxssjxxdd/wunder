@@ -67,6 +67,21 @@ CLI argument parsing uses clap; TLS uses rustls (ring provider). Desktop uses th
 - Context compaction and long-term memory for long sessions
 - Knowledge base
 
+## Ten Cores
+
+| Core | Design Goal | Core Capabilities |
+| --- | --- | --- |
+| Goal | Let agents enter a goal state and continuously work one task through to completion | Goal-state entry and sustainment, continuous execution, progress tracking, completion check |
+| Compatibility | Keep the desktop and command-line forms explicitly constrained and runnable on legacy operating systems | Windows 7 and Ubuntu 18.04 adaptation, dual desktop/CLI forms, runtime version pinning, dependency downgrade, startup self-check |
+| Context Compaction | Control context size in long sessions while retaining useful information | Manual compaction, automatic compaction, overflow recovery, compaction summary re-injection, before/after comparison and replay |
+| Sub-agents | Derive subtasks within a single thread, completed by independent executors that return results | Subtask breakdown, sub-agent creation and reclamation, result aggregation, parent-child session linking |
+| Scheduled Tasks | Support system-level periodic execution and background governance | Scheduled triggers, planned tasks, background inspection, automatic maintenance, async execution chains |
+| Channel Communication | Support multiple entry points into the same runtime capabilities | HTTP, WebSocket, Desktop, CLI, third-party channels, gateway adaptation |
+| Memory | Support long sessions and long-term material reuse without polluting the thread's core cognition | Thread-init memory injection, knowledge base, workspace files, long-term material reading |
+| Swarm | Support a mother bee dispatching multiple worker bees to complete collaborative tasks | Task breakdown, worker dispatch, node state sync, result aggregation, parent-child session linking |
+| Multithreading | Improve throughput and resource utilization through concurrency control within a single process | Worker thread pool, concurrent task scheduling, thread isolation, resource caps, race and deadlock protection |
+| Multi-tenancy | Support organization, user, tenant, and permission governance for the server form | Tenant isolation, organization and user system, permission control, token account governance, admin console |
+
 ## Documentation
 
 - User/admin/developer manual: `docs/使用说明书/zh-CN/index.md`

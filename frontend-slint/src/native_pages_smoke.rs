@@ -375,6 +375,21 @@ fn check_world(runtime: &NativeDesktop) -> Result<(), Box<dyn std::error::Error>
     assert_eq!(direct_messages.len(), 1);
     assert!(direct_messages[0].mine);
 
+    // The rail badge counts only messages from others: a peer message raises
+    // the total by one and marking the conversation read restores it.
+    let baseline = runtime.total_world_unread()?;
+    runtime.state().storage.send_user_world_message(
+        &conversation,
+        "smoke-peer",
+        "来自成员的消息",
+        "text",
+        None,
+        1_800_000_000.0,
+    )?;
+    assert_eq!(runtime.total_world_unread()?, baseline + 1);
+    runtime.mark_world_read(&conversation, None)?;
+    assert_eq!(runtime.total_world_unread()?, baseline);
+
     // The realtime feed must deliver the next send without polling storage.
     let feed = runtime.start_world_event_feed()?;
     std::thread::sleep(std::time::Duration::from_millis(200));

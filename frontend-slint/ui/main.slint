@@ -1,4 +1,4 @@
-import { Theme, DesktopPage, Conversation, TextBlock, ChatTurn, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, CronCard, CronRunCard, AgentCardFile, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, PlazaItemCard } from "theme.slint";
+import { Theme, DesktopPage, Conversation, TextBlock, ChatTurn, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, WorldGroupMemberCard, CronCard, CronRunCard, AgentCardFile, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, PlazaItemCard } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, SearchField, FormField, MiddleHeader, MiddleFooter } from "components.slint";
 import { Composer } from "composer.slint";
 import { MessageRow } from "message.slint";
@@ -11,7 +11,7 @@ import { ChannelsPage } from "channels_page.slint";
 import { PlazaPage } from "plaza_page.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { ListView, ScrollView, ComboBox } from "std-widgets.slint";
-export { Theme, DesktopPage, Conversation, TextBlock, ChatTurn, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, CronCard, CronRunCard, AgentCardFile, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, PlazaItemCard }
+export { Theme, DesktopPage, Conversation, TextBlock, ChatTurn, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, WorldGroupMemberCard, CronCard, CronRunCard, AgentCardFile, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, PlazaItemCard }
 export { AppTray } from "tray.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
 
@@ -205,6 +205,9 @@ export component MainWindow inherits Window {
     in-out property <string> world-announcement;
     in-out property <bool> world-announcement-editing: false;
     in-out property <bool> world-has-earlier: false;
+    in-out property <[WorldGroupMemberCard]> world-group-members: [];
+    in-out property <bool> world-members-open: false;
+    in-out property <int> world-unread: 0;
     in-out property <[ModelCard]> models: [
         { key: "默认模型", provider: "", model: "未连接", base-url: "", model-type: "llm", is-default: true }
     ];
@@ -390,7 +393,7 @@ export component MainWindow inherits Window {
                 RailButton { icon: @image-url("../assets/icons/robot.svg"); label: "专家"; active: root.page == DesktopPage.agents; clicked => { root.page = DesktopPage.agents; root.refresh-agents(); } }
                 RailButton { icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "工具"; active: root.page == DesktopPage.tools; clicked => { root.page = DesktopPage.tools; root.refresh-tools(); } }
                 RailButton { icon: @image-url("../assets/icons/folder-open.svg"); label: "文件"; active: root.page == DesktopPage.files; clicked => { root.page = DesktopPage.files; root.refresh-files(); } }
-                RailButton { icon: @image-url("../assets/icons/comments.svg"); label: "用户"; active: root.page == DesktopPage.users; clicked => { root.page = DesktopPage.users; root.refresh-world(false); } }
+                RailButton { icon: @image-url("../assets/icons/comments.svg"); label: "用户"; active: root.page == DesktopPage.users; badge: root.world-unread; clicked => { root.page = DesktopPage.users; root.refresh-world(false); } }
                 Rectangle { vertical-stretch: 1; }
                 RailButton { icon: @image-url("../assets/icons/ellipsis.svg"); label: "更多"; active: root.more-open; clicked => { root.more-open = !root.more-open; } }
             }
@@ -763,6 +766,7 @@ export component MainWindow inherits Window {
         messages: root.world-messages; active-title: root.world-active-title; conversation-open: root.world-active-conversation != "";
         announcement: root.world-announcement; announcement-editing: root.world-announcement-editing; has-earlier: root.world-has-earlier;
         group-creator-open: root.world-group-creator-open; picks: root.world-group-picks;
+        group-members: root.world-group-members; members-open: root.world-members-open;
         refresh => { root.refresh-world(root.page == DesktopPage.groups); }
         previous-page => { root.world-offset = max(0, root.world-offset - 100); root.refresh-world(root.page == DesktopPage.groups); }
         next-page => { root.world-offset += 100; root.refresh-world(root.page == DesktopPage.groups); }
@@ -776,6 +780,7 @@ export component MainWindow inherits Window {
         cancel-announcement => { root.cancel-world-announcement(); }
         save-announcement(text) => { root.save-world-announcement(text); }
         load-earlier => { root.load-earlier-world-messages(); }
+        toggle-members => { root.world-members-open = !root.world-members-open; }
     }
     if root.page == DesktopPage.cron : CronPage {
         x: 56px; y: 0px; width: parent.width - 56px; height: parent.height; loading: root.cron-loading; jobs: root.cron-jobs;
