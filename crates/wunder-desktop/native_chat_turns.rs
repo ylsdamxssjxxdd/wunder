@@ -3,6 +3,7 @@ use super::{message_from_value, NativeDesktop, NativeMessage};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct NativeChatTurn {
     pub root_id: String,
     pub user: NativeMessage,
@@ -11,99 +12,111 @@ pub struct NativeChatTurn {
 
 impl NativeDesktop {
     pub fn load_chat_turns(&self, session: &str) -> Result<Vec<NativeChatTurn>> {
-        let storage = &self.state().storage;
-        let mut roots = storage.list_thread_turns(self.user_id(), session, None, 50)?;
-        roots.reverse();
-        let mut turns = Vec::with_capacity(roots.len());
-        for root in roots {
-            let id = root["turn_id"]
+        load_turns(self.state(), self.user_id(), session)
+    }
+}
+
+pub(super) fn load_turns(
+    state: &wunder_server::state::AppState,
+    user: &str,
+    session: &str,
+) -> Result<Vec<NativeChatTurn>> {
+    let mut roots = state.storage.list_thread_turns(user, session, None, 50)?;
+    roots.reverse();
+    roots
+        .iter()
+        .filter_map(|root| load_turn(state, user, session, root).transpose())
+        .collect()
+}
+
+pub(super) fn load_turn(
+    state: &wunder_server::state::AppState,
+    user: &str,
+    session: &str,
+    root: &Value,
+) -> Result<Option<NativeChatTurn>> {
+    let storage = &state.storage;
+    let id = root["turn_id"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing root identity"))?;
+    let mut after = -1;
+    let mut items = Vec::new();
+    for page in 0..8 {
+        let Some(detail) = storage.get_thread_turn(user, session, id, after, 200, false)? else {
+            break;
+        };
+        if let Some(rows) = detail["items"].as_array() {
+            items.extend(rows.iter().cloned());
+        }
+        if detail["has_more"] != true {
+            break;
+        }
+        if page == 7 {
+            return Err(anyhow!("turn display limit exceeded; inspect thread log"));
+        }
+        after = detail["next_after"]
+            .as_i64()
+            .or_else(|| items.last().and_then(|row| row["item_index"].as_i64()))
+            .unwrap_or(after);
+    }
+    // Recover the latest stable answer from durable blocks when a stop
+    // happened before the full assistant item was committed.
+    if let Some(item) = items
+        .iter_mut()
+        .rev()
+        .find(|item| stable_answer(item))
+        .filter(|item| {
+            item["payload"]["content"]
                 .as_str()
-                .ok_or_else(|| anyhow!("missing root identity"))?;
-            let mut after = -1;
-            let mut items = Vec::new();
-            for page in 0..8 {
-                let Some(detail) =
-                    storage.get_thread_turn(self.user_id(), session, id, after, 200, false)?
-                else {
-                    break;
-                };
-                if let Some(rows) = detail["items"].as_array() {
-                    items.extend(rows.iter().cloned());
-                }
-                if detail["has_more"] != true {
-                    break;
-                }
-                if page == 7 {
-                    return Err(anyhow!("turn display limit exceeded; inspect thread log"));
-                }
-                after = detail["next_after"]
-                    .as_i64()
-                    .or_else(|| items.last().and_then(|row| row["item_index"].as_i64()))
-                    .unwrap_or(after);
+                .unwrap_or_default()
+                .is_empty()
+        })
+    {
+        let item_id = item["item_id"].as_str().unwrap_or_default().to_string();
+        let mut blocks = Vec::new();
+        let mut from = 0;
+        for page in 0..64 {
+            let (part, next, more) = storage.list_thread_item_blocks_page(
+                user,
+                session,
+                &item_id,
+                Some("content"),
+                from,
+                100,
+                false,
+            )?;
+            blocks.extend(part);
+            if !more {
+                break;
             }
-            // Recover the latest stable answer from durable blocks when a stop
-            // happened before the full assistant item was committed.
-            if let Some(item) = items
-                .iter_mut()
-                .rev()
-                .find(|item| stable_answer(item))
-                .filter(|item| {
-                    item["payload"]["content"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .is_empty()
-                })
-            {
-                let item_id = item["item_id"].as_str().unwrap_or_default().to_string();
-                let mut blocks = Vec::new();
-                let mut from = 0;
-                for page in 0..64 {
-                    let (part, next, more) = storage.list_thread_item_blocks_page(
-                        self.user_id(),
-                        session,
-                        &item_id,
-                        Some("content"),
-                        from,
-                        100,
-                        false,
-                    )?;
-                    blocks.extend(part);
-                    if !more {
-                        break;
-                    }
-                    if page == 63 {
-                        return Err(anyhow!("turn block limit exceeded"));
-                    }
-                    from = next.ok_or_else(|| anyhow!("missing block cursor"))? + 1;
-                }
-                let mut content = String::new();
-                for block in blocks {
-                    let data = block.get("data").unwrap_or(&block);
-                    if data["field"].as_str().unwrap_or("content") != "content" {
-                        continue;
-                    }
-                    if let Some(text) = data["content"].as_str() {
-                        if content.len() + text.len() > 8 * 1024 * 1024 {
-                            return Err(anyhow!("turn text limit exceeded"));
-                        }
-                        content.push_str(text);
-                    }
-                }
-                if !content.is_empty()
-                    && item["payload"]["content"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .is_empty()
-                {
-                    item["payload"]["content"] = json!(content);
-                }
+            if page == 63 {
+                return Err(anyhow!("turn block limit exceeded"));
             }
-            if let Some(turn) = project_turn(&root, &items) {
-                turns.push(turn);
+            from = next.ok_or_else(|| anyhow!("missing block cursor"))? + 1;
+        }
+        let mut content = String::new();
+        for block in blocks {
+            let data = block.get("data").unwrap_or(&block);
+            if data["field"].as_str().unwrap_or("content") != "content" {
+                continue;
+            }
+            if let Some(text) = data["content"].as_str() {
+                if content.len() + text.len() > 8 * 1024 * 1024 {
+                    return Err(anyhow!("turn text limit exceeded"));
+                }
+                content.push_str(text);
             }
         }
-        Ok(turns)
+        if !content.is_empty()
+            && item["payload"]["content"]
+                .as_str()
+                .unwrap_or_default()
+                .is_empty()
+        {
+            item["payload"]["content"] = json!(content);
+        }
     }
+    Ok(project_turn(root, &items))
 }
 
 fn stable_answer(item: &Value) -> bool {
@@ -127,16 +140,15 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
         .unwrap_or_else(|| json!({"content":""}));
     payload["role"] = json!("assistant");
     payload["turn_id"] = json!(id);
-    let status = if matches!(
-        root["status"].as_str(),
-        Some("cancelled" | "failed" | "interrupted" | "rejected" | "stopped")
-    ) {
-        &root["status"]
-    } else {
-        latest
-            .map(|item| &item["status"])
-            .unwrap_or(&root["status"])
-    };
+    let status =
+        if root["status"] == "completed" && latest.is_some_and(|item| item["turn_id"] != id) {
+            latest
+                .map(|item| &item["status"])
+                .unwrap_or(&root["status"])
+        } else {
+            // A completed model action does not settle its owning user turn.
+            &root["status"]
+        };
     let state = match status.as_str().unwrap_or_default() {
         "cancelled" | "interrupted" | "stopped" => "已停止",
         "failed" | "rejected" => "执行失败",
@@ -195,6 +207,18 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn finished_model_action_does_not_settle_running_channel_turn() {
+        let root = json!({"turn_id":"fixture-root", "status":"running"});
+        let items = vec![
+            json!({"kind":"user_message","turn_id":"fixture-root","payload":{"content":"Fixture input"}}),
+            json!({"kind":"assistant_message","item_id":"fixture-root:text-1","turn_id":"fixture-root","status":"completed","payload":{"content":"Fixture action", "model_round":1}}),
+        ];
+        assert_eq!(
+            project_turn(&root, &items).unwrap().assistant.stats_status,
+            "正在生成…"
+        );
+    }
     #[test]
     fn rejected_scheduled_turn_has_terminal_status_without_model_text() {
         let root = json!({"turn_id":"fixture-rejected", "status":"rejected"});

@@ -15,6 +15,9 @@ use tokio::runtime::Runtime;
 mod stream;
 #[path = "native_chat_turns.rs"]
 mod chat_turns;
+#[path = "native_observer.rs"]
+mod observer;
+pub use observer::{NativeThreadUpdate, NativeThreadWatch};
 pub use chat_turns::NativeChatTurn;
 pub use stream::{NativeChatEvent, NativeStream};
 #[path = "native_catalog.rs"]
@@ -87,7 +90,7 @@ pub struct NativeSession {
     pub locked: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NativeMessage {
     pub turn_id: String,
     pub workflow_detail: String,
@@ -201,6 +204,12 @@ impl NativeDesktop {
     pub fn get_session(&self, session_id: &str) -> Result<(NativeSession, Vec<NativeMessage>)> {
         let (session, turns) = self.get_session_turns(session_id)?;
         Ok((session, turns.into_iter().flat_map(|turn| [turn.user, turn.assistant]).collect()))
+    }
+
+    pub fn get_session_info(&self, session_id: &str) -> Result<NativeSession> {
+        let record = self.state().user_store.get_chat_session(self.user_id(), session_id.trim())?
+            .ok_or_else(|| anyhow!("chat session not found"))?;
+        Ok(self.session_with_stats(record))
     }
 
     pub fn get_session_turns(&self, session_id: &str) -> Result<(NativeSession, Vec<NativeChatTurn>)> {

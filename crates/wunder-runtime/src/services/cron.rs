@@ -112,6 +112,11 @@ pub async fn handle_cron_action(
     payload: CronActionRequest,
 ) -> Result<Value> {
     let action = payload.action.trim().to_lowercase();
+    // Do not acknowledge an executable schedule when the worker is disabled.
+    // Read/delete/disable remain available for inspecting and cleaning up jobs.
+    if !config.cron.enabled && matches!(action.as_str(), "add" | "update" | "enable" | "run") {
+        return Err(anyhow!("Scheduled task execution is disabled (cron.enabled=false). Enable the scheduler before scheduling or running tasks."));
+    }
     let scoped_agent_id = resolve_scoped_agent_id(agent_id, payload.job.as_ref());
     let now = now_ts();
     match action.as_str() {
@@ -186,7 +191,7 @@ pub async fn handle_cron_action(
             .await?;
             let jobs = filter_jobs_by_agent_scope(jobs, scoped_agent_id.as_deref());
             let items = jobs.iter().map(cron_job_to_value).collect::<Vec<_>>();
-            Ok(json!({ "action": "list", "jobs": items }))
+            Ok(json!({ "action": "list", "jobs": items, "scheduler": { "enabled": config.cron.enabled } }))
         }
         "get" => {
             let job_id = payload
@@ -2173,14 +2178,24 @@ impl CronScheduler {
                 continue;
             }
             let now = now_ts();
-            let running = self.count_running_jobs(now).await.unwrap_or(0);
+            let running = match self.count_running_jobs(now).await {
+                Ok(running) => running,
+                Err(err) => {
+                    error!(error = %err, "cron scheduler could not read running jobs");
+                    sleep(Duration::from_millis(cron_cfg.poll_interval_ms.max(500))).await;
+                    continue;
+                }
+            };
             let max_runs = cron_cfg.max_concurrent_runs.max(1) as i64;
             let capacity = (max_runs - running).max(0);
             if capacity > 0 {
                 let jobs = self
                     .claim_due_jobs(now, capacity, cron_lease_expires_at(&config, now))
                     .await
-                    .unwrap_or_default();
+                    .unwrap_or_else(|err| {
+                        error!(error = %err, "cron scheduler could not claim due jobs");
+                        Vec::new()
+                    });
                 for job in jobs {
                     let scheduler = Arc::clone(&self);
                     long_task::spawn("cron.scheduler.execute_job", async move {
@@ -2188,7 +2203,10 @@ impl CronScheduler {
                     });
                 }
             }
-            let next = self.get_next_cron_run_at(now).await.unwrap_or(None);
+            let next = self.get_next_cron_run_at(now).await.unwrap_or_else(|err| {
+                error!(error = %err, "cron scheduler could not read next run time");
+                None
+            });
             let sleep_ms = compute_scheduler_sleep_ms(
                 now,
                 next,
@@ -2249,6 +2267,14 @@ impl CronScheduler {
 mod tests {
     use crate::storage::*;
     use serde_json::json;
+
+    #[test]
+    fn cron_partial_config_keeps_scheduler_enabled() {
+        let config: crate::config::CronConfig = serde_json::from_value(json!({"max_concurrent_runs": 2})).unwrap();
+        assert!(config.enabled);
+        let disabled: crate::config::CronConfig = serde_json::from_value(json!({"enabled": false})).unwrap();
+        assert!(!disabled.enabled);
+    }
 
     fn now_ts_test() -> f64 {
         chrono::Utc::now().timestamp_millis() as f64 / 1000.0
@@ -2317,6 +2343,45 @@ mod tests {
             .upsert_chat_session(&build_chat_session("bound", "agent_a", now_ts_test()))
             .unwrap();
         (runtime, state, dir)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cron_real_loop_claims_due_job_and_persists_terminal_failure() {
+        let (_runtime, state, _dir) = runtime_fixture().await;
+        let now = now_ts_test();
+        let mut job = build_job("missing-thread", "isolated", now);
+        job.schedule_kind = "at".into();
+        job.schedule_at = super::format_ts(Some(now + 0.15));
+        job.schedule_every_ms = None;
+        job.next_run_at = Some(now + 0.15);
+        state.storage.upsert_cron_job(&job).unwrap();
+        let scheduler = state.control.cron.clone();
+        let task = tokio::spawn(scheduler.run_loop());
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let stored = state.storage.get_cron_job("cron_user", &job.job_id).unwrap().unwrap();
+                if stored.last_run_at.is_some() { break stored; }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        }).await;
+        task.abort();
+        let stored = result.expect("actual scheduler must execute a due task without a service or model");
+        assert_eq!(stored.last_status.as_deref(), Some("error"));
+        assert!(stored.last_error.as_deref().unwrap().contains("routing"));
+        assert!(stored.running_at.is_none());
+        let runs = state.storage.list_cron_runs("cron_user", &job.job_id, 10).unwrap();
+        assert_eq!(runs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn cron_disabled_cannot_acknowledge_a_new_schedule() {
+        let (mut runtime, _state, _dir) = runtime_fixture().await;
+        runtime.config.cron.enabled = false;
+        let result = super::handle_cron_action(runtime.config, runtime.storage,
+            Some(runtime.orchestrator), Some(runtime.wake_signal), runtime.user_store,
+            runtime.user_tool_manager, runtime.skills, "cron_user", Some("bound"), Some("agent_a"),
+            super::CronActionRequest { action: "add".into(), job: None }).await;
+        assert!(result.unwrap_err().to_string().contains("cron.enabled=false"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

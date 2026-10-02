@@ -120,6 +120,11 @@ const handleDialogVisibleChange = (nextVisible: boolean) => {
 };
 </script>
 
+/* Layout note: el-dialog uses append-to-body, so this dialog is teleported out
+   of the component tree. Scoped `:deep()` selectors cannot reach it because the
+   teleported subtree carries no data-v-* attribute. All dialog/stage sizing
+   therefore lives in the global stylesheet under
+   `.messenger-image-preview-dialog` in styles/messenger.css. */
 <style scoped>
 .messenger-image-preview-body {
   flex: 1 1 auto;
@@ -130,38 +135,4 @@ const handleDialogVisibleChange = (nextVisible: boolean) => {
 .messenger-image-preview-body.is-text {
   overflow: auto;
 }
-
-.messenger-image-preview-body iframe {
-  height: 100%;
-  min-height: 0;
-}
-
-:deep(.messenger-image-preview-dialog.el-dialog) {
-  max-width: min(92vw, 980px);
-  max-height: calc(var(--app-viewport-height, 100vh) - 24px);
-  margin: 12px auto !important;
-  display: flex;
-  flex-direction: column;
-}
-
-:deep(.messenger-image-preview-dialog .el-dialog__body) {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-:deep(.messenger-image-preview-body .zoomable-image-preview) {
-  height: 100%;
-}
-
-:deep(.messenger-image-preview-body .zoomable-image-surface) {
-  height: 100%;
-}
-
-:deep(.messenger-image-preview-body .zoomable-image-stage) {
-  height: 100%;
-  min-height: 0;
-  max-height: none;
-}
-
 </style>

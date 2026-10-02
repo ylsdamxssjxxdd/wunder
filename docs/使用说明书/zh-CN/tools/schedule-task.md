@@ -172,3 +172,9 @@ updated_at: 2026-10-02
 `npm run test:chat` 包含定时任务后台轮次场景：旧轮次运行、新轮次拒绝、停止、排队、独立结果投递及刷新恢复。HTTP/WebSocket 使用合成协议对端，页面操作和渲染使用真实浏览器，不启动正式服务或调用真实模型。
 
 查看 `temp_dir/chat-scheduled-review/conversation/index.html` 的分屏截图，以及同目录上一级的 `thread-export.jsonl`、`thread-changes.jsonl`、`performance.json` 和 `analysis.json`。后端定向运行 `cargo test -p wunder-runtime cron --lib`，覆盖真实 SQLite 与任务队列准入、取消和结果投递。两类测试分别验证后端状态和浏览器呈现，不宣称覆盖真实模型行为。
+
+### 调度状态与页面统计
+
+服务端需启用 `cron.enabled`。关闭时创建、更新、启用和手动运行会返回明确错误，列表仍可读取并显示调度器状态；已经运行的服务需重新加载配置或重启才能采用修改。工具详情显示本地时区时间、执行规则、上次状态与绑定线程，原始结果仍保留在线程日志中。
+
+常规 `npm run test:chat --workspace wunder-frontend` 覆盖切到设置页期间完成、返回聊天、刷新后保留生成速度及定时工具摘要截图。`cargo test -p wunder-runtime cron --lib` 覆盖真实调度循环到期领取与失败结算，不连接真实模型；成功结果回传另由持久化回归覆盖。截图位于 `temp_dir/chat-scheduled-review/`。

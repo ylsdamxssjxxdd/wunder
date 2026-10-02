@@ -1,5 +1,6 @@
 import type { ToolWorkflowStructuredGroup, ToolWorkflowStructuredMetric, ToolWorkflowStructuredView } from './toolWorkflowTypes';
 import { normalizeToolResultDataObject } from './toolWorkflowResultPayload';
+import { buildScheduleResultView } from './toolWorkflowScheduleView';
 
 type UnknownObject = Record<string, unknown>;
 
@@ -661,6 +662,7 @@ export const buildStructuredToolResultView = (
 ): ToolWorkflowStructuredView | null => {
   const normalizedDataObject = normalizeToolResultDataObject(dataObject);
   if (!normalizedDataObject) return null;
+  if (['schedule_task', '定时任务'].includes(toolName)) return buildScheduleResultView(normalizedDataObject, t);
   if (isReadFileTool(toolName)) return buildReadStructuredView(normalizedDataObject, t);
   if (isListFilesTool(toolName)) return buildListStructuredView(normalizedDataObject, t);
   if (isSearchContentTool(toolName)) return buildSearchStructuredView(normalizedDataObject, t);

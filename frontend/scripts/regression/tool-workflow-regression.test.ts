@@ -7,6 +7,25 @@ import {
   buildStructuredToolResultView
 } from '../../src/components/chat/toolWorkflowStructuredView';
 import { extractToolResultDataObject } from '../../src/components/chat/toolWorkflowResultPayload';
+import en from '../../src/i18n/messages/en-US';
+
+test('scheduled tasks show nested schedules, routing and failure without JSON truncation', () => {
+  const translate = (key: string) => (en as Record<string, string>)[key] || key;
+  const view = buildStructuredToolResultView('schedule_task', null, { action: 'list',
+    scheduler: { enabled: false }, jobs: [{ job_id: 'fixture-job', name: 'Fixture timer',
+      enabled: true, schedule: { kind: 'at', at: '2030-01-01T10:00:00Z' },
+      next_run_at: '2030-01-01T10:00:00Z', last_status: 'error', last_error: 'Fixture failure',
+      session_target: 'isolated', session_id: 'fixture-thread' }] }, translate);
+  assert.equal(view?.variant, 'schedule');
+  assert.equal(view?.metrics.find(row => row.key === 'scheduler')?.value, 'Disabled');
+  const row = view!.groups[0].rows[0];
+  assert.equal(row.title, 'Fixture timer');
+  assert.match(row.body!, /2030/);
+  assert.match(row.body!, /fixture-thread/);
+  assert.match(row.body!, /Fixture failure/);
+  assert.match(row.body!, /separate thread/);
+  assert.doesNotMatch(row.body!, /\[object\]|omitted/);
+});
 import { formatWorkflowDetailForDisplay } from '../../src/components/chat/toolWorkflowDetailFormatter';
 import {
   buildWorkflowToolRuns,

@@ -630,8 +630,8 @@ pub struct BrowserDockerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CronConfig {
-    #[serde(default)]
     pub enabled: bool,
     #[serde(default, deserialize_with = "deserialize_usize_from_any")]
     pub max_concurrent_runs: usize,

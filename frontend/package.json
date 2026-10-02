@@ -80,7 +80,7 @@
     "test:chat-background-publication": "node scripts/run-regression-tests.mjs chat-background-publication-regression.test.ts",
     "test:e2e:chat": "playwright test tests/e2e/chat-user-lifecycle.spec.ts tests/e2e/chat-durable-stream-performance.spec.ts tests/e2e/chat-cancel-image-recovery.spec.ts tests/e2e/chat-scheduled-task.spec.ts --workers=1",
     "typecheck:chat-tests": "tsc -p tests/tsconfig.chat-evidence.json --noEmit",
-    "test:chat": "npm run typecheck:chat-tests && npm run test:chat-thread-pipeline && npm run test:chat-evidence && npm run test:e2e:chat"
+    "test:chat": "npm run typecheck:chat-tests && npm run test:chat-thread-pipeline && npm run test:chat-evidence && npm run test:chat-workflow-history && npm run test:e2e:chat"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.2",

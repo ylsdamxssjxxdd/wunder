@@ -31,9 +31,8 @@
           <div class="subagent-panel__summary">{{ latestPreview(item) || '等待消息…' }}</div>
           <div class="subagent-panel__detail-line">
             <span>工具 {{ metric(item, 'tool_calls') }} 次</span>
-            <span>额度 {{ metric(item, 'account_credits_consumed') }}</span>
+            <span>额度 {{ metric(item, 'model_request_count') }}</span>
             <span>上下文 {{ contextUsage(item) }}</span>
-            <span>模型请求 {{ metric(item, 'model_request_count') }} 次</span>
           </div>
         </div>
         <div class="subagent-panel__item-actions" @click.stop>
@@ -68,7 +67,7 @@
         </div>
         <div class="subagent-panel__detail-line">
           <span>工具 {{ metric(activeItem, 'tool_calls') }} 次</span>
-          <span>额度 {{ metric(activeItem, 'account_credits_consumed') }}</span>
+          <span>额度 {{ metric(activeItem, 'model_request_count') }}</span>
           <span>上下文 {{ contextUsage(activeItem) }}</span>
         </div>
         <div class="subagent-detail__timeline">
@@ -175,6 +174,7 @@ const latestPreview = (item: SubagentPanelItem) =>
   pickSubagentText(item, 'latest_message', 'assistant_message', 'summary', 'user_message');
 
 const metric = (item: SubagentPanelItem, key: string): string => {
+  // Display quota as provider request count; account debit can be zero for exempt calls.
   const metrics = (item.metrics ?? resolveItemDetail(item).metrics) as Record<string, unknown> | undefined;
   const value = metrics?.[key];
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
@@ -368,6 +368,12 @@ const terminate = async (item: SubagentPanelItem) => {
 <style>
 /* Dialog styles are global because el-dialog teleports to <body> */
 .subagent-panel__dialog.el-dialog {
+  /* Teleport leaves the chat shell: derive all text colors from the dialog theme. */
+  --chat-text: var(--el-text-color-primary, #303133);
+  --chat-muted: var(--el-text-color-regular, #606266);
+  --chat-text-secondary: var(--el-text-color-regular, #606266);
+  --chat-text-muted: var(--el-text-color-secondary, #909399);
+  --chat-panel: var(--el-bg-color, #ffffff);
   width: min(720px, calc(100vw - 24px)) !important;
   max-height: calc(var(--app-viewport-height, 100vh) - 24px);
   margin: 12px auto !important;
@@ -398,6 +404,8 @@ const terminate = async (item: SubagentPanelItem) => {
 }
 
 .subagent-detail__headline {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 15px;
   font-weight: 700;
 }
@@ -415,8 +423,16 @@ const terminate = async (item: SubagentPanelItem) => {
   min-height: 0;
   max-height: 65vh;
   overflow: auto;
-  white-space: pre-wrap;
+  padding-top: 4px;
+  border-top: 1px solid var(--el-border-color-lighter, #ebeef5);
+  scrollbar-gutter: stable;
   word-break: break-word;
+}
+
+.subagent-panel__dialog .subagent-panel__detail-line {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--chat-muted);
 }
 
 .subagent-panel__dialog .subagent-panel__status {

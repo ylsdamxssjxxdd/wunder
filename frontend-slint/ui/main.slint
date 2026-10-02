@@ -33,6 +33,7 @@ export component MainWindow inherits Window {
     in-out property <string> active-agent-id;
     in-out property <string> heading: "默认智能体";
     in-out property <bool> busy: false;
+    in-out property <bool> observing-thread: false;
     in-out property <bool> connected: false;
     in-out property <bool> chat-loading: false;
     in-out property <bool> session-loading: false;
@@ -424,7 +425,7 @@ export component MainWindow inherits Window {
                 HorizontalLayout {
                     padding-left: 14px; padding-right: 14px; height: 34px; spacing: 8px;
                     SearchField { horizontal-stretch: 1; icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索"; text <=> root.keyword; }
-                    new-chat := Action { width: 34px; height: 34px; icon: @image-url("../assets/icons/plus.svg"); label: "新建线程"; enabled: !root.busy && !root.creating-session && !root.session-loading && !root.chat-loading && !root.agents-loading; selected: true; clicked => { root.new-thread(); } }
+                    new-chat := Action { width: 34px; height: 34px; icon: @image-url("../assets/icons/plus.svg"); label: "新建线程"; enabled: (!root.busy || root.observing-thread) && !root.creating-session && !root.session-loading && !root.chat-loading && !root.agents-loading; selected: true; clicked => { root.new-thread(); } }
                 }
                 Rectangle { height: 14px; }
                 ScrollView {
@@ -436,7 +437,7 @@ export component MainWindow inherits Window {
                         Rectangle {
                             x: 8px; y: 2px; width: parent.width - 16px; height: 64px; border-radius: 12px;
                             background: root.selected-conversation == index ? Theme.accent : transparent;
-                            Action { width: parent.width; height: parent.height; label: conversation.title; enabled: !root.busy && !root.creating-session && !root.session-loading && !root.chat-loading; clicked => { root.select-conversation(index); } }
+                            Action { width: parent.width; height: parent.height; label: conversation.title; enabled: (!root.busy || root.observing-thread) && !root.creating-session && !root.session-loading && !root.chat-loading; clicked => { root.select-conversation(index); } }
                             Avatar { x: 10px; y: 13px; source: @image-url("../assets/avatar.png"); }
                             Text { x: 54px; y: 10px; width: parent.width - 60px; height: 19px; text: conversation.title; color: root.selected-conversation == index ? white : Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
                             Text { x: 54px; y: 35px; width: parent.width - 62px; height: 16px; text: conversation.preview; color: root.selected-conversation == index ? #ffffffe0 : Theme.muted; font-size: 11px; overflow: elide; }
@@ -459,7 +460,7 @@ export component MainWindow inherits Window {
                     height: 62px; padding-left: 14px; padding-right: 14px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
                     Text { text: root.heading; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
-                    Action { width: 104px; icon: @image-url("../assets/icons/plus.svg"); label: "新建线程"; show-label: true; enabled: !root.busy && !root.creating-session && !root.session-loading && !root.chat-loading && !root.agents-loading; clicked => { root.new-thread(); } }
+                    Action { width: 104px; icon: @image-url("../assets/icons/plus.svg"); label: "新建线程"; show-label: true; enabled: (!root.busy || root.observing-thread) && !root.creating-session && !root.session-loading && !root.chat-loading && !root.agents-loading; clicked => { root.new-thread(); } }
                 }
                 Rectangle { height: 1px; background: Theme.border; }
                 messages-view := ListView {
@@ -510,7 +511,7 @@ export component MainWindow inherits Window {
         // Preserve the chat's minimum width; the right dock becomes optional.
         if root.page == DesktopPage.messages && root.right-open && root.width >= 1100px : WorkDock {
             files-loading: root.files-loading; files-error: root.files-error; directory-path: root.directory-path; directory-root: root.directory-root; directory-container-id: root.directory-container-id;
-            tasks-enabled: !root.busy && !root.session-loading && !root.chat-loading && !root.creating-session;
+            tasks-enabled: (!root.busy || root.observing-thread) && !root.session-loading && !root.chat-loading && !root.creating-session;
             conversations: root.conversations;
             files: root.files;
             x: root.width - 284px; y: 0px; width: 284px; height: parent.height; active-task: root.connected ? root.selected-conversation : root.active-task;
@@ -551,7 +552,7 @@ export component MainWindow inherits Window {
         TouchArea { clicked => { root.dock-overlay-open = false; } }
         WorkDock {
             files-loading: root.files-loading; files-error: root.files-error; directory-path: root.directory-path; directory-root: root.directory-root; directory-container-id: root.directory-container-id;
-            tasks-enabled: !root.busy && !root.session-loading && !root.chat-loading && !root.creating-session;
+            tasks-enabled: (!root.busy || root.observing-thread) && !root.session-loading && !root.chat-loading && !root.creating-session;
             conversations: root.conversations;
             files: root.files;
             x: parent.width - 284px; y: 0px; width: 284px; height: parent.height;

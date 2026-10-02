@@ -185,6 +185,16 @@ export class ChatMockService {
     // idle edge, while no cancellation toast is generated.
   }
   /** Background scheduler uses durable events; it has no foreground start request. */
+  scheduleToolResult() {
+    const turn = this.turns.find(row => row.user_round === 1)!;
+    this.item(turn, 'schedule', 'tool_call', 'completed', { tool: 'schedule_task',
+      tool_call_id: 'fixture-schedule-call', event_type: 'tool_result',
+      args: { action: 'add' }, result: { ok: true, data: { action: 'add', job: {
+        job_id: 'fixture-job', name: 'Fixture timer', enabled: true, running: false,
+        schedule: { kind: 'at', at: '2030-01-01T10:00:00Z' }, next_run_at: '2030-01-01T10:00:00Z',
+        last_status: null, session_target: 'isolated', session_id: MOCK_SESSION
+      } } } });
+  }
   scheduledTurn(status: 'queued' | 'rejected' | 'completed') {
     const turn = { turn_id: `fixture-turn-${++this.round}`, user_round: this.round,
       content: 'Scheduled fixture task', status };

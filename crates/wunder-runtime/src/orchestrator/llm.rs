@@ -945,7 +945,7 @@ impl Orchestrator {
                         },
                     )
                     .await?;
-                    let (prefill_duration_s, mut decode_duration_s) = if will_stream {
+                    let (prefill_duration_s, decode_duration_s) = if will_stream {
                         output_timing
                             .lock()
                             .durations(request_started_at, response_finished_at)
@@ -959,14 +959,9 @@ impl Orchestrator {
                     } else {
                         None
                     };
-                    if tool_calls
-                        .as_ref()
-                        .and_then(Value::as_array)
-                        .is_some_and(|calls| !calls.is_empty())
-                        || usage.estimated
-                    {
-                        decode_duration_s = None;
-                    }
+                    // OutputTiming already isolates visible content from reasoning
+                    // and tool arguments. A tool call or missing provider usage
+                    // does not invalidate that measured content interval.
                     // Body speed must use visible answer tokens, excluding hidden reasoning.
                     let decode_output_tokens = if content.trim().is_empty() {
                         usage.output
@@ -1356,6 +1351,28 @@ mod tests {
             timing.durations(start, start + Duration::from_secs(66)),
             (Some(1.0), Some(2.0))
         );
+    }
+
+    #[test]
+    fn tool_round_visible_timing_survives_turn_stats_serialization() {
+        let start = Instant::now();
+        let mut timing = super::OutputTiming::default();
+        timing.mark_output(start + Duration::from_secs(1), 0, 128);
+        timing.mark_output(start + Duration::from_secs(10), 32, 0);
+        timing.mark_output(start + Duration::from_secs(12), 32, 0);
+        // Tool argument chunks do not add visible text or extend its interval.
+        timing.mark_output(start + Duration::from_secs(20), 0, 0);
+        let (prefill, decode) = timing.durations(start, start + Duration::from_secs(21));
+        let summary = crate::core::llm_speed::LlmSpeedSummary::from_usage_and_durations(
+            Some(1000), Some(32), prefill, decode);
+        let mut accumulator = crate::core::llm_speed::TurnDecodeSpeedAccumulator::default();
+        accumulator.record_summary(&summary);
+        let mut stats = serde_json::Map::new();
+        accumulator.insert_into_map(&mut stats);
+        let restored: serde_json::Value = serde_json::from_str(&serde_json::to_string(&stats).unwrap()).unwrap();
+        assert_eq!(restored["visible_decode_speed_tps"], json!(16.0));
+        assert_eq!(restored["visible_decode_duration_s"], json!(2.0));
+        assert_eq!(restored["visible_decode_measured"], json!(true));
     }
 
     #[test]

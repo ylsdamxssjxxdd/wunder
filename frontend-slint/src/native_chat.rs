@@ -16,6 +16,9 @@ use wunder_desktop::{
     NativeChatAttachment, NativeChatEvent, NativeChatInput, NativeDesktop, NativeStream,
 };
 
+#[path = "native_chat_observer.rs"]
+mod observer;
+
 struct Active {
     stream: NativeStream,
     output: TurnOutput,
@@ -52,11 +55,13 @@ impl std::ops::DerefMut for Active {
 
 struct State {
     timer: Timer,
+    observation: observer::Observation,
     desktop: Arc<NativeDesktop>,
     active: Option<Active>,
     history_generation: Arc<AtomicU64>,
     drafts: std::collections::HashMap<String, String>,
     recording: Option<Recording>,
+    list_inflight: Arc<AtomicBool>,
 }
 
 struct Recording {
@@ -87,12 +92,15 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     app.set_files(ModelRc::default());
     let state = Rc::new(RefCell::new(State {
         timer: Timer::default(),
+        observation: observer::Observation::default(),
         desktop,
         active: None,
         history_generation: Arc::new(AtomicU64::new(0)),
         drafts: std::collections::HashMap::new(),
         recording: None,
+        list_inflight: Arc::new(AtomicBool::new(false)),
     }));
+    observer::install(app, state.clone());
     bind_refresh(app, state.clone());
     bind_selection(app, state.clone());
     bind_new_thread(app, state.clone());
@@ -133,58 +141,68 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
 fn bind_refresh(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
     app.on_refresh_chat(move || {
-        let Some(app) = weak.upgrade() else { return };
-        if app.get_chat_loading()
-            || app.get_session_loading()
-            || app.get_busy()
-            || app.get_creating_session()
-        {
-            return;
-        }
-        let desktop = state.borrow().desktop.clone();
-        let weak = app.as_weak();
-        app.set_chat_loading(true);
-        let agent_for_empty = app.get_active_agent_id().to_string();
-        std::thread::spawn(move || {
-            let result = desktop.list_sessions().and_then(|mut items| {
-                if items.is_empty() {
-                    let created = desktop.create_session_for_agent(
-                        (!agent_for_empty.trim().is_empty()).then_some(agent_for_empty.as_str()),
-                    )?;
-                    items.push(created);
-                }
-                Ok(items)
-            });
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_chat_loading(false);
-                match result {
-                    Ok(items) => {
-                        let rows = items
-                            .into_iter()
-                            .take(100)
-                            .map(|item| Conversation {
-                                id: item.id.into(),
-                                title: item.title.into(),
-                                time: format_time(item.updated_at).into(),
-                                consumed_tokens: format_count_i64(item.consumed_tokens).into(),
-                                tool_calls: item.tool_calls.to_string().into(),
-                                quota_used: format_count_i64(item.quota_used).into(),
-                                runtime_status: item.runtime_status.into(),
-                                locked: item.locked,
-                                ..Default::default()
-                            })
-                            .collect::<Vec<_>>();
+        if let Some(app) = weak.upgrade() { refresh_chat(&app, state.clone(), false); }
+    });
+}
+
+fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
+    if app.get_chat_loading()
+        || app.get_session_loading()
+        || state.borrow().active.is_some()
+        || app.get_creating_session()
+    {
+        return;
+    }
+    let desktop = state.borrow().desktop.clone();
+    let weak = app.as_weak();
+    let inflight = state.borrow().list_inflight.clone();
+    if inflight.swap(true, Ordering::AcqRel) { return; }
+    if !silent { app.set_chat_loading(true); }
+    let agent_for_empty = app.get_active_agent_id().to_string();
+    std::thread::spawn(move || {
+        let result = desktop.list_sessions().and_then(|mut items| {
+            if items.is_empty() {
+                let created = desktop.create_session_for_agent(
+                    (!agent_for_empty.trim().is_empty()).then_some(agent_for_empty.as_str()),
+                )?;
+                items.push(created);
+            }
+            Ok(items)
+        });
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            inflight.store(false, Ordering::Release);
+            if !silent { app.set_chat_loading(false); }
+            match result {
+                Ok(items) => {
+                    let rows = items
+                        .into_iter()
+                        .take(100)
+                        .map(|item| Conversation {
+                            id: item.id.into(),
+                            title: item.title.into(),
+                            time: format_time(item.updated_at).into(),
+                            consumed_tokens: format_count_i64(item.consumed_tokens).into(),
+                            tool_calls: item.tool_calls.to_string().into(),
+                            quota_used: format_count_i64(item.quota_used).into(),
+                            runtime_status: item.runtime_status.into(),
+                            locked: item.locked,
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>();
+                    let selected = rows.iter().position(|row| row.id == app.get_active_session_id());
+                    app.set_selected_conversation(selected.map(|index| index as i32).unwrap_or(-1));
+                    if !app.get_conversations().iter().eq(rows.iter().cloned()) {
                         app.set_conversations(ModelRc::new(VecModel::from(rows)));
-                        if app.get_active_session_id().is_empty()
-                            && app.get_conversations().row_count() > 0
-                        {
-                            app.invoke_select_conversation(0);
-                        }
-                        app.set_status("内嵌运行时已就绪".into());
                     }
-                    Err(error) => app.set_status(format!("无法读取会话：{error}").into()),
+                    if app.get_active_session_id().is_empty()
+                        && app.get_conversations().row_count() > 0
+                    {
+                        app.invoke_select_conversation(0);
+                    }
+                    if !silent { app.set_status("内嵌运行时已就绪".into()); }
                 }
-            });
+                Err(error) => app.set_status(format!("无法读取会话：{error}").into()),
+            }
         });
     });
 }
@@ -209,7 +227,7 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
     app.on_select_conversation(move |index| {
         let Some(app) = weak.upgrade() else { return };
-        if index < 0 || app.get_busy() {
+        if index < 0 || state.borrow().active.is_some() {
             return;
         }
         let Some(row) = app.get_conversations().row_data(index as usize) else {
@@ -218,6 +236,7 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         let id = row.id.to_string();
         {
             let mut current = state.borrow_mut();
+            current.observation.detach();
             if current.drafts.len() >= 100 {
                 current.drafts.retain(|key, _| {
                     app.get_conversations()
@@ -235,13 +254,15 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         let generation = state.borrow().history_generation.clone();
         let request = generation.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         let weak = app.as_weak();
+        app.set_busy(false);
+        app.set_stopping(false);
         app.set_selected_conversation(index);
         app.set_active_session_id(id.clone().into());
         app.set_heading(row.title);
         app.set_session_loading(true);
         app.set_turns(ModelRc::default());
         std::thread::spawn(move || {
-            let result = desktop.get_session_turns(&id);
+            let result = desktop.get_session_info(&id);
             let _ = weak.upgrade_in_event_loop(move |app| {
                 if app.get_active_session_id() != id
                     || generation.load(Ordering::Relaxed) != request
@@ -250,7 +271,7 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                 }
                 app.set_session_loading(false);
                 match result {
-                    Ok((session, turns)) => {
+                    Ok(session) => {
                         let agent = session.agent_id.unwrap_or_else(|| "__default__".into());
                         if app.get_active_agent_id() != agent {
                             app.set_active_agent_id(agent.clone().into());
@@ -258,36 +279,7 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                         }
                         crate::entity_state::restore_agent(&app, &agent);
                         app.set_heading(session.title.into());
-                        let map_message =
-                            |message: wunder_desktop::native::NativeMessage| ChatMessage {
-                                workflow: !message.workflow_detail.is_empty(),
-                                workflow_detail: message.workflow_detail.into(),
-                                text: message.text.clone().into(),
-                                mine: message.mine,
-                                time: format_time(message.created_at).into(),
-                                state: message.state.into(),
-                                stats_status: message.stats_status.into(),
-                                stats_duration: message.stats_duration.into(),
-                                stats_speed: message.stats_speed.into(),
-                                stats_context: message.stats_context.into(),
-                                stats_quota: message.stats_quota.into(),
-                                stats_tools: message.stats_tools.into(),
-                                stats_credits: message.stats_credits.into(),
-                                blocks: crate::message_blocks::from_text(&message.text),
-                                avatar_glyph: agent_avatar_glyph(&app),
-                                avatar_tone: agent_avatar_tone(&app),
-                            };
-                        let projected = turns
-                            .into_iter()
-                            .map(|turn| ChatTurn {
-                                root_id: turn.root_id.into(),
-                                user: map_message(turn.user),
-                                assistant: map_message(turn.assistant),
-                            })
-                            .collect::<Vec<_>>();
                         app.set_greeting(greeting_message(&app));
-                        app.set_turns(ModelRc::new(VecModel::from(projected)));
-                        app.set_scroll_revision(app.get_scroll_revision().wrapping_add(1));
                         app.set_status("内嵌运行时已就绪".into());
                     }
                     Err(error) => app.set_status(format!("无法加载会话：{error}").into()),
@@ -321,7 +313,7 @@ fn bind_new_thread(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
     app.on_new_thread(move || {
         let Some(app) = weak.upgrade() else { return };
-        if app.get_busy()
+        if state.borrow().active.is_some()
             || app.get_creating_session()
             || app.get_session_loading()
             || app.get_chat_loading()
@@ -370,7 +362,8 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
     app.on_send_message(move || {
         let Some(app) = weak.upgrade() else { return };
-        if app.get_busy()
+        if !state.borrow().observation.is_ready()
+            || app.get_busy()
             || app.get_session_loading()
             || app.get_chat_loading()
             || app.get_creating_session()
@@ -441,6 +434,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         app.set_turns(ModelRc::from(model.clone()));
         app.set_draft("".into());
         app.set_pending_attachments(ModelRc::default());
+        app.set_observing_thread(false);
         app.set_busy(true);
         app.set_follow_output(true);
         app.set_stopping(false);
@@ -449,6 +443,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         app.set_stream_max_ui_ms(0.0);
         app.set_stream_max_backlog(0);
         app.set_context_usage(0.0);
+        state.borrow_mut().observation.detach();
         state.borrow_mut().active = Some(Active {
             stream,
             output: TurnOutput {
@@ -640,12 +635,29 @@ fn bind_stop(app: &MainWindow, state: Rc<RefCell<State>>) {
         if app.get_stopping() {
             return;
         }
-        if let Some(active) = state.borrow_mut().active.as_mut() {
+        let mut current = state.borrow_mut();
+        if let Some(active) = current.active.as_mut() {
             app.set_stopping(true);
             active.stream.cancel();
             active.state = "已停止".into();
             update_message_stats_row(active);
             app.set_status("正在停止…".into());
+        } else if app.get_busy() {
+            app.set_stopping(true);
+            let desktop = current.desktop.clone();
+            let session = app.get_active_session_id().to_string();
+            let weak = app.as_weak();
+            std::thread::spawn(move || {
+                let result = desktop.cancel_chat(&session);
+                let _ = weak.upgrade_in_event_loop(move |app| {
+                    if app.get_active_session_id() == session {
+                        app.set_stopping(false);
+                        if let Err(error) = result {
+                            app.set_status(format!("无法停止：{error}").into());
+                        }
+                    }
+                });
+            });
         }
     });
 }

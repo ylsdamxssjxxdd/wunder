@@ -304,6 +304,7 @@ const resolveTurnAssistantStats = (
 const hasGenerationSpeed = (stats: Record<string, unknown>): boolean =>
   ['visible_decode_speed_tps', 'decode_speed_tps', 'avg_model_round_speed_tps',
     'avg_model_round_decode_speed_tps'].some((key) => {
+      if (stats[key] === null || stats[key] === undefined || stats[key] === '') return false;
       const value = Number(stats[key]);
       return Number.isFinite(value) && value >= 0;
     });

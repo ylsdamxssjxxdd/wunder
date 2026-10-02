@@ -400,6 +400,24 @@ test('child-agent tool rounds retain terminal generation speed when history row 
   assert.equal(bubble?.display?.stats?.interaction_duration_s, 4.2);
 });
 
+test('null speed history does not override a valid persisted speed during recovery', () => {
+  const state = emptyChatThreadState('fixture-speed-recovery');
+  const turn = { turn_id: 'fixture-turn', user_round: 1, status: 'completed', content: 'Fixture request' };
+  const stable = textItemData('fixture-turn', 3, { content: 'Fixture reply', status: 'completed' });
+  const history = (id: string, speed: number | null) => ({
+    item_id: id, turn_id: turn.turn_id, model_round: 0, kind: 'assistant_message',
+    role: 'assistant', visibility: 'user', status: 'completed', revision: 1,
+    meta: { message_stats: { visible_decode_speed_tps: speed } }
+  });
+  const valid = history('fixture-valid-history', 24);
+  const missing = history('fixture-null-history', null);
+  applyFrames(state, [turnUpsert(1, turn), itemUpsert(2, stable), itemUpsert(3, valid), itemUpsert(4, missing)]);
+  const read = () => buildChatThreadRenderableMessages(state).find(row => row.role === 'assistant')?.display?.stats;
+  assert.equal(read()?.visible_decode_speed_tps, 24);
+  applyChatThreadSnapshot(state, { cursor: 4, turns: [turn], items: [stable, valid, missing] });
+  assert.equal(read()?.visible_decode_speed_tps, 24);
+});
+
 test('chat thread projection groups all workflow items into the turn bubble', () => {
   const state = emptyChatThreadState('session-projection-workflow');
   applyFrames(state, [

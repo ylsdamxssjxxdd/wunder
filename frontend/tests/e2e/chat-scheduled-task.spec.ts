@@ -5,6 +5,51 @@ import { ChatMockService, MOCK_SESSION } from '../support/chatMockService';
 import { installChatTurnDomAudit } from '../support/chatTurnDomAudit';
 import { captureConversation, saveChatEvidence } from '../support/chatEvidenceCapture';
 
+test('speed survives completion off-page, navigation back and reload with readable schedule results', async ({ page }) => {
+  const service = new ChatMockService();
+  const directory = resolve(process.cwd(), '../temp_dir/chat-scheduled-review');
+  await mkdir(directory, { recursive: true });
+  await service.install(page);
+  const navigate = (path: string) => page.evaluate(async path => {
+    await (document.querySelector('#app') as any).__vue_app__.config.globalProperties.$router.push(path);
+  }, path);
+  try {
+    await page.goto('/login');
+    await page.locator('input[autocomplete="username"]').fill('fixture-user');
+    await page.locator('input[autocomplete="current-password"]').fill('fixture-password');
+    await page.locator('button[type="submit"]').click();
+    await page.waitForURL('**/app/**');
+    await page.goto(`/app/chat?session_id=${MOCK_SESSION}`);
+    service.holdNext = true;
+    await page.getByTestId('chat-composer-input').fill('Fixture scheduled work');
+    await page.getByTestId('chat-composer-input').press('Control+Enter');
+    const bubble = page.locator('.messenger-turn[data-root-turn-id="fixture-turn-1"] [data-turn-slot="assistant"]');
+    await expect(bubble).toContainText('Partial reply 1.');
+    await navigate('/app/settings');
+    await expect(page.getByTestId('chat-composer-input')).not.toBeVisible();
+    service.release();
+    await expect.poll(() => service.turns.find(row => row.user_round === 1)?.status).toBe('completed');
+    service.scheduleToolResult();
+    await navigate(`/app/chat?session_id=${MOCK_SESSION}`);
+    await expect(bubble).toContainText('Completed reply 1.');
+    await expect(bubble.locator('.messenger-message-stats')).toContainText('24');
+    await expect(bubble.locator('.messenger-message-stats')).toContainText('token/s');
+    await page.reload();
+    await expect(bubble.locator('.messenger-message-stats')).toContainText('24');
+    await expect(bubble.locator('.messenger-message-stats')).toContainText('token/s');
+    await page.screenshot({ path: resolve(directory, 'speed-after-navigation.png'), fullPage: true });
+    // Open the actual tool row to verify the production structured result renderer.
+    const workflow = bubble.locator('.message-tool-workflow');
+    if (!(await workflow.evaluate(node => (node as HTMLDetailsElement).open))) await workflow.locator(':scope > summary').click();
+    const row = bubble.locator('.tool-workflow-entry').filter({ hasText: /schedule_task|定时任务/ });
+    await row.locator(':scope > summary').click();
+    await expect(page.locator('.tool-workflow-structured.is-schedule')).toContainText('Fixture timer');
+    await expect(page.locator('.tool-workflow-structured.is-schedule')).toContainText('2030');
+    await expect(page.locator('.tool-workflow-structured.is-schedule')).not.toContainText('[object]');
+    await page.screenshot({ path: resolve(directory, 'schedule-readable-result.png'), fullPage: true });
+  } finally { await service.dispose(); }
+});
+
 test('background scheduled turns preserve active Stop, queue and independent terminal bubbles', async ({ page }, info) => {
   const service = new ChatMockService();
   const directory = resolve(process.cwd(), '../temp_dir/chat-scheduled-review');
