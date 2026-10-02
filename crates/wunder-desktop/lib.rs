@@ -8,11 +8,15 @@ pub mod native;
 pub mod runtime;
 
 pub use native::{
-    AgentImportOutcome, AgentRecord, AgentSettingsEdit, CronRecord, CronRunRecord, DesktopSettings,
-    Directory, FileRecord, LanPeerRecord, LanSettings, ModelEdit, ModelProbeOutcome, ModelRecord,
+    AgentImportOutcome, AgentRecord, AgentSettingsEdit, ChannelAccountCard, ChannelAccountListing,
+    ChannelBindingCard, ChannelCatalogItem, ChannelLogEntry, CronRecord, CronRunRecord,
+    DesktopSettings, Directory, FileRecord, LanPeerRecord, LanSettings, ModelEdit,
+    ModelProbeOutcome, ModelRecord, NativeChannelAccountEdit, NativeChannelBindingEdit,
+    PlazaImportOutcome, PlazaItemCard,
     NativeChatAttachment, NativeChatEvent, NativeChatInput, NativeCronJobEdit, NativeDesktop,
     NativeMessage, NativeProfile, NativeSession, NativeStream, PromptPackInfo,
     PromptSegmentContent, ToolRecord, WorldContact, WorldEventFeed, WorldGroup, WorldGroupDetail,
-    WorldGroupMember, WorldMessage, WorldMessageTracker, WORKER_CARD_SCHEMA_VERSION,
+    WeixinQrLoginStart, WeixinQrLoginStatus, WorldGroupMember, WorldMessage,
+    WorldMessageTracker, WORKER_CARD_SCHEMA_VERSION,
 };
 pub use runtime::DesktopRuntime;

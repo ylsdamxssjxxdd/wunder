@@ -1,3 +1,4 @@
+import { getChatThreadStatus } from '@/realtime/chat/chatThreadRuntime';
 import { emitSubagentPoolChanged } from '@/utils/subagentPoolEvents';
 import { applySessionQuotaUsage } from './chatSessionQuota';
 import { defineStore } from 'pinia';
@@ -1228,6 +1229,12 @@ export function applySessionRuntimeEvent(store, sessionId, payload, eventType = 
   if (!targetId) return null;
   const runtime = ensureRuntime(targetId);
   if (!runtime) return null;
+  // Durable turns own liveness; a delayed monitor control cannot reopen them.
+  const durableStatus = getChatThreadStatus(targetId);
+  if (durableStatus) {
+    runtime.threadStatus = normalizeThreadRuntimeStatus(durableStatus);
+    return runtime;
+  }
   const projectedStatus = store.runtimeProjection?.sessions?.[targetId]?.runtimeStatus;
   const payloadStatus = normalizeThreadRuntimeStatus(payload?.thread_status ?? payload?.status);
   if (projectedStatus && payloadStatus !== normalizeThreadRuntimeStatus(projectedStatus)) {
@@ -1929,7 +1936,7 @@ const applyWorkspaceUpdateCanonicalSideEffect = (
   });
 };
 
-const applyCanonicalStreamSideEffects = (
+export const applyCanonicalStreamSideEffects = (
   store,
   sessionId,
   eventType,

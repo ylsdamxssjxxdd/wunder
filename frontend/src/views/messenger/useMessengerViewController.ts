@@ -53,7 +53,6 @@ import ChatComposer from '@/components/chat/ChatComposer.vue';
 import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import {
   InquiryPanel,
-  MessageCompactionDivider,
   MessageFeedbackActions,
   MessageKnowledgeCitation,
   MessageSubagentPanel,
@@ -133,9 +132,7 @@ import {
 import { hasActiveSubagentItems } from '@/utils/subagentRuntime';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import {
-  isCompactionOnlyWorkflowItems,
-  isCompactionRunningFromWorkflowItems,
-  resolveLatestCompactionSnapshot
+  isCompactionRunningFromWorkflowItems
 } from '@/utils/chatCompactionWorkflow';
 import {
   isAudioRecordingSupported,
@@ -364,7 +361,6 @@ export function useMessengerViewController(): Record<string, any> {
     invalidateUserToolsSummaryCache,
     isAudioRecordingSupported,
     isChatDebugEnabled,
-    isCompactionOnlyWorkflowItems,
     isCompactionRunningFromWorkflowItems,
     isDesktopModeEnabled,
     isImagePath,
@@ -379,7 +375,6 @@ export function useMessengerViewController(): Record<string, any> {
     loadUserSkillsCache,
     loadUserToolsCatalogCache,
     loadUserToolsSummaryCache,
-    MessageCompactionDivider,
     MessageFeedbackActions,
     MessageKnowledgeCitation,
     MessageSubagentPanel,
@@ -444,7 +439,6 @@ export function useMessengerViewController(): Record<string, any> {
     resolveAssistantMessageRuntimeState,
     resolveFileContainerLifecycleText,
     resolveFileWorkspaceEmptyText,
-    resolveLatestCompactionSnapshot,
     resolveMarkdownWorkspacePath,
     resolveRetainedSelectedPlazaItemId,
     resolveSectionFromRoute,

@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "strict": true
+  },
+  "include": [
+    "support/chat*.ts",
+    "e2e/chat-user-lifecycle.spec.ts",
+    "e2e/chat-durable-stream-performance.spec.ts"
+  ]
+}

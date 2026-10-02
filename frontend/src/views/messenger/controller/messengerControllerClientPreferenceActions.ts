@@ -56,7 +56,6 @@ import ChatComposer from '@/components/chat/ChatComposer.vue';
 import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import {
   InquiryPanel,
-  MessageCompactionDivider,
   MessageFeedbackActions,
   MessageKnowledgeCitation,
   MessageSubagentPanel,
@@ -135,9 +134,7 @@ import {
 import { hasActiveSubagentItems } from '@/utils/subagentRuntime';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import {
-  isCompactionOnlyWorkflowItems,
   isCompactionRunningFromWorkflowItems,
-  resolveLatestCompactionSnapshot
 } from '@/utils/chatCompactionWorkflow';
 import {
   isAudioRecordingSupported,
@@ -650,3 +647,4 @@ export function installMessengerControllerClientPreferenceActions(ctx: Messenger
 
   ctx.shouldReuseAgentMetaResult = (loadedAt: number, force = false): boolean => !force && loadedAt > 0 && Date.now() - loadedAt < ctx.AGENT_META_REQUEST_CACHE_MS;
 }
+

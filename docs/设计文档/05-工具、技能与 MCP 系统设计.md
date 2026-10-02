@@ -57,9 +57,9 @@ flowchart TD
 
 | 层 | 作用 | 主要落点 |
 | --- | --- | --- |
-| 模型侧工具面 | 暴露工具名、短 description、canonical schema | `src/services/tools/catalog.rs` |
-| 兼容解析层 | 吃掉别名、历史字段和兼容输入 | `src/services/tools.rs`、各工具实现 |
-| 执行治理层 | 调度、审批、并行、超时、失败治理 | `src/services/tools/dispatch.rs`、`src/orchestrator/` |
+| 模型侧工具面 | 暴露工具名、短 description、canonical schema | `crates/wunder-runtime/src/services/tools/catalog.rs` |
+| 兼容解析层 | 吃掉别名、历史字段和兼容输入 | `crates/wunder-runtime/src/services/tools.rs`、各工具实现 |
+| 执行治理层 | 调度、审批、并行、超时、失败治理 | `crates/wunder-runtime/src/services/tools/dispatch.rs`、`crates/wunder-runtime/src/orchestrator/` |
 | 返回归一层 | 统一成功包、失败包和 compact 结果 | `build_model_tool_success*`、`build_failed_tool_result` |
 
 更细的工具设计原则见：
@@ -129,12 +129,12 @@ flowchart LR
 
 | 模块 | 主要目录 |
 | --- | --- |
-| 工具实现 | `src/services/tools/` |
-| 工具目录与注册 | `src/services/tools/catalog.rs` |
-| 工具路由分发 | `src/services/tools/dispatch.rs` |
-| 技能 | `src/services/skills.rs` `config/skills/` |
-| MCP | `src/services/mcp.rs` `extra_mcp/` |
-| 浏览器与桌面桥接 | `src/services/browser/` `src/services/tools/desktop_control.rs` |
+| 工具实现 | `crates/wunder-runtime/src/services/tools/` |
+| 工具目录与注册 | `crates/wunder-runtime/src/services/tools/catalog.rs` |
+| 工具路由分发 | `crates/wunder-runtime/src/services/tools/dispatch.rs` |
+| 技能 | `crates/wunder-runtime/src/services/skills.rs` `config/skills/` |
+| MCP | `crates/wunder-runtime/src/services/mcp.rs` `extra_mcp/` |
+| 浏览器与桌面桥接 | `crates/wunder-runtime/src/services/browser/` `crates/wunder-runtime/src/services/tools/desktop_control.rs` |
 
 ## 8. 当前落地状态
 

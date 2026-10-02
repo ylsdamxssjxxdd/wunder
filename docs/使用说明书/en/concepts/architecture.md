@@ -75,10 +75,10 @@ Its role is to unify how the outside world enters the system.
 
 This is the system core, mainly composed of:
 
-- `src/api/`
-- `src/orchestrator/`
-- `src/services/`
-- `src/core/`
+- `crates/wunder-runtime/src/api/`
+- `crates/wunder-runtime/src/orchestrator/`
+- `crates/wunder-runtime/src/services/`
+- `crates/wunder-runtime/src/core/`
 
 It is responsible for:
 

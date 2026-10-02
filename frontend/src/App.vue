@@ -2,9 +2,9 @@
   <div class="app-shell" :class="{ 'app-shell--desktop': desktopChromeVisible }">
     <DesktopWindowChrome v-if="desktopChromeVisible" />
     <div class="app-shell-content">
+      <MaintenanceBanner />
       <router-view />
     </div>
-    <MaintenanceOverlay />
   </div>
 </template>
 
@@ -14,7 +14,7 @@ import { useRoute } from 'vue-router';
 
 import DesktopWindowChrome from '@/components/common/DesktopWindowChrome.vue';
 import { isDesktopModeEnabled } from '@/config/desktop';
-import MaintenanceOverlay from '@/components/system/MaintenanceOverlay.vue';
+import MaintenanceBanner from '@/components/system/MaintenanceBanner.vue';
 
 const route = useRoute();
 

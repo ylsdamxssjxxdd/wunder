@@ -342,6 +342,26 @@ struct ToolCallKey {
 - Windows 7 x86 和 Ubuntu 18.04 目标构建通过；不引入不受支持的终端、浏览器或系统依赖。
 - 所有新增状态、快捷键、降级行为和已知上限在帮助文本中可发现。
 
+### N7：终端呈现样式完全对齐 Codex（呈现规范化）
+
+N1–N6 完成的是"正确的数据与结构"；N7 把呈现像素级对齐 `D:\proj\参考\codex-main` 的 TUI 基线（用户以 codex 实截图为验收样张）。2026-10-02 差距盘点的结论是：事件→呈现链路架构与 codex 同构（帧调度合并、单元模型、可视窗口渲染、原生 scrollback、游标回放均已是业界标准做法），差距集中在**呈现层格式细节**，逐项清单与精确模板见第 11 节。
+
+**改动**
+
+- 修复 Working 行渲染门控：`draw_activity` 仅在 `activity_highlighted()` 时调用导致普通流式期间活动行空白，改为线程运行期间始终绘制；计时改为 `1m 53s` 紧凑分秒格式；中断键位提示改为 `esc`。
+- 命令卡对齐：成功/失败 bullet 语义色（绿/红 bold）；失败头部内联 `Failed (exit N)`；输出尾部首行 `└` 引导、续行 4 空格悬挂缩进；折叠提示改为 `… +N lines (ctrl+t to expand)` 式样。
+- 新增转录展开视图：`Ctrl+T` 打开当前线程转录 overlay（全量命令输出、`$ ` 前缀命令、`✓/✗ (exit)` 结果行），同键收起；命令卡与工具结果卡的折叠提示指向该入口。
+- 补丁/编辑卡对齐：头部 `Edited <path> (+N -N)` / `Edited N files`；内联 diff 增加行号 gutter、hunk 间 `⋮` 分隔、暗/亮双通道底色与 ANSI-16 无背景降级；增加 `+ Show details` / `− Show less` 折叠披露；完成后补丁卡必须保留 diff 预览（不得退化为纯文件清单）。
+- composer/footer 对齐：占位符与背景填充风格、`›` 提示符 bold；footer 增加任务标题与 `? for shortcuts`；新增 `⚠ N warnings · f2 to view` 警告条（含窄屏三级收缩）；将 `ui/status_line.rs` 死代码接入或移除。
+- 连续只读命令（读文件/列目录/搜索）合并为 `• Exploring` 组卡，子项标题用强调色；用户消息前缀评估改为 `▌ ` 两列样式。
+
+**验收**
+
+- 与 codex 实截图逐项对照：命令成功/失败卡、编辑卡内联 diff、Working 行、composer/footer 四个区域在 80/120 列下格式一致；40 列降级顺序符合第 11 节规定。
+- `Ctrl+T` 展开/收起不丢失滚动位置，展开视图中原始输出完整可复制。
+- 无真彩、无色、减动画终端下：diff 退化为纯前景色、动画退化为静态符号，所有状态仍可由文本与符号区分。
+- 全部新格式有 Ratatui TestBackend 快照测试覆盖（40/80/120 列），快照夹具使用脱敏虚拟内容。
+
 ## 6. 性能、可靠性与数据完整性门槛
 
 | 项目 | 强制门槛 |
@@ -391,6 +411,16 @@ N1、N2 是 N3–N5 的前置条件：在没有线程目录、线程作用域状
 - `crates/wunder-runtime/src/services/stream_events.rs`、线程运行时和会话存储：目录服务与可回放事件的权威来源。
 - `docs/聊天流式管线根治方案.md`：聊天流式 durable 游标（`change_seq`）、durable/ephemeral 分工、原子快照与单 reducer 的正确性基线（见第 10 节）。
 
+N7 呈现对齐（第 11 节）另需精读的参考文件（2026-10-02 盘点核实）：
+
+- `codex-rs/tui/src/exec_cell/render.rs`、`compact.rs`、`transcript.rs`、`model.rs`：命令卡头部/输出尾部/折叠提示/展开视图与多命令合并的权威实现；
+- `codex-rs/tui/src/diff_render.rs`：内联 diff 的行号 gutter、双通道底色、ANSI 降级与宽度策略；
+- `codex-rs/tui/src/history_cell/patches.rs` 与 `activity_preview.rs`：补丁卡与紧凑预览（`DETAIL_PREVIEW_LINES=3`）；
+- `codex-rs/tui/src/status_indicator_widget.rs`（含 `timer.rs`）：Working 行精确拼接、`fmt_elapsed_compact` 分秒计时与 32ms/1000ms 双档刷新；
+- `codex-rs/tui/src/transcript_view/layout.rs` 与 `disclosure.rs`：`+ Show details`/`− Show less`/`+ N lines (ctrl+t to expand)` 折叠披露；
+- `codex-rs/tui/src/bottom_pane/footer.rs`、`chat_composer.rs`、`chat_composer/warning_notice.rs`：footer 字段组装、折叠顺序与 `⚠ N warnings · f2 to view` 警告条；
+- `codex-rs/tui/src/style.rs`、`motion.rs`、`ui_consts.rs`、`keymap.rs`：语义色/键位样式/动画降级/前缀常量与默认键位。
+
 
 ## 10. 聊天流式游标对齐：《聊天流式管线根治方案》带来的新要求（待独立迁移）
 
@@ -411,6 +441,57 @@ N1、N2 是 N3–N5 的前置条件：在没有线程目录、线程作用域状
 - **共享 feeder 接入**：CLI 通过 runtime 共享 feeder `watch_thread_changes` 获取 durable 帧，`ThreadChangeFrame::{Change{seq,event,data}, SnapshotRequired{data}, Overflow{cursor,resume_recommended}}` 帧形态与 runtime M1-C 对齐。
 - **验证状态**：`cargo test -p wunder-cli --bin wunder-cli -- --skip switching_threads` → 171 passed, 1 failed（`replay_reapplies_from_cursor_without_duplicates` 既有遗留问题，非本迁移引起）。`cargo check -p wunder-cli` 通过。
 - **剩余节点**：start 基线（3.2：`stream_started` 返回 `resume_from_seq`，feeder 从该 cursor 开始）、慢客户端（3.4：连接 writer 水位停止订阅 + `stream_overflow`）、原子快照全量 reload（I5：snapshot API 返回 `{turns,items,blocks,cursor}` 同一读事务）、子智能体同 commit API M4（多智能体与排队交接无缺漏，状态均有 durable change）。
+
+
+## 11. 终端呈现对齐 Codex 规范（N7 依据）
+
+2026-10-02 对照 `D:\proj\参考\codex-main`（`codex-rs/tui`）与 wunder CLI 现状逐项盘点。总体结论：事件→呈现链路**架构与 codex 同构**——帧调度合并（`frame_scheduler.rs` ≈ codex `FrameRequester`，均钳制 120fps）、单元化转录（`TranscriptCell` ≈ `HistoryCell`）、按可视窗口渲染并缓存、溢出归档原生 scrollback（`scrollback::insert_history_lines` ≈ `insert_history.rs`）、按游标回放——这些均是 codex/同类智能体终端的业界标准做法，无需重构；差距集中在呈现层格式。以下为逐项差距与目标模板，N7 按此执行。
+
+### 11.1 差距清单（现状证据 → 目标）
+
+| # | 区域 | wunder 现状（证据） | codex 目标 |
+| --- | --- | --- | --- |
+| 1 | 命令卡头部 | 标题词一致（`Ran/Failed`，patch_log.rs:978-990），但 exit code 在输出区 `  │ exit=1, 123ms` 行（:1000-1016）；完成一律 `• ` 前缀 | 成功 `•`绿bold / 失败 `•`红bold；失败头部内联 `Failed (exit {N})`bold（exec_cell/compact.rs:81-108）；探索组失败追加 ` · {n} failed`红 |
+| 2 | 输出尾部前缀 | `  │ ` 管道前缀（patch_log.rs:769-771） | 首行 `  └ `dim + 续行 `    `（render.rs:566-571） |
+| 3 | 折叠提示 | 静态 `... +{N} lines, truncated`（:1651-1664），无任何展开交互 | `… +{N} lines (ctrl+t to view transcript)`dim（render.rs:304-311, ui_consts.rs:12）；折叠披露 `+ {N} {lines} (ctrl+t to expand)`（transcript_view/layout.rs:38-53） |
+| 4 | 展开视图 | 无（全仓库无 ctrl+t/expand 处理） | `Ctrl+T` 转录 overlay：`$ `品红命令前缀 + 全量输出 + `✓/✗ (exit) • {duration}` 结果行（exec_cell/transcript.rs:27-65；keymap.rs:1647） |
+| 5 | 编辑卡 | 有内联彩色 diff（patch_log.rs:643-759 + theme.rs 真彩底色，仅 pending 构建后继承）；无行号、无详情入口；完成后可能退化为文件清单 | 头部 `{Added\|Deleted\|Edited} {path} (+{n}绿 -{n}红)`（diff_render.rs:450-481）；行号 gutter 右对齐、hunk 间 `⋮`dim（:884-983,661-670）；暗/亮双通道底色 + ANSI-16 纯前景降级；`+ Show details`/`− Show less` 折叠披露；紧凑预览 3 行 |
+| 6 | Working 行 | 格式串存在但 `draw_activity` 被 `activity_highlighted()` 门控（ui.rs:18,33 + app.rs:676-683），**普通流式期间不渲染**；计时整秒；键位 ctrl+c | 运行期间始终显示 `• Working ({elapsed} • esc to interrupt)`dim + shimmer 动画；`fmt_elapsed_compact`：`{n}s`→`{m}m {ss}s`→`{h}h {mm}m {ss}s`（status_indicator_widget.rs:76-89,235-266）；32ms/1000ms 双档自调度刷新 |
+| 7 | composer/footer | 占位符单行 dim 无边框；footer 左侧 模型·目录·`← command center /threads`，右侧 `N% context left`（composer.rs:126-151）；无任务标题、无 `? for shortcuts`、无警告条；`ui/status_line.rs` 为死代码未接线 | 占位符 `"Ask Codex to do anything"`dim + 背景填充 + `›`bold 提示符；footer：`{model} {effort}` · 工作目录 · 任务标题 ＋ `← for agents · ? for shortcuts`；右 `N% context left`；`⚠ {N} warnings · f2 to view` 暗琥珀警告条（warning_notice.rs:15-25, style.rs:189-202）；窄屏折叠顺序见 footer.rs:388-570 |
+| 8 | 只读命令分组 | 无分组，每命令一张卡 | 连续 Read/List/Search 合并 `• Exploring`组卡，子项 `  └ ` 缩进 + accent 色标题（render.rs:313-448） |
+| 9 | 用户消息前缀 | `• ` 前缀 | `▌ ` 两列前缀（ui_consts.rs:3-10） |
+| 10 | 推理呈现 | 始终展开的 DIM markdown | 折叠式 reasoning 摘要（"Thought for" 风格），差异放状态行 details（`  └ ` 最多 3 行） |
+
+### 11.2 呈现模板基线（验收样张对应）
+
+```text
+• Ran cargo test --workspace                       ← 成功：• 绿 bold，命令 bash 高亮
+  └ test result: ok. 176 passed                    ← 首行 └ 引导，续行 4 空格
+    （后续输出行）
+  … +84 lines (ctrl+t to view transcript)          ← dim 折叠提示
+
+• Failed (exit 1) cd frontend; npx playwright …    ← • 红 bold + Failed (exit N) bold
+
+• Edited src\main.rs (+12 -3)                      ← +n 绿 / -n 红
+  33 -   }).observe(document.documentElement, …    ← 行号 gutter + 红/绿底色行
+  33 +   }).observe(document, …)
+  ⋮                                                ← hunk 间 dim 分隔
+  + Show details                                   ← 折叠披露；展开为 − Show less
+
+◌ Working (1m 53s • esc to interrupt)              ← 运行中始终可见，shimmer/呼吸
+
+› Ask Codex to do anything                         ← bold 提示符 + dim 占位符 + 背景填充
+  {model} {effort} · {cwd} · {任务标题}            ← footer 左侧
+  ← for agents · ? for shortcuts   ⚠ 2 warnings · f2 to view   N% context left
+```
+
+符号语义色表（对齐 codex `styles.md`/`style.rs`）：`•`dim=中性运行、`•`shimmer/呼吸=进行中动画、`•`绿bold=成功、`•`红bold=失败、`✘`品红bold=补丁失败、`✓/✗`=transcript 结果、`⚠`=警告（琥珀强调计数）、`⌗`类结构符（`└ │ ⋮`）一律 dim；避免 blue/yellow 前景，无色终端全部回落 Reset 且 diff 无背景。
+
+### 11.3 实施与验收约束
+
+- 呈现改动只动渲染层（`patch_log.rs`、`ui/`、`theme.rs`、`app.rs` 绘制门控），不改事件语义与 `ToolCallKey` 关联；展开视图读取的原始输出来自既有命令会话状态，不复制大对象。
+- 用户截图样张与参考实现措辞存在版本差异（如 `ctrl+t to expand` 与 `ctrl+t to view transcript`）：以**样张措辞为准**实现，参考实现的折叠/降级逻辑照搬。
+- 每个格式点的修改配 TestBackend 快照（40/80/120 列）与无色/减动画变体；快照夹具使用脱敏虚拟内容。
 
 
 ## 实施进度补充：线程显示状态隔离（待集成验证）
@@ -448,3 +529,18 @@ N1、N2 是 N3–N5 的前置条件：在没有线程目录、线程作用域状
 - **多线程高频压测落地**：新增 `tui/thread_registry_load_tests.rs` 三个门禁测试——① 24 个目录线程 + 4 条活跃流高频灌入：单帧抽取预算被严格遵守、后台线程未读计数准确、队列越界时 `needs_replay` 与诚实游标（`last_applied_event_id`）正确置位；② 4 条流各 300 事件的模拟帧循环：切换线程不打断生产者，最终逐线程 300 事件全部到达、无重复、无乱序；③ 回放重放 1..=128 且 1..=64 已应用：仅补齐缺失的 64 项，`clear_replay` 后状态复位。测试只依赖有界注册表结构，不需要模型连接。
 - **帮助可发现性**：composer footer 新增 `← 线程中心 /threads` 提示项（窄终端时先截断说明文字、保留键位，符合 §3.1 降级顺序）；`/threads` 与 command center 内键位帮助此前已覆盖。
 - 验证状态：压测已编写并注册，等待并行开发中的 wunder-runtime thread-log store trait 扩展（`thread_snapshot`/`upsert_thread_text_block` 返回值变更）在测试 feature 集下编译收敛后执行；本记录不代表 N6 发布门禁完成，Win7 x86 与 Ubuntu 18.04 目标构建仍待执行。
+
+### N6 门禁收口与 I5 快照 reload 进展（2026-10-02）
+
+- **压测两项遗留失败修复，套件零失败**：`switching_threads_keeps_background_streams_and_recovers_fully` 此前从未通过——`#[tokio::test]` 默认单线程 runtime 下帧循环全部为同步 `try_recv`、无任何让位点，生产者任务得不到调度；循环结束后先 `producer.await` 再排水构成死锁（生产者阻塞在已满通道的 send 上，无人消费）。修复：帧循环每帧 `yield_now().await`（对应真实帧循环的 await 间隙），尾部改为"排水直到全部通道关闭（期间让位）再 join"。`replay_reapplies_from_cursor_without_duplicates` 此前建模遗漏溢出幸存队列：溢出后队列仍保有 `MAX_PENDING_EVENTS` 条未消费事件，回放阶段被全部计入新增；修复为先按真实帧循环语义消费并标记幸存队列，再统计回放流新增。两项修复后全套 `cargo test -p wunder-cli --bin wunder-cli` **176 通过 0 失败，不再需要 `--skip switching_threads`**。
+- **I5 原子快照全量 reload 落地（CLI 侧）**：workspace façade 新增 `try_load_thread_snapshot`，复用存储层 `thread_snapshot`（同一读事务返回 `{cursor,turns,items,blocks,item_total}`）；`replay_thread_events_if_needed` 的快照守卫分支改为 `reload_transcript_from_snapshot`：仅接受 `cursor >= 本地 durable 水位` 的快照（过期快照按"无可回放"处理保留本地状态），命中时以 `snapshot_history_records` 投影 user/assistant/reasoning 会话条目（按 `created_seq,item_index` 排序，tool/approval/model_call 条目如实降级为保留期提示），随后推进 `change_seq` 水位、复位 heal 状态并清除回放信号；读取失败保留 `needs_replay` 待下次 resume 重试。基于旧会话历史的 `reload_transcript_from_history` 降级路径已删除。
+- **文档勘误**：2026-10-01 进度中"CLI 通过 runtime 共享 feeder `watch_thread_changes` 获取 durable 帧"与代码不符——该 feeder 目前仅被 runtime `ws_helpers`（chat_ws v2 主路径）消费，CLI 回放实际通过存储分页 `try_load_thread_changes`（spawn_blocking）取得 durable 帧，帧形态与 feeder `ThreadChangeFrame` 对齐。feeder 直连仍是 §10 剩余节点（start 基线 3.2）的一部分。
+- **平台构建门禁评估**：跨平台构建基建已存在——`build-windows-win7-x86` CI job（`builders/build-win7-cli.ps1`，目标 `i686-win7-windows-gnu`，离线 nightly-2026-03-14 gnu 工具链 + msys2 i686 mingw）与 `builders/build-cli-linux-amd64-offline.sh`（Ubuntu 18.04 sysroot 交叉编译，glibc 上限 2.27）。本开发机（rustc 1.95.0 msvc host，仅有 x86_64 mingw）缺少已准备的离线工具链包与 18.04 sysroot，门禁按设计经由 CI 或先跑 prepare 脚本执行；本机直跑不在本轮范围。
+- **仍待完成**：feeder 直连与 start 基线（§10 3.2）、慢客户端 `stream_overflow`（3.4）、子智能体同 commit API（M4）、真实终端下的多线程交互验收，以及经 CI 的两个平台目标构建产出。
+
+### 呈现样式对齐盘点与 N7 立项（2026-10-02）
+
+- **架构结论**：对照 codex-rs/tui 逐项核实，wunder CLI 事件→呈现链路与 codex 同构（帧调度合并钳制 120fps、单元化转录、可视窗口渲染+缓存、溢出归档原生 scrollback、按游标回放），属业界标准做法，无需重构。
+- **呈现差距**：呈现层为部分对齐，共 10 项差距（详见 §11.1），关键项：① 无任何展开交互（codex 为 Ctrl+T 转录 overlay）；② 失败 exit code 不在头部；③ diff 无行号 gutter、无 `+ Show details` 披露、完成后可能退化为文件清单；④ **Working 行被 `activity_highlighted()` 门控，普通流式期间实际不渲染**（功能性缺陷）；⑤ footer 缺任务标题、`? for shortcuts`、`⚠ N warnings · f2 to view`，`ui/status_line.rs` 为死代码；⑥ 无 Exploring 只读命令分组；⑦ 用户前缀/推理折叠差异。
+- **方案更新**：新增 N7 节点（呈现规范化，含修复 Working 行门控缺陷）、§11 呈现规范基线（差距表、呈现模板、符号语义色表、实施约束）、§9 补充 N7 精读文件清单。N7 验收以用户提供的 codex 实截图为样张，措辞以样张为准。
+- 本记录为盘点与立项，不代表 N7 已实施。

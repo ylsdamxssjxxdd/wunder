@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 
 import { buildAssistantDisplayContent } from '../../src/utils/assistantFailureNotice';
 
+test('completed assistant keeps its answer when an individual tool failed', () => {
+  assert.equal(buildAssistantDisplayContent({ role: 'assistant', status: 'final', content: 'Recovered response.',
+    workflowItems: [{ type: 'tool_result', status: 'failed', detail: 'Fixture tool unavailable.' }] }, key => key), 'Recovered response.');
+});
+
 const messages: Record<string, string> = {
   'chat.message.failedInlineTitle': 'This reply did not complete',
   'chat.message.failedInlineReason': 'Reason: {detail}',

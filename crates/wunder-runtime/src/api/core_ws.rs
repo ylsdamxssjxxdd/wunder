@@ -14,7 +14,6 @@ use crate::core::long_task;
 use crate::i18n;
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
 use crate::schemas::{AttachmentPayload, StreamEvent, WunderRequest};
-use crate::services::chat_cancel_marker::persist_user_cancelled_turn_marker;
 use crate::services::runtime::thread::ThreadSubmitOutcome;
 use crate::state::AppState;
 use crate::user_store::UserStore;
@@ -720,14 +719,6 @@ async fn handle_ws(
                                             cancel_source,
                                         )
                                         .await;
-                                    let _ = persist_user_cancelled_turn_marker(
-                                        state.workspace.clone(),
-                                        state.user_store.clone(),
-                                        &user.user_id,
-                                        &session_id,
-                                        cancel_source,
-                                    )
-                                    .await;
                                 }
                                 Err(SessionAccessError::NotFound) => {
                                     let _ = send_ws_error(

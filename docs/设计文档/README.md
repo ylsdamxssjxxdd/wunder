@@ -22,7 +22,7 @@ wunder 是一个面向组织与个人的智能体调度系统，统一承载三�
 | 特色能力 | 设计含义 | 关键代码域 |
 | --- | --- | --- |
 | 智能体核心 | 线程、turn、prompt、context、tool、recovery 拥有稳定语义 | `crates/wunder-runtime/src/orchestrator` `crates/wunder-runtime/src/services/runtime` |
-| 实时事件系统 | 前端和外部系统只消费公开事件流，不直接定义后端真相 | `crates/wunder-runtime/src/services/stream_events.rs` `services/beeroom_realtime.rs` `api/*_ws.rs` |
+| 实时事件系统 | 前端和外部系统只消费公开 durable change 事件流，不直接定义后端真相 | `crates/wunder-runtime/src/services/thread_log.rs` `services/beeroom_realtime.rs` `api/*_ws.rs` |
 | 蜂群协作与资产化 | hive、mission、WorkerCard、SkillPack 可编排、可导入、可导出 | `crates/wunder-runtime/src/services/swarm` `services/hive_pack.rs` |
 | 工具化运行时 | 对开发者来说一切都是接口，对大模型来说一切皆工具 | `crates/wunder-runtime/src/services/tools` `services/skills.rs` `services/mcp.rs` |
 | 长会话能力 | 冻结 prompt、上下文压缩、一次性记忆注入、恢复链统一治理 | `crates/wunder-runtime/src/orchestrator/prompt.rs` `orchestrator/context.rs` |

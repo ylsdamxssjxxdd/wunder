@@ -1,5 +1,5 @@
 import { Theme, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow } from "theme.slint";
-import { Action, SearchField } from "components.slint";
+import { Action, SearchField, MiddleHeader, MiddleFooter } from "components.slint";
 import { CheckBox, ScrollView } from "std-widgets.slint";
 
 export component WorldPage inherits Rectangle {
@@ -17,6 +17,7 @@ export component WorldPage inherits Rectangle {
     in property <bool> has-earlier: false;
     in property <bool> group-creator-open: false;
     in property <[WorldPickRow]> picks;
+    in property <string> status;
     callback refresh();
     callback open-contact(int);
     callback send-message(string);
@@ -35,42 +36,105 @@ export component WorldPage inherits Rectangle {
     private property <string> announcement-draft;
     private property <string> creator-name-draft;
     background: Theme.chat;
-    VerticalLayout { spacing: 0px;
-        Rectangle { height: 76px; background: Theme.surface; HorizontalLayout { padding: 18px; spacing: 12px; Text { text: root.groups ? "群组" : "联系人"; color: Theme.text; font-size: 18px; font-weight: 700; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } if root.groups : Action { icon: @image-url("../assets/icons/plus.svg"); label: "新建群组"; show-label: true; enabled: !root.loading; clicked => { root.creator-name-draft = ""; root.open-group-creator(); } } Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.loading; clicked => { root.refresh(); } } } }
-        Rectangle { height: 1px; background: Theme.border; }
-        HorizontalLayout { padding: 16px; spacing: 14px; vertical-stretch: 1;
-            Rectangle { width: 260px; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 12px; spacing: 9px;
-            if root.group-creator-open : VerticalLayout { spacing: 9px;
-                Text { height: 20px; text: "新建群组"; color: Theme.text; font-size: 13px; font-weight: 700; }
-                TextInput { height: 28px; text <=> root.creator-name-draft; color: Theme.text; font-size: 12px; }
-                Text { height: 16px; text: "选择至少 1 名初始成员（不含你自己）"; color: Theme.muted; font-size: 10px; }
-                ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off; VerticalLayout { spacing: 2px; for pick in root.picks : CheckBox { height: 28px; text: pick.username; checked: pick.selected; toggled => { root.toggle-group-member(pick.user-id); } } } if root.picks.length == 0 : Text { height: 60px; text: root.loading ? "正在加载联系人…" : "暂无可选联系人"; color: Theme.muted; font-size: 11px; horizontal-alignment: center; } }
-                HorizontalLayout { height: 30px; spacing: 8px; Rectangle { horizontal-stretch: 1; } Action { width: 64px; label: "创建"; show-label: true; primary: true; enabled: !root.loading && root.creator-name-draft != ""; clicked => { root.create-group(root.creator-name-draft); } } Action { width: 64px; label: "取消"; show-label: true; enabled: !root.loading; clicked => { root.close-group-creator(); } } }
-            }
-            if !root.group-creator-open : VerticalLayout { spacing: 9px; SearchField { icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: root.groups ? "搜索群组" : "搜索联系人"; text <=> root.keyword; } Text { height: 18px; text: root.loading ? "正在加载…" : "共 " + root.total + " 项"; color: Theme.muted; font-size: 11px; } ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off; VerticalLayout { spacing: 5px;
-                if !root.groups : Rectangle { height: root.contacts.length * 62px; VerticalLayout { for item[index] in root.contacts : Rectangle { height: 62px; border-radius: 9px; background: Theme.panel; Action { width: parent.width; height: parent.height; label: item.username; clicked => { root.open-contact(index); } } Text { x: 12px; y: 10px; text: item.username; color: Theme.text; font-size: 12px; font-weight: 600; } Text { x: 12px; y: 33px; text: item.online ? "在线" : (item.preview == "" ? "暂无消息" : item.preview); color: item.online ? #16845d : Theme.muted; font-size: 10px; overflow: elide; } if item.unread > 0 : Rectangle { x: parent.width - 34px; y: 12px; width: 22px; height: 16px; border-radius: 8px; background: #b63a22; Text { width: parent.width; text: item.unread > 99 ? "99+" : item.unread; color: white; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; } } } } }
-                if root.groups : Rectangle { height: root.group-items.length * 62px; VerticalLayout { for item[index] in root.group-items : Rectangle { height: 62px; border-radius: 9px; background: Theme.panel; Action { width: parent.width; height: parent.height; label: item.name; clicked => { root.open-contact(index); } } Text { x: 12px; y: 10px; text: item.name; color: Theme.text; font-size: 12px; font-weight: 600; } Text { x: 12px; y: 33px; text: item.members + " 人 · " + (item.preview == "" ? "暂无消息" : item.preview); color: Theme.muted; font-size: 10px; overflow: elide; } if item.unread > 0 : Rectangle { x: parent.width - 34px; y: 12px; width: 22px; height: 16px; border-radius: 8px; background: #b63a22; Text { width: parent.width; text: item.unread > 99 ? "99+" : item.unread; color: white; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; } } } } }
-                if (!root.groups && root.contacts.length == 0) || (root.groups && root.group-items.length == 0) : Text { height: 70px; text: root.loading ? "正在加载…" : "暂无数据"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
-            } } }
-            HorizontalLayout { height: 30px; Rectangle { horizontal-stretch: 1; } Action { width: 52px; label: "上一页"; show-label: true; enabled: !root.loading && root.offset > 0; clicked => { root.previous-page(); } } Action { width: 52px; label: "下一页"; show-label: true; enabled: !root.loading && root.offset + (root.groups ? root.group-items.length : root.contacts.length) < root.total; clicked => { root.next-page(); } } } } }
-            Rectangle { horizontal-stretch: 1; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 18px; spacing: 10px;
-                Text { height: 28px; text: root.conversation-open ? root.active-title : (root.groups ? "群组消息" : "用户消息"); color: Theme.text; font-size: 18px; font-weight: 700; }
-                if root.conversation-open && root.groups : HorizontalLayout { height: root.announcement-editing ? 32px : 26px; spacing: 8px;
-                    Text { width: 34px; text: "公告"; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
-                    if !root.announcement-editing : Text { horizontal-stretch: 1; text: root.announcement == "" ? "暂无公告" : root.announcement; color: Theme.text; font-size: 11px; wrap: word-wrap; overflow: elide; vertical-alignment: center; }
-                    if !root.announcement-editing : Action { width: 56px; height: 24px; label: "编辑"; show-label: true; enabled: !root.loading; clicked => { root.announcement-draft = root.announcement; root.edit-announcement(); } }
-                    if root.announcement-editing : TextInput { horizontal-stretch: 1; text <=> root.announcement-draft; color: Theme.text; font-size: 11px; }
-                    if root.announcement-editing : Action { width: 56px; height: 24px; label: "保存"; show-label: true; primary: true; enabled: !root.loading; clicked => { root.save-announcement(root.announcement-draft); } }
-                    if root.announcement-editing : Action { width: 56px; height: 24px; label: "取消"; show-label: true; enabled: !root.loading; clicked => { root.cancel-announcement(); } }
+    HorizontalLayout {
+        spacing: 0px;
+        Rectangle {
+            width: 220px;
+            background: Theme.middle;
+            Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+            VerticalLayout {
+                spacing: 0px;
+                MiddleHeader { title: root.groups ? "群组" : "联系人"; subtitle: root.groups ? "普通用户群组消息" : "与联系人单聊"; }
+                if root.group-creator-open : VerticalLayout {
+                    vertical-stretch: 1; padding-left: 14px; padding-right: 14px; padding-top: 4px; padding-bottom: 8px; spacing: 9px;
+                    Text { height: 20px; text: "新建群组"; color: Theme.text; font-size: 13px; font-weight: 700; }
+                    TextInput { height: 28px; text <=> root.creator-name-draft; color: Theme.text; font-size: 12px; }
+                    Text { height: 16px; text: "选择至少 1 名初始成员（不含你自己）"; color: Theme.muted; font-size: 10px; }
+                    ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off; VerticalLayout { spacing: 2px; for pick in root.picks : CheckBox { height: 28px; text: pick.username; checked: pick.selected; toggled => { root.toggle-group-member(pick.user-id); } } } if root.picks.length == 0 : Text { height: 60px; text: root.loading ? "正在加载联系人…" : "暂无可选联系人"; color: Theme.muted; font-size: 11px; horizontal-alignment: center; } }
+                    HorizontalLayout { height: 30px; spacing: 8px; Rectangle { horizontal-stretch: 1; } Action { width: 64px; label: "创建"; show-label: true; primary: true; enabled: !root.loading && root.creator-name-draft != ""; clicked => { root.create-group(root.creator-name-draft); } } Action { width: 64px; label: "取消"; show-label: true; enabled: !root.loading; clicked => { root.close-group-creator(); } } }
                 }
-                if !root.conversation-open : Text { text: root.groups ? "选择一个普通用户群组查看消息。" : "选择联系人开始单聊。"; color: Theme.muted; font-size: 13px; }
-                if root.conversation-open : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off; VerticalLayout { alignment: start; spacing: 8px;
-                    if root.has-earlier : Action { height: 26px; width: 120px; label: "加载更早"; show-label: true; enabled: !root.loading; clicked => { root.load-earlier(); } }
-                    for message in root.messages : Rectangle { height: 58px; border-radius: 9px; background: message.mine ? Theme.mine : Theme.panel; Text { x: 10px; y: 6px; width: parent.width - 20px; height: parent.height - 12px; text: message.content; color: Theme.text; font-size: 12px; wrap: word-wrap; overflow: elide; } }
-                } }
-                if root.conversation-open : HorizontalLayout { height: 38px; spacing: 8px; TextInput { horizontal-stretch: 1; text <=> root.draft; color: Theme.text; font-size: 12px; } Action { width: 68px; label: "发送"; show-label: true; primary: true; enabled: root.draft != "" && !root.loading; clicked => { root.send-message(root.draft); root.draft = ""; } } }
-                Rectangle { vertical-stretch: root.conversation-open ? 0 : 1; }
-            } }
+                if !root.group-creator-open : VerticalLayout {
+                    spacing: 0px;
+                    HorizontalLayout {
+                        padding-left: 14px; padding-right: 14px; height: 34px; spacing: 8px;
+                        SearchField { horizontal-stretch: 1; icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: root.groups ? "搜索群组" : "搜索联系人"; text <=> root.keyword; }
+                        if root.groups : Action { width: 34px; height: 34px; icon: @image-url("../assets/icons/plus.svg"); label: "新建群组"; enabled: !root.loading; selected: true; clicked => { root.creator-name-draft = ""; root.open-group-creator(); } }
+                    }
+                    Rectangle { height: 14px; }
+                    ScrollView {
+                        vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                        VerticalLayout { alignment: start; spacing: 4px;
+                            if !root.groups : VerticalLayout { alignment: start; spacing: 4px;
+                                for item[index] in root.contacts : Rectangle {
+                                    visible: root.keyword == "" || item.username.to-lowercase().starts-with(root.keyword.to-lowercase());
+                                    height: self.visible ? 62px : 0px;
+                                    Rectangle {
+                                        x: 8px; y: 2px; width: parent.width - 16px; height: 58px; border-radius: 12px; background: Theme.accent-soft;
+                                        Action { width: parent.width; height: parent.height; label: item.username; enabled: !root.loading; clicked => { root.open-contact(index); } }
+                                        Text { x: 12px; y: 9px; width: parent.width - 56px; height: 19px; text: item.username; color: Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
+                                        Text { x: 12px; y: 32px; width: parent.width - 56px; height: 16px; text: item.online ? "在线" : (item.preview == "" ? "暂无消息" : item.preview); color: item.online ? #16845d : Theme.muted; font-size: 10px; overflow: elide; }
+                                        if item.unread > 0 : Rectangle { x: parent.width - 34px; y: 12px; width: 22px; height: 16px; border-radius: 8px; background: #b63a22; Text { width: parent.width; text: item.unread > 99 ? "99+" : item.unread; color: white; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; } }
+                                    }
+                                }
+                            }
+                            if root.groups : VerticalLayout { alignment: start; spacing: 4px;
+                                for item[index] in root.group-items : Rectangle {
+                                    visible: root.keyword == "" || item.name.to-lowercase().starts-with(root.keyword.to-lowercase());
+                                    height: self.visible ? 62px : 0px;
+                                    Rectangle {
+                                        x: 8px; y: 2px; width: parent.width - 16px; height: 58px; border-radius: 12px; background: Theme.accent-soft;
+                                        Action { width: parent.width; height: parent.height; label: item.name; enabled: !root.loading; clicked => { root.open-contact(index); } }
+                                        Text { x: 12px; y: 9px; width: parent.width - 56px; height: 19px; text: item.name; color: Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
+                                        Text { x: 12px; y: 32px; width: parent.width - 56px; height: 16px; text: item.members + " 人 · " + (item.preview == "" ? "暂无消息" : item.preview); color: Theme.muted; font-size: 10px; overflow: elide; }
+                                        if item.unread > 0 : Rectangle { x: parent.width - 34px; y: 12px; width: 22px; height: 16px; border-radius: 8px; background: #b63a22; Text { width: parent.width; text: item.unread > 99 ? "99+" : item.unread; color: white; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; } }
+                                    }
+                                }
+                            }
+                            if (!root.groups && root.contacts.length == 0) || (root.groups && root.group-items.length == 0) : Text { height: 70px; text: root.loading ? "正在加载…" : "暂无数据"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                    }
+                    HorizontalLayout { height: 30px; padding-left: 14px; padding-right: 14px; Rectangle { horizontal-stretch: 1; } Action { width: 52px; label: "上一页"; show-label: true; enabled: !root.loading && root.offset > 0; clicked => { root.previous-page(); } } Action { width: 52px; label: "下一页"; show-label: true; enabled: !root.loading && root.offset + (root.groups ? root.group-items.length : root.contacts.length) < root.total; clicked => { root.next-page(); } } }
+                    MiddleFooter { text: root.status; }
+                }
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                spacing: 0px;
+                HorizontalLayout {
+                    height: 62px; padding-left: 14px; padding-right: 14px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
+                    Text { text: root.conversation-open ? root.active-title : (root.groups ? "群组消息" : "用户消息"); color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.loading; clicked => { root.refresh(); } }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                if root.conversation-open && root.groups : Rectangle {
+                    height: root.announcement-editing ? 40px : 34px;
+                    HorizontalLayout {
+                        padding-left: 22px; padding-right: 22px; spacing: 8px;
+                        Text { width: 34px; text: "公告"; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
+                        if !root.announcement-editing : Text { horizontal-stretch: 1; text: root.announcement == "" ? "暂无公告" : root.announcement; color: Theme.text; font-size: 11px; wrap: word-wrap; overflow: elide; vertical-alignment: center; }
+                        if !root.announcement-editing : Action { width: 56px; height: 24px; label: "编辑"; show-label: true; enabled: !root.loading; clicked => { root.announcement-draft = root.announcement; root.edit-announcement(); } }
+                        if root.announcement-editing : TextInput { horizontal-stretch: 1; text <=> root.announcement-draft; color: Theme.text; font-size: 11px; }
+                        if root.announcement-editing : Action { width: 56px; height: 24px; label: "保存"; show-label: true; primary: true; enabled: !root.loading; clicked => { root.save-announcement(root.announcement-draft); } }
+                        if root.announcement-editing : Action { width: 56px; height: 24px; label: "取消"; show-label: true; enabled: !root.loading; clicked => { root.cancel-announcement(); } }
+                    }
+                }
+                if !root.conversation-open : Text { vertical-stretch: 1; text: root.groups ? "选择一个普通用户群组查看消息。" : "选择联系人开始单聊。"; color: Theme.muted; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                if root.conversation-open : ScrollView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { alignment: start; padding-left: 22px; padding-right: 22px; padding-top: 12px; padding-bottom: 8px; spacing: 8px;
+                        if root.has-earlier : Action { height: 26px; width: 120px; label: "加载更早"; show-label: true; enabled: !root.loading; clicked => { root.load-earlier(); } }
+                        for message in root.messages : Rectangle { height: 58px; border-radius: 9px; background: message.mine ? Theme.mine : Theme.panel; Text { x: 10px; y: 6px; width: parent.width - 20px; height: parent.height - 12px; text: message.content; color: Theme.text; font-size: 12px; wrap: word-wrap; overflow: elide; } }
+                    }
+                }
+                if root.conversation-open : HorizontalLayout {
+                    height: 52px; padding-left: 22px; padding-right: 22px; padding-bottom: 14px; spacing: 8px;
+                    TextInput { horizontal-stretch: 1; height: 38px; text <=> root.draft; color: Theme.text; font-size: 12px; }
+                    Action { width: 68px; height: 38px; label: "发送"; show-label: true; primary: true; enabled: root.draft != "" && !root.loading; clicked => { root.send-message(root.draft); root.draft = ""; } }
+                }
+            }
         }
     }
 }

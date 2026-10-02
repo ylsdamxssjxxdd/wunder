@@ -134,8 +134,26 @@ impl Orchestrator {
                     .and_then(|value| value.get("type"))
                     .and_then(Value::as_str)
                     .is_none_or(|kind| kind == "subagent_hidden_user");
+            // Every visible assistant write that belongs to a model round is
+            // the same durable output item.  Stats are allowed to arrive in a
+            // later write (and tool/question terminal paths do not all carry
+            // the stats object), so identity must not depend on metadata.
+            // Hidden model-context messages stay append-only and never replace
+            // the user-visible stream item.
+            let output_slot = role == "assistant"
+                && round_info.model_round.is_some()
+                && meta.and_then(|value| value.get("hidden")).and_then(Value::as_bool) != Some(true);
             let item_id = if input_slot {
                 format!("{turn_id}:user")
+            } else if output_slot {
+                // A model round has exactly one visible durable output item.
+                // The stream registers it as `{turn}:text-{round}` at request
+                // admission; final history and message statistics must update
+                // that same item instead of appending a random-id duplicate.
+                format!(
+                    "{turn_id}:text-{}",
+                    round_info.model_round.expect("output slot requires a model round")
+                )
             } else {
                 Uuid::new_v4().to_string()
             };

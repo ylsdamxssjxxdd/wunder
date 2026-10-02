@@ -124,6 +124,23 @@ export component Avatar inherits Rectangle {
     if !root.mine && root.glyph != "" : Text { width: 100%; height: 100%; text: root.glyph; font-size: 16px; color: Theme.accent-deep; horizontal-alignment: center; vertical-alignment: center; }
     if root.mine : Text { text: "我"; font-size: 13px; color: Theme.accent-deep; horizontal-alignment: center; vertical-alignment: center; }
 }
+// Every non-chat page reuses the chat middle-column form: a full-height list
+// pane with its own header, search row, list and status footer, separated from
+// the main area by a 1px border instead of one shared top bar.
+export component MiddleHeader inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    height: 80px;
+    Text { x: 16px; y: 20px; width: parent.width - 32px; height: 25px; text: root.title; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; }
+    Text { x: 16px; y: 49px; width: parent.width - 32px; height: 18px; text: root.subtitle; color: Theme.muted; font-size: 12px; overflow: elide; }
+}
+
+export component MiddleFooter inherits Rectangle {
+    in property <string> text;
+    height: 36px;
+    Text { x: 12px; width: parent.width - 24px; height: parent.height; text: root.text; color: Theme.muted; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+}
+
 export component SearchField inherits Rectangle {
     in property <image> icon;
     in property <string> placeholder: "搜索";

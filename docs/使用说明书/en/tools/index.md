@@ -30,7 +30,7 @@ wunder's built-in tools no longer return unrelated ad hoc formats. Most tools no
 - `summary`
 - `data`
 
-In practice, this means the business payload should usually be read from `data` first. `src/services/tools.rs` already provides compatibility helpers such as `tool_result_data()` and `tool_result_field()`, and the documentation follows that same convention.
+In practice, this means the business payload should usually be read from `data` first. `crates/wunder-runtime/src/services/tools.rs` already provides compatibility helpers such as `tool_result_data()` and `tool_result_field()`, and the documentation follows that same convention.
 
 ## Unified success shape
 

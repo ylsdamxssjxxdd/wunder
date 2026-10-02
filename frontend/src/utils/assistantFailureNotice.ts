@@ -168,6 +168,10 @@ export const resolveAssistantFailureNotice = (
   t: Translator
 ): AssistantFailureNotice | null => {
   if (String(message?.role || '') !== 'assistant') return null;
+  // Durable turn outcome owns the bubble; an individual tool can fail and the
+  // assistant can still recover and complete the request successfully.
+  const status = normalizeStatus(message.status);
+  if (status === 'final' || SUCCESS_STATUSES.has(status) || status === 'cancelled') return null;
   if (isAssistantMessageRunning(message) || hasActiveSubagentItems(message.subagents)) return null;
   const terminal = resolveLatestTerminalWorkflowItem(message);
   if (!terminal) return null;

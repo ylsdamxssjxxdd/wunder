@@ -1,5 +1,5 @@
 import { Theme, FileCard } from "theme.slint";
-import { Action, SearchField } from "components.slint";
+import { Action, SearchField, MiddleHeader, MiddleFooter } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // A full workspace page and the chat dock intentionally share the same
@@ -15,6 +15,7 @@ export component FilesPage inherits Rectangle {
     in property <int> offset: 0;
     in property <int> total: 0;
     in property <[FileCard]> files;
+    in property <string> status;
     callback refresh();
     callback navigate(string);
     callback open-file(string);
@@ -33,48 +34,63 @@ export component FilesPage inherits Rectangle {
     private property <bool> action-open: false;
     background: Theme.chat;
 
-    VerticalLayout {
+    HorizontalLayout {
         spacing: 0px;
         Rectangle {
-            height: 76px; background: Theme.surface; border-width: 0px; border-color: transparent;
-            HorizontalLayout {
-                padding: 18px; spacing: 12px;
-                Image { width: 24px; height: 24px; source: @image-url("../assets/icons/folder-open.svg"); colorize: Theme.accent-deep; }
-                VerticalLayout {
-                    spacing: 1px;
-                    Text { height: 25px; text: "文件工作区"; color: Theme.text; font-size: 18px; font-weight: 700; }
-                    Text { height: 17px; text: "容器 #" + root.directory-container-id + " · " + (root.directory-root == "" ? "正在加载本地目录" : root.directory-root); color: Theme.muted; font-size: 11px; overflow: elide; }
+            width: 220px;
+            background: Theme.middle;
+            Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+            VerticalLayout {
+                spacing: 0px;
+                MiddleHeader { title: "文件工作区"; subtitle: "容器 #" + root.directory-container-id; }
+                HorizontalLayout {
+                    padding-left: 14px; padding-right: 14px; height: 34px; spacing: 8px;
+                    Action { horizontal-stretch: 1; height: 34px; icon: @image-url("../assets/icons/arrow-up.svg"); label: "上一级"; show-label: true; enabled: !root.loading && root.directory-path != ""; clicked => { root.navigate(root.directory-parent); } }
                 }
-                Rectangle { horizontal-stretch: 1; }
-                Action { width: 34px; icon: @image-url("../assets/icons/folder-open.svg"); label: "切换目录"; enabled: !root.loading; clicked => { root.open-workspace-binding(); } }
-                Action { width: 34px; icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.loading; clicked => { root.refresh(); } }
+                Rectangle { height: 12px; }
+                HorizontalLayout { padding-left: 16px; padding-right: 16px; Text { height: 18px; text: "当前目录"; color: Theme.muted; font-size: 10px; } }
+                HorizontalLayout { padding-left: 16px; padding-right: 16px; Text { height: 34px; text: root.directory-path == "" ? "工作区根目录" : root.directory-path; color: Theme.text; font-size: 12px; wrap: word-wrap; overflow: elide; } }
+                Rectangle { height: 10px; }
+                HorizontalLayout { padding-left: 16px; Text { height: 20px; text: "子目录"; color: Theme.text; font-size: 13px; font-weight: 600; } }
+                Rectangle { height: 6px; }
+                ScrollView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { alignment: start;
+                        for file in root.files : Rectangle {
+                            visible: file.entry-type == "dir" && (root.keyword == "" || file.name.to-lowercase().starts-with(root.keyword.to-lowercase()));
+                            height: self.visible ? 40px : 0px;
+                            Rectangle {
+                                x: 8px; y: 2px; width: parent.width - 16px; height: 36px; border-radius: 9px; background: Theme.accent-soft;
+                                Action { width: parent.width; height: parent.height; label: file.name; enabled: !root.loading; clicked => { root.navigate(file.path); } }
+                                Image { x: 10px; y: 10px; width: 16px; height: 16px; source: @image-url("../assets/icons/folder-open.svg"); colorize: Theme.accent-deep; }
+                                Text { x: 34px; width: parent.width - 42px; height: parent.height; text: file.name; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                            }
+                        }
+                        if root.files.length == 0 : Text { height: 40px; text: root.loading ? "正在读取…" : "暂无子目录"; color: Theme.muted; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                }
+                MiddleFooter { text: root.status; }
             }
         }
-        Rectangle { height: 1px; background: Theme.border; }
-        HorizontalLayout {
-            padding: 16px; spacing: 14px; vertical-stretch: 1;
-            Rectangle {
-                width: min(260px, parent.width * 0.32); border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
-                VerticalLayout {
-                    padding: 12px; spacing: 9px;
-                    Text { height: 22px; text: "位置"; color: Theme.text; font-size: 13px; font-weight: 600; }
-                    Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/arrow-up.svg"); label: "上一级"; show-label: true; enabled: !root.loading && root.directory-path != ""; clicked => { root.navigate(root.directory-parent); } }
-                    Rectangle { height: 1px; background: Theme.border; }
-                    Text { height: 18px; text: "当前目录"; color: Theme.muted; font-size: 10px; }
-                    Text { height: 42px; text: root.directory-path == "" ? "工作区根目录" : root.directory-path; color: Theme.text; font-size: 12px; wrap: word-wrap; overflow: elide; }
-                    Rectangle { vertical-stretch: 1; }
-                    Text { height: 32px; text: "文件访问受当前容器根目录限制。"; color: Theme.muted; font-size: 10px; wrap: word-wrap; }
-                }
-            }
-            Rectangle {
-                horizontal-stretch: 1; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
-                VerticalLayout {
-                    padding: 14px; spacing: 10px;
-                    HorizontalLayout {
-                        height: 34px; spacing: 8px;
-                        SearchField { horizontal-stretch: 1; icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索当前目录"; text <=> root.keyword; }
-                        Action { width: 36px; icon: @image-url("../assets/icons/plus.svg"); label: "新建文件"; enabled: !root.loading; clicked => { root.new-file-open = !root.new-file-open; } }
+        Rectangle {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                spacing: 0px;
+                HorizontalLayout {
+                    height: 62px; padding-left: 14px; padding-right: 14px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
+                    VerticalLayout { spacing: 1px;
+                        Text { height: 25px; text: root.directory-path == "" ? "工作区根目录" : root.directory-path; color: Theme.text; font-size: 16px; font-weight: 700; overflow: elide; }
+                        Text { height: 17px; text: "共 " + root.total + " 项 · 文件访问受当前容器根目录限制"; color: Theme.muted; font-size: 11px; overflow: elide; }
                     }
+                    Rectangle { horizontal-stretch: 1; }
+                    Action { icon: @image-url("../assets/icons/folder-open.svg"); label: "切换目录"; enabled: !root.loading; clicked => { root.open-workspace-binding(); } }
+                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.loading; clicked => { root.refresh(); } }
+                    Action { icon: @image-url("../assets/icons/plus.svg"); label: "新建文件"; enabled: !root.loading; clicked => { root.new-file-open = !root.new-file-open; } }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                VerticalLayout {
+                    padding-left: 22px; padding-right: 22px; padding-top: 12px; padding-bottom: 14px; spacing: 10px;
+                    SearchField { icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索当前目录"; text <=> root.keyword; }
                     if root.new-file-open : Rectangle {
                         height: 38px; border-radius: 8px; background: Theme.accent-soft;
                         HorizontalLayout { padding: 4px; spacing: 4px;
@@ -99,7 +115,7 @@ export component FilesPage inherits Rectangle {
                     }
                     HorizontalLayout {
                         height: 30px; spacing: 7px;
-                        Text { width: 120px; text: root.loading ? "正在读取…" : "共 " + root.total + " 项"; color: Theme.muted; font-size: 10px; vertical-alignment: center; }
+                        Text { width: 120px; text: root.loading ? "正在读取…" : "第 " + (root.offset + 1) + " 项起"; color: Theme.muted; font-size: 10px; vertical-alignment: center; }
                         Rectangle { horizontal-stretch: 1; }
                         Action { width: 54px; label: "上一页"; show-label: true; enabled: !root.loading && root.offset > 0; clicked => { root.previous-page(); } }
                         Action { width: 54px; label: "下一页"; show-label: true; enabled: !root.loading && root.offset + root.files.length < root.total; clicked => { root.next-page(); } }

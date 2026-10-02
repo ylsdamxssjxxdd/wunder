@@ -9,10 +9,8 @@ use super::*;
 use crate::core::approval::{
     ApprovalRequest, ApprovalRequestKind, ApprovalRequestTx, ApprovalResponse,
 };
-use crate::services::chat_cancel_marker::persist_user_cancelled_turn_marker;
 use crate::services::goal;
 use crate::tools::ToolContext;
-use crate::user_store::UserStore;
 use futures::StreamExt;
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -80,6 +78,26 @@ impl Orchestrator {
             emitter.emit("round_usage", payload).await;
         }
         emitter.emit("error", err.to_payload()).await;
+        // Close the admitted model output item before settling the turn.  The
+        // stable item is also the only visible assistant bubble source, so an
+        // error must never be represented by a new random history row.
+        if active_turn_round.model_round.is_some()
+            && !matches!(err.code(), "USER_BUSY" | "CANCELLED")
+        {
+            self.append_chat(
+                user_id,
+                session_id,
+                "assistant",
+                Some(&json!(err.message())),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                active_turn_round,
+            );
+        }
         let _ = self.workspace.flush_writes_async().await;
         if let Some(thread_turn_id) = active_turn_round.thread_turn_id {
             let status = if err.code() == "CANCELLED" {
@@ -133,21 +151,8 @@ impl Orchestrator {
             )
             .await;
         }
-        if !matches!(err.code(), "USER_BUSY" | "CANCELLED") {
-            self.append_chat(
-                user_id,
-                session_id,
-                "assistant",
-                Some(&json!(err.message())),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                active_turn_round,
-            );
-        }
+        // The terminal stable item was written above. Do not append a second
+        // assistant history item here.
         if err.code() == "CANCELLED" {
             let cancel_source = err
                 .detail()
@@ -160,19 +165,6 @@ impl Orchestrator {
                     .mark_cancelled_with_source(session_id, cancel_source);
             } else {
                 self.monitor.mark_cancelled(session_id);
-            }
-            if let Err(marker_err) = persist_user_cancelled_turn_marker(
-                self.workspace.clone(),
-                Arc::new(UserStore::new(self.storage.clone())),
-                user_id,
-                session_id,
-                cancel_source.unwrap_or("orchestrator_cancel"),
-            )
-            .await
-            {
-                warn!(
-                    "persist cancelled turn marker failed for session {session_id}: {marker_err}"
-                );
             }
         } else if err.code() != "USER_BUSY" {
             self.monitor.mark_error(session_id, err.message());

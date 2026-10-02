@@ -56,7 +56,6 @@ import ChatComposer from '@/components/chat/ChatComposer.vue';
 import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import {
   InquiryPanel,
-  MessageCompactionDivider,
   MessageFeedbackActions,
   MessageKnowledgeCitation,
   MessageSubagentPanel,
@@ -135,9 +134,7 @@ import {
 import { hasActiveSubagentItems } from '@/utils/subagentRuntime';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import {
-  isCompactionOnlyWorkflowItems,
   isCompactionRunningFromWorkflowItems,
-  resolveLatestCompactionSnapshot
 } from '@/utils/chatCompactionWorkflow';
 import {
   isAudioRecordingSupported,
@@ -542,3 +539,4 @@ export function installMessengerControllerMessagePanelsPresentation(ctx: Messeng
   ctx.isAdminUser = (user: Record<string, unknown> | null): boolean => Array.isArray(user?.roles) &&
       user.roles.some((role) => role === 'admin' || role === 'super_admin');
 }
+

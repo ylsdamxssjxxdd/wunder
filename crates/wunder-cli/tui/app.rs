@@ -4406,14 +4406,15 @@ impl TuiApp {
                 self.thread_registry.clear_replay(session_id);
                 return;
             }
-            // I5 snapshot guard: the durable window was trimmed; reload an atomic
-            // snapshot instead of guessing at a cursor.
+            // I5 snapshot guard: the durable window was trimmed; reload the
+            // atomic snapshot instead of guessing at a cursor.
             if records.iter().any(|record| {
                 record.get("event").and_then(Value::as_str) == Some("thread_snapshot_required")
             }) {
                 self.notify_replay_history_expired(session_id);
-                self.reload_transcript_from_history(session_id).await;
-                self.thread_registry.clear_replay(session_id);
+                if self.reload_transcript_from_snapshot(session_id).await {
+                    self.thread_registry.clear_replay(session_id);
+                }
                 return;
             }
             let mut progressed = false;
@@ -4447,12 +4448,34 @@ impl TuiApp {
         // but retain the cursor so we never acknowledge more than we applied.
     }
 
-    /// Reload the transcript from an atomic history snapshot (I5). Used when the
-    /// durable change window was trimmed and no cursor can safely replay.
-    async fn reload_transcript_from_history(&mut self, session_id: &str) {
-        let history = crate::load_session_history_entries(&self.runtime, session_id, 0)
-            .await
-            .unwrap_or_default();
+    /// I5: rebuild the transcript from the atomic `{cursor,turns,items,blocks}`
+    /// snapshot (one read transaction) when the durable change window was
+    /// trimmed. Returns true when the replay signal is resolved: the snapshot
+    /// was applied, or it is stale relative to the local cursor so there is
+    /// nothing left to replay. A failed read returns false and retains the
+    /// cursor so a later resume retries.
+    async fn reload_transcript_from_snapshot(&mut self, session_id: &str) -> bool {
+        let user_id = self.runtime.user_id.clone();
+        let workspace = self.runtime.state.workspace.clone();
+        let target = session_id.to_string();
+        let page = tokio::task::spawn_blocking(move || {
+            workspace.try_load_thread_snapshot(&user_id, &target)
+        })
+        .await;
+        let snapshot = match page {
+            Ok(Ok(snapshot)) => snapshot,
+            _ => return false,
+        };
+        let cursor = snapshot.get("cursor").and_then(Value::as_i64).unwrap_or(0);
+        if cursor <= 0 {
+            return false;
+        }
+        if cursor < self.thread_registry.durable_cursor(session_id) {
+            // The snapshot predates what this projection already applied;
+            // keep local state and continue from the durable watermark.
+            return true;
+        }
+        let history = snapshot_history_records(&snapshot);
         self.logs.clear();
         self.active_assistant = None;
         self.active_reasoning = None;
@@ -4460,6 +4483,8 @@ impl TuiApp {
         // durable healing state so a later watch re-establishes from the snapshot.
         self.thread_registry.clear_durable_heal_state(session_id);
         self.restore_transcript_from_history(history);
+        self.thread_registry.mark_durable_applied(session_id, cursor);
+        true
     }
 
     /// Heal durable item_upsert frames into the transcript. Idempotent: the applied

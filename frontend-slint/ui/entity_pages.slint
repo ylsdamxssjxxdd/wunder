@@ -1,22 +1,7 @@
 import { Theme, AgentCard, AgentCardFile, PromptPackCard, ToolCard, ModelCard, FileCard, LanPeerCard } from "theme.slint";
-import { Action, Avatar, SearchField, FormField } from "components.slint";
+import { Action, Avatar, SearchField, FormField, MiddleHeader, MiddleFooter } from "components.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { CheckBox, ComboBox, ScrollView } from "std-widgets.slint";
-
-component PageHeader inherits Rectangle {
-    in property <string> title;
-    in property <string> subtitle;
-    in property <image> icon;
-    in property <string> action-label;
-    in property <bool> enabled: true;
-    callback action();
-    height: 82px;
-    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
-    Image { x: 20px; y: 22px; width: 28px; height: 28px; source: root.icon; colorize: Theme.accent-deep; }
-    Text { x: 60px; y: 17px; width: parent.width - 160px; height: 24px; text: root.title; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; }
-    Text { x: 60px; y: 44px; width: parent.width - 160px; height: 18px; text: root.subtitle; color: Theme.muted; font-size: 12px; overflow: elide; }
-    if root.action-label != "" : Action { x: parent.width - 112px; y: 25px; width: 92px; height: 32px; icon: @image-url("../assets/icons/plus.svg"); enabled: root.enabled; label: root.action-label; show-label: true; primary: true; clicked => { root.action(); } }
-}
 
 export component AgentsPage inherits Rectangle {
     in property <bool> loading: false;
@@ -60,44 +45,59 @@ export component AgentsPage inherits Rectangle {
     in property <bool> cards-loading: false;
     in property <[AgentCardFile]> card-files;
     in-out property <bool> card-overwrite: false;
+    in property <string> status;
     background: Theme.chat;
-    VerticalLayout {
+    HorizontalLayout {
         spacing: 0px;
-        HorizontalLayout {
-            height: 64px; padding-left: 18px; padding-right: 16px; spacing: 8px;
-            VerticalLayout { spacing: 1px; Text { height: 25px; text: "专家"; color: Theme.text; font-size: 18px; font-weight: 700; } Text { height: 17px; text: "管理可用于新会话的智能体"; color: Theme.muted; font-size: 11px; } }
-            Rectangle { horizontal-stretch: 1; }
-            Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.loading; clicked => { root.refresh(); } }
-            Action { label: "导出卡片"; show-label: true; enabled: !root.loading && !root.saving && root.selected-agent >= 0; clicked => { root.export-agent-card(); } }
-            Action { label: "导入卡片"; show-label: true; enabled: !root.loading && !root.saving; clicked => { root.open-agent-card-import(); } }
-            Action { icon: @image-url("../assets/icons/plus.svg"); label: "新建专家"; show-label: true; primary: true; enabled: !root.loading && !root.saving; clicked => { root.create-agent(); } }
-        }
-        Rectangle { height: 1px; background: Theme.border; }
-        HorizontalLayout {
-            vertical-stretch: 1; padding-top: 14px; padding-right: 16px; padding-bottom: 16px; padding-left: 16px; spacing: 14px;
-            Rectangle { width: min(340px, parent.width * 0.36); border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
-                VerticalLayout { padding: 12px; spacing: 10px;
-                    SearchField { icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索专家"; text <=> root.keyword; }
-                    Text { height: 19px; text: "我的专家  ·  " + root.agents.length; color: Theme.text; font-size: 12px; font-weight: 600; }
-                    ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
-                        VerticalLayout { alignment: start; spacing: 5px;
-                            for agent[index] in root.agents : Rectangle {
-                                height: root.keyword == "" || agent.name.to-lowercase().starts-with(root.keyword.to-lowercase()) ? 76px : 0px; visible: self.height > 0px; border-radius: 11px; background: root.selected-agent == index ? Theme.accent : transparent;
+        Rectangle {
+            width: 220px;
+            background: Theme.middle;
+            Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+            VerticalLayout {
+                spacing: 0px;
+                MiddleHeader { title: "专家"; subtitle: "管理可用于新会话的智能体"; }
+                HorizontalLayout {
+                    padding-left: 14px; padding-right: 14px; height: 34px; spacing: 8px;
+                    SearchField { horizontal-stretch: 1; icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索专家"; text <=> root.keyword; }
+                    Action { width: 34px; height: 34px; icon: @image-url("../assets/icons/plus.svg"); label: "新建专家"; enabled: !root.loading && !root.saving; selected: true; clicked => { root.create-agent(); } }
+                }
+                Rectangle { height: 14px; }
+                ScrollView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { alignment: start;
+                        for agent[index] in root.agents : Rectangle {
+                            height: root.keyword == "" || agent.name.to-lowercase().starts-with(root.keyword.to-lowercase()) ? 76px : 0px; visible: self.height > 0px;
+                            Rectangle {
+                                x: 8px; y: 2px; width: parent.width - 16px; height: 72px; border-radius: 12px; background: root.selected-agent == index ? Theme.accent : transparent;
                                 Action { width: parent.width; height: parent.height; label: agent.name; enabled: !root.saving; clicked => { root.select-agent(index); } }
-                                Avatar { x: 10px; y: 17px; mine: false; glyph: agent.icon-glyph; tone: agent.icon-tone; source: @image-url("../assets/avatar.png"); }
-                                Text { x: 54px; y: 10px; width: parent.width - 65px; height: 20px; text: agent.name; color: root.selected-agent == index ? white : Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
-                                Text { x: 54px; y: 33px; width: parent.width - 65px; height: 16px; text: (agent.model == "" ? "默认模型" : agent.model) + "  ·  " + agent.tool-count + " 项工具"; color: root.selected-agent == index ? #ffffffe0 : Theme.muted; font-size: 10px; overflow: elide; }
-                                Text { x: 54px; y: 52px; width: parent.width - 65px; height: 14px; text: agent.status == "active" ? "可用" : agent.status; color: root.selected-agent == index ? #ffffffe0 : Theme.muted; font-size: 10px; overflow: elide; }
+                                Avatar { x: 10px; y: 19px; mine: false; glyph: agent.icon-glyph; tone: agent.icon-tone; source: @image-url("../assets/avatar.png"); }
+                                Text { x: 54px; y: 12px; width: parent.width - 65px; height: 20px; text: agent.name; color: root.selected-agent == index ? white : Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
+                                Text { x: 54px; y: 35px; width: parent.width - 65px; height: 16px; text: (agent.model == "" ? "默认模型" : agent.model) + "  ·  " + agent.tool-count + " 项工具"; color: root.selected-agent == index ? #ffffffe0 : Theme.muted; font-size: 10px; overflow: elide; }
+                                Text { x: 54px; y: 53px; width: parent.width - 65px; height: 14px; text: agent.status == "active" ? "可用" : agent.status; color: root.selected-agent == index ? #ffffffe0 : Theme.muted; font-size: 10px; overflow: elide; }
                             }
-                            if root.agents.length == 0 : Text { height: 48px; text: root.loading ? "正在加载专家…" : "未加载到专家"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
                         }
+                        if root.agents.length == 0 : Text { height: 48px; text: root.loading ? "正在加载专家…" : "未加载到专家"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
                     }
                 }
+                MiddleFooter { text: root.status; }
             }
-            Rectangle { horizontal-stretch: 1; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
-                ScrollView { horizontal-scrollbar-policy: always-off;
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                spacing: 0px;
+                HorizontalLayout {
+                    height: 62px; padding-left: 14px; padding-right: 14px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
+                    VerticalLayout { spacing: 1px; Text { height: 25px; text: root.selected-name == "" ? "专家设置" : root.selected-name; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; } Text { height: 17px; text: root.selected-status == "" ? "编辑专家能力和运行策略" : root.selected-status; color: Theme.muted; font-size: 11px; overflow: elide; } }
+                    Rectangle { horizontal-stretch: 1; }
+                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.loading; clicked => { root.refresh(); } }
+                    Action { label: "导出卡片"; show-label: true; enabled: !root.loading && !root.saving && root.selected-agent >= 0; clicked => { root.export-agent-card(); } }
+                    Action { label: "导入卡片"; show-label: true; enabled: !root.loading && !root.saving; clicked => { root.open-agent-card-import(); } }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                ScrollView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                     VerticalLayout { padding-top: 18px; padding-right: 22px; padding-bottom: 24px; padding-left: 22px; spacing: 13px; alignment: start;
-                        HorizontalLayout { height: 44px; spacing: 10px; Avatar { width: 42px; height: 42px; glyph: root.selected-icon-glyph; tone: 1; } VerticalLayout { spacing: 1px; Text { height: 23px; text: root.selected-name == "" ? "专家设置" : root.selected-name; color: Theme.text; font-size: 17px; font-weight: 700; } Text { height: 17px; text: root.selected-status == "" ? "编辑专家能力和运行策略" : root.selected-status; color: Theme.muted; font-size: 11px; } } Rectangle { horizontal-stretch: 1; } }
                         FormField { label: "名称"; placeholder: "专家名称"; text <=> root.selected-name; read-only: root.saving; }
                         FormField { label: "问候语 / 描述"; placeholder: "告诉用户这个专家能做什么"; text <=> root.selected-description; read-only: root.saving; }
                         Text { height: 18px; text: "系统提示词"; color: Theme.muted; font-size: 11px; }
@@ -150,40 +150,54 @@ export component ToolsPage inherits Rectangle {
     in property <bool> loading: false;
     in property <[ToolCard]> tools;
     callback refresh();
+    in property <string> status;
     background: Theme.chat;
     private property <string> keyword;
     private property <string> category: "全部";
-    VerticalLayout {
+    HorizontalLayout {
         spacing: 0px;
-        PageHeader { title: "工具"; subtitle: "当前账户可使用的内置工具、技能和连接能力"; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); action-label: ""; }
-        HorizontalLayout {
-            padding: 16px; spacing: 14px; vertical-stretch: 1;
-            Rectangle {
-                width: min(280px, parent.width * 0.32); border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
-                VerticalLayout { padding: 12px; spacing: 10px;
-                    HorizontalLayout { height: 34px; SearchField { horizontal-stretch: 1; icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索工具"; text <=> root.keyword; } }
-                    HorizontalLayout { height: 30px; Action { horizontal-stretch: 1; icon: @image-url("../assets/icons/rotate-right.svg"); enabled: !root.loading; label: "刷新"; show-label: true; clicked => { root.refresh(); } } }
-                    Text { height: 22px; text: "工具分类"; color: Theme.text; font-size: 13px; font-weight: 600; }
-                    for category in ["全部", "内置工具", "MCP 工具", "技能", "知识库", "用户工具", "共享工具", "A2A 工具"] : Action { height: 30px; label: category; show-label: true; selected: root.category == category; clicked => { root.category = category; } }
-                    Rectangle { vertical-stretch: 1; }
-                    Text { height: 18px; text: root.tools.length + " 项能力"; color: Theme.muted; font-size: 11px; }
+        Rectangle {
+            width: 220px;
+            background: Theme.middle;
+            Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+            VerticalLayout {
+                spacing: 0px;
+                MiddleHeader { title: "工具"; subtitle: "当前账户可使用的内置工具、技能和连接能力"; }
+                HorizontalLayout {
+                    padding-left: 14px; padding-right: 14px; height: 34px; spacing: 8px;
+                    SearchField { horizontal-stretch: 1; icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索工具"; text <=> root.keyword; }
                 }
+                Rectangle { height: 14px; }
+                HorizontalLayout { padding-left: 16px; Text { height: 22px; text: "工具分类"; color: Theme.text; font-size: 13px; font-weight: 600; } }
+                Rectangle { height: 6px; }
+                VerticalLayout { alignment: start; padding-left: 8px; padding-right: 8px; spacing: 4px;
+                    for category in ["全部", "内置工具", "MCP 工具", "技能", "知识库", "用户工具", "共享工具", "A2A 工具"] : Action { height: 30px; width: parent.width; label: category; show-label: true; selected: root.category == category; clicked => { root.category = category; } }
+                }
+                MiddleFooter { text: root.status; }
             }
-            Rectangle { horizontal-stretch: 1; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
-                VerticalLayout { padding: 20px; spacing: 12px;
-                    Text { height: 28px; text: "工具详情"; color: Theme.text; font-size: 18px; font-weight: 700; }
-                    ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
-                        VerticalLayout { alignment: start; spacing: 8px;
-                            for tool in root.tools : Rectangle {
-                                visible: (root.category == "全部" || tool.category == root.category) && (root.keyword == "" || tool.name.to-lowercase().starts-with(root.keyword.to-lowercase()) || tool.description.starts-with(root.keyword));
-                                height: ((root.category == "全部" || tool.category == root.category) && (root.keyword == "" || tool.name.to-lowercase().starts-with(root.keyword.to-lowercase()) || tool.description.starts-with(root.keyword))) ? 84px : 0px; border-radius: 11px; background: Theme.accent-soft;
-                                Text { x: 14px; y: 12px; width: parent.width - 28px; height: 22px; text: tool.name; color: Theme.text; font-size: 15px; font-weight: 600; overflow: elide; }
-                                Text { x: 14px; y: 39px; width: parent.width - 28px; height: 34px; text: tool.description == "" ? "已启用的运行时能力" : tool.description; color: Theme.muted; font-size: 12px; wrap: word-wrap; overflow: elide; }
-                            }
-                            if root.tools.length == 0 : Text { height: 72px; text: root.loading ? "正在加载工具…" : "未加载到可用工具"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                spacing: 0px;
+                HorizontalLayout {
+                    height: 62px; padding-left: 14px; padding-right: 14px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
+                    VerticalLayout { spacing: 1px; Text { height: 25px; text: root.category == "全部" ? "全部工具" : root.category; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; } Text { height: 17px; text: root.tools.length + " 项能力 · 工具权限由本地运行时统一管理"; color: Theme.muted; font-size: 11px; overflow: elide; } }
+                    Rectangle { horizontal-stretch: 1; }
+                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.loading; clicked => { root.refresh(); } }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                ScrollView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { alignment: start; padding-top: 14px; padding-right: 22px; padding-bottom: 20px; padding-left: 22px; spacing: 8px;
+                        for tool in root.tools : Rectangle {
+                            visible: (root.category == "全部" || tool.category == root.category) && (root.keyword == "" || tool.name.to-lowercase().starts-with(root.keyword.to-lowercase()) || tool.description.starts-with(root.keyword));
+                            height: ((root.category == "全部" || tool.category == root.category) && (root.keyword == "" || tool.name.to-lowercase().starts-with(root.keyword.to-lowercase()) || tool.description.starts-with(root.keyword))) ? 84px : 0px; border-radius: 11px; background: Theme.accent-soft;
+                            Text { x: 14px; y: 12px; width: parent.width - 28px; height: 22px; text: tool.name; color: Theme.text; font-size: 15px; font-weight: 600; overflow: elide; }
+                            Text { x: 14px; y: 39px; width: parent.width - 28px; height: 34px; text: tool.description == "" ? "已启用的运行时能力" : tool.description; color: Theme.muted; font-size: 12px; wrap: word-wrap; overflow: elide; }
                         }
+                        if root.tools.length == 0 : Text { height: 72px; text: root.loading ? "正在加载工具…" : "未加载到可用工具"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
                     }
-                    Text { height: 18px; text: "工具权限由本地运行时统一管理"; color: Theme.muted; font-size: 11px; }
                 }
             }
         }
@@ -235,27 +249,43 @@ export component SettingsPage inherits Rectangle {
     in property <bool> prompt-loading: false;
     in-out property <bool> reset-confirm-open: false;
     in-out property <string> pack-name-draft;
+    in property <string> status;
     private property <int> settings-tab: 0;
     background: Theme.chat;
-    VerticalLayout {
+    HorizontalLayout {
         spacing: 0px;
-        PageHeader { title: "系统设置"; subtitle: "本地运行时、工作目录和模型配置"; icon: @image-url("../assets/icons/gear.svg"); enabled: !root.loading && !root.saving; action-label: "添加模型"; action => { root.create-model(); } }
-        HorizontalLayout { height: parent.height - 98px; padding: 16px; spacing: 14px;
-            Rectangle { width: 220px; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
-                VerticalLayout { padding: 12px; spacing: 5px;
-                    Text { height: 24px; text: "设置项目"; color: Theme.text; font-size: 13px; font-weight: 600; }
+        Rectangle {
+            width: 220px;
+            background: Theme.middle;
+            Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+            VerticalLayout {
+                spacing: 0px;
+                MiddleHeader { title: "系统设置"; subtitle: "本地运行时、工作目录和模型配置"; }
+                Rectangle { height: 14px; }
+                HorizontalLayout { padding-left: 16px; Text { height: 22px; text: "设置项目"; color: Theme.text; font-size: 13px; font-weight: 600; } }
+                Rectangle { height: 6px; }
+                VerticalLayout { alignment: start; padding-left: 8px; padding-right: 8px; spacing: 4px;
                     Action { height: 38px; width: parent.width; icon: @image-url("../assets/icons/robot.svg"); label: "模型配置"; show-label: true; selected: root.settings-tab == 0; clicked => { root.settings-tab = 0; } }
                     Action { height: 38px; width: parent.width; icon: @image-url("../assets/icons/gear.svg"); label: "本地运行时"; show-label: true; selected: root.settings-tab == 1; clicked => { root.settings-tab = 1; } }
                     Action { height: 38px; width: parent.width; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "工具与技能"; show-label: true; selected: root.settings-tab == 2; clicked => { root.settings-tab = 2; } }
                     Action { height: 38px; width: parent.width; icon: @image-url("../assets/icons/comments.svg"); label: "帮助与关于"; show-label: true; selected: root.settings-tab == 3; clicked => { root.settings-tab = 3; } }
                     Action { height: 38px; width: parent.width; icon: @image-url("../assets/icons/gear.svg"); label: "通用偏好"; show-label: true; selected: root.settings-tab == 4; clicked => { root.settings-tab = 4; } }
                     Action { height: 38px; width: parent.width; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "提示词包"; show-label: true; selected: root.settings-tab == 5; clicked => { root.settings-tab = 5; root.refresh-prompt-packs(); } }
-                    Rectangle { vertical-stretch: 1; }
-                    Text { height: 18px; text: "桌面端本地设置"; color: Theme.muted; font-size: 10px; }
                 }
+                MiddleFooter { text: root.status; }
             }
-            Rectangle { horizontal-stretch: 1; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
-                VerticalLayout {
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                spacing: 0px;
+                HorizontalLayout {
+                    height: 62px; padding-left: 14px; padding-right: 14px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
+                    VerticalLayout { spacing: 1px; Text { height: 25px; text: root.settings-tab == 0 ? "模型配置" : root.settings-tab == 1 ? "本地运行时" : root.settings-tab == 2 ? "工具与技能" : root.settings-tab == 3 ? "帮助与关于" : root.settings-tab == 4 ? "通用偏好" : "提示词包"; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; } Text { height: 17px; text: "桌面端本地设置，保存在本机配置中"; color: Theme.muted; font-size: 11px; overflow: elide; } }
+                    Rectangle { horizontal-stretch: 1; }
+                    if root.settings-tab == 0 : Action { icon: @image-url("../assets/icons/plus.svg"); label: "添加模型"; show-label: true; primary: true; enabled: !root.loading && !root.saving; clicked => { root.create-model(); } }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
                     if root.settings-tab == 1 : Rectangle { vertical-stretch: 1;
                         VerticalLayout { padding: 24px; spacing: 14px; alignment: start;
                             Text { height: 28px; text: "本地运行时"; font-size: 18px; font-weight: 700; color: Theme.text; }
@@ -273,8 +303,8 @@ export component SettingsPage inherits Rectangle {
                             Action { label: root.lan-enabled ? "停用内网通信" : "启用内网通信"; show-label: true; primary: root.lan-enabled; enabled: !root.saving && !root.loading; clicked => { root.save-lan(!root.lan-enabled, root.lan-name); } }
                         }
                     }
-                    if root.settings-tab == 0 : HorizontalLayout { height: parent.height - 16px; padding: 8px; spacing: 14px;
-                        Rectangle { width: 300px; border-radius: 10px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+                    if root.settings-tab == 0 : HorizontalLayout { vertical-stretch: 1; padding: 8px; spacing: 14px;
+                        Rectangle { width: 220px; border-radius: 10px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
                             VerticalLayout { padding: 12px; spacing: 10px;
                                 HorizontalLayout { height: 25px; Text { text: "模型配置"; color: Theme.text; font-size: 13px; font-weight: 600; } Rectangle { horizontal-stretch: 1; } Action { icon: @image-url("../assets/icons/rotate-right.svg"); enabled: !root.loading; label: "刷新"; clicked => { root.refresh(); } } }
                                 ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
@@ -291,7 +321,7 @@ export component SettingsPage inherits Rectangle {
                             }
                         }
                         Rectangle { horizontal-stretch: 1; border-radius: 10px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
-                            VerticalLayout { padding: 24px; spacing: 13px;
+                            VerticalLayout { padding: 18px; spacing: 13px;
                                 Text { height: 26px; text: root.selected-key == "" ? "模型配置" : root.selected-key; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; }
                                 Rectangle { border-radius: 9px; background: Theme.accent-soft; height: 52px; Text { x: 13px; width: parent.width - 26px; height: parent.height; text: "工作目录：" + (root.workspace-root == "" ? "正在读取…" : root.workspace-root); color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; } }
                                 Text { height: 18px; text: root.selected-key == "" ? "选择左侧模型查看配置" : (root.selected-type + " · " + root.selected-provider); color: Theme.muted; font-size: 12px; }
@@ -340,8 +370,8 @@ export component SettingsPage inherits Rectangle {
                             Rectangle { vertical-stretch: 1; }
                         }
                     }
-                    if root.settings-tab == 5 : HorizontalLayout { height: parent.height - 16px; padding: 8px; spacing: 14px;
-                        Rectangle { width: 260px; border-radius: 10px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+                    if root.settings-tab == 5 : HorizontalLayout { vertical-stretch: 1; padding: 8px; spacing: 14px;
+                        Rectangle { width: 240px; border-radius: 10px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
                             VerticalLayout { padding: 12px; spacing: 8px;
                                 HorizontalLayout { height: 24px; Text { text: "提示词包"; color: Theme.text; font-size: 13px; font-weight: 600; } Rectangle { horizontal-stretch: 1; } Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.prompt-loading; clicked => { root.refresh-prompt-packs(); } } }
                                 ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
@@ -361,8 +391,10 @@ export component SettingsPage inherits Rectangle {
                         Rectangle { horizontal-stretch: 1; border-radius: 10px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
                             VerticalLayout { padding: 18px; spacing: 10px;
                                 HorizontalLayout { height: 26px; Text { text: root.selected-pack == "" ? "分段编辑" : "分段编辑 · " + root.selected-pack; color: Theme.text; font-size: 15px; font-weight: 700; overflow: elide; } Rectangle { horizontal-stretch: 1; } Text { text: root.prompt-readonly ? "只读（内置包）" : "可编辑"; color: root.prompt-readonly ? Theme.muted : #16845d; font-size: 11px; vertical-alignment: center; } }
-                                HorizontalLayout { height: 30px; spacing: 6px;
-                                    for segment[index] in [{key: "role", label: "角色"}, {key: "engineering", label: "工程"}, {key: "tools_protocol", label: "工具协议"}, {key: "skills_protocol", label: "技能协议"}, {key: "memory", label: "记忆"}, {key: "extra", label: "附加"}] : Action { label: segment.label; show-label: true; enabled: root.selected-pack != ""; selected: root.selected-segment == index; clicked => { root.selected-segment = index; root.select-prompt-pack(root.selected-pack); } } }
+                                ScrollView { height: 34px; vertical-scrollbar-policy: always-off; horizontal-scrollbar-policy: as-needed;
+                                    HorizontalLayout { spacing: 6px;
+                                        for segment[index] in [{key: "role", label: "角色"}, {key: "engineering", label: "工程"}, {key: "tools_protocol", label: "工具协议"}, {key: "skills_protocol", label: "技能协议"}, {key: "memory", label: "记忆"}, {key: "extra", label: "附加"}] : Action { width: 92px; label: segment.label; show-label: true; enabled: root.selected-pack != ""; selected: root.selected-segment == index; clicked => { root.selected-segment = index; root.select-prompt-pack(root.selected-pack); } } }
+                                }
                                 TextEditBase { vertical-stretch: 1; text <=> root.prompt-draft; read-only: root.prompt-readonly || root.prompt-loading; wrap: word-wrap; foreground: Theme.text; font-size: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; border-radius: 8px; }
                                 HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; } Action { width: 96px; label: "保存分段"; show-label: true; primary: true; enabled: !root.prompt-readonly && !root.prompt-loading && root.selected-pack != ""; clicked => { root.save-prompt-segment(); } } }
                             }
@@ -371,5 +403,4 @@ export component SettingsPage inherits Rectangle {
                 }
             }
         }
-    }
 }

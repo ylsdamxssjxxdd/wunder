@@ -17,31 +17,36 @@ const resolveTimestampIso = (value: number): string => new Date(value).toISOStri
 
 const settleTerminalAssistantStatus = (
   message,
-  terminalStatus: 'final' | 'failed'
+  terminalStatus: 'final' | 'failed' | 'cancelled'
 ): boolean => {
   const status = String(message?.status || '').trim().toLowerCase();
   if (!TERMINAL_SETTLED_ASSISTANT_STATUS_SET.has(status)) return false;
   message.status = terminalStatus;
   message.final = terminalStatus === 'final';
   message.failed = terminalStatus === 'failed' ? true : Boolean(message.failed);
-  message.cancelled = false;
+  message.cancelled = terminalStatus === 'cancelled';
   return true;
 };
 
 export const settleTerminalAssistantArtifacts = (
   messages,
-  options: { failed?: boolean } = {}
+  options: { failed?: boolean; cancelled?: boolean } = {}
 ): boolean => {
   if (!Array.isArray(messages) || messages.length === 0) return false;
-  const terminalWorkflowStatus = options.failed === true ? 'failed' : 'completed';
-  const terminalSubagentStatus = options.failed === true ? 'failed' : 'completed';
+  const terminalStatus = options.failed === true
+    ? 'failed'
+    : options.cancelled === true
+      ? 'cancelled'
+      : 'final';
+  const terminalWorkflowStatus = terminalStatus === 'final' ? 'completed' : terminalStatus;
+  const terminalSubagentStatus = terminalStatus === 'final' ? 'completed' : terminalStatus;
   const nowMs = Date.now();
   const updatedAt = resolveTimestampIso(nowMs);
   let changed = false;
 
   messages.forEach((message) => {
     if (!message || message.role !== 'assistant') return;
-    if (settleTerminalAssistantStatus(message, options.failed === true ? 'failed' : 'final')) {
+    if (settleTerminalAssistantStatus(message, terminalStatus)) {
       changed = true;
     }
     if (stopPendingAssistantMessage(message)) {
@@ -68,7 +73,7 @@ export const settleTerminalAssistantArtifacts = (
         active || !status
           ? terminalSubagentStatus
           : status;
-      const nextFailed = options.failed === true ? true : Boolean(item.failed);
+      const nextFailed = terminalStatus === 'failed' ? true : Boolean(item.failed);
       const nextTerminal = true;
       const nextCanTerminate = false;
       const nextUpdatedAtMs = Math.max(Number(item.updated_at_ms || 0), nowMs);

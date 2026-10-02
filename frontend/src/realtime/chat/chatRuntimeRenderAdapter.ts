@@ -690,7 +690,10 @@ const settleTerminalMaterializedArtifacts = (
   status: ChatRuntimeMessageStatus
 ): void => {
   if (isRuntimeMessageActive(status)) return;
-  const terminalStatus = status === 'final' ? 'completed' : 'failed';
+  // Stopping a turn is terminal, but it is neither an execution failure nor a
+  // reason to erase the already completed workflow history from its bubble.
+  const terminalStatus = status === 'final' ? 'completed' :
+    status === 'cancelled' ? 'cancelled' : 'failed';
   if (Array.isArray(message.workflowItems)) {
     message.workflowItems.forEach((item) => {
       if (!isPlainRecord(item)) return;

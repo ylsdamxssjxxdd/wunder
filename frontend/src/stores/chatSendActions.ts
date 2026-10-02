@@ -1,3 +1,4 @@
+import { applyChatThreadEffects, syncChatThreadShell } from './chatThreadEffects';
 import { defineStore } from 'pinia';
 
 import {
@@ -58,7 +59,7 @@ import {
   normalizeMessageFeedback,
   normalizeMessageFeedbackVote
 } from '@/utils/messageFeedback';
-import { applyChatThreadServerEvent } from '@/realtime/chat/chatThreadRuntime';
+import { applyChatThreadServerEvent, submitChatThreadTurn, getChatThreadState } from '@/realtime/chat/chatThreadRuntime';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
@@ -214,26 +215,18 @@ const resolveQueuePayloadDetail = (
     detailSource.waitAhead,
     detailSource.active_wait_ahead,
     detailSource.activeWaitAhead,
-    detailSource.queue_ahead,
-    detailSource.queueAhead,
     approvalPayload?.wait_ahead,
     approvalPayload?.waitAhead,
     approvalPayload?.active_wait_ahead,
     approvalPayload?.activeWaitAhead,
-    approvalPayload?.queue_ahead,
-    approvalPayload?.queueAhead,
     payload?.wait_ahead,
     payload?.waitAhead,
     payload?.active_wait_ahead,
     payload?.activeWaitAhead,
-    payload?.queue_ahead,
-    payload?.queueAhead,
     payloadData.wait_ahead,
     payloadData.waitAhead,
     payloadData.active_wait_ahead,
     payloadData.activeWaitAhead,
-    payloadData.queue_ahead,
-    payloadData.queueAhead
   );
   return {
     ...(detailSource && typeof detailSource === 'object' ? detailSource : {}),
@@ -241,7 +234,6 @@ const resolveQueuePayloadDetail = (
     ...(normalizeStreamEventId(eventId) ? { event_id: normalizeStreamEventId(eventId) } : {}),
     ...(queueAhead !== null
       ? {
-          wait_ahead: queueAhead,
           queue_ahead: queueAhead
         }
       : {})
@@ -259,6 +251,8 @@ const markAssistantMessageQueued = (
   const normalizedEventType = QUEUE_WORKFLOW_EVENT_TYPES.has(eventType) ? eventType : 'queued';
   const detail = resolveQueuePayloadDetail(payload, approvalPayload, normalizedEventType, eventId);
   const queueAhead = parseQueueAheadValue(
+    detail.queue_ahead,
+    detail.queueAhead,
     detail.wait_ahead,
     detail.waitAhead,
     detail.active_wait_ahead,
@@ -292,7 +286,6 @@ const markAssistantMessageQueued = (
     sourceEventType: normalizedEventType,
     ...(queueAhead !== null
       ? {
-          wait_ahead: queueAhead,
           queue_ahead: queueAhead
         }
       : {})
@@ -311,7 +304,6 @@ const markAssistantMessageQueued = (
         sourceEventType: patch.sourceEventType,
         ...(queueAhead !== null
           ? {
-              wait_ahead: queueAhead,
               queue_ahead: queueAhead
             }
           : {})
@@ -474,6 +466,7 @@ export const chatSendActions = {
       });
       const sessionMessagesRef = this.messages;
       const assistantMessage = assistantMessageRaw;
+      submitChatThreadTurn(this, sessionId, clientMessageId, content);
       applyCanonicalClientMessageSubmittedRuntimeEvent(this, {
         sessionId,
         content,
@@ -648,7 +641,9 @@ export const chatSendActions = {
           const effectiveEventType = normalizedEventType || eventType;
           // Durable frames are the only source of timeline projection.
           if (
-            applyChatThreadServerEvent(this, sessionId, effectiveEventType, payload)
+            applyChatThreadServerEvent(this, sessionId, effectiveEventType, payload, {
+              onChangesApplied: (changes) => applyChatThreadEffects(this, sessionId, changes)
+            })
           ) {
             return;
           }
@@ -1039,6 +1034,11 @@ export const chatSendActions = {
           await pendingTerminalSnapshotSmoothing;
         }
       } catch (error) {
+        const pending = getChatThreadState(sessionId)?.turns.get(`pending:${clientMessageId}`);
+        if (pending) {
+          pending.status = error?.name === 'AbortError' ? 'cancelled' : 'failed';
+          syncChatThreadShell(this, sessionId);
+        }
         const abortReason = String(runtime?.sendAbortReason || '').trim();
         if (error?.name === 'AbortError' && (abortReason !== 'user_stop' || String(runtime?.sendRequestId || '') !== sendRequestId)) {
           recoveredByRealtime = true;
@@ -1152,7 +1152,11 @@ export const chatSendActions = {
           interruptedByStop ||
           Boolean(runtime?.stopRequested) ||
           sendControllerAlreadyCleared;
-        const terminalSeen = finalSeen || errorSeen;
+        const durableTurn = [...(getChatThreadState(sessionId)?.turns.values() ?? [])]
+          .find((turn) => turn.clientMessageId === clientMessageId);
+        finalSeen ||= durableTurn?.status === 'completed';
+        errorSeen ||= durableTurn?.status === 'failed';
+        const terminalSeen = finalSeen || errorSeen || durableTurn?.status === 'cancelled';
         let keepStreaming = recoveredByRealtime || (!stopped && !terminalSeen);
         const finishedRequestId = ownsCurrentSendState ? currentSendRequestId : sendRequestId;
         if (bootstrappingDraftSession) {

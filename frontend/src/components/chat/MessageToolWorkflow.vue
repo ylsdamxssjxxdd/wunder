@@ -136,9 +136,6 @@ import {
 } from '@/stores/commandSessions';
 import {
   buildCommandCardView,
-  buildCommandResultNote,
-  buildPatchResultNote,
-  buildPatchResultView
 } from './toolWorkflowActionViews';
 import { buildApplyPatchEmptyPreviewText } from './toolWorkflowPatchPreview';
 import { buildToolResultPreview } from './toolWorkflowPreview';
@@ -161,7 +158,6 @@ import {
 import { createToolWorkflowRenderBatcher } from './toolWorkflowRenderBatcher';
 import { shouldRenderWorkflowShell } from './toolWorkflowVisibility';
 import { useWorkflowDetailParser, WORKFLOW_DETAIL_WORKER_THRESHOLD } from './useWorkflowDetailParser';
-import { formatWorkflowDetailForDisplay } from './toolWorkflowDetailFormatter';
 import { extractToolResultDataObject } from './toolWorkflowResultPayload';
 import { chatPerf } from '@/utils/chatPerf';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
@@ -3462,33 +3458,6 @@ const buildGenericResultBlock = (
   return blocks.join('\n\n');
 };
 
-const buildApplyPatchResultLines = (patchEntries: PatchEntry[], errorText: string): PatchLine[] => {
-  const rows: PatchLine[] = [];
-  let cursor = 0;
-  const push = (kind: PatchLine['kind'], text: string) => {
-    if (!text.trim()) return;
-    rows.push({ key: `patch-result-${cursor}`, kind, text });
-    cursor += 1;
-  };
-
-  patchEntries.forEach((entry) => {
-    const kind: PatchLine['kind'] =
-      entry.kind === 'add'
-        ? 'add'
-        : entry.kind === 'delete'
-          ? 'delete'
-          : entry.kind === 'move'
-            ? 'move'
-            : entry.kind === 'other'
-              ? 'note'
-              : 'update';
-    push(kind, `${entry.sign} ${entry.text}`);
-  });
-  if (errorText) push('error', `error: ${errorText}`);
-
-  return rows;
-};
-
 const buildEmptySection = (key: string, title: string, body: string): ToolWorkflowDetailSection => ({
   key,
   title,
@@ -3499,8 +3468,85 @@ const buildEmptySection = (key: string, title: string, body: string): ToolWorkfl
   empty: true
 });
 
-const resolveRawWorkflowDetail = (item: WorkflowItem | null): string =>
-  typeof item?.detail === 'string' && item.detail.length > 0 ? item.detail : '';
+/**
+ * Build the compact user-facing result.  Tool call arguments and raw payloads
+ * remain available through the existing context-menu debug view; they must not
+ * be the default content of an expanded workflow row.
+ */
+const buildResultOnlyText = (
+  entry: RawEntry,
+  status: string,
+  errorText: string,
+  resultObject: UnknownObject | null,
+  dataObject: UnknownObject | null,
+  detailObjects: UnknownObject[]
+): string => {
+  if (status === 'failed') return errorText || t('chat.toolWorkflow.resultFailed');
+
+  const args = extractCallArgs(entry.callItem);
+  const path = pickString(
+    dataObject?.path,
+    dataObject?.file,
+    dataObject?.file_path,
+    resultObject?.path,
+    args?.path,
+    args?.file,
+    args?.file_path
+  );
+  const summary = truncateSingleLine(
+    pickString(
+      dataObject?.summary,
+      dataObject?.message,
+      dataObject?.answer,
+      resultObject?.summary,
+      resultObject?.message,
+      resultObject?.answer
+    ),
+    280
+  );
+
+  if (isReadFileTool(entry.toolName)) {
+    return path ? `${t('chat.toolWorkflow.resultRead')}: ${path}` : summary || t('chat.toolWorkflow.resultDone');
+  }
+  if (isWriteFileTool(entry.toolName)) {
+    const bytes = toInt(dataObject?.bytes, resultObject?.bytes);
+    const suffix = bytes > 0 ? ` · ${bytes} bytes` : '';
+    return path
+      ? `${t('chat.toolWorkflow.resultWritten')}: ${path}${suffix}`
+      : summary || t('chat.toolWorkflow.resultDone');
+  }
+  if (isListFilesTool(entry.toolName)) {
+    const count = toInt(dataObject?.items_count, dataObject?.count, resultObject?.count);
+    return count > 0 ? `${t('chat.toolWorkflow.resultListed')}: ${count}` : summary || t('chat.toolWorkflow.resultDone');
+  }
+  if (isSearchContentTool(entry.toolName)) {
+    const count = toInt(
+      dataObject?.returned_match_count,
+      dataObject?.hits_count,
+      dataObject?.matches_count,
+      resultObject?.count
+    );
+    return count > 0 ? `${t('chat.toolWorkflow.resultFound')}: ${count}` : summary || t('chat.toolWorkflow.resultDone');
+  }
+  if (isApplyPatchTool(entry.toolName)) {
+    const changed = toInt(dataObject?.changed_files, dataObject?.files_changed, resultObject?.changed_files);
+    return changed > 0
+      ? `${t('chat.toolWorkflow.resultPatched')}: ${changed}`
+      : summary || t('chat.toolWorkflow.resultDone');
+  }
+  if (isExecuteCommandTool(entry.toolName)) {
+    const observation = pickObservationText(...detailObjects, dataObject, resultObject);
+    const formatted = observation ? formatToolObservationText(observation) : '';
+    return formatted ? buildTextPreview(formatted, 6, 900, '') : summary || t('chat.toolWorkflow.resultDone');
+  }
+
+  const observation = pickObservationText(...detailObjects, dataObject, resultObject);
+  if (observation) {
+    const formatted = formatToolObservationText(observation);
+    if (formatted && !/^\s*[\[{]/u.test(formatted)) return buildTextPreview(formatted, 6, 900, '');
+  }
+  return summary || t('chat.toolWorkflow.resultDone');
+};
 
 const buildToolResultSection = (
   entry: RawEntry,
@@ -3513,15 +3559,22 @@ const buildToolResultSection = (
   const sectionKey = `${entry.key}-tool-result`;
   const sectionTitle = t('chat.toolWorkflow.toolResultSection');
 
-  const rawResultDetail = resolveRawWorkflowDetail(entry.resultItem);
-  const rawOutputDetail = resolveRawWorkflowDetail(entry.outputItem);
   const detailObjects = readWorkflowDetailObjects(entry.resultItem, entry.outputItem, entry.callItem);
   const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
 
+  // Keep the expanded row focused on the outcome.  Detailed arguments and
+  // payloads are intentionally available only from the debug context menu.
+  const resultOnlyText = buildResultOnlyText(
+    entry,
+    status,
+    errorText,
+    resultObject,
+    dataObject,
+    detailObjects
+  );
+
   if (isReadFileTool(entry.toolName)) {
-    const body =
-      buildReadFileContentOnlyBlock(dataObject) ||
-      buildTextPreview(pickObservationText(...detailObjects, dataObject, resultObject), 12, 1800, '');
+    const body = resultOnlyText;
     if (body) {
       return {
         key: sectionKey,
@@ -3537,14 +3590,7 @@ const buildToolResultSection = (
   }
 
   if (isWriteFileTool(entry.toolName)) {
-    const body =
-      buildTextPreview(
-        pickFileContentText(extractCallArgs(entry.callItem), ...detailObjects, dataObject, resultObject),
-        12,
-        1800,
-        ''
-      ) ||
-      buildTextPreview(pickObservationText(...detailObjects, dataObject, resultObject), 12, 1800, '');
+    const body = resultOnlyText;
     if (body) {
       return {
         key: sectionKey,
@@ -3559,23 +3605,8 @@ const buildToolResultSection = (
     return null;
   }
 
-  if (isCommandStreamVisualizationEnabled() && isExecuteCommandTool(entry.toolName)) {
-    const commandView = buildExecuteCommandView(entry, command, status, errorText, commandSession, true);
-    if (hasVisibleCommandViewContent(commandView)) {
-      return {
-        key: sectionKey,
-        title: sectionTitle,
-        kind: 'command',
-        summary: buildCommandResultNote(commandView, t),
-        body: commandView.terminalText,
-        copyText: commandView.terminalText || rawResultDetail || rawOutputDetail || undefined,
-        commandView,
-        patchLines: []
-      };
-    }
-  }
   if (isExecuteCommandTool(entry.toolName)) {
-    const compactBody = buildExecuteCommandCompactResultText(entry, command, status, errorText);
+    const compactBody = resultOnlyText || buildExecuteCommandCompactResultText(entry, command, status, errorText);
     if (compactBody) {
       return {
         key: sectionKey,
@@ -3591,52 +3622,20 @@ const buildToolResultSection = (
   }
 
   if (isApplyPatchTool(entry.toolName)) {
-    const errorText =
-      status === 'failed'
-        ? buildErrorText(entry.resultItem, null) || t('chat.toolWorkflow.applyPatchFailure.empty')
-        : '';
-    const patchEntries = buildApplyPatchEntries(entry.resultItem, entry.toolName);
-    const patchDiffBlocks = buildApplyPatchDiffBlocks(entry.callItem, entry.toolName);
-    const resultDiffFiles = buildApplyPatchResultFilesFromDiffBlocks(
-      entry.resultItem,
-      entry.toolName,
-      errorText
-    );
-    const patchFiles =
-      resultDiffFiles.length > 0
-        ? resultDiffFiles
-        : mergeApplyPatchResultFilesWithPreview(patchEntries, patchDiffBlocks, errorText);
-    const counts = resolveApplyPatchCounts(entry, patchDiffBlocks);
-    const limitedPatchFiles = limitPatchFileViews(patchFiles);
-    const patchView = {
-      ...buildPatchResultView(counts, limitedPatchFiles.files, t),
-      previewOnly: dataObject?.dry_run === true,
-      omittedFiles: Math.max(counts.changedFiles - limitedPatchFiles.files.length, limitedPatchFiles.omittedFiles)
-    };
-    const summary = buildPatchResultNote(counts, t);
-    const copyText = [resolvePatchInput(entry.callItem), rawResultDetail, rawOutputDetail]
-      .filter(Boolean)
-      .join('\n\n')
-      .trim();
+    const copyText = resultOnlyText;
     return {
       key: sectionKey,
       title: sectionTitle,
-      kind: 'patch',
-      summary,
-      body: copyText,
+      kind: 'text',
+      summary: resultOnlyText,
+      body: resultOnlyText,
       copyText: copyText || undefined,
       commandView: null,
-      patchLines: buildApplyPatchResultLines(patchEntries, errorText),
-      patchView
+      patchLines: []
     };
   }
 
-  const observation = buildTextPreview(
-    formatToolObservationText(pickObservationText(...detailObjects, dataObject, resultObject)),
-    12,
-    1800,
-    ''
-  );
+  const observation = resultOnlyText;
   if (observation) {
     return {
       key: sectionKey,
@@ -3664,27 +3663,14 @@ const buildToolResultSection = (
     };
   }
 
-  if (rawResultDetail) {
-    const displayResultDetail = (rawResultDetail.length >= WORKFLOW_DETAIL_WORKER_THRESHOLD ? detailParser.format(rawResultDetail) : formatWorkflowDetailForDisplay(rawResultDetail));
+  // Never fall back to rendering raw JSON in the user view.
+  if (resultOnlyText) {
     return {
       key: sectionKey,
       title: sectionTitle,
       kind: 'text',
-      body: displayResultDetail,
-      copyText: rawResultDetail,
-      commandView: null,
-      patchLines: []
-    };
-  }
-
-  if (rawOutputDetail) {
-    const displayOutputDetail = (rawOutputDetail.length >= WORKFLOW_DETAIL_WORKER_THRESHOLD ? detailParser.format(rawOutputDetail) : formatWorkflowDetailForDisplay(rawOutputDetail));
-    return {
-      key: sectionKey,
-      title: sectionTitle,
-      kind: 'text',
-      body: displayOutputDetail,
-      copyText: rawOutputDetail,
+      body: resultOnlyText,
+      copyText: resultOnlyText,
       commandView: null,
       patchLines: []
     };

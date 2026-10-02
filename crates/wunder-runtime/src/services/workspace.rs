@@ -1330,6 +1330,13 @@ impl WorkspaceManager {
             .map(|seq| seq.max(0))
     }
 
+    /// I5 atomic snapshot (根治方案): `{cursor,turns,items,blocks,item_total}`
+    /// read in one transaction. Used for full reload when the durable change
+    /// window was trimmed and no cursor can safely replay.
+    pub fn try_load_thread_snapshot(&self, user_id: &str, session_id: &str) -> Result<Value> {
+        self.storage.thread_snapshot(user_id, session_id)
+    }
+
     /// Compatibility projection for non-chat diagnostics only.
     pub fn load_stream_events(
         &self,

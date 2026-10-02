@@ -88,6 +88,23 @@ const workflowIds = (message: { workflowItems?: unknown } | null | undefined): u
     : [];
 };
 
+test('durable queue item keeps one queued assistant bubble and preserves queue_ahead', () => {
+  const state = emptyChatThreadState('queue-session');
+  applyFrames(state, [
+    turnUpsert(1, { turn_id: 'turn-queue', user_round: 1, status: 'queued', content: 'Queue this request.' }),
+    itemUpsert(2, { item_id: 'turn-queue:user', turn_id: 'turn-queue', kind: 'user_message',
+      role: 'user', content: 'Queue this request.', visibility: 'user', status: 'completed', revision: 1, user_round: 1 }),
+    itemUpsert(3, { item_id: 'turn-queue:queue-task', turn_id: 'turn-queue', kind: 'queue',
+      event_type: 'queue_update', queue_ahead: 3, wait_ahead: 5, visibility: 'user', status: 'queued', revision: 1 })
+  ]);
+  const messages = buildChatThreadRenderableMessages(state);
+  const assistants = messages.filter(message => message.role === 'assistant');
+  assert.equal(assistants.length, 1);
+  assert.equal(assistants[0].status, 'queued');
+  assert.equal((assistants[0].workflowItems?.[0] as Record<string, unknown>)?.queue_ahead, 3);
+  assert.equal((assistants[0].workflowItems?.[0] as Record<string, unknown>)?.isTool, false);
+});
+
 /** Registration-order independent shape: identity, text, status, cards. */
 const projectionShape = (messages: ReturnType<typeof buildChatThreadRenderableMessages>) =>
   messages.map((message) => ({
@@ -104,7 +121,7 @@ const projectionShape = (messages: ReturnType<typeof buildChatThreadRenderableMe
     workflowIds: workflowIds(message)
   }));
 
-test('chat thread projection emits one bubble per model round in order', () => {
+test('chat thread projection emits one assistant bubble per user turn', () => {
   const state = emptyChatThreadState('session-projection-rounds');
   applyFrames(state, [
     turnUpsert(1, { turn_id: 'turn-1', user_round: 0, status: 'running', content: 'question' }),
@@ -117,21 +134,16 @@ test('chat thread projection emits one bubble per model round in order', () => {
 
   assert.deepEqual(messages.map((message) => message.id), [
     'tturn:turn-1:user',
-    'titem:turn-1:text-0',
-    'titem:turn-1:text-1'
+    'tturn:turn-1:assistant'
   ]);
   assert.deepEqual(messages.map((message) => message.content), [
     'question',
-    'round zero',
-    'round one'
+    'round zero\n\nround one'
   ]);
-  // Two separate bubbles: the later round never overwrites the earlier one.
+  // Model rounds are sections within the one durable turn bubble.
   assert.equal(messages[1].role, 'assistant');
-  assert.equal(messages[2].role, 'assistant');
-  assert.notEqual(messages[1].id, messages[2].id);
   assert.equal(messages[1].userTurnId, 'turn-1');
-  assert.equal(messages[1].modelTurnId, 'turn-1:round-0');
-  assert.equal(messages[2].modelTurnId, 'turn-1:round-1');
+  assert.equal(messages[1].modelTurnId, 'turn-1:assistant');
 });
 
 test('chat thread projection renders the user bubble from turn content', () => {
@@ -203,7 +215,47 @@ test('chat thread projection composes blocks plus tail and propagates turn compl
   assert.equal(terminalBubble.content, 'Hello world');
 });
 
-test('chat thread projection groups workflow items by model round and orphans into the last bubble', () => {
+test('chat thread projection merges legacy history stats into the stable output without a duplicate bubble', () => {
+  const state = emptyChatThreadState('session-projection-history-stats');
+  applyFrames(state, [
+    turnUpsert(1, { turn_id: 'turn-1', user_round: 1, status: 'completed', content: 'q' }),
+    itemUpsert(2, textItemData('turn-1', 1, {
+      content: 'answer',
+      reasoning_content: 'durable reasoning',
+      decode_output_tokens: 12,
+      decode_duration_s: 0.4
+    })),
+    // Older persisted sessions have a random history item carrying aggregate
+    // stats. It supplements the canonical text item and remains invisible.
+    itemUpsert(3, {
+      item_id: 'history-snapshot-id', turn_id: 'turn-1', model_round: 1,
+      kind: 'assistant_message', role: 'assistant', visibility: 'user',
+      status: 'completed', revision: 1, content: 'answer',
+      meta: { message_stats: {
+        interaction_duration_s: 1.2,
+        visible_decode_speed_tps: 30,
+        contextTokens: 120,
+        toolCalls: 0
+      } }
+    })
+  ]);
+
+  const messages = buildChatThreadRenderableMessages(state);
+  const assistants = messages.filter((message) => message.role === 'assistant');
+  assert.equal(assistants.length, 1);
+  assert.equal(assistants[0].content, 'answer');
+  assert.equal(assistants[0].reasoning, 'durable reasoning');
+  assert.deepEqual(assistants[0].display?.stats, {
+    decode_output_tokens: 12,
+    decode_duration_s: 0.4,
+    interaction_duration_s: 1.2,
+    visible_decode_speed_tps: 30,
+    contextTokens: 120,
+    toolCalls: 0
+  });
+});
+
+test('chat thread projection groups all workflow items into the turn bubble', () => {
   const state = emptyChatThreadState('session-projection-workflow');
   applyFrames(state, [
     turnUpsert(1, { turn_id: 'turn-1', user_round: 0, status: 'running', content: 'q' }),
@@ -243,41 +295,39 @@ test('chat thread projection groups workflow items by model round and orphans in
 
   const messages = buildChatThreadRenderableMessages(state);
   const assistants = messages.filter((message) => message.role === 'assistant');
-  assert.equal(assistants.length, 2);
+  assert.equal(assistants.length, 1);
 
-  const roundZero = assistants[0];
-  const roundOne = assistants[1];
-  assert.deepEqual(workflowIds(roundZero), ['turn-1:tool-call-a']);
-  // Rounded items in registration order, then the model_round-less item.
-  assert.deepEqual(workflowIds(roundOne), [
-    'turn-1:tool-call-b',
+  const turnAssistant = assistants[0];
+  // All model-round and model-round-less items retain durable registration order.
+  assert.deepEqual(workflowIds(turnAssistant), [
+    'turn-1:tool-call-a',
     'turn-1:approval-x',
+    'turn-1:tool-call-b',
     'turn-1:tool-call-c'
   ]);
 
-  const callRecord = (roundZero.workflowItems as Array<Record<string, unknown>>)[0];
+  const callRecord = (turnAssistant.workflowItems as Array<Record<string, unknown>>)[0];
   assert.equal(callRecord.eventType, 'tool_call');
   assert.equal(callRecord.status, 'loading');
   assert.equal(callRecord.toolName, 'lookup');
   assert.equal(callRecord.toolCallId, 'call-a');
   assert.equal(callRecord.title, 'Tool call: lookup');
   assert.equal(callRecord.isTool, true);
-  assert.equal(callRecord.modelTurnId, roundZero.modelTurnId);
+  assert.equal(callRecord.modelTurnId, turnAssistant.modelTurnId);
 
-  const resultRecord = (roundOne.workflowItems as Array<Record<string, unknown>>)[0];
+  const resultRecord = (turnAssistant.workflowItems as Array<Record<string, unknown>>)[2];
   assert.equal(resultRecord.eventType, 'tool_result');
   assert.equal(resultRecord.status, 'completed');
   assert.equal(resultRecord.detail, 'ok result');
   assert.equal(resultRecord.title, 'Tool result: lookup');
 
-  const approvalRecord = (roundOne.workflowItems as Array<Record<string, unknown>>)[1];
+  const approvalRecord = (turnAssistant.workflowItems as Array<Record<string, unknown>>)[1];
   assert.equal(approvalRecord.eventType, 'approval_request');
   assert.equal(approvalRecord.status, 'loading');
   assert.equal(approvalRecord.title, 'Approval required: deploy');
 
   // A live turn with running tools keeps the legacy tooling semantics.
-  assert.equal(roundOne.status, 'tooling');
-  assert.equal(roundZero.status, 'tooling');
+  assert.equal(turnAssistant.status, 'tooling');
 });
 
 test('chat thread projection keeps workflow-only rounds and standalone workflow turns', () => {
@@ -302,8 +352,8 @@ test('chat thread projection keeps workflow-only rounds and standalone workflow 
   const assistants = messages.filter((message) => message.role === 'assistant');
 
   assert.deepEqual(assistants.map((message) => message.id), [
-    'titem:turn-1:text-2',
-    'titem:turn-2:text-0'
+    'tturn:turn-1:assistant',
+    'tturn:turn-2:assistant'
   ]);
   assert.equal(assistants[0].content, '');
   assert.deepEqual(workflowIds(assistants[0]), ['turn-1:tool-call-a']);
@@ -345,7 +395,7 @@ test('chat thread projection excludes admin and internal items', () => {
   const assistants = messages.filter((message) => message.role === 'assistant');
 
   assert.equal(assistants.length, 1);
-  assert.equal(assistants[0].id, 'titem:turn-1:text-0');
+  assert.equal(assistants[0].id, 'tturn:turn-1:assistant');
   assert.deepEqual(workflowIds(assistants[0]), ['turn-1:tool-call-visible']);
 });
 
@@ -383,19 +433,20 @@ test('chat thread projection is deterministic across item registration order', (
   const second = buildChatThreadRenderableMessages(buildStateB());
   const replay = buildChatThreadRenderableMessages(buildStateA());
 
-  // Round ordering defines bubbles; registration order must not reshuffle them.
+  // Turn ordering defines bubbles; registration order must not reshuffle them.
   // (createdSeq mirrors ThreadItemState.order and legitimately differs.)
   assert.deepEqual(projectionShape(second), projectionShape(first));
   assert.deepEqual(projectionShape(replay), projectionShape(first));
   assert.deepEqual(first.map((message) => message.id), [
     'tturn:turn-1:user',
-    'titem:turn-1:text-0',
-    'titem:turn-1:text-1',
-    'titem:turn-2:text-0'
+    'tturn:turn-1:assistant',
+    'tturn:turn-2:assistant'
   ]);
   // The null user_round turn sorts last deterministically.
-  assert.equal(first[3].userTurnId, 'turn-2');
-  assert.deepEqual(workflowIds(first[2]), ['turn-1:tool-call-b', 'turn-1:tool-call-c']);
+  assert.equal(first[2].userTurnId, 'turn-2');
+  assert.deepEqual(workflowIds(first[1]), [
+    'turn-1:tool-call-a', 'turn-1:tool-call-b', 'turn-1:tool-call-c'
+  ]);
 
   // Pure function: no cross-call caching, fresh arrays with equal content.
   const stateA = buildStateA();
@@ -420,7 +471,9 @@ test('chat thread projection handles empty states without throwing', () => {
     turnUpsert(1, { turn_id: 'turn-1', user_round: 0, status: 'running', content: 'plain question' })
   ]);
   const messages = buildChatThreadRenderableMessages(userOnly);
-  assert.equal(messages.length, 1);
+  assert.equal(messages.length, 2);
+  assert.equal(messages[1].role, 'assistant');
+  assert.equal(messages[1].status, 'streaming');
   assert.equal(messages[0].role, 'user');
   assert.equal(messages[0].content, 'plain question');
 });

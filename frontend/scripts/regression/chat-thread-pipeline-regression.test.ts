@@ -11,7 +11,7 @@ import {
   resetChatThreadRuntime,
   getChatThreadState
 } from '../../src/realtime/chat/chatThreadRuntime';
-import { composeItemText, getThreadTurn } from '../../src/realtime/chat/chatThreadState';
+import { applyChatThreadSnapshot, composeItemText, getThreadTurn } from '../../src/realtime/chat/chatThreadState';
 import {
   emptyChatThreadState,
   THREAD_GAP_MAX_FRAMES,
@@ -34,6 +34,50 @@ class FakeStore {
 const wireChange = (data: Record<string, unknown>) => ({ event: 'thread_change', data });
 const wireTail = (data: Record<string, unknown>) => ({ event: 'thread_item_tail', data });
 const wireAck = (data: Record<string, unknown>) => ({ event: 'stream_started', data: { session_id: SESSION, data } });
+
+test('cancelled partial text survives reload using the persisted backend block envelope', () => {
+  resetChatThreadRuntime(SESSION);
+  ensureChatThreadRuntime(SESSION);
+  const store = new FakeStore();
+  const turn = { turn_id: 'turn-cancel-block', user_round: 1, status: 'running' };
+  const item = { item_id: `${turn.turn_id}:text-1`, turn_id: turn.turn_id,
+    kind: 'assistant_message', status: 'running', revision: 1, visibility: 'user',
+    payload: { model_round: 1, role: 'assistant', content: '', reasoning: '' } };
+  let cursor = 0;
+  const commit = (change_type: string, payload: Record<string, unknown>) =>
+    applyChatThreadServerEvent(store, SESSION, 'thread_change', wireChange({
+      change_type, cursor: ++cursor, turn_id: turn.turn_id, payload
+    }));
+  commit('turn_upsert', turn);
+  commit('item_upsert', item);
+  const blocks = [
+    { field: 'content', block_index: 0, content_offset: 0, content: 'Partial 🐣' },
+    { field: 'reasoning', block_index: 0, reasoning_offset: 0, reasoning: 'Thinking.' },
+    { field: 'content', block_index: 1, content_offset: 'Partial 🐣'.length, content: ' reply.' }
+  ].map(data => ({ event: 'thread_item_block', session_id: SESSION, item_id: item.item_id,
+    field: data.field, block_index: data.block_index,
+    data: { turn_id: turn.turn_id, model_round: 1, item_id: item.item_id, ...data } }));
+  applyChatThreadServerEvent(store, SESSION, 'thread_item_tail', wireTail({
+    item_id: item.item_id, field: 'content', offset: 0, text: 'Partial 🐣 reply.'
+  }));
+  blocks.forEach(block => commit('text_block', block));
+  commit('turn_status', { ...turn, status: 'cancelled' });
+  assert.equal(composeItemText(getChatThreadState(SESSION)!, item.item_id, 'content'), 'Partial 🐣 reply.');
+  assert.equal(composeItemText(getChatThreadState(SESSION)!, item.item_id, 'reasoning'), 'Thinking.');
+  assert.equal(getChatThreadState(SESSION)!.tails.get(item.item_id)?.content, '');
+
+  // A new page has no ephemeral tails and no final full-text item to rescue it.
+  resetChatThreadRuntime(SESSION);
+  ensureChatThreadRuntime(SESSION);
+  applyChatThreadSnapshot(getChatThreadState(SESSION)!, {
+    cursor, turns: [{ ...turn, status: 'cancelled' }],
+    items: [{ ...item, status: 'cancelled' }], blocks
+  });
+  const bubble = buildChatThreadMaterializedMessages(SESSION)?.find(row => row.role === 'assistant');
+  assert.equal(bubble?.content, 'Partial 🐣 reply.');
+  assert.equal(bubble?.reasoning, 'Thinking.');
+  assert.equal(bubble?.status, 'cancelled');
+});
 
 test('v2 pipeline renders a full streaming turn from change frames', () => {
   resetChatThreadRuntime(SESSION);
@@ -133,6 +177,43 @@ test('v2 pipeline renders a full streaming turn from change frames', () => {
   assert.equal(apply('approval_request', { data: { approval_id: 'a1' } }), false);
   assert.equal(apply('queued', { data: {} }), false);
   assert.equal(apply('thread_status', { data: { thread_status: 'running' } }), false);
+});
+
+test('cancelled turn keeps partial content while accepting terminal usage settlement', () => {
+  resetChatThreadRuntime(SESSION);
+  ensureChatThreadRuntime(SESSION);
+  const store = new FakeStore();
+  const apply = (type: string, payload: unknown) =>
+    applyChatThreadServerEvent(store, SESSION, type, payload);
+
+  apply('thread_change', wireChange({
+    change_type: 'turn_upsert', turn_id: 'turn-stop', cursor: 1,
+    payload: { turn_id: 'turn-stop', user_round: 1, status: 'running', content: 'stop after partial output' }
+  }));
+  apply('thread_change', wireChange({
+    change_type: 'item_upsert', turn_id: 'turn-stop', cursor: 2, revision: 1,
+    item: { item_id: 'turn-stop:text-1', turn_id: 'turn-stop', kind: 'assistant_message', status: 'running', revision: 1,
+      visibility: 'user', payload: { model_round: 1, role: 'assistant', content: 'Partial answer.' } }
+  }));
+  apply('thread_change', wireChange({
+    change_type: 'turn_status', turn_id: 'turn-stop', cursor: 3,
+    payload: { turn_id: 'turn-stop', status: 'cancelled' }
+  }));
+  // A delayed final upsert owns the usage metadata but must not resurrect text.
+  apply('thread_change', wireChange({
+    change_type: 'item_upsert', turn_id: 'turn-stop', cursor: 4, revision: 2,
+    item: { item_id: 'turn-stop:text-1', turn_id: 'turn-stop', kind: 'assistant_message', status: 'completed', revision: 2,
+      visibility: 'user', payload: { model_round: 1, role: 'assistant', content: 'Late answer must remain hidden.',
+        meta: { message_stats: { interaction_duration_s: 2.4, visible_decode_speed_tps: 18 } } }
+    }
+  }));
+
+  const bubble = buildChatThreadMaterializedMessages(SESSION)?.find(message =>
+    String(message.id ?? message.message_id) === 'tturn:turn-stop:assistant'
+  );
+  assert.equal(bubble?.status, 'cancelled');
+  assert.equal(bubble?.content, 'Partial answer.');
+  assert.equal(Number((bubble?.stats as Record<string, unknown>)?.interaction_duration_s), 2.4);
 });
 
 test('durable pipeline reports unavailable snapshot recovery and preserves idempotency', () => {
@@ -626,7 +707,7 @@ test('tail frames validate UTF-16 offsets: zero, continuous, hole, covered and -
   assert.equal(composeItemText(state(), 'turn-t:text-1', 'content'), '你好，世界😀');
 });
 
-test('tails stay isolated per (item_id, field) across interleaved model rounds', () => {
+test('interleaved model-round tails remain isolated inside one turn assistant bubble', () => {
   resetChatThreadRuntime(SESSION);
   ensureChatThreadRuntime(SESSION);
   const store = new FakeStore();
@@ -664,12 +745,56 @@ test('tails stay isolated per (item_id, field) across interleaved model rounds',
   const messages = buildChatThreadMaterializedMessages(SESSION);
   assert.deepEqual(
     messages?.map((message) => message.content),
-    ['你好，我是', '世界！']
+    ['你好，我是\n\n世界！']
   );
   assert.equal(
     (messages?.[0] as Record<string, unknown> | undefined)?.reasoning,
     '思考'
   );
+});
+
+test('each turn materializes one assistant bubble and ignores random history snapshots', () => {
+  resetChatThreadRuntime(SESSION);
+  ensureChatThreadRuntime(SESSION);
+  const store = new FakeStore();
+  const apply = (type: string, payload: unknown) =>
+    applyChatThreadServerEvent(store, SESSION, type, payload);
+
+  apply('thread_change', wireChange({
+    change_type: 'turn_upsert', turn_id: 'turn-one', cursor: 1, revision: 1,
+    payload: { turn_id: 'turn-one', status: 'running', user_round: 1, content: '请求' }
+  }));
+  for (const [cursor, round, content] of [[2, 1, '第一轮'], [3, 2, '最终答复']] as const) {
+    apply('thread_change', wireChange({
+      change_type: 'item_upsert', turn_id: 'turn-one', cursor, revision: 1,
+      item: {
+        item_id: `turn-one:text-${round}`, turn_id: 'turn-one', kind: 'assistant_message',
+        status: 'completed', revision: 1, visibility: 'user',
+        payload: { model_round: round, role: 'assistant', content, reasoning: '' }
+      }
+    }));
+  }
+  // The old execution-history append has a random id and identical content.
+  // It remains context data only and cannot create a second visible bubble.
+  apply('thread_change', wireChange({
+    change_type: 'item_upsert', turn_id: 'turn-one', cursor: 4, revision: 1,
+    item: {
+      item_id: 'legacy-history-random-id', turn_id: 'turn-one', kind: 'assistant_message',
+      status: 'completed', revision: 1, visibility: 'user',
+      payload: { model_round: 2, role: 'assistant', content: '最终答复', reasoning: '' }
+    }
+  }));
+  apply('thread_change', wireChange({
+    change_type: 'turn_status', turn_id: 'turn-one', cursor: 5,
+    payload: { turn_id: 'turn-one', status: 'completed' }
+  }));
+
+  const messages = buildChatThreadMaterializedMessages(SESSION);
+  assert.equal(messages?.length, 2);
+  const assistant = messages?.[1] as Record<string, unknown>;
+  assert.equal(assistant.__runtime_message_id, 'tturn:turn-one:assistant');
+  assert.equal(assistant.content, '第一轮\n\n最终答复');
+  assert.equal(assistant.runtime_status, 'final');
 });
 
 test('a stale atomic snapshot is refused and keeps the durable protocol contract', async () => {

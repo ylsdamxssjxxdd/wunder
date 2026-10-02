@@ -156,6 +156,38 @@ test('terminal settle clears queued assistant placeholders after stream completi
   assert.equal(hasAssistantWaitingForCurrentOutput(messages[1]), false);
 });
 
+test('user stop preserves completed work and labels only unfinished artifacts as cancelled', () => {
+  const messages: Record<string, any>[] = [
+    { role: 'user', content: 'input' },
+    {
+      role: 'assistant',
+      content: 'Partial result retained.',
+      status: 'tooling',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      workflowItems: [
+        { eventType: 'tool_call', status: 'completed' },
+        { eventType: 'tool_call', status: 'running' }
+      ],
+      subagents: [
+        { status: 'completed', failed: false, terminal: true, canTerminate: false },
+        { status: 'running', failed: false, terminal: false, canTerminate: true }
+      ]
+    }
+  ];
+
+  assert.equal(settleTerminalAssistantArtifacts(messages, { cancelled: true }), true);
+  assert.equal(messages[1].status, 'cancelled');
+  assert.equal(messages[1].cancelled, true);
+  assert.equal(messages[1].failed, false);
+  assert.equal(messages[1].workflowItems[0].status, 'completed');
+  assert.equal(messages[1].workflowItems[1].status, 'cancelled');
+  assert.equal(messages[1].subagents[0].status, 'completed');
+  assert.equal(messages[1].subagents[0].failed, false);
+  assert.equal(messages[1].subagents[1].status, 'cancelled');
+  assert.equal(messages[1].subagents[1].failed, false);
+});
+
 test('user stop settlement clears local runtime locks that would keep composer busy', () => {
   const sessionId = 'sess_user_stop_local_settle';
   const waitingUpdatedAtMs = Date.now() - 1000;

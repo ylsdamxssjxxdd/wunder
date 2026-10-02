@@ -16,8 +16,12 @@ mod stream;
 pub use stream::{NativeChatEvent, NativeStream};
 #[path = "native_catalog.rs"]
 mod catalog;
+#[path = "native_channels.rs"]
+mod channels;
 #[path = "native_cron.rs"]
 mod cron;
+#[path = "native_plaza.rs"]
+mod plaza;
 #[path = "native_profile.rs"]
 mod profile;
 #[path = "native_prompts.rs"]
@@ -32,6 +36,12 @@ pub use catalog::{
     AgentImportOutcome, AgentRecord, AgentSettingsEdit, ToolRecord, WORKER_CARD_SCHEMA_VERSION,
 };
 pub use cron::{CronRecord, CronRunRecord, NativeCronJobEdit};
+pub use channels::{
+    ChannelAccountCard, ChannelAccountListing, ChannelBindingCard, ChannelCatalogItem,
+    ChannelLogEntry, NativeChannelAccountEdit, NativeChannelBindingEdit, WeixinQrLoginStart,
+    WeixinQrLoginStatus,
+};
+pub use plaza::{PlazaImportOutcome, PlazaItemCard};
 pub use profile::NativeProfile;
 pub use prompts::{PromptPackInfo, PromptSegmentContent};
 pub use settings::{

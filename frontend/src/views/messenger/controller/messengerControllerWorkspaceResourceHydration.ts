@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { createWorkspaceHydrationBatch } from '@/utils/workspaceHydrationBatch';
 // Workspace path resolution, resource fetching, markdown resource cards, image preview, and resource downloads.
 import type { MessengerControllerContext } from './messengerControllerContext';
 import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
@@ -56,7 +57,6 @@ import ChatComposer from '@/components/chat/ChatComposer.vue';
 import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import {
   InquiryPanel,
-  MessageCompactionDivider,
   MessageFeedbackActions,
   MessageKnowledgeCitation,
   MessageSubagentPanel,
@@ -135,9 +135,7 @@ import {
 import { hasActiveSubagentItems } from '@/utils/subagentRuntime';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import {
-  isCompactionOnlyWorkflowItems,
   isCompactionRunningFromWorkflowItems,
-  resolveLatestCompactionSnapshot
 } from '@/utils/chatCompactionWorkflow';
 import {
   isAudioRecordingSupported,
@@ -449,6 +447,8 @@ type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 export function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerControllerContext): void {
   let workspaceHydrationTimeout: number | null = null;
   let workspaceResourceCacheEpoch = 0;
+  const pendingHydration = createWorkspaceHydrationBatch();
+  let workspaceResourceGeneration = 0;
   // Requests are page-scoped: abandoned bubbles must not keep downloads alive.
   const workspaceResourceAbortControllers = new Set<AbortController>();
   const workspaceResourceInvalidations: WorkspaceResourceInvalidation[] = [];
@@ -742,6 +742,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
   ) => {
       const preview = options.preview === 'png' ? 'png' : '';
       const requestEpoch = workspaceResourceCacheEpoch;
+      const generation = workspaceResourceGeneration;
       const cacheKey = buildWorkspaceResourceCacheKey(resource.publicPath, preview, requestEpoch);
       const cached = ctx.workspaceResourceCache.get(cacheKey);
       if (cached?.objectUrl) {
@@ -761,6 +762,9 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
           }
           const params = buildWorkspaceResourceRequestParams(resource, extra);
           const response = await downloadWunderWorkspaceFile(params, { signal: controller.signal });
+          if (controller.signal.aborted || generation !== workspaceResourceGeneration) {
+              throw new DOMException('Workspace request cancelled', 'AbortError');
+          }
           try {
               const fallbackFilename = preview === 'png'
                   ? `${String(resource.filename || 'preview').replace(/\.[^.]+$/, '')}.png`
@@ -776,6 +780,9 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
                   contentType,
                   response
               );
+              if (controller.signal.aborted || generation !== workspaceResourceGeneration) {
+                  throw new DOMException('Workspace request cancelled', 'AbortError');
+              }
               const objectUrl = URL.createObjectURL(normalizedBlob);
               const entry: WorkspaceResourceCachePayload = { objectUrl, filename };
               if (isWorkspaceResourceInvalidatedSince(resource, requestEpoch)) {
@@ -792,12 +799,14 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
               return entry;
           }
           catch (error) {
-              ctx.workspaceResourceCache.delete(cacheKey);
+              if (ctx.workspaceResourceCache.get(cacheKey)?.promise === promise) {
+                  ctx.workspaceResourceCache.delete(cacheKey);
+              }
               throw error;
           }
       })()
           .catch((error) => {
-          ctx.workspaceResourceCache.delete(cacheKey);
+          if (ctx.workspaceResourceCache.get(cacheKey)?.promise === promise) ctx.workspaceResourceCache.delete(cacheKey);
           throw error;
       })
           .finally(() => {
@@ -898,6 +907,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       card.dataset.workspaceState = 'loading';
       card.classList.remove('is-error');
       card.classList.remove('is-ready');
+      const generation = workspaceResourceGeneration;
       const hydrationEpoch = workspaceResourceCacheEpoch;
       card.dataset.workspaceHydrationEpoch = String(hydrationEpoch);
       const loadingTimerId = scheduleWorkspaceLoadingLabel(card, status, ctx.t('chat.resourceImageLoading'));
@@ -905,7 +915,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
           const entry = await ctx.fetchWorkspaceResource(resource, {
               preview: isMetafileImagePath(resource.filename) ? 'png' : undefined
           });
-          if (String(card.dataset.workspaceHydrationEpoch || '') !== String(hydrationEpoch)) {
+          if (generation !== workspaceResourceGeneration || String(card.dataset.workspaceHydrationEpoch || '') !== String(hydrationEpoch)) {
               revokeUncachedWorkspaceObjectUrl(entry.objectUrl);
               return;
           }
@@ -925,7 +935,11 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
           });
       }
       catch (error) {
+          if (generation !== workspaceResourceGeneration ||
+              String(card.dataset.workspaceHydrationEpoch || '') !== String(hydrationEpoch)) return;
           await hydrateWorkspaceResourceErrorDiagnostics(error);
+          if (generation !== workspaceResourceGeneration ||
+              String(card.dataset.workspaceHydrationEpoch || '') !== String(hydrationEpoch)) return;
           markWorkspaceImageCardError(card, status, loadingTimerId, ctx.isWorkspaceResourceMissing(error)
               ? ctx.t('chat.resourceMissing')
               : ctx.t('chat.resourceImageFailed'), resolveWorkspaceResourceErrorDiagnostics(error));
@@ -985,14 +999,14 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       if (ctx.sessionHub.activeSection !== 'messages') {
           return;
       }
-      if (ctx.workspaceResourceHydrationFrame !== null || ctx.workspaceResourceHydrationPending)
+      pendingHydration.add(options.messageKeys);
+      if (ctx.workspaceResourceHydrationFrame !== null || ctx.workspaceResourceHydrationPending ||
+          workspaceHydrationTimeout !== null)
           return;
-      if (typeof window !== 'undefined' && workspaceHydrationTimeout !== null) {
-          window.clearTimeout(workspaceHydrationTimeout);
-          workspaceHydrationTimeout = null;
-      }
       ctx.workspaceResourceHydrationPending = true;
+      const generation = workspaceResourceGeneration;
       void nextTick(() => {
+          if (generation !== workspaceResourceGeneration) return;
           ctx.workspaceResourceHydrationPending = false;
           if (ctx.workspaceResourceHydrationFrame !== null || typeof window === 'undefined')
               return;
@@ -1010,7 +1024,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
                           activeConversationKey: ctx.sessionHub.activeConversationKey
                       });
                   }
-                  ctx.hydrateWorkspaceResources(options);
+                  ctx.hydrateWorkspaceResources(pendingHydration.take());
               });
           }, ctx.desktopMode?.value ? 180 : 90);
       });
@@ -1040,6 +1054,8 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
   };
 
   ctx.clearWorkspaceResourceCache = () => {
+      workspaceResourceGeneration += 1;
+      pendingHydration.clear();
       abortWorkspaceResourceRequests();
       ctx.resetWorkspaceResourceCards();
       if (typeof window !== 'undefined' && workspaceHydrationTimeout !== null) {
@@ -1585,3 +1601,4 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       }
   };
 }
+

@@ -30,7 +30,7 @@ wunder 的内置工具已经不再是“每个工具各回各的格式”。大�
 - 顶层 `summary`
 - 顶层 `data`
 
-也就是说，**业务结果优先在 `data` 里取**。`src/services/tools.rs` 里已经有 `tool_result_data()` / `tool_result_field()` 这种兼容读取方式，文档也应按这个约定来理解。
+也就是说，**业务结果优先在 `data` 里取**。`crates/wunder-runtime/src/services/tools.rs` 里已经有 `tool_result_data()` / `tool_result_field()` 这种兼容读取方式，文档也应按这个约定来理解。
 
 ## 统一成功返回
 

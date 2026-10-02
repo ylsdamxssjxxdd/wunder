@@ -200,7 +200,7 @@ fn build_weixin_qr_png_bytes(raw_qrcode: &str) -> Option<Vec<u8>> {
     Some(cursor.into_inner())
 }
 
-fn build_weixin_qr_png_data_uri(raw_qrcode: &str) -> Option<String> {
+pub fn build_weixin_qr_png_data_uri(raw_qrcode: &str) -> Option<String> {
     let bytes = build_weixin_qr_png_bytes(raw_qrcode)?;
     let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
     Some(format!("data:image/png;base64,{encoded}"))
@@ -341,110 +341,110 @@ struct ChannelAccountsQuery {
 }
 
 #[derive(Debug, Deserialize)]
-struct ChannelAccountUpsertRequest {
-    channel: String,
+pub struct ChannelAccountUpsertRequest {
+    pub channel: String,
     #[serde(default)]
-    account_id: Option<String>,
+    pub account_id: Option<String>,
     #[serde(default)]
-    create_new: Option<bool>,
+    pub create_new: Option<bool>,
     #[serde(default)]
-    agent_id: Option<String>,
+    pub agent_id: Option<String>,
     #[serde(default)]
-    account_name: Option<String>,
+    pub account_name: Option<String>,
     #[serde(default)]
-    app_id: Option<String>,
+    pub app_id: Option<String>,
     #[serde(default)]
-    app_secret: Option<String>,
+    pub app_secret: Option<String>,
     #[serde(default)]
-    receive_group_chat: Option<bool>,
+    pub receive_group_chat: Option<bool>,
     #[serde(default)]
-    enabled: Option<bool>,
+    pub enabled: Option<bool>,
     #[serde(default)]
-    domain: Option<String>,
+    pub domain: Option<String>,
     #[serde(default)]
-    peer_kind: Option<String>,
+    pub peer_kind: Option<String>,
     #[serde(default)]
-    config: Option<Value>,
+    pub config: Option<Value>,
     #[serde(default)]
-    feishu: Option<FeishuAccountPayload>,
+    pub feishu: Option<FeishuAccountPayload>,
     #[serde(default)]
-    wechat: Option<WechatAccountPayload>,
+    pub wechat: Option<WechatAccountPayload>,
     #[serde(default)]
-    wechat_mp: Option<WechatMpAccountPayload>,
+    pub wechat_mp: Option<WechatMpAccountPayload>,
     #[serde(default)]
-    weixin: Option<WeixinAccountPayload>,
+    pub weixin: Option<WeixinAccountPayload>,
 }
 
 #[derive(Debug, Deserialize)]
-struct FeishuAccountPayload {
+pub struct FeishuAccountPayload {
     #[serde(default)]
-    app_id: Option<String>,
+    pub app_id: Option<String>,
     #[serde(default)]
-    app_secret: Option<String>,
+    pub app_secret: Option<String>,
     #[serde(default)]
-    domain: Option<String>,
+    pub domain: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct WechatAccountPayload {
+pub struct WechatAccountPayload {
     #[serde(default)]
-    corp_id: Option<String>,
+    pub corp_id: Option<String>,
     #[serde(default)]
-    agent_id: Option<String>,
+    pub agent_id: Option<String>,
     #[serde(default)]
-    secret: Option<String>,
+    pub secret: Option<String>,
     #[serde(default)]
-    token: Option<String>,
+    pub token: Option<String>,
     #[serde(default)]
-    encoding_aes_key: Option<String>,
+    pub encoding_aes_key: Option<String>,
     #[serde(default)]
-    domain: Option<String>,
+    pub domain: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct WechatMpAccountPayload {
+pub struct WechatMpAccountPayload {
     #[serde(default)]
-    app_id: Option<String>,
+    pub app_id: Option<String>,
     #[serde(default)]
-    app_secret: Option<String>,
+    pub app_secret: Option<String>,
     #[serde(default)]
-    token: Option<String>,
+    pub token: Option<String>,
     #[serde(default)]
-    encoding_aes_key: Option<String>,
+    pub encoding_aes_key: Option<String>,
     #[serde(default)]
-    original_id: Option<String>,
+    pub original_id: Option<String>,
     #[serde(default)]
-    domain: Option<String>,
+    pub domain: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct WeixinAccountPayload {
+pub struct WeixinAccountPayload {
     #[serde(default, alias = "apiBase")]
-    api_base: Option<String>,
+    pub api_base: Option<String>,
     #[serde(default, alias = "cdnBase")]
-    cdn_base: Option<String>,
+    pub cdn_base: Option<String>,
     #[serde(default, alias = "botToken")]
-    bot_token: Option<String>,
+    pub bot_token: Option<String>,
     #[serde(default, alias = "ilinkBotId")]
-    ilink_bot_id: Option<String>,
+    pub ilink_bot_id: Option<String>,
     #[serde(default, alias = "ilinkUserId")]
-    ilink_user_id: Option<String>,
+    pub ilink_user_id: Option<String>,
     #[serde(default, alias = "botType")]
-    bot_type: Option<String>,
+    pub bot_type: Option<String>,
     #[serde(default, alias = "longConnectionEnabled")]
-    long_connection_enabled: Option<bool>,
+    pub long_connection_enabled: Option<bool>,
     #[serde(default, alias = "pollTimeoutMs")]
-    poll_timeout_ms: Option<u64>,
+    pub poll_timeout_ms: Option<u64>,
     #[serde(default, alias = "apiTimeoutMs")]
-    api_timeout_ms: Option<u64>,
+    pub api_timeout_ms: Option<u64>,
     #[serde(default, alias = "maxConsecutiveFailures")]
-    max_consecutive_failures: Option<u64>,
+    pub max_consecutive_failures: Option<u64>,
     #[serde(default, alias = "backoffMs")]
-    backoff_ms: Option<u64>,
+    pub backoff_ms: Option<u64>,
     #[serde(default, alias = "routeTag")]
-    route_tag: Option<String>,
+    pub route_tag: Option<String>,
     #[serde(default, alias = "allowFrom")]
-    allow_from: Option<Vec<String>>,
+    pub allow_from: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -462,19 +462,19 @@ struct ChannelBindingsQuery {
 }
 
 #[derive(Debug, Deserialize)]
-struct ChannelBindingUpsertRequest {
-    channel: String,
-    account_id: String,
-    peer_kind: String,
-    peer_id: String,
+pub struct ChannelBindingUpsertRequest {
+    pub channel: String,
+    pub account_id: String,
+    pub peer_kind: String,
+    pub peer_id: String,
     #[serde(default)]
-    agent_id: Option<String>,
+    pub agent_id: Option<String>,
     #[serde(default)]
-    tool_overrides: Option<Vec<String>>,
+    pub tool_overrides: Option<Vec<String>>,
     #[serde(default)]
-    enabled: Option<bool>,
+    pub enabled: Option<bool>,
     #[serde(default)]
-    priority: Option<i64>,
+    pub priority: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -491,25 +491,25 @@ struct WeixinQrRenderQuery {
 }
 
 #[derive(Debug, Deserialize)]
-struct WeixinQrStartRequest {
+pub struct WeixinQrStartRequest {
     #[serde(default, alias = "accountId")]
-    account_id: Option<String>,
+    pub account_id: Option<String>,
     #[serde(default, alias = "apiBase")]
-    api_base: Option<String>,
+    pub api_base: Option<String>,
     #[serde(default, alias = "botType")]
-    bot_type: Option<String>,
+    pub bot_type: Option<String>,
     #[serde(default)]
-    force: Option<bool>,
+    pub force: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
-struct WeixinQrWaitRequest {
+pub struct WeixinQrWaitRequest {
     #[serde(alias = "sessionKey")]
-    session_key: String,
+    pub session_key: String,
     #[serde(default, alias = "apiBase")]
-    api_base: Option<String>,
+    pub api_base: Option<String>,
     #[serde(default, alias = "timeoutMs")]
-    timeout_ms: Option<u64>,
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -601,13 +601,9 @@ async fn render_weixin_qr_image(
     ))
 }
 
-async fn list_channel_accounts(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Query(query): Query<ChannelAccountsQuery>,
-) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
-    let user_id = resolved.user.user_id.clone();
+/// The user channel surface is only available when channels or the gateway is
+/// enabled; both the HTTP handlers and the façade share this gate.
+async fn ensure_user_channels_enabled(state: &Arc<AppState>) -> ChannelServiceResult<()> {
     let config = state.config_store.get().await;
     if !config.channels.enabled && !config.gateway.enabled {
         return Err(error_response(
@@ -615,14 +611,22 @@ async fn list_channel_accounts(
             "channels disabled".to_string(),
         ));
     }
+    Ok(())
+}
 
-    let channel_filter = query
-        .channel
-        .as_deref()
+/// Shared user-channel service: lists accounts owned by the user with
+/// secret-free config previews. The HTTP handler and the native desktop façade
+/// both go through this function.
+pub async fn list_user_channel_accounts(
+    state: &Arc<AppState>,
+    user_id: &str,
+    channel: Option<&str>,
+) -> ChannelServiceResult<Value> {
+    let channel_filter = channel
         .map(|value| normalize_user_channel(Some(value)))
         .transpose()?;
 
-    let account_keys = list_owned_account_keys(&state, &user_id, channel_filter.as_deref())?;
+    let account_keys = list_owned_account_keys(state, user_id, channel_filter.as_deref())?;
     let mut items = Vec::new();
     for (channel, account_id) in account_keys {
         let record = state
@@ -633,7 +637,7 @@ async fn list_channel_accounts(
             continue;
         };
 
-        let binding_pref = load_user_binding_pref(&state, &user_id, &channel, &account_id)?;
+        let binding_pref = load_user_binding_pref(state, user_id, &channel, &account_id)?;
         items.push(build_user_account_item(
             &channel,
             &account_id,
@@ -645,28 +649,37 @@ async fn list_channel_accounts(
         ));
     }
 
-    Ok(Json(json!({ "data": {
+    Ok(json!({
         "items": items,
         "supported_channels": supported_user_channel_items(),
-    } })))
+    }))
 }
 
-async fn upsert_channel_account(
+async fn list_channel_accounts(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Query(query): Query<ChannelActionQuery>,
-    Json(payload): Json<ChannelAccountUpsertRequest>,
+    Query(query): Query<ChannelAccountsQuery>,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
-    let config = state.config_store.get().await;
-    if !config.channels.enabled && !config.gateway.enabled {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            "channels disabled".to_string(),
-        ));
-    }
+    ensure_user_channels_enabled(&state)
+        .await
+        .map_err(channel_service_response)?;
+    let data = list_user_channel_accounts(&state, &user_id, query.channel.as_deref())
+        .await
+        .map_err(channel_service_response)?;
+    Ok(Json(json!({ "data": data })))
+}
 
+/// Shared user-channel service: creates or updates one owned account. Field
+/// validation, secret retention (an empty secret keeps the stored value) and
+/// default binding sync stay identical to the HTTP path.
+pub async fn upsert_user_channel_account(
+    state: &Arc<AppState>,
+    user: &crate::storage::UserAccountRecord,
+    user_id: &str,
+    payload: ChannelAccountUpsertRequest,
+) -> ChannelServiceResult<Value> {
     let channel = normalize_user_channel(Some(payload.channel.as_str()))?;
     let requested_agent_id = payload
         .agent_id
@@ -686,7 +699,7 @@ async fn upsert_channel_account(
             .user_store
             .get_user_agent_access(&user_id)
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        if !is_agent_allowed(&resolved.user, access.as_ref(), &record) {
+        if !is_agent_allowed(user, access.as_ref(), &record) {
             return Err(error_response(
                 StatusCode::NOT_FOUND,
                 i18n::t("error.agent_not_found"),
@@ -1446,7 +1459,7 @@ async fn upsert_channel_account(
         } else {
             map.insert("agent_id".to_string(), Value::Null);
         }
-        map.insert("owner_user_id".to_string(), Value::String(user_id.clone()));
+        map.insert("owner_user_id".to_string(), Value::String(user_id.to_string()));
     }
 
     let agent_id_for_binding = requested_agent_id.clone().or(existing_agent_id);
@@ -1554,7 +1567,7 @@ async fn upsert_channel_account(
         }
     }
 
-    let item = build_user_account_item(
+    Ok(build_user_account_item(
         &channel,
         &account_id,
         &status,
@@ -1562,19 +1575,34 @@ async fn upsert_channel_account(
         Some(now),
         &config_value,
         Some(&selected_peer_kind),
-    );
-
-    Ok(Json(json!({ "data": item })))
+    ))
 }
 
-async fn start_weixin_qr_login(
+async fn upsert_channel_account(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<ChannelActionQuery>,
-    Json(payload): Json<WeixinQrStartRequest>,
+    Json(payload): Json<ChannelAccountUpsertRequest>,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
+    ensure_user_channels_enabled(&state)
+        .await
+        .map_err(channel_service_response)?;
+    let item = upsert_user_channel_account(&state, &resolved.user, &user_id, payload)
+        .await
+        .map_err(channel_service_response)?;
+    Ok(Json(json!({ "data": item })))
+}
+
+/// Shared weixin QR login service: opens a login session and returns the raw
+/// qrcode text plus a locally rendered PNG data URI, so native clients never
+/// depend on the remote preview URL.
+pub async fn start_user_weixin_qr_login(
+    state: &Arc<AppState>,
+    user_id: &str,
+    payload: WeixinQrStartRequest,
+) -> ChannelServiceResult<Value> {
     let account_id = payload
         .account_id
         .as_deref()
@@ -1588,7 +1616,7 @@ async fn start_weixin_qr_login(
     let mut account_bot_type: Option<String> = None;
 
     if let Some(target_account_id) = account_id.as_deref() {
-        if !user_owns_channel_account(&state, &user_id, USER_CHANNEL_WEIXIN, target_account_id)? {
+        if !user_owns_channel_account(state, user_id, USER_CHANNEL_WEIXIN, target_account_id)? {
             return Err(error_response(
                 StatusCode::FORBIDDEN,
                 i18n::t("error.permission_denied"),
@@ -1653,7 +1681,7 @@ async fn start_weixin_qr_login(
                     refreshed.qrcode_url = preview_qrcode_url.clone();
                     save_weixin_qr_session(refreshed);
                 }
-                return Ok(Json(json!({ "data": {
+                return Ok(json!({
                     "session_key": existing.session_key,
                     "qrcode": existing.qrcode,
                     "qrcode_url": preview_qrcode_url,
@@ -1661,7 +1689,7 @@ async fn start_weixin_qr_login(
                     "api_base": existing.api_base,
                     "bot_type": existing.bot_type,
                     "cached": true,
-                }})));
+                }));
             }
         }
     }
@@ -1704,7 +1732,7 @@ async fn start_weixin_qr_login(
 
     let session = WeixinQrSession {
         session_key: session_key.clone(),
-        user_id: user_id.clone(),
+        user_id: user_id.to_string(),
         qrcode: qrcode.clone(),
         qrcode_url: qrcode_url.clone(),
         qrcode_open_url: raw_qrcode_url.clone(),
@@ -1722,24 +1750,38 @@ async fn start_weixin_qr_login(
         format!("weixin qr login started: session_key={session_key}"),
     );
 
-    Ok(Json(json!({ "data": {
+    Ok(json!({
         "session_key": session_key,
         "qrcode": qrcode,
         "qrcode_url": qrcode_url,
         "qrcode_open_url": raw_qrcode_url,
         "api_base": api_base,
         "bot_type": bot_type,
-    }})))
+    }))
 }
 
-async fn wait_weixin_qr_login(
+async fn start_weixin_qr_login(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<ChannelActionQuery>,
-    Json(payload): Json<WeixinQrWaitRequest>,
+    Json(payload): Json<WeixinQrStartRequest>,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
+    let data = start_user_weixin_qr_login(&state, &user_id, payload)
+        .await
+        .map_err(channel_service_response)?;
+    Ok(Json(json!({ "data": data })))
+}
+
+/// Shared weixin QR login service: long-polls one confirmation window. The
+/// desktop façade calls it with short timeouts so the user can cancel between
+/// polls; status, expiry and ownership semantics stay identical to HTTP.
+pub async fn wait_user_weixin_qr_login(
+    state: &Arc<AppState>,
+    user_id: &str,
+    payload: WeixinQrWaitRequest,
+) -> ChannelServiceResult<Value> {
     let session_key = payload.session_key.trim().to_string();
     if session_key.is_empty() {
         return Err(error_response(
@@ -1802,7 +1844,7 @@ async fn wait_weixin_qr_login(
                 "qr_login_confirmed",
                 format!("weixin qr login confirmed: session_key={session_key}"),
             );
-            return Ok(Json(json!({ "data": {
+            return Ok(json!({
                 "connected": true,
                 "status": status,
                 "session_key": session_key,
@@ -1810,7 +1852,7 @@ async fn wait_weixin_qr_login(
                 "ilink_bot_id": status_resp.ilink_bot_id,
                 "ilink_user_id": status_resp.ilink_user_id,
                 "api_base": status_resp.baseurl.unwrap_or(api_base),
-            }})));
+            }));
         }
 
         if status == "expired" {
@@ -1821,24 +1863,73 @@ async fn wait_weixin_qr_login(
                 "qr_login_expired",
                 format!("weixin qr login expired: session_key={session_key}"),
             );
-            return Ok(Json(json!({ "data": {
+            return Ok(json!({
                 "connected": false,
                 "status": status,
                 "session_key": session_key,
                 "message": "weixin qr expired",
-            }})));
+            }));
         }
 
         if now_ms() >= deadline {
-            return Ok(Json(json!({ "data": {
+            return Ok(json!({
                 "connected": false,
                 "status": status,
                 "session_key": session_key,
                 "message": "waiting for weixin qr confirmation timed out",
-            }})));
+            }));
         }
         sleep(Duration::from_millis(WEIXIN_QR_WAIT_POLL_INTERVAL_MS)).await;
     }
+}
+
+async fn wait_weixin_qr_login(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<ChannelActionQuery>,
+    Json(payload): Json<WeixinQrWaitRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id.clone();
+    let data = wait_user_weixin_qr_login(&state, &user_id, payload)
+        .await
+        .map_err(channel_service_response)?;
+    Ok(Json(json!({ "data": data })))
+}
+
+/// Shared user-channel service: deletes one owned account together with its
+/// bindings.
+pub async fn delete_user_channel_account(
+    state: &Arc<AppState>,
+    user_id: &str,
+    channel: &str,
+    account_id: &str,
+) -> ChannelServiceResult<Value> {
+    let channel = normalize_user_channel(Some(channel))?;
+    let account_id = account_id.trim().to_string();
+    if account_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    if !user_owns_channel_account(state, user_id, &channel, &account_id)? {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.permission_denied"),
+        ));
+    }
+
+    let (deleted_account, deleted_bindings, deleted_user_bindings) =
+        delete_channel_account_records(state, user_id, &channel, &account_id)?;
+
+    Ok(json!({
+        "channel": channel,
+        "account_id": account_id,
+        "deleted_accounts": deleted_account,
+        "deleted_bindings": deleted_bindings,
+        "deleted_user_bindings": deleted_user_bindings,
+    }))
 }
 
 async fn delete_channel_account_by_id(
@@ -1848,32 +1939,11 @@ async fn delete_channel_account_by_id(
     AxumPath((channel, account_id)): AxumPath<(String, String)>,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
-    let user_id = resolved.user.user_id.clone();
-    let channel = normalize_user_channel(Some(channel.as_str()))?;
-    let account_id = account_id.trim().to_string();
-    if account_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.content_required"),
-        ));
-    }
-    if !user_owns_channel_account(&state, &user_id, &channel, &account_id)? {
-        return Err(error_response(
-            StatusCode::FORBIDDEN,
-            i18n::t("error.permission_denied"),
-        ));
-    }
-
-    let (deleted_account, deleted_bindings, deleted_user_bindings) =
-        delete_channel_account_records(&state, &user_id, &channel, &account_id)?;
-
-    Ok(Json(json!({ "data": {
-        "channel": channel,
-        "account_id": account_id,
-        "deleted_accounts": deleted_account,
-        "deleted_bindings": deleted_bindings,
-        "deleted_user_bindings": deleted_user_bindings,
-    }})))
+    let data =
+        delete_user_channel_account(&state, &resolved.user.user_id, &channel, &account_id)
+            .await
+            .map_err(channel_service_response)?;
+    Ok(Json(json!({ "data": data })))
 }
 
 async fn delete_channel_account_legacy(
@@ -1884,9 +1954,10 @@ async fn delete_channel_account_legacy(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
-    let channel = normalize_user_channel(Some(channel.as_str()))?;
+    let channel = normalize_user_channel(Some(channel.as_str())).map_err(channel_service_response)?;
 
-    let account_ids = list_owned_account_ids_for_channel(&state, &user_id, &channel)?;
+    let account_ids =
+        list_owned_account_ids_for_channel(&state, &user_id, &channel).map_err(channel_service_response)?;
     if account_ids.is_empty() {
         return Ok(Json(json!({ "data": {
             "channel": channel,
@@ -1905,7 +1976,8 @@ async fn delete_channel_account_legacy(
 
     let account_id = account_ids[0].clone();
     let (deleted_account, deleted_bindings, deleted_user_bindings) =
-        delete_channel_account_records(&state, &user_id, &channel, &account_id)?;
+        delete_channel_account_records(&state, &user_id, &channel, &account_id)
+            .map_err(channel_service_response)?;
 
     Ok(Json(json!({ "data": {
         "channel": channel,
@@ -1916,16 +1988,17 @@ async fn delete_channel_account_legacy(
     }})))
 }
 
-async fn list_channel_bindings(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Query(query): Query<ChannelBindingsQuery>,
-) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
-    let user_id = resolved.user.user_id.clone();
-    let query_channel = query
-        .channel
-        .as_deref()
+/// Shared user-channel service: lists the user's peer bindings with the
+/// effective channel binding applied.
+pub async fn list_user_channel_bindings(
+    state: &Arc<AppState>,
+    user_id: &str,
+    channel: Option<&str>,
+    account_id: Option<&str>,
+    peer_kind: Option<&str>,
+    peer_id: Option<&str>,
+) -> ChannelServiceResult<Value> {
+    let query_channel = channel
         .map(|value| normalize_user_channel(Some(value)))
         .transpose()?;
 
@@ -1933,10 +2006,10 @@ async fn list_channel_bindings(
         .storage
         .list_channel_user_bindings(crate::storage::ListChannelUserBindingsQuery {
             channel: query_channel.as_deref(),
-            account_id: query.account_id.as_deref(),
-            peer_kind: query.peer_kind.as_deref(),
-            peer_id: query.peer_id.as_deref(),
-            user_id: Some(&user_id),
+            account_id,
+            peer_kind,
+            peer_id,
+            user_id: Some(user_id),
             offset: 0,
             limit: 200,
         })
@@ -1998,17 +2071,37 @@ async fn list_channel_bindings(
             })
         })
         .collect::<Vec<_>>();
-    Ok(Json(json!({ "data": { "items": items, "total": total } })))
+    Ok(json!({ "items": items, "total": total }))
 }
 
-async fn upsert_channel_binding(
+async fn list_channel_bindings(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Query(query): Query<ChannelActionQuery>,
-    Json(payload): Json<ChannelBindingUpsertRequest>,
+    Query(query): Query<ChannelBindingsQuery>,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
+    let data = list_user_channel_bindings(
+        &state,
+        &user_id,
+        query.channel.as_deref(),
+        query.account_id.as_deref(),
+        query.peer_kind.as_deref(),
+        query.peer_id.as_deref(),
+    )
+    .await
+    .map_err(channel_service_response)?;
+    Ok(Json(json!({ "data": data })))
+}
+
+/// Shared user-channel service: creates or updates one peer binding for an
+/// owned, active account.
+pub async fn upsert_user_channel_binding(
+    state: &Arc<AppState>,
+    user: &crate::storage::UserAccountRecord,
+    user_id: &str,
+    payload: ChannelBindingUpsertRequest,
+) -> ChannelServiceResult<Value> {
     let channel = normalize_user_channel(Some(payload.channel.as_str()))?;
     let account_id = payload.account_id.trim().to_string();
     let peer_kind = normalize_user_peer_kind(&channel, &payload.peer_kind);
@@ -2046,7 +2139,7 @@ async fn upsert_channel_binding(
             "weixin peer_kind must be user".to_string(),
         ));
     }
-    if !user_owns_channel_account(&state, &user_id, &channel, &account_id)? {
+    if !user_owns_channel_account(state, user_id, &channel, &account_id)? {
         return Err(error_response(
             StatusCode::FORBIDDEN,
             i18n::t("error.permission_denied"),
@@ -2092,7 +2185,7 @@ async fn upsert_channel_binding(
             .user_store
             .get_user_agent_access(&user_id)
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        if !is_agent_allowed(&resolved.user, access.as_ref(), &record) {
+        if !is_agent_allowed(user, access.as_ref(), &record) {
             return Err(error_response(
                 StatusCode::NOT_FOUND,
                 i18n::t("error.agent_not_found"),
@@ -2123,7 +2216,7 @@ async fn upsert_channel_binding(
         account_id: account_id.clone(),
         peer_kind: peer_kind.clone(),
         peer_id: peer_id.clone(),
-        user_id: user_id.clone(),
+        user_id: user_id.to_string(),
         created_at: now,
         updated_at: now,
     };
@@ -2131,7 +2224,7 @@ async fn upsert_channel_binding(
         .storage
         .upsert_channel_user_binding(&user_binding)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({ "data": {
+    Ok(json!({
         "binding_id": record.binding_id,
         "channel": record.channel,
         "account_id": record.account_id,
@@ -2144,18 +2237,33 @@ async fn upsert_channel_binding(
         "user_id": user_binding.user_id,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
-    }})))
+    }))
 }
 
-async fn delete_channel_binding(
+async fn upsert_channel_binding(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<ChannelActionQuery>,
-    AxumPath((channel, account_id, peer_kind, peer_id)): AxumPath<(String, String, String, String)>,
+    Json(payload): Json<ChannelBindingUpsertRequest>,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
-    let channel = normalize_user_channel(Some(channel.as_str()))?;
+    let data = upsert_user_channel_binding(&state, &resolved.user, &user_id, payload)
+        .await
+        .map_err(channel_service_response)?;
+    Ok(Json(json!({ "data": data })))
+}
+
+/// Shared user-channel service: deletes one of the user's peer bindings.
+pub async fn delete_user_channel_binding(
+    state: &Arc<AppState>,
+    user_id: &str,
+    channel: &str,
+    account_id: &str,
+    peer_kind: &str,
+    peer_id: &str,
+) -> ChannelServiceResult<Value> {
+    let channel = normalize_user_channel(Some(channel))?;
     let account_id = account_id.trim().to_string();
     let peer_kind = peer_kind.trim().to_string();
     let peer_id = peer_id.trim().to_string();
@@ -2165,7 +2273,7 @@ async fn delete_channel_binding(
             i18n::t("error.content_required"),
         ));
     }
-    if !user_owns_channel_account(&state, &user_id, &channel, &account_id)? {
+    if !user_owns_channel_account(state, user_id, &channel, &account_id)? {
         return Err(error_response(
             StatusCode::FORBIDDEN,
             i18n::t("error.permission_denied"),
@@ -2188,7 +2296,7 @@ async fn delete_channel_binding(
             "binding not found".to_string(),
         ));
     }
-    let binding_id = make_user_binding_id(&user_id, &channel, &account_id, &peer_kind, &peer_id);
+    let binding_id = make_user_binding_id(user_id, &channel, &account_id, &peer_kind, &peer_id);
     let affected_binding = state
         .storage
         .delete_channel_binding(&binding_id)
@@ -2197,14 +2305,29 @@ async fn delete_channel_binding(
         .storage
         .delete_channel_user_binding(&channel, &account_id, &peer_kind, &peer_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({ "data": {
+    Ok(json!({
         "binding_id": binding_id,
         "deleted_bindings": affected_binding,
         "deleted_user_bindings": affected_user_binding,
-    }})))
+    }))
 }
 
-fn normalize_user_channel(channel: Option<&str>) -> Result<String, Response> {
+async fn delete_channel_binding(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<ChannelActionQuery>,
+    AxumPath((channel, account_id, peer_kind, peer_id)): AxumPath<(String, String, String, String)>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id.clone();
+    let data =
+        delete_user_channel_binding(&state, &user_id, &channel, &account_id, &peer_kind, &peer_id)
+            .await
+            .map_err(channel_service_response)?;
+    Ok(Json(json!({ "data": data })))
+}
+
+fn normalize_user_channel(channel: Option<&str>) -> ChannelServiceResult<String> {
     let channel = channel
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -2221,7 +2344,7 @@ fn normalize_user_channel(channel: Option<&str>) -> Result<String, Response> {
     ))
 }
 
-fn resolve_user_channels(channel: Option<&str>) -> Result<Vec<String>, Response> {
+fn resolve_user_channels(channel: Option<&str>) -> ChannelServiceResult<Vec<String>> {
     if let Some(channel) = channel {
         return Ok(vec![normalize_user_channel(Some(channel))?]);
     }
@@ -2258,7 +2381,7 @@ fn list_owned_account_keys(
     state: &Arc<AppState>,
     user_id: &str,
     channel_filter: Option<&str>,
-) -> Result<Vec<(String, String)>, Response> {
+) -> ChannelServiceResult<Vec<(String, String)>> {
     let mut account_keys: BTreeSet<(String, String)> = BTreeSet::new();
 
     let (bindings, _) = state
@@ -2309,7 +2432,7 @@ fn list_owned_account_ids_for_channel(
     state: &Arc<AppState>,
     user_id: &str,
     channel: &str,
-) -> Result<Vec<String>, Response> {
+) -> ChannelServiceResult<Vec<String>> {
     let normalized_channel = normalize_user_channel(Some(channel))?;
     let keys = list_owned_account_keys(state, user_id, Some(&normalized_channel))?;
     Ok(keys.into_iter().map(|(_, account_id)| account_id).collect())
@@ -2320,7 +2443,7 @@ fn user_owns_channel_account(
     user_id: &str,
     channel: &str,
     account_id: &str,
-) -> Result<bool, Response> {
+) -> ChannelServiceResult<bool> {
     let channel = normalize_user_channel(Some(channel))?;
     let account_id = account_id.trim();
     if account_id.is_empty() {
@@ -2353,7 +2476,7 @@ fn load_user_binding_pref(
     user_id: &str,
     channel: &str,
     account_id: &str,
-) -> Result<Option<String>, Response> {
+) -> ChannelServiceResult<Option<String>> {
     let (items, _) = state
         .storage
         .list_channel_user_bindings(crate::storage::ListChannelUserBindingsQuery {
@@ -2785,7 +2908,7 @@ fn build_user_account_item(
     })
 }
 
-fn merge_json_object(target: &mut Map<String, Value>, patch: &Value) -> Result<(), Response> {
+fn merge_json_object(target: &mut Map<String, Value>, patch: &Value) -> ChannelServiceResult<()> {
     let patch_obj = patch.as_object().ok_or_else(|| {
         error_response(
             StatusCode::BAD_REQUEST,
@@ -2803,7 +2926,7 @@ fn delete_channel_account_records(
     user_id: &str,
     channel: &str,
     account_id: &str,
-) -> Result<(i64, i64, i64), Response> {
+) -> ChannelServiceResult<(i64, i64, i64)> {
     let deleted_account = state
         .storage
         .delete_channel_account(channel, account_id)
@@ -2886,7 +3009,7 @@ fn sync_user_default_binding(
     agent_id: Option<&str>,
     enabled: bool,
     now: f64,
-) -> Result<(), Response> {
+) -> ChannelServiceResult<()> {
     let selected_kind = normalize_user_peer_kind(channel, selected_peer_kind);
     if selected_kind.trim().is_empty() {
         return Err(error_response(
@@ -3109,7 +3232,46 @@ fn remove_weixin_qr_session(session_key: &str) {
     guard.remove(session_key);
 }
 
-fn error_response(status: StatusCode, message: String) -> Response {
+/// Error type shared by user channel service calls. The HTTP layer converts it
+/// back into a JSON error response; the native desktop façade reads `status`
+/// and `message` directly without parsing a response body.
+#[derive(Debug, Clone)]
+pub struct ChannelServiceError {
+    pub status: StatusCode,
+    pub message: String,
+}
+
+pub type ChannelServiceResult<T> = Result<T, ChannelServiceError>;
+
+/// Explicit conversion for HTTP handlers: service errors become the same JSON
+/// error body the handlers produced before the service extraction.
+pub fn channel_service_response(error: ChannelServiceError) -> Response {
+    channel_error_response(error.status, error.message)
+}
+
+/// Lets one error-call site serve both HTTP handlers (`Response`) and shared
+/// service functions (`ChannelServiceError`) without duplicating them.
+pub trait ChannelErrorResponse {
+    fn error_response(status: StatusCode, message: String) -> Self;
+}
+
+impl ChannelErrorResponse for Response {
+    fn error_response(status: StatusCode, message: String) -> Self {
+        channel_error_response(status, message)
+    }
+}
+
+impl ChannelErrorResponse for ChannelServiceError {
+    fn error_response(status: StatusCode, message: String) -> Self {
+        ChannelServiceError { status, message }
+    }
+}
+
+fn error_response<T: ChannelErrorResponse>(status: StatusCode, message: impl Into<String>) -> T {
+    T::error_response(status, message.into())
+}
+
+fn channel_error_response(status: StatusCode, message: String) -> Response {
     crate::api::errors::error_response(status, message)
 }
 

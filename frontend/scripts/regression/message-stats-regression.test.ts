@@ -676,7 +676,7 @@ test('message stats keeps requesting for bare running assistant placeholder', ()
   assert.equal(entries[0]?.iconClass, 'fa-solid fa-paper-plane');
 });
 
-test('message stats keeps latest active assistant requesting when message runtime flags lag behind session busy state', () => {
+test('message stats do not reopen a settled assistant from session-level busy state', () => {
   const t = createTranslator();
   const messages = [
     { role: 'user', content: 'hello' },
@@ -692,17 +692,12 @@ test('message stats keeps latest active assistant requesting when message runtim
     messages[1],
     t,
     messages,
-    Date.UTC(2026, 4, 1, 10, 39, 47),
-    {
-      activeSessionBusy: true,
-      latestVisibleAssistant: true
-    }
+    Date.UTC(2026, 4, 1, 10, 39, 47)
   );
 
   assert.equal(entries.length, 1);
-  assert.equal(entries[0]?.value, 'Requesting');
-  assert.equal(entries[0]?.live, true);
-  assert.equal(entries[0]?.iconClass, 'fa-solid fa-paper-plane');
+  assert.equal(entries[0]?.value, 'User round 1');
+  assert.equal(entries[0]?.live, false);
 });
 
 test('message stats still shows completed round for inactive assistant without runtime flags', () => {
@@ -721,11 +716,7 @@ test('message stats still shows completed round for inactive assistant without r
     messages[1],
     t,
     messages,
-    Date.UTC(2026, 4, 1, 10, 39, 48),
-    {
-      activeSessionBusy: false,
-      latestVisibleAssistant: true
-    }
+    Date.UTC(2026, 4, 1, 10, 39, 48)
   );
 
   assert.equal(entries.length, 1);
@@ -844,11 +835,7 @@ test('message stats keeps explicit queued status ahead of requesting fallback', 
     },
     t,
     null,
-    Date.UTC(2026, 6, 9, 12, 0, 0),
-    {
-      activeSessionBusy: true,
-      latestVisibleAssistant: true
-    }
+    Date.UTC(2026, 6, 9, 12, 0, 0)
   );
 
   assert.equal(entries.length, 1);
@@ -889,16 +876,12 @@ test('message hydration restores queued workflow events from session detail proj
     hydrated,
     t,
     null,
-    Date.UTC(2026, 6, 9, 12, 0, 0),
-    {
-      activeSessionBusy: true,
-      latestVisibleAssistant: true
-    }
+    Date.UTC(2026, 6, 9, 12, 0, 0)
   );
 
   assert.equal(entries.length, 1);
   assert.equal(entries[0]?.value.includes('Queued'), true);
-  assert.equal(entries[0]?.value.includes('1 ahead'), true);
+  assert.equal(entries[0]?.value.includes('0 ahead'), true);
   assert.notEqual(entries[0]?.value, t('messenger.messageStatus.requesting'));
   assert.equal(entries[0]?.iconClass, 'fa-solid fa-clock');
 });

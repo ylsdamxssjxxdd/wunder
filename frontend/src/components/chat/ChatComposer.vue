@@ -121,6 +121,7 @@
         <span class="chat-composer-resize-grip"></span>
       </button>
       <textarea
+        data-testid="chat-composer-input"
         v-model="inputText"
         ref="inputRef"
         :class="{ 'chat-composer-input--world': worldStyle }"
@@ -395,6 +396,8 @@
             <div class="messenger-world-send-group">
               <button
                 class="messenger-world-send-main"
+                data-testid="chat-composer-send"
+                :data-mode="stopButtonActive ? 'stop' : 'send'"
                 type="button"
                 :disabled="!canSendOrStop"
                 :title="stopButtonActive ? t('common.stop') : t('chat.input.send')"
@@ -484,6 +487,8 @@
         </div>
         <button
           class="input-icon-btn send-btn"
+          data-testid="chat-composer-send"
+          :data-mode="stopButtonActive ? 'stop' : 'send'"
           type="button"
           :disabled="!canSendOrStop"
           :title="stopButtonActive ? t('common.stop') : t('chat.input.send')"

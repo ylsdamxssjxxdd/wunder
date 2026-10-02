@@ -1,3 +1,4 @@
+import { applyChatThreadEffects, syncChatThreadShell } from './chatThreadEffects';
 import { advanceThreadLogCursor, threadLogCursor } from './chatThreadCursor';
 import { selectVisibleMessageProjections } from '@/realtime/chat/chatRuntimeSelectors';
 import {
@@ -183,8 +184,22 @@ export const startSessionWatcher = (store, sessionId) => {
         if (controller.signal.aborted) return;
         const profile = resolveWatchdogProfile(store, key);
         const lastEventAt = Number(runtime.watchLastEventAt) || 0;
-        const running = isThreadRuntimeBusy(runtime?.threadStatus) ||
-          hasRunningAssistantMessage(sessionMessagesRef);
+        // Once v2 has accepted any durable turn, its turn state is the only
+        // liveness authority. `sessionMessagesRef` intentionally retains
+        // optimistic legacy placeholders for compatibility actions; treating
+        // one of those placeholders as live after a durable terminal change
+        // repeatedly restarted watch, which in turn overlapped feeders.
+        const threadState = getChatThreadState(key);
+        const durableRunning = threadState && threadState.turns.size > 0
+          ? Array.from(threadState.turns.values()).some((turn) => {
+              const status = String(turn.status ?? '').trim().toLowerCase();
+              return !['completed', 'failed', 'cancelled', 'interrupted'].includes(status);
+            })
+          : null;
+        const running = durableRunning ?? (
+          isThreadRuntimeBusy(runtime?.threadStatus) ||
+          hasRunningAssistantMessage(sessionMessagesRef)
+        );
         if (running && lastEventAt && Date.now() - lastEventAt >=
             Math.max(Number(profile.idleMs) || 0, WATCHDOG_V2_LIVENESS_IDLE_MS) &&
             !runtime.sendController && !runtime.resumeController) {
@@ -209,8 +224,9 @@ export const startSessionWatcher = (store, sessionId) => {
     }
     if (applyGoalStreamEvent(store, key, normalizedEventType, data ?? payload)) return;
     if (applyChatThreadServerEvent(store, key, normalizedEventType || eventType, payload, {
+      onChangesApplied: (changes) => applyChatThreadEffects(store, key, changes),
       onSnapshotRequired: () => controller.abort(),
-      onSnapshotApplied: resumeWatchFromLastSeq,
+      onSnapshotApplied: () => { syncChatThreadShell(store, key); resumeWatchFromLastSeq(); },
       onOverflow: resumeWatchFromLastSeq,
       onGapOverflow: resumeWatchFromLastSeq
     })) return;
@@ -237,7 +253,10 @@ export const startSessionWatcher = (store, sessionId) => {
     }),
     onEvent,
     signal: controller.signal,
-    closeOnFinal: false
+    closeOnFinal: false,
+    // Session-level stop owns cancellation. Aborting this local watcher must
+    // not emit an additional request-scoped cancel frame.
+    cancelOnAbort: false
   });
   watchPromise
     .catch((error) => {
@@ -286,7 +305,7 @@ registerChatThreadSnapshotLoader(async (sessionKey) => {
   const response = await getThreadLogSnapshot(sessionKey);
   const body = response?.data?.data ?? response?.data ?? {};
   const cursor = Number(body?.cursor);
-  if (!Number.isSafeInteger(cursor) || cursor <= 0) {
+  if (!Number.isSafeInteger(cursor) || cursor < 0) {
     throw new Error('thread snapshot cursor missing');
   }
   return {

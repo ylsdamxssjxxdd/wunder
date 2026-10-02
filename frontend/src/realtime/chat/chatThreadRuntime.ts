@@ -13,6 +13,7 @@ import {
   hasEmbeddedItemPayload,
   THREAD_OVERFLOW_RESUME_COOLDOWN_MS,
   type ChatThreadFrame,
+  type ThreadChangeFrame,
   type ChatThreadState,
   type StreamStartedAck,
   type ThreadSnapshotRequiredData
@@ -67,6 +68,40 @@ export const isChatThreadV2Session = (key: string): boolean =>
 
 export const resetChatThreadRuntime = (key: string): void => {
   registry.delete(key);
+};
+
+export const getChatThreadStatus = (key: string): string | null => {
+  const state = getChatThreadState(key);
+  if (!state?.turns.size) return null;
+  let latest = null;
+  let active = null;
+  for (const turn of state.turns.values()) {
+    if (!latest || (turn.userRound ?? 0) >= (latest.userRound ?? 0)) latest = turn;
+    if (turn.status && !['completed', 'failed', 'cancelled', 'interrupted'].includes(turn.status)) active = turn;
+  }
+  return active?.status ?? latest?.status ?? null;
+};
+
+/** Install local input in the same turn map before any busy status is published. */
+export const submitChatThreadTurn = (store: unknown, key: string, clientMessageId: string, content: string): void => {
+  const state = ensureChatThreadRuntime(key).state;
+  if ([...state.turns.values()].some((turn) => turn.clientMessageId === clientMessageId)) return;
+  const userRound = [...state.turns.values()].reduce((max, turn) => Math.max(max, turn.userRound ?? 0), 0) + 1;
+  const turnId = `pending:${clientMessageId}`;
+  state.turns.set(turnId, { turnId, userRound, clientMessageId, userContent: content, status: 'running' });
+  markRuntimeProjectionChanged(store, { sessionId: key, reason: 'thread_submit', immediate: true });
+};
+
+export const hydrateChatThreadRuntime = (store: unknown, key: string, snapshot: ChatThreadSnapshot): boolean => {
+  const state = ensureChatThreadRuntime(key).state;
+  const pending = [...state.turns.values()].filter((turn) => turn.turnId.startsWith('pending:'));
+  const result = applyChatThreadSnapshot(state, snapshot, Date.now());
+  if (!result.changed) return false;
+  for (const turn of pending) {
+    if (![...state.turns.values()].some((entry) => entry.clientMessageId === turn.clientMessageId)) state.turns.set(turn.turnId, turn);
+  }
+  markRuntimeProjectionChanged(store, { sessionId: key, reason: 'thread_snapshot', immediate: true });
+  return true;
 };
 
 /** Connection and user-interaction controls do not carry timeline state. */
@@ -216,8 +251,10 @@ const bumpInvalidation = (
 ): void => {
   if (!changed) return;
   if (frame.event === 'thread_item_tail') {
-    // Bubble ids are deterministic: `titem:{item_id}` for assistant text.
-    const messageId = `titem:${frame.item_id}`;
+    // Each user turn owns one assistant bubble. A tail therefore invalidates
+    // its turn-level row rather than a transient model-round row.
+    const turnId = String(frame.item_id || '').split(':', 1)[0];
+    const messageId = turnId ? `tturn:${turnId}:assistant` : `titem:${frame.item_id}`;
     if (frame.field === 'reasoning') {
       markRuntimeProjectionReasoningChanged(store, [messageId]);
     } else {
@@ -245,6 +282,7 @@ const bumpInvalidation = (
  */
 export interface ChatThreadServerEventHooks {
   now?: () => number;
+  onChangesApplied?: (changes: ThreadChangeFrame[]) => void;
   onSnapshotRequired?: (payload: ThreadSnapshotRequiredData) => void;
   onSnapshotApplied?: () => void;
   onOverflow?: (cursor: number) => void;
@@ -290,8 +328,8 @@ const dispatchSnapshotRequired = (
       const snapshot = await loader(key);
       const entry = registry.get(key);
       if (!entry) return;
-      const applied = applyChatThreadSnapshot(entry.state, snapshot, (hooks.now ?? Date.now)());
-      if (!applied.changed) throw new Error('thread snapshot cursor is stale');
+      const applied = hydrateChatThreadRuntime(store, key, snapshot);
+      if (!applied) throw new Error('thread snapshot cursor is stale');
       markRuntimeProjectionChanged(store, { sessionId: key, reason: 'thread_structure' });
       hooks.onSnapshotApplied?.();
     } catch {
@@ -345,26 +383,9 @@ export const applyChatThreadServerEvent = (
     dispatchResume(entry, hooks, typeof frame.cursor === 'number' ? frame.cursor : 0, 'overflow');
     return true;
   }
-  if (frame.event === 'thread_change' && frame.change_type === 'item_upsert') {
-    const clientMessageId = typeof frame.data.client_message_id === 'string'
-      ? frame.data.client_message_id
-      : '';
-    if (clientMessageId && frame.data.kind === 'user_message') {
-      // Queued submissions bind their optimistic bubble through the durable
-      // user item instead of a stream ack; its content is server truth.
-      bindStreamStarted(
-        entry.state,
-        {
-          event: 'stream_started',
-          turn_id: String(frame.turn_id || frame.data.turn_id || ''),
-          resume_from_seq: frame.seq,
-          client_message_id: clientMessageId
-        },
-        typeof frame.data.content === 'string' ? frame.data.content : undefined
-      );
-    }
-  }
-  const result = applyChatThreadFrame(entry.state, frame, (hooks.now ?? Date.now)());
+  const changes: ThreadChangeFrame[] = [];
+  const result = applyChatThreadFrame(entry.state, frame, (hooks.now ?? Date.now)(), (change) => changes.push(change));
+  if (changes.length) hooks.onChangesApplied?.(changes);
   if (result.needResume) {
     dispatchResume(entry, hooks, 0, 'gap');
     return true;

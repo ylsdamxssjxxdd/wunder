@@ -1,3 +1,4 @@
+import { getChatThreadStatus } from '@/realtime/chat/chatThreadRuntime';
 import { defineStore } from 'pinia';
 import { markRaw } from 'vue';
 
@@ -162,6 +163,8 @@ export const useChatStore = defineStore('chat', {
       const activeKey = resolveSessionKey(state.activeSessionId);
       const messages = activeKey === key ? state.messages : getSessionMessages(key);
       const runtime = getRuntime(key);
+      const durableStatus = getChatThreadStatus(key);
+      if (durableStatus) return ['running', 'queued', 'waiting_approval', 'waiting_user_input'].includes(durableStatus);
       return resolveMergedSessionBusy({
         projection: state.runtimeProjection,
         sessionId: key,
@@ -178,6 +181,8 @@ export const useChatStore = defineStore('chat', {
       const activeKey = resolveSessionKey(state.activeSessionId);
       const messages = activeKey === key ? state.messages : getSessionMessages(key);
       const runtime = getRuntime(key);
+      const durableStatus = getChatThreadStatus(key);
+      if (durableStatus) return normalizeThreadRuntimeStatus(durableStatus);
       return resolveMergedSessionRuntimeStatus({
         projection: state.runtimeProjection,
         sessionId: key,

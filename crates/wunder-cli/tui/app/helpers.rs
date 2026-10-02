@@ -836,6 +836,43 @@ pub(super) fn normalize_wrapped_cursor_position(
     (row.saturating_add(col / width), col % width)
 }
 
+/// Project snapshot items (thread_items rows ordered by created_seq) into the
+/// history-record shape consumed by `restore_transcript_from_history`. Only
+/// readable conversation items are projected; tool, approval and model-call
+/// items degrade to the expired-replay notice instead of a JSON wall.
+pub(super) fn snapshot_history_records(snapshot: &Value) -> Vec<Value> {
+    let Some(items) = snapshot.get("items").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut records: Vec<(i64, i64, Value)> = Vec::with_capacity(items.len());
+    for item in items {
+        if item.get("visibility").and_then(Value::as_str) != Some("user") {
+            continue;
+        }
+        let kind = item.get("kind").and_then(Value::as_str).unwrap_or("");
+        let payload = item.get("payload").cloned().unwrap_or(Value::Null);
+        let content = payload.get("content").cloned().unwrap_or(Value::Null);
+        let reasoning = payload
+            .get("reasoning")
+            .or_else(|| payload.get("reasoning_content"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let role = if kind == "user_message" {
+            "user"
+        } else if kind == "assistant_message" || kind.contains("reasoning") {
+            "assistant"
+        } else {
+            continue;
+        };
+        let record = json!({"role": role, "content": content, "reasoning_content": reasoning});
+        let created_seq = item.get("created_seq").and_then(Value::as_i64).unwrap_or(0);
+        let item_index = item.get("item_index").and_then(Value::as_i64).unwrap_or(0);
+        records.push((created_seq, item_index, record));
+    }
+    records.sort_by_key(|(created_seq, item_index, _)| (*created_seq, *item_index));
+    records.into_iter().map(|(_, _, record)| record).collect()
+}
+
 pub(super) fn history_content_to_text(value: Option<&Value>) -> String {
     let Some(value) = value else {
         return String::new();
@@ -2049,4 +2086,66 @@ pub(super) fn build_workspace_file_index(root: &std::path::Path) -> Vec<IndexedF
     }
     items.sort_by(|left, right| left.path.cmp(&right.path));
     items
+}
+
+#[cfg(test)]
+mod snapshot_history_tests {
+    use super::*;
+
+    #[test]
+    fn projects_conversation_items_in_durable_order() {
+        let snapshot = json!({
+            "cursor": 42,
+            "turns": [],
+            "items": [
+                {"item_id": "text-2", "item_index": 0, "kind": "assistant_message",
+                 "visibility": "user", "created_seq": 12,
+                 "payload": {"role": "assistant", "content": "second",
+                             "reasoning": "thought process"}},
+                {"item_id": "msg-1", "item_index": 0, "kind": "user_message",
+                 "visibility": "user", "created_seq": 3,
+                 "payload": {"role": "user", "content": "first"}},
+            ],
+            "blocks": [],
+        });
+        let records = snapshot_history_records(&snapshot);
+        let roles: Vec<&str> = records
+            .iter()
+            .filter_map(|record| record.get("role").and_then(Value::as_str))
+            .collect();
+        assert_eq!(roles, vec!["user", "assistant"]);
+        assert_eq!(records[0]["content"], json!("first"));
+        assert_eq!(
+            records[1]["reasoning_content"],
+            json!("thought process")
+        );
+    }
+
+    #[test]
+    fn skips_tool_and_hidden_items() {
+        let snapshot = json!({
+            "cursor": 9,
+            "items": [
+                {"item_id": "tool-1", "kind": "tool_call", "visibility": "user",
+                 "created_seq": 4, "payload": {"tool": "sample_tool"}},
+                {"item_id": "approval-1", "kind": "approval", "visibility": "user",
+                 "created_seq": 5, "payload": {}},
+                {"item_id": "hidden-1", "kind": "user_message", "visibility": "model",
+                 "created_seq": 6, "payload": {"role": "user", "content": "prompt only"}},
+                {"item_id": "reasoning-1", "kind": "reasoning", "visibility": "user",
+                 "created_seq": 7, "payload": {"reasoning": "brief thought"}},
+            ],
+        });
+        let records = snapshot_history_records(&snapshot);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["role"], json!("assistant"));
+        assert_eq!(records[0]["content"], json!(Value::Null));
+        assert_eq!(records[0]["reasoning_content"], json!("brief thought"));
+    }
+
+    #[test]
+    fn empty_snapshot_yields_no_records() {
+        assert!(snapshot_history_records(&json!({})).is_empty());
+        assert!(snapshot_history_records(&json!({"items": []})).is_empty());
+    }
 }

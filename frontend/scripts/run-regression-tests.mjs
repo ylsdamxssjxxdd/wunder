@@ -36,6 +36,7 @@ for (const testFile of tests) {
   );
   if (build.status !== 0) process.exit(build.status ?? 1);
 
-  const run = spawnSync(process.execPath, [output], { cwd: frontendRoot, stdio: 'inherit' });
+  const run = spawnSync(process.execPath, [output], { cwd: frontendRoot, stdio: 'inherit', timeout: 60_000 });
+  if (run.error) process.stderr.write(`Regression process failed (${run.error.code ?? 'unknown'}): ${testFile}\n`);
   if (run.status !== 0) process.exit(run.status ?? 1);
 }

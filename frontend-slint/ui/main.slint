@@ -1,5 +1,5 @@
-import { Theme, DesktopPage, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, CronCard, CronRunCard, AgentCardFile, PromptPackCard } from "theme.slint";
-import { Action, EdgeToggle, RailButton, Avatar, SearchField, FormField } from "components.slint";
+import { Theme, DesktopPage, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, CronCard, CronRunCard, AgentCardFile, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, PlazaItemCard } from "theme.slint";
+import { Action, EdgeToggle, RailButton, Avatar, SearchField, FormField, MiddleHeader, MiddleFooter } from "components.slint";
 import { Composer } from "composer.slint";
 import { MessageRow } from "message.slint";
 import { WorkDock } from "dock.slint";
@@ -7,9 +7,11 @@ import { FilesPage } from "files_page.slint";
 import { WorldPage } from "world_page.slint";
 import { CronPage } from "cron_page.slint";
 import { AgentsPage, ToolsPage, SettingsPage } from "entity_pages.slint";
+import { ChannelsPage } from "channels_page.slint";
+import { PlazaPage } from "plaza_page.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { ListView, ScrollView, ComboBox } from "std-widgets.slint";
-export { Theme, DesktopPage, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, CronCard, CronRunCard, AgentCardFile, PromptPackCard }
+export { Theme, DesktopPage, Conversation, TextBlock, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, CronCard, CronRunCard, AgentCardFile, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, PlazaItemCard }
 export { AppTray } from "tray.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
 
@@ -133,6 +135,69 @@ export component MainWindow inherits Window {
     in-out property <bool> cron-runs-loading: false;
     in-out property <string> cron-runs-title;
     in-out property <[CronRunCard]> cron-runs: [];
+    in-out property <bool> channel-loading: false;
+    in-out property <[ChannelCatalogCard]> channel-catalog: [];
+    in-out property <[ChannelAccountCard]> channel-accounts: [];
+    in-out property <int> selected-channel-account: -1;
+    in-out property <[ChannelBindingCard]> channel-bindings: [];
+    in-out property <bool> channel-bindings-loading: false;
+    in-out property <bool> channel-logs-open: false;
+    in-out property <bool> channel-logs-loading: false;
+    in-out property <[ChannelLogCard]> channel-logs: [];
+    in-out property <bool> channel-editor-open: false;
+    in-out property <bool> channel-editor-saving: false;
+    in-out property <string> channel-edit-id;
+    in-out property <int> channel-edit-kind: 0;
+    in-out property <int> channel-edit-agent: 0;
+    in-out property <[string]> channel-agent-names: ["默认智能体"];
+    in-out property <[string]> channel-catalog-names: [];
+    in-out property <string> channel-edit-name;
+    in-out property <bool> channel-edit-enabled: true;
+    in-out property <bool> channel-edit-group-chat: true;
+    in-out property <string> channel-edit-app-id;
+    in-out property <string> channel-edit-app-secret;
+    in-out property <string> channel-edit-corp-id;
+    in-out property <string> channel-edit-wechat-agent;
+    in-out property <string> channel-edit-secret;
+    in-out property <string> channel-edit-token;
+    in-out property <string> channel-edit-aes-key;
+    in-out property <string> channel-edit-original-id;
+    in-out property <string> channel-edit-api-base;
+    in-out property <string> channel-edit-bot-token;
+    in-out property <string> channel-edit-bot-id;
+    in-out property <string> channel-edit-user-id;
+    in-out property <string> channel-edit-domain;
+    in-out property <string> channel-edit-config-json;
+    in-out property <bool> plaza-loading: false;
+    in-out property <[PlazaItemCard]> plaza-items: [];
+    in-out property <int> selected-plaza-item: -1;
+    in-out property <bool> plaza-import-open: false;
+    in-out property <bool> channel-delete-open: false;
+    in-out property <bool> channel-qr-open: false;
+    in-out property <int> channel-qr-state: 0;
+    in-out property <image> channel-qr-image;
+    in-out property <string> channel-qr-message;
+    callback refresh-channels();
+    callback select-channel-account(int);
+    callback open-channel-creator();
+    callback edit-channel-account();
+    callback save-channel-editor();
+    callback cancel-channel-editor();
+    callback request-delete-channel();
+    callback confirm-delete-channel();
+    callback cancel-delete-channel();
+    callback toggle-channel-account(bool);
+    callback open-channel-logs();
+    callback close-channel-logs();
+    callback refresh-plaza();
+    callback select-plaza-item(int);
+    callback request-plaza-import();
+    callback confirm-plaza-import();
+    callback cancel-plaza-import();
+    callback delete-channel-binding(string, string);
+    callback start-channel-qr();
+    callback cancel-channel-qr();
+    callback reconnect-channel();
     in-out property <[WorldMessageCard]> world-messages: [];
     in-out property <string> world-active-title;
     in-out property <string> world-active-conversation;
@@ -342,6 +407,8 @@ export component MainWindow inherits Window {
                 Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/gear.svg"); label: "系统设置"; show-label: true; clicked => { root.more-open = false; root.page = DesktopPage.settings; root.refresh-settings(); } }
                 Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/comments.svg"); label: "群组"; show-label: true; clicked => { root.more-open = false; root.page = DesktopPage.groups; root.refresh-world(true); } }
                 Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/rotate-right.svg"); label: "定时任务"; show-label: true; clicked => { root.more-open = false; root.page = DesktopPage.cron; root.refresh-cron(); } }
+                Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/paper-plane.svg"); label: "渠道设置"; show-label: true; clicked => { root.more-open = false; root.page = DesktopPage.channels; root.refresh-channels(); } }
+                Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/layer-group.svg"); label: "广场"; show-label: true; clicked => { root.more-open = false; root.page = DesktopPage.plaza; root.refresh-plaza(); } }
                 Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/robot.svg"); label: "我的概况"; show-label: true; clicked => { root.more-open = false; root.page = DesktopPage.profile; root.refresh-profile(); } }
                 Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/comments.svg"); label: "关于心舰"; show-label: true; clicked => { root.more-open = false; root.open-info("关于", "心舰 · 蜂巢\n\n本地原生运行时"); } }
             }
@@ -521,8 +588,9 @@ export component MainWindow inherits Window {
     }
 
     if root.page == DesktopPage.agents : AgentsPage {
-        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px;
+        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height;
         loading: root.agents-loading; saving: root.saving;
+        status: root.status;
         agents: root.agents; selected-agent: root.selected-agent;
         selected-name <=> root.selected-agent-name; selected-description <=> root.selected-agent-description;
         selected-model <=> root.selected-agent-model; selected-system-prompt <=> root.selected-agent-system-prompt; selected-status: root.selected-agent-status;
@@ -567,12 +635,14 @@ export component MainWindow inherits Window {
         }
     }
     if root.page == DesktopPage.tools : ToolsPage {
-        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px;
+        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height;
         tools: root.tools; loading: root.tools-loading; refresh => { root.refresh-tools(); }
+        status: root.status;
     }
     if root.page == DesktopPage.settings : SettingsPage {
-        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px;
+        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height;
         loading: root.settings-loading; saving: root.saving;
+        status: root.status;
         models: root.models; selected-model: root.selected-model;
         workspace-root <=> root.workspace-root; language <=> root.runtime-language;
         lan-enabled <=> root.lan-enabled; lan-name <=> root.lan-name; lan-peer-id: root.lan-peer-id; lan-endpoint: root.lan-endpoint; lan-peer-count: root.lan-peer-count; lan-peers: root.lan-peers;
@@ -607,21 +677,61 @@ export component MainWindow inherits Window {
         reset-work-state => { root.reset-work-state(); }
     }
     if root.page == DesktopPage.profile : Rectangle {
-        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px; background: Theme.chat;
-        VerticalLayout { spacing: 0px;
-            Rectangle { height: 82px; HorizontalLayout { padding: 20px; spacing: 14px; Rectangle { width: 48px; height: 48px; border-radius: 24px; background: Theme.accent-soft; Text { width: parent.width; height: parent.height; text: root.profile.avatar-glyph; color: Theme.accent-deep; font-size: 20px; horizontal-alignment: center; vertical-alignment: center; } } VerticalLayout { Text { height: 25px; text: "我的概况"; color: Theme.text; font-size: 19px; font-weight: 700; } Text { height: 20px; text: root.profile.username + "  ·  " + root.profile.user-id; color: Theme.muted; font-size: 12px; } } Rectangle { horizontal-stretch: 1; } Action { width: 112px; label: "编辑资料"; show-label: true; enabled: !root.profile-loading; clicked => { root.profile-username-draft = root.profile.username; root.profile-email-draft = root.profile.email; root.profile-unit-draft = root.profile.unit-id; root.profile-edit-open = true; } } } }
-            Rectangle { height: 1px; background: Theme.border; }
-            HorizontalLayout { padding: 20px; spacing: 12px; vertical-stretch: 1;
-                for item in [{label: "会话总数", value: root.profile.sessions}, {label: "近 7 天", value: root.profile.sessions-last-7d}, {label: "工具调用", value: root.profile.tool-calls}, {label: "智能体", value: root.profile.agents}, {label: "Token 使用", value: root.profile.tokens}] : Rectangle { width: 150px; height: 92px; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 12px; Text { height: 18px; text: item.label; color: Theme.muted; font-size: 11px; } Text { height: 34px; text: item.value; color: Theme.text; font-size: 24px; font-weight: 700; } } }
-                Rectangle { horizontal-stretch: 1; }
+        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height; background: Theme.chat;
+        HorizontalLayout {
+            spacing: 0px;
+            Rectangle {
+                width: 220px;
+                background: Theme.middle;
+                Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+                VerticalLayout {
+                    spacing: 0px;
+                    MiddleHeader { title: "我的概况"; subtitle: "账号信息与使用概览"; }
+                    HorizontalLayout {
+                        padding-left: 16px; padding-right: 16px; padding-top: 4px; padding-bottom: 8px; spacing: 10px;
+                        Rectangle { width: 44px; height: 44px; border-radius: 22px; background: Theme.accent-soft; Text { width: parent.width; height: parent.height; text: root.profile.avatar-glyph; color: Theme.accent-deep; font-size: 19px; horizontal-alignment: center; vertical-alignment: center; } }
+                        VerticalLayout { spacing: 2px; Text { height: 19px; text: root.profile.username; color: Theme.text; font-size: 13px; font-weight: 600; overflow: elide; } Text { height: 15px; text: "ID " + root.profile.user-id; color: Theme.muted; font-size: 10px; overflow: elide; } }
+                    }
+                    Rectangle { height: 1px; background: Theme.border; }
+                    Rectangle { height: 10px; }
+                    HorizontalLayout { padding-left: 16px; Text { height: 20px; text: "账户信息"; color: Theme.text; font-size: 13px; font-weight: 600; } }
+                    Rectangle { height: 4px; }
+                    for row in [{label: "邮箱", value: root.profile.email}, {label: "单位", value: root.profile.unit}, {label: "最近活跃", value: root.profile.last-active}] : HorizontalLayout { height: 28px; padding-left: 16px; padding-right: 16px; Text { width: 64px; height: parent.height; text: row.label; color: Theme.muted; font-size: 11px; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: row.value == "" ? "未填写" : row.value; color: Theme.text; font-size: 11px; vertical-alignment: center; overflow: elide; } }
+                    Rectangle { height: 10px; }
+                    HorizontalLayout { padding-left: 16px; Text { height: 20px; text: "头像颜色"; color: Theme.text; font-size: 13px; font-weight: 600; } }
+                    HorizontalLayout {
+                        padding-left: 16px; padding-top: 6px; spacing: 8px;
+                        for color in ["#3b82f6", "#10b981", "#f97316", "#8b5cf6", "#ec4899", "#64748b"] : Rectangle { width: 20px; height: 20px; border-radius: 10px; background: color == "#3b82f6" ? #3b82f6 : color == "#10b981" ? #10b981 : color == "#f97316" ? #f97316 : color == "#8b5cf6" ? #8b5cf6 : color == "#ec4899" ? #ec4899 : #64748b; border-width: root.profile.avatar-color == color ? 2px : 0px; border-color: Theme.text; TouchArea { clicked => { root.save-profile-avatar(root.profile.avatar-icon, color); } } }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    MiddleFooter { text: root.status; }
+                }
             }
-            Rectangle { width: parent.width - 40px; height: 176px; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 16px; spacing: 6px; Text { height: 20px; text: "账户信息"; color: Theme.text; font-size: 14px; font-weight: 600; } Text { height: 18px; text: "邮箱：" + root.profile.email; color: Theme.muted; font-size: 12px; } Text { height: 18px; text: "单位：" + root.profile.unit; color: Theme.muted; font-size: 12px; } Text { height: 18px; text: "最近活跃：" + root.profile.last-active; color: Theme.muted; font-size: 12px; } HorizontalLayout { height: 28px; spacing: 8px; Text { width: 48px; text: "头像"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } for color in ["#3b82f6", "#10b981", "#f97316", "#8b5cf6", "#ec4899", "#64748b"] : Rectangle { width: 20px; height: 20px; border-radius: 10px; background: color == "#3b82f6" ? #3b82f6 : color == "#10b981" ? #10b981 : color == "#f97316" ? #f97316 : color == "#8b5cf6" ? #8b5cf6 : color == "#ec4899" ? #ec4899 : #64748b; border-width: root.profile.avatar-color == color ? 2px : 0px; border-color: Theme.text; TouchArea { clicked => { root.save-profile-avatar(root.profile.avatar-icon, color); } } } Rectangle { horizontal-stretch: 1; } } } }
+            Rectangle {
+                horizontal-stretch: 1;
+                VerticalLayout {
+                    spacing: 0px;
+                    HorizontalLayout {
+                        height: 62px; padding-left: 14px; padding-right: 14px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
+                        VerticalLayout { spacing: 1px; Text { height: 25px; text: "使用统计"; color: Theme.text; font-size: 18px; font-weight: 700; } Text { height: 17px; text: "会话、工具与额度使用概况"; color: Theme.muted; font-size: 11px; } }
+                        Rectangle { horizontal-stretch: 1; }
+                        Action { width: 112px; label: "编辑资料"; show-label: true; enabled: !root.profile-loading; clicked => { root.profile-username-draft = root.profile.username; root.profile-email-draft = root.profile.email; root.profile-unit-draft = root.profile.unit-id; root.profile-edit-open = true; } }
+                    }
+                    Rectangle { height: 1px; background: Theme.border; }
+                    HorizontalLayout { padding: 20px; spacing: 12px;
+                        for item in [{label: "会话总数", value: root.profile.sessions}, {label: "近 7 天", value: root.profile.sessions-last-7d}, {label: "工具调用", value: root.profile.tool-calls}, {label: "智能体", value: root.profile.agents}, {label: "Token 使用", value: root.profile.tokens}] : Rectangle { width: 150px; height: 92px; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 12px; Text { height: 18px; text: item.label; color: Theme.muted; font-size: 11px; } Text { height: 34px; text: item.value; color: Theme.text; font-size: 24px; font-weight: 700; } } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                }
+            }
         }
     }
     if root.page == DesktopPage.files : FilesPage {
-        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px;
+        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height;
         loading: root.files-loading; error: root.files-error; directory-path: root.directory-path; directory-parent: root.directory-parent;
         directory-root: root.directory-root; directory-container-id: root.directory-container-id; offset: root.files-offset; total: root.files-total; files: root.files;
+        status: root.status;
         refresh => { root.refresh-files(); }
         navigate(path) => { root.navigate-directory(path); }
         open-file(path) => { root.open-file(path); }
@@ -633,8 +743,9 @@ export component MainWindow inherits Window {
         next-page => { root.files-offset += 100; root.refresh-files(); }
     }
     if root.page == DesktopPage.users || root.page == DesktopPage.groups : WorldPage {
-        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px;
+        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height;
         groups: root.page == DesktopPage.groups; loading: root.world-loading; total: root.world-total; offset: root.world-offset; contacts: root.world-contacts; group-items: root.world-groups;
+        status: root.status;
         messages: root.world-messages; active-title: root.world-active-title; conversation-open: root.world-active-conversation != "";
         announcement: root.world-announcement; announcement-editing: root.world-announcement-editing; has-earlier: root.world-has-earlier;
         group-creator-open: root.world-group-creator-open; picks: root.world-group-picks;
@@ -653,7 +764,8 @@ export component MainWindow inherits Window {
         load-earlier => { root.load-earlier-world-messages(); }
     }
     if root.page == DesktopPage.cron : CronPage {
-        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height - 32px; loading: root.cron-loading; jobs: root.cron-jobs;
+        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height; loading: root.cron-loading; jobs: root.cron-jobs;
+        status: root.status;
         agent-names <=> root.cron-agent-names;
         editor-open <=> root.cron-editor-open;
         editor-saving <=> root.cron-editor-saving;
@@ -679,10 +791,54 @@ export component MainWindow inherits Window {
         save-editor => { root.save-cron-editor(); }
         cancel-editor => { root.cancel-cron-editor(); }
     }
-
-    if root.page != DesktopPage.messages : Rectangle {
-        x: 56px; y: root.height - 32px; width: root.width - 56px; height: 32px; background: Theme.panel;
-        Text { x: 16px; width: parent.width - 32px; height: parent.height; text: root.status; color: Theme.muted; font-size: 11px; vertical-alignment: center; overflow: elide; }
+    if root.page == DesktopPage.channels : ChannelsPage {
+        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height;
+        loading: root.channel-loading; status: root.status;
+        catalog: root.channel-catalog; catalog-names: root.channel-catalog-names;
+        accounts: root.channel-accounts; selected: root.selected-channel-account;
+        bindings: root.channel-bindings; bindings-loading: root.channel-bindings-loading;
+        logs-open: root.channel-logs-open; logs-loading: root.channel-logs-loading; logs: root.channel-logs;
+        editor-open: root.channel-editor-open; editor-saving: root.channel-editor-saving; editor-id: root.channel-edit-id;
+        editor-kind <=> root.channel-edit-kind; editor-agent <=> root.channel-edit-agent;
+        agent-names: root.channel-agent-names;
+        edit-name <=> root.channel-edit-name; edit-enabled <=> root.channel-edit-enabled; edit-group-chat <=> root.channel-edit-group-chat;
+        edit-app-id <=> root.channel-edit-app-id; edit-app-secret <=> root.channel-edit-app-secret;
+        edit-corp-id <=> root.channel-edit-corp-id; edit-wechat-agent <=> root.channel-edit-wechat-agent;
+        edit-secret <=> root.channel-edit-secret; edit-token <=> root.channel-edit-token; edit-aes-key <=> root.channel-edit-aes-key;
+        edit-original-id <=> root.channel-edit-original-id; edit-api-base <=> root.channel-edit-api-base;
+        edit-bot-token <=> root.channel-edit-bot-token; edit-bot-id <=> root.channel-edit-bot-id;
+        edit-user-id <=> root.channel-edit-user-id; edit-domain <=> root.channel-edit-domain;
+        edit-config-json <=> root.channel-edit-config-json;
+        delete-open <=> root.channel-delete-open;
+        qr-open <=> root.channel-qr-open; qr-state <=> root.channel-qr-state;
+        qr-image <=> root.channel-qr-image; qr-message <=> root.channel-qr-message;
+        start-qr => { root.start-channel-qr(); }
+        cancel-qr => { root.cancel-channel-qr(); }
+        reconnect => { root.reconnect-channel(); }
+        refresh => { root.refresh-channels(); }
+        select-account(index) => { root.select-channel-account(index); }
+        open-creator => { root.open-channel-creator(); }
+        edit-account => { root.edit-channel-account(); }
+        save-editor => { root.save-channel-editor(); }
+        cancel-editor => { root.cancel-channel-editor(); }
+        request-delete => { root.request-delete-channel(); }
+        confirm-delete => { root.confirm-delete-channel(); }
+        cancel-delete => { root.cancel-delete-channel(); }
+        toggle(enabled) => { root.toggle-channel-account(enabled); }
+        open-logs => { root.open-channel-logs(); }
+        close-logs => { root.close-channel-logs(); }
+        delete-binding(peer-kind, peer-id) => { root.delete-channel-binding(peer-kind, peer-id); }
+    }
+    if root.page == DesktopPage.plaza : PlazaPage {
+        x: 56px; y: 0px; width: parent.width - 56px; height: parent.height;
+        loading: root.plaza-loading; status: root.status;
+        items: root.plaza-items; selected: root.selected-plaza-item;
+        import-open <=> root.plaza-import-open;
+        refresh => { root.refresh-plaza(); }
+        select-item(index) => { root.select-plaza-item(index); }
+        request-import => { root.request-plaza-import(); }
+        confirm-import => { root.confirm-plaza-import(); }
+        cancel-import => { root.cancel-plaza-import(); }
     }
 
     if root.agent-creator-open : Rectangle {

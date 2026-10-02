@@ -1,0 +1,294 @@
+import { Theme, ChannelAccountCard, ChannelBindingCard, ChannelCatalogCard, ChannelLogCard } from "theme.slint";
+import { Action, SearchField, FormField, MiddleHeader, MiddleFooter } from "components.slint";
+import { TextEditBase } from "textedit-base.slint";
+import { CheckBox, ComboBox, ScrollView } from "std-widgets.slint";
+
+// Channel accounts follow the shared page form: a full-height middle list
+// separated from the detail main area, like the chat conversation pane.
+export component ChannelsPage inherits Rectangle {
+    in property <bool> loading: false;
+    in property <[ChannelCatalogCard]> catalog;
+    in property <[ChannelAccountCard]> accounts;
+    in property <int> selected: -1;
+    in property <[ChannelBindingCard]> bindings;
+    in property <bool> bindings-loading: false;
+    in property <bool> logs-open: false;
+    in property <bool> logs-loading: false;
+    in property <[ChannelLogCard]> logs;
+    in property <string> status;
+    in property <bool> editor-open: false;
+    in property <bool> editor-saving: false;
+    in property <string> editor-id;
+    in-out property <int> editor-kind: 0;
+    in-out property <int> editor-agent: 0;
+    in property <[string]> agent-names;
+    in property <[string]> catalog-names;
+    in property <bool> delete-open: false;
+    in property <bool> qr-open: false;
+    in property <int> qr-state: 0;
+    in property <image> qr-image;
+    in property <string> qr-message;
+    in-out property <string> edit-name;
+    in-out property <bool> edit-enabled: true;
+    in-out property <bool> edit-group-chat: true;
+    in-out property <string> edit-app-id;
+    in-out property <string> edit-app-secret;
+    in-out property <string> edit-corp-id;
+    in-out property <string> edit-wechat-agent;
+    in-out property <string> edit-secret;
+    in-out property <string> edit-token;
+    in-out property <string> edit-aes-key;
+    in-out property <string> edit-original-id;
+    in-out property <string> edit-api-base;
+    in-out property <string> edit-bot-token;
+    in-out property <string> edit-bot-id;
+    in-out property <string> edit-user-id;
+    in-out property <string> edit-domain;
+    in-out property <string> edit-config-json;
+    callback refresh();
+    callback select-account(int);
+    callback open-creator();
+    callback edit-account();
+    callback save-editor();
+    callback cancel-editor();
+    callback request-delete();
+    callback confirm-delete();
+    callback cancel-delete();
+    callback toggle(bool);
+    callback open-logs();
+    callback close-logs();
+    callback delete-binding(string, string);
+    callback start-qr();
+    callback cancel-qr();
+    callback reconnect();
+    private property <string> keyword;
+    private property <string> catalog-filter: "全部";
+    private property <ChannelAccountCard> current: root.selected >= 0 && root.selected < root.accounts.length ? root.accounts[root.selected] : {
+        channel: "", account-id: "", name: "", status: "", active: false, configured: false,
+        peer-kind: "", agent-id: "", created-at: "", updated-at: "", summary: "", secret-set: false,
+        app-id: "", corp-id: "", wechat-agent-id: "", original-id: "", weixin-bot-id: "",
+        weixin-user-id: "", bot-type: "", domain: ""
+    };
+    private property <string> editor-channel-key: root.editor-kind >= 0 && root.editor-kind < root.catalog.length ? root.catalog[root.editor-kind].channel : "";
+    background: Theme.chat;
+
+    HorizontalLayout {
+        spacing: 0px;
+        Rectangle {
+            width: 220px;
+            background: Theme.middle;
+            Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+            VerticalLayout {
+                spacing: 0px;
+                MiddleHeader { title: "渠道设置"; subtitle: "接入外部消息渠道账号"; }
+                HorizontalLayout {
+                    padding-left: 14px; padding-right: 14px; height: 34px; spacing: 8px;
+                    SearchField { horizontal-stretch: 1; icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索账号"; text <=> root.keyword; }
+                    Action { width: 34px; height: 34px; icon: @image-url("../assets/icons/plus.svg"); label: "新建账号"; selected: true; clicked => { root.open-creator(); } }
+                }
+                Rectangle { height: 14px; }
+                HorizontalLayout { padding-left: 16px; Text { height: 20px; text: "渠道类型"; color: Theme.text; font-size: 13px; font-weight: 600; } }
+                Rectangle { height: 6px; }
+                VerticalLayout { alignment: start; padding-left: 8px; padding-right: 8px; spacing: 3px;
+                    Action { height: 28px; width: parent.width; label: "全部"; show-label: true; selected: root.catalog-filter == "全部"; clicked => { root.catalog-filter = "全部"; } }
+                    for item in root.catalog : Action {
+                        height: 28px; width: parent.width; label: item.name; show-label: true;
+                        selected: root.catalog-filter == item.channel;
+                        clicked => { root.catalog-filter = item.channel; }
+                    }
+                }
+                Rectangle { height: 10px; }
+                HorizontalLayout { padding-left: 16px; Text { height: 20px; text: "账号"; color: Theme.text; font-size: 13px; font-weight: 600; } }
+                Rectangle { height: 6px; }
+                ScrollView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { alignment: start; spacing: 4px;
+                        for account[index] in root.accounts : Rectangle {
+                            visible: (root.catalog-filter == "全部" || account.channel == root.catalog-filter)
+                                && (root.keyword == "" || account.name.to-lowercase().starts-with(root.keyword.to-lowercase()));
+                            height: self.visible ? 64px : 0px;
+                            Rectangle {
+                                x: 8px; y: 2px; width: parent.width - 16px; height: 60px; border-radius: 12px;
+                                background: root.selected == index ? Theme.accent : transparent;
+                                Action { width: parent.width; height: parent.height; label: account.name; clicked => { root.select-account(index); } }
+                                Text { x: 12px; y: 9px; width: parent.width - 24px; height: 19px; text: account.name == "" ? account.account-id : account.name; color: root.selected == index ? white : Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
+                                Text { x: 12px; y: 34px; width: parent.width - 24px; height: 16px; text: account.channel + " · " + (account.configured ? "已配置" : "待补全"); color: root.selected == index ? #ffffffe0 : (account.configured ? #16845d : Theme.muted); font-size: 10px; overflow: elide; }
+                            }
+                        }
+                        if root.accounts.length == 0 : Text { height: 70px; text: root.loading ? "正在加载…" : "暂无渠道账号"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                }
+                MiddleFooter { text: root.status; }
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                spacing: 0px;
+                HorizontalLayout {
+                    height: 62px; padding-left: 14px; padding-right: 14px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
+                    VerticalLayout { spacing: 1px;
+                        Text { height: 25px; text: root.selected >= 0 ? (root.current.name == "" ? root.current.account-id : root.current.name) : "渠道账号"; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; }
+                        Text { height: 17px; text: root.selected >= 0 ? (root.current.active ? "已启用 · " : "已停用 · ") + (root.current.configured ? "配置完整" : "配置待补全") : "在左侧选择账号查看详情"; color: Theme.muted; font-size: 11px; overflow: elide; }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Action { icon: @image-url("../assets/icons/plus.svg"); label: "新建账号"; show-label: true; clicked => { root.open-creator(); } }
+                    if root.selected >= 0 : Action { label: root.current.active ? "停用" : "启用"; show-label: true; enabled: !root.loading; clicked => { root.toggle(!root.current.active); } }
+                    if root.selected >= 0 : Action { label: "编辑"; show-label: true; clicked => { root.edit-account(); } }
+                    if root.selected >= 0 : Action { label: "运行日志"; show-label: true; clicked => { root.open-logs(); } }
+                    if root.selected >= 0 && root.current.channel == "xmpp" : Action { label: "重连"; show-label: true; enabled: !root.loading; clicked => { root.reconnect(); } }
+                    if root.selected >= 0 : Action { label: "删除"; show-label: true; enabled: !root.loading; clicked => { root.request-delete(); } }
+                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.loading; clicked => { root.refresh(); } }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                if root.selected < 0 : Text { vertical-stretch: 1; text: "请选择渠道账号查看详情"; color: Theme.muted; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                if root.selected >= 0 : ScrollView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { alignment: start; padding: 22px; spacing: 12px;
+                        HorizontalLayout { height: 30px; spacing: 8px; Text { width: 96px; height: parent.height; text: "渠道类型"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: root.current.channel; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; } }
+                        HorizontalLayout { height: 30px; spacing: 8px; Text { width: 96px; height: parent.height; text: "账号 ID"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: root.current.account-id; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; } }
+                        HorizontalLayout { height: 30px; spacing: 8px; Text { width: 96px; height: parent.height; text: "接收对象"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: root.current.peer-kind == "group" ? "群聊" : "单聊"; color: Theme.text; font-size: 12px; vertical-alignment: center; } }
+                        HorizontalLayout { height: 30px; spacing: 8px; Text { width: 96px; height: parent.height; text: "绑定智能体"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: root.current.agent-id == "" ? "默认智能体" : root.current.agent-id; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; } }
+                        HorizontalLayout { height: 30px; spacing: 8px; Text { width: 96px; height: parent.height; text: "密钥状态"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: root.current.secret-set ? "已设置（不回显）" : "未设置"; color: root.current.secret-set ? #16845d : Theme.muted; font-size: 12px; vertical-alignment: center; } }
+                        HorizontalLayout { height: 30px; spacing: 8px; Text { width: 96px; height: parent.height; text: "最近更新"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: root.current.updated-at + "  ·  创建于 " + root.current.created-at; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; } }
+                        HorizontalLayout { height: 30px; spacing: 8px; Text { width: 96px; height: parent.height; text: "配置摘要"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: root.current.summary == "" ? "无" : root.current.summary; color: Theme.text; font-size: 11px; wrap: word-wrap; overflow: elide; } }
+                        Rectangle { height: 1px; background: Theme.border; }
+                        HorizontalLayout { height: 26px; Text { text: "消息绑定"; color: Theme.text; font-size: 14px; font-weight: 600; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } Text { text: root.bindings-loading ? "正在加载…" : root.bindings.length + " 条"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } }
+                        for binding in root.bindings : Rectangle {
+                            height: 44px; border-radius: 8px; background: Theme.panel;
+                            Text { x: 12px; y: 6px; width: parent.width - 150px; height: 17px; text: (binding.peer-kind == "group" ? "群聊" : "单聊") + " · " + (binding.peer-id == "*" ? "全部会话" : binding.peer-id) + (binding.enabled ? "" : " · 已停用"); color: Theme.text; font-size: 11px; font-weight: 600; vertical-alignment: center; overflow: elide; }
+                            Text { x: 12px; y: 24px; width: parent.width - 150px; height: 15px; text: binding.agent-id == "" ? "默认智能体" : binding.agent-id; color: Theme.muted; font-size: 10px; vertical-alignment: center; overflow: elide; }
+                            Action { x: parent.width - 96px; y: 7px; width: 84px; height: 30px; label: "删除绑定"; show-label: true; enabled: !root.loading; clicked => { root.delete-binding(binding.peer-kind, binding.peer-id); } }
+                        }
+                        if root.bindings.length == 0 && !root.bindings-loading : Text { height: 44px; text: "暂无绑定记录"; color: Theme.muted; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.editor-open : Rectangle {
+        Rectangle { background: #00000033; TouchArea { clicked => { } } }
+        Rectangle {
+            x: (parent.width - 480px) / 2; y: 24px; width: 480px; height: parent.height - 48px;
+            border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+            TouchArea { }
+            VerticalLayout { padding: 18px; spacing: 10px;
+                Text { height: 24px; text: root.editor-kind >= 0 && root.editor-kind < root.catalog.length && root.catalog[root.editor-kind].name != "" ? root.catalog[root.editor-kind].name : "渠道账号"; color: Theme.text; font-size: 16px; font-weight: 700; }
+                ScrollView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { spacing: 9px; alignment: start;
+                        HorizontalLayout { height: 30px; spacing: 10px; Text { width: 84px; text: "渠道"; color: Theme.muted; font-size: 12px; vertical-alignment: center; } ComboBox { horizontal-stretch: 1; model: root.catalog-names.length == 0 ? ["暂无可用渠道"] : root.catalog-names; current-index <=> root.editor-kind; enabled: root.editor-id == "" && !root.editor-saving; } }
+                        HorizontalLayout { height: 30px; spacing: 10px; Text { width: 84px; text: "显示名称"; color: Theme.muted; font-size: 12px; vertical-alignment: center; } TextInput { horizontal-stretch: 1; height: 30px; text <=> root.edit-name; color: Theme.text; font-size: 12px; } }
+                        HorizontalLayout { height: 30px; spacing: 10px; Text { width: 84px; text: "智能体"; color: Theme.muted; font-size: 12px; vertical-alignment: center; } ComboBox { horizontal-stretch: 1; model: root.agent-names; current-index <=> root.editor-agent; enabled: !root.editor-saving; } }
+                        HorizontalLayout { height: 24px; spacing: 10px; CheckBox { text: "启用账号"; checked <=> root.edit-enabled; enabled: !root.editor-saving; } if root.editor-channel-key == "feishu" : CheckBox { text: "接收群聊"; checked <=> root.edit-group-chat; enabled: !root.editor-saving; } }
+                        if root.editor-channel-key == "feishu" : VerticalLayout { spacing: 7px;
+                            FormField { label: "App ID"; placeholder: "飞书应用 App ID"; text <=> root.edit-app-id; }
+                            FormField { label: "App Secret（留空保留原值）"; placeholder: "仅写入，不回显"; secret: true; text <=> root.edit-app-secret; }
+                            FormField { label: "域名（可选，默认 open.feishu.cn）"; placeholder: "open.feishu.cn"; text <=> root.edit-domain; }
+                        }
+                        if root.editor-channel-key == "wechat" : VerticalLayout { spacing: 7px;
+                            FormField { label: "企业 ID（corp_id）"; placeholder: "企业微信 Corp ID"; text <=> root.edit-corp-id; }
+                            FormField { label: "应用 AgentId"; placeholder: "企业微信应用 AgentId"; text <=> root.edit-wechat-agent; }
+                            FormField { label: "应用 Secret（留空保留原值）"; placeholder: "仅写入，不回显"; secret: true; text <=> root.edit-secret; }
+                            FormField { label: "Token（可选）"; placeholder: "回调 Token，可留空"; text <=> root.edit-token; }
+                            FormField { label: "EncodingAESKey（可选）"; placeholder: "回调加密键，可留空"; secret: true; text <=> root.edit-aes-key; }
+                            FormField { label: "域名（可选，默认 qyapi.weixin.qq.com）"; placeholder: "qyapi.weixin.qq.com"; text <=> root.edit-domain; }
+                        }
+                        if root.editor-channel-key == "wechat_mp" : VerticalLayout { spacing: 7px;
+                            FormField { label: "App ID"; placeholder: "公众号 App ID"; text <=> root.edit-app-id; }
+                            FormField { label: "App Secret（留空保留原值）"; placeholder: "仅写入，不回显"; secret: true; text <=> root.edit-app-secret; }
+                            FormField { label: "Token（可选）"; placeholder: "回调 Token，可留空"; text <=> root.edit-token; }
+                            FormField { label: "EncodingAESKey（可选）"; placeholder: "回调加密键，可留空"; secret: true; text <=> root.edit-aes-key; }
+                            FormField { label: "原始 ID（可选）"; placeholder: "公众号原始 ID gh_ 前缀"; text <=> root.edit-original-id; }
+                            FormField { label: "域名（可选，默认 api.weixin.qq.com）"; placeholder: "api.weixin.qq.com"; text <=> root.edit-domain; }
+                        }
+                        if root.editor-channel-key == "weixin" : VerticalLayout { spacing: 7px;
+                            FormField { label: "服务地址（可选）"; placeholder: "https://ilinkai.weixin.qq.com"; text <=> root.edit-api-base; }
+                            FormField { label: "Bot Token（留空保留原值）"; placeholder: "仅写入，不回显"; secret: true; text <=> root.edit-bot-token; }
+                            HorizontalLayout { height: 30px; spacing: 8px; Text { text: "没有 Token？"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } Action { width: 92px; label: "扫码登录获取"; show-label: true; enabled: !root.editor-saving; clicked => { root.start-qr(); } } }
+                            FormField { label: "机器人 ID"; placeholder: "ilink 机器人 ID"; text <=> root.edit-bot-id; }
+                            FormField { label: "用户 ID（可选）"; placeholder: "ilink 用户 ID"; text <=> root.edit-user-id; }
+                        }
+                        if root.editor-channel-key != "feishu" && root.editor-channel-key != "wechat" && root.editor-channel-key != "wechat_mp" && root.editor-channel-key != "weixin" : Text { height: 34px; text: "该渠道暂无引导表单，请在下方高级配置中填写 JSON 字段。"; color: Theme.muted; font-size: 11px; wrap: word-wrap; }
+                        Text { height: 18px; text: "高级配置 JSON（合并进渠道配置，留空跳过）"; color: Theme.muted; font-size: 11px; }
+                        TextEditBase { height: 110px; text <=> root.edit-config-json; wrap: word-wrap; foreground: Theme.text; font-size: 11px; background: Theme.panel; border-width: 1px; border-color: Theme.border; border-radius: 8px; scroll-view-padding: 8px; }
+                    }
+                }
+                HorizontalLayout { height: 34px; spacing: 8px; Rectangle { horizontal-stretch: 1; }
+                    Action { width: 84px; label: root.editor-saving ? "保存中" : "保存"; show-label: true; primary: true; enabled: !root.editor-saving; clicked => { root.save-editor(); } }
+                    Action { width: 84px; label: "取消"; show-label: true; enabled: !root.editor-saving; clicked => { root.cancel-editor(); } }
+                }
+            }
+        }
+    }
+
+    if root.logs-open : Rectangle {
+        Rectangle { background: #00000022; TouchArea { clicked => { root.close-logs(); } } }
+        Rectangle {
+            x: parent.width - 440px; y: 0px; width: 440px; height: parent.height; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+            VerticalLayout { padding: 16px; spacing: 10px;
+                HorizontalLayout { height: 26px; Text { text: "运行日志"; color: Theme.text; font-size: 15px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; } Action { width: 30px; icon: @image-url("../assets/icons/xmark.svg"); clicked => { root.close-logs(); } } }
+                Text { height: 18px; text: root.logs-loading ? "正在加载…" : "最近 " + root.logs.length + " 条（上限 200）"; color: Theme.muted; font-size: 11px; }
+                ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off; VerticalLayout { spacing: 6px; alignment: start;
+                    for entry in root.logs : Rectangle { height: 64px; border-radius: 9px; background: Theme.panel; VerticalLayout { padding: 9px; spacing: 2px;
+                        HorizontalLayout { height: 17px; Text { text: entry.time; color: Theme.muted; font-size: 10px; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } Text { text: entry.level; color: entry.level == "warn" ? #b8860b : (entry.level == "error" ? #b63a22 : #16845d); font-size: 10px; font-weight: 600; vertical-alignment: center; } }
+                        Text { height: 16px; text: entry.event; color: Theme.text; font-size: 11px; font-weight: 600; overflow: elide; }
+                        Text { height: 22px; text: entry.message; color: Theme.muted; font-size: 10px; wrap: word-wrap; overflow: elide; }
+                    } }
+                    if root.logs.length == 0 && !root.logs-loading : Text { height: 70px; text: "暂无运行日志"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
+                } }
+            }
+        }
+    }
+
+    if root.qr-open : Rectangle {
+        Rectangle { background: #00000044; TouchArea { clicked => { root.cancel-qr(); } } }
+        Rectangle {
+            x: (parent.width - min(360px, parent.width - 40px)) / 2;
+            y: (parent.height - 460px) / 2;
+            width: min(360px, parent.width - 40px); height: 460px;
+            border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+            TouchArea { }
+            VerticalLayout { padding: 20px; spacing: 12px;
+                HorizontalLayout { height: 26px;
+                    Text { text: "微信扫码登录"; color: Theme.text; font-size: 16px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; }
+                    Action { width: 30px; icon: @image-url("../assets/icons/xmark.svg"); label: "取消"; clicked => { root.cancel-qr(); } }
+                }
+                if root.qr-state <= 1 : VerticalLayout { spacing: 10px;
+                    Rectangle {
+                        width: 220px; height: 220px; border-radius: 10px; background: white;
+                        border-width: 1px; border-color: Theme.border;
+                        Image { x: 10px; y: 10px; width: 200px; height: 200px; source: root.qr-image; image-fit: contain; }
+                    }
+                    Text { height: 18px; text: root.qr-state == 0 ? "正在获取二维码…" : "请使用微信扫描二维码"; color: Theme.muted; font-size: 12px; horizontal-alignment: center; }
+                }
+                if root.qr-state == 2 : Text { vertical-stretch: 1; text: "扫码成功，已回填登录凭据。请检查账号信息后保存。"; color: #16845d; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
+                if root.qr-state == 3 : Text { vertical-stretch: 1; text: "二维码已过期，请重新获取。"; color: #b8860b; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                if root.qr-state == 4 : Text { vertical-stretch: 1; text: "已取消扫码登录。"; color: Theme.muted; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                if root.qr-state == 5 : Text { vertical-stretch: 1; text: "扫码登录失败：" + root.qr-message; color: #b63a22; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
+                HorizontalLayout { height: 34px; spacing: 8px; Rectangle { horizontal-stretch: 1; }
+                    if root.qr-state >= 3 : Action { width: 110px; label: "重新获取二维码"; show-label: true; primary: true; clicked => { root.start-qr(); } }
+                    Action { width: 72px; label: "关闭"; show-label: true; clicked => { root.cancel-qr(); } }
+                }
+            }
+        }
+    }
+
+    if root.delete-open : Rectangle {
+        Rectangle { background: #00000040; TouchArea { clicked => { root.cancel-delete(); } } }
+        Rectangle {
+            x: (parent.width - 380px) / 2; y: (parent.height - 150px) / 2; width: 380px; height: 150px;
+            border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+            TouchArea { }
+            VerticalLayout { padding: 18px; spacing: 12px;
+                Text { text: "删除渠道账号"; color: Theme.text; font-size: 15px; font-weight: 700; }
+                Text { vertical-stretch: 1; text: "将删除该账号及其全部绑定，删除后需要重新扫码或填写配置才能恢复接收。确认删除？"; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+                HorizontalLayout { height: 32px; spacing: 8px; Rectangle { horizontal-stretch: 1; }
+                    Action { width: 96px; label: "确认删除"; show-label: true; clicked => { root.confirm-delete(); } }
+                    Action { width: 72px; label: "取消"; show-label: true; primary: true; clicked => { root.cancel-delete(); } }
+                }
+            }
+        }
+    }
+}

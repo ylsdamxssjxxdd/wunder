@@ -33,18 +33,14 @@
             <template v-for="(group, groupIndex) in agentVirtualGroups" :key="`agent-virtual-group:${groupIndex}`">
               <template v-for="item in group" :key="item.key">
               <div
-                v-if="
-                  !isHiddenInternalMessage(item.message)
-                    && (!isCompactionMarkerMessage(item.message) || shouldShowCompactionDivider(item.message))
-                "
+                v-if="!isHiddenInternalMessage(item.message)"
                 class="messenger-message"
                 :data-virtual-key="item.key"
-                :class="{
-                  mine: item.message.role === 'user',
-                  'messenger-message--compaction': isCompactionMarkerMessage(item.message)
-                }"
+                :data-turn-id="item.message.__runtime_user_turn_id || item.message.user_turn_id || ''"
+                :data-message-status="item.message.status || ''"
+                :class="{ mine: item.message.role === 'user' }"
               >
-              <div v-if="!isCompactionMarkerMessage(item.message)" class="messenger-message-side">
+              <div class="messenger-message-side">
                 <button
                   v-if="item.message.role === 'user'"
                   class="messenger-message-avatar messenger-message-avatar--mine-profile messenger-message-avatar--clickable"
@@ -83,39 +79,6 @@
                 />
               </div>
               <div class="messenger-message-main">
-                <template v-if="isCompactionMarkerMessage(item.message)">
-                  <MessageCompactionDivider
-                    :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
-                    :is-streaming="
-                      Boolean(
-                        item.message.workflowStreaming ||
-                          item.message.reasoningStreaming ||
-                          item.message.stream_incomplete
-                      )
-                    "
-                    :manual-marker="
-                      item.message.manual_compaction_marker === true
-                        || item.message.manualCompactionMarker === true
-                    "
-                    :session-busy="activeMessengerSessionBusy"
-                  />
-                </template>
-                <template v-else>
-                <MessageCompactionDivider
-                  v-if="
-                    item.message.role === 'assistant' &&
-                      shouldShowCompactionDivider(item.message)
-                  "
-                  :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
-                  :is-streaming="
-                    Boolean(
-                      item.message.workflowStreaming ||
-                        item.message.reasoningStreaming ||
-                        item.message.stream_incomplete
-                    )
-                  "
-                  :session-busy="activeMessengerSessionBusy"
-                />
                 <div class="messenger-message-meta">
                   <span>{{ item.message.role === 'user' ? t('chat.message.user') : activeAgentName }}</span>
                   <span>{{ formatTime(item.message.created_at) }}</span>
@@ -332,8 +295,6 @@
                     <MessageStats
                       v-if="item.message.role === 'assistant'"
                       :message="item.message"
-                      :active-session-busy="activeMessengerSessionBusy"
-                      :latest-visible-assistant="latestVisibleAgentAssistantMessage === item.message"
                     />
                   <button
                     v-if="shouldShowAgentResumeButton(item.message)"
@@ -379,7 +340,6 @@
                     <i class="fa-solid fa-clone" aria-hidden="true"></i>
                   </button>
                 </div>
-                </template>
               </div>
               </div>
             </template>
@@ -562,7 +522,6 @@ const props = defineProps<{ controller: MessengerControllerContext }>();
 const AbilityTooltipListItem = props.controller.AbilityTooltipListItem;
 const activeAgentIcon = props.controller.activeAgentIcon;
 const activeAgentName = props.controller.activeAgentName;
-const activeMessengerSessionBusy = props.controller.activeMessengerSessionBusy;
 const agentAbilitySections = props.controller.agentAbilitySections;
 const agentAbilityTooltipOptions = props.controller.agentAbilityTooltipOptions;
 const agentAbilityTooltipRef = props.controller.agentAbilityTooltipRef;
@@ -596,7 +555,6 @@ const hasRetainedMessageConversationContext = props.controller.hasRetainedMessag
 const hasMessageContent = props.controller.hasMessageContent;
 const hasUserAudioAttachments = props.controller.hasUserAudioAttachments;
 const hasUserImageAttachments = props.controller.hasUserImageAttachments;
-const isCompactionMarkerMessage = props.controller.isCompactionMarkerMessage;
 const isGreetingMessage = props.controller.isGreetingMessage;
 const isHiddenInternalMessage = props.controller.isHiddenInternalMessage;
 const isOwnMessage = props.controller.isOwnMessage;
@@ -605,7 +563,6 @@ const isWorldVoiceMessage = props.controller.isWorldVoiceMessage;
 const isWorldVoicePlaying = props.controller.isWorldVoicePlaying;
 const latestVisibleAgentAssistantMessage = props.controller.latestVisibleAgentAssistantMessage;
 const MARKDOWN_STREAM_THROTTLE_MS = props.controller.MARKDOWN_STREAM_THROTTLE_MS;
-const MessageCompactionDivider = props.controller.MessageCompactionDivider;
 const MessageFeedbackActions = props.controller.MessageFeedbackActions;
 const MessageKnowledgeCitation = props.controller.MessageKnowledgeCitation;
 const MessageSubagentPanel = props.controller.MessageSubagentPanel;
@@ -635,7 +592,6 @@ const sessionHub = props.controller.sessionHub;
 const shouldMountAgentMessageBubble = props.controller.shouldMountAgentMessageBubble;
 const shouldMountAgentWorkflow = props.controller.shouldMountAgentWorkflow;
 const shouldShowAgentResumeButton = props.controller.shouldShowAgentResumeButton;
-const shouldShowCompactionDivider = props.controller.shouldShowCompactionDivider;
 const t = props.controller.t;
 const toggleWorldVoicePlayback = props.controller.toggleWorldVoicePlayback;
 const worldVirtualBottomSpacer = props.controller.worldVirtualBottomSpacer;

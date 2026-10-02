@@ -4,7 +4,6 @@ use crate::i18n;
 use crate::orchestrator::OrchestratorError;
 use crate::schemas::{AttachmentPayload, WunderRequest};
 use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
-use crate::services::chat_cancel_marker::persist_user_cancelled_turn_marker;
 use crate::services::llm::{is_llm_model, normalize_reasoning_effort};
 use crate::services::orchestration_context::{
     build_locked_thread_message, repair_orchestration_session_context,
@@ -169,6 +168,8 @@ struct SessionToolsUpdateRequest {
 
 #[derive(Debug, Deserialize)]
 struct SessionCompactionRequest {
+    #[serde(default)]
+    client_message_id: Option<String>,
     #[serde(default)]
     model_name: Option<String>,
     // Deprecated compatibility field: parsed for older clients but ignored;
@@ -695,21 +696,11 @@ async fn cancel_session(
         .cancel_session_activity(&resolved.user.user_id, &session_id, "rest_cancel")
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let marker_persisted = persist_user_cancelled_turn_marker(
-        state.workspace.clone(),
-        state.user_store.clone(),
-        &resolved.user.user_id,
-        &session_id,
-        "rest_cancel",
-    )
-    .await
-    .unwrap_or(false);
     Ok(Json(json!({
         "data": {
             "cancelled": cancel_settlement.monitor_cancelled,
             "child_sessions_cancelled": cancel_settlement.child_sessions_cancelled,
             "goal_cleared": goal_cleared,
-            "marker_persisted": marker_persisted,
             "queued_tasks_cancelled": cancel_settlement.queued_tasks_cancelled,
             "running_tasks_marked_cancelled": cancel_settlement.running_tasks_marked_cancelled,
             "thread_status_reset": cancel_settlement.thread_status_reset,
@@ -780,6 +771,7 @@ async fn compact_session(
             &session_id,
             &json!({
                 "role": "user", "content": "/compact",
+                "client_message_id": payload.client_message_id,
                 "meta": {"type": "manual_compaction_command", "manual_compaction": true}
             }),
         )
@@ -825,6 +817,8 @@ async fn compact_session(
             "accepted": true,
             "running": true,
             "user_round": manual_user_round,
+            "turn_id": accepted["turn_id"],
+            "client_message_id": payload.client_message_id,
             "session_id": session_id,
         }
     })))

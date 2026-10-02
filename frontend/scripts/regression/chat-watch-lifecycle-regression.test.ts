@@ -303,6 +303,15 @@ test('send, resume, and watch no longer route realtime events through legacy pro
   assert.equal(runtimeControlsSource.includes('WATCH_USER_MESSAGE_DEDUP_MS'), false);
 });
 
+test('session stop does not fan out request-scoped websocket cancels', () => {
+  const stopSource = readFileSync(resolve(process.cwd(), 'src/stores/chatStopResumeActions.ts'), 'utf8');
+  const watcherSource = readFileSync(resolve(process.cwd(), 'src/stores/chatWatcher.ts'), 'utf8');
+  assert.ok(stopSource.includes("type: 'cancel'"));
+  assert.ok(stopSource.includes("cancel_source: 'user_stop'"));
+  assert.equal(stopSource.includes('chatWsClient.sendCancel('), false);
+  assert.ok(watcherSource.includes('cancelOnAbort: false'));
+});
+
 test('history hydration no longer rebuilds legacy workflow state from raw stream events', () => {
   const source = readFileSync(resolve(process.cwd(), 'src/stores/chatMessageHydration.ts'), 'utf8');
   assert.equal(source.includes("import { createWorkflowProcessor } from './chatWorkflowProcessor';"), false);

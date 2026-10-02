@@ -1145,9 +1145,12 @@ impl Orchestrator {
                         user_id,
                         &json!({
                             "session_id":session_id, "turn_id":turn,
-                            "item_id":format!("{turn}:manual-compaction"),
+                            // Assistant text identities are stable per model round.
+                            // `/compact` is its own assistant response, so it uses
+                            // the first text identity of its command turn too.
+                            "item_id":format!("{turn}:text-1"),
                             "kind":"assistant_message", "role":"assistant", "status":"running",
-                            "user_round":round, "content":"",
+                            "user_round":round, "model_round":1, "content":"",
                             "meta":{"type":"manual_compaction_marker","manual_compaction":true,"status":"running"}
                         }),
                     )
@@ -1564,10 +1567,10 @@ impl Orchestrator {
         if let Some(turn) = round_info.thread_turn_id {
             let payload = json!({
                 "session_id":session_id, "turn_id":turn.to_string(),
-                "item_id":format!("{turn}:manual-compaction"),
+                "item_id":format!("{turn}:text-1"),
                 "kind":"assistant_message", "role":"assistant",
                 "status":if status == "done" { "completed" } else { status },
-                "user_round":round_info.user_round, "content":content, "meta":marker_meta
+                "user_round":round_info.user_round, "model_round":1, "content":content, "meta":marker_meta
             });
             if let Err(err) = self.committer.append_item(user_id, &payload).await {
                 warn!("persist manual compaction result failed: {err}");

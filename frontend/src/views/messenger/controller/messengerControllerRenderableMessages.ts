@@ -59,7 +59,6 @@ import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import { resolveRuntimeMessageContentSource } from '@/components/chat/messageRuntimeContent';
 import {
   InquiryPanel,
-  MessageCompactionDivider,
   MessageFeedbackActions,
   MessageKnowledgeCitation,
   MessageSubagentPanel,
@@ -137,9 +136,7 @@ import {
 } from '@/utils/chatSessionRuntime';
 import { hasActiveSubagentItems } from '@/utils/subagentRuntime';
 import {
-  isCompactionOnlyWorkflowItems,
-  isCompactionRunningFromWorkflowItems,
-  resolveLatestCompactionSnapshot
+  isCompactionRunningFromWorkflowItems
 } from '@/utils/chatCompactionWorkflow';
 import {
   isAudioRecordingSupported,
@@ -188,6 +185,7 @@ import {
   buildChatThreadMaterializedMessages,
   isChatThreadV2Session
 } from '@/realtime/chat/chatThreadRuntime';
+import { enforceOneBubblePerChatTurn } from '@/realtime/chat/chatBubbleTopology';
 import {
   invalidateAllUserToolsCaches,
   invalidateUserSkillsCache,
@@ -626,7 +624,7 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       }
       if (String(message?.role || '') === 'user')
           return true;
-      return ctx.hasMessageContent(message?.content) || ctx.hasWorkflowOrThinking(message);
+      return message.__runtime_projected === true || ctx.hasMessageContent(message?.content) || ctx.hasWorkflowOrThinking(message);
   };
 
   const resolveSyntheticGreetingRenderable = (): AgentRenderableMessage | null => {
@@ -702,11 +700,12 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
                       message
                   })) as AgentRenderableMessage[]
           );
+          const constrainedV2Renderable = displayV2Renderable;
           logAgentRenderSource('thread-source', {
               activeSessionId: ctx.chatStore.activeSessionId,
-              ...summarizeChatRuntimeRenderableMessages(displayV2Renderable)
-          }, displayV2Renderable);
-          return displayV2Renderable;
+              ...summarizeChatRuntimeRenderableMessages(constrainedV2Renderable)
+          }, constrainedV2Renderable);
+          return constrainedV2Renderable;
       }
       const projection = toRaw(ctx.chatStore.runtimeProjection);
       const projectionRenderable = buildChatRuntimeRenderableMessages({
@@ -718,12 +717,13 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           syntheticGreeting,
           projectionRenderable
       );
+      const constrainedProjectionRenderable = enforceOneBubblePerChatTurn(displayProjectionRenderable);
       logAgentRenderSource('projection-source', {
           activeSessionId: ctx.chatStore.activeSessionId,
           shadowEnabled,
-          ...summarizeChatRuntimeRenderableMessages(displayProjectionRenderable)
-      }, displayProjectionRenderable);
-      return displayProjectionRenderable;
+          ...summarizeChatRuntimeRenderableMessages(constrainedProjectionRenderable)
+      }, constrainedProjectionRenderable);
+      return constrainedProjectionRenderable;
   });
 
   ctx.resolveActiveAgentRenderableMessageRecords = (): Record<string, unknown>[] => {
@@ -1035,55 +1035,8 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
 
   ctx.isGreetingMessage = (message: Record<string, unknown>): boolean => String(message?.role || '') === 'assistant' && Boolean(message?.isGreeting);
 
-  ctx.isCompactionMarkerMessage = (message: Record<string, unknown>): boolean => {
-      if (String(message?.role || '') !== 'assistant')
-          return false;
-      // Manual compaction is a normal assistant turn. Its workflow can remain
-      // visible while running, but it must never switch to the divider layout.
-      if (message?.manual_compaction_marker === true || message?.manualCompactionMarker === true)
-          return false;
-      if (ctx.hasMessageContent(message?.content))
-          return false;
-      if (ctx.hasMessageContent(message?.reasoning))
-          return false;
-      if (ctx.hasPlanSteps(message?.plan))
-          return false;
-      const panelStatus = String(((message?.questionPanel as Record<string, unknown> | null)?.status || ''))
-          .trim()
-          .toLowerCase();
-      if (panelStatus === 'pending')
-          return false;
-      if (!isCompactionOnlyWorkflowItems(message?.workflowItems))
-          return false;
-      const isStreaming = Boolean(message?.workflowStreaming ||
-          message?.reasoningStreaming ||
-          message?.stream_incomplete);
-      if (!isStreaming)
-          return true;
-      const snapshot = resolveLatestCompactionSnapshot(message?.workflowItems);
-      const triggerMode = String(snapshot?.detail?.trigger_mode ?? snapshot?.detail?.triggerMode ?? '')
-          .trim()
-          .toLowerCase();
-      return triggerMode === 'manual';
-  };
-
-  ctx.shouldShowCompactionDivider = (message: Record<string, unknown>): boolean => {
-      if (message?.manual_compaction_marker === true || message?.manualCompactionMarker === true)
-          return false;
-      if (!ctx.isCompactionMarkerMessage(message))
-          return false;
-      const snapshot = resolveLatestCompactionSnapshot(message?.workflowItems);
-      if (!snapshot)
-          return false;
-      const detailStatus = String(snapshot.detail?.status || '').trim().toLowerCase();
-      if (detailStatus === 'skipped')
-          return false;
-      return true;
-  };
-
   ctx.isVisibleAgentAssistantMessage = (message: Record<string, unknown>): boolean => String(message?.role || '') === 'assistant' &&
-      !ctx.isHiddenInternalMessage(message) &&
-      (!ctx.isCompactionMarkerMessage(message) || ctx.shouldShowCompactionDivider(message));
+      !ctx.isHiddenInternalMessage(message);
 
   ctx.latestVisibleAgentAssistantMessage = computed<Record<string, unknown> | null>(() => {
       for (let index = ctx.agentRenderableMessages.value.length - 1; index >= 0; index -= 1) {
@@ -1100,26 +1053,15 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           return 'idle';
       if (resolveAssistantFailureNotice(message, ctx.t))
           return 'error';
+      // The durable projection owns this turn's lifecycle. Session-level
+      // activity belongs to a newer turn and cannot reopen this bubble.
+      if (message.__runtime_projected === true)
+          return resolveAssistantMessageRuntimeState(message) as AgentRuntimeState;
       if (hasActiveSubagentItems(message.subagents))
           return 'running';
       if (hasAssistantWaitingForCurrentOutput(message))
           return 'running';
       const runtimeState = resolveAssistantMessageRuntimeState(message) as AgentRuntimeState;
-      const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
-      const activeSessionRuntimeStatus = activeSessionId
-          ? String(ctx.resolveSessionRuntimeStatus(activeSessionId) || '').trim().toLowerCase()
-          : '';
-      if (activeSessionRuntimeStatus === 'running' &&
-          ctx.isAgentConversationActive.value &&
-          ctx.latestVisibleAgentAssistantMessage.value === message) {
-          return 'running';
-      }
-      if (runtimeState === 'done' &&
-          ctx.isAgentConversationActive.value &&
-          ctx.activeMessengerSessionBusy.value &&
-          ctx.latestVisibleAgentAssistantMessage.value === message) {
-          return 'running';
-      }
       return runtimeState;
   };
 

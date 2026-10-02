@@ -278,6 +278,80 @@ async fn change_stream_emits_tail_frames_with_utf16_offsets() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn assistant_terminal_history_upserts_the_registered_stream_item() {
+    let (state, _dir) = build_test_state("change_stream_terminal_item").await;
+    let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(256);
+    let emitter = EventEmitter::new(
+        "session-a".into(),
+        "user-a".into(),
+        Some(queue_tx),
+        Some(state.storage.clone()),
+        state.monitor.clone(),
+        false,
+        None,
+    )
+    .with_committer(state.kernel.orchestrator.committer.clone());
+    let turn = accept_turn(&state, "session-a", "user-a");
+    emitter.bind_turn(&turn, 1);
+    emitter
+        .emit("llm_request", json!({"turn_id": turn, "model_round": 1}))
+        .await;
+
+    let round = RoundInfo::new(1, 1);
+    let stats = json!({"message_stats": {
+        "interaction_duration_s": 1.25,
+        "visible_decode_speed_tps": 42.0
+    }});
+    let orchestrator = &state.kernel.orchestrator;
+    orchestrator.append_chat(
+        "user-a",
+        "session-a",
+        "assistant",
+        Some(&json!("done")),
+        None,
+        Some(&stats),
+        Some("thinking"),
+        None,
+        None,
+        None,
+        RoundInfo {
+            thread_turn_id: Some(Uuid::parse_str(&turn).unwrap()),
+            ..round
+        },
+    );
+    state.workspace.flush_writes();
+
+    let item = state
+        .storage
+        .get_thread_turn("user-a", "session-a", &turn, -1, 100, true)
+        .unwrap()
+        .unwrap()["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["item_id"] == format!("{turn}:text-1"))
+        .cloned()
+        .expect("stable assistant item");
+    assert_eq!(item["payload"]["content"], "done");
+    assert_eq!(item["payload"]["meta"]["message_stats"]["visible_decode_speed_tps"], 42.0);
+    assert_eq!(item["payload"]["reasoning_content"], "thinking");
+    assert_eq!(
+        state
+            .storage
+            .get_thread_turn("user-a", "session-a", &turn, -1, 100, true)
+            .unwrap()
+            .unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["kind"] == "assistant_message")
+            .count(),
+        1
+    );
+    while queue_rx.try_recv().is_ok() {}
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn interleaved_model_tails_keep_item_offsets_and_durable_bases() {
     let (state, _dir) = build_test_state("change_stream_interleaved_tails").await;
     let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(256);

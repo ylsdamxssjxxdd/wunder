@@ -4,8 +4,10 @@
 //
 // buildChatThreadRenderableMessages is a pure function of ChatThreadState:
 // the same state always produces a deep-equal projection array. Ordering is
-// defined, never guessed: turns by userRound, bubbles by modelRound, tool
-// records by registration order (change_seq arrival). No scoring, no string
+// defined, never guessed: turns by userRound and records by registration order
+// (change_seq arrival). A user turn has exactly one user bubble and at most one
+// assistant bubble; model rounds are sections inside that assistant bubble.
+// No scoring, no string
 // pattern matching, no localeCompare, no cross-call caching.
 
 import type {
@@ -20,15 +22,14 @@ import type {
   ChatRuntimeWorkflowItemProjection
 } from './chatRuntimeTypes';
 
-// Bubble ids are namespaced so they can never collide with legacy v1 message
-// ids while both pipelines exist side by side (plan §6 gradual rollout).
+// Bubble ids are namespaced so they can never collide with legacy message ids.
 const USER_BUBBLE_ID_PREFIX = 'tturn:';
-const ASSISTANT_BUBBLE_ID_PREFIX = 'titem:';
+const ASSISTANT_BUBBLE_ID_PREFIX = 'tturn:';
 
 // Backend thread item kinds that render as workflow cards inside the
-// assistant bubble of their model round. Everything else (terminal,
+// assistant bubble of their user turn. Everything else (terminal,
 // model_call, system_message, ...) is lifecycle bookkeeping, not a card.
-const WORKFLOW_ITEM_KINDS = new Set(['tool_call', 'approval', 'plan', 'compaction']);
+const WORKFLOW_ITEM_KINDS = new Set(['tool_call', 'approval', 'plan', 'compaction', 'queue']);
 
 // User-facing visibility. 'admin' is excluded per the v2 contract;
 // 'model_internal' matches the legacy snapshot behaviour (never rendered).
@@ -65,53 +66,20 @@ const appendTurnMessages = (
     messages.push(buildUserBubble(turn, state));
   }
 
-  const workflowsByRound = new Map<number, ThreadItemState[]>();
-  const orphanWorkflows: ThreadItemState[] = [];
-  const rounds = new Set<number>();
+  const textItems: ThreadItemState[] = [];
+  const workflows: ThreadItemState[] = [];
   for (const item of items) {
-    if (item.kind === 'assistant_message') {
-      rounds.add(item.modelRound);
-      continue;
-    }
-    if (!WORKFLOW_ITEM_KINDS.has(item.kind)) continue;
-    const round = resolveWorkflowItemRound(item);
-    if (round === null) {
-      orphanWorkflows.push(item);
-    } else {
-      rounds.add(round);
-      const bucket = workflowsByRound.get(round);
-      if (bucket) bucket.push(item);
-      else workflowsByRound.set(round, [item]);
+    // EventEmitter owns visible output with this stable identity. Execution
+    // history snapshots use random ids and must never become duplicate bubbles.
+    if (item.kind === 'assistant_message' && item.itemId === textItemId(turn.turnId, item.modelRound)) {
+      textItems.push(item);
+    } else if (WORKFLOW_ITEM_KINDS.has(item.kind)) {
+      workflows.push(item);
     }
   }
-
-  let lastBubble: ChatRuntimeMessageProjection | null = null;
-  for (const round of [...rounds].sort((left, right) => left - right)) {
-    const textItem = state.items.get(textItemId(turn.turnId, round)) ?? null;
-    const workflows = workflowsByRound.get(round) ?? [];
-    if (!textItem && workflows.length === 0) continue;
-    const bubble = buildAssistantBubble(state, turn, round, textItem, workflows);
-    messages.push(bubble);
-    lastBubble = bubble;
+  if (userContent.length > 0 || textItems.length > 0 || workflows.length > 0) {
+    messages.push(buildAssistantBubble(state, turn, items, textItems, workflows));
   }
-
-  if (orphanWorkflows.length === 0) return;
-  if (lastBubble) {
-    // Items without a payload model_round belong to the turn's latest bubble.
-    const target = lastBubble;
-    const existing = Array.isArray(target.workflowItems) ? target.workflowItems : [];
-    target.workflowItems = existing.concat(
-      orphanWorkflows
-        .sort((left, right) => left.order - right.order)
-        .map((item) => buildWorkflowRecord(item, target.modelTurnId))
-    );
-    target.updatedSeq = Math.max(target.updatedSeq, maxItemOrder(orphanWorkflows));
-    return;
-  }
-  // No assistant bubble exists at all: keep the legacy standalone-workflow
-  // convention (a placeholder assistant bubble carrying the workflow cards).
-  const standaloneRound = resolveStandaloneWorkflowRound(items);
-  messages.push(buildAssistantBubble(state, turn, standaloneRound, null, orphanWorkflows));
 };
 
 const bucketVisibleItemsByTurn = (
@@ -155,7 +123,8 @@ const buildUserBubble = (
     content: turn.userContent ?? '',
     reasoning: '',
     status: 'final',
-    createdAt: '',
+    createdAt: String(userItem?.raw.timestamp ?? ''),
+    display: { ...(userItem?.raw.attachments ? { attachments: userItem.raw.attachments } : {}), user_round: turn.userRound },
     createdSeq: seq,
     updatedSeq: seq,
     userTurnId: turn.turnId,
@@ -176,27 +145,33 @@ const buildUserBubble = (
 const buildAssistantBubble = (
   state: ChatThreadState,
   turn: ThreadTurnState,
-  round: number,
-  textItem: ThreadItemState | null,
+  turnItems: ThreadItemState[],
+  textItems: ThreadItemState[],
   workflows: ThreadItemState[]
 ): ChatRuntimeMessageProjection => {
   const turnId = turn.turnId;
-  const itemId = textItemId(turnId, round);
-  const modelTurnId = `${turnId}:round-${round}`;
-  const content = textItem ? composeItemText(state, itemId, 'content') : '';
-  const reasoning = textItem ? composeItemText(state, itemId, 'reasoning') : '';
+  const orderedTextItems = textItems.slice().sort(compareModelItems);
+  const latestTextItem = orderedTextItems[orderedTextItems.length - 1] ?? null;
+  // `append_chat` still records an immutable conversation-history snapshot
+  // after a model round. It has no stable thread item id, so it is never a
+  // bubble source. Its terminal message_stats are nevertheless authoritative
+  // presentation metadata for the matching stable output item.
+  const stats = resolveTurnAssistantStats(turnItems, orderedTextItems);
+  const modelTurnId = `${turnId}:assistant`;
+  const content = composeTurnText(state, orderedTextItems, 'content');
+  const reasoning = composeTurnText(state, orderedTextItems, 'reasoning');
   const records = workflows
     .slice()
-    .sort((left, right) => left.order - right.order)
+    .sort(compareWorkflowItems)
     .map((item) => buildWorkflowRecord(item, modelTurnId));
-  const createdSeq = textItem?.order ?? (workflows.length > 0 ? minItemOrder(workflows) : 0);
+  const createdSeq = orderedTextItems[0]?.order ?? (workflows.length > 0 ? minItemOrder(workflows) : 0);
   const updatedSeq = Math.max(
-    textItem?.order ?? 0,
+    latestTextItem?.order ?? 0,
     workflows.length > 0 ? maxItemOrder(workflows) : 0
   );
-  const resolved = resolveBubbleStatus(turn, textItem, workflows);
+  const resolved = resolveBubbleStatus(turn, orderedTextItems, workflows);
   const message: ChatRuntimeMessageProjection = {
-    id: `${ASSISTANT_BUBBLE_ID_PREFIX}${itemId}`,
+    id: `${ASSISTANT_BUBBLE_ID_PREFIX}${turnId}:assistant`,
     role: 'assistant',
     content,
     reasoning,
@@ -211,29 +186,90 @@ const buildAssistantBubble = (
     cancelled: resolved.cancelled,
     workflowItems: records,
     subagents: [],
-    raw: buildAssistantBubbleRaw(turn, round, textItem)
+    raw: buildAssistantBubbleRaw(turn, latestTextItem)
   };
-  if (turn.userRound !== null) {
-    message.display = { user_round: turn.userRound };
+  if (turn.userRound !== null || stats) {
+    message.display = {
+      ...(turn.userRound !== null ? { user_round: turn.userRound } : {}),
+      ...(stats ? { stats } : {})
+    };
+  }
+  if (resolved.cancelled) {
+    // Cancellation settles this existing bubble. Its visible partial answer,
+    // tool history and performance record remain attached to the same turn.
+    message.display = {
+      ...(message.display ?? {}),
+      stopped: true,
+      stop_reason: 'user_stop'
+    };
   }
   return message;
 };
 
+/**
+ * The visible assistant text has one stable identity per (turn, model round).
+ * Conversation-history rows use random ids, so treating them as messages
+ * creates duplicate bubbles. We retain only their aggregate stats, tied to the
+ * newest stable round, and merge them with the stable item's live diagnostics.
+ */
+const resolveTurnAssistantStats = (
+  items: ThreadItemState[],
+  stableTextItems: ThreadItemState[]
+): Record<string, unknown> | null => {
+  const latestStable = stableTextItems[stableTextItems.length - 1];
+  if (!latestStable) return null;
+  const direct = extractItemStats(latestStable.raw);
+  let persisted: Record<string, unknown> | null = null;
+  for (const item of items) {
+    if (item === latestStable || item.kind !== 'assistant_message' || item.role !== 'assistant') continue;
+    if (item.modelRound !== latestStable.modelRound) continue;
+    const stats = extractPersistedMessageStats(item.raw);
+    if (stats) persisted = stats;
+  }
+  if (!direct && !persisted) return null;
+  return { ...(direct ?? {}), ...(persisted ?? {}) };
+};
+
+const extractPersistedMessageStats = (payload: Record<string, unknown>): Record<string, unknown> | null => {
+  const meta = isPlainRecord(payload.meta) ? payload.meta : null;
+  return isPlainRecord(meta?.message_stats) ? meta.message_stats :
+    isPlainRecord(payload.message_stats) ? payload.message_stats : null;
+};
+
+const extractItemStats = (payload: Record<string, unknown>): Record<string, unknown> | null => {
+  const nested = isPlainRecord(payload.stats) ? payload.stats : null;
+  const persisted = extractPersistedMessageStats(payload);
+  // `llm_output` owns these per-round values. Copy only known diagnostics so
+  // content and lifecycle data cannot leak into the presentation stats object.
+  const directKeys = [
+    'usage', 'round_usage', 'decode_output_tokens', 'decode_tokens',
+    'decode_duration_s', 'decode_speed_tps', 'prefill_duration_s',
+    'prefill_speed_tps', 'stream_timing', 'ttft_ms', 'tool_calls'
+  ];
+  const direct = Object.fromEntries(
+    directKeys
+      .filter((key) => payload[key] !== undefined)
+      .map((key) => [key, payload[key]])
+  );
+  return nested || persisted || Object.keys(direct).length > 0
+    ? { ...direct, ...(nested ?? {}), ...(persisted ?? {}) }
+    : null;
+};
+
 const buildAssistantBubbleRaw = (
   turn: ThreadTurnState,
-  round: number,
   textItem: ThreadItemState | null
 ): Record<string, unknown> => {
   const base: Record<string, unknown> = {
     turn_id: turn.turnId,
-    model_round: round
+    model_round: textItem?.modelRound ?? 0
   };
   if (!textItem) return base;
   return {
     ...textItem.raw,
     item_id: textItem.itemId,
     turn_id: turn.turnId,
-    model_round: round,
+    model_round: textItem.modelRound,
     kind: textItem.kind,
     revision: textItem.revision
   };
@@ -251,23 +287,23 @@ type ResolvedBubbleStatus = {
 // text streaming -> streaming, settled text -> final.
 const resolveBubbleStatus = (
   turn: ThreadTurnState,
-  textItem: ThreadItemState | null,
+  textItems: ThreadItemState[],
   workflows: ThreadItemState[]
 ): ResolvedBubbleStatus => {
   const turnStatus = normalizeStatus(turn.status);
   if (turnStatus === 'completed') return { status: 'final', final: true, failed: false, cancelled: false };
   if (turnStatus === 'failed') return { status: 'failed', final: false, failed: true, cancelled: false };
   if (turnStatus === 'cancelled') return { status: 'cancelled', final: false, failed: false, cancelled: true };
-  if (textItem?.status === 'failed') return { status: 'failed', final: false, failed: true, cancelled: false };
-  if (textItem?.status === 'cancelled') return { status: 'cancelled', final: false, failed: false, cancelled: true };
+  if (textItems.some((item) => item.status === 'failed')) return { status: 'failed', final: false, failed: true, cancelled: false };
+  if (textItems.some((item) => item.status === 'cancelled')) return { status: 'cancelled', final: false, failed: false, cancelled: true };
   if (turnStatus === 'queued') return { status: 'queued', final: false, failed: false, cancelled: false };
-  if (workflows.some((item) => isActiveItemStatus(item.status))) {
+  if (workflows.some((item) => item.kind !== 'queue' && isActiveItemStatus(item.status))) {
     return { status: 'tooling', final: false, failed: false, cancelled: false };
   }
-  if (textItem && isActiveItemStatus(textItem.status)) {
+  if (textItems.some((item) => isActiveItemStatus(item.status))) {
     return { status: 'streaming', final: false, failed: false, cancelled: false };
   }
-  if (textItem && normalizeStatus(textItem.status) === 'completed') {
+  if (textItems.length > 0 && textItems.every((item) => normalizeStatus(item.status) === 'completed')) {
     return { status: 'final', final: true, failed: false, cancelled: false };
   }
   return { status: 'streaming', final: false, failed: false, cancelled: false };
@@ -277,24 +313,35 @@ const resolveBubbleStatus = (
 // Workflow records (MessageToolWorkflow-compatible)
 // ---------------------------------------------------------------------------
 
+const workflowRecordCache = new WeakMap<ThreadItemState, { revision: number; modelTurnId: string; record: WorkflowItemRecord }>();
+
 const buildWorkflowRecord = (
   item: ThreadItemState,
   modelTurnId: string
 ): WorkflowItemRecord => {
+  const cached = workflowRecordCache.get(item);
+  if (cached?.revision === item.revision && cached.modelTurnId === modelTurnId) return cached.record;
   const payload = item.raw ?? {};
   const eventType = resolveWorkflowEventType(item);
   const toolName = firstText(payload.tool, payload.tool_name, payload.name, payload.toolName);
   const record: WorkflowItemRecord = {
+    ...payload,
+    ...(payload.request_usage ? { usage: payload.request_usage } : {}),
     id: item.itemId,
     eventType,
     status: mapWorkflowStatus(item.status),
-    isTool: true,
+    isTool: item.kind !== 'queue',
     title: firstText(payload.title, deriveWorkflowTitle(eventType, toolName)),
     detail: resolveWorkflowDetail(payload),
     modelTurnId,
     model_turn_id: modelTurnId,
     updatedSeq: item.revision
   };
+  const args = payload.args ?? payload.arguments ?? payload.input;
+  if (args !== undefined) {
+    record.toolCallRawDetail = stringifyWorkflowDetail({ tool: toolName, arguments: args });
+  }
+  if (eventType === 'tool_result') record.toolResultRawDetail = stringifyWorkflowDetail(payload);
   if (toolName) {
     record.toolName = toolName;
     record.tool = toolName;
@@ -305,6 +352,7 @@ const buildWorkflowRecord = (
   copyWorkflowAliases(record, payload, 'tool_runtime_name', 'toolRuntimeName', 'runtime_name', 'runtimeName', 'toolRuntimeName', 'tool_runtime_name', 'runtimeName', 'runtime_name');
   copyWorkflowAliases(record, payload, 'tool_function_name', 'toolFunctionName', 'function_name', 'functionName', 'toolFunctionName', 'tool_function_name', 'functionName', 'function_name');
   copyWorkflowAliases(record, payload, 'command_session_id', 'commandSessionId', 'command_session_id', 'commandSessionId');
+  workflowRecordCache.set(item, { revision: item.revision, modelTurnId, record });
   return record;
 };
 
@@ -320,11 +368,6 @@ const copyWorkflowAliases = (
   outputKeys.forEach((key) => {
     record[key] = value;
   });
-};
-
-const resolveWorkflowItemRound = (item: ThreadItemState): number | null => {
-  const raw = item.raw?.model_round;
-  return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
 };
 
 const resolveWorkflowEventType = (item: ThreadItemState): string => {
@@ -343,6 +386,7 @@ const resolveWorkflowEventType = (item: ThreadItemState): string => {
     return isActiveItemStatus(item.status) ? 'approval_request' : 'approval_result';
   }
   if (item.kind === 'plan') return rawType || 'plan_update';
+  if (item.kind === 'queue') return rawType || (item.status === 'queued' ? 'queue_update' : 'queue_start');
   return rawType || 'compaction';
 };
 
@@ -363,9 +407,7 @@ const deriveWorkflowTitle = (eventType: string, toolName: string): string => {
 const resolveWorkflowDetail = (payload: Record<string, unknown>): string => {
   if (typeof payload.detail === 'string' && payload.detail) return payload.detail;
   if (typeof payload.content === 'string' && payload.content) return payload.content;
-  const data = payload.data;
-  if (isPlainRecord(data)) return stringifyWorkflowDetail(data);
-  return '';
+  return stringifyWorkflowDetail(payload);
 };
 
 const stringifyWorkflowDetail = (value: unknown): string => {
@@ -390,13 +432,35 @@ const stringifyWorkflowDetail = (value: unknown): string => {
 // Small shared helpers
 // ---------------------------------------------------------------------------
 
-const resolveStandaloneWorkflowRound = (items: ThreadItemState[]): number => {
-  let max = 0;
-  for (const item of items) {
-    if (Number.isFinite(item.modelRound) && item.modelRound > max) max = item.modelRound;
+const compareModelItems = (left: ThreadItemState, right: ThreadItemState): number =>
+  left.modelRound !== right.modelRound ? left.modelRound - right.modelRound : left.order - right.order;
+
+const compareWorkflowItems = (left: ThreadItemState, right: ThreadItemState): number => {
+  const leftRound = explicitWorkflowRound(left);
+  const rightRound = explicitWorkflowRound(right);
+  if (leftRound === null && rightRound !== null) return 1;
+  if (leftRound !== null && rightRound === null) return -1;
+  if (leftRound !== null && rightRound !== null && leftRound !== rightRound) {
+    return leftRound - rightRound;
   }
-  return max;
+  // Durable identity, rather than arrival timing, makes a snapshot and its
+  // replay produce the same workflow ordering.
+  return left.itemId < right.itemId ? -1 : left.itemId > right.itemId ? 1 : 0;
 };
+
+const explicitWorkflowRound = (item: ThreadItemState): number | null => {
+  const round = item.raw?.model_round;
+  return typeof round === 'number' && Number.isFinite(round) ? round : null;
+};
+
+const composeTurnText = (
+  state: ChatThreadState,
+  items: ThreadItemState[],
+  field: 'content' | 'reasoning'
+): string => items
+  .map((item) => composeItemText(state, item.itemId, field))
+  .filter((text) => text.length > 0)
+  .join('\n\n');
 
 const minItemOrder = (items: ThreadItemState[]): number =>
   items.reduce((min, item) => (item.order < min ? item.order : min), items[0]?.order ?? 0);

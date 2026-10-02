@@ -28,7 +28,6 @@ const AdminUsersView = () => import('@/views/AdminUsersView.vue');
 const AdminAgentsView = () => import('@/views/AdminAgentsView.vue');
 const AdminSystemView = () => import('@/views/AdminSystemView.vue');
 const BeeroomE2EHarnessView = () => import('@/views/dev/BeeroomE2EHarnessView.vue');
-const ChatCompactionE2EHarnessView = () => import('@/views/dev/ChatCompactionE2EHarnessView.vue');
 const ChatBubbleStressE2EHarnessView = () => import('@/views/dev/ChatBubbleStressE2EHarnessView.vue');
 const MessengerHeavyHistoryE2EHarnessView = () => import('@/views/dev/MessengerHeavyHistoryE2EHarnessView.vue');
 const MessengerViewPerformanceE2EHarnessView = () => import('@/views/dev/MessengerViewPerformanceE2EHarnessView.vue');
@@ -208,11 +207,6 @@ const routes: RouteRecordRaw[] = [
           path: '/__e2e/beeroom-harness',
           name: 'beeroom-e2e-harness',
           component: BeeroomE2EHarnessView
-        },
-        {
-          path: '/__e2e/chat-compaction-harness',
-          name: 'chat-compaction-e2e-harness',
-          component: ChatCompactionE2EHarnessView
         },
         {
           path: '/__e2e/chat-bubble-stress',
@@ -512,3 +506,4 @@ router.beforeEach(async (to) => {
 });
 
 export default router;
+

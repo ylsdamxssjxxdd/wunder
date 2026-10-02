@@ -1,3 +1,6 @@
+import { hydrateChatThreadRuntime } from '@/realtime/chat/chatThreadRuntime';
+import { syncChatThreadShell } from './chatThreadEffects';
+import { getThreadLogSnapshot } from '@/api/chat';
 import { sessionCatalogCheckIds, sessionCatalogCandidateIds, mergeSessionCatalogPage, cacheSessionCatalog } from './chatSessionCatalog';
 import { isSessionUnavailable } from './chatSessionAvailability';
 import { normalizeThreadLogCursor } from './chatThreadCursor';
@@ -671,6 +674,7 @@ export const chatSessionOpenLoadActions = {
         let sessionRes = null;
         let eventsPayload = null;
         let workflowEventsPayload = null;
+        let threadSnapshot = null;
         let sessionDetail = prefetchedSessionDetail;
         const detailLimit = resolveSessionOpenDetailLimit();
         const knownEventFloor = resolveKnownSessionEventFloor(
@@ -692,7 +696,7 @@ export const chatSessionOpenLoadActions = {
         try {
           if (!sessionDetail || !eventsPayload || !workflowEventsPayload) {
             perfFetchStart = perfEnabled ? performance.now() : 0;
-            [sessionRes, eventsPayload, workflowEventsPayload] = await Promise.all([
+            [sessionRes, eventsPayload, workflowEventsPayload, threadSnapshot] = await Promise.all([
               sessionDetail
                 ? Promise.resolve(null)
                 : getSessionWithParams(
@@ -722,7 +726,8 @@ export const chatSessionOpenLoadActions = {
               // refresh until the second response arrives.
               loadSessionWorkflowEventsSnapshot(targetSessionId, {
                 signal: detailAbortController?.signal
-              }).catch(() => null)
+              }).catch(() => null),
+              getThreadLogSnapshot(targetSessionId, detailAbortController ? { signal: detailAbortController.signal } : {})
             ]);
             if (detailAbortController?.signal.aborted || isStaleDesktopSessionDetailLoad(this, targetSessionId, preserveWatcher)) {
               return null;
@@ -748,6 +753,10 @@ export const chatSessionOpenLoadActions = {
         }
         if (isSessionUnavailable(this, targetSessionId) || isStaleDesktopSessionDetailLoad(this, targetSessionId, preserveWatcher)) {
           return null;
+        }
+        if (threadSnapshot) {
+          const snapshotBody = threadSnapshot.data?.data ?? threadSnapshot.data;
+          hydrateChatThreadRuntime(this, targetSessionId, snapshotBody);
         }
         if (!isChatSnapshotCurrent(ensureRuntime(targetSessionId), eventsPayload, hydrationRevision)) {
           // Seed missing history even when WS wins the cold-refresh race, while
@@ -1166,6 +1175,7 @@ export const chatSessionOpenLoadActions = {
                 foregroundCount: Array.isArray(this.messages) ? this.messages.length : 0
               })
         });
+        syncChatThreadShell(this, targetSessionId);
         this.scheduleSnapshot(true);
         const allowStartWatcherAfterHydration = options.startWatcherAfterHydration !== false;
         const shouldKeepActiveSessionWarm = shouldKeepActiveSessionWarmAfterHydration({

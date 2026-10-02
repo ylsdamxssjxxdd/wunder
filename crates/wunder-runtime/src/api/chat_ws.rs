@@ -22,7 +22,6 @@ use crate::core::long_task;
 use crate::i18n;
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
 use crate::schemas::StreamEvent;
-use crate::services::chat_cancel_marker::persist_user_cancelled_turn_marker;
 use crate::services::goal::{self, GoalCommand};
 use crate::services::runtime::thread::{QueueInfo, ThreadSubmitOutcome};
 use crate::state::AppState;
@@ -594,6 +593,14 @@ async fn handle_ws(
                                     tokio::pin!(stream);
                                     let mut goal_continue_ready = false;
                                     let mut feeder_started = false;
+                                    // The start request owns its feeder for the
+                                    // lifetime of this execution stream.  Once
+                                    // the stream has drained, the client creates
+                                    // the long-lived watch from its durable
+                                    // cursor.  Leaving this feeder alive used to
+                                    // make the start feeder and the later watch
+                                    // publish the same change rows concurrently.
+                                    let feeder_cancel = cancel.child_token();
                                     loop {
                                         tokio::select! {
                                             _ = cancel.cancelled() => {
@@ -628,7 +635,7 @@ async fn handle_ws(
                                                         let feeder_session = session_id_cleanup.clone();
                                                         let feeder_tx = ws_tx_snapshot.clone();
                                                         let feeder_request_id = request_id_cleanup.clone();
-                                                        let feeder_cancel = cancel.clone();
+                                                        let feeder_cancel = feeder_cancel.clone();
                                                         long_task::spawn("api.chat_ws.change_feeder", async move {
                                                             resume_thread_changes_v2(feeder_state, feeder_session, change_cursor, Some(&feeder_request_id), feeder_tx, Some(feeder_cancel)).await;
                                                         });
@@ -644,6 +651,13 @@ async fn handle_ws(
                                             }
                                         }
                                     }
+                                    // The execution stream only ends after its
+                                    // runner and online queue drain, so all
+                                    // committed changes are already recoverable
+                                    // from the durable cursor.  Stop this
+                                    // request-scoped feeder before the frontend
+                                    // installs its session watcher.
+                                    feeder_cancel.cancel();
                                     if goal_continue_ready && !cancel.is_cancelled() {
                                         let session_id_for_goal = session_id_cleanup.clone();
                                         state_snapshot
@@ -949,14 +963,6 @@ async fn handle_ws(
                                         cancel_source,
                                     )
                                     .await;
-                                let _ = persist_user_cancelled_turn_marker(
-                                    state.workspace.clone(),
-                                    state.user_store.clone(),
-                                    &user.user_id,
-                                    &session_id,
-                                    cancel_source,
-                                )
-                                .await;
                             }
                         }
                     }
@@ -1399,6 +1405,19 @@ async fn register_ws_task(
     let cancel = CancellationToken::new();
     let task_id = Uuid::new_v4().simple().to_string();
     let mut guard = tasks.lock().await;
+    // `watch` and `resume` are alternate readers of the same durable session
+    // log.  They may use different request ids on a multiplexed socket, so
+    // request-id replacement alone cannot prevent two feeders from writing
+    // the same change range.  Replace a prior recovery subscription for this
+    // session, but never cancel a `start`/queued execution task: those own
+    // business execution and have `cancel_session == true`.
+    if !cancel_session {
+        for entry in guard.values() {
+            if !entry.cancel_session && entry.session_id == session_id {
+                entry.cancel.cancel();
+            }
+        }
+    }
     if let Some(entry) = guard.insert(
         request_id.to_string(),
         WsStreamEntry {
@@ -1464,5 +1483,45 @@ mod tests {
                 "queue_after_change_seq": 41,
             })
         );
+    }
+
+    #[tokio::test]
+    async fn recovery_subscription_replaces_another_subscription_for_the_session() {
+        let tasks = Arc::new(Mutex::new(HashMap::new()));
+        let (first, _) = register_ws_task(
+            &tasks,
+            "watch-first",
+            Some("session-a".to_string()),
+            false,
+        )
+        .await;
+        let (_second, _) = register_ws_task(
+            &tasks,
+            "resume-second",
+            Some("session-a".to_string()),
+            false,
+        )
+        .await;
+        assert!(first.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn recovery_subscription_does_not_cancel_active_start_execution() {
+        let tasks = Arc::new(Mutex::new(HashMap::new()));
+        let (start, _) = register_ws_task(
+            &tasks,
+            "start-request",
+            Some("session-a".to_string()),
+            true,
+        )
+        .await;
+        let (_watch, _) = register_ws_task(
+            &tasks,
+            "watch-request",
+            Some("session-a".to_string()),
+            false,
+        )
+        .await;
+        assert!(!start.is_cancelled());
     }
 }

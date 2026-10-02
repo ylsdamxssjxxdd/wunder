@@ -215,7 +215,7 @@ test('detail response racing live output seeds history without rolling back cont
   const pending: Array<() => void> = [];
   api.defaults.adapter = async (config) => new Promise(resolve => {
     pending.push(() => resolve({ status: 200, statusText: 'OK', headers: {}, config, data: { data:
-      config.url?.endsWith('/events')
+      config.url?.endsWith('/thread-log/snapshot') ? null : config.url?.endsWith('/events')
         ? { running: false, runtime: { status: 'idle' }, last_event_id: 10, events: [],
             workflow_only: config.params?.workflow_only === true,
             rounds: config.params?.workflow_only ? [{ user_round: 1, events: [{
@@ -228,7 +228,7 @@ test('detail response racing live output seeds history without rolling back cont
   try {
     const loading = store.loadSessionDetail('session-1', { startWatcherAfterHydration: false });
     await new Promise(resolve => setTimeout(resolve, 0));
-    assert.equal(pending.length, 3);
+    assert.equal(pending.length, 4);
     applyCanonicalStreamRuntimeEvent(store, 'session-1', 'llm_output_delta', {
       user_round: 2, model_round: 1, delta: 'new-output'
     }, '11');
@@ -242,6 +242,7 @@ test('detail response racing live output seeds history without rolling back cont
     assert.equal(restored[1].status, 'final');
     assert.equal(restored[1].workflowItems?.[0]?.toolCallId, 'stored-call');
   } finally {
+    pending.forEach(resolve => resolve());
     api.defaults.adapter = originalAdapter;
     store.resetState();
   }

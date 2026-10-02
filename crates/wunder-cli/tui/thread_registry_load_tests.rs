@@ -154,27 +154,45 @@ async fn switching_threads_keeps_background_streams_and_recovers_fully() {
             let next = &ids[(_frame / 5) as usize % ids.len()];
             registry.activate(next);
         }
+        // The test runtime is current-thread: spawned producers only advance
+        // while this task yields, exactly like the real frame loop awaiting
+        // between frames.
+        tokio::task::yield_now().await;
         if applied.iter().all(|ids| ids.len() >= 300) {
             break;
         }
     }
-    for producer in producers {
-        let _ = producer.await;
-    }
 
-    // Drain the remainder after all producers finished.
-    for (session_id, receiver) in receivers.iter_mut() {
-        while let Ok(message) = receiver.try_recv() {
-            if let StreamMessage::Event { event, .. } = message {
-                let event_id = event
-                    .id
-                    .as_deref()
-                    .and_then(|id| id.parse::<i64>().ok())
-                    .unwrap_or(0);
-                registry.record_event(session_id, event_id);
-                registry.projection_mut(session_id).queue_event(event);
+    // Producers may still hold unsent events: drain while yielding so their
+    // pending sends acquire capacity. Joining before the channels are closed
+    // deadlocks (producers block on a full buffer, nobody drains).
+    let mut closed = vec![false; receivers.len()];
+    while closed.iter().any(|done| !done) {
+        for (index, (session_id, receiver)) in receivers.iter_mut().enumerate() {
+            loop {
+                match receiver.try_recv() {
+                    Ok(StreamMessage::Event { event, .. }) => {
+                        let event_id = event
+                            .id
+                            .as_deref()
+                            .and_then(|id| id.parse::<i64>().ok())
+                            .unwrap_or(0);
+                        registry.record_event(session_id, event_id);
+                        registry.projection_mut(session_id).queue_event(event);
+                    }
+                    Ok(_) => {}
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        closed[index] = true;
+                        break;
+                    }
+                }
             }
         }
+        tokio::task::yield_now().await;
+    }
+    for producer in producers {
+        let _ = producer.await;
     }
     for (index, id) in ids.iter().enumerate() {
         registry.activate(id);
@@ -240,6 +258,22 @@ fn replay_reapplies_from_cursor_without_duplicates() {
     }
     let replay_from = registry.replay_from(id).expect("replay cursor");
     assert!(replay_from >= 1);
+
+    // The overflow left MAX_PENDING_EVENTS survivors queued; the frame loop
+    // keeps consuming them (and marking them applied) while the replay
+    // refills from storage. Every survivor is a distinct event, none lost.
+    let mut overflow_applied = 0;
+    for event in registry.take_pending_events(id, MAX_PENDING_EVENTS) {
+        let parsed = event
+            .id
+            .as_deref()
+            .and_then(|id| id.parse::<i64>().ok())
+            .unwrap_or(0);
+        if registry.mark_event_applied(id, parsed) {
+            overflow_applied += 1;
+        }
+    }
+    assert_eq!(overflow_applied, MAX_PENDING_EVENTS);
 
     // The replay re-delivers 1..=64 (already applied) plus 65..=128 (new).
     let mut new_applied = 0;

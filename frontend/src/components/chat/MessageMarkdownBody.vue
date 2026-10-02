@@ -505,6 +505,7 @@ const scheduleRender = () => {
   if (cached?.source === source) {
     markdownPending.value = false;
     visibleHtml.value = cached.html;
+    emit('rendered', buildRenderedPayload(source, cached.html));
     return;
   }
   if (plainTextRender) {

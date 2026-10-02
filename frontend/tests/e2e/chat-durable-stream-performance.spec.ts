@@ -1,4 +1,9 @@
 import { expect, test } from '@playwright/test';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+
+// Each test has its own browser context. A performance failure must not skip the visual evidence.
+test.describe.configure({ mode: 'default' });
 
 type DurableProbe = {
   tokens: number;
@@ -6,6 +11,7 @@ type DurableProbe = {
   maxFrameLatencyMs: number;
   reconnectRecoveryMs: number;
   longTasksOver50Ms: number;
+  longTaskDetails?: Array<{ startTime: number; duration: number; name: string }>;
   inputApplied: boolean;
   scrollApplied: boolean;
   copyObserved: boolean;
@@ -23,9 +29,19 @@ test('durable 1000-token chat stream renders, resumes, and stays interactive', a
   });
   await page.goto('/__e2e/messenger-view-performance?session_id=perf-session-a');
   await page.waitForFunction(() => Boolean((window as any).__messengerViewPerformanceE2E));
-  const result = await page.evaluate<[], DurableProbe>(() =>
+  const profiler = process.env.CHAT_PROFILE ? await page.context().newCDPSession(page) : null;
+  if (profiler) { await profiler.send('Profiler.enable'); await profiler.send('Profiler.start'); }
+  const result = await page.evaluate((): Promise<DurableProbe> =>
     (window as any).__messengerViewPerformanceE2E.runDurableStreamProbe());
   console.log('durable stream probe', JSON.stringify(result));
+  const probeDir = resolve(process.cwd(), '../temp_dir/chat-lifecycle-review');
+  await mkdir(probeDir, { recursive: true });
+  if (profiler) {
+    const { profile } = await profiler.send('Profiler.stop');
+    await writeFile(resolve(probeDir, `stream-${Date.now()}.cpuprofile`), JSON.stringify(profile));
+    await profiler.detach();
+  }
+  await writeFile(resolve(probeDir, `stream-performance-${Date.now()}.json`), JSON.stringify(result, null, 2));
 
   expect(result.tokens).toBe(1000);
   expect(result.p95FrameLatencyMs).toBeLessThan(100);

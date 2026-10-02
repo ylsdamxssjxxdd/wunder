@@ -463,5 +463,13 @@ export const buildWorkflowToolRuns = (items: WorkflowItem[]): RawToolRun[] => {
     }
   });
 
+  // A durable tool item replaces its call with the result while retaining
+  // invocation JSON. Expose both facets through the same row after reload too.
+  for (const row of rows) {
+    if (!row.callItem && row.resultItem &&
+        (row.resultItem.toolCallRawDetail || row.resultItem.tool_call_raw_detail)) {
+      row.callItem = row.resultItem;
+    }
+  }
   return rows;
 };

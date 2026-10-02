@@ -37,12 +37,7 @@ type MessageRecord = Record<string, unknown>;
 
 const props = withDefaults(defineProps<{
   message: MessageRecord;
-  activeSessionBusy?: boolean;
-  latestVisibleAssistant?: boolean;
-}>(), {
-  activeSessionBusy: false,
-  latestVisibleAssistant: false
-});
+}>(), {});
 
 const { t } = useI18n();
 const nowTick = ref(Date.now());
@@ -51,8 +46,7 @@ let timer: number | null = null;
 const isLive = computed(() => {
   const message = props.message || {};
   return Boolean(
-    props.latestVisibleAssistant && props.activeSessionBusy ||
-      message.workflowStreaming ||
+    message.workflowStreaming ||
       message.reasoningStreaming ||
       message.stream_incomplete ||
       message.retry_started_at_ms ||
@@ -68,10 +62,7 @@ const isLive = computed(() => {
 const entries = computed<MessageStatsEntry[]>(() => {
   const message = props.message || {};
   if (String(message.role || '') !== 'assistant' || message.isGreeting) return [];
-  return buildAssistantMessageStatsEntries(message, t, undefined, nowTick.value, {
-    activeSessionBusy: props.activeSessionBusy,
-    latestVisibleAssistant: props.latestVisibleAssistant
-  });
+  return buildAssistantMessageStatsEntries(message, t, undefined, nowTick.value);
 });
 
 const syncTimer = () => {

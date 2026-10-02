@@ -1,0 +1,126 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createPinia, setActivePinia } from 'pinia';
+import { applyChatThreadServerEvent, submitChatThreadTurn, hydrateChatThreadRuntime, resetChatThreadRuntime, buildChatThreadMaterializedMessages } from '../../src/realtime/chat/chatThreadRuntime';
+import { buildWorkflowToolRuns } from '../../src/components/chat/toolWorkflowRunModel';
+import { resolveCollapsedWorkflowEntryMetadata } from '../../src/components/chat/toolWorkflowCollapsedMetadata';
+
+const key = 'thread-effects-test';
+const setup = async () => {
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+    getItem: () => null, setItem: () => {}, removeItem: () => {}
+  } });
+  const { useChatStore } = await import('../../src/stores/chat');
+  const { applyChatThreadEffects, syncChatThreadShell } = await import('../../src/stores/chatThreadEffects');
+  setActivePinia(createPinia());
+  resetChatThreadRuntime(key);
+  const chat = useChatStore();
+  chat.activeSessionId = key;
+  chat.sessions = [{ id: key, agent_id: 'agent-example' }] as any;
+  const events: string[] = [];
+  const original = globalThis.window;
+  globalThis.window = { dispatchEvent: (event: Event) => { events.push(event.type); return true; } } as any;
+  const apply = (seq: number, change_type: string, data: Record<string, unknown>) =>
+    applyChatThreadServerEvent(chat, key, 'thread_change', {
+      cursor: seq, change_type, turn_id: data.turn_id, item_id: data.item_id, revision: data.revision, payload: data
+    }, { onChangesApplied: changes => applyChatThreadEffects(chat, key, changes) });
+  return { chat, events, apply, syncChatThreadShell, cleanup: () => { globalThis.window = original; } };
+};
+
+test('durable lifecycle settles shell and dispatches workspace effects once even through replay and gaps', async () => {
+  const { chat, events, apply, syncChatThreadShell, cleanup } = await setup();
+  try {
+    submitChatThreadTurn(chat, key, 'client-one', 'question');
+    chat.loadingBySession[key] = true;
+    syncChatThreadShell(chat, key);
+    assert.equal(chat.isSessionBusy(key), true);
+    apply(1, 'turn_upsert', { turn_id: 'turn-one', user_round: 1, status: 'running', client_message_id: 'client-one' });
+    const workspace = { turn_id: 'turn-one', item_id: 'workspace-one', kind: 'workspace_update', event_type: 'workspace_update', revision: 1, status: 'completed', paths: ['example.txt'] };
+    apply(3, 'item_upsert', workspace);
+    assert.equal(events.includes('wunder:workspace-refresh'), false);
+    apply(2, 'item_upsert', { turn_id: 'turn-one', item_id: 'turn-one:user', kind: 'user_message', content: 'question', revision: 1 });
+    apply(3, 'item_upsert', workspace);
+    assert.equal(events.filter(event => event === 'wunder:workspace-refresh').length, 1);
+    apply(4, 'turn_upsert', { turn_id: 'turn-one', status: 'completed' });
+    apply(4, 'turn_upsert', { turn_id: 'turn-one', status: 'completed' });
+    assert.equal(chat.isSessionBusy(key), false);
+    assert.equal(chat.sessionRuntimeStatus(key), 'completed');
+    assert.equal(chat.isSessionLoading(key), false);
+    assert.equal(events.filter(event => event === 'wunder:agent-runtime-refresh').length, 1);
+    submitChatThreadTurn(chat, key, 'client-two', 'next question');
+    const rows = buildChatThreadMaterializedMessages(key)!;
+    assert.deepEqual(rows.map(row => row.role), ['user', 'assistant', 'user', 'assistant']);
+    assert.equal(rows[1].final, true);
+    assert.equal(rows[3].final, false);
+  } finally { cleanup(); }
+});
+
+test('row-shaped atomic snapshot restores compact input and complete tool invocation metadata', async () => {
+  const { chat, syncChatThreadShell, cleanup } = await setup();
+  try {
+    hydrateChatThreadRuntime(chat, key, {
+      cursor: 8,
+      turns: [{ turn_id: 'turn-compact', user_turn_index: 2, status: 'completed', payload: { user_round: 2 } }],
+      items: [
+        { item_id: 'turn-compact:user', turn_id: 'turn-compact', kind: 'user_message', revision: 2, status: 'completed', payload: { role: 'user', content: '/compact', user_round: 2 } },
+        { item_id: 'turn-compact:tool-example', turn_id: 'turn-compact', kind: 'tool_call', revision: 3, status: 'completed', payload: {
+          event_type: 'tool_result', tool: 'example_tool', tool_call_id: 'call-example', model_round: 1,
+          args: { text: 'sample input' }, data: { result: 'sample result' }, meta: { duration_ms: 125 },
+          request_context_tokens: 42, request_usage: { total_tokens: 57 }
+        } }
+      ], blocks: []
+    });
+    syncChatThreadShell(chat, key);
+    const rows = buildChatThreadMaterializedMessages(key)!;
+    assert.deepEqual(rows.map(row => row.role), ['user', 'assistant']);
+    assert.equal(rows[0].content, '/compact');
+    assert.equal(rows[1].final, true);
+    const runs = buildWorkflowToolRuns(rows[1].workflowItems!);
+    assert.equal(runs.length, 1);
+    assert.deepEqual(JSON.parse(String(runs[0].callItem?.toolCallRawDetail)), { tool: 'example_tool', arguments: { text: 'sample input' } });
+    const metadata = resolveCollapsedWorkflowEntryMetadata(runs[0]);
+    assert.equal(metadata.durationLabel, '125ms');
+    assert.equal(metadata.contextTokensLabel, '42 token');
+    assert.equal(metadata.consumedTokensLabel, '57 token');
+  } finally { cleanup(); }
+});
+
+
+test('production send callback binds its pending pair and settles from server turn_upsert before transport cleanup', async () => {
+  const { chat, cleanup } = await setup();
+  const { chatWsClient } = await import('../../src/stores/chatWatcher');
+  const { clearSessionWatcher } = await import('../../src/stores/chatRuntimeControls');
+  const originalRequest = chatWsClient.request;
+  let pendingRoles: string[] = [];
+  chatWsClient.request = (async (options: any) => {
+    const request = typeof options.message === 'function' ? options.message() : options.message;
+    if (request.type !== 'start') {
+      return new Promise(resolve => options.signal?.addEventListener('abort', () => resolve(undefined), { once: true }));
+    }
+    pendingRoles = buildChatThreadMaterializedMessages(key)!.map(row => row.role);
+    const clientId = request.payload.client_message_id;
+    const emit = (cursor: number, payload: Record<string, unknown>, change_type = 'turn_upsert') => options.onEvent('thread_change', JSON.stringify({
+      cursor, change_type, turn_id: 'turn-send', item_id: payload.item_id, revision: payload.revision, payload
+    }));
+    emit(1, { turn_id: 'turn-send', status: 'queued', user_round: 1, client_message_id: clientId });
+    emit(2, { item_id: 'turn-send:user', turn_id: 'turn-send', kind: 'user_message', content: 'question', user_round: 1, client_message_id: clientId, revision: 1 }, 'item_upsert');
+    emit(3, { turn_id: 'turn-send', status: 'running' });
+    emit(4, { item_id: 'turn-send:text-1', turn_id: 'turn-send', model_round: 1, kind: 'assistant_message', role: 'assistant', content: 'answer', status: 'completed', revision: 1 }, 'item_upsert');
+    emit(5, { turn_id: 'turn-send', status: 'completed' });
+    assert.equal(chat.isSessionBusy(key), false);
+    assert.equal(chat.isSessionLoading(key), false);
+    options.onEvent('final', JSON.stringify({ content: 'answer' }));
+  }) as any;
+  try {
+    await chat.sendMessage('question');
+    assert.deepEqual(pendingRoles, ['user', 'assistant']);
+    const rows = buildChatThreadMaterializedMessages(key)!;
+    assert.deepEqual(rows.map(row => row.role), ['user', 'assistant']);
+    assert.equal(rows[1].content, 'answer');
+    assert.equal(chat.sessionRuntimeStatus(key), 'completed');
+  } finally {
+    clearSessionWatcher();
+    chatWsClient.request = originalRequest;
+    cleanup();
+  }
+});

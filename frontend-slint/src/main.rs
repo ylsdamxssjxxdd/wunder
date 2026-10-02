@@ -21,6 +21,8 @@ mod tray;
 mod workspace_ui;
 mod world_ui;
 mod cron_ui;
+mod channel_ui;
+mod plaza_ui;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     install_slint_platform()?;

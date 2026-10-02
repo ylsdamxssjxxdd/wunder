@@ -56,7 +56,6 @@ import ChatComposer from '@/components/chat/ChatComposer.vue';
 import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import {
   InquiryPanel,
-  MessageCompactionDivider,
   MessageFeedbackActions,
   MessageKnowledgeCitation,
   MessageSubagentPanel,
@@ -135,9 +134,7 @@ import {
 import { hasActiveSubagentItems } from '@/utils/subagentRuntime';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import {
-  isCompactionOnlyWorkflowItems,
   isCompactionRunningFromWorkflowItems,
-  resolveLatestCompactionSnapshot
 } from '@/utils/chatCompactionWorkflow';
 import {
   isAudioRecordingSupported,
@@ -1025,3 +1022,4 @@ export function installMessengerControllerMessageRoutingPreferences(ctx: Messeng
       ctx.orderedOwnedAgentsState.orderedKeys.value = ctx.normalizeStringListUnique(nextOrder);
   };
 }
+

@@ -13,26 +13,11 @@ import { clearAssistantRetryState } from './chatStats';
 import type { ResumeStreamOptions } from './chatTypes';
 import { abortCompactRequest, abortResumeStream, abortSendStream, chatWsClient, finalizeManualCompactionAsCancelled, startSessionWatcher } from './chatWatcher';
 
-const normalizeRuntimeRequestId = (value: unknown): string =>
-  String(value || '').trim();
-
-const collectRuntimeCancelRequestIds = (runtime: Record<string, any> | null | undefined): string[] => {
-  const ids = [
-    normalizeRuntimeRequestId(runtime?.sendRequestId),
-    normalizeRuntimeRequestId(runtime?.resumeRequestId),
-    normalizeRuntimeRequestId(runtime?.watchRequestId)
-  ].filter(Boolean);
-  return Array.from(new Set(ids));
-};
-
 const sendWsCancelForSessionStop = (
-  sessionId: string,
-  runtime: Record<string, any> | null | undefined
-): string[] => {
-  const requestIds = collectRuntimeCancelRequestIds(runtime);
-  requestIds.forEach((requestId) => {
-    chatWsClient.sendCancel(requestId, sessionId, 'user_stop');
-  });
+  sessionId: string
+): void => {
+  // A stop is scoped to the durable session.  Cancelling each start, resume
+  // and watch request first caused repeated server settlements for one click.
   void chatWsClient
     .notify({
       type: 'cancel',
@@ -45,11 +30,9 @@ const sendWsCancelForSessionStop = (
     .catch((error) => {
       chatDebugLog('messenger.send', 'stop-session-ws-cancel-failed', {
         sessionId,
-        requestIds,
         message: String((error as { message?: unknown })?.message || '')
       });
     });
-  return requestIds;
 };
 
 export const chatStopResumeActions = {
@@ -68,7 +51,7 @@ export const chatStopResumeActions = {
         runtime.sendAbortReason = 'user_stop';
         runtime.resumeAbortReason = 'user_stop';
       }
-      const wsCancelRequestIds = sendWsCancelForSessionStop(targetSessionId, runtime);
+      sendWsCancelForSessionStop(targetSessionId);
       abortSendStream(targetSessionId);
       abortResumeStream(targetSessionId);
       abortCompactRequest(targetSessionId);
@@ -112,7 +95,6 @@ export const chatStopResumeActions = {
         sessionId: targetSessionId,
         terminateSubagents: options.terminateSubagents !== false,
         runtime: runtime ? buildRuntimeDebugSnapshot(runtime) : null,
-        wsCancelRequestIds,
         pendingAssistant: buildMessageIdentityDebugSnapshot(
           pendingAssistant,
           Array.isArray(targetMessages) ? targetMessages.indexOf(pendingAssistant) : -1
@@ -123,7 +105,9 @@ export const chatStopResumeActions = {
       });
       this.dismissPendingInquiryPanel();
       if (Array.isArray(targetMessages)) {
-        settleTerminalAssistantArtifactsBase(targetMessages, { failed: true });
+        // A user stop is terminal, but it is not an execution failure. Keep
+        // completed work intact and settle only unfinished artifacts as cancelled.
+        settleTerminalAssistantArtifactsBase(targetMessages, { cancelled: true });
         cacheSessionMessages(targetSessionId, targetMessages);
         touchSessionUpdatedAt(this, targetSessionId, Date.now());
         notifySessionSnapshot(this, targetSessionId, targetMessages, true);

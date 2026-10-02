@@ -43,7 +43,7 @@ export struct ChatMessage {
 // Stable desktop navigation identifiers. Keep presentation pages independent
 // from their position in the rail so deep links and native controllers never
 // rely on an integer slot.
-export enum DesktopPage { messages, agents, tools, settings, profile, files, users, groups, cron }
+export enum DesktopPage { messages, agents, tools, settings, profile, files, users, groups, cron, channels, plaza }
 // Screenshot attachment state remains in the UI projection until send. The
 // data URL is forwarded through the native Rust façade without an HTTP hop.
 export struct ChatAttachment { name: string, mime-type: string, data-url: string }
@@ -56,6 +56,13 @@ export struct CronCard { id: string, name: string, enabled: bool, schedule: stri
 export struct CronRunCard { run-id: string, status: string, trigger: string, summary: string, error: string, duration: string, created-at: string }
 export struct AgentCardFile { path: string, label: string }
 export struct PromptPackCard { id: string, readonly: bool, locale: string, is-active: bool, is-lang-default: bool }
+// Channel projections stay secret-free: the runtime only sends `_set` flags
+// and non-secret guided prefill values, never token or secret content.
+export struct ChannelCatalogCard { channel: string, name: string, description: string }
+export struct ChannelAccountCard { channel: string, account-id: string, name: string, status: string, active: bool, configured: bool, peer-kind: string, agent-id: string, created-at: string, updated-at: string, summary: string, secret-set: bool, app-id: string, corp-id: string, wechat-agent-id: string, original-id: string, weixin-bot-id: string, weixin-user-id: string, bot-type: string, domain: string }
+export struct ChannelBindingCard { binding-id: string, peer-kind: string, peer-id: string, agent-id: string, enabled: bool }
+export struct ChannelLogCard { time: string, level: string, event: string, message: string }
+export struct PlazaItemCard { item-id: string, kind: string, title: string, summary: string, owner: string, mine: bool, freshness: string, artifact: string, size: string, tags: string, updated-at: string }
 export struct AgentCard {
     id: string,
     name: string,

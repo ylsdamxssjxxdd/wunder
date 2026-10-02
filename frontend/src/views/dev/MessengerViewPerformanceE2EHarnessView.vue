@@ -17,9 +17,13 @@ import { createMessengerWorkflowMetricsProbe } from './messengerWorkflowMetricsP
 import { enableWorkflowHistoryFixture, readWorkflowHistoryFixture } from './messengerWorkflowHistoryFixture';
 import { useAgentStore } from '@/stores/agents';
 import { useChatStore } from '@/stores/chat';
+import { applyChatThreadEffects } from '@/stores/chatThreadEffects';
 import { useSessionHubStore } from '@/stores/sessionHub';
 import { applyCanonicalStreamRuntimeEvent, cacheSessionMessages, markSessionDetailWarm, syncChatRuntimeProjectionFromSnapshot } from '@/stores/chatRuntimeState';
-import { applyChatThreadServerEvent, resetChatThreadRuntime } from '@/realtime/chat/chatThreadRuntime';
+import {
+  applyChatThreadServerEvent,
+  resetChatThreadRuntime
+} from '@/realtime/chat/chatThreadRuntime';
 
 type HarnessMetrics = {
   firstInteractiveMs: number;
@@ -328,7 +332,7 @@ const runDurableStreamProbe = async () => {
   const turnId = 'durable-probe-turn';
   const itemId = `${turnId}:text-1`;
   const apply = (event: string, data: Record<string, unknown>) => {
-    const accepted = applyChatThreadServerEvent(chat, SESSION_A, event, data);
+    const accepted = applyChatThreadServerEvent(chat, SESSION_A, event, data, { onChangesApplied: changes => applyChatThreadEffects(chat, SESSION_A, changes) });
     if (!accepted) throw new Error(`durable frame was not consumed: ${event}`);
   };
   apply('thread_change', {
@@ -351,11 +355,18 @@ const runDurableStreamProbe = async () => {
     }
   });
   await nextFrame();
+  // Let initial MessengerView work, module hydration and virtual-list layout
+  // settle before measuring streaming work.
+  await new Promise<void>((resolve) => setTimeout(resolve, 250));
 
   const samples: number[] = [];
   const longTasks: number[] = [];
+  const longTaskDetails: Array<{ startTime: number; duration: number; name: string }> = [];
   const observer = typeof PerformanceObserver === 'undefined' ? null : new PerformanceObserver((list) => {
-    for (const entry of list.getEntries()) longTasks.push(entry.duration);
+    for (const entry of list.getEntries()) {
+      longTasks.push(entry.duration);
+      if (longTaskDetails.length < 100) longTaskDetails.push({ startTime: entry.startTime, duration: entry.duration, name: entry.name });
+    }
   });
   try { observer?.observe({ type: 'longtask' } as PerformanceObserverInit); } catch { /* optional API */ }
   const list = document.querySelector<HTMLElement>('[data-testid="messenger-message-list"]');
@@ -365,11 +376,14 @@ const runDurableStreamProbe = async () => {
   document.addEventListener('copy', onCopy);
   const chunks: string[] = [];
   try {
-    for (let index = 0; index < 1000; index += 1) {
-      const text = ` ${index % 10}`;
-      chunks.push(text);
+    for (let index = 0; index < 1000; index += 10) {
       const startedAt = performance.now();
-      apply('thread_item_tail', { item_id: itemId, field: 'content', offset: index * 2, base_seq: 3, text });
+      for (let part = 0; part < 10; part += 1) {
+        const token = index + part;
+        const text = ` ${token % 10}`;
+        chunks.push(text);
+        apply('thread_item_tail', { item_id: itemId, field: 'content', offset: token * 2, base_seq: 3, text });
+      }
       if (composer && index % 100 === 0) {
         composer.value = `typing-${index}`;
         composer.dispatchEvent(new Event('input', { bubbles: true }));
@@ -402,14 +416,19 @@ const runDurableStreamProbe = async () => {
     await nextFrame();
     const ordered = [...samples].sort((left, right) => left - right);
     const p95 = ordered[Math.max(0, Math.ceil(ordered.length * 0.95) - 1)] || 0;
-    const rendered = document.body.textContent?.includes('probe input') === true
-      && document.body.textContent?.includes(' 0 1 2 3 4 5') === true;
+    // Content clocks and Vue paint can land on different frames. Measure actual
+    // DOM recovery, bounded by the same one-second acceptance threshold.
+    const isRendered = () => document.body.textContent?.includes('probe input') === true
+      && document.body.textContent?.includes(chunks.join('').trim()) === true;
+    while (!isRendered() && performance.now() - recoveryStartedAt < 1000) await nextFrame();
+    const rendered = isRendered();
     return {
-      tokens: samples.length,
+      tokens: chunks.length,
       p95FrameLatencyMs: p95,
       maxFrameLatencyMs: Math.max(...samples, 0),
       reconnectRecoveryMs: performance.now() - recoveryStartedAt,
       longTasksOver50Ms: longTasks.filter((duration) => duration > 50).length,
+      longTaskDetails,
       inputApplied: composer?.value === 'typing-900',
       scrollApplied: Boolean(list && list.scrollTop >= 0),
       copyObserved: copied,

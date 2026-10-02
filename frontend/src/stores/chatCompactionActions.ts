@@ -1,3 +1,6 @@
+import { applyChatThreadServerEvent, submitChatThreadTurn, getChatThreadState } from '@/realtime/chat/chatThreadRuntime';
+import { syncChatThreadShell } from './chatThreadEffects';
+import { markRuntimeProjectionChanged } from '@/realtime/chat/chatRuntimeProjectionInvalidation';
 import { readChatRealtimeRevision } from './chatSnapshotFreshness';
 import { defineStore } from 'pinia';
 
@@ -142,6 +145,8 @@ export const chatCompactionActions = {
             ? this.messages
             : getSessionMessages(targetId) || [];
         const now = Date.now();
+        const compactClientId = String(localCompactionCommandMessageId || `compact:${targetId}:${now}`);
+        submitChatThreadTurn(this, targetId, compactClientId, '/compact');
         let compactionMessage = findRunningManualCompactionMarkerMessage(targetMessages);
         if (!compactionMessage) {
           compactionMessage = buildPendingManualCompactionMarkerMessage(now);
@@ -188,11 +193,18 @@ export const chatCompactionActions = {
         const compactionRevision = readChatRealtimeRevision(runtimeForManual);
         try {
           const requestPayload = {
-            ...(payload && typeof payload === 'object' ? payload : {})
+            ...(payload && typeof payload === 'object' ? payload : {}),
+            client_message_id: compactClientId
           };
           const { data } = await compactSessionApi(targetId, requestPayload, {
             signal: compactControllerForManual?.signal
           });
+          const accepted = data?.data ?? data;
+          if (accepted?.turn_id) {
+            applyChatThreadServerEvent(this, targetId, 'stream_started', {
+              ...accepted, client_message_id: compactClientId
+            });
+          }
           const acceptedRound = Number(
             data?.data?.user_round ?? data?.user_round ?? data?.data?.userRound ?? data?.userRound
           );
@@ -249,6 +261,12 @@ export const chatCompactionActions = {
           });
           return data?.data?.message || data?.message || '';
         } catch (error) {
+          const pending = getChatThreadState(targetId)?.turns.get(`pending:${compactClientId}`);
+          if (pending) {
+            pending.status = isAbortRequestError(error) ? 'cancelled' : 'failed';
+            syncChatThreadShell(this, targetId);
+            markRuntimeProjectionChanged(this, { sessionId: targetId, reason: 'compact_failed', immediate: true });
+          }
           if (isAbortRequestError(error)) {
             const abortReason = chatPageLifecycle.pageUnloading ? 'page-unload' : 'request-cancelled';
             if (!chatPageLifecycle.pageUnloading) {

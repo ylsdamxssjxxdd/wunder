@@ -93,7 +93,6 @@
     "./chat-assistant-match-regression.test.ts",
     "./chat-session-merge-regression.test.ts",
     "./chat-compaction-marker-regression.test.ts",
-    "./chat-compaction-divider-tokens-regression.test.ts",
     "./chat-compaction-dedupe-regression.test.ts",
     "./chat-compaction-summary-regression.test.ts",
     "./messenger-interaction-blocker-regression.test.ts",
@@ -122,3 +121,4 @@
     "./ability-visuals-regression.test.ts"
   ]
 }
+

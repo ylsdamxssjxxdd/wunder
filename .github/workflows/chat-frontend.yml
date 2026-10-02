@@ -1,0 +1,39 @@
+name: Chat frontend contract
+
+on:
+  pull_request:
+    paths: ['frontend/**', 'package*.json', '.github/workflows/chat-frontend.yml']
+  push:
+    paths: ['frontend/**', 'package*.json', '.github/workflows/chat-frontend.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chat-frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mock-chat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - run: npm run test:chat
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chat-evidence
+          path: |
+            temp_dir/chat-user-review/
+            temp_dir/chat-lifecycle-review/
+            frontend/test-results/
+          retention-days: 7

@@ -196,14 +196,6 @@ pub(super) async fn cancel_chat(state: &Arc<AppState>, user: &str, session: &str
         .thread_runtime
         .cancel_session_activity(user, session, "native_ui")
         .await?;
-    wunder_server::persist_user_cancelled_turn_marker(
-        state.workspace.clone(),
-        state.user_store.clone(),
-        user,
-        session,
-        "native_ui",
-    )
-    .await?;
     Ok(())
 }
 

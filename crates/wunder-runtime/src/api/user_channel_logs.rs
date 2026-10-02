@@ -1,3 +1,6 @@
+use super::user_channels::{
+    channel_service_response, ChannelErrorResponse, ChannelServiceResult,
+};
 use crate::api::user_context::resolve_user;
 use crate::channels::catalog;
 use crate::channels::types::ChannelAccountConfig;
@@ -6,7 +9,7 @@ use crate::i18n;
 use crate::state::AppState;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::{
     routing::{get, post},
     Json, Router,
@@ -75,62 +78,50 @@ pub fn router() -> Router<Arc<AppState>> {
         )
 }
 
-async fn list_channel_runtime_logs(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Query(query): Query<ChannelRuntimeLogsQuery>,
-) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
-    let user_id = resolved.user.user_id.clone();
-
-    let config = state.config_store.get().await;
-    if !config.channels.enabled && !config.gateway.enabled {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            "channels disabled".to_string(),
-        ));
-    }
-
-    let channel_filter = query
-        .channel
-        .as_deref()
+/// Shared user-channel service: recent runtime log entries for accounts the
+/// user owns, optionally narrowed by channel/account/agent.
+pub async fn list_user_channel_runtime_logs(
+    state: &Arc<AppState>,
+    user_id: &str,
+    channel: Option<&str>,
+    account_id: Option<&str>,
+    agent_id: Option<&str>,
+    limit: Option<usize>,
+) -> ChannelServiceResult<Value> {
+    let channel_filter = channel
         .map(|value| normalize_user_channel(Some(value)))
         .transpose()?;
-    let account_filter = query
-        .account_id
-        .as_deref()
+    let account_filter = account_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
-    let agent_filter = query
-        .agent_id
-        .as_deref()
+    let agent_filter = agent_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
-    let limit = query.limit.unwrap_or(80).clamp(1, 200);
+    let limit = limit.unwrap_or(80).clamp(1, 200);
 
     let account_keys = list_owned_account_keys_for_agent(
-        &state,
-        &user_id,
+        state,
+        user_id,
         channel_filter.as_deref(),
         agent_filter.as_deref(),
     )?;
     if account_keys.is_empty() {
-        return Ok(Json(json!({ "data": {
+        return Ok(json!({
             "items": [],
             "total": 0,
             "status": runtime_log_status_payload(0, 0),
-        } })));
+        }));
     }
     if let Some(account_id) = account_filter.as_deref() {
         let channel = channel_filter.clone().unwrap_or_default();
         if !channel.is_empty() && !account_keys.contains(&(channel, account_id.to_string())) {
-            return Ok(Json(json!({ "data": {
+            return Ok(json!({
                 "items": [],
                 "total": 0,
                 "status": runtime_log_status_payload(account_keys.len(), 0),
-            } })));
+            }));
         }
     }
 
@@ -178,7 +169,7 @@ async fn list_channel_runtime_logs(
         (channel_filter.as_deref(), account_filter.as_deref())
     {
         if let Ok(selected_runtime) =
-            build_user_channel_runtime(&state, &user_id, channel, account_id)
+            build_user_channel_runtime(state, user_id, channel, account_id)
         {
             if let Some(map) = status.as_object_mut() {
                 map.insert("selected_runtime".to_string(), selected_runtime);
@@ -186,11 +177,40 @@ async fn list_channel_runtime_logs(
         }
     }
 
-    Ok(Json(json!({ "data": {
+    Ok(json!({
         "items": items,
         "total": items.len(),
         "status": status,
-    } })))
+    }))
+}
+
+async fn list_channel_runtime_logs(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<ChannelRuntimeLogsQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id.clone();
+
+    let config = state.config_store.get().await;
+    if !config.channels.enabled && !config.gateway.enabled {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "channels disabled".to_string(),
+        ));
+    }
+
+    let data = list_user_channel_runtime_logs(
+        &state,
+        &user_id,
+        query.channel.as_deref(),
+        query.account_id.as_deref(),
+        query.agent_id.as_deref(),
+        query.limit,
+    )
+    .await
+    .map_err(channel_service_response)?;
+    Ok(Json(json!({ "data": data })))
 }
 
 async fn write_channel_runtime_probe(
@@ -213,7 +233,8 @@ async fn write_channel_runtime_probe(
         .channel
         .as_deref()
         .map(|value| normalize_user_channel(Some(value)))
-        .transpose()?;
+        .transpose()
+        .map_err(channel_service_response)?;
     let account_filter = payload
         .account_id
         .as_deref()
@@ -232,7 +253,8 @@ async fn write_channel_runtime_probe(
         &user_id,
         channel_filter.as_deref(),
         agent_filter.as_deref(),
-    )?;
+    )
+    .map_err(channel_service_response)?;
     if account_keys.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -286,26 +308,23 @@ async fn write_channel_runtime_probe(
     } })))
 }
 
-async fn reconnect_channel_account(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(payload): Json<ChannelReconnectRequest>,
-) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
-    let user_id = resolved.user.user_id.clone();
-    let channel = normalize_user_channel(payload.channel.as_deref())?;
-    let account_id = payload
-        .account_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            error_response(
-                StatusCode::BAD_REQUEST,
-                "account_id is required".to_string(),
-            )
-        })?
-        .to_string();
+/// Shared service: requests an XMPP reconnect for an owned account. Other
+/// channels are long-poll based and reconnect implicitly, so they are rejected
+/// exactly like the HTTP path.
+pub async fn reconnect_user_channel(
+    state: &Arc<AppState>,
+    user_id: &str,
+    channel: &str,
+    account_id: &str,
+) -> ChannelServiceResult<Value> {
+    let channel = normalize_user_channel(Some(channel))?;
+    let account_id = account_id.trim().to_string();
+    if account_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "account_id is required".to_string(),
+        ));
+    }
 
     if !channel.eq_ignore_ascii_case(USER_CHANNEL_XMPP) {
         return Err(error_response(
@@ -314,7 +333,7 @@ async fn reconnect_channel_account(
         ));
     }
 
-    let owned = list_owned_account_keys(&state, &user_id, Some(&channel))?;
+    let owned = list_owned_account_keys(state, user_id, Some(&channel))?;
     if !owned.contains(&(channel.clone(), account_id.clone())) {
         return Err(error_response(
             StatusCode::FORBIDDEN,
@@ -328,12 +347,30 @@ async fn reconnect_channel_account(
         .force_xmpp_reconnect(&account_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
-    Ok(Json(json!({ "data": {
+    Ok(json!({
         "channel": channel,
         "account_id": account_id,
         "message": "xmpp reconnect requested",
         "ts": chrono::Utc::now().timestamp_millis() as f64 / 1000.0,
-    } })))
+    }))
+}
+
+async fn reconnect_channel_account(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<ChannelReconnectRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id.clone();
+    let data = reconnect_user_channel(
+        &state,
+        &user_id,
+        payload.channel.as_deref().unwrap_or_default(),
+        payload.account_id.as_deref().unwrap_or_default(),
+    )
+    .await
+    .map_err(channel_service_response)?;
+    Ok(Json(json!({ "data": data })))
 }
 
 fn list_owned_account_keys_for_agent(
@@ -341,7 +378,7 @@ fn list_owned_account_keys_for_agent(
     user_id: &str,
     channel_filter: Option<&str>,
     agent_filter: Option<&str>,
-) -> Result<BTreeSet<(String, String)>, Response> {
+) -> ChannelServiceResult<BTreeSet<(String, String)>> {
     let all_owned = list_owned_account_keys(state, user_id, channel_filter)?;
     let Some(agent_id) = agent_filter else {
         return Ok(all_owned);
@@ -452,7 +489,7 @@ fn list_owned_account_keys(
     state: &Arc<AppState>,
     user_id: &str,
     channel_filter: Option<&str>,
-) -> Result<BTreeSet<(String, String)>, Response> {
+) -> ChannelServiceResult<BTreeSet<(String, String)>> {
     let mut account_keys: BTreeSet<(String, String)> = BTreeSet::new();
     let (bindings, _) = state
         .storage
@@ -527,7 +564,8 @@ fn build_user_channel_runtime(
     channel: &str,
     account_id: &str,
 ) -> Result<Value, Response> {
-    let owned = list_owned_account_keys(state, user_id, Some(channel))?;
+    let owned = list_owned_account_keys(state, user_id, Some(channel))
+        .map_err(channel_service_response)?;
     if !owned.contains(&(
         channel.trim().to_ascii_lowercase(),
         account_id.trim().to_string(),
@@ -586,7 +624,7 @@ fn build_user_channel_runtime(
     }))
 }
 
-fn normalize_user_channel(channel: Option<&str>) -> Result<String, Response> {
+fn normalize_user_channel(channel: Option<&str>) -> ChannelServiceResult<String> {
     let channel = channel
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -603,7 +641,7 @@ fn normalize_user_channel(channel: Option<&str>) -> Result<String, Response> {
     ))
 }
 
-fn resolve_user_channels(channel: Option<&str>) -> Result<Vec<String>, Response> {
+fn resolve_user_channels(channel: Option<&str>) -> ChannelServiceResult<Vec<String>> {
     if let Some(channel) = channel {
         return Ok(vec![normalize_user_channel(Some(channel))?]);
     }
@@ -669,8 +707,6 @@ fn peer_key(channel: &str, account_id: &str, peer_kind: &str, peer_id: &str) -> 
     )
 }
 
-fn error_response(status: StatusCode, message: String) -> Response {
-    let mut response = Json(json!({ "error": message })).into_response();
-    *response.status_mut() = status;
-    response
+fn error_response<T: ChannelErrorResponse>(status: StatusCode, message: impl Into<String>) -> T {
+    T::error_response(status, message.into())
 }

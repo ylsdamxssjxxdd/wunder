@@ -7,7 +7,7 @@
 ## 2. 三层架构
 
 ```
-执行调度层 (src/orchestrator/tool_exec.rs, tool_calls.rs, tool_parallel.rs)
+执行调度层 (crates/wunder-runtime/src/orchestrator/tool_exec.rs, tool_calls.rs, tool_parallel.rs)
   工具调用解析、并行调度、重试治理、结果归一化
 
 工具实现层 (src/services/tools/)
@@ -81,7 +81,7 @@ Tool surface 决定了当前线程、当前模型能看到哪些工具。它由�
 
 ### 5.2 默认启用工具画像
 
-以下“默认启用”按当前 `src/services/default_tool_profile.rs` 与 `config/wunder-example.yaml` 整理，表示默认智能体和新建智能体的初始勾选集合，不等于运行时唯一可见工具集合。
+以下“默认启用”按当前 `crates/wunder-runtime/src/services/default_tool_profile.rs` 与 `config/wunder-example.yaml` 整理，表示默认智能体和新建智能体的初始勾选集合，不等于运行时唯一可见工具集合。
 
 | 工具名 | 常用别名 | 主要作用 |
 | --- | --- | --- |
@@ -102,7 +102,7 @@ Tool surface 决定了当前线程、当前模型能看到哪些工具。它由�
 
 ### 5.3 内置工具全量总表
 
-当前 model-visible 内置工具按 `src/services/tools/catalog.rs` 中的 `builtin_tool_specs_with_language()` 统计，共 **30** 个。
+当前 model-visible 内置工具按 `crates/wunder-runtime/src/services/tools/catalog.rs` 中的 `builtin_tool_specs_with_language()` 统计，共 **37** 个。
 
 | 工具名 | 常用别名 | 类别 | 默认启用 | 说明 |
 | --- | --- | --- | --- | --- |
@@ -166,7 +166,7 @@ MCP 负责把外部资源、外部工具或外部服务纳入统一能力治理�
 
 | 能力 | 说明 |
 | --- | --- |
-| 浏览器控制 | Puppeteer-based 浏览器操控（`src/services/browser/`） |
+| 浏览器控制 | Puppeteer-based 浏览器操控（`crates/wunder-runtime/src/services/browser/`） |
 | 桌面控制 | 原生 Desktop 运行时桥接的桌面操作 |
 | 文件与补丁 | 读写、搜索、diff、patch |
 | 命令执行 | Shell 命令（含 guard 和 output 检查） |
@@ -176,8 +176,8 @@ MCP 负责把外部资源、外部工具或外部服务纳入统一能力治理�
 
 ## 9. 新增工具步骤
 
-1. 在 `src/services/tools/` 新建独立文件实现逻辑。
-2. 在 `src/services/tools/catalog.rs` 注册到工具目录。
+1. 在 `crates/wunder-runtime/src/services/tools/` 新建独立文件实现逻辑。
+2. 在 `crates/wunder-runtime/src/services/tools/catalog.rs` 注册到工具目录。
 3. 补充输入校验、错误模型和英文注释。
 4. 明确审批策略、沙盒策略、并行策略和超时。
 5. 补齐回归或最小验证。

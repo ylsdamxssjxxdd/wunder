@@ -639,6 +639,9 @@ pub struct MonitorState {
     disks: Mutex<MonitorDisks>,
     system_snapshot_cache: Mutex<Option<(SystemSnapshot, f64)>>,
     system_snapshot_ttl_s: f64,
+    // Host and mount refreshes can block in container runtimes.  Keep exactly
+    // one refresh off the request path and let callers read the last sample.
+    system_snapshot_refreshing: AtomicBool,
     workspace_root: PathBuf,
     log_usage_cache: Mutex<UsageCache>,
     workspace_usage_cache: Mutex<UsageCache>,
@@ -692,6 +695,7 @@ impl MonitorState {
             disks: Mutex::new(disks),
             system_snapshot_cache: Mutex::new(None),
             system_snapshot_ttl_s: DEFAULT_SYSTEM_SNAPSHOT_TTL_S,
+            system_snapshot_refreshing: AtomicBool::new(false),
             workspace_root,
             log_usage_cache: Mutex::new(UsageCache::default()),
             workspace_usage_cache: Mutex::new(UsageCache::default()),
@@ -1873,7 +1877,7 @@ impl MonitorState {
         )
     }
 
-    pub fn get_system_metrics(&self) -> SystemSnapshot {
+    pub fn get_system_metrics(self: &Arc<Self>) -> SystemSnapshot {
         self.run_guarded(
             "monitor.get_system_metrics",
             || self.fallback_system_snapshot(),
@@ -1887,11 +1891,26 @@ impl MonitorState {
                         }
                     }
                 }
-
-                let snapshot = self.collect_system_snapshot();
-                let mut cache = self.system_snapshot_cache.lock();
-                *cache = Some((snapshot.clone(), now));
-                snapshot
+                let previous = self.fallback_system_snapshot();
+                if self.system_snapshot_refreshing.swap(true, Ordering::SeqCst) {
+                    return previous;
+                }
+                let monitor = Arc::clone(self);
+                thread::spawn(move || {
+                    monitor.run_guarded(
+                        "monitor.refresh_system_snapshot",
+                        || (),
+                        || {
+                            let snapshot = monitor.collect_system_snapshot();
+                            let sampled_at = now_ts();
+                            *monitor.system_snapshot_cache.lock() = Some((snapshot, sampled_at));
+                        },
+                    );
+                    monitor
+                        .system_snapshot_refreshing
+                        .store(false, Ordering::SeqCst);
+                });
+                previous
             },
         )
     }

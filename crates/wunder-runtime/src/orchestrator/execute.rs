@@ -450,6 +450,11 @@ impl Orchestrator {
                 model_round += 1;
                 let round_info = request_round.with_model_round(model_round);
                 last_round_info = round_info;
+                // Error/cancel recovery must settle the model round that was
+                // actually admitted. Keeping the initial user-only identity
+                // here creates a second random assistant item and leaves the
+                // streamed `{turn}:text-{round}` item running after refresh.
+                active_turn_round = round_info;
                 let mut adaptive_recovery_limit_hint: Option<i64> = None;
                 self.ensure_not_cancelled(&session_id)?;
                 let compaction_llm_config = apply_context_window_limit_hint(
@@ -1404,6 +1409,8 @@ impl Orchestrator {
                         }
 
                         let mut tool_result_payload = result.to_event_payload(&name);
+                        // The durable result replaces the call item; keep invocation data for replay.
+                        tool_result_payload["args"] = args.clone();
                         tool_result_payload["request_context_tokens"] = json!(request_context_tokens);
                         tool_result_payload["request_usage"] = json!(usage);
                         if let Value::Object(ref mut map) = tool_result_payload {

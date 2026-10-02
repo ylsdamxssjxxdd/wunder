@@ -56,7 +56,6 @@ import ChatComposer from '@/components/chat/ChatComposer.vue';
 import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import {
   InquiryPanel,
-  MessageCompactionDivider,
   MessageFeedbackActions,
   MessageKnowledgeCitation,
   MessageSubagentPanel,
@@ -136,9 +135,7 @@ import {
 import { hasActiveSubagentItems } from '@/utils/subagentRuntime';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import {
-  isCompactionOnlyWorkflowItems,
   isCompactionRunningFromWorkflowItems,
-  resolveLatestCompactionSnapshot
 } from '@/utils/chatCompactionWorkflow';
 import {
   isAudioRecordingSupported,
@@ -412,6 +409,11 @@ type WorldScreenshotCaptureOption = {
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 export function installMessengerControllerAgentRuntimeSignals(ctx: MessengerControllerContext): void {
+  // Durable terminal frames can acknowledge a task before the aggregate
+  // running-agent poll observes idle. The lifecycle controller records that
+  // acknowledgement here so the later running → idle edge cannot show a
+  // second toast.
+  ctx.completedAgentNoticeSuppression ??= new Map<string, number>();
   ctx.hasCronTask = (agentId: unknown): boolean => ctx.cronAgentIds.value.has(ctx.normalizeAgentId(agentId));
 
   ctx.normalizeRuntimeState = (state: unknown, pendingQuestion = false): AgentRuntimeState => normalizeAssistantMessageRuntimeState(state, pendingQuestion) as AgentRuntimeState;
@@ -665,6 +667,12 @@ export function installMessengerControllerAgentRuntimeSignals(ctx: MessengerCont
               if (previousState === nextState)
                   return;
               if (ctx.shouldNotifyAgentCompletion(previousState, nextState)) {
+                  const suppressionUntil = Number(ctx.completedAgentNoticeSuppression.get(agentId) || 0);
+                  if (suppressionUntil > Date.now()) {
+                      ctx.completedAgentNoticeSuppression.delete(agentId);
+                      return;
+                  }
+                  ctx.completedAgentNoticeSuppression.delete(agentId);
                   void ctx.notifyAgentTaskCompleted(agentId);
               }
           });
@@ -674,3 +682,4 @@ export function installMessengerControllerAgentRuntimeSignals(ctx: MessengerCont
       ctx.agentRuntimeStateMap.value = reconciledStateMap;
   };
 }
+

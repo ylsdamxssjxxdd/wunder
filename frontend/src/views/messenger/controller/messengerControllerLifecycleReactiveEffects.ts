@@ -58,7 +58,6 @@ import ChatComposer from '@/components/chat/ChatComposer.vue';
 import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import {
   InquiryPanel,
-  MessageCompactionDivider,
   MessageFeedbackActions,
   MessageKnowledgeCitation,
   MessageSubagentPanel,
@@ -137,9 +136,7 @@ import {
 import { hasActiveSubagentItems } from '@/utils/subagentRuntime';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import {
-  isCompactionOnlyWorkflowItems,
   isCompactionRunningFromWorkflowItems,
-  resolveLatestCompactionSnapshot
 } from '@/utils/chatCompactionWorkflow';
 import {
   isAudioRecordingSupported,
@@ -1197,7 +1194,25 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           summary: ctx.sessionHub.activeSection === 'agents' || ctx.showAgentRightDock.value
       });
       ctx.stopWorkspaceRefreshListener = onWorkspaceRefresh(ctx.handleWorkspaceResourceRefresh);
+      ctx.completedAgentNoticeSuppression ??= new Map<string, number>();
+      const completedTurnNoticeKeys = new Set<string>();
       ctx.stopAgentRuntimeRefreshListener = onAgentRuntimeRefresh((detail) => {
+          // A terminal durable frame is authoritative for this acknowledgement.
+          // Do this before the aggregate poll: polling can legitimately lag or
+          // omit an idle agent, which used to make the completion toast vanish.
+          for (const completion of detail?.completedTurns ?? []) {
+              const sessionId = String(completion?.sessionId || '').trim();
+              const turnId = String(completion?.turnId || '').trim();
+              const agentId = ctx.normalizeAgentId(completion?.agentId ||
+                  ctx.buildSessionAgentMap().get(sessionId));
+              const noticeKey = `${sessionId}:${turnId}`;
+              if (!sessionId || !turnId || !agentId || completedTurnNoticeKeys.has(noticeKey)) {
+                  continue;
+              }
+              completedTurnNoticeKeys.add(noticeKey);
+              ctx.completedAgentNoticeSuppression.set(agentId, Date.now() + 10_000);
+              void ctx.notifyAgentTaskCompleted(agentId);
+          }
           void ctx.loadRunningAgents({ force: true });
           const targetAgentIds = new Set((Array.isArray(detail?.agentIds) ? detail.agentIds : [])
               .map((agentId) => ctx.normalizeAgentId(agentId))
@@ -1355,3 +1370,4 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.userWorldStore.stopAllWatchers();
   });
 }
+

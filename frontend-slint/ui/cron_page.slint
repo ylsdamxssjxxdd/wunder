@@ -1,5 +1,5 @@
 import { Theme, CronCard, CronRunCard } from "theme.slint";
-import { Action, SearchField } from "components.slint";
+import { Action, SearchField, MiddleHeader, MiddleFooter } from "components.slint";
 import { CheckBox, ComboBox, ScrollView } from "std-widgets.slint";
 
 export component CronPage inherits Rectangle {
@@ -22,6 +22,7 @@ export component CronPage inherits Rectangle {
     in property <bool> runs-loading: false;
     in property <string> runs-title;
     in property <[CronRunCard]> runs;
+    in property <string> status;
     callback refresh();
     callback toggle(string, bool);
     callback delete(string);
@@ -32,18 +33,83 @@ export component CronPage inherits Rectangle {
     callback save-editor();
     callback cancel-editor();
     private property <string> keyword;
+    private property <int> selected: -1;
+    private property <CronCard> current: root.selected >= 0 && root.selected < root.jobs.length ? root.jobs[root.selected] : { id: "", name: "", enabled: false, schedule: "", next-run: "", last-status: "", last-error: "" };
     background: Theme.chat;
-    VerticalLayout { spacing: 0px;
-        Rectangle { height: 76px; background: Theme.surface; HorizontalLayout { padding: 18px; spacing: 12px; Text { text: "定时任务"; color: Theme.text; font-size: 18px; font-weight: 700; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } Action { icon: @image-url("../assets/icons/plus.svg"); label: "新建任务"; show-label: true; enabled: !root.editor-open; clicked => { root.open-creator(); } } Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.loading; clicked => { root.refresh(); } } } }
-        Rectangle { height: 1px; background: Theme.border; }
-        Rectangle { vertical-stretch: 1; background: Theme.chat; VerticalLayout { padding: 16px; Rectangle { vertical-stretch: 1; border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 14px; spacing: 9px; SearchField { icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索任务"; text <=> root.keyword; } ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off; VerticalLayout { spacing: 6px; for job in root.jobs : Rectangle { visible: root.keyword == "" || job.name.to-lowercase().starts-with(root.keyword.to-lowercase()); height: self.visible ? 104px : 0px; border-radius: 9px; background: Theme.panel; VerticalLayout { padding: 10px; spacing: 3px;
-            HorizontalLayout { height: 22px; spacing: 8px; Text { text: job.name; color: Theme.text; font-size: 13px; font-weight: 600; horizontal-stretch: 1; overflow: elide; vertical-alignment: center; } Text { text: job.enabled ? "已启用" : "已停用"; color: job.enabled ? #16845d : Theme.muted; font-size: 10px; vertical-alignment: center; } }
-            Text { text: job.schedule + " · 下次 " + job.next-run; color: Theme.muted; font-size: 10px; overflow: elide; }
-            Text { text: job.last-error == "" ? "上次状态：" + job.last-status : "上次失败：" + job.last-error; color: job.last-error == "" ? Theme.muted : #b63a22; font-size: 10px; overflow: elide; }
-        } Rectangle { x: parent.width - 248px; y: 10px; width: 238px; height: 84px; VerticalLayout { spacing: 4px;
-            HorizontalLayout { height: 38px; spacing: 4px; Action { horizontal-stretch: 1; label: job.enabled ? "停用" : "启用"; show-label: true; enabled: !root.loading; clicked => { root.toggle(job.id, !job.enabled); } } Action { horizontal-stretch: 1; label: "立即运行"; show-label: true; enabled: !root.loading; clicked => { root.run-now(job.id); } } }
-            HorizontalLayout { height: 38px; spacing: 4px; Action { horizontal-stretch: 1; label: "运行记录"; show-label: true; enabled: !root.runs-loading; clicked => { root.open-runs(job.id); } } Action { horizontal-stretch: 1; label: "删除"; show-label: true; enabled: !root.loading; clicked => { root.delete(job.id); } } }
-        } } } if root.jobs.length == 0 : Text { height: 70px; text: root.loading ? "正在加载…" : "暂无定时任务"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; } } } } } } }
+    HorizontalLayout {
+        spacing: 0px;
+        Rectangle {
+            width: 220px;
+            background: Theme.middle;
+            Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+            VerticalLayout {
+                spacing: 0px;
+                MiddleHeader { title: "定时任务"; subtitle: "查看与管理智能体定时任务"; }
+                HorizontalLayout {
+                    padding-left: 14px; padding-right: 14px; height: 34px; spacing: 8px;
+                    SearchField { horizontal-stretch: 1; icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: "搜索任务"; text <=> root.keyword; }
+                    Action { width: 34px; height: 34px; icon: @image-url("../assets/icons/plus.svg"); label: "新建任务"; enabled: !root.editor-open; selected: true; clicked => { root.open-creator(); } }
+                }
+                Rectangle { height: 14px; }
+                ScrollView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { alignment: start; spacing: 4px;
+                        for job[index] in root.jobs : Rectangle {
+                            visible: root.keyword == "" || job.name.to-lowercase().starts-with(root.keyword.to-lowercase());
+                            height: self.visible ? 64px : 0px;
+                            Rectangle {
+                                x: 8px; y: 2px; width: parent.width - 16px; height: 60px; border-radius: 12px;
+                                background: root.selected == index ? Theme.accent : transparent;
+                                Action { width: parent.width; height: parent.height; label: job.name; enabled: !root.loading; clicked => { root.selected = index; } }
+                                Text { x: 12px; y: 9px; width: parent.width - 78px; height: 19px; text: job.name; color: root.selected == index ? white : Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
+                                Text { x: parent.width - 62px; y: 10px; width: 52px; height: 16px; text: job.enabled ? "已启用" : "已停用"; color: root.selected == index ? #ffffffe0 : (job.enabled ? #16845d : Theme.muted); font-size: 10px; horizontal-alignment: right; }
+                                Text { x: 12px; y: 34px; width: parent.width - 24px; height: 16px; text: job.schedule + " · 下次 " + job.next-run; color: root.selected == index ? #ffffffe0 : Theme.muted; font-size: 10px; overflow: elide; }
+                            }
+                        }
+                        if root.jobs.length == 0 : Text { height: 70px; text: root.loading ? "正在加载…" : "暂无定时任务"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                }
+                MiddleFooter { text: root.status; }
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                spacing: 0px;
+                HorizontalLayout {
+                    height: 62px; padding-left: 14px; padding-right: 14px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
+                    VerticalLayout { spacing: 1px;
+                        Text { height: 25px; text: root.selected >= 0 ? root.current.name : "定时任务"; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; }
+                        Text { height: 17px; text: root.selected >= 0 ? (root.current.enabled ? "已启用" : "已停用") + " · " + root.current.schedule : "在左侧选择任务查看详情"; color: Theme.muted; font-size: 11px; overflow: elide; }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Action { label: root.current.enabled ? "停用" : "启用"; show-label: true; enabled: root.selected >= 0 && !root.loading; clicked => { root.toggle(root.current.id, !root.current.enabled); } }
+                    Action { label: "立即运行"; show-label: true; enabled: root.selected >= 0 && !root.loading; clicked => { root.run-now(root.current.id); } }
+                    Action { label: "运行记录"; show-label: true; enabled: root.selected >= 0 && !root.runs-loading; clicked => { root.open-runs(root.current.id); } }
+                    Action { label: "删除"; show-label: true; enabled: root.selected >= 0 && !root.loading; clicked => { root.delete(root.current.id); } }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                if root.selected < 0 : Text { vertical-stretch: 1; text: "请选择任务查看详情"; color: Theme.muted; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                if root.selected >= 0 : ScrollView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { alignment: start; padding: 22px; spacing: 10px;
+                        for row in [
+                            {label: "调度", value: root.current.schedule},
+                            {label: "下次执行", value: root.current.next-run},
+                            {label: "上次状态", value: root.current.last-status == "" ? "尚未运行" : root.current.last-status}
+                        ] : HorizontalLayout { height: 30px; Rectangle { width: 96px; Text { x: 0px; width: parent.width; height: parent.height; text: row.label; color: Theme.muted; font-size: 11px; vertical-alignment: center; } } Text { horizontal-stretch: 1; height: parent.height; text: row.value; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; } }
+                        HorizontalLayout { height: 30px; Rectangle { width: 96px; Text { x: 0px; width: parent.width; height: parent.height; text: "上次错误"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } } Text { horizontal-stretch: 1; height: parent.height; text: root.current.last-error == "" ? "无" : root.current.last-error; color: root.current.last-error == "" ? Theme.muted : #b63a22; font-size: 12px; vertical-alignment: center; overflow: elide; } }
+                        Rectangle { height: 1px; background: Theme.border; }
+                        HorizontalLayout { height: 32px; spacing: 8px;
+                            Action { width: 96px; label: "运行记录"; show-label: true; enabled: !root.runs-loading; clicked => { root.open-runs(root.current.id); } }
+                            Action { width: 96px; label: root.current.enabled ? "停用任务" : "启用任务"; show-label: true; enabled: !root.loading; clicked => { root.toggle(root.current.id, !root.current.enabled); } }
+                            Rectangle { horizontal-stretch: 1; }
+                            Action { width: 84px; label: "删除任务"; show-label: true; enabled: !root.loading; clicked => { root.delete(root.current.id); } }
+                        }
+                    }
+                }
+            }
+        }
     }
     if root.runs-open : Rectangle { Rectangle { background: #00000022; TouchArea { clicked => { root.close-runs(); } } } Rectangle { x: parent.width - 420px; y: 0px; width: 420px; height: parent.height; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 16px; spacing: 10px;
             HorizontalLayout { height: 26px; Text { text: "运行记录 · " + root.runs-title; color: Theme.text; font-size: 15px; font-weight: 700; horizontal-stretch: 1; overflow: elide; vertical-alignment: center; } Action { width: 30px; icon: @image-url("../assets/icons/xmark.svg"); clicked => { root.close-runs(); } } }

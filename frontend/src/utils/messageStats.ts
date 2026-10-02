@@ -25,11 +25,6 @@ export type MessageStatsEntry = {
   hint?: string;
 };
 
-export type AssistantMessageStatsOptions = {
-  activeSessionBusy?: boolean;
-  latestVisibleAssistant?: boolean;
-};
-
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
 type WorkflowItemLike = Record<string, any>;
 type MessageLike = Record<string, any>;
@@ -97,6 +92,14 @@ const resolveQueueAheadCount = (item: WorkflowItemLike | null | undefined): numb
         ? item.detail
         : null;
   const candidates = [
+    // queue_ahead counts waiting requests before this one. wait_ahead also
+    // includes occupied execution slots and must not inflate the queue rank.
+    item.queue_ahead,
+    item.queueAhead,
+    detail?.queue_ahead,
+    detail?.queueAhead,
+    detail?.data?.queue_ahead,
+    detail?.data?.queueAhead,
     item.wait_ahead,
     item.waitAhead,
     item.active_wait_ahead,
@@ -109,12 +112,6 @@ const resolveQueueAheadCount = (item: WorkflowItemLike | null | undefined): numb
     detail?.data?.waitAhead,
     detail?.data?.active_wait_ahead,
     detail?.data?.activeWaitAhead,
-    item.queue_ahead,
-    item.queueAhead,
-    detail?.queue_ahead,
-    detail?.queueAhead,
-    detail?.data?.queue_ahead,
-    detail?.data?.queueAhead
   ];
   for (const candidate of candidates) {
     const parsed = Number.parseInt(String(candidate ?? ''), 10);
@@ -700,12 +697,18 @@ const resolveAssistantStatusEntry = (
   message: Record<string, any>,
   t: TranslateFn,
   allMessages?: MessageLike[] | null,
-  nowMs = Date.now(),
-  options?: AssistantMessageStatsOptions
+  nowMs = Date.now()
 ): MessageStatsEntry | null => {
-  const latestActiveAssistantBusy =
-    options?.activeSessionBusy === true && options?.latestVisibleAssistant === true;
-  if (!latestActiveAssistantBusy && !hasAssistantActivitySignals(message)) return null;
+  if (!hasAssistantActivitySignals(message)) return null;
+
+  // Stopping a turn preserves its partial answer and completed tool history.
+  // It is a user action, not an execution failure, so expose a terminal
+  // stopped state on that same bubble before generic error classification.
+  if (message.cancelled === true || ['cancelled', 'canceled', 'aborted'].includes(
+    normalizeWorkflowStatus(message.runtime_status ?? message.runtimeStatus ?? message.status)
+  )) {
+    return buildStatusEntry(t('messenger.messageStatus.stopped'), 'muted', false, 'fa-solid fa-stop');
+  }
 
   if (message.failed === true || message.state === 'error' || resolveAssistantFailureNotice(message, t)) {
     return buildStatusEntry(t('messenger.messageStatus.error'), 'error', false, 'fa-solid fa-triangle-exclamation');
@@ -780,7 +783,7 @@ const resolveAssistantStatusEntry = (
     return buildStatusEntry(t('messenger.messageStatus.resumable'), 'warning', false, 'fa-solid fa-rotate-right');
   }
   if (
-    (isAssistantMessageRunning(message) || latestActiveAssistantBusy) &&
+    isAssistantMessageRunning(message) &&
     shouldShowRetryState &&
     (hasPersistedRetryState || ACTIVE_WORKFLOW_STATUSES.has(normalizeWorkflowStatus(latestRetry.item?.status))) &&
     (
@@ -842,9 +845,6 @@ const resolveAssistantStatusEntry = (
   if (latestActiveTool.index >= 0 && latestActiveTool.index >= latestOutput.index) {
     return buildStatusEntry(t('messenger.messageStatus.toolRunning'), 'running', true, 'fa-solid fa-screwdriver-wrench');
   }
-  if (latestActiveAssistantBusy && !hasAssistantVisibleOutput(message) && latestOutput.index < 0) {
-    return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true, 'fa-solid fa-paper-plane');
-  }
   if (hasAssistantWaitingForCurrentOutput(message)) {
     return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true, 'fa-solid fa-paper-plane');
   }
@@ -860,13 +860,6 @@ const resolveAssistantStatusEntry = (
     }
     return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true, 'fa-solid fa-paper-plane');
   }
-  if (latestActiveAssistantBusy) {
-    if (hasAssistantVisibleOutput(message) || latestOutput.index >= 0) {
-      return buildStatusEntry(t('messenger.messageStatus.modelOutputting'), 'running', true, 'fa-solid fa-comment-dots');
-    }
-    return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true, 'fa-solid fa-paper-plane');
-  }
-
   const userRound = resolveAssistantUserRound(message, allMessages);
   return buildStatusEntry(
     userRound ? t('chat.stats.userRoundStatus', { round: userRound }) : t('messenger.messageStatus.done'),
@@ -880,19 +873,17 @@ export const buildAssistantMessageStatsEntries = (
   message: Record<string, any> | null | undefined,
   t: TranslateFn,
   allMessages?: MessageLike[] | null,
-  nowMs = Date.now(),
-  options?: AssistantMessageStatsOptions
+  nowMs = Date.now()
 ): MessageStatsEntry[] => {
   if (!message || message.role !== 'assistant' || message.isGreeting) {
     return [];
   }
-  const statusEntry = resolveAssistantStatusEntry(message, t, allMessages, nowMs, options);
+  const statusEntry = resolveAssistantStatusEntry(message, t, allMessages, nowMs);
   const stats = (message.stats || null) as Record<string, any> | null;
   if (!stats) return statusEntry ? [statusEntry] : [];
   if (
     isAssistantMessageRunning(message) ||
     hasAssistantWaitingForCurrentOutput(message) ||
-    (options?.activeSessionBusy === true && options?.latestVisibleAssistant === true) ||
     hasActiveSubagentItems(message?.subagents)
   ) {
     return statusEntry ? [statusEntry] : [];

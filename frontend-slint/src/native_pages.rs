@@ -19,6 +19,8 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     crate::workspace_ui::install(app, api.clone());
     crate::world_ui::install(app, api.clone());
     crate::cron_ui::install(app, api.clone());
+    crate::channel_ui::install(app, api.clone());
+    crate::plaza_ui::install(app, api.clone());
     crate::runtime_settings::install(app, api);
     app.invoke_refresh_agents();
     app.invoke_refresh_settings();

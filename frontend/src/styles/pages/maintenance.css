@@ -1,29 +1,26 @@
 :root {
-  --maintenance-bg: rgba(244, 246, 251, 0.95);
-  --maintenance-card: #ffffff;
-  --maintenance-border: rgba(15, 23, 42, 0.12);
-  --maintenance-text: #0f172a;
-  --maintenance-muted: rgba(71, 85, 105, 0.8);
-  --maintenance-icon-bg: rgba(248, 113, 113, 0.12);
-  --maintenance-icon-color: #ef4444;
+  --maintenance-banner-bg: rgba(255, 248, 230, 0.96);
+  --maintenance-banner-border: rgba(217, 119, 6, 0.32);
+  --maintenance-banner-text: #92400e;
+  --maintenance-banner-muted: rgba(146, 64, 14, 0.78);
+  --maintenance-banner-icon-bg: rgba(245, 158, 11, 0.16);
+  --maintenance-banner-icon-color: #d97706;
 }
 
 :root[data-user-theme='dark'] {
-  --maintenance-bg: rgba(9, 15, 28, 0.92);
-  --maintenance-card: #0f1c33;
-  --maintenance-border: rgba(148, 163, 184, 0.24);
-  --maintenance-text: #e2e8f0;
-  --maintenance-muted: rgba(226, 232, 240, 0.68);
-  --maintenance-icon-bg: rgba(248, 113, 113, 0.18);
-  --maintenance-icon-color: #f87171;
+  --maintenance-banner-bg: rgba(64, 46, 18, 0.94);
+  --maintenance-banner-border: rgba(245, 158, 11, 0.34);
+  --maintenance-banner-text: #fde68a;
+  --maintenance-banner-muted: rgba(253, 230, 138, 0.72);
+  --maintenance-banner-icon-bg: rgba(245, 158, 11, 0.18);
+  --maintenance-banner-icon-color: #fbbf24;
 }
 
 :root[data-user-theme='light'] {
-  --maintenance-bg: rgba(244, 246, 251, 0.95);
-  --maintenance-card: #ffffff;
-  --maintenance-border: rgba(15, 23, 42, 0.12);
-  --maintenance-text: #0f172a;
-  --maintenance-muted: rgba(71, 85, 105, 0.8);
-  --maintenance-icon-bg: rgba(248, 113, 113, 0.12);
-  --maintenance-icon-color: #ef4444;
+  --maintenance-banner-bg: rgba(255, 248, 230, 0.96);
+  --maintenance-banner-border: rgba(217, 119, 6, 0.32);
+  --maintenance-banner-text: #92400e;
+  --maintenance-banner-muted: rgba(146, 64, 14, 0.78);
+  --maintenance-banner-icon-bg: rgba(245, 158, 11, 0.16);
+  --maintenance-banner-icon-color: #d97706;
 }

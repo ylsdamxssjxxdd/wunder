@@ -45,6 +45,8 @@ export interface ChatThreadSnapshotTurn {
   status?: string;
   content?: string;
   client_message_id?: string;
+  user_turn_index?: number;
+  payload?: Record<string, unknown>;
 }
 
 /**
@@ -80,6 +82,11 @@ interface ChatThreadSideState {
   /** Tails for fields outside content/reasoning (tool/command output). */
   extraTails: Map<string, FieldTail>;
 }
+
+const isCancelledTurnStatus = (value: unknown): boolean => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return normalized === 'cancelled' || normalized === 'canceled' || normalized === 'aborted';
+};
 
 const sideStates = new WeakMap<ChatThreadState, ChatThreadSideState>();
 
@@ -135,11 +142,12 @@ function nextItemOrder(state: ChatThreadState): number {
 export function applyChatThreadFrame(
   state: ChatThreadState,
   frame: ChatThreadFrame,
-  now: number
+  now: number,
+  onChange?: (frame: ThreadChangeFrame) => void
 ): ChatThreadApplyResult {
   switch (frame.event) {
     case 'thread_change':
-      return applyChangeFrame(state, frame, now);
+      return applyChangeFrame(state, frame, now, onChange);
     case 'thread_item_tail':
       return applyTailFrame(state, frame);
     case 'thread_snapshot_required':
@@ -154,7 +162,8 @@ export function applyChatThreadFrame(
 function applyChangeFrame(
   state: ChatThreadState,
   frame: ThreadChangeFrame,
-  now: number
+  now: number,
+  onChange?: (frame: ThreadChangeFrame) => void
 ): ChatThreadApplyResult {
   const seq = frame.seq;
   if (typeof seq !== 'number' || !Number.isFinite(seq)) return UNCHANGED;
@@ -166,9 +175,12 @@ function applyChangeFrame(
 
   let result = applyInOrderChange(state, frame);
   state.lastSeq = seq;
+  if (result.changed) onChange?.(frame);
   let entry = takeContiguousGapEntry(state);
   while (entry) {
-    result = mergeResults(result, applyInOrderChange(state, entry.frame));
+    const applied = applyInOrderChange(state, entry.frame);
+    result = mergeResults(result, applied);
+    if (applied.changed) onChange?.(entry.frame);
     state.lastSeq = entry.frame.seq;
     entry = takeContiguousGapEntry(state);
   }
@@ -177,6 +189,18 @@ function applyChangeFrame(
 }
 
 function applyInOrderChange(state: ChatThreadState, frame: ThreadChangeFrame): ChatThreadApplyResult {
+  const data = frame.data;
+  const current = typeof data.item_id === 'string' ? state.items.get(data.item_id) : undefined;
+  if (typeof data.client_message_id === 'string' && data.client_message_id &&
+      (frame.change_type === 'turn_upsert' ||
+       (frame.change_type === 'item_upsert' && data.kind === 'user_message' &&
+        (!current || Number(data.revision ?? frame.revision ?? 0) > current.revision)))) {
+    bindStreamStarted(state, {
+      event: 'stream_started', turn_id: String(data.turn_id ?? frame.turn_id ?? ''),
+      client_message_id: data.client_message_id, resume_from_seq: frame.seq,
+      user_round: typeof data.user_round === 'number' ? data.user_round : undefined
+    });
+  }
   switch (frame.change_type) {
     case 'item_upsert':
       return applyItemUpsert(state, frame);
@@ -252,11 +276,13 @@ function applyItemUpsert(state: ChatThreadState, frame: ThreadChangeFrame): Chat
       role: firstString(data.role) ?? null,
       visibility: firstString(data.visibility) ?? null,
       content: typeof data.content === 'string' ? data.content : '',
-      reasoning: typeof data.reasoning === 'string' ? data.reasoning : '',
+      reasoning: typeof data.reasoning === 'string' ? data.reasoning :
+        typeof data.reasoning_content === 'string' ? data.reasoning_content : '',
       order: nextItemOrder(state),
       raw: data
     };
     state.items.set(itemId, item);
+    if (item.kind === 'user_message') syncUserTurn(state, item);
     // A terminal item carries the turn outcome; admin-visibility items are
     // stored normally here, exclusion is the projection's job.
     if (item.kind === 'terminal' && item.status) syncTerminalTurnStatus(state, item);
@@ -265,6 +291,11 @@ function applyItemUpsert(state: ChatThreadState, frame: ThreadChangeFrame): Chat
 
   // Same revision is idempotent; a lower revision is stale.
   if (revision <= existing.revision) return UNCHANGED;
+  // A delayed model-final upsert may still carry authoritative terminal usage
+  // statistics. Accept its revision and raw metadata, but do not replace the
+  // partial text a user explicitly stopped. Tool items settle independently.
+  const preserveStoppedText = existing.kind === 'assistant_message' &&
+    isCancelledTurnStatus(state.turns.get(existing.turnId)?.status);
   let structural = false;
   existing.revision = revision;
   existing.raw = data;
@@ -278,14 +309,28 @@ function applyItemUpsert(state: ChatThreadState, frame: ThreadChangeFrame): Chat
     existing.status = status;
     structural = true;
   }
-  if (typeof data.content === 'string') existing.content = data.content;
-  if (typeof data.reasoning === 'string') existing.reasoning = data.reasoning;
+  if (!preserveStoppedText && typeof data.content === 'string') existing.content = data.content;
+  const reasoning = typeof data.reasoning === 'string' ? data.reasoning :
+    typeof data.reasoning_content === 'string' ? data.reasoning_content : undefined;
+  if (!preserveStoppedText && reasoning !== undefined) existing.reasoning = reasoning;
   const role = firstString(data.role);
   if (role !== undefined) existing.role = role;
   const visibility = firstString(data.visibility);
   if (visibility !== undefined) existing.visibility = visibility;
+  if (existing.kind === 'user_message') syncUserTurn(state, existing);
   if (existing.kind === 'terminal' && status !== undefined) syncTerminalTurnStatus(state, existing);
   return structural ? CHANGED_STRUCTURAL : CHANGED_CONTENT;
+}
+
+function syncUserTurn(state: ChatThreadState, item: ThreadItemState): void {
+  if (item.visibility === 'admin' || item.visibility === 'model_internal') return;
+  const turn = state.turns.get(item.turnId) ?? {
+    turnId: item.turnId, userRound: null, status: null, clientMessageId: null, userContent: null
+  };
+  turn.userContent = item.content;
+  turn.userRound = firstNumber(item.raw.user_round) ?? turn.userRound;
+  turn.clientMessageId = firstString(item.raw.client_message_id) ?? turn.clientMessageId;
+  state.turns.set(item.turnId, turn);
 }
 
 function syncTerminalTurnStatus(state: ChatThreadState, item: ThreadItemState): void {
@@ -305,7 +350,12 @@ function syncTerminalTurnStatus(state: ChatThreadState, item: ThreadItemState): 
 
 function applyTextBlock(state: ChatThreadState, frame: ThreadChangeFrame): ChatThreadApplyResult {
   // Wire payloads are unvalidated JSON; casts go through unknown.
-  const data = frame.data as unknown as ThreadBlockUpsertPayload;
+  // Storage and emitter persist a block envelope with text/offsets under data.
+  // Apply the same normalization for live changes and atomic snapshot replay.
+  const envelope = frame.data;
+  const nested = envelope.data && typeof envelope.data === 'object' && !Array.isArray(envelope.data)
+    ? envelope.data as Record<string, unknown> : {};
+  const data = { ...nested, ...envelope } as unknown as ThreadBlockUpsertPayload;
   const itemId = firstString(data.item_id, frame.item_id);
   if (!itemId) return UNCHANGED;
   const field = firstString(data.field) ?? 'content';
@@ -536,9 +586,9 @@ export function applyChatThreadSnapshot(
     if (!turnId) continue;
     state.turns.set(turnId, {
       turnId,
-      userRound: firstNumber(entry.user_round) ?? null,
+      userRound: firstNumber(entry.user_round, entry.user_turn_index, entry.payload?.user_round) ?? null,
       status: firstString(entry.status) ?? null,
-      clientMessageId: firstString(entry.client_message_id) ?? null,
+      clientMessageId: firstString(entry.client_message_id, entry.payload?.client_message_id) ?? null,
       userContent: typeof entry.content === 'string' ? entry.content : null
     });
   }

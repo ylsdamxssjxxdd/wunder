@@ -162,12 +162,12 @@ const hydrateQueueWorkflowItems = (message: Record<string, any>) => {
       if (!QUEUE_WORKFLOW_EVENT_TYPES.has(eventType)) return null;
       const data = asRecord(record.data) || {};
       const queueAhead = parseQueueAheadValue(
+        data.queue_ahead,
+        data.queueAhead,
         data.wait_ahead,
         data.waitAhead,
         data.active_wait_ahead,
-        data.activeWaitAhead,
-        data.queue_ahead,
-        data.queueAhead
+        data.activeWaitAhead
       );
       return {
         id: `queue:${String(data.queue_id ?? data.queueId ?? index)}`,
@@ -178,7 +178,6 @@ const hydrateQueueWorkflowItems = (message: Record<string, any>) => {
         sourceEventType: eventType,
         ...(queueAhead !== null
           ? {
-              wait_ahead: queueAhead,
               queue_ahead: queueAhead
             }
           : {})

@@ -674,11 +674,7 @@ test('chat runtime render adapter materializes queued stream events as queued as
     assistant as Record<string, any>,
     t,
     materialized as Array<Record<string, any>>,
-    Date.UTC(2026, 6, 9, 12, 0, 0),
-    {
-      activeSessionBusy: true,
-      latestVisibleAssistant: true
-    }
+    Date.UTC(2026, 6, 9, 12, 0, 0)
   );
   assert.equal(entries[0]?.value, 'Queued · 2 ahead');
 });

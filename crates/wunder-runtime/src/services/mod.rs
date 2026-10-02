@@ -14,7 +14,7 @@ pub mod beeroom_reset;
 pub mod bridge;
 pub mod browser;
 pub mod chat_attachments;
-pub mod chat_cancel_marker;
+pub mod chat_history_item;
 pub mod chat_media;
 pub mod chat_payload_sanitizer;
 pub mod chat_runtime_projection;
