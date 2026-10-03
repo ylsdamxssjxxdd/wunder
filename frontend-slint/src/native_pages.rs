@@ -4,7 +4,7 @@ use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{rc::Rc, sync::Arc};
 use wunder_desktop::{
     AgentRecord, AgentSettingsEdit, DesktopSettings, LanPeerRecord, ModelEdit, NativeDesktop,
-    NativeProfile, ToolRecord,
+    NativeProfile, RuntimeToolStatus, ToolRecord,
 };
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
@@ -1038,6 +1038,20 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     app.set_runtime_language(settings.language.into());
     app.set_runtime_theme(settings.theme.into());
     app.set_runtime_send_key(settings.send_key.into());
+    app.set_runtime_python(settings.python_path.into());
+    app.set_runtime_git(settings.git_path.into());
+    app.set_runtime_rg(settings.rg_path.into());
+    let status = |tool: &str| {
+        settings
+            .tool_status
+            .iter()
+            .find(|entry| entry.tool == tool)
+            .map(tool_status_text)
+            .unwrap_or_default()
+    };
+    app.set_runtime_python_status(status("python").into());
+    app.set_runtime_git_status(status("git").into());
+    app.set_runtime_rg_status(status("rg").into());
     app.set_lan_enabled(settings.lan.enabled);
     app.set_lan_name(settings.lan.display_name.into());
     app.set_lan_peer_id(settings.lan.peer_id.into());
@@ -1075,6 +1089,24 @@ fn to_lan_peer_card(peer: LanPeerRecord) -> crate::LanPeerCard {
         peer_id: peer.peer_id.into(),
         display_name: peer.display_name.into(),
         address: format!("{}:{}", peer.lan_ip, peer.listen_port).into(),
+    }
+}
+
+/// User-facing one-line status for a configured runtime tool path. A warning
+/// mark keeps an invalid configured path visible instead of silently falling
+/// back to the system interpreter.
+fn tool_status_text(status: &RuntimeToolStatus) -> String {
+    let detail = if status.effective.is_empty() {
+        String::new()
+    } else {
+        format!(" · {}", status.effective)
+    };
+    match status.source.as_str() {
+        "custom" => format!("✓ 自定义路径已生效{detail}"),
+        "embedded" => format!("✓ 已使用内置补充包{detail}"),
+        "invalid" => "⚠ 配置路径无效，已回退系统环境".to_string(),
+        "system" => "使用系统 PATH".to_string(),
+        _ => "⚠ 未找到可用的 Python 运行时，需要配置或安装补充包".to_string(),
     }
 }
 

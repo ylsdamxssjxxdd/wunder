@@ -1,5 +1,6 @@
+import { I18n } from "i18n.slint";
 import { Theme, PlazaItemCard } from "theme.slint";
-import { Action, MiddleHeader, MiddleFooter } from "components.slint";
+import { Action, MiddleHeader, MiddleFooter, PageState, PageStateKind } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // The desktop plaza only browses normal user assets (worker cards and skill
@@ -16,53 +17,53 @@ export component PlazaPage inherits Rectangle {
     callback request-import();
     callback confirm-import();
     callback cancel-import();
-    private property <string> kind-filter: "全部";
+    private property <string> kind-filter: I18n.common_all;
     private property <PlazaItemCard> current: root.selected >= 0 && root.selected < root.items.length ? root.items[root.selected] : {
         item-id: "", kind: "", title: "", summary: "", owner: "", mine: false,
         freshness: "", artifact: "", size: "", tags: "", updated-at: ""
     };
-    private property <string> current-kind-label: root.current.kind == "worker_card" ? "工蜂卡" : root.current.kind == "skill_pack" ? "技能包" : "";
+    private property <string> current-kind-label: root.current.kind == "worker_card" ? I18n.common_worker_card : root.current.kind == "skill_pack" ? I18n.common_skill_pack : "";
     background: Theme.chat;
 
     HorizontalLayout {
         spacing: 0px;
         Rectangle {
-            width: 220px;
+            width: Theme.middle-width;
             background: Theme.middle;
             Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
             VerticalLayout {
                 spacing: 0px;
-                MiddleHeader { title: "广场"; subtitle: "浏览普通资产并导入"; }
+                MiddleHeader { title: I18n.common_plaza; subtitle: I18n.pz_subtitle; }
                 HorizontalLayout {
                     padding-left: 14px; padding-right: 14px; height: 34px; spacing: 8px;
-                    Action { horizontal-stretch: 1; height: 34px; icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新广场"; show-label: true; enabled: !root.loading; clicked => { root.refresh(); } }
+                    Action { horizontal-stretch: 1; height: 34px; icon: @image-url("../assets/icons/rotate-right.svg"); label: I18n.pz_refresh; show-label: true; enabled: !root.loading; clicked => { root.refresh(); } }
                 }
                 Rectangle { height: 14px; }
-                HorizontalLayout { padding-left: 16px; Text { height: 20px; text: "资产类型"; color: Theme.text; font-size: 13px; font-weight: 600; } }
+                HorizontalLayout { padding-left: 16px; Text { height: 20px; text: I18n.pz_kind_filter; color: Theme.text; font-size: Theme.font-md; font-weight: 600; } }
                 Rectangle { height: 6px; }
                 VerticalLayout { alignment: start; padding-left: 8px; padding-right: 8px; spacing: 4px;
-                    Action { height: 30px; width: parent.width; label: "全部"; show-label: true; selected: root.kind-filter == "全部"; clicked => { root.kind-filter = "全部"; } }
-                    Action { height: 30px; width: parent.width; label: "工蜂卡"; show-label: true; selected: root.kind-filter == "worker_card"; clicked => { root.kind-filter = "worker_card"; } }
-                    Action { height: 30px; width: parent.width; label: "技能包"; show-label: true; selected: root.kind-filter == "skill_pack"; clicked => { root.kind-filter = "skill_pack"; } }
+                    Action { height: 30px; width: parent.width; label: I18n.common_all; show-label: true; selected: root.kind-filter == I18n.common_all; clicked => { root.kind-filter = I18n.common_all; } }
+                    Action { height: 30px; width: parent.width; label: I18n.common_worker_card; show-label: true; selected: root.kind-filter == "worker_card"; clicked => { root.kind-filter = "worker_card"; } }
+                    Action { height: 30px; width: parent.width; label: I18n.common_skill_pack; show-label: true; selected: root.kind-filter == "skill_pack"; clicked => { root.kind-filter = "skill_pack"; } }
                 }
                 Rectangle { height: 10px; }
-                HorizontalLayout { padding-left: 16px; Text { height: 20px; text: "资产"; color: Theme.text; font-size: 13px; font-weight: 600; } }
+                HorizontalLayout { padding-left: 16px; Text { height: 20px; text: I18n.pz_assets; color: Theme.text; font-size: Theme.font-md; font-weight: 600; } }
                 Rectangle { height: 6px; }
                 ScrollView {
                     vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                     VerticalLayout { alignment: start; spacing: 4px;
                         for item[index] in root.items : Rectangle {
-                            visible: root.kind-filter == "全部" || item.kind == root.kind-filter;
+                            visible: root.kind-filter == I18n.common_all || item.kind == root.kind-filter;
                             height: self.visible ? 60px : 0px;
                             Rectangle {
-                                x: 8px; y: 2px; width: parent.width - 16px; height: 56px; border-radius: 12px;
+                                x: 8px; y: 2px; width: parent.width - 16px; height: 56px; border-radius: Theme.radius-lg;
                                 background: root.selected == index ? Theme.accent : transparent;
                                 Action { width: parent.width; height: parent.height; label: item.title; clicked => { root.select-item(index); } }
-                                Text { x: 12px; y: 9px; width: parent.width - 24px; height: 19px; text: item.title; color: root.selected == index ? white : Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
-                                Text { x: 12px; y: 33px; width: parent.width - 24px; height: 16px; text: (item.kind == "worker_card" ? "工蜂卡" : "技能包") + " · " + (item.mine ? "我发布的" : item.owner); color: root.selected == index ? #ffffffe0 : Theme.muted; font-size: 10px; overflow: elide; }
+                                Text { x: 12px; y: 9px; width: parent.width - 24px; height: 19px; text: item.title; color: root.selected == index ? white : Theme.text; font-size: Theme.font-md; font-weight: 600; overflow: elide; }
+                                Text { x: 12px; y: 33px; width: parent.width - 24px; height: 16px; text: (item.kind == "worker_card" ? I18n.common_worker_card : I18n.common_skill_pack) + " · " + (item.mine ? I18n.pz_mine : item.owner); color: root.selected == index ? #ffffffe0 : Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
                             }
                         }
-                        if root.items.length == 0 : Text { height: 70px; text: root.loading ? "正在加载广场…" : "广场暂无普通资产"; color: Theme.muted; horizontal-alignment: center; vertical-alignment: center; }
+                        if root.items.length == 0 : PageState { height: 70px; kind: root.loading ? PageStateKind.loading : PageStateKind.empty; message: root.loading ? I18n.pz_loading : I18n.pz_empty; }
                     }
                 }
                 MiddleFooter { text: root.status; }
@@ -75,26 +76,26 @@ export component PlazaPage inherits Rectangle {
                 HorizontalLayout {
                     height: 62px; padding-left: 14px; padding-right: 14px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
                     VerticalLayout { spacing: 1px;
-                        Text { height: 25px; text: root.selected >= 0 ? root.current.title : "广场"; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; }
-                        Text { height: 17px; text: root.selected >= 0 ? (root.current-kind-label + " · " + (root.current.mine ? "我发布的" : "来自 " + root.current.owner)) : "在左侧选择资产查看详情"; color: Theme.muted; font-size: 11px; overflow: elide; }
+                        Text { height: 25px; text: root.selected >= 0 ? root.current.title : I18n.common_plaza; color: Theme.text; font-size: Theme.font-headline; font-weight: 700; overflow: elide; }
+                        Text { height: 17px; text: root.selected >= 0 ? (root.current-kind-label + " · " + (root.current.mine ? I18n.pz_mine : I18n.pz_from_prefix + root.current.owner)) : I18n.pz_pick_item; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                     }
                     Rectangle { horizontal-stretch: 1; }
-                    if root.selected >= 0 : Action { icon: @image-url("../assets/icons/upload.svg"); label: "导入资产"; show-label: true; primary: true; enabled: !root.loading; clicked => { root.request-import(); } }
+                    if root.selected >= 0 : Action { icon: @image-url("../assets/icons/upload.svg"); label: I18n.pz_import; show-label: true; primary: true; enabled: !root.loading; clicked => { root.request-import(); } }
                 }
                 Rectangle { height: 1px; background: Theme.border; }
-                if root.selected < 0 : Text { vertical-stretch: 1; text: "选择资产查看详情，导入后即可使用。蜂群相关资产仅在网页端提供。"; color: Theme.muted; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
+                if root.selected < 0 : Text { vertical-stretch: 1; text: I18n.pz_pick_hint; color: Theme.muted; font-size: Theme.font-md; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
                 if root.selected >= 0 : ScrollView {
                     vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
                     VerticalLayout { alignment: start; padding: 22px; spacing: 12px;
-                        HorizontalLayout { height: 30px; spacing: 8px; Text { width: 96px; height: parent.height; text: "资产类型"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: root.current-kind-label; color: Theme.text; font-size: 12px; vertical-alignment: center; } }
-                        HorizontalLayout { height: 30px; spacing: 8px; Text { width: 96px; height: parent.height; text: "发布者"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: root.current.mine ? "我（" + root.current.owner + "）" : root.current.owner; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; } }
-                        HorizontalLayout { height: 30px; spacing: 8px; Text { width: 96px; height: parent.height; text: "更新时间"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: root.current.updated-at; color: Theme.text; font-size: 12px; vertical-alignment: center; } }
-                        HorizontalLayout { height: 30px; spacing: 8px; Text { width: 96px; height: parent.height; text: "文件"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: root.current.artifact + " · " + root.current.size; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; } }
-                        HorizontalLayout { height: 30px; spacing: 8px; Text { width: 96px; height: parent.height; text: "同步状态"; color: Theme.muted; font-size: 11px; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: root.current.freshness == "current" ? "与源一致" : root.current.freshness == "outdated" ? "源已更新，重新导入可获取新版本" : "源已删除，仅可导入当前快照"; color: root.current.freshness == "current" ? #16845d : #b8860b; font-size: 12px; vertical-alignment: center; } }
-                        HorizontalLayout { spacing: 8px; Text { width: 96px; text: "标签"; color: Theme.muted; font-size: 11px; vertical-alignment: top; } Text { horizontal-stretch: 1; text: root.current.tags == "" ? "无" : root.current.tags; color: Theme.text; font-size: 12px; wrap: word-wrap; } }
-                        HorizontalLayout { spacing: 8px; Text { width: 96px; text: "简介"; color: Theme.muted; font-size: 11px; vertical-alignment: top; } Text { horizontal-stretch: 1; text: root.current.summary == "" ? "暂无简介" : root.current.summary; color: Theme.text; font-size: 12px; wrap: word-wrap; } }
+                        HorizontalLayout { height: 30px; spacing: 8px; Text { width: 96px; height: parent.height; text: I18n.pz_kind_filter; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: root.current-kind-label; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; } }
+                        HorizontalLayout { height: 30px; spacing: 8px; Text { width: 96px; height: parent.height; text: I18n.pz_publisher; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: root.current.mine ? I18n.pz_me_prefix + root.current.owner + "）" : root.current.owner; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; overflow: elide; } }
+                        HorizontalLayout { height: 30px; spacing: 8px; Text { width: 96px; height: parent.height; text: I18n.pz_updated_at; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: root.current.updated-at; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; } }
+                        HorizontalLayout { height: 30px; spacing: 8px; Text { width: 96px; height: parent.height; text: I18n.common_files; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: root.current.artifact + " · " + root.current.size; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; overflow: elide; } }
+                        HorizontalLayout { height: 30px; spacing: 8px; Text { width: 96px; height: parent.height; text: I18n.pz_sync_state; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; } Text { horizontal-stretch: 1; height: parent.height; text: root.current.freshness == "current" ? I18n.pz_sync_current : root.current.freshness == "outdated" ? I18n.pz_sync_outdated : I18n.pz_sync_deleted; color: root.current.freshness == "current" ? Theme.success : Theme.warning; font-size: Theme.font-sm; vertical-alignment: center; } }
+                        HorizontalLayout { spacing: 8px; Text { width: 96px; text: I18n.pz_tags; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: top; } Text { horizontal-stretch: 1; text: root.current.tags == "" ? I18n.common_none : root.current.tags; color: Theme.text; font-size: Theme.font-sm; wrap: word-wrap; } }
+                        HorizontalLayout { spacing: 8px; Text { width: 96px; text: I18n.pz_summary; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: top; } Text { horizontal-stretch: 1; text: root.current.summary == "" ? I18n.pz_no_summary : root.current.summary; color: Theme.text; font-size: Theme.font-sm; wrap: word-wrap; } }
                         Rectangle { height: 1px; background: Theme.border; }
-                        Text { height: 34px; text: "导入工蜂卡会创建一个新的专家；导入技能包会安装到本机技能目录。导入动作会经过运行时权限校验。"; color: Theme.muted; font-size: 11px; wrap: word-wrap; }
+                        Text { height: 34px; text: I18n.pz_import_note; color: Theme.muted; font-size: Theme.font-xs; wrap: word-wrap; }
                         Rectangle { vertical-stretch: 1; }
                     }
                 }
@@ -103,17 +104,17 @@ export component PlazaPage inherits Rectangle {
     }
 
     if root.import-open : Rectangle {
-        Rectangle { background: #00000040; TouchArea { clicked => { root.cancel-import(); } } }
+        Rectangle { background: Theme.overlay; TouchArea { clicked => { root.cancel-import(); } } }
         Rectangle {
             x: (parent.width - 400px) / 2; y: (parent.height - 170px) / 2; width: 400px; height: 170px;
-            border-radius: 12px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+            border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border;
             TouchArea { }
             VerticalLayout { padding: 18px; spacing: 12px;
-                Text { text: "导入广场资产"; color: Theme.text; font-size: 15px; font-weight: 700; }
-                Text { vertical-stretch: 1; text: "将导入“" + root.current.title + "”。" + (root.current.kind == "worker_card" ? "会创建一个新的专家。" : "会安装技能包到本机。") + "确认导入？"; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+                Text { text: I18n.pz_import_title; color: Theme.text; font-size: 15px; font-weight: 700; }
+                Text { vertical-stretch: 1; text: I18n.pz_import_prefix + root.current.title + "”。" + (root.current.kind == "worker_card" ? I18n.pz_import_card_suffix : I18n.pz_import_pack_suffix) + I18n.pz_import_question; color: Theme.muted; font-size: Theme.font-sm; wrap: word-wrap; }
                 HorizontalLayout { height: 32px; spacing: 8px; Rectangle { horizontal-stretch: 1; }
-                    Action { width: 96px; label: "确认导入"; show-label: true; clicked => { root.confirm-import(); } }
-                    Action { width: 72px; label: "取消"; show-label: true; primary: true; clicked => { root.cancel-import(); } }
+                    Action { width: 96px; label: I18n.pz_confirm_import; show-label: true; clicked => { root.confirm-import(); } }
+                    Action { width: 72px; label: I18n.common_cancel; show-label: true; primary: true; clicked => { root.cancel-import(); } }
                 }
             }
         }

@@ -4483,7 +4483,8 @@ impl TuiApp {
         // durable healing state so a later watch re-establishes from the snapshot.
         self.thread_registry.clear_durable_heal_state(session_id);
         self.restore_transcript_from_history(history);
-        self.thread_registry.mark_durable_applied(session_id, cursor);
+        self.thread_registry
+            .mark_durable_applied(session_id, cursor);
         true
     }
 

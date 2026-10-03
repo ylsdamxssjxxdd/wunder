@@ -1,3 +1,4 @@
+import { I18n } from "i18n.slint";
 import { Theme, ChatAttachment } from "theme.slint";
 import { Action, TerminalAction } from "components.slint";
 import { TextEditBase } from "textedit-base.slint";
@@ -5,10 +6,10 @@ import { TextEditBase } from "textedit-base.slint";
 component ContextUsageIcon inherits Rectangle {
     in property <float> usage: 0.0;
     in-out property <bool> open: false;
-    in-out property <string> thinking-level: "自动";
+    in-out property <string> thinking-level: I18n.common_auto;
     width: 24px; height: 30px;
     accessible-role: image;
-    accessible-label: "上下文占用";
+    accessible-label: I18n.cp_context_usage;
     clip: false;
     Image {
         x: 3px; y: 3px; width: 18px; height: 18px;
@@ -37,18 +38,18 @@ component ContextUsageIcon inherits Rectangle {
     }
     if root.open || touch.has-hover || panel-hover.has-hover : Rectangle {
         x: -188px; y: -138px; width: 214px; height: 142px;
-        z: 20; border-radius: 10px; background: Theme.surface;
+        z: 20; border-radius: Theme.radius-md; background: Theme.surface;
         border-width: 1px; border-color: Theme.border;
         VerticalLayout {
             padding: 10px; spacing: 5px;
-            Text { text: "上下文占用"; color: Theme.text; font-size: 12px; font-weight: 600; }
-            Text { text: root.usage <= 0.0 ? "暂无最近一次请求数据" : "当前请求上下文占用：" + round(root.usage * 100.0) + "%"; color: Theme.muted; font-size: 11px; }
-            Text { text: "思考等级"; color: Theme.text; font-size: 11px; font-weight: 600; }
+            Text { text: I18n.cp_context_usage; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; }
+            Text { text: root.usage <= 0.0 ? I18n.cp_usage_empty : I18n.cp_usage_prefix + round(root.usage * 100.0) + "%"; color: Theme.muted; font-size: Theme.font-xs; }
+            Text { text: I18n.cp_thinking_level; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; }
             HorizontalLayout {
                 height: 28px; spacing: 4px;
-                for level in ["自动", "低", "中", "高"] : Rectangle {
+                for level in [I18n.common_auto, I18n.cp_think_low, I18n.cp_think_mid, I18n.cp_think_high] : Rectangle {
                     border-radius: 6px; background: root.thinking-level == level ? Theme.accent : (level-touch.has-hover ? Theme.accent-soft : transparent);
-                    Text { text: level; color: root.thinking-level == level ? white : Theme.text; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                    Text { text: level; color: root.thinking-level == level ? white : Theme.text; font-size: Theme.font-2xs; horizontal-alignment: center; vertical-alignment: center; }
                     level-touch := TouchArea { mouse-cursor: pointer; clicked => { root.thinking-level = level; } }
                 }
             }
@@ -88,9 +89,9 @@ export component Composer inherits Rectangle {
             height: 30px; spacing: 6px;
             for attachment[index] in root.attachments : Rectangle {
                 width: 220px; height: 28px;
-                border-radius: 7px; background: Theme.accent-soft; border-width: 1px; border-color: Theme.border;
-                Text { x: 8px; width: parent.width - 34px; height: parent.height; text: "图片 · " + attachment.name; color: Theme.text; font-size: 11px; vertical-alignment: center; overflow: elide; }
-                Action { x: parent.width - 27px; y: 2px; width: 24px; height: 24px; icon: @image-url("../assets/icons/xmark.svg"); label: "移除附件"; clicked => { root.remove-attachment(index); } }
+                border-radius: Theme.radius-sm; background: Theme.accent-soft; border-width: 1px; border-color: Theme.border;
+                Text { x: 8px; width: parent.width - 34px; height: parent.height; text: I18n.cp_image_prefix + attachment.name; color: Theme.text; font-size: Theme.font-xs; vertical-alignment: center; overflow: elide; }
+                Action { x: parent.width - 27px; y: 2px; width: 24px; height: 24px; icon: @image-url("../assets/icons/xmark.svg"); label: I18n.cp_remove_attachment; clicked => { root.remove-attachment(index); } }
             }
             Rectangle { horizontal-stretch: 1; }
         }
@@ -102,10 +103,10 @@ export component Composer inherits Rectangle {
             min-height: 72px;
             scroll-view-padding: 10px;
             background: Theme.surface.transparentize(0.18);
-            border-width: 1px; border-radius: 10px;
+            border-width: 1px; border-radius: Theme.radius-md;
             border-color: self.has-focus ? Theme.accent : Theme.border;
             foreground: Theme.text;
-            placeholder-text: "输入消息，开始新的对话…";
+            placeholder-text: I18n.cp_input_placeholder;
             placeholder-color: Theme.muted;
             selection-background-color: Theme.accent-soft;
             selection-foreground-color: Theme.text;
@@ -129,15 +130,15 @@ export component Composer inherits Rectangle {
             height: 30px; spacing: 8px;
             Rectangle {
                 width: 30px; height: 30px;
-                Action { width: parent.width; height: parent.height; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: "预设问题"; selected: root.preset-open; clicked => { root.preset-open = !root.preset-open; root.command-open = false; root.screenshot-open = false; } }
+                Action { width: parent.width; height: parent.height; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: I18n.ag_preset_questions; selected: root.preset-open; clicked => { root.preset-open = !root.preset-open; root.command-open = false; root.screenshot-open = false; } }
                 if root.preset-open : Rectangle {
                     x: 0px; y: -106px; width: 206px; height: 96px; z: 20;
-                    border-radius: 9px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                    border-radius: Theme.radius-md; background: Theme.surface; border-width: 1px; border-color: Theme.border;
                     VerticalLayout { padding: 8px; spacing: 4px;
-                        Text { text: "预设问题"; color: Theme.text; font-size: 11px; font-weight: 600; }
-                        for preset in ["你好，请介绍一下你的能力。", "请帮我整理当前内容。"] : Rectangle {
+                        Text { text: I18n.ag_preset_questions; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; }
+                        for preset in [I18n.cp_preset_q1, I18n.cp_preset_q2] : Rectangle {
                             height: 28px; border-radius: 5px; background: preset-touch.has-hover ? Theme.accent-soft : transparent;
-                            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: preset; color: Theme.text; font-size: 10px; vertical-alignment: center; overflow: elide; }
+                            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: preset; color: Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
                             preset-touch := TouchArea { mouse-cursor: pointer; clicked => { root.draft = preset; root.preset-open = false; editor.focus(); } }
                         }
                     }
@@ -145,15 +146,15 @@ export component Composer inherits Rectangle {
             }
             Rectangle {
                 width: 30px; height: 30px;
-                TerminalAction { width: parent.width; height: parent.height; label: "命令"; selected: root.command-open; clicked => { root.command-open = !root.command-open; root.preset-open = false; root.screenshot-open = false; root.command(); } }
+                TerminalAction { width: parent.width; height: parent.height; label: I18n.cp_commands; selected: root.command-open; clicked => { root.command-open = !root.command-open; root.preset-open = false; root.screenshot-open = false; root.command(); } }
                 if root.command-open : Rectangle {
                     x: 0px; y: -106px; width: 214px; height: 96px; z: 20;
-                    border-radius: 9px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                    border-radius: Theme.radius-md; background: Theme.surface; border-width: 1px; border-color: Theme.border;
                     VerticalLayout { padding: 8px; spacing: 4px;
-                        Text { text: "命令"; color: Theme.text; font-size: 11px; font-weight: 600; }
-                        for command in ["/help  查看可用命令", "/compact  压缩上下文"] : Rectangle {
+                        Text { text: I18n.cp_commands; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; }
+                        for command in [I18n.cp_cmd_help, I18n.cp_cmd_compact] : Rectangle {
                             height: 28px; border-radius: 5px; background: command-touch.has-hover ? Theme.accent-soft : transparent;
-                            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: command; color: Theme.text; font-size: 10px; vertical-alignment: center; overflow: elide; }
+                            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: command; color: Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
                             command-touch := TouchArea { mouse-cursor: pointer; clicked => { root.draft = command.starts-with("/help") ? "/help" : "/compact"; root.command-open = false; editor.focus(); } }
                         }
                     }
@@ -161,35 +162,35 @@ export component Composer inherits Rectangle {
             }
             Action {
                 icon: @image-url("../assets/icons/microphone.svg");
-                label: root.recording ? "停止录音" : (root.transcribing ? "识别中" : "录音");
+                label: root.recording ? I18n.cp_stop_recording : (root.transcribing ? I18n.cp_transcribing : I18n.cp_record);
                 enabled: !root.transcribing && !root.busy;
                 selected: root.recording;
                 clicked => { root.record-voice(); }
             }
             Rectangle {
                 width: 30px; height: 30px;
-                Action { width: parent.width; height: parent.height; icon: @image-url("../assets/icons/camera.svg"); label: "截图"; selected: root.screenshot-open; clicked => { root.screenshot-open = !root.screenshot-open; root.preset-open = false; root.command-open = false; } }
+                Action { width: parent.width; height: parent.height; icon: @image-url("../assets/icons/camera.svg"); label: I18n.cp_screenshot; selected: root.screenshot-open; clicked => { root.screenshot-open = !root.screenshot-open; root.preset-open = false; root.command-open = false; } }
                 if root.screenshot-open : Rectangle {
                     x: 0px; y: -130px; width: 220px; height: 120px; z: 20;
-                    border-radius: 9px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                    border-radius: Theme.radius-md; background: Theme.surface; border-width: 1px; border-color: Theme.border;
                     VerticalLayout { padding: 8px; spacing: 4px;
-                        Text { text: "截图方式（默认隐藏窗口）"; color: Theme.text; font-size: 11px; font-weight: 600; }
-                        for option in [{label: "全屏截图（隐藏窗口）", hide: true, region: false}, {label: "区域截图（隐藏窗口）", hide: true, region: true}, {label: "全屏截图（保留窗口）", hide: false, region: false}, {label: "区域截图（保留窗口）", hide: false, region: true}] : Rectangle {
+                        Text { text: I18n.cp_screenshot_mode; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; }
+                        for option in [{label: I18n.cp_shot_fullscreen_hidden, hide: true, region: false}, {label: I18n.cp_shot_region_hidden, hide: true, region: true}, {label: I18n.cp_shot_fullscreen_kept, hide: false, region: false}, {label: I18n.cp_shot_region_kept, hide: false, region: true}] : Rectangle {
                             height: 22px; border-radius: 5px; background: option-touch.has-hover ? Theme.accent-soft : transparent;
-                            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: option.label; color: Theme.text; font-size: 10px; vertical-alignment: center; }
+                            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: option.label; color: Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; }
                             option-touch := TouchArea { mouse-cursor: pointer; clicked => { root.screenshot-open = false; root.screenshot(option.hide, option.region); } }
                         }
                     }
                 }
             }
             Rectangle { horizontal-stretch: 1; }
-            if root.generating : Action { width: 88px; label: root.stopping ? "正在停止" : "停止生成"; show-label: true; enabled: !root.stopping; clicked => { root.stop(); } }
+            if root.generating : Action { width: 88px; label: root.stopping ? I18n.cp_stopping : I18n.cp_stop_generation; show-label: true; enabled: !root.stopping; clicked => { root.stop(); } }
             // The web composer keeps this context indicator immediately beside
             // the send control. Its fill is driven by the native context
             // projection when available and remains an empty muted glyph at 0.
-            Text { text: root.model-name; color: Theme.muted; font-size: 10px; overflow: elide; max-width: 180px; }
+            Text { text: root.model-name; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; max-width: 180px; }
             if !root.generating : ContextUsageIcon { usage: root.context-usage; }
-            if !root.generating : Action { width: 40px; icon: @image-url("../assets/icons/paper-plane.svg"); label: root.busy ? "发送中" : "发送"; primary: true; enabled: (root.draft != "" || root.attachments.length > 0) && !root.busy; clicked => { root.send(); } }
+            if !root.generating : Action { width: 40px; icon: @image-url("../assets/icons/paper-plane.svg"); label: root.busy ? I18n.cp_sending : I18n.cp_send; primary: true; enabled: (root.draft != "" || root.attachments.length > 0) && !root.busy; clicked => { root.send(); } }
         }
     }
 }

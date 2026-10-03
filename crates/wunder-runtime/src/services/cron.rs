@@ -1469,6 +1469,32 @@ impl CronRuntime {
             }
         };
         let is_isolated = routing.parent_session_id.is_some();
+        // A main-thread timer is an interrupting inbox delivery. Leaving the
+        // currently running turn alive would make the timer wait behind the
+        // very work that scheduled it, keeping that old bubble running and
+        // eventually cancelling both turns. Interrupt before accepting the
+        // new scheduled turn; the new turn is then the sole successor.
+        if !is_isolated {
+            if let Err(err) = self
+                .preempt_main_thread_for_scheduled_delivery(&job.user_id, &routing.run_session_id)
+                .await
+            {
+                status = "error".to_string();
+                error_msg = Some(format!("preempt bound thread failed: {err}"));
+                self.finish_job(
+                    job,
+                    trigger,
+                    &status,
+                    &summary,
+                    &error_msg,
+                    start_ts,
+                    started,
+                    lease_heartbeat,
+                )
+                .await;
+                return;
+            }
+        }
 
         let run_result = self
             .run_request_when_idle(
@@ -1523,6 +1549,39 @@ impl CronRuntime {
 
     fn resolve_session_routing(&self, job: &CronJobRecord) -> Result<CronSessionRouting> {
         resolve_cron_session_routing(self.storage.as_ref(), job)
+    }
+
+    /// `session=main` means delivery takes precedence over the bound thread's
+    /// prior work. Isolated jobs deliberately do not use this path.
+    async fn preempt_main_thread_for_scheduled_delivery(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<()> {
+        let runtime = self
+            .orchestrator
+            .task_runtime
+            .read()
+            .upgrade()
+            .ok_or_else(|| anyhow!("task runtime is unavailable"))?;
+        if runtime
+            .is_session_available_for_submit(user_id, session_id)
+            .await
+        {
+            return Ok(());
+        }
+        let settlement = runtime
+            .cancel_session_activity(user_id, session_id, "scheduled_delivery")
+            .await?;
+        tracing::info!(
+            user_id,
+            session_id,
+            monitor_cancelled = settlement.monitor_cancelled,
+            queued_tasks_cancelled = settlement.queued_tasks_cancelled,
+            running_tasks_marked_cancelled = settlement.running_tasks_marked_cancelled,
+            "scheduled main-thread delivery preempted prior work"
+        );
+        Ok(())
     }
 
     async fn run_request_when_idle(
@@ -2692,6 +2751,44 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("cron.enabled=false"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cron_main_delivery_preempts_active_bound_thread_before_acceptance() {
+        let (runtime, state, _dir) = runtime_fixture().await;
+        let old = state
+            .storage
+            .accept_thread_turn("cron_user", "bound", &json!({"content":"active work"}))
+            .unwrap();
+        state.monitor.register_continuation(
+            "bound",
+            "cron_user",
+            "agent_a",
+            "active work",
+            false,
+            1,
+        );
+        state
+            .storage
+            .try_acquire_session_lock("bound", "cron_user", "agent_a", 60.0, 10)
+            .unwrap();
+
+        runtime
+            .preempt_main_thread_for_scheduled_delivery("cron_user", "bound")
+            .await
+            .unwrap();
+
+        let monitor = state.monitor.get_record("bound").unwrap();
+        assert_eq!(monitor["status"], "cancelling");
+        assert_eq!(monitor["cancel_source"], "scheduled_delivery");
+        // The old durable turn remains its own identity until its active runner
+        // writes the cancellation terminal; no future scheduled output may use it.
+        let turns = state
+            .storage
+            .list_thread_turns("cron_user", "bound", None, 10)
+            .unwrap();
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0]["turn_id"], old["turn_id"]);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

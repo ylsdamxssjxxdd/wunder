@@ -77,7 +77,9 @@ fn channel_account_roundtrip_keeps_secrets_write_only() {
     };
     assert!(runtime.save_channel_account(&unsupported).is_err());
 
-    let created = runtime.save_channel_account(&feishu_edit()).expect("create");
+    let created = runtime
+        .save_channel_account(&feishu_edit())
+        .expect("create");
     assert!(!created.account_id.is_empty());
     assert!(created.active);
     assert!(created.configured);
@@ -86,11 +88,17 @@ fn channel_account_roundtrip_keeps_secrets_write_only() {
     assert!(created.secret_set);
     // The secret must not appear in any projected field.
     let dumped = format!("{created:?}");
-    assert!(!dumped.contains(TEST_SECRET), "secret leaked through the card");
+    assert!(
+        !dumped.contains(TEST_SECRET),
+        "secret leaked through the card"
+    );
 
     let listed = runtime.list_channel_accounts().expect("list");
     assert!(listed.catalog.iter().any(|item| item.channel == "feishu"));
-    assert!(listed.items.iter().any(|item| item.account_id == created.account_id));
+    assert!(listed
+        .items
+        .iter()
+        .any(|item| item.account_id == created.account_id));
     for item in &listed.items {
         assert!(!format!("{item:?}").contains(TEST_SECRET));
     }
@@ -123,9 +131,7 @@ fn channel_account_roundtrip_keeps_secrets_write_only() {
     let logs = runtime
         .list_channel_runtime_logs(Some("feishu"), Some(&created.account_id), 50)
         .expect("logs");
-    assert!(logs
-        .iter()
-        .any(|entry| entry.event == "account_upserted"));
+    assert!(logs.iter().any(|entry| entry.event == "account_upserted"));
 
     runtime
         .delete_channel_account("feishu", &created.account_id)
@@ -143,7 +149,9 @@ fn channel_account_roundtrip_keeps_secrets_write_only() {
 #[test]
 fn channel_toggle_and_binding_roundtrip() {
     let runtime = start_isolated().expect("isolated runtime");
-    let created = runtime.save_channel_account(&feishu_edit()).expect("create");
+    let created = runtime
+        .save_channel_account(&feishu_edit())
+        .expect("create");
 
     runtime
         .toggle_channel_account("feishu", &created.account_id, false)
@@ -151,14 +159,19 @@ fn channel_toggle_and_binding_roundtrip() {
     let disabled = find_account(&runtime, &created.account_id).expect("account");
     assert!(!disabled.active);
     assert_eq!(disabled.status, "disabled");
-    assert!(disabled.configured, "toggle must not lose the configuration");
+    assert!(
+        disabled.configured,
+        "toggle must not lose the configuration"
+    );
 
     runtime
         .toggle_channel_account("feishu", &created.account_id, true)
         .expect("enable");
-    assert!(find_account(&runtime, &created.account_id)
-        .expect("account")
-        .active);
+    assert!(
+        find_account(&runtime, &created.account_id)
+            .expect("account")
+            .active
+    );
 
     // An extra peer binding for a specific user id.
     let binding = NativeChannelBindingEdit {
@@ -174,7 +187,9 @@ fn channel_toggle_and_binding_roundtrip() {
         .list_channel_bindings(Some("feishu"), Some(&created.account_id))
         .expect("bindings");
     assert_eq!(bindings.len(), 2);
-    assert!(bindings.iter().any(|item| item.peer_id == "ou_contract_user"));
+    assert!(bindings
+        .iter()
+        .any(|item| item.peer_id == "ou_contract_user"));
 
     runtime
         .delete_channel_binding("feishu", &created.account_id, "user", "ou_contract_user")
@@ -200,7 +215,9 @@ fn channel_config_json_path_supports_schema_less_channels() {
     let edit = NativeChannelAccountEdit {
         channel: "qqbot".into(),
         account_name: "契约机器人".into(),
-        config_json: r#"{"qqbot": {"app_id": "qq-app", "client_secret": "qq-secret", "token": "qq-token"}}"#.into(),
+        config_json:
+            r#"{"qqbot": {"app_id": "qq-app", "client_secret": "qq-secret", "token": "qq-token"}}"#
+                .into(),
         enabled: true,
         ..Default::default()
     };
@@ -219,7 +236,9 @@ fn channel_config_json_path_supports_schema_less_channels() {
         ..Default::default()
     };
     // The single existing account is reused and keeps its configuration.
-    let reused = runtime.save_channel_account(&missing_config).expect("reuse");
+    let reused = runtime
+        .save_channel_account(&missing_config)
+        .expect("reuse");
     assert_eq!(reused.account_id, created.account_id);
     assert!(reused.configured);
 

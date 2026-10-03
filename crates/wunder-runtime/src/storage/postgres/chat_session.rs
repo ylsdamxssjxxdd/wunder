@@ -460,7 +460,10 @@ impl PostgresChatSessionStorage for PostgresStorage {
             "DELETE FROM chat_sessions WHERE user_id = $1 AND session_id = $2",
             &[&cleaned_user, &cleaned_session],
         )?;
-        tx.execute("DELETE FROM channel_sessions WHERE user_id = $1 AND session_id = $2", &[&cleaned_user, &cleaned_session])?;
+        tx.execute(
+            "DELETE FROM channel_sessions WHERE user_id = $1 AND session_id = $2",
+            &[&cleaned_user, &cleaned_session],
+        )?;
         tx.commit()?;
         Ok(affected as i64)
     }

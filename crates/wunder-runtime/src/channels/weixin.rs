@@ -162,7 +162,13 @@ pub struct WeixinVideoItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WeixinMessageItem {
-    #[serde(default, rename = "type")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_opt_i64",
+        rename = "type",
+        alias = "item_type",
+        alias = "itemType"
+    )]
     pub item_type: Option<i64>,
     #[serde(default, alias = "textItem")]
     pub text_item: Option<WeixinTextItem>,
@@ -176,15 +182,19 @@ pub struct WeixinMessageItem {
     pub video_item: Option<WeixinVideoItem>,
     #[serde(default, alias = "msgId")]
     pub msg_id: Option<Value>,
-    #[serde(default, alias = "createTimeMs")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_opt_i64",
+        alias = "createTimeMs"
+    )]
     pub create_time_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WeixinInboundMessage {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_i64")]
     pub seq: Option<i64>,
-    #[serde(default, alias = "messageId")]
+    #[serde(default, alias = "messageId", alias = "msg_id", alias = "msgId")]
     pub message_id: Option<Value>,
     #[serde(default, alias = "fromUserId")]
     pub from_user_id: Option<String>,
@@ -192,25 +202,29 @@ pub struct WeixinInboundMessage {
     pub to_user_id: Option<String>,
     #[serde(default, alias = "clientId")]
     pub client_id: Option<String>,
-    #[serde(default, alias = "createTimeMs")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_opt_i64",
+        alias = "createTimeMs"
+    )]
     pub create_time_ms: Option<i64>,
     #[serde(default)]
     pub session_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_i64")]
     pub message_type: Option<i64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_i64")]
     pub message_state: Option<i64>,
-    #[serde(default)]
+    #[serde(default, alias = "itemList")]
     pub item_list: Vec<WeixinMessageItem>,
-    #[serde(default)]
+    #[serde(default, alias = "contextToken")]
     pub context_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WeixinGetUpdatesResponse {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_i64_default")]
     pub ret: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_i64")]
     pub errcode: Option<i64>,
     #[serde(default)]
     pub errmsg: Option<String>,
@@ -218,7 +232,7 @@ pub struct WeixinGetUpdatesResponse {
     pub msgs: Vec<WeixinInboundMessage>,
     #[serde(default)]
     pub get_updates_buf: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_opt_u64")]
     pub longpolling_timeout_ms: Option<u64>,
 }
 
@@ -384,7 +398,114 @@ pub async fn get_updates(
         timeout_ms,
     )
     .await?;
-    serde_json::from_value(payload).map_err(|err| anyhow!("weixin getupdates decode failed: {err}"))
+    decode_get_updates_response(payload)
+}
+
+/// iLink deployments have returned both a flat response and an envelope under
+/// `data`/`result`; older clients also used `messages` instead of `msgs`.
+/// Normalize those shapes at the protocol boundary so the rest of the channel
+/// pipeline always consumes one durable representation.
+fn decode_get_updates_response(payload: Value) -> Result<WeixinGetUpdatesResponse> {
+    let mut root = match payload {
+        Value::Object(map) => Value::Object(map),
+        Value::Array(msgs) => json!({ "msgs": msgs }),
+        other => {
+            return Err(anyhow!(
+                "weixin getupdates decode failed: expected object/array, got {}",
+                other
+            ));
+        }
+    };
+
+    let mut candidate = root.clone();
+    for key in ["data", "result"] {
+        if candidate.get("msgs").is_none() && candidate.get("messages").is_none() {
+            if let Some(nested) = candidate.get(key).filter(|value| value.is_object()) {
+                candidate = nested.clone();
+            }
+        }
+    }
+    if let Some(messages) = candidate.get("messages").cloned() {
+        if let Some(map) = candidate.as_object_mut() {
+            map.insert("msgs".to_string(), messages);
+        }
+    }
+
+    // Preserve status/cursor fields from the outer envelope when the message
+    // list was nested.
+    if let (Some(root_map), Some(candidate_map)) = (root.as_object_mut(), candidate.as_object()) {
+        for key in [
+            "ret",
+            "errcode",
+            "errmsg",
+            "get_updates_buf",
+            "longpolling_timeout_ms",
+        ] {
+            if !root_map.contains_key(key) {
+                if let Some(value) = candidate_map.get(key) {
+                    root_map.insert(key.to_string(), value.clone());
+                }
+            }
+        }
+        if let Some(msgs) = candidate_map.get("msgs") {
+            root_map.insert("msgs".to_string(), msgs.clone());
+        }
+    }
+    serde_json::from_value(root).map_err(|err| anyhow!("weixin getupdates decode failed: {err}"))
+}
+
+/// iLink has emitted numeric protocol fields as both JSON numbers and strings.
+/// Keep the wire boundary tolerant while exposing one typed representation to
+/// the durable channel pipeline.
+fn deserialize_opt_i64<'de, D>(deserializer: D) -> std::result::Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(number)) => number
+            .as_i64()
+            .ok_or_else(|| serde::de::Error::custom("expected integer"))
+            .map(Some),
+        Some(Value::String(text)) => text
+            .trim()
+            .parse::<i64>()
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        Some(other) => Err(serde::de::Error::custom(format!(
+            "expected integer or numeric string, got {other}"
+        ))),
+    }
+}
+
+fn deserialize_i64_default<'de, D>(deserializer: D) -> std::result::Result<i64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(deserialize_opt_i64(deserializer)?.unwrap_or_default())
+}
+
+fn deserialize_opt_u64<'de, D>(deserializer: D) -> std::result::Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(number)) => number
+            .as_u64()
+            .ok_or_else(|| serde::de::Error::custom("expected unsigned integer"))
+            .map(Some),
+        Some(Value::String(text)) => text
+            .trim()
+            .parse::<u64>()
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        Some(other) => Err(serde::de::Error::custom(format!(
+            "expected unsigned integer or numeric string, got {other}"
+        ))),
+    }
 }
 
 pub async fn get_bot_qrcode(
@@ -1977,6 +2098,41 @@ mod tests {
             extract_context_token_from_meta(Some(&nested)).as_deref(),
             Some("ctx-2")
         );
+    }
+
+    #[test]
+    fn decode_get_updates_accepts_envelopes_and_numeric_strings() {
+        let payload = json!({
+            "data": {
+                "ret": "0",
+                "get_updates_buf": "cursor-1",
+                "messages": [{
+                    "seq": "7",
+                    "fromUserId": "peer-1",
+                    "createTimeMs": "1710000000000",
+                    "itemList": [{
+                        "type": "1",
+                        "textItem": {"text": "hello"}
+                    }]
+                }]
+            }
+        });
+        let decoded = decode_get_updates_response(payload).expect("decode envelope");
+        assert_eq!(decoded.ret, 0);
+        assert_eq!(decoded.get_updates_buf.as_deref(), Some("cursor-1"));
+        assert_eq!(decoded.msgs.len(), 1);
+        assert_eq!(decoded.msgs[0].seq, Some(7));
+        assert_eq!(decoded.msgs[0].item_list[0].item_type, Some(1));
+    }
+
+    #[test]
+    fn decode_get_updates_accepts_top_level_message_array() {
+        let decoded = decode_get_updates_response(json!([
+            {"from_user_id": "peer-2", "item_list": [{"type": 1, "text_item": {"text": "ok"}}]}
+        ]))
+        .expect("decode array");
+        assert_eq!(decoded.msgs.len(), 1);
+        assert_eq!(decoded.msgs[0].from_user_id.as_deref(), Some("peer-2"));
     }
 
     #[test]

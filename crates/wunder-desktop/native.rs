@@ -11,14 +11,15 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
-#[path = "native_stream.rs"]
-mod stream;
 #[path = "native_chat_turns.rs"]
 mod chat_turns;
 #[path = "native_observer.rs"]
 mod observer;
-pub use observer::{NativeThreadUpdate, NativeThreadWatch};
+#[path = "native_stream.rs"]
+mod stream;
+pub use crate::runtime::RuntimeToolStatus;
 pub use chat_turns::NativeChatTurn;
+pub use observer::{NativeThreadUpdate, NativeThreadWatch};
 pub use stream::{NativeChatEvent, NativeStream};
 #[path = "native_catalog.rs"]
 mod catalog;
@@ -41,12 +42,12 @@ mod world;
 pub use catalog::{
     AgentImportOutcome, AgentRecord, AgentSettingsEdit, ToolRecord, WORKER_CARD_SCHEMA_VERSION,
 };
-pub use cron::{CronRecord, CronRunRecord, NativeCronJobEdit};
 pub use channels::{
     ChannelAccountCard, ChannelAccountListing, ChannelBindingCard, ChannelCatalogItem,
     ChannelLogEntry, NativeChannelAccountEdit, NativeChannelBindingEdit, WeixinQrLoginStart,
     WeixinQrLoginStatus,
 };
+pub use cron::{CronRecord, CronRunRecord, NativeCronJobEdit};
 pub use plaza::{PlazaImportOutcome, PlazaItemCard};
 pub use profile::NativeProfile;
 pub use prompts::{PromptPackInfo, PromptSegmentContent};
@@ -203,16 +204,28 @@ impl NativeDesktop {
 
     pub fn get_session(&self, session_id: &str) -> Result<(NativeSession, Vec<NativeMessage>)> {
         let (session, turns) = self.get_session_turns(session_id)?;
-        Ok((session, turns.into_iter().flat_map(|turn| [turn.user, turn.assistant]).collect()))
+        Ok((
+            session,
+            turns
+                .into_iter()
+                .flat_map(|turn| [turn.user, turn.assistant])
+                .collect(),
+        ))
     }
 
     pub fn get_session_info(&self, session_id: &str) -> Result<NativeSession> {
-        let record = self.state().user_store.get_chat_session(self.user_id(), session_id.trim())?
+        let record = self
+            .state()
+            .user_store
+            .get_chat_session(self.user_id(), session_id.trim())?
             .ok_or_else(|| anyhow!("chat session not found"))?;
         Ok(self.session_with_stats(record))
     }
 
-    pub fn get_session_turns(&self, session_id: &str) -> Result<(NativeSession, Vec<NativeChatTurn>)> {
+    pub fn get_session_turns(
+        &self,
+        session_id: &str,
+    ) -> Result<(NativeSession, Vec<NativeChatTurn>)> {
         let cleaned = session_id.trim();
         let record = self
             .desktop
@@ -223,7 +236,6 @@ impl NativeDesktop {
         let turns = self.load_chat_turns(cleaned)?;
         Ok((self.session_with_stats(record), turns))
     }
-
 
     pub fn create_session_for_agent(&self, agent_id: Option<&str>) -> Result<NativeSession> {
         let agent_id = agent_id
@@ -379,7 +391,11 @@ fn message_from_value(value: Value) -> Option<NativeMessage> {
         .or_else(|| value.pointer("/meta/message_stats"))
         .unwrap_or(&Value::Null);
     Some(NativeMessage {
-        turn_id: value.get("turn_id").and_then(Value::as_str).unwrap_or_default().to_string(),
+        turn_id: value
+            .get("turn_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
         workflow_detail: String::new(),
         text: value.get("content").and_then(Value::as_str)?.to_string(),
         mine: role == "user",

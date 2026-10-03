@@ -1,11 +1,12 @@
+import { I18n } from "i18n.slint";
 // A tray icon is a top-level Slint component. It must not be nested in the
 // application Window because the native backend owns its message window.
 export component AppTray inherits SystemTrayIcon {
     in property <image> tray-icon;
-    in property <string> tray-tooltip: "心舰 · 蜂巢";
+    in property <string> tray-tooltip: I18n.tr_title;
     icon: tray-icon;
     tooltip: tray-tooltip;
-    title: "心舰";
+    title: I18n.tr_name;
 
     callback show-main-requested();
     callback screenshot-requested();
@@ -15,10 +16,10 @@ export component AppTray inherits SystemTrayIcon {
     clicked => { root.show-main-requested(); }
 
     Menu {
-        MenuItem { title: "显示主窗口"; activated => { root.show-main-requested(); } }
-        MenuItem { title: "截图 (Ctrl+F1)"; activated => { root.screenshot-requested(); } }
-        MenuItem { title: "全屏截图"; activated => { root.fullscreen-screenshot-requested(); } }
+        MenuItem { title: I18n.tr_show_window; activated => { root.show-main-requested(); } }
+        MenuItem { title: I18n.tr_screenshot; activated => { root.screenshot-requested(); } }
+        MenuItem { title: I18n.tr_fullscreen_shot; activated => { root.fullscreen-screenshot-requested(); } }
         MenuSeparator {}
-        MenuItem { title: "退出"; activated => { root.quit-requested(); } }
+        MenuItem { title: I18n.tr_exit; activated => { root.quit-requested(); } }
     }
 }

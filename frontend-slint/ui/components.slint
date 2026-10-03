@@ -1,4 +1,6 @@
+import { I18n } from "i18n.slint";
 import { Theme } from "theme.slint";
+import { Spinner } from "std-widgets.slint";
 
 // Keyboard and accessibility actions share the pointer callback.
 export component Action inherits Rectangle {
@@ -7,13 +9,15 @@ export component Action inherits Rectangle {
     in property <bool> enabled: true;
     in property <bool> selected: false;
     in property <bool> primary: false;
+    in property <bool> danger: false;
     in property <bool> rail: false;
     in property <bool> show-label: false;
     callback clicked();
     width: root.show-label ? 92px : 30px;
     height: 30px;
-    border-radius: 7px;
+    border-radius: Theme.radius-sm;
     background: root.primary ? (root.enabled ? Theme.accent : Theme.accent.transparentize(0.6))
+        : root.danger ? (root.enabled ? Theme.danger : Theme.danger.transparentize(0.6))
         : root.rail ? (root.selected || touch.has-hover ? #ffffff33 : transparent)
         : root.selected || touch.has-hover ? Theme.accent-soft : transparent;
     border-width: focus.has-focus ? 1px : 0px;
@@ -28,13 +32,13 @@ export component Action inherits Rectangle {
         y: (parent.height - 15px) / 2;
         width: 15px; height: 15px;
         source: root.icon; image-fit: contain;
-        colorize: root.rail || root.primary ? white : Theme.muted;
+        colorize: root.rail || root.primary || root.danger ? white : Theme.muted;
     }
     if root.show-label : Text {
         x: root.icon.width > 0 ? 28px : 6px; width: parent.width - self.x - 6px;
         horizontal-alignment: center; height: parent.height;
-        text: root.label; font-size: 11px;
-        color: root.primary ? white : Theme.text;
+        text: root.label; font-size: Theme.font-xs;
+        color: root.primary || root.danger ? white : Theme.text;
         vertical-alignment: center; overflow: elide;
     }
     focus := FocusScope {
@@ -63,7 +67,7 @@ export component EdgeToggle inherits Rectangle {
     height: 48px;
     background: transparent;
     accessible-role: button;
-    accessible-label: root.open ? "收起侧栏" : "展开侧栏";
+    accessible-label: root.open ? I18n.ui_collapse_sidebar : I18n.ui_expand_sidebar;
     touch := TouchArea {
         x: 0px; width: parent.width;
         mouse-cursor: pointer;
@@ -97,16 +101,16 @@ export component RailButton inherits Rectangle {
     forward-focus: rail-focus;
     accessible-role: button; accessible-label: root.label;
     accessible-action-default => { root.clicked(); }
-    border-radius: 10px;
+    border-radius: Theme.radius-md;
     background: root.active || rail-touch.has-hover ? #ffffff33 : transparent;
     border-width: rail-focus.has-focus ? 1px : 0px; border-color: white;
     Image { y: 8px; width: 16px; height: 16px; source: root.icon; image-fit: contain; colorize: #ffffff; }
     if root.badge > 0 : Rectangle {
         x: parent.width - 20px; y: 3px; width: badge-text.text == "99+" ? 24px : 16px; height: 13px;
-        border-radius: 7px; background: #b63a22; border-width: 1px; border-color: #ffffffcc;
+        border-radius: Theme.radius-sm; background: Theme.danger; border-width: 1px; border-color: #ffffffcc;
         badge-text := Text { width: parent.width; height: parent.height; text: root.badge > 99 ? "99+" : root.badge; color: white; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
     }
-    Text { y: 30px; width: parent.width; height: 14px; text: root.label; color: #ffffffe6; font-size: 10px; horizontal-alignment: center; }
+    Text { y: 30px; width: parent.width; height: 14px; text: root.label; color: #ffffffe6; font-size: Theme.font-2xs; horizontal-alignment: center; }
     rail-focus := FocusScope {
         key-pressed(event) => {
             if event.text == " " || event.text == "\n" { root.clicked(); return accept; }
@@ -128,8 +132,8 @@ export component Avatar inherits Rectangle {
     background: root.mine ? Theme.accent-soft : (root.tone == 1 ? #fff0e3 : root.tone == 2 ? #e7f5ef : root.tone == 3 ? #e8efff : #ffffff);
     clip: true;
     if !root.mine : Image { width: 100%; height: 100%; source: root.source; image-fit: cover; }
-    if !root.mine && root.glyph != "" : Text { width: 100%; height: 100%; text: root.glyph; font-size: 16px; color: Theme.accent-deep; horizontal-alignment: center; vertical-alignment: center; }
-    if root.mine : Text { text: "我"; font-size: 13px; color: Theme.accent-deep; horizontal-alignment: center; vertical-alignment: center; }
+    if !root.mine && root.glyph != "" : Text { width: 100%; height: 100%; text: root.glyph; font-size: Theme.font-xl; color: Theme.accent-deep; horizontal-alignment: center; vertical-alignment: center; }
+    if root.mine : Text { text: I18n.common_me; font-size: Theme.font-md; color: Theme.accent-deep; horizontal-alignment: center; vertical-alignment: center; }
 }
 // Every non-chat page reuses the chat middle-column form: a full-height list
 // pane with its own header, search row, list and status footer, separated from
@@ -138,28 +142,28 @@ export component MiddleHeader inherits Rectangle {
     in property <string> title;
     in property <string> subtitle;
     height: 80px;
-    Text { x: 16px; y: 20px; width: parent.width - 32px; height: 25px; text: root.title; color: Theme.text; font-size: 18px; font-weight: 700; overflow: elide; }
-    Text { x: 16px; y: 49px; width: parent.width - 32px; height: 18px; text: root.subtitle; color: Theme.muted; font-size: 12px; overflow: elide; }
+    Text { x: 16px; y: 20px; width: parent.width - 32px; height: 25px; text: root.title; color: Theme.text; font-size: Theme.font-headline; font-weight: 700; overflow: elide; }
+    Text { x: 16px; y: 49px; width: parent.width - 32px; height: 18px; text: root.subtitle; color: Theme.muted; font-size: Theme.font-sm; overflow: elide; }
 }
 
 export component MiddleFooter inherits Rectangle {
     in property <string> text;
     height: 36px;
-    Text { x: 12px; width: parent.width - 24px; height: parent.height; text: root.text; color: Theme.muted; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+    Text { x: 12px; width: parent.width - 24px; height: parent.height; text: root.text; color: Theme.muted; font-size: Theme.font-xs; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
 }
 
 export component SearchField inherits Rectangle {
     in property <image> icon;
-    in property <string> placeholder: "搜索";
+    in property <string> placeholder: I18n.common_search;
     in-out property <string> text <=> editor.text;
-    height: 34px; background: Theme.accent-soft; border-radius: 8px;
+    height: 34px; background: Theme.accent-soft; border-radius: Theme.radius-sm;
     border-width: 1px; border-color: editor.has-focus ? Theme.accent : transparent;
     forward-focus: editor;
     Image { x: 10px; width: 12px; height: 12px; source: root.icon; colorize: Theme.muted; }
-    Text { x: 30px; width: parent.width - 38px; height: parent.height; text: editor.text == "" && editor.preedit-text == "" ? root.placeholder : ""; color: Theme.muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
+    Text { x: 30px; width: parent.width - 38px; height: parent.height; text: editor.text == "" && editor.preedit-text == "" ? root.placeholder : ""; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; overflow: elide; }
     editor := TextInput {
         x: 30px; width: parent.width - 38px; height: parent.height;
-        color: Theme.text; font-size: 12px; single-line: true;
+        color: Theme.text; font-size: Theme.font-sm; single-line: true;
         vertical-alignment: center;
         selection-background-color: Theme.accent-soft; selection-foreground-color: Theme.text;
     }
@@ -170,18 +174,144 @@ export component FormField inherits Rectangle {
     in property <string> placeholder;
     in property <bool> secret: false;
     in property <bool> read-only: false;
+    // Inline validation message; empty keeps the compact single-line form.
+    in property <string> error: "";
     in-out property <string> text <=> editor.text;
-    height: 62px;
-    Text { y: 0px; width: parent.width; height: 18px; text: root.label; color: Theme.muted; font-size: 11px; }
+    height: root.error == "" ? 62px : 78px;
+    Text { y: 0px; width: parent.width; height: 18px; text: root.label; color: Theme.muted; font-size: Theme.font-xs; }
     Rectangle {
-        y: 21px; width: parent.width; height: 36px; border-radius: 8px;
-        background: Theme.panel; border-width: 1px; border-color: editor.has-focus ? Theme.accent : Theme.border;
-        Text { x: 10px; width: parent.width - 20px; height: parent.height; text: editor.text == "" && editor.preedit-text == "" ? root.placeholder : ""; color: Theme.muted; font-size: 12px; vertical-alignment: center; overflow: elide; }
+        y: 21px; width: parent.width; height: 36px; border-radius: Theme.radius-sm;
+        background: Theme.panel; border-width: 1px; border-color: root.error != "" ? Theme.danger : editor.has-focus ? Theme.accent : Theme.border;
+        Text { x: 10px; width: parent.width - 20px; height: parent.height; text: editor.text == "" && editor.preedit-text == "" ? root.placeholder : ""; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; overflow: elide; }
         editor := TextInput {
-            x: 10px; width: parent.width - 20px; height: parent.height; color: Theme.text; font-size: 12px;
+            x: 10px; width: parent.width - 20px; height: parent.height; color: Theme.text; font-size: Theme.font-sm;
             read-only: root.read-only; single-line: true; vertical-alignment: center; input-type: root.secret ? InputType.password : InputType.text;
             selection-background-color: Theme.accent-soft; selection-foreground-color: Theme.text;
             accessible-role: text-input; accessible-label: root.label; accessible-placeholder-text: root.placeholder;
+        }
+    }
+    if root.error != "" : Text {
+        y: 60px; width: parent.width; height: 16px; text: root.error;
+        color: Theme.danger; font-size: Theme.font-2xs; overflow: elide;
+    }
+}
+
+// Uniform non-ready presentation for list panes: loading, empty, error and
+// permission-denied. Pages pass the message (already localized) and, for
+// recoverable states, a retry action.
+export enum PageStateKind { loading, empty, error, permission-denied }
+
+export component PageState inherits Rectangle {
+    in property <PageStateKind> kind: PageStateKind.empty;
+    in property <string> message;
+    in property <string> retry-label;
+    callback retry();
+    VerticalLayout {
+        alignment: center; spacing: Theme.space-2;
+        if root.kind == PageStateKind.loading : HorizontalLayout { alignment: center; Spinner { width: 22px; height: 22px; } }
+        Text {
+            text: root.message;
+            color: root.kind == PageStateKind.error || root.kind == PageStateKind.permission-denied ? Theme.danger : Theme.muted;
+            font-size: Theme.font-xs; horizontal-alignment: center; overflow: elide;
+        }
+        if root.retry-label != "" : HorizontalLayout { alignment: center; Action { label: root.retry-label; show-label: true; clicked => { root.retry(); } } }
+    }
+}
+
+// Shared modal base: full-window scrim plus a centered, click-isolated card.
+// Children are placed inside the card layout.
+export component ModalDialog inherits Rectangle {
+    in property <bool> dismissable: true;
+    in property <length> card-width: 420px;
+    in property <length> card-height: 220px;
+    callback dismissed();
+    width: 100%; height: 100%;
+    background: Theme.overlay;
+    TouchArea { clicked => { if root.dismissable { root.dismissed(); } } }
+    Rectangle {
+        width: min(root.card-width, root.width - 48px);
+        height: min(root.card-height, root.height - 48px);
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2;
+        border-radius: Theme.radius-xl; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+        TouchArea { }
+        VerticalLayout { padding: Theme.space-5; spacing: Theme.space-3; @children }
+    }
+}
+
+export component ConfirmDialog inherits Rectangle {
+    in property <string> title;
+    in property <string> message;
+    in property <string> confirm-label;
+    in property <string> cancel-label;
+    // Danger confirms (delete/reset) render the confirm button in the danger
+    // tone and keep cancel as the primary escape.
+    in property <bool> danger: false;
+    in property <bool> busy: false;
+    callback confirmed();
+    callback canceled();
+    width: 100%; height: 100%;
+    ModalDialog {
+        dismissable: !root.busy;
+        card-width: 400px;
+        card-height: 160px;
+        dismissed => { root.canceled(); }
+        Text { height: 22px; text: root.title; color: Theme.text; font-size: Theme.font-md; font-weight: 700; }
+        Text { vertical-stretch: 1; text: root.message; color: Theme.muted; font-size: Theme.font-sm; wrap: word-wrap; }
+        HorizontalLayout { height: 32px; spacing: Theme.space-2; Rectangle { horizontal-stretch: 1; }
+            Action { width: 72px; label: root.cancel-label; show-label: true; primary: root.danger; enabled: !root.busy; clicked => { root.canceled(); } }
+            Action { width: 96px; label: root.confirm-label; show-label: true; danger: root.danger; primary: !root.danger; enabled: !root.busy; clicked => { root.confirmed(); } }
+        }
+    }
+}
+
+export component InfoDialog inherits Rectangle {
+    in property <string> title;
+    in property <string> message;
+    in property <string> close-label;
+    callback closed();
+    width: 100%; height: 100%;
+    ModalDialog {
+        card-width: 720px;
+        card-height: 620px;
+        dismissed => { root.closed(); }
+        HorizontalLayout { height: 30px;
+            Text { text: root.title; color: Theme.text; font-size: Theme.font-md; font-weight: 600; }
+            Rectangle { horizontal-stretch: 1; }
+            Action { icon: @image-url("../assets/icons/xmark.svg"); label: root.close-label; clicked => { root.closed(); } }
+        }
+        Text { text: root.message; color: Theme.muted; font-size: Theme.font-sm; wrap: word-wrap; vertical-stretch: 1; }
+        HorizontalLayout {
+            Rectangle { horizontal-stretch: 1; }
+            Action { label: root.close-label; icon: @image-url("../assets/icons/check.svg"); show-label: true; primary: true; clicked => { root.closed(); } }
+        }
+    }
+}
+
+// Transient toast feedback. Visibility and auto-hide are driven from the Rust
+// controller (ToastHost stays click-through and Slint-timer free).
+export global ToastState {
+    in-out property <string> message;
+    in-out property <int> kind;      // 0 info, 1 success, 2 danger
+    in-out property <int> revision;  // bumped on every show; Rust compares it before clearing
+}
+
+export component ToastHost inherits Rectangle {
+    width: 100%; height: 34px; x: 0px; y: 14px;
+    visible: ToastState.message != "";
+    Rectangle {
+        width: min(460px, root.width - 48px);
+        height: 34px;
+        x: (root.width - self.width) / 2;
+        border-radius: Theme.radius-sm;
+        background: Theme.surface;
+        border-width: 1px;
+        border-color: ToastState.kind == 1 ? Theme.success : ToastState.kind == 2 ? Theme.danger : Theme.border;
+        HorizontalLayout {
+            padding-left: 12px; padding-right: 12px; spacing: Theme.space-2; alignment: center;
+            if ToastState.kind == 1 : Image { width: 14px; height: 14px; source: @image-url("../assets/icons/circle-check.svg"); colorize: Theme.success; }
+            if ToastState.kind == 2 : Image { width: 14px; height: 14px; source: @image-url("../assets/icons/xmark.svg"); colorize: Theme.danger; }
+            Text { horizontal-stretch: 1; text: ToastState.message; color: Theme.text; font-size: Theme.font-xs; vertical-alignment: center; overflow: elide; }
         }
     }
 }

@@ -1,3 +1,4 @@
+import { I18n } from "i18n.slint";
 import { Theme, Conversation, FileCard } from "theme.slint";
 import { Action } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
@@ -37,21 +38,21 @@ export component WorkDock inherits Rectangle {
     VerticalLayout {
         padding: 10px; spacing: 10px;
         Rectangle {
-            border-radius: 12px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+            border-radius: Theme.radius-lg; background: Theme.panel; border-width: 1px; border-color: Theme.border;
             vertical-stretch: 3;
             VerticalLayout {
                 padding: 12px; spacing: 10px;
                 HorizontalLayout {
                     height: 26px; spacing: 6px;
                     Image { width: 14px; height: 14px; source: @image-url("../assets/icons/box-archive.svg"); colorize: Theme.accent-deep; }
-                    Text { text: "工作目录"; font-size: 13px; font-weight: 600; color: Theme.text; vertical-alignment: center; }
-                    Text { text: root.directory-container-id; color: Theme.accent-deep; font-size: 11px; font-weight: 600; vertical-alignment: center; y: -1px; }
+                    Text { text: I18n.dk_workdir; font-size: Theme.font-md; font-weight: 600; color: Theme.text; vertical-alignment: center; }
+                    Text { text: root.directory-container-id; color: Theme.accent-deep; font-size: Theme.font-xs; font-weight: 600; vertical-alignment: center; y: -1px; }
                     Rectangle { horizontal-stretch: 1; }
-                    Action { icon: @image-url("../assets/icons/folder-open.svg"); label: "切换目录"; clicked => { root.open-workspace-binding(); } }
-                    Action { icon: @image-url("../assets/icons/plus.svg"); label: "新建文件"; clicked => { root.new-file-open = !root.new-file-open; } }
-                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; enabled: !root.files-loading; clicked => { root.refresh-files(); } }
+                    Action { icon: @image-url("../assets/icons/folder-open.svg"); label: I18n.dk_switch_dir; clicked => { root.open-workspace-binding(); } }
+                    Action { icon: @image-url("../assets/icons/plus.svg"); label: I18n.dk_new_file; clicked => { root.new-file-open = !root.new-file-open; } }
+                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: I18n.common_refresh; enabled: !root.files-loading; clicked => { root.refresh-files(); } }
                 }
-                if root.new-file-open : Rectangle { z: 10; x: parent.width - 210px; width: 200px; height: 176px; border-radius: 9px; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 6px; spacing: 2px; Text { text: "新建文件"; height: 18px; color: Theme.muted; font-size: 10px; } for option in [{kind: "text", label: "文本 .txt"}, {kind: "markdown", label: "Markdown .md"}, {kind: "word", label: "Word .docx"}, {kind: "sheet", label: "表格 .xlsx"}, {kind: "slides", label: "演示文稿 .pptx"}, {kind: "flowchart", label: "流程图 .drawio"}] : Action { height: 22px; label: option.label; show-label: true; clicked => { root.new-file-open = false; root.create-file(option.kind, root.directory-path); } } } }
+                if root.new-file-open : Rectangle { z: 10; x: parent.width - 210px; width: 200px; height: 176px; border-radius: Theme.radius-md; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 6px; spacing: 2px; Text { text: I18n.dk_new_file; height: 18px; color: Theme.muted; font-size: Theme.font-2xs; } for option in [{kind: "text", label: I18n.dk_new_text}, {kind: "markdown", label: "Markdown .md"}, {kind: "word", label: "Word .docx"}, {kind: "sheet", label: I18n.dk_new_sheet}, {kind: "slides", label: I18n.dk_new_deck}, {kind: "flowchart", label: I18n.dk_new_diagram}] : Action { height: 22px; label: option.label; show-label: true; clicked => { root.new-file-open = false; root.create-file(option.kind, root.directory-path); } } } }
                 ScrollView {
                     horizontal-scrollbar-policy: always-off;
                     VerticalLayout {
@@ -60,8 +61,8 @@ export component WorkDock inherits Rectangle {
                             height: 36px;
                             Action { width: parent.width; height: parent.height; label: file.name; clicked => { if file.entry-type == "dir" { root.file-menu(file.path, 2); } else { root.preview-file(file.path); } } }
                             Image { x: 4px; y: 10px; width: 16px; height: 16px; source: file.entry-type == "dir" ? @image-url("../assets/icons/folder-open.svg") : file.name.ends-with(".md") ? @image-url("../assets/icons/file-type-markdown.svg") : file.name.ends-with(".docx") ? @image-url("../assets/icons/file-type-word.svg") : file.name.ends-with(".xlsx") ? @image-url("../assets/icons/file-type-excel.svg") : file.name.ends-with(".pptx") ? @image-url("../assets/icons/file-type-powerpoint.svg") : file.name.ends-with(".pdf") ? @image-url("../assets/icons/file-type-pdf.svg") : @image-url("../assets/icons/file-type-text.svg"); }
-                            Text { x: 29px; width: parent.width - 72px; height: parent.height; text: file.name; color: Theme.text; font-size: 12px; vertical-alignment: center; overflow: elide; }
-                            Text { x: parent.width - 42px; width: 38px; height: parent.height; text: file.entry-type == "dir" ? "目录" : file.size; color: Theme.muted; font-size: 10px; vertical-alignment: center; horizontal-alignment: right; overflow: elide; }
+                            Text { x: 29px; width: parent.width - 72px; height: parent.height; text: file.name; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; overflow: elide; }
+                            Text { x: parent.width - 42px; width: 38px; height: parent.height; text: file.entry-type == "dir" ? I18n.common_directory : file.size; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; horizontal-alignment: right; overflow: elide; }
                             TouchArea {
                                 mouse-cursor: pointer;
                                 pointer-event(event) => {
@@ -70,48 +71,48 @@ export component WorkDock inherits Rectangle {
                                 }
                             }
                             if root.file-menu-index == index : Rectangle {
-                                x: parent.width - 128px; y: 30px; z: 10; width: 120px; height: 86px; border-radius: 8px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                                x: parent.width - 128px; y: 30px; z: 10; width: 120px; height: 86px; border-radius: Theme.radius-sm; background: Theme.surface; border-width: 1px; border-color: Theme.border;
                                 VerticalLayout { padding: 5px; spacing: 2px;
-                                    Action { height: 24px; label: "打开"; show-label: true; clicked => { root.file-menu-index = -1; root.file-menu(file.path, 0); } }
-                                    Action { height: 24px; label: "复制路径"; show-label: true; clicked => { root.file-menu-index = -1; root.file-menu(file.path, 1); } }
-                                    Action { height: 24px; label: "系统打开"; show-label: true; clicked => { root.file-menu-index = -1; root.file-menu(file.path, 3); } }
+                                    Action { height: 24px; label: I18n.dk_open; show-label: true; clicked => { root.file-menu-index = -1; root.file-menu(file.path, 0); } }
+                                    Action { height: 24px; label: I18n.dk_copy_path; show-label: true; clicked => { root.file-menu-index = -1; root.file-menu(file.path, 1); } }
+                                    Action { height: 24px; label: I18n.dk_open_native; show-label: true; clicked => { root.file-menu-index = -1; root.file-menu(file.path, 3); } }
                                 }
                             }
                         }
                     }
                 }
-                TextInput { height: 18px; text: root.files-loading ? "正在读取…" : root.files-error != "" ? root.files-error : (root.directory-root == "" ? "本地工作目录" : root.directory-root); read-only: true; color: Theme.muted; font-size: 10px; horizontal-alignment: right; }
+                TextInput { height: 18px; text: root.files-loading ? I18n.dk_reading : root.files-error != "" ? root.files-error : (root.directory-root == "" ? I18n.dk_title : root.directory-root); read-only: true; color: Theme.muted; font-size: Theme.font-2xs; horizontal-alignment: right; }
             }
         }
         Rectangle {
-            border-radius: 12px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+            border-radius: Theme.radius-lg; background: Theme.panel; border-width: 1px; border-color: Theme.border;
             vertical-stretch: 2;
             VerticalLayout {
                 padding: 12px; spacing: 10px;
                 HorizontalLayout {
                     height: 24px; spacing: 8px;
                     Image { width: 14px; height: 14px; source: @image-url("../assets/icons/list-check.svg"); colorize: Theme.accent-deep; }
-                    Text { text: "工作线程"; font-size: 13px; font-weight: 600; color: Theme.text; }
+                    Text { text: I18n.dk_threads_title; font-size: Theme.font-md; font-weight: 600; color: Theme.text; }
                     Rectangle { horizontal-stretch: 1; }
-                    Text { text: root.conversations.length; color: Theme.accent-deep; font-size: 11px; }
+                    Text { text: root.conversations.length; color: Theme.accent-deep; font-size: Theme.font-xs; }
                 }
                 ScrollView {
                     horizontal-scrollbar-policy: always-off;
                     VerticalLayout {
                         alignment: start; spacing: 6px;
                         for conversation[index] in root.conversations : Rectangle {
-                            height: 56px; border-radius: 10px;
+                            height: 56px; border-radius: Theme.radius-md;
                             background: index == root.active-task ? Theme.accent-soft : transparent;
                             Action { width: parent.width - 30px; height: parent.height; label: conversation.title; enabled: root.tasks-enabled; clicked => { root.activate-task(index); } }
                             Image { x: 9px; y: 16px; width: 16px; height: 16px; source: @image-url("../assets/icons/comments.svg"); colorize: Theme.accent; }
-                            Text { x: 36px; y: 8px; width: parent.width - 44px; height: 18px; text: conversation.title; color: Theme.text; font-size: 12px; overflow: elide; }
+                            Text { x: 36px; y: 8px; width: parent.width - 44px; height: 18px; text: conversation.title; color: Theme.text; font-size: Theme.font-sm; overflow: elide; }
                             Image { x: 36px; y: 31px; width: 10px; height: 10px; source: @image-url("../assets/icons/bolt.svg"); colorize: Theme.muted; }
-                            Text { x: 49px; y: 28px; width: 31px; height: 14px; text: conversation.consumed-tokens; color: Theme.muted; font-size: 10px; vertical-alignment: center; overflow: elide; }
+                            Text { x: 49px; y: 28px; width: 31px; height: 14px; text: conversation.consumed-tokens; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
                             Image { x: 82px; y: 31px; width: 10px; height: 10px; source: @image-url("../assets/icons/screwdriver-wrench.svg"); colorize: Theme.muted; }
-                            Text { x: 95px; y: 28px; width: 20px; height: 14px; text: conversation.tool-calls; color: Theme.muted; font-size: 10px; vertical-alignment: center; overflow: elide; }
+                            Text { x: 95px; y: 28px; width: 20px; height: 14px; text: conversation.tool-calls; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
                             Image { x: 117px; y: 31px; width: 10px; height: 10px; source: @image-url("../assets/icons/coins.svg"); colorize: Theme.muted; }
-                            Text { x: 130px; y: 28px; width: parent.width - 166px; height: 14px; text: conversation.quota-used; color: Theme.muted; font-size: 10px; vertical-alignment: center; overflow: elide; }
-                            Action { x: parent.width - 30px; y: 13px; width: 26px; height: 26px; icon: @image-url("../assets/icons/ellipsis.svg"); label: "线程操作"; clicked => { root.menu-index = index; } }
+                            Text { x: 130px; y: 28px; width: parent.width - 166px; height: 14px; text: conversation.quota-used; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
+                            Action { x: parent.width - 30px; y: 13px; width: 26px; height: 26px; icon: @image-url("../assets/icons/ellipsis.svg"); label: I18n.dk_thread_ops; clicked => { root.menu-index = index; } }
                             TouchArea {
                                 x: 0px; y: 0px; width: 26px; height: parent.height;
                                 pointer-event(event) => {
@@ -121,18 +122,18 @@ export component WorkDock inherits Rectangle {
                                 moved => { if root.dragging-index >= 0 && self.mouse-y < -18px && index > 0 { root.thread-drop(root.dragging-index, index - 1); root.dragging-index = index - 1; } else if root.dragging-index >= 0 && self.mouse-y > parent.height + 18px && index + 1 < root.conversations.length { root.thread-drop(root.dragging-index, index + 1); root.dragging-index = index + 1; } }
                             }
                             if root.menu-index == index : Rectangle {
-                                x: parent.width - 132px; y: 34px; z: 10; width: 124px; height: 94px; border-radius: 8px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                                x: parent.width - 132px; y: 34px; z: 10; width: 124px; height: 94px; border-radius: Theme.radius-sm; background: Theme.surface; border-width: 1px; border-color: Theme.border;
                                 VerticalLayout { padding: 5px; spacing: 2px;
-                                    Action { height: 26px; label: "详情"; show-label: true; clicked => { root.menu-index = -1; root.thread-menu(index, 0); } }
-                                    Action { height: 26px; label: "重命名"; show-label: true; clicked => { root.menu-index = -1; root.rename-index = index; root.rename-value = conversation.title; } }
-                                    Action { height: 26px; label: "归档"; show-label: true; clicked => { root.menu-index = -1; root.archive-thread(index); } }
+                                    Action { height: 26px; label: I18n.dk_details; show-label: true; clicked => { root.menu-index = -1; root.thread-menu(index, 0); } }
+                                    Action { height: 26px; label: I18n.common_rename; show-label: true; clicked => { root.menu-index = -1; root.rename-index = index; root.rename-value = conversation.title; } }
+                                    Action { height: 26px; label: I18n.dk_archive; show-label: true; clicked => { root.menu-index = -1; root.archive-thread(index); } }
                                 }
                             }
                             if root.rename-index == index : Rectangle {
-                                x: 8px; y: 8px; z: 11; width: parent.width - 16px; height: 88px; border-radius: 8px; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                                x: 8px; y: 8px; z: 11; width: parent.width - 16px; height: 88px; border-radius: Theme.radius-sm; background: Theme.surface; border-width: 1px; border-color: Theme.border;
                                 VerticalLayout { padding: 7px; spacing: 4px;
-                                    TextInput { height: 28px; text <=> root.rename-value; color: Theme.text; font-size: 11px; }
-                                    HorizontalLayout { height: 25px; Rectangle { horizontal-stretch: 1; } Action { width: 52px; height: 24px; label: "取消"; show-label: true; clicked => { root.rename-index = -1; } } Action { width: 52px; height: 24px; label: "保存"; show-label: true; primary: true; enabled: root.rename-value != ""; clicked => { root.rename-thread(index, root.rename-value); root.rename-index = -1; } } }
+                                    TextInput { height: 28px; text <=> root.rename-value; color: Theme.text; font-size: Theme.font-xs; }
+                                    HorizontalLayout { height: 25px; Rectangle { horizontal-stretch: 1; } Action { width: 52px; height: 24px; label: I18n.common_cancel; show-label: true; clicked => { root.rename-index = -1; } } Action { width: 52px; height: 24px; label: I18n.common_save; show-label: true; primary: true; enabled: root.rename-value != ""; clicked => { root.rename-thread(index, root.rename-value); root.rename-index = -1; } } }
                                 }
                             }
                         }

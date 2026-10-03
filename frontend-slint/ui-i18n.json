@@ -1,0 +1,3487 @@
+[
+ {
+  "key": "ag_title",
+  "zh": "专家",
+  "en": "Agents"
+ },
+ {
+  "key": "ag_subtitle",
+  "zh": "管理可用于新会话的智能体",
+  "en": "Manage agents for new sessions"
+ },
+ {
+  "key": "ag_search",
+  "zh": "搜索专家",
+  "en": "Search agents"
+ },
+ {
+  "key": "ag_new",
+  "zh": "新建专家",
+  "en": "New agent"
+ },
+ {
+  "key": "ag_tool_count_suffix",
+  "zh": " 项工具",
+  "en": " tools"
+ },
+ {
+  "key": "ag_available",
+  "zh": "可用",
+  "en": "available"
+ },
+ {
+  "key": "ag_loading",
+  "zh": "正在加载专家…",
+  "en": "Loading agents…"
+ },
+ {
+  "key": "ag_empty",
+  "zh": "未加载到专家",
+  "en": "No agents loaded"
+ },
+ {
+  "key": "ag_editor_title",
+  "zh": "专家设置",
+  "en": "Agent settings"
+ },
+ {
+  "key": "ag_editor_subtitle",
+  "zh": "编辑专家能力和运行策略",
+  "en": "Edit capabilities and run strategy"
+ },
+ {
+  "key": "ag_export_card",
+  "zh": "导出卡片",
+  "en": "Export card"
+ },
+ {
+  "key": "ag_import_card",
+  "zh": "导入卡片",
+  "en": "Import card"
+ },
+ {
+  "key": "ag_name_label",
+  "zh": "专家名称",
+  "en": "Agent name"
+ },
+ {
+  "key": "ag_greeting_label",
+  "zh": "问候语 / 描述",
+  "en": "Greeting / description"
+ },
+ {
+  "key": "ag_greeting_placeholder",
+  "zh": "告诉用户这个专家能做什么",
+  "en": "Tell users what this agent can do"
+ },
+ {
+  "key": "ag_system_prompt",
+  "zh": "系统提示词",
+  "en": "System prompt"
+ },
+ {
+  "key": "ag_tool_capability",
+  "zh": "工具能力",
+  "en": "Tools"
+ },
+ {
+  "key": "ag_tools_available_suffix",
+  "zh": " 项可用",
+  "en": " available"
+ },
+ {
+  "key": "ag_search_tools",
+  "zh": "搜索工具",
+  "en": "Search tools"
+ },
+ {
+  "key": "ag_run_strategy",
+  "zh": "运行策略",
+  "en": "Run strategy"
+ },
+ {
+  "key": "ag_model_key",
+  "zh": "模型配置键",
+  "en": "Model config key"
+ },
+ {
+  "key": "ag_model_key_hint",
+  "zh": "留空继承默认",
+  "en": "Empty inherits the default"
+ },
+ {
+  "key": "ag_workdir_container",
+  "zh": "工作目录容器",
+  "en": "Working directory container"
+ },
+ {
+  "key": "ag_container_prefix",
+  "zh": "容器 #",
+  "en": "Container #"
+ },
+ {
+  "key": "ag_permission_mode",
+  "zh": "权限模式",
+  "en": "Permission mode"
+ },
+ {
+  "key": "ag_prefer_mother",
+  "zh": "偏好母智能体",
+  "en": "Prefer mother agent"
+ },
+ {
+  "key": "ag_switch_on",
+  "zh": "已开启",
+  "en": "On"
+ },
+ {
+  "key": "ag_switch_off",
+  "zh": "已关闭",
+  "en": "Off"
+ },
+ {
+  "key": "ag_preset_questions",
+  "zh": "预设问题",
+  "en": "Preset questions"
+ },
+ {
+  "key": "ag_save_settings",
+  "zh": "保存设置",
+  "en": "Save settings"
+ },
+ {
+  "key": "ag_delete_confirm_title",
+  "zh": "确认删除智能体",
+  "en": "Delete this agent"
+ },
+ {
+  "key": "ag_delete_prefix",
+  "zh": "将删除“",
+  "en": "This permanently deletes “"
+ },
+ {
+  "key": "ag_delete_suffix",
+  "zh": "”及其本地配置。已有会话不会被改写。",
+  "en": "” and its local configuration. Existing conversations are not rewritten."
+ },
+ {
+  "key": "ag_import_title",
+  "zh": "导入工蜂卡",
+  "en": "Import worker card"
+ },
+ {
+  "key": "ag_import_hint",
+  "zh": "卡片目录：工作区 agent-cards 目录下的导出文件",
+  "en": "Card directory: exported files under the workspace agent-cards directory"
+ },
+ {
+  "key": "ag_overwrite_label",
+  "zh": "覆盖同名专家（导入前需确认）",
+  "en": "Overwrite agents with the same name (confirm before import)"
+ },
+ {
+  "key": "ag_import_button",
+  "zh": "导入",
+  "en": "Import"
+ },
+ {
+  "key": "ag_cards_scanning",
+  "zh": "正在扫描卡片目录…",
+  "en": "Scanning card directory…"
+ },
+ {
+  "key": "ag_cards_empty",
+  "zh": "卡片目录暂无可导入的工蜂卡文件",
+  "en": "No importable worker cards in the card directory"
+ },
+ {
+  "key": "ag_preview_skill",
+  "zh": "预览技能",
+  "en": "Skill preview"
+ },
+ {
+  "key": "ag_silent_run",
+  "zh": "静默运行",
+  "en": "Silent run"
+ },
+ {
+  "key": "tl_title",
+  "zh": "工具",
+  "en": "Tools"
+ },
+ {
+  "key": "tl_subtitle",
+  "zh": "当前账户可使用的内置工具、技能和连接能力",
+  "en": "Built-in tools, skills and connections for the current account"
+ },
+ {
+  "key": "tl_category",
+  "zh": "工具分类",
+  "en": "Category"
+ },
+ {
+  "key": "tl_cat_all",
+  "zh": "全部工具",
+  "en": "All tools"
+ },
+ {
+  "key": "tl_cat_builtin",
+  "zh": "内置工具",
+  "en": "Built-in tools"
+ },
+ {
+  "key": "tl_cat_mcp",
+  "zh": "MCP 工具",
+  "en": "MCP tools"
+ },
+ {
+  "key": "tl_cat_skills",
+  "zh": "技能",
+  "en": "Skills"
+ },
+ {
+  "key": "tl_cat_kb",
+  "zh": "知识库",
+  "en": "Knowledge base"
+ },
+ {
+  "key": "tl_cat_user",
+  "zh": "用户工具",
+  "en": "User tools"
+ },
+ {
+  "key": "tl_cat_shared",
+  "zh": "共享工具",
+  "en": "Shared tools"
+ },
+ {
+  "key": "tl_cat_a2a",
+  "zh": "A2A 工具",
+  "en": "A2A tools"
+ },
+ {
+  "key": "tl_count_suffix",
+  "zh": " 项能力 · 工具权限由本地运行时统一管理",
+  "en": " capabilities · tool permissions are managed by the local runtime"
+ },
+ {
+  "key": "tl_enabled_capabilities",
+  "zh": "已启用的运行时能力",
+  "en": "Enabled runtime capabilities"
+ },
+ {
+  "key": "tl_loading",
+  "zh": "正在加载工具…",
+  "en": "Loading tools…"
+ },
+ {
+  "key": "tl_empty",
+  "zh": "未加载到可用工具",
+  "en": "No tools loaded"
+ },
+ {
+  "key": "dk_title",
+  "zh": "本地工作目录",
+  "en": "Local working directory"
+ },
+ {
+  "key": "dk_threads_title",
+  "zh": "工作线程",
+  "en": "Threads"
+ },
+ {
+  "key": "dk_thread_ops",
+  "zh": "线程操作",
+  "en": "Thread actions"
+ },
+ {
+  "key": "dk_details",
+  "zh": "详情",
+  "en": "Details"
+ },
+ {
+  "key": "dk_archive",
+  "zh": "归档",
+  "en": "Archive"
+ },
+ {
+  "key": "dk_workdir",
+  "zh": "工作目录",
+  "en": "Working directory"
+ },
+ {
+  "key": "dk_switch_dir",
+  "zh": "切换目录",
+  "en": "Switch directory"
+ },
+ {
+  "key": "dk_new_file",
+  "zh": "新建文件",
+  "en": "New file"
+ },
+ {
+  "key": "dk_new_text",
+  "zh": "文本 .txt",
+  "en": "Text .txt"
+ },
+ {
+  "key": "dk_new_sheet",
+  "zh": "表格 .xlsx",
+  "en": "Sheet .xlsx"
+ },
+ {
+  "key": "dk_new_deck",
+  "zh": "演示文稿 .pptx",
+  "en": "Slides .pptx"
+ },
+ {
+  "key": "dk_new_diagram",
+  "zh": "流程图 .drawio",
+  "en": "Diagram .drawio"
+ },
+ {
+  "key": "dk_open",
+  "zh": "打开",
+  "en": "Open"
+ },
+ {
+  "key": "dk_copy_path",
+  "zh": "复制路径",
+  "en": "Copy path"
+ },
+ {
+  "key": "dk_open_native",
+  "zh": "系统打开",
+  "en": "Open with system"
+ },
+ {
+  "key": "dk_reading",
+  "zh": "正在读取…",
+  "en": "Reading…"
+ },
+ {
+  "key": "common_save",
+  "zh": "保存",
+  "en": "Save"
+ },
+ {
+  "key": "common_saving",
+  "zh": "保存中",
+  "en": "Saving…"
+ },
+ {
+  "key": "common_cancel",
+  "zh": "取消",
+  "en": "Cancel"
+ },
+ {
+  "key": "common_delete",
+  "zh": "删除",
+  "en": "Delete"
+ },
+ {
+  "key": "common_confirm_delete",
+  "zh": "确认删除",
+  "en": "Delete"
+ },
+ {
+  "key": "common_refresh",
+  "zh": "刷新",
+  "en": "Refresh"
+ },
+ {
+  "key": "common_close",
+  "zh": "关闭",
+  "en": "Close"
+ },
+ {
+  "key": "common_create",
+  "zh": "创建",
+  "en": "Create"
+ },
+ {
+  "key": "common_creating",
+  "zh": "创建中",
+  "en": "Creating…"
+ },
+ {
+  "key": "common_edit",
+  "zh": "编辑",
+  "en": "Edit"
+ },
+ {
+  "key": "common_add",
+  "zh": "添加",
+  "en": "Add"
+ },
+ {
+  "key": "common_new",
+  "zh": "新建",
+  "en": "New"
+ },
+ {
+  "key": "common_open",
+  "zh": "打开",
+  "en": "Open"
+ },
+ {
+  "key": "common_copy",
+  "zh": "复制",
+  "en": "Copy"
+ },
+ {
+  "key": "common_rename",
+  "zh": "重命名",
+  "en": "Rename"
+ },
+ {
+  "key": "common_confirm",
+  "zh": "确认",
+  "en": "Confirm"
+ },
+ {
+  "key": "common_all",
+  "zh": "全部",
+  "en": "All"
+ },
+ {
+  "key": "common_search",
+  "zh": "搜索",
+  "en": "Search"
+ },
+ {
+  "key": "common_none",
+  "zh": "无",
+  "en": "None"
+ },
+ {
+  "key": "common_done",
+  "zh": "完成",
+  "en": "Done"
+ },
+ {
+  "key": "common_details",
+  "zh": "详情",
+  "en": "Details"
+ },
+ {
+  "key": "common_enable",
+  "zh": "启用",
+  "en": "Enable"
+ },
+ {
+  "key": "common_disable",
+  "zh": "停用",
+  "en": "Disable"
+ },
+ {
+  "key": "common_enabled",
+  "zh": "已启用",
+  "en": "Enabled"
+ },
+ {
+  "key": "common_disabled",
+  "zh": "已停用",
+  "en": "Disabled"
+ },
+ {
+  "key": "common_previous_page",
+  "zh": "上一页",
+  "en": "Previous"
+ },
+ {
+  "key": "common_next_page",
+  "zh": "下一页",
+  "en": "Next"
+ },
+ {
+  "key": "common_default_agent",
+  "zh": "默认智能体",
+  "en": "Default agent"
+ },
+ {
+  "key": "common_default_model",
+  "zh": "默认模型",
+  "en": "Default model"
+ },
+ {
+  "key": "common_ai",
+  "zh": "智能体",
+  "en": "Agents"
+ },
+ {
+  "key": "common_tools",
+  "zh": "工具",
+  "en": "Tools"
+ },
+ {
+  "key": "common_files",
+  "zh": "文件",
+  "en": "Files"
+ },
+ {
+  "key": "common_messages",
+  "zh": "消息",
+  "en": "Messages"
+ },
+ {
+  "key": "common_you",
+  "zh": "你",
+  "en": "You"
+ },
+ {
+  "key": "common_me",
+  "zh": "我",
+  "en": "Me"
+ },
+ {
+  "key": "common_directory",
+  "zh": "目录",
+  "en": "Directory"
+ },
+ {
+  "key": "common_built_in_tools",
+  "zh": "内置工具",
+  "en": "Built-in tools"
+ },
+ {
+  "key": "common_skills",
+  "zh": "技能",
+  "en": "Skills"
+ },
+ {
+  "key": "common_model_config",
+  "zh": "模型配置",
+  "en": "Models"
+ },
+ {
+  "key": "common_local_runtime",
+  "zh": "本地运行时",
+  "en": "Local runtime"
+ },
+ {
+  "key": "common_yesterday",
+  "zh": "昨天",
+  "en": "Yesterday"
+ },
+ {
+  "key": "common_just_now",
+  "zh": "刚刚",
+  "en": "Just now"
+ },
+ {
+  "key": "common_unknown",
+  "zh": "未连接",
+  "en": "Not connected"
+ },
+ {
+  "key": "common_cron_tasks",
+  "zh": "定时任务",
+  "en": "Scheduled tasks"
+ },
+ {
+  "key": "common_plaza",
+  "zh": "广场",
+  "en": "Plaza"
+ },
+ {
+  "key": "common_groups",
+  "zh": "群组",
+  "en": "Groups"
+ },
+ {
+  "key": "common_users",
+  "zh": "用户",
+  "en": "Users"
+ },
+ {
+  "key": "common_more",
+  "zh": "更多",
+  "en": "More"
+ },
+ {
+  "key": "common_name",
+  "zh": "名称",
+  "en": "Name"
+ },
+ {
+  "key": "common_type",
+  "zh": "类型",
+  "en": "Type"
+ },
+ {
+  "key": "common_status",
+  "zh": "状态",
+  "en": "Status"
+ },
+ {
+  "key": "common_model",
+  "zh": "模型",
+  "en": "Model"
+ },
+ {
+  "key": "common_agents",
+  "zh": "专家",
+  "en": "Agents"
+ },
+ {
+  "key": "common_channels",
+  "zh": "渠道",
+  "en": "Channels"
+ },
+ {
+  "key": "common_auto",
+  "zh": "自动",
+  "en": "Auto"
+ },
+ {
+  "key": "common_worker_card",
+  "zh": "工蜂卡",
+  "en": "Worker card"
+ },
+ {
+  "key": "common_skill_pack",
+  "zh": "技能包",
+  "en": "Skill pack"
+ },
+ {
+  "key": "common_saving_dots",
+  "zh": "正在保存…",
+  "en": "Saving…"
+ },
+ {
+  "key": "common_loading",
+  "zh": "正在加载…",
+  "en": "Loading…"
+ },
+ {
+  "key": "common_reading",
+  "zh": "正在读取…",
+  "en": "Reading…"
+ },
+ {
+  "key": "rail_messages",
+  "zh": "消息",
+  "en": "Messages"
+ },
+ {
+  "key": "rail_agents",
+  "zh": "专家",
+  "en": "Agents"
+ },
+ {
+  "key": "rail_tools",
+  "zh": "工具",
+  "en": "Tools"
+ },
+ {
+  "key": "rail_files",
+  "zh": "文件",
+  "en": "Files"
+ },
+ {
+  "key": "rail_users",
+  "zh": "用户",
+  "en": "Users"
+ },
+ {
+  "key": "rail_more",
+  "zh": "更多",
+  "en": "More"
+ },
+ {
+  "key": "menu_settings",
+  "zh": "系统设置",
+  "en": "System settings"
+ },
+ {
+  "key": "menu_groups",
+  "zh": "群组",
+  "en": "Groups"
+ },
+ {
+  "key": "menu_cron",
+  "zh": "定时任务",
+  "en": "Scheduled tasks"
+ },
+ {
+  "key": "menu_channels",
+  "zh": "渠道设置",
+  "en": "Channels"
+ },
+ {
+  "key": "menu_plaza",
+  "zh": "广场",
+  "en": "Plaza"
+ },
+ {
+  "key": "menu_profile",
+  "zh": "我的概况",
+  "en": "Profile"
+ },
+ {
+  "key": "menu_about",
+  "zh": "关于心舰",
+  "en": "About Wunder"
+ },
+ {
+  "key": "chat_title",
+  "zh": "消息",
+  "en": "Messages"
+ },
+ {
+  "key": "chat_subtitle",
+  "zh": "与智能体一起，继续工作",
+  "en": "Keep working with your agents"
+ },
+ {
+  "key": "chat_search_placeholder",
+  "zh": "搜索",
+  "en": "Search"
+ },
+ {
+  "key": "chat_new_thread",
+  "zh": "新建线程",
+  "en": "New thread"
+ },
+ {
+  "key": "chat_connected_source",
+  "zh": "本地运行时",
+  "en": "Local runtime"
+ },
+ {
+  "key": "chat_preview_source",
+  "zh": "本地界面预览",
+  "en": "Local UI preview"
+ },
+ {
+  "key": "chat_back_to_latest",
+  "zh": "回到最新消息",
+  "en": "Back to latest"
+ },
+ {
+  "key": "chat_author_you",
+  "zh": "你",
+  "en": "You"
+ },
+ {
+  "key": "chat_demo_status",
+  "zh": "本地演示 · 未连接后端",
+  "en": "Local demo · backend not connected"
+ },
+ {
+  "key": "chat_greeting",
+  "zh": "你好，可以开始新的对话。",
+  "en": "Hi, you can start a new conversation."
+ },
+ {
+  "key": "demo_conv0_preview",
+  "zh": "随时开始新的对话",
+  "en": "Start a new conversation anytime"
+ },
+ {
+  "key": "demo_conv1_title",
+  "zh": "智能体 01",
+  "en": "Agent 01"
+ },
+ {
+  "key": "demo_conv1_preview",
+  "zh": "上次任务已完成",
+  "en": "Last task completed"
+ },
+ {
+  "key": "demo_conv2_title",
+  "zh": "智能体 02",
+  "en": "Agent 02"
+ },
+ {
+  "key": "demo_conv2_preview",
+  "zh": "暂无新消息",
+  "en": "Nothing new"
+ },
+ {
+  "key": "demo_agent_desc",
+  "zh": "帮助你处理日常任务。",
+  "en": "Helps you handle daily tasks."
+ },
+ {
+  "key": "demo_agent_group",
+  "zh": "默认蜂房",
+  "en": "Default hive"
+ },
+ {
+  "key": "demo_tool_file_desc",
+  "zh": "读取和整理本地工作目录中的内容",
+  "en": "Reads and organizes the local working directory"
+ },
+ {
+  "key": "demo_tool_skill_name",
+  "zh": "技能调用",
+  "en": "Skill calls"
+ },
+ {
+  "key": "demo_tool_skill_desc",
+  "zh": "按权限使用已安装的技能",
+  "en": "Uses installed skills with permissions"
+ },
+ {
+  "key": "about_title",
+  "zh": "关于",
+  "en": "About"
+ },
+ {
+  "key": "about_text",
+  "zh": "心舰 · 蜂巢\\n\\n本地原生运行时",
+  "en": "Wunder · Hive\\n\\nLocal native runtime"
+ },
+ {
+  "key": "workspace_binding_title",
+  "zh": "切换工作目录",
+  "en": "Switch working directory"
+ },
+ {
+  "key": "workspace_binding_index",
+  "zh": "目录序号",
+  "en": "Directory index"
+ },
+ {
+  "key": "workspace_binding_path",
+  "zh": "本地目录路径",
+  "en": "Local directory path"
+ },
+ {
+  "key": "workspace_binding_choose",
+  "zh": "选择目录",
+  "en": "Choose directory"
+ },
+ {
+  "key": "reset_title",
+  "zh": "重置工作状态",
+  "en": "Reset work state"
+ },
+ {
+  "key": "reset_message",
+  "zh": "将停止运行中的任务、清理队列与临时投影。资产、配置、文件与历史保留。确认重置？",
+  "en": "Running tasks will stop; queues and temporary projections will be cleared. Assets, settings, files and history are kept. Reset now?"
+ },
+ {
+  "key": "reset_confirm",
+  "zh": "确认重置",
+  "en": "Reset"
+ },
+ {
+  "key": "thread_log_overview",
+  "zh": "线程概况",
+  "en": "Thread overview"
+ },
+ {
+  "key": "thread_log_status_label",
+  "zh": "状态",
+  "en": "Status"
+ },
+ {
+  "key": "thread_log_elapsed",
+  "zh": "耗时",
+  "en": "Duration"
+ },
+ {
+  "key": "thread_log_user_rounds",
+  "zh": "用户轮次",
+  "en": "User turns"
+ },
+ {
+  "key": "thread_log_tool_calls",
+  "zh": "工具调用",
+  "en": "Tool calls"
+ },
+ {
+  "key": "thread_log_tokens",
+  "zh": "Token 消耗",
+  "en": "Token usage"
+ },
+ {
+  "key": "thread_log_speed",
+  "zh": "生成速度",
+  "en": "Speed"
+ },
+ {
+  "key": "thread_log_entries",
+  "zh": "详情条目",
+  "en": "Entries"
+ },
+ {
+  "key": "thread_log_search",
+  "zh": "搜索日志",
+  "en": "Search log"
+ },
+ {
+  "key": "thread_log_filter_all",
+  "zh": "全部",
+  "en": "All"
+ },
+ {
+  "key": "thread_log_filter_tools",
+  "zh": "工具",
+  "en": "Tools"
+ },
+ {
+  "key": "thread_log_filter_models",
+  "zh": "模型",
+  "en": "Models"
+ },
+ {
+  "key": "cron_delete_title",
+  "zh": "删除定时任务",
+  "en": "Delete scheduled task"
+ },
+ {
+  "key": "cron_delete_message",
+  "zh": "删除后任务与运行记录不可恢复。确认删除该任务？",
+  "en": "The task and its run records cannot be recovered after deletion. Delete this task?"
+ },
+ {
+  "key": "info_ack",
+  "zh": "知道了",
+  "en": "Got it"
+ },
+ {
+  "key": "profile_title",
+  "zh": "我的概况",
+  "en": "Profile"
+ },
+ {
+  "key": "profile_subtitle",
+  "zh": "账号信息与使用概览",
+  "en": "Account and usage overview"
+ },
+ {
+  "key": "profile_account_info",
+  "zh": "账户信息",
+  "en": "Account"
+ },
+ {
+  "key": "profile_email",
+  "zh": "邮箱",
+  "en": "Email"
+ },
+ {
+  "key": "profile_unit",
+  "zh": "单位",
+  "en": "Unit"
+ },
+ {
+  "key": "profile_last_active",
+  "zh": "最近活跃",
+  "en": "Last active"
+ },
+ {
+  "key": "profile_unset",
+  "zh": "未填写",
+  "en": "Not set"
+ },
+ {
+  "key": "profile_avatar_color",
+  "zh": "头像颜色",
+  "en": "Avatar color"
+ },
+ {
+  "key": "profile_stats_title",
+  "zh": "使用统计",
+  "en": "Usage"
+ },
+ {
+  "key": "profile_stats_subtitle",
+  "zh": "会话、工具与额度使用概况",
+  "en": "Sessions, tools and quota at a glance"
+ },
+ {
+  "key": "profile_edit_button",
+  "zh": "编辑资料",
+  "en": "Edit profile"
+ },
+ {
+  "key": "profile_sessions_total",
+  "zh": "会话总数",
+  "en": "Total sessions"
+ },
+ {
+  "key": "profile_sessions_7d",
+  "zh": "近 7 天",
+  "en": "Last 7 days"
+ },
+ {
+  "key": "profile_tool_calls",
+  "zh": "工具调用",
+  "en": "Tool calls"
+ },
+ {
+  "key": "profile_token_usage",
+  "zh": "Token 使用",
+  "en": "Token usage"
+ },
+ {
+  "key": "profile_edit_title",
+  "zh": "编辑个人资料",
+  "en": "Edit profile"
+ },
+ {
+  "key": "profile_username",
+  "zh": "用户名",
+  "en": "Username"
+ },
+ {
+  "key": "profile_unit_optional",
+  "zh": "单位编号（可选）",
+  "en": "Unit ID (optional)"
+ },
+ {
+  "key": "agent_creator_title",
+  "zh": "新建智能体",
+  "en": "New agent"
+ },
+ {
+  "key": "agent_creator_name_label",
+  "zh": "名称",
+  "en": "Name"
+ },
+ {
+  "key": "agent_creator_name_placeholder",
+  "zh": "输入智能体名称",
+  "en": "Enter an agent name"
+ },
+ {
+  "key": "model_editor_add",
+  "zh": "添加模型",
+  "en": "Add model"
+ },
+ {
+  "key": "model_editor_edit",
+  "zh": "编辑模型",
+  "en": "Edit model"
+ },
+ {
+  "key": "model_key_label",
+  "zh": "配置键",
+  "en": "Config key"
+ },
+ {
+  "key": "model_key_placeholder",
+  "zh": "输入模型配置键",
+  "en": "Enter a model config key"
+ },
+ {
+  "key": "model_provider_label",
+  "zh": "提供方",
+  "en": "Provider"
+ },
+ {
+  "key": "model_provider_placeholder",
+  "zh": "输入提供方标识",
+  "en": "Enter a provider id"
+ },
+ {
+  "key": "model_name_label",
+  "zh": "模型名称",
+  "en": "Model name"
+ },
+ {
+  "key": "model_name_placeholder",
+  "zh": "输入上游模型名称",
+  "en": "Enter the upstream model name"
+ },
+ {
+  "key": "model_base_url_label",
+  "zh": "服务地址",
+  "en": "Base URL"
+ },
+ {
+  "key": "model_base_url_placeholder",
+  "zh": "输入服务地址",
+  "en": "Enter the service URL"
+ },
+ {
+  "key": "model_token_label",
+  "zh": "访问密钥（留空保留原值）",
+  "en": "API key (leave empty to keep)"
+ },
+ {
+  "key": "model_token_placeholder",
+  "zh": "仅保存到本机设置",
+  "en": "Saved to local settings only"
+ },
+ {
+  "key": "model_type_label",
+  "zh": "类型",
+  "en": "Type"
+ },
+ {
+  "key": "model_type_placeholder",
+  "zh": "llm、embedding、asr、tts、image 或 video",
+  "en": "llm, embedding, asr, tts, image or video"
+ },
+ {
+  "key": "model_probe_context",
+  "zh": "探测上下文",
+  "en": "Probe context"
+ },
+ {
+  "key": "model_probe_voices",
+  "zh": "探测语音",
+  "en": "Probe voices"
+ },
+ {
+  "key": "preview_edit_toggle",
+  "zh": "取消编辑",
+  "en": "Cancel editing"
+ },
+ {
+  "key": "preview_copy",
+  "zh": "复制",
+  "en": "Copy"
+ },
+ {
+  "key": "preview_close",
+  "zh": "关闭预览",
+  "en": "Close preview"
+ },
+ {
+  "key": "cp_thinking_auto",
+  "zh": "自动",
+  "en": "Auto"
+ },
+ {
+  "key": "cp_context_usage",
+  "zh": "上下文占用",
+  "en": "Context usage"
+ },
+ {
+  "key": "cp_usage_empty",
+  "zh": "暂无最近一次请求数据",
+  "en": "No request usage yet"
+ },
+ {
+  "key": "cp_usage_prefix",
+  "zh": "当前请求上下文占用：",
+  "en": "Current context usage: "
+ },
+ {
+  "key": "cp_thinking_level",
+  "zh": "思考等级",
+  "en": "Thinking level"
+ },
+ {
+  "key": "cp_think_low",
+  "zh": "低",
+  "en": "Low"
+ },
+ {
+  "key": "cp_think_mid",
+  "zh": "中",
+  "en": "Medium"
+ },
+ {
+  "key": "cp_think_high",
+  "zh": "高",
+  "en": "High"
+ },
+ {
+  "key": "cp_image_prefix",
+  "zh": "图片 · ",
+  "en": "Images · "
+ },
+ {
+  "key": "cp_remove_attachment",
+  "zh": "移除附件",
+  "en": "Remove attachment"
+ },
+ {
+  "key": "cp_input_placeholder",
+  "zh": "输入消息，开始新的对话…",
+  "en": "Type a message to start…"
+ },
+ {
+  "key": "cp_preset_questions",
+  "zh": "预设问题",
+  "en": "Preset questions"
+ },
+ {
+  "key": "cp_preset_q1",
+  "zh": "你好，请介绍一下你的能力。",
+  "en": "Hi, please introduce your capabilities."
+ },
+ {
+  "key": "cp_preset_q2",
+  "zh": "请帮我整理当前内容。",
+  "en": "Please organize the current content."
+ },
+ {
+  "key": "cp_commands",
+  "zh": "命令",
+  "en": "Commands"
+ },
+ {
+  "key": "cp_cmd_help",
+  "zh": "/help  查看可用命令",
+  "en": "/help  list available commands"
+ },
+ {
+  "key": "cp_cmd_compact",
+  "zh": "/compact  压缩上下文",
+  "en": "/compact  compact context"
+ },
+ {
+  "key": "cp_stop_recording",
+  "zh": "停止录音",
+  "en": "Stop recording"
+ },
+ {
+  "key": "cp_transcribing",
+  "zh": "识别中",
+  "en": "Transcribing"
+ },
+ {
+  "key": "cp_record",
+  "zh": "录音",
+  "en": "Record"
+ },
+ {
+  "key": "cp_screenshot",
+  "zh": "截图",
+  "en": "Screenshot"
+ },
+ {
+  "key": "cp_screenshot_mode",
+  "zh": "截图方式（默认隐藏窗口）",
+  "en": "Capture mode (hides window by default)"
+ },
+ {
+  "key": "cp_shot_fullscreen_hidden",
+  "zh": "全屏截图（隐藏窗口）",
+  "en": "Fullscreen (hide window)"
+ },
+ {
+  "key": "cp_shot_region_hidden",
+  "zh": "区域截图（隐藏窗口）",
+  "en": "Region (hide window)"
+ },
+ {
+  "key": "cp_shot_fullscreen_kept",
+  "zh": "全屏截图（保留窗口）",
+  "en": "Fullscreen (keep window)"
+ },
+ {
+  "key": "cp_shot_region_kept",
+  "zh": "区域截图（保留窗口）",
+  "en": "Region (keep window)"
+ },
+ {
+  "key": "cp_stopping",
+  "zh": "正在停止",
+  "en": "Stopping"
+ },
+ {
+  "key": "cp_stop_generation",
+  "zh": "停止生成",
+  "en": "Stop"
+ },
+ {
+  "key": "cp_sending",
+  "zh": "发送中",
+  "en": "Sending"
+ },
+ {
+  "key": "cp_send",
+  "zh": "发送",
+  "en": "Send"
+ },
+ {
+  "key": "ms_agent_loop",
+  "zh": "智能体循环",
+  "en": "Agent loop"
+ },
+ {
+  "key": "ms_state_done",
+  "zh": "任务完成",
+  "en": "Task complete"
+ },
+ {
+  "key": "ui_collapse_sidebar",
+  "zh": "收起侧栏",
+  "en": "Collapse sidebar"
+ },
+ {
+  "key": "ui_expand_sidebar",
+  "zh": "展开侧栏",
+  "en": "Expand sidebar"
+ },
+ {
+  "key": "ui_avatar_mine",
+  "zh": "我",
+  "en": "Me"
+ },
+ {
+  "key": "ui_search_placeholder",
+  "zh": "搜索",
+  "en": "Search"
+ },
+ {
+  "key": "ch_title",
+  "zh": "渠道设置",
+  "en": "Channels"
+ },
+ {
+  "key": "ch_subtitle",
+  "zh": "接入外部消息渠道账号",
+  "en": "Connect external messaging channel accounts"
+ },
+ {
+  "key": "ch_search",
+  "zh": "搜索账号",
+  "en": "Search accounts"
+ },
+ {
+  "key": "ch_new_account",
+  "zh": "新建账号",
+  "en": "New account"
+ },
+ {
+  "key": "ch_channel_type",
+  "zh": "渠道类型",
+  "en": "Channel type"
+ },
+ {
+  "key": "ch_account",
+  "zh": "账号",
+  "en": "Account"
+ },
+ {
+  "key": "ch_configured",
+  "zh": "已配置",
+  "en": "Configured"
+ },
+ {
+  "key": "ch_pending_config",
+  "zh": "待补全",
+  "en": "Incomplete"
+ },
+ {
+  "key": "ch_accounts_title",
+  "zh": "渠道账号",
+  "en": "Channel accounts"
+ },
+ {
+  "key": "ch_enabled_prefix",
+  "zh": "已启用 · ",
+  "en": "Enabled · "
+ },
+ {
+  "key": "ch_disabled_prefix",
+  "zh": "已停用 · ",
+  "en": "Disabled · "
+ },
+ {
+  "key": "ch_config_ok",
+  "zh": "配置完整",
+  "en": "Configuration complete"
+ },
+ {
+  "key": "ch_config_pending",
+  "zh": "配置待补全",
+  "en": "Configuration incomplete"
+ },
+ {
+  "key": "ch_pick_account",
+  "zh": "在左侧选择账号查看详情",
+  "en": "Pick an account on the left to view details"
+ },
+ {
+  "key": "ch_logs",
+  "zh": "运行日志",
+  "en": "Run logs"
+ },
+ {
+  "key": "ch_reconnect",
+  "zh": "重连",
+  "en": "Reconnect"
+ },
+ {
+  "key": "ch_pick_account_hint",
+  "zh": "请选择渠道账号查看详情",
+  "en": "Select a channel account to view details"
+ },
+ {
+  "key": "ch_account_id",
+  "zh": "账号 ID",
+  "en": "Account ID"
+ },
+ {
+  "key": "ch_receive_target",
+  "zh": "接收对象",
+  "en": "Receivers"
+ },
+ {
+  "key": "ch_bind_agent",
+  "zh": "绑定智能体",
+  "en": "Bound agent"
+ },
+ {
+  "key": "ch_secret_state",
+  "zh": "密钥状态",
+  "en": "Secret state"
+ },
+ {
+  "key": "ch_secret_set",
+  "zh": "已设置（不回显）",
+  "en": "Set (never shown)"
+ },
+ {
+  "key": "ch_secret_unset",
+  "zh": "未设置",
+  "en": "Not set"
+ },
+ {
+  "key": "ch_last_updated",
+  "zh": "最近更新",
+  "en": "Updated"
+ },
+ {
+  "key": "ch_created_prefix",
+  "zh": "  ·  创建于 ",
+  "en": "  ·  created "
+ },
+ {
+  "key": "ch_config_summary",
+  "zh": "配置摘要",
+  "en": "Configuration summary"
+ },
+ {
+  "key": "ch_bindings",
+  "zh": "消息绑定",
+  "en": "Message bindings"
+ },
+ {
+  "key": "ch_bindings_count_suffix",
+  "zh": " 条",
+  "en": ""
+ },
+ {
+  "key": "ch_bindings_all_sessions",
+  "zh": "全部会话",
+  "en": "All sessions"
+ },
+ {
+  "key": "ch_disabled_suffix",
+  "zh": " · 已停用",
+  "en": " · disabled"
+ },
+ {
+  "key": "ch_delete_binding",
+  "zh": "删除绑定",
+  "en": "Delete binding"
+ },
+ {
+  "key": "ch_bindings_empty",
+  "zh": "暂无绑定记录",
+  "en": "No bindings"
+ },
+ {
+  "key": "ch_accounts_empty",
+  "zh": "暂无渠道账号",
+  "en": "No channel accounts"
+ },
+ {
+  "key": "ch_no_channels",
+  "zh": "暂无可用渠道",
+  "en": "No channels available"
+ },
+ {
+  "key": "ch_display_name",
+  "zh": "显示名称",
+  "en": "Display name"
+ },
+ {
+  "key": "ch_enable_account",
+  "zh": "启用账号",
+  "en": "Enable account"
+ },
+ {
+  "key": "ch_receive_group",
+  "zh": "接收群聊",
+  "en": "Receive group chats"
+ },
+ {
+  "key": "ch_group_chat",
+  "zh": "群聊",
+  "en": "Group chat"
+ },
+ {
+  "key": "ch_direct_chat",
+  "zh": "单聊",
+  "en": "Direct chat"
+ },
+ {
+  "key": "ch_field_feishu_app_id",
+  "zh": "飞书应用 App ID",
+  "en": "Feishu app ID"
+ },
+ {
+  "key": "ch_field_app_secret",
+  "zh": "App Secret（留空保留原值）",
+  "en": "App secret (leave empty to keep)"
+ },
+ {
+  "key": "ch_field_writeonly_hint",
+  "zh": "仅写入，不回显",
+  "en": "Write-only, never shown"
+ },
+ {
+  "key": "ch_field_feishu_domain",
+  "zh": "域名（可选，默认 open.feishu.cn）",
+  "en": "Domain (optional, default open.feishu.cn)"
+ },
+ {
+  "key": "ch_field_corp_id",
+  "zh": "企业 ID（corp_id）",
+  "en": "Corp ID (corp_id)"
+ },
+ {
+  "key": "ch_field_wecom_corp_id",
+  "zh": "企业微信 Corp ID",
+  "en": "WeCom Corp ID"
+ },
+ {
+  "key": "ch_field_wecom_agent_id",
+  "zh": "应用 AgentId",
+  "en": "App AgentId"
+ },
+ {
+  "key": "ch_field_wecom_agent_suffix",
+  "zh": "企业微信应用 AgentId",
+  "en": "WeCom app AgentId"
+ },
+ {
+  "key": "ch_field_wecom_secret",
+  "zh": "应用 Secret（留空保留原值）",
+  "en": "App secret (leave empty to keep)"
+ },
+ {
+  "key": "ch_field_wecom_domain",
+  "zh": "域名（可选，默认 qyapi.weixin.qq.com）",
+  "en": "Domain (optional, default qyapi.weixin.qq.com)"
+ },
+ {
+  "key": "ch_field_mp_app_id",
+  "zh": "公众号 App ID",
+  "en": "Official account AppID"
+ },
+ {
+  "key": "ch_field_token_optional",
+  "zh": "Token（可选）",
+  "en": "Token (optional)"
+ },
+ {
+  "key": "ch_field_token_hint",
+  "zh": "回调 Token，可留空",
+  "en": "Callback token, optional"
+ },
+ {
+  "key": "ch_field_aes_optional",
+  "zh": "EncodingAESKey（可选）",
+  "en": "EncodingAESKey (optional)"
+ },
+ {
+  "key": "ch_field_aes_hint",
+  "zh": "回调加密键，可留空",
+  "en": "Callback encryption key, optional"
+ },
+ {
+  "key": "ch_field_mp_original_id",
+  "zh": "原始 ID（可选）",
+  "en": "Original ID (optional)"
+ },
+ {
+  "key": "ch_field_mp_original_hint",
+  "zh": "公众号原始 ID gh_ 前缀",
+  "en": "Official account original ID with gh_ prefix"
+ },
+ {
+  "key": "ch_field_mp_domain",
+  "zh": "域名（可选，默认 api.weixin.qq.com）",
+  "en": "Domain (optional, default api.weixin.qq.com)"
+ },
+ {
+  "key": "ch_field_api_base_optional",
+  "zh": "服务地址（可选）",
+  "en": "API base URL (optional)"
+ },
+ {
+  "key": "ch_field_bot_token",
+  "zh": "Bot Token（留空保留原值）",
+  "en": "Bot token (leave empty to keep)"
+ },
+ {
+  "key": "ch_no_token_hint",
+  "zh": "没有 Token？",
+  "en": "No token?"
+ },
+ {
+  "key": "ch_qr_login_button",
+  "zh": "扫码登录获取",
+  "en": "Scan QR to sign in"
+ },
+ {
+  "key": "ch_field_bot_id",
+  "zh": "机器人 ID",
+  "en": "Bot ID"
+ },
+ {
+  "key": "ch_field_bot_id_placeholder",
+  "zh": "ilink 机器人 ID",
+  "en": "ilink bot ID"
+ },
+ {
+  "key": "ch_field_user_id",
+  "zh": "用户 ID（可选）",
+  "en": "User ID (optional)"
+ },
+ {
+  "key": "ch_field_user_id_placeholder",
+  "zh": "ilink 用户 ID",
+  "en": "ilink user ID"
+ },
+ {
+  "key": "ch_advanced_json",
+  "zh": "高级配置 JSON（合并进渠道配置，留空跳过）",
+  "en": "Advanced JSON (merged into the channel config; leave empty to skip)"
+ },
+ {
+  "key": "ch_guided_form_empty",
+  "zh": "该渠道暂无引导表单，请在下方高级配置中填写 JSON 字段。",
+  "en": "This channel has no guided form; fill the JSON fields in advanced settings below."
+ },
+ {
+  "key": "ch_logs_empty",
+  "zh": "暂无运行日志",
+  "en": "No run logs"
+ },
+ {
+  "key": "ch_bindings_limit_suffix",
+  "zh": " 条（上限 200）",
+  "en": " (up to 200)"
+ },
+ {
+  "key": "ch_delete_message",
+  "zh": "将删除该账号及其全部绑定，删除后需要重新扫码或填写配置才能恢复接收。确认删除？",
+  "en": "This deletes the account and all its bindings; receiving requires a new QR sign-in or manual configuration afterwards. Delete now?"
+ },
+ {
+  "key": "ch_qr_title",
+  "zh": "微信扫码登录",
+  "en": "WeChat QR sign-in"
+ },
+ {
+  "key": "ch_qr_waiting",
+  "zh": "正在获取二维码…",
+  "en": "Fetching QR code…"
+ },
+ {
+  "key": "ch_qr_scan_hint",
+  "zh": "请使用微信扫描二维码",
+  "en": "Scan the QR code with WeChat"
+ },
+ {
+  "key": "ch_qr_success",
+  "zh": "扫码成功，已回填登录凭据。请检查账号信息后保存。",
+  "en": "Signed in. Credentials filled in; review the account and save."
+ },
+ {
+  "key": "ch_qr_expired",
+  "zh": "二维码已过期，请重新获取。",
+  "en": "The QR code expired; fetch a new one."
+ },
+ {
+  "key": "ch_qr_canceled",
+  "zh": "已取消扫码登录。",
+  "en": "QR sign-in canceled."
+ },
+ {
+  "key": "ch_qr_failed_prefix",
+  "zh": "扫码登录失败：",
+  "en": "QR sign-in failed: "
+ },
+ {
+  "key": "ch_qr_refresh",
+  "zh": "重新获取二维码",
+  "en": "Fetch new QR code"
+ },
+ {
+  "key": "cr_title",
+  "zh": "定时任务",
+  "en": "Scheduled tasks"
+ },
+ {
+  "key": "cr_subtitle",
+  "zh": "查看与管理智能体定时任务",
+  "en": "View and manage agent scheduled tasks"
+ },
+ {
+  "key": "cr_search",
+  "zh": "搜索任务",
+  "en": "Search tasks"
+ },
+ {
+  "key": "cr_new_task",
+  "zh": "新建任务",
+  "en": "New task"
+ },
+ {
+  "key": "cr_next_prefix",
+  "zh": " · 下次 ",
+  "en": " · next "
+ },
+ {
+  "key": "cr_empty",
+  "zh": "暂无定时任务",
+  "en": "No scheduled tasks"
+ },
+ {
+  "key": "cr_pick_task",
+  "zh": "在左侧选择任务查看详情",
+  "en": "Pick a task on the left to view details"
+ },
+ {
+  "key": "cr_run_now",
+  "zh": "立即运行",
+  "en": "Run now"
+ },
+ {
+  "key": "cr_runs",
+  "zh": "运行记录",
+  "en": "Runs"
+ },
+ {
+  "key": "cr_pick_task_hint",
+  "zh": "请选择任务查看详情",
+  "en": "Select a task to view details"
+ },
+ {
+  "key": "cr_schedule",
+  "zh": "调度",
+  "en": "Schedule"
+ },
+ {
+  "key": "cr_next_run",
+  "zh": "下次执行",
+  "en": "Next run"
+ },
+ {
+  "key": "cr_last_status",
+  "zh": "上次状态",
+  "en": "Last status"
+ },
+ {
+  "key": "cr_never_run",
+  "zh": "尚未运行",
+  "en": "Never run"
+ },
+ {
+  "key": "cr_last_error",
+  "zh": "上次错误",
+  "en": "Last error"
+ },
+ {
+  "key": "cr_disable_task",
+  "zh": "停用任务",
+  "en": "Disable task"
+ },
+ {
+  "key": "cr_enable_task",
+  "zh": "启用任务",
+  "en": "Enable task"
+ },
+ {
+  "key": "cr_delete_task",
+  "zh": "删除任务",
+  "en": "Delete task"
+ },
+ {
+  "key": "cr_runs_title_prefix",
+  "zh": "运行记录 · ",
+  "en": "Runs · "
+ },
+ {
+  "key": "cr_runs_recent_prefix",
+  "zh": "最近 ",
+  "en": "Last "
+ },
+ {
+  "key": "cr_runs_recent_suffix",
+  "zh": " 次（最多 200 条）",
+  "en": " runs (up to 200)"
+ },
+ {
+  "key": "cr_trigger_manual",
+  "zh": "手动",
+  "en": "Manual"
+ },
+ {
+  "key": "cr_trigger_schedule",
+  "zh": "计划",
+  "en": "Scheduled"
+ },
+ {
+  "key": "cr_no_summary",
+  "zh": "无输出摘要",
+  "en": "No output summary"
+ },
+ {
+  "key": "cr_failure_prefix",
+  "zh": "失败：",
+  "en": "Failed: "
+ },
+ {
+  "key": "cr_runs_empty",
+  "zh": "暂无运行记录",
+  "en": "No runs"
+ },
+ {
+  "key": "cr_kind_once",
+  "zh": "一次性",
+  "en": "One-off"
+ },
+ {
+  "key": "cr_kind_interval",
+  "zh": "固定间隔",
+  "en": "Fixed interval"
+ },
+ {
+  "key": "cr_kind_cron",
+  "zh": "Cron 表达式",
+  "en": "Cron expression"
+ },
+ {
+  "key": "cr_field_exec_time",
+  "zh": "执行时间",
+  "en": "Run at"
+ },
+ {
+  "key": "cr_field_interval",
+  "zh": "间隔（秒）",
+  "en": "Interval (seconds)"
+ },
+ {
+  "key": "cr_field_first_time",
+  "zh": "首次时间",
+  "en": "First run at"
+ },
+ {
+  "key": "cr_field_expression",
+  "zh": "表达式",
+  "en": "Expression"
+ },
+ {
+  "key": "cr_field_timezone",
+  "zh": "时区",
+  "en": "Time zone"
+ },
+ {
+  "key": "cr_field_message",
+  "zh": "执行消息",
+  "en": "Message"
+ },
+ {
+  "key": "cr_field_target_agent",
+  "zh": "目标智能体",
+  "en": "Target agent"
+ },
+ {
+  "key": "cr_delete_after_run",
+  "zh": "运行一次后删除",
+  "en": "Delete after one run"
+ },
+ {
+  "key": "wd_groups",
+  "zh": "群组",
+  "en": "Groups"
+ },
+ {
+  "key": "wd_contacts",
+  "zh": "联系人",
+  "en": "Contacts"
+ },
+ {
+  "key": "wd_groups_subtitle",
+  "zh": "普通用户群组消息",
+  "en": "Regular user group messages"
+ },
+ {
+  "key": "wd_contacts_subtitle",
+  "zh": "与联系人单聊",
+  "en": "Direct chats with contacts"
+ },
+ {
+  "key": "wd_new_group",
+  "zh": "新建群组",
+  "en": "New group"
+ },
+ {
+  "key": "wd_pick_members_hint",
+  "zh": "选择至少 1 名初始成员（不含你自己）",
+  "en": "Pick at least 1 initial member (excluding yourself)"
+ },
+ {
+  "key": "wd_loading_contacts",
+  "zh": "正在加载联系人…",
+  "en": "Loading contacts…"
+ },
+ {
+  "key": "wd_no_pickable",
+  "zh": "暂无可选联系人",
+  "en": "No contacts to pick"
+ },
+ {
+  "key": "wd_search_groups",
+  "zh": "搜索群组",
+  "en": "Search groups"
+ },
+ {
+  "key": "wd_search_contacts",
+  "zh": "搜索联系人",
+  "en": "Search contacts"
+ },
+ {
+  "key": "wd_online",
+  "zh": "在线",
+  "en": "Online"
+ },
+ {
+  "key": "wd_no_messages",
+  "zh": "暂无消息",
+  "en": "No messages yet"
+ },
+ {
+  "key": "wd_members_suffix",
+  "zh": " 人 · ",
+  "en": " members · "
+ },
+ {
+  "key": "wd_empty",
+  "zh": "暂无数据",
+  "en": "No data"
+ },
+ {
+  "key": "wd_group_messages",
+  "zh": "群组消息",
+  "en": "Group messages"
+ },
+ {
+  "key": "wd_user_messages",
+  "zh": "用户消息",
+  "en": "User messages"
+ },
+ {
+  "key": "wd_announcement",
+  "zh": "公告",
+  "en": "Announcement"
+ },
+ {
+  "key": "wd_no_announcement",
+  "zh": "暂无公告",
+  "en": "No announcement"
+ },
+ {
+  "key": "wd_members",
+  "zh": "成员",
+  "en": "Members"
+ },
+ {
+  "key": "wd_multiline_hint",
+  "zh": "支持多行，最多 4000 字",
+  "en": "Multiple lines, up to 4000 characters"
+ },
+ {
+  "key": "wd_pick_group_hint",
+  "zh": "选择一个普通用户群组查看消息。",
+  "en": "Pick a regular user group to view messages."
+ },
+ {
+  "key": "wd_pick_contact_hint",
+  "zh": "选择联系人开始单聊。",
+  "en": "Pick a contact to start a direct chat."
+ },
+ {
+  "key": "wd_load_earlier",
+  "zh": "加载更早",
+  "en": "Load earlier"
+ },
+ {
+  "key": "wd_members_title_prefix",
+  "zh": "群成员 · ",
+  "en": "Members · "
+ },
+ {
+  "key": "wd_collapse_members",
+  "zh": "收起成员列表",
+  "en": "Collapse member list"
+ },
+ {
+  "key": "wd_owner",
+  "zh": "群主",
+  "en": "Owner"
+ },
+ {
+  "key": "wd_loading_members",
+  "zh": "正在加载成员…",
+  "en": "Loading members…"
+ },
+ {
+  "key": "wd_members_empty",
+  "zh": "暂无成员信息",
+  "en": "No member info"
+ },
+ {
+  "key": "pz_title",
+  "zh": "广场",
+  "en": "Plaza"
+ },
+ {
+  "key": "pz_subtitle",
+  "zh": "浏览普通资产并导入",
+  "en": "Browse and import regular assets"
+ },
+ {
+  "key": "pz_refresh",
+  "zh": "刷新广场",
+  "en": "Refresh plaza"
+ },
+ {
+  "key": "pz_kind_filter",
+  "zh": "资产类型",
+  "en": "Asset type"
+ },
+ {
+  "key": "pz_assets",
+  "zh": "资产",
+  "en": "Assets"
+ },
+ {
+  "key": "pz_mine",
+  "zh": "我发布的",
+  "en": "Published by me"
+ },
+ {
+  "key": "pz_loading",
+  "zh": "正在加载广场…",
+  "en": "Loading plaza…"
+ },
+ {
+  "key": "pz_empty",
+  "zh": "广场暂无普通资产",
+  "en": "No regular assets in the plaza"
+ },
+ {
+  "key": "pz_from_prefix",
+  "zh": "来自 ",
+  "en": "From "
+ },
+ {
+  "key": "pz_pick_item",
+  "zh": "在左侧选择资产查看详情",
+  "en": "Pick an asset on the left to view details"
+ },
+ {
+  "key": "pz_import",
+  "zh": "导入资产",
+  "en": "Import asset"
+ },
+ {
+  "key": "pz_pick_hint",
+  "zh": "选择资产查看详情，导入后即可使用。蜂群相关资产仅在网页端提供。",
+  "en": "Pick an asset to view details; it is ready to use after import. Hive-related assets are only available on the web client."
+ },
+ {
+  "key": "pz_publisher",
+  "zh": "发布者",
+  "en": "Publisher"
+ },
+ {
+  "key": "pz_me_prefix",
+  "zh": "我（",
+  "en": "Me ("
+ },
+ {
+  "key": "pz_updated_at",
+  "zh": "更新时间",
+  "en": "Updated"
+ },
+ {
+  "key": "pz_kind",
+  "zh": "文件",
+  "en": "File"
+ },
+ {
+  "key": "pz_sync_state",
+  "zh": "同步状态",
+  "en": "Sync state"
+ },
+ {
+  "key": "pz_sync_current",
+  "zh": "与源一致",
+  "en": "Up to date with source"
+ },
+ {
+  "key": "pz_sync_outdated",
+  "zh": "源已更新，重新导入可获取新版本",
+  "en": "Source updated; import again to get the new version"
+ },
+ {
+  "key": "pz_sync_deleted",
+  "zh": "源已删除，仅可导入当前快照",
+  "en": "Source deleted; only the current snapshot can be imported"
+ },
+ {
+  "key": "pz_tags",
+  "zh": "标签",
+  "en": "Tags"
+ },
+ {
+  "key": "pz_summary",
+  "zh": "简介",
+  "en": "Summary"
+ },
+ {
+  "key": "pz_no_summary",
+  "zh": "暂无简介",
+  "en": "No summary"
+ },
+ {
+  "key": "pz_import_note",
+  "zh": "导入工蜂卡会创建一个新的专家；导入技能包会安装到本机技能目录。导入动作会经过运行时权限校验。",
+  "en": "Importing a worker card creates a new agent; importing a skill pack installs it into the local skill directory. Imports go through runtime permission checks."
+ },
+ {
+  "key": "pz_import_title",
+  "zh": "导入广场资产",
+  "en": "Import plaza asset"
+ },
+ {
+  "key": "pz_import_prefix",
+  "zh": "将导入“",
+  "en": "This imports “"
+ },
+ {
+  "key": "pz_import_card_suffix",
+  "zh": "会创建一个新的专家。",
+  "en": "” and creates a new agent."
+ },
+ {
+  "key": "pz_import_pack_suffix",
+  "zh": "会安装技能包到本机。",
+  "en": "” and installs the skill pack locally."
+ },
+ {
+  "key": "pz_import_question",
+  "zh": "确认导入？",
+  "en": "Import now?"
+ },
+ {
+  "key": "pz_confirm_import",
+  "zh": "确认导入",
+  "en": "Import"
+ },
+ {
+  "key": "so_hint",
+  "zh": "拖动选择截图区域 · 右键或 Esc 取消",
+  "en": "Drag to select a region · right-click or Esc to cancel"
+ },
+ {
+  "key": "so_fullscreen",
+  "zh": "全屏",
+  "en": "Fullscreen"
+ },
+ {
+  "key": "tr_title",
+  "zh": "心舰 · 蜂巢",
+  "en": "Wunder · Hive"
+ },
+ {
+  "key": "tr_name",
+  "zh": "心舰",
+  "en": "Wunder"
+ },
+ {
+  "key": "tr_show_window",
+  "zh": "显示主窗口",
+  "en": "Show main window"
+ },
+ {
+  "key": "tr_screenshot",
+  "zh": "截图 (Ctrl+F1)",
+  "en": "Screenshot (Ctrl+F1)"
+ },
+ {
+  "key": "tr_fullscreen_shot",
+  "zh": "全屏截图",
+  "en": "Fullscreen screenshot"
+ },
+ {
+  "key": "tr_exit",
+  "zh": "退出",
+  "en": "Exit"
+ },
+ {
+  "key": "app_window_title",
+  "zh": "心舰 · 蜂巢（Slint 原型）",
+  "en": "Wunder · Hive (Slint prototype)"
+ },
+ {
+  "key": "err_cannot",
+  "zh": "无法{0}：{1}",
+  "en": "Unable to {0}: {1}"
+ },
+ {
+  "key": "err_failed",
+  "zh": "{0}失败：{1}",
+  "en": "{0} failed: {1}"
+ },
+ {
+  "key": "st_error_prefix",
+  "zh": "错误：{0}",
+  "en": "Error: {0}"
+ },
+ {
+  "key": "st_tray_unavailable",
+  "zh": "系统托盘不可用：{0}",
+  "en": "System tray unavailable: {0}"
+ },
+ {
+  "key": "err_op_open_native",
+  "zh": "使用系统程序打开",
+  "en": "open with the system"
+ },
+ {
+  "key": "err_op_save_file",
+  "zh": "保存文件",
+  "en": "save the file"
+ },
+ {
+  "key": "err_op_stop",
+  "zh": "停止",
+  "en": "stop generation"
+ },
+ {
+  "key": "err_op_switch_workdir",
+  "zh": "切换工作目录",
+  "en": "switch the working directory"
+ },
+ {
+  "key": "err_op_create_file",
+  "zh": "创建文件",
+  "en": "create the file"
+ },
+ {
+  "key": "err_op_create_dir",
+  "zh": "创建目录",
+  "en": "create the directory"
+ },
+ {
+  "key": "err_op_create_group",
+  "zh": "创建群组",
+  "en": "create the group"
+ },
+ {
+  "key": "err_op_delete_cron",
+  "zh": "删除定时任务",
+  "en": "delete the scheduled task"
+ },
+ {
+  "key": "err_op_delete_channel",
+  "zh": "删除渠道账号",
+  "en": "delete the channel account"
+ },
+ {
+  "key": "err_op_delete_binding",
+  "zh": "删除绑定",
+  "en": "delete the binding"
+ },
+ {
+  "key": "err_op_load_session",
+  "zh": "加载会话",
+  "en": "load the session"
+ },
+ {
+  "key": "err_op_load_earlier",
+  "zh": "加载更早消息",
+  "en": "load earlier messages"
+ },
+ {
+  "key": "err_op_load_group_messages",
+  "zh": "加载群组消息",
+  "en": "load group messages"
+ },
+ {
+  "key": "err_op_send",
+  "zh": "发送",
+  "en": "send"
+ },
+ {
+  "key": "err_op_start_runtime",
+  "zh": "启动内嵌运行时",
+  "en": "start the embedded runtime"
+ },
+ {
+  "key": "err_op_archive_thread",
+  "zh": "归档工作线程",
+  "en": "archive the thread"
+ },
+ {
+  "key": "err_op_restore_session",
+  "zh": "恢复会话",
+  "en": "restore the session"
+ },
+ {
+  "key": "err_op_open_direct_chat",
+  "zh": "打开单聊",
+  "en": "open the direct chat"
+ },
+ {
+  "key": "err_op_new_session",
+  "zh": "新建会话",
+  "en": "create the session"
+ },
+ {
+  "key": "err_op_update_cron",
+  "zh": "更新定时任务",
+  "en": "update the scheduled task"
+ },
+ {
+  "key": "err_op_update_channel",
+  "zh": "更新渠道账号",
+  "en": "update the channel account"
+ },
+ {
+  "key": "err_op_minimize_tray",
+  "zh": "最小化到系统托盘",
+  "en": "minimize to tray"
+ },
+ {
+  "key": "err_op_run_now",
+  "zh": "立即运行任务",
+  "en": "run the task now"
+ },
+ {
+  "key": "err_op_read_session",
+  "zh": "读取会话",
+  "en": "read the session"
+ },
+ {
+  "key": "err_op_read_cron",
+  "zh": "读取定时任务",
+  "en": "read scheduled tasks"
+ },
+ {
+  "key": "err_op_read_plaza",
+  "zh": "读取广场资产",
+  "en": "read plaza assets"
+ },
+ {
+  "key": "err_op_read_agents",
+  "zh": "读取智能体列表",
+  "en": "read the agent list"
+ },
+ {
+  "key": "err_op_read_channels",
+  "zh": "读取渠道账号",
+  "en": "read channel accounts"
+ },
+ {
+  "key": "err_op_read_world",
+  "zh": "读取用户世界",
+  "en": "read the user world"
+ },
+ {
+  "key": "err_op_read_thread_log",
+  "zh": "读取线程日志",
+  "en": "read the thread log"
+ },
+ {
+  "key": "err_op_read_bindings",
+  "zh": "读取绑定",
+  "en": "read bindings"
+ },
+ {
+  "key": "err_op_read_announcement",
+  "zh": "读取群公告",
+  "en": "read the group announcement"
+ },
+ {
+  "key": "err_op_read_contacts",
+  "zh": "读取联系人",
+  "en": "read contacts"
+ },
+ {
+  "key": "err_op_read_logs",
+  "zh": "读取运行日志",
+  "en": "read run logs"
+ },
+ {
+  "key": "err_op_read_runs",
+  "zh": "读取运行记录",
+  "en": "read run records"
+ },
+ {
+  "key": "err_op_rename_thread",
+  "zh": "重命名工作线程",
+  "en": "rename the thread"
+ },
+ {
+  "key": "fail_op_save_cron",
+  "zh": "保存定时任务",
+  "en": "Save scheduled task"
+ },
+ {
+  "key": "fail_op_save_channel",
+  "zh": "保存渠道账号",
+  "en": "Save channel account"
+ },
+ {
+  "key": "fail_op_save_announcement",
+  "zh": "公告保存",
+  "en": "Save announcement"
+ },
+ {
+  "key": "fail_op_realtime_subscribe",
+  "zh": "实时消息订阅",
+  "en": "Realtime subscription"
+ },
+ {
+  "key": "fail_op_import",
+  "zh": "导入",
+  "en": "Import"
+ },
+ {
+  "key": "fail_op_send_message",
+  "zh": "发送消息",
+  "en": "Send message"
+ },
+ {
+  "key": "fail_op_file_action",
+  "zh": "文件操作",
+  "en": "File action"
+ },
+ {
+  "key": "fail_op_asr",
+  "zh": "语音识别",
+  "en": "Voice recognition"
+ },
+ {
+  "key": "fail_op_reconnect",
+  "zh": "重连",
+  "en": "Reconnect"
+ },
+ {
+  "key": "st_cron_expr_empty",
+  "zh": "Cron 表达式不能为空",
+  "en": "Cron expression cannot be empty"
+ },
+ {
+  "key": "st_task_name_empty",
+  "zh": "任务名称不能为空",
+  "en": "Task name cannot be empty"
+ },
+ {
+  "key": "st_task_running",
+  "zh": "任务正在运行中，未重复排队",
+  "en": "Task already running; not queued again"
+ },
+ {
+  "key": "st_name_invalid",
+  "zh": "名称不能为空且不能超过 80 个字符",
+  "en": "Name cannot be empty and must be at most 80 characters"
+ },
+ {
+  "key": "st_agent_name_invalid",
+  "zh": "智能体名称不能为空且不能超过 80 个字符",
+  "en": "Agent name cannot be empty and must be at most 80 characters"
+ },
+ {
+  "key": "st_exec_interval_range",
+  "zh": "执行间隔必须在 1..86400 秒之间",
+  "en": "Interval must be between 1 and 86400 seconds"
+ },
+ {
+  "key": "st_exec_message_empty",
+  "zh": "执行消息不能为空",
+  "en": "Message cannot be empty"
+ },
+ {
+  "key": "st_channel_type_required",
+  "zh": "请选择渠道类型",
+  "en": "Pick a channel type"
+ },
+ {
+  "key": "st_members_required",
+  "zh": "请至少选择 1 名初始成员",
+  "en": "Pick at least 1 initial member"
+ },
+ {
+  "key": "st_runtime_form_invalid",
+  "zh": "请填写工作目录和有效的运行时语言",
+  "en": "Fill in the working directory and a valid runtime language"
+ },
+ {
+  "key": "st_model_form_invalid",
+  "zh": "请填写模型配置，并选择有效的模型类型",
+  "en": "Fill in the model settings and pick a valid model type"
+ },
+ {
+  "key": "st_no_session",
+  "zh": "请先创建或选择一个会话",
+  "en": "Create or select a session first"
+ },
+ {
+  "key": "st_no_asr_model",
+  "zh": "请先在系统设置中配置默认语音识别模型",
+  "en": "Configure a default ASR model in system settings first"
+ },
+ {
+  "key": "st_input_too_long",
+  "zh": "输入过长，请分段发送",
+  "en": "Input too long; send in parts"
+ },
+ {
+  "key": "st_demo_input_too_long",
+  "zh": "演示输入过长，请缩短后重试",
+  "en": "Demo input too long; shorten and retry"
+ },
+ {
+  "key": "st_syncing",
+  "zh": "正在同步…",
+  "en": "Syncing…"
+ },
+ {
+  "key": "st_probing_context",
+  "zh": "正在探测上下文…",
+  "en": "Probing context…"
+ },
+ {
+  "key": "st_probing_voices",
+  "zh": "正在探测语音列表…",
+  "en": "Probing voice list…"
+ },
+ {
+  "key": "st_transcribing",
+  "zh": "正在识别录音…",
+  "en": "Transcribing recording…"
+ },
+ {
+  "key": "st_recording_hint",
+  "zh": "正在录音，再次点击停止",
+  "en": "Recording; click again to stop"
+ },
+ {
+  "key": "st_stopping",
+  "zh": "正在停止…",
+  "en": "Stopping…"
+ },
+ {
+  "key": "st_runtime_loading",
+  "zh": "正在加载内嵌运行时…",
+  "en": "Loading embedded runtime…"
+ },
+ {
+  "key": "st_runtime_starting",
+  "zh": "正在启动内嵌运行时…",
+  "en": "Starting embedded runtime…"
+ },
+ {
+  "key": "st_runtime_ready",
+  "zh": "内嵌运行时已就绪",
+  "en": "Embedded runtime ready"
+ },
+ {
+  "key": "st_prefs_saved",
+  "zh": "偏好已保存",
+  "en": "Preferences saved"
+ },
+ {
+  "key": "st_profile_saved",
+  "zh": "个人资料已保存",
+  "en": "Profile saved"
+ },
+ {
+  "key": "st_announcement_saved",
+  "zh": "公告已更新",
+  "en": "Announcement updated"
+ },
+ {
+  "key": "st_lan_saved",
+  "zh": "内网通信设置已保存",
+  "en": "LAN mesh settings saved"
+ },
+ {
+  "key": "st_cron_saved",
+  "zh": "定时任务已保存",
+  "en": "Scheduled task saved"
+ },
+ {
+  "key": "st_cron_deleted",
+  "zh": "定时任务已删除",
+  "en": "Scheduled task deleted"
+ },
+ {
+  "key": "st_workdir_switched",
+  "zh": "工作目录已切换",
+  "en": "Working directory switched"
+ },
+ {
+  "key": "st_thread_archived",
+  "zh": "工作线程已归档",
+  "en": "Thread archived"
+ },
+ {
+  "key": "st_thread_renamed",
+  "zh": "工作线程已重命名",
+  "en": "Thread renamed"
+ },
+ {
+  "key": "st_tools_synced",
+  "zh": "工具目录已同步",
+  "en": "Tool catalog synced"
+ },
+ {
+  "key": "st_queued_run_now",
+  "zh": "已加入立即执行队列",
+  "en": "Queued for immediate run"
+ },
+ {
+  "key": "st_card_exported_path",
+  "zh": "工蜂卡已导出：{0}",
+  "en": "Worker card exported: {0}"
+ },
+ {
+  "key": "st_imported_named",
+  "zh": "已导入「{0}」：{1}",
+  "en": "Imported “{0}”: {1}"
+ },
+ {
+  "key": "st_imported",
+  "zh": "已导入：{0}",
+  "en": "Imported: {0}"
+ },
+ {
+  "key": "st_reconnect_requested",
+  "zh": "已请求重连，稍后查看运行日志确认",
+  "en": "Reconnect requested; check run logs shortly"
+ },
+ {
+  "key": "st_prompt_segment_saved",
+  "zh": "提示词分段已保存",
+  "en": "Prompt segment saved"
+ },
+ {
+  "key": "st_prompt_pack_created",
+  "zh": "提示词包已创建：{0}",
+  "en": "Prompt pack created: {0}"
+ },
+ {
+  "key": "st_prompt_pack_deleted",
+  "zh": "提示词包已删除",
+  "en": "Prompt pack deleted"
+ },
+ {
+  "key": "st_file_saved",
+  "zh": "文件已保存",
+  "en": "File saved"
+ },
+ {
+  "key": "st_file_created",
+  "zh": "文件已创建",
+  "en": "File created"
+ },
+ {
+  "key": "st_file_ops_done",
+  "zh": "文件操作已完成",
+  "en": "File action completed"
+ },
+ {
+  "key": "st_agent_created",
+  "zh": "新智能体已创建",
+  "en": "New agent created"
+ },
+ {
+  "key": "st_agents_synced",
+  "zh": "智能体列表已同步",
+  "en": "Agent list synced"
+ },
+ {
+  "key": "st_agent_deleted",
+  "zh": "智能体已删除",
+  "en": "Agent deleted"
+ },
+ {
+  "key": "st_agent_saved",
+  "zh": "智能体配置已保存",
+  "en": "Agent settings saved"
+ },
+ {
+  "key": "st_local_settings_synced",
+  "zh": "本地设置已同步",
+  "en": "Local settings synced"
+ },
+ {
+  "key": "st_model_saved",
+  "zh": "模型配置已保存到本地运行时",
+  "en": "Model settings saved to the local runtime"
+ },
+ {
+  "key": "st_default_model_updated",
+  "zh": "默认模型已更新",
+  "en": "Default model updated"
+ },
+ {
+  "key": "st_channel_saved",
+  "zh": "渠道账号已保存",
+  "en": "Channel account saved"
+ },
+ {
+  "key": "st_channel_deleted",
+  "zh": "渠道账号已删除",
+  "en": "Channel account deleted"
+ },
+ {
+  "key": "st_binding_deleted",
+  "zh": "绑定已删除",
+  "en": "Binding deleted"
+ },
+ {
+  "key": "st_group_created",
+  "zh": "群组已创建",
+  "en": "Group created"
+ },
+ {
+  "key": "st_runtime_saved",
+  "zh": "运行时设置已保存",
+  "en": "Runtime settings saved"
+ },
+ {
+  "key": "st_dir_created",
+  "zh": "目录已创建",
+  "en": "Directory created"
+ },
+ {
+  "key": "st_voices_found",
+  "zh": "语音列表探测成功：{0} 项",
+  "en": "Voice list probe succeeded: {0} items"
+ },
+ {
+  "key": "st_diagnostics_exported",
+  "zh": "诊断信息已导出：{0}",
+  "en": "Diagnostics exported: {0}"
+ },
+ {
+  "key": "st_attachment_added",
+  "zh": "{0}已放入输入区，发送即可交给模型",
+  "en": "{0} added to the composer; send to hand it to the model"
+ },
+ {
+  "key": "st_max_attachments",
+  "zh": "最多可附加 {0} 张截图，请先移除一张",
+  "en": "You can attach up to {0} screenshots; remove one first"
+ },
+ {
+  "key": "st_voice_transcribed",
+  "zh": "语音已转写到输入区，可编辑后发送",
+  "en": "Voice transcribed into the composer; edit and send"
+ },
+ {
+  "key": "st_minimized_tray",
+  "zh": "已最小化到系统托盘；点击托盘图标可恢复窗口",
+  "en": "Minimized to the tray; click the tray icon to restore the window"
+ },
+ {
+  "key": "st_no_voices",
+  "zh": "提供方未返回语音列表",
+  "en": "Provider returned no voice list"
+ },
+ {
+  "key": "dlg_probe_context",
+  "zh": "上下文探测",
+  "en": "Context probe"
+ },
+ {
+  "key": "dlg_probe_voices",
+  "zh": "语音列表探测",
+  "en": "Voice list probe"
+ },
+ {
+  "key": "dlg_save_failed",
+  "zh": "保存失败",
+  "en": "Save failed"
+ },
+ {
+  "key": "dlg_operation_failed",
+  "zh": "操作失败",
+  "en": "Operation failed"
+ },
+ {
+  "key": "dlg_overwrite_confirm",
+  "zh": "将用卡片内容覆盖同名专家的名称、提示词、工具与运行策略，且不可自动恢复。确认继续？",
+  "en": "The card will overwrite the same-name agent's name, prompt, tools and run strategy; this cannot be undone automatically. Continue?"
+ },
+ {
+  "key": "dlg_work_state_reset",
+  "zh": "工作状态已重置",
+  "en": "Work state reset"
+ },
+ {
+  "key": "dlg_card_exported",
+  "zh": "工蜂卡已导出",
+  "en": "Worker card exported"
+ },
+ {
+  "key": "dlg_written",
+  "zh": "已写入 {0}",
+  "en": "Written to {0}"
+ },
+ {
+  "key": "dlg_written_import_hint",
+  "zh": "已写入 {0}；导入时从同一目录选择。",
+  "en": "Written to {0}; pick the same directory when importing."
+ },
+ {
+  "key": "dlg_no_voices",
+  "zh": "提供方未返回语音列表。",
+  "en": "Provider returned no voice list."
+ },
+ {
+  "key": "dlg_diagnostics_exported",
+  "zh": "诊断信息已导出",
+  "en": "Diagnostics exported"
+ },
+ {
+  "key": "dlg_overwrite_import_title",
+  "zh": "确认覆盖导入",
+  "en": "Confirm overwrite import"
+ },
+ {
+  "key": "dlg_thread_log",
+  "zh": "线程日志",
+  "en": "Thread log"
+ },
+ {
+  "key": "dlg_check_model",
+  "zh": "请检查模型配置后重试。",
+  "en": "Check the model settings and retry."
+ },
+ {
+  "key": "dlg_config_save_failed",
+  "zh": "配置保存失败，请检查目录权限后重试",
+  "en": "Failed to save settings; check directory permissions and retry."
+ },
+ {
+  "key": "st_thread_log_title",
+  "zh": "线程日志 · {0}",
+  "en": "Thread log · {0}"
+ },
+ {
+  "key": "demo_time_now",
+  "zh": "现在",
+  "en": "Just now"
+ },
+ {
+  "key": "st_demo_task_reset",
+  "zh": "已重置当前演示任务",
+  "en": "Demo task reset"
+ },
+ {
+  "key": "st_demo_not_sent",
+  "zh": "本地演示 · 消息未发送至后端",
+  "en": "Local demo · message not sent to backend"
+ },
+ {
+  "key": "st_demo_agent_created",
+  "zh": "智能体已创建 · 仅本次演示有效",
+  "en": "Agent created (demo only)"
+ },
+ {
+  "key": "st_demo_model_saved",
+  "zh": "模型已保存 · 仅本次演示有效",
+  "en": "Model saved (demo only)"
+ },
+ {
+  "key": "st_demo_settings_saved",
+  "zh": "设置已保存 · 仅本次演示有效",
+  "en": "Settings saved (demo only)"
+ },
+ {
+  "key": "st_demo_config_saved",
+  "zh": "配置已保存 · 仅本次演示有效",
+  "en": "Configuration saved (demo only)"
+ },
+ {
+  "key": "st_demo_default_model_updated",
+  "zh": "默认模型已更新 · 仅本次演示有效",
+  "en": "Default model updated (demo only)"
+ },
+ {
+  "key": "shot_kind_region",
+  "zh": "截图",
+  "en": "Screenshot"
+ },
+ {
+  "key": "shot_kind_fullscreen",
+  "zh": "全屏截图",
+  "en": "Fullscreen screenshot"
+ },
+ {
+  "key": "st_title",
+  "zh": "系统设置",
+  "en": "System settings"
+ },
+ {
+  "key": "st_subtitle",
+  "zh": "本地运行时、工作目录和模型配置",
+  "en": "Local runtime, working directory and models"
+ },
+ {
+  "key": "st_items",
+  "zh": "设置项目",
+  "en": "Settings"
+ },
+ {
+  "key": "st_local_note",
+  "zh": "桌面端本地设置，保存在本机配置中",
+  "en": "Desktop local settings are stored in this machine's configuration"
+ },
+ {
+  "key": "st_tab_general",
+  "zh": "通用偏好",
+  "en": "General"
+ },
+ {
+  "key": "st_tab_prompts",
+  "zh": "提示词包",
+  "en": "Prompt packs"
+ },
+ {
+  "key": "st_tab_models",
+  "zh": "模型配置",
+  "en": "Models"
+ },
+ {
+  "key": "st_tab_runtime",
+  "zh": "本地运行时",
+  "en": "Local runtime"
+ },
+ {
+  "key": "st_tab_tools",
+  "zh": "工具与技能",
+  "en": "Tools & skills"
+ },
+ {
+  "key": "st_tab_help",
+  "zh": "帮助与关于",
+  "en": "Help & about"
+ },
+ {
+  "key": "st_theme",
+  "zh": "主题",
+  "en": "Theme"
+ },
+ {
+  "key": "st_theme_light",
+  "zh": "浅色（蜂巢基调）",
+  "en": "Light (hive tone)"
+ },
+ {
+  "key": "st_send_key",
+  "zh": "发送键",
+  "en": "Send key"
+ },
+ {
+  "key": "st_send_enter",
+  "zh": "Enter 发送",
+  "en": "Enter sends"
+ },
+ {
+  "key": "st_send_ctrl_enter",
+  "zh": "Ctrl+Enter 发送",
+  "en": "Ctrl+Enter sends"
+ },
+ {
+  "key": "st_send_enter_newline",
+  "zh": "Enter 换行，Ctrl+Enter 发送",
+  "en": "Enter newline, Ctrl+Enter sends"
+ },
+ {
+  "key": "st_send_enter_direct",
+  "zh": "Enter 直接发送",
+  "en": "Enter sends directly"
+ },
+ {
+  "key": "st_save_prefs",
+  "zh": "保存偏好",
+  "en": "Save preferences"
+ },
+ {
+  "key": "st_workspace_root",
+  "zh": "工作区根目录",
+  "en": "Workspace root"
+ },
+ {
+  "key": "st_workdir",
+  "zh": "工作目录",
+  "en": "Working directory"
+ },
+ {
+  "key": "st_workdir_note",
+  "zh": "更改工作目录后会使用新的文件根目录，原目录的文件不会自动迁移。",
+  "en": "Changing the working directory switches to a new file root; files in the previous directory are not migrated."
+ },
+ {
+  "key": "st_language",
+  "zh": "运行时语言",
+  "en": "Runtime language"
+ },
+ {
+  "key": "st_language_hint",
+  "zh": "zh-CN 或 en-US",
+  "en": "zh-CN or en-US"
+ },
+ {
+  "key": "st_exec_paths",
+  "zh": "执行文件路径",
+  "en": "Executable paths"
+ },
+ {
+  "key": "st_exec_paths_note",
+  "zh": "指定 Python / Git / rg 可执行文件路径，保存后对新启动的工具立即生效；留空表示自动检测。也可将补充包解压到安装目录的 opt/ 下自动识别。",
+  "en": "Set Python / Git / rg executable paths; saved paths apply to newly started tools immediately. Empty means auto-detect. Supplement packages unpacked under the install directory's opt/ are also detected."
+ },
+ {
+  "key": "st_python_path",
+  "zh": "Python 路径",
+  "en": "Python path"
+ },
+ {
+  "key": "st_python_hint",
+  "zh": "留空自动检测，可指向 python 可执行文件",
+  "en": "Empty auto-detects; may point to a python executable"
+ },
+ {
+  "key": "st_git_path",
+  "zh": "Git 路径",
+  "en": "Git path"
+ },
+ {
+  "key": "st_git_hint",
+  "zh": "留空使用系统 PATH 中的 git",
+  "en": "Empty uses git from the system PATH"
+ },
+ {
+  "key": "st_rg_path",
+  "zh": "rg 路径",
+  "en": "rg path"
+ },
+ {
+  "key": "st_rg_hint",
+  "zh": "留空自动检测 ripgrep",
+  "en": "Empty auto-detects ripgrep"
+ },
+ {
+  "key": "st_lan_title",
+  "zh": "内网通信",
+  "en": "LAN mesh"
+ },
+ {
+  "key": "st_lan_on",
+  "zh": "已启用节点发现",
+  "en": "Node discovery enabled"
+ },
+ {
+  "key": "st_lan_off",
+  "zh": "未启用节点发现",
+  "en": "Node discovery disabled"
+ },
+ {
+  "key": "st_lan_node_name",
+  "zh": "节点名称",
+  "en": "Node name"
+ },
+ {
+  "key": "st_lan_node_name_hint",
+  "zh": "本机在内网中的显示名称",
+  "en": "Display name of this machine on the LAN"
+ },
+ {
+  "key": "st_lan_node_id",
+  "zh": "节点 ID：",
+  "en": "Node ID: "
+ },
+ {
+  "key": "st_lan_listen",
+  "zh": "监听：",
+  "en": "Listening: "
+ },
+ {
+  "key": "st_lan_discovered_prefix",
+  "zh": "  ·  已发现 ",
+  "en": "  ·  discovered "
+ },
+ {
+  "key": "st_lan_discovered_suffix",
+  "zh": " 个节点",
+  "en": " nodes"
+ },
+ {
+  "key": "st_lan_empty",
+  "zh": "暂无已发现节点",
+  "en": "No discovered nodes"
+ },
+ {
+  "key": "st_lan_enable",
+  "zh": "启用内网通信",
+  "en": "Enable LAN mesh"
+ },
+ {
+  "key": "st_lan_disable",
+  "zh": "停用内网通信",
+  "en": "Disable LAN mesh"
+ },
+ {
+  "key": "st_models_default_suffix",
+  "zh": "  · 默认",
+  "en": "  · default"
+ },
+ {
+  "key": "st_current_suffix",
+  "zh": "  · 当前",
+  "en": "  · current"
+ },
+ {
+  "key": "st_models_loading",
+  "zh": "正在加载模型…",
+  "en": "Loading models…"
+ },
+ {
+  "key": "st_models_empty",
+  "zh": "尚未配置模型",
+  "en": "No models configured"
+ },
+ {
+  "key": "st_workdir_colon",
+  "zh": "工作目录：",
+  "en": "Working directory: "
+ },
+ {
+  "key": "st_pick_model",
+  "zh": "选择左侧模型查看配置",
+  "en": "Pick a model on the left to view its settings"
+ },
+ {
+  "key": "st_model_colon",
+  "zh": "模型：",
+  "en": "Model: "
+ },
+ {
+  "key": "st_url_colon",
+  "zh": "地址：",
+  "en": "URL: "
+ },
+ {
+  "key": "st_is_default",
+  "zh": "当前默认",
+  "en": "Current default"
+ },
+ {
+  "key": "st_set_default",
+  "zh": "设为默认",
+  "en": "Set as default"
+ },
+ {
+  "key": "st_models_note",
+  "zh": "模型配置保存在本机，修改后在新任务中生效。",
+  "en": "Model settings are stored locally and apply to new tasks after changes."
+ },
+ {
+  "key": "st_models_count_suffix",
+  "zh": " 个模型条目",
+  "en": " model entries"
+ },
+ {
+  "key": "st_tools_elsewhere",
+  "zh": "工具目录和技能能力已在工具页面统一展示。",
+  "en": "The tool catalog and skill capabilities are shown on the tools page."
+ },
+ {
+  "key": "st_help_native_note",
+  "zh": "桌面端使用本地原生运行时，不经本机 HTTP/WebSocket，不拉起 bridge 子进程。",
+  "en": "The desktop app runs a local native runtime: no local HTTP/WebSocket hop and no bridge subprocess."
+ },
+ {
+  "key": "st_diagnostics",
+  "zh": "诊断",
+  "en": "Diagnostics"
+ },
+ {
+  "key": "st_export_diagnostics",
+  "zh": "导出诊断信息",
+  "en": "Export diagnostics"
+ },
+ {
+  "key": "st_diagnostics_note",
+  "zh": "导出密钥无关的本机设置与能力计数，便于问题排查。",
+  "en": "Exports secret-free local settings and capability counts for troubleshooting."
+ },
+ {
+  "key": "st_reset_title",
+  "zh": "重置工作状态",
+  "en": "Reset work state"
+ },
+ {
+  "key": "st_reset_note",
+  "zh": "清理运行状态、队列与临时投影；保留资产、配置、文件与历史。",
+  "en": "Clears run state, queues and temporary projections; keeps assets, settings, files and history."
+ },
+ {
+  "key": "pm_readonly_builtin",
+  "zh": "内置只读",
+  "en": "Built-in (read-only)"
+ },
+ {
+  "key": "pm_custom",
+  "zh": "自定义",
+  "en": "Custom"
+ },
+ {
+  "key": "pm_builtin_lang_pack",
+  "zh": "内置语言包",
+  "en": "Built-in language pack"
+ },
+ {
+  "key": "pm_empty",
+  "zh": "暂无提示词包",
+  "en": "No prompt packs"
+ },
+ {
+  "key": "pm_new",
+  "zh": "新建",
+  "en": "New"
+ },
+ {
+  "key": "pm_delete_custom",
+  "zh": "删除当前自定义包",
+  "en": "Delete the current custom pack"
+ },
+ {
+  "key": "pm_segment_edit",
+  "zh": "分段编辑",
+  "en": "Segment editor"
+ },
+ {
+  "key": "pm_segment_edit_prefix",
+  "zh": "分段编辑 · ",
+  "en": "Segment editor · "
+ },
+ {
+  "key": "pm_readonly_hint",
+  "zh": "只读（内置包）",
+  "en": "Read-only (built-in pack)"
+ },
+ {
+  "key": "pm_editable_hint",
+  "zh": "可编辑",
+  "en": "Editable"
+ },
+ {
+  "key": "pm_segment_role",
+  "zh": "角色",
+  "en": "Role"
+ },
+ {
+  "key": "pm_segment_engineering",
+  "zh": "工程",
+  "en": "Engineering"
+ },
+ {
+  "key": "pm_segment_tool_protocol",
+  "zh": "工具协议",
+  "en": "Tool protocol"
+ },
+ {
+  "key": "pm_segment_skill_protocol",
+  "zh": "技能协议",
+  "en": "Skill protocol"
+ },
+ {
+  "key": "pm_segment_memory",
+  "zh": "记忆",
+  "en": "Memory"
+ },
+ {
+  "key": "pm_segment_attach",
+  "zh": "附加",
+  "en": "Attachment"
+ },
+ {
+  "key": "pm_save_segment",
+  "zh": "保存分段",
+  "en": "Save segment"
+ },
+ {
+  "key": "fl_title",
+  "zh": "文件工作区",
+  "en": "File workspace"
+ },
+ {
+  "key": "fl_container_prefix",
+  "zh": "容器 #",
+  "en": "Container #"
+ },
+ {
+  "key": "fl_up",
+  "zh": "上一级",
+  "en": "Up"
+ },
+ {
+  "key": "fl_current_dir",
+  "zh": "当前目录",
+  "en": "Current directory"
+ },
+ {
+  "key": "fl_workspace_root",
+  "zh": "工作区根目录",
+  "en": "Workspace root"
+ },
+ {
+  "key": "fl_subdirs",
+  "zh": "子目录",
+  "en": "Subdirectories"
+ },
+ {
+  "key": "fl_reading",
+  "zh": "正在读取…",
+  "en": "Reading…"
+ },
+ {
+  "key": "fl_empty",
+  "zh": "暂无子目录",
+  "en": "No subdirectories"
+ },
+ {
+  "key": "fl_total_prefix",
+  "zh": "共 ",
+  "en": "Total "
+ },
+ {
+  "key": "fl_total_suffix",
+  "zh": " 项 · 文件访问受当前容器根目录限制",
+  "en": " items · file access is limited to the current container root"
+ },
+ {
+  "key": "fl_switch_dir",
+  "zh": "切换目录",
+  "en": "Switch directory"
+ },
+ {
+  "key": "fl_search",
+  "zh": "搜索当前目录",
+  "en": "Search current directory"
+ },
+ {
+  "key": "fl_kind_text",
+  "zh": "文本",
+  "en": "Text"
+ },
+ {
+  "key": "fl_kind_sheet",
+  "zh": "表格",
+  "en": "Sheet"
+ },
+ {
+  "key": "fl_kind_deck",
+  "zh": "演示",
+  "en": "Slides"
+ },
+ {
+  "key": "fl_kind_diagram",
+  "zh": "流程图",
+  "en": "Diagram"
+ },
+ {
+  "key": "fl_ops",
+  "zh": "文件操作",
+  "en": "File actions"
+ },
+ {
+  "key": "fl_preview_loading",
+  "zh": "正在读取文件…",
+  "en": "Reading file…"
+ },
+ {
+  "key": "fl_no_file_selected",
+  "zh": "当前目录没有文件",
+  "en": "No file in this directory"
+ },
+ {
+  "key": "fl_page_from_prefix",
+  "zh": "第 ",
+  "en": "From item "
+ },
+ {
+  "key": "fl_page_from_suffix",
+  "zh": " 项起",
+  "en": ""
+ },
+ {
+  "key": "fl_copy_to",
+  "zh": "复制到",
+  "en": "Copy to"
+ },
+ {
+  "key": "fl_move_to",
+  "zh": "移动到",
+  "en": "Move to"
+ },
+ {
+  "key": "fl_open_native",
+  "zh": "使用系统程序打开",
+  "en": "Open with system"
+ },
+ {
+  "key": "fl_move",
+  "zh": "移动",
+  "en": "Move"
+ },
+ {
+  "key": "fl_delete_prefix",
+  "zh": "将永久删除“",
+  "en": "This permanently deletes “"
+ },
+ {
+  "key": "fl_delete_suffix",
+  "zh": "”。此操作无法恢复。",
+  "en": "”. This cannot be undone."
+ },
+ {
+  "key": "fl_new_name",
+  "zh": "新名称",
+  "en": "New name"
+ },
+ {
+  "key": "fl_target_path",
+  "zh": "目标相对路径",
+  "en": "Target relative path"
+ },
+ {
+  "key": "fl_upload",
+  "zh": "上传文件",
+  "en": "Upload file"
+ },
+ {
+  "key": "fl_download",
+  "zh": "下载到本机",
+  "en": "Download to this machine"
+ }
+]

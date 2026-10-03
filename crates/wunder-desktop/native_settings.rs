@@ -1,7 +1,8 @@
 //! Serialized, secret-free projections of desktop configuration.
 use super::NativeDesktop;
 use crate::runtime::{
-    load_desktop_settings, normalize_desktop_container_roots, save_desktop_settings,
+    load_desktop_settings, normalize_desktop_container_roots, runtime_tool_statuses,
+    save_desktop_settings, RuntimeToolStatus,
 };
 use anyhow::{anyhow, bail, Result};
 use wunder_server::config::{Config, LlmConfig};
@@ -22,6 +23,10 @@ pub struct DesktopSettings {
     pub language: String,
     pub theme: String,
     pub send_key: String,
+    pub python_path: String,
+    pub git_path: String,
+    pub rg_path: String,
+    pub tool_status: Vec<RuntimeToolStatus>,
     pub models: Vec<ModelRecord>,
     pub lan: LanSettings,
 }
@@ -122,6 +127,8 @@ impl NativeDesktop {
             &config,
             lan,
             (persisted.theme.as_str(), persisted.send_key.as_str()),
+            &persisted,
+            &self.desktop.app_dir,
         ))
     }
 
@@ -228,6 +235,8 @@ impl NativeDesktop {
             &config,
             self.read_lan_settings(),
             (persisted.theme.as_str(), persisted.send_key.as_str()),
+            &persisted,
+            &self.desktop.app_dir,
         ))
     }
 
@@ -321,7 +330,14 @@ impl NativeDesktop {
         })
     }
 
-    pub fn save_runtime(&self, workspace: &str, language: &str) -> Result<DesktopSettings> {
+    pub fn save_runtime(
+        &self,
+        workspace: &str,
+        language: &str,
+        python_path: &str,
+        git_path: &str,
+        rg_path: &str,
+    ) -> Result<DesktopSettings> {
         if workspace.trim().is_empty() || !matches!(language, "zh-CN" | "en-US") {
             bail!("请填写工作目录和有效的语言");
         }
@@ -352,29 +368,35 @@ impl NativeDesktop {
             config.workspace.root = path.to_string_lossy().into_owned();
             config.workspace.container_roots = roots;
             config.i18n.default_language = language.into();
+            // Tool paths stay lenient like the runtime resolvers: an invalid
+            // value falls back at spawn time and the status panel reports it.
+            settings.python_path = python_path.trim().to_string();
+            settings.git_path = git_path.trim().to_string();
+            settings.rg_path = rg_path.trim().to_string();
             Ok(())
         })
     }
 
     fn update_settings(
         &self,
-        edit: impl FnOnce(&mut Config, &crate::runtime::DesktopSettings) -> Result<()>,
+        edit: impl FnOnce(&mut Config, &mut crate::runtime::DesktopSettings) -> Result<()>,
     ) -> Result<DesktopSettings> {
         // Serialize read/modify/write, including model secret preservation.
         let _guard = self
             .settings_lock
             .lock()
             .map_err(|_| anyhow!("配置锁不可用"))?;
-        let old_settings = load_desktop_settings(&self.desktop.settings_path)?;
+        let mut old_settings = load_desktop_settings(&self.desktop.settings_path)?;
         let old_config = self.runtime.block_on(self.state().config_store.get());
         let mut config = old_config.clone();
-        edit(&mut config, &old_settings)?;
-        let mut settings = old_settings.clone();
+        edit(&mut config, &mut old_settings)?;
+        let mut settings = old_settings;
         settings.llm = Some(config.llm.clone());
         settings.workspace_root = config.workspace.root.clone();
         settings.container_roots = config.workspace.container_roots.clone();
         settings.language = config.i18n.default_language.clone();
         settings.updated_at = super::now_ts();
+        let restore_settings = settings.clone();
         save_desktop_settings(&self.desktop.settings_path, &settings)?;
         let result = self
             .runtime
@@ -387,7 +409,7 @@ impl NativeDesktop {
         if let Err(error) = result {
             // ConfigStore currently mutates memory before persistence. Restore
             // both stores on failure so the UI can safely retry.
-            let _ = save_desktop_settings(&self.desktop.settings_path, &old_settings);
+            let _ = save_desktop_settings(&self.desktop.settings_path, &restore_settings);
             let _ = self.runtime.block_on(
                 self.state()
                     .config_store
@@ -404,6 +426,8 @@ impl NativeDesktop {
             &config,
             lan,
             (persisted.theme.as_str(), persisted.send_key.as_str()),
+            &persisted,
+            &self.desktop.app_dir,
         ))
     }
 }
@@ -439,7 +463,13 @@ fn set_default(llm: &mut LlmConfig, kind: &str, key: String) {
     }
 }
 
-fn project(config: &Config, lan: LanSettings, preferences: (&str, &str)) -> DesktopSettings {
+fn project(
+    config: &Config,
+    lan: LanSettings,
+    preferences: (&str, &str),
+    persisted: &crate::runtime::DesktopSettings,
+    app_dir: &std::path::Path,
+) -> DesktopSettings {
     let mut models = config
         .llm
         .models
@@ -463,6 +493,10 @@ fn project(config: &Config, lan: LanSettings, preferences: (&str, &str)) -> Desk
         language: config.i18n.default_language.clone(),
         theme: preferences.0.to_string(),
         send_key: preferences.1.to_string(),
+        python_path: persisted.python_path.clone(),
+        git_path: persisted.git_path.clone(),
+        rg_path: persisted.rg_path.clone(),
+        tool_status: runtime_tool_statuses(persisted, app_dir),
         models,
         lan,
     }

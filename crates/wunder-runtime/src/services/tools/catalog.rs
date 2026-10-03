@@ -1945,19 +1945,25 @@ mod tests {
             .find(|spec| spec.name == "命令会话")
             .expect("Chinese command session spec");
         assert!(zh_session.description.contains("轮询后台命令"));
-        assert!(zh_session.input_schema["properties"]["action"]["description"]
-            .as_str()
-            .is_some_and(|value| value.contains("操作")));
-        assert!(zh.iter().all(|spec| spec.name != "LSP查询" && spec.name != "节点调用"));
+        assert!(
+            zh_session.input_schema["properties"]["action"]["description"]
+                .as_str()
+                .is_some_and(|value| value.contains("操作"))
+        );
+        assert!(zh
+            .iter()
+            .all(|spec| spec.name != "LSP查询" && spec.name != "节点调用"));
 
         let en_session = builtin_tool_specs_with_language("en-US")
             .into_iter()
             .find(|spec| spec.name == "命令会话")
             .expect("English command session spec");
         assert!(en_session.description.contains("Poll a background command"));
-        assert!(en_session.input_schema["properties"]["action"]["description"]
-            .as_str()
-            .is_some_and(|value| value.starts_with("Action:")));
+        assert!(
+            en_session.input_schema["properties"]["action"]["description"]
+                .as_str()
+                .is_some_and(|value| value.starts_with("Action:"))
+        );
         assert_eq!(resolve_tool_name("lsp"), "lsp");
         assert_eq!(resolve_tool_name("node_invoke"), "node_invoke");
     }

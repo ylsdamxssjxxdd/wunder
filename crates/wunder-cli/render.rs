@@ -956,7 +956,10 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value) -> Vec<String> {
     }
 
     if lines.len() == 1 {
-        push_tree_line(&mut lines, wunder_server::tool_result_display::tool_result_display(tool, payload, false));
+        push_tree_line(
+            &mut lines,
+            wunder_server::tool_result_display::tool_result_display(tool, payload, false),
+        );
     }
     lines
 }
@@ -1285,7 +1288,10 @@ fn format_generic_tool_result_lines(tool: &str, payload: &Value) -> Vec<String> 
             push_tree_line(&mut lines, text);
         }
     } else if lines.len() == 1 {
-        push_tree_line(&mut lines, wunder_server::tool_result_display::tool_result_display(tool, payload, false));
+        push_tree_line(
+            &mut lines,
+            wunder_server::tool_result_display::tool_result_display(tool, payload, false),
+        );
     }
     lines
 }

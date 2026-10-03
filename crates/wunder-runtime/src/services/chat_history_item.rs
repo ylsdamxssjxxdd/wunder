@@ -157,4 +157,3 @@ pub(crate) fn normalize_message_content(value: &Value) -> String {
         other => other.to_string(),
     }
 }
-

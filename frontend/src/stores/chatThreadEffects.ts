@@ -5,6 +5,13 @@ import { ensureRuntime, applyCanonicalStreamSideEffects, getSessionMessages } fr
 import { settleTerminalAssistantArtifacts } from './chatTerminalArtifacts';
 import { emitAgentRuntimeRefresh, type AgentRuntimeCompletion } from '@/utils/workspaceEvents';
 
+// Completion is a durable state transition, but the feeder may publish it as
+// both turn_upsert and turn_status (and a reconnect can replay either shape).
+// Keep the side effect idempotent per reducer state instance. A WeakMap makes
+// the guard disappear when a session runtime is reset, so a later execution
+// with the same identifiers is not accidentally suppressed.
+const completedTurnClaims = new WeakMap<object, Set<string>>();
+
 const terminal = (status: unknown) => ['completed', 'failed', 'cancelled', 'interrupted', 'rejected', 'stopped'].includes(String(status));
 
 /** Bridge committed state to shell controls. Never feed timeline data into another reducer. */
@@ -53,6 +60,9 @@ export const applyChatThreadEffects = (store, key: string, changes: ThreadChange
       // Only a durable normal completion can acknowledge a finished task.
       // Failure and cancellation stay visible on their original assistant
       // bubble and must never be presented as successful completion.
+      const state = getChatThreadState(key);
+      const claims = state ? (completedTurnClaims.get(state) ?? new Set<string>()) : null;
+      if (state && claims && !completedTurnClaims.has(state)) completedTurnClaims.set(state, claims);
       const completedTurns: AgentRuntimeCompletion[] = changes
         .filter((change) =>
           (change.change_type === 'turn_upsert' || change.change_type === 'turn_status') &&
@@ -64,9 +74,19 @@ export const applyChatThreadEffects = (store, key: string, changes: ThreadChange
           ...(agentId ? { agentId: String(agentId) } : {})
         }))
         .filter((completion) => Boolean(completion.turnId));
+      const freshCompletedTurns = completedTurns.filter((completion) => {
+        if (!claims) return true;
+        const claim = `${completion.sessionId}:${completion.turnId}`;
+        if (claims.has(claim)) return false;
+        claims.add(claim);
+        // A bounded presentation guard; the durable state itself remains
+        // unbounded only for the session lifetime and is replaced on reset.
+        if (claims.size > 2048) claims.delete(claims.values().next().value as string);
+        return true;
+      });
       emitAgentRuntimeRefresh({
         ...(agentId ? { agentIds: [agentId] } : {}),
-        ...(completedTurns.length ? { completedTurns } : {})
+        ...(freshCompletedTurns.length ? { completedTurns: freshCompletedTurns } : {})
       });
     }
   }

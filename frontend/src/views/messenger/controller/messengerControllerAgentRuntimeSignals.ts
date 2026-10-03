@@ -170,7 +170,7 @@ import {
   extractWorkspaceRefreshPaths,
   isWorkspacePathAffected
 } from '@/utils/workspaceRefresh';
-import { emitWorkspaceRefresh, onAgentRuntimeRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { claimAgentRuntimeAgentCompletion, emitWorkspaceRefresh, onAgentRuntimeRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import {
@@ -673,7 +673,9 @@ export function installMessengerControllerAgentRuntimeSignals(ctx: MessengerCont
                       return;
                   }
                   ctx.completedAgentNoticeSuppression.delete(agentId);
-                  void ctx.notifyAgentTaskCompleted(agentId);
+                  if (claimAgentRuntimeAgentCompletion(agentId)) {
+                      void ctx.notifyAgentTaskCompleted(agentId);
+                  }
               }
           });
       }

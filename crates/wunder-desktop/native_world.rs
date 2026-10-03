@@ -280,7 +280,10 @@ impl NativeDesktop {
     /// Total unread messages across every conversation of the signed-in user.
     /// Backs the rail badge; the underlying scan is bounded in the service.
     pub fn total_world_unread(&self) -> Result<i64> {
-        self.state().projection.user_world.total_unread(self.user_id())
+        self.state()
+            .projection
+            .user_world
+            .total_unread(self.user_id())
     }
 
     pub fn get_world_group_detail(&self, group_id: &str) -> Result<WorldGroupDetail> {

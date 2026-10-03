@@ -22,9 +22,7 @@ impl Orchestrator {
                     "source_session_id":message.source,"session_id":session,"kind":message.kind,
                     "delivery":"not_applied"});
                 round.insert_into(data.as_object_mut().expect("message payload"));
-                emitter
-                    .emit("subagent_message", data)
-                    .await;
+                emitter.emit("subagent_message", data).await;
                 continue;
             }
             let mut data = json!({"message_id":message.id,"source_session_id":message.source,
@@ -49,9 +47,7 @@ impl Orchestrator {
                         "source_session_id":rejected.source,"session_id":session,
                         "kind":rejected.kind,"delivery":"not_applied"});
                     round.insert_into(data.as_object_mut().expect("message payload"));
-                    emitter
-                        .emit("subagent_message", data)
-                        .await;
+                    emitter.emit("subagent_message", data).await;
                 }
                 return Err(OrchestratorError::internal(error.to_string()));
             }

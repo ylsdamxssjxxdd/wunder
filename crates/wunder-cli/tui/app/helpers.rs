@@ -1595,7 +1595,10 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value) -> Vec<String> {
     }
 
     if lines.len() == 1 {
-        push_tree_line(&mut lines, wunder_server::tool_result_display::tool_result_display(tool, payload, false));
+        push_tree_line(
+            &mut lines,
+            wunder_server::tool_result_display::tool_result_display(tool, payload, false),
+        );
     }
     lines
 }
@@ -1654,7 +1657,10 @@ pub(super) fn format_tool_result_lines(tool: &str, payload: &Value) -> Vec<Strin
             push_tree_line(&mut lines, text);
         }
     } else {
-        push_tree_line(&mut lines, wunder_server::tool_result_display::tool_result_display(tool, payload, false));
+        push_tree_line(
+            &mut lines,
+            wunder_server::tool_result_display::tool_result_display(tool, payload, false),
+        );
     }
     lines
 }
@@ -2114,10 +2120,7 @@ mod snapshot_history_tests {
             .collect();
         assert_eq!(roles, vec!["user", "assistant"]);
         assert_eq!(records[0]["content"], json!("first"));
-        assert_eq!(
-            records[1]["reasoning_content"],
-            json!("thought process")
-        );
+        assert_eq!(records[1]["reasoning_content"], json!("thought process"));
     }
 
     #[test]

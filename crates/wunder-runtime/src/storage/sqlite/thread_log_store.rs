@@ -1130,10 +1130,17 @@ mod tests {
         use wunder_core::storage_backend::ThreadLogStore;
         let dir = tempfile::tempdir().unwrap();
         let db = SqliteStorage::new(dir.path().join("empty.db").to_string_lossy().into_owned());
-        assert_eq!(db.thread_snapshot("owner", "thread").unwrap(),
-            json!({"cursor":0,"turns":[],"items":[],"blocks":[],"item_total":0}));
+        assert_eq!(
+            db.thread_snapshot("owner", "thread").unwrap(),
+            json!({"cursor":0,"turns":[],"items":[],"blocks":[],"item_total":0})
+        );
         db.accept_thread_turn("owner", "thread", &input(1)).unwrap();
-        assert!(db.thread_snapshot("owner", "thread").unwrap()["cursor"].as_i64().unwrap() > 0);
+        assert!(
+            db.thread_snapshot("owner", "thread").unwrap()["cursor"]
+                .as_i64()
+                .unwrap()
+                > 0
+        );
         assert!(db.thread_snapshot("other", "thread").is_err());
     }
     #[test]
@@ -1290,22 +1297,38 @@ mod tests {
         assert_ne!(root["turn_id"], next["turn_id"]);
         assert_eq!(next["root_turn_id"], root["turn_id"]);
         db.update_thread_turn_impl(
-            "owner", "thread", next["turn_id"].as_str().unwrap(), "running", "", &json!({}),
-        ).unwrap();
-        let changes = db.list_thread_changes_impl("owner", "thread", 0, 100).unwrap();
+            "owner",
+            "thread",
+            next["turn_id"].as_str().unwrap(),
+            "running",
+            "",
+            &json!({}),
+        )
+        .unwrap();
+        let changes = db
+            .list_thread_changes_impl("owner", "thread", 0, 100)
+            .unwrap();
         for status in ["queued", "running"] {
-            let change = changes.iter().find(|change|
-                change["turn_id"] == next["turn_id"] && change["change_type"] == "turn_upsert"
-                    && change["payload"]["status"] == status
-            ).unwrap();
+            let change = changes
+                .iter()
+                .find(|change| {
+                    change["turn_id"] == next["turn_id"]
+                        && change["change_type"] == "turn_upsert"
+                        && change["payload"]["status"] == status
+                })
+                .unwrap();
             assert_eq!(change["payload"]["root_turn_id"], root["turn_id"]);
             assert_eq!(change["payload"]["trigger_kind"], "continuation");
             assert_eq!(change["payload"]["user_round"], 1);
         }
         let snapshot = db.thread_snapshot_impl("owner", "thread").unwrap();
         assert_eq!(snapshot["turns"].as_array().unwrap().len(), 2);
-        let continuation = snapshot["turns"].as_array().unwrap().iter()
-            .find(|turn| turn["turn_id"] == next["turn_id"]).unwrap();
+        let continuation = snapshot["turns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|turn| turn["turn_id"] == next["turn_id"])
+            .unwrap();
         assert_eq!(continuation["root_turn_id"], root["turn_id"]);
         assert_eq!(continuation["trigger_kind"], "continuation");
         // Internal continuation input is excluded even though its lifecycle

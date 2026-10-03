@@ -18,13 +18,14 @@ const setup = async () => {
   chat.activeSessionId = key;
   chat.sessions = [{ id: key, agent_id: 'agent-example' }] as any;
   const events: string[] = [];
+  const eventDetails: any[] = [];
   const original = globalThis.window;
-  globalThis.window = { dispatchEvent: (event: Event) => { events.push(event.type); return true; } } as any;
+  globalThis.window = { dispatchEvent: (event: Event) => { events.push(event.type); eventDetails.push((event as CustomEvent).detail); return true; } } as any;
   const apply = (seq: number, change_type: string, data: Record<string, unknown>) =>
     applyChatThreadServerEvent(chat, key, 'thread_change', {
       cursor: seq, change_type, turn_id: data.turn_id, item_id: data.item_id, revision: data.revision, payload: data
     }, { onChangesApplied: changes => applyChatThreadEffects(chat, key, changes) });
-  return { chat, events, apply, syncChatThreadShell, cleanup: () => { globalThis.window = original; } };
+  return { chat, events, eventDetails, apply, syncChatThreadShell, cleanup: () => { globalThis.window = original; } };
 };
 
 test('durable lifecycle settles shell and dispatches workspace effects once even through replay and gaps', async () => {
@@ -42,7 +43,10 @@ test('durable lifecycle settles shell and dispatches workspace effects once even
     apply(3, 'item_upsert', workspace);
     assert.equal(events.filter(event => event === 'wunder:workspace-refresh').length, 1);
     apply(4, 'turn_upsert', { turn_id: 'turn-one', status: 'completed' });
-    apply(4, 'turn_upsert', { turn_id: 'turn-one', status: 'completed' });
+    // The feeder may represent the same terminal transition as a later
+    // turn_status frame. It must not emit a second completion side effect.
+    apply(5, 'turn_status', { turn_id: 'turn-one', status: 'completed' });
+    apply(6, 'turn_status', { turn_id: 'turn-one', status: 'completed' });
     assert.equal(chat.isSessionBusy(key), false);
     assert.equal(chat.sessionRuntimeStatus(key), 'completed');
     assert.equal(chat.isSessionLoading(key), false);
@@ -153,5 +157,43 @@ test('scheduled rejection preserves Stop for active work and terminal bubbles re
     assert.equal(chat.isSessionBusy(key), false);
     assert.deepEqual(buildChatThreadMaterializedMessages(key)!.filter(row => row.role === 'assistant')
       .map(row => row.status), ['cancelled', 'failed', 'final']);
+  } finally { cleanup(); }
+});
+
+test('scheduled preemption projects the new root turn live and emits one completion', async () => {
+  const { chat, events, eventDetails, apply, cleanup } = await setup();
+  try {
+    apply(1, 'turn_upsert', { turn_id: 'old-turn', user_round: 1, status: 'running' });
+    apply(2, 'item_upsert', { turn_id: 'old-turn', item_id: 'old-turn:user', kind: 'user_message',
+      role: 'user', content: 'interactive request', user_round: 1, revision: 1 });
+    apply(3, 'item_upsert', { turn_id: 'old-turn', item_id: 'old-turn:text-1', kind: 'assistant_message',
+      role: 'assistant', content: 'partial output', model_round: 1, status: 'running', revision: 1 });
+    apply(4, 'turn_status', { turn_id: 'old-turn', status: 'cancelled' });
+    apply(5, 'turn_upsert', { turn_id: 'scheduled-turn', user_round: 2, status: 'queued' });
+    apply(6, 'item_upsert', { turn_id: 'scheduled-turn', item_id: 'scheduled-turn:user', kind: 'user_message',
+      role: 'user', content: 'scheduled delivery', user_round: 2, revision: 1 });
+    apply(7, 'item_upsert', { turn_id: 'scheduled-turn', item_id: 'scheduled-turn:queue', kind: 'queue',
+      status: 'queued', queue_ahead: 0, revision: 1 });
+    apply(8, 'turn_status', { turn_id: 'scheduled-turn', status: 'running' });
+    apply(9, 'item_upsert', { turn_id: 'scheduled-turn', item_id: 'scheduled-turn:tool', kind: 'tool_call',
+      event_type: 'tool_result', tool: 'schedule_task', status: 'completed', revision: 1,
+      meta: { duration_ms: 12 } });
+    apply(10, 'item_upsert', { turn_id: 'scheduled-turn', item_id: 'scheduled-turn:text-1', kind: 'assistant_message',
+      role: 'assistant', content: 'scheduled result', model_round: 1, status: 'completed', revision: 1 });
+    apply(11, 'turn_upsert', { turn_id: 'scheduled-turn', status: 'completed' });
+    apply(12, 'turn_status', { turn_id: 'scheduled-turn', status: 'completed' });
+
+    const rows = buildChatThreadMaterializedMessages(key)!;
+    assert.deepEqual(rows.map(row => row.role), ['user', 'assistant', 'user', 'assistant']);
+    assert.equal(rows[1].status, 'cancelled');
+    assert.equal(rows[1].content, 'partial output');
+    assert.equal(rows[3].status, 'final');
+    assert.equal(rows[3].content, 'scheduled result');
+    assert.equal(rows[3].workflowItems?.length, 2); // queue + tool result
+    const completions = eventDetails
+      .filter(detail => Array.isArray(detail?.completedTurns))
+      .flatMap(detail => detail.completedTurns);
+    assert.equal(completions.length, 1);
+    assert.equal(completions[0].turnId, 'scheduled-turn');
   } finally { cleanup(); }
 });

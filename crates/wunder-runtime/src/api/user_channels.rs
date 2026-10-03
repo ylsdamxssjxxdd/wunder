@@ -1447,7 +1447,10 @@ pub async fn upsert_user_channel_account(
         } else {
             map.insert("agent_id".to_string(), Value::Null);
         }
-        map.insert("owner_user_id".to_string(), Value::String(user_id.to_string()));
+        map.insert(
+            "owner_user_id".to_string(),
+            Value::String(user_id.to_string()),
+        );
     }
 
     let agent_id_for_binding = requested_agent_id.clone().or(existing_agent_id);
@@ -1924,10 +1927,9 @@ async fn delete_channel_account_by_id(
     AxumPath((channel, account_id)): AxumPath<(String, String)>,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
-    let data =
-        delete_user_channel_account(&state, &resolved.user.user_id, &channel, &account_id)
-            .await
-            .map_err(channel_service_response)?;
+    let data = delete_user_channel_account(&state, &resolved.user.user_id, &channel, &account_id)
+        .await
+        .map_err(channel_service_response)?;
     Ok(Json(json!({ "data": data })))
 }
 
@@ -1939,10 +1941,11 @@ async fn delete_channel_account_legacy(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
-    let channel = normalize_user_channel(Some(channel.as_str())).map_err(channel_service_response)?;
+    let channel =
+        normalize_user_channel(Some(channel.as_str())).map_err(channel_service_response)?;
 
-    let account_ids =
-        list_owned_account_ids_for_channel(&state, &user_id, &channel).map_err(channel_service_response)?;
+    let account_ids = list_owned_account_ids_for_channel(&state, &user_id, &channel)
+        .map_err(channel_service_response)?;
     if account_ids.is_empty() {
         return Ok(Json(json!({ "data": {
             "channel": channel,
@@ -2305,10 +2308,16 @@ async fn delete_channel_binding(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
-    let data =
-        delete_user_channel_binding(&state, &user_id, &channel, &account_id, &peer_kind, &peer_id)
-            .await
-            .map_err(channel_service_response)?;
+    let data = delete_user_channel_binding(
+        &state,
+        &user_id,
+        &channel,
+        &account_id,
+        &peer_kind,
+        &peer_id,
+    )
+    .await
+    .map_err(channel_service_response)?;
     Ok(Json(json!({ "data": data })))
 }
 

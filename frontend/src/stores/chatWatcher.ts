@@ -272,7 +272,14 @@ export const startSessionWatcher = (store, sessionId) => {
     })
     .finally(() => {
       const current = getRuntime(key);
-      if (current && current.watchController === controller) {
+      // A watcher can finish after a newer watcher has already replaced it
+      // (scheduled delivery commonly aborts the old watch while installing a
+      // fresh one).  Only the currently registered instance may clear state or
+      // schedule a reconnect.  Letting an old finally block restart itself
+      // creates overlapping feeders, duplicate terminal effects and causes the
+      // newly delivered turn to remain invisible until a full snapshot reload.
+      const isCurrentWatcher = Boolean(current && current.watchController === controller);
+      if (isCurrentWatcher && current) {
         current.watchController = null;
         current.watchActiveRoundCount = 0;
         current.watchRequestId = null;
@@ -280,8 +287,14 @@ export const startSessionWatcher = (store, sessionId) => {
         refreshRuntimeStreamLifecycle(current);
         if (chatWatcherSharedState.sessionWatchSessionId === key) chatWatcherSharedState.sessionWatchSessionId = '';
       }
-      if (!controller.signal.aborted && store.activeSessionId === key && !desktopMode) {
-        setTimeout(() => startSessionWatcher(store, key), 80);
+      if (isCurrentWatcher && !controller.signal.aborted && store.activeSessionId === key && !desktopMode) {
+        setTimeout(() => {
+          const latest = getRuntime(key);
+          // Another path may have installed a watcher during the debounce
+          // window.  Never replace that live instance with this stale retry.
+          if (latest?.watchController || store.activeSessionId !== key) return;
+          startSessionWatcher(store, key);
+        }, 80);
       }
     });
 };

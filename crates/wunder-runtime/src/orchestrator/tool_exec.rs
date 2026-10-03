@@ -142,7 +142,10 @@ impl Orchestrator {
             // the user-visible stream item.
             let output_slot = role == "assistant"
                 && round_info.model_round.is_some()
-                && meta.and_then(|value| value.get("hidden")).and_then(Value::as_bool) != Some(true);
+                && meta
+                    .and_then(|value| value.get("hidden"))
+                    .and_then(Value::as_bool)
+                    != Some(true);
             let item_id = if input_slot {
                 format!("{turn_id}:user")
             } else if output_slot {
@@ -152,7 +155,9 @@ impl Orchestrator {
                 // that same item instead of appending a random-id duplicate.
                 format!(
                     "{turn_id}:text-{}",
-                    round_info.model_round.expect("output slot requires a model round")
+                    round_info
+                        .model_round
+                        .expect("output slot requires a model round")
                 )
             } else {
                 Uuid::new_v4().to_string()

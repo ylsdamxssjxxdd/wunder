@@ -752,7 +752,10 @@ impl ChannelHub {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
-        if let Some(content) = display_question.as_deref().filter(|_| inbound_has_meaningful_text) {
+        if let Some(content) = display_question
+            .as_deref()
+            .filter(|_| inbound_has_meaningful_text)
+        {
             self.accept_channel_turn(&mut session_info, content).await?;
         }
 
@@ -1079,12 +1082,7 @@ impl ChannelHub {
             }))
         };
         let response = match self
-            .run_channel_request(
-                request,
-                &message,
-                &session_info,
-                resolved_binding.as_ref(),
-            )
+            .run_channel_request(request, &message, &session_info, resolved_binding.as_ref())
             .await
         {
             Ok(ChannelModelResult::Answer(answer)) => {

@@ -1,3 +1,4 @@
+import { I18n } from "i18n.slint";
 import { Theme, ChatMessage } from "theme.slint";
 import { Action, Avatar } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
@@ -10,7 +11,7 @@ component MessageStat inherits HorizontalLayout {
     height: 18px;
     spacing: 3px;
     Image { width: 12px; height: 12px; source: root.icon; image-fit: contain; colorize: Theme.muted; }
-    Text { text: root.value; color: Theme.muted; font-size: 11px; vertical-alignment: center; y: -1px; }
+    Text { text: root.value; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; y: -1px; }
 }
 
 export component MessageRow inherits Rectangle {
@@ -29,16 +30,16 @@ export component MessageRow inherits Rectangle {
         height: self.preferred-height;
         spacing: 6px;
         Text {
-            height: 18px; font-size: 11px; color: Theme.muted;
-            text: (root.message.mine ? "你" : root.author) + "   " + root.message.time;
+            height: 18px; font-size: Theme.font-xs; color: Theme.muted;
+            text: (root.message.mine ? I18n.common_you : root.author) + "   " + root.message.time;
             horizontal-alignment: root.message.mine ? right : left;
         }
         if root.message.workflow : Rectangle {
             height: root.expanded ? 240px : 34px;
-            border-radius: 8px; border-width: 1px; border-color: Theme.border;
+            border-radius: Theme.radius-sm; border-width: 1px; border-color: Theme.border;
             background: Theme.surface.transparentize(0.35);
             Action {
-                x: 4px; y: 2px; width: parent.width - 8px; label: "智能体循环"; show-label: true;
+                x: 4px; y: 2px; width: parent.width - 8px; label: I18n.ms_agent_loop; show-label: true;
                 icon: @image-url("../assets/icons/chevron-right.svg");
                 clicked => { root.expanded = !root.expanded; }
             }
@@ -48,7 +49,7 @@ export component MessageRow inherits Rectangle {
                     TextInput {
                         text: root.message.workflow-detail;
                         read-only: true; wrap: word-wrap;
-                        font-size: 12px; color: Theme.text;
+                        font-size: Theme.font-sm; color: Theme.text;
                     }
                 }
             }
@@ -56,19 +57,19 @@ export component MessageRow inherits Rectangle {
         Rectangle {
             height: body.preferred-height + 24px;
             background: root.message.mine ? Theme.mine : Theme.bubble;
-            border-radius: 12px; border-color: root.message.mine ? Theme.accent.transparentize(0.7) : Theme.border; border-width: 1px;
+            border-radius: Theme.radius-lg; border-color: root.message.mine ? Theme.accent.transparentize(0.7) : Theme.border; border-width: 1px;
             body := VerticalLayout {
                 x: 13px; y: 12px; width: parent.width - 26px;
                 height: self.preferred-height; spacing: 0px;
                 if root.message.blocks.length == 0 : TextInput {
-                    text: root.message.text; color: Theme.text; font-size: 13px;
+                    text: root.message.text; color: Theme.text; font-size: Theme.font-md;
                     read-only: true; wrap: word-wrap;
                 }
                 for block in root.message.blocks : Rectangle {
                     height: block-text.preferred-height;
                     background: block.kind == 1 ? Theme.accent-soft : transparent;
                     block-text := TextInput {
-                        width: parent.width; text: block.text; color: Theme.text; font-size: 13px;
+                        width: parent.width; text: block.text; color: Theme.text; font-size: Theme.font-md;
                         font-weight: block.kind == 2 ? 600 : 400;
                         read-only: true; wrap: word-wrap;
                     }
@@ -81,8 +82,8 @@ export component MessageRow inherits Rectangle {
                 y: 0px; height: 18px; spacing: 8px;
                 stats-row := HorizontalLayout {
                     height: 18px; spacing: 8px;
-                    if root.message.stats-status == "任务完成" || root.message.stats-status == "完成" : MessageStat { icon: @image-url("../assets/icons/hashtag.svg"); value: root.message.stats-status; }
-                    if root.message.stats-status != "任务完成" && root.message.stats-status != "完成" : MessageStat { icon: @image-url("../assets/icons/comment-dots.svg"); value: root.message.stats-status; }
+                    if root.message.stats-status == I18n.ms_state_done || root.message.stats-status == I18n.common_done : MessageStat { icon: @image-url("../assets/icons/hashtag.svg"); value: root.message.stats-status; }
+                    if root.message.stats-status != I18n.ms_state_done && root.message.stats-status != I18n.common_done : MessageStat { icon: @image-url("../assets/icons/comment-dots.svg"); value: root.message.stats-status; }
                     MessageStat { icon: @image-url("../assets/icons/stopwatch.svg"); value: root.message.stats-duration; }
                     MessageStat { icon: @image-url("../assets/icons/gauge-high.svg"); value: root.message.stats-speed; }
                     MessageStat { icon: @image-url("../assets/icons/layer-group.svg"); value: root.message.stats-context; }
@@ -92,7 +93,7 @@ export component MessageRow inherits Rectangle {
                 }
             }
             Rectangle { horizontal-stretch: 1; }
-            Action { width: 42px; height: 20px; label: "复制"; show-label: true; clicked => { root.copy(); } }
+            Action { width: 42px; height: 20px; label: I18n.common_copy; show-label: true; clicked => { root.copy(); } }
         }
     }
 }

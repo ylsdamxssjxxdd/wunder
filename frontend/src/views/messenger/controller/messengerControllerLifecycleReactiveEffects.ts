@@ -171,7 +171,7 @@ import {
   extractWorkspaceRefreshPaths,
   isWorkspacePathAffected
 } from '@/utils/workspaceRefresh';
-import { emitWorkspaceRefresh, onAgentRuntimeRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { claimAgentRuntimeCompletion, emitWorkspaceRefresh, onAgentRuntimeRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
 import { chatDebugLog, isChatDebugEnabled, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
 import {
@@ -1206,7 +1206,8 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
               const agentId = ctx.normalizeAgentId(completion?.agentId ||
                   ctx.buildSessionAgentMap().get(sessionId));
               const noticeKey = `${sessionId}:${turnId}`;
-              if (!sessionId || !turnId || !agentId || completedTurnNoticeKeys.has(noticeKey)) {
+              if (!sessionId || !turnId || !agentId || completedTurnNoticeKeys.has(noticeKey) ||
+                  !claimAgentRuntimeCompletion(sessionId, turnId)) {
                   continue;
               }
               completedTurnNoticeKeys.add(noticeKey);

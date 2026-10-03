@@ -3,8 +3,8 @@ use crate::api::chat_goal::apply_goal_command;
 use crate::api::user_context::resolve_user;
 use crate::api::ws_helpers::{
     apply_ws_auth_headers, has_ws_protocol_token, negotiate_ws_protocol, parse_connect_payload,
-    parse_payload, resolve_session_id, resume_queued_thread_changes_v2, resume_thread_changes_v2, send_ws_error,
-    send_ws_error_payload, send_ws_event, send_ws_pong, send_ws_ready,
+    parse_payload, resolve_session_id, resume_queued_thread_changes_v2, resume_thread_changes_v2,
+    send_ws_error, send_ws_error_payload, send_ws_event, send_ws_pong, send_ws_ready,
     send_ws_tail_event, ws_error_payload_from_anyhow, ws_protocol_info, WsEnvelope, WsFeatures,
     WsPolicy, WsQuery, WsReadyPayload, WsSender, WS_MAX_MESSAGE_BYTES, WS_PROTOCOL_VERSION,
 };
@@ -1488,13 +1488,8 @@ mod tests {
     #[tokio::test]
     async fn recovery_subscription_replaces_another_subscription_for_the_session() {
         let tasks = Arc::new(Mutex::new(HashMap::new()));
-        let (first, _) = register_ws_task(
-            &tasks,
-            "watch-first",
-            Some("session-a".to_string()),
-            false,
-        )
-        .await;
+        let (first, _) =
+            register_ws_task(&tasks, "watch-first", Some("session-a".to_string()), false).await;
         let (_second, _) = register_ws_task(
             &tasks,
             "resume-second",
@@ -1508,13 +1503,8 @@ mod tests {
     #[tokio::test]
     async fn recovery_subscription_does_not_cancel_active_start_execution() {
         let tasks = Arc::new(Mutex::new(HashMap::new()));
-        let (start, _) = register_ws_task(
-            &tasks,
-            "start-request",
-            Some("session-a".to_string()),
-            true,
-        )
-        .await;
+        let (start, _) =
+            register_ws_task(&tasks, "start-request", Some("session-a".to_string()), true).await;
         let (_watch, _) = register_ws_task(
             &tasks,
             "watch-request",

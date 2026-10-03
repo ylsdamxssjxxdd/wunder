@@ -88,8 +88,53 @@ pub fn check_runtime(
         .workspace_preview("", "../config/desktop.settings.json")
         .is_err());
     let root = output.join("workspace-next");
-    let updated = runtime.save_runtime(root.to_str().ok_or("invalid isolated path")?, "en-US")?;
+    // Runtime tool paths: a configured python file resolves as custom, an
+    // invalid git path is reported invalid, and clearing restores auto mode.
+    let tool_dir = output.join("tool-bin");
+    std::fs::create_dir_all(&tool_dir)?;
+    let python_stub = tool_dir.join("python.exe");
+    std::fs::write(&python_stub, b"stub interpreter")?;
+    let saved = runtime.save_runtime(
+        root.to_str().ok_or("invalid isolated path")?,
+        "en-US",
+        python_stub.to_str().ok_or("invalid python path")?,
+        "missing-git.exe",
+        "",
+    )?;
+    assert_eq!(saved.python_path, python_stub.to_str().ok_or("path")?);
+    assert_eq!(saved.git_path, "missing-git.exe");
+    let python_status = saved
+        .tool_status
+        .iter()
+        .find(|entry| entry.tool == "python")
+        .ok_or("python status missing")?;
+    assert_eq!(python_status.source, "custom");
+    assert_eq!(python_status.effective, python_stub.to_str().ok_or("path")?);
+    let git_status = saved
+        .tool_status
+        .iter()
+        .find(|entry| entry.tool == "git")
+        .ok_or("git status missing")?;
+    assert_eq!(git_status.source, "invalid");
+    let rg_status = saved
+        .tool_status
+        .iter()
+        .find(|entry| entry.tool == "rg")
+        .ok_or("rg status missing")?;
+    assert!(matches!(rg_status.source.as_str(), "system" | "embedded"));
+    let updated = runtime.save_runtime(
+        root.to_str().ok_or("invalid isolated path")?,
+        "en-US",
+        "",
+        "",
+        "",
+    )?;
     assert_eq!(updated.language, "en-US");
+    assert!(updated.python_path.is_empty());
+    assert!(updated
+        .tool_status
+        .iter()
+        .all(|entry| entry.tool == "rg" || entry.source != "invalid"));
     let page = runtime.workspace_directory("", "", 0)?;
     assert_eq!(page.path, "");
     let settings_file = output.join("runtime/config/desktop.settings.json");
@@ -98,6 +143,10 @@ pub fn check_runtime(
         persisted["llm"]["models"]["test-embedding"]["api_key"],
         "test-secret"
     );
+    // Tool path fields must survive the settings round-trip for restarts.
+    assert!(persisted["python_path"].is_string());
+    assert!(persisted["git_path"].is_string());
+    assert!(persisted["rg_path"].is_string());
     let container = persisted["container_roots"]["1"]
         .as_str()
         .ok_or("container root missing")?;
@@ -111,7 +160,7 @@ pub fn check_runtime(
     assert!(preview.starts_with("测试文本\n"));
     assert!(preview.ends_with("（仅预览前 32 KiB）"));
     assert!(preview.len() < 33_000);
-    runtime.save_runtime(root.to_str().ok_or("invalid path")?, "zh-CN")?;
+    runtime.save_runtime(root.to_str().ok_or("invalid path")?, "zh-CN", "", "", "")?;
     std::fs::write(
         output.join("pages-check.json"),
         serde_json::to_vec_pretty(&serde_json::json!({

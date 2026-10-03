@@ -1,6 +1,4 @@
-use super::user_channels::{
-    channel_service_response, ChannelErrorResponse, ChannelServiceResult,
-};
+use super::user_channels::{channel_service_response, ChannelErrorResponse, ChannelServiceResult};
 use crate::api::user_context::resolve_user;
 use crate::channels::catalog;
 use crate::channels::types::ChannelAccountConfig;
@@ -561,8 +559,8 @@ fn build_user_channel_runtime(
     channel: &str,
     account_id: &str,
 ) -> Result<Value, Response> {
-    let owned = list_owned_account_keys(state, user_id, Some(channel))
-        .map_err(channel_service_response)?;
+    let owned =
+        list_owned_account_keys(state, user_id, Some(channel)).map_err(channel_service_response)?;
     if !owned.contains(&(
         channel.trim().to_ascii_lowercase(),
         account_id.trim().to_string(),

@@ -1,5 +1,6 @@
 //! Independent, single-flight workspace projection shared by the dock and files page.
 use crate::{FileCard, MainWindow};
+use anyhow::anyhow;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -150,9 +151,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     || kind.contains(&query)
                     || event.summary.to_lowercase().contains(&query)
                     || event.raw.to_lowercase().contains(&query);
-                let type_matches = filter == "全部"
-                    || (filter == "工具" && kind.contains("tool"))
-                    || (filter == "模型" && (kind.contains("llm") || kind.contains("model")));
+                let type_matches = filter == "all"
+                    || (filter == "tools" && kind.contains("tool"))
+                    || (filter == "models" && (kind.contains("llm") || kind.contains("model")));
                 text_matches && type_matches
             })
             .cloned()
@@ -470,6 +471,93 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         });
     });
     let weak = app.as_weak();
+    let upload_api = api.clone();
+    app.on_upload_workspace_file(move || {
+        let Some(app) = weak.upgrade() else {
+            return;
+        };
+        if app.get_files_loading() {
+            return;
+        }
+        let agent = app.get_active_agent_id().to_string();
+        if agent.trim().is_empty() {
+            app.set_status("请先选择智能体".into());
+            return;
+        }
+        // Local-link transfer: the source path comes from the system file
+        // dialog and the façade copies it directly into the container.
+        let directory = app.get_directory_path().to_string();
+        app.set_files_loading(true);
+        let weak = app.as_weak();
+        let api = upload_api.clone();
+        std::thread::spawn(move || {
+            let outcome = pick_windows_file("选择要导入的文件").map(|source| {
+                let name = std::path::Path::new(&source)
+                    .file_name()
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let destination = if directory.trim().is_empty() {
+                    name
+                } else {
+                    format!("{}/{}", directory.trim_end_matches('/'), name)
+                };
+                (source, destination)
+            });
+            let result = match outcome {
+                Some((source, destination)) => api
+                    .import_workspace_file(&agent, &source, &destination)
+                    .map(|_| destination),
+                None => Err(anyhow::anyhow!("已取消选择")),
+            };
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_files_loading(false);
+                match result {
+                    Ok(destination) => {
+                        app.set_status(format!("已导入 {destination}").into());
+                        app.invoke_refresh_files();
+                    }
+                    Err(error) if error.to_string() == "已取消选择" => {}
+                    Err(error) => app.set_status(format!("导入失败：{error}").into()),
+                }
+            });
+        });
+    });
+    let weak = app.as_weak();
+    let download_api = api.clone();
+    app.on_download_workspace_file(move |path, name| {
+        let Some(app) = weak.upgrade() else {
+            return;
+        };
+        if app.get_files_loading() {
+            return;
+        }
+        let agent = app.get_active_agent_id().to_string();
+        if agent.trim().is_empty() {
+            return;
+        }
+        app.set_files_loading(true);
+        let weak = app.as_weak();
+        let api = download_api.clone();
+        let name = name.to_string();
+        std::thread::spawn(move || {
+            let result = match save_windows_file("保存到本机", &name) {
+                Some(target) => {
+                    api.export_workspace_file(&agent, &path, &target)
+                        .map(|_| target),
+                }
+                None => Err(anyhow::anyhow!("已取消选择")),
+            };
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_files_loading(false);
+                match result {
+                    Ok(target) => app.set_status(format!("已导出到 {target}").into()),
+                    Err(error) if error.to_string() == "已取消选择" => {}
+                    Err(error) => app.set_status(format!("导出失败：{error}").into()),
+                }
+            });
+        });
+    });
+    let weak = app.as_weak();
     app.on_open_file_native(move |path| {
         let Some(app) = weak.upgrade() else { return };
         let agent = app.get_active_agent_id().to_string();
@@ -537,4 +625,106 @@ fn choose_windows_directory() -> Option<String> {
     }
     let end = path.iter().position(|v| *v == 0).unwrap_or(path.len());
     Some(String::from_utf16_lossy(&path[..end]))
+}
+
+/// System open-file dialog. Desktop file transfer stays on the local link:
+/// the dialog only yields a host path and the façade copies from disk.
+#[cfg(windows)]
+fn pick_windows_file(title: &str) -> Option<String> {
+    file_windows_dialog(title, "", 0x0000_1804, false) // OFN_HIDEREADONLY|FILEMUSTEXIST|PATHMUSTEXIST
+}
+
+/// System save-as dialog seeded with the workspace file name.
+#[cfg(windows)]
+fn save_windows_file(title: &str, default_name: &str) -> Option<String> {
+    file_windows_dialog(title, default_name, 0x0000_0802, true) // OFN_OVERWRITEPROMPT|PATHMUSTEXIST
+}
+
+#[cfg(windows)]
+fn file_windows_dialog(title: &str, default_name: &str, flags: u32, save: bool) -> Option<String> {
+    use std::{ffi::c_void, ptr};
+    #[repr(C)]
+    struct OpenFileNameW {
+        struct_size: u32,
+        owner: isize,
+        instance: isize,
+        filter: *const u16,
+        custom_filter: *mut u16,
+        max_custom_filter: u32,
+        filter_index: u32,
+        file: *mut u16,
+        max_file: u32,
+        file_title: *mut u16,
+        max_file_title: u32,
+        initial_dir: *const u16,
+        title_ptr: *const u16,
+        flags: u32,
+        file_offset: u16,
+        file_extension: u16,
+        default_ext: *const u16,
+        cust_data: isize,
+        hook: isize,
+        template_name: *const u16,
+        reserved_ptr: *mut c_void,
+        reserved_u32: u32,
+        flags_ex: u32,
+    }
+    #[link(name = "comdlg32")]
+    unsafe extern "system" {
+        fn GetOpenFileNameW(info: *mut OpenFileNameW) -> i32;
+        fn GetSaveFileNameW(info: *mut OpenFileNameW) -> i32;
+    }
+    const OFN_ALLOWMULTISELECT_UNUSED: u32 = 0;
+    let _ = OFN_ALLOWMULTISELECT_UNUSED;
+    let title_wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut buffer = [0u16; 1024];
+    let seed = default_name.trim();
+    for (index, unit) in seed.encode_utf16().take(buffer.len() - 1).enumerate() {
+        buffer[index] = unit;
+    }
+    let mut info = OpenFileNameW {
+        struct_size: std::mem::size_of::<OpenFileNameW>() as u32,
+        owner: 0,
+        instance: 0,
+        filter: ptr::null(),
+        custom_filter: ptr::null_mut(),
+        max_custom_filter: 0,
+        filter_index: 0,
+        file: buffer.as_mut_ptr(),
+        max_file: buffer.len() as u32,
+        file_title: ptr::null_mut(),
+        max_file_title: 0,
+        initial_dir: ptr::null(),
+        title_ptr: title_wide.as_ptr(),
+        flags,
+        file_offset: 0,
+        file_extension: 0,
+        default_ext: ptr::null(),
+        cust_data: 0,
+        hook: 0,
+        template_name: ptr::null(),
+        reserved_ptr: ptr::null_mut(),
+        reserved_u32: 0,
+        flags_ex: 0,
+    };
+    let ok = if save {
+        unsafe { GetSaveFileNameW(&mut info) }
+    } else {
+        unsafe { GetOpenFileNameW(&mut info) }
+    } != 0;
+    if !ok {
+        return None;
+    }
+    let end = buffer.iter().position(|v| *v == 0).unwrap_or(buffer.len());
+    Some(String::from_utf16_lossy(&buffer[..end]))
+}
+
+#[cfg(not(windows))]
+fn pick_windows_file(_title: &str) -> Option<String> {
+    None
+}
+
+#[cfg(not(windows))]
+fn save_windows_file(_title: &str, _default_name: &str) -> Option<String> {
+    None
 }

@@ -1,0 +1,69 @@
+// Single source for the desktop visual language: palette, brushes, status
+// colors, scrims, type scale, radii, spacing and shell layout metrics.
+// Values mirror frontend/src/styles/base.css and messenger.css (eva-orange).
+// Slint pages and Rust controllers must reference these tokens instead of
+// repeating literals; theme.slint re-exports this global together with the
+// shared data structs so existing imports keep working.
+export global Theme {
+    // Palette
+    out property <color> text: #32170a;
+    out property <color> muted: #8d6248;
+    out property <color> panel: #fffaf6;
+    out property <color> surface: #ffffff;
+    out property <color> border: #f0dfd2;
+    out property <color> accent: #ff9448;
+    out property <color> accent-deep: #e5792e;
+    out property <color> accent-soft: #fff0e3;
+    out property <color> bubble: #ffffff;
+    out property <color> mine: #ffe9d7;
+
+    // Status colors: log levels, run states, badges and error text.
+    out property <color> success: #16845d;
+    out property <color> warning: #b8860b;
+    out property <color> danger: #b63a22;
+    out property <color> info: #3b82f6;
+
+    // Unified scrim behind modal dialogs, drawers and overlays.
+    out property <color> overlay: #00000040;
+
+    out property <brush> rail: @linear-gradient(180deg, #ffb26f 0%, #e5792e 100%);
+    out property <brush> middle: @linear-gradient(180deg, #fffaf6 0%, #fff6ef 100%);
+    out property <brush> chat: @linear-gradient(180deg, #fffbf8 0%, #fff2e8 100%);
+    out property <brush> dock: @linear-gradient(180deg, #fff8f3 0%, #fff0e5 100%);
+    out property <brush> composer: @linear-gradient(180deg, #fff8f3 0%, #fff2e9 100%);
+
+    // Type scale. Odd sizes (8px/9px/15px/17px/19px) are deliberate one-offs
+    // (badges, footers) and stay literal until they join the scale.
+    out property <length> font-2xs: 10px;
+    out property <length> font-xs: 11px;
+    out property <length> font-sm: 12px;
+    out property <length> font-md: 13px;
+    out property <length> font-lg: 14px;
+    out property <length> font-xl: 16px;
+    out property <length> font-headline: 18px;
+    out property <length> font-display: 24px;
+
+    // Corner radii. Circular avatars keep their half-width literals.
+    out property <length> radius-sm: 8px;
+    out property <length> radius-md: 10px;
+    out property <length> radius-lg: 12px;
+    out property <length> radius-xl: 14px;
+
+    // Spacing scale.
+    out property <length> space-1: 4px;
+    out property <length> space-2: 8px;
+    out property <length> space-3: 12px;
+    out property <length> space-4: 16px;
+    out property <length> space-5: 20px;
+
+    // Shell layout metrics shared by the rail, middle columns and dock.
+    // min-window-* must stay in sync with the winit min size in main.rs.
+    out property <length> rail-width: 56px;
+    out property <length> middle-width: 220px;
+    out property <length> dock-width: 284px;
+    out property <length> header-height: 62px;
+    out property <length> middle-header-height: 80px;
+    out property <length> min-window-width: 760px;
+    out property <length> min-window-height: 580px;
+    out property <length> dock-breakpoint: 1100px;
+}

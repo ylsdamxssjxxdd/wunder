@@ -363,7 +363,13 @@ fn advance(
                 "native UI default failed",
             )?;
             crate::smoke::snapshot(app, &directory.join("native-settings.png"))?;
-            app.invoke_save_runtime(app.get_workspace_root(), "zh-CN".into());
+            app.invoke_save_runtime(
+                app.get_workspace_root(),
+                "zh-CN".into(),
+                "".into(),
+                "".into(),
+                "".into(),
+            );
         }
         13 => {
             app.set_page(crate::DesktopPage::Messages);

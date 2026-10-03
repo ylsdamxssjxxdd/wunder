@@ -95,34 +95,51 @@ impl NativeDesktop {
         self.write_workspace_bytes(&scope, &target, content.as_bytes())
     }
 
-    /// Imports caller-owned bytes without exposing a host path to the runtime.
-    pub fn upload_workspace_bytes(&self, agent: &str, path: &str, bytes: &[u8]) -> Result<()> {
-        const MAX_UPLOAD_BYTES: usize = 32 * 1024 * 1024;
-        if bytes.len() > MAX_UPLOAD_BYTES {
-            bail!("文件超过 32 MiB 上传上限");
+    /// Imports a host file into the workspace container by direct local copy.
+    /// Desktop file transfer never crosses a communication link: the source is
+    /// picked with the system file dialog and the bytes stream from disk into
+    /// the confined destination.
+    pub fn import_workspace_file(
+        &self,
+        agent: &str,
+        source_host_path: &str,
+        destination_relative: &str,
+    ) -> Result<()> {
+        let source = std::path::PathBuf::from(source_host_path.trim());
+        let metadata = std::fs::metadata(&source).map_err(|_| anyhow!("源文件不存在或不可读"))?;
+        if !metadata.is_file() {
+            bail!("请选择普通文件导入");
         }
         let scope = self.workspace_scope(agent)?;
-        let target = self.confined_destination(&scope, path)?;
-        if target.exists() {
-            bail!("文件已存在");
-        }
-        self.write_workspace_bytes(&scope, &target, bytes)
+        let target = self.confined_destination(&scope, destination_relative)?;
+        std::fs::copy(&source, &target)?;
+        self.state().workspace.refresh_workspace_tree(&scope);
+        Ok(())
     }
 
-    /// Returns a bounded download payload. Native callers choose the save
-    /// location themselves; this façade never accepts an arbitrary host path.
-    pub fn download_workspace_bytes(&self, agent: &str, path: &str) -> Result<Vec<u8>> {
-        const MAX_DOWNLOAD_BYTES: u64 = 32 * 1024 * 1024;
+    /// Exports one workspace file to a user-chosen host path by direct local
+    /// copy — the desktop counterpart of a download without any byte
+    /// transport through the façade.
+    pub fn export_workspace_file(
+        &self,
+        agent: &str,
+        relative_path: &str,
+        target_host_path: &str,
+    ) -> Result<()> {
         let scope = self.workspace_scope(agent)?;
-        let target = self.confined_path(&scope, path)?;
-        let metadata = target.metadata()?;
-        if !metadata.is_file() {
-            bail!("请选择普通文件");
+        let source = self.confined_path(&scope, relative_path)?;
+        if !source.metadata()?.is_file() {
+            bail!("请选择普通文件导出");
         }
-        if metadata.len() > MAX_DOWNLOAD_BYTES {
-            bail!("文件超过 32 MiB 下载上限");
+        let target = std::path::PathBuf::from(target_host_path.trim());
+        if target.as_os_str().is_empty() {
+            bail!("请选择保存位置");
         }
-        Ok(std::fs::read(target)?)
+        if target.is_dir() {
+            bail!("保存位置已是同名目录");
+        }
+        std::fs::copy(&source, &target)?;
+        Ok(())
     }
 
     pub fn delete_workspace_entry(&self, agent: &str, path: &str) -> Result<()> {

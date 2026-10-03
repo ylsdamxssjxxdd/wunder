@@ -256,6 +256,12 @@ test('watcher keeps projection events flowing while send or resume controllers e
   assert.equal(watcherSource.includes('roundStates'), false);
   assert.equal(watcherSource.includes('state.processor.handleEvent('), false);
   assert.equal(watcherSource.includes('insertWatchUserMessage('), false);
+  // A stale watcher's finally block must never clear or restart a newer
+  // watcher. Scheduled delivery aborts the old feeder while it installs the
+  // new turn feeder, so this identity guard is part of the protocol contract.
+  assert.ok(watcherSource.includes('const isCurrentWatcher = Boolean(current && current.watchController === controller)'));
+  assert.ok(watcherSource.includes('if (isCurrentWatcher && !controller.signal.aborted'));
+  assert.ok(watcherSource.includes('if (latest?.watchController || store.activeSessionId !== key) return;'));
 });
 
 test('send, resume, and watch no longer route realtime events through legacy processors', () => {

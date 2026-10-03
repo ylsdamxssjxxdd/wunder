@@ -1190,7 +1190,8 @@ impl Orchestrator {
                             &manual_turn_decode_speed,
                             manual_turn_started_at.elapsed().as_secs_f64(),
                         ),
-                    ).await;
+                    )
+                    .await;
                     let _ = self.workspace.flush_writes_async().await;
                     self.emit_manual_compaction_failure(&emitter, lifecycle_round_info, &err)
                         .await;
@@ -1289,7 +1290,8 @@ impl Orchestrator {
                         &manual_turn_decode_speed,
                         manual_turn_started_at.elapsed().as_secs_f64(),
                     ),
-                ).await;
+                )
+                .await;
                 let _ = self.workspace.flush_writes_async().await;
                 self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
                     .await;
@@ -1350,7 +1352,8 @@ impl Orchestrator {
                             &manual_turn_decode_speed,
                             manual_turn_started_at.elapsed().as_secs_f64(),
                         ),
-                    ).await;
+                    )
+                    .await;
                     let _ = self.workspace.flush_writes_async().await;
                 }
                 self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
@@ -1385,7 +1388,8 @@ impl Orchestrator {
                         &manual_turn_decode_speed,
                         manual_turn_started_at.elapsed().as_secs_f64(),
                     ),
-                ).await;
+                )
+                .await;
                 let _ = self.workspace.flush_writes_async().await;
             }
             self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
@@ -1467,7 +1471,8 @@ impl Orchestrator {
                         &manual_turn_decode_speed,
                         manual_turn_started_at.elapsed().as_secs_f64(),
                     ),
-                ).await;
+                )
+                .await;
                 let _ = self.workspace.flush_writes_async().await;
             } else {
                 self.append_manual_compaction_result(
@@ -1483,7 +1488,8 @@ impl Orchestrator {
                         &manual_turn_decode_speed,
                         manual_turn_started_at.elapsed().as_secs_f64(),
                     ),
-                ).await;
+                )
+                .await;
                 let _ = self.workspace.flush_writes_async().await;
             }
         }

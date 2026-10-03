@@ -1,9 +1,7 @@
 use super::NativeDesktop;
 use anyhow::{anyhow, Result};
 use serde_json::Value;
-use wunder_server::user_plaza::{
-    get_item, import_item, list_items, ListUserPlazaItemsQuery,
-};
+use wunder_server::user_plaza::{get_item, import_item, list_items, ListUserPlazaItemsQuery};
 
 /// Desktop plaza only carries normal user assets. `hive_pack` items are swarm
 /// assets: they never appear in the list and importing one is refused, no
@@ -60,7 +58,8 @@ impl NativeDesktop {
         let mut cards: Vec<(f64, PlazaItemCard)> = items
             .into_iter()
             .filter(|item| {
-                PLAZA_DESKTOP_KINDS.contains(&item.get("kind").and_then(Value::as_str).unwrap_or(""))
+                PLAZA_DESKTOP_KINDS
+                    .contains(&item.get("kind").and_then(Value::as_str).unwrap_or(""))
             })
             .map(plaza_card_from_item)
             .collect();
@@ -100,7 +99,10 @@ impl NativeDesktop {
 }
 
 fn plaza_card_from_item(item: Value) -> (f64, PlazaItemCard) {
-    let updated_ts = item.get("updated_at").and_then(Value::as_f64).unwrap_or(0.0);
+    let updated_ts = item
+        .get("updated_at")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
     let tags: Vec<String> = item
         .get("tags")
         .and_then(Value::as_array)
@@ -115,17 +117,22 @@ fn plaza_card_from_item(item: Value) -> (f64, PlazaItemCard) {
         })
         .unwrap_or_default();
     let card = PlazaItemCard {
-        artifact_size_text: format_size(item
-            .get("artifact_size_bytes")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)),
+        artifact_size_text: format_size(
+            item.get("artifact_size_bytes")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        ),
         updated_at: super::channels::format_ts(updated_ts),
         tags: tags.join(" · "),
         item_id: text_at(&item, "item_id"),
         kind: text_at(&item, "kind"),
         title: {
             let title = text_at(&item, "title");
-            if title.is_empty() { text_at(&item, "source_key") } else { title }
+            if title.is_empty() {
+                text_at(&item, "source_key")
+            } else {
+                title
+            }
         },
         summary: text_at(&item, "summary"),
         owner_username: text_at(&item, "owner_username"),

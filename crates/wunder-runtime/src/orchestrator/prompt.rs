@@ -327,7 +327,9 @@ impl Orchestrator {
             &session_prompt,
             language,
         ) {
-            Err(err) => warn!("freeze session system prompt failed for session {session_id}: {err}"),
+            Err(err) => {
+                warn!("freeze session system prompt failed for session {session_id}: {err}")
+            }
             Ok(Some(item)) => {
                 // The frozen prompt is a durable item append through the unified
                 // commit exit, which publishes the change cursor only on the

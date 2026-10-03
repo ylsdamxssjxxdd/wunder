@@ -190,7 +190,10 @@ impl NativeDesktop {
         Ok(listing)
     }
 
-    pub fn save_channel_account(&self, edit: &NativeChannelAccountEdit) -> Result<ChannelAccountCard> {
+    pub fn save_channel_account(
+        &self,
+        edit: &NativeChannelAccountEdit,
+    ) -> Result<ChannelAccountCard> {
         let channel = edit.channel.trim().to_ascii_lowercase();
         if channel.is_empty() {
             return Err(anyhow!("请选择渠道类型"));
@@ -261,7 +264,12 @@ impl NativeDesktop {
 
     /// Enabled toggle reuses the account upsert: empty fields keep every stored
     /// value and only the enabled flag changes.
-    pub fn toggle_channel_account(&self, channel: &str, account_id: &str, enabled: bool) -> Result<()> {
+    pub fn toggle_channel_account(
+        &self,
+        channel: &str,
+        account_id: &str,
+        enabled: bool,
+    ) -> Result<()> {
         let user = self.channel_user()?;
         let request = ChannelAccountUpsertRequest {
             channel: channel.trim().to_ascii_lowercase(),
@@ -385,7 +393,11 @@ impl NativeDesktop {
 
     /// Opens a weixin QR login session. `account_id` rebinds an existing
     /// account; empty creates a fresh login for a new account.
-    pub fn start_weixin_qr_login(&self, account_id: Option<&str>, force: bool) -> Result<WeixinQrLoginStart> {
+    pub fn start_weixin_qr_login(
+        &self,
+        account_id: Option<&str>,
+        force: bool,
+    ) -> Result<WeixinQrLoginStart> {
         let payload = WeixinQrStartRequest {
             account_id: account_id
                 .map(str::trim)
@@ -414,7 +426,11 @@ impl NativeDesktop {
 
     /// One short wait window (the façade loops with ~3s timeouts so the UI can
     /// cancel between polls). Error texts distinguish missing/expired sessions.
-    pub fn wait_weixin_qr_login(&self, session_key: &str, timeout_ms: u64) -> Result<WeixinQrLoginStatus> {
+    pub fn wait_weixin_qr_login(
+        &self,
+        session_key: &str,
+        timeout_ms: u64,
+    ) -> Result<WeixinQrLoginStatus> {
         let payload = WeixinQrWaitRequest {
             session_key: session_key.trim().to_string(),
             api_base: None,
@@ -429,7 +445,10 @@ impl NativeDesktop {
             ))
             .map_err(channel_error)?;
         Ok(WeixinQrLoginStatus {
-            connected: data.get("connected").and_then(Value::as_bool).unwrap_or(false),
+            connected: data
+                .get("connected")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             status: text_at(&data, "status"),
             message: text_at(&data, "message"),
             bot_token: text_at(&data, "bot_token"),
@@ -500,8 +519,8 @@ fn config_json_opt(raw: &str) -> Result<Option<Value>> {
     if trimmed.is_empty() {
         return Ok(None);
     }
-    let value: Value = serde_json::from_str(trimmed)
-        .map_err(|err| anyhow!("高级配置不是合法 JSON：{err}"))?;
+    let value: Value =
+        serde_json::from_str(trimmed).map_err(|err| anyhow!("高级配置不是合法 JSON：{err}"))?;
     if !value.is_object() {
         return Err(anyhow!("高级配置必须是 JSON 对象"));
     }
@@ -547,7 +566,9 @@ fn account_card_from_item(item: &Value) -> ChannelAccountCard {
             "agent_id" => wechat_agent_id = text_at(&Value::Object(flat.clone()), "agent_id"),
             "original_id" => original_id = text_at(&Value::Object(flat.clone()), "original_id"),
             "ilink_bot_id" => weixin_bot_id = text_at(&Value::Object(flat.clone()), "ilink_bot_id"),
-            "ilink_user_id" => weixin_user_id = text_at(&Value::Object(flat.clone()), "ilink_user_id"),
+            "ilink_user_id" => {
+                weixin_user_id = text_at(&Value::Object(flat.clone()), "ilink_user_id")
+            }
             "bot_type" => bot_type = text_at(&Value::Object(flat.clone()), "bot_type"),
             "domain" => domain = text_at(&Value::Object(flat.clone()), "domain"),
             _ => {}
@@ -588,8 +609,16 @@ fn account_card_from_item(item: &Value) -> ChannelAccountCard {
             .unwrap_or(false),
         peer_kind: text_at(&meta, "peer_kind"),
         agent_id,
-        created_at: format_ts(item.get("created_at").and_then(Value::as_f64).unwrap_or_default()),
-        updated_at: format_ts(item.get("updated_at").and_then(Value::as_f64).unwrap_or_default()),
+        created_at: format_ts(
+            item.get("created_at")
+                .and_then(Value::as_f64)
+                .unwrap_or_default(),
+        ),
+        updated_at: format_ts(
+            item.get("updated_at")
+                .and_then(Value::as_f64)
+                .unwrap_or_default(),
+        ),
         app_id,
         corp_id,
         wechat_agent_id,

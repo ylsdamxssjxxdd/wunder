@@ -767,6 +767,81 @@ fn resolve_workspace_path_input(raw: &str, app_dir: &Path) -> PathBuf {
     }
 }
 
+/// Secret-free tool path status for the runtime settings panel. `source`
+/// values: "custom" (configured and valid), "invalid" (configured but the
+/// file is missing, runtime falls back), "embedded" (bundled supplement),
+/// "system" (system PATH or explicit system preference), "missing".
+#[derive(Clone, Debug)]
+pub struct RuntimeToolStatus {
+    pub tool: String,
+    pub configured: String,
+    pub effective: String,
+    pub source: String,
+}
+
+fn tool_status(
+    tool: &str,
+    configured: &str,
+    resolved: Option<PathBuf>,
+    auto_label: &str,
+) -> RuntimeToolStatus {
+    let configured = configured.trim().to_string();
+    let (source, effective) = match (configured.is_empty(), resolved) {
+        (false, Some(path)) => ("custom", path.to_string_lossy().into_owned()),
+        (false, None) => ("invalid", String::new()),
+        (true, maybe) => (
+            auto_label,
+            maybe
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        ),
+    };
+    RuntimeToolStatus {
+        tool: tool.into(),
+        configured,
+        effective,
+        source: source.into(),
+    }
+}
+
+pub fn runtime_tool_statuses(settings: &DesktopSettings, app_dir: &Path) -> Vec<RuntimeToolStatus> {
+    // The python resolver silently falls back to the system interpreter when
+    // a configured path is invalid; the status panel must expose that instead.
+    let configured_python = settings.python_path.trim();
+    let (python_resolved, python_auto_label) = if configured_python.is_empty() {
+        match resolve_desktop_python_bin(settings, app_dir) {
+            DesktopPythonBin::Auto(path) => (Some(path), "embedded"),
+            DesktopPythonBin::System => (None, "system"),
+            DesktopPythonBin::None => (None, "missing"),
+            DesktopPythonBin::Custom(_) => (None, "missing"),
+        }
+    } else {
+        let candidate = resolve_workspace_path_input(configured_python, app_dir);
+        (candidate.is_file().then_some(candidate), "missing")
+    };
+    vec![
+        tool_status(
+            "python",
+            configured_python,
+            python_resolved,
+            python_auto_label,
+        ),
+        tool_status(
+            "git",
+            &settings.git_path,
+            resolve_desktop_tool_bin(&settings.git_path, app_dir),
+            "system",
+        ),
+        tool_status(
+            "rg",
+            &settings.rg_path,
+            resolve_desktop_tool_bin(&settings.rg_path, app_dir)
+                .or_else(|| resolve_embedded_rg_bin(app_dir)),
+            "system",
+        ),
+    ]
+}
+
 fn default_theme() -> String {
     "light".to_string()
 }

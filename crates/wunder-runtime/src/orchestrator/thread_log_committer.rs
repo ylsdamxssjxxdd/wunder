@@ -42,11 +42,7 @@ impl ThreadLogCommitter {
         if session_id.is_empty() {
             return Arc::new(AsyncMutex::new(()));
         }
-        self.gates
-            .lock()
-            .entry(session_id)
-            .or_default()
-            .clone()
+        self.gates.lock().entry(session_id).or_default().clone()
     }
 
     /// Publish the receipt cursor when the write actually produced a change.
@@ -254,8 +250,8 @@ mod tests {
                 "session-a",
                 &json!({"content":"hi","client_message_id":"msg-1"}),
             )
-        .await
-        .unwrap();
+            .await
+            .unwrap();
         assert_eq!(replay["turn_id"], accepted["turn_id"]);
         assert_eq!(replay["created"], json!(false));
         assert!(!wake.has_changed().unwrap());
@@ -295,8 +291,8 @@ mod tests {
                 &json!({"session_id":"session-a","turn_id":"x","item_id":"x:item",
                          "kind":"assistant_message","status":"running","visibility":"user"}),
             )
-        .await
-        .unwrap_err();
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("thread owner mismatch"));
         assert!(!wake.has_changed().unwrap());
         assert_eq!(

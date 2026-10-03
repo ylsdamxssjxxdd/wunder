@@ -203,8 +203,7 @@ impl Projection {
                         self.text.ends_with(&text[..split]),
                         "native text block rewrite mismatch"
                     );
-                    self.text
-                        .truncate(self.text.len() - text[..split].len());
+                    self.text.truncate(self.text.len() - text[..split].len());
                     &text[split..]
                 } else {
                     ensure!(offset == self.offset, "native text block gap");

@@ -1364,12 +1364,17 @@ mod tests {
         timing.mark_output(start + Duration::from_secs(20), 0, 0);
         let (prefill, decode) = timing.durations(start, start + Duration::from_secs(21));
         let summary = crate::core::llm_speed::LlmSpeedSummary::from_usage_and_durations(
-            Some(1000), Some(32), prefill, decode);
+            Some(1000),
+            Some(32),
+            prefill,
+            decode,
+        );
         let mut accumulator = crate::core::llm_speed::TurnDecodeSpeedAccumulator::default();
         accumulator.record_summary(&summary);
         let mut stats = serde_json::Map::new();
         accumulator.insert_into_map(&mut stats);
-        let restored: serde_json::Value = serde_json::from_str(&serde_json::to_string(&stats).unwrap()).unwrap();
+        let restored: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&stats).unwrap()).unwrap();
         assert_eq!(restored["visible_decode_speed_tps"], json!(16.0));
         assert_eq!(restored["visible_decode_duration_s"], json!(2.0));
         assert_eq!(restored["visible_decode_measured"], json!(true));

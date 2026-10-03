@@ -1,3 +1,4 @@
+import { I18n } from "i18n.slint";
 // Frozen-screen region selector. Rust owns the captured frame and receives
 // only the final logical selection rectangle.
 
@@ -72,16 +73,16 @@ export component ScreenshotOverlay inherits Window {
     }
     if !root.has-selection && !root.dragging : Rectangle {
         x: (parent.width - 392px) / 2; y: 24px; width: 392px; height: 32px; border-radius: 6px; background: #000000b8;
-        Text { text: "拖动选择截图区域 · 右键或 Esc 取消"; color: #ffffff; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+        Text { text: I18n.so_hint; color: #ffffff; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
     }
     if root.has-selection && !root.dragging : Rectangle {
         x: ((root.sel-x + root.sel-w) * 1px - 198px).clamp(4px, root.screen-width - 202px);
         y: ((root.sel-y + root.sel-h) * 1px + 8px).clamp(4px, root.screen-height - 38px);
         width: 198px; height: 34px; border-radius: 7px; background: #282828ee;
         HorizontalLayout { padding-left: 4px; padding-right: 4px; padding-top: 3px; padding-bottom: 3px; spacing: 5px;
-            OverlayButton { label: "全屏"; triggered => { root.select-all(); } }
-            OverlayButton { label: "完成"; primary: true; triggered => { root.finish(); } }
-            OverlayButton { label: "取消"; triggered => { root.canceled(); } }
+            OverlayButton { label: I18n.so_fullscreen; triggered => { root.select-all(); } }
+            OverlayButton { label: I18n.common_done; primary: true; triggered => { root.finish(); } }
+            OverlayButton { label: I18n.common_cancel; triggered => { root.canceled(); } }
         }
     }
     keys := FocusScope {

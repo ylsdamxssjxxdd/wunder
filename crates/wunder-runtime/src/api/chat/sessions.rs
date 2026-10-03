@@ -869,12 +869,7 @@ async fn submit_message_feedback(
         .kernel
         .orchestrator
         .committer
-        .set_feedback(
-            &resolved.user.user_id,
-            &session_id,
-            &item_id,
-            vote,
-        )
+        .set_feedback(&resolved.user.user_id, &session_id, &item_id, vote)
         .await
         .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
     {

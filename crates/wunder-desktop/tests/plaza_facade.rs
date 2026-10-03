@@ -38,7 +38,14 @@ const WORKER_CARD_ARTIFACT: &str = r#"{
     "runtime": { "model_name": "", "approval_mode": "suggest" }
 }"#;
 
-fn plant_item(runtime: &NativeDesktop, root: &Path, item_id: &str, kind: &str, artifact: &str, updated_at: f64) {
+fn plant_item(
+    runtime: &NativeDesktop,
+    root: &Path,
+    item_id: &str,
+    kind: &str,
+    artifact: &str,
+    updated_at: f64,
+) {
     let artifact_path = root.join(format!("{item_id}.artifact"));
     std::fs::write(&artifact_path, artifact).expect("artifact file");
     let record = serde_json::json!({
@@ -67,14 +74,10 @@ fn plant_item(runtime: &NativeDesktop, root: &Path, item_id: &str, kind: &str, a
         .expect("plant plaza meta");
 }
 
-
 /// Plaza fixtures live in their own OS temp dir; the leaked runtime tempdir
 /// keeps the process alive for the whole test either way.
 fn fixture_dir() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "wunder-plaza-fixtures-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("wunder-plaza-fixtures-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("fixture dir");
     dir
 }
@@ -84,20 +87,46 @@ fn plaza_lists_normal_assets_and_hides_swarm_packs() {
     let runtime = start_isolated().expect("isolated runtime");
     let fixtures = fixture_dir();
 
-    plant_item(&runtime, &fixtures, "card-1", "worker_card", WORKER_CARD_ARTIFACT, 100.0);
-    plant_item(&runtime, &fixtures, "pack-1", "skill_pack", "skill-archive-placeholder", 200.0);
-    plant_item(&runtime, &fixtures, "hive-1", "hive_pack", "swarm-pack-placeholder", 300.0);
+    plant_item(
+        &runtime,
+        &fixtures,
+        "card-1",
+        "worker_card",
+        WORKER_CARD_ARTIFACT,
+        100.0,
+    );
+    plant_item(
+        &runtime,
+        &fixtures,
+        "pack-1",
+        "skill_pack",
+        "skill-archive-placeholder",
+        200.0,
+    );
+    plant_item(
+        &runtime,
+        &fixtures,
+        "hive-1",
+        "hive_pack",
+        "swarm-pack-placeholder",
+        300.0,
+    );
 
     let items = runtime.list_plaza_items(None).expect("list");
     let ids: Vec<String> = items.iter().map(|item| item.item_id.clone()).collect();
     assert!(ids.contains(&"card-1".to_string()), "worker card missing");
     assert!(ids.contains(&"pack-1".to_string()), "skill pack missing");
-    assert!(!ids.contains(&"hive-1".to_string()), "hive pack leaked into desktop plaza");
+    assert!(
+        !ids.contains(&"hive-1".to_string()),
+        "hive pack leaked into desktop plaza"
+    );
     // Newest first ordering.
     assert_eq!(ids.first().map(String::as_str), Some("pack-1"));
 
     // Kind filters stay inside the desktop kinds.
-    let cards = runtime.list_plaza_items(Some("worker_card")).expect("cards");
+    let cards = runtime
+        .list_plaza_items(Some("worker_card"))
+        .expect("cards");
     assert_eq!(cards.len(), 1);
     assert_eq!(cards[0].item_id, "card-1");
     assert!(runtime.list_plaza_items(Some("hive_pack")).is_err());
@@ -113,7 +142,14 @@ fn plaza_lists_normal_assets_and_hides_swarm_packs() {
 fn plaza_import_refuses_unknown_and_swarm_items() {
     let runtime = start_isolated().expect("isolated runtime");
     let fixtures = fixture_dir();
-    plant_item(&runtime, &fixtures, "hive-2", "hive_pack", "swarm-pack", 10.0);
+    plant_item(
+        &runtime,
+        &fixtures,
+        "hive-2",
+        "hive_pack",
+        "swarm-pack",
+        10.0,
+    );
 
     assert!(runtime.import_plaza_item("missing-item").is_err());
     let error = runtime
@@ -126,7 +162,14 @@ fn plaza_import_refuses_unknown_and_swarm_items() {
 fn plaza_import_creates_agent_from_worker_card() {
     let runtime = start_isolated().expect("isolated runtime");
     let fixtures = fixture_dir();
-    plant_item(&runtime, &fixtures, "card-2", "worker_card", WORKER_CARD_ARTIFACT, 5.0);
+    plant_item(
+        &runtime,
+        &fixtures,
+        "card-2",
+        "worker_card",
+        WORKER_CARD_ARTIFACT,
+        5.0,
+    );
 
     let outcome = runtime.import_plaza_item("card-2").expect("import");
     assert_eq!(outcome.kind, "worker_card");
@@ -137,7 +180,9 @@ fn plaza_import_creates_agent_from_worker_card() {
     assert!(agents
         .iter()
         .any(|agent| agent.id == outcome.imported_agent_id));
-    runtime.delete_agent(&outcome.imported_agent_id).expect("cleanup");
+    runtime
+        .delete_agent(&outcome.imported_agent_id)
+        .expect("cleanup");
     runtime
         .state()
         .storage

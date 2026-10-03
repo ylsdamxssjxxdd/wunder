@@ -781,6 +781,7 @@ impl ChannelHub {
 
     pub(super) async fn weixin_long_connection_supervisor_loop(&self) {
         let mut workers: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
+        let mut disabled_logged = false;
         loop {
             workers.retain(|_, handle| !handle.is_finished());
             let config = self.config_store.get().await;
@@ -792,9 +793,20 @@ impl ChannelHub {
                     "channels.long_connection.weixin.supervisor",
                     "disabled",
                 );
+                if !disabled_logged {
+                    self.record_runtime_info(
+                        weixin::WEIXIN_CHANNEL,
+                        None,
+                        "long_connection_disabled",
+                        "weixin long connection supervisor disabled by runtime configuration"
+                            .to_string(),
+                    );
+                    disabled_logged = true;
+                }
                 sleep(Duration::from_secs(WEIXIN_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
                 continue;
             }
+            disabled_logged = false;
 
             match self.list_weixin_long_connection_targets().await {
                 Ok(targets) => {
@@ -916,6 +928,15 @@ impl ChannelHub {
 
             match response {
                 Ok(result) => {
+                    self.record_runtime_info(
+                        weixin::WEIXIN_CHANNEL,
+                        Some(&target.account_id),
+                        "long_connection_poll_succeeded",
+                        format!(
+                            "weixin getupdates succeeded: msgs_count={}",
+                            result.msgs.len()
+                        ),
+                    );
                     if let Some(timeout_ms) =
                         result.longpolling_timeout_ms.filter(|value| *value > 0)
                     {
@@ -991,6 +1012,16 @@ impl ChannelHub {
                         &result.msgs,
                         &target.account_id,
                         &target.config,
+                    );
+                    self.record_runtime_info(
+                        weixin::WEIXIN_CHANNEL,
+                        Some(&target.account_id),
+                        "long_connection_messages_extracted",
+                        format!(
+                            "weixin inbound extraction: raw_count={}, accepted_count={}",
+                            result.msgs.len(),
+                            messages.len()
+                        ),
                     );
                     if messages.is_empty() {
                         sleep(weixin_idle_poll_sleep_duration(

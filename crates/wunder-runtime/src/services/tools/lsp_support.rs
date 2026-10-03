@@ -143,4 +143,3 @@ pub(crate) async fn touch_lsp_file(
         "error": error
     })
 }
-

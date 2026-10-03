@@ -158,7 +158,7 @@ pub fn install(app: &MainWindow) {
         }
     });
     let weak = app.as_weak();
-    app.on_save_runtime(move |workspace, language| {
+    app.on_save_runtime(move |workspace, language, _python, _git, _rg| {
         if let Some(app) = weak.upgrade() {
             app.set_workspace_root(workspace);
             app.set_runtime_language(language);

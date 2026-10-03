@@ -17,6 +17,56 @@ export type AgentRuntimeRefreshDetail = {
   completedTurns?: AgentRuntimeCompletion[];
 };
 
+// Completion frames can be observed by more than one controller instance
+// during route replacement.  Keep the idempotency boundary outside a
+// component so an old and a new listener cannot both show the same toast.
+// This is deliberately bounded and time based; it is only a presentation
+// guard, while the durable turn log remains the source of truth.
+const completionClaims = new Map<string, number>();
+const COMPLETION_CLAIM_TTL_MS = 10 * 60 * 1000;
+const COMPLETION_CLAIM_LIMIT = 2048;
+
+export const claimAgentRuntimeCompletion = (sessionId: unknown, turnId: unknown): boolean => {
+  const session = String(sessionId ?? '').trim();
+  const turn = String(turnId ?? '').trim();
+  if (!session || !turn) return false;
+  const now = Date.now();
+  for (const [key, claimedAt] of completionClaims) {
+    if (now - claimedAt > COMPLETION_CLAIM_TTL_MS) completionClaims.delete(key);
+  }
+  const key = `${session}:${turn}`;
+  if (completionClaims.has(key)) return false;
+  completionClaims.set(key, now);
+  while (completionClaims.size > COMPLETION_CLAIM_LIMIT) {
+    const oldest = completionClaims.keys().next().value;
+    if (!oldest) break;
+    completionClaims.delete(oldest);
+  }
+  return true;
+};
+
+/** Claim the aggregate fallback notification for the same agent. */
+export const claimAgentRuntimeAgentCompletion = (agentId: unknown): boolean => {
+  const agent = String(agentId ?? '').trim();
+  if (!agent) return false;
+  const now = Date.now();
+  for (const [key, claimedAt] of completionClaims) {
+    if (now - claimedAt > COMPLETION_CLAIM_TTL_MS) completionClaims.delete(key);
+  }
+  const key = `agent:${agent}`;
+  const previous = completionClaims.get(key);
+  // Aggregate state has no turn identity, so keep this fallback claim short;
+  // a later independent task for the same agent must still be announceable.
+  if (previous !== undefined && now - previous < 15_000) return false;
+  completionClaims.set(key, now);
+  while (completionClaims.size > COMPLETION_CLAIM_LIMIT) {
+    const oldest = completionClaims.keys().next().value;
+    if (!oldest) break;
+    completionClaims.delete(oldest);
+  }
+  return true;
+};
+
 export const emitWorkspaceRefresh = (detail = {}) => {
   if (typeof window === 'undefined') return;
   const payload = detail && typeof detail === 'object' ? detail : { detail };

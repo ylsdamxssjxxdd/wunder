@@ -333,7 +333,10 @@ async fn assistant_terminal_history_upserts_the_registered_stream_item() {
         .cloned()
         .expect("stable assistant item");
     assert_eq!(item["payload"]["content"], "done");
-    assert_eq!(item["payload"]["meta"]["message_stats"]["visible_decode_speed_tps"], 42.0);
+    assert_eq!(
+        item["payload"]["meta"]["message_stats"]["visible_decode_speed_tps"],
+        42.0
+    );
     assert_eq!(item["payload"]["reasoning_content"], "thinking");
     assert_eq!(
         state
@@ -575,12 +578,7 @@ async fn freeze_system_prompt_append_wakes_feeder_with_snapshot() {
 
     let item = state
         .workspace
-        .build_session_system_prompt_item(
-            "user-a",
-            "session-a",
-            "你是测试助手。",
-            Some("zh"),
-        )
+        .build_session_system_prompt_item("user-a", "session-a", "你是测试助手。", Some("zh"))
         .expect("build system prompt item")
         .expect("system prompt item");
     // The unified commit exit persists the append and publishes the receipt
