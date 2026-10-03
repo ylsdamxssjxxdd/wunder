@@ -158,6 +158,14 @@ pub trait ThreadLogStore {
         include_internal: bool,
     ) -> Result<(i64, i64)>;
     fn latest_thread_user_round_by_session(&self, session_id: &str) -> Result<i64>;
+    /// Return the latest durable user-turn status for each requested session.
+    /// The result is bounded by the supplied session ids and is used by the
+    /// session catalog so detached threads retain their terminal state.
+    fn latest_thread_turn_statuses(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<HashMap<String, String>>;
     fn get_thread_turn(
         &self,
         user_id: &str,

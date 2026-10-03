@@ -1730,7 +1730,9 @@ const applySessionIdle = (
       if (message.display) clearProjectedRetryDisplay(message.display);
     }
   });
-  session.runtimeStatus = 'idle';
+  if (!['completed', 'failed', 'cancelled', 'system_error'].includes(session.runtimeStatus)) {
+    session.runtimeStatus = 'idle';
+  }
   session.busyReason = null;
 };
 
@@ -1744,7 +1746,7 @@ const applySessionRuntime = (
     return;
   }
   if (explicitStatus === 'completed') {
-    session.runtimeStatus = hasActiveMessage(session) ? 'running' : 'idle';
+    session.runtimeStatus = hasActiveMessage(session) ? 'running' : 'completed';
     session.busyReason = hasActiveMessage(session) ? (session.busyReason || 'streaming') : null;
     return;
   }
@@ -6878,7 +6880,7 @@ const deriveSessionRuntime = (session: ChatRuntimeSessionProjection): void => {
     return;
   }
   if (session.runtimeStatus === 'completed') {
-    session.runtimeStatus = 'idle';
+    // Preserve terminal state for detached work-thread rows.
     session.busyReason = null;
     return;
   }

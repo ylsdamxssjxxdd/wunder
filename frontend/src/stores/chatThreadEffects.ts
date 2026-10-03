@@ -77,11 +77,17 @@ export const applyChatThreadEffects = (store, key: string, changes: ThreadChange
       const completedTurns: AgentRuntimeCompletion[] = changes
         .filter((change) =>
           (change.change_type === 'turn_upsert' || change.change_type === 'turn_status') &&
-          String(change.data.status ?? '').toLowerCase() === 'completed'
+          ['completed', 'failed', 'cancelled', 'canceled', 'interrupted', 'stopped']
+            .includes(String(change.data.status ?? '').toLowerCase())
         )
         .map((change) => ({
           sessionId: key,
           turnId: String(change.data.turn_id ?? change.turn_id ?? '').trim(),
+          status: String(change.data.status ?? '').toLowerCase() === 'failed'
+            ? 'failed' as const
+            : ['cancelled', 'canceled', 'interrupted', 'stopped'].includes(String(change.data.status ?? '').toLowerCase())
+              ? 'cancelled' as const
+              : 'completed' as const,
           ...(agentId ? { agentId: String(agentId) } : {})
         }))
         .filter((completion) => Boolean(completion.turnId));

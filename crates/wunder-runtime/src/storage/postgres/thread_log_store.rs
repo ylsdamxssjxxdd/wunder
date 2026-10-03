@@ -102,6 +102,11 @@ pub(super) trait PostgresThreadLogStorage {
         include_internal: bool,
     ) -> Result<(i64, i64)>;
     fn latest_thread_user_round_by_session_impl(&self, session_id: &str) -> Result<i64>;
+    fn latest_thread_turn_statuses_impl(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, String>>;
     fn get_thread_turn_impl(
         &self,
         user_id: &str,
@@ -797,6 +802,40 @@ impl PostgresThreadLogStorage for PostgresStorage {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
         Ok(conn.query_one("SELECT COALESCE(MAX(user_turn_index),0) FROM thread_turns WHERE session_id=$1 AND trigger_kind='user'", &[&session_id])?.get(0))
+    }
+    fn latest_thread_turn_statuses_impl(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, String>> {
+        self.ensure_initialized()?;
+        let ids = session_ids
+            .iter()
+            .map(|id| id.trim())
+            .filter(|id| !id.is_empty())
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let mut conn = self.conn()?;
+        let placeholders = std::iter::repeat("$")
+            .take(ids.len())
+            .enumerate()
+            .map(|(index, _)| format!("${}", index + 2))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!("SELECT session_id,status FROM (SELECT session_id,status,ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY user_turn_index DESC) AS row_number FROM thread_turns WHERE user_id=$1 AND trigger_kind='user' AND session_id IN ({placeholders})) AS latest WHERE row_number=1");
+        let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+            Vec::with_capacity(ids.len() + 1);
+        params.push(&user_id);
+        for id in &ids {
+            params.push(id);
+        }
+        let rows = conn.query(&sql, &params)?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
+            .collect())
     }
     fn get_thread_turn_impl(
         &self,

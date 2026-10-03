@@ -1605,11 +1605,14 @@ export const syncChatRuntimeProjectionFromSnapshot = (
     options.running === undefined
       ? loading || isThreadRuntimeBusy(runtime?.threadStatus)
       : Boolean(options.running);
+  const currentStatus = normalizeThreadRuntimeStatus(runtime?.threadStatus);
   const snapshotRuntimeStatus = running || loading
     ? 'running'
-    : normalizeThreadRuntimeStatus(runtime?.threadStatus) === 'queued'
+    : currentStatus === 'queued'
       ? 'queued'
-      : 'idle';
+      : currentStatus === 'completed' || currentStatus === 'failed' || currentStatus === 'cancelled'
+        ? currentStatus
+        : 'idle';
   const result = applyChatRuntimeEvent(projection, {
     event_type: 'session_snapshot',
     source: 'snapshot',

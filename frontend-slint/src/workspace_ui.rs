@@ -1,6 +1,5 @@
 //! Independent, single-flight workspace projection shared by the dock and files page.
 use crate::{FileCard, MainWindow};
-use anyhow::anyhow;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -543,7 +542,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             let result = match save_windows_file("保存到本机", &name) {
                 Some(target) => {
                     api.export_workspace_file(&agent, &path, &target)
-                        .map(|_| target),
+                        .map(|_| target)
                 }
                 None => Err(anyhow::anyhow!("已取消选择")),
             };

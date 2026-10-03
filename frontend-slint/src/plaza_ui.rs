@@ -1,5 +1,5 @@
 use crate::{MainWindow, PlazaItemCard};
-use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::sync::Arc;
 use wunder_desktop::NativeDesktop;
 

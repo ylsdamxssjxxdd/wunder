@@ -378,6 +378,9 @@ const resolveBubbleStatus = (
   if (textItems.some((item) => item.status === 'failed')) return { status: 'failed', final: false, failed: true, cancelled: false };
   if (textItems.some((item) => item.status === 'cancelled')) return { status: 'cancelled', final: false, failed: false, cancelled: true };
   if (turnStatus === 'queued') return { status: 'queued', final: false, failed: false, cancelled: false };
+  if (turnStatus === 'waiting' || turnStatus === 'waiting_input' || turnStatus === 'waiting_user_input' || turnStatus === 'waiting_approval') {
+    return { status: 'queued', final: false, failed: false, cancelled: false };
+  }
   if (workflows.some((item) => item.kind !== 'queue' && isActiveItemStatus(item.status))) {
     return { status: 'tooling', final: false, failed: false, cancelled: false };
   }

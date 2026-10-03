@@ -214,6 +214,13 @@ impl ThreadLogStore for PostgresStorage {
     fn latest_thread_user_round_by_session(&self, session_id: &str) -> Result<i64> {
         self.latest_thread_user_round_by_session_impl(session_id)
     }
+    fn latest_thread_turn_statuses(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, String>> {
+        self.latest_thread_turn_statuses_impl(user_id, session_ids)
+    }
     fn get_thread_turn(
         &self,
         user_id: &str,

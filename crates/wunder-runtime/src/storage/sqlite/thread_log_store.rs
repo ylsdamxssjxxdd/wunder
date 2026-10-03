@@ -102,6 +102,11 @@ pub(super) trait SqliteThreadLogStorage {
         include_internal: bool,
     ) -> Result<(i64, i64)>;
     fn latest_thread_user_round_by_session_impl(&self, session_id: &str) -> Result<i64>;
+    fn latest_thread_turn_statuses_impl(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, String>>;
     fn get_thread_turn_impl(
         &self,
         user_id: &str,
@@ -404,7 +409,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         user_turn_index: i64,
     ) -> Result<Option<String>> {
         self.ensure_initialized()?;
-        let mut conn = self.open()?;
+        let conn = self.open()?;
         Ok(conn.query_row("SELECT turn_id FROM thread_turns WHERE user_id=? AND session_id=? AND user_turn_index=? AND trigger_kind='user'", params![user_id,session_id,user_turn_index], |r| r.get(0)).optional()?)
     }
     fn accept_thread_turn_impl(
@@ -753,7 +758,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         limit: i64,
     ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
-        let mut conn = self.open()?;
+        let conn = self.open()?;
         let before = before.unwrap_or(i64::MAX);
         let limit = limit.clamp(1, 101);
         Ok({
@@ -789,6 +794,40 @@ impl SqliteThreadLogStorage for SqliteStorage {
         let conn = self.open()?;
         Ok(conn.query_row("SELECT COALESCE(MAX(user_turn_index),0) FROM thread_turns WHERE session_id=? AND trigger_kind='user'", params![session_id], |r| r.get(0))?)
     }
+    fn latest_thread_turn_statuses_impl(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, String>> {
+        self.ensure_initialized()?;
+        let ids = session_ids
+            .iter()
+            .map(|id| id.trim())
+            .filter(|id| !id.is_empty())
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let conn = self.open()?;
+        let placeholders = std::iter::repeat("?")
+            .take(ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT session_id,status FROM (SELECT session_id,status,ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY user_turn_index DESC) AS row_number FROM thread_turns WHERE user_id=? AND trigger_kind='user' AND session_id IN ({placeholders})) WHERE row_number=1"
+        );
+        let mut values = Vec::with_capacity(ids.len() + 1);
+        values.push(rusqlite::types::Value::Text(user_id.to_owned()));
+        values.extend(
+            ids.into_iter()
+                .map(|id| rusqlite::types::Value::Text(id.to_owned())),
+        );
+        let mut statement = conn.prepare(&sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(values), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<std::collections::HashMap<_, _>>>()?)
+    }
     fn get_thread_turn_impl(
         &self,
         user_id: &str,
@@ -799,7 +838,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         include_internal: bool,
     ) -> Result<Option<Value>> {
         self.ensure_initialized()?;
-        let mut conn = self.open()?;
+        let conn = self.open()?;
         let limit = limit.clamp(1, 100);
         let fetch = limit + 1;
         let mut turns = {
@@ -1021,7 +1060,7 @@ impl SqliteThreadLogStorage for SqliteStorage {
         limit: i64,
     ) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
-        let mut conn = self.open()?;
+        let conn = self.open()?;
         let limit = limit.clamp(1, 500);
         let after = after.max(0);
         let earliest: Option<i64> = conn.query_row(

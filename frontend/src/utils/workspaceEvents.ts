@@ -5,6 +5,7 @@ export type AgentRuntimeCompletion = {
   sessionId: string;
   turnId: string;
   agentId?: string;
+  status?: 'completed' | 'failed' | 'cancelled';
 };
 
 export type AgentRuntimeRefreshDetail = {

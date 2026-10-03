@@ -708,6 +708,29 @@ export function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerCon
               });
               agentRuntimeSessionSnapshot = nextSessionMap;
               reconcileSettledAgentRuntimeSessions(runtimeItems);
+              // The aggregate runtime endpoint is also authoritative for
+              // detached work-thread rows. Keep the catalog row in sync even
+              // when its websocket is not mounted in the foreground.
+              runtimeItems.forEach((item) => {
+                  const sessionId = String(item.sessionId || '').trim();
+                  if (!sessionId) return;
+                  const session = ctx.chatStore.sessions?.find((entry) => String(entry?.id || '').trim() === sessionId);
+                  if (!session) return;
+                  const catalogStatus = item.state === 'running'
+                      ? 'running'
+                      : item.state === 'pending'
+                          ? 'queued'
+                          : item.state === 'error'
+                              ? 'failed'
+                              : item.state === 'done'
+                                  ? 'completed'
+                                  : '';
+                  if (!catalogStatus) return;
+                  session.runtime_status = catalogStatus;
+                  session.runtimeStatus = catalogStatus;
+                  session.thread_status = catalogStatus;
+                  session.threadStatus = catalogStatus;
+              });
               ctx.handleAgentRuntimeStateUpdate(stateMap);
               reconcileTerminalAgentRuntimeStatesFromSessions('running-agents-refresh', previousStateMap);
               ctx.runningAgentsLoadedAt = Date.now();
@@ -997,9 +1020,10 @@ export function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerCon
           sessionCount: Array.isArray(ctx.chatStore.sessions) ? ctx.chatStore.sessions.length : 0
       });
       try {
-          await ctx.chatStore.loadSessions({
+      await ctx.chatStore.loadSessions({
               traceId,
-              traceSource: ctx.messengerSessionRefreshTraceSource.value
+              traceSource: ctx.messengerSessionRefreshTraceSource.value,
+              force: true
           });
           await ctx.chatStore.ensureActiveSessionRealtime?.({
               reason: 'realtime-pulse',

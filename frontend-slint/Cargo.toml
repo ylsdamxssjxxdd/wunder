@@ -6,6 +6,7 @@ rust-version = "1.92"
 publish = false
 
 [dependencies]
+anyhow = "1"
 wunder-desktop = { path = "../crates/wunder-desktop", default-features = false, features = ["sqlite-storage", "desktop-control"] }
 wunder-runtime = { path = "../crates/wunder-runtime", default-features = false, features = ["sqlite-storage"] }
 slint = { version = "=1.18.0", default-features = false, features = [

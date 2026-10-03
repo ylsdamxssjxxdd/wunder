@@ -317,9 +317,26 @@ async fn list_sessions(
         .iter()
         .map(|record| record.session_id.clone())
         .collect::<Vec<_>>();
+    let durable_turn_statuses = state
+        .storage
+        .latest_thread_turn_statuses(&resolved.user.user_id, &session_ids)
+        .unwrap_or_default();
     let usage_by_session = state.monitor.session_usage_summaries(&session_ids);
     for record in &sessions {
         let mut payload = session_payload(record);
+        let monitor = state.monitor.get_record(&record.session_id);
+        let runtime_status = resolve_catalog_runtime_status(
+            monitor.as_ref(),
+            record.status.as_str(),
+            durable_turn_statuses
+                .get(&record.session_id)
+                .map(String::as_str),
+        );
+        if let Value::Object(map) = &mut payload {
+            map.insert("runtime_status".to_string(), json!(runtime_status));
+            map.insert("runtimeStatus".to_string(), json!(runtime_status));
+            map.insert("thread_status".to_string(), json!(runtime_status));
+        }
         if let Some((consumed_tokens, tool_calls, quota_used)) =
             usage_by_session.get(&record.session_id)
         {
@@ -1664,6 +1681,53 @@ fn session_payload(record: &crate::storage::ChatSessionRecord) -> Value {
         "spawn_label": record.spawn_label,
         "spawned_by": record.spawned_by,
     })
+}
+
+/// The catalog is also used while a thread is not foregrounded, so its state
+/// cannot depend on the currently mounted websocket watcher. Keep the durable
+/// chat status separate from the catalog `active`/`archived` flag and expose
+/// the monitor lifecycle when available.
+fn resolve_catalog_runtime_status(
+    monitor: Option<&Value>,
+    session_status: &str,
+    durable_turn_status: Option<&str>,
+) -> &'static str {
+    match monitor
+        .and_then(|value| value.get("status"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("running") | Some("cancelling") => "running",
+        Some("queued") => "queued",
+        Some("waiting") => "waiting_user_input",
+        Some("finished") | Some("completed") => "completed",
+        Some("error") | Some("failed") => "failed",
+        Some("cancelled") | Some("canceled") | Some("interrupted") => "cancelled",
+        _ => match durable_turn_status
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("queued") | Some("admitted") | Some("accepted") => "queued",
+            Some("running") | Some("streaming") | Some("executing") => "running",
+            Some("waiting")
+            | Some("waiting_input")
+            | Some("waiting_user_input")
+            | Some("waiting_approval") => "waiting_user_input",
+            Some("completed") | Some("finished") | Some("done") => "completed",
+            Some("failed") | Some("error") | Some("system_error") => "failed",
+            Some("cancelled") | Some("canceled") | Some("interrupted") => "cancelled",
+            _ if session_status
+                .trim()
+                .eq_ignore_ascii_case(CHAT_SESSION_STATUS_ARCHIVED) =>
+            {
+                "idle"
+            }
+            _ => "idle",
+        },
+    }
 }
 
 fn insert_session_orchestration_lock_fields(

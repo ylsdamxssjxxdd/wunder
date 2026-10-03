@@ -22,6 +22,26 @@ export const mergeSessionRuntimeFields = (
     ...currentRecord,
     ...incomingRecord
   } as ChatSessionLike;
+  const runtimeKey = (record: ChatSessionLike): string => String(
+    record.runtime_status ?? record.runtimeStatus ?? record.thread_status ?? record.threadStatus ?? ''
+  ).trim().toLowerCase();
+  const currentRuntime = runtimeKey(currentRecord);
+  const incomingRuntime = runtimeKey(incomingRecord);
+  const terminalOrBusy = new Set([
+    'running', 'queued', 'waiting', 'waiting_approval', 'waiting_user_input',
+    'completed', 'finished', 'done', 'failed', 'error', 'cancelled', 'canceled',
+    'interrupted', 'stopped'
+  ]);
+  // A catalog refresh can race a terminal frame and briefly return only the
+  // generic session `active` state. Do not erase a known runtime state with
+  // that transport placeholder; a real running/terminal value still wins.
+  if (terminalOrBusy.has(currentRuntime) &&
+      (!incomingRuntime || ['active', 'idle', 'not_loaded'].includes(incomingRuntime))) {
+    merged.runtime_status = currentRecord.runtime_status ?? currentRecord.runtimeStatus;
+    merged.runtimeStatus = currentRecord.runtimeStatus ?? currentRecord.runtime_status;
+    if (currentRecord.thread_status !== undefined) merged.thread_status = currentRecord.thread_status;
+    if (currentRecord.threadStatus !== undefined) merged.threadStatus = currentRecord.threadStatus;
+  }
   const quotaUsed = mergeSessionQuotaUsed(currentRecord, incomingRecord);
   if (quotaUsed !== null) {
     merged.model_request_count = quotaUsed;

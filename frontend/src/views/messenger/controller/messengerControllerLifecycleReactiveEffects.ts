@@ -1203,6 +1203,14 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           for (const completion of detail?.completedTurns ?? []) {
               const sessionId = String(completion?.sessionId || '').trim();
               const turnId = String(completion?.turnId || '').trim();
+              const terminalStatus = completion?.status || 'completed';
+              const catalogSession = ctx.chatStore.sessions?.find((session) => String(session?.id || '').trim() === sessionId);
+              if (catalogSession) {
+                  catalogSession.runtime_status = terminalStatus;
+                  catalogSession.runtimeStatus = terminalStatus;
+                  catalogSession.thread_status = terminalStatus;
+                  catalogSession.threadStatus = terminalStatus;
+              }
               const agentId = ctx.normalizeAgentId(completion?.agentId ||
                   ctx.buildSessionAgentMap().get(sessionId));
               const noticeKey = `${sessionId}:${turnId}`;

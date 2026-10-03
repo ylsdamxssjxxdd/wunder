@@ -392,6 +392,13 @@ export const chatSendActions = {
       const nextLocalStreamRound = maxKnownStreamRound + 1;
       const assistantMessageRaw = {
         ...buildMessage('assistant', ''),
+        // Publish the local turn lifecycle immediately.  The canonical
+        // websocket projection arrives asynchronously; without an explicit
+        // running state the avatar briefly renders as idle between the local
+        // placeholder and the first runtime frame.
+        state: 'running',
+        runtime_status: 'running',
+        runtimeStatus: 'running',
         ...(bootstrappingDraftSession ? { draft_session_bootstrap: true } : {}),
         workflowItems: [],
         workflowStreaming: true,
