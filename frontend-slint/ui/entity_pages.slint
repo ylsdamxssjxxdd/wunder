@@ -248,6 +248,7 @@ export component SettingsPage inherits Rectangle {
     callback delete-prompt-pack();
     callback export-diagnostics();
     callback reset-work-state();
+    callback open-profile();
     in-out property <string> theme;
     in-out property <string> send-key;
     in property <[PromptPackCard]> prompt-packs;
@@ -274,18 +275,39 @@ export component SettingsPage inherits Rectangle {
             Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
             VerticalLayout {
                 spacing: 0px;
-                MiddleHeader { title: I18n.menu_settings; subtitle: I18n.st_subtitle; }
-                Rectangle { height: 14px; }
-                HorizontalLayout { padding-left: 16px; Text { height: 22px; text: I18n.st_items; color: Theme.text; font-size: Theme.font-md; font-weight: 600; } }
                 Rectangle { height: 6px; }
-                VerticalLayout { alignment: start; padding-left: 8px; padding-right: 8px; spacing: 4px;
-                    Action { height: 38px; width: parent.width; icon: @image-url("../assets/icons/robot.svg"); label: I18n.common_model_config; show-label: true; selected: root.settings-tab == 0; clicked => { root.settings-tab = 0; } }
-                    Action { height: 38px; width: parent.width; icon: @image-url("../assets/icons/gear.svg"); label: I18n.common_local_runtime; show-label: true; selected: root.settings-tab == 1; clicked => { root.settings-tab = 1; } }
-                    Action { height: 38px; width: parent.width; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: I18n.st_tab_tools; show-label: true; selected: root.settings-tab == 2; clicked => { root.settings-tab = 2; } }
-                    Action { height: 38px; width: parent.width; icon: @image-url("../assets/icons/comments.svg"); label: I18n.st_tab_help; show-label: true; selected: root.settings-tab == 3; clicked => { root.settings-tab = 3; } }
-                    Action { height: 38px; width: parent.width; icon: @image-url("../assets/icons/gear.svg"); label: I18n.st_tab_general; show-label: true; selected: root.settings-tab == 4; clicked => { root.settings-tab = 4; } }
-                    Action { height: 38px; width: parent.width; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: I18n.st_tab_prompts; show-label: true; selected: root.settings-tab == 5; clicked => { root.settings-tab = 5; root.refresh-prompt-packs(); } }
+                // The settings middle pane follows the web client's compact
+                // navigation card instead of a generic page heading.
+                Rectangle {
+                    height: 84px; x: 10px; width: parent.width - 20px;
+                    border-radius: Theme.radius-xl; background: Theme.accent;
+                    Image { x: 16px; y: 18px; width: 48px; height: 48px; source: @image-url("../assets/icons/gear.svg"); colorize: white; }
+                    Text { x: 76px; y: 17px; width: parent.width - 88px; height: 22px; text: I18n.menu_settings; color: white; font-size: Theme.font-lg; font-weight: 700; overflow: elide; }
+                    Text { x: 76px; y: 42px; width: parent.width - 88px; height: 17px; text: I18n.st_subtitle; color: #ffffffdd; font-size: Theme.font-xs; overflow: elide; }
+                    TouchArea { mouse-cursor: pointer; clicked => { root.settings-tab = 4; } }
                 }
+                Rectangle { height: 12px; }
+                VerticalLayout { alignment: start; padding-left: 10px; padding-right: 10px; spacing: 6px;
+                    Rectangle { height: 58px; border-radius: Theme.radius-lg; background: menu-profile.has-hover ? Theme.accent-soft : transparent;
+                        Image { x: 14px; y: 15px; width: 28px; height: 28px; source: @image-url("../assets/icons/comments.svg"); colorize: Theme.muted; }
+                        Text { x: 54px; y: 10px; width: parent.width - 66px; height: 19px; text: I18n.menu_profile; color: Theme.text; font-size: Theme.font-md; font-weight: 700; overflow: elide; }
+                        Text { x: 54px; y: 29px; width: parent.width - 66px; height: 16px; text: I18n.profile_subtitle; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                        menu-profile := TouchArea { mouse-cursor: pointer; clicked => { root.open-profile(); } }
+                    }
+                    Rectangle { height: 58px; border-radius: Theme.radius-lg; background: root.settings-tab == 5 || menu-prompts.has-hover ? Theme.accent-soft : transparent;
+                        Image { x: 14px; y: 15px; width: 28px; height: 28px; source: @image-url("../assets/icons/file-type-text.svg"); colorize: Theme.muted; }
+                        Text { x: 54px; y: 10px; width: parent.width - 66px; height: 19px; text: I18n.st_tab_prompts; color: Theme.text; font-size: Theme.font-md; font-weight: 700; overflow: elide; }
+                        Text { x: 54px; y: 29px; width: parent.width - 66px; height: 16px; text: I18n.pm_segment_edit; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                        menu-prompts := TouchArea { mouse-cursor: pointer; clicked => { root.settings-tab = 5; root.refresh-prompt-packs(); } }
+                    }
+                    Rectangle { height: 58px; border-radius: Theme.radius-lg; background: root.settings-tab == 3 || menu-help.has-hover ? Theme.accent-soft : transparent;
+                        Image { x: 14px; y: 15px; width: 28px; height: 28px; source: @image-url("../assets/icons/file-lines.svg"); colorize: Theme.muted; }
+                        Text { x: 54px; y: 10px; width: parent.width - 66px; height: 19px; text: I18n.st_tab_help; color: Theme.text; font-size: Theme.font-md; font-weight: 700; overflow: elide; }
+                        Text { x: 54px; y: 29px; width: parent.width - 66px; height: 16px; text: I18n.st_help_native_note; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                        menu-help := TouchArea { mouse-cursor: pointer; clicked => { root.settings-tab = 3; } }
+                    }
+                }
+                Rectangle { vertical-stretch: 1; }
                 MiddleFooter { text: root.status; }
             }
         }
@@ -293,13 +315,13 @@ export component SettingsPage inherits Rectangle {
             horizontal-stretch: 1;
             VerticalLayout {
                 spacing: 0px;
-                HorizontalLayout {
+                if root.settings-tab != 4 : HorizontalLayout {
                     height: 62px; padding-left: 14px; padding-right: 14px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
                     VerticalLayout { spacing: 1px; Text { height: 25px; text: root.settings-tab == 0 ? I18n.common_model_config : root.settings-tab == 1 ? I18n.common_local_runtime : root.settings-tab == 2 ? I18n.st_tab_tools : root.settings-tab == 3 ? I18n.st_tab_help : root.settings-tab == 4 ? I18n.st_tab_general : I18n.st_tab_prompts; color: Theme.text; font-size: Theme.font-headline; font-weight: 700; overflow: elide; } Text { height: 17px; text: I18n.st_local_note; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; } }
                     Rectangle { horizontal-stretch: 1; }
                     if root.settings-tab == 0 : Action { icon: @image-url("../assets/icons/plus.svg"); label: I18n.model_editor_add; show-label: true; primary: true; enabled: !root.loading && !root.saving; clicked => { root.create-model(); } }
                 }
-                Rectangle { height: 1px; background: Theme.border; }
+                if root.settings-tab != 4 : Rectangle { height: 1px; background: Theme.border; }
                     if root.settings-tab == 1 : Rectangle { vertical-stretch: 1;
                         VerticalLayout { padding: 24px; spacing: 14px;
                             Text { height: 28px; text: I18n.common_local_runtime; font-size: Theme.font-headline; font-weight: 700; color: Theme.text; }
@@ -381,16 +403,27 @@ export component SettingsPage inherits Rectangle {
                             Rectangle { vertical-stretch: 1; }
                         }
                     }
-                    if root.settings-tab == 4 : Rectangle { vertical-stretch: 1;
-                        VerticalLayout { padding: 24px; spacing: 14px; alignment: start;
-                            Text { height: 28px; text: I18n.st_tab_general; color: Theme.text; font-size: Theme.font-headline; font-weight: 700; }
-                            HorizontalLayout { height: 30px; spacing: 10px; Text { width: 84px; text: I18n.st_theme; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
-                                ComboBox { width: 180px; model: [I18n.st_theme_light]; current-index: 0; enabled: false; } }
-                            HorizontalLayout { height: 30px; spacing: 10px; Text { width: 84px; text: I18n.st_send_key; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
-                                ComboBox { width: 180px; model: [I18n.st_send_enter, I18n.st_send_ctrl_enter]; current-index: root.send-key == "ctrl_enter" ? 1 : 0; enabled: true; selected(index) => { root.send-key = index == 1 ? "ctrl_enter" : "enter"; } }
-                                Text { text: root.send-key == "ctrl_enter" ? I18n.st_send_enter_newline : I18n.st_send_enter_direct; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; } }
-                            Action { width: 110px; label: root.saving ? I18n.common_saving : I18n.st_save_prefs; show-label: true; primary: true; enabled: !root.saving && !root.loading; clicked => { root.save-preferences(); } }
-                            Rectangle { vertical-stretch: 1; }
+                    if root.settings-tab == 4 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                        VerticalLayout { padding: 24px; spacing: 16px; alignment: start;
+                            Rectangle { height: 368px; border-radius: Theme.radius-xl; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                                VerticalLayout { padding: 22px; spacing: 0px;
+                                    HorizontalLayout { height: 62px; Text { text: "当前版本"; color: Theme.text; font-size: Theme.font-display; font-weight: 700; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } Action { width: 108px; height: 36px; icon: @image-url("../assets/icons/rotate-right.svg"); label: I18n.common_refresh; show-label: true; enabled: !root.loading; clicked => { root.refresh(); } } }
+                                    Text { height: 22px; text: "已是最新版本"; color: Theme.muted; font-size: Theme.font-sm; }
+                                    Rectangle { height: 1px; background: Theme.border; }
+                                    HorizontalLayout { height: 70px; Text { text: "版本号"; color: Theme.text; font-size: Theme.font-xl; font-weight: 700; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } Text { text: "0.4.0"; color: Theme.text; font-size: Theme.font-xl; font-weight: 700; vertical-alignment: center; } }
+                                    Rectangle { height: 1px; background: Theme.border; }
+                                    HorizontalLayout { height: 98px; VerticalLayout { spacing: 2px; Text { height: 28px; text: I18n.st_send_key; color: Theme.text; font-size: Theme.font-xl; font-weight: 700; } Text { text: root.send-key == "ctrl_enter" ? I18n.st_send_enter_newline : I18n.st_send_enter_direct; color: Theme.muted; font-size: Theme.font-sm; } } Rectangle { horizontal-stretch: 1; } ComboBox { width: 180px; height: 38px; model: [I18n.st_send_enter, I18n.st_send_ctrl_enter]; current-index: root.send-key == "ctrl_enter" ? 1 : 0; selected(index) => { root.send-key = index == 1 ? "ctrl_enter" : "enter"; } } }
+                                    Rectangle { height: 1px; background: Theme.border; }
+                                    HorizontalLayout { height: 84px; VerticalLayout { spacing: 2px; Text { height: 28px; text: I18n.st_theme; color: Theme.text; font-size: Theme.font-xl; font-weight: 700; } Text { text: I18n.st_theme_light; color: Theme.muted; font-size: Theme.font-sm; } } Rectangle { horizontal-stretch: 1; } ComboBox { width: 180px; height: 38px; model: [I18n.st_theme_light]; current-index: 0; enabled: false; } }
+                                }
+                            }
+                            Rectangle { height: 112px; border-radius: Theme.radius-xl; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                                VerticalLayout { padding: 22px; spacing: 6px; Text { height: 28px; text: I18n.common_model_config; color: Theme.text; font-size: Theme.font-xl; font-weight: 700; } Text { height: 18px; text: I18n.st_models_note; color: Theme.muted; font-size: Theme.font-sm; overflow: elide; } HorizontalLayout { height: 34px; Rectangle { horizontal-stretch: 1; } Action { width: 108px; height: 32px; icon: @image-url("../assets/icons/robot.svg"); label: I18n.common_model_config; show-label: true; clicked => { root.settings-tab = 0; } } } }
+                            }
+                            Rectangle { height: 112px; border-radius: Theme.radius-xl; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                                VerticalLayout { padding: 22px; spacing: 6px; Text { height: 28px; text: I18n.common_local_runtime; color: Theme.text; font-size: Theme.font-xl; font-weight: 700; } Text { height: 18px; text: I18n.st_workdir_note; color: Theme.muted; font-size: Theme.font-sm; overflow: elide; } HorizontalLayout { height: 34px; Rectangle { horizontal-stretch: 1; } Action { width: 108px; height: 32px; icon: @image-url("../assets/icons/gear.svg"); label: I18n.common_local_runtime; show-label: true; clicked => { root.settings-tab = 1; } } } }
+                            }
+                            Action { width: 110px; height: 34px; label: root.saving ? I18n.common_saving : I18n.st_save_prefs; show-label: true; primary: true; enabled: !root.saving && !root.loading; clicked => { root.save-preferences(); } }
                         }
                     }
                     if root.settings-tab == 5 : HorizontalLayout { vertical-stretch: 1; padding: 8px; spacing: 14px;

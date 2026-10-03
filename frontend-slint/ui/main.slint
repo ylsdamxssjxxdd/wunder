@@ -1,5 +1,5 @@
 import { I18n } from "i18n.slint";
-import { Theme, DesktopPage, Conversation, TextBlock, ChatTurn, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, WorldGroupMemberCard, CronCard, CronRunCard, AgentCardFile, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, PlazaItemCard } from "theme.slint";
+import { Theme, DesktopPage, Conversation, TextBlock, ToolWorkflowEntry, ChatTurn, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, WorldGroupMemberCard, CronCard, CronRunCard, AgentCardFile, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, PlazaItemCard } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, SearchField, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost } from "components.slint";
 import { Composer } from "composer.slint";
 import { MessageRow } from "message.slint";
@@ -12,7 +12,7 @@ import { ChannelsPage } from "channels_page.slint";
 import { PlazaPage } from "plaza_page.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { ListView, ScrollView, ComboBox } from "std-widgets.slint";
-export { Theme, DesktopPage, Conversation, TextBlock, ChatTurn, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, WorldGroupMemberCard, CronCard, CronRunCard, AgentCardFile, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, PlazaItemCard }
+export { Theme, DesktopPage, Conversation, TextBlock, ToolWorkflowEntry, ChatTurn, ChatMessage, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, WorldContactCard, WorldGroupCard, WorldMessageCard, WorldPickRow, WorldGroupMemberCard, CronCard, CronRunCard, AgentCardFile, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, PlazaItemCard }
 export { AppTray } from "tray.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
 
@@ -86,7 +86,24 @@ export component MainWindow inherits Window {
     ];
     in-out property <[FileCard]> files: [];
     in-out property <ChatMessage> greeting: { text: I18n.chat_greeting, avatar-glyph: "✦", avatar-tone: 1 };
-    in-out property <[ChatTurn]> turns: [];
+    // This preview turn is replaced immediately by the native session model.
+    // It intentionally exercises the complete chat row in slint-viewer.
+    in-out property <[ChatTurn]> turns: [{
+        root-id: "preview-workflow",
+        user: { text: "整理工作目录并说明结果", mine: true, time: "现在" },
+        assistant: {
+            text: "已完成目录检查，并整理了可以继续使用的文件。", mine: false, time: "现在",
+            workflow: true,
+            workflow-detail: "读取工作目录\n已读取并整理文件列表\n\n检查文件内容\n已验证文本内容可读取",
+            workflow-items: [
+                { id: "read-dir", title: "读取工作目录", preview: "已读取并整理文件列表", detail: "执行完成\n找到 2 个可用文件，目录结构正常。", state: "completed" },
+                { id: "inspect-file", title: "检查文件内容", preview: "已验证文本内容可读取", detail: "执行完成\n文件内容已读取，未发现格式错误。", state: "completed" }
+            ],
+            reasoning: "先读取目录清单，确认文件类型，再检查文本内容是否可用，最后汇总结果。",
+            stats-status: I18n.ms_state_done, stats-duration: "1.2s", stats-speed: "42.0/s", stats-context: "2.4k", stats-quota: "320", stats-tools: "2", stats-credits: "1",
+            avatar-glyph: "✦", avatar-tone: 1
+        }
+    }];
     in-out property <[AgentCard]> agents: [
         { id: "demo-agent", name: I18n.common_default_agent, description: I18n.demo_agent_desc, model: I18n.common_default_model, system-prompt: "", status: "active", icon-name: "spark", icon-color: "#f97316", icon-glyph: "✦", icon-tone: 1, tool-count: 2, tool-names: [I18n.fail_op_file_action], preset-questions: [], sandbox-container-id: 1, approval-mode: "suggest", preview-skill: false, silent: false, prefer-mother: false, preset-question-count: 0, is-shared: false, group-name: I18n.demo_agent_group }
     ];
@@ -228,7 +245,7 @@ export component MainWindow inherits Window {
     in-out property <string> runtime-git-status;
     in-out property <string> runtime-rg-status;
     // Screenshot/fixture hook for the settings page's active panel.
-    in-out property <int> settings-active-panel: 0;
+    in-out property <int> settings-active-panel: 4;
     in-out property <bool> lan-enabled: false;
     in-out property <string> lan-name;
     in-out property <string> lan-peer-id;
@@ -406,17 +423,17 @@ export component MainWindow inherits Window {
                 RailButton { icon: @image-url("../assets/icons/folder-open.svg"); label: I18n.common_files; active: root.page == DesktopPage.files; clicked => { root.page = DesktopPage.files; root.refresh-files(); } }
                 RailButton { icon: @image-url("../assets/icons/comments.svg"); label: I18n.common_users; active: root.page == DesktopPage.users; badge: root.world-unread; clicked => { root.page = DesktopPage.users; root.refresh-world(false); } }
                 Rectangle { vertical-stretch: 1; }
-                RailButton { icon: @image-url("../assets/icons/ellipsis.svg"); label: I18n.common_more; active: root.more-open; clicked => { root.more-open = !root.more-open; } }
+                RailButton { horizontal-ellipsis: true; icon: @image-url("../assets/icons/ellipsis.svg"); label: I18n.common_more; active: root.more-open; clicked => { root.more-open = !root.more-open; } }
             }
         }
 
         if root.more-open : Rectangle {
-            x: 62px; y: parent.height - 166px; width: 208px; height: 150px;
+            x: 62px; y: parent.height - 310px; width: 208px; height: 300px;
             border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border; z: 20;
             VerticalLayout {
                 padding: 8px; spacing: 4px;
                 Text { height: 24px; text: I18n.common_more; color: Theme.text; font-size: Theme.font-md; font-weight: 600; }
-                Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/gear.svg"); label: I18n.menu_settings; show-label: true; clicked => { root.more-open = false; root.page = DesktopPage.settings; root.refresh-settings(); } }
+                Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/gear.svg"); label: I18n.menu_settings; show-label: true; clicked => { root.more-open = false; root.page = DesktopPage.settings; root.settings-active-panel = 4; root.refresh-settings(); } }
                 Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/comments.svg"); label: I18n.common_groups; show-label: true; clicked => { root.more-open = false; root.page = DesktopPage.groups; root.refresh-world(true); } }
                 Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/rotate-right.svg"); label: I18n.common_cron_tasks; show-label: true; clicked => { root.more-open = false; root.page = DesktopPage.cron; root.refresh-cron(); } }
                 Action { height: 32px; width: parent.width; icon: @image-url("../assets/icons/paper-plane.svg"); label: I18n.menu_channels; show-label: true; clicked => { root.more-open = false; root.page = DesktopPage.channels; root.refresh-channels(); } }
@@ -431,17 +448,13 @@ export component MainWindow inherits Window {
             Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
             VerticalLayout {
                 spacing: 0px;
-                Rectangle {
-                    height: 80px;
-                    Text { x: 16px; y: 20px; width: parent.width - 32px; text: I18n.common_messages; color: Theme.text; font-size: Theme.font-headline; font-weight: 700; }
-                    Text { x: 16px; y: 49px; width: parent.width - 32px; text: I18n.chat_subtitle; color: Theme.muted; font-size: Theme.font-sm; }
-                }
+                // The web conversation list begins directly with its compact search field.
+                Rectangle { height: 12px; }
                 HorizontalLayout {
-                    padding-left: 14px; padding-right: 14px; height: 34px; spacing: 8px;
+                    padding-left: 14px; padding-right: 14px; height: 34px;
                     SearchField { horizontal-stretch: 1; icon: @image-url("../assets/icons/magnifying-glass.svg"); placeholder: I18n.common_search; text <=> root.keyword; }
-                    new-chat := Action { width: 34px; height: 34px; icon: @image-url("../assets/icons/plus.svg"); label: I18n.chat_new_thread; enabled: (!root.busy || root.observing-thread) && !root.creating-session && !root.session-loading && !root.chat-loading && !root.agents-loading; selected: true; clicked => { root.new-thread(); } }
                 }
-                Rectangle { height: 14px; }
+                Rectangle { height: 6px; }
                 ScrollView {
                     horizontal-scrollbar-policy: always-off;
                     VerticalLayout { alignment: start;
@@ -698,6 +711,7 @@ export component MainWindow inherits Window {
         delete-prompt-pack => { root.delete-prompt-pack(); }
         export-diagnostics => { root.export-diagnostics(); }
         reset-work-state => { root.reset-work-state(); }
+        open-profile => { root.page = DesktopPage.profile; root.refresh-profile(); }
     }
     if root.page == DesktopPage.profile : Rectangle {
         x: Theme.rail-width; y: 0px; width: parent.width - Theme.rail-width; height: parent.height; background: Theme.chat;

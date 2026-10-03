@@ -1,5 +1,5 @@
 //! Durable user-turn projection. Execution turns never allocate page rows.
-use super::{message_from_value, NativeDesktop, NativeMessage};
+use super::{message_from_value, NativeDesktop, NativeMessage, NativeWorkflowEntry};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
@@ -176,10 +176,8 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
     {
         let data = &item["payload"];
         if item["kind"] == "compaction" {
-            workflow.push(format!(
-                "上下文压缩\n{}",
-                data["summary_text"].as_str().unwrap_or_default()
-            ));
+            let detail = data["summary_text"].as_str().unwrap_or_default().to_string();
+            workflow.push(NativeWorkflowEntry { id: item["item_id"].as_str().unwrap_or("compaction").to_string(), title: "上下文压缩".into(), preview: wunder_server::tool_result_display::preview(&detail), detail, state: item["status"].as_str().unwrap_or_default().into() });
             if latest.is_none() {
                 assistant.text = data["summary_text"].as_str().unwrap_or_default().into();
             }
@@ -189,14 +187,14 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
                 .or_else(|| data["tool_name"].as_str())
                 .or_else(|| data["name"].as_str())
                 .unwrap_or("工具");
-            workflow.push(wunder_server::tool_result_display::tool_result_display(
-                tool,
-                data,
-                matches!(item["status"].as_str(), Some("running" | "queued")),
-            ));
+            let detail = wunder_server::tool_result_display::tool_result_display(
+                tool, data, matches!(item["status"].as_str(), Some("running" | "queued")),
+            );
+            workflow.push(NativeWorkflowEntry { id: item["item_id"].as_str().unwrap_or(tool).to_string(), title: tool.into(), preview: wunder_server::tool_result_display::preview(&detail), detail, state: item["status"].as_str().unwrap_or_default().into() });
         }
     }
-    assistant.workflow_detail = workflow.join("\n\n");
+    assistant.workflow_detail = workflow.iter().map(|entry| entry.detail.as_str()).collect::<Vec<_>>().join("\n\n");
+    assistant.workflow_items = workflow;
     Some(NativeChatTurn {
         root_id: id.into(),
         user,

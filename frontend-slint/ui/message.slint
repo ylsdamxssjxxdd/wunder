@@ -1,5 +1,5 @@
 import { I18n } from "i18n.slint";
-import { Theme, ChatMessage } from "theme.slint";
+import { Theme, ChatMessage, ToolWorkflowEntry } from "theme.slint";
 import { Action, Avatar } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
@@ -18,10 +18,13 @@ export component MessageRow inherits Rectangle {
     in property <ChatMessage> message;
     in property <string> author;
     in property <image> avatar;
-    in-out property <bool> expanded: false;
+    // The web client keeps a completed workflow visible while the message is
+    // current; individual tool details remain collapsed until selected.
+    in-out property <bool> expanded: !root.message.mine && root.message.workflow;
     private property <bool> stats-visible: !root.message.mine && (root.message.stats-status != "" || root.message.stats-duration != "" || root.message.stats-speed != "" || root.message.stats-context != "" || root.message.stats-quota != "" || root.message.stats-tools != "" || root.message.stats-credits != "");
     callback copy();
-    private property <length> bubble-width: root.message.mine ? min(root.width - 58px, max(180px, root.width * 0.8)) : root.width - 58px;
+    private property <int> expanded-workflow-item: -1;
+    private property <length> bubble-width: root.message.mine ? min(root.width - 58px, max(180px, root.width * 0.84)) : root.width - 44px;
     height: column.height + 22px;
     Avatar { x: root.message.mine ? parent.width - 34px : 0px; y: 0px; mine: root.message.mine; source: root.avatar; glyph: root.message.avatar-glyph; tone: root.message.avatar-tone; }
     column := VerticalLayout {
@@ -34,32 +37,54 @@ export component MessageRow inherits Rectangle {
             text: (root.message.mine ? I18n.common_you : root.author) + "   " + root.message.time;
             horizontal-alignment: root.message.mine ? right : left;
         }
+        if !root.message.mine && root.message.reasoning != "" : Rectangle {
+            height: reasoning-text.preferred-height + 14px;
+            border-radius: Theme.radius-sm; background: Theme.accent-soft.transparentize(0.38);
+            border-width: 1px; border-color: Theme.border;
+            Text { x: 10px; y: 6px; width: 36px; height: 18px; text: root.message.reasoning-streaming ? "思考中" : "已思考"; color: Theme.accent-deep; font-size: Theme.font-2xs; font-weight: 600; vertical-alignment: top; }
+            reasoning-text := Text {
+                x: 48px; y: 6px; width: parent.width - 58px; text: root.message.reasoning;
+                wrap: word-wrap; color: Theme.muted; font-size: Theme.font-xs; overflow: elide;
+            }
+        }
         if root.message.workflow : Rectangle {
-            height: root.expanded ? 240px : 34px;
-            border-radius: Theme.radius-sm; border-width: 1px; border-color: Theme.border;
-            background: Theme.surface.transparentize(0.35);
+            height: root.expanded ? min(320px, 36px + root.message.workflow-items.length * 42px) : 28px;
+            border-width: 0px;
+            background: transparent;
             Action {
-                x: 4px; y: 2px; width: parent.width - 8px; label: I18n.ms_agent_loop; show-label: true;
+                x: 0px; y: 0px; width: parent.width; label: I18n.ms_agent_loop; show-label: true;
                 icon: @image-url("../assets/icons/chevron-right.svg");
                 clicked => { root.expanded = !root.expanded; }
             }
-            if root.expanded : ScrollView {
-                x: 12px; y: 38px; width: parent.width - 24px; height: parent.height - 48px;
-                VerticalLayout {
-                    TextInput {
-                        text: root.message.workflow-detail;
-                        read-only: true; wrap: word-wrap;
-                        font-size: Theme.font-sm; color: Theme.text;
+            if root.expanded && root.message.workflow-items.length > 0 : ScrollView {
+                x: 0px; y: 30px; width: parent.width; height: parent.height - 30px;
+                VerticalLayout { spacing: 3px;
+                    for item[index] in root.message.workflow-items : Rectangle {
+                        height: root.expanded-workflow-item == index ? 122px : 38px;
+                        border-radius: Theme.radius-sm; background: Theme.surface.transparentize(0.12);
+                        border-width: 1px; border-color: Theme.border;
+                        Image { x: 10px; y: 13px; width: 11px; height: 11px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; }
+                        Text { x: 30px; y: 9px; width: 128px; height: 18px; text: item.title; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; overflow: elide; }
+                        Text { x: 164px; y: 9px; width: parent.width - 174px; height: 18px; text: item.preview; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                        TouchArea { mouse-cursor: pointer; clicked => { root.expanded-workflow-item = root.expanded-workflow-item == index ? -1 : index; } }
+                        if root.expanded-workflow-item == index : TextInput {
+                            x: 10px; y: 39px; width: parent.width - 20px; height: parent.height - 46px;
+                            text: item.detail; read-only: true; wrap: word-wrap; color: Theme.text; font-size: Theme.font-xs;
+                        }
                     }
                 }
             }
+            if root.expanded && root.message.workflow-items.length == 0 : ScrollView {
+                x: 0px; y: 30px; width: parent.width; height: parent.height - 30px;
+                TextInput { text: root.message.workflow-detail; read-only: true; wrap: word-wrap; font-size: Theme.font-sm; color: Theme.muted; }
+            }
         }
         Rectangle {
-            height: body.preferred-height + 24px;
-            background: root.message.mine ? Theme.mine : Theme.bubble;
-            border-radius: Theme.radius-lg; border-color: root.message.mine ? Theme.accent.transparentize(0.7) : Theme.border; border-width: 1px;
+            height: body.preferred-height + 22px;
+            background: root.message.mine ? Theme.mine.transparentize(0.18) : Theme.bubble;
+            border-radius: Theme.radius-lg; border-color: root.message.mine ? Theme.accent.transparentize(0.72) : Theme.border; border-width: 1px;
             body := VerticalLayout {
-                x: 13px; y: 12px; width: parent.width - 26px;
+                x: 12px; y: 10px; width: parent.width - 50px;
                 height: self.preferred-height; spacing: 0px;
                 if root.message.blocks.length == 0 : TextInput {
                     text: root.message.text; color: Theme.text; font-size: Theme.font-md;

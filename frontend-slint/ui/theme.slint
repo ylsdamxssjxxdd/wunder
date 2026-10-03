@@ -5,6 +5,10 @@ export { Theme }
 export struct Conversation { id: string, title: string, preview: string, time: string, consumed-tokens: string, tool-calls: string, quota-used: string, runtime-status: string, locked: bool }
 export struct ThreadLogEvent { event-type: string, time: string, summary: string, raw: string }
 export struct TextBlock { text: string, kind: int }
+// A bounded, stable projection of one tool invocation. Detail text is only
+// laid out after the user expands that entry, so streaming tool output never
+// causes the full chat history to be reparsed.
+export struct ToolWorkflowEntry { id: string, title: string, preview: string, detail: string, state: string }
 // Message statistics are kept as already formatted strings. Formatting stays
 // in the native projection so the Slint thread only lays out a small, stable
 // row while a stream is active.
@@ -22,6 +26,9 @@ export struct ChatMessage {
     stats-quota: string,
     stats-tools: string,
     stats-credits: string,
+    reasoning: string,
+    reasoning-streaming: bool,
+    workflow-items: [ToolWorkflowEntry],
     blocks: [TextBlock],
     avatar-glyph: string,
     avatar-tone: int

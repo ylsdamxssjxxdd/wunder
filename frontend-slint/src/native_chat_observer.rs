@@ -163,6 +163,11 @@ fn patch_turn(
         |message: &wunder_desktop::NativeMessage, previous: Option<&ChatMessage>| ChatMessage {
             workflow: !message.workflow_detail.is_empty(),
             workflow_detail: message.workflow_detail.as_str().into(),
+            workflow_items: slint::ModelRc::from(std::rc::Rc::new(slint::VecModel::from(message.workflow_items.iter().map(|item| crate::ToolWorkflowEntry {
+                id: item.id.as_str().into(), title: item.title.as_str().into(), preview: item.preview.as_str().into(), detail: item.detail.as_str().into(), state: item.state.as_str().into()
+            }).collect::<Vec<_>>()))),
+            reasoning: message.reasoning.as_str().into(),
+            reasoning_streaming: message.state == "正在生成…",
             text: message.text.as_str().into(),
             mine: message.mine,
             time: format_time(message.created_at).into(),
@@ -216,6 +221,8 @@ mod tests {
             turn_id: root.into(),
             text: text.into(),
             workflow_detail: String::new(),
+            workflow_items: Vec::new(),
+            reasoning: String::new(),
             mine: false,
             created_at: 0.0,
             state: status.into(),

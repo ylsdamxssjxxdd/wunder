@@ -1208,7 +1208,7 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
       }
   };
 
-  ctx.openAgentSession = async (sessionId: string, agentId = '') => {
+  ctx.openAgentSession = async (sessionId: string, agentId = '', options: { skipHydration?: boolean } = {}) => {
       if (!sessionId)
           return;
       const normalizedSessionId = String(sessionId || '').trim();
@@ -1252,6 +1252,14 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
               path: nextPath,
               query: nextQuery
           }).catch(() => undefined);
+      }
+      // createSession already installed the empty-thread greeting and watcher.
+      // Re-opening it immediately would start a second hydration pipeline
+      // (detail + events + workflow + thread snapshot) while the first watcher
+      // is being mounted, which can monopolize the old page's render loop.
+      if (options.skipHydration === true) {
+          ctx.finishMessengerPerfTrace(perfTrace, 'ok', { created: true, hydrationSkipped: true });
+          return;
       }
       const isForegroundSession = () => String(ctx.chatStore.activeSessionId || '').trim() === normalizedSessionId;
       try {

@@ -340,6 +340,11 @@ export function usePersistentStableListOrder<T>(
     if (!normalizedKey) return;
     const sourceKeys = normalizeKeyList((Array.isArray(source.value) ? source.value : []).map((item) => options.getKey(item)));
     if (!sourceKeys.includes(normalizedKey)) return;
+    // Keep this operation idempotent. Callers commonly invoke it from a
+    // watcher whose dependencies include orderedItems; assigning a fresh
+    // array when the key is already first would retrigger that watcher
+    // indefinitely and can freeze the whole messenger page.
+    if (orderedKeys.value[0] === normalizedKey) return;
     const nextOrder = [normalizedKey, ...orderedKeys.value.filter((item) => item !== normalizedKey)];
     orderedKeys.value = nextOrder;
     const storageKey = resolveKeySource(options.storageKey);

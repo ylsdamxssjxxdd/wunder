@@ -8,6 +8,9 @@ const MAX_INPUT_BYTES: usize = 16_384;
 
 pub fn install(app: &MainWindow) {
     crate::demo_entities::install(app);
+    // Keep the default preview representative of a completed agent turn so
+    // visual smoke captures cover reasoning and expandable tool entries.
+    app.set_turns(ModelRc::from(Rc::new(VecModel::from(vec![demo_turn()]))));
     let weak = app.as_weak();
     app.on_refresh_files(move || {
         if let Some(app) = weak.upgrade() {
@@ -63,6 +66,9 @@ pub fn install(app: &MainWindow) {
             time: "现在".into(),
             workflow: false,
             workflow_detail: "".into(),
+            workflow_items: ModelRc::default(),
+            reasoning: "".into(),
+            reasoning_streaming: false,
             state: "".into(),
             stats_status: "".into(),
             stats_duration: "".into(),
@@ -136,13 +142,19 @@ fn slot(app: &MainWindow) -> usize {
 }
 
 fn reply(text: &str) -> ChatMessage {
+    let workflow_detail = "读取工作目录\n已读取并整理文件列表";
     ChatMessage {
         blocks: crate::message_blocks::from_text(text),
         text: text.into(),
         mine: false,
         time: "现在".into(),
-        workflow: false,
-        workflow_detail: "".into(),
+        workflow: true,
+        workflow_detail: workflow_detail.into(),
+        workflow_items: ModelRc::from(Rc::new(VecModel::from(vec![crate::ToolWorkflowEntry {
+            id: "demo-tool".into(), title: "读取工作目录".into(), preview: "已读取并整理文件列表".into(), detail: workflow_detail.into(), state: "completed".into()
+        }]))),
+        reasoning: "先检查工作目录中的文件，再整理结果并生成回复。".into(),
+        reasoning_streaming: false,
         state: "".into(),
         stats_status: "任务完成".into(),
         stats_duration: "1.2s".into(),
@@ -153,6 +165,43 @@ fn reply(text: &str) -> ChatMessage {
         stats_credits: "1".into(),
         avatar_glyph: "✦".into(),
         avatar_tone: 1,
+    }
+}
+
+fn demo_turn() -> ChatTurn {
+    ChatTurn {
+        root_id: "demo-workflow".into(),
+        user: ChatMessage {
+            text: "整理工作目录并说明结果".into(),
+            blocks: crate::message_blocks::from_text("整理工作目录并说明结果"),
+            mine: true,
+            time: "现在".into(),
+            ..Default::default()
+        },
+        assistant: ChatMessage {
+            text: "已完成目录检查，并整理了可以继续使用的文件。".into(),
+            blocks: crate::message_blocks::from_text("已完成目录检查，并整理了可以继续使用的文件。"),
+            mine: false,
+            time: "现在".into(),
+            workflow: true,
+            workflow_detail: "读取工作目录\n已读取并整理文件列表\n\n检查文件内容\n已验证文本内容可读取".into(),
+            workflow_items: ModelRc::from(Rc::new(VecModel::from(vec![
+                crate::ToolWorkflowEntry { id: "read-dir".into(), title: "读取工作目录".into(), preview: "已读取并整理文件列表".into(), detail: "执行完成\n找到 2 个可用文件，目录结构正常。".into(), state: "completed".into() },
+                crate::ToolWorkflowEntry { id: "inspect-file".into(), title: "检查文件内容".into(), preview: "已验证文本内容可读取".into(), detail: "执行完成\n文件内容已读取，未发现格式错误。".into(), state: "completed".into() }
+            ]))),
+            reasoning: "先读取目录清单，确认文件类型，再检查文本内容是否可用，最后汇总结果。".into(),
+            reasoning_streaming: false,
+            stats_status: "任务完成".into(),
+            stats_duration: "1.2s".into(),
+            stats_speed: "42.0/s".into(),
+            stats_context: "2.4k".into(),
+            stats_quota: "320".into(),
+            stats_tools: "2".into(),
+            stats_credits: "1".into(),
+            avatar_glyph: "✦".into(),
+            avatar_tone: 1,
+            ..Default::default()
+        },
     }
 }
 

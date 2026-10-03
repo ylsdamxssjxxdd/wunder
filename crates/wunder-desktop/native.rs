@@ -95,6 +95,8 @@ pub struct NativeSession {
 pub struct NativeMessage {
     pub turn_id: String,
     pub workflow_detail: String,
+    pub workflow_items: Vec<NativeWorkflowEntry>,
+    pub reasoning: String,
     pub text: String,
     pub mine: bool,
     pub created_at: f64,
@@ -106,6 +108,18 @@ pub struct NativeMessage {
     pub stats_quota: String,
     pub stats_tools: String,
     pub stats_credits: String,
+}
+
+/// Compact, bounded tool-call presentation for native frontends. The raw
+/// durable payload remains in storage; this projection contains only the
+/// fields needed to render the collapsed row and its local detail view.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NativeWorkflowEntry {
+    pub id: String,
+    pub title: String,
+    pub preview: String,
+    pub detail: String,
+    pub state: String,
 }
 
 pub struct NativeDesktop {
@@ -397,6 +411,13 @@ fn message_from_value(value: Value) -> Option<NativeMessage> {
             .unwrap_or_default()
             .to_string(),
         workflow_detail: String::new(),
+        workflow_items: Vec::new(),
+        reasoning: value
+            .get("reasoning")
+            .or_else(|| value.get("reasoning_content"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
         text: value.get("content").and_then(Value::as_str)?.to_string(),
         mine: role == "user",
         created_at: value

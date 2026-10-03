@@ -902,8 +902,10 @@ export function installMessengerControllerSharedHelpers(ctx: MessengerController
           if (options.notify === true) {
               ElMessage.success(ctx.t('chat.newSessionOpened'));
           }
-          // Keep "new thread" action responsive; detail hydration continues in background.
-          void ctx.openAgentSession(sessionId, targetAgent);
+          // createSession has already installed the new empty thread, greeting,
+          // cache entry and realtime watcher. Only synchronize the route here;
+          // reopening the same session would duplicate its hydration pipeline.
+          void ctx.openAgentSession(sessionId, targetAgent, { skipHydration: true });
           return 'opened';
       }
       finally {

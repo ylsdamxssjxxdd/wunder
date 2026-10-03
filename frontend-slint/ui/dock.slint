@@ -38,14 +38,18 @@ export component WorkDock inherits Rectangle {
     VerticalLayout {
         padding: 10px; spacing: 10px;
         Rectangle {
-            border-radius: Theme.radius-lg; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+            border-radius: Theme.radius-xl; background: Theme.surface; border-width: 1px; border-color: Theme.border;
             vertical-stretch: 3;
             VerticalLayout {
-                padding: 12px; spacing: 10px;
+                padding: 14px; spacing: 10px;
                 HorizontalLayout {
-                    height: 26px; spacing: 6px;
-                    Image { width: 14px; height: 14px; source: @image-url("../assets/icons/box-archive.svg"); colorize: Theme.accent-deep; }
-                    Text { text: I18n.dk_workdir; font-size: Theme.font-md; font-weight: 600; color: Theme.text; vertical-alignment: center; }
+                    height: 28px; spacing: 8px;
+                    Rectangle {
+                        width: 22px; height: 22px; y: 3px; border-radius: Theme.radius-sm;
+                        background: Theme.accent-soft;
+                        Image { x: 5px; y: 5px; width: 12px; height: 12px; source: @image-url("../assets/icons/box-archive.svg"); colorize: Theme.accent-deep; }
+                    }
+                    Text { text: I18n.dk_workdir; font-size: Theme.font-md; font-weight: 700; color: Theme.muted; vertical-alignment: center; }
                     Text { text: root.directory-container-id; color: Theme.accent-deep; font-size: Theme.font-xs; font-weight: 600; vertical-alignment: center; y: -1px; }
                     Rectangle { horizontal-stretch: 1; }
                     Action { icon: @image-url("../assets/icons/folder-open.svg"); label: I18n.dk_switch_dir; clicked => { root.open-workspace-binding(); } }
@@ -56,11 +60,11 @@ export component WorkDock inherits Rectangle {
                 ScrollView {
                     horizontal-scrollbar-policy: always-off;
                     VerticalLayout {
-                        alignment: start; spacing: 4px;
+                        alignment: start; spacing: 2px;
                         for file[index] in root.files : Rectangle {
-                            height: 36px;
+                            height: 28px; border-radius: Theme.radius-sm;
                             Action { width: parent.width; height: parent.height; label: file.name; clicked => { if file.entry-type == "dir" { root.file-menu(file.path, 2); } else { root.preview-file(file.path); } } }
-                            Image { x: 4px; y: 10px; width: 16px; height: 16px; source: file.entry-type == "dir" ? @image-url("../assets/icons/folder-open.svg") : file.name.ends-with(".md") ? @image-url("../assets/icons/file-type-markdown.svg") : file.name.ends-with(".docx") ? @image-url("../assets/icons/file-type-word.svg") : file.name.ends-with(".xlsx") ? @image-url("../assets/icons/file-type-excel.svg") : file.name.ends-with(".pptx") ? @image-url("../assets/icons/file-type-powerpoint.svg") : file.name.ends-with(".pdf") ? @image-url("../assets/icons/file-type-pdf.svg") : @image-url("../assets/icons/file-type-text.svg"); }
+                            Image { x: 4px; y: 6px; width: 16px; height: 16px; source: file.entry-type == "dir" ? @image-url("../assets/icons/folder-open.svg") : file.name.ends-with(".md") ? @image-url("../assets/icons/file-type-markdown.svg") : file.name.ends-with(".docx") ? @image-url("../assets/icons/file-type-word.svg") : file.name.ends-with(".xlsx") ? @image-url("../assets/icons/file-type-excel.svg") : file.name.ends-with(".pptx") ? @image-url("../assets/icons/file-type-powerpoint.svg") : file.name.ends-with(".pdf") ? @image-url("../assets/icons/file-type-pdf.svg") : @image-url("../assets/icons/file-type-text.svg"); }
                             Text { x: 29px; width: parent.width - 72px; height: parent.height; text: file.name; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; overflow: elide; }
                             Text { x: parent.width - 42px; width: 38px; height: parent.height; text: file.entry-type == "dir" ? I18n.common_directory : file.size; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; horizontal-alignment: right; overflow: elide; }
                             TouchArea {
@@ -85,14 +89,14 @@ export component WorkDock inherits Rectangle {
             }
         }
         Rectangle {
-            border-radius: Theme.radius-lg; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+            border-radius: Theme.radius-xl; background: Theme.surface; border-width: 1px; border-color: Theme.border;
             vertical-stretch: 2;
             VerticalLayout {
-                padding: 12px; spacing: 10px;
+                padding: 14px; spacing: 10px;
                 HorizontalLayout {
-                    height: 24px; spacing: 8px;
+                    height: 28px; spacing: 6px;
                     Image { width: 14px; height: 14px; source: @image-url("../assets/icons/list-check.svg"); colorize: Theme.accent-deep; }
-                    Text { text: I18n.dk_threads_title; font-size: Theme.font-md; font-weight: 600; color: Theme.text; }
+                    Text { text: I18n.dk_threads_title; font-size: Theme.font-md; font-weight: 700; color: Theme.text; }
                     Rectangle { horizontal-stretch: 1; }
                     Text { text: root.conversations.length; color: Theme.accent-deep; font-size: Theme.font-xs; }
                 }
@@ -101,18 +105,18 @@ export component WorkDock inherits Rectangle {
                     VerticalLayout {
                         alignment: start; spacing: 6px;
                         for conversation[index] in root.conversations : Rectangle {
-                            height: 56px; border-radius: Theme.radius-md;
+                            height: 46px; border-radius: Theme.radius-sm;
                             background: index == root.active-task ? Theme.accent-soft : transparent;
                             Action { width: parent.width - 30px; height: parent.height; label: conversation.title; enabled: root.tasks-enabled; clicked => { root.activate-task(index); } }
-                            Image { x: 9px; y: 16px; width: 16px; height: 16px; source: @image-url("../assets/icons/comments.svg"); colorize: Theme.accent; }
-                            Text { x: 36px; y: 8px; width: parent.width - 44px; height: 18px; text: conversation.title; color: Theme.text; font-size: Theme.font-sm; overflow: elide; }
-                            Image { x: 36px; y: 31px; width: 10px; height: 10px; source: @image-url("../assets/icons/bolt.svg"); colorize: Theme.muted; }
-                            Text { x: 49px; y: 28px; width: 31px; height: 14px; text: conversation.consumed-tokens; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
-                            Image { x: 82px; y: 31px; width: 10px; height: 10px; source: @image-url("../assets/icons/screwdriver-wrench.svg"); colorize: Theme.muted; }
-                            Text { x: 95px; y: 28px; width: 20px; height: 14px; text: conversation.tool-calls; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
-                            Image { x: 117px; y: 31px; width: 10px; height: 10px; source: @image-url("../assets/icons/coins.svg"); colorize: Theme.muted; }
-                            Text { x: 130px; y: 28px; width: parent.width - 166px; height: 14px; text: conversation.quota-used; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
-                            Action { x: parent.width - 30px; y: 13px; width: 26px; height: 26px; icon: @image-url("../assets/icons/ellipsis.svg"); label: I18n.dk_thread_ops; clicked => { root.menu-index = index; } }
+                            Image { x: 8px; y: 15px; width: 16px; height: 16px; source: @image-url("../assets/icons/comments.svg"); colorize: Theme.accent; }
+                            Text { x: 36px; y: 6px; width: parent.width - 44px; height: 18px; text: conversation.title; color: Theme.text; font-size: Theme.font-sm; overflow: elide; }
+                            Image { x: 36px; y: 27px; width: 10px; height: 10px; source: @image-url("../assets/icons/bolt.svg"); colorize: Theme.muted; }
+                            Text { x: 49px; y: 24px; width: 31px; height: 14px; text: conversation.consumed-tokens; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
+                            Image { x: 82px; y: 27px; width: 10px; height: 10px; source: @image-url("../assets/icons/screwdriver-wrench.svg"); colorize: Theme.muted; }
+                            Text { x: 95px; y: 24px; width: 20px; height: 14px; text: conversation.tool-calls; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
+                            Image { x: 117px; y: 27px; width: 10px; height: 10px; source: @image-url("../assets/icons/coins.svg"); colorize: Theme.muted; }
+                            Text { x: 130px; y: 24px; width: parent.width - 166px; height: 14px; text: conversation.quota-used; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
+                            Action { x: parent.width - 30px; y: 10px; width: 26px; height: 26px; icon: @image-url("../assets/icons/ellipsis.svg"); label: I18n.dk_thread_ops; clicked => { root.menu-index = index; } }
                             TouchArea {
                                 x: 0px; y: 0px; width: 26px; height: parent.height;
                                 pointer-event(event) => {

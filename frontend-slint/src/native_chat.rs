@@ -38,6 +38,8 @@ struct TurnOutput {
     stats_tools: String,
     stats_credits: String,
     workflow: Vec<(String, String)>,
+    reasoning: String,
+    reasoning_dirty: bool,
     workflow_dirty: bool,
 }
 
@@ -423,6 +425,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             assistant: ChatMessage {
                 time: "刚刚".into(),
                 state: "正在生成…".into(),
+                reasoning: "".into(),
                 blocks: ModelRc::from(blocks.model.clone()),
                 avatar_glyph: agent_avatar_glyph(&app),
                 avatar_tone: agent_avatar_tone(&app),
@@ -461,6 +464,8 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                 stats_credits: String::new(),
                 workflow: Vec::new(),
                 workflow_dirty: false,
+                reasoning: String::new(),
+                reasoning_dirty: false,
             },
         });
         start_timer(&app, state.clone());
@@ -819,6 +824,15 @@ fn apply_event(active: &mut TurnOutput, event: &Value) -> Result<bool, String> {
         active.round = active.round.max(round);
     }
     match kind {
+        "reasoning" | "reasoning_delta" => {
+            if let Some(delta) = data["delta"].as_str().or_else(|| data["reasoning_delta"].as_str()) {
+                active.reasoning.push_str(delta);
+                active.reasoning.truncate(32_768);
+                active.reasoning_dirty = true;
+                active.state = "正在思考…".into();
+                return Ok(true);
+            }
+        }
         "native_execution_started" => {
             // Background goal executions restart model_round at one, while
             // retaining the same user/assistant pair and completed tool list.
@@ -849,11 +863,18 @@ fn apply_event(active: &mut TurnOutput, event: &Value) -> Result<bool, String> {
         }
         "native_stats" => return Ok(true),
         "llm_output_delta" | "delta" => {
+            if let Some(reasoning) = data["reasoning_delta"].as_str().filter(|value| !value.is_empty()) {
+                active.reasoning.push_str(reasoning);
+                active.reasoning.truncate(32_768);
+                active.reasoning_dirty = true;
+                active.state = "正在思考…".into();
+            }
             if let Some(delta) = data["delta"].as_str() {
                 active.blocks.append(delta)?;
                 active.state = "正在生成…".into();
                 return Ok(true);
             }
+            return Ok(active.reasoning_dirty);
         }
         "llm_output" | "final" => {
             if let Some(text) = data["answer"].as_str().or_else(|| data["content"].as_str()) {
@@ -1023,7 +1044,18 @@ fn update_message_stats_row(active: &mut TurnOutput) {
             .collect::<Vec<_>>()
             .join("\n\n")
             .into();
+        message.workflow_items = ModelRc::from(Rc::new(VecModel::from(active.workflow.iter().map(|(id, detail)| {
+            let mut lines = detail.lines();
+            let title = lines.next().filter(|line| !line.trim().is_empty()).unwrap_or("工具").trim().to_string();
+            let preview = lines.next().unwrap_or("").trim().to_string();
+            crate::ToolWorkflowEntry { id: id.as_str().into(), title: title.into(), preview: preview.into(), detail: detail.as_str().into(), state: "completed".into() }
+        }).collect::<Vec<_>>())));
         active.workflow_dirty = false;
+    }
+    if active.reasoning_dirty {
+        message.reasoning = active.reasoning.as_str().into();
+        message.reasoning_streaming = active.state == "正在思考…";
+        active.reasoning_dirty = false;
     }
     active.model.set_row_data(active.row, turn);
 }
@@ -1131,6 +1163,8 @@ mod turn_tests {
             stats_credits: String::new(),
             workflow: vec![],
             workflow_dirty: false,
+            reasoning: String::new(),
+            reasoning_dirty: false,
         };
         for round in 1..=12 {
             apply_event(&mut output, &json!({"event":"llm_output_delta", "data":{"model_round":round,"delta":"Fixture partial"}})).unwrap();

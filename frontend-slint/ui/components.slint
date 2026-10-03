@@ -93,6 +93,8 @@ export component RailButton inherits Rectangle {
     in property <image> icon;
     in property <string> label;
     in property <bool> active: false;
+    // The rail uses a horizontal ellipsis for its overflow affordance.
+    in property <bool> horizontal-ellipsis: false;
     // Global badge (e.g. unread messages). Values above 99 render as "99+".
     in property <int> badge: 0;
     callback clicked();
@@ -104,7 +106,8 @@ export component RailButton inherits Rectangle {
     border-radius: Theme.radius-md;
     background: root.active || rail-touch.has-hover ? #ffffff33 : transparent;
     border-width: rail-focus.has-focus ? 1px : 0px; border-color: white;
-    Image { y: 8px; width: 16px; height: 16px; source: root.icon; image-fit: contain; colorize: #ffffff; }
+    if !root.horizontal-ellipsis : Image { y: 8px; width: 16px; height: 16px; source: root.icon; image-fit: contain; colorize: #ffffff; }
+    if root.horizontal-ellipsis : Text { y: 3px; width: parent.width; height: 25px; text: "•••"; color: #ffffff; font-size: 16px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
     if root.badge > 0 : Rectangle {
         x: parent.width - 20px; y: 3px; width: badge-text.text == "99+" ? 24px : 16px; height: 13px;
         border-radius: Theme.radius-sm; background: Theme.danger; border-width: 1px; border-color: #ffffffcc;
