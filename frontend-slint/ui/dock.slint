@@ -106,10 +106,11 @@ export component WorkDock inherits Rectangle {
                         alignment: start; spacing: 6px;
                         for conversation[index] in root.conversations : Rectangle {
                             height: 46px; border-radius: Theme.radius-sm;
-                            background: index == root.active-task ? Theme.accent-soft : transparent;
+                            background: index == root.active-task ? Theme.accent-soft : (conversation.runtime-status.starts-with("正在") || conversation.runtime-status.starts-with("目标") || conversation.runtime-status == "running" || conversation.runtime-status == "pending") ? Theme.accent-soft.transparentize(0.35) : transparent;
                             Action { width: parent.width - 30px; height: parent.height; label: conversation.title; enabled: root.tasks-enabled; clicked => { root.activate-task(index); } }
-                            Image { x: 8px; y: 15px; width: 16px; height: 16px; source: @image-url("../assets/icons/comments.svg"); colorize: Theme.accent; }
-                            Text { x: 36px; y: 6px; width: parent.width - 44px; height: 18px; text: conversation.title; color: Theme.text; font-size: Theme.font-sm; overflow: elide; }
+                            Image { x: 8px; y: 15px; width: 16px; height: 16px; source: @image-url("../assets/icons/comments.svg"); colorize: (conversation.runtime-status.starts-with("正在") || conversation.runtime-status.starts-with("目标") || conversation.runtime-status == "running" || conversation.runtime-status == "pending") ? Theme.accent-deep : Theme.accent; }
+                            Text { x: 36px; y: 6px; width: parent.width - 94px; height: 18px; text: conversation.title; color: (conversation.runtime-status.starts-with("正在") || conversation.runtime-status.starts-with("目标") || conversation.runtime-status == "running" || conversation.runtime-status == "pending") ? Theme.accent-deep : Theme.text; font-size: Theme.font-sm; overflow: elide; }
+                            if (conversation.runtime-status.starts-with("正在") || conversation.runtime-status.starts-with("目标") || conversation.runtime-status == "running" || conversation.runtime-status == "pending") : Text { x: parent.width - 78px; y: 7px; width: 48px; height: 16px; text: "运行中"; color: Theme.accent-deep; font-size: Theme.font-2xs; horizontal-alignment: right; overflow: elide; }
                             Image { x: 36px; y: 27px; width: 10px; height: 10px; source: @image-url("../assets/icons/bolt.svg"); colorize: Theme.muted; }
                             Text { x: 49px; y: 24px; width: 31px; height: 14px; text: conversation.consumed-tokens; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
                             Image { x: 82px; y: 27px; width: 10px; height: 10px; source: @image-url("../assets/icons/screwdriver-wrench.svg"); colorize: Theme.muted; }

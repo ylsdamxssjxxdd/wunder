@@ -463,11 +463,12 @@ export component MainWindow inherits Window {
                         visible: self.height > 0px;
                         Rectangle {
                             x: 8px; y: 2px; width: parent.width - 16px; height: 64px; border-radius: Theme.radius-lg;
-                            background: root.selected-conversation == index ? Theme.accent : transparent;
+                            background: root.selected-conversation == index ? Theme.accent : (conversation.runtime-status.starts-with("正在") || conversation.runtime-status.starts-with("目标") || conversation.runtime-status == "running" || conversation.runtime-status == "pending") ? Theme.accent-soft : transparent;
                             Action { width: parent.width; height: parent.height; label: conversation.title; enabled: (!root.busy || root.observing-thread) && !root.creating-session && !root.session-loading && !root.chat-loading; clicked => { root.select-conversation(index); } }
-                            Avatar { x: 10px; y: 13px; source: @image-url("../assets/avatar.png"); }
-                            Text { x: 54px; y: 10px; width: parent.width - 60px; height: 19px; text: conversation.title; color: root.selected-conversation == index ? white : Theme.text; font-size: Theme.font-md; font-weight: 600; overflow: elide; }
-                            Text { x: 54px; y: 35px; width: parent.width - 62px; height: 16px; text: conversation.preview; color: root.selected-conversation == index ? #ffffffe0 : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                            Avatar { x: 10px; y: 13px; source: @image-url("../assets/avatar.png"); status: conversation.runtime-status; }
+                            Text { x: 54px; y: 10px; width: parent.width - 60px; height: 19px; text: conversation.title; color: root.selected-conversation == index ? white : (conversation.runtime-status.starts-with("正在") || conversation.runtime-status.starts-with("目标") || conversation.runtime-status == "running" || conversation.runtime-status == "pending") ? Theme.accent-deep : Theme.text; font-size: Theme.font-md; font-weight: 600; overflow: elide; }
+                            if (conversation.runtime-status.starts-with("正在") || conversation.runtime-status.starts-with("目标") || conversation.runtime-status == "running" || conversation.runtime-status == "pending") : Text { x: parent.width - 62px; y: 11px; width: 50px; height: 16px; text: "运行中"; color: root.selected-conversation == index ? white : Theme.accent-deep; font-size: Theme.font-2xs; horizontal-alignment: right; overflow: elide; }
+                            Text { x: 54px; y: 35px; width: parent.width - 62px; height: 16px; text: conversation.runtime-status != "" ? conversation.runtime-status : conversation.preview; color: root.selected-conversation == index ? #ffffffe0 : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                         }
                     }
                     }

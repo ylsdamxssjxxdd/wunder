@@ -20,13 +20,13 @@ export component MessageRow inherits Rectangle {
     in property <image> avatar;
     // The web client keeps a completed workflow visible while the message is
     // current; individual tool details remain collapsed until selected.
-    in-out property <bool> expanded: !root.message.mine && root.message.workflow;
+    in-out property <bool> expanded: false;
     private property <bool> stats-visible: !root.message.mine && (root.message.stats-status != "" || root.message.stats-duration != "" || root.message.stats-speed != "" || root.message.stats-context != "" || root.message.stats-quota != "" || root.message.stats-tools != "" || root.message.stats-credits != "");
     callback copy();
     private property <int> expanded-workflow-item: -1;
     private property <length> bubble-width: root.message.mine ? min(root.width - 58px, max(180px, root.width * 0.84)) : root.width - 44px;
     height: column.height + 22px;
-    Avatar { x: root.message.mine ? parent.width - 34px : 0px; y: 0px; mine: root.message.mine; source: root.avatar; glyph: root.message.avatar-glyph; tone: root.message.avatar-tone; }
+    Avatar { x: root.message.mine ? parent.width - 34px : 0px; y: 0px; mine: root.message.mine; source: root.avatar; glyph: root.message.avatar-glyph; tone: root.message.avatar-tone; status: root.message.state; }
     column := VerticalLayout {
         x: root.message.mine ? root.width - 44px - root.bubble-width : 44px;
         width: root.bubble-width;
@@ -38,23 +38,35 @@ export component MessageRow inherits Rectangle {
             horizontal-alignment: root.message.mine ? right : left;
         }
         if !root.message.mine && root.message.reasoning != "" : Rectangle {
-            height: reasoning-text.preferred-height + 14px;
-            border-radius: Theme.radius-sm; background: Theme.accent-soft.transparentize(0.38);
+            // Web preview is deliberately one line; the complete reasoning is
+            // available through the native tooltip on hover.
+            height: 30px; border-radius: Theme.radius-sm;
+            background: Theme.accent-soft.transparentize(0.38);
             border-width: 1px; border-color: Theme.border;
-            Text { x: 10px; y: 6px; width: 36px; height: 18px; text: root.message.reasoning-streaming ? "思考中" : "已思考"; color: Theme.accent-deep; font-size: Theme.font-2xs; font-weight: 600; vertical-alignment: top; }
+            Text { x: 10px; y: 6px; width: 36px; height: 18px; text: root.message.reasoning-streaming ? "思考中" : "已思考"; color: Theme.accent-deep; font-size: Theme.font-2xs; font-weight: 600; vertical-alignment: center; }
             reasoning-text := Text {
-                x: 48px; y: 6px; width: parent.width - 58px; text: root.message.reasoning;
-                wrap: word-wrap; color: Theme.muted; font-size: Theme.font-xs; overflow: elide;
+                x: 48px; y: 6px; width: parent.width - 58px; height: 18px; text: root.message.reasoning;
+                color: Theme.muted; font-size: Theme.font-xs; overflow: elide; vertical-alignment: center;
+            }
+            reasoning-hover := TouchArea { x: 0px; y: 0px; width: parent.width; height: parent.height; mouse-cursor: pointer; }
+            if reasoning-hover.has-hover : Rectangle {
+                x: 0px; y: 30px; width: parent.width; height: 120px;
+                border-radius: Theme.radius-sm; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                Text { x: 10px; y: 8px; width: parent.width - 20px; height: parent.height - 16px; text: root.message.reasoning; color: Theme.text; font-size: Theme.font-xs; wrap: word-wrap; overflow: elide; }
             }
         }
         if root.message.workflow : Rectangle {
-            height: root.expanded ? min(320px, 36px + root.message.workflow-items.length * 42px) : 28px;
-            border-width: 0px;
-            background: transparent;
-            Action {
-                x: 0px; y: 0px; width: parent.width; label: I18n.ms_agent_loop; show-label: true;
-                icon: @image-url("../assets/icons/chevron-right.svg");
-                clicked => { root.expanded = !root.expanded; }
+            height: root.expanded ? min(320px, 34px + root.message.workflow-items.length * 42px + (root.expanded-workflow-item >= 0 ? 84px : 0px)) : 30px;
+            border-width: 0px; background: transparent;
+            HorizontalLayout {
+                height: 28px; spacing: 5px;
+                TouchArea { width: 16px; mouse-cursor: pointer; clicked => { root.expanded = !root.expanded; } }
+                Image { width: 12px; height: 12px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; transform-rotation: root.expanded ? 90deg : 0deg; }
+                Text { text: I18n.ms_agent_loop; color: Theme.muted; font-size: Theme.font-xs; font-weight: 600; vertical-alignment: center; }
+                Text { text: root.message.workflow-items.length > 0 ? "(" + root.message.workflow-items.length + ")" : ""; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+                Text { width: 180px; text: root.message.workflow-items.length > 0 ? root.message.workflow-items[root.message.workflow-items.length - 1].preview : ""; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; horizontal-alignment: right; }
+                TouchArea { horizontal-stretch: 1; mouse-cursor: pointer; clicked => { root.expanded = !root.expanded; } }
             }
             if root.expanded && root.message.workflow-items.length > 0 : ScrollView {
                 x: 0px; y: 30px; width: parent.width; height: parent.height - 30px;
@@ -63,7 +75,7 @@ export component MessageRow inherits Rectangle {
                         height: root.expanded-workflow-item == index ? 122px : 38px;
                         border-radius: Theme.radius-sm; background: Theme.surface.transparentize(0.12);
                         border-width: 1px; border-color: Theme.border;
-                        Image { x: 10px; y: 13px; width: 11px; height: 11px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; }
+                        Image { x: 10px; y: 13px; width: 11px; height: 11px; source: item.state == "completed" ? @image-url("../assets/icons/check.svg") : item.state == "failed" ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/rotate-right.svg"); colorize: item.state == "completed" ? Theme.success : item.state == "failed" ? Theme.danger : Theme.accent; }
                         Text { x: 30px; y: 9px; width: 128px; height: 18px; text: item.title; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; overflow: elide; }
                         Text { x: 164px; y: 9px; width: parent.width - 174px; height: 18px; text: item.preview; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
                         TouchArea { mouse-cursor: pointer; clicked => { root.expanded-workflow-item = root.expanded-workflow-item == index ? -1 : index; } }
