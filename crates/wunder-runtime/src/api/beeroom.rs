@@ -22,8 +22,9 @@ use crate::services::orchestration_context::{
 use crate::services::orchestration_run_control::cancel_active_team_runs_for_parent_session;
 use crate::services::swarm::beeroom::{
     claim_mother_agent, collect_agent_activity, get_mother_agent_id, mother_meta_key,
-    resolve_bound_hive_mother_session, resolve_or_create_hive_mother_session,
-    resolve_preferred_mother_agent_id, set_mother_agent, snapshot_team_run,
+    resolve_bound_hive_chat_session, resolve_bound_hive_mother_session,
+    resolve_or_create_hive_chat_session, resolve_preferred_mother_agent_id, set_mother_agent,
+    snapshot_team_run,
 };
 use crate::state::AppState;
 use crate::storage::{normalize_hive_id, HiveRecord, UserAgentRecord, DEFAULT_HIVE_ID};
@@ -101,8 +102,12 @@ pub fn router() -> Router<Arc<AppState>> {
             get(get_beeroom_mission),
         )
         .route(
+            "/wunder/beeroom/groups/{group_id}/chat-session",
+            axum::routing::post(ensure_beeroom_chat_session),
+        )
+        .route(
             "/wunder/beeroom/groups/{group_id}/mother-session",
-            axum::routing::post(ensure_beeroom_mother_session),
+            axum::routing::post(ensure_beeroom_chat_session),
         )
         .route(
             "/wunder/beeroom/orchestration/prompts",
@@ -2100,7 +2105,7 @@ async fn get_beeroom_group(
     })))
 }
 
-async fn ensure_beeroom_mother_session(
+async fn ensure_beeroom_chat_session(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     AxumPath(group_id): AxumPath<String>,
@@ -2141,27 +2146,13 @@ async fn ensure_beeroom_mother_session(
             )
         })?;
 
-    let (session, created) = if let Some(orchestration) =
-        load_hive_state(state.storage.as_ref(), &user_id, &group.hive_id)
-            .filter(|item| item.active && item.mother_agent_id.trim() == mother_agent_id.trim())
-    {
-        let session = state
-            .user_store
-            .get_chat_session(&user_id, &orchestration.mother_session_id)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-            .ok_or_else(|| {
-                error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found"))
-            })?;
-        (session, false)
-    } else {
-        resolve_or_create_hive_mother_session(
-            state.storage.as_ref(),
-            &user_id,
-            &group.hive_id,
-            mother_agent,
-        )
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-    };
+    let (session, created) = resolve_or_create_hive_chat_session(
+        state.storage.as_ref(),
+        &user_id,
+        &group.hive_id,
+        mother_agent,
+    )
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
     Ok(Json(json!({
         "data": {
@@ -2506,6 +2497,17 @@ fn group_payload(
             .flatten()
             .map(|session| session.session_id)
         });
+    let chat_session_id = mother_agent_id.as_deref().and_then(|agent_id| {
+        resolve_bound_hive_chat_session(
+            state.storage.as_ref(),
+            &group.user_id,
+            &group.hive_id,
+            agent_id,
+        )
+        .ok()
+        .flatten()
+        .map(|session| session.session_id)
+    });
 
     Ok(json!({
         "group_id": group.hive_id,
@@ -2524,6 +2526,7 @@ fn group_payload(
         "mother_agent_id": mother_agent_id,
         "mother_agent_name": mother_agent.map(|agent| agent.name.clone()),
         "mother_session_id": mother_session_id,
+        "chat_session_id": chat_session_id,
         "members": agents
             .iter()
             .take(member_limit.unwrap_or(usize::MAX))

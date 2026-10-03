@@ -147,9 +147,9 @@ export const getBeeroomDemoRun = (groupId: ApiId, runId: ApiId) =>
     }
   );
 
-export const ensureBeeroomMotherSession = (groupId: ApiId) =>
+export const ensureBeeroomChatSession = (groupId: ApiId) =>
   api.post(
-    `/beeroom/groups/${encodeURIComponent(String(groupId || '').trim())}/mother-session`,
+    `/beeroom/groups/${encodeURIComponent(String(groupId || '').trim())}/chat-session`,
     {},
     { timeout: 60000 }
   );

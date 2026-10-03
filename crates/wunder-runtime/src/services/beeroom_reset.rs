@@ -4,7 +4,8 @@ use crate::services::orchestration_context::{
     load_round_state, persist_history_record,
 };
 use crate::services::swarm::beeroom::{
-    get_mother_agent_id, resolve_or_create_hive_mother_session, resolve_preferred_mother_agent_id,
+    chat_session_meta_key, get_mother_agent_id, resolve_or_create_hive_mother_session,
+    resolve_preferred_mother_agent_id,
 };
 use crate::state::AppState;
 use anyhow::Result;
@@ -124,6 +125,11 @@ pub async fn reset_beeroom_group(
     let removed_chat_messages = state
         .user_store
         .delete_beeroom_chat_messages(user_id, group_id)?;
+    // A reset starts a fresh user-visible canvas conversation. Remove the
+    // durable binding so the next first send allocates a new thread.
+    state
+        .storage
+        .delete_meta_prefix(&chat_session_meta_key(user_id, group_id))?;
 
     let mut member_threads = Vec::with_capacity(agents.len());
     for agent in &agents {

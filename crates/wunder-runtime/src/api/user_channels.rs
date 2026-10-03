@@ -636,11 +636,10 @@ pub async fn list_user_channel_accounts(
         ));
     }
 
-    let config = state.config_store.get().await;
     Ok(json!({
         "items": items,
         "supported_channels": supported_user_channel_items(),
-        "runtime_enabled": config.channels.enabled || config.gateway.enabled,
+        "runtime_enabled": true,
     }))
 }
 
@@ -2131,13 +2130,6 @@ pub async fn upsert_user_channel_binding(
         return Err(error_response(
             StatusCode::FORBIDDEN,
             i18n::t("error.permission_denied"),
-        ));
-    }
-    let config = state.config_store.get().await;
-    if !config.channels.enabled && !config.gateway.enabled {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            "channels disabled".to_string(),
         ));
     }
     let account = state

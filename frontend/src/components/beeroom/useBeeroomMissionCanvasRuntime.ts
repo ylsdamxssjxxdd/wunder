@@ -7,7 +7,7 @@ import {
   listSessions,
   openChatSocket
 } from '@/api/chat';
-import { ensureBeeroomMotherSession, resetBeeroomGroup } from '@/api/beeroom';
+import { ensureBeeroomChatSession, resetBeeroomGroup } from '@/api/beeroom';
 import {
   listRecentBeeroomAgentOutputs,
   DEFAULT_BEEROOM_AGENT_OUTPUT_PREVIEW_LIMIT
@@ -123,6 +123,7 @@ type BeeroomMissionCanvasRuntimeOverrides = {
   fixedMotherDispatchAgentId?: Ref<unknown>;
   lockedComposerTargetAgentId?: Ref<unknown>;
   disableAutoMotherDispatchReconcile?: boolean;
+  onSessionReady?: (sessionId: string, agentId: string) => void | Promise<void>;
 };
 
 const MANUAL_CHAT_HISTORY_LIMIT = 120;
@@ -226,7 +227,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   );
   const fixedMotherDispatchSessionId = computed(() => {
     const groupId = String(options.group.value?.group_id || '').trim();
-    const payloadSessionId = String(options.group.value?.mother_session_id || '').trim();
+    const payloadSessionId = String(options.group.value?.chat_session_id || '').trim();
     const resolvedGroupSessionId = resolvedGroupMotherSessionGroupId.value === groupId
       ? resolvedGroupMotherSessionId.value
       : '';
@@ -2011,7 +2012,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       !overrideFixedMotherDispatchSessionId.value &&
       agentId === String(motherAgentId.value || '').trim()
     ) {
-      const { data } = await ensureBeeroomMotherSession(groupId);
+      const { data } = await ensureBeeroomChatSession(groupId);
       const summary = data?.data && typeof data.data === 'object'
         ? (data.data as Record<string, unknown>)
         : null;
@@ -2475,6 +2476,12 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         { remember: false }
       );
       void syncDispatchSessionToMessenger(sessionId, target.agentId).catch(() => null);
+      // The canvas owns the durable conversation thread. Hand it to the
+      // messenger shell so its normal snapshot/change stream becomes the
+      // visible source of truth for the first and all later turns.
+      if (String(chatStore.activeSessionId || '').trim() !== sessionId) {
+        void options.runtimeOverrides?.onSessionReady?.(sessionId, target.agentId);
+      }
       await syncDispatchSessionMessages({ hydrate: true });
       baselineAssistantSignature = buildSessionAssistantSignature(
         readDispatchSessionMessages(sessionId),
@@ -2627,18 +2634,21 @@ export const useBeeroomMissionCanvasRuntime = (options: {
           { agentId, remember: true }
         );
       });
-      const nextMotherSessionId = String(
-        memberThreads.find((item) => String(item?.role || '').trim() === 'mother')?.session_id || ''
-      ).trim();
       beeroomStore.applyGroupReset(groupId);
       resolvedGroupMotherSessionGroupId.value = groupId;
-      resolvedGroupMotherSessionId.value = nextMotherSessionId;
+      // Reset intentionally removes the canvas-chat binding. The next user
+      // send creates one new durable conversation rather than exposing an
+      // internal member task session as the chat thread.
+      resolvedGroupMotherSessionId.value = '';
       chatMessagesClearedAfter.value = 0;
       manualChatMessages.value = [];
-      dispatchSessionId.value = nextMotherSessionId;
+      dispatchSessionId.value = '';
       dispatchLastEventId.value = 0;
       dispatchRequestId.value = '';
       dispatchRuntimeStatus.value = 'idle';
+      dispatchTargetAgentId.value = '';
+      dispatchTargetName.value = '';
+      dispatchTargetTone.value = 'worker';
       composerSending.value = false;
       dispatchLabelPreview.value = '';
       persistCachedChatState();

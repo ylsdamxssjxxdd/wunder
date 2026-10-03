@@ -107,6 +107,7 @@ export type BeeroomGroup = {
   mother_agent_id?: string | null;
   mother_agent_name?: string | null;
   mother_session_id?: string | null;
+  chat_session_id?: string | null;
   members?: BeeroomMember[];
   latest_mission?: BeeroomMission | null;
   active_orchestration?: {
@@ -357,6 +358,8 @@ const stableGroupFingerprint = (group: BeeroomGroup | null | undefined): string 
     normalizeScalar(group.mission_total),
     normalizeScalar(group.mother_agent_id),
     normalizeScalar(group.mother_agent_name),
+    normalizeScalar(group.mother_session_id),
+    normalizeScalar(group.chat_session_id),
     normalizeScalar(group.active_orchestration?.orchestration_id),
     normalizeScalar(group.active_orchestration?.run_id),
     normalizeScalar(group.active_orchestration?.mother_session_id),

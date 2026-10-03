@@ -29,6 +29,8 @@ pub const WEIXIN_CHANNEL: &str = "weixin";
 pub const DEFAULT_API_BASE: &str = "https://ilinkai.weixin.qq.com";
 pub const DEFAULT_CDN_BASE: &str = "https://novac2c.cdn.weixin.qq.com/c2c";
 pub const DEFAULT_QR_BOT_TYPE: &str = "3";
+const ILINK_APP_ID: &str = "bot";
+const ILINK_APP_CLIENT_VERSION: &str = "132104";
 const DEFAULT_POLL_TIMEOUT_MS: u64 = 35_000;
 const DEFAULT_API_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_BACKOFF_MS: u64 = 8_000;
@@ -520,9 +522,27 @@ pub async fn get_bot_qrcode(
     let encoded_bot_type = encode_query_value(bot_type);
     let url = format!("{normalized_base}/ilink/bot/get_bot_qrcode?bot_type={encoded_bot_type}");
     let mut request = http
-        .get(&url)
+        .post(&url)
+        .json(&json!({ "local_token_list": [] }))
         .timeout(Duration::from_millis(timeout_ms.max(1_000)));
     let mut headers = HeaderMap::new();
+    headers.insert(
+        HeaderName::from_static("ilink-app-id"),
+        HeaderValue::from_static(ILINK_APP_ID),
+    );
+    headers.insert(
+        HeaderName::from_static("ilink-app-clientversion"),
+        HeaderValue::from_static(ILINK_APP_CLIENT_VERSION),
+    );
+    headers.insert(
+        HeaderName::from_static("authorizationtype"),
+        HeaderValue::from_static("ilink_bot_token"),
+    );
+    headers.insert(
+        HeaderName::from_static("x-wechat-uin"),
+        HeaderValue::from_str(&random_wechat_uin())
+            .map_err(|err| anyhow!("invalid x-wechat-uin header: {err}"))?,
+    );
     if let Some(tag) = trimmed_non_empty(route_tag) {
         headers.insert(
             HeaderName::from_static("skroutetag"),
@@ -573,8 +593,21 @@ pub async fn get_qrcode_status(
 
     let mut headers = HeaderMap::new();
     headers.insert(
+        HeaderName::from_static("ilink-app-id"),
+        HeaderValue::from_static(ILINK_APP_ID),
+    );
+    headers.insert(
         HeaderName::from_static("ilink-app-clientversion"),
-        HeaderValue::from_static("1"),
+        HeaderValue::from_static(ILINK_APP_CLIENT_VERSION),
+    );
+    headers.insert(
+        HeaderName::from_static("authorizationtype"),
+        HeaderValue::from_static("ilink_bot_token"),
+    );
+    headers.insert(
+        HeaderName::from_static("x-wechat-uin"),
+        HeaderValue::from_str(&random_wechat_uin())
+            .map_err(|err| anyhow!("invalid x-wechat-uin header: {err}"))?,
     );
     if let Some(tag) = trimmed_non_empty(route_tag) {
         headers.insert(
@@ -908,6 +941,7 @@ pub fn decrypt_inbound_media_bytes(
 fn build_base_info() -> Value {
     json!({
         "channel_version": "wunder-rust",
+        "bot_agent": "Wunder",
     })
 }
 
@@ -1796,6 +1830,14 @@ fn build_request_headers(config: &WeixinConfig, body: &str) -> Result<HeaderMap>
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
+        HeaderName::from_static("ilink-app-id"),
+        HeaderValue::from_static(ILINK_APP_ID),
+    );
+    headers.insert(
+        HeaderName::from_static("ilink-app-clientversion"),
+        HeaderValue::from_static(ILINK_APP_CLIENT_VERSION),
+    );
+    headers.insert(
         CONTENT_LENGTH,
         HeaderValue::from_str(&body.len().to_string())
             .map_err(|err| anyhow!("invalid content-length header: {err}"))?,
@@ -2098,6 +2140,22 @@ mod tests {
             extract_context_token_from_meta(Some(&nested)).as_deref(),
             Some("ctx-2")
         );
+    }
+
+    #[test]
+    fn request_identity_matches_current_ilink_plugin_contract() {
+        let config = WeixinConfig {
+            bot_token: Some("token".to_string()),
+            ..Default::default()
+        };
+        let headers = build_request_headers(&config, "{}").expect("headers");
+        assert_eq!(headers.get("authorizationtype").unwrap(), "ilink_bot_token");
+        assert_eq!(headers.get("ilink-app-id").unwrap(), ILINK_APP_ID);
+        assert_eq!(
+            headers.get("ilink-app-clientversion").unwrap(),
+            ILINK_APP_CLIENT_VERSION
+        );
+        assert!(headers.get("x-wechat-uin").is_some());
     }
 
     #[test]

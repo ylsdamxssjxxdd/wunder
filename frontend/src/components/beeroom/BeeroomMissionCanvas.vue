@@ -136,6 +136,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: 'open-agent', agentId: string): void;
+  (event: 'open-session', payload: { sessionId: string; agentId: string }): void;
   (event: 'refresh'): void;
 }>();
 
@@ -214,6 +215,9 @@ const {
   agents: agentsRef,
   t,
   onRefresh: () => emit('refresh'),
+  runtimeOverrides: {
+    onSessionReady: (sessionId, agentId) => emit('open-session', { sessionId, agentId })
+  }
 });
 
 const agentOutputPreviewMessages = computed(() =>

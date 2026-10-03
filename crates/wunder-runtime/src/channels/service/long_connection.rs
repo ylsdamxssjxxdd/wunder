@@ -781,32 +781,10 @@ impl ChannelHub {
 
     pub(super) async fn weixin_long_connection_supervisor_loop(&self) {
         let mut workers: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
-        let mut disabled_logged = false;
         loop {
             workers.retain(|_, handle| !handle.is_finished());
             let config = self.config_store.get().await;
-            if !channels_runtime_enabled(&config) {
-                for (_, handle) in workers.drain() {
-                    handle.abort();
-                }
-                runtime_metrics::record_loop_tick(
-                    "channels.long_connection.weixin.supervisor",
-                    "disabled",
-                );
-                if !disabled_logged {
-                    self.record_runtime_info(
-                        weixin::WEIXIN_CHANNEL,
-                        None,
-                        "long_connection_disabled",
-                        "weixin long connection supervisor disabled by runtime configuration"
-                            .to_string(),
-                    );
-                    disabled_logged = true;
-                }
-                sleep(Duration::from_secs(WEIXIN_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
-                continue;
-            }
-            disabled_logged = false;
+            let _ = channels_runtime_enabled(&config);
 
             match self.list_weixin_long_connection_targets().await {
                 Ok(targets) => {
@@ -917,6 +895,13 @@ impl ChannelHub {
         let mut get_updates_buf = String::new();
         let mut consecutive_failures = 0_u64;
 
+        self.record_runtime_info(
+            weixin::WEIXIN_CHANNEL,
+            Some(&target.account_id),
+            "long_connection_started",
+            "weixin getupdates worker started".to_string(),
+        );
+
         loop {
             let response = weixin::get_updates(
                 &self.http,
@@ -949,6 +934,12 @@ impl ChannelHub {
                         .filter(|value| !value.is_empty())
                     {
                         get_updates_buf = buf.to_string();
+                        self.record_runtime_info(
+                            weixin::WEIXIN_CHANNEL,
+                            Some(&target.account_id),
+                            "long_connection_cursor_advanced",
+                            "weixin getupdates cursor advanced".to_string(),
+                        );
                     }
 
                     let errcode = result.errcode.unwrap_or(0);

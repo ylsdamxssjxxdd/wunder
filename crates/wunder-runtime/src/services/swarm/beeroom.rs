@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 const BEE_ROOM_MOTHER_META_PREFIX: &str = "beeroom:mother:";
 const BEE_ROOM_MOTHER_SESSION_META_PREFIX: &str = "beeroom:mother-session:";
+const BEE_ROOM_CHAT_SESSION_META_PREFIX: &str = "beeroom:chat-session:";
 
 fn now_ts() -> f64 {
     chrono::Utc::now().timestamp_millis() as f64 / 1000.0
@@ -133,6 +134,40 @@ pub fn mother_session_meta_key(user_id: &str, hive_id: &str) -> String {
         user_id.trim(),
         normalize_hive_id(hive_id)
     )
+}
+
+pub fn chat_session_meta_key(user_id: &str, hive_id: &str) -> String {
+    format!(
+        "{BEE_ROOM_CHAT_SESSION_META_PREFIX}{}:{}",
+        user_id.trim(),
+        normalize_hive_id(hive_id)
+    )
+}
+
+pub fn resolve_bound_hive_chat_session(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    hive_id: &str,
+    mother_agent_id: &str,
+) -> Result<Option<ChatSessionRecord>> {
+    let Some(raw) = storage.get_meta(&chat_session_meta_key(user_id, hive_id))? else {
+        return Ok(None);
+    };
+    let Ok(binding) = serde_json::from_str::<MotherSessionBinding>(&raw) else {
+        return Ok(None);
+    };
+    if binding.agent_id.trim() != mother_agent_id.trim() || binding.session_id.trim().is_empty() {
+        return Ok(None);
+    }
+    let Some(record) = storage.get_chat_session(user_id.trim(), binding.session_id.trim())? else {
+        return Ok(None);
+    };
+    if record.status.trim().eq_ignore_ascii_case("archived")
+        || !session_belongs_to_agent(&record, mother_agent_id)
+    {
+        return Ok(None);
+    }
+    Ok(Some(record))
 }
 
 fn session_belongs_to_agent(record: &ChatSessionRecord, agent_id: &str) -> bool {
@@ -276,6 +311,71 @@ pub fn resolve_or_create_hive_mother_session(
         &record.session_id,
     )?;
     Ok((record, !reused_existing))
+}
+
+/// Returns the durable conversation thread owned by a bee room.  This is
+/// deliberately separate from the orchestration/mother thread: orchestration
+/// runs may rotate or reuse their own session, while the canvas conversation
+/// must keep one user-visible thread for the lifetime of the hive binding.
+pub fn resolve_or_create_hive_chat_session(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    hive_id: &str,
+    mother_agent: &UserAgentRecord,
+) -> Result<(ChatSessionRecord, bool)> {
+    let normalized_hive_id = normalize_hive_id(hive_id);
+    if !agent_in_hive(mother_agent, &normalized_hive_id) {
+        return Err(anyhow!("mother agent is outside current hive"));
+    }
+    let cleaned_user = user_id.trim();
+    let cleaned_agent = mother_agent.agent_id.trim();
+    if cleaned_user.is_empty() || cleaned_agent.is_empty() {
+        return Err(anyhow!("user_id or agent_id is empty"));
+    }
+    let binding_key = chat_session_meta_key(cleaned_user, &normalized_hive_id);
+    if let Some(record) =
+        resolve_bound_hive_chat_session(storage, cleaned_user, &normalized_hive_id, cleaned_agent)?
+    {
+        return Ok((record, false));
+    }
+    let now = now_ts();
+    let title = mother_agent
+        .name
+        .trim()
+        .strip_prefix('@')
+        .unwrap_or(mother_agent.name.trim())
+        .trim();
+    let record = ChatSessionRecord {
+        session_id: format!("sess_{}", Uuid::new_v4().simple()),
+        user_id: cleaned_user.to_string(),
+        title: if title.is_empty() {
+            cleaned_agent.to_string()
+        } else {
+            title.to_string()
+        },
+        status: "active".to_string(),
+        created_at: now,
+        updated_at: now,
+        last_message_at: now,
+        agent_id: if is_default_agent_alias(cleaned_agent) {
+            None
+        } else {
+            Some(cleaned_agent.to_string())
+        },
+        tool_overrides: Vec::new(),
+        parent_session_id: None,
+        parent_message_id: None,
+        spawn_label: None,
+        spawned_by: None,
+    };
+    storage.upsert_chat_session(&record)?;
+    let binding = MotherSessionBinding {
+        agent_id: cleaned_agent.to_string(),
+        session_id: record.session_id.clone(),
+        updated_at: now,
+    };
+    storage.set_meta(&binding_key, &serde_json::to_string(&binding)?)?;
+    Ok((record, true))
 }
 
 pub fn get_mother_agent_id(
@@ -648,8 +748,8 @@ fn is_terminal_status(status: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_swarm_dispatch_message, resolve_or_create_hive_mother_session, resolve_swarm_hive_id,
-        set_mother_agent,
+        build_swarm_dispatch_message, resolve_or_create_hive_chat_session,
+        resolve_or_create_hive_mother_session, resolve_swarm_hive_id, set_mother_agent,
     };
     use crate::storage::*;
     use serde_json::Value;
@@ -716,6 +816,54 @@ mod tests {
         assert!(second_created);
         assert_eq!(first.session_id, first_again.session_id);
         assert_ne!(first.session_id, second.session_id);
+    }
+
+    #[test]
+    fn hive_chat_session_is_stable_but_never_reuses_the_orchestration_session() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("beeroom-hive-chat-session.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let agent = UserAgentRecord {
+            agent_id: "agent-mother".to_string(),
+            user_id: "user-a".to_string(),
+            hive_id: "hive-a".to_string(),
+            name: "Agent".to_string(),
+            description: String::new(),
+            system_prompt: String::new(),
+            preview_skill: false,
+            model_name: None,
+            ability_items: Vec::new(),
+            tool_names: Vec::new(),
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
+            visible_unit_ids: Vec::new(),
+            preset_questions: Vec::new(),
+            access_level: "A".to_string(),
+            approval_mode: "full_auto".to_string(),
+            is_shared: false,
+            status: "active".to_string(),
+            icon: None,
+            sandbox_container_id: 0,
+            created_at: 1.0,
+            updated_at: 1.0,
+            preset_binding: None,
+            silent: false,
+            prefer_mother: true,
+        };
+        let (orchestration, _) =
+            resolve_or_create_hive_mother_session(storage.as_ref(), "user-a", "hive-a", &agent)
+                .expect("create orchestration session");
+        let (chat, created) =
+            resolve_or_create_hive_chat_session(storage.as_ref(), "user-a", "hive-a", &agent)
+                .expect("create chat session");
+        let (chat_again, created_again) =
+            resolve_or_create_hive_chat_session(storage.as_ref(), "user-a", "hive-a", &agent)
+                .expect("reuse chat session");
+
+        assert!(created);
+        assert!(!created_again);
+        assert_eq!(chat.session_id, chat_again.session_id);
+        assert_ne!(chat.session_id, orchestration.session_id);
     }
 
     #[test]

@@ -86,8 +86,7 @@ pub async fn list_user_channel_runtime_logs(
     agent_id: Option<&str>,
     limit: Option<usize>,
 ) -> ChannelServiceResult<Value> {
-    let config = state.config_store.get().await;
-    let runtime_enabled = config.channels.enabled || config.gateway.enabled;
+    let runtime_enabled = true;
     let channel_filter = channel
         .map(|value| normalize_user_channel(Some(value)))
         .transpose()?;
@@ -216,13 +215,7 @@ async fn write_channel_runtime_probe(
     let resolved = resolve_user(&state, &headers, None).await?;
     let user_id = resolved.user.user_id.clone();
 
-    let config = state.config_store.get().await;
-    if !config.channels.enabled && !config.gateway.enabled {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            "channels disabled".to_string(),
-        ));
-    }
+    let _config = state.config_store.get().await;
 
     let channel_filter = payload
         .channel

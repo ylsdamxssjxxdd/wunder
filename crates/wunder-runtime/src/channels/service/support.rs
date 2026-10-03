@@ -17,8 +17,11 @@ use reqwest::header::{HeaderMap as ReqHeaderMap, HeaderName, HeaderValue, AUTHOR
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
-pub(super) fn channels_runtime_enabled(config: &Config) -> bool {
-    config.channels.enabled || config.gateway.enabled
+/// Channel workers are account driven.  The legacy global switches only
+/// describe gateway deployment and must not silently disable a configured
+/// channel account (the default config keeps both switches false).
+pub(super) fn channels_runtime_enabled(_config: &Config) -> bool {
+    true
 }
 
 pub(super) fn channel_test_request_overrides() -> Option<Value> {

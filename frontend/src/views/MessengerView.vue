@@ -445,6 +445,7 @@
               @refresh="refreshActiveBeeroom"
               @move-agents="handleBeeroomMoveAgents"
               @open-agent="openAgentById"
+              @open-session="openBeeroomSession"
             />
           </div>
         </template>
@@ -2024,6 +2025,8 @@ const onUpdated = controller.onUpdated;
 const onUserToolsUpdated = controller.onUserToolsUpdated;
 const onWorkspaceRefresh = controller.onWorkspaceRefresh;
 const openAgentById = controller.openAgentById;
+const openBeeroomSession = (payload: { sessionId: string; agentId: string }) =>
+  controller.openAgentSession(String(payload?.sessionId || '').trim(), String(payload?.agentId || '').trim());
 const openAgentDraftSession = controller.openAgentDraftSession;
 const openAgentDraftSessionWithScroll = controller.openAgentDraftSessionWithScroll;
 const openAgentPromptPreview = controller.openAgentPromptPreview;

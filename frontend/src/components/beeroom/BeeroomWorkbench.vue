@@ -17,6 +17,7 @@
             :refreshing="refreshing"
             @refresh="emit('refresh')"
             @open-agent="emit('open-agent', $event)"
+            @open-session="emit('open-session', $event)"
           />
         </div>
       </div>
@@ -94,6 +95,7 @@ const emit = defineEmits<{
   (event: 'refresh'): void;
   (event: 'move-agents', value: string[]): void;
   (event: 'open-agent', agentId: string): void;
+  (event: 'open-session', payload: { sessionId: string; agentId: string }): void;
 }>();
 
 const { t } = useI18n();
