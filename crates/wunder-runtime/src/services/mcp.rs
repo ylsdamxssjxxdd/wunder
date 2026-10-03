@@ -120,6 +120,6 @@ mod tests {
     fn disabled_stub_normalizes_transport_aliases() {
         assert_eq!(normalize_transport(None), "streamable-http");
         assert_eq!(normalize_transport(Some("http")), "streamable-http");
-        assert_eq!(normalize_transport(Some("sse")), "sse");
+        assert_eq!(normalize_transport(Some("streamable-http")), "streamable-http");
     }
 }

@@ -72,6 +72,8 @@ export type CanvasNodeMeta = {
 export type SwarmProjectionNode = {
   id: string;
   agentId: string;
+  /** Durable child thread represented by this node, when applicable. */
+  sessionId?: string;
   name: string;
   displayName: string;
   renderKind?: SwarmNodeRenderKind;
@@ -1139,6 +1141,7 @@ export const buildBeeroomSwarmProjection = (options: {
       subagentNodes.push({
         id: nodeId,
         agentId: item.agentId,
+        sessionId: item.sessionId,
         name,
         displayName: trimText(name, 12) || '-',
         role: 'subagent',

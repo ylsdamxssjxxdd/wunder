@@ -42,7 +42,7 @@ test('thread icons share status shapes, animation and terminal precedence', asyn
   await page.evaluate(() => (window as any).taskListFixture.setStatus('thread-1', 'idle'));
   await expect(rows.nth(1).locator('.messenger-agent-avatar')).toHaveClass(/state-idle/);
   await page.evaluate(() => (window as any).taskListFixture.setStatus('thread-1', 'completed', true));
-  await expect(rows.nth(1).locator('.messenger-agent-avatar')).toHaveClass(/state-idle/);
+  await expect(rows.nth(1).locator('.messenger-agent-avatar')).toHaveClass(/state-done/);
   await page.screenshot({ path: '../temp_dir/task-list-browser.png' });
 });
 

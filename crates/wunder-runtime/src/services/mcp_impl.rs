@@ -1,7 +1,6 @@
 // MCP 服务与客户端：对齐 codex-main 的 rmcp SDK，用于流式 HTTP 与工具调用。
 use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_filename_stem};
 use crate::config::{Config, McpServerConfig};
-use crate::core::long_task;
 use crate::i18n;
 use crate::schemas::{ToolSpec, WunderRequest};
 use crate::state::AppState;
@@ -12,15 +11,13 @@ use anyhow::{anyhow, Result};
 use axum::Router;
 use futures::StreamExt;
 use parking_lot::Mutex;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, AUTHORIZATION};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use rmcp::handler::client::ClientHandler;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ClientCapabilities, ClientJsonRpcMessage,
-    ClientNotification, ClientRequest, ErrorData as McpError, Implementation,
-    InitializeRequestParams, InitializedNotification, JsonObject, ListToolsRequest,
-    ListToolsResult, PaginatedRequestParams, ProtocolVersion, Request, RequestId,
-    ServerCapabilities, ServerInfo, ServerJsonRpcMessage, ServerResult, Tool,
+    CallToolRequestParams, CallToolResponse, CallToolResult, ErrorData as McpError,
+    Implementation, JsonObject, ListToolsResult, PaginatedRequestParams, ServerCapabilities,
+    ServerConfig, Tool,
 };
 use rmcp::service::{serve_client, RequestContext, RoleServer};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
@@ -29,16 +26,12 @@ use rmcp::transport::{
     StreamableHttpClientTransport, StreamableHttpServerConfig, StreamableHttpService,
 };
 use serde_json::{json, Value};
-use sse_stream::SseStream;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{mpsc, oneshot};
-use tokio::time::{Duration, Instant};
-use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 const MCP_SERVER_NAME: &str = "wunder";
@@ -51,6 +44,39 @@ const MCP_DOC2MD_DESCRIPTION: &str = "解析文档并返回 Markdown 文本。";
 
 const MCP_TOOL_CACHE_TTL_S: f64 = 30.0;
 const MCP_TOOL_CACHE_MAX_ENTRIES: usize = 128;
+
+pub(crate) fn normalize_transport(transport: Option<&str>) -> String {
+    let value = transport.unwrap_or("streamable-http").trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("http") {
+        return "streamable-http".to_string();
+    }
+    match value.to_ascii_lowercase().as_str() {
+        "streamable-http" | "streamable_http" | "streamablehttp" => {
+            "streamable-http".to_string()
+        }
+        other => other.to_string(),
+    }
+}
+
+fn mcp_client_cache() -> &'static Mutex<HashMap<String, reqwest::Client>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, reqwest::Client>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn build_mcp_client_key(headers: &HeaderMap, timeout_s: Option<u64>) -> String {
+    let mut pairs = headers
+        .iter()
+        .map(|(key, value)| {
+            let value_text = value
+                .to_str()
+                .map(str::to_string)
+                .unwrap_or_else(|_| String::from_utf8_lossy(value.as_bytes()).to_string());
+            format!("{}={}", key.as_str().to_lowercase(), value_text)
+        })
+        .collect::<Vec<_>>();
+    pairs.sort();
+    format!("timeout={};{}", timeout_s.unwrap_or(0), pairs.join(";"))
+}
 
 /// 构建 MCP 服务路由：挂载 /wunder/mcp 的 Streamable HTTP 服务。
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
@@ -156,13 +182,17 @@ impl WunderMcpServer {
 }
 
 impl ServerHandler for WunderMcpServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_tool_list_changed()
                 .build(),
         )
+        .with_server_info(Implementation::new(
+            MCP_SERVER_NAME,
+            env!("CARGO_PKG_VERSION"),
+        ))
         .with_instructions(MCP_INSTRUCTIONS.to_string())
     }
 
@@ -173,11 +203,7 @@ impl ServerHandler for WunderMcpServer {
     ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
         let tools = vec![Self::execute_tool(), Self::doc2md_tool()];
         async move {
-            Ok(ListToolsResult {
-                tools,
-                next_cursor: None,
-                meta: None,
-            })
+            Ok(ListToolsResult::with_all_items(tools))
         }
     }
 
@@ -185,10 +211,13 @@ impl ServerHandler for WunderMcpServer {
         &self,
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
+    ) -> Result<CallToolResponse, McpError> {
         let tool_name = request.name.as_ref();
         if tool_name == MCP_DOC2MD_TOOL_NAME {
-            return self.handle_doc2md(request.arguments.as_ref()).await;
+            return self
+                .handle_doc2md(request.arguments.as_ref())
+                .await
+                .map(Into::into);
         }
         if tool_name != MCP_EXECUTE_TOOL_NAME {
             return Err(McpError::invalid_params("未知 MCP 工具", None));
@@ -244,7 +273,7 @@ impl ServerHandler for WunderMcpServer {
             "uid": response.uid,
             "a2ui": response.a2ui,
         });
-        Ok(CallToolResult::structured(payload))
+        Ok(CallToolResult::structured(payload).into())
     }
 }
 
@@ -519,14 +548,15 @@ pub async fn fetch_tools(config: &Config, server: &McpServerConfig) -> Result<Ve
     }
 
     let transport = normalize_transport(server.transport.as_deref());
-    let specs = if transport == "sse" {
-        fetch_tools_sse(config, server).await?
-    } else {
-        let transport = build_transport(config, server)?;
-        let service = serve_client(NoopClientHandler, transport).await?;
-        let tools = service.list_all_tools().await?;
-        collect_tool_specs(server, tools)
-    };
+    if transport != "streamable-http" {
+        return Err(anyhow!(
+            "不再支持旧版 MCP 传输类型: {transport}，请改用 streamable-http"
+        ));
+    }
+    let transport = build_transport(config, server)?;
+    let service = serve_client(NoopClientHandler, transport).await?;
+    let tools = service.list_all_tools().await?;
+    let specs = collect_tool_specs(server, tools);
     store_mcp_tool_specs(cache_key, specs.clone());
     Ok(specs)
 }
@@ -606,8 +636,8 @@ pub async fn call_tool_with_server(
         return Err(anyhow!("MCP 工具不在允许列表中"));
     }
     let transport = normalize_transport(server.transport.as_deref());
-    if transport == "sse" {
-        return call_tool_sse(config, server, tool_name, args).await;
+    if transport != "streamable-http" {
+        return Err(anyhow!("不再支持旧版 MCP 传输类型: {transport}，请改用 streamable-http"));
     }
     let transport = build_transport(config, server)?;
     let service = serve_client(NoopClientHandler, transport).await?;
@@ -679,346 +709,17 @@ fn parse_json_from_single_text_block(content: &[Value]) -> Option<Value> {
     serde_json::from_str::<Value>(text).ok()
 }
 
-struct SseClientSession {
-    endpoint: url::Url,
-    receiver: mpsc::Receiver<ServerJsonRpcMessage>,
-    client: reqwest::Client,
-    task: tokio::task::JoinHandle<()>,
-    timeout: Option<Duration>,
-    next_id: i64,
-}
-
-fn request_id_matches(expected: &RequestId, actual: &RequestId) -> bool {
-    if expected == actual {
-        return true;
-    }
-    match (expected, actual) {
-        (RequestId::Number(expected), RequestId::String(actual))
-        | (RequestId::String(actual), RequestId::Number(expected)) => actual
-            .parse::<i64>()
-            .ok()
-            .is_some_and(|value| value == *expected),
-        _ => false,
-    }
-}
-
-impl SseClientSession {
-    async fn connect(config: &Config, server: &McpServerConfig) -> Result<Self> {
-        let headers = build_mcp_headers(config, server)?;
-        let timeout_s = if config.mcp.timeout_s > 0 {
-            Some(config.mcp.timeout_s)
-        } else {
-            None
-        };
-        let timeout = timeout_s.map(Duration::from_secs);
-        let client = build_mcp_client(headers, timeout_s)?;
-        let response = client
-            .get(&server.endpoint)
-            .header(ACCEPT, HeaderValue::from_static("text/event-stream"))
-            .send()
-            .await?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!("MCP SSE 连接失败: {status} {body}"));
-        }
-
-        let base_url = url::Url::parse(&server.endpoint)?;
-        let (tx, rx) = mpsc::channel(64);
-        let (endpoint_tx, endpoint_rx) = oneshot::channel::<Result<url::Url>>();
-        let handle = long_task::spawn("services.mcp.sse_client_reader", async move {
-            let mut endpoint_tx = Some(endpoint_tx);
-            let mut stream = SseStream::from_byte_stream(response.bytes_stream());
-            while let Some(item) = stream.next().await {
-                match item {
-                    Ok(event) => {
-                        let event_name = event.event.as_deref().unwrap_or("message");
-                        match event_name {
-                            "endpoint" => {
-                                if let Some(tx) = endpoint_tx.take() {
-                                    let data = event.data.unwrap_or_default();
-                                    let result = resolve_sse_endpoint(&base_url, &data);
-                                    let _ = tx.send(result);
-                                }
-                            }
-                            "message" | "" => {
-                                let Some(data) = event.data else {
-                                    continue;
-                                };
-                                if data.trim().is_empty() {
-                                    continue;
-                                }
-                                match serde_json::from_str::<ServerJsonRpcMessage>(&data) {
-                                    Ok(message) => {
-                                        if tx.send(message).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                    Err(err) => {
-                                        warn!("MCP SSE 消息解析失败: {err}");
-                                    }
-                                }
-                            }
-                            _ => {
-                                debug!("忽略 MCP SSE 事件: {event_name}");
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        warn!("MCP SSE 流解析失败: {err}");
-                        break;
-                    }
-                }
-            }
-            if let Some(tx) = endpoint_tx.take() {
-                let _ = tx.send(Err(anyhow!("MCP SSE 未返回 endpoint 事件")));
-            }
-        });
-
-        let endpoint = wait_for_endpoint(endpoint_rx, timeout).await?;
-        info!("MCP SSE 已连接: {}", endpoint.as_str());
-        Ok(SseClientSession {
-            endpoint,
-            receiver: rx,
-            client,
-            task: handle,
-            timeout,
-            next_id: 1,
-        })
-    }
-
-    async fn initialize(&mut self) -> Result<()> {
-        let params = InitializeRequestParams::new(
-            ClientCapabilities::default(),
-            Implementation::from_build_env(),
-        )
-        .with_protocol_version(ProtocolVersion::V_2024_11_05);
-        let request = ClientRequest::InitializeRequest(Request::new(params));
-        let result = self.request(request).await?;
-        match result {
-            ServerResult::InitializeResult(_) => {}
-            other => {
-                return Err(anyhow!("MCP SSE 初始化返回类型异常: {other:?}"));
-            }
-        }
-        self.notify(ClientNotification::InitializedNotification(
-            InitializedNotification::default(),
-        ))
-        .await?;
-        Ok(())
-    }
-
-    async fn list_tools(&mut self) -> Result<ListToolsResult> {
-        let request = ClientRequest::ListToolsRequest(ListToolsRequest::default());
-        let result = self.request(request).await?;
-        match result {
-            ServerResult::ListToolsResult(tools) => Ok(tools),
-            other => Err(anyhow!("MCP SSE tools/list 返回类型异常: {other:?}")),
-        }
-    }
-
-    async fn call_tool(&mut self, tool_name: &str, args: &Value) -> Result<CallToolResult> {
-        let params = build_call_tool_request_params(tool_name, args);
-        let request = ClientRequest::CallToolRequest(Request::new(params));
-        let result = self.request(request).await?;
-        match result {
-            ServerResult::CallToolResult(output) => Ok(output),
-            other => Err(anyhow!("MCP SSE tools/call 返回类型异常: {other:?}")),
-        }
-    }
-
-    async fn request(&mut self, request: ClientRequest) -> Result<ServerResult> {
-        let request_id = self.next_request_id();
-        let message = ClientJsonRpcMessage::request(request, request_id.clone());
-        self.send_message(&message).await?;
-        self.await_response(request_id).await
-    }
-
-    async fn notify(&self, notification: ClientNotification) -> Result<()> {
-        let message = ClientJsonRpcMessage::notification(notification);
-        self.send_message(&message).await
-    }
-
-    async fn send_message(&self, message: &ClientJsonRpcMessage) -> Result<()> {
-        let response = self
-            .client
-            .post(self.endpoint.clone())
-            .header(ACCEPT, HeaderValue::from_static("application/json"))
-            .json(message)
-            .send()
-            .await?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!("MCP SSE 消息发送失败: {status} {body}"));
-        }
-        Ok(())
-    }
-
-    async fn await_response(&mut self, request_id: RequestId) -> Result<ServerResult> {
-        let deadline = self.timeout.map(|timeout| Instant::now() + timeout);
-        loop {
-            let next = match deadline {
-                Some(deadline) => {
-                    let remaining = deadline.saturating_duration_since(Instant::now());
-                    if remaining.is_zero() {
-                        return Err(anyhow!("MCP SSE 等待响应超时"));
-                    }
-                    match tokio::time::timeout(remaining, self.receiver.recv()).await {
-                        Ok(value) => value,
-                        Err(_) => return Err(anyhow!("MCP SSE 等待响应超时")),
-                    }
-                }
-                None => self.receiver.recv().await,
-            };
-            let Some(message) = next else {
-                return Err(anyhow!("MCP SSE 连接已关闭"));
-            };
-
-            match message {
-                ServerJsonRpcMessage::Response(response) => {
-                    if request_id_matches(&request_id, &response.id) {
-                        return Ok(response.result);
-                    }
-                    debug!("忽略 MCP SSE 未匹配响应: {}", response.id);
-                }
-                ServerJsonRpcMessage::Error(error) => {
-                    if error
-                        .id
-                        .as_ref()
-                        .is_some_and(|id| request_id_matches(&request_id, id))
-                    {
-                        return Err(anyhow!(
-                            "MCP SSE 响应错误: {} ({:?})",
-                            error.error.message,
-                            error.error.data
-                        ));
-                    }
-                    debug!("忽略 MCP SSE 未匹配错误: {:?}", error.id);
-                }
-                ServerJsonRpcMessage::Request(request) => {
-                    warn!(
-                        "MCP SSE 收到未处理的服务端请求: {} {:?}",
-                        request.id, request.request
-                    );
-                }
-                ServerJsonRpcMessage::Notification(notification) => {
-                    debug!("忽略 MCP SSE 通知: {:?}", notification.notification);
-                }
-            }
-        }
-    }
-
-    fn next_request_id(&mut self) -> RequestId {
-        let id = self.next_id;
-        self.next_id += 1;
-        RequestId::String(id.to_string().into())
-    }
-}
-
-impl Drop for SseClientSession {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
-
-async fn wait_for_endpoint(
-    receiver: oneshot::Receiver<Result<url::Url>>,
-    timeout: Option<Duration>,
-) -> Result<url::Url> {
-    let result = match timeout {
-        Some(timeout) => tokio::time::timeout(timeout, receiver)
-            .await
-            .map_err(|_| anyhow!("MCP SSE 获取 endpoint 超时"))??,
-        None => receiver.await?,
-    };
-    result
-}
-
-fn resolve_sse_endpoint(base_url: &url::Url, raw: &str) -> Result<url::Url> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(anyhow!("MCP SSE endpoint 为空"));
-    }
-    let endpoint = url::Url::parse(trimmed).or_else(|_| base_url.join(trimmed))?;
-    if endpoint.scheme() != base_url.scheme() || endpoint.host_str() != base_url.host_str() {
-        return Err(anyhow!(
-            "MCP SSE endpoint 域名不匹配: {}",
-            endpoint.as_str()
-        ));
-    }
-    Ok(endpoint)
-}
-
-async fn fetch_tools_sse(config: &Config, server: &McpServerConfig) -> Result<Vec<ToolSpec>> {
-    let mut session = SseClientSession::connect(config, server).await?;
-    session.initialize().await?;
-    let tools = session.list_tools().await?;
-    Ok(collect_tool_specs(server, tools.tools))
-}
-
-async fn call_tool_sse(
-    config: &Config,
-    server: &McpServerConfig,
-    tool_name: &str,
-    args: &Value,
-) -> Result<Value> {
-    let mut session = SseClientSession::connect(config, server).await?;
-    session.initialize().await?;
-    let result = session.call_tool(tool_name, args).await?;
-    Ok(serialize_tool_result(result))
-}
-
-pub(crate) fn normalize_transport(transport: Option<&str>) -> String {
-    let value = transport.unwrap_or("streamable-http").trim();
-    if value.is_empty() {
-        return "streamable-http".to_string();
-    }
-    if value.eq_ignore_ascii_case("http") {
-        return "streamable-http".to_string();
-    }
-    let lowered = value.to_ascii_lowercase();
-    match lowered.as_str() {
-        "streamable-http" | "streamable_http" | "streamablehttp" => "streamable-http".to_string(),
-        _ => lowered,
-    }
-}
-
-fn mcp_client_cache() -> &'static Mutex<HashMap<String, reqwest::Client>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, reqwest::Client>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn build_mcp_client_key(headers: &HeaderMap, timeout_s: Option<u64>) -> String {
-    let mut pairs = headers
-        .iter()
-        .map(|(key, value)| {
-            let value_text = value
-                .to_str()
-                .map(|text| text.to_string())
-                .unwrap_or_else(|_| String::from_utf8_lossy(value.as_bytes()).to_string());
-            format!("{}={}", key.as_str().to_lowercase(), value_text)
-        })
-        .collect::<Vec<_>>();
-    pairs.sort();
-    let timeout = timeout_s.unwrap_or(0);
-    format!("timeout={timeout};{}", pairs.join(";"))
-}
-
 fn build_mcp_client(headers: HeaderMap, timeout_s: Option<u64>) -> Result<reqwest::Client> {
     let key = build_mcp_client_key(&headers, timeout_s);
-    let cache = mcp_client_cache();
-    if let Some(client) = cache.lock().get(&key) {
+    if let Some(client) = mcp_client_cache().lock().get(&key) {
         return Ok(client.clone());
     }
     let mut builder = reqwest::Client::builder().default_headers(headers);
-    if let Some(timeout_s) = timeout_s {
-        if timeout_s > 0 {
-            builder = builder.timeout(Duration::from_secs(timeout_s));
-        }
+    if let Some(seconds) = timeout_s.filter(|seconds| *seconds > 0) {
+        builder = builder.timeout(std::time::Duration::from_secs(seconds));
     }
     let client = builder.build()?;
-    cache.lock().insert(key, client.clone());
+    mcp_client_cache().lock().insert(key, client.clone());
     Ok(client)
 }
 

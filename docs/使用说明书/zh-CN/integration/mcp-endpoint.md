@@ -13,6 +13,8 @@ source_docs:
 
 # MCP 入口
 
+当前 Rust MCP 使用 rmcp 3.5.0，内置服务通过 Streamable HTTP 支持 MCP 2026-07-28 的请求级元数据协商。外部服务接入也统一使用 SDK 的 Streamable HTTP 客户端；旧版 SSE 传输和自写初始化客户端已移除。
+
 MCP 在 Wunder 里是正式接入面。
 
 当前用户需要先分清两件事：
@@ -24,13 +26,14 @@ MCP 在 Wunder 里是正式接入面。
 
 - `POST /wunder/mcp`
 - 传输方式：Streamable HTTP
+- 协议协商：SDK 自动优先使用 2026-07-28；与旧服务互通时由 SDK 按支持列表协商，不要手写 `initialize`
 
 当前 Rust 端内置暴露两个工具：
 
 - `excute`
 - `doc2md`
 
-注意，工具名当前实际就是 `excute`，文档需要按代码现状理解，不要自行改写成 `execute`。
+注意，工具名当前实际就是 `excute`。这是现有公开工具标识，调用方应按该名称传递。
 
 ## 自托管 MCP 的适用场景
 
@@ -64,6 +67,8 @@ mcp:
 - `db_query`
 - `db_export`
 - `kb_query`
+
+`extra_mcp` 默认也使用 Streamable HTTP。Python 服务的 SDK 依赖由其独立运行环境管理；它会按 Python SDK 支持的版本与客户端协商，不能假定其具备 Rust rmcp 3.5.0 的全部 2026-07-28 扩展。
 
 也就是说：
 

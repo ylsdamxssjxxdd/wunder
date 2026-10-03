@@ -13,7 +13,7 @@ default = []
 desktop-control = ["dep:windows-sys", "dep:x11-dl"]
 doc2md = ["dep:cfb", "dep:pdf-extract", "dep:rlsx"]
 host-metrics = ["dep:sysinfo"]
-mcp = ["dep:rmcp", "dep:sse-stream"]
+mcp = ["dep:rmcp"]
 postgres-storage = ["dep:deadpool-postgres", "dep:tokio-postgres"]
 sim-bins = ["sqlite-storage"]
 sqlite-storage = ["dep:rusqlite"]
@@ -175,7 +175,6 @@ serde_yaml.workspace = true
 sha1.workspace = true
 sha2.workspace = true
 shell-words.workspace = true
-sse-stream = { workspace = true, optional = true }
 tokio.workspace = true
 tokio-postgres = { workspace = true, optional = true }
 tokio-rustls.workspace = true

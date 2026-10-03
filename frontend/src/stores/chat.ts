@@ -148,7 +148,9 @@ export const useChatStore = defineStore('chat', {
     greetingOverride: '',
     draftAgentId: '',
     draftToolOverrides: null,
-    pendingApprovals: [] as PendingApproval[]
+    pendingApprovals: [] as PendingApproval[],
+    sessionOrderRevision: 0,
+    sessionOrderPromotion: null as { sessionId: string; agentId: string } | null
   }),
   getters: {
     isSessionLoading: (state) => (sessionId) => {

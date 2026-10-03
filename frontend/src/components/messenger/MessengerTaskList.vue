@@ -64,8 +64,10 @@ import { useI18n } from '@/i18n';
 import { useChatStore } from '@/stores/chat';
 import { useAuthStore } from '@/stores/auth';
 import { selectSessionRuntimeStatus } from '@/realtime/chat/chatRuntimeSelectors';
+import { getChatThreadStatus } from '@/realtime/chat/chatThreadRuntime';
 import { taskWindow, type TaskListItem } from '@/views/messenger/taskList';
-import { resolveTaskRuntimeState } from '@/views/messenger/taskRuntimeState';
+import { hasCompletedTaskTurn, resolveTaskRuntimeState } from '@/views/messenger/taskRuntimeState';
+import { getRuntime, getSessionMessages, hasRuntimeControllers } from '@/stores/chatRuntimeState';
 import { useTaskListDrag } from '@/views/messenger/useTaskListDrag';
 import { useTaskListPages } from '@/views/messenger/useTaskListPages';
 import { useTaskListActivity } from '@/views/messenger/useTaskListActivity';
@@ -90,9 +92,19 @@ const ordered = usePersistentStableListOrder(toRef(props, 'items'), {
 });
 const resolveItemState = (item: TaskListItem) => {
   void store.runtimeProjectionVersionBySession[item.id];
-  return resolveTaskRuntimeState(
-    selectSessionRuntimeStatus(store.runtimeProjection, item.id), item.runtimeStatus, Boolean(store.loadingBySession[item.id])
+  const runtime = getRuntime(item.id);
+  const durableStatus = getChatThreadStatus(item.id);
+  const state = resolveTaskRuntimeState(
+    selectSessionRuntimeStatus(store.runtimeProjection, item.id),
+    item.runtimeStatus,
+    Boolean(store.loadingBySession[item.id]),
+    durableStatus || runtime?.threadStatus,
+    hasRuntimeControllers(runtime)
   );
+  if (state === 'idle' && hasCompletedTaskTurn(
+    String(store.activeSessionId || '').trim() === item.id ? store.messages : getSessionMessages(item.id)
+  )) return 'done';
+  return state;
 };
 const { showActiveOnly, activeCount, activityState, displayItems } = useTaskListActivity(ordered.orderedItems, resolveItemState);
 const activityFilterTitle = computed(() => t(
@@ -151,6 +163,20 @@ watch(displayItems, (items) => {
   if (dragState.value.key && !items.some((item) => item.id === dragState.value.key)) resetDrag();
   void nextTick(syncViewport);
 });
+watch(
+  () => [
+    store.sessionOrderRevision,
+    store.sessionOrderPromotion?.sessionId,
+    displayItems.value.map((item) => item.id).join(',')
+  ],
+  () => {
+    const promotedId = String(store.sessionOrderPromotion?.sessionId || '').trim();
+    if (promotedId && displayItems.value.some((item) => item.id === promotedId)) {
+      ordered.prependKey(promotedId);
+    }
+  },
+  { immediate: true }
+);
 onBeforeUnmount(() => {
   observer?.disconnect();
 });

@@ -187,6 +187,11 @@ export const chatSessionMutationActions = {
       }
       const restoredAgentId = String(restored.agent_id || '').trim();
       this.sessions = sortSessionsByActivity(this.sessions);
+      this.sessionOrderPromotion = {
+        sessionId: resolvedId,
+        agentId: restoredAgentId
+      };
+      this.sessionOrderRevision += 1;
       writeSessionListCache(restoredAgentId, filterSessionsByAgent(restoredAgentId, this.sessions));
       syncDemoChatCache({ sessions: this.sessions });
       return restored;

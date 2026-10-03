@@ -151,6 +151,8 @@ Tool surface 决定了当前线程、当前模型能看到哪些工具。它由�
 
 MCP 负责把外部资源、外部工具或外部服务纳入统一能力治理：
 
+Rust runtime 使用 rmcp 3.5.0。HTTP 传输统一为 Streamable HTTP，内置端点支持 MCP 2026-07-28 的 `server/discover` 与请求级元数据协商；外部客户端由 SDK 自动处理版本选择、会话恢复和分页。仓库内自写的旧 SSE/固定 `initialize` 客户端已删除。
+
 | 层面 | 职责 |
 | --- | --- |
 | MCP 管理 | 服务配置、启停、认证、目录展示 |
@@ -190,7 +192,7 @@ MCP 负责把外部资源、外部工具或外部服务纳入统一能力治理�
 
 ## 11. 新增 MCP 步骤
 
-1. 明确 endpoint、transport、认证方式和工具/资源范围。
+1. 明确 endpoint、transport、认证方式和工具/资源范围；`transport` 使用 `streamable-http`。
 2. 在 `config/mcp_config.json` 配置并控制 enable 状态。
 3. 验证列资源、读资源和调工具的最小闭环。
 4. 确保错误、超时和认证失败可被定位。

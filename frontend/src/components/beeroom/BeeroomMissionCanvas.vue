@@ -27,6 +27,7 @@
           :fullscreen="canvasFullscreen"
           :reveal-replay-key="revealReplayKey"
           @open-agent="emit('open-agent', $event)"
+          @open-session="emit('open-session', $event)"
           @preview-node-output="handleAgentOutputPreview"
           @toggle-fullscreen="toggleCanvasFullscreen"
         />
@@ -68,6 +69,7 @@
           @open-artifacts="openMotherWorkspace"
           @send="handleComposerSend"
           @open-agent="emit('open-agent', $event)"
+          @open-session="emit('open-session', $event)"
           @approval="handleDispatchApproval($event.decision, $event.approvalId)"
         />
       </div>
@@ -214,10 +216,7 @@ const {
   mission: missionRef,
   agents: agentsRef,
   t,
-  onRefresh: () => emit('refresh'),
-  runtimeOverrides: {
-    onSessionReady: (sessionId, agentId) => emit('open-session', { sessionId, agentId })
-  }
+  onRefresh: () => emit('refresh')
 });
 
 const agentOutputPreviewMessages = computed(() =>

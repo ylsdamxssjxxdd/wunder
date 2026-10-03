@@ -1,6 +1,9 @@
 use crate::config::Config;
 use crate::monitor::MonitorState;
-use crate::storage::{ChatSessionRecord, ChatSessionStore, SqliteStorage, StorageBackend};
+use crate::storage::{
+    ChannelRuntimeStore, ChannelSessionRecord, ChatSessionRecord, ChatSessionStore, SqliteStorage,
+    StorageBackend,
+};
 use std::sync::Arc;
 
 fn record(id: &str, parent: Option<&str>, source: Option<&str>) -> ChatSessionRecord {
@@ -134,4 +137,45 @@ fn child_catalog_filters_before_pagination_and_preserves_explicit_queries() {
         .list_chat_sessions_by_status("user", None, Some("root"), Some("all"), 0, 10)
         .unwrap();
     assert_eq!(total, 3);
+}
+
+#[test]
+fn work_catalog_excludes_channel_root_sessions_before_pagination() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = SqliteStorage::new(dir.path().join("test.db").to_string_lossy().into());
+    storage
+        .upsert_chat_session(&record("manual", None, None))
+        .unwrap();
+    storage
+        .upsert_chat_session(&record("channel", None, None))
+        .unwrap();
+    storage
+        .upsert_channel_session(&ChannelSessionRecord {
+            channel: "test".into(),
+            account_id: "account".into(),
+            peer_kind: "user".into(),
+            peer_id: "peer".into(),
+            thread_id: None,
+            session_id: "channel".into(),
+            agent_id: None,
+            user_id: "user".into(),
+            tts_enabled: None,
+            tts_voice: None,
+            metadata: None,
+            last_message_at: 1.0,
+            created_at: 1.0,
+            updated_at: 1.0,
+        })
+        .unwrap();
+    let (items, total) = storage
+        .list_work_chat_sessions("user", None, Some("active"), 0, 10)
+        .unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(
+        items
+            .into_iter()
+            .map(|item| item.session_id)
+            .collect::<Vec<_>>(),
+        vec!["manual"]
+    );
 }

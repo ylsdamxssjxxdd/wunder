@@ -340,7 +340,10 @@ impl SqliteChatSessionStorage for SqliteStorage {
             .map(str::to_lowercase)
             .unwrap_or_default();
         if work_catalog {
-            parent_clause.push_str(" AND (COALESCE(parent_session_id, '') = '' OR COALESCE(spawned_by, '') NOT IN ('model', 'subagent_control'))");
+            // Channel conversations have ordinary root chat-session rows too,
+            // but they belong to the channel inbox rather than the user's
+            // work-thread strip. Exclude them before pagination.
+            parent_clause.push_str(" AND (COALESCE(parent_session_id, '') = '' OR COALESCE(spawned_by, '') NOT IN ('model', 'subagent_control')) AND NOT EXISTS (SELECT 1 FROM channel_sessions AS channel_session WHERE channel_session.session_id = chat_sessions.session_id AND channel_session.user_id = chat_sessions.user_id)");
         }
         let (status_clause, status_params) =
             if normalized_status.is_empty() || normalized_status == "all" {

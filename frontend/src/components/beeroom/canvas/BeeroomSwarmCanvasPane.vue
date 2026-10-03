@@ -271,6 +271,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: 'open-agent', agentId: string): void;
+  (event: 'open-session', payload: { sessionId: string; agentId: string }): void;
   (event: 'preview-node-output', payload: {
     nodeId: string;
     agentId: string;
@@ -1160,7 +1161,10 @@ const handleNodeDoubleClick = (nodeId: string) => {
   clearPendingNodeOutputPreview();
   const node = worldNodeMap.value.get(String(nodeId || '').trim());
   const agentId = String(node?.agentId || '').trim();
-  if (agentId) {
+  const sessionId = String(node?.sessionId || '').trim();
+  if (sessionId && agentId) {
+    emit('open-session', { sessionId, agentId });
+  } else if (agentId) {
     emit('open-agent', agentId);
   }
 };

@@ -2025,7 +2025,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       return { sessionId, sessionSummary: summary };
     }
     const apiAgentId = agentId === DEFAULT_AGENT_KEY ? '' : agentId;
-    const { data } = await listSessions({ agent_id: apiAgentId });
+    // Do not send an empty agent_id query parameter. The sessions endpoint
+    // treats an omitted filter as the default-agent scope; `agent_id=` is
+    // rejected as an invalid request parameter on default-only beerooms.
+    const { data } = await listSessions(apiAgentId ? { agent_id: apiAgentId } : {});
     const source = Array.isArray(data?.data?.items) ? data.data.items : [];
     const matched = source
       .filter((item) => {

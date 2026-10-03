@@ -27,6 +27,17 @@ export const syncChatThreadShell = (store, key: string): string | null => {
   runtime.loaded = true;
   runtime.activeTurnId = active?.turnId ?? '';
   runtime.lastThreadStatusAt = Date.now();
+  const session = Array.isArray(store.sessions)
+    ? store.sessions.find((item) => String(item?.id || '').trim() === key)
+    : null;
+  if (session) {
+    // Keep the catalog row aligned with the durable turn state. The transport
+    // may emit session_idle immediately after a terminal turn; retaining the
+    // completed/failed status here lets the work-thread icon communicate the
+    // result instead of falling back to a generic idle icon.
+    session.runtime_status = status;
+    session.runtimeStatus = status;
+  }
   const projection = store.runtimeProjection?.sessions?.[key];
   if (projection) {
     projection.runtimeStatus = status;

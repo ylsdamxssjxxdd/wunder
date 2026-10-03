@@ -335,9 +335,21 @@ export function usePersistentStableListOrder<T>(
     }
   };
 
+  const prependKey = (key: string): void => {
+    const normalizedKey = normalizeKey(key);
+    if (!normalizedKey) return;
+    const sourceKeys = normalizeKeyList((Array.isArray(source.value) ? source.value : []).map((item) => options.getKey(item)));
+    if (!sourceKeys.includes(normalizedKey)) return;
+    const nextOrder = [normalizedKey, ...orderedKeys.value.filter((item) => item !== normalizedKey)];
+    orderedKeys.value = nextOrder;
+    const storageKey = resolveKeySource(options.storageKey);
+    if (storageKey) writeStoredKeys(storageKey, nextOrder);
+  };
+
   return {
     orderedItems,
     orderedKeys,
-    moveItem
+    moveItem,
+    prependKey
   };
 }

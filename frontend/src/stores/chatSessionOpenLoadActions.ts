@@ -542,6 +542,11 @@ export const chatSessionOpenLoadActions = {
       writeSessionListCache(session.agent_id, filterSessionsByAgent(session.agent_id, this.sessions));
       this.activeSessionId = session.id;
       this.draftAgentId = String(session.agent_id || '').trim();
+      this.sessionOrderPromotion = {
+        sessionId: String(session.id || '').trim(),
+        agentId: String(session.agent_id || '').trim()
+      };
+      this.sessionOrderRevision += 1;
       const baseMessages = options.preserveCurrentMessages === true ? this.messages : [];
       this.messages = ensureGreetingMessage(baseMessages, {
         createdAt: session.created_at,

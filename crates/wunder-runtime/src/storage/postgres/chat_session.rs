@@ -345,7 +345,10 @@ impl PostgresChatSessionStorage for PostgresStorage {
         }
 
         if work_catalog {
-            conditions.push("(COALESCE(parent_session_id, '') = '' OR COALESCE(spawned_by, '') NOT IN ('model', 'subagent_control'))".to_string());
+            // Channel conversations have ordinary root chat-session rows too,
+            // but they belong to the channel inbox rather than the user's
+            // work-thread strip. Exclude them before pagination.
+            conditions.push("(COALESCE(parent_session_id, '') = '' OR COALESCE(spawned_by, '') NOT IN ('model', 'subagent_control')) AND NOT EXISTS (SELECT 1 FROM channel_sessions AS channel_session WHERE channel_session.session_id = chat_sessions.session_id AND channel_session.user_id = chat_sessions.user_id)".to_string());
         }
         let where_clause = if conditions.is_empty() {
             String::new()
