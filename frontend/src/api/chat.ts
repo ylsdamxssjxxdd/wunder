@@ -74,7 +74,11 @@ const sanitizeQueryParams = (params: QueryParams = {}): QueryParams => {
   return output;
 };
 
-export const createSession = (payload: unknown) => api.post('/chat/sessions', payload);
+// Creating an empty thread is a metadata write. It must never inherit a
+// long-running request timeout and leave the messenger behind a modal blocker.
+export const createSession = (payload: unknown) => api.post('/chat/sessions', payload, {
+  timeout: 10_000
+});
 export const listSessions = (params: QueryParams, options: { signal?: AbortSignal } = {}) =>
   api.get('/chat/sessions', { params, ...options });
 export const getSession = (id: string, options: { signal?: AbortSignal } = {}) =>

@@ -889,26 +889,26 @@ export function installMessengerControllerSharedHelpers(ctx: MessengerController
           }
           return 'already_current';
       }
-      const runResult = await ctx.runWithMessengerInteractionBlock('new_session', async () => {
-          ctx.creatingAgentSession.value = true;
-          try {
-              const sessionId = await ctx.openOrReuseFreshAgentSession(targetAgent, {
-                  reuseScope: 'any'
-              });
-              if (!sessionId)
-                  return 'noop';
-              if (options.notify === true) {
-                  ElMessage.success(ctx.t('chat.newSessionOpened'));
-              }
-              // Keep "new thread" action responsive; detail hydration continues in background.
-              void ctx.openAgentSession(sessionId, targetAgent);
-              return 'opened';
+      // A session write can be delayed by an unavailable local service. Keep
+      // only the action button busy: a whole-page blocker makes the shell and
+      // its recovery controls unreachable while the request is pending.
+      ctx.creatingAgentSession.value = true;
+      try {
+          const sessionId = await ctx.openOrReuseFreshAgentSession(targetAgent, {
+              reuseScope: 'any'
+          });
+          if (!sessionId)
+              return 'noop';
+          if (options.notify === true) {
+              ElMessage.success(ctx.t('chat.newSessionOpened'));
           }
-          finally {
-              ctx.creatingAgentSession.value = false;
-          }
-      });
-      return runResult || 'noop';
+          // Keep "new thread" action responsive; detail hydration continues in background.
+          void ctx.openAgentSession(sessionId, targetAgent);
+          return 'opened';
+      }
+      finally {
+          ctx.creatingAgentSession.value = false;
+      }
   };
 
   ctx.startNewSession = async function startNewSession() {
