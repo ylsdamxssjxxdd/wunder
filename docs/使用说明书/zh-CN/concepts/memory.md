@@ -99,4 +99,4 @@ wunder 的记忆采用**结构化碎片**形式，不是一大段自由文本：
 
 - [记忆（核心）](/docs/zh-CN/concepts/core-memory/) —— 记忆的设计原则
 - [提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/) —— 系统提示词的组织
-- [工作区与工作目录](/docs/zh-CN/concepts/workspaces/) —— 云端目录管理
+- [工作区与工作目录](/docs/zh-CN/concepts/workspaces/) —— 工作区管理

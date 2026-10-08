@@ -44,7 +44,7 @@ Organized by purpose. Quickly find what you need.
 |------|---------|
 | [Core Concepts](/docs/en/concepts/) | System running model |
 | [Sessions & Turns](/docs/en/concepts/sessions-and-rounds/) | User turns and model turns |
-| [Workspaces and Working Directory](/docs/en/concepts/workspaces/) | Single cloud directory and isolation |
+| [Workspaces and Working Directory](/docs/en/concepts/workspaces/) | Single workspace, its location, and isolation |
 
 ## Integration & Development
 

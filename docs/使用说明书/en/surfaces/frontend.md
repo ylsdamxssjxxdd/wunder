@@ -42,7 +42,7 @@ Use the input area to start tasks, add context, and control the current thread. 
 | **Attachment entry** | Select or drag local files; after processing, they are sent with the message |
 | **Send / stop** | Send when idle, or stop the current execution while running |
 | **Model switch** | Switch the active model right in the composer instead of jumping to settings |
-| **Approval mode** | Choose how strictly tool execution is approved (a cloud security boundary) |
+| **Approval mode** | Choose how strictly tool execution is approved (a security boundary) |
 | **Reasoning effort** | Brain icon filled with orange from the bottom: empty for no thinking, half-full for medium, full for highest; stays gray when following the model default, which does not reflect the actual thinking budget |
 | **Work threads** | Each running entry has a light animation. You can switch or create another thread while the original continues in the background |
 
@@ -80,7 +80,7 @@ If the model generates an invalid tool call or no usable content, the message st
 
 ## Working directory
 
-The "Working directory" area below the workspace tree in the left sidebar shows your single cloud directory. You can:
+The "Working directory" area below the workspace tree in the left sidebar shows your single workspace (a persistent local directory in the Honeycomb; a server-side user directory in the web UI). You can:
 
 - browse the directory structure (directories expand lazily)
 - upload, download, delete, rename, move, and copy files

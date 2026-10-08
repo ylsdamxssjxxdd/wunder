@@ -50,7 +50,6 @@ fn agent_form_snapshot(app: &MainWindow) -> String {
         "preview_skill": app.get_selected_agent_preview_skill(),
         "silent": app.get_selected_agent_silent(),
         "prefer_mother": app.get_selected_agent_prefer_mother(),
-        "hive": app.get_expert_hive().to_string(),
     })
     .to_string()
 }

@@ -1,6 +1,6 @@
 ---
 title: Desktop Guide
-summary: The first choice for individual users. Download, install, and start — no server needed.
+summary: wunder's default form. Download, install, and start — no server needed.
 read_when:
   - You want to get wunder running right away
   - You care more about Beehive's desktop form than deploying a full server
@@ -12,7 +12,7 @@ source_docs:
 
 # Desktop Guide
 
-Desktop is Beehive's desktop form. If you want to start using it right away, don't set up a server first — just use Desktop.
+The desktop app is wunder's default form. Download and install it, and you have a complete AI workbench — no server required.
 
 Open it and you have a complete agent workbench. No server required.
 

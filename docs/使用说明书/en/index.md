@@ -1,30 +1,26 @@
 ---
 title: wunder
-summary: wunder is an agent system that executes tasks. You describe a goal in Beehive, and agents break it down, call tools, and deliver results.
+summary: wunder is an AI workbench that executes tasks. Install the desktop app, describe a goal, and the agent breaks it down, calls tools, and delivers results.
 read_when:
   - First time learning about wunder
   - Need to quickly decide where to start
 source_docs:
   - README.md
-  - docs/设计文档/01-系统总体设计.md
 ---
 
 # wunder
 
-<p class="docs-eyebrow">An agent system that executes tasks</p>
+<p class="docs-eyebrow">An AI workbench that executes tasks</p>
 
-## Beehive: your workbench
+## The Honeycomb: your AI workbench
 
-You use wunder through **Beehive**. Beehive is the user-side workbench, covering chat, the working directory, agent settings, and tools. Open Beehive, describe your goal, and agents break it down, call tools, and deliver results.
+You use wunder through the **Honeycomb (desktop)**. It is a local desktop app covering chat, files, agent settings, and tools. Install it, describe your goal, and the agent breaks the goal down, calls tools, and delivers results — no server deployment required.
 
-Beehive is available in two ways:
+```text
+Download → Configure a model → Describe your goal → Get results
+```
 
-| Way | For | Notes |
-|------|------|------|
-| **Desktop app** | Individual users | Local install, runs out of the box, can operate local files and desktop |
-| **Web browser** | Teams / Organizations | Browser access, multi-user, unified management |
-
-Both share the same workbench with identical capabilities. Individual users just install the desktop app; for teams, an admin deploys the server and members access Beehive in a browser. Developers and automation scenarios can also use the [CLI](/docs/en/start/cli/).
+Individual users can start right after installing; [Quick Start](/docs/en/start/quickstart/) gets your first task done in 4 steps.
 
 ## What it can do
 
@@ -34,9 +30,9 @@ Both share the same workbench with identical capabilities. Individual users just
 - **Continuous tasks**: scheduled checks, recurring reminders, cross-channel message handling
 - **System integration**: connect external services, turn recurring flows into skills
 
-## Workbench and system structure
+## Workbench structure
 
-Beehive uses a two-column layout: the left sidebar holds new task, search, the workspace thread tree, the working directory, and settings; the right side is chat. All daily chat, file handling, agent settings, and tool usage happen here. Every user has exactly one agent instance and one fixed cloud working directory. See [Meet Beehive](/docs/en/surfaces/frontend/).
+The Honeycomb uses a two-column layout: the left sidebar holds new task, search, the workspace thread tree, the working directory, and settings; the right side is chat. All daily chat, file handling, agent settings, and tool usage happen here. Every user has exactly one agent instance and one fixed workspace. See [Meet Beehive](/docs/en/surfaces/frontend/).
 
 The system is organized top-down:
 
@@ -44,48 +40,27 @@ The system is organized top-down:
 
 You send a message → the agent keeps working in its thread, spawning temporary subagents when work can be split.
 
-## Pick your entry by role
-
-<div class="docs-card-grid">
-  <a class="docs-card" href="/docs/en/start/quickstart/">
-    <strong>First time</strong>
-    <span>Complete your first task.</span>
-  </a>
-  <a class="docs-card" href="/docs/en/surfaces/frontend/">
-    <strong>Meet Beehive</strong>
-    <span>Chat, the working directory, agent settings, and tools.</span>
-  </a>
-  <a class="docs-card" href="/docs/en/start/desktop/">
-    <strong>Individual users</strong>
-    <span>Download the desktop app and run locally.</span>
-  </a>
-  <a class="docs-card" href="/docs/en/start/server/">
-    <strong>Team admins</strong>
-    <span>Deploy the server, manage users and permissions.</span>
-  </a>
-  <a class="docs-card" href="/docs/en/surfaces/web-admin/">
-    <strong>Admin surface</strong>
-    <span>System config, user and channel governance.</span>
-  </a>
-  <a class="docs-card" href="/docs/en/start/cli/">
-    <strong>Developers</strong>
-    <span>Terminal-driven, scripting, automation.</span>
-  </a>
-</div>
-
 ## Key features
 
 | Feature | Description |
 |------|------|
-| **Unified workbench** | Desktop and web share the same Beehive, with identical capabilities |
-| **Multi-user & permissions** | Layered control over users, organizations, token quotas, and permissions |
-| **One agent per user** | Each user has exactly one agent instance, bound 1:1 to an admin-side preset; work that can run in parallel is split across temporary subagents |
+| **Local-first** | The Honeycomb runs locally, out of the box, and can operate local files and the desktop |
+| **One agent per user** | Each user has exactly one agent instance; work that can run in parallel is split across temporary subagents |
 | **Rich tool ecosystem** | Built-in tools + MCP external tools + skill packs + knowledge bases |
+| **Long sessions** | Context compaction and long-term memory keep long sessions working |
 | **Open interfaces** | WebSocket real-time, RESTful API, A2A interop standard |
+
+## Need more? Two optional forms
+
+The Honeycomb covers most scenarios. wunder also ships two optional forms — use them when you need them:
+
+- **The Hull (server)**: deploy only when multiple people need to share one system. Multi-user, permissions, channel access; members use Beehive in a browser. See the [Hull deployment guide](/docs/en/start/server/) and the [Bridge](/docs/en/surfaces/web-admin/).
+- **The Helm (cli)**: for terminals and automation, script-driven. See the [Helm guide](/docs/en/start/cli/).
 
 ## Quick navigation
 
 - **First time** → [Quick Start](/docs/en/start/quickstart/)
+- **Download & install** → [Honeycomb quick start](/docs/en/start/desktop/)
 - **Understand the system** → [Core Concepts](/docs/en/concepts/)
 - **Integrate with existing systems** → [Integration Overview](/docs/en/integration/)
 - **Running into issues** → [Troubleshooting](/docs/en/help/troubleshooting/) or [FAQ](/docs/en/help/faq/)
@@ -94,4 +69,3 @@ You send a message → the agent keeps working in its thread, spawning temporary
 
 - [Documentation Hub](/docs/en/start/hubs/)
 - [API Index](/docs/en/reference/api-index/)
-- [System Overview (design doc)](/docs/设计文档/01-系统总体设计.md)

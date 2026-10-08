@@ -44,7 +44,7 @@ source_docs:
 |------|------|
 | [核心概览](/docs/zh-CN/concepts/) | 系统运行模型 |
 | [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/) | 用户轮次和模型轮次 |
-| [工作区与工作目录](/docs/zh-CN/concepts/workspaces/) | 唯一云端目录与隔离 |
+| [工作区与工作目录](/docs/zh-CN/concepts/workspaces/) | 唯一工作区、目录位置与隔离 |
 
 ## 接入与开发
 

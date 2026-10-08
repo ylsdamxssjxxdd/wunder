@@ -9,7 +9,7 @@ wunder's interfaces fall into two categories: **Beehive** is every user's work s
 
 ## Beehive: user work surface
 
-Beehive is the daily work surface for all users, covering chat, the working directory, agent settings, tools, and settings. Individual users install the desktop app; team members open Beehive in a web browser managed by the server. Both share the same interface and capabilities, and the desktop app adds local file access, a local runtime, and one-click reset on top of Beehive.
+Beehive is the daily work surface for all users, covering chat, the working directory, agent settings, tools, and settings. The default way in is the desktop app; after a team deploys the Hull (server), members can also open Beehive in a web browser. Both share the same interface and capabilities, and the desktop app adds local file access, a local runtime, and one-click reset on top of Beehive.
 
 ## Admin interface: governance backend
 
@@ -40,7 +40,7 @@ Both the desktop app and the web browser use a two-column layout:
 
 The left sidebar is fixed at 240px and stacks, top to bottom: new task, search, the workspace and thread tree, the **working directory** (file tree + toolbar + usage bar), and the settings entry at the bottom. The right column is fluid and shows either the welcome page or the current thread's chat; file preview and online editing open as overlays without changing the two-column structure.
 
-Every user has exactly one agent instance and one fixed cloud working directory, so the sidebar holds only that single workspace and thread tree — no multi-agent list, create, or switch entry, and no way to change the directory.
+Every user has exactly one agent instance and one fixed workspace, so the sidebar holds only that single workspace and thread tree — no multi-agent list, create, or switch entry, and no way to change the directory.
 
 ## Pick by role
 

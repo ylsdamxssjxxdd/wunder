@@ -190,6 +190,13 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         if busy.swap(true, Ordering::Relaxed) {
             return;
         }
+        if !matches!(tab, 2 | 4 | 5) {
+            // Tabs without a data projection (cron and channels) refresh
+            // through their own callbacks; nothing else loads here.
+            busy.store(false, Ordering::Relaxed);
+            app.set_expert_loading(false);
+            return;
+        }
         let busy = busy.clone();
         let api = refresh_api.clone();
         let weak = app.as_weak();
@@ -200,7 +207,6 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         app.set_expert_loading(true);
         std::thread::spawn(move || {
             enum Data {
-                Settings(Vec<(String, String)>),
                 Memories(Vec<wunder_desktop::native::ExpertMemory>),
                 Archives(Vec<wunder_desktop::NativeSession>, i64),
                 Runtime(serde_json::Value),
@@ -223,7 +229,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 5 => api
                     .expert_archives(&agent, offset)
                     .map(|(rows, total)| Data::Archives(rows, total)),
-                _ => api.expert_hives().map(Data::Settings),
+                _ => unreachable!("tab filtered before spawn"),
             };
             let _ = weak.upgrade_in_event_loop(move |app| {
                 busy.store(false, Ordering::Relaxed);
@@ -236,30 +242,6 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 }
                 app.set_expert_loading(false);
                 match result {
-                    Ok(Data::Settings(hives)) => {
-                        let selected: String = String::new();
-                        if let Some((_, name)) = hives.iter().find(|(id, _)| id == &selected) {
-                            // The hive combobox is loaded asynchronously after
-                            // the agent record; only project it while the
-                            // editor is clean so a pending user choice survives.
-                            if !app.get_agent_dirty() {
-                                app.set_expert_hive(name.as_str().into());
-                                crate::agent_editor::refresh_agent_snapshot(&app);
-                            }
-                        }
-                        app.set_expert_hive_ids(model(
-                            hives
-                                .iter()
-                                .map(|(id, _)| SharedString::from(id.as_str()))
-                                .collect(),
-                        ));
-                        let mut filters = vec![SharedString::from("全部蜂群")];
-                        filters.extend(hives.iter().map(|(_, n)| SharedString::from(n.as_str())));
-                        app.set_expert_hive_filters(model(filters));
-                        app.set_expert_hive_names(model(
-                            hives.into_iter().map(|(_, n)| n.into()).collect(),
-                        ));
-                    }
                     Ok(Data::Memories(rows)) => {
                         if category == "全部标签" {
                             let mut categories = vec![SharedString::from("全部标签")];
@@ -416,26 +398,6 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     Ok(()) => app.set_status("记忆复刻完成".into()),
                     Err(e) => app.set_expert_error(e.to_string().into()),
                 }
-            });
-        });
-    });
-    let weak = app.as_weak();
-    let probe_api = api.clone();
-    app.on_probe_expert_channel(move || {
-        let Some(app) = weak.upgrade() else { return };
-        let Some(account) = usize::try_from(app.get_selected_channel_account())
-            .ok()
-            .and_then(|i| app.get_channel_accounts().row_data(i))
-        else {
-            return;
-        };
-        let api = probe_api.clone();
-        let weak = app.as_weak();
-        std::thread::spawn(move || {
-            let result = api.probe_expert_channel(&account.channel, &account.account_id);
-            let _ = weak.upgrade_in_event_loop(move |app| match result {
-                Ok(()) => app.invoke_open_channel_logs(),
-                Err(e) => app.set_status(e.to_string().into()),
             });
         });
     });

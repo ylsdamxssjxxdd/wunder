@@ -106,7 +106,11 @@ impl PostgresStorage {
     }
 
     /// Prototype hard cutover: legacy budget-shaped goal tables are dropped
-    /// and rebuilt with the revision/phase schema.
+    /// here so the schema batch below recreates them with the current
+    /// revision/phase schema. Must run BEFORE the batch, never after:
+    /// the batch only skips existing tables and its indexes would fail
+    /// against the legacy shape, and a post-batch drop would leave the
+    /// table missing entirely.
     fn ensure_session_goal_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
         let rows = conn.query(
             "SELECT column_name FROM information_schema.columns WHERE table_name = 'session_goals'",
@@ -252,6 +256,11 @@ impl PostgresStorage {
                 &[],
             )?;
         }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chat_sessions_workspace \
+             ON chat_sessions (user_id, workspace_id, last_message_at DESC)",
+            &[],
+        )?;
         let _ = conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_chat_sessions_parent \
              ON chat_sessions (user_id, parent_session_id, updated_at)",
@@ -890,6 +899,10 @@ impl PostgresSchemaStorage for PostgresStorage {
                     continue;
                 }
             };
+            // Legacy session_goals shapes must be cleared before the batch
+            // runs, otherwise the batch's phase index fails against the old
+            // table and the hard cutover cannot rebuild it.
+            self.ensure_session_goal_columns(&mut conn)?;
             let result = conn.batch_execute(
                 r#"
                 CREATE TABLE IF NOT EXISTS meta (
@@ -1321,8 +1334,6 @@ impl PostgresSchemaStorage for PostgresStorage {
                   ON user_tokens (user_id);
                 CREATE INDEX IF NOT EXISTS idx_user_tokens_expires
                   ON user_tokens (expires_at);
-                CREATE INDEX IF NOT EXISTS idx_user_tokens_family
-                  ON user_tokens (family_id);
                 CREATE TABLE IF NOT EXISTS user_refresh_tokens (
                   refresh_token TEXT PRIMARY KEY,
                   user_id TEXT NOT NULL,
@@ -1359,6 +1370,7 @@ impl PostgresSchemaStorage for PostgresStorage {
                   parent_message_id TEXT,
                   spawn_label TEXT,
                   spawned_by TEXT,
+                  workspace_id TEXT,
                   created_at DOUBLE PRECISION NOT NULL,
                   updated_at DOUBLE PRECISION NOT NULL,
                   last_message_at DOUBLE PRECISION NOT NULL
@@ -1371,8 +1383,6 @@ impl PostgresSchemaStorage for PostgresStorage {
                   ON chat_sessions (user_id, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_chat_sessions_parent
                   ON chat_sessions (user_id, parent_session_id, updated_at);
-                CREATE INDEX IF NOT EXISTS idx_chat_sessions_workspace
-                  ON chat_sessions (user_id, workspace_id, last_message_at DESC);
                 CREATE TABLE IF NOT EXISTS workspaces (
                   workspace_id TEXT PRIMARY KEY,
                   user_id TEXT NOT NULL,
@@ -1970,7 +1980,6 @@ impl PostgresSchemaStorage for PostgresStorage {
                     self.ensure_user_token_columns(&mut conn)?;
                     self.ensure_user_tool_access_columns(&mut conn)?;
                     self.ensure_chat_session_columns(&mut conn)?;
-                    self.ensure_session_goal_columns(&mut conn)?;
                     self.ensure_thread_item_sequence(&mut conn)?;
                     self.ensure_thread_item_block_fields(&mut conn)?;
                     // A hard cutover intentionally discards obsolete duplicate history.

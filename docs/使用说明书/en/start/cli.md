@@ -1,6 +1,6 @@
 ---
 title: CLI Usage
-summary: The entry point for developers and automation. Terminal-driven, scriptable, JSONL output.
+summary: Optional form. For terminals and automation: terminal-driven, scriptable, JSONL output.
 read_when:
   - You want to use wunder in the terminal
   - You want to integrate wunder into scripts or automation
@@ -11,7 +11,7 @@ updated_at: 2026-04-10
 
 # CLI Usage
 
-CLI is the entry point for developers and automation. Use it directly in the terminal — no GUI needed.
+The Helm (cli) is wunder's command-line form and an optional one: for daily use install the desktop app. Use the Helm when you work in a terminal or need scripting and automation.
 
 ## When to Choose CLI
 

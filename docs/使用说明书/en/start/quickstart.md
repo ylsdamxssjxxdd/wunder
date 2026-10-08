@@ -1,6 +1,6 @@
 ---
 title: Quick Start
-summary: The shortest path to open Beehive, configure a model, and complete your first task.
+summary: The shortest path to install the desktop app, configure a model, and complete your first task.
 read_when:
   - You're using wunder for the first time
   - You need to verify a working setup
@@ -10,120 +10,43 @@ source_docs:
 
 # Quick Start
 
-First time with wunder? The shortest path is: open Beehive, configure a model, and complete one task. Beehive is where you work — individuals use the desktop app, team members use the web browser.
+One goal: open the Honeycomb and complete your first task. Individual users default to the desktop app — download and go, no server required.
 
-## Step 1: Open Beehive
+## 4 steps to get running
 
-| Situation | What to do |
-|----------|--------|
-| Personal use | Install the [desktop app](/docs/en/start/desktop/), launch and go |
-| Team member | After an admin [deploys the server](/docs/en/start/server/), open Beehive in a browser |
-| Automation / scripting | Use the [CLI](/docs/en/start/cli/) from a terminal |
+### 1. Download and install
 
-Not sure which to pick? Default to the desktop app — lowest barrier.
+Get the installer for your system from Releases, install or extract, then launch.
 
-## Shortest path: Desktop app
+### 2. Configure the model
 
-For individual users, download and go.
+Open "System Settings" → "Model Configuration". Enter your API Key and endpoint URL, then click "Test Connection" before saving.
 
-### 5 steps to get running
+### 3. Start your first conversation
 
-1. **Download and install**
-   - Get the installer for your system from Releases
-   - Install or extract, then launch
+Go back to the chat interface, type `List the files in the current directory`, and press Enter.
 
-2. **Configure the model**
-   - Open "System Settings" → "Model Configuration"
-   - Enter your API Key and endpoint URL
-   - Click "Test Connection" before saving
+### 4. Watch it work
 
-3. **Start your first conversation**
-   - Go back to the chat interface
-   - Type: `List the files in the current directory`
-   - Press Enter
+Model thinks → calls tools → shows results → replies.
 
-4. **Watch it work**
-   - Model thinks → calls tools → shows results → replies
+If you saw the full execution process and the final result, you're up and running.
 
-5. **Verify**
-   - Saw the full execution process and results? You're up and running.
-
-### Desktop-only capabilities
+## Out-of-the-box capabilities
 
 - **Local-first**: runs locally by default, can also connect to a remote server
 - **Desktop control**: can operate local windows, files, browsers
 - **Persistent workspace**: files are not auto-cleaned
 - **Direct agent editing**: adjust agent configuration and prompts anytime
 
-## Team path: Web browser
+## Other ways to use wunder
 
-For multi-user collaboration and organizational governance.
+The Honeycomb covers most scenarios. The following optional forms are only needed for specific requirements:
 
-### Prerequisites
-
-- Docker and Docker Compose (recommended)
-- At least 4GB available memory
-
-### 3 steps to deploy
-
-1. **Get the code**
-   ```bash
-   git clone <repo-url>
-   cd wunder
-   ```
-
-2. **Start the service**
-   ```bash
-   # x86 architecture
-   docker-compose -f docker-compose-x86.yml up -d
-   
-   # ARM architecture
-   docker-compose -f docker-compose-arm.yml up -d
-   ```
-
-3. **Open Beehive**
-   - Beehive: http://localhost:18002
-   - Admin & docs: http://localhost:18000
-   - Default admin: admin / admin
-
-Once deployed, team members open Beehive in a browser — no client install needed.
-
-### Server core capabilities
-
-- **Multi-tenancy**: layered management of users, organizations, permissions
-- **Channel integration**: Feishu, WeChat, QQ, and more
-- **Observability**: monitoring, benchmarking, capability evaluation
-
-## Developer path: CLI
-
-For developers and automation scripts.
-
-### Install and run
-
-```bash
-# Build (requires Rust)
-cargo build --release
-
-# Run
-./target/release/wunder-cli
-```
-
-### First session
-
-```bash
-wunder-cli
-> Write a Hello World Python script
-```
-
-### CLI-only capabilities
-
-- **TUI interface**: terminal interaction
-- **Session management**: `/fork`, `/compact`, `/resume`
-- **JSONL output**: easy pipe and automation integration
+- **The Hull (server)**: deploy when multiple people need to share one system; members use Beehive in a browser. See the [Hull deployment guide](/docs/en/start/server/).
+- **The Helm (cli)**: for terminals and automation. See the [Helm guide](/docs/en/start/cli/).
 
 ## Verification checklist
-
-No matter which path you chose, confirm:
 
 - [ ] You can successfully start a conversation
 - [ ] You can see intermediate steps and tool calls
@@ -132,6 +55,7 @@ No matter which path you chose, confirm:
 
 ## Next steps
 
+- Download & install details → [Honeycomb quick start](/docs/en/start/desktop/)
 - Meet Beehive → [Beehive Interface](/docs/en/surfaces/frontend/)
 - Understand the system → [Core Concepts](/docs/en/concepts/)
 - Integrate with existing systems → [Integration Overview](/docs/en/integration/)

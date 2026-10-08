@@ -442,8 +442,7 @@ fn bind_activity(app: &MainWindow, state: Rc<RefCell<State>>) {
     });
 }
 
-fn bind_refresh(app: &MainWindow, state: Rc<RefCell<State>>) {
-    let weak = app.as_weak();
+fn bind_refresh(app: &MainWindow, state: Rc<RefCell<State>>) {    let weak = app.as_weak();
     app.on_refresh_chat(move || {
         if let Some(app) = weak.upgrade() {
             refresh_chat(&app, state.clone(), false);

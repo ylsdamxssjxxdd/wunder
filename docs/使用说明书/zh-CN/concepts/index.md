@@ -84,7 +84,7 @@ wunder 默认按多用户、长会话、高风险工具来设计。安全限制�
 - [工具体系](/docs/zh-CN/concepts/tools/) —— 工具来源和使用
 - [长期记忆](/docs/zh-CN/concepts/memory/) —— 记忆的形态和管理
 - [提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/) —— 定制智能体风格
-- [工作区与工作目录](/docs/zh-CN/concepts/workspaces/) —— 唯一云端目录的管理
+- [工作区与工作目录](/docs/zh-CN/concepts/workspaces/) —— 唯一工作区的位置与管理
 - [Token 与配额](/docs/zh-CN/concepts/quota-and-token-usage/) —— 资源使用统计
 - [流式执行](/docs/zh-CN/concepts/streaming/) —— 实时输出的原理
 - [运行时状态](/docs/zh-CN/concepts/presence-and-runtime/) —— 状态指示器的含义

@@ -40,7 +40,7 @@ Every action the model takes (thinking, calling a tool, replying) counts as one 
 
 ## Workspace
 
-Your persistent file space. In the cloud form every user has **exactly one** workspace: a single cloud directory of their own under the server data root, used as the root for file tools. A workspace cannot be added, deleted, or replaced, and it never binds a folder on your machine.
+Your persistent file space. Every user has **exactly one** workspace, used as the root for file tools: in the Honeycomb (desktop) it is a persistent local directory with direct access to local files; in Hull (server) deployments it is a single per-user directory under the server data root, accessed through the web UI. A workspace cannot be added, deleted, or replaced.
 
 ## Working Directory
 

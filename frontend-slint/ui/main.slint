@@ -89,12 +89,7 @@ export component MainWindow inherits Window {
     in-out property <[ExpertToolGroup]> expert-tool-groups;
     in-out property <string> expert-tool-keyword;
     in-out property <[string]> expert-model-names;
-    in-out property <[string]> expert-hive-names: ["默认蜂群"];
-    in-out property <[string]> expert-hive-ids;
-    in-out property <[string]> expert-hive-filters: ["全部蜂群"];
-    in-out property <string> expert-hive: "默认蜂群";
     callback refresh-expert();
-    callback probe-expert-channel();
     callback search-expert-tools();
     callback toggle-expert-tool-group(string);
     callback edit-agent-question(int, string);

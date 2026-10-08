@@ -1,7 +1,7 @@
 {
   "site": {
     "name": "使用说明书",
-    "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
+    "description": "wunder is an AI workbench for individuals and teams. / wunder 是一个面向个人和团队的 AI 工作台。",
     "default_language": "zh-CN",
     "home_page": "zh-CN/index",
     "logo": "/docs/assets/eva01-head.svg",
@@ -31,7 +31,12 @@
                 "group": "入门",
                 "pages": [
                   "zh-CN/start/quickstart",
-                  "zh-CN/start/desktop",
+                  "zh-CN/start/desktop"
+                ]
+              },
+              {
+                "group": "进阶（可选形态）",
+                "pages": [
                   "zh-CN/start/server",
                   "zh-CN/start/cli"
                 ]
@@ -273,7 +278,12 @@
                 "group": "Onboarding",
                 "pages": [
                   "en/start/quickstart",
-                  "en/start/desktop",
+                  "en/start/desktop"
+                ]
+              },
+              {
+                "group": "Advanced (Optional Forms)",
+                "pages": [
                   "en/start/server",
                   "en/start/cli"
                 ]

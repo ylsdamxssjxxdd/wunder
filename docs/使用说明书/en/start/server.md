@@ -1,6 +1,6 @@
 ---
 title: Server Deployment
-summary: The choice for teams and organizations. Multi-user, permission management, channel integration, unified governance.
+summary: Optional form. Deploy only for multi-user collaboration, permission management, channel integration, and unified governance.
 read_when:
   - You need multiple people sharing wunder
   - You need an admin backend and unified management
@@ -11,7 +11,7 @@ updated_at: 2026-04-10
 
 # Server Deployment
 
-Server is the choice for teams and organizations. Multi-user collaboration, permission management, channel integration — all require deploying Server first.
+The Hull (server) is wunder's service form and an optional one: for personal use the desktop app is enough. Deploy the server only when you need multi-user collaboration, permission management, or channel integration.
 
 ## When to Choose Server
 
