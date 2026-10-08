@@ -1,0 +1,503 @@
+{
+  "site": {
+    "name": "使用说明书",
+    "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
+    "default_language": "zh-CN",
+    "home_page": "zh-CN/index",
+    "logo": "/docs/assets/eva01-head.svg",
+    "header_links": [
+      {
+        "label": "Console / 控制台",
+        "url": "/"
+      }
+    ]
+  },
+  "navigation": {
+    "languages": [
+      {
+        "language": "zh-CN",
+        "label": "简体中文",
+        "tabs": [
+          {
+            "tab": "开始",
+            "groups": [
+              {
+                "group": "首页",
+                "pages": [
+                  "zh-CN/index"
+                ]
+              },
+              {
+                "group": "入门",
+                "pages": [
+                  "zh-CN/start/quickstart",
+                  "zh-CN/start/desktop",
+                  "zh-CN/start/server",
+                  "zh-CN/start/cli"
+                ]
+              },
+              {
+                "group": "导航",
+                "pages": [
+                  "zh-CN/start/hubs",
+                  "zh-CN/start/docs-directory"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "核心",
+            "groups": [
+              {
+                "group": "10个核心",
+                "pages": [
+                  "zh-CN/concepts/index",
+                  "zh-CN/concepts/core-agent-loop",
+                  "zh-CN/concepts/core-tools",
+                  "zh-CN/concepts/core-context-compression",
+                  "zh-CN/concepts/core-memory",
+                  "zh-CN/concepts/core-channels",
+                  "zh-CN/concepts/core-scheduled-tasks",
+                  "zh-CN/concepts/core-multi-user-management",
+                  "zh-CN/concepts/core-realtime",
+                  "zh-CN/concepts/core-stability",
+                  "zh-CN/concepts/core-observability"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "工具",
+            "groups": [
+              {
+                "group": "概览",
+                "pages": [
+                  "zh-CN/tools/index"
+                ]
+              },
+              {
+                "group": "文件与代码",
+                "pages": [
+                  "zh-CN/tools/workspace-files",
+                  "zh-CN/tools/exec",
+                  "zh-CN/tools/ptc",
+                  "zh-CN/tools/apply-patch",
+                  "zh-CN/tools/read-image",
+                  "zh-CN/tools/skill-call"
+                ]
+              },
+              {
+                "group": "网页与桌面",
+                "pages": [
+                  "zh-CN/tools/web-fetch",
+                  "zh-CN/tools/browser",
+                  "zh-CN/tools/desktop-control"
+                ]
+              },
+              {
+                "group": "UI and Automation",
+                "pages": [
+                  "zh-CN/tools/panels-and-a2ui",
+                  "zh-CN/tools/schedule-task",
+                  "zh-CN/tools/final-response",
+                  "zh-CN/tools/sleep"
+                ]
+              },
+              {
+                "group": "会话与协作",
+                "pages": [
+                  "zh-CN/tools/thread-control",
+                  "zh-CN/tools/subagent-control",
+                  "zh-CN/tools/memory-manager",
+                  "zh-CN/tools/channel",
+                  "zh-CN/tools/self-status"
+                ]
+              },
+              {
+                "group": "系统桥接",
+                "pages": [
+                  "zh-CN/tools/user-world",
+                  "zh-CN/tools/a2a-tools"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "接入",
+            "groups": [
+              {
+                "group": "概览",
+                "pages": [
+                  "zh-CN/integration/index"
+                ]
+              },
+              {
+                "group": "核心接口",
+                "pages": [
+                  "zh-CN/integration/wunder-api",
+                  "zh-CN/integration/chat-ws",
+                  "zh-CN/integration/chat-sessions",
+                  "zh-CN/integration/workspace-api",
+                  "zh-CN/integration/temp-dir"
+                ]
+              },
+              {
+                "group": "扩展接入",
+                "pages": [
+                  "zh-CN/integration/user-world",
+                  "zh-CN/integration/channel-webhook",
+                  "zh-CN/integration/weixin-channel",
+                  "zh-CN/integration/external-login",
+                  "zh-CN/integration/a2a",
+                  "zh-CN/integration/mcp-endpoint"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "界面",
+            "groups": [
+              {
+                "group": "概览",
+                "pages": [
+                  "zh-CN/surfaces/index"
+                ]
+              },
+              {
+                "group": "前端与桌面",
+                "pages": [
+                  "zh-CN/surfaces/frontend",
+                  "zh-CN/surfaces/web-admin",
+                  "zh-CN/surfaces/desktop-ui"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "运维",
+            "groups": [
+              {
+                "group": "概览",
+                "pages": [
+                  "zh-CN/ops/index"
+                ]
+              },
+              {
+                "group": "部署与治理",
+                "pages": [
+                  "zh-CN/ops/deployment",
+                  "zh-CN/ops/data-and-storage",
+                  "zh-CN/ops/desktop-local-mode",
+                  "zh-CN/ops/auth-and-security",
+                  "zh-CN/ops/benchmark-and-observability",
+                  "zh-CN/ops/wunderbench",
+                  "zh-CN/ops/channel-runtime"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "参考",
+            "groups": [
+              {
+                "group": "概览",
+                "pages": [
+                  "zh-CN/reference/index"
+                ]
+              },
+              {
+                "group": "系统参考",
+                "pages": [
+                  "zh-CN/reference/api-index",
+                  "zh-CN/reference/config",
+                  "zh-CN/reference/stream-events",
+                  "zh-CN/reference/workspace-routing",
+                  "zh-CN/reference/prompt-templates",
+                  "zh-CN/reference/admin-panels"
+                ]
+              },
+              {
+                "group": "深入了解",
+                "pages": [
+                  "zh-CN/concepts/architecture",
+                  "zh-CN/concepts/workspaces",
+                  "zh-CN/concepts/sessions-and-rounds",
+                  "zh-CN/concepts/streaming",
+                  "zh-CN/concepts/presence-and-runtime",
+                  "zh-CN/concepts/tools",
+                  "zh-CN/concepts/prompt-and-skills",
+                  "zh-CN/concepts/memory",
+                  "zh-CN/concepts/quota-and-token-usage",
+                  "zh-CN/concepts/goal-mode",
+                  "zh-CN/concepts/companion",
+                  "zh-CN/concepts/boundary-handling"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "帮助",
+            "groups": [
+              {
+                "group": "概览",
+                "pages": [
+                  "zh-CN/help/index"
+                ]
+              },
+              {
+                "group": "帮助",
+                "pages": [
+                  "zh-CN/help/troubleshooting",
+                  "zh-CN/help/faq",
+                  "zh-CN/help/glossary"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "en",
+        "label": "English",
+        "tabs": [
+          {
+            "tab": "Getting Started",
+            "groups": [
+              {
+                "group": "Home",
+                "pages": [
+                  "en/index"
+                ]
+              },
+              {
+                "group": "Onboarding",
+                "pages": [
+                  "en/start/quickstart",
+                  "en/start/desktop",
+                  "en/start/server",
+                  "en/start/cli"
+                ]
+              },
+              {
+                "group": "Navigation",
+                "pages": [
+                  "en/start/hubs",
+                  "en/start/docs-directory"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Core",
+            "groups": [
+              {
+                "group": "10 Core Ideas",
+                "pages": [
+                  "en/concepts/index",
+                  "en/concepts/core-agent-loop",
+                  "en/concepts/core-tools",
+                  "en/concepts/core-context-compression",
+                  "en/concepts/core-memory",
+                  "en/concepts/core-channels",
+                  "en/concepts/core-scheduled-tasks",
+                  "en/concepts/core-multi-user-management",
+                  "en/concepts/core-realtime",
+                  "en/concepts/core-stability",
+                  "en/concepts/core-observability"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Tools",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "en/tools/index"
+                ]
+              },
+              {
+                "group": "Files and Code",
+                "pages": [
+                  "en/tools/workspace-files",
+                  "en/tools/exec",
+                  "en/tools/ptc",
+                  "en/tools/apply-patch",
+                  "en/tools/read-image",
+                  "en/tools/skill-call"
+                ]
+              },
+              {
+                "group": "Web and Desktop",
+                "pages": [
+                  "en/tools/web-fetch",
+                  "en/tools/browser",
+                  "en/tools/desktop-control"
+                ]
+              },
+              {
+                "group": "UI and Automation",
+                "pages": [
+                  "en/tools/panels-and-a2ui",
+                  "en/tools/schedule-task",
+                  "en/tools/final-response",
+                  "en/tools/sleep"
+                ]
+              },
+              {
+                "group": "Sessions and Collaboration",
+                "pages": [
+                  "en/tools/thread-control",
+                  "en/tools/subagent-control",
+                  "en/tools/memory-manager",
+                  "en/tools/channel",
+                  "en/tools/self-status"
+                ]
+              },
+              {
+                "group": "System Bridges",
+                "pages": [
+                  "en/tools/user-world",
+                  "en/tools/a2a-tools"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "en/integration/index"
+                ]
+              },
+              {
+                "group": "Core Interfaces",
+                "pages": [
+                  "en/integration/wunder-api",
+                  "en/integration/chat-ws",
+                  "en/integration/chat-sessions",
+                  "en/integration/workspace-api",
+                  "en/integration/temp-dir"
+                ]
+              },
+              {
+                "group": "Extended Integrations",
+                "pages": [
+                  "en/integration/user-world",
+                  "en/integration/channel-webhook",
+                  "en/integration/weixin-channel",
+                  "en/integration/external-login",
+                  "en/integration/a2a",
+                  "en/integration/mcp-endpoint"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Surfaces",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "en/surfaces/index"
+                ]
+              },
+              {
+                "group": "Frontend and Desktop",
+                "pages": [
+                  "en/surfaces/frontend",
+                  "en/surfaces/web-admin",
+                  "en/surfaces/desktop-ui"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Operations",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "en/ops/index"
+                ]
+              },
+              {
+                "group": "Deployment and Operations",
+                "pages": [
+                  "en/ops/deployment",
+                  "en/ops/data-and-storage",
+                  "en/ops/desktop-local-mode",
+                  "en/ops/auth-and-security",
+                  "en/ops/benchmark-and-observability",
+                  "en/ops/wunderbench",
+                  "en/ops/channel-runtime"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Reference",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "en/reference/index"
+                ]
+              },
+              {
+                "group": "System Reference",
+                "pages": [
+                  "en/reference/api-index",
+                  "en/reference/config",
+                  "en/reference/stream-events",
+                  "en/reference/workspace-routing",
+                  "en/reference/prompt-templates",
+                  "en/reference/admin-panels"
+                ]
+              },
+              {
+                "group": "Deep Dives",
+                "pages": [
+                  "en/concepts/architecture",
+                  "en/concepts/workspaces",
+                  "en/concepts/sessions-and-rounds",
+                  "en/concepts/streaming",
+                  "en/concepts/presence-and-runtime",
+                  "en/concepts/tools",
+                  "en/concepts/prompt-and-skills",
+                  "en/concepts/memory",
+                  "en/concepts/quota-and-token-usage",
+                  "en/concepts/goal-mode",
+                  "en/concepts/companion",
+                  "en/concepts/boundary-handling"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Help",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "en/help/index"
+                ]
+              },
+              {
+                "group": "Help",
+                "pages": [
+                  "en/help/troubleshooting",
+                  "en/help/faq",
+                  "en/help/glossary"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

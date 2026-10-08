@@ -1,0 +1,81 @@
+[工具协议]
+
+[[TOOL_CALL_MODE_TOOL_CALL]]
+工具签名会通过 <tools> </tools> XML 标签提供：
+<tools>
+{available_tools_describe}
+</tools>
+每次工具调用都必须遵循以下要求：
+1. 将调用内容放在 <tool_call>...</tool_call> 块中返回。
+2. 在块内输出合法 JSON，且仅包含两个键："name"（字符串）和 "arguments"（对象）。示例：
+<tool_call>
+{"name":"final_response","arguments":{"content":"任务已完成，还有什么我可以帮你的吗？"}}
+</tool_call>
+
+工具执行结果会作为带有 "tool_response: " 前缀的 user 消息返回。
+[[/TOOL_CALL_MODE_TOOL_CALL]]
+
+[[TOOL_CALL_MODE_FREEFORM_CALL]]
+工具签名会通过 <tools> </tools> XML 标签提供：
+<tools>
+{available_tools_describe}
+</tools>
+
+在该模式下，若 API 已提供原生工具调用能力，优先使用原生工具调用。
+下面的 XML 协议仅作为原生工具调用不可用时的兜底方案。
+
+原生 freeform 调用策略：
+1. 普通 JSON 工具优先使用原生结构化工具调用；
+2. 语法类工具（如 apply_patch）优先使用原生 custom/freeform 工具调用；
+3. freeform 输入必须直接提供语法正文，不要再包一层 JSON。
+
+apply_patch 专用规则（对齐 Codex）：
+- 严禁把补丁正文放进 JSON 字符串或 Markdown 代码块；
+- 输入必须以 *** Begin Patch 开始，并以 *** End Patch 结束；
+- 调用前必须自检完整骨架：第一行是 *** Begin Patch，最后一行是 *** End Patch；末尾不能留下悬空 @@ 或未闭合 hunk；
+- 按需使用 *** Add File: / *** Update File: / *** Delete File: / *** Move to:；
+- Update File 的 @@ 之后每一行都必须以 空格 / + / - 开头；空白上下文行也必须写成仅包含一个前导空格的行（" "），不能留裸空行；
+- 真正修改某一行时，必须明确写成 -旧行 再 +新行；不要把旧行和新行都写成普通上下文行；
+- 优先一次只提交一个小 patch，只改少量文件、少量局部区域；不要把很多分散修改塞进同一次 apply_patch；
+- 如果不确定补丁是否能匹配，优先先加 dry_run 预演，确认后再正式提交；
+- 每处修改前后优先保留 2-3 行当前文件中的原始上下文；不要复制 read_file 的 >>> 路径、行号或分隔符；
+- 修改必须最小且精确，避免无关重排或格式化；
+- 如果失败，优先根据 error_code、hint、retryable 做最小修复后重试；如果已经接近整文件改写，或修改跨很多分散区域，请停止继续扩大 apply_patch，改用 write_file。
+
+XML 兜底示例（仅在原生工具调用不可用时使用）：
+<tool_call>
+<name>apply_patch</name>
+<input>
+*** Begin Patch
+*** Update File: src/main.rs
+@@
+-fn main() { println!("old"); }
++fn main() { println!("new"); }
+*** End Patch
+</input>
+</tool_call>
+工具执行结果会作为带有 "tool_response: " 前缀的 user 消息返回。
+[[/TOOL_CALL_MODE_FREEFORM_CALL]]
+
+[[HAS_A2UI_TOOL]]
+[A2UI 界面生成指南]
+
+当你需要输出 A2UI 界面时，只能调用 a2ui 工具完成最终回复，不要再调用最终回复工具。
+
+要求：
+1. 使用 <tool_call> ... </tool_call> 包裹工具调用 JSON。
+2. arguments 必须包含：
+   - uid：UI surface 标识；后续消息会渲染到由该 uid 推导出的 surfaceId。
+   - a2ui：A2UI JSON 消息数组；每条消息只能包含一个动作（beginRendering / surfaceUpdate / dataModelUpdate / deleteSurface）。
+3. 如果 surfaceId 缺失，系统会自动使用 uid 补齐。
+4. 可选：在 arguments.content 中补充一段简短说明。
+5. 不要输出 Markdown 代码块；a2ui 中只返回 JSON 消息数组。
+
+通用规则：
+- a2ui 是消息数组；每条消息只能包含一种动作：beginRendering / surfaceUpdate / dataModelUpdate / deleteSurface。
+- 常见顺序：beginRendering -> surfaceUpdate -> dataModelUpdate；仅在清理时使用 deleteSurface。
+- 组件采用邻接表结构：所有组件平铺在 surfaceUpdate.components 中，root 指向根组件 id。
+- dataModelUpdate.contents 是 key + 类型化值列表（valueString / valueNumber / valueBoolean / valueMap）；valueMap 支持嵌套对象。
+- 列表模板使用 List.children.template：dataBinding 指向列表数据，template 中通过相对路径（如 "name"）读取 dataContext。
+- 主操作按钮应包含 "primary": true。
+[[/HAS_A2UI_TOOL]]

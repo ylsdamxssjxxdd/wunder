@@ -1,0 +1,3624 @@
+# wunder API 文档
+
+## 4. API 设计
+
+### 4.0 实现说明
+
+- Slint 蜂窝复用本地 bridge 既有接口：`/wunder/chat/ws` 用于 start/watch 与事件恢复，HTTP 用于会话、专家、工具目录和蜂窝设置；目录浏览使用 `/wunder/workspace` 的 path/offset/limit/agent_id，文本预览使用 `/wunder/workspace/content` 的 max_bytes。专家更新提交配置键空字符串表示继承默认模型，不以有效模型名称覆盖继承关系。未增加蜂窝专属业务协议或存储。
+
+- Slint 原生化迁移新增 `wunder-desktop` 库 façade：蜂窝进程可直接复用 `AppState`、`ThreadRuntime` 和 `Orchestrator`，通过有界内存通道接收聊天 `StreamEvent`，绕过本机 HTTP/WebSocket；Slint 默认启动覆盖聊天、子线程目录、智能体、工具、文件及系统/模型设置；已移除 Slint bridge 适配和启动路径。`NativeStream::try_recv` 区分暂时为空和订阅关闭，通道容量 128；生产端异步等待容量，消费者 33 ms 合并增量。显式 `cancel` 清理目标/线程活动并持久化停止标记；正常完成或丢弃订阅不会隐式取消会话。排队路径按任务 ID 回读有界持久化事件；即时执行持有线程 lease 直到流结束，原生窗口不开放本机监听端口。
+
+- 接口实现基于 Rust Axum，路由拆分在 `src/api`（core/chat/user_world/user_tools/user_agents/user_channels/admin/a2a/desktop 等模块）。
+- 当前产品核心能力采用“五维能力框架”：**形态协同 / 租户治理 / 智能体协作 / 工具生态 / 接口开放**；用户体系聊天（用户↔智能体 + 用户↔用户）是默认主线。
+- 运行与热重载环境建议使用 `Dockerfile` + `docker-compose-x86.yml`/`docker-compose-arm.yml`；Windows 本地开发如果 bind mount 导致前端/编译 I/O 明显卡顿，可改用新增的 `docker-compose-win.yml`，保留源码目录挂载并把运行态数据、前端产物和依赖缓存切到 Docker named volume。
+- MCP 服务容器：`extra-mcp` 用于运行 `extra_mcp/` 下的 FastMCP 服务脚本，默认以 streamable-http 对宿主机发布 `${MCP_PORT}` 端口（`MCP_BIND_HOST` 默认 `0.0.0.0`，如需仅本机访问可改为 `127.0.0.1`），人员数据库连接通过 `config/mcp_config.json` 的 `database` 配置。
+- MCP 配置文件：`config/mcp_config.json` 支持集中管理人员数据库配置，可通过 `MCP_CONFIG_PATH` 指定路径，数据库配置以配置文件为准；默认优先读取该路径，不存在时兼容回退到 `extra_mcp/mcp_config.json`。
+- 多数据库支持：在 `mcp_config.json` 的 `database.targets` 中配置多个数据库（MySQL/PostgreSQL），默认使用 `default_key`，需要切换目标可调整 `default_key` 或部署多个 MCP 实例。
+- Database data tools: configure `database.tables` (or `database.query_tables`) to auto-register table-scoped `db_query_*` + `db_export_*` tools. The finest-grained `database.tables[*].name` is used as the public display name and tool-name suffix; if omitted, it defaults to `table`. Each tool is hard-bound to its table; `db_query*` embeds compact schema hints (`column + type`) in description and returns compact rows/JSONL only, while `db_export*` accepts an explicit read-only SQL query and writes xlsx/csv directly under the configured export root (`database.export_root`) or, when `path` points to `/workspaces/{user_id}/...`, directly into the current Wunder workspace and returns a lean export payload centered on canonical `path` plus `workspace_relative_path` for follow-up tools. By default `db_export*` rejects SQL that still contains `LIMIT/OFFSET`; set `allow_limited_export=true` only for intentional partial exports.
+- extra_mcp PPT tools: 独立 MCP 服务内置 `ppt_write` / `ppt_refine` / `ppt_read` / `ppt_template_read` / `ppt_delete`，使用豆包式页面 XML/JSON 生成可编辑 PPTX。`ppt_write` 创建或追加页面并返回 `presentation_id` 与 `slide_id`；`ppt_refine` 基于保存的 manifest 按 `slide_id` 重渲染指定页面，并可通过 `template_id` 整体切换模板风格；`ppt_read` 与 `ppt_template_read` 返回页面文字/结构摘要，`ppt_template_read` 空参数返回内置模板列表和 `config/ppt_templates/<template_id>/` 下的真实 PPTX 母版模板包；`ppt_delete` 删除页面并重渲染。内置模板包括 `amber_clear`、`executive_green`、`research_blue`、`finance_ink`、`creative_coral`、`minimal_gray`、`doubao_radar`，其中 `doubao_radar` 复刻豆包相控阵雷达类技术介绍风格。母版模板包使用 `template.pptx` + `template.json`，第一页强制使用 `cover` 版式，最后一页强制使用 `closing` 版式，中间页按 `layout` / `template_slide_id` / `type` 选择；默认包 `black_times_default` 使用中文 `SimHei`、英文 `Times New Roman`。页面可通过 XML `<image src="/workspaces/.../image.png" />` 或 JSON `images` 数组插入本地/工作区位图。产物默认写入 `/workspaces/.extra_mcp/ppt/<presentation_id>/`，也可通过 `output_path=/workspaces/{user_id}/exports/report.pptx` 直接写入工作区。新增或升级工具后，舰桥需刷新 `extra_mcp` 的 MCP 工具规格；若配置了 `allow_tools` 白名单，需要包含上述工具名。
+- 单库类型切换：设置 `database.db_type=mysql|postgres`，或在多库配置中为每个目标指定 `type/engine` 或 DSN scheme。
+- 知识库 MCP：按 `knowledge.targets` 动态注册 `kb_query_*` 工具；最细粒度 `knowledge.targets[*].name` 用作对外展示名和工具名后缀，未配置时默认使用目标 `key`。向量知识库检索不依赖 RAGFlow MCP。
+- 向量知识库使用主存储后端保存文档、切片与 embedding 向量：server 默认写入 PostgreSQL，desktop/SQLite 形态写入 SQLite；不再依赖 Weaviate 服务。
+- RAGFlow 知识库通过 `ragflow.*` 接入，知识库可按 `literal/vector/ragflow` 运行；RAGFlow 文档管理与检索由后端直连远端 Dataset。
+- docker compose 默认将运行态持久化统一落在仓库 `config/data/`：`./config/data/workspaces` 挂载到 `/workspaces`（用户工作区）、`./config/data/postgres` 挂载到 PostgreSQL 数据目录；向量知识库 embedding 随主存储后端持久化。服务内部的 SQLite fallback、用户提示词模板、`temp_dir`、`vector_knowledge`、吞吐报告与 monitor 历史默认路径也统一收口到 `config/data/`，避免在仓库根目录再生成 `data/`、`temp_dir/`、`vector_knowledge/`。主配置文件直接使用仓库 `config/wunder.yaml`（容器内默认 `/app/config/wunder.yaml`，可通过 `WUNDER_CONFIG_PATH` 改到其他单文件路径）；`WUNDER_USER_TOOLS_ROOT` / `WUNDER_VECTOR_KNOWLEDGE_ROOT` / `WUNDER_TEMP_DIR_ROOT` 默认也已对齐到 `/app/config/data/*`。构建/依赖缓存（`target/`、`.cargo/`、根 `node_modules/`）保持写入仓库目录便于管理；原生 Slint Desktop 的发布链由 `builders/` 和 `frontend-slint/` 维护，不依赖 Node 或 WebView 壳。`docker-compose-win.yml` 额外用 `wunder_win_data` 兜底整个 `/app/config/data`，并对 `workspaces/browser/user_tools/vector_knowledge/temp_dir` 等热点目录继续做子卷覆盖。
+- 前端多平台依赖目录约定：仓库根使用并行 profile 保存不同系统的依赖树，当前默认包括 `node_modules-win-x86/`、`node_modules-linux-x86/`、`node_modules-linux-arm/`；根 `node_modules/` 只作为当前宿主平台的活动入口（链接/联接点），宿主机可通过 `python scripts/node_modules_profile.py status|use|adopt ...` 管理。`docker-compose-x86.yml` 会把 `./node_modules-linux-x86` 挂到 `/workspace/node_modules`，`docker-compose-arm.yml` 会把 `./node_modules-linux-arm` 挂到 `/workspace/node_modules`，从而避免 Linux 容器内的 `npm ci` 改写宿主机 Windows 依赖目录。`wunder-frontend` 启动时还会比对当前 `package-lock.json` 与已挂载依赖树的指纹，若发现 ARM profile 过旧或跨平台污染，会自动重装对应 workspace 依赖。
+- `wunder-frontend` 在 docker compose 中是一次性静态构建任务：先构建到临时目录 `frontend/dist.__docker_tmp`，再按“资源文件优先、`index.html` 最后切换”的顺序同步到 `frontend/dist`，成功后容器退出并由 `wunder-nginx` 提供静态站点，避免 Vite dev server 常驻占用 CPU；如需调试 Vite，可显式设置 `FRONTEND_RUN_DEV_SERVER=1` 并按需暴露 `FRONTEND_PORT`。构建阶段直接调用 `vite/bin/vite.js`，并按真实文件标记校验 Linux 容器内的 `rollup`/`esbuild` 平台原生依赖，避免目录存在但实际为空壳时误判为可用；ARM compose 默认关闭 `FRONTEND_ALLOW_PREBUILT_DIST`，优先要求真实 ARM `node_modules` 与真实构建产物，只有显式设为 `1` 时才允许复用现有静态产物兜底。
+- `docker-compose-arm.yml` 的 `wunder-server` 与 `wunder-sandbox` 默认注入 `WUNDER_PREFER_PREBUILT_BIN=0`：ARM 环境默认按源码/产物时间关系正常判定是否需要重新构建；如需显式优先复用既有 ARM release 二进制，可在 `.env` 中设置 `WUNDER_PREFER_PREBUILT_BIN=1`。
+- Docker Compose 下 `wunder-server` / `wunder-sandbox` 默认以 `WUNDER_SERVER_FEATURES=mcp,host-metrics,web-fetch` 编译；`host-metrics` 用于管理员侧系统状态中的 CPU、内存、进程、负载和磁盘采样，`web-fetch` 用于启用内置 `网页抓取` 工具。若自行覆盖 `WUNDER_SERVER_FEATURES`，需要保留这两个 feature，否则 `/wunder/admin/monitor` 的 `system` 主机指标会按轻量降级返回 0，或用户侧智能体工具列表不会显示 `网页抓取`。
+- `wunder-server` 运行时默认使用有界线程预算，避免大核宿主机按 CPU 数量创建多套超大 Tokio 线程池并放大 glibc malloc arena：主运行时默认 `min(可用 CPU, 8)` 个 worker、`16~64` 个 blocking 线程，PostgreSQL fallback runtime 默认 `min(可用 CPU, 2)` 个 worker，session-run runtime 默认 `min(可用 CPU, 4)` 个 worker 与 `16~32` 个 blocking 线程；Linux 容器会优先识别 cgroup CPU 配额。可分别通过 `WUNDER_SERVER_WORKER_THREADS`、`WUNDER_SERVER_MAX_BLOCKING_THREADS`、`WUNDER_POSTGRES_RUNTIME_THREADS`、`WUNDER_SESSION_RUN_WORKER_THREADS`、`WUNDER_SESSION_RUN_MAX_BLOCKING_THREADS` 覆盖。Compose 仅透传这些显式覆盖值，并默认设置 `MALLOC_ARENA_MAX=4` 与 `MALLOC_TRIM_THRESHOLD_=131072`，对应宿主覆盖变量为 `WUNDER_MALLOC_ARENA_MAX`、`WUNDER_MALLOC_TRIM_THRESHOLD_BYTES`；高并发部署应结合压测逐步上调线程预算，不建议直接按宿主逻辑核数配置。
+- 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址；compose 下 `wunder-sandbox` 默认不再启用容器级只读根文件系统，确需恢复 Docker `read_only` 时设置 `WUNDER_SANDBOX_DOCKER_READ_ONLY=true`。
+- 沙盒命令流：`POST /sandboxes/execute_command_stream` 返回 NDJSON（`command_start`、`delta`、`command_exit`、`final`）；`WUNDER_SANDBOX_TIMEOUT_S` 覆盖连接、响应头与响应体读取，执行端也限制整次流的生命周期。客户端断开时取消执行并回收直接子进程与输出读取任务。
+- 沙盒重试：仅连接建立失败或命令流路由明确返回 404/405 时允许候选地址切换/非流式兼容回退；请求可能已执行后的超时、断流、非法响应或服务端错误返回 `data.error_meta.code=SANDBOX_EXECUTION_INTERRUPTED`、`retryable=false`、`outcome_unknown=true`，不自动重放。执行端总超时使用 `SANDBOX_COMMAND_TIMEOUT`。调用方应先核对工作区结果再决定是否重新执行。
+- 沙盒文件工具：存储在受控阻塞池中单次初始化，失败后短暂退避再重试；上下文按容器根、工作区根和工作区标识隔离，最多缓存 128 项，访问时回收空闲超过 300 秒的项。文件工具复用相同运行时实现，不额外启动存储写线程和 LSP 清理任务。
+- `ptc` 的脚本保存路径为 `ptc_temp/<invocation_id>/<filename>`，本地与沙盒一致；每次调用使用独立目录避免同名脚本覆盖，实际路径以返回的 `path` 为准，`workdir` 语义保持不变。
+- 工具清单与提示词注入复用统一的工具规格构建逻辑：`tool_call/freeform_call` 模式会注入工具协议片段，`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
+- 智能体线程首次解析出的 `tool_call_mode` 会随线程冻结，后续轮次不会因模型配置变更在 `function_call/tool_call/freeform_call` 之间静默切换；旧线程若已有冻结 system prompt，会先从该 prompt 推断原工具模式。`function_call` 仍尊重用户显式配置，但在本地 llama.cpp 类服务中，native `tools` 可能由服务端 chat template 注入到非消息前缀位置，调试事件的 `context_cache_probe.tool_transport= native_tools` 会标记这一缓存风险。
+- 当 `tool_call_mode=freeform_call` 且模型走 OpenAI Responses API 时，服务端会把 `apply_patch` 这类语法工具下发为原生 `type=custom` 工具（携带 `format={type:grammar,syntax:lark,definition}`），普通 JSON 工具继续走 `type=function`；工具结果会按 `custom_tool_call_output/function_call_output` 回填历史，避免仅靠 XML 提示词驱动。
+- 配置加载：运行时只读取单一配置文件 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖）；若不存在则自动回退 `config/wunder-example.yaml`；舰桥修改会直接写回当前生效的配置文件，不再额外维护独立覆盖层。
+- 环境变量：`.env` 为可选项；docker compose 通过 `${VAR:-default}` 提供默认值，未提供 `.env` 也可直接启动。
+- compose 镜像策略：`docker-compose-x86.yml` 的 `wunder-server` / `wunder-sandbox` / `extra-mcp` 仍使用本地镜像并保留 `pull_policy: never`，已存在镜像时优先复用，不存在时再自动构建，避免首次启动时 `extra-mcp` 先拉取失败。`docker-compose-arm.yml` 改为直接引用现成的 `wunder-arm` 镜像，不再声明 `build:` / `pull_policy:`，以兼容较老的 docker-compose 解析器和 ARM 服务器上的预置镜像启动方式。
+- ARM compose 防漂移：`docker-compose-arm.yml` 仍保留 `platform: linux/arm64` 与启动期架构校验，`wunder-server` / `wunder-sandbox` / `extra-mcp` / `wunder-frontend` / `wunder-nginx` 运行时若非 arm64 会立即失败并提示重建命令，避免误用旧的 x86 镜像标签。
+- 前端入口：舰桥调试 UI `http://127.0.0.1:18000`，蜂巢 `http://127.0.0.1:18001`（Nginx 静态站点，默认入口）；仅在显式启用 `FRONTEND_RUN_DEV_SERVER=1` 并暴露端口时，才通过 `FRONTEND_PORT` 访问 Vite dev server。
+- Docker compose 默认公开入口：`wunder-nginx` 发布 `18001`，`extra-mcp` 额外发布 `${MCP_PORT}`；`wunder-postgres` 默认绑定 `127.0.0.1`。如需将 `extra-mcp` 收回仅本机访问，可设置 `MCP_BIND_HOST=127.0.0.1`。
+- 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；`/login?token=<team_jwt>&user_id=<id>[&agent_name=<name>]` 当前走 `/wunder/auth/external/token_login` 直换 wunder `access_token`（JWT 校验失败不阻断登录）。当前也支持 `/login?user_id=<id>[&agent_name=<name>]` 无 token 直登。外链登录成功后统一进入 `/app/embed/chat`（desktop 为 `/desktop/embed/chat`）嵌入壳，并隐藏侧边栏与中栏；当未传 `agent_name`，或名称未命中当前用户可访问的已有智能体时，前端进入嵌入态消息页并使用默认智能体 `agent_id=__default__` / `entry=default`；当 `agent_name` 命中当前用户可访问的已有智能体时，接口返回对应 `agent_id` 与 `focus_mode=true`，前端进入同一嵌入壳并聚焦该智能体。嵌入壳内消息页与智能体页都可访问，但左/中栏保持隐藏。`POST /wunder/auth/login`、`/wunder/auth/register`、`/wunder/auth/demo` 以及会直接签发用户 token 的 `/wunder/auth/external/*` 登录接口支持可选请求头 `X-Wunder-Session-Scope`；同一用户仅在同一 `session_scope` 内执行“新登录顶旧登录”，不同 scope（如 `user_web` 与 `admin_web`）互不影响。
+- 用户资料接口：`GET /wunder/auth/me` 会额外返回 `usage_summary`（当前用于用户侧“我的概况”展示累计消耗与工具调用数）与 `session_summary`（`total_sessions/sessions_last_7d/trend_last_7d/last_active_at`，用于统一展示总会话、近 7 天会话、7 天趋势与最后活跃时间），并补充等级字段 `level/max_level/experience_total/experience_current/experience_for_next_level/experience_remaining/experience_progress/reached_max_level`，以及额度账户字段 `quota_balance/quota_granted_total/quota_used_total/daily_quota_grant/last_quota_grant_date`；其中 `quota_balance` 是用户当前可支配的额度余额，`quota_granted_total` 记录累计发放总额，`quota_used_total` 记录累计消耗。`PATCH /wunder/auth/me` 支持更新 `username/email/unit_id`，并保持返回同一结构；已登录用户如同时提交 `current_password` 与 `new_password`，服务端会先校验当前密码，再更新自己的登录密码。另提供未登录的 `POST /wunder/auth/reset_password`，仅凭账号、邮箱和新密码即可重置登录密码。
+- 注册开关接口：`GET /wunder/auth/settings` 无需登录，返回 `data.allow_user_registration`，供蜂巢决定是否展示注册入口。`security.allow_user_registration=false` 时，`POST /wunder/auth/register` 会返回 403，管理员仍可通过用户管理创建或批量导入账号。
+- 用户偏好接口：`GET /wunder/auth/me/preferences` / `PATCH /wunder/auth/me/preferences` 当前除主题与头像外，还支持 `messenger_order`，用于同步用户侧消息页/智能体页/蜂群页中栏条目顺序。`messenger_order` 结构为 `messages[] / agents_owned[] / agents_shared[] / swarms[]`，均为字符串 key 数组；服务端会去重并过滤空字符串，前端可用它在刷新后恢复用户自定义排序。
+- 用户态工作状态重置接口：`POST /wunder/auth/me/reset_work_state`，按当前登录用户中止运行中的会话/排队任务/蜂群任务，清空相关工作区内容，并为默认智能体与各用户智能体重建新的任务线程。
+- 蜂群整体重置接口：`POST /wunder/beeroom/groups/{group_id}/reset`，仅作用于当前用户指定蜂群；中止该蜂群成员的活动会话、排队任务和蜂群任务，关闭活动编排，清除蜂群任务与右栏消息投影，并为母蜂及全部工蜂创建新的任务线程。返回 `member_threads[]`（`agent_id/agent_name/role/session_id`）以及取消、清理计数。
+- 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
+- 蜂巢请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
+- 模型配置支持 `model_type=llm|embedding|tts|image`；向量知识库依赖 embedding 模型调用 `/v1/embeddings`，聊天页语音播放通过 TTS 模型代理 `/v1/audio/speech`。
+- 蜂巢默认入口为 `/app/home`（desktop 为 `/desktop/home`）；`/app/home|chat|settings` 统一复用 Messenger 壳。形象能力并入智能体设置页的“形象”配置，不再提供独立用户侧形象库路由。嵌入聊天路由为 `/app/embed/chat`（desktop `/desktop/embed/chat`，demo `/demo/embed/chat`），用于外链接入时统一承载消息页与智能体页主内容，并隐藏左/中栏。外链详情路由为 `/app/external/:linkId`（demo 为 `/demo/external/:linkId`）。External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001。
+- 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
+- 渠道 webhook 入站默认采用“快速 ACK + 后台队列分发”：`/wunder/channel/*/webhook` 完成验签与标准化后立即入队，模型/工具链路在后台执行；当入站队列短时拥塞时接口返回 `503` 以触发渠道侧重试。
+- QQ Bot 渠道支持两种入站模式：`/wunder/channel/qqbot/webhook` 回调模式，以及账号级长连接模式（`qqbot.long_connection_enabled=true`，默认开启）；凭证可使用 `qqbot.app_id + qqbot.client_secret` 或 `qqbot.token=appId:clientSecret`；未显式配置 `qqbot.intents` 时长连接会按 `full -> group+channel -> channel-only` 自动降级重试，并写入渠道运行日志事件。
+- 渠道附件出站（2026-03-18）：Feishu 支持上传后发送原生 `image/file` 消息；XMPP 出站会附带 `jabber:x:oob` 与 `urn:xmpp:reference:0` 节点；QQBot 在 group/user 目标支持通过 `/v2/*/files` 发送富媒体 URL（image/video/audio）。
+- 渠道附件入站（2026-03-18）：QQBot URL 附件会在入站阶段下载到会话作用域工作区；Feishu/XMPP 保持既有落盘能力。
+- 渠道链接改写（2026-03-18）：`channel_outbox` 不仅会改写正文中的 `/workspaces/...`，也会改写 `attachments[].url` 中的工作区路径为 `/wunder/temp_dir/download`。
+- 工作区容器约定：用户私有容器固定为 `container_id=0`，智能体容器范围为 `1~10`；`/wunder/workspace*` 全部接口（含 upload）支持显式 `container_id`，且优先级高于 `agent_id` 推导。
+- OnlyOffice 在线编辑/查看：配置 `onlyoffice.enabled/document_server_url/public_base_url/jwt_secret` 后，用户侧工作区中的 Office、WPS 系列、PDF、纯文本/代码、XPS、DjVu、Visio 图等 OnlyOffice 支持格式可通过 `/wunder/workspace/onlyoffice/*` 生成编辑器配置；可编辑格式保存后回写，查看类格式只读打开。`public_base_url` 必须是 OnlyOffice Document Server 可访问的 Wunder 外部地址；容器部署中 Wunder 后端访问 Document Server 的地址不同于浏览器地址时，可配置 `onlyoffice.internal_document_server_url`。仓库 compose 默认提供 `wunder-onlyoffice` 服务，挂载 `config/fonts` 到 OnlyOffice custom-fonts 并在启动时刷新字体索引。
+- draw.io 在线图表编辑：配置 `drawio.enabled/editor_url` 后，用户侧工作区中的 `.drawio`、`.dio`、`.drawio.xml` 文件可通过 `/wunder/workspace/drawio/config` 获取 diagrams.net/draw.io 嵌入编辑器地址；前端通过现有 `/wunder/workspace/content` 读取 XML，并通过 `/wunder/workspace/file` 保存回写。仓库 compose 默认提供 `wunder-drawio` 服务，宿主机默认端口为 `18081`。
+- 蜂窝本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
+- 蜂窝现仅保留本地模式，不再提供 desktop 内部的服务端连接切换与端云协同入口；需要服务端能力时请直接使用浏览器访问 server 形态。Desktop 本地模式固定优先使用安装包附带的 Python 运行时，不再通过 `/wunder/desktop/settings` 配置自定义解释器，也不再提供 `/wunder/desktop/python/interpreters` 本机探测接口；`GET /wunder/desktop/fs/list` 仍保留用于本地目录浏览等通用场景。
+- 蜂窝本地模式新增 `POST /wunder/desktop/reset_work_state`：统一中止当前 desktop 用户的运行中会话、队列任务与蜂群任务，为默认智能体和全部用户智能体切换到新的任务线程，并清空各自工作目录内容，供系统设置页执行“一键重置工作状态”。
+  - 智能体形象能力统一复用智能体 icon 字段；用户私有形象保存在浏览器 IndexedDB，管理员全局形象由 /wunder/admin/companions* 管理并通过 /wunder/companions/global* 供用户侧读取；当前蜂窝回退为界面内形象展示。
+- 蜂窝 GUI 使用 frontend-slint 与 NativeDesktop 同进程运行，不新增远程 API。
+- 蜂窝引导接口 `GET /config.json` 与 `GET /wunder/desktop/bootstrap` 现补充 `runtime_profile` 与 `runtime_capabilities`：前者用于标识 `desktop_embedded` / 其他运行形态，后者用于下发 `embedded_mode/thread_runtime_active/gateway_maintenance_active/cron_active/channels_enabled/channel_outbox_worker_enabled/lan_overlay_supported` 等能力位，供前端按实际运行能力启用订阅、恢复与降级策略。
+- 控制平面实时状态已收敛到 `state.control.presence`：当前主要负责连接在线态与最近活跃时间，为在线列表与连接恢复提供基础数据。
+- 蜂窝本地模式默认开启 `channels.outbox.worker_enabled=true`，保障 `channel_tool.send_message` 入队后自动投递，无需管理员侧手工启用出站 worker。
+- 普通注册用户每天统一发放 1000 额度，与单位和用户等级无关；每天首次使用或调整账户时入账一次，可累计，不补发未使用日期。每次实际模型请求（含工具循环、压缩摘要和失败重试）开始前原子扣 1；流式分片、工具执行、回放和用量统计不重复扣。已发出的失败请求不退款。余额不足时请求不会发往模型，返回 429。管理员及未注册虚拟用户维持免额度限制。用户等级只积累经验，不再发放额外额度。
+- 管理员用户执行请求不受 额度余额、会话锁、历史裁剪、监控裁剪、模型/工具超时与历史清理限制，适合长期运行任务。
+- A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
+- 多语言：Rust 版默认从 `config/i18n.messages.json` 读取翻译（可用 `WUNDER_I18N_MESSAGES_PATH` 覆盖）；`/wunder/i18n` 提供语言配置，响应包含 `Content-Language`。
+- Rust 版现状：MCP 服务与工具发现/调用已落地（rmcp + streamable-http）；Skills/知识库转换与数据库持久化仍在迁移，相关接口以轻量结构返回。
+
+### 4.0.1 统一错误响应（HTTP）
+
+- HTTP 错误统一返回 JSON 结构：
+  - `ok`：固定为 `false`
+  - `error.code`：稳定错误码（例如 `BAD_REQUEST` / `UNAUTHORIZED` / `NOT_FOUND` / `INTERNAL_ERROR`）
+  - `error.message`：人类可读错误信息
+  - `error.status`：HTTP 状态码数值
+  - `error.hint`：可执行的排障提示
+  - `error.trace_id`：请求级追踪 ID，同时通过响应头 `x-trace-id` 返回
+  - `error.timestamp`：UNIX 时间戳（秒，浮点）
+- 兼容历史客户端（4.0.1 之前依赖旧格式）时仍保留 `detail.message`。
+- 响应头同步返回：
+  - `x-trace-id`：与 `error.trace_id` 一致
+  - `x-error-code`：与 `error.code` 一致
+
+### 4.0.2 用户世界（User World）接口
+
+- 目标：支持“用户↔用户”单聊 + 群聊，默认可见联系人，WebSocket 优先，SSE 兜底。
+- 鉴权：使用蜂巢 Bearer Token（与 `/wunder/chat/*` 一致）。
+- 在线态来源：联系人列表中的 `online/last_seen_at` 由 `connection presence` 提供。
+- 接口清单：
+  - `GET /wunder/user_world/contacts`：联系人列表（支持 `keyword/offset/limit`，返回 `online/last_seen_at` 在线状态）
+  - `GET /wunder/user_world/groups`：当前用户群聊列表（支持 `offset/limit`）
+  - `POST /wunder/user_world/groups`：创建群聊（`group_name/member_user_ids[]`）
+  - `GET /wunder/user_world/groups/{group_id}`：群详情（含群公告与成员列表，需群成员权限）
+  - `POST /wunder/user_world/groups/{group_id}/announcement`：更新群公告（`announcement`，传空可清空，需群成员权限）
+  - `POST /wunder/user_world/conversations`：按 `peer_user_id` 获取或创建 direct 会话
+  - `GET /wunder/user_world/conversations`：当前用户会话列表
+  - `GET /wunder/user_world/conversations/{conversation_id}`：会话详情（需成员权限）
+  - `GET /wunder/user_world/conversations/{conversation_id}/messages`：消息分页（`before_message_id/limit`）
+  - `POST /wunder/user_world/conversations/{conversation_id}/messages`：发送消息（`content/content_type/client_msg_id`）
+  - `POST /wunder/user_world/conversations/{conversation_id}/read`：回写已读（`last_read_message_id`）
+- `GET /wunder/user_world/files/download`：会话内文件/文件夹下载（`conversation_id/owner_user_id/path`，可选 `container_id` 指定容器；目录会自动打包为 zip，支持 `check=true` 仅校验存在并返回响应头）
+  - `GET /wunder/user_world/conversations/{conversation_id}/events`：SSE 事件流（`after_event_id/limit`）
+  - `GET /wunder/user_world/ws`：WebSocket 多路复用通道
+- WS 消息类型：
+  - client：`connect` / `watch` / `send` / `read` / `cancel` / `ping`
+  - server：`ready` / `event` / `error` / `pong`
+- 事件类型：
+  - `uw.message`：新消息事件
+  - `uw.read`：读状态更新事件
+- 协议约束：
+  - 发送者身份以 Token 用户为准，不允许伪造。
+  - 仅会话成员可读写与订阅事件。
+  - 支持 `client_msg_id` 幂等去重（同会话内唯一）。
+  - 语音消息约定：当 `content_type=voice`（或 `audio/*`）时，`content` 推荐传 JSON 字符串，至少包含 `path`（容器相对路径）；可选字段 `duration_ms/mime_type/name/size/container_id/owner_user_id`。
+  - 会话对象在群聊场景返回 `group_id/group_name/member_count`；单聊场景返回 `peer_user_id`。
+  - 群聊对象返回 `announcement/announcement_updated_at` 字段；群详情额外返回 `members[]`。
+
+### 4.1 `/wunder` 请求
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：字符串，用户唯一标识
+  - `question`：字符串，用户问题
+  - `client_message_id`：字符串，可选，兼容 `clientMessageId`；用于客户端乐观用户消息与后端事件、队列事件、刷新投影精确合并，服务端会去除首尾空白并最多保留 128 个字符。请求进入运行轮次后，服务端会把该值原样写入本轮所有对象型流事件 payload（如 `progress`、`llm_output_delta`、`final`、`tool_*`、`thread_status`），前端可按该精确键升级本地占位。
+  - `tool_names`：字符串列表，可选，指定启用的内置工具/MCP/技能名称
+  - `skip_tool_calls`：布尔，可选，是否忽略模型输出中的工具调用并直接结束（默认 false）
+  - `stream`：布尔，可选，是否流式输出（默认 true）
+  - `debug_payload`：已废弃。仅为兼容旧客户端保留，服务端解析后忽略，不再保留模型请求体；日志统一为精简形态
+  - `session_id`：字符串，可选，指定会话标识
+  - `agent_id`：字符串，可选，智能体应用 id（用于附加提示词与沙盒容器工作区路由）
+  - `model_name`：字符串，可选，模型配置名称（不传则使用默认模型）
+- `config_overrides`：对象，可选，用于临时覆盖配置
+- `attachments`：数组，可选，附件列表（图片/音频支持 data URL；服务端会持久化到用户私有容器并补充 `public_path`）
+- 约束：注册用户以 `quota_balance` 限制模型请求；每次实际请求扣 1 额度，与 `total_tokens` 无关。多个线程共享用户额度，数据库原子准入禁止透支；最后 1 额度可正常使用。不足返回 429（`detail.code=USER_QUOTA_INSUFFICIENT`）。
+- 约束：`question` 与非图片附件文本合计最多 `1048576` 个字符，超出返回 400（`detail.field=input_text`，并携带 `detail.max_chars/detail.actual_chars`）。
+- 忙时队列：当 `agent_queue.enabled=true` 时，直接用户聊天请求在 `server.max_active_sessions` 达到上限后进入可见队列，非流式返回 202（`data.queue_id`/`data.thread_id`/`data.session_id`/`data.queue_ahead`/`data.queue_total`/`data.active_ahead`/`data.wait_ahead`/`data.queue_event_id`/`data.queue_after_event_id`），SSE/WS 返回排队事件或排队确认；`queue_ahead` 表示队列内排在当前任务前方的 pending/retry 任务数，`active_ahead` 表示当前阻塞执行槽的运行中直接用户轮次数，`wait_ahead` 表示用户侧可展示的总等待人数/请求数；`queue_event_id` 是 `queue_enter` 的持久事件 id，`queue_after_event_id` 是恢复时应使用的 `after_event_id` 锚点。请求带 `client_message_id` 时，`queue_enter.data.client_message_id` 与后续同轮对象型流事件会原样使用服务端归一化后的值。子智能体、蜂群工蜂与后台内部任务不计入用户可见队列。
+- 队列回放：`queue_enter/queue_start/queue_finish/queue_fail` 现已进入 `stream_events` 持久化流，`watch/resume`、刷新重连和 SSE/WS 补偿都可回放。队列终止事件写入前会先 flush 当前任务已产生的流式事件持久化队列，避免恢复端先看到 `queue_finish` 再补到旧增量。
+- 聊天 WS 排队语义：`/wunder/chat/ws` 的 `start` 被排队后，服务端会沿同一个 request-scoped WS 流从 `queue_after_event_id` 继续转发本 `queue_id` 的 `queue_enter -> queue_start -> 模型/工具流式事件 -> queue_finish/queue_fail`；客户端不要在收到 `queue_enter` 或 queued ack 后主动切换到 `watch`。队列回放在匹配本 `queue_id` 的 `queue_start` 前不会转发无 `queue_id` 的模型/工具事件，遇到本 `queue_id` 的 `queue_finish/queue_fail` 会立即截断，避免旧任务尾部或下一轮事件混入当前请求。
+- WS 恢复语义：只有在连接断开、收到 `slow_client`、页面恢复补水或主动重连时，客户端才应使用 `watch/resume` 与 `queue_after_event_id`/本地最新 `event_id` 补齐事件。
+- 排队活跃态：`watch/resume` 会把同 `session` 下的 `pending/retry/running` 队列任务视为活跃流状态，排队期仍会维持恢复链路与心跳。
+- 会话事件快照：`GET /wunder/chat/sessions/{session_id}/events` 会区分纯排队与真实运行态；纯排队时返回 `queued=true`，并在缺少运行时快照时补充 `runtime.thread_status/status=queued`，但 `running=false`。客户端应使用 `queued`/`runtime.status=queued` 恢复排队气泡，不应把纯排队当作模型轮次已开始。
+- 慢客户端恢复：当 WS 出站队列接近满载时，服务端会发送 `slow_client(reason=queue_full_resume_required)`，调用方应改走 `resume/watch` 补齐，而不是假设增量仍会持续直推。 实时请求随后停止向该订阅直推，继续排空后台执行流；恢复回放保持有序、无损，不能静默丢弃增量并前移游标。满队列投递最多等待 1 秒，连接不可用时通过重连或会话快照补水。
+- 模型轮次输出事件 `llm_output`：除 `content/reasoning/tool_calls/usage/prefill_duration_s/decode_duration_s` 等既有字段外，流式请求会尽量附带 `stream_timing` 诊断对象；非流式、无可见增量或旧事件回放中该字段可能为 `null` 或缺失，客户端必须兼容。
+- 生成统计：`llm_output/token_usage.decode_output_tokens` 使用归一化后的 `usage.output`（上游提供 reasoning token 明细时剔除思考 token），`decode_duration_s` 取首个生成内容增量到最后一个生成内容增量，思考与空工具分片不计入该区间；只有一个生成内容分片或缺少计时时，速度为 `null`。`stream_timing` 仍描述全部生成内容/思考分片，供诊断使用。
+- 用量口径：模型服务返回的 `usage.input_tokens` 为输入，`usage.output_tokens` 为已知正文输出，`usage.reasoning_tokens` 仅在服务明确报告时出现；`total_tokens` 包含思考。服务未报告思考分项时不会由系统猜测。每次模型响应产生一个 `model_usage` 累计快照，用户轮次的 `round_usage` 只作为兼容汇总，客户端重放应覆盖同轮快照而不能重复相加；`context_occupancy_tokens` 是当前上下文观测值，可因压缩下降，与消耗 Token 分开。
+- 工具指标：`tool_call` / `tool_result` 的 `request_context_tokens` 固定为触发该工具的模型请求输入 Token（含缓存输入），未知/估算时为 `null`；`request_usage` 是该次模型请求消耗，同次请求的并行工具共享快照，不能逐工具相加。`meta.duration_ms` 是本次工具处理的单调时钟耗时，包含处理期间的审批和执行锁等待，允许为 `0`；缓存命中重新计时，取消亦发送终态指标。历史记录缺少耗时时，客户端可按该调用服务端开始/结束事件的时间间隔回退，但不得使用整个用户轮次耗时或业务结果中的同名字段。
+- `context_usage.context_usage_source=provider_input` 表示供应商报告的本次请求输入占用（不含当次生成输出/思考）；压缩后明确归零，下一次有效输入观测可重新增长。流式正文增量不估算上下文，也不以累计消耗推进上下文动画。
+- `final` 与历史消息 `stats` 增加 `visible_decode_tokens/visible_decode_duration_s/visible_decode_speed_tps`，表示最后一次模型响应的生成指标。前端生成速度优先使用该明确指标，不用累计 token 或 `avg_model_round_speed_tps` 推算当前回复速度；旧历史缺失指标时显示空缺。`avg_model_round_speed_*` 继续保留作用户轮次聚合诊断。
+- 模型 `timeout_s` 对流式调用表示首个输出及相邻有效模型分片的最大等待时间，正文、思考和工具参数分片均刷新活跃时间；持续思考不会因整次调用达到该时长而被中断。非流式调用继续使用整体超时，取消语义保持不变。
+- `llm_output` 的 `finish_reason/stop_reason=tool_calls/function_call/tool_use` 或非空 `tool_calls` 只结束模型动作，不结束用户请求；客户端继续接收工具与后续模型事件。连接关闭、本地 AbortError 或 loading 清理不等同于任务终态。
+- `/events` 的 `runtime` 是当前状态快照，其状态可在相同 `last_event_id` 下变化。客户端不得按历史游标对状态快照去重；并发补水应拒绝晚到旧响应覆盖更新的实时状态，先建立 transcript 顺序再恢复活跃尾部。
+
+  - `stream_timing.chunk_count`：本次上游流中包含正文或推理增量的分片数。
+  - `stream_timing.content_delta_chars` / `stream_timing.reasoning_delta_chars`：正文与推理增量字符数，用于判断最终快照是否来自流式累积。
+  - `stream_timing.prefill_ms`：请求发出到首个可见增量的耗时。
+  - `stream_timing.decode_ms`：首个可见增量到最后一个可见增量的耗时。
+  - `stream_timing.max_chunk_gap_ms`：相邻可见增量的最大间隔，用于区分本地模型预填充、服务端上游分片突发和前端 flush 掉帧。
+
+### 4.1.A 外部一次性工作流 API
+
+- 用途：供外部系统后端把单个 Wunder 智能体嵌入到自有前端小部件。调用方指定目标用户、目标智能体、消息和上传文件；Wunder 会打断该智能体当前工作，新建主会话，在目标用户的 `container_id=10` 工作目录执行一次性任务，并返回中间事件、最终回复和可下载文件。
+- 鉴权：外部系统后端使用 `X-API-Key: <security.external_auth_key>` 或 `Authorization: Bearer <security.external_auth_key>`；管理员 token 也可访问。用户 Bearer Token 只能访问自身 run，不能跨用户指定目标。`external_auth_key` 未配置时按现有配置逻辑回退到 `security.api_key`。外部密钥路径下指定未注册普通用户时会自动开通账号，并同步该用户的预设智能体。
+- 工作区语义：MVP 固定 `workspace_container_id=10`，创建 run 前会清空该用户 10 号目录；上传文件落到 `input/`，服务端会创建 `output/`，最终下载清单包含 `output/` 下文件，以及最终回答中引用到的 `input/...` 或 `output/...` 文件。该覆盖是请求级的，不修改智能体的持久 `sandbox_container_id`。
+- 并发与打断：同一 `user_id + container_id=10` 同时只允许一个外部工作流。默认已有外部工作流时返回 `409 EXTERNAL_WORKFLOW_BUSY`；传 `preempt_active_workflow=true` 会先取消旧外部工作流。一次性工作流始终要求 `preempt=true`，会取消目标智能体当前任务线程工作并强制创建新的主会话。
+- 请求格式：创建接口使用 `multipart/form-data`，必须包含 `request` JSON 字段，可重复上传 `files` 或 `files[]` 文件字段。单次请求上限当前为 200MB。
+
+#### `POST /wunder/external/workflows:stream`
+
+- 返回：SSE 流，适合前端小部件实时展示。
+- `request` 字段：
+
+```json
+{
+  "user_name": "<target_user_name>",
+  "agent_name": "<target_agent_name>",
+  "message": "<task message>",
+  "preempt": true,
+  "preempt_active_workflow": false,
+  "workspace_container_id": 10,
+  "clear_workspace": true,
+  "timeout_s": 6000,
+  "client_run_id": "<optional_external_id>",
+  "metadata": {}
+}
+```
+
+- `user_id/user_name` 二选一；`agent_id/agent_name` 二选一。`timeout_s` 范围为 1 到 6000 秒，默认 6000 秒。
+- SSE 事件：
+  - `workflow.start`：返回 `run_id/session_id/user_id/agent_id/status/workspace_container_id/events_url/cancel_url`。
+  - `workflow.event`：转发内部编排事件，`data.type` 为内部事件类型，如 `tool_call/tool_result/tool_output_delta/approval_request/final/error/turn_terminal` 等。
+  - `workflow.final`：任务完成，返回 `answer/usage/stop_reason/files`。
+  - `workflow.error`：任务失败、取消或超时，返回 `status/error`。
+
+#### `POST /wunder/external/workflows`
+
+- 返回：`202 Accepted`，后台执行同一套工作流。
+- 返回体：`data.run_id/session_id/status/events_url/cancel_url/workspace_container_id`。
+- 后续通过状态、事件与文件接口补拉。
+
+#### `GET /wunder/external/workflows/{run_id}`
+
+- 返回 run 快照：`run_id/session_id/user_id/agent_id/status/answer/usage/stop_reason/files/created_at/started_at/finished_at/elapsed_s/error/metadata`。
+
+#### `GET /wunder/external/workflows/{run_id}/events`
+
+- Query：`after_event_id` 默认 0，`limit` 默认 200，最大 1000。
+- 返回：`data.events[]`，每项包含 `run_id/session_id/type/event_id/timestamp/data`。
+
+#### `POST /wunder/external/workflows/{run_id}/cancel`
+
+- 作用：取消当前外部工作流对应会话、排队任务和会话目标。
+- 返回：`run_id/session_id/status/cancel_requested`。运行中 run 会先进入 `cancelling`，后续流式终态会收敛为 `cancelled`。
+
+#### `GET /wunder/external/workflows/{run_id}/files/{file_id}`
+
+- 作用：下载本次 run 结果清单中的文件。
+- 约束：只能下载该 run 的 `files[]` 清单内文件，不能任意读取 10 号目录。
+
+## 4.x 子智能体控制补充（2026-03-26）
+
+- `subagent_control` 现支持 `action=batch_spawn|status|wait|interrupt|close|resume`，与既有 `list|history|send|spawn` 共用同一入口。
+- `batch_spawn` 支持一次派发多个子智能体任务，返回稳定 `dispatch_id`；支持 `strategy=parallel_all|first_success|review_then_merge`，其中 `first_success` 用于对齐 Codex 式的“首个成功即先返回”协作收敛语义，并会在同次等待收敛时默认对未完成兄弟分支执行 `remainingAction=interrupt`。
+- `wait` 现支持 `waitMode=all|any|first_success`：`all` 等待全部目标结束，`any` 在首个目标进入终态后返回，`first_success` 在首个成功出现后返回，否则继续等到全部结束或超时。
+- `batch_spawn/wait` 现支持 `remainingAction=keep|interrupt|close`：用于在 `first_success/any` 这类提前收敛场景下处理尚未结束的兄弟分支；`wait` 默认 `keep`，`batch_spawn.strategy=first_success` 默认 `interrupt`。
+- 新增一级编排工具 `会话让出`（英文别名 `sessions_yield`/`yield`）：用于在成功派发后台子智能体后显式结束当前轮次，并等待子智能体回流结果自动唤醒父线程继续。
+- `status/wait` 支持按 `runId/runIds/sessionId/sessionIds/dispatchId/parentId` 查询或等待；未显式传目标时，`status` 默认查询当前会话下最近子会话运行态。
+- `interrupt` 基于 monitor 对目标子会话发起取消；`close/resume` 直接切换子会话 `status=closed|active`，并可通过 `cascade=true` 递归作用到后代子会话。
+- 子智能体批量调度的运行账本统一落在 `session_runs`，新增元数据字段 `dispatch_id/run_kind/requested_by/metadata`；其中 `metadata` 当前包含 `controller_session_id/parent_turn_ref/depth/role/control_scope`，批量任务还会补充 `dispatch_index/dispatch_size/dispatch_label/strategy/completion_mode/remaining_action`，便于批次级聚合、追踪与恢复。
+- `status/wait` 的结果会额外返回 `completion_mode/completion_reached/completed_reason/selected_items`；运行快照中新增 `agent_state.status/message`；批次结果会补充 `winner_item/remaining_action/remaining_action_applied/settled_items`，用于对齐 Codex 协作线程的 winner 选择与剩余分支处置表达。
+- `status/wait`、会话级 `subagents` 列表以及聊天消息里的 `messages[].subagents[]` 会同步返回 `metadata/controller_session_id/depth/role/control_scope/spawn_mode` 等结构化字段，前端可以直接渲染子智能体工作区，不再依赖聊天文本推断谱系。
+- 流式事件新增 `subagent_dispatch_start/subagent_dispatch_item_update/subagent_dispatch_finish/subagent_status/subagent_interrupt/subagent_close/subagent_resume/subagent_announce`，其中批次开始/结束事件会携带 `strategy/completion_mode/remaining_action` 供前端工作流展示。
+- Codex 风格父子轮次语义：父智能体在成功派发子智能体后不必阻塞等待；父轮可以先发出 `turn_terminal` 并结束，本次对话在用户视角应视为“已结束”，子智能体继续在后台运行。
+- 当某个 `dispatch_id` 达到 `completion_mode` 收敛条件，或全部子任务完成后，系统会向父会话追加一条隐藏内部观察消息并自动唤醒父线程继续推理；该观察消息会参与轮次对齐，但在聊天历史里会标记 `hiddenInternal=true`，前端默认不渲染正文。
+- 新增会话级子智能体接口：
+  - `GET /wunder/chat/sessions/{session_id}/subagents`：返回当前父会话可见的子智能体运行项列表，支持 `limit`、`dispatchId`、`parentTurnRef`、`parentUserRound`、`latestTurnOnly`
+    - `latestTurnOnly=true` 时，服务端会按子智能体元数据中的 `parent_turn_ref / parent_user_round / parent_model_round` 自动收敛到当前最新父轮次，便于前端只回放本轮派生的子智能体，而不混入历史轮次分支
+  - `POST /wunder/chat/sessions/{session_id}/subagents/control`：支持 `action=interrupt|terminate|close`，并可通过 `sessionIds[]` 或 `dispatchId` 批量控制当前父会话下的子智能体
+- 忙时返回：当 `agent_queue.enabled=false` 且显式指定 `session_id` 正在运行/取消中时，会返回 429（`detail.code=USER_BUSY`）。
+- 说明：未传 `session_id` 且主会话正忙时，会自动分叉独立会话继续处理，并返回新的 `session_id`（不覆盖主会话）。
+- 说明：问询面板进入 `waiting` 后，用户选择路线会被当作正常请求立即继续处理，不会被判定为“会话繁忙”进入队列。
+- 约束：直接用户聊天的全局并发上限由 `server.max_active_sessions` 控制，超过上限的请求会排队等待；管理员从用户侧聊天入口发起的请求同样受该可见队列约束。
+- 约束：同一轮同类工具连续失败达到 `server.tool_failure_guard_threshold`（默认 5）会触发 `tool_failure_guard` 并停止自动重试；同一工具命中同一个明确的不可重试错误时，也默认在第 5 次相同失败后触发保护，避免模型持续硬撞同一错误。
+- 说明：直接调用编排器的管理员运维/评测/内部任务仍可跳过会话锁、额度余额或并发上限；用户侧聊天入口不因管理员身份绕过 `server.max_active_sessions`。
+- 说明：当 `tool_names` 显式包含 `a2ui` 时，系统会剔除“最终回复”工具并改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
+- 流式异常事件：`error` 事件现在会统一附带 `error_meta`（`category/severity/retryable/retry_after_ms/source_stage/recovery_action`），便于前端与调用方区分“可重试失败”和“需人工修正失败”。
+- 流式终结事件：新增 `turn_terminal`，作为每轮执行的唯一终结语义，`status` 取值包括 `completed/failed/cancelled/rejected`；`final.stop_reason` 现可能为 `yield`，表示模型主动调用 `sessions_yield` 结束本轮并转入后台子智能体续跑；调用方不应再仅靠 `final/error` 自行猜测一轮是否已结束。
+- 审批闭环事件：新增 `approval_resolved`，表示待审批请求已进入终态；`approval_result` 保持兼容，但新接入方应优先消费 `approval_resolved`。
+- 工具工作流关联语义：`tool_call/tool_output_delta/tool_result/approval_request/approval_result` 现在会尽量附带稳定的 `tool_call_id`；当上游没有原生 call id 时，服务端会补发合成 id，便于前端将命令输出、审批等待与最终结果持续合并到同一张工作流卡片。
+- `execute_command` 实时协议已落地：每条命令拥有独立 `command_session_id/command_index`；生命周期事件与每条命令结果用于拆分子命令工作流条目，在线运行时通过 `command_session_delta` 向客户端推送 stdout/stderr/pty 增量，用于在聊天工具循环内展示小型终端输出区。
+- `execute_command` 默认只等待 750ms；仍在执行的命令会返回 `state=running` 与 `command_session_id`，模型可继续调用其他工具。模型通过 `command_session`（别名 `write_command_stdin`）以 `action=poll` 获取有界输出与终态，或以 `action=write_stdin` 写入 stdin 后轮询。会话按 `user_id + session_id` 隔离，默认每个运行时最多保留 16 个活动进程；线程取消会级联终止本线程及后代线程的活动命令。蜂窝由本地运行时托管，舰体由 sandbox 会话服务托管，两者使用相同的模型侧控制语义。
+- `execute_command` 在 Windows 本地/蜂窝运行时优先使用 `powershell.exe` 执行 shell 命令；仅当 PowerShell 不可用时回退 `cmd.exe`，命令会话事件中的 `shell` 字段会记录实际使用的 shell。
+- 命令会话生命周期事件：`command_session_start/command_session_status/command_session_exit/command_session_summary` 继续作为可持久化状态事件，其中 `command_session_summary` 只保留状态、退出码、耗时、输出字节数与 dropped 计数；`command_session_delta` 也会进入持久化流，供完整审计与按轮次回放使用，前端仍通过虚拟窗口和增量合并避免长命令输出进入热路径列表查询。
+- 线程运行态事件：新增 `thread_status`，用于同步 loaded runtime 状态机；`status` 取值包括 `running/waiting_approval/waiting_user_input/idle/not_loaded/system_error`，并附带 `session_id/thread_id/subscriber_count/loaded/active_turn_id`。
+- 会话事件摘要接口：`GET /wunder/chat/sessions/{session_id}/events` 现额外返回 `data.runtime` 快照（包含 `thread_status/loaded/active_turn_id/turn.pending_approval_count/turn.waiting_for_user_input` 等字段）；`data.running` 也会覆盖等待审批、等待用户输入等活跃态，便于刷新后继续保持实时等待视图。
+- 会话事件摘要接口现在同时返回 `data.events[]` 原始持久化事件流，保留既有 `data.rounds[]` 工作流摘要；新前端状态投影应优先消费 `data.events[]`，缺失时再回退到 `data.rounds[]`。
+- 会话历史工作流补水：`GET /wunder/chat/sessions/{session_id}/events?workflow_only=true&from_user_round={n}&to_user_round={n}` 只返回指定用户轮次的 `data.rounds[]` 工作流事件，`data.events=[]`；模型正文增量与终态正文事件不会返回，但会保留 `turn_terminal` 与带用户轮次的 `thread_status`，使渐进补水能结算模型/工具运行态。此模式用于正文先渲染、工具循环和气泡附加信息随后补齐，参数必须是递增的正整数范围。
+- 工作流补水查询按 `session_id + user_round + event_id` 索引读取；历史流事件会在存储升级时补齐 `event_type/user_round` 索引字段，避免长会话刷新时扫描完整事件流。
+- `data.events[]` 与聊天 WS 事件 payload 会补充 `event_seq`；当前 `event_seq` 与会话内递增的 `event_id` 对齐，用于前端 reducer 去重、乱序检测和 HTTP snapshot 回放。
+- 会话级实时订阅支持显式 `cancel` 与任务自然结束后的幂等清理。WebSocket 连接关闭只释放传输订阅，不会取消后台线程或拒绝待审批工具；重新连接后客户端应通过会话事件快照恢复运行态和待审批项，再以 `approval_id + session_id` 提交决定。
+- 命令会话摘要现并入 `GET /wunder/chat/sessions/{session_id}/events`：返回 `data.command_sessions[]`，每项为当前会话内仍保留在 Broker 中的短期命令会话快照，包含 `command_session_id/status/seq/started_at/updated_at/ended_at/exit_code/stdout_tail/stderr_tail/pty_tail/*_dropped_bytes` 等字段；tail 为有界 head+tail 预览，中间输出可能以省略标记折叠，用于前端刷新后恢复工作流里的近期终端预览。
+- 新增命令会话回放接口：
+  - `GET /wunder/chat/sessions/{session_id}/command-sessions`：返回当前会话可见的命令会话快照列表。
+  - `GET /wunder/chat/sessions/{session_id}/command-sessions/{command_session_id}`：返回单个命令会话快照，按 `user_id + session_id + command_session_id` 做作用域校验。
+- 线程卸载事件：新增 `thread_closed`，表示当前 loaded runtime 已卸载；当最后一个流式订阅者离开且该线程没有 active turn 时会发出，payload 附带 `last_status` 便于前端做状态收尾。
+- `context_usage` 事件在模型配置存在有效上下文上限时会额外附带 `max_context`，用于前端展示“上下文占用/上限”。
+- 审批作用域：待审批请求现在由共享注册表统一管理，但 `chat/ws` 的 `approval` 与 `cancel` 只会消费 `source=chat_ws` 的待审批项，不会误清理渠道侧审批；渠道内回复 `1/2/3` 也只会作用于 `source=channel` 的审批上下文。
+- 说明：`/wunder` 入口允许传入未注册的 `user_id`，作为线程标识与隔离空间使用。
+
+### 4.x 目标态系统
+
+- 目标态绑定 `session_id`，当前每个会话最多保留一个目标；目标状态包括 `active / paused / budget_limited / complete`，与线程运行态分离。
+- 用户侧 `/goal` 命令已支持：
+  - 网页端 Messenger：`/goal <objective>` 作为一条用户轮次气泡发送并持久化（transcript 行带 `goal_command` 标志），同时创建或替换目标并进入 `active`；`/goal` 查看当前目标状态；`/goal resume` 恢复目标；目标态期间输入不锁定，可随时正常聊天或通过 `/goal <新目标>` 直接替换。
+  - 舵机 / TUI：`/goal` 查看当前目标，`/goal <objective>` 创建或替换当前目标并进入 `active`，`/goal --tokens <n> <objective>` 可设置可选 token 预算。
+- 网页端退出目标态统一通过聊天页停止按钮完成，终止会调用会话 cancel 并清除目标。
+- 模型侧暴露单一内置工具 `goal`；支持 `action=get/create/update`，其中 `action=update` 只允许 `status=complete`，模型不能暂停、恢复或清除目标。
+- `goal` 工具是运行时系统能力，始终注入模型可用工具列表，不受会话或智能体卡片工具配置影响。
+- 网页端 Messenger 支持 `/goal` 命令；目标态中的智能体会在中栏条目显示“目标”标识，目标态不再锁定发送等线程操作；退出统一通过聊天页停止按钮完成。
+- 目标续跑提示词将 objective 作为数据包裹注入（不改写 frozen system prompt），包含跨轮次保持、证据校验、完成审计与预算汇报要求。
+- `/goal` 命令用户轮次在模型上下文中会被改写为自然语言描述（如 "The user set a session goal: ..."），避免把原始斜杠命令当作字面任务重放。
+- `GET /wunder/chat/sessions/{session_id}/events` 返回 `data.goal` 目标快照，便于 watch / resume / reload 恢复。
+- 目标管理接口：
+  - `GET /wunder/chat/sessions/{session_id}/goal`：返回 `{ data: { goal } }`，无目标时 `goal=null`。
+  - `PUT /wunder/chat/sessions/{session_id}/goal`：请求体支持 `objective/token_budget/status`；设置或恢复 active 时会尝试启动续跑；响应 `data` 额外包含 `user_round`（/goal 命令用户轮次号，Set/Resume 时有值），供前端把本地命令气泡对齐到持久化轮次。
+  - `DELETE /wunder/chat/sessions/{session_id}/goal`：清除当前目标。
+- `chat/ws` 新增 `goal.get / goal.set / goal` 消息类型；响应类型为 `goal`。
+- `POST /wunder/chat/sessions/{session_id}/cancel` 在终止当前会话运行时会同步清除目标态，并返回 `goal_cleared`。若最近一轮用户消息之后尚无可见智能体回复，服务端会追加一条可恢复的 assistant 取消标记，刷新后仍能看到该轮次已被用户终止；响应会返回 `marker_persisted` 表示本次是否新写入该标记。取消结算会同时收敛 monitor、目标续跑、队列任务、运行中任务和 `agent_thread` 状态，响应额外包含 `queued_tasks_cancelled`、`running_tasks_marked_cancelled`、`thread_status_reset`、`settlement_event_id`。
+- 目标事件：`goal_updated / goal_cleared / goal_continuation_started / goal_budget_limited / goal_continuation_ready`。
+- 目标续跑通过隐藏内部用户消息触发，不改写 frozen system prompt；目标在 `paused / budget_limited / complete` 状态下停止自动续跑。
+
+### 4.1.1 `/wunder/system_prompt`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：字符串，用户唯一标识
+  - `session_id`：字符串，可选，会话标识
+  - `tool_names`：字符串列表，可选，指定启用的内置工具/MCP/技能名称（内置工具支持英文别名）
+  - `config_overrides`：对象，可选，用于临时覆盖配置
+  - `agent_prompt`：字符串，可选，智能体追加提示词
+- 返回（JSON）：
+  - `prompt`：字符串，当前系统提示词
+  - `build_time_ms`：数字，系统提示词构建耗时（毫秒）
+
+### 4.1.2 `/wunder/tools`
+
+- 方法：`GET`
+- 入参（Query）：
+- `user_id`：字符串，可选，用户唯一标识（传入后返回用户自建工具；共享工具字段兼容保留但固定为空）
+- 返回（JSON）：
+  - `builtin_tools`：内置工具列表（name/description/input_schema）
+  - `mcp_tools`：MCP 工具列表（name/description/input_schema）
+  - `a2a_tools`：A2A 服务工具列表（name/description/input_schema）
+  - `skills`：技能列表（name/description/input_schema）
+  - `knowledge_tools`：知识库工具列表（字面/向量，name/description/input_schema）
+  - `user_tools`：自建工具列表（name/description/input_schema）
+  - `user_mcp_tools`：当前用户自建 MCP 工具列表（仅传入 `user_id` 时返回）
+  - `user_skills`：当前用户自建技能列表（仅传入 `user_id` 时返回）
+  - `user_knowledge_tools`：当前用户自建知识库工具列表（仅传入 `user_id` 时返回）
+  - `shared_tools`：共享工具列表（兼容字段，当前固定为空）
+  - `shared_tools_selected`：共享工具勾选列表（兼容字段，当前固定为空或 `null`）
+  - `items`：统一能力目录列表；字段包括 `id/name/runtime_name/display_name/description/input_schema/group/source/kind/owner_id/available/selected`
+  - 说明：`runtime_name` 是持久化与实际调用使用的唯一名；`display_name` 用于界面展示。系统 MCP 工具会优先以去掉 `server@` 前缀后的最小限定别名展示。
+  - MCP 服务配置 `packaged=true` 时，不再展开远端全部工具，而是返回单个聚合工具 `server@__mcp_pack__`；该工具入参 `action=list|get|call`，并继续受 `allow_tools` 约束。
+- 说明：
+  - 用户自建工具名称统一为 `user_id@工具名`（MCP 为 `user_id@server@tool`）。
+  - `items[]` 为新的统一能力输出；旧的分组字段继续保留，便于前端与旧调用方平滑迁移。
+  - 共享工具能力已停用；服务端不再扫描其他用户工作区，也不再把共享字段纳入运行时编排。
+  - 知识库工具入参支持 `query` 或 `keywords` 列表（二选一），`limit` 可选；向量知识库会按关键词逐一检索并在结果中返回 `queries` 分组（多关键词时 `documents` 追加 `keyword`）。
+- 内置工具名称同时提供英文别名（如 `read_file`、`write_file`），可用于接口选择与工具调用。
+- `列出文件`（`list_files`）新增分页参数：`cursor`（字符串游标）/`offset`（兼容数值偏移）与 `limit`（默认 `500`，最大 `500`）；返回结果补充 `resolved_path/cursor/offset/limit/returned/has_more/next_cursor/next_offset`。推荐优先按页续取，避免一次性回放超长目录导致上下文膨胀；省略或空白 `path` 时默认使用当前智能体工作目录。
+- `搜索内容`（`search_content`）支持双引擎：`engine=auto|rg|rust`（`auto` 优先 `rg`，失败自动回退 `rust`），并兼容一批更接近 `rg` 心智模型的别名：`pattern`、`glob -> file_pattern`、`type`（常见语言/后缀快捷过滤）、`context/-C`、`-A/-B`、`ignore_case/-i`、`fixed_strings/-F`、`max_count/head_limit -> max_matches`。默认语义更新为：`query` 省略 `query_mode` 时按 `literal` 处理，`pattern` 省略 `query_mode`/`-F` 时按 `regex` 处理；对 `query` 的多词精确短语在无结果时，工具可能自动回退为按词检索，以更贴近模型的自然查询习惯。对于单个超长文件的高密度命中，结果会优先分散暴露不同区段的代表命中，避免预览长期偏在文件前部。该工具只搜索本地工作区文本文件，不会访问网页；省略或空白 `path` 时默认当前智能体工作目录，相对 `path` 也按当前工作区解析；返回结果会补充 `resolved_path/scope/scope_note`，零命中时 `summary.next_hint` 会明确提示“本地范围为空或需先 list_files”。
+- `读取文件`（`read_file`）仅用于代码/配置/日志/Markdown 等本地纯文本的定点读取，不应用于图片、PDF、Office 文档、压缩包或其他二进制文件，也不应把它当作“整篇吞长文档”的工具。`path/file_path/file` 必填；相对路径按当前智能体工作目录解析。该工具支持 `mode=slice|indentation`：`indentation` 模式可传 `indentation.anchor_line/max_levels/include_siblings/include_header/max_lines`，用于按缩进树读取代码块并降低上下文占用。`slice` 模式的 `start_line/end_line` 采用包含式区间；若只传 `start_line` 而不传 `end_line`，则会从该行开始默认读取 200 行，需要不同窗口大小时请同时传 `end_line` 或改用 `file_path + offset/limit`。当模型传入 `start_line=0` 时会自动归一化到首行，但若 `start_line > end_line` 会直接返回 `TOOL_READ_INVALID_RANGE`，避免把反向区间静默吞成假成功；若 `files[]` 一次超过 20 个目标，也会直接返回明确错误而不是静默截断。同文件相邻/重叠切片在同一次调用内会合并展示，以减少重复输出与外层截断。另兼容 Codex 常见的 `file_path + offset/limit` 读取窗口写法，并在 `meta.files[]` 中补充 `resolved_path/requested_ranges/effective_ranges/range_args_normalized/used_default_range/request_satisfied` 方便前端与模型判断原始请求、实际生效范围及本次请求是否真正满足。
+- `执行命令`（`execute_command`）在本机与 sandbox 返回统一输出护栏元信息：`output_meta`（每条命令）与 `meta.output_guard`（聚合）；若未传 `workdir` 或传空值，则默认使用当前智能体工作目录；相对 `workdir` 也按当前工作区解析。若 `content` 为纯补丁正文（`*** Begin Patch ... *** End Patch`），会自动路由到 `应用补丁` 并在结果追加 `intercepted_from=execute_command`。
+- 工具结果默认允许约 `20000` 字符级别内容进入 `tool_result`/observation（管理员会话同样生效）；若仍因上下文预算被裁剪，系统会在顶层直接返回 `truncated/observation_output_chars/continuation_required/continuation_hint`（不再放入 `meta`）；数据体中可能出现 `data.truncated/original_chars/preview`、表格级 `rows_sampled/rows_omitted`，或数组级 `{"__truncated":true,"omitted_items":N}` 标记，表示当前结果为片段/样本而非全量。
+- `执行命令` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_commands`（也可放入 `budget` 对象）；`dry_run=true` 时仅返回执行计划与预算，不落地执行。
+- `执行命令` 失败结果的管理员事件通道会在 `data.diagnostics` 保留最多 4 条有界诊断（命令、序号、退出码和输出尾部）；模型 observation 仍只接收精简错误文本，避免把多命令 stderr 再次写入上下文。
+- `写入文件`、`应用补丁` 与 `文本编辑` 支持 `dry_run` 预演：返回目标文件与变更摘要，不写磁盘；传入相对 `path` 或补丁内相对文件路径时，会按当前智能体工作目录解析，不会落到服务进程 cwd。
+- `应用补丁` 的 `input` 现支持多层 JSON 包裹自动解包（如 `{"input":"{\"input\":\"*** Begin Patch ... *** End Patch\"}"}`），降低模型重复封装导致的格式失败。
+- `应用补丁` 的 `dry_run` 与正式执行共用暂存、冲突检查和上下文匹配逻辑，不写磁盘、不触发工作区版本更新或 LSP 写入通知。`data.files[].diff_blocks` 为有界预览：每文件最多 80 行，每调用最多 320 行、24 KiB 行正文；超预算整行省略。`data` 与 `files[]` 同时提供准确的 `added_lines/deleted_lines` 和 `diff_lines_omitted`，前端不能从预览行数推算实际变更量。模型 observation 保留准确增删行数与文件摘要，省略 diff 正文；事件与工具日志保留有界预览。
+- 当 `应用补丁` 返回 `PATCH_CONTEXT_NOT_FOUND` 时，`error_meta.hint` 会包含“期望旧片段 + 邻近源码 + 最相似窗口差异示例”，便于模型按上下文重新生成补丁。
+- `搜索内容` 返回保留兼容字段 `matches`，同时提供结构化 `hits`、`matched_files/matched_file_count/returned_match_count`、`summary` 与 `meta.search`。其中 `summary` 会给出实际采用的策略、顶部相关文件、命中词、`focus_points` 和下一步提示；`meta.search` 额外包含 `query_source`、`query_mode_inferred`、`strategy`、`attempts_tried`、`requested_engine/resolved_engine/rg_program/fallback/elapsed_ms/timeout_hit` 等信息，便于前端与调度层做可观测优化。
+- `搜索内容` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`（也可放入 `budget`，并支持 `budget.max_files/max_matches/max_candidates`）；超预算时会在 `meta.search.output_budget_hit` 标记结果裁剪。
+- `读取文件` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_files`（也可放入 `budget`）；结果在 `meta.read` 返回 `timeout_hit/output_budget_hit/budget_file_limit_hit`。当本次只返回了默认大窗口前缀、文件安全截断前缀，或读取结果在外层继续可细化续取时，数据体会显式补 `continuation_required/continuation_hint`，提示模型应先 `search_content` 定位标题或改读更窄的行范围，而不是反复整篇重读。
+- 基础工具失败结果统一补充 `error_meta`：`code/hint/retryable/retry_after_ms`，并保证同时落入 `data.error_meta`，便于前端、结果归一化和重试治理统一按错误码做自动恢复。
+- 外层工具超时不再只返回笼统字符串；`tool_result` 会补充 `data.failure_summary/error_detail_head/next_step_hint/timeout_s/timeout_ms` 与 `error_meta.code=TOOL_TIMEOUT`，前端工作流可直接显示失败原因与下一步建议。
+- 图像生成工具现在会尽量把上游显式失败转换为结构化工具失败：例如 `vllm-omni / Z-Image` 的尺寸不合法会返回 `error_meta.code=IMAGE_SIZE_ALIGNMENT_INVALID`、`retryable=false`、`data.suggested_size` 与 `data.next_step_hint`，而不是等到外层统一超时。
+- 新增内置工具 `计划面板`（英文别名 `update_plan`），用于更新计划看板并触发 `plan_update` 事件。
+- 新增内置工具 `问询面板`（英文别名 `question_panel`/`ask_panel`），用于提供多条路线选择并触发 `question_panel` 事件。
+- 新增内置工具 `技能调用`（英文别名 `skill_call`/`skill_get`），传入技能名返回完整 SKILL.md 与技能目录结构。
+  - 技能文档内建议使用占位符 `{{SKILL_ROOT}}` 引用技能资源（脚本/示例/工作流文件等）。
+  - `skill_call` 返回时会将 `skill_md` 中的 `{{SKILL_ROOT}}` 自动替换为本次可见的技能根目录绝对路径（同返回字段 `root`）。
+  - `skill_call` 结果不再走通用长度裁剪，避免模型因拿不到完整技能正文而反复回读同一个 `SKILL.md`。
+- `读取文件` 的切片读取结果会在 `meta.files[]` 里补充 `hit_eof/range_reaches_eof`，帮助模型判断当前分段是否已触达文件末尾，避免继续请求越界范围；若同文件一次请求了多个离散切片，正文里会增加 `[lines a-b]` 小标题以保持范围边界清晰。
+- 新增内置工具 `子智能体控制`（英文别名 `subagent_control`），通过 `action=list|history|send|spawn|batch_spawn|status|wait|interrupt|close|resume` 统一完成子会话派生、批量调度、状态聚合与生命周期控制。
+- 新增内置工具 `会话让出`（英文别名 `sessions_yield`/`yield`），用于在完成子智能体派发后主动结束当前轮次，向用户返回一句简短提示，并等待后台子智能体完成后自动唤醒父会话继续。
+- 新增内置工具 `会话线程控制`（英文别名 `thread_control`/`session_thread`），通过 `action=list|info|create|switch|back|update_title|archive|restore| 控制当前用户的线程树，并可触发 `thread_control` 工作流事件驱动前端同步切换线程。
+- 新增内置工具 `智能体蜂群`（英文别名 `agent_swarm`/`swarm_control`），通过 `action=list|status|send|history|spawn|batch_send|wait` 管理当前用户“当前智能体以外”的其他智能体。
+- `智能体蜂群` 的 `send`/`batch_send`/`spawn` 默认会复用目标工蜂当前任务线程；当任务线程不存在时会先创建并绑定。若显式传入 `threadStrategy=new_thread`，则会为目标工蜂新建干净线程并将其绑定为新的任务线程；`threadStrategy=task_thread`（或 `reuseThread=true`）则显式要求复用任务线程。`send`/`batch_send` 在显式提供 `sessionKey` 时仍会优先复用指定线程。
+- `智能体蜂群` 新增 `wait` 动作：可直接等待 `run_ids` 结果并返回聚合状态，避免母蜂反复轮询 `status`。
+- `智能体蜂群` 的 `send`/`batch_send`/`wait` 等待语义分三态：显式传 `0` 立即返回当前快照，显式传正数按该超时等待；省略等待参数时走系统默认超时，只有系统默认值本身为 `0` 时才会进入无限等待。
+- 多工蜂协作推荐：先 `batch_send` 一次并发派发，再 `wait` 统一收敛。
+- `智能体蜂群` 入参语义增强（便于模型主动调用）：`send`/`spawn` 支持 `agentId` 或 `agentName/name` 直达目标；`send` 需 `message` 且 `agentId/agentName/name/sessionKey` 四选一，`spawn` 需 `task` 且 `agentId/agentName/name` 三选一，`history` 需 `sessionKey`，`wait` 需 `runIds`，`batch_send` 需 `tasks[]`（每项需 `message` 且 `agentId/agentName/name/sessionKey` 四选一）；`send`/`batch_send`/`spawn` 还支持 `threadStrategy=new_thread|task_thread`，也兼容 `reuseThread=true`。
+- `智能体蜂群` 的动态提示仅注入到工具描述本身，展示“工蜂名称 + 一句话描述”；已冻结线程的 system prompt 不会因工蜂变化而改写。
+- 推荐最短调用路径：`list -> batch_send -> wait -> history/status`（单目标用 `send` 替代 `batch_send`）。
+- `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`；`batch_spawn` 会返回稳定 `dispatch_id` 并把父轮次引用写入每个子任务，便于后续在消息气泡内聚合展示。
+- 推荐的 Codex 风格子智能体调用路径更新为：`subagent_control.spawn/batch_spawn -> sessions_yield -> 子智能体自动回流唤醒 -> status/wait(按需)`；其中 `sessions_yield` 是显式“本轮先结束”的一级原语。
+- `会话线程控制` 的 `create/switch/back/ 可同时更新任务线程绑定；当工具通过流式通道返回 `thread_control` 事件时，蜂巢会先合并会话摘要，再按 payload 决定是否切换到目标线程。
+- 新增内置工具 `用户世界工具`（英文别名 `user_world`），通过 `action=list_users|send_message` 获取用户列表或发送私信（消息会在用户世界页面可见）。
+- 新增内置工具 `渠道工具`（英文别名 `channel_tool`），通过 `action=list_contacts|send_message` 查询渠道可联系对象并向指定渠道对象发送消息（支持工作区文件引用转下载链接后发送）。
+- `渠道工具.list_contacts` 默认融合会话历史与 XMPP roster（若可用），返回 `source=session_history|roster|session_history+roster`；可传 `refresh=true` 强制刷新 roster 缓存。
+- `渠道工具.send_message` 参数已简化：不再强制 `channel/account_id/to` 同时必填；可直接传 `text`（或 `content`/`attachments`）并由系统从会话/默认账号自动补全。`list_contacts` 返回 `contact` 对象，可直接回传给 `send_message`。
+- `渠道工具.send_message` 附件投递能力（2026-03-18）：Feishu/XMPP/QQBot 优先走渠道原生附件链路；若目标渠道不支持对应类型则自动回退为文本链接，不阻断投递。
+- 测试开放态（2026-03-11）：`channel_tool` 默认放开账号归属限制，`list_contacts` 可读取当前系统内所有已配置渠道账号；渠道请求默认覆盖 `security.approval_mode=full_auto` 与 `security.exec_policy_mode=allow`，不再进入渠道审批提示链路。
+- 浏览器工具重构（2026-03-27，2026-07-02 更新）：内置工具 `浏览器`（英文别名 `browser`）升级为浏览器运行时入口，支持 `status/profiles/start/stop/tabs/open/focus/close/navigate/snapshot/act/screenshot/read_page`；保留 `browser_navigate/browser_click/browser_type/browser_screenshot/browser_read_page/browser_close` 旧别名兼容。浏览器工具对模型的可见性由 `tools.browser.enabled` 控制，浏览器运行时由顶层 `browser.*` 配置控制；非 desktop 模式下无需再把 `浏览器` 写进 `tools.builtin.enabled`，`desktop + tools.browser.enabled` 仍兼容 legacy 模式。慢页面建议先调用 `start` 预热或复用会话，再在 `open`/`navigate` 中传 `timeout_ms` 或 `timeout_secs`；智能体工具调用 `screenshot` 默认保存到当前工作区 `browser/screenshots/`，直接调用 HTTP 控制接口截图仍落到 `temp_dir` 并返回下载链接。模型侧 `status` 返回会移除本地 `control.host/control.port`，避免模型误把内部控制端点当成下载或浏览地址。
+- 新增浏览器控制接口（2026-03-27）：`/wunder/browser/health`、`/wunder/browser/status`、`/wunder/browser/profiles`、`/wunder/browser/session/start`、`/wunder/browser/session/stop`、`/wunder/browser/tabs`、`/wunder/browser/tabs/open`、`/wunder/browser/tabs/focus`、`/wunder/browser/tabs/close`、`/wunder/browser/navigate`、`/wunder/browser/snapshot`、`/wunder/browser/act`、`/wunder/browser/screenshot`、`/wunder/browser/read_page`。
+- 内置工具 `网页抓取`（英文别名 `web_fetch`）支持 `extract_mode=markdown|text` 与 `max_chars`；直接通过 HTTP 抓取网页并输出低噪声正文，不用于本地文件或关键词搜索，并会对明显的前端壳页/验证页返回结构化失败或自动切换浏览器兜底。
+- `网页抓取` 默认执行正文清洗与去噪，移除导航、页脚、广告、评论等低价值片段；同时内置重定向复校验、响应体大小限制与短 TTL 缓存。私网/内网目标默认拦截，但现可通过 `tools.web.fetch.allow_private_network=true` 全量放开，或用 `tools.web.fetch.hostname_allowlist` 按主机名/IP 精确放行。
+- `网页抓取` 运行时支持 `tools.web.fetch.provider=direct|auto|firecrawl`：`direct` 使用 Wunder 内置 HTTP 抓取，`firecrawl` 调用外部 Firecrawl `/v2/scrape`，`auto` 在配置 Firecrawl API Key 或自定义 `base_url` 时优先使用 Firecrawl、失败后回退 direct。Firecrawl 配置位于 `tools.web.fetch.firecrawl.*`，也可通过 `WUNDER_WEB_FETCH_PROVIDER`、`FIRECRAWL_BASE_URL`、`FIRECRAWL_API_KEY` 覆盖；官方云端 `https://api.firecrawl.dev` 需要 API Key。
+- 管理员侧“系统设置 / Firecrawl 网页抓取”保存后会将 Firecrawl 连接参数同步到 `tools.web.search.firecrawl.*`；当抓取 provider 为 `firecrawl`，或为 `auto` 且已配置 Firecrawl API Key/自定义地址时，`tools.web.search.enabled=true` 且 `provider=firecrawl`，用户侧智能体工具列表会显示 `网页搜索`。
+- Docker compose 默认不再内置 Firecrawl 自托管服务组；默认部署回退为 Wunder 内置 `direct` 网页抓取，降低启动依赖和队列数据库复杂度。管理员侧“系统设置 / Firecrawl 网页抓取”只保存 Wunder 连接外部 Firecrawl 的参数，不负责启动、停止或修改 Docker 服务。
+- `网页抓取` 可以抓取 Bing/Google/DuckDuckGo/百度等搜索结果页作为线索页，但最终证据应继续抓取具体来源页面，不要把搜索结果摘要当成结论来源。
+- `网页抓取` 的失败结果现结构化暴露 `phase`（如 `validation/dns_lookup/request/response_body/extract`）、`failure_summary`、`next_step_hint` 与 `error_meta`；浏览器桥启动失败也会在 ready 前返回结构化 JSON，便于工作流区域直接展示真实故障原因（例如缺少 Playwright 浏览器二进制）。
+- 新增内置工具 `桌面控制器`（英文别名 `desktop_controller`/`controller`），通过 bbox+action 执行桌面操作，执行后自动附加桌面截图，仅 desktop 模式可用。
+- 新增内置工具 `桌面监视器`（英文别名 `desktop_monitor`/`monitor`），等待 wait_ms 后返回桌面截图并自动附加，仅 desktop 模式可用。
+- `桌面控制器/桌面监视器` 在同一会话内会额外返回 `previous_screenshot_path`；工具 followup 会按“上一帧 -> 当前帧”顺序自动回灌图片（首帧仅回灌当前帧）。
+- 新增内置工具 `休眠等待`（英文别名 `sleep`/`sleep_wait`/`pause`），参数 `seconds` 必填；用于主动等待（如 `300` 秒），并自动适配工具超时。
+- 内置工具 `读图工具`（英文别名 `read_image`/`view_image`），参数 `path` 必填，可通过 `frame_step` / `frame_rate` 控制 GIF / 视频取帧；工具会直接把本地图片、GIF 或视频预处理后的视觉内容送入模型上下文，具体查看意图来自当前对话，不再暴露 `prompt` 入参。
+- `读图工具` 仅在 `llm.models.<name>.support_vision=true` 的模型下会出现在可用工具列表中，非视觉模型会自动隐藏并拒绝调用。
+- `桌面控制器/桌面监视器` 仅在 `llm.models.<name>.support_vision=true` 的模型下会出现在可用工具列表中。
+- `action=list` 返回当前在线节点清单（含 `node_id/commands/caps/scopes` 等信息）；`action=invoke` 需要 `node_id + command`，可选 `args/timeout_s/metadata`。
+- 兼容旧入参：未传 `action` 但同时提供 `node_id + command` 时仍按 `invoke` 处理。
+- A2A 服务工具命名为 `a2a@service`，服务由管理员配置并启用。
+- 内置提供 `a2a观察`/`a2a等待`，用于观察任务状态与等待结果。
+
+### 4.1.2A 智能体应用与模型选择（`/wunder/agents`）
+
+#### `GET /wunder/agents/models`
+
+- 方法：`GET`
+- 入参（Query，可选）：`user_id`
+- 返回（JSON）：
+  - `data.items`：可选模型配置名列表（仅 `model_type=llm`）
+  - `data.default_model_name`：当前默认模型配置名（可能为 `null`）
+- 说明：
+  - 返回的模型名为 **模型配置键**，不是上游 provider 的原始模型字符串。
+  - 用户侧“智能体设置/新建智能体/工蜂卡导入导出”应使用该列表作为可选项。
+
+#### `GET /wunder/agents`
+
+- 方法：`GET`
+- 入参（Query，可选）：`user_id`、`hive_id`
+- 返回（JSON）：`data.items[]`（智能体列表）
+- 预设补齐：仅在用户首次访问该列表时执行一次默认预设智能体补齐；后续用户对预设实例的重命名或删除不会在列表读取时自动生成重复副本，如需补回由管理员预设同步触发。
+- 与模型选择相关字段：
+  - `configured_model_name`：该智能体显式配置的模型；为空表示跟随默认模型
+  - `model_name`：当前生效模型（优先取 `configured_model_name`，否则回退到默认模型）
+- 与蜂群协作相关字段：
+  - `silent`：是否静默；为 `true` 时，用户侧消息中栏和蜂群右侧消息栏默认隐藏该智能体的消息入口/消息项
+  - `prefer_mother`：是否优先作为母蜂；当蜂群未显式设置母蜂时，会优先使用该智能体作为默认母蜂
+- 与能力模型相关字段：
+  - `ability_items`：结构化能力列表，字段包括 `id/name/runtime_name/display_name/description/input_schema/group/source/kind/owner_id/available/selected`
+  - `abilities.items`：与 `ability_items` 等价的嵌套兼容字段
+  - `tool_names`：当前运行时启用的能力名列表（兼容字段）
+  - `declared_tool_names` / `declared_skill_names`：仅表示 worker-card 导入时声明的工具/技能依赖；普通智能体不要求写入
+- 与形象相关字段：
+  - `icon`：智能体形象主字段，推荐写完整 JSON 字符串；静态头像为 `kind=static`，动态形象为 `kind=companion`
+  - 动态形象的 `scope=global` 表示管理员全局形象，`scope=private` 表示当前用户本地上传形象；管理员预设智能体只能选择全局形象
+  - `show=false` 时仅保留头像预览，不在浏览器/桌面浮层显示动态形象；`messageHints=false` 时不显示必要消息气泡
+
+#### `POST /wunder/agents`
+
+- 方法：`POST`
+- 入参（Query）：`user_id`
+- 入参（JSON）：
+  - `name`：智能体名称（必填）
+  - `model_name`：模型配置名（可选，支持 `modelName`/`model_name`；空值表示使用默认模型）
+  - `ability_items`：结构化能力列表（可选）
+  - `abilities.items`：结构化能力列表的嵌套写法（可选，等价于 `ability_items`）
+  - `declared_tool_names`：工蜂卡声明的非技能工具依赖（可选）
+  - `declared_skill_names`：工蜂卡声明的技能依赖（可选）
+  - `silent`：静默模式（可选，兼容 `silentMode` / `silent_mode`）
+  - `prefer_mother`：优先母蜂（可选，兼容 `preferMother` / `prefer_mother`）
+  - `icon`：智能体形象 JSON 字符串（可选），支持静态头像或动态形象
+  - 其余字段同现有智能体创建接口（如 `description/system_prompt/tool_names/...`）
+- 说明：
+  - 工蜂卡导入/导出时，技能声明应落在 `declared_skill_names`，不要混入 `declared_tool_names`
+  - 当提交 `ability_items`/`abilities.items` 时，后端会把它作为结构化能力主数据持久化；`tool_names` 继续作为运行时兼容字段保留
+
+#### `PUT /wunder/agents/{agent_id}`
+
+- 说明补充：
+  - 与创建接口一致，更新时同样支持 `silent` / `prefer_mother`（以及兼容别名）并会直接回写到智能体配置。
+  - 默认智能体配置接口返回体也会同步携带 `silent` / `prefer_mother`。
+
+- 方法：`PUT`
+- 入参（Query）：`user_id`
+- 入参（JSON）：
+  - `model_name`：模型配置名（可选，支持 `modelName`/`model_name`；空值表示清除显式配置并回退默认模型）
+  - `ability_items` / `abilities.items`：结构化能力列表（可选，增量更新时可单独提交）
+  - `icon`：智能体形象 JSON 字符串（可选），支持静态头像或动态形象
+  - 其余字段按需增量更新
+- 说明：预设智能体实例使用稳定 `preset_binding` 跟踪模板关系；用户侧重命名不会丢失绑定，也不会触发同名预设副本再次自动补种。
+- 工蜂卡相关说明：
+  - 更新时可同时提交 `declared_tool_names` 与 `declared_skill_names`
+  - 技能依赖应写入 `declared_skill_names`
+
+#### `GET /wunder/agents/{agent_id}/runtime-records`
+
+- 方法：`GET`
+- 入参（Query，可选）：`user_id`、`days`（1~30，默认 14）、`date`（`YYYY-MM-DD`，热力图选中日期）
+- 返回（JSON）：
+  - `data.summary.runtime_seconds`：统计窗口内总运行时长
+  - `data.summary.billed_tokens`：兼容字段，等价于累计消耗
+  - `data.summary.consumed_tokens`：推荐字段，表示统计窗口内累计消耗
+  - `data.summary.tool_calls`：统计窗口内工具调用次数
+  - `data.daily[]`：按日拆分，字段包括 `date/runtime_seconds/billed_tokens/consumed_tokens/tool_calls`
+  - `data.heatmap`：工具调用热力图（`date/max_calls/items[]`）
+  - `data.heatmap.items[]`：按工具运行时名聚合，字段包括 `tool/name/display_name/tool_name/runtime_name/category/hourly_calls/total_calls`；`display_name` 用于界面展示，`runtime_name`/`tool_name` 用于唯一定位与排障。
+- 说明：
+  - `consumed_tokens` 按各次请求的 `round_usage.total_tokens` 累加得到。
+  - `billed_tokens` 为历史兼容字段，新接入优先使用 `consumed_tokens`。
+  - MCP 工具热力图不再用展示名作为聚合键，避免中文别名与 `server@tool` 运行时名重复显示。
+
+#### `GET /wunder/companions/global`
+
+- 方法：`GET`
+- 鉴权：无。该接口只读返回管理员发布的全局形象资源，供登录前后用户侧形象选择器与预设智能体预览复用。
+- 返回（JSON）：`data.items[]`
+  - `id`：全局形象 ID
+  - `display_name`：显示名称
+  - `description`：说明
+  - `spritesheet_path`：形象包内帧图路径
+  - `spritesheet_mime`：帧图 MIME
+  - `spritesheet_url`：帧图直连地址（`/wunder/companions/global/{id}/spritesheet?...`），列表/选择器优先使用该字段做轻量预览
+  - `imported_at/updated_at`：导入与更新时间戳（秒）
+  - 说明：列表接口默认不再内联返回整张帧图 data URL，避免形象较多时首开页面或弹窗传输体过大。
+
+#### `GET /wunder/companions/global/{id}`
+
+- 方法：`GET`
+- 鉴权：无。
+- 返回（JSON）：`data` 为单个全局形象完整记录；除列表元数据外，额外包含 `spritesheet_data_url`，供桌面浮窗或单项详情按需加载。不存在时返回 `404`。
+
+#### `GET /wunder/companions/global/{id}/spritesheet`
+
+- 方法：`GET`
+- 鉴权：无。
+- 返回：帧图二进制，`Content-Type` 与 `spritesheet_mime` 一致。用于管理员侧/用户侧形象列表轻量预览，避免在列表接口内联大体积 base64。
+
+#### `GET /wunder/companions/global/{id}/package`
+
+- 方法：`GET`
+- 鉴权：无。
+- 返回：`application/zip` 标准形象包，用于需要复用全局形象包的客户端下载。
+
+#### `GET /wunder/admin/preset_agents`
+
+- 方法：`GET`
+- 返回：`data.items[]`
+- 说明：
+  - 列表会额外补充模板用户 `preset_template` 的默认智能体，返回项携带 `preset_id="__default__"` 与 `is_default_agent=true`。
+  - 普通预设返回的 `preset_id` 是内部稳定标识，用于绑定、版本递增与存量同步；舰桥界面不应将其作为展示名或用户输入项。
+  - 该默认智能体项不会写入普通 `user_agents.presets`；舰桥可直接编辑其默认模板，并可复用同一同步接口将默认智能体设置同步到存量用户。
+
+#### `POST /wunder/admin/preset_agents`
+
+- 方法：`POST`
+- 入参（JSON）：`items[]`
+- 预设项新增字段：
+  - `model_name`：预设智能体默认模型配置名（可选，支持 `modelName`/`model_name`）
+  - `icon`：预设智能体形象 JSON 字符串（可选）；管理员侧可选择静态头像或 `scope=global` 的动态形象
+- 说明：
+  - 舰桥预设保存后，模板用户同名智能体会同步该 `model_name`。
+  - 新注册用户或存量同步时，若该字段非空，会将该模型配置下发到用户智能体。
+  - 预设智能体保存、同步与工蜂卡导出均以 `icon` 为主字段，`icon_name/icon_color` 只作为兼容静态头像旧字段。
+  - 若提交项中包含 `preset_id="__default__"` 的默认智能体特殊项，服务端会忽略该项，避免将默认智能体误写成普通预设。
+  - 预设工蜂卡目录与管理员导出文件名默认只使用名称，`preset_id` 仍只作为后端模板绑定键；卡片协议中对应的内部稳定标识改为 `metadata.agent_id`，值继续统一使用 `preset_<stable-hash>` 形态，不作为用户可见文件名前缀；预设版本与启停状态写入卡片顶层 `preset.{revision,status}`，不再放在 `extensions`。
+
+#### `/wunder/admin/companions*`
+
+- 说明：管理员全局形象管理接口。全局形象供所有用户和管理员预设智能体选择；用户私有形象不经过这些接口。
+- `GET /wunder/admin/companions`：返回 `data.items[]` 全局形象列表，字段同 `/wunder/companions/global`，默认只返回轻量元数据与 `spritesheet_url`。
+- `POST /wunder/admin/companions`：使用 multipart 表单字段 `file` 上传标准形象 zip 包；返回 `data.item` 与 `data.sha256`。
+- `GET /wunder/admin/companions/{id}`：读取单个全局形象完整记录，包含 `spritesheet_data_url`。
+- `GET /wunder/admin/companions/{id}/spritesheet`：返回单个全局形象帧图二进制，供管理员列表轻量预览。
+- `PATCH /wunder/admin/companions/{id}`：更新 `display_name`/`name` 与 `description`。
+- `DELETE /wunder/admin/companions/{id}`：删除全局形象，返回 `data.deleted`。
+- `GET /wunder/admin/companions/{id}/package`：导出标准形象 zip 包。
+
+#### `POST /wunder/admin/preset_agents/sync`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `preset_id`：预设 ID；当传入 `__default__` 时，表示同步模板用户默认智能体配置。
+  - `mode`：`safe` / `force`
+  - `dry_run`：是否仅预演
+- 说明：
+  - `preset_id="__default__"` 仅同步默认智能体的设置字段（名称、描述、提示词、工具、问题、审批模式、状态、工作目录与图标）。
+  - 默认智能体同步同样支持 `safe` / `force`：`safe` 只覆盖仍跟随模板的字段，`force` 强制覆盖模板管理字段。
+
+### 4.1.2.1 `/wunder/user_tools/mcp`
+
+- 方法：`GET/POST`
+- `GET` 入参（Query）：
+  - `user_id`：字符串，用户唯一标识
+- `GET` 返回（JSON）：
+  - `servers`：用户 MCP 服务列表（name/endpoint/allow_tools/packaged/shared_tools/enabled/transport/description/display_name/headers/auth/tool_specs）
+- `POST` 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `servers`：用户 MCP 服务列表（字段同上）
+- `POST` 返回：同 `GET`
+- 说明：`packaged=true` 时该用户 MCP 服务在模型侧作为单个聚合工具暴露；聚合工具内部可 `list/get/call` 已加载且允许的远端工具。`shared_tools` 为兼容字段，当前保存与返回时固定为空数组。
+
+### 4.1.2.2 `/wunder/user_tools/mcp/tools`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `name`：服务名称
+  - `endpoint`：服务地址
+  - `transport`：传输类型（可选）
+  - `headers`：请求头对象（可选）
+  - `auth`：认证字段（可选）
+- 返回（JSON）：
+  - `tools`：MCP 工具清单
+
+### 4.1.2.3 `/wunder/user_tools/skills`
+
+- 方法：`GET/POST/DELETE`
+- `GET` 入参（Query）：
+  - `user_id`：字符串，用户唯一标识
+- `GET` 返回（JSON）：
+  - `enabled`：已启用技能名列表
+  - `shared`：已共享技能名列表（兼容字段，当前固定为空）
+  - `skills`：技能列表（name/description/path/input_schema/enabled/shared/builtin/source/readonly）
+    - `source`：`builtin` 或 `custom`
+    - `builtin=true`/`readonly=true` 表示内置技能（只读）
+- `POST` 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `enabled`：启用技能名列表
+  - `shared`：共享技能名列表（兼容字段，当前会被服务端清空）
+- `POST` 返回：同 `GET`
+- 说明：desktop 本地模式下，内置技能启用状态会同步写入全局 `skills.enabled`，不再作为 `user_id@技能名` 自建工具注入。
+- `DELETE` 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `name`：技能名称
+- `DELETE` 返回（JSON）：
+  - `ok`：是否成功
+  - `name`：技能名称
+  - `message`：提示信息
+- 说明：内置技能只读，`DELETE` 会返回 `403`。
+
+### 4.1.2.4 `/wunder/user_tools/skills/files`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `name`：技能名称
+- 返回（JSON）：
+  - `name`：技能名称
+  - `root`：技能根目录
+  - `entries`：文件列表（path/kind）
+
+### 4.1.2.5 `/wunder/user_tools/skills/file`
+
+- 方法：`GET/PUT`
+- `GET` 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `name`：技能名称
+  - `path`：相对技能目录的文件路径
+- `GET` 返回（JSON）：
+  - `name`：技能名称
+  - `path`：文件路径
+  - `content`：文件内容
+- `PUT` 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `name`：技能名称
+  - `path`：相对技能目录的文件路径
+  - `content`：文件内容
+- `PUT` 返回（JSON）：
+  - `ok`：是否成功
+  - `path`：文件路径
+  - `reloaded`：是否触发技能刷新（编辑 SKILL.md 时为 true）
+- 说明：内置技能只读，`PUT` 会返回 `403`。
+
+### 4.1.2.6 `/wunder/user_tools/skills/content`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `name`：技能名称
+- 返回（JSON）：
+  - `name`：技能名称
+  - `path`：SKILL.md 文件路径
+  - `content`：SKILL.md 完整内容
+
+### 4.1.2.7 `/wunder/user_tools/skills/upload`
+
+- 方法：`POST`
+- 入参：`multipart/form-data`
+  - `file`：技能压缩包，支持 `.zip`、`.skill`、`.rar`、`.7z`、`.tar`、`.tgz`、`.tar.gz`、`.tbz2`、`.tar.bz2`、`.txz`、`.tar.xz`
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `extracted`：解压文件数量
+  - `message`：提示信息
+- 说明：上传内容写入自定义技能目录（`source=custom`），不会覆盖内置 `config/skills/` 源码目录。
+- 说明：上传目录若与内置技能目录冲突会返回 `403`（避免覆盖内置技能）。
+- 说明：压缩包必须以“技能目录”为顶层，例如 `我的技能/SKILL.md`；不允许直接把 `SKILL.md`、脚本或其他文件放在压缩包根目录，否则会返回 `400`。
+- 说明：`.zip/.skill` 使用内置解压；`.rar/.7z/.tar*` 等常见格式会优先调用系统已有解压器，若本机缺少对应解压工具会返回错误提示。
+
+### 4.1.2.8 `/wunder/user_tools/skills/export`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `name`：技能名称
+- 返回：`application/zip` 文件流
+- 说明：将当前技能目录按“单独顶层技能目录”结构导出为 zip 压缩包，内置技能与自定义技能都允许导出。
+
+### 4.1.2.9 `/wunder/user_tools/knowledge`
+
+- 方法：`GET/POST`
+- `GET` 入参（Query）：
+  - `user_id`：用户唯一标识
+- `GET` 返回（JSON）：
+  - `knowledge.bases`：知识库列表（name/description/root/enabled/shared/base_type/embedding_model/ragflow_dataset_id/ragflow_dataset_managed/chunk_method/chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size/chunk_overlap/top_k/score_threshold）
+  - `embedding_models`：可用嵌入模型名称列表（仅包含 model_type=embedding）
+  - `tts_models`：可用文转声模型名称列表（仅包含 model_type=tts）
+  - `image_models`：可用图像生成模型名称列表（仅包含 model_type=image）
+- `POST` 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `knowledge.bases`：知识库列表（name/description/enabled/shared/base_type/embedding_model/ragflow_dataset_id/ragflow_dataset_managed/chunk_method/chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size/chunk_overlap/top_k/score_threshold）
+- `POST` 返回：同 `GET`
+- 说明：`base_type` 为空默认字面知识库，`base_type` 还可为 `vector` 或 `ragflow`。`vector` 知识库使用 `embedding_model` 生成向量并写入主存储后端；`ragflow` 知识库通过 `ragflow.*` 连接远端 Dataset，`ragflow_dataset_id` 留空时会在保存后自动创建，填写已有 RAGFlow Dataset ID 时会直接绑定；`ragflow_dataset_managed=false` 表示非托管外部 Dataset，移除 Wunder 知识库时不会删除远端 Dataset。`chunk_method` 可设置 RAGFlow 切片方式（默认 `naive`，支持 `naive/qa/resume/manual/table/paper/book/laws/presentation/picture/one/email/tag`），`chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size` 会按切片方式过滤后映射到 RAGFlow `parser_config`。其中 `naive` 支持切片长度、分隔符、版面解析、自动关键词/问题和 Excel 转 HTML；`manual/paper/book/laws/presentation/one` 支持版面解析和自动关键词/问题；`email/picture` 支持自动关键词/问题；`qa/resume/table/tag` 暂无额外解析参数。自动创建的 Dataset 在 RAGFlow 侧使用 `[用户名] 知识库名称` 命名，`root` 使用 `ragflow:<dataset_id>` 作为逻辑标识。从列表移除托管的 RAGFlow 知识库时会同步删除对应远端 Dataset。存在可用嵌入模型时优先使用数据库向量检索；未配置模型、嵌入调用失败或向量检索失败时，自动回退到文本匹配。
+
+### 4.1.2.10 `/wunder/user_tools/knowledge/files`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+- 返回（JSON）：
+  - `base`：知识库名称
+  - `files`：Markdown 文件相对路径列表
+- 说明：仅适用于字面知识库；向量和 RAGFlow 知识库请使用 `/wunder/user_tools/knowledge/docs` 等接口。
+
+### 4.1.2.11 `/wunder/user_tools/knowledge/file`
+
+- 方法：`GET/PUT/DELETE`
+- `GET` 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `path`：相对知识库根目录的文件路径
+- `GET` 返回（JSON）：
+  - `base`：知识库名称
+  - `path`：文件路径
+  - `content`：文件内容
+- `PUT` 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `path`：文件路径
+  - `content`：文件内容
+- `PUT` 返回（JSON）：
+  - `ok`：是否成功
+  - `message`：提示信息
+- `DELETE` 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `path`：文件路径
+- `DELETE` 返回（JSON）：
+  - `ok`：是否成功
+  - `message`：提示信息
+- 说明：仅适用于字面知识库；向量和 RAGFlow 知识库请使用 `/wunder/user_tools/knowledge/doc` 等接口。
+
+### 4.1.2.12 `/wunder/user_tools/knowledge/upload`
+
+- 方法：`POST`
+- 入参（multipart/form-data）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `file`：待上传文件
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `message`：提示信息
+  - `path`：转换后的 Markdown 相对路径（字面知识库）
+  - `doc_id`：向量文档 id（向量知识库）
+  - `doc_name`：向量文档名称（向量知识库）
+  - `chunk_count`：切片数量（向量知识库）
+  - `embedding_model`：嵌入模型（向量知识库）
+  - `converter`：使用的转换器（doc2md/text/html/code/pdf/raw）
+  - `warnings`：转换警告列表
+- 说明：该接口支持 doc2md 可解析的格式，上传后自动转换为 Markdown 保存，原始非 md 文件不会落库并会清理；向量和 RAGFlow 知识库上传会同步到各自引擎并建立文档/切片关系，向量知识库需通过 `/wunder/user_tools/knowledge/reindex` 生成向量。
+
+### 4.1.2.13 `/wunder/user_tools/knowledge/docs`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+- 返回（JSON）：
+  - `base`：知识库名称
+  - `docs`：向量文档列表（doc_id/name/status/chunk_count/embedding_model/updated_at）
+- 说明：仅适用于向量和 RAGFlow 知识库。
+
+### 4.1.2.14 `/wunder/user_tools/knowledge/doc`
+
+- 方法：`GET/DELETE`
+- `GET` 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+- `GET` 返回（JSON）：
+  - `base`：知识库名称
+  - `doc`：文档元数据（embedding_model/chunk_size/chunk_overlap/chunk_count/status/updated_at/chunks[index/start/end/status/content]）
+  - `content`：原文内容
+- `DELETE` 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+- `DELETE` 返回（JSON）：
+  - `ok`：是否成功
+  - `deleted`：删除的向量条目数量
+  - `doc_id`：文档 id
+  - `doc_name`：文档名称
+- 说明：仅适用于向量和 RAGFlow 知识库。
+
+### 4.1.2.15 `/wunder/user_tools/knowledge/chunks`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+- 返回（JSON）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+  - `chunks`：切片列表（index/start/end/preview/content/status）
+- 说明：仅适用于向量和 RAGFlow 知识库。
+
+### 4.1.2.16 `/wunder/user_tools/knowledge/chunk/embed`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+  - `chunk_index`：切片序号
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `doc`：更新后的文档元数据
+- 说明：仅适用于向量和 RAGFlow 知识库。
+
+### 4.1.2.17 `/wunder/user_tools/knowledge/chunk/delete`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+  - `chunk_index`：切片序号
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `doc`：更新后的文档元数据
+- 说明：仅适用于向量和 RAGFlow 知识库。
+
+### 4.1.2.18 `/wunder/user_tools/knowledge/chunk/update`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+  - `chunk_index`：切片序号
+  - `content`：更新后的切片内容
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `doc`：更新后的文档元数据
+- 说明：仅适用于向量和 RAGFlow 知识库。更新后对应切片会被标记为待重新嵌入。
+
+### 4.1.2.19 `/wunder/user_tools/knowledge/test`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `query`：测试问题
+  - `top_k`：召回数量（可选）
+- 返回（JSON）：
+  - `base`：知识库名称
+  - `query`：测试问题
+  - `embedding_model`：嵌入模型（向量知识库）
+  - `top_k`：召回数量（向量知识库）
+  - `hits`：召回列表（doc_id/document/chunk_index/start/end/content/embedding_model/score）
+  - `fallback_mode`：是否回退为文本匹配结果（仅向量知识库）
+  - `text`：字面知识库结果文本
+  - `reasoning`：字面知识库测试时模型返回的思考过程文本
+- 说明：支持向量、RAGFlow 与字面知识库。向量知识库在嵌入模型不可用或向量检索链路失败时会自动回退为文本匹配；RAGFlow 知识库直接返回远端 Dataset 命中结果。
+
+### 4.1.2.20 `/wunder/user_tools/knowledge/reindex`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `doc_id`：文档 id（可选，留空则重建全部）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `reindexed`：已重建的 doc_id 列表
+  - `failed`：失败项列表（doc_id/error）
+- 说明：仅适用于向量和 RAGFlow 知识库。
+
+### 4.1.2.21 `/wunder/user_tools/tools`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - `builtin_tools`：内置工具列表（name/description/input_schema）
+  - `mcp_tools`：MCP 工具列表（name/description/input_schema）
+  - `a2a_tools`：A2A 服务工具列表（name/description/input_schema）
+  - `skills`：技能列表（name/description/input_schema）
+  - `knowledge_tools`：知识库工具列表（字面/向量，name/description/input_schema）
+  - `user_tools`：自建工具列表（name/description/input_schema）
+  - `shared_tools`：共享工具列表（兼容字段，当前固定为空）
+  - `shared_tools_selected`：共享工具勾选列表（兼容字段，当前固定为空数组）
+  - `items`：统一能力目录列表；字段包括 `id/name/runtime_name/display_name/description/input_schema/group/source/kind/owner_id/available/selected`
+  - 说明：`runtime_name` 是持久化与实际调用使用的唯一名；`display_name` 用于界面展示。系统 MCP 工具会优先以去掉 `server@` 前缀后的最小限定别名展示。
+- 说明：返回的是当前用户实际可用工具（已按等级与用户自身配置过滤）。
+- 说明：知识库工具入参支持 `query` 或 `keywords` 列表（二选一），`limit` 可选。
+- 说明：`items[]` 与旧分组字段同时返回；推荐新前端与新工具目录逻辑优先消费 `items[]`。
+
+### 4.1.2.21 `/wunder/user_tools/catalog`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - 兼容保留 `/wunder/user_tools/tools` 的扁平字段：`builtin_tools/mcp_tools/a2a_tools/skills/knowledge_tools/user_tools/shared_tools/shared_tools_selected`
+  - `admin_builtin_tools`：管理员开放给当前用户的内置工具
+  - `admin_mcp_tools`：管理员开放给当前用户的 MCP 工具
+  - `admin_a2a_tools`：管理员开放给当前用户的 A2A 工具
+  - `admin_skills`：管理员开放给当前用户的技能
+  - `admin_knowledge_tools`：管理员开放给当前用户的知识库工具
+  - `user_mcp_tools`：当前用户配置的自建 MCP 工具
+  - `user_skills`：当前用户配置的自建技能
+  - `user_knowledge_tools`：当前用户配置的自建知识库工具
+  - `default_agent_tool_names`：默认智能体/预制智能体新建时的默认勾选项
+  - `items`：统一能力目录列表；字段包括 `id/name/runtime_name/display_name/description/input_schema/group/source/kind/owner_id/available/selected`
+  - 说明：`runtime_name` 是持久化与实际调用使用的唯一名；`display_name` 用于界面展示。系统 MCP 工具会优先以去掉 `server@` 前缀后的最小限定别名展示。
+- 说明：用于智能体设置与工具管理页面；`shared_tools/shared_tools_selected` 仅为兼容字段，当前恒为空。
+- 说明：管理员开放工具与用户自建工具已拆分为独立区域。舰体/云端模式下管理员开放工具是否可见由管理员配置决定；用户自建 MCP/技能/知识库只要已配置就会进入对应区域，不再依赖用户侧额外“启用”开关。
+- 说明：`items[]` 是目录接口的统一能力视图：`group` 用于前端分组展示，`kind` 用于区分工具/技能；旧字段继续保留用于兼容。
+- 说明：desktop 本地模式下，`builtin_tools/admin_builtin_tools` 默认返回全部内置工具（按运行能力过滤），不再依赖 `tools.builtin.enabled` 白名单。
+- 说明：`default_agent_tool_names` 当前固定收敛为默认画像：`最终回复/定时任务/记忆管理/执行命令/命令会话/ptc/列出文件/搜索内容/读取文件/技能调用/写入文件/应用补丁`，以及默认技能 `技能创建器`；MCP/知识库默认不勾选。`execute_command` 默认阻塞返回结果，设置 `run_in_background=true` 转后台后必须使用 `命令会话` 轮询。
+
+### 4.1.2.22 `/wunder/user_tools/shared_tools`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识（可选）
+  - `shared_tools`：共享工具勾选列表（兼容字段，当前会被忽略）
+- 返回（JSON）：
+  - `user_id`：用户唯一标识
+  - `shared_tools`：共享工具勾选列表（当前固定为空数组）
+
+### 4.1.2.22 `/wunder/doc2md/convert`
+
+- 方法：`POST`
+- 入参：`multipart/form-data`
+  - `file`：待解析文件（可传多个同名字段）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - 单文件：`name`/`content`/`converter`/`warnings`
+  - 多文件：`items`（数组，元素包含 `name`/`content`/`converter`/`warnings`）
+- 说明：接口无需鉴权，系统内部附件转换统一调用该逻辑。
+- 支持扩展名：`.txt/.md/.markdown/.html/.htm/.py/.c/.cpp/.cc/.h/.hpp/.json/.js/.ts/.css/.ini/.cfg/.log/.doc/.docx/.odt/.pdf/.pptx/.odp/.xlsx/.ods/.wps/.et/.dps`。
+- 上传限制：默认 200MB。
+
+### 4.1.2.23 `/wunder/attachments/convert`
+
+- 方法：`POST`
+- 入参：`multipart/form-data`
+  - `file`：待解析文件（可传多个同名字段）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - 单文件：`name`/`content`/`converter`/`warnings`
+  - 多文件：`items`（数组，元素包含 `name`/`content`/`converter`/`warnings`）
+- 说明：`/wunder/attachments/convert` 用于调试面板（需鉴权），解析逻辑与 `/wunder/doc2md/convert` 一致。
+
+### 4.1.2.24 `/wunder/temp_dir/download`
+
+- 方法：`GET`
+- 鉴权：无
+- 入参（query）：`filename` 文件路径（相对 `temp_dir/`，不支持 `..`）
+- 说明：默认从项目根目录 `config/data/temp_dir/` 目录读取文件并下载；可通过环境变量 `WUNDER_TEMP_DIR_ROOT` 指定根目录。
+- 返回：文件流（`Content-Disposition: attachment`）
+
+### 4.1.2.25 `/wunder/temp_dir/upload`
+
+- 方法：`POST`
+- 鉴权：无
+- 类型：`multipart/form-data`
+- 入参：
+  - `file` 文件字段（支持多个同名字段）
+  - `path` 目标子目录路径（相对 `temp_dir/`，可选）
+  - `overwrite` 是否覆盖同名文件（可选，默认 true）
+- 说明：默认上传文件到项目根目录 `config/data/temp_dir/`，若设置 `path` 则自动创建目录；可通过环境变量 `WUNDER_TEMP_DIR_ROOT` 指定根目录。
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `files`：上传后的文件名列表
+
+### 4.1.2.26 `/wunder/temp_dir/list`
+
+- 方法：`GET`
+- 鉴权：无
+- 说明：列出临时目录文件（包含子目录，返回相对路径）；默认根目录为项目根 `config/data/temp_dir/`，可通过环境变量 `WUNDER_TEMP_DIR_ROOT` 指定。
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `files`：文件列表（`name`/`size`/`updated_time`）
+
+### 4.1.2.27 `/wunder/temp_dir/remove`
+
+- 方法：`POST`
+- 鉴权：无
+- 入参（JSON）：
+  - `all`：是否清空目录（true 表示清空）
+  - `filename`：要删除的文件路径（相对 `temp_dir/`）
+  - `filenames`：要删除的文件路径数组（相对 `temp_dir/`）
+- 说明：默认操作项目根目录 `config/data/temp_dir/`；可通过环境变量 `WUNDER_TEMP_DIR_ROOT` 指定根目录。
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `removed`：已删除文件名列表
+  - `missing`：未找到的文件名列表
+
+### 4.1.2.28 `/wunder/mcp`
+
+- 类型：MCP 服务（streamable-http）
+- 说明：系统自托管 MCP 入口，默认在管理员 MCP 服务管理中内置但未启用。
+- Rust 版已实现该入口，基于 rmcp 的 streamable-http 传输。
+- 鉴权：请求头需携带 `X-API-Key` 或 `Authorization: Bearer <key>`。
+- 工具：`excute`（在 wunder 内部映射为 `wunder@excute`）
+  - 入参：`task` 字符串，任务描述
+  - 行为：使用固定 `user_id = wunder` 执行任务，按管理员启用的工具清单运行，并剔除 `wunder@excute` 避免递归调用
+  - 返回：`answer`/`session_id`/`usage`
+- 工具：`doc2md`（在 wunder 内部映射为 `wunder@doc2md`）
+  - 入参：`source_url` 文件下载地址（URL，需包含扩展名）
+  - 行为：下载 `source_url` 对应文件后解析并返回 Markdown
+  - 返回：`name`/`content`/`converter`/`warnings`
+- 参考配置：`endpoint` 默认可设为 `${WUNDER_MCP_ENDPOINT:-http://127.0.0.1:18000/wunder/mcp}`
+- 超时配置：MCP 调用全局超时由 `config.mcp.timeout_s` 控制（秒）
+
+### 4.1.2.29 `/wunder/i18n`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - `default_language`：默认语言
+  - `supported_languages`：支持语言列表
+  - `aliases`：语言别名映射
+
+### 4.1.2.30 `/wunder/cron/*`
+
+- 说明：定时任务管理（用户侧）。
+- `GET /wunder/cron/list`：列出当前用户的定时任务（可选 `agent_id`，按智能体作用域过滤）
+  - 返回：`data.jobs`（包含 job_id/name/schedule/next_run_at/last_status/consecutive_failures/auto_disabled_reason 等）
+- `GET /wunder/cron/status`：查询调度器健康状态与当前用户任务概况
+  - 返回：`data.scheduler`（started/enabled/running_jobs/next_run_at/last_tick_at/last_error、`poll_interval_ms`、`max_idle_sleep_ms`、`lease_ttl_ms`、`lease_heartbeat_ms`、`max_concurrent_runs`、`idle_retry_ms`、`max_busy_wait_ms`、`max_consecutive_failures` 等）+ `data.jobs_total/jobs_enabled/jobs_running`；任务项额外返回派生字段 `running/heartbeat_at/lease_expires_at` 用于前端与模型判断当前执行态。
+- `GET /wunder/cron/runs?job_id=...&limit=...&agent_id=...`：查询任务运行记录（传入 `agent_id` 时校验任务归属）
+  - 返回：`data.runs`
+- `POST /wunder/cron/add|update|remove|enable|disable|get|run|action`：新增/更新/删除/启停/查询/立即执行（`action=status` 与 `GET /wunder/cron/status` 等价）
+  - 入参：与内置工具 `schedule_task` schema 一致（`action` + `job`）
+  - 说明：
+    - `job.schedule.kind=every` 时支持可选 `schedule.at` 作为首次触发时间锚点；若未提供则默认以任务创建时间为起点，首次触发为“下一个间隔点”（严格晚于当前时刻，避免创建即触发）。
+    - 可选 `job.schedule_text` 支持自然语言或 cron（如 `every 5 minutes`、`daily at 9am`、`0 */6 * * *`）；若同时传 `schedule` 与 `schedule_text`，以 `schedule` 为准。
+    - `job.session=main` 时，任务触发会把消息发送到该智能体**触发时的当前任务线程**；若当前没有可用任务线程，则回退到任务记录保存的 `session_id`。
+    - `job.session=isolated` 时，任务会先在新线程执行，再把结果回送到该智能体**触发时的当前任务线程**；若没有可用任务线程，同样回退到任务记录保存的 `session_id`。
+    - `schedule.at` 必须是未来时间且不超过 1 年；`schedule.every_ms` 最大 24 小时；`schedule.cron` 需为 5-7 段字段。
+    - 周期任务同一时刻最多只有一个活跃执行实例；如果执行耗时超过间隔，系统不会为每个错过的 tick 额外堆积并发实例，而是跳过或折叠逾期间隔后继续推进下一次执行时间。
+    - 调度执行遇到 `USER_BUSY` 会按 `cron.idle_retry_ms` 重试，并受 `cron.max_busy_wait_ms` 上限保护，超时后写入 error 运行记录。
+    - 连续失败达到 `cron.max_consecutive_failures` 会自动停用任务并写入 `auto_disabled_reason`。
+    - 周期任务失败后会按退避策略推迟下一次执行时间，取“自然下一次执行时间”和“错误退避时间”中的较大值，降低高错误率场景下的重试风暴。
+  - 返回：`data` 中包含 action 结果与 job 信息
+
+### 4.1.2.31 `/wunder/channels/runtime_logs`
+
+- 方法：`GET`
+- 说明：用户侧渠道运行日志查询接口；用于在渠道设置面板展示长连接告警/重连信息，服务端对重复日志做时间窗口聚合（防洪）。
+- 入参（Query）：
+  - `user_id`：用户唯一标识（可选）
+  - `channel`：渠道过滤（可选）
+  - `account_id`：账号过滤（可选）
+  - `agent_id`：按智能体过滤（可选，仅返回该智能体绑定账号对应日志）
+  - `limit`：返回条数（可选，默认 80，最大 200）
+- 返回（JSON）：
+  - `data.items`：日志列表（按时间倒序）
+    - `id`：日志记录标识
+    - `ts`：时间戳（秒）
+    - `level`：日志等级（`info/warn/error`）
+    - `channel`：渠道名
+    - `account_id`：账号 ID（若为空表示渠道级日志）
+    - `event`：事件类型（如 `long_connection_failed`）
+    - `message`：日志内容
+    - `repeat_count`：聚合计数（同类日志在窗口内重复次数）
+  - `data.total`：本次返回条数
+  - `data.status`：运行状态摘要
+    - `collector_alive`：日志采集器是否存活（布尔）
+    - `server_ts`：服务端当前时间戳（秒）
+    - `owned_accounts`：当前用户可见账号数
+    - `scanned_total`：本次扫描到的原始日志条数（过滤前）
+    - `selected_runtime`：当请求同时传入 `channel + account_id` 时返回对应账号运行态快照；当前 XMPP 会返回 `xmpp_long_connection.status/long_connection_enabled/has_credentials/updated_at`
+
+### 4.1.2.31.1 `/wunder/channels/runtime_logs/probe`
+
+- 方法：`POST`
+- 说明：写入一条渠道运行测试日志，用于排查“面板无日志”与权限过滤问题。
+- 入参（JSON）：
+  - `channel`：渠道名（可选）
+  - `account_id`：账号 ID（可选）
+  - `agent_id`：智能体 ID（可选）
+  - `message`：自定义日志内容（可选）
+- 返回（JSON）：
+  - `data.channel`：实际写入渠道
+  - `data.account_id`：实际写入账号
+  - `data.event`：固定 `runtime_probe`
+  - `data.message`：日志内容
+  - `data.ts`：写入时间戳（秒）
+  - `data.status`：同 `/wunder/channels/runtime_logs` 的 `status` 字段
+
+### 4.1.2.31.2 `/wunder/channels/reconnect`
+
+- 方法：`POST`
+- 说明：用户侧渠道账号重连接口；当前仅支持 XMPP。接口会触发账号配置时间戳刷新并写入 `reconnect_requested` 运行日志，供长连接 supervisor 重建对应 worker。
+- 入参（JSON）：
+  - `channel`：渠道名，当前仅支持 `xmpp`
+  - `account_id`：账号 ID（必填）
+- 返回（JSON）：
+  - `data.channel`：渠道名
+  - `data.account_id`：账号 ID
+  - `data.message`：固定 `xmpp reconnect requested`
+  - `data.ts`：请求时间戳（秒）
+
+### 4.1.2.31.3 `/wunder/plaza/items*`
+
+> **已移除（2026-10-08）**：用户广场 / 市场接口已在云端易用重构中全链路移除，本小节仅作历史记录，不再是接口契约的一部分；移除范围见文末「移除的广场 / 市场接口」。
+
+- 说明：用户侧蜂巢广场接口。用于发布、浏览、下架和引入蜂群包（`hive_pack`）、工蜂卡（`worker_card`）和技能包（`skill_pack`）。
+- 鉴权：蜂巢 Bearer Token；`user_id` 可省略，服务端默认按当前登录用户解析。
+
+#### `GET /wunder/plaza/items`
+
+- 入参（Query）：
+  - `user_id`：用户唯一标识（可选）
+  - `mine_only`：仅返回当前用户发布的条目（可选，布尔）
+  - `kind`：按类型过滤（可选，`hive_pack|worker_card|skill_pack`）
+- 返回（JSON）：
+  - `data.total`：条目总数
+  - `data.items[]`：广场条目列表
+    - `item_id`：条目 ID
+    - `kind`：条目类型
+    - `title/summary`：展示名称与简介
+    - `owner_user_id/owner_username`：发布者
+    - `source_key`：源对象标识（蜂群 ID / 智能体 ID / 技能名）
+    - `artifact_filename/artifact_size_bytes`：工件文件名与大小
+    - `icon/tags/metadata`：展示补充信息
+    - `created_at/updated_at/source_updated_at`：时间戳（秒）
+    - `freshness_status`：源内容状态，`current|outdated|source_missing`
+    - `source_signature`：发布快照时记录的源签名，仅用于诊断
+    - `mine`：是否为当前用户自己的条目
+
+#### `POST /wunder/plaza/items`
+
+- 入参（JSON）：
+  - `kind`：必填，`hive_pack|worker_card|skill_pack`
+  - `source_key`：必填；发布源对象标识
+  - `title`：可选，自定义展示名
+  - `summary`：可选，自定义简介
+- 行为：
+  - `hive_pack`：复用蜂群包导出链路生成工件后上架
+  - `worker_card`：复用工蜂卡构建链路生成工件后上架
+  - `skill_pack`：将当前用户的自定义技能目录打包后上架
+  - 同一用户、同一 `kind + source_key` 再次发布时会覆盖原快照，不会自动跟随源内容更新
+- 返回（JSON）：
+  - `data`：创建后的条目对象，字段同列表项
+
+#### `GET /wunder/plaza/items/{item_id}`
+
+- 入参（Path）：
+  - `item_id`：广场条目 ID
+- 返回（JSON）：
+  - `data`：单个广场条目详情，字段同列表项
+
+#### `DELETE /wunder/plaza/items/{item_id}`
+
+- 入参（Path）：
+  - `item_id`：广场条目 ID
+- 约束：
+  - 仅允许条目发布者下架自己的条目
+- 返回（JSON）：
+  - `data.ok`：固定 `true`
+  - `data.item_id`：已下架条目 ID
+
+#### `POST /wunder/plaza/items/{item_id}/import`
+
+- 入参（Path）：
+  - `item_id`：广场条目 ID
+- 行为：
+  - `hive_pack`：直接走蜂群包导入链路
+  - `worker_card`：解析工蜂卡并在当前用户下创建新智能体
+  - `skill_pack`：解压到当前用户技能目录
+- 返回（JSON）：
+  - `data.kind/item_id/title`：本次引入的基础信息
+  - `data.imported_hive_id`：引入蜂群后的目标蜂群 ID（仅蜂群包）
+  - `data.imported_agent_id`：引入工蜂后的目标智能体 ID（仅工蜂卡）
+  - `data.imported_job`：蜂群包导入任务结果（仅蜂群包）
+  - `data.skill_import`：技能包导入摘要（仅技能包）
+  - `data.message`：给前端直接展示的结果文案
+
+### 4.1.3 `/wunder/admin/mcp`
+
+- 方法：`GET/POST`
+- `GET` 返回：
+  - `servers`：MCP 服务列表（name/endpoint/allow_tools/packaged/enabled/transport/description/display_name/headers/auth/tool_specs）
+- `POST` 入参：
+  - `servers`：完整 MCP 服务列表，用于保存配置
+- 说明：`packaged=true` 会把该服务暴露为单个聚合工具 `server@__mcp_pack__`，聚合工具支持 `list`（列出可用工具摘要）、`get`（获取指定工具结构体）、`call`（调用指定远端工具），用于降低工具数量多时的上下文膨胀。
+
+### 4.1.3.1 `/wunder/admin/lsp`
+
+- 方法：`GET/POST`
+- `GET` 返回：
+  - `lsp`：LSP 配置（enabled/timeout_s/diagnostics_debounce_ms/idle_ttl_s/servers）
+  - `status`：LSP 连接状态列表（server_id/server_name/user_id/root/status/last_used_at）
+- `POST` 入参：
+  - `lsp`：完整 LSP 配置，用于保存配置
+
+#### `/wunder/admin/lsp/test`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `path`：文件路径（相对用户工作区）
+  - `operation`：definition/references/hover/documentSymbol/workspaceSymbol/implementation/callHierarchy/diagnostics
+  - `line`：行号（定位类操作必填，1-based）
+  - `character`：列号（定位类操作必填，1-based）
+  - `query`：workspaceSymbol 查询关键词（可选）
+  - `call_hierarchy_direction`：incoming/outgoing（可选）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `operation`：请求操作
+  - `path`：文件路径
+  - `results`：按 LSP 服务返回的结果列表
+  - `diagnostics`：诊断摘要（errors/warnings/items），`diagnostics` 操作返回该字段
+
+### 4.1.4 `/wunder/admin/mcp/tools`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `name`：服务名称
+  - `endpoint`：服务地址
+- 返回（JSON）：
+  - `tools`：服务端工具清单
+
+#### `/wunder/admin/mcp/tools/call`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `server`：服务名称
+  - `tool`：工具名称
+  - `args`：参数对象（可选）
+- 返回（JSON）：
+  - `result`：工具调用结果
+  - `warning`：提示信息（可选）
+
+### 4.1.4.1 `/wunder/admin/a2a`
+
+- 方法：`GET/POST`
+- `GET` 返回：
+  - `services`：A2A 服务列表（name/endpoint/service_type/user_id/enabled/description/display_name/headers/auth/agent_card/allow_self/max_depth/default_method）
+- `POST` 入参：
+  - `services`：完整 A2A 服务列表，用于保存配置
+- 说明：`service_type=internal` 表示 Wunder 内部 A2A 服务，需配置固定 `user_id` 以便挂载工具后自动填充。
+
+### 4.1.4.2 `/wunder/admin/a2a/card`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `endpoint`：A2A JSON-RPC 端点
+  - `headers`：请求头对象（可选）
+  - `auth`：认证字段（可选）
+- 返回（JSON）：
+  - `agent_card`：AgentCard 元数据
+
+### 4.1.5 `/wunder/admin/skills`
+
+- 方法：`GET/POST/DELETE`
+- `GET` 返回：
+  - `paths`：技能目录列表
+  - `enabled`：已启用技能名列表
+  - `skills`：技能信息（name/description/path/input_schema/enabled/builtin/source/readonly/editable）
+    - `source`：`builtin` / `custom` / `external`
+- `POST` 入参：
+  - `enabled`：启用技能名列表
+  - `paths`：技能目录列表（可选）
+- `DELETE` 入参（Query）：
+  - `name`：技能名称
+- `DELETE` 返回：
+  - `ok`：是否删除成功
+  - `name`：已删除技能名称
+  - `message`：删除说明
+- 说明：仅允许删除自定义上传技能（`source=custom`）；内置技能只读会返回 `403`。
+
+### 4.1.5.1 `/wunder/admin/skills/content`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `name`：技能名称
+- 返回（JSON）：
+  - `name`：技能名称
+  - `path`：SKILL.md 路径
+  - `content`：SKILL.md 内容
+
+### 4.1.5.2 `/wunder/admin/skills/files`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `name`：技能名称
+- 返回（JSON）：
+  - `name`：技能名称
+  - `root`：技能目录绝对路径
+  - `entries`：目录结构条目（`path` 相对路径，`kind` 为 `dir/file`）
+
+### 4.1.5.3 `/wunder/admin/skills/file`
+
+- 方法：`GET/PUT`
+- `GET` 入参（Query）：
+  - `name`：技能名称
+  - `path`：相对技能目录的文件路径
+- `GET` 返回（JSON）：
+  - `name`：技能名称
+  - `path`：文件相对路径
+  - `content`：文件内容
+- `PUT` 入参（JSON）：
+  - `name`：技能名称
+  - `path`：相对技能目录的文件路径
+  - `content`：文件内容
+- `PUT` 返回（JSON）：
+  - `ok`：是否保存成功
+  - `path`：文件相对路径
+  - `reloaded`：是否触发技能刷新（更新 SKILL.md 时为 true）
+- 说明：仅 `source=custom` 技能允许写入；内置/外部技能只读会返回 `403`。
+
+### 4.1.6 `/wunder/admin/llm`
+
+- 方法：`GET/POST`
+- `GET` 返回：
+  - `llm.default`：默认对话模型配置名称
+  - `llm.default_embedding`：默认嵌入模型配置名称（可选）
+  - `llm.default_asr`：默认声转文模型配置名称（可选）
+  - `llm.default_tts`：默认文转声模型配置名称（可选）
+  - `llm.default_image`：默认图像生成模型配置名称（可选）
+- `llm.virtual_replay`：虚拟模型回放配置；`logs_root` 为 JSONL 日志保存目录，`enabled_logs` 为已登记日志列表。
+- `llm.models`：模型配置映射；所有类型通用字段为 `model_type/provider/base_url/api_key/model/enable/mock_if_unconfigured`。
+  - 说明：模型调用失败重试与流式断线恢复已收敛为服务端内部固定策略，不再暴露单模型 `retry` 参数。
+  - 说明：当检测到模型连接失败、`503 Loading model`、连接拒绝/重置、请求发送失败或超时等 LLM 不可用错误时，编排层会至少按长退避重试 5 次；若最终仍失败，错误码统一返回 `LLM_UNAVAILABLE`。
+  - 说明：已完成的空响应（包含仅有 reasoning 的响应）直接交给用户轮次恢复守卫，底层不因空内容自动补拉非流式请求或重试；传输中断和服务不可用仍走原有故障恢复。
+  - 说明：`provider` 支持预置（`virtual_replay/openai_compatible/openai/anthropic/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`）；`openai_compatible` 需显式填写 `base_url`，其余 provider 可省略 `base_url` 自动补齐。
+  - 说明：`provider=virtual_replay` 表示虚拟模型回放，`model` 可填已上传回放日志的 `id`，不需要 `base_url/api_key`；执行时按当前用户轮次与模型轮次严格匹配 JSONL 中的 `llm_output` 与 `tool_calls`，轮次缺失或耗尽会返回错误，不会循环复用旧输出。省略 `model` 时才使用轻量随机虚拟回复，便于本地连通性测试；回放用量仅作统计，不扣减用户额度。
+  - `simulation_speed`：仅虚拟模型生效，`fast/medium/slow`，缺省或 null 为 `fast`；非法值拒绝。预填充速度分别为 2000/500/100 Token/s，思考与生成速度分别为 200/50/10 Token/s。管理员模型配置可选择档位。随机虚拟回复先发送明确标识的模拟思考，再发送生成内容；回放在能力和预算范围内使用日志思考内容，非流式调用也等待生成时长。三种运行形态共用此配置。
+  - `simulation`：虚拟模型能力对象，支持 `support_tools` / `support_reasoning`（默认 true）、`image_tokens`（每张图片默认 256）、`audio_tokens`（每段音频默认 1024），媒体 token 必须为正整数。复用 `max_context`（缺省 131072）、`max_output`（缺省 4096）、`support_vision` / `support_hearing`（缺省 false）、`thinking_token_budget` 和 `reasoning_effort`。文本按 UTF-8 字节数 / 4 向上估算；消息开销、工具定义、思考历史与工具结果均计入输入。媒体只模拟能力和用量，不读取、识别或下载内容。
+  - 虚拟请求在预处理前验证“输入 + 请求输出预算 <= 最大上下文”；等于上限允许，超过返回模拟 HTTP 400 的 `invalid_request_error`，含 `code/param/message`。错误码包括 `context_length_exceeded`、`max_tokens_exceeded`、`unsupported_image`、`unsupported_audio`、`unsupported_tools`、`tool_not_available`。线程流仍使用现有错误事件封装，上下文错误映射 `CONTEXT_WINDOW_EXCEEDED` 并走现有压缩恢复；其他参数或能力错误映射不可重试的 `INVALID_REQUEST`。吞吐失败通过快照的 `error` 展示；开始前的上下文校验仍可直接返回 400。
+  - 虚拟回放直接使用 `tool_call_mode`（工具调用方式）：`function_call` 返回原生 `tool_calls`；`tool_call` 返回 `<tool_call>` 文本块；`freeform_call` 在 Responses 模式使用原生通道，其他模式使用文本回退。日志中的结构化或文本调用复用现有解析器归一，保留调用 ID、参数与轮次，不额外生成工具场景。原生工具必须在请求提供的 schema 中，文本协议由现有执行器校验允许工具；权限、审批和实际执行不变。没有日志的合成回复不发起调用。已存量配置中的旧 `simulation.tool_call` 被忽略并在保存时移除，舰桥不再提供工具名称或参数输入框。线程仍遵守初始化时冻结的调用协议。
+  - 虚拟模型将思考、正文、工具参数共同限制在输出预算内，正文截断保持 UTF-8 完整，超长工具调用不交给执行器。`llm_output.finish_reason` 为 `stop/tool_calls/length`（原生工具调用为 `tool_calls`，文本协议正常结束为 `stop`）；用量根据当前模拟请求重新估算，不采用历史日志用量。关闭思考能力或设置 `reasoning_effort=none` 后不发送思考；吞吐思考默认占总输出 1/4，显式思考预算可覆盖且至少留一个正文 token。吞吐测试只测文本，不执行回放工具调用。
+
+  - 说明：`provider=anthropic` 使用 `/v1/messages` 协议，鉴权头为 `x-api-key`（同时兼容 `Authorization: Bearer`）。
+  - 说明：`model_type=llm` 表示对话模型，额外支持 `api_mode/temperature/timeout_s/max_rounds/max_context/max_output/thinking_token_budget/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/reasoning_effort/history_compaction_ratio/stop`。
+  - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力；配置页只需要连接字段。
+  - 说明：`model_type=asr` 表示声转文模型，按 OpenAI 兼容 `/v1/audio/transcriptions` 发起 multipart 转写；额外支持默认 `asr_language/asr_prompt/asr_response_format/asr_temperature`，请求体同名字段可临时覆盖。
+  - 说明：`model_type=tts` 表示文转声模型，聊天页语音播放会经 `/wunder/chat/tts` 转发到 OpenAI 兼容 `/v1/audio/speech`；额外支持默认 `tts_voice/tts_instructions/tts_response_format/tts_speed`，请求体同名字段可临时覆盖。
+  - 说明：`model_type=image` 表示图像生成模型，配置层预留 OpenAI 兼容 `/v1/images/generations` 能力；额外支持默认 `image_size/image_output_format/image_negative_prompt/image_num_inference_steps/image_guidance_scale`。
+  - 说明：带原生工具调用的请求默认仍走流式；工具参数会先归一化，再进入工具 schema/admission 校验。参数缺失或格式错误直接作为短工具错误回传模型，不切换非流式，也不触发 provider 重试；真实 provider/网络失败仍按 `llm_stream_retry` 恢复。
+  - 说明：`history_compaction_ratio` 默认 `0.9`，达到 `max_context * ratio` 后会优先触发预压缩。
+  - 说明：当前压缩策略已对齐 Codex，不再支持 `history_compaction_reset`。压缩后统一提交 `replacement_history`，其主体为首尾归一化交互窗口与一条 `[上下文摘要]` 消息，不再依赖前后锚点与 reset mode；运行中压缩还会为当前轮追加临时 `user` 续跑指令，但该指令不会写入 `replacement_history`。压缩摘要会输出 `resume_action=final|continue|retry|ask_user`，用于指导当前轮续跑。
+  - 说明：`api_mode` 可选 `chat_completions|responses`（默认 chat_completions；当 provider=openai 且模型为 GPT-5/O 系列时未配置会自动走 responses），`responses` 会改用 `/v1/responses` 协议与流式事件。
+  - 说明：`max_output` 为单次请求的统一输出上限；未配置时服务端默认按 `8192` 下发，避免模型循环无限输出。
+  - 说明：`thinking_token_budget` 为 reasoning/thinking 通道的单次思考 Token 上限；未配置时服务端默认按 `2048` 下发；若 `reasoning_effort=none` 则不下发该预算。
+  - 说明：服务端当前会同时下发 `thinking_token_budget`（对齐 vLLM / OpenAI-compatible 扩展）与 `thinking_budget_tokens`（对齐 `llama.cpp` server 请求体）；Anthropic `messages` 协议不下发这两个非标准字段。
+  - 说明：`reasoning_effort` 可选 `none|minimal|low|medium|high|xhigh`；留空表示跟随模型默认思考等级。
+  - 说明：`max_rounds` 缺省为 1000；非管理员会话在未配置或过低时会提升到至少 2（含工具调用），管理员与 desktop 模式不受该限制。
+  - 说明：空最终答复、仅思考而无可用输出、`final_response` 空答复及不完整 JSON 工具参数共享每用户轮次最多一次恢复。恢复请求将 `reasoning_effort` 设为 `none` 并移除思考预算，在兼容提供方下发 `enable_thinking=false`；此覆盖持续到当前用户轮次结束，不改持久化配置或冻结 system prompt。再次无可用输出返回 `LLM_OUTPUT_LOOP`（HTTP 502，`recovery_action=retry_next_turn`），不再误报 `LLM_UNAVAILABLE`。
+  - 说明：参数回退包装中的 JSON 在末尾截断时，执行前标记 `TOOL_ARGUMENTS_INCOMPLETE`；该批调用暂停执行，要求重新生成完整参数，不自动补全后执行。
+  - 说明：真实模型 `llm_output` 增加 `finish_reason`、`output_limit_reached`、`max_output`、`thinking_token_budget`、`thinking_disabled`。输出触顶依据提供方停止原因或非估算的正文与思考合计用量判断；预算和关闭思考字段描述请求设置，提供方是否支持须另行核验。
+- `POST` 入参：
+  - `llm.default`：默认对话模型配置名称
+  - `llm.default_embedding/default_asr/default_tts/default_image/default_video`：默认嵌入/声转文/语音/绘图/视频模型配置名称（可选）
+  - `llm.virtual_replay.enabled_logs`：虚拟回放日志列表；普通模型配置保存会保留已有日志配置。
+  - `llm.models`：模型配置映射，用于保存与下发
+
+### 4.1.6.0 `/wunder/admin/llm/virtual_logs`
+
+- 方法：`GET/POST`
+- `GET` 返回（JSON）：
+  - `logs[]`：已登记虚拟回放日志，字段包括 `id/name/enabled/format/user_rounds/size_bytes/uploaded_at`。
+- `POST` 入参（multipart/form-data）：
+  - `file`：JSONL 回放日志文件，最大 32 MiB，必须为 UTF-8。
+  - `name`：显示名称（可选；未传时使用文件名）。
+- `POST` 返回（JSON）：
+  - `log`：本次上传后的日志摘要。
+  - `logs[]`：更新后的日志列表。
+- 说明：支持 Wunder 会话导出的 `llm_output` 事件 JSONL，也支持简单 `role=user/assistant` 对话 JSONL。
+
+### 4.1.6.0.1 `/wunder/admin/llm/virtual_logs/{log_id}`
+
+- 方法：`POST/DELETE`
+- `POST` 入参（JSON）：
+  - `enabled`：是否启用该回放日志。
+- 返回（JSON）：
+  - `logs[]`：更新后的日志列表。
+- `DELETE` 说明：删除日志登记并移除对应 JSONL 文件。
+
+### 4.1.6.1 `/wunder/admin/llm/context_window`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `provider`：模型提供方类型（默认 openai_compatible）
+  - `base_url`：模型服务地址（预置 provider 可省略）
+  - `api_key`：访问密钥（可选）
+  - `model`：模型名称
+  - `timeout_s`：探测超时秒数（可选）
+- 返回（JSON）：
+  - `max_context`：最大上下文长度（可能为 null）
+  - `message`：探测结果说明
+  - 说明：仅支持 OpenAI 兼容 provider（见 `/wunder/admin/llm` 说明）。
+
+### 4.1.6.1.1 `/wunder/admin/multimodal/speech`
+
+- 方法：`POST`
+- 说明：管理员侧多模调试中的语音测试接口。服务端按指定或默认 TTS 模型发起语音合成，将结果写入指定工作区后返回保存路径与结构化结果。
+- 入参（JSON）：
+  - `user_id`：目标工作区所属用户（可选，默认 `admin`）
+  - `container_id`：工作区容器编号（可选，默认 `0`）
+  - `path`：保存相对路径（可选；不传时自动写入 `generated_media/`）
+  - `text`：待合成文本
+  - `model_name`：文转声模型配置名称（可选）
+  - `voice`：音色（可选）
+  - `instructions`：风格/语气控制（可选）
+  - `response_format`：输出格式（可选，支持 `wav/mp3/flac/aac/opus/pcm`）
+  - `speed`：语速（可选）
+  - `reference_path`：声音克隆参考音频路径（可选；支持工作区相对路径与 `/workspaces/...` 公共路径，服务端会读取后转为 data URL）
+  - `ref_audio`：声音克隆参考音频（可选；支持 HTTP(S) URL、data URL，也兼容可解析的本地工作区/工作目录文件路径）
+  - `ref_text`：参考音频转写文本（可选；部分上游克隆模型需要）
+  - `model_specific_params`：透传给上游 TTS 接口的模型特定参数（可选）
+- 返回（JSON）：
+  - `data.kind`：固定为 `speech`
+  - `data.user_id` / `data.container_id` / `data.workspace_id`
+  - `data.model_name`：最终命中的模型配置名称
+  - `data.content_type`：结果 MIME
+  - `data.size_bytes`：结果字节数
+  - `data.workspace_relative_path`：工作区相对路径
+  - `data.public_path`：工作区公开路径（可用于后续下载/预览）
+  - `data.request`：服务端实际使用的请求参数摘要
+
+### 4.1.6.1.0 `/wunder/admin/multimodal/transcription`
+
+- 方法：`POST`
+- 说明：管理员侧多模调试中的声转文测试接口。支持直接上传音频文件，或传工作区中的 `source_public_path`；服务端按指定或默认 ASR 模型转写后返回文本、原始响应和源文件路径。
+- 入参（Multipart Form）：
+  - `user_id`：目标工作区所属用户（可选，默认 `admin`）
+  - `container_id`：工作区容器编号（可选，默认 `0`）
+  - `path`：当上传文件时，源音频保存到工作区的相对路径（可选）
+  - `source_public_path`：已有工作区音频文件的公共路径（可选；与 `file` 二选一）
+  - `file`：待转写音频文件（可选；与 `source_public_path` 二选一）
+  - `model_name`：声转文模型配置名称（可选）
+  - `language`：识别语言提示（可选）
+  - `prompt`：转写提示（可选）
+  - `response_format`：返回格式（可选，支持 `json/text/verbose_json/srt/vtt`）
+  - `temperature`：解码温度（可选）
+- 返回（JSON）：
+  - `data.kind`：固定为 `transcription`
+  - `data.user_id` / `data.container_id` / `data.workspace_id`
+  - `data.model_name`：最终命中的模型配置名称
+  - `data.content_type`：上游返回 Content-Type
+  - `data.text`：识别文本
+  - `data.source_public_path`：源音频工作区公共路径
+  - `data.source_workspace_relative_path`：源音频工作区相对路径
+  - `data.raw_response`：上游原始结构化响应
+  - `data.request`：服务端实际使用的请求参数摘要
+
+### 4.1.6.1.2 `/wunder/admin/multimodal/image`
+
+- 方法：`POST`
+- 说明：管理员侧多模调试中的图像生成/编辑测试接口。未传输入图时按 OpenAI 兼容 `/v1/images/generations` 文生图；传 `input_path` 或 `input_paths` 时读取同一工作区图片并按 `/v1/images/edits` multipart 图生图/编辑，将结果写入指定工作区后返回保存路径与结构化结果。
+- 入参（JSON）：
+  - `user_id` / `container_id` / `path`：同 `/wunder/admin/multimodal/speech`
+  - `prompt`：图像生成提示词
+  - `model_name`：图像生成模型配置名称（可选）
+  - `size`：尺寸（可选）；对 `vllm-omni / Z-Image` 这类上游，建议宽高都能被 `16` 整除，例如 `1344x768`、`1024x1024`、`1920x1088`
+  - `output_format`：输出格式（可选，支持 `png/jpeg/webp`）
+  - `negative_prompt`：负向提示词（可选）
+  - `num_inference_steps`：采样步数（可选）
+  - `guidance_scale`：引导系数（可选）
+  - `seed`：随机种子（可选）
+  - `input_path`：工作区输入图片路径（可选；填写后进入图生图/编辑模式）
+  - `input_paths`：工作区输入图片路径列表（可选；用于支持多图编辑的模型）
+  - `mask_path`：工作区蒙版图片路径（可选；用于局部重绘/局部编辑）
+  - `reference_path`：工作区参考图片路径（可选；用于支持额外参考图的模型）
+  - `strength`：编辑强度（可选，转发给兼容模型）
+  - `true_cfg_scale`：true CFG 引导系数（可选，转发给兼容模型）
+  - `output_compression`：输出压缩质量 0-100（可选，转发给兼容模型）
+  - `layers`：分层图像模型输出图层数（可选）
+  - `resolution`：分层图像模型分辨率提示（可选）
+- 返回（JSON）：
+  - `data.kind`：固定为 `image`
+  - 其余结构同 `/wunder/admin/multimodal/speech`
+  - 若上游显式拒绝请求，错误会优先转成可展示的结构化失败：例如尺寸非法时返回 `error_meta.code=IMAGE_SIZE_ALIGNMENT_INVALID`、`error_meta.retryable=false`，并在 `data.failure_summary/data.next_step_hint/data.suggested_size` 中给出修正建议
+
+### 4.1.6.1.3 `/wunder/admin/multimodal/video`
+
+- 方法：`POST`
+- 说明：管理员侧多模调试中的视频测试接口。服务端按指定或默认视频模型生成视频，将结果写入指定工作区后返回保存路径与结构化结果。
+- 入参（JSON）：
+  - `user_id` / `container_id` / `path`：同 `/wunder/admin/multimodal/speech`
+  - `prompt`：视频提示词
+  - `model_name`：视频模型配置名称（可选）
+  - `size`：尺寸（可选）
+  - `seconds`：时长秒数（可选）
+  - `fps`：帧率（可选）
+  - `num_frames`：帧数（可选）
+  - `negative_prompt`：负向提示词（可选）
+  - `num_inference_steps`：采样步数（可选）
+  - `guidance_scale` / `guidance_scale_2`：引导系数（可选）
+  - `boundary_ratio`：边界比例（可选）
+  - `flow_shift`：流场偏移（可选）
+  - `seed`：随机种子（可选）
+  - `enable_frame_interpolation`：是否启用插帧（可选）
+- 返回（JSON）：
+  - `data.kind`：固定为 `video`
+  - 其余结构同 `/wunder/admin/multimodal/speech`
+
+### 4.1.6.2 `/wunder/admin/system`
+
+- 方法：`GET/POST`
+- `GET` 返回：
+  - `server.max_active_sessions`：全局最大并发会话数
+  - `server.stream_chunk_size`：流式输出分片大小（字节）
+- `security.api_key`：API Key（未配置时为 null）
+- `security.allow_user_registration`：是否允许用户侧自助注册；关闭后用户侧注册入口隐藏，`POST /wunder/auth/register` 返回 403。
+- `security.external_auth_key`：外部系统嵌入登录密钥（为空时自动回退到 `security.api_key`）
+- `security.external_embed_preset_agent_name`：外链嵌入预制智能体名称（为空表示未配置）
+- `security.external_embed_jwt_secret`：外链 JWT 直登密钥（为空时自动回退到 `security.external_auth_key` / `security.api_key`）
+- `security.external_embed_jwt_user_id_claim`：外链 JWT 中映射 wunder 用户 ID 的 claim 名称（默认 `sub`）
+  - `security.allow_commands`：允许执行命令前缀列表
+  - `security.allow_paths`：允许访问的额外目录列表；填 `*` 表示放开整个文件系统
+  - `security.deny_globs`：拒绝访问的路径通配规则列表
+  - `security.exec_policy_mode`（allow/audit/enforce）用于高风险命令审计/拦截。
+  - `sandbox.enabled`：是否启用沙盒执行（由 `sandbox.mode` 推导）
+  - `sandbox.mode`：沙盒模式（local/sandbox）
+  - `sandbox.endpoint`：沙盒服务地址
+  - `sandbox.container_root`：容器内根目录
+  - `sandbox.network`：网络模式
+  - `sandbox.readonly_rootfs`：Wunder 沙盒请求层的只读根文件系统开关；Docker Compose 的容器级 `read_only` 由 `WUNDER_SANDBOX_DOCKER_READ_ONLY` 单独控制，默认关闭
+  - `sandbox.idle_ttl_s`：空闲回收秒数
+  - `sandbox.timeout_s`：单次执行超时秒数
+  - `sandbox.resources`：资源限制（cpu/memory_mb/pids）
+  - `observability.log_level`：日志级别
+  - `observability.monitor_event_limit`：历史字段，线程监控日志不再按条数自动裁剪；保留 `0` 表示无限制
+  - `observability.monitor_payload_max_chars`：监控事件内容最大字符；设为 `0` 表示不截断
+  - `observability.monitor_drop_event_types`：历史字段，线程日志不再按事件类型自动丢弃
+  - `cors.allow_origins`：允许来源列表
+  - `cors.allow_methods`：允许方法列表
+  - `cors.allow_headers`：允许请求头列表
+  - `cors.allow_credentials`：是否允许携带凭证
+  - `onlyoffice.enabled`：是否启用用户侧工作区 Office 在线编辑
+  - `onlyoffice.document_server_url`：OnlyOffice Document Server 地址
+  - `onlyoffice.internal_document_server_url`：Wunder 后端下载 OnlyOffice 保存结果时访问 Document Server 的内部地址（可选，留空时使用 `document_server_url`）
+  - `onlyoffice.api_url`：OnlyOffice Docs API 脚本地址（可选，留空时由 `document_server_url` 拼接）
+  - `onlyoffice.public_base_url`：OnlyOffice Document Server 可访问到的 Wunder 外部地址
+  - `onlyoffice.jwt_secret`：OnlyOffice JWT 密钥
+  - `onlyoffice.jwt_header`：OnlyOffice JWT 请求头（默认 `Authorization`）
+  - `onlyoffice.token_ttl_s`：文件拉取/保存回调短期令牌有效期
+  - `onlyoffice.request_timeout_s`：Wunder 下载 OnlyOffice 保存结果的超时时间
+  - `onlyoffice.max_download_bytes`：保存回写文件最大字节数（默认 1GB，上限 1GB）
+  - `drawio.enabled`：是否启用用户侧工作区 draw.io 图表在线编辑
+  - `drawio.editor_url`：浏览器访问 diagrams.net/draw.io 编辑器的地址
+  - `drawio.max_file_bytes`：可在线编辑的图表文件大小上限
+  - `ragflow.base_url`：RAGFlow API 地址
+  - `ragflow.api_key`：RAGFlow API 密钥
+  - `ragflow.timeout_s`：Wunder 访问 RAGFlow 的超时时间（秒）
+- `POST` 入参：以上字段均可选，支持分组更新
+- `POST` 返回：同 `GET`
+
+### 4.1.6.3 `/wunder/admin/server`
+
+- 方法：`GET/POST`
+- `GET` 返回：
+  - `server.max_active_sessions`：全局最大并发会话数
+  - `server.sandbox_enabled`：是否启用沙盒执行（true=使用 sandbox，false=本机执行）
+- `POST` 入参：
+  - `max_active_sessions`：全局最大并发会话数（可选，>0）
+  - `sandbox_enabled`：是否启用沙盒执行（可选）
+- `POST` 返回：
+  - `server.max_active_sessions`：更新后的全局最大并发会话数
+  - `server.sandbox_enabled`：更新后的沙盒执行开关
+
+### 4.1.6.4 `/wunder/admin/security`
+
+- 方法：`GET`
+- `GET` 返回：
+  - `security.api_key`：当前 API Key（未配置时为 null）
+- 说明：仅管理员可访问，供舰桥高级设置读取默认 API Key。
+
+### 4.1.6.5 `/wunder/admin/prompt_templates`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - `data.active`：当前启用的系统提示词模板包 ID（`default` 表示仓库内 `config/prompts/`）
+  - `data.packs_root`：非 default 模板包的根目录（默认 `./config/data/prompt_templates`）
+  - `data.packs[]`：模板包列表（id/is_default/path）
+  - `data.segments[]`：系统提示词分段文件列表（key/file）
+
+### 4.1.6.6 `/wunder/admin/prompt_templates/active`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `active`：要启用的模板包 ID（空或 `default` 表示仓库内默认模板）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `data.active`：更新后的启用模板包 ID
+
+### 4.1.6.7 `/wunder/admin/prompt_templates/file`
+
+- 方法：`GET/PUT`
+- `GET` 入参（Query）：
+  - `pack_id`：模板包 ID（可选，默认使用当前启用包）
+  - `locale`：`zh`/`en`（可选，默认跟随系统语言设置）
+  - `key`：分段 key（role/engineering/tools_protocol/skills_protocol/memory/extra）
+- `GET` 返回（JSON）：
+  - `data.pack_id`：模板包 ID
+  - `data.locale`：`zh`/`en`
+  - `data.key`：分段 key
+  - `data.path`：文件路径（服务端解析后的实际路径）
+  - `data.exists`：文件是否存在于该模板包
+  - `data.fallback_used`：是否回退读取 default 模板包内容
+  - `data.content`：文件内容
+- `PUT` 入参（JSON）：
+  - `pack_id`：模板包 ID（可选，默认使用当前启用包）
+  - `locale`：`zh`/`en`（可选，默认跟随系统语言设置）
+  - `key`：分段 key
+  - `content`：文件内容
+- `PUT` 返回（JSON）：
+  - `ok`：是否成功
+  - `data.path`：写入文件路径
+- 说明：
+  - `default` 模板包为只读，禁止通过 `PUT` 修改；请先创建新模板包再编辑。
+
+### 4.1.6.8 `/wunder/admin/prompt_templates/packs`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `pack_id`：要创建的模板包 ID（仅支持字母/数字/_/-）
+  - `copy_from`：可选，复制来源模板包 ID（默认 `default`）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `data.pack_id`：模板包 ID
+  - `data.path`：模板包路径
+  - `data.copied_from`：复制来源模板包 ID
+
+### 4.1.6.9 `/wunder/admin/prompt_templates/packs/{pack_id}`
+
+- 方法：`DELETE`
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `data.pack_id`：删除的模板包 ID
+
+### 4.1.6.10 `/wunder/prompt_templates`
+
+- 方法：`GET`
+- 鉴权：用户侧 Bearer Token
+- 返回（JSON）：
+  - `data.active`：当前用户实际生效的模板包 ID
+    - 默认会解析为 `default-zh` 或 `default-en`
+    - 兼容别名 `default` 仅用于历史设置兼容，不再作为用户界面的主选项
+  - `data.packs_root`：用户自定义模板包根目录
+  - `data.default_sync_pack_id`：当前管理员启用的系统模板包 ID
+  - `data.packs[]`：模板包列表
+    - `id`：模板包 ID
+    - `is_default`：是否为内置默认包
+    - `readonly`：是否只读
+    - `builtin`：是否为内置包
+    - `locale`：内置包绑定语言，当前为 `zh` 或 `en`
+    - `is_system_language_default`：是否为当前系统语言默认落点
+    - `sync_pack_id`：内置包同步的系统模板包 ID
+    - `path`：模板包路径
+  - `data.segments[]`：可编辑分段列表
+- 说明：
+  - 用户侧默认提供 `default-zh` 与 `default-en` 两套只读内置模板包
+  - 未显式选择时，后端会按当前系统语言把兼容别名 `default` 解析到对应内置包
+
+### 4.1.6.11 `/wunder/prompt_templates/active`
+
+- 方法：`POST`
+- 鉴权：用户侧 Bearer Token
+- 入参（JSON）：
+  - `active`：要启用的模板包 ID，可为 `default-zh`、`default-en` 或自定义包 ID
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `data.active`：已保存的模板包 ID
+- 说明：
+  - 选中 `default-zh` 或 `default-en` 后，运行时会固定读取对应语言模板，不再随界面语言漂移
+
+### 4.1.6.12 `/wunder/prompt_templates/file`
+
+- 方法：`GET` / `PUT`
+- 鉴权：用户侧 Bearer Token
+- `GET` Query：
+  - `pack_id`：模板包 ID，可选，默认读取当前启用包
+  - `locale`：语言，可选；对内置包会被强制锁定为包绑定语言
+  - `key`：分段 key
+- `GET` 返回（JSON）：
+  - `data.pack_id`：实际读取的模板包 ID
+  - `data.locale`：实际读取语言
+  - `data.key`：分段 key
+  - `data.path`：实际读取路径
+  - `data.exists`：当前包内该分段是否存在
+  - `data.fallback_used`：是否回退到了系统模板内容
+  - `data.readonly`：当前包是否只读
+  - `data.source_pack_id`：实际命中的系统模板包 ID
+  - `data.content`：分段内容
+- `PUT` 入参（JSON）：
+  - `pack_id`：模板包 ID
+  - `locale`：语言
+  - `key`：分段 key
+  - `content`：分段内容
+- `PUT` 返回（JSON）：
+  - `ok`：是否成功
+  - `data.pack_id`：模板包 ID
+  - `data.locale`：写入语言
+  - `data.key`：分段 key
+  - `data.path`：写入路径
+- 说明：
+  - `default-zh` 与 `default-en` 为只读，禁止通过 `PUT` 修改
+  - 自定义包缺失分段时，会先回退到当前系统 active 模板包，再回退到系统 `default`
+
+### 4.1.6.13 `/wunder/prompt_templates/packs`
+
+- 方法：`POST`
+- 鉴权：用户侧 Bearer Token
+- 入参（JSON）：
+  - `pack_id`：要创建的自定义模板包 ID
+  - `copy_from`：可选，复制来源模板包 ID
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `data.pack_id`：创建后的模板包 ID
+  - `data.path`：模板包路径
+  - `data.copied_from`：复制来源模板包 ID
+- 说明：
+  - `copy_from` 支持 `default-zh`、`default-en` 和任意现有自定义包
+  - 对内置包复制时，会从当前管理员启用的系统模板内容复制出可编辑包
+
+### 4.1.6.14 `/wunder/prompt_templates/packs/{pack_id}`
+
+- 方法：`DELETE`
+- 鉴权：用户侧 Bearer Token
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `data.pack_id`：删除的模板包 ID
+- 说明：
+  - 内置包 `default-zh` 与 `default-en` 不允许删除
+  - 若删除的是当前启用的自定义包，后端会回退到系统语言对应的默认内置包
+
+### 4.1.7 `/wunder/admin/skills/upload`
+
+- 方法：`POST`
+- 入参：`multipart/form-data`
+  - `file`：技能压缩包，支持 `.zip`、`.skill`、`.rar`、`.7z`、`.tar`、`.tgz`、`.tar.gz`、`.tbz2`、`.tar.bz2`、`.txz`、`.tar.xz`
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `extracted`：解压文件数量
+- 说明：压缩包必须包含独立的顶层技能目录。
+- 说明：管理员侧上传的技能会直接导入内置技能目录，与系统内置技能共用同一目录树；服务启动时会自动尝试将旧的 `admin_skills` 目录迁移到该目录。
+- 说明：`.zip/.skill` 使用内置解压；`.rar/.7z/.tar*` 等常见格式会优先调用系统已有解压器，若本机缺少对应解压工具会返回错误提示。
+
+### 4.1.8 `/wunder/admin/monitor`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `active_only`：是否仅返回活动线程（默认 true）
+  - `tool_hours`：统计窗口（小时，可选，用于服务状态、Sandbox 状态与工具热力图统计）
+  - `start_time`：筛选开始时间戳（秒，可选，与 `end_time` 搭配时按区间统计）
+  - `end_time`：筛选结束时间戳（秒，可选，与 `start_time` 搭配时按区间统计）
+- 说明：当提供 `start_time`/`end_time` 时，将按区间统计并忽略 `tool_hours`；服务状态与 Sandbox 状态指标均基于统计区间。
+- 说明：`system` 中的主机资源指标依赖 Rust `host-metrics` feature；Docker Compose 默认启用该 feature，自定义 `WUNDER_SERVER_FEATURES` 时若移除它，CPU、内存、进程与磁盘指标会以 0 值降级。
+- 返回（JSON）：
+- `system`：系统资源占用（cpu_percent/memory_total/memory_used/memory_available/process_rss/process_cpu_percent/load_avg_1/load_avg_5/load_avg_15/disk_total/disk_used/disk_free/disk_percent/log_used/workspace_used/uptime_s）
+  - `service`：服务状态指标（active_sessions/queued_sessions/history_sessions/finished_sessions/error_sessions/cancelled_sessions/total_sessions/avg_context_tokens/avg_elapsed_s/avg_prefill_speed_tps/avg_decode_speed_tps）
+  - `sandbox`：沙盒状态（mode/network/readonly_rootfs/idle_ttl_s/timeout_s/endpoint/image/resources(cpu/memory_mb/pids)/recent_calls/recent_sessions）
+  - `sessions`：活动线程列表（start_time/session_id/user_id/question/status/token_usage/elapsed_s/stage/summary
+    + ttft_ms
+    + prefill_tokens/prefill_duration_s/prefill_speed_tps/prefill_speed_lower_bound
+    + decode_tokens/decode_duration_s/decode_speed_tps）
+  - `tool_stats`：工具调用统计列表（tool/tool_name/calls）；`tool` 为展示名，`tool_name` 为真实运行时名。
+
+### 4.1.8.1 `/wunder/admin/monitor/tool_usage`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `tool`：工具名称（必填）
+  - `tool_hours`：统计窗口（小时，可选）
+  - `start_time`：筛选开始时间戳（秒，可选，与 `end_time` 搭配时按区间统计）
+  - `end_time`：筛选结束时间戳（秒，可选，与 `start_time` 搭配时按区间统计）
+- 说明：当提供 `start_time`/`end_time` 时，将按区间统计并忽略 `tool_hours`。
+- 返回（JSON）：
+  - `tool`：工具名称
+  - `tool_name`：工具真实名称（用于事件定位）
+  - `runtime_name`：本次查询使用的真实运行时名；当入参为展示名时会反解为运行时名。
+  - `sessions`：调用会话列表（session_id/user_id/question/status/stage/start_time/updated_time/elapsed_s/token_usage/tool_calls/last_time
+    + ttft_ms
+    + prefill_tokens/prefill_duration_s/prefill_speed_tps/prefill_speed_lower_bound
+    + decode_tokens/decode_duration_s/decode_speed_tps）
+
+### 4.1.8.2 `/wunder/admin/monitor/logs/cleanup`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `start_time`：删除开始时间戳（秒，必填）
+  - `end_time`：删除结束时间戳（秒，必填）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `start_time` / `end_time`：实际使用的时间范围
+  - `deleted`：按表统计的删除条数
+  - `deleted_total`：总删除条数
+  - `system`：删除后的系统资源指标快照
+- 说明：该接口是舰桥按时间范围手动维护线程日志的入口，立即物理删除，仅供管理员使用。
+- 说明：清理范围与 `system.log_used` 口径一致，覆盖 `chat_history`、`tool_logs`、`artifact_logs`、`monitor_sessions`、`stream_events`、`memory_task_logs`。其中包含聊天历史上下文与流事件，删除后不可恢复。
+- 说明：除管理员手动清理外，`stream_events` 按 `observability.stream_event_retention_hours`（默认 168 小时，0 表示禁用）由每小时保留期清扫任务自动删除过期事件（`chat_history` 永不自动删除）；用户删除会话后写入宽限期墓碑，`observability.deleted_session_log_grace_hours`（默认 24 小时，<=0 表示立即清理）到期后由清扫任务物理删除其日志。
+- 清理日志与空历史线程目录在同一事务提交，`deleted.chat_sessions` 返回目录删除数。仅清理范围内曾有消息、现已无聊天/上下文/流事件/监控/工具/产物记录的目录；保留未使用草稿、部分历史、有定时任务或活动目标的线程。运行中、排队中和等待审批线程的日志也会跳过。
+- 说明：必须同时提供开始和结束时间，后端会拒绝空范围或无效范围；若开始时间大于结束时间，后端会自动交换顺序。
+
+### 4.1.9 `/wunder/admin/monitor/{session_id}`
+
+- 方法：`GET`
+- 查询参数：`offset`（可选，默认 `0`）、`limit`（可选，默认 `100`，最大 `100`）。线程日志按事件序号稳定分页，每页最多返回 100 条；响应同时返回 `event_offset/event_limit/event_total/events_has_more`。显式 `export_all=true` 仅供下载完整日志时使用。
+- 返回（JSON）：
+  - `session`：线程日志（start_time/session_id/user_id/question/status/token_usage/elapsed_s/stage/summary
+    + ttft_ms
+    + prefill_tokens/prefill_duration_s/prefill_speed_tps/prefill_speed_lower_bound
+    + decode_tokens/decode_duration_s/decode_speed_tps）
+  - `events`：事件详情列表
+- 分页响应字段：`event_offset`、`event_limit`、`event_total`、`events_has_more`。
+- 说明：
+- `session` 详情不再返回 `log_profile` 与 `trace_id`（MonitorLogProfile 已移除，日志统一为精简形态）。
+- `session` 详情新增 `agent_name`（智能体名称），用于在线程日志中快速辨认线程归属。
+- `events` 每条记录新增 `event_id`（线程内递增）。
+- 每轮用户提问会额外写入 `user_input` 事件，`data.message/question` 保存原始用户消息，便于在线程日志中快速定位上下文。
+- 线程日志事件按事件序号完整持久化，服务重启、切换线程和刷新页面不会自动删除历史轮次；用户侧与舰桥详情窗口使用最多 100 条的稳定分页和紧凑原生条目渲染，完整日志仅在显式导出时读取。
+- `observability.monitor_event_limit` 与 `observability.monitor_drop_event_types` 仅为旧配置兼容保留，不再触发线程日志裁剪或丢弃。
+- `observability.monitor_payload_max_chars` 仍可限制单字段大小；需要完整字段时设为 `0`。
+- `llm_request` 事件仅保存 `payload_summary` 与 `message_count`，不保留完整请求体。
+- 预填充速度基于会话第一轮 LLM 请求计算，避免多轮缓存导致速度偏高；当只能从“请求发出到首个输出事件”反推 TTFT 时，`prefill_speed_lower_bound=true`，表示该预填充速度是下界而非模型内部精确值。
+- `session.context_tokens/context_tokens_peak` 汇总采用最新 `context_usage` 显式占用；正常请求由供应商输入 Token（含缓存输入）刷新，不含当次生成的输出与思考；上下文压缩触发也只使用已观测上下文占用，不再叠加本地 token 估算或工具 schema 开销。压缩完成后在下一次模型 usage 返回前，上下文占用会标记为未观测。
+- `round_usage.context_occupancy_tokens` 表示当前线程上下文占用；`round_usage.total_tokens` 与 `request_consumed_tokens` 表示本轮请求消耗，多模型轮次时会累加每次模型调用的用量。
+- 新接入展示“当前上下文占用”时优先读取 `context_occupancy_tokens`，展示“单次请求消耗”或扣费统计时读取 `request_consumed_tokens`/`round_usage.total_tokens`。
+- 取消请求会在 `session.cancel_source`、`cancel` 事件、最终 `cancelled` 事件和 `CANCELLED.detail.cancel_source` 中记录来源。REST 停止使用 `rest_cancel`，WebSocket 停止默认使用 `ws_cancel`/`core_ws_cancel`，客户端本地 Abort 若确实转成后端取消会使用 `client_abort`。当取消发生在用户消息已持久化但模型尚未产生可见回复的窗口，服务端会幂等写入 `meta.type=session_cancelled`、`stop_reason=user_stop` 的 assistant 历史标记，避免刷新后只剩用户消息。REST/WS 会话取消还会写入持久化 `thread_status` 事件，`status/thread_status=cancelled`，并为被取消的 queued/running 任务发送 `queue_fail` 终态事件，便于客户端断线补水后清除停止按钮、排队提示和尾部 pending 气泡。
+- 额度余额不足时返回 `USER_QUOTA_INSUFFICIENT`，错误明细会附带 `quota_balance/quota_granted_total/quota_used_total/daily_quota_grant/last_quota_grant_date`，便于客户端直接刷新额度账户视图。
+
+
+### 4.1.10 `/wunder/admin/monitor/{session_id}/cancel`
+
+- 方法：`POST`
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `message`：提示信息
+- 说明：取消会中断正在进行的 LLM/工具调用，内部轮询取消标记，通常 200ms 内生效。监控记录会保留 `cancel_source`，便于区分用户显式停止、WebSocket 停止和客户端本地 Abort。
+
+### 4.1.10.2 `/wunder/admin/monitor/{session_id}/priority`
+
+- 方法：`POST`
+- 权限：管理员 Bearer token 或配置的 API key。
+- 作用：将该会话最早的 `pending/retry` 队列任务提升为管理员优先级，并唤醒队列调度器。
+- 返回：`ok/queue_id/priority/pause_requested/resume_policy`。
+- 说明：优先任务仍受全局并发上限约束。并发已满时，服务端会在普通任务完成当前模型动作或工具动作后协作让出执行槽位；已产生的正文、工具结果和当前模型轮次会保留，管理员任务完成后自动恢复原任务。用户主动取消属于终态取消，不会被自动恢复。
+- 说明：队列优先级写入 `agent_tasks`，SQLite 与 PostgreSQL 都使用原子领取和单向终态更新；刷新或断线重连通过 `queue_enter/queue_start/queue_finish/queue_fail` 与 runtime snapshot 恢复排队、暂停和继续状态。
+
+### 4.1.10.1 `/wunder/admin/monitor/{session_id}/compaction`
+
+- 方法：`POST`
+- 入参（JSON）：`model_name`（可选，指定压缩摘要模型）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `message`：提示信息
+- 说明：仅会话空闲时可触发，触发后会向监控事件写入 `compaction` 记录。
+- 说明：压缩重建默认保留“冻结 system + 最早归一化交互窗口 + 压缩摘要 + 最近归一化交互窗口 + 当前轮续跑消息”。运行中压缩会按当前轮状态和摘要的 `resume_action` 生成临时 `user` 续跑指令，避免重复执行已成功工具或从失败现场重新开始；工具成功但 `resume_action=final/ask_user` 时使用 `final_continuation` 直接收口，`continue/retry/unknown` 时使用 `tool_success_continuation` 从最新 observation 与摘要继续。动态产物索引只参与摘要上下文，不追加到主请求 `system`。
+- 说明：`compaction` 事件会额外包含 `retained_user_message_count`、`retained_user_tokens`、`retained_interaction_message_count`、`retained_head_message_count`、`retained_tail_message_count`、`source_interaction_block_count`、`current_user_replay_mode`、`compaction_resume_action`、`current_turn_progress_state`、`current_turn_has_tool_success` 与 `current_turn_has_tool_failure` 字段，便于核对压缩保留窗口和当前轮续跑策略。
+- 说明：每次压缩都会生成唯一 `compaction_id`，并在 `progress / llm_request / llm_response / compaction` 事件中保持一致；压缩完成事件会额外带上 `replacement_history_message_count`、`replacement_history_tokens`、`rebuilt_request_debug` 与 `replacement_history_debug`，用于核对本次继续执行请求和已提交压缩基线。
+- 说明：若压缩摘要模型请求失败并回退到本地裁剪摘要，`compaction` 事件会额外附带 `summary_fallback_reason`、`summary_failure_code`、`summary_failure_message` 与 `summary_failure_retryable` 字段，便于区分“摘要请求失败”和“摘要输出为空”。
+
+### 4.1.11 `/wunder/admin/monitor/{session_id}`
+
+- 方法：`DELETE`
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `message`：提示信息
+
+### 4.1.12 `/wunder/workspace`
+
+- 说明：所有 workspace 接口支持可选 `agent_id`。若该智能体已配置 `sandbox_container_id`（1~10），则按“用户 + 容器编号”路由工作区；未传 `agent_id`、找不到智能体或历史兼容场景时，仍回退到默认用户工作区/旧路由策略。
+- 说明：已登录用户可显式传入自身 scoped `user_id`（如 `user__c__2`、`user__a__xxxx`、`user__agent__legacy`）访问对应容器/智能体工作区，无需管理员权限。
+- 方法：`GET`
+- 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选；已配置容器时按容器路由，未传或为空表示默认工作区）
+  - `path`：相对路径（可选，默认根目录）
+  - `refresh_tree`：是否刷新工作区树缓存（默认 false）
+  - `keyword`：名称关键字过滤（可选）
+  - `offset`：分页偏移量（可选）
+  - `limit`：分页大小，0 表示不分页（可选）
+  - `sort_by`：排序字段（name/size/updated_time）
+  - `order`：排序方向（asc/desc）
+- 返回（JSON）：
+  - `user_id`：用户唯一标识
+  - `path`：当前目录
+  - `parent`：父目录（根目录为 null）
+  - `entries`：目录条目（name/path/type/size/updated_time）
+  - `tree_version`：工作区树版本号
+  - `total`：总条目数
+  - `offset`：分页偏移量
+  - `limit`：分页大小
+
+### 4.1.13 `/wunder/workspace/content`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
+  - `path`：相对路径（可选，默认根目录）
+  - `include_content`：是否返回内容（默认 true）
+  - `max_bytes`：文件内容最大字节数（默认 512 KB）
+  - `depth`：目录展开深度（默认 1）
+  - `keyword`：名称关键字过滤（可选）
+  - `offset`：分页偏移量（可选）
+  - `limit`：分页大小（可选）
+  - `sort_by`：排序字段（name/size/updated_time）
+  - `order`：排序方向（asc/desc）
+- 返回（JSON）：
+  - `user_id`：用户唯一标识
+  - `path`：当前路径
+  - `type`：条目类型（file/dir）
+  - `size`：文件大小（目录为 0）
+  - `updated_time`：更新时间
+  - `content`：文件内容（文件可选）
+  - `format`：内容格式（text/dir）
+  - `truncated`：是否截断
+  - `entries`：目录内容条目（可选，支持 children）
+  - `total`：总条目数
+  - `offset`：分页偏移量
+  - `limit`：分页大小
+
+### 4.1.14 `/wunder/workspace/search`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
+  - `keyword`：搜索关键字
+  - `offset`：分页偏移量（可选）
+  - `limit`：分页大小（可选）
+  - `include_files`：是否包含文件（默认 true）
+  - `include_dirs`：是否包含目录（默认 true）
+- 返回（JSON）：
+  - `user_id`：用户唯一标识
+  - `keyword`：搜索关键字
+  - `entries`：匹配条目列表（name/path/type/size/updated_time）
+  - `total`：总匹配数量
+  - `offset`：分页偏移量
+  - `limit`：分页大小
+
+### 4.1.15 `/wunder/workspace/upload`
+
+- 方法：`POST`
+- 入参：`multipart/form-data`
+  - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
+  - `path`：相对路径（目录）
+  - `files`：上传文件列表
+  - `relative_paths`：文件相对路径列表（可选，保留目录结构）
+- 限制：单次 multipart 请求上限 1GB。
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `message`：提示信息
+  - `files`：已上传文件相对路径
+  - `tree_version`：工作区树版本号
+
+### 4.1.16 `/wunder/workspace/download`
+
+- 方法：`GET`
+- 限制：服务端按文件流式返回，不设置应用层文件大小上限。
+- 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
+  - `container_id`：工作区容器 id（可选）
+  - `path`：相对路径（文件）
+  - `preview`：预览格式（可选）；`preview=png` 仅支持 WMF/EMF 元文件，返回转换后的 PNG 预览，普通下载不使用该参数。
+- 返回：文件流；`preview=png` 时 `Content-Type` 为 `image/png`，否则按原文件流式返回。
+
+### 4.1.17 `/wunder/workspace/archive`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
+  - `path`：相对路径（可选，目录/文件；留空则全量打包）
+- 返回：工作区全量或指定目录的压缩包文件流
+
+### 4.1.18 `/wunder/workspace`
+
+- 方法：`DELETE`
+- 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
+  - `path`：相对路径（文件或目录）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `message`：提示信息
+  - `tree_version`：工作区树版本号
+
+### 4.1.19 `/wunder/workspace/dir`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
+  - `path`：目录相对路径
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `message`：提示信息
+  - `tree_version`：工作区树版本号
+  - `files`：已创建目录路径
+
+### 4.1.20 `/wunder/workspace/move`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
+  - `source`：源路径
+  - `destination`：目标路径
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `message`：提示信息
+  - `tree_version`：工作区树版本号
+  - `files`：目标路径
+
+### 4.1.21 `/wunder/workspace/copy`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
+  - `source`：源路径
+  - `destination`：目标路径
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `message`：提示信息
+  - `tree_version`：工作区树版本号
+  - `files`：目标路径
+
+### 4.1.22 `/wunder/workspace/batch`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
+  - `action`：批量操作类型（delete/move/copy）
+  - `paths`：待处理路径列表
+  - `destination`：目标目录（批量移动/复制）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `message`：提示信息
+  - `tree_version`：工作区树版本号
+  - `succeeded`：成功条目列表
+  - `failed`：失败条目列表（path/message）
+
+### 4.1.23 `/wunder/workspace/file`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `agent_id`：智能体应用 id（可选）
+  - `path`：文件相对路径
+  - `content`：文件内容
+  - `create_if_missing`：文件不存在时是否创建（默认 false）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `message`：提示信息
+  - `tree_version`：工作区树版本号
+  - `files`：保存的文件路径
+
+### 4.1.23.1 `/wunder/workspace/onlyoffice/config`
+
+- 方法：`GET`
+- 用途：为用户侧工作区中的 OnlyOffice 支持文档生成 OnlyOffice Docs API 编辑器配置。
+- 鉴权：蜂巢 Bearer Token；管理员/API Key 调试仍可按工作区接口规则显式传 `user_id`。
+- 入参（Query）：
+  - `user_id`：用户唯一标识（可选，通常由 Token 解析）
+  - `agent_id`：智能体应用 id（可选）
+  - `container_id`：工作区容器编号（可选，优先于 `agent_id`）
+  - `path`：文件相对路径
+  - `lang`：编辑器语言（可选，当前归一到 `zh-CN` 或 `en`）
+- 返回（JSON）：
+  - `enabled`：固定为 true
+  - `api_url`：OnlyOffice `api.js` 地址
+  - `config`：传给 `DocsAPI.DocEditor` 的编辑器配置，包含短期签名的文件拉取地址、`token`、可编辑格式的保存回调地址，以及 OnlyOffice AI 后台插件的 `editorConfig.plugins` 自动启动配置
+  - `path`：规范化后的文件路径
+  - `updated_time`：文件更新时间
+- 约束：支持 Office、WPS 系列、PDF、纯文本/代码、XPS、DjVu、Visio 图等 OnlyOffice 支持格式（如 `doc/docx/xls/xlsx/ppt/pptx/wps/wpt/et/ett/dps/dpt/pdf/txt/md/py/js/json/odt/ods/odp/csv/rtf/vsdx` 等）；必须配置 `onlyoffice.enabled=true`、`onlyoffice.document_server_url` 或 `onlyoffice.api_url`、`onlyoffice.public_base_url` 以及 `onlyoffice.jwt_secret`。纯文本/代码类扩展以 `txt` 类型交给 OnlyOffice 打开并回写原路径；XPS/DjVu/Visio 图等查看类格式以只读模式打开。`public_base_url` 必须能被 OnlyOffice Document Server 访问。仓库 compose 的 `wunder-onlyoffice` 启动脚本会把内置 AI 插件加入 Document Server 插件 autostart，编辑器配置也会显式加载该插件；AI 菜单可见不代表模型已可调用，模型/provider 仍需在 OnlyOffice AI 设置中完成配置。
+
+### 4.1.23.2 `/wunder/workspace/onlyoffice/file`
+
+- 方法：`GET`
+- 用途：OnlyOffice Document Server 通过短期令牌拉取待编辑或查看文件。
+- 入参（Query）：
+  - `token`：由 `/wunder/workspace/onlyoffice/config` 生成的短期访问令牌
+- 返回：文件流，`Content-Disposition` 为 inline。
+- 说明：该接口不使用用户 Bearer Token，访问权限完全由短期签名令牌约束。
+
+### 4.1.23.3 `/wunder/workspace/onlyoffice/callback`
+
+- 方法：`POST`
+- 用途：接收 OnlyOffice 保存回调，并在 `status=2` 或 `status=6` 时下载回写后的文档覆盖原文件。
+- 入参：
+  - Query `token`：由 `/wunder/workspace/onlyoffice/config` 生成的短期回调令牌
+  - Body：OnlyOffice Document Server 回调 JSON，其中保存状态需包含 `status` 与 `url`
+- 返回（JSON）：
+  - `error`：`0` 表示成功；非 0 表示保存失败
+- 说明：保存下载受 `onlyoffice.request_timeout_s` 与 `onlyoffice.max_download_bytes` 限制，`max_download_bytes` 默认与上限均为 1GB；回写成功后会标记工作区目录树刷新；回调下载地址会优先按 `onlyoffice.internal_document_server_url` 重写，未配置时回退到 `onlyoffice.document_server_url`，避免 Docker/反向代理场景下浏览器地址与 Wunder 后端可访问地址不同导致保存失败；只读查看格式不会执行回写。
+
+### 4.1.23.4 `/wunder/workspace/drawio/config`
+
+- 方法：`GET`
+- 用途：为用户侧工作区中的 draw.io 图表文件返回 diagrams.net/draw.io 嵌入编辑器地址与限制。
+- 鉴权：蜂巢 Bearer Token；管理员/API Key 调试仍可按工作区接口规则显式传 `user_id`。
+- 入参（Query）：
+  - `user_id`：用户唯一标识（可选，通常由 Token 解析）
+  - `agent_id`：智能体应用 id（可选）
+  - `container_id`：工作区容器编号（可选，优先于 `agent_id`）
+  - `path`：文件相对路径
+  - `lang`：编辑器语言（可选，当前归一到 `zh` 或 `en`）
+- 返回（JSON）：
+  - `enabled`：固定为 true
+  - `editor_url`：带 `embed=1&proto=json` 等参数的 draw.io 嵌入编辑器地址
+  - `path`：规范化后的文件路径
+  - `max_file_bytes`：可编辑文件大小上限
+  - `updated_time`：文件更新时间
+- 约束：支持 `.drawio`、`.dio`、`.drawio.xml` 文本/XML 图表文件；必须配置 `drawio.enabled=true` 与 `drawio.editor_url`。文件内容读取和保存复用 `/wunder/workspace/content` 与 `/wunder/workspace/file`，不需要 draw.io 容器直接访问 Wunder 后端。
+
+### 4.1.24.0 `/`
+
+- 方法：`GET`
+- 说明：舰桥前端入口（`web/index.html`），包含幻灯片（系统介绍）与 A2A 服务管理面板；`web/simple-chat` 简易聊天测试页暂时停用。
+- 说明补充：舰桥样式入口为 `web/app.css`，样式已拆分为 `web/styles/*.css`。
+
+### 4.1.24.1 `/wunder/ppt`
+
+- 方法：`GET`
+- 说明：提供系统介绍 PPT 静态资源（`docs/ppt` 目录，页面拆分为 `slides/*.js`，顺序由 `slides/manifest.js` 维护），用于前端系统介绍页面嵌入或独立打开。
+
+### 4.1.24.2 `/wunder/ppt-en`
+
+- 方法：`GET`
+- 说明：提供系统介绍 PPT 英文版静态资源（`docs/ppt-en` 目录，页面拆分为 `slides/*.js`，顺序由 `slides/manifest.js` 维护），用于前端系统介绍页面嵌入或独立打开。
+
+### 4.1.24.3 舰桥前端页面与接口
+
+- 内部状态/线程日志：`/wunder/admin/monitor`、`/wunder/admin/monitor/tool_usage`、`/wunder/admin/monitor/{session_id}`、`/wunder/admin/monitor/{session_id}/cancel`、`/wunder/admin/monitor/{session_id}/compaction`。
+- 线程管理：`/wunder/admin/users`、`/wunder/admin/users/{user_id}/sessions`、`/wunder/admin/users/{user_id}`、`/wunder/admin/users/throughput/cleanup`。
+- 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/import`、`/wunder/admin/user_accounts/test/seed`、`/wunder/admin/user_accounts/test/cleanup`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/quota_adjustment`、`/wunder/admin/user_accounts/{user_id}/logout`、`/wunder/admin/user_accounts/{user_id}/login_token`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
+- 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/multimodal/transcription`、`/wunder/admin/multimodal/speech`、`/wunder/admin/multimodal/image`、`/wunder/admin/multimodal/video`、`/wunder/admin/system`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
+- 内置工具/MCP/LSP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/lsp`、`/wunder/admin/lsp/test`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/content`、`/wunder/admin/skills/files`、`/wunder/admin/skills/file`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
+- 渠道监控与治理：`/wunder/admin/channels/accounts`、`/wunder/admin/channels/accounts/batch`、`/wunder/admin/channels/accounts/{channel}/{account_id}`、`/wunder/admin/channels/accounts/{channel}/{account_id}/impact`、`/wunder/admin/channels/bindings`、`/wunder/admin/channels/user_bindings`、`/wunder/admin/channels/sessions`。
+- 渠道舰桥节点治理：`/wunder/admin/bridge/metadata`、`/wunder/admin/bridge/supported_channels`、`/wunder/admin/bridge/centers`、`/wunder/admin/bridge/centers/{center_id}`、`/wunder/admin/bridge/centers/{center_id}/accounts`、`/wunder/admin/bridge/centers/{center_id}/weixin_bind`、`/wunder/admin/bridge/accounts/{center_account_id}`、`/wunder/admin/bridge/routes`、`/wunder/admin/bridge/routes/{route_id}`、`/wunder/admin/bridge/delivery_logs`。
+- 吞吐量/性能/benchmark/模拟：`/wunder/admin/throughput/*`、`/wunder/admin/performance/sample`、`/wunder/admin/benchmark/*`、`/wunder/admin/sim_lab/*`。
+- 调试面板接口：`/wunder`、`/wunder/system_prompt`、`/wunder/tools`、`/wunder/attachments/convert`、`/wunder/workspace/*`、`/wunder/user_tools/*`、`/wunder/cron/*`。
+- 文档/幻灯片：`/wunder/ppt`、`/wunder/ppt-en`。
+
+- `GET /wunder/admin/user_accounts`：管理员分页读取用户账号列表。
+  - 入参（Query）：`keyword`、`offset`、`limit`，可选 `activity_days`（近几天活跃度窗口，默认 7）。
+  - 返回（JSON）：`data.items[]` 中除用户基础资料与额度字段外，额外包含 `activity_series[]`，每项为 `{ date, tokens }`，表示近几天按日聚合的 Token 消耗，可直接用于舰桥绘制用户活跃度小曲线图。
+- `POST /wunder/admin/user_accounts/import`：管理员通过 multipart `file` 上传 Excel 批量创建用户，支持 `.xlsx/.xls/.xlsm/.xlsb/.ods`，文件上限 8MB，单次最多 1000 行。首行需包含 `username` 与 `password`（也支持 `用户名/账号`、`密码`），可选列为 `email/mail/邮箱/邮件`、`unit_id/unit/org_unit/单位id/单位`、`status/状态`、`roles/role/角色/权限`。返回 `data.created/data.failed/data.items/data.errors`，行级失败不会回滚已成功创建的账号。
+- `PATCH /wunder/admin/user_accounts/{user_id}`：`quota_balance` 为非负整数，直接设置结转当天发放后的最终余额；不改变累计消耗。普通资料、密码和登录更新不会覆盖并发额度变更。管理员账户不支持设置额度。
+- `POST /wunder/admin/user_accounts/{user_id}/quota_adjustment`：管理员对指定用户执行额度发放或扣除。
+  - 入参（JSON）：`action=grant|deduct`、`amount`
+  - 行为：`grant` 会增加余额与累计获得；`deduct` 会减少余额并增加累计消耗；两者都会先结转当天应发放但尚未入账的每日额度。`deduct` 余额不足时原子拒绝，不做部分扣除；`amount` 必须为正整数。
+- `POST /wunder/admin/user_accounts/{user_id}/logout`：管理员强制下线指定用户当前用户侧会话。
+  - 行为：同时失效 `user_web` 与 `default` 会话作用域，保留 `admin_web` 会话作用域不受影响。
+- `POST /wunder/admin/user_accounts/{user_id}/login_token`：管理员为指定用户签发用户侧 `user_web` 会话 token，用于舰桥用户管理页免登打开蜂巢。
+  - 行为：要求管理员或负责人权限并校验单位范围；签发新 token 后只挤掉同用户的 `user_web` 会话，不影响 `admin_web`（舰桥）会话；该接口可用于默认管理员账号，公开外链登录接口仍保留管理员账号保护。
+
+### 4.1.24.4 `/wunder/admin/sim_lab/*`
+
+- `GET /wunder/admin/sim_lab/projects`：获取模拟项目列表与默认参数。
+- `POST /wunder/admin/sim_lab/runs`：执行模拟任务。
+  - 入参（JSON）：`run_id`、`projects[]`、`options`。
+  - `options.swarm_flow` 支持：`workers`、`max_wait_s`、`mother_wait_s`、`poll_ms`、`worker_task_rounds`、`keep_artifacts`、`strict_mock_only`。
+  - `strict_mock_only` 默认 `true`：若检测到非本地 mock LLM 请求，当前模拟运行会直接失败并返回错误。
+- `GET /wunder/admin/sim_lab/runs/{run_id}/status`：查询运行是否仍处于活动状态。
+- `POST /wunder/admin/sim_lab/runs/{run_id}/cancel`：取消运行。
+- 结果报告补充：`projects[].report.llm_request_audit` 与 `projects[].report.checks.mock_only_llm_requests`，用于判定是否全程仅命中 mock LLM 端点。
+
+### 4.1.25 `/wunder/admin/tools`
+
+- 方法：`GET/POST`
+- `GET` 返回：
+  - `enabled`：已启用内置工具名称列表
+  - `tools`：内置工具列表（name/description/input_schema/enabled）
+- `POST` 入参：
+  - `enabled`：启用的内置工具名称列表
+
+### 4.1.25.1 `/wunder/admin/channels/accounts`
+
+- 方法：`GET`
+- 入参（Query，可选）：
+  - `channel`：渠道名过滤
+  - `status`：账号状态过滤（如 `active`）
+  - `keyword`：模糊搜索关键字（匹配渠道/账号/持有者/状态）
+  - `owner_user_id`：按持有者用户 ID 过滤
+  - `issue_only`：是否仅返回异常账号（`true/false`）
+  - `last_active_after`：最近通信时间下限（秒级时间戳）
+  - `last_active_before`：最近通信时间上限（秒级时间戳）
+- 返回（JSON）：
+  - `data.items[]`：渠道账号列表，字段包括：
+    - `channel`、`account_id`、`status`、`config`、`created_at`、`updated_at`
+    - `runtime`：运行态信息（当前含 `feishu_long_connection`、`xmpp_long_connection`）
+    - `owner_user_id`、`owner_username`：主持有者（基于渠道用户绑定推导）
+    - `owners[]`：持有者预览（`user_id`、`username`）
+    - `owner_count`：持有者数量
+    - `binding_count`：绑定数量
+    - `session_count`：渠道会话数量
+    - `message_count` / `inbound_message_count`：入站消息数量
+    - `outbound_total_count` / `outbound_sent_count` / `outbound_failed_count` / `outbound_retry_count` / `outbound_pending_count`：出站分维统计
+    - `outbound_retry_attempts`：累计出站重试次数
+    - `outbound_success_rate`：出站成功率（`sent / (sent + failed)`）
+    - `communication_count`：通信总量（入站 + 出站）
+    - `last_communication_at`：最近通信时间（秒级时间戳）
+    - `has_issue`：是否存在异常（账号停用、长连接异常或出站失败/重试）
+
+### 4.1.25.1.1 `/wunder/admin/channels/accounts/batch`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `action`：批量动作，支持 `enable` / `disable` / `delete`
+  - `items[]`：目标账号列表
+    - `channel`
+    - `account_id`
+- 返回（JSON）：
+  - `data.action`：执行动作
+  - `data.total`：请求中有效目标数（去重后）
+  - `data.success` / `data.failed` / `data.skipped`：批量执行汇总
+  - `data.deleted_accounts` / `data.deleted_bindings` / `data.deleted_user_bindings` / `data.deleted_sessions` / `data.deleted_messages` / `data.deleted_outbox`：当 `action=delete` 时的累计清理统计
+  - `data.items[]`：逐账号结果（`channel/account_id/ok/result`，并按动作附带 `status` 或删除统计字段）
+- 说明：用于管理员批量启用、停用或删除渠道账号；删除动作会复用单条删除链路并清理关联绑定、会话、消息与出站队列。
+
+### 4.1.25.2 `/wunder/admin/channels/accounts/{channel}/{account_id}`
+
+- 方法：`DELETE`
+- 返回（JSON）：
+  - `data.channel`、`data.account_id`
+  - `data.deleted_accounts`：删除账号记录数
+  - `data.deleted_bindings`：删除渠道绑定数
+  - `data.deleted_user_bindings`：删除渠道用户绑定数
+  - `data.deleted_sessions`：删除渠道会话数
+  - `data.deleted_messages`：删除渠道消息数
+  - `data.deleted_outbox`：删除出站队列记录数
+- 说明：用于舰桥快速移除失效渠道账号及其绑定关系。
+
+### 4.1.25.2.1 `/wunder/admin/channels/accounts/{channel}/{account_id}/impact`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - `data.account_exists`：账号是否存在
+  - `data.bindings`：将受影响的渠道绑定数
+  - `data.user_bindings`：将受影响的渠道用户绑定数
+  - `data.sessions`：将受影响的渠道会话数
+  - `data.messages`：将受影响的渠道消息数
+  - `data.outbox_total` / `data.outbox_pending` / `data.outbox_retry` / `data.outbox_failed`：将受影响的出站队列统计
+- 说明：用于删除前影响预估提示。
+
+### 4.1.25.3 `/wunder/admin/channels/bindings`
+
+- 方法：`GET`
+- 入参（Query，可选）：
+  - `channel`：渠道名过滤
+- 返回（JSON）：
+  - `data.items[]`：渠道绑定列表（`binding_id/channel/account_id/peer_kind/peer_id/agent_id/tool_overrides/priority/enabled/created_at/updated_at`）
+
+### 4.1.25.4 `/wunder/admin/channels/user_bindings`
+
+- 方法：`GET`
+- 入参（Query，可选）：
+  - `channel`、`account_id`、`peer_kind`、`peer_id`、`user_id`
+  - `offset`（默认 0）、`limit`（默认 50）
+- 返回（JSON）：
+  - `data.items[]`：用户绑定列表（`channel/account_id/peer_kind/peer_id/user_id/created_at/updated_at`）
+  - `data.total`：总数
+
+### 4.1.25.5 `/wunder/admin/channels/sessions`
+
+- 方法：`GET`
+- 入参（Query，可选）：
+  - `channel`、`account_id`、`peer_id`、`session_id`
+  - `offset`（默认 0）、`limit`（默认 50）
+- 返回（JSON）：
+  - `data.items[]`：会话列表（`channel/account_id/peer_kind/peer_id/thread_id/session_id/agent_id/user_id/tts_enabled/tts_voice/metadata/last_message_at/created_at/updated_at`）
+  - `data.total`：总数
+
+### 4.1.25.6 `/wunder/admin/bridge/metadata`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - `data.default_password`：渠道舰桥节点自动开户默认密码（当前固定 `123456`）
+  - `data.supported_channels[]`：支持挂入渠道舰桥节点的渠道清单（含 `channel/display_name/webhook_mode/adapter_registered/provider_caps`）
+  - `data.preset_agents[]`：可选默认预设智能体（`name/description`）
+  - `data.channel_accounts[]`：当前系统已激活的共享渠道账号（`channel/account_id/status`）
+  - `data.org_units[]`：可选目标单位（`unit_id/name/path_name/level`）
+
+### 4.1.25.7 `/wunder/admin/bridge/centers`
+
+- 方法：`GET/POST`
+- `GET` 入参（Query，可选）：
+  - `status`：中心状态过滤
+  - `keyword`：名称/编码模糊搜索
+  - `offset`、`limit`
+- `GET` 返回：
+  - `data.items[]`：渠道舰桥节点列表，字段包括 `center_id/name/code/status/default_preset_agent_name/default_identity_strategy/username_policy/account_count/shared_channel_count/route_count/active_route_count/owner_user_id/owner_username`
+- `POST` 入参（JSON）：
+  - `center_id`：可选，传入时为更新
+  - `name`、`code`
+  - `status`
+  - `default_preset_agent_name`
+  - `target_unit_id`
+  - `default_identity_strategy`
+  - `username_policy`
+  - `description`
+  - `shared_channels[]`：可选的批量写入能力；当前单个渠道舰桥节点只允许一个渠道，舰桥页面默认不走一次性保存，而是通过“渠道设置”弹窗维护单条绑定
+- 说明：管理员用它创建或更新一个“全渠道入口 -> 默认预设智能体”的渠道舰桥节点。页面当前采用“监控主页面 + 中心配置弹窗 + 渠道设置弹窗”模式。
+
+### 4.1.25.8 `/wunder/admin/bridge/centers/{center_id}`
+
+- 方法：`GET/DELETE`
+- `GET` 返回：
+  - `data.center`：中心详情
+  - `data.shared_channels[]`：该中心下的接入渠道配置
+  - `data.accounts[]`：该中心下的共享渠道账号配置
+- `DELETE` 返回：
+  - `data.deleted`：删除中心记录数；关联 `bridge_center_accounts / bridge_user_routes / bridge_delivery_logs / bridge_route_audit_logs` 会同步清理
+
+### 4.1.25.9 `/wunder/admin/bridge/centers/{center_id}/accounts`
+
+- 方法：`GET/POST`
+- `GET` 返回：
+  - `data.items[]`：共享渠道账号列表（`center_account_id/channel/account_id/enabled/identity_strategy/thread_strategy/default_preset_agent_name_override/route_count/active_route_count/provider_caps`）
+- `POST` 入参（JSON）：
+  - `channel`、`account_id`
+  - `enabled`
+  - `identity_strategy`
+  - `thread_strategy`
+  - `reply_strategy`
+  - `default_preset_agent_name_override`
+- 说明：底层仍保留独立渠道绑定接口，便于脚本化接线；当前单个渠道舰桥节点只允许绑定一个渠道账号。舰桥页面会先通过 `/wunder/admin/channels/accounts?status=active` 拉取现有可用账号，再用此接口写入桥接绑定。
+
+### 4.1.25.10 `/wunder/admin/bridge/accounts/{center_account_id}`
+
+- 方法：`PATCH/DELETE`
+- `PATCH`：更新某个共享渠道账号配置，入参与 `POST /wunder/admin/bridge/centers/{center_id}/accounts` 相同。
+- `DELETE`：删除该共享账号，并清理其名下 bridge routes、delivery logs、audit logs。
+
+### 4.1.25.10A `/wunder/admin/bridge/centers/{center_id}/weixin_bind`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `account_id`：可选；为空时服务端按节点自动生成稳定的 Weixin 账号 ID
+  - `api_base`
+  - `bot_type`
+  - `bot_token`
+  - `ilink_bot_id`
+  - `ilink_user_id`
+- 返回（JSON）：
+  - `data.center`：所属渠道舰桥节点
+  - `data.account`：最终写入的 `bridge_center_account`
+  - `data.channel_account`：最终写入的 `channel_accounts.weixin/*` 配置快照
+- 说明：管理员侧 `Weixin iLink (New)` 扫码流程会先调用已有 `/wunder/channels/weixin/qr/start`、`/wunder/channels/weixin/qr/wait` 获取二维码和扫码确认结果，再调用这里把凭据落成真实渠道账号并绑定到当前渠道舰桥节点；如果节点已有旧绑定，会先清理旧 bridge routes / delivery logs / audit logs。
+
+### 4.1.25.11 `/wunder/admin/bridge/routes`
+
+- 方法：`GET`
+- 入参（Query，可选）：
+  - `center_id`、`center_account_id`
+  - `channel`、`account_id`
+  - `status`
+  - `keyword`
+  - `wunder_user_id`、`agent_id`
+  - `offset`、`limit`
+- 返回（JSON）：
+  - `data.items[]`：自动分配路由列表，字段包括 `route_id/external_identity_key/external_display_name/wunder_user_id/wunder_username/agent_id/agent_name/status/last_session_id/last_error/last_inbound_at/last_outbound_at`
+
+### 4.1.25.12 `/wunder/admin/bridge/routes/{route_id}`
+
+- 方法：`GET/PATCH`
+- `GET` 返回：
+  - `data.route`：单条 bridge route 详情
+  - `data.delivery_logs[]`：最近投递日志
+  - `data.audit_logs[]`：最近治理审计日志
+- `PATCH` 入参（JSON）：
+  - `status`：可切换到 `active/paused/blocked/error`
+  - `clear_last_error`：是否清空 `last_error`
+- 说明：用于暂停、恢复或封禁某条外部用户自动分配路由。
+
+### 4.1.25.13 `/wunder/admin/bridge/delivery_logs`
+
+- 方法：`GET`
+- 入参（Query，可选）：
+  - `center_id`、`center_account_id`、`route_id`
+  - `direction`：`inbound/outbound`
+  - `status`
+  - `limit`
+- 返回（JSON）：
+  - `data.items[]`：投递日志列表（`delivery_id/direction/stage/status/provider_message_id/session_id/summary/payload/created_at`）
+
+### 4.1.26 `/wunder/admin/knowledge`
+
+- 方法：`GET/POST`
+- `GET` 返回：
+  - `knowledge`：知识库配置（bases 数组，元素包含 name/description/root/enabled/base_type/embedding_model/ragflow_dataset_id/ragflow_dataset_managed/chunk_method/chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size/chunk_overlap/top_k/score_threshold）
+- `POST` 入参：
+  - `knowledge`：完整知识库配置，用于保存与下发
+- 说明：当 root 为空时，字面知识库会自动创建 `./config/knowledge/<知识库名称>` 目录；向量知识库 root 自动指向 `config/data/vector_knowledge/shared/<base>` 作为逻辑标识，文档、切片元数据与 embedding 向量存储在数据库中，并要求 `embedding_model`；RAGFlow 知识库 root 使用 `ragflow:<dataset_id>` 作为逻辑标识，`ragflow_dataset_id` 留空时自动创建 Dataset，填写已有 RAGFlow Dataset ID 时直接绑定；`ragflow_dataset_managed=false` 表示非托管外部 Dataset，移除 Wunder 知识库时不会删除远端 Dataset。`chunk_method` 映射到 RAGFlow Dataset 的切片方式，`chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size` 按切片方式映射到 RAGFlow `parser_config`，文档上传、分块、检索和重解析由 RAGFlow Dataset 执行。管理员侧自动创建的 RAGFlow Dataset 在远端使用 `[Wunder Admin] 知识库名称` 命名，便于与用户侧 `[用户名] 知识库名称` 区分。
+
+### 4.1.27 `/wunder/admin/knowledge/files`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `base`：知识库名称
+- 返回（JSON）：
+  - `base`：知识库名称
+  - `files`：Markdown 文件相对路径列表
+- 说明：仅适用于字面知识库；向量和 RAGFlow 知识库请使用 `/wunder/admin/knowledge/docs` 等接口。
+
+### 4.1.28 `/wunder/admin/knowledge/file`
+
+- 方法：`GET/PUT/DELETE`
+- `GET` 入参（Query）：
+  - `base`：知识库名称
+  - `path`：相对知识库根目录的文件路径
+- `PUT` 入参（JSON）：
+  - `base`：知识库名称
+  - `path`：相对知识库根目录的文件路径
+  - `content`：文件内容
+- `DELETE` 入参（Query）：
+  - `base`：知识库名称
+  - `path`：相对知识库根目录的文件路径
+- 说明：仅适用于字面知识库；向量和 RAGFlow 知识库请使用 `/wunder/admin/knowledge/doc` 等接口。
+
+### 4.1.29 `/wunder/admin/knowledge/upload`
+
+- 方法：`POST`
+- 入参（multipart/form-data）：
+  - `base`：知识库名称
+  - `file`：待上传文件
+  - 返回（JSON）：
+    - `ok`：是否成功
+    - `message`：提示信息
+    - `path`：转换后的 Markdown 相对路径（字面知识库）
+    - `doc_id`：文档 id（向量或 RAGFlow 知识库）
+    - `doc_name`：文档名称（向量或 RAGFlow 知识库）
+    - `chunk_count`：切片数量（向量或 RAGFlow 知识库）
+    - `embedding_model`：嵌入模型或 `ragflow` 标识
+    - `converter`：使用的转换器（doc2md/text/html/code/pdf/raw）
+    - `warnings`：转换警告列表
+  - 说明：该接口支持 doc2md 可解析的格式，上传后自动转换为 Markdown 保存，原始非 md 文件不会落库并会清理；向量知识库上传会解析并切片，需通过 `/wunder/admin/knowledge/reindex` 或 `/wunder/admin/knowledge/chunk/*` 生成向量；RAGFlow 知识库上传直接转交远端 Dataset 解析、嵌入与管理。
+
+### 4.1.30 `/wunder/admin/knowledge/refresh`
+
+- 方法：`POST`
+- 入参（Query）：
+  - `base`：知识库名称（可选，留空则刷新全部）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `message`：提示信息
+- 说明：仅适用于字面知识库；向量和 RAGFlow 知识库请使用 `/wunder/admin/knowledge/reindex`。
+
+### 4.1.30.1 `/wunder/admin/knowledge/docs`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `base`：知识库名称
+- 返回（JSON）：
+  - `base`：知识库名称
+  - `docs`：文档列表（doc_id/name/status/chunk_count/embedding_model/updated_at）
+- 说明：仅适用于向量和 RAGFlow 知识库。
+
+### 4.1.30.2 `/wunder/admin/knowledge/doc`
+
+- 方法：`GET/DELETE`
+- `GET` 入参（Query）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+- `GET` 返回（JSON）：
+  - `base`：知识库名称
+  - `doc`：文档元数据（embedding_model/chunk_size/chunk_overlap/chunk_count/status/updated_at/chunks[index/start/end/status/content]）
+  - `content`：原文内容
+- `DELETE` 入参（Query）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+- `DELETE` 返回（JSON）：
+  - `ok`：是否成功
+  - `deleted`：删除的向量条目数量；RAGFlow 知识库固定返回 `0`
+  - `doc_id`：文档 id
+  - `doc_name`：文档名称
+- 说明：仅适用于向量和 RAGFlow 知识库；RAGFlow 知识库的文档内容从远端下载，删除也同步删除远端 Dataset 文档。
+
+### 4.1.30.3 `/wunder/admin/knowledge/chunks`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+- 返回（JSON）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+  - `chunks`：切片列表（index/start/end/preview/content/status）
+- 说明：仅适用于向量和 RAGFlow 知识库。
+
+### 4.1.30.4 `/wunder/admin/knowledge/chunk/update`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+  - `chunk_index`：切片索引
+  - `content`：切片内容
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `doc`：更新后的文档元数据
+- 说明：仅适用于向量和 RAGFlow 知识库；向量知识库更新内容后切片状态变为 `pending`，RAGFlow 知识库会调用远端切片更新接口。
+
+### 4.1.30.5 `/wunder/admin/knowledge/chunk/embed`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+  - `chunk_index`：切片索引
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `doc`：更新后的文档元数据
+- 说明：仅适用于向量和 RAGFlow 知识库；向量知识库执行单片嵌入并写入向量库，RAGFlow 知识库会将切片设为可用。
+
+### 4.1.30.6 `/wunder/admin/knowledge/chunk/delete`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+  - `chunk_index`：切片索引
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `doc`：更新后的文档元数据
+- 说明：仅适用于向量和 RAGFlow 知识库；向量知识库删除切片向量并标记为 `deleted`，RAGFlow 知识库会调用远端切片删除接口。
+
+### 4.1.30.7 `/wunder/admin/knowledge/test`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `base`：知识库名称
+  - `query`：测试问题
+  - `top_k`：召回数量（可选，默认使用知识库配置）
+- 返回（JSON）：
+  - `base`：知识库名称
+  - `query`：测试问题
+  - 向量或 RAGFlow 知识库：
+    - `base_type`：`vector` 或 `ragflow`
+    - `embedding_model`：嵌入模型或 `ragflow` 标识
+    - `top_k`：召回数量
+    - `hits`：召回结果列表
+      - `doc_id`：文档 id
+      - `document`：文档名称
+      - `chunk_index`：切片索引
+      - `start`：切片起点
+      - `end`：切片终点
+      - `content`：切片内容
+      - `score`：相似度分数
+  - 字面知识库：
+    - `text`：模型正式输出
+    - `reasoning`：模型返回的思考过程
+    - `hits`：命中文档列表
+      - `doc_id`：文档编码
+      - `document`：文档名称
+      - `content`：文档内容
+      - `score`：相关度分数（可选）
+      - `section_path`：章节路径
+      - `reason`：命中原因（可选）
+- 说明：字面知识库会调用大模型生成原始输出，并附带命中文档内容；向量和 RAGFlow 知识库保持召回结果。
+
+### 4.1.30.7.1 `/wunder/admin/knowledge/test/stream`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `base`：知识库名称
+  - `query`：测试问题
+  - `top_k`：召回数量（可选，默认使用知识库配置）
+- 返回：`text/event-stream`
+  - `event: request`
+    - 字面知识库：完整 LLM 请求体，包含 `payload`、`base_url`、候选片段数量等调试信息
+    - 向量或 RAGFlow 知识库：当前检索请求摘要，包含 `base_type`、`embedding_model`、`top_k` 等参数
+  - `event: reasoning`
+    - `delta`：模型思考增量，仅字面知识库返回
+  - `event: output`
+    - `delta`：模型正式输出增量，仅字面知识库返回
+  - `event: complete`
+    - 向量或 RAGFlow 知识库：`base`、`query`、`base_type`、`embedding_model`、`top_k`、`hits`
+    - 字面知识库：`base`、`query`、`text`、`reasoning`、`hits`
+  - `event: error`
+    - `message`：错误信息
+- 说明：管理员侧“知识库测试”弹窗对字面知识库使用该接口流式展示完整请求体、思考过程与正式输出，便于定位检索慢或回答异常问题。
+
+### 4.1.30.8 `/wunder/admin/knowledge/reindex`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `base`：知识库名称
+  - `doc_id`：文档 id（可选，留空则重建全部）
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `reindexed`：已重建的 doc_id 列表
+  - `failed`：失败项列表（doc_id/error）
+- 说明：仅适用于向量和 RAGFlow 知识库；向量知识库执行重建嵌入，RAGFlow 知识库触发远端文档重新解析。
+
+### 4.1.31 `/wunder/admin/users`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - `users`：用户统计列表
+    - `user_id`：用户标识
+    - `active_sessions`：活动线程数
+    - `history_sessions`：历史线程数
+    - `total_sessions`：会话总数
+    - `chat_records`：历史对话记录条数
+    - `tool_calls`：工具调用次数
+    - `token_usage`：累计占用的 Token 总量
+
+### 4.1.32 `/wunder/admin/users/{user_id}/sessions`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `active_only`：是否仅返回活动线程（默认 false）
+- 返回（JSON）：
+  - `user_id`：用户标识
+  - `sessions`：会话列表（字段同 `/wunder/admin/monitor` 的 sessions）
+
+### 4.1.33 `/wunder/admin/users/{user_id}`
+
+- 方法：`DELETE`
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `message`：提示信息
+  - `cancelled_sessions`：已终止的活动线程数量
+  - `deleted_sessions`：已清除的会话数量
+  - `deleted_chat_sessions`：已删除的线程目录数（包括监控中不存在的目录）
+  - `deleted_chat_records`：已删除的对话记录数
+  - `deleted_tool_records`：已删除的工具日志数
+  - `workspace_deleted`：工作区是否删除
+  - `legacy_history_deleted`：旧版历史目录是否删除
+
+### 4.1.34 `/wunder/admin/users/throughput/cleanup`
+
+- 方法：`POST`
+- 入参（JSON，可选）：
+  - `prefix`：压测用户前缀，默认 `throughput_user`
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `prefix`：匹配前缀
+  - `users`：清理的用户数量
+  - `cancelled_sessions`：终止的活动线程数量
+  - `deleted_sessions`：清除的会话数量
+  - `deleted_storage`：持久化存储中删除的会话数量
+  - `deleted_chat_records`：删除的对话记录数
+  - `deleted_tool_records`：删除的工具日志数
+  - `workspace_deleted`：删除的工作区数量
+
+### 4.1.35 记忆管理接口（已移除）
+
+- 原 `/wunder/admin/memory/*` 舰桥接口已下线，不再提供管理员侧记忆面板能力。
+- 当前推荐方式：通过结构化记忆碎片系统 + 可选内置工具 `记忆管理`（`memory_manager`）协同维护长期记忆。
+- 作用域：按 `用户 + 智能体` 隔离；记忆只在线程首次建立时注入到系统提示词快照，同一线程后续不再自动改写系统提示词。自动注入内容只包含记忆索引 `memory_id | title`，不包含完整 `content`；如需读取最新或完整记忆，请通过 `memory_manager` 的 `list/search/get` 主动检索。
+- `memory_manager` 建议主动触发时机：当模型置信度不足、信息疑似过期、用户指出“答错/记错”、或用户反馈导致偏好/约束变化时，先执行 `search` 查找候选记忆，再根据 `memory_id` 执行 `get` 查看完整细节，最后再决定是否 `add/update`。
+- `search` 当前仅保留轻量关键词召回，不再使用 embedding/语义 rerank；工具返回收敛为更适合模型消费的精简结构：`list` 默认返回最近 30 条索引，`search` 默认返回 10 条候选索引，`get` 再按 `memory_id` 读取完整正文。
+- 会话发生 context compaction 后，调度器会基于 `用户 + 智能体 + 当前问题` 再次执行 fresh recall，并把记忆块拼接到压缩摘要消息继续执行（不改写线程冻结的 system prompt）；该记忆块仍只注入 `memory_id | title` 索引。记忆块会额外带上“当前可用总条数 / 本次注入条数 / 注入上限”摘要，并在必要时提示模型可继续通过 `memory_manager list/search` 检索剩余记忆，再通过 `get` 读取完整内容；`compaction` 事件会附带 `fresh_memory_injected`、`fresh_memory_count` 与 `fresh_memory_total_count` 字段。
+- 记忆碎片当前用户侧主结构收敛为 `memory_id / title_l0 / content_l2 / tag / supersedes_memory_id / valid_from`；列表与详情接口默认不再对外暴露 `summary_l1 / tags / entities / pinned / invalidated_at` 等旧字段。服务端仍兼容旧入参别名 `category`，但新的前端与模型协议应统一使用 `tag`。
+- `status` 当前主要用于标识 `active / superseded` 等版本关系；蜂巢已移除置顶、作废、已失效等交互入口。
+- `memory_manager` 的 `list/search/get/add/update/remove/clear` 已与结构化 `memory_fragments` 共用同一条主存储链路；模型经工具写入的新记忆会直接出现在用户侧“记忆碎片”卡片页，无需再等待旧摘要表懒迁移。兼容别名 `recall -> search`、`delete -> remove` 会在工具层统一规范化。
+- 用户侧记忆面板支持“记忆复刻”：`POST /wunder/agents/{agent_id}/memories/replicate` 会先清空目标智能体记忆，再复制当前智能体全部记忆到目标智能体；源智能体记忆保持不变。旧路由 `/memories/migrate` 仅作兼容别名保留。
+- `confirmed_by_user` 字段当前仅作为兼容旧数据保留，不再作为用户侧记忆碎片页面的交互入口，也不再参与 `search` 排序和提示词快照构建。
+- 自动记忆提炼能力仍可通过独立设置接口控制，但“记忆碎片”面板已不再展示最近提炼任务、召回说明等附属视图，列表接口也不再捆绑返回这些附属数据。
+- 聊天页提示词预览接口 `/wunder/chat/system-prompt` 与 `/wunder/chat/sessions/{session_id}/system-prompt` 现会额外返回 `memory_preview`、`memory_preview_mode(frozen/pending/none)`、`memory_preview_count`、`memory_preview_total_count`，用于向用户明确展示“当前线程已冻结”或“新线程将注入”的记忆快照；其中 `memory_preview_count` 表示当前提示词里实际注入的记忆条数，`memory_preview_total_count` 表示该记忆块生成时可用的长期记忆总数；新建线程在首条用户消息前应为 `pending`，首条用户消息发送后才转为 `frozen`。
+
+#### `GET /wunder/agents/{agent_id}/memory-settings`
+
+- 返回当前用户在指定智能体上的记忆设置。
+- 响应示例：
+
+```json
+{
+  "data": {
+    "settings": {
+      "auto_extract_enabled": false,
+      "updated_at": 0
+    }
+  }
+}
+```
+
+#### `POST /wunder/agents/{agent_id}/memory-settings`
+
+- 更新当前用户在指定智能体上的记忆设置。
+- 请求体：
+
+```json
+{
+  "auto_extract_enabled": true
+}
+```
+
+- 响应示例：
+
+```json
+{
+  "data": {
+    "settings": {
+      "auto_extract_enabled": true,
+      "updated_at": 1773620812.637
+    }
+  }
+}
+```
+
+- `GET /wunder/agents/{agent_id}/memories` 现在只返回记忆列表、总数与类别集合，不再附带 `data.settings`、`recent_hits`、`recent_jobs`。
+
+### 4.1.43 `/wunder/admin/throughput/start`
+
+- 方法：`POST`，管理员鉴权。
+- JSON 必填：`model_name`（已启用的语言模型配置名）、`concurrency_list`、`input_tokens`、`output_tokens`。`concurrency_list` 是按顺序测试的并发数列表，每项范围 1–1024，重复项会去重；为兼容旧客户端，也接受单个 `concurrency` 并将其规范化为单项列表。不接受用户前缀或其他未知字段。
+- API 接受输入与输出 Token 的正整数配置：输入范围为 1–16777216，输出范围为 1–1048576。管理员吞吐页面提供输入 Token 与输出 Token 两个可自由填写、带常用档位的字段；展示值从 1,000 起使用 `k`，从 100,000 起使用 `m`，历史快照仍保留原始整数 `input_tokens`。
+- 输入为包含消息开销的本地估算；随机中性文本避免固定前缀缓存，API usage 才是实测用量。已配置的上下文窗口用于输入与输出之和校验，不静默截短。
+- 每次测试固定一个模型、输入长度和输出长度，按 `concurrency_list` 顺序逐项发起并发请求；结果聚合每个并发档的输入、输出与推理 Token，`samples` 保存各档的四项速度指标。`ttft_ms` 是并发请求首字延迟的算术平均，`max_ttft_ms` 是最慢请求的首字延迟；`decode_tps` / `prefill_tps` 是并发批次整体速度，`avg_decode_tps` / `avg_prefill_tps` 在舰桥分别显示为“单生成速度”和“单预填充速度”。页面速度从 1,000 起使用 `k tok/s`，从 100,000 起使用 `m tok/s`。不创建用户、任务线程、会话、工具调用或线程日志，不写入长期记忆。
+- 支持 `virtual_replay` 模型进行合成测量：使用模型 `simulation_speed` 的预处理和生成速度，不读取回放日志。先输出思考增量，再输出正文；思考占目标输出的 1/4，计入输出总数，`reasoning_tokens` 单列，不额外增加预算。结果带 `simulated: true` 与当次 `simulation_speed`，曲线按模型、速度档位及输出长度分组。普通虚拟调用共用速度配置、取消与超时。
+- 输出使用对应协议的输出上限；明确标记为 `vllm`、`vllm_omni`、`sglang` 且使用 Chat Completions 的引擎额外传 `min_tokens` 和 `ignore_eos`。其他 API 不能保证不提前停止，使用连续生成指令并核验实际用量；不重复请求凑数，不将目标数冒充用量。
+- 不自动重试，不降级为非流式。请求超时取模型配置，默认 1800 秒，限制在 1–3600 秒。
+- 返回：`ThroughputSnapshot`；参数错误 400，已有运行中或保存中的测试 409。快照的 `config` 包含 `concurrency_list`，`samples` 按并发数记录历史曲线点。
+
+### 4.1.44 `/wunder/admin/throughput/stop`
+
+- 方法：`POST`，管理员鉴权。
+- 返回：`ThroughputSnapshot`，状态先为 `stopping`，取消当前网络请求后为 `stopped`；不能保证上游供应商立即停止计算或计费。
+
+### 4.1.45 `/wunder/admin/throughput/status`
+
+- 方法：`GET`，管理员鉴权。
+- 返回：`schema_version: 2`、`active`（当前或最近任务快照，可为 null）、`history`（从旧到新，最近 50 次结果，包含失败和停止的任务）。
+- 舰桥默认通过快照 WebSocket 同步，HTTP 用于初始补水及断线兜底。
+
+### 4.1.46 `/wunder/admin/throughput/report`
+
+- 方法：`GET`，管理员鉴权。
+- Query：可选 `run_id`，缺省返回当前或最近记录。仅查找已知记录 ID，不将输入拼接为文件路径；不存在或已淘汰返回 404。
+- 返回：`ThroughputSnapshot`；历史曲线从每份摘要的 `samples` 绘制，以并发数为横轴。纵轴不显示绝对速度，而是以同一测试中并发 1 的指标为 0%，展示后续并发档相对基线的百分比变化；悬停时同时显示实测 tok/s。
+- 新摘要写入 `config/data/throughput/scenarios-v2.json`，最多 50 条，临时文件替换保存。仅记录配置、时间、指标和脱敏错误，不保存注入内容、模型回复、API 密钥或地址。旧版并发报告不混入新口径，不自动删除既有业务数据。
+
+#### 实时快照
+
+- `POST /wunder/admin/throughput/ticket`：管理员鉴权，返回 `ticket` 和 `expires_in_s: 30`。票据单次消费，最多保留 64 张。
+- `GET /wunder/throughput/ws`：WebSocket 升级；`Sec-WebSocket-Protocol` 携带 `wunder-throughput, ticket.<ticket>`，服务端选中 `wunder-throughput`。不把长期密钥或票据放入 URL。票据失效返回 401。
+- 每 500 ms 下发 `{event: "snapshot", sequence, data: <status response>}`，`sequence` 在连接内递增。客户端按序幂等替换，重连获取新票据和完整快照，无需逐 token replay。
+- 每连接最长 15 分钟，客户端自动重连；发送超时 5 秒。切出面板关闭连接、定时器与在途补水。
+
+#### ThroughputSnapshot（v2）
+
+- `id`、`config`（模型、并发列表、输入 Token、输出 Token）、`samples`（每个并发档的状态、耗时和指标）、`started_at`、`finished_at`、`elapsed_s`。
+- `simulated`：是否为内置虚拟模型产生的合成测量；旧摘要缺省为 false。
+- `simulation_speed`：内置虚拟模型当次 `fast/medium/slow` 档位；真实 API 与旧摘要省略。旧模拟摘要归入 legacy 曲线，不按新默认速度追认。
+- `status`：`running/stopping/finished/incomplete/error/stopped`；仅 API 用量精确等于目标时为 `finished`，缺失用量或长度不符为 `incomplete`。
+- `length_control`：`fixed`（已提交定长参数）或 `best_effort`（上限与提示词）。是否实际达标始终单独校验。
+- `metrics.input_tokens/output_tokens/reasoning_tokens`：API 实测；输出包含推理 Token，推理子项单列。未知值为 null。
+- `metrics.estimated_output_tokens`：按累计 UTF-8 字节 / 4 向上取整，仅作实时估算，不用于确认目标或替代实测曲线。
+- `metrics.ttft_ms`：每个请求从发出到首个非空文本/推理片段的平均值；不以角色或 usage 事件作为首字。
+- `metrics.max_ttft_ms`：同一并发批次中最慢请求的首字延迟，用于整体预填充速度的分母。
+- `metrics.decode_tps`：并发批次实际生成总量 / 批次生成墙钟区间；`avg_decode_tps` 为每请求生成速度算术平均。缺用量或无生成间隔为 null。
+- `metrics.prefill_tps`：并发批次实际输入总量 / 最慢首字延迟；`avg_prefill_tps` 为每请求输入 / 首字耗时的算术平均。两者均含网络等待，不等同引擎纯预填充速度。
+- `metrics.target_reached`：true / false / null（无法确认）；`finish_reason` 为安全枚举。
+- `error`：脱敏失败说明；`persistence_error`：摘要保存失败，内存结果仍可导出。
+
+### 4.1.47 `/wunder/admin/performance/sample`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `concurrency`：并发数（>0 且 <= `server.max_active_sessions`）
+  - `command`：执行命令内容（可选，默认 `echo wunder_perf`）
+- 返回（JSON）：
+  - `concurrency`：并发数
+  - `metrics`：指标数组
+    - `key`：指标标识（`prompt_build`/`file_ops`/`command_exec`/`tool_access`/`log_write`）
+    - `avg_ms`：平均耗时（毫秒，可能为 null）
+    - `ok`：是否全部成功
+    - `error`：错误信息（可选）
+- 说明：
+  - `prompt_build`：系统提示词构建耗时。
+  - `file_ops`：列出文件/写入/读取/搜索/应用补丁组合耗时。
+  - `command_exec`：内置工具“执行命令”的耗时。
+  - `tool_access`：用户工具绑定与权限解析的耗时。
+  - `log_write`：写入工具日志耗时。
+  - 每个并发点会执行两轮采样，返回两轮平均耗时。
+  - 用于不同并发下的性能采样，不涉及模型调用。
+
+### 4.1.48 `/wunder/admin/wunderbench/*`
+
+- 旧 `/wunder/admin/evaluation/*` 能力评估接口已移除。
+- 当前统一使用 WunderBench 模型评测接口，旧 `/wunder/admin/benchmark/*` 作为兼容别名保留；旧 `start` 入口在未传筛选条件时仍运行全量题库。
+- WunderBench 复用 Wunder 真实智能体执行链路，默认运行全部可用任务；也可通过 `suite_ids` 或 `task_ids` 手动筛选用例。运行过程会准备工作区、执行工具、记录产物，并输出自动评分、LLM 裁判评分与 scorecard。
+- 题库是版本化配置资源而非运行结果：运行快照会固化 `question_bank` 和 `task_specs`，确保题库升级、移除后仍能复盘历史结果。
+
+### WunderBench API
+
+#### `GET /wunder/admin/wunderbench/profiles`
+- 方法：`GET`
+- 入参（Query，可选）：`question_bank_id`、`question_bank_version`；未传或传 `builtin` 时读取内置题库。
+- 返回（JSON）：`{ "benchmark": "wunderbench", "question_bank": {...}, "profiles": [...] }`
+- 每个 profile 包含 `id`、`name`、`description`、`task_count`、`recommended_runs`、`default`。当前仅返回 `full`，表示运行全部可用任务；历史 `quick`、`core`、`standard` 等入参会兼容归一为 `full`。
+
+#### `GET /wunder/admin/wunderbench/preset_agents`
+- 方法：`GET`
+- 返回（JSON）：`{ "benchmark": "wunderbench", "preset_agents": [...] }`。每项包含 `preset_id`、`revision`、`name`、`description`、`model_name`、`preview_skill`、`sandbox_container_id`、`tool_count`、`status`、`is_default_agent`。
+- 仅 `active` 的预设智能体可以启动评测；默认智能体使用稳定标识 `default_agent`。`/wunder/admin/benchmark/preset_agents` 是兼容别名。
+
+#### `GET /wunder/admin/wunderbench/banks`
+- 方法：`GET`
+- 返回（JSON）：`{ "benchmark": "wunderbench", "banks": [...] }`。每个题库包含 `id`、`version`、`name`、`description`、`subject`、`languages`、`task_count`、`task_ids`、`suites`、`checksum`、`has_executable_grading` 与 `built_in`。
+
+#### `POST /wunder/admin/wunderbench/banks/import`
+- 方法：`POST`，`multipart/form-data`，最大 32 MiB。
+- 字段：`file`（必填，ZIP 题库包）、`allow_executable_grading`（可选布尔值；题库包含 `automated` 评分脚本时必须显式为 `true`）。
+- 题库包根目录必须有 `wunderbench.json`：`protocol` 固定为 `wunderbench.question_bank`，`schema_version` 当前为 `1`，并声明稳定的 `id`、`version`、`name`、`tasks_path`、`assets_path`。`tasks_path` 内任务继续使用 WunderBench Markdown 规范。
+- 同一 `id + version` 不允许覆盖导入；目录、资产和 workspace 路径均限制在包或 attempt 工作区内，导入会拒绝路径穿越、重复 task id、缺失资产、超大或超量 ZIP 条目。
+
+#### `GET /wunder/admin/wunderbench/suites`
+- 方法：`GET`
+- 返回（JSON）：`{ "benchmark": "wunderbench", "profiles": [...], "suites": [...] }`
+- 每个 suite 项包含 `suite_id`、`task_count`、`categories`、`grading_types`、`recommended_runs`，用于舰桥快速构建套件筛选与推荐轮次。
+
+#### `GET /wunder/admin/wunderbench/tasks`
+- 方法：`GET`
+- 入参（Query，可选）：`question_bank_id`、`question_bank_version`、`suite`、`category`、`grading_type`。
+- 返回（JSON）：`{ "benchmark": "wunderbench", "question_bank": {...}, "tasks": [...] }`。每个任务项包含 `id`、`name`、`suite`、`category`、`grading_type`、`timeout_seconds`、`runs_recommended`、`difficulty`、`required_tools`、`tags`、`languages`、`criteria_count`、`has_automated_checks`、`has_judge_rubric`、`coverage`、`prompt`、`expected_behavior`。
+
+#### `POST /wunder/admin/wunderbench/start`
+- 方法：`POST`
+- 入参（JSON）：`user_id`（必填）、`question_bank_id` / `question_bank_version`（可选；指定导入题库时两者必须同时提供）、`profile`（可选，默认 `full`，旧值兼容归一为 `full`）、`preset_agent_id`（可选；兼容别名 `presetAgentId` 与 `agent_preset_id`）、`model_name`、`judge_model_name`、`suite_ids`、`task_ids`、`runs_per_task`、`capture_artifacts`、`capture_transcript`、`tool_names`、`config_overrides`。
+- 说明：未传 `suite_ids/task_ids` 时运行全量题库；传入后进入手动筛选模式。
+- `preset_agent_id` 指向默认智能体或配置预设时，运行会使用其系统提示词、工具集合、技能预览和沙盒容器，并固化完整预设快照。显式 `model_name` 优先于预设模型；非空 `tool_names` 优先于预设工具。未传预设时保持仅模型评测行为。
+- 返回（JSON）：`run_id`、`status`、`benchmark`、`question_bank`、`profile`、`preset_agent`、`task_count`、`attempt_count`、`suite_ids`。启动后服务端会异步执行 WunderBench。
+
+#### `GET /wunder/admin/wunderbench/runs`
+- 方法：`GET`
+- 入参（Query，可选）：`user_id`、`status`、`model_name`、`since_time`、`until_time`、`limit`。
+- 返回（JSON）：`{ "runs": [...] }`，每项为 WunderBench 运行快照，包含运行状态、总分、profile、suite 列表、效率摘要、开始/结束时间等信息。
+
+#### `GET /wunder/admin/wunderbench/runs/{run_id}`
+- 方法：`GET`
+- 返回（JSON）：`{ "run": ..., "tasks": [...], "attempts": [...] }`。其中 `run.summary.scorecard` 包含 `readiness`、`overall_score`、`reliability_score`、`tool_success_score`、`stability_score`、`efficiency_score`、`weakest_suites`、`top_failures`。
+
+#### `GET /wunder/admin/wunderbench/runs/{run_id}/export`
+- 方法：`GET`
+- 返回：`application/json` 附件下载，文件名形如 `wunderbench-{run_id}-export.json`。
+- 内容：导出单次评测的完整复盘包，包含 `run`、`question_bank`、`task_aggregates`、`attempts`、`task_specs`、`attempt_logs` 与 `diagnostics`。`task_specs` 优先使用启动时固化快照，而不是读取当前题库。
+- `task_aggregates` 仅保留聚合分数和 `attempt_refs` 轻量引用，完整 attempt payload 只在顶层 `attempts` 出现一次，避免导出文件重复膨胀。
+- `attempt_logs` 仅保留 `attempt_ref`、主执行线程与裁判线程 monitor 记录，不再重复嵌入完整 attempt。
+- `attempt_logs` 会按 `bench-{run_id}-{task_id}-{attempt_no}` 和 `bench-{run_id}-{task_id}-{attempt_no}-judge` 收集主执行与裁判线程的 monitor 记录，包含已持久化的模型请求、模型输出、工具调用、工具结果、工作区更新、token/速度统计等事件。
+- 新启动的 WunderBench 会使用管理员调试日志模式记录评测线程，便于导出后进行模型行为与系统链路复盘；历史运行若创建于该能力上线前，`llm_request` 可能只包含摘要。
+
+#### `POST /wunder/admin/wunderbench/runs/{run_id}/cancel`
+- 方法：`POST`
+- 返回（JSON）：`{ "ok": true, "run_id": "...", "message": "cancel requested" }`。仅对仍在内存中的运行实例生效。
+
+#### `DELETE /wunder/admin/wunderbench/runs/{run_id}`
+- 方法：`DELETE`
+- 返回（JSON）：`{ "ok": true, "run_id": "...", "deleted": N }`。会同时删除该 run 关联的 attempt 与 task aggregate 持久化结果。
+
+#### `GET /wunder/admin/wunderbench/runs/{run_id}/stream`
+- 方法：`GET`（SSE）
+- 返回：SSE 事件流；事件名包括 `benchmark_started`、`task_attempt_started`、`task_attempt_finished`、`task_aggregated`、`benchmark_progress`、`benchmark_log`、`benchmark_finished`。
+- 说明：仅能订阅仍在运行中的 WunderBench；运行结束后需要改用明细接口查询最终结果。
+
+## 2026-03-22 增补：weixin（微信 iLink）渠道接入（P0）
+
+- 新增渠道 provider：`weixin`（独立于 `wechat` / `wechat_mp`）。
+- 运行形态：长轮询 worker（`ilink/bot/getupdates`），不是平台 webhook 回调模式。
+- 出站发送：`ilink/bot/sendmessage`，回复必须携带 `context_token`。
+- 配置入口：`/wunder/channels/accounts`，账号配置键为 `weixin.*`（`api_base`、`bot_token`、`ilink_bot_id` 等）。
+- 舰桥运行态：`/wunder/admin/channels/accounts` 增加 `weixin_long_connection` 状态字段。
+
+## 2026-03-22 增补：weixin（微信 iLink）渠道接入（P1）
+
+- 媒体出站链路（已接入）：`ilink/bot/getuploadurl` + CDN `/upload`（AES-128-ECB + PKCS7），再通过 `ilink/bot/sendmessage` 发送 `image/file/video/voice` item。
+- 媒体入站链路（已接入）：`getupdates.msgs[*].item_list` 中的媒体项会下载 CDN `/download`，按 `media.aes_key`（兼容 base64(raw16) 与 base64(hex32)）解密后落地到工作区，并回写附件 URL。
+- `weixin` 新增可选配置键：
+  - `weixin.cdn_base`：CDN 基地址（默认 `https://novac2c.cdn.weixin.qq.com/c2c`）
+  - `weixin.bot_type`：二维码登录 bot_type（默认 `3`）
+- 新增二维码登录接口：
+  - `POST /wunder/channels/weixin/qr/start`
+    - 入参：`account_id?`、`api_base?`、`bot_type?`、`force?`
+    - 返回：`session_key`、`qrcode`、`qrcode_url`、`qrcode_open_url`、`api_base`、`bot_type`
+  - `POST /wunder/channels/weixin/qr/wait`
+    - 入参：`session_key`、`api_base?`、`timeout_ms?`
+    - 返回：`connected`、`status`，若确认登录则附带 `bot_token`、`ilink_bot_id`、`ilink_user_id`、`api_base`
+  - `GET /wunder/channels/weixin/qr/render`
+    - 入参（Query）：`text`（必填），`api_base?`
+    - 返回：`image/png`；用于前端兜底渲染二维码，避免外部 H5 链接直接作为 `<img>` 导致破图
+
+## 2026-03-24 增补：聊天消息反馈（点赞/踩）
+
+### `POST /wunder/chat/sessions/{session_id}/messages/{history_id}/feedback`
+
+- 方法：`POST`
+- 鉴权：用户侧 Bearer Token
+- 入参（JSON）：
+  - `vote`：`up` / `down`（支持 `like/dislike/thumb_up/thumb_down` 等兼容写法）
+- 约束：
+  - 仅允许对 `assistant` 消息提交反馈。
+  - 同一条消息只允许提交一次；提交后锁定，不可修改。
+- 返回（JSON）：
+  - `data.session_id`：会话 ID
+  - `data.history_id`：消息 history_id
+  - `data.feedback`：
+    - `vote`：`up` / `down`
+    - `created_at`：反馈时间（RFC3339）
+    - `locked`：固定为 `true`
+- 错误码：
+  - `400`：参数非法或目标不是 assistant 消息
+  - `404`：会话或消息不存在
+  - `409`：该消息已存在反馈（已锁定）
+
+### `GET /wunder/chat/sessions/{session_id}/messages/{history_id}`
+
+- 方法：`GET`
+- 鉴权：用户侧 Bearer Token；仅允许读取当前用户所属会话中的真实历史消息。
+- 用途：聊天页在历史摘要、分段正文或工具详情需要展开时，按稳定 `history_id` 取回完整可见消息，避免把所有长正文和工具结果放进首屏历史页。
+- 返回（JSON）：
+  - `data.id`：会话 ID。
+  - `data.message`：与 `data.transcript[]` 相同的单条完整消息结构，包含稳定 `message_id`、`history_id`、正文、附件、终态和反馈字段。
+- 错误码：
+  - `400`：会话 ID 或 history_id 非法。
+  - `404`：会话不存在、无权访问或消息不存在。
+
+### 会话消息返回体补充（用户侧聊天接口）
+
+`GET /wunder/chat/sessions` 的 `data.items[]` 返回 `consumed_tokens`、`tool_calls`、`model_request_count` 三个会话累计摘要字段，供线程列表直接展示；`quota_used` 暂时保留为 `model_request_count` 的兼容别名。接口不会把消息正文或监控事件明细嵌入列表响应。`model_request_count` 表示该线程实际分派的模型请求数（每次获准的供应商请求计 1，包含重试和压缩摘要）；普通用户通常同时扣除 1 个账户额度，管理员请求只计入线程请求数而不扣账户余额。它与 Token 消耗和用户账户的 `quota_used_total` 分开。无可靠历史基线时为 `null` 或缺失，客户端显示未知而非伪造为 0。
+
+新的 `model_request_usage` 流式事件是模型请求和账户额度的权威实时投影，字段为 `request_count`、`turn_request_count`、`session_request_count`、`billable`、`account_credits_consumed`，普通用户还会携带 `account { balance, granted_total, used_total, daily_grant, last_grant_date }` 快照。`session_request_count` 与列表的 `model_request_count` 使用相同的绝对累计口径；消费者取累计最大值并同步列表缓存，不能将累计值再次相加。管理员事件明确携带 `billable=false` 与 `account_credits_consumed=0`，不会包含账户快照；虚拟回放和被额度限制拒绝的请求不增加该累计值。旧 `quota_usage` 仅用于历史重放兼容，新的执行链不再生产它。摘要随现有监控 JSON 在 PostgreSQL/SQLite 持久化，不依赖前端历史消息或已裁剪事件数量。
+
+列表可带 `known_session_ids`（逗号分隔，最多 100 个 ID，每个不超过 128 字节），响应 `data.unavailable_session_ids[]` 返回其中不属于当前用户活动会话目录的 ID（已删除、归档或不属于该用户）。核对独立于本次分页和智能体筛选；不能将部分分页未返回的条目直接视为删除。客户端轮换核对已缓存 ID，收到明确失效结果后清理列表、详情和关联缓存，并拒绝迟到响应重新加入该条目。若 `offset=0` 且返回条目数等于 `data.total`，则可按完整目录清理请求开始前已知但缺失的同查询范围条目；不得影响其他查询范围或请求期间新建的线程。详情失效与列表核对共用客户端失效标记。
+
+`DELETE /wunder/admin/monitor/{session_id}` 从持久化会话目录确定归属，监控记录缺失时仍清理用户会话、关联日志及定时任务；目录删除失败返回错误，不再静默报告成功。
+
+- `GET /wunder/chat/sessions/{session_id}`
+- `GET /wunder/chat/sessions/{session_id}/history`
+- `DELETE /wunder/chat/sessions/{session_id}`：仅删除当前用户可见的线程目录、上下文派生状态、定时任务与运行时投影；聊天正文、工具日志、产物日志、流事件和监控历史不会被删除。线程日志由管理员通过 `/wunder/admin/monitor/logs/cleanup` 或管理员线程删除接口显式维护。
+- `GET /wunder/chat/sessions/{session_id}` 新增 `data.agent_name`（智能体名称，默认智能体同样返回名称）。
+- `GET /wunder/chat/sessions/{session_id}` 新增受权限保护的 `data.log_overview` 聚合投影，包含线程日志概览所需的 `session_id/agent_id/status/elapsed_s/user_rounds/tool_calls/model_request_count/consumed_tokens/event_total/ttft_ms/prefill_speed_tps/prefill_speed_lower_bound/decode_speed_tps`；不包含追踪 ID、用户 ID、管理员标记或原始事件。
+- `GET /wunder/chat/sessions/{session_id}` 新增 `data.context_occupancy_tokens`，作为 `data.context_tokens` 的显式语义别名；新接入优先使用该字段表达当前线程上下文占用。
+- `GET /wunder/chat/sessions/{session_id}` 与 `GET /wunder/chat/sessions/{session_id}/history` 的历史消息视图统一返回 `data.transcript[]`，不再返回 `data.messages[]`。`transcript` 是刷新页面的唯一权威消息序列，前端必须按数组顺序与 `turn_index` 渲染，不得再使用 `stream_round`、正文或时间戳推断用户/模型轮次身份。
+- `GET /wunder/chat/sessions/{session_id}/events` 未传 `limit` 时会从持久化流事件库按递增事件序号完整读取历史；用户侧线程日志窗口使用 `workflow_only=true&offset={n}&page_size={m}` 分页，`page_size` 最大 100，响应通过 `event_offset/event_limit/event_total/events_has_more` 指示当前页范围、总数和下一页。需要渐进补水时可使用 `workflow_only=true&from_user_round={n}&to_user_round={n}`，导出或管理员审计应读取完整事件范围。
+- 两个历史接口均接受可选 `summary=true`：服务端保留消息身份、轮次、状态和附件元数据，但会截断超长 `content/reasoning`，并移除 `workflowItems/subagents` 详情；被截断字段分别带 `content_truncated/content_length`、`reasoning_truncated/reasoning_length` 与 `workflowItems_truncated/subagents_truncated`。用户展开时应调用单条消息详情接口补全，不得重新拉取整页历史。
+- `data.transcript[]` 单项常用字段：
+  - `role`：`user` / `assistant`
+  - `content`：可见正文
+  - `reasoning`：助手思考内容（仅存在时返回）
+  - `created_at`：本地时区 RFC3339 时间
+  - `message_id`：稳定消息身份，历史消息为 `history:{history_id}`，运行中临时投影也会生成稳定临时 id
+  - `client_message_id`：客户端提交消息时提供的可选身份；队列投影中的用户消息会优先使用该值作为 `message_id`，便于刷新/重连后与本地乐观气泡合并。
+  - `history_id`：落库历史 id（仅真实历史消息存在）
+  - `user_turn_id`：用户轮次身份
+  - `model_turn_id`：模型轮次身份（仅 `assistant`）
+  - `turn_index`：本次返回数组内的权威顺序，从 1 递增
+  - `user_turn_index` / `model_turn_index`：后端按历史顺序归一化出的用户/模型轮次序号
+  - `status`：`final` / `streaming` / `queued` / `cancelled` / `failed`
+  - `cancelled` / `failed`：终态布尔标记
+  - `stop_reason`：停止原因，例如用户终止时为 `user_stop`
+  - `attachments`、`questionPanel`、`hiddenInternal`、`feedback`：附件、询问面板、内部隐藏标记与消息反馈
+- 当会话仅处于队列等待阶段、最新用户消息尚未落入历史时，`GET /wunder/chat/sessions/{session_id}` 会基于活跃 `agent_tasks` 追加一组临时消息视图：
+  - 最新用户消息会按请求体中的 `question/attachments/client_message_id` 投影到 `data.transcript[]`
+  - 对应助手占位会带 `stream_incomplete=true`
+  - 对应助手占位会附带队列 workflow 事件（如 `queue_enter`，必要时包含 `queue_start`）；请求带 `client_message_id` 时，workflow event 的 `data.client_message_id` 与用户投影保持一致，便于刷新后立即恢复“排队中/开始处理”的可见状态
+  - 该投影仅用于刷新/重连后的实时态恢复，不写回历史；一旦真实历史落库，会以真实消息为准
+- 当消息为 `assistant` 且已反馈时，`transcript[].feedback` 结构如下：
+  - `vote`：`up` / `down`
+  - `created_at`：反馈时间（RFC3339）
+  - `locked`：`true`
+- 当消息为 `assistant` 且由该条回复触发过子智能体派发时，`transcript[].subagents[]` 会返回当前已知的子智能体运行项；典型字段包括 `session_id/run_id/dispatch_id/title/label/status/summary/terminal/failed/can_terminate/updated_at/parent_user_round/parent_model_round/agent_state/detail`。
+- 当消息为系统内部补发的隐藏观察消息时，`transcript[].hiddenInternal=true`；该消息仅用于保持父子轮次与自动唤醒链路一致，前端默认应跳过渲染正文。
+
+### 监控接口补充（管理员侧）
+
+- `GET /wunder/admin/monitor` 的 `sessions[]` 新增：
+  - `feedback_up_count`：点赞数
+  - `feedback_down_count`：点踩数
+  - `feedback_total_count`：反馈总数
+  - `feedback_status`：`up` / `down` / `mixed` / `none`
+- `GET /wunder/admin/monitor` 与 `GET /wunder/admin/monitor/{session_id}` 现额外提供：
+  - `context_occupancy_tokens`：`context_tokens` 的显式语义别名
+  - `context_occupancy_tokens_peak`：`context_tokens_peak` 的显式语义别名
+- `GET /wunder/admin/monitor/{session_id}` 新增：
+  - `feedback[]`：线程反馈列表
+    - `history_id`：消息 history_id
+    - `vote`：`up` / `down`
+    - `user_id`：提交反馈的用户 ID
+    - `created_at`：反馈时间（RFC3339）
+    - `created_time`：UNIX 时间戳（秒）
+
+## 2026-03-26 增补：beeroom 实时链路重构与观测
+
+### `GET /wunder/beeroom/realtime/metrics`
+
+- 方法：`GET`
+- 鉴权：与 beeroom WebSocket 保持一致（用户鉴权，支持 query token）
+- 返回（JSON）：
+  - `metrics.publish_total`：实时事件发布总数
+  - `metrics.replay_batch_total`：回放批次数
+  - `metrics.replay_event_total`：回放事件总量
+  - `metrics.replay_failure_total`：回放失败次数
+  - `metrics.lag_recovery_total`：lag 恢复次数
+  - `metrics.push_sample_total`：推送延迟采样数
+  - `metrics.push_latency_avg_ms`：推送延迟均值（ms）
+  - `metrics.push_latency_max_ms`：推送延迟最大值（ms）
+  - `timestamp`：服务端时间（RFC3339）
+
+### beeroom WebSocket watch 语义更新
+
+- `watch` 进入后不再只依赖内存广播，先按 `after_event_id` 回放持久化事件，再进入 live push。
+- 当连接出现 `Lagged` 或续传缺口时，服务端优先做 cursor replay 补齐，而不是直接要求前端全量刷新。
+- `sync_required` 仍保留为兜底事件，但主恢复路径已切换为“回放优先”。
+- 前端 beeroom 轮询降级为健康检查（默认 30s），不再作为主实时来源。
+- beeroom 聊天实时入口只保留 `/wunder/beeroom/ws`；旧 beeroom 聊天 SSE 入口已移除。
+
+### 说明
+
+- 本次改造针对 beeroom/chat/channel 的消息实时链路；“模型配置变更（用户改模型、管理员改默认模型）”的全局推送链路尚未迁移到统一实时总线，仍按现有页面刷新/重新拉取机制生效。
+
+## 2026-04-04 增补：聊天附件预处理
+
+### `POST /wunder/chat/attachments/convert`
+
+- 方法：`POST`
+- 鉴权：与聊天域保持一致（用户侧 Bearer Token）
+- Body：`multipart/form-data`
+  - `file`：必填，可上传一个或多个文档附件；支持范围与 `/wunder/doc2md/convert` 一致
+- 返回：`JSON`
+  - 单文件时：`data.name/content/converter/warnings`
+  - 多文件时：`data.items[]`
+- 说明：
+  - 这是聊天域的文档预处理入口，供前端先把文档转成文本型附件，再提交到 `POST /wunder/chat/sessions/{session_id}/messages`
+  - 图片一般直接走 `attachments[]`
+  - 音频 / 视频 / GIF 走 `/wunder/chat/attachments/media/process`
+
+### `POST /wunder/chat/attachments/media/process`
+
+- 方法：`POST`
+- 鉴权：用户侧 Bearer Token
+  - Body：`multipart/form-data`
+  - 首次处理：
+    - `file`：必填，图片 / GIF / 音频 / 视频文件
+    - `frame_rate`：可选，视频抽帧频率（FPS），默认 `1`
+    - `frame_step`：可选，GIF 间隔取帧参数；`0` 表示仅首帧，`2` 表示取第 `1/3/5/...` 帧
+  - 重新抽帧：
+    - `source_public_path`：必填，之前返回的源媒体工作区公共路径
+    - `frame_rate`：可选，视频抽帧频率（FPS）
+    - `frame_step`：可选，GIF 间隔取帧参数
+- 支持类型：
+  - 图片：`png/jpg/jpeg/webp/bmp/tif/tiff`
+  - GIF：`gif`
+  - 音频：`mp3/wav/ogg/opus/aac/flac/m4a/webm(audio/*)`
+  - 视频：`mp4/mov/mkv/avi/webm(video/*)/mpeg/mpg/m4v`
+- 返回：`JSON`
+  - `data.kind`：`image` / `gif` / `audio` / `video`
+  - `data.name`：源文件名
+  - `data.source_public_path`：源媒体落盘后的 `/workspaces/...` 公共路径，可用于后续重新抽帧
+  - `data.duration_ms`：媒体时长（若可探测）
+  - `data.requested_frame_rate`：请求的 FPS（仅视频）
+  - `data.applied_frame_rate`：实际采用的 FPS（仅视频，超长视频会被自动下调）
+  - `data.requested_frame_step`：请求的 GIF 间隔取帧参数（仅 GIF）
+  - `data.applied_frame_step`：实际采用的 GIF 间隔取帧参数（仅 GIF）
+  - `data.total_frame_count`：源 GIF / 视频的总帧数（若可探测）
+  - `data.frame_count`：返回的图片帧数量
+  - `data.has_audio`：视频是否成功抽取到音轨
+  - `data.warnings[]`：降级说明，例如 ASR 未配置、视频无音轨、抽帧被限流
+  - `data.attachments[]`：可直接作为聊天附件提交的派生结果
+    - 图片帧：`name/content_type=image/jpeg|image/png/public_path`
+    - 音频结果：`name/content(转写文本或占位文本)/content_type/public_path`
+- 说明：
+  - 视频不会直接作为模型输入，而是先拆成图片序列和音轨。
+  - GIF 不会再原样送模型：默认只取首帧；显式提供 `frame_step` 时按间隔抽帧并转成图片序列。
+  - 默认每秒抽 `1` 帧，并带总帧数上限保护；超长视频会自动降低实际 FPS。
+  - 音频/视频转写复用 `channels.media.asr` 配置；若未启用 ASR，接口仍会成功返回，但会在 `warnings` 中说明，并给音频附件写入占位文本。
+  - 运行该接口需要服务端可用的 `ffmpeg/ffprobe`；也可通过环境变量 `WUNDER_FFMPEG_BIN`、`WUNDER_FFPROBE_BIN` 指定路径。
+
+### `POST /wunder/chat/tts`
+
+- 方法：`POST`
+- 鉴权：用户侧 Bearer Token
+- 请求体（JSON）：
+  - `text`：必填，需要合成语音的文本，当前最大 8000 字符
+  - `model_name` / `modelName`：可选，指定 `model_type=tts` 的模型配置名称；未指定时优先使用 `llm.default_tts`，再回退到第一个 TTS 模型
+  - `voice`：可选，音色/说话人名称；不填时优先使用模型配置 `tts_voice`，再交由上游 TTS 服务使用默认值
+  - `instructions`：可选，语音风格提示；不填时使用模型配置 `tts_instructions`
+  - `response_format` / `responseFormat`：可选，`wav|pcm|flac|mp3|aac|opus`；不填时使用模型配置 `tts_response_format`，再默认 `wav`
+  - `speed`：可选，语速；不填时使用模型配置 `tts_speed`，服务端会限制在 `0.25..4.0`
+- 返回：音频二进制流，`Content-Type` 优先使用上游响应，缺省按请求格式推断。
+- 说明：服务端代理到所选模型配置的 OpenAI 兼容 `/v1/audio/speech`，避免在浏览器暴露模型 API Key。
+
+### 聊天消息提交补充
+
+- `POST /wunder/chat/sessions/{session_id}/messages`
+- 请求体可选字段 `debug_payload`（兼容 `debugPayload`）已废弃：仅为兼容旧客户端保留，服务端解析后忽略，请求与日志统一为精简形态，不影响正常对话行为。
+- 请求体支持可选字段 `reasoning_effort`（兼容 `reasoningEffort`），取值为 `default`、`none`、`minimal`、`low`、`medium`、`high` 或 `xhigh`。除 `default` 外，该值仅覆盖当前请求的模型思考等级，不修改管理员保存的模型配置；非法值会被忽略。WebSocket `/wunder/chat/ws` 的 `start` payload 同样支持该字段。
+- 请求体支持可选字段 `client_message_id`（兼容 `clientMessageId`），语义同 `/wunder` 请求；`/wunder/chat/ws` 与 `/wunder/ws` 的 `start` payload 也支持该字段。服务端会在本轮对象型流事件和队列事件中回带该值，供实时投影按精确键合并用户消息、排队占位和后续模型/工具输出。
+- 现支持“仅附件、无正文”的提交方式：
+  - 只要 `attachments[]` 中存在非空 `content` 或 `public_path`，即可不传文本正文。
+  - 这同样适用于图片、文档、音频转写结果以及视频拆帧结果。
+
+### 手动上下文压缩
+
+- `POST /wunder/chat/sessions/{session_id}/compaction`
+- 鉴权：与聊天域保持一致（用户侧 Bearer Token）
+- 请求体：
+  - `model_name?`：可选，指定用于压缩摘要的模型。
+  - `debug_payload?`：已废弃，兼容 `debugPayload`，服务端解析后忽略；压缩摘要阶段的模型请求事件统一为精简摘要形态。
+- 行为：
+  - 接口命中后立即返回 accepted，不再阻塞等待压缩完成。
+- 后端会将这次手动压缩登记为一个真实的独立运行轮次，并持续写入 `thread_status`、`progress`、`compaction`、`context_usage`、`turn_terminal` 等事件。
+- 压缩摘要消息的 `meta` 现在会额外持久化 `compaction_id` 与 `replacement_history`；后续普通请求与会话回放都会优先基于这份已提交的 `replacement_history`，而不是再次临时重建一套近似上下文。
+  - 刷新页面后，前端应通过会话事件与 runtime 快照恢复“压缩中/已完成/失败”状态，而不是依赖本地临时气泡。
+- 摘要阶段的模型请求会按 `system? + source_messages + user: CONTEXT CHECKPOINT COMPACTION` 组装，压缩指令始终是最后一条消息，避免尾部工具 observation 覆盖摘要任务。
+- 运行中压缩完成后的继续执行请求会按 `frozen system + retained_head_messages + summary + retained_tail_messages + current_user_replay_message` 组装；`current_user_replay_message` 只作为临时 `user` 续跑指令使用，不写入 `replacement_history`。续跑只读取摘要的 `resume_action` 与保留的结构化 observation，不从工具输出文本里提取路径来判断任务是否完成，也不把产物索引拼进 `system`。
+- 返回：
+  - `data.accepted`：固定为 `true`
+  - `data.running`：固定为 `true`
+  - `data.user_round`：本次手动压缩对应的用户轮次
+  - `data.session_id`：当前会话 ID
+- 说明：
+  - 压缩事件会带上 `trigger_mode`：目前包括 `manual`、`auto_loop`、`overflow_recovery`。`manual` 对应独立的 `/compact` 用户轮次，结果在其后的普通助手气泡与智能体循环中呈现，不生成分隔线；`compaction.summary_text` 实时写入气泡正文，其它模式属于智能体运行中的自动压缩/溢出恢复。
+  - 会话详情与事件快照共用运行态判定：优先使用线程 runtime；runtime 缺失且 monitor 仍活跃时，仅查询最近 32 条持久化事件，以最新终态校正滞后 monitor。后续活动事件、新用户轮次或更晚的运行开始时间会保留活跃态；读取失败或缺少证据时不强制置为空闲。
+  - 客户端接受 `running=false` 后立即清除旧 streaming 标记，历史工作流补水不得重新激活终态气泡，包括仅回放到摘要模型请求的分页。
+  - 压缩事件会带上 `current_user_replay_mode`、`compaction_resume_action` 与 `current_turn_progress_state`：`pending` 会保留当前用户消息，`tool_succeeded` 会按摘要动作选择 `final_continuation` 或 `tool_success_continuation` 临时 `user` continuation note，`tool_failed/in_progress` 会使用修复/继续 note 承接当前轮，避免连续 assistant 尾消息、重复执行工具，或把一次工具成功误判为用户任务完成。
+
+- 工具结果现在采用“双通道”：
+  - 前端事件通道（`tool_result` SSE）保留结构化结果用于渲染与工作流关联：`tool/ok/data/tool_call_id`，并保留 `meta` 与失败关键信息（`error/error_code/retryable`）；仍会裁剪 `trace_id/user_round/model_round` 等轮次追踪噪声。
+  - 模型 observation 通道走极简压缩：在不破坏可继续执行语义的前提下移除冗余字段并压缩大体积结构。
+- `tool_result` 事件额外提供 `model_observation`（JSONL 文本，单行 JSON），其内容与本轮实际送入模型的 observation 对齐，可直接用于前端排障展示。
+- 模型 observation 保持紧凑 JSON，`hits/matches/files/rows/items/results` 等数组保留原生类型，不再统一改写成嵌套转义的 `*_jsonl` 字符串；工具自身提供的 JSONL 字段仍保留。传输耗时仅保留在 `tool_result.meta`，分页游标、截断提示、异步命令句柄及外部工具业务字段必须保留。
+- When truncation happens, payload/meta may include `truncation_reasons` (for example `array_items`/`string_chars`/`char_budget`), and multiple reasons can co-exist in the same result to indicate compound truncation.
+
+## 2026-04-13 增补：beeroom 蜂群元数据编辑
+
+### `POST /wunder/beeroom/groups/{group_id}/mother-session`
+
+- 用途：解析或创建当前蜂群专属的母蜂聊天会话，并在发送前将其绑定为母蜂任务线程；蜂群右栏不得从普通聊天页活动会话或母蜂“最近会话”猜测归属。
+- 鉴权：用户侧 Bearer Token；服务端同时校验蜂群归属、母蜂归属和已绑定会话归属。
+- 请求体：空对象 `{}`。
+- 行为：默认复用同一 `user_id + group_id + mother_agent_id` 的蜂群绑定；若用户已在普通聊天页为该母蜂显式新建或切换任务线程，且该线程未被另一蜂群绑定，则当前蜂群会采用该任务线程，后续右栏消息从新会话第 1 轮开始。不同蜂群即使使用同一母蜂，也不会借用彼此的专属绑定。活动编排存在时继续返回编排态冻结的权威母蜂会话，不在运行中换线。
+- 返回：`data` 包含 `id/title/status/agent_id/created_at/updated_at/last_message_at/group_id/created`。
+- 蜂群摘要和详情中的 `mother_session_id?` 返回当前已绑定的普通蜂群母会话或活动编排母会话；尚未建立绑定时为 `null`。
+
+### `GET /wunder/agents/running` 蜂群运行态补充
+
+- 活跃 `team_run`（`queued/running/merging`）是阻塞式蜂群工具期间的权威运行证据：母蜂按 `mother_agent_id/parent_session_id` 投影为 `running`，状态为 `queued/running` 的工蜂任务也投影为 `running`。
+- 团队运行态优先于 monitor 中短暂出现的 `done/error` 快照，避免模型动作与工具动作切换时将仍在等待工蜂的母蜂误报为完成；团队运行终止后才恢复普通线程与 monitor 状态。
+- 服务端按 `user_id + status` 查询活跃团队运行，并由 PostgreSQL/SQLite 的 `team_runs(user_id, status, updated_time)` 索引支撑，不进行跨租户全局扫描。
+
+### `PUT /wunder/beeroom/groups/{group_id}`
+
+- 用途：更新蜂群名称、说明和母蜂配置，供用户侧消息页蜂群中栏“编辑蜂群”弹窗调用。
+- 请求体：
+  - `name: string`，必填，蜂群名称。
+  - `description?: string`，可选；传空串会清空说明。
+  - `mother_agent_id?: string`，可选；传空串会清空母蜂绑定，传有效智能体 ID 时会自动将该智能体迁入目标蜂群并重设为母蜂。
+- 返回：`data` 为更新后的蜂群摘要，结构与 `GET /wunder/beeroom/groups/{group_id}` 返回中的 `group` 基础字段保持一致。
+  - `GET /wunder/beeroom/groups` 的 `members[]` 最多返回 6 个成员摘要；`GET /wunder/beeroom/groups/{group_id}`、创建与更新响应返回完整 `members[]`，蜂群工作台应以详情成员集合为权威来源。
+- 返回补充：
+  - 蜂群成员 `agents[]` 现包含 `silent` / `prefer_mother`。
+  - 当蜂群未显式绑定 `mother_agent_id` 时，服务端会优先回退到首个 `prefer_mother=true` 的成员作为默认母蜂。
+
+## 2026-04-16 增补：beeroom 编排提示词模板
+
+### `GET /wunder/beeroom/orchestration/prompts`
+
+- 用途：用户侧编排页发送母蜂消息前加载编排注入模板，模板正文以 `config/prompts/<zh|en>/orchestration/*.txt` 为准，避免前端硬编码编排运行说明。
+- 鉴权：蜂巢 Bearer Token，与 `/wunder/beeroom/groups` 一致。
+- 语言：服务端根据 `x-wunder-language` / `accept-language` 解析语言，优先返回 `zh` 或 `en` 下的模板；非默认系统模板包仍沿用 active prompt pack 的覆盖规则。
+- 返回：`data.prompts` 对象包含以下字符串键：
+  - `mother_runtime`
+  - `round_artifacts`
+  - `worker_first_dispatch`
+  - `worker_round_artifacts`
+  - `worker_guide`
+  - `situation_context`
+  - `user_message`
+- 示例响应：
+
+```json
+{
+  "data": {
+    "prompts": {
+      "mother_runtime": "...",
+      "round_artifacts": "...",
+      "worker_first_dispatch": "...",
+      "worker_round_artifacts": "...",
+      "worker_guide": "...",
+      "situation_context": "...",
+      "user_message": "..."
+    }
+  }
+}
+```
+
+### `POST /wunder/beeroom/orchestration/session-context`
+
+- 用途：用户侧编排页在“新建编排”或每次向母蜂发送用户消息前，同步当前母蜂线程对应的编排运行状态，供后端在编排态下识别这条线程不是普通对话。
+- 鉴权：蜂巢 Bearer Token，与 `/wunder/beeroom/groups` 一致。
+- 请求体：
+  - `session_id: string`，必填，母蜂任务线程会话 ID。
+  - `run_id: string`，必填，当前编排 run id。
+  - `group_id?: string`，可选，蜂群 ID / hive_id。
+  - `role?: string`，可选，默认 `mother`。
+  - `round_index?: number`，可选，默认 `1`，表示当前母蜂用户轮次。
+  - `mother_agent_id?: string`，可选，未传时服务端回退到该会话绑定的 `agent_id`。
+- 返回：`data` 回显当前持久化的线程级编排状态：
+  - `session_id`
+  - `mode`：固定为 `orchestration`
+  - `run_id`
+  - `group_id`
+  - `role`
+  - `round_index`
+  - `mother_agent_id`
+- 说明：
+  - 该状态保存在线程级 meta 中，不改动 chat session 表结构。
+  - 当母蜂在该线程里调用 `agent_swarm` 时，后端会读取对应 `orchestration/<run_id>/round_xx/situation.txt`，并把当前轮次态势与工蜂产物目录提示自动注入给工蜂。
+  - 轮次目录与 round_id 统一使用两位格式，如 `round_01`、`round_02`。
+
+### `GET /wunder/beeroom/orchestration/state`
+
+- 用途：查询指定蜂群当前是否处于编排态，以及当前活跃编排态的母蜂线程和成员线程绑定。
+- 鉴权：蜂巢 Bearer Token。
+- Query：
+  - `group_id: string`，必填，蜂群 ID / hive_id。
+- 返回：
+  - `data.active: boolean`
+  - `data.state?: { orchestration_id, run_id, group_id, mother_agent_id, mother_agent_name, mother_session_id, active, entered_at, updated_at, round_state }`
+  - `data.member_threads[]: { orchestration_id, run_id, group_id, agent_id, agent_name, role, session_id, title, created_at }`
+- `round_state` 结构：
+  - `orchestration_id / run_id / group_id`
+  - `rounds[]: { id, index, situation, user_message, created_at, finalized_at }`
+  - `suppressed_message_ranges[]: { start_at, end_at }`
+  - `updated_at`
+- 说明：
+  - 编排页时间线、历史消息过滤与“停止后不计入正式轮次”统一以 `round_state` 为真相来源，不再依赖母蜂线程历史重建或 round 目录扫描推断。
+
+### `POST /wunder/beeroom/orchestration/state/create`
+
+- 用途：为指定蜂群新建一次编排态，强制为母蜂与全部工蜂创建新的编排任务线程，并将整群切换到该编排现实。
+- 鉴权：蜂巢 Bearer Token。
+- 请求体：
+  - `group_id: string`，必填。
+  - `mother_agent_id?: string`，可选，未传时服务端按当前蜂群母蜂决策逻辑选择。
+  - `run_id?: string`，可选，未传时服务端自动生成。
+- 返回：
+  - `data.state`：当前活跃编排态。
+  - `data.member_threads[]`：新建后的母蜂/工蜂编排线程绑定。
+- 说明：
+  - 若该蜂群已有活跃编排态，服务端会先将旧活跃编排态转入历史，再创建新的活跃编排态。
+
+### `POST /wunder/beeroom/orchestration/state/exit`
+
+- 用途：解除指定蜂群的编排态，并为整群智能体切换到新的普通任务线程。
+- 鉴权：蜂巢 Bearer Token。
+- 请求体：
+  - `group_id: string`，必填。
+- 返回：
+  - `data.group_id`
+  - `data.active: false`
+  - `data.member_threads[]`：解除后各智能体新建的普通任务线程。
+- 说明：
+  - 被解除的编排态会保留为历史可恢复对象；原编排线程不再是当前活跃编排态的一部分。
+
+### `GET /wunder/beeroom/orchestration/history`
+
+- 用途：列出指定蜂群可恢复的编排态历史。
+- 鉴权：蜂巢 Bearer Token。
+- Query：
+  - `group_id: string`，必填。
+- 返回：
+  - `data.items[]: { orchestration_id, run_id, group_id, mother_agent_id, mother_agent_name, mother_session_id, status, latest_round_index, entered_at, updated_at, exited_at, restored_at }`
+- 说明：
+  - 历史项以母蜂编排线程为核心，可用于编排页“历史”面板恢复。
+
+### `POST /wunder/beeroom/orchestration/history/restore`
+
+- 用途：按指定历史编排态恢复当前蜂群的编排现实。
+- 鉴权：蜂巢 Bearer Token。
+- 请求体：
+  - `group_id: string`，必填。
+  - `orchestration_id: string`，必填，要恢复的历史编排态 ID。
+- 返回：
+  - `data.state`：恢复后的当前活跃编排态。
+  - `data.history`：被恢复的历史记录快照。
+  - `data.member_threads[]`：恢复后母蜂/工蜂线程绑定。
+- 说明：
+  - 母蜂优先复用原历史编排线程。
+  - 工蜂若历史编排线程仍存在则复用；若缺失则自动补建新的编排线程后重新加入当前编排态。
+  - 历史编排的正式轮次状态会一并恢复；老历史若尚未落过 `round_state`，服务端会按母蜂历史做一次兼容迁移并写回。
+
+### `POST /wunder/beeroom/orchestration/history/branch`
+
+- 用途：从指定历史编排 run 的某个母蜂用户轮次创建新的编排分支。
+- 鉴权：蜂巢 Bearer Token。
+- 请求体：
+  - `group_id: string`，必填。
+  - `source_orchestration_id: string`，必填，分支来源 run。
+  - `round_index: number`，必填，表示从第几轮开始重新继续。
+  - `activate?: boolean`，可选，默认 `true`；为 `true` 时新分支会直接成为当前激活编排态。
+- 返回：
+  - `data.state`：新分支的编排态快照。
+  - `data.history`：新分支对应的历史记录。
+  - `data.member_threads[]`：新分支中母蜂/工蜂的线程绑定。
+- 说明：
+  - 该接口不会覆盖旧 run，而是新建新的 `orchestration_id + run_id`。
+  - 新分支会继承源 run 的 `1..N-1` 轮正式历史。
+  - 第 `N` 轮会在新分支中重新打开，保留 `situation`，清空该轮 `user_message` 与旧产物。
+  - 母蜂新线程会只复制分支点之前的可见聊天历史，避免未来轮消息污染新分支。
+  - 目录继承规则为：复制 `1..N-1` 轮目录与未来轮 `situation.txt`；当前重新打开轮只保留 `situation.txt`，并为工蜂预建空产物目录。
+
+### `POST /wunder/beeroom/orchestration/history/truncate`
+
+- 用途：保留指定 run 到某个用户轮次，并删除该轮之后的所有轮次与其后代分支。
+- 鉴权：蜂巢 Bearer Token。
+- 请求体：
+  - `group_id: string`，必填。
+  - `orchestration_id: string`，必填，要裁剪的 run。
+  - `round_index: number`，必填，表示保留到第几轮。
+- 返回：
+  - `data.history`：裁剪后的历史记录。
+  - `data.state?`：若该 run 当前处于激活编排态，则返回裁剪后的编排态快照。
+  - `data.round_state`：裁剪后的正式轮次状态。
+  - `data.removed_orchestration_ids[]`：被一并删除的后代分支 ID。
+  - `data.retained_round_index`：裁剪后保留的最新轮次。
+- 说明：
+  - 当前轮次节点本身会被保留，只清除其后的内容。
+  - 若目标 run 当前处于激活编排态，系统不会退出编排态，只会将当前 run 末端收缩到目标轮次。
+  - 若某个后代分支当前正处于激活编排态，接口会拒绝裁剪，避免误删当前现实。
+
+### `POST /wunder/beeroom/orchestration/rounds/reserve`
+
+- 用途：为当前活跃编排态预留或更新一个待提交用户轮次，供前端在真正发给母蜂前先占位。
+- 鉴权：蜂巢 Bearer Token。
+- 请求体：
+  - `group_id: string`，必填。
+  - `round_id?: string`，可选，已有轮次时更新该轮次。
+  - `round_index?: number`，可选，显式指定轮次序号。
+  - `situation?: string`，可选，本轮态势。
+  - `user_message?: string`，可选，用户原始消息。
+- 返回：
+  - `data.round`
+  - `data.round_state`
+  - `data.state`
+
+### `POST /wunder/beeroom/orchestration/rounds/finalize`
+
+- 用途：将一个待提交轮次转为正式轮次。
+- 鉴权：蜂巢 Bearer Token。
+- 请求体：
+  - `group_id: string`，必填。
+  - `round_id?: string`
+  - `round_index?: number`
+  - `situation?: string`
+  - `user_message?: string`
+- 返回：
+  - `data.round`
+  - `data.round_state`
+  - `data.state`
+
+### `POST /wunder/beeroom/orchestration/rounds/cancel`
+
+- 用途：取消一个待提交轮次，并把该次发送期间母蜂线程产生的消息时间段写入屏蔽区间，保证停止后刷新、恢复历史或重新进入编排页时都不会再把该轮当作正式轮次。
+- 鉴权：蜂巢 Bearer Token。
+- 请求体：
+  - `group_id: string`，必填。
+  - `round_id?: string`
+  - `round_index?: number`
+  - `message_started_at?: number`，可选，秒或毫秒时间戳。
+  - `message_ended_at?: number`，可选，秒或毫秒时间戳。
+  - `remove_round?: boolean`，可选；若该轮是新预留轮次，可直接从正式轮次列表中移除。
+- 返回：
+  - `data.round`
+  - `data.round_state`
+  - `data.state`
+
+
+### 模型工具调用恢复事件
+
+- `bad_tool_call_retry`：历史兼容事件。当前运行时不会为 native 工具参数错误发起模型重试，也不会发送该事件；调用直接进入工具 schema/admission 校验，错误结果回传模型。真实 provider/网络失败仍使用 `llm_stream_retry`。
+- `tool_no_progress_guard`：命令/脚本工具连续 4 次以相同参数返回相同非空观察结果时触发的循环保护。终止元数据包含 `tool/repeat_count/threshold/detail`；不同命令或新的有效输出会重置计数。
+- `llm_stream_retry` 进入统一持久化事件流，沿用会话归属、轮次、稳定事件序号和 replay 机制；刷新或重连可恢复重试状态。`bad_tool_call_retry` 仅作为历史兼容事件保留，不再由当前 native 参数校验路径产生。仅上线后的普通模型重试新增持久化，既有日志不回填。
+- `progress.stage=invalid_tool_call_reroute/empty_final_answer_reroute` 表示模型正在修复不可执行的调用或空回复，前端将其投影为恢复状态，跨随后的 `llm_request` 保留，直到有效输出、工具执行或终态到达。恢复不是整轮失败，不得据此提前终止会话；终态后的迟到重试不能重新激活消息。
+
+### 上下文本地精简事件
+
+自动压缩达到原有供应商实测用量阈值后，可先尝试本地精简旧的读取、搜索和列表结果。成功时发送 `progress`，`stage=microcompaction`、`strategy=old_tool_preview`，包含 `observed_context_tokens`、`estimated_tokens_before/after/saved`、`reduced_messages`、`kept_recent_tool_groups` 及轮次字段。`estimated_*` 仅用于诊断，不计入配额，也不冒充供应商实测用量。
+
+该路径不调用摘要模型，不生成摘要分隔线；模型上下文通过既有统一存储替换并完成写队列同步后继续，聊天记录不改写。后续请求重新由供应商报告真实占用。手动压缩、强制修复及空间不足仍走原有摘要流程。
+
+## 子智能体池与级联中断（2026-09-23）
+
+- `GET /wunder/chat/sessions` 未指定 `parent_session_id` 时，工作目录在数据库计数与分页之前排除 `spawned_by=model|subagent_control` 且有父会话的子智能体。显式父会话筛选保持原语义，普通 `thread_control` 派生线程与蜂群线程不受此过滤影响。SQLite、PostgreSQL 与原生蜂窝目录共用此规则。
+- `GET /wunder/chat/sessions/{session_id}/subagents` 默认跨用户轮次返回保留的子智能体，包含已完成、已中断及已关闭会话，沿用 `limit` 上限 500；`latestTurnOnly` 仅供单轮消息投影使用。子智能体目录不包含蜂群和普通线程派生项。
+- `POST /wunder/chat/sessions/{session_id}/cancel` 及 WS cancel 统一中断当前会话和后代执行，保留子会话、历史与提示词。REST 增加 `child_sessions_cancelled`；子运行终态为 `cancelled`，不会因中断自动关闭或删除。后台执行同样受父会话中断约束。
+- `subagent_control.list` 返回持久子智能体池及最新运行状态；`send(session_id,message)` 或 `resume(session_id,message)` 在原线程执行下一项任务，默认非阻塞。`resume` 不带消息仅重新开放线程。运行中 send 作为追加指导；启动/收尾窗口暂不接收，调用方应等待收敛后重试；不会自动恢复全部子智能体。
+- 复用运行刷新 `parent_turn_ref/parent_user_round/parent_model_round`，默认把状态事件投递给所属父会话。中断和重新分派会使旧运行延迟唤醒失效。会话 system prompt 与长期记忆注入规则不变。
+
+### 用户额度账户迁移与实时投影
+
+- PostgreSQL / SQLite 在首次升级时为既有账户初始化 1000 额度，并删除旧 Token 账户字段；历史 Token 数字不换算为请求额度。迁移具有事务边界，重复启动不会补回已花完的额度。
+- 新接口只返回 `quota_balance/quota_granted_total/quota_used_total/daily_quota_grant/last_quota_grant_date`；移除旧 Token 字段、旧资料接口 `daily_quota*` 别名和 `/token_adjustment` 路由。
+- 每次真实模型请求通过 `model_request_usage` 事件发布线程请求计数和账户额度投影：`request_count=1`、`turn_request_count`、`session_request_count`、`billable`、`account_credits_consumed`。普通用户事件还带 `account` 快照（`balance/granted_total/used_total/daily_grant/last_grant_date`）；管理员事件带 `billable=false` 与零扣款。事件仅用于请求次数和额度投影，不计入 Token 消耗。历史 `quota_usage` 事件仍可读取，但不再由新执行链生成。
+- 真实 Token 用量通过 `model_usage/token_usage/round_usage` 保留，供上下文、速度与消耗统计使用。
+
+
+### Slint 默认原生蜂窝接入
+
+Slint 程序默认链接 `wunder-desktop` library；不拉起 bridge，不通过本机 HTTP/WebSocket 转发。旧的 `--connect` 与 `--bridge-smoke` 参数移除，`--native` 兼容无参数启动。舰体现有 HTTP/WS 协议保持不变。
+
+`NativeDesktop` 新增同步 Rust façade（调用方必须放在后台工作线程）：
+
+- `list_agents/create_agent/update_agent`：最多返回 100 项，共享 `agent_management`、UserStore、默认智能体/预设初始化、归属和访问控制、inner-visible 投影；只修改智能体模板，不改已有线程冻结提示词。
+- `list_tools`：最多返回 200 项，直接复用模型调用的工具描述和当前用户权限集合，界面支持分类与检索。
+- `get_desktop_settings/save_model/set_default_model/save_runtime`：强类型配置投影，无 API key；`ModelEdit` 中空密钥保留原值，配置更改串行化，复用 desktop.settings.json 备份写入及 ConfigStore。工作目录变更保留显式容器映射，不迁移旧文件。
+- `workspace_directory/workspace_preview`：按智能体归属选择容器；每页最多 100 项，预览最多 32 KiB，拒绝绝对路径、父路径和指向工作区外部的链接。
+
+原生页面请求在后台完成，UI 只应用投影；目录/历史请求通过版本与归属检查拒绝过期回写。事件仍使用容量 128 的通道和共享持久化队列事件，聊天不因切换页面中断。
+
+
+## 子智能体运行中消息（2026-09-23）
+
+- `subagent_control.send(session_id,message,message_id?)`：目标正在接收时返回 `state=accepted`、`data.delivery=queued_current_turn`、`message_id`；当前模型调用/工具结束后按顺序应用。目标已结束则维持原线程复用语义；收尾窗口或容量满返回错误，调用方可重试。
+- 新动作 `subagent_control.report(message,message_id?)`：仅临时子智能体可调用，目标由 durable 直接父关系决定，不接受任意父目标。父线程接收中返回 `queued_current_turn`；否则持久排队，返回 `queued_next_turn` 和 `queue_id`。
+- message 最大 20000 UTF-8 字节；message_id 最大 128 字节。同一来源的同 ID 不得改变内容；运行中去重范围是当前接收轮最近 256 条，持久队列去重范围是尚保留的任务记录。跨已结束轮次重新 send 仍表示新任务。
+- 接收线程的持久实时事件 `subagent_message` 包含 `message_id/source_session_id/session_id/kind/delivery`；kind 为 guide/report/completion，delivery 为 applied/not_applied，applied 附带 message 和当前轮次字段。使用既有 WS replay 补水。空闲投递通过现有 queue 事件和 queue_id 观察；过期内部消息只发 `subagent_message` 的 not_applied 和 queue_status=cancelled，不发会使父线程进入错误状态的 queue_fail。
+- accepted 表示已接收而非执行完成。运行中收件箱不承诺进程崩溃恢复；已应用上下文和空闲持久队列可恢复。主线程停止后的旧消息不能唤醒新一轮。
+- `wait.poll_interval_seconds` 保留兼容；本地事件即时唤醒，跨进程回查间隔不低于 5 秒，最终截止由 wait_seconds 决定。收件箱有未消费消息时提前返回 `completed_reason=message_received`，`completion_reached=false`，不标记任务完成或抑制后续完成回流。
+- 超长完成通知压缩为摘要及 session/run/dispatch 引用，并标记 `truncated=true`；批量通知最多保留三个结果引用并给出 `items_omitted`，完整内容通过 `status/history` 查询。
+
+
+## 蜂群编排移除（本次重构）
+
+本次重构全链路移除蜂群编排（swarm / beeroom / 蜂房 / 编排态 / team run / hive pack / 工蜂卡 / sim-lab 蜂群测试），不再支持和维护。下列条目**整体删除**，不再是接口契约的一部分。上文按时间累积的历史增补条目保留原文，仅作变更记录，不再对应当前系统行为。
+
+### 移除的内置工具
+
+- `智能体蜂群`（英文别名 `agent_swarm` / `swarm_control`）：工具注册、工具描述、工具呈现、CLI 映射与文档一并移除，`action=list|status|send|history|spawn|batch_send|wait` 不再可用。
+- 舰桥内置工具列表、可见性树与工具族文档中的蜂群工具条目同步删除；`web/shared/tool-visuals.js` 中对应图标映射一并移除。
+
+### 移除的接口族
+
+- 团队运行：`/wunder/chat/team_runs*`、`/wunder/admin/team_runs*`、`/wunder/admin/hives/{id}/team_runs`。
+- 蜂群与蜂房：`/wunder/beeroom*`（含 `/wunder/beeroom/ws`、实时指标、群组、成员、编排提示词与态势、编排态创建/退出、历史恢复与分支、轮次预留与结算、群组重置与演示端点）与 `/wunder/admin/hives/*`。
+- 仿真实验室：`/wunder/admin/sim_lab/*`（项目列表、运行、状态、取消）。
+- 蜂巢广场中的蜂群包路线：`hive_pack` 的发布与引入（`worker_card`、`skill_pack` 随广场一并移除，见下节）。
+- 相关前端路由与面板：用户侧蜂群页与编排页、舰桥「调试」分组下的蜂群测试（sim-lab）面板、导航项、`api.js` 中的 team_runs/hives 封装与对应 i18n 条目。
+
+### 移除的广场 / 市场接口
+
+- 用户广场：`/wunder/plaza/items*`（列表、详情、发布、下架、引入）整体移除，不再是接口契约的一部分；`hive_pack`、`worker_card`、`skill_pack` 三类资产不再有广场发布与引入路线。
+- 相关前端路由与状态：用户侧广场入口、`api/plaza.ts`、`stores/plaza.ts`、`MessengerHivePlazaPanel.vue` 与对应 i18n 条目一并移除。
+- 上文「4.1.2.31.3 `/wunder/plaza/items*`」小节仅作历史记录，不代表当前接口。
+
+### 移除的存储与配置
+
+- 表：`hives`、`team_runs`、`team_tasks`，以及蜂群相关索引与仓储方法；记录类型 `HiveRecord`、`TeamRunRecord`、`TeamTaskRecord` 一并移除。
+- 列：`user_agents.hive_id` 与 `normalize_hive_id` / `DEFAULT_HIVE_ID` 常量；索引 `idx_user_agents_user_hive` 同步删除。
+- 蜂房聊天持久化表 `beeroom_chat_messages` 同步移除；`team_tasks.team_run_id -> team_runs` 级联外键随表删除，库内不再保留跨域级联删除外键。
+- 配置：`config.agent_swarm_*`（runner、max_active_team_runs、max_parallel_tasks_per_team、timeout、retry、depth）及其默认值。
+- 会话 meta 中的 `orchestration_*` 键与 `ORCHESTRATION_MODE` 常量一并移除。
+- 压测与仿真：`swarm_sim`、`swarm_flow_sim` 可执行目标、蜂群包导入导出与工蜂卡导出及其回归用例。
+
+### 保留说明
+
+- 子智能体工具（`subagent_control`）**保留**：子智能体是主智能体在任务中临时创建的工作单元，与蜂群无关，接口语义不变，仍见上文「子智能体池与级联中断」「子智能体运行中消息」等条目。
+- 其他智能体工具（`thread_control`、`memory_manager`、`channel_tool`、`self_status` 等）不受影响。
+- 渠道、网关、定时任务与评估（wunderbench）链路不受影响：渠道桥、定时任务与模型评估中引用预设智能体的部分照常工作。
+- 用户侧只保留唯一智能体实例，由预设绑定生成；工作区为唯一云端目录，工具以该目录为根。
+- 移除前运行中的 `team_runs` 数据应清理或归档导出；`hives` / `team_runs` / `team_tasks` 表在升级时按迁移流程删除。
+
+
+## 单智能体与唯一云端目录（本次重构）
+
+本次重构把用户侧从「多智能体 + 多容器沙箱」收敛为「每用户唯一智能体实例 + 唯一云端工作目录」。上文的按时间累积条目保留原文，仅作变更记录，不再对应当前系统行为；本节描述当前契约。
+
+### 用户侧智能体：`GET /wunder/agents` 收敛为单实例
+
+- 响应包裹不变：`{ "data": { "total": 1, "items": [ ... ] } }`，`items` 恒为一项——当前用户唯一智能体实例，字段沿用既有 `agent_payload`（含 `preset_binding`）。
+- 每个用户在同一时刻只有一个智能体实例，由管理侧预设 1:1 绑定生成；开户或首次访问时确保存在。
+- 历史遗留的其余实例不物理删除，置为归档只读：其线程与历史消息保留，但不再出现在任何用户侧列表中。
+- 用户侧仅保留「读取唯一实例 + 更新预设允许自定义的字段」这条路径。
+
+### 用户侧移除的入口
+
+以下用户侧接口与能力**整体移除**，不再是契约的一部分：
+
+| 移除项 | 说明 |
+|---|---|
+| 创建智能体 | `POST /wunder/agents` 系列创建入口 |
+| 删除智能体 | `DELETE /wunder/agents/{id}` 系列删除入口 |
+| 共享 / 可见范围 | 智能体共享、公开、可见范围设置相关端点 |
+| 排序 | 智能体排序与顺序持久化端点 |
+| 网格总览 / 列表页 | 多智能体总览、网格页、快捷创建等前端能力（前端入口同步移除） |
+
+字段级收敛：
+
+- `user_agents.hive_id` 与相关查询移除（蜂群移除范围，见上一节）。
+- `user_agents.sandbox_container_id` 随单根目录移除，预设表单不再有容器 ID 字段。
+- `GET /wunder/agents` 不再返回「其他智能体」候选列表；用户侧不存在「选择智能体」这一步。
+
+### 工作区：`container_id` 收敛为按用户根解析
+
+- `/wunder/workspace*` 全部接口（含 upload、download、archive、batch、content、search）在服务端统一按**当前用户根**解析，`container_id` 不再决定目录。
+- **过渡期保留该参数**以兼容旧客户端：传入任意值（含 `0`、`1~10`）结果一致，均落到该用户的唯一目录；服务端不因该参数切换根，也不报错。后续版本移除该参数。
+- `agent_id` 不再参与目录派生，只影响会话与配置绑定；子智能体与主智能体共用同一用户目录。
+- 端口径使用**扁平化智能体作用域**：`scoped_user_id(user, agent)` / `scoped_user_id_by_container` / `scoped_user_id_variants` 恒等于用户自身作用域，不再产生按智能体或容器派生的作用域目录。CLI / 蜂窝本地形态的 `WUNDER_WORKSPACE_SINGLE_ROOT` 与 `container_roots` 与服务端口径不同，**不随本次收敛移除**。
+- 路径安全：所有路径仍以用户根为界做 `is_within_root` 校验；对外只下发工作区相对路径，不暴露服务端绝对路径。
+- 存量目录迁移：历史按智能体或容器隔离的目录合并归入用户根（重名追加后缀并生成迁移清单），迁移完成后再移除兼容逻辑。
+
+### 新增：`GET /wunder/workspace/stats`
+
+目录用量统计，供欢迎页概览卡片与左栏工作目录区用量条共用。
+
+- 方法：`GET`
+- 查询参数：`path`（工作区相对路径，可选，默认根目录）、`recent_limit`（可选，默认 8，上限 32）
+- 响应：**裸对象**（`/wunder/workspace*` 系列沿用裸对象约定，不加 `data` 包裹）
+
+```jsonc
+{
+  "user_id": "u_1",
+  "path": "",
+  "files": 120,
+  "dirs": 18,
+  "used_bytes": 134217728,
+  "truncated": false,
+  "quota_bytes": null,
+  "recent": [
+    { "name": "foo.rs", "path": "src/foo.rs", "type": "file", "size": 2048,
+      "updated_time": "2026-01-01T12:00:00+08:00" }
+  ]
+}
+```
+
+字段说明：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `user_id` | string | 当前用户标识 |
+| `path` | string | 本次统计的子树相对路径，根目录为空字符串 |
+| `files` | number | 文件数 |
+| `dirs` | number | 目录数 |
+| `used_bytes` | number | 已用字节数 |
+| `truncated` | bool | 有界遍历提前结束，计数为**下界** |
+| `quota_bytes` | number \| null | 配额上限；为 `null` 表示未配置配额 |
+| `recent` | array | 最近修改条目，元素结构与 `/workspace` 列表项一致 |
+
+前端约定：
+
+- `quota_bytes` 为 `null` 时**只显示已用量，不渲染配额分母**，也不显示配额进度条。
+- `truncated` 为 `true` 时标注「统计为大目录下界」。
+- 结果按「用户 + 子树」键做 15 秒 TTL 缓存，工作区树变更（`mark_tree_dirty`）即失效。
+
+错误沿用统一错误体 `{"error": {"code": "...", "message": "..."}}`，路径越界与参数非法按既有工作区语义返回。
+
+### 管理侧：预设绑定的 bindings / sync 契约
+
+预设智能体是**模板**，可以有多份；每个用户 1:1 绑定其中一份，并由此生成该用户唯一的智能体实例。以下接口供舰桥消费。
+
+```jsonc
+// 1) 预设列表带绑定数（去掉 sandbox_container_id）
+// GET /wunder/admin/preset_agents
+{ "data": { "items": [ { "preset_id": "preset_xxx", "name": "...", "bound_users": 12,
+                          "updated_at": 1735689600,
+                          "customizable": { "system_prompt": false, "welcome": false,
+                                            "model_name": true, "reasoning_effort": false,
+                                            "tool_names": false, "approval_mode": true } } ] } }
+
+// 2) 某预设的绑定用户列表
+// GET /wunder/admin/preset_agents/{preset_id}/bindings?page=&page_size=&keyword=
+// page_size 上限 100（舰桥默认 20）
+{ "data": { "total": 12, "items": [ { "user_id": "u_1", "username": "...",
+                                      "agent_id": "agent_x", "customized": ["approval_mode"] } ] } }
+
+// 3) 绑定 / 换绑 / 解绑
+// POST /wunder/admin/preset_agents/bindings
+//   { preset_id, user_ids: [], action: "bind"|"unbind", new_preset_id? }
+//   action=bind 语义 = 「确保这些用户有且仅有一个绑定到 preset_id 的实例」（幂等 / 换绑计 rebound / 新建计 created）；
+//   用户管理面板的「重建智能体」复用同一语义（preset_id 传该用户当前预设）；
+//   action=unbind 必须带 new_preset_id（解绑即迁移），否则 400。
+{ "data": { "preset_id": "preset_xxx", "affected_users": 12,
+            "created_agents": 3, "rebound_agents": 9 } }
+
+// 4) 同步预设到绑定用户的唯一实例
+// POST /wunder/admin/preset_agents/sync  { preset_id, mode: "safe|force", dry_run: true|false }
+{ "data": { "preset_id": "preset_xxx", "mode": "safe", "dry_run": false, "affected_users": 12,
+            "updated_agents": 7, "skipped_customized": 5, "created_agents": 0 } }
+
+// 5) 用户开户 / 列表新增字段
+// GET /wunder/admin/user_accounts（权威账户列表，{data:{total,items}}）
+// GET /wunder/admin/users（**监控口径的会话汇总**，裸 {users:[…]}；由会话投影而来，
+//   没有会话的用户不出现；items 同样带下面三个字段，实现为按本页 user_id 集合的一次批量查询）
+{ "data": { "items": [ { "user_id": "u_1", "username": "...", "preset_id": "preset_xxx",
+                          "agent_id": "agent_x", "customized_fields": ["approval_mode"] } ] } }
+```
+
+#### 用户侧单智能体读写（`/wunder/user/agent`）
+
+```jsonc
+// GET /wunder/user/agent —— 走用户 Bearer（`is_admin_path()` 已豁免 /wunder/user 前缀）
+{ "data": { "agent": { /* 复用既有 agent_payload，标识键是 `id`（与 /wunder/agents items 同构） */
+                        "id": "agent_x", "name": "...", "model_name": null,
+                        "approval_mode": "full_auto", "tool_names": [], "preset_questions": [] },
+            "preset_binding": { "preset_id": "preset_xxx", "name": "..." },
+            "customizable": { /* 六键布尔 */ } } }
+
+// PUT /wunder/user/agent —— 以「当前用户」为作用域更新其唯一实例（前端无需知道 agent_id）
+//   body 只接受**可写字段**：system_prompt / model_name / tool_names / approval_mode（以及预设放开的其它持久字段）
+//   未被预设放开的字段 → 4xx 且 `error.code = "FIELD_NOT_CUSTOMIZABLE"`（明确拒绝，不静默忽略）
+//   响应与 GET 同构，回显生效后的值
+```
+
+约束：
+
+- `customizable` 逐项声明「用户可否自定义」：`system_prompt`、`welcome`、`model_name`、`reasoning_effort`、`tool_names`、`approval_mode`。用户只能在蜂巢设置页修改被允许的字段，其余只读并显示「由管理员预设」。
+- **两类字段要区分**：`system_prompt` / `model_name` / `tool_names` / `approval_mode` 是真正的持久化写字段；`welcome`（由 `description` + `preset_questions` 承载）与 `reasoning_effort`（会话/消息级，随每次请求下发）只作为「前端可否放开该开关」的标记透出，不作为 agent 写字段校验。
+- `unbind` 必须显式给出新的 `preset_id`，保证每个用户任意时刻**只有一个**智能体实例、且绑定唯一。
+- `sync` 的 `mode`：`safe` 只覆盖用户未改动过的字段（`skipped_customized` 为被跳过的自定义项数量）；`force` 全字段覆盖。两者均**不改写已冻结线程的 system prompt**，只影响新建线程；长期记忆仍只在线程初始化时注入一次。
+- `sync` 支持 `dry_run`，用于同步前预览影响用户数；非 dry-run 需二次确认并返回结果计数。
+- 用户开户（含渠道舰桥中心自动开户、外部嵌入首登）时从默认预设创建唯一实例；预设表单不再包含蜂群字段（`hive_id`）与容器 ID 字段。
+- 上述列表接口一律分页（`page` / `page_size`，上限固定），禁止无分页全量返回。
+
+### 与本次收敛相关的其他说明
+
+- `/wunder/user/agent`（GET 单智能体 + 绑定预设 + 可自定义标记；PUT 更新允许自定义的字段）与 `/wunder/agents/models`（用户视图，item 含 `id`/`name`/`source`/`is_default`，`context` 在配置未提供时省略；另有 `default_model_name` 与 `user_default_model_name`）按同一套冻结契约交付。
+- **用户侧多智能体入口整体移除**：`GET /wunder/agents` 收敛为单实例（`data.items` 至多一项）、`/wunder/agents/shared`、创建/删除/排序等端点不再提供；`/wunder/agents` 的 items 与 `/wunder/user/agent` 的 `agent` 字段完全同构。
+- 通用响应包裹约定不变：`/wunder/workspace*` 用裸对象；`/wunder/user/*`、`/wunder/agents/*`、`/wunder/admin/*` 用 `{ "data": { ... } }`；错误统一 `{"error": {"code": "...", "message": "..."}}`。
+- 所有列表接口必须分页：`/workspace*` 用既有 `offset` / `limit`，管理侧列表用 `page` / `page_size`。
+

@@ -1,0 +1,104 @@
+import { ToolsTheme } from "tools_theme.slint";
+import { ToolCard } from "theme.slint";
+import { ToolIcons } from "tool_icons.slint";
+import { I18n } from "i18n.slint";
+
+export component ToolText inherits Text {
+    font-family: ToolsTheme.font;
+    font-size: 12px;
+    color: ToolsTheme.text;
+    overflow: elide;
+    vertical-alignment: center;
+}
+
+export component ToolButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> enabled: true;
+    in property <bool> primary: false;
+    in property <bool> danger: false;
+    in property <bool> show-label: false;
+    callback clicked();
+    width: root.show-label ? 64px : 32px;
+    height: 28px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: focus.has-focus ? ToolsTheme.accent : root.danger ? #ffd9de : root.primary ? #ffdec3 : #dfdfdf;
+    background: touch.has-hover && root.enabled ? ToolsTheme.soft : root.danger ? #fff2f4 : root.primary ? #fff3e8 : #f7f7f7;
+    opacity: root.enabled ? 1 : 0.45;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+    forward-focus: focus;
+    HorizontalLayout {
+        padding-left: 8px; padding-right: 8px; spacing: 5px; alignment: center; cross-axis-alignment: center;
+        if root.icon.width > 0 : Image { width: 14px; height: 14px; source: root.icon; colorize: root.danger ? #d54c65 : root.primary ? ToolsTheme.deep : #606060; }
+        if root.show-label : ToolText { text: root.label; font-weight: 600; color: root.danger ? #d54c65 : root.primary ? ToolsTheme.deep : #606060; }
+    }
+    focus := FocusScope { enabled: root.enabled; key-pressed(event) => { if event.text == " " || event.text == "\n" { root.clicked(); return accept; } return reject; } }
+    touch := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { focus.focus(); root.clicked(); } }
+    // Icon-only buttons carry their meaning in a hover tooltip; labelled
+    // buttons already show the text.
+    if !root.show-label && root.label != "" : Tooltip { text: @markdown("\{root.label}"); }
+}
+
+export component ToolNavigation inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <image> icon;
+    in property <bool> selected;
+    callback clicked();
+    height: 60px;
+    border-radius: 12px;
+    background: root.selected ? ToolsTheme.accent : touch.has-hover ? #fff0e5 : transparent;
+    accessible-role: button;
+    accessible-label: root.title;
+    accessible-action-default => { root.clicked(); }
+    forward-focus: focus;
+    border-width: focus.has-focus ? 1px : 0px;
+    border-color: ToolsTheme.accent;
+    Rectangle {
+        x: 12px; y: 9px; width: 36px; height: 36px; border-radius: 18px;
+        background: root.selected ? #ffffff40 : #ececec;
+        Image { x: 12px; y: 11px; width: 12px; height: 14px; source: root.icon; colorize: root.selected ? white : #626262; }
+    }
+    ToolText { x: 58px; y: 10px; height: 17px; width: parent.width - 68px; text: root.title; font-weight: 700; color: root.selected ? white : ToolsTheme.text; }
+    ToolText { x: 58px; y: 27px; height: 17px; width: parent.width - 68px; text: root.subtitle; font-size: 11px; color: root.selected ? white : #a77b60; }
+    focus := FocusScope { key-pressed(event) => { if event.text == " " || event.text == "\n" { root.clicked(); return accept; } return reject; } }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { focus.focus(); root.clicked(); } }
+}
+
+export component ToolGroup inherits Rectangle {
+    in property <string> title;
+    in property <int> kind;
+    in property <[ToolCard]> tools;
+    callback inspect(string, string);
+    background: #fbfbfb;
+    border-width: 1px; border-color: #ececec; border-radius: 10px;
+    VerticalLayout {
+        padding: 10px; spacing: 8px; alignment: start;
+        ToolText { height: 18px; text: root.title; color: #4b5563; font-weight: 600; }
+        FlexboxLayout {
+            spacing: 8px; alignment: start; cross-axis-alignment: start;
+            for tool in root.tools : chip := Rectangle {
+                height: 33px;
+                border-radius: 17px; border-width: 1px; border-color: #ffdec3; background: ToolsTheme.soft;
+                accessible-role: button; accessible-label: tool.name;
+                accessible-action-default => { root.inspect(tool.name, tool.description); }
+                HorizontalLayout {
+                    padding-left: 6px; padding-right: 10px; spacing: 8px; cross-axis-alignment: center;
+                    Rectangle {
+                        width: 24px; height: 24px; border-radius: 8px;
+                        background: ToolIcons.tone-background(tool.tone);
+                        border-width: 1px; border-color: ToolIcons.tone-border(tool.tone);
+                        Image { x: 6px; y: 6px; width: 12px; height: 12px; source: ToolIcons.image(tool.icon); colorize: ToolIcons.tone-color(tool.tone); }
+                    }
+                    ToolText { text: tool.name; font-size: 11px; font-weight: 700; color: ToolsTheme.deep; max-width: 180px; }
+                }
+                TouchArea { mouse-cursor: pointer; clicked => { root.inspect(tool.name, tool.description); } }
+            }
+        }
+        if root.tools.length == 0 : ToolText { height: 32px; text: I18n.tm_none; color: #a77b60; }
+    }
+}

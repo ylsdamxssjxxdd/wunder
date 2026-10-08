@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>水滴 · 连续曲面与曲率航行演示</title>
+<style>
+html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#02040a;color:#e8eef5;font-family:Arial,"Microsoft YaHei",sans-serif}
+*{box-sizing:border-box}
+#scene{position:fixed;left:0;top:0;width:100%;height:100%;display:block;z-index:0}
+#vignette{position:fixed;left:0;top:0;right:0;bottom:0;z-index:1;pointer-events:none;background:linear-gradient(180deg,rgba(2,4,10,.6),transparent 24%,transparent 76%,rgba(0,0,5,.8)),radial-gradient(ellipse at center,transparent 52%,rgba(0,0,5,.66) 100%)}
+.panel{position:fixed;z-index:3;background:rgba(9,14,23,.9);border:1px solid rgba(125,159,196,.3);border-radius:8px;padding:15px 17px;box-shadow:0 12px 38px rgba(0,0,0,.28)}
+#header{position:fixed;left:30px;top:27px;z-index:3;pointer-events:none}
+#header .kicker{font:11px Consolas,"Courier New",monospace;letter-spacing:.3em;color:#00c7ff;opacity:.9}
+#header h1{margin:10px 0 0;font-size:43px;line-height:1.04;letter-spacing:.04em;color:#f2f6fb;text-shadow:0 0 25px rgba(0,170,255,.28)}
+#header h1 em{font-style:normal;color:#00b9ff}
+#header .sub{margin-top:9px;font-size:12px;letter-spacing:.34em;color:#8c98a7}
+#panel{right:30px;top:27px;width:236px}
+.ptitle{font:10px Consolas,"Courier New",monospace;letter-spacing:.28em;color:#8c98a7;margin-bottom:11px}
+.ptitle b{float:right;width:7px;height:7px;border-radius:50%;background:#37e08b;box-shadow:0 0 9px #37e08b}
+.ctl{display:block;min-height:38px;padding:9px 0;border-top:1px solid rgba(125,159,196,.15);font-size:12px;letter-spacing:.12em}
+.switch{float:right;position:relative;width:38px;height:20px;border-radius:20px;background:rgba(125,159,196,.2);border:1px solid rgba(125,159,196,.34);cursor:pointer}
+.switch:after{content:"";position:absolute;left:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#aeb8c6}
+.switch.on{background:rgba(0,170,255,.38);border-color:#00aaff}.switch.on:after{left:20px;background:#00c7ff;box-shadow:0 0 10px #00c7ff}
+#speedBox{margin-top:8px;padding-top:11px;border-top:1px solid rgba(125,159,196,.15);font-family:Consolas,"Courier New",monospace}
+#speedBox .sl{font-size:10px;letter-spacing:.25em;color:#8c98a7}#speedVal{margin-top:3px;color:#00c7ff;font-size:27px;font-weight:bold;text-shadow:0 0 15px rgba(0,170,255,.55)}#speedMode{margin-top:2px;color:#8c98a7;font-size:10px;letter-spacing:.12em}
+#specs{position:fixed;left:30px;bottom:25px;z-index:3;line-height:1.9;pointer-events:none;font:11px Consolas,"Courier New",monospace;color:#8c98a7;letter-spacing:.08em}#specs b{color:#e8eef5;font-weight:normal}#specs .k{display:inline-block;width:92px;color:#5b6575}
+#hint{position:fixed;right:30px;bottom:25px;z-index:3;text-align:right;line-height:2;font:11px Consolas,"Courier New",monospace;color:#5b6575;letter-spacing:.1em;pointer-events:none}#hint em{font-style:normal;color:#00c7ff}
+#loader{position:fixed;left:0;top:0;right:0;bottom:0;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#02040a;transition:opacity .8s ease}#loader.done{opacity:0;pointer-events:none}#loader .lk{font:11px Consolas,"Courier New",monospace;letter-spacing:.4em;color:#00aaff}#loader .lt{margin-top:14px;font-size:28px;font-weight:bold;letter-spacing:.12em}#loader .bar{width:220px;height:2px;margin-top:26px;overflow:hidden;background:rgba(125,159,196,.15)}#loader .bar i{display:block;width:0;height:100%;background:#00aaff;box-shadow:0 0 12px #00aaff;animation:load 1.2s ease forwards}@keyframes load{to{width:100%}}
+#fallback{display:none;position:fixed;left:0;top:0;right:0;bottom:0;z-index:8;padding:90px 30px 30px;background:#02040a;color:#dbe8f4}#fallback h2{font-size:25px;color:#00c7ff}#fallback p{max-width:680px;color:#8c98a7;line-height:1.7}#fallbackCanvas{width:100%;max-width:900px;height:340px;border:1px solid #21405b;background:#050912}
+@media(max-width:700px){#header{left:18px;top:18px}#header h1{font-size:28px}#header .sub{letter-spacing:.13em}#panel{right:18px;top:auto;bottom:18px;width:205px}#specs,#hint{display:none}}
+</style>
+</head>
+<body>
+<canvas id="scene" aria-label="可交互的连续金属曲面水滴模型"></canvas><div id="vignette"></div>
+<div id="header"><div class="kicker">DEEP SPACE // CONTINUOUS SURFACE</div><h1>水滴 <em>DRIP-01</em></h1><div class="sub">连续金属曲面 · 曲率航行实验体</div></div>
+<div id="panel" class="panel"><div class="ptitle">FLIGHT SYSTEMS <b></b></div><div class="ctl">自动旋转 <span id="rotateSwitch" class="switch on" role="button" tabindex="0" aria-label="切换自动旋转"></span></div><div class="ctl">曲率引擎 <span id="warpSwitch" class="switch" role="button" tabindex="0" aria-label="切换曲率引擎"></span></div><div id="speedBox"><div class="sl">VELOCITY</div><div id="speedVal">000.0 c</div><div id="speedMode">IMPULSE · 巡航模式</div></div></div>
+<div id="specs"><div><span class="k">LENGTH</span><b>18.4 m</b></div><div><span class="k">SURFACE</span><b>CONTINUOUS</b></div><div><span class="k">MATERIAL</span><b>LIQUID METAL</b></div><div><span class="k">STATUS</span><b id="statusText">READY</b></div></div>
+<div id="hint"><em>拖拽</em> 旋转视角 · <em>滚轮</em> 缩放<br>按住 <em>W</em> 进入曲率航行</div>
+<div id="loader"><div class="lk">INITIALIZING</div><div class="lt">水滴 DRIP-01</div><div class="bar"><i></i></div></div>
+<div id="fallback"><h2>已切换到兼容示意模式</h2><p>当前浏览器无法启用 WebGL。页面仍保留连续曲面水滴的结构示意；在支持 WebGL 的浏览器中可恢复完整金属反射、引擎辉光和曲率拖影。</p><canvas id="fallbackCanvas" width="900" height="340" aria-label="水滴二维结构示意"></canvas></div>
+<script src="../assets/three.min.js"></script>
+<script>
+(function(){
+  'use strict';
+  var canvas=document.getElementById('scene'),fallback=document.getElementById('fallback'),fallbackCanvas=document.getElementById('fallbackCanvas');
+  var renderer,scene,camera,raycaster,drop,stars,dust,warpLines,warpMaterial,warpGeometry,warpPositions,warpDirections,warpRadii,softGlow,engineLight;
+  var engineGlow=[],rotateSwitch=document.getElementById('rotateSwitch'),warpSwitch=document.getElementById('warpSwitch'),speedVal=document.getElementById('speedVal'),speedMode=document.getElementById('speedMode'),statusText=document.getElementById('statusText');
+  var autoRotate=true,warpToggle=false,warpHeld=false,warpAmount=0,dragging=false,lastX=0,lastY=0,yaw=.42,pitch=.18,distance=11.5,lastTime=0;
+
+  function mat(color,metal,rough,emissive,intensity){return new THREE.MeshStandardMaterial({color:color,metalness:metal,roughness:rough,emissive:emissive||0,emissiveIntensity:intensity||0});}
+  function glowTexture(a,b,size){var c=document.createElement('canvas'),g,t;c.width=c.height=size||128;g=c.getContext('2d');t=g.createRadialGradient(c.width/2,c.height/2,0,c.width/2,c.height/2,c.width/2);t.addColorStop(0,a);t.addColorStop(.3,b);t.addColorStop(1,'rgba(0,0,0,0)');g.fillStyle=t;g.fillRect(0,0,c.width,c.height);return new THREE.CanvasTexture(c);}
+  function dropGeometry(){
+    var points=[],i,t,y,r;
+    // Analytic asymmetric profile: a fine nose on the left, a broad spherical cap on the right.
+    for(i=0;i<=160;i++){
+      t=i/160;
+      y=-3.85+t*7.7;
+      if(t<.46){
+        var left=t/.46;
+        r=1.72*Math.pow(Math.sin(Math.PI*left/2),.55);
+      }else{
+        var right=(t-.46)/.54;
+        // The rounded end approaches the axis with zero slope, avoiding a second sharp tip.
+        r=1.72*Math.pow(Math.cos(Math.PI*right/2),1.8);
+      }
+      points.push(new THREE.Vector2(r,y));
+    }
+    return new THREE.LatheGeometry(points,96);
+  }  function createDrop(){
+    var geometry=dropGeometry();
+    drop=new THREE.Group();
+    // The longitudinal axis runs left-to-right in the viewing plane.
+    drop.rotation.z=-Math.PI/2;
+    drop.rotation.y=.18;
+    scene.add(drop);
+    var liquid=mat(0xb9c7d0,.94,.31,0x080e16,.06);
+    liquid.flatShading=false;
+    drop.add(new THREE.Mesh(geometry,liquid));
+    return drop;
+  }
+  function createSpace(){
+    var n=1800,i,g,v,a,b,r,nebulaPurple,nebulaTeal;
+    softGlow=glowTexture('rgba(255,255,255,1)','rgba(255,255,255,.42)',128);
+    scene.add(new THREE.AmbientLight(0x203142,.32));
+    var warm=new THREE.DirectionalLight(0xfff1dc,1.1);warm.position.set(5,7,6);scene.add(warm);
+    var cyan=new THREE.PointLight(0x00ffcc,5,65);cyan.position.set(-6,4,-6);scene.add(cyan);
+    var amber=new THREE.PointLight(0xff8830,4,60);amber.position.set(7,-4,-3);scene.add(amber);
+    var magenta=new THREE.PointLight(0xff4dd2,2.4,60);magenta.position.set(-7,2,6);scene.add(magenta);
+    g=new THREE.BufferGeometry();v=new Float32Array(n*3);for(i=0;i<n;i++){a=Math.random()*Math.PI*2;b=Math.acos(2*Math.random()-1);r=75+Math.random()*620;v[i*3]=Math.sin(b)*Math.cos(a)*r;v[i*3+1]=Math.cos(b)*r;v[i*3+2]=Math.sin(b)*Math.sin(a)*r;}g.setAttribute('position',new THREE.BufferAttribute(v,3));stars=new THREE.Points(g,new THREE.PointsMaterial({color:0xcfe4ff,size:1.4,sizeAttenuation:true,map:softGlow,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,opacity:.86}));scene.add(stars);
+    g=new THREE.BufferGeometry();v=new Float32Array(500*3);for(i=0;i<500;i++){a=Math.random()*Math.PI*2;r=35+Math.random()*82;v[i*3]=Math.cos(a)*r;v[i*3+1]=(Math.random()-.5)*r*.75;v[i*3+2]=Math.sin(a)*r;}g.setAttribute('position',new THREE.BufferAttribute(v,3));dust=new THREE.Points(g,new THREE.PointsMaterial({color:0x88aaff,size:.55,map:softGlow,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,opacity:.32}));scene.add(dust);
+    nebulaPurple=glowTexture('rgba(120,60,200,.48)','rgba(70,30,140,.18)',256);nebulaTeal=glowTexture('rgba(20,140,150,.44)','rgba(15,70,110,.16)',256);addNebula(nebulaPurple,-25,10,-48,35);addNebula(nebulaTeal,25,-10,-42,30);
+    warpDirections=new Float32Array(700*3);warpRadii=new Float32Array(700);warpPositions=new Float32Array(700*6);g=new THREE.BufferGeometry();for(i=0;i<700;i++){var q=new THREE.Vector3(Math.random()-.5,Math.random()-.5,Math.random()-.5).normalize();warpDirections[i*3]=q.x;warpDirections[i*3+1]=q.y;warpDirections[i*3+2]=q.z;warpRadii[i]=45+Math.random()*500;}g.setAttribute('position',new THREE.BufferAttribute(warpPositions,3));warpGeometry=g;warpMaterial=new THREE.LineBasicMaterial({color:0x9fd8ff,transparent:true,opacity:0,blending:THREE.AdditiveBlending,depthWrite:false});warpLines=new THREE.LineSegments(g,warpMaterial);warpLines.frustumCulled=false;scene.add(warpLines);
+  }
+  function addNebula(texture,x,y,z,size){var s=new THREE.Sprite(new THREE.SpriteMaterial({map:texture,transparent:true,opacity:.4,blending:THREE.AdditiveBlending,depthWrite:false}));s.position.set(x,y,z);s.scale.set(size,size,size);scene.add(s);}
+  function cameraUpdate(){var c=Math.cos(pitch);camera.position.set(Math.sin(yaw)*c*distance,Math.sin(pitch)*distance,Math.cos(yaw)*c*distance);camera.lookAt(new THREE.Vector3(0,0,0));}
+  function render(){if(renderer)renderer.render(scene,camera);}
+  function resize(){var w=window.innerWidth||640,h=window.innerHeight||480;if(!renderer)return;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();render();}
+  function fallbackDraw(){var c=fallbackCanvas,ctx;if(!c||!c.getContext)return;ctx=c.getContext('2d');if(!ctx)return;ctx.fillStyle='#050912';ctx.fillRect(0,0,c.width,c.height);var grad=ctx.createLinearGradient(250,80,650,270);grad.addColorStop(0,'#eef6fa');grad.addColorStop(.45,'#8798a6');grad.addColorStop(1,'#273746');ctx.fillStyle=grad;ctx.beginPath();ctx.moveTo(80,170);ctx.bezierCurveTo(190,70,420,64,700,170);ctx.bezierCurveTo(530,270,220,270,80,170);ctx.fill();ctx.strokeStyle='#54d8ff';ctx.lineWidth=4;ctx.stroke();ctx.fillStyle='#ff9d4a';ctx.fillRect(392,83,16,24);ctx.font='15px Arial';ctx.fillStyle='#dbe8f4';ctx.fillText('连续金属曲面 · 水滴 DRIP-01',330,305);}
+  function showFallback(){if(canvas)canvas.style.display='none';if(fallback)fallback.style.display='block';fallbackDraw();}
+  function point(event){var rect=canvas.getBoundingClientRect(),x=event.clientX,y=event.clientY;if(event.touches&&event.touches.length){x=event.touches[0].clientX;y=event.touches[0].clientY;}return{x:x,y:y,px:((x-rect.left)/rect.width)*2-1,py:-((y-rect.top)/rect.height)*2+1};}
+  function begin(event){var p=point(event);dragging=true;lastX=p.x;lastY=p.y;if(event.preventDefault)event.preventDefault();}
+  function move(event){var p;if(!dragging)return;p=point(event);yaw-=(p.x-lastX)*.008;pitch+=(p.y-lastY)*.008;pitch=Math.max(-1.2,Math.min(1.2,pitch));lastX=p.x;lastY=p.y;cameraUpdate();render();if(event.preventDefault)event.preventDefault();}
+  function end(){dragging=false;}
+  function wheel(event){var d=event.wheelDelta?-event.wheelDelta/120:event.detail?event.detail/3:event.deltaY/100;distance=Math.max(6,Math.min(22,distance+d*.38));cameraUpdate();render();if(event.preventDefault)event.preventDefault();}
+  function switchClass(el,on){el.className=on?'switch on':'switch';}
+  function toggleRotate(){autoRotate=!autoRotate;switchClass(rotateSwitch,autoRotate);}
+  function toggleWarp(){warpToggle=!warpToggle;switchClass(warpSwitch,warpToggle);}
+  function animate(time){var dt=Math.min(.05,(time-lastTime)/1000||0),i,target,speed,len,dx,dy,dz,r;lastTime=time;if(autoRotate&&!dragging)yaw+=dt*.13;target=(warpToggle||warpHeld)?1:0;warpAmount+=(target-warpAmount)*Math.min(dt*3,1);if(drop){drop.position.y=Math.sin(time*.0008)*.12;drop.rotation.z=-Math.PI/2+Math.sin(time*.0005)*.018+Math.sin(time*.04)*.004*warpAmount;}for(i=0;i<engineGlow.length;i++){if(engineGlow[i].material)engineGlow[i].material.opacity=.62+.26*(.5+.5*Math.sin(time*.008+i));}if(engineLight)engineLight.intensity=8+warpAmount*24+Math.sin(time*.007)*1.4;if(warpAmount>.015){warpMaterial.opacity=warpAmount*.82;speed=145*warpAmount;for(i=0;i<700;i++){r=warpRadii[i]-speed*dt*(.45+warpRadii[i]*.003);if(r<5)r=440+Math.random()*100;warpRadii[i]=r;dx=warpDirections[i*3];dy=warpDirections[i*3+1];dz=warpDirections[i*3+2];len=2+warpAmount*28;warpPositions[i*6]=dx*r;warpPositions[i*6+1]=dy*r;warpPositions[i*6+2]=dz*r;warpPositions[i*6+3]=dx*(r+len);warpPositions[i*6+4]=dy*(r+len);warpPositions[i*6+5]=dz*(r+len);}warpGeometry.attributes.position.needsUpdate=true;}else warpMaterial.opacity*=.9;var fov=48+warpAmount*19;if(Math.abs(camera.fov-fov)>.01){camera.fov+=(fov-camera.fov)*Math.min(dt*4,1);camera.updateProjectionMatrix();}speedVal.textContent=warpAmount>.02?(12+warpAmount*87).toFixed(1)+' c':'000.0 c';speedMode.textContent=warpAmount>.02?'CURVATURE · 加速航行':'IMPULSE · 巡航模式';statusText.textContent=warpAmount>.02?'CURVATURE ENGAGED':'READY';cameraUpdate();render();requestAnimationFrame(animate);}
+  function init(){try{var gl=canvas.getContext('webgl')||canvas.getContext('experimental-webgl');if(!gl||typeof THREE==='undefined'){showFallback();return;}renderer=new THREE.WebGLRenderer({canvas:canvas,context:gl,antialias:true});renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));renderer.setSize(window.innerWidth,window.innerHeight,false);if(renderer.toneMapping!==undefined){renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;}if(renderer.outputEncoding!==undefined)renderer.outputEncoding=THREE.sRGBEncoding;scene=new THREE.Scene();scene.background=new THREE.Color(0x02040a);scene.fog=new THREE.FogExp2(0x02040a,.0016);camera=new THREE.PerspectiveCamera(48,window.innerWidth/window.innerHeight,.1,3000);raycaster=new THREE.Raycaster();createSpace();createDrop();cameraUpdate();resize();rotateSwitch.onclick=toggleRotate;warpSwitch.onclick=toggleWarp;rotateSwitch.onkeydown=function(e){if(e.keyCode===13||e.keyCode===32)toggleRotate();};warpSwitch.onkeydown=function(e){if(e.keyCode===13||e.keyCode===32)toggleWarp();};canvas.addEventListener('mousedown',begin,false);canvas.addEventListener('mousemove',move,false);canvas.addEventListener('mouseup',end,false);canvas.addEventListener('mouseleave',end,false);canvas.addEventListener('touchstart',begin,false);canvas.addEventListener('touchmove',move,false);canvas.addEventListener('touchend',end,false);canvas.addEventListener('wheel',wheel,false);canvas.addEventListener('mousewheel',wheel,false);canvas.addEventListener('DOMMouseScroll',wheel,false);window.addEventListener('resize',resize,false);window.addEventListener('keydown',function(e){if(e.keyCode===87)warpHeld=true;},false);window.addEventListener('keyup',function(e){if(e.keyCode===87)warpHeld=false;},false);setTimeout(function(){document.getElementById('loader').className='done';},900);requestAnimationFrame(animate);}catch(e){if(window.console&&console.warn)console.warn('3D initialization failed',e&&(e.stack||e.message||e));showFallback();}}
+  if(document.addEventListener)document.addEventListener('DOMContentLoaded',init,false);else window.attachEvent('onload',init);
+}());
+</script>
+</body>
+</html>

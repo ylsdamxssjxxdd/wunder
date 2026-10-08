@@ -1,0 +1,1320 @@
+<template>
+  <el-dialog
+    v-model="dialogVisible"
+    class="messenger-dialog messenger-timeline-detail-dialog"
+    :show-close="false"
+    width="1040px"
+    destroy-on-close
+  >
+    <template #header>
+      <div class="messenger-dialog-header">
+        <div class="messenger-dialog-header-copy">
+          <strong>{{ t('messenger.timeline.detail.title') }}</strong>
+          <span :title="dialogTitle">{{ dialogTitle }}</span>
+        </div>
+        <div class="messenger-dialog-header-actions">
+          <button class="messenger-dialog-close" type="button" :aria-label="t('common.close')" @click="dialogVisible = false">
+            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+          </button>
+        </div>
+      </div>
+    </template>
+    <div v-if="loading" class="messenger-timeline-detail-loading">
+      {{ t('common.loading') }}
+    </div>
+    <div v-else class="messenger-timeline-detail-layout">
+      <aside class="messenger-timeline-detail-overview">
+        <div class="messenger-timeline-detail-overview-title">
+          <i class="fa-solid fa-chart-simple" aria-hidden="true"></i>
+          {{ t('messenger.timeline.detail.overview') }}
+        </div>
+        <div class="messenger-timeline-detail-overview-grid">
+          <div v-for="item in overviewItems" :key="item.label" class="messenger-timeline-detail-overview-item">
+            <i :class="item.icon" aria-hidden="true"></i>
+            <div>
+              <span>{{ item.label }}</span>
+              <strong :title="item.value">{{ item.value }}</strong>
+            </div>
+          </div>
+        </div>
+        <button
+          class="messenger-inline-btn messenger-timeline-detail-export-btn"
+          type="button"
+          :disabled="!sessionDetail"
+          :title="t('messenger.timeline.detail.export')"
+          :aria-label="t('messenger.timeline.detail.export')"
+          @click="exportTimelineDetail"
+        >
+          <i class="fa-solid fa-download" aria-hidden="true"></i>
+          <span>{{ t('messenger.timeline.detail.export') }}</span>
+        </button>
+      </aside>
+
+      <div class="messenger-timeline-detail-panel">
+        <div class="messenger-timeline-detail-section">
+          <div class="messenger-timeline-detail-label-row">
+            <div v-if="roundOptions.length" class="messenger-timeline-detail-round-picker">
+              <span class="messenger-timeline-detail-round-picker-label">
+                {{ t('messenger.timeline.detail.userRound') }}
+              </span>
+              <select v-model.number="selectedRound" class="messenger-timeline-detail-round-select">
+                <option v-for="item in roundOptions" :key="item.value" :value="item.value">
+                  {{ item.label }}
+                </option>
+              </select>
+            </div>
+            <div class="messenger-timeline-detail-question">{{ detailQuestion }}</div>
+          </div>
+        </div>
+
+        <div class="messenger-timeline-detail-section messenger-timeline-detail-section-events">
+          <label class="messenger-timeline-detail-label">{{ t('messenger.timeline.detail.events') }}</label>
+          <div class="messenger-timeline-detail-filters">
+            <select v-model="eventTypeFilter" class="messenger-timeline-detail-filter-select">
+              <option value="">{{ t('messenger.timeline.detail.filterAllTypes') }}</option>
+              <option v-for="item in eventTypeOptions" :key="item" :value="item">
+                {{ item }}
+              </option>
+            </select>
+            <input
+              v-model.trim="keywordInput"
+              class="messenger-timeline-detail-filter-input"
+              type="text"
+              :placeholder="t('messenger.timeline.detail.filterKeyword')"
+            />
+          </div>
+
+          <div v-if="!filteredEvents.length" class="messenger-timeline-detail-empty">
+            {{ t('messenger.timeline.detail.noEvents') }}
+          </div>
+          <div
+            v-else
+            ref="eventsContainerRef"
+            class="messenger-timeline-detail-events"
+          >
+            <details
+              v-for="item in filteredEvents"
+              :key="item.key"
+              class="messenger-timeline-detail-event-item"
+              :data-round="item.round"
+              :open="expandedEventKeys.has(item.key)"
+              @toggle="handleEventToggle(item.key, $event)"
+            >
+              <summary class="messenger-timeline-detail-event-summary">
+                <span class="messenger-timeline-detail-event-time">[{{ item.timestampLabel }}]</span>
+                <span class="messenger-timeline-detail-event-type">#{{ item.order }} {{ item.eventType }}</span>
+                <span class="messenger-timeline-detail-event-title">{{ item.title }}</span>
+                <span class="messenger-timeline-detail-event-round">
+                  {{ t('messenger.timeline.detail.round', { round: item.round }) }}
+                </span>
+              </summary>
+              <pre
+                v-if="expandedEventKeys.has(item.key)"
+                class="messenger-timeline-detail-event-raw"
+              >{{ resolveEventRaw(item) }}</pre>
+            </details>
+          </div>
+            <button v-if="itemHasMore" type="button" class="messenger-inline-btn" @click="loadSelectedTurnItems(selectedRound, true)">{{ t('messenger.timeline.detail.nextPage') }}</button>
+          <div class="messenger-timeline-detail-pagination">
+            <button type="button" class="messenger-inline-btn messenger-timeline-detail-page-icon" :disabled="eventPage === 0 || loadingEvents" :title="t('messenger.timeline.detail.previousPage')" :aria-label="t('messenger.timeline.detail.previousPage')" @click="loadTimelineEventPage(eventPage - 1)">
+              <i class="fa-solid fa-angle-left" aria-hidden="true"></i>
+            </button>
+            <span class="messenger-timeline-detail-page-info">{{ eventPageInfo }}</span>
+            <button type="button" class="messenger-inline-btn messenger-timeline-detail-page-icon" :disabled="!eventHasMore || loadingEvents" :title="t('messenger.timeline.detail.nextPage')" :aria-label="t('messenger.timeline.detail.nextPage')" @click="loadTimelineEventPage(eventPage + 1)">
+              <i class="fa-solid fa-angle-right" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </el-dialog>
+</template>
+
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { ElMessage } from 'element-plus';
+
+import {
+  getSessionWithParams as getChatSessionWithParams,
+  getThreadLogTurn,
+  getThreadLogTurns
+} from '@/api/chat';
+import { getCurrentLanguage, useI18n } from '@/i18n';
+import { showApiError } from '@/utils/apiError';
+import { exportSingleSessionLog } from '@/utils/sessionLogExport';
+import { formatCompactCount } from '@/utils/compactNumber';
+
+type TimelineDetailRoundEvent = {
+  event?: unknown;
+  type?: unknown;
+  data?: unknown;
+  timestamp?: unknown;
+};
+
+type TimelineDetailRound = {
+  turn_id?: string;
+  user_round?: unknown;
+  round?: unknown;
+  status?: unknown;
+  summary?: unknown;
+  events?: TimelineDetailRoundEvent[];
+};
+
+type TimelineDetailEventItem = {
+  key: string;
+  order: number;
+  round: number;
+  eventType: string;
+  timestampLabel: string;
+  title: string;
+  searchText: string;
+  rawEvent: TimelineDetailRoundEvent;
+};
+
+type TimelineRoundOption = {
+  value: number;
+  label: string;
+};
+
+type TimelineDetailSession = {
+  id: string;
+  title: string;
+  userName: string;
+  agentId: string;
+  agentName: string;
+  createdAt: unknown;
+  updatedAt: unknown;
+  lastMessageAt: unknown;
+  messageCount: number;
+  historyIncomplete: boolean;
+  messages: Record<string, unknown>[];
+  logOverview: Record<string, unknown> | null;
+};
+
+type TimelineExportLine = Record<string, unknown>;
+
+const TIMELINE_DETAIL_EVENT_TITLE_MAX_LENGTH = 120;
+const TIMELINE_DETAIL_EVENT_PAGE_SIZE = 100;
+const TIMELINE_DETAIL_SESSION_MESSAGE_LIMIT = 32;
+const TIMELINE_DETAIL_EXPANDED_EVENT_LIMIT = 3;
+const TIMELINE_DETAIL_RAW_CACHE_LIMIT = 12;
+
+const props = defineProps<{
+  visible: boolean;
+  sessionId: string;
+}>();
+
+const emit = defineEmits<{
+  'update:visible': [value: boolean];
+}>();
+
+const { t } = useI18n();
+
+const dialogVisible = computed({
+  get: () => props.visible,
+  set: (value: boolean) => emit('update:visible', value)
+});
+
+const loading = ref(false);
+const sessionDetail = ref<TimelineDetailSession | null>(null);
+const rounds = ref<TimelineDetailRound[]>([]);
+const running = ref(false);
+const lastEventId = ref(0);
+const eventTypeFilter = ref('');
+const keywordInput = ref('');
+const keywordFilter = ref('');
+const selectedRound = ref(0);
+const eventsContainerRef = ref<HTMLElement | null>(null);
+const expandedEventKeys = ref<Set<string>>(new Set());
+const eventRawCache = new Map<string, string>();
+const eventPage = ref(0);
+const eventHasMore = ref(false);
+const turnPageCursors = ref<(number | undefined)[]>([undefined]);
+const itemAfter = ref(-1);
+const itemHasMore = ref(false);
+let detailRequestToken = 0;
+const eventTotal = ref(0);
+const turnTotal = ref(0);
+const loadingEvents = ref(false);
+
+let requestToken = 0;
+let keywordFilterTimer: ReturnType<typeof setTimeout> | null = null;
+
+const resetFilters = () => {
+  eventTypeFilter.value = '';
+  keywordInput.value = '';
+  keywordFilter.value = '';
+  if (keywordFilterTimer !== null) {
+    clearTimeout(keywordFilterTimer);
+    keywordFilterTimer = null;
+  }
+};
+
+const resetDetailState = () => {
+  loading.value = false;
+  sessionDetail.value = null;
+  rounds.value = [];
+  running.value = false;
+  lastEventId.value = 0;
+  selectedRound.value = 0;
+  expandedEventKeys.value = new Set();
+  eventRawCache.clear();
+  eventPage.value = 0;
+  turnPageCursors.value = [undefined];
+  itemAfter.value = -1;
+  itemHasMore.value = false;
+  eventHasMore.value = false;
+  eventTotal.value = 0;
+  turnTotal.value = 0;
+  loadingEvents.value = false;
+  resetFilters();
+};
+
+const normalizeTimestamp = (value: unknown): number => {
+  if (value === null || value === undefined) return 0;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? 0 : value.getTime();
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return 0;
+    return value < 1_000_000_000_000 ? value * 1000 : value;
+  }
+  const text = String(value).trim();
+  if (!text) return 0;
+  if (/^-?\d+(\.\d+)?$/.test(text)) {
+    const numeric = Number(text);
+    if (!Number.isFinite(numeric)) return 0;
+    return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+  }
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+};
+
+const unwrapEventData = (payload: unknown): unknown => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return payload;
+  }
+  const source = payload as Record<string, unknown>;
+  const hasSessionId = typeof source.session_id === 'string' && source.session_id.trim().length > 0;
+  const hasTimestamp = typeof source.timestamp === 'string' && source.timestamp.trim().length > 0;
+  const inner = source.data;
+  if (hasSessionId && hasTimestamp && inner && typeof inner === 'object') {
+    return inner;
+  }
+  return payload;
+};
+
+const fallbackEventDataText = (value: unknown): string => {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return `[array(${value.length})]`;
+  }
+  if (typeof value === 'object') {
+    try {
+      const source = value as Record<string, unknown>;
+      const keys = Object.keys(source);
+      if (keys.length === 0) {
+        return '{}';
+      }
+      const preview: Record<string, unknown> = {};
+      keys.slice(0, 8).forEach((key) => {
+        const field = source[key];
+        if (field === null || field === undefined) {
+          preview[key] = field;
+          return;
+        }
+        if (typeof field === 'string' || typeof field === 'number' || typeof field === 'boolean') {
+          preview[key] = field;
+          return;
+        }
+        if (typeof field === 'bigint') {
+          preview[key] = field.toString();
+          return;
+        }
+        if (Array.isArray(field)) {
+          preview[key] = `[array(${field.length})]`;
+          return;
+        }
+        preview[key] = '[object]';
+      });
+      if (keys.length > 8) {
+        preview.__extra_keys__ = keys.length - 8;
+      }
+      const text = JSON.stringify(preview);
+      return typeof text === 'string' ? text : '{...}';
+    } catch {
+      return '{...}';
+    }
+  }
+  return String(value);
+};
+
+// Keep timeline rendering readable even if payload has circular refs/BigInt.
+const safeStringifyEventData = (value: unknown, pretty = false): string => {
+  const seen = new WeakSet<object>();
+  try {
+    const text = JSON.stringify(
+      value ?? null,
+      (_key, current: unknown) => {
+        if (typeof current === 'bigint') {
+          return current.toString();
+        }
+        if (typeof current === 'function') {
+          return `[Function ${current.name || 'anonymous'}]`;
+        }
+        if (typeof current === 'symbol') {
+          return String(current);
+        }
+        if (current instanceof Error) {
+          return {
+            name: current.name,
+            message: current.message,
+            stack: current.stack
+          };
+        }
+        if (current && typeof current === 'object') {
+          const objectValue = current as object;
+          if (seen.has(objectValue)) {
+            return '[Circular]';
+          }
+          seen.add(objectValue);
+          if (current instanceof Map) {
+            return Object.fromEntries(current.entries());
+          }
+          if (current instanceof Set) {
+            return Array.from(current.values());
+          }
+        }
+        return current;
+      },
+      pretty ? 2 : undefined
+    );
+    return typeof text === 'string' ? text : fallbackEventDataText(value);
+  } catch {
+    return fallbackEventDataText(value);
+  }
+};
+
+const stringifyEventData = (payload: unknown, pretty = false): string => {
+  const resolved = unwrapEventData(payload);
+  if (typeof resolved === 'string') {
+    return resolved;
+  }
+  return safeStringifyEventData(resolved, pretty);
+};
+
+const truncateText = (value: unknown): string => {
+  const text = String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) {
+    return '';
+  }
+  if (text.length <= TIMELINE_DETAIL_EVENT_TITLE_MAX_LENGTH) {
+    return text;
+  }
+  return `${text.slice(0, TIMELINE_DETAIL_EVENT_TITLE_MAX_LENGTH)}...`;
+};
+
+// Extract readable scalar text from nested summary/error objects.
+const extractEventTitleText = (value: unknown, depth = 0): string => {
+  if (value === null || value === undefined || depth > 3) {
+    return '';
+  }
+  if (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint'
+  ) {
+    return String(value).trim();
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const text = extractEventTitleText(item, depth + 1);
+      if (text) {
+        return text;
+      }
+    }
+    return '';
+  }
+  if (typeof value !== 'object') {
+    return '';
+  }
+  const source = value as Record<string, unknown>;
+  for (const key of [
+    'summary',
+    'message',
+    'question',
+    'reason',
+    'error',
+    'tool',
+    'tool_name',
+    'toolName',
+    'name',
+    'model',
+    'model_name',
+    'stage',
+    'status',
+    'code',
+    'title'
+  ]) {
+    const text = extractEventTitleText(source[key], depth + 1);
+    if (text) {
+      return text;
+    }
+  }
+  return '';
+};
+
+const resolveEventTitle = (eventType: string, payload: unknown): string => {
+  const normalizedType = String(eventType || '')
+    .trim()
+    .toLowerCase();
+  const data = unwrapEventData(payload);
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    const source = data as Record<string, unknown>;
+    const candidates =
+      normalizedType === 'user_input'
+        ? [
+            source.message,
+            source.question,
+            source.input,
+            source.content,
+            source.summary,
+            source.error,
+            source.reason,
+            source.tool,
+            source.tool_name,
+            source.toolName,
+            source.name,
+            source.model,
+            source.model_name,
+            source.stage,
+            source.status
+          ]
+        : [
+            source.summary,
+            source.message,
+            source.question,
+            source.error,
+            source.reason,
+            source.tool,
+            source.tool_name,
+            source.toolName,
+            source.name,
+            source.model,
+            source.model_name,
+            source.stage,
+            source.status
+          ];
+    for (const candidate of candidates) {
+      const title = truncateText(extractEventTitleText(candidate));
+      if (title) {
+        return title;
+      }
+    }
+  }
+  if (typeof data === 'string') {
+    const title = truncateText(data);
+    if (title) {
+      return title;
+    }
+  }
+  const fallback = truncateText(stringifyEventData(data, false));
+  return fallback || '-';
+};
+
+const formatEventTimestamp = (value: unknown): string => {
+  const text = String(value || '').trim();
+  if (!text) {
+    return '-';
+  }
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) {
+    return text;
+  }
+  return parsed.toLocaleString(getCurrentLanguage());
+};
+
+const normalizeRoundIndex = (value: unknown, fallback: number): number => {
+  const parsed = Number.parseInt(String(value ?? fallback), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return Math.max(1, fallback);
+  }
+  return parsed;
+};
+
+const normalizeRounds = (value: unknown): TimelineDetailRound[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      const source =
+        item && typeof item === 'object' && !Array.isArray(item)
+          ? (item as Record<string, unknown>)
+          : {};
+      const events = Array.isArray(source.events)
+        ? source.events
+            .filter((event) => event && typeof event === 'object' && !Array.isArray(event))
+            .map((event) => event as TimelineDetailRoundEvent)
+        : [];
+      return {
+        user_round: source.user_round,
+        round: source.round,
+        events
+      } as TimelineDetailRound;
+    })
+    .filter((item) => Array.isArray(item.events) && item.events.length > 0);
+};
+
+const isDefaultHiddenEventType = (eventType: string): boolean => {
+  const normalized = String(eventType || '')
+    .trim()
+    .toLowerCase();
+  return normalized.endsWith('_delta') || normalized === 'context_usage';
+};
+
+// ThreadLog is the authoritative history.  Keep the existing event renderer
+// as a presentation adapter so a turn remains selectable even when it only has
+// a user message, an empty response, or a terminal error.
+const normalizeThreadTurns = (value: unknown): TimelineDetailRound[] => {
+  if (!Array.isArray(value)) return [];
+  return value.map((turn) => {
+    const source = turn && typeof turn === 'object' && !Array.isArray(turn)
+      ? (turn as Record<string, unknown>) : {};
+    const index = normalizeRoundIndex(source.user_turn_index, 1);
+    const payload = source.payload && typeof source.payload === 'object'
+      ? source.payload as Record<string, unknown> : {};
+    const eventType = String(payload.kind || payload.role || source.status || 'turn').trim() || 'turn';
+    const item = {
+      event: eventType,
+      data: payload,
+      timestamp: source.updated_time || source.created_time || ''
+    };
+    return {
+      turn_id: String(source.turn_id || ''),
+      user_round: index,
+      status: source.status,
+      summary: source.summary,
+      events: [item]
+    };
+  });
+};
+
+const normalizeSession = (sessionId: string, value: unknown): TimelineDetailSession => {
+  const source =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const sourceMessages = Array.isArray(source.messages)
+    ? source.messages
+    : Array.isArray(source.transcript)
+      ? source.transcript
+      : [];
+  const messages = sourceMessages
+    .filter((item) => item && typeof item === 'object' && !Array.isArray(item))
+    .map((item) => item as Record<string, unknown>);
+  return {
+    id: String(source.id || sessionId),
+    title: String(source.title || ''),
+    userName: String(source.user_name || source.username || ''),
+    agentId: String(source.agent_id || ''),
+    agentName: String(source.agent_name || ''),
+    createdAt: source.created_at,
+    updatedAt: source.updated_at,
+    lastMessageAt: source.last_message_at,
+    messageCount: messages.length,
+    historyIncomplete: Boolean(source.history_incomplete),
+    messages,
+    logOverview:
+      source.log_overview && typeof source.log_overview === 'object' && !Array.isArray(source.log_overview)
+        ? (source.log_overview as Record<string, unknown>)
+        : null
+  };
+};
+
+const resolveQuestion = (session: TimelineDetailSession | null): string => {
+  if (!session) {
+    return t('messenger.timeline.detail.questionEmpty');
+  }
+  for (const message of session.messages) {
+    if (String(message?.role || '').trim() !== 'user') continue;
+    const content = String(message?.content || '').trim();
+    if (content) {
+      return content;
+    }
+  }
+  const fallback = String(session.title || '').trim();
+  if (fallback) {
+    return fallback;
+  }
+  return t('messenger.timeline.detail.questionEmpty');
+};
+
+const resolveQuestionFromEventPayload = (payload: unknown): string => {
+  const data = unwrapEventData(payload);
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    const source = data as Record<string, unknown>;
+    const candidate =
+      source.message ||
+      source.question ||
+      source.input ||
+      source.content ||
+      source.prompt ||
+      source.text;
+    const text = String(candidate || '').trim();
+    if (text) {
+      return text;
+    }
+  }
+  if (typeof data === 'string') {
+    return data.trim();
+  }
+  return '';
+};
+
+const formatMetaTime = (value: unknown): string => {
+  const ts = normalizeTimestamp(value);
+  if (!ts) {
+    return '-';
+  }
+  return new Date(ts).toLocaleString(getCurrentLanguage());
+};
+
+const buildTimelineDetailEvents = (
+  sourceRounds: TimelineDetailRound[]
+): TimelineDetailEventItem[] => {
+  const result: TimelineDetailEventItem[] = [];
+  let order = 0;
+  sourceRounds.forEach((round, roundIndex) => {
+    const roundIndexValue = normalizeRoundIndex(round?.user_round ?? round?.round, roundIndex + 1);
+    const eventList = Array.isArray(round?.events) ? round.events : [];
+    eventList.forEach((event, eventIndex) => {
+      order += 1;
+      const eventType = String(event?.event || event?.type || 'unknown').trim() || 'unknown';
+      const title = resolveEventTitle(eventType, event?.data);
+      const timestampLabel = formatEventTimestamp(event?.timestamp);
+      const searchText = `${eventType} ${title}`.toLowerCase();
+      result.push({
+        key: `${roundIndexValue}-${eventType}-${order}-${eventIndex}`,
+        order,
+        round: roundIndexValue,
+        eventType,
+        timestampLabel,
+        title,
+        searchText,
+        rawEvent: event
+      });
+    });
+  });
+  return result;
+};
+
+const events = computed<TimelineDetailEventItem[]>(() => {
+  return buildTimelineDetailEvents(rounds.value);
+});
+
+const roundOptions = computed<TimelineRoundOption[]>(() => {
+  const values = new Set<number>();
+  rounds.value.forEach((round, roundIndex) => {
+    values.add(normalizeRoundIndex(round?.user_round ?? round?.round, roundIndex + 1));
+  });
+  return Array.from(values)
+    .sort((left, right) => left - right)
+    .map((value) => ({
+      value,
+      label: t('messenger.timeline.detail.round', { round: value })
+    }));
+});
+
+const roundQuestionMap = computed(() => {
+  const result = new Map<number, string>();
+  rounds.value.forEach((round, roundIndex) => {
+    const roundIndexValue = normalizeRoundIndex(round?.user_round ?? round?.round, roundIndex + 1);
+    const eventList = Array.isArray(round?.events) ? round.events : [];
+    let fallbackQuestion = '';
+    for (const event of eventList) {
+      const eventType = String(event?.event || event?.type || '')
+        .trim()
+        .toLowerCase();
+      const question = resolveQuestionFromEventPayload(event?.data);
+      if (!question) {
+        continue;
+      }
+      if (eventType === 'user_input' || eventType === 'received') {
+        result.set(roundIndexValue, question);
+        fallbackQuestion = '';
+        break;
+      }
+      if (!fallbackQuestion) {
+        fallbackQuestion = question;
+      }
+    }
+    if (!result.has(roundIndexValue) && fallbackQuestion) {
+      result.set(roundIndexValue, fallbackQuestion);
+    }
+  });
+
+  const userMessages = (sessionDetail.value?.messages || [])
+    .filter((item) => String(item?.role || '').trim() === 'user')
+    .map((item) => String(item?.content || '').trim())
+    .filter((item) => item.length > 0);
+  roundOptions.value.forEach((item, index) => {
+    if (!result.has(item.value) && userMessages[index]) {
+      result.set(item.value, userMessages[index]);
+    }
+  });
+  return result;
+});
+
+const eventTypeOptions = computed(() => {
+  const types = new Set<string>();
+  events.value.forEach((item) => {
+    if (item.eventType) {
+      types.add(item.eventType);
+    }
+  });
+  return Array.from(types).sort((left, right) => left.localeCompare(right));
+});
+
+const filterTimelineEvents = (items: TimelineDetailEventItem[]): TimelineDetailEventItem[] => {
+  const selectedType = String(eventTypeFilter.value || '').trim();
+  const keyword = String(keywordFilter.value || '')
+    .trim()
+    .toLowerCase();
+  return items.filter((item) => {
+    if (selectedType && item.eventType !== selectedType) {
+      return false;
+    }
+    if (!selectedType && isDefaultHiddenEventType(item.eventType)) {
+      return false;
+    }
+    if (!keyword) {
+      return true;
+    }
+    return item.searchText.includes(keyword)
+      || stringifyEventData(item.rawEvent?.data, false).toLowerCase().includes(keyword);
+  });
+};
+
+const filteredEvents = computed(() => {
+  return filterTimelineEvents(events.value.filter((item) => item.round === selectedRound.value));
+});
+
+const resolveEventRaw = (item: TimelineDetailEventItem): string => {
+  const cached = eventRawCache.get(item.key);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const raw = stringifyEventData(item.rawEvent?.data, true);
+  eventRawCache.set(item.key, raw);
+  while (eventRawCache.size > TIMELINE_DETAIL_RAW_CACHE_LIMIT) {
+    const oldestKey = eventRawCache.keys().next().value;
+    if (!oldestKey) break;
+    eventRawCache.delete(oldestKey);
+  }
+  return raw;
+};
+
+const handleEventToggle = (key: string, event: Event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLDetailsElement) || target !== event.currentTarget) {
+    return;
+  }
+  const next = new Set(expandedEventKeys.value);
+  if (target.open) {
+    next.delete(key);
+    next.add(key);
+    while (next.size > TIMELINE_DETAIL_EXPANDED_EVENT_LIMIT) {
+      const oldestKey = next.values().next().value;
+      if (!oldestKey) break;
+      next.delete(oldestKey);
+    }
+  } else {
+    next.delete(key);
+  }
+  expandedEventKeys.value = next;
+};
+
+const selectTimelineExportEvents = (
+  items: TimelineDetailEventItem[]
+): TimelineDetailEventItem[] => {
+  const selectedType = String(eventTypeFilter.value || '').trim();
+  const keyword = String(keywordFilter.value || '').trim();
+  if (selectedType || keyword) {
+    return filterTimelineEvents(items);
+  }
+  return items.filter((item) => !isDefaultHiddenEventType(item.eventType));
+};
+
+const exportEvents = computed(() => {
+  return selectTimelineExportEvents(events.value);
+});
+
+const dialogTitle = computed(() => {
+  const name = String(sessionDetail.value?.title || '').trim();
+  return name
+    ? t('messenger.timeline.detail.titleWithName', { name })
+    : t('messenger.timeline.detail.title');
+});
+
+const detailQuestion = computed(() => {
+  if (selectedRound.value > 0) {
+    const question = String(roundQuestionMap.value.get(selectedRound.value) || '').trim();
+    if (question) {
+      return question;
+    }
+  }
+  return resolveQuestion(sessionDetail.value);
+});
+
+const resolveSessionAgentDisplay = (session: TimelineDetailSession): string => {
+  const name = String(session.agentName || '').trim();
+  const id = String(session.agentId || '').trim();
+  if (name) {
+    return name;
+  }
+  if (id) {
+    return id;
+  }
+  return '-';
+};
+
+const overviewValue = (value: unknown): string => {
+  if (value === null || value === undefined || String(value).trim() === '') return '-';
+  return String(value);
+};
+
+const overviewCount = (value: unknown): string => {
+  if (value === null || value === undefined || value === '') return '0';
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? formatCompactCount(parsed) : '0';
+};
+
+const overviewDuration = (value: unknown): string => {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0) return '-';
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = seconds - hours * 3600 - minutes * 60;
+  const parts: string[] = [];
+  if (hours) parts.push(`${hours}h`);
+  if (minutes || hours) parts.push(`${minutes}m`);
+  parts.push(`${rest.toFixed(1)}s`);
+  return parts.join(' ');
+};
+
+const overviewSpeed = (value: unknown, lowerBound = false): string => {
+  const speed = Number(value);
+  if (!Number.isFinite(speed) || speed <= 0) return '-';
+  const unit = speed >= 1_000_000 ? 'm' : speed >= 1_000 ? 'k' : '';
+  const divisor = unit === 'm' ? 1_000_000 : unit === 'k' ? 1_000 : 1;
+  return `${lowerBound ? '>=' : ''}${(speed / divisor).toFixed(1)}${unit} ${t('messenger.timeline.detail.tokenRateUnit')}`;
+};
+
+const overviewStatus = (value: unknown): string => {
+  const status = String(value || '').trim().toLowerCase();
+  const statusKeys: Record<string, string> = {
+    running: 'messenger.timeline.detail.running',
+    waiting: 'messenger.timeline.detail.queued',
+    queued: 'messenger.timeline.detail.queued',
+    cancelling: 'messenger.timeline.detail.cancelling',
+    finished: 'messenger.timeline.detail.completed',
+    error: 'messenger.timeline.detail.failed',
+    cancelled: 'messenger.timeline.detail.cancelled'
+  };
+  const key = statusKeys[status];
+  return key ? t(key) : overviewValue(value);
+};
+
+const resolvePersistedDecodeSpeed = (
+  messages: Record<string, unknown>[] | undefined
+): number | null => {
+  if (!Array.isArray(messages)) return null;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (String(message?.role || '').trim() !== 'assistant') continue;
+    const stats =
+      message?.stats && typeof message.stats === 'object' && !Array.isArray(message.stats)
+        ? message.stats as Record<string, unknown>
+        : null;
+    if (!stats) continue;
+    for (const key of [
+      'visible_decode_speed_tps',
+      'decode_speed_tps',
+      'avg_model_round_speed_tps',
+      'avg_model_round_decode_speed_tps'
+    ]) {
+      const value = Number(stats[key]);
+      if (Number.isFinite(value) && value > 0) return value;
+    }
+  }
+  return null;
+};
+
+const overviewItems = computed(() => {
+  const session = sessionDetail.value;
+  if (!session) {
+    return [];
+  }
+  const metrics = session.logOverview || {};
+  const persistedDecodeSpeed = resolvePersistedDecodeSpeed(session.messages);
+  const overviewDecodeSpeed = Number(metrics.decode_speed_tps);
+  const decodeSpeed = Number.isFinite(overviewDecodeSpeed) && overviewDecodeSpeed > 0
+    ? overviewDecodeSpeed
+    : persistedDecodeSpeed;
+  return [
+    { icon: 'fa-solid fa-user', label: t('messenger.timeline.detail.metaUserNameLabel'), value: overviewValue(session.userName) },
+    { icon: 'fa-solid fa-robot', label: t('messenger.timeline.detail.metaAgentLabel'), value: overviewValue(metrics.agent_name || resolveSessionAgentDisplay(session)) },
+    { icon: 'fa-solid fa-circle-info', label: t('messenger.timeline.detail.metaStatusLabel'), value: overviewStatus(metrics.status || (running.value ? 'running' : 'finished')) },
+    { icon: 'fa-regular fa-clock', label: t('messenger.timeline.detail.metaElapsedLabel'), value: overviewDuration(metrics.elapsed_s) },
+    { icon: 'fa-solid fa-arrow-rotate-right', label: t('messenger.timeline.detail.metaRoundCountLabel'), value: overviewCount(turnTotal.value) },
+    { icon: 'fa-solid fa-screwdriver-wrench', label: t('messenger.timeline.detail.metaToolsLabel'), value: overviewCount(metrics.tool_calls) },
+    { icon: 'fa-solid fa-coins', label: t('messenger.timeline.detail.metaQuotaLabel'), value: overviewCount(metrics.model_request_count ?? metrics.quota_used) },
+    { icon: 'fa-solid fa-bolt', label: t('messenger.timeline.detail.metaTokensLabel'), value: overviewCount(metrics.consumed_tokens) },
+    { icon: 'fa-solid fa-bolt-lightning', label: t('messenger.timeline.detail.metaTtftLabel'), value: overviewDuration(Number(metrics.ttft_ms) / 1000) },
+    { icon: 'fa-solid fa-arrow-up', label: t('messenger.timeline.detail.metaPrefillLabel'), value: overviewSpeed(metrics.prefill_speed_tps, Boolean(metrics.prefill_speed_lower_bound)) },
+    { icon: 'fa-solid fa-arrow-down', label: t('messenger.timeline.detail.metaDecodeLabel'), value: overviewSpeed(decodeSpeed) },
+    { icon: 'fa-solid fa-list', label: t('messenger.timeline.detail.metaEventCountLabel'), value: overviewCount(eventTotal.value) },
+    { icon: 'fa-solid fa-fingerprint', label: t('messenger.timeline.detail.metaSessionIdLabel'), value: overviewValue(metrics.session_id || session.id) }
+  ];
+});
+
+const eventPageInfo = computed(() =>
+  t('messenger.timeline.detail.pageInfo', {
+    page: eventPage.value + 1,
+    start: events.value.length ? eventPage.value * TIMELINE_DETAIL_EVENT_PAGE_SIZE + 1 : 0,
+    end: events.value.length
+      ? eventPage.value * TIMELINE_DETAIL_EVENT_PAGE_SIZE + events.value.length
+      : 0,
+    total: turnTotal.value
+  })
+);
+
+const buildEventSummary = (eventType: string, payload: unknown): Record<string, unknown> => {
+  const data = unwrapEventData(payload);
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return {};
+  }
+  const source = data as Record<string, unknown>;
+  const summary: Record<string, unknown> = {};
+  for (const key of [
+    'stage',
+    'summary',
+    'message',
+    'question',
+    'trace_id',
+    'model_round',
+    'tool',
+    'tool_name',
+    'stop_reason',
+    'ok'
+  ]) {
+    const value = source[key];
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      summary[key] = value;
+    }
+  }
+  if (eventType === 'tool_call' && source.args && typeof source.args === 'object') {
+    summary.args = source.args;
+  }
+  if (eventType === 'tool_result' && source.meta && typeof source.meta === 'object') {
+    summary.meta = source.meta;
+  }
+  if (eventType === 'llm_output' && source.usage && typeof source.usage === 'object') {
+    summary.usage = source.usage;
+  }
+  return summary;
+};
+
+const normalizeExportTimestamp = (value: unknown): string => {
+  const text = String(value || '').trim();
+  if (text) {
+    const parsed = new Date(text);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+  const timestampMs = normalizeTimestamp(value);
+  if (timestampMs > 0) {
+    return new Date(timestampMs).toISOString();
+  }
+  return '';
+};
+
+const buildTimelineExportLines = (
+  sourceEvents: TimelineDetailEventItem[] = exportEvents.value
+): TimelineExportLine[] => {
+  const output: TimelineExportLine[] = [];
+  const uniqueEventTypes = new Set<string>();
+  sourceEvents.forEach((item, index) => {
+    const event = item.rawEvent;
+    const eventType = item.eventType || 'unknown';
+    uniqueEventTypes.add(eventType);
+    output.push({
+      record_type: 'event',
+      order: index + 1,
+      round: item.round,
+      event: eventType,
+      timestamp: normalizeExportTimestamp(event?.timestamp),
+      timestamp_ms: normalizeTimestamp(event?.timestamp),
+      title: item.title,
+      summary: buildEventSummary(eventType, event?.data),
+      data: unwrapEventData(event?.data)
+    });
+  });
+
+  const session = sessionDetail.value;
+  output.unshift({
+    record_type: 'meta',
+    export_schema_version: 3,
+    export_format: 'jsonl',
+    exported_at: new Date().toISOString(),
+    summary: {
+      question: detailQuestion.value,
+      round_count: rounds.value.length,
+      event_count: output.length,
+      event_types: Array.from(uniqueEventTypes).sort((left, right) => left.localeCompare(right)),
+      running: running.value,
+      last_event_id: lastEventId.value
+    },
+    session
+  });
+
+  return output;
+};
+
+const loadTimelineDetail = async (sessionId: string) => {
+  const targetId = String(sessionId || '').trim();
+  if (!targetId) {
+    return;
+  }
+  const currentToken = ++requestToken;
+  loading.value = true;
+  sessionDetail.value = null;
+  rounds.value = [];
+  running.value = false;
+  lastEventId.value = 0;
+  expandedEventKeys.value = new Set();
+  eventRawCache.clear();
+  eventPage.value = 0;
+  turnPageCursors.value = [undefined];
+  itemAfter.value = -1;
+  itemHasMore.value = false;
+  eventHasMore.value = false;
+  resetFilters();
+  try {
+    const [sessionRes, turnsRes] = await Promise.all([
+      getChatSessionWithParams(targetId, {
+        limit: TIMELINE_DETAIL_SESSION_MESSAGE_LIMIT,
+        summary: true
+      }),
+      getThreadLogTurns(targetId, { limit: TIMELINE_DETAIL_EVENT_PAGE_SIZE })
+    ]);
+    if (currentToken !== requestToken) {
+      return;
+    }
+    const sessionData = (sessionRes?.data as { data?: unknown } | undefined)?.data;
+    sessionDetail.value = normalizeSession(targetId, sessionData);
+    const turnPayload = (turnsRes?.data as { data?: Record<string, unknown> } | undefined)?.data;
+    rounds.value = normalizeThreadTurns(turnPayload?.turns);
+    turnPageCursors.value[1] = Number(turnPayload?.next_before) || undefined;
+    eventHasMore.value = Boolean(turnPayload?.has_more);
+    const itemTotal = Number(turnPayload?.item_total);
+    const userRoundTotal = Number(turnPayload?.user_round_total);
+    eventTotal.value = Number.isFinite(itemTotal) ? itemTotal : 0;
+    turnTotal.value = Number.isFinite(userRoundTotal) ? userRoundTotal : rounds.value.length;
+    running.value = false;
+  } catch (error) {
+    if (currentToken !== requestToken) {
+      return;
+    }
+    dialogVisible.value = false;
+    showApiError(error, t('messenger.timeline.detail.loadFailed'));
+  } finally {
+    if (currentToken === requestToken) {
+      loading.value = false;
+    }
+  }
+};
+
+const loadTimelineEventPage = async (page: number) => {
+  const session = sessionDetail.value;
+  const nextPage = Math.max(0, Math.trunc(page));
+  if (!session || loadingEvents.value || nextPage === eventPage.value) {
+    return;
+  }
+  const currentToken = requestToken;
+  loadingEvents.value = true;
+  try {
+    const response = await getThreadLogTurns(session.id, {
+      before: turnPageCursors.value[nextPage], limit: TIMELINE_DETAIL_EVENT_PAGE_SIZE
+    });
+    if (currentToken !== requestToken) return;
+    const payload = response.data?.data;
+    const selected = rounds.value.find((round) => Number(round.user_round) === selectedRound.value);
+    const pageRounds = normalizeThreadTurns(payload?.turns);
+    // Keep at most one pinned selection plus the current catalog page.
+    rounds.value = selected && !pageRounds.some((round) => round.turn_id === selected.turn_id)
+      ? [...pageRounds, selected] : pageRounds;
+    turnPageCursors.value[nextPage + 1] = payload?.next_before;
+    eventPage.value = nextPage;
+    eventHasMore.value = Boolean(payload?.has_more);
+    const itemTotal = Number(payload?.item_total);
+    const userRoundTotal = Number(payload?.user_round_total);
+    eventTotal.value = Number.isFinite(itemTotal) ? itemTotal : eventTotal.value;
+    turnTotal.value = Number.isFinite(userRoundTotal) ? userRoundTotal : pageRounds.length;
+    expandedEventKeys.value = new Set();
+    eventRawCache.clear();
+    await nextTick();
+    eventsContainerRef.value?.scrollTo({ top: 0 });
+  } catch (error) {
+    if (currentToken === requestToken) {
+      showApiError(error, t('messenger.timeline.detail.loadFailed'));
+    }
+  } finally {
+    if (currentToken === requestToken) {
+      loadingEvents.value = false;
+    }
+  }
+};
+
+const loadSelectedTurnItems = async (round: number, next = false) => {
+  const target = rounds.value.find((item) => Number(item.user_round) === round);
+  const session = sessionDetail.value;
+  if (!target?.turn_id || !session) return;
+  const token = ++detailRequestToken;
+  const parentToken = requestToken;
+  try {
+    const response = await getThreadLogTurn(session.id, target.turn_id, {
+      item_after: next ? itemAfter.value : -1, limit: 100
+    });
+    if (token !== detailRequestToken || parentToken !== requestToken || selectedRound.value !== round) return;
+    const turn = response.data?.data?.turn;
+    const items = Array.isArray(turn?.items) ? turn.items : [];
+    itemAfter.value = Number(turn?.next_after ?? -1);
+    itemHasMore.value = Boolean(turn?.has_more);
+    const detailEvents = items.map((item: Record<string, unknown>) => ({
+      event: String(item.kind || 'item'), data: item.payload || {},
+      timestamp: item.updated_time || item.created_time || ''
+    }));
+    rounds.value = rounds.value.map((item) => ({ ...item,
+      events: item.turn_id === target.turn_id ? detailEvents : [] }));
+    expandedEventKeys.value = new Set();
+    eventRawCache.clear();
+  } catch (error) {
+    if (token === detailRequestToken && parentToken === requestToken)
+      showApiError(error, t('messenger.timeline.detail.loadFailed'));
+  }
+};
+
+const exportTimelineDetail = async () => {
+  const session = sessionDetail.value;
+  if (!session) {
+    return;
+  }
+  try {
+    await exportSingleSessionLog(session.id, { filenamePrefix: session.agentName || session.title || session.id });
+    ElMessage.success(t('messenger.timeline.detail.exported'));
+  } catch (error) {
+    const detail = String((error as { message?: string })?.message || t('common.requestFailed'));
+    ElMessage.error(t('messenger.timeline.detail.exportFailed', { message: detail }));
+  }
+};
+
+const scrollToSelectedRound = () => {
+  if (!selectedRound.value) {
+    return;
+  }
+  const container = eventsContainerRef.value;
+  if (!container) {
+    return;
+  }
+  const selector = `.messenger-timeline-detail-event-item[data-round="${selectedRound.value}"]`;
+  const target = container.querySelector<HTMLElement>(selector);
+  if (!target) {
+    return;
+  }
+  container
+    .querySelectorAll<HTMLElement>('.messenger-timeline-detail-event-item.is-round-target')
+    .forEach((node) => node.classList.remove('is-round-target'));
+  target.classList.add('is-round-target');
+  target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  window.setTimeout(() => {
+    target.classList.remove('is-round-target');
+  }, 1400);
+};
+
+watch(
+  [() => dialogVisible.value, () => props.sessionId],
+  ([visible, sessionId]) => {
+    const targetId = String(sessionId || '').trim();
+    if (!visible || !targetId) {
+      return;
+    }
+    void loadTimelineDetail(targetId);
+  },
+  { immediate: true }
+);
+
+watch(
+  roundOptions,
+  (options) => {
+    if (!options.length) {
+      selectedRound.value = 0;
+      return;
+    }
+    const selectedValid = options.some((item) => item.value === selectedRound.value);
+    if (!selectedValid) {
+      selectedRound.value = options[options.length - 1]?.value || 0;
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  selectedRound,
+  () => {
+    if (selectedRound.value > 0) void loadSelectedTurnItems(selectedRound.value);
+    void nextTick(() => {
+      scrollToSelectedRound();
+    });
+  },
+  { flush: 'post' }
+);
+
+watch(keywordInput, (value) => {
+  if (keywordFilterTimer !== null) {
+    clearTimeout(keywordFilterTimer);
+  }
+  keywordFilterTimer = setTimeout(() => {
+    keywordFilterTimer = null;
+    keywordFilter.value = String(value || '').trim();
+  }, 120);
+});
+
+watch(
+  () => dialogVisible.value,
+  (visible) => {
+    if (visible) {
+      return;
+    }
+    requestToken += 1;
+    resetDetailState();
+  }
+);
+
+onBeforeUnmount(() => {
+  if (keywordFilterTimer !== null) {
+    clearTimeout(keywordFilterTimer);
+    keywordFilterTimer = null;
+  }
+});
+</script>

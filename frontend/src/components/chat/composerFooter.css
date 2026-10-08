@@ -1,0 +1,476 @@
+/* B4 composer internals (§8.1/§8.2).
+   The card surface itself (radius 22px, 1px border, white bg, 10x14 padding) is
+   owned by the shell styles in `styles/messenger.css` + `styles/pages/messenger-shell.css`;
+   this file only styles what lives inside the card. */
+
+.composer-textarea {
+  display: block;
+  width: 100%;
+  max-height: 168px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--mz-text, #1f2329);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  resize: none;
+  overflow-y: hidden;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.composer-textarea::placeholder {
+  color: var(--mz-text-muted, #8a8f99);
+}
+
+.composer-textarea:focus,
+.composer-textarea:focus-visible {
+  border: 0;
+  outline: none;
+  box-shadow: none;
+}
+
+/* ------------------------------------------------------------ action row */
+
+/* 对齐桌面 composer.slint:513-664：30px 高、6px 间距的按钮行，
+   左组（工作目录 / 审批 / 命令 / 语音）与右组（模型 / 占用 / 发送）分列两端。 */
+.composer-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.composer-action-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.composer-action-group--end {
+  flex: 0 1 auto;
+  justify-content: flex-end;
+}
+
+.composer-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* The model popover attaches above the whole input card (§8.3), not above its
+   trigger: keeping this anchor static makes the card the containing block.
+   The command panel uses the same trick (`.command-menu` is card-width). */
+.composer-anchor--card,
+.composer-anchor--static {
+  position: static;
+}
+
+.composer-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.composer-icon-btn:hover:not(:disabled),
+.composer-icon-btn.is-active {
+  background: var(--mz-hover, #f1efec);
+  color: var(--mz-primary, #c96443);
+}
+
+/* 录音中：图标变红（桌面 `icon-color: root.recording ? danger : muted`）。 */
+.composer-icon-btn.is-recording,
+.composer-icon-btn.is-recording:hover:not(:disabled) {
+  background: transparent;
+  color: var(--mz-danger, #d04a43);
+}
+
+.composer-icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.composer-icon-btn:focus-visible {
+  outline: 2px solid var(--mz-primary-soft, #dfac9a);
+  outline-offset: 1px;
+}
+
+.composer-caret {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* 录音计时紧贴麦克风（桌面 composer.slint:612-618）。 */
+.composer-voice-timer {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 30px;
+  color: var(--mz-danger, #d04a43);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 上下文占用图标（桌面 ContextUsageIcon，composer.slint:229-278 / :654）。 */
+.composer-context-usage {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 30px;
+  color: var(--mz-text-muted, #8a8f99);
+}
+
+/* ------------------------------------------------------ approval + model */
+
+/* 桌面的审批 chip 与模型触发器都是「无边框、悬停填充」的幽灵按钮
+   （composer.slint:529-544 / :62-95），高度与其余按钮同为 30px。 */
+.composer-approval-trigger,
+.composer-model-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mz-text-secondary, #3d3d3d);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.composer-model-trigger {
+  max-width: min(320px, 46vw);
+}
+
+.composer-approval-trigger:hover:not(:disabled),
+.composer-model-trigger:hover:not(:disabled) {
+  background: var(--mz-hover, #f1efec);
+}
+
+.composer-approval-trigger.is-active,
+.composer-model-trigger.is-active {
+  background: var(--mz-primary-tint, #f6e9e3);
+  color: var(--mz-primary, #c96443);
+}
+
+.composer-approval-trigger:disabled,
+.composer-model-trigger:disabled {
+  cursor: progress;
+  opacity: 0.75;
+}
+
+.composer-approval-trigger:focus-visible,
+.composer-model-trigger:focus-visible {
+  outline: 2px solid var(--mz-primary-soft, #dfac9a);
+  outline-offset: 1px;
+}
+
+.composer-approval-icon,
+.composer-model-icon {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.composer-approval-label,
+.composer-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-model-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.composer-model-effort {
+  flex-shrink: 0;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.composer-model-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(var(--ui-accent-rgb, 201, 100, 67), 0.25);
+  border-top-color: var(--mz-primary, #c96443);
+  border-radius: 50%;
+  animation: composer-model-spin 640ms linear infinite;
+}
+
+@keyframes composer-model-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-model-spinner {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------------------------ send */
+
+/* 对齐桌面：40px 宽 × 30px 高的主色按钮（composer.slint:657-663）。 */
+.composer-send-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: var(--ui-accent, var(--mz-primary, #c96443));
+  color: #ffffff;
+  cursor: pointer;
+  transition: background-color 140ms ease, opacity 140ms ease;
+}
+
+.composer-send-btn:hover:not(:disabled) {
+  background: var(--ui-accent-hover, var(--mz-primary-hover, #b55637));
+}
+
+.composer-send-btn:disabled {
+  background: var(--ui-accent-disabled, #e3ddd9);
+  color: #ffffff;
+  cursor: not-allowed;
+}
+
+.composer-send-btn:focus-visible {
+  outline: 2px solid var(--mz-primary-soft, #dfac9a);
+  outline-offset: 2px;
+}
+
+.composer-send-icon {
+  font-size: 14px;
+}
+
+/* ------------------------------------------------------------- voice hint */
+
+.composer-voice-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 12px;
+}
+
+.composer-voice-rings {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+}
+
+.composer-voice-rings > span {
+  width: 3px;
+  height: 6px;
+  border-radius: 2px;
+  background: currentColor;
+  animation: composer-voice-ring 900ms ease-in-out infinite;
+}
+
+.composer-voice-rings > span:nth-child(2) {
+  animation-delay: 140ms;
+}
+
+.composer-voice-rings > span:nth-child(3) {
+  animation-delay: 280ms;
+}
+
+@keyframes composer-voice-ring {
+  50% {
+    height: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-voice-rings > span {
+    animation: none;
+  }
+}
+
+/* ---------------------------------------------------------------- popovers */
+
+.composer-panel {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 40;
+  box-sizing: border-box;
+  min-width: 220px;
+  max-height: 340px;
+  padding: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--mz-border, #e8e6e3);
+  border-radius: 12px;
+  background: var(--mz-surface, #ffffff);
+  box-shadow: 0 12px 32px rgba(31, 35, 41, 0.16);
+}
+
+.composer-panel--approval {
+  width: 268px;
+}
+
+.composer-panel-title {
+  padding: 6px 8px 4px;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.composer-panel-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mz-text, #1f2329);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-panel-item:hover,
+.composer-panel-item.is-selected {
+  background: var(--mz-hover, #f1efec);
+}
+
+.composer-panel-item.is-selected {
+  color: var(--mz-primary, #c96443);
+}
+
+.composer-panel-item:focus-visible {
+  outline: 2px solid var(--mz-primary-soft, #dfac9a);
+  outline-offset: -2px;
+}
+
+.composer-panel-item-icon {
+  flex-shrink: 0;
+  width: 14px;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 12px;
+  text-align: center;
+}
+
+.composer-panel-item--radio .composer-panel-radio {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  color: var(--mz-primary, #c96443);
+  font-size: 9px;
+}
+
+.composer-panel-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.composer-panel-item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-panel-desc {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-panel-hint {
+  padding: 6px 8px 2px;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.composer-panel-item--command {
+  gap: 10px;
+}
+
+.composer-panel-command {
+  flex-shrink: 0;
+  font-family: Consolas, "SFMono-Regular", Menlo, monospace;
+  font-size: 12px;
+}
+
+.composer-panel-item--command .composer-panel-desc {
+  flex: 1 1 auto;
+}
+
+/* --------------------------------------------------- narrow container tweaks */
+
+.input-container--world {
+  container-type: inline-size;
+}
+
+/* 窄视口：先收工作目录名与模型名，按钮行不换行、不溢出（间距保持 6px）。 */
+@container (max-width: 560px) {
+  .composer-model-trigger {
+    max-width: 132px;
+  }
+
+  .composer-model-effort {
+    display: none;
+  }
+
+  .composer-approval-label {
+    max-width: 72px;
+  }
+}
+
+@container (max-width: 420px) {
+  .composer-model-name {
+    max-width: 76px;
+  }
+
+  .composer-approval-icon {
+    display: none;
+  }
+}

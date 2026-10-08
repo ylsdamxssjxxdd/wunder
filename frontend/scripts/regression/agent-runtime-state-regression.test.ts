@@ -1,0 +1,203 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  hasAgentTerminalSettlementEvidence,
+  isTerminalMessengerRuntimeStatus,
+  isWaitingMessengerRuntimeStatus,
+  resolveAgentRuntimeTerminalStateFromSessionStatus,
+  resolveAgentRuntimeStateFromSignals,
+  shouldNotifyAgentTaskCompletion,
+  shouldPreserveMissingAgentRuntimeState,
+  shouldSettleAgentRuntimeFromTerminalSession,
+  shouldSettleAgentSessionsFromRuntimeState
+} from '../../src/views/messenger/agentRuntimeState';
+
+test('agent runtime state keeps queued/waiting ahead of stale local streaming', () => {
+  assert.equal(isWaitingMessengerRuntimeStatus('queued'), true);
+  assert.equal(
+    resolveAgentRuntimeStateFromSignals({
+      localWaiting: true,
+      localStreaming: true,
+      remoteState: 'idle'
+    }),
+    'pending'
+  );
+  assert.equal(
+    resolveAgentRuntimeStateFromSignals({
+      localStreaming: true,
+      remoteState: 'pending'
+    }),
+    'pending'
+  );
+});
+
+test('agent runtime state lets authoritative terminal beat stale running override', () => {
+  assert.equal(isTerminalMessengerRuntimeStatus('completed'), true);
+  assert.equal(
+    resolveAgentRuntimeStateFromSignals({
+      localStreaming: true,
+      remoteState: 'done',
+      overrideState: 'running'
+    }),
+    'done'
+  );
+  assert.equal(
+    resolveAgentRuntimeStateFromSignals({
+      localStreaming: true,
+      remoteState: 'error',
+      overrideState: 'running'
+    }),
+    'error'
+  );
+});
+
+test('agent runtime state still uses local streaming as running fallback', () => {
+  assert.equal(
+    resolveAgentRuntimeStateFromSignals({
+      localStreaming: true,
+      remoteState: 'idle'
+    }),
+    'running'
+  );
+});
+
+test('blocking swarm tool outranks a stale terminal agent snapshot', () => {
+  assert.equal(
+    resolveAgentRuntimeStateFromSignals({
+      localStreaming: true,
+      activeBlockingSwarm: true,
+      remoteState: 'done',
+      overrideState: 'running'
+    }),
+    'running'
+  );
+  assert.equal(
+    resolveAgentRuntimeStateFromSignals({
+      activeBlockingSwarm: true,
+      remoteState: 'error'
+    }),
+    'running'
+  );
+});
+
+test('agent runtime settlement only clears stale hot or terminal sessions', () => {
+  assert.equal(
+    shouldSettleAgentSessionsFromRuntimeState({
+      previousState: 'running',
+      nextState: 'idle'
+    }),
+    true
+  );
+  assert.equal(
+    shouldSettleAgentSessionsFromRuntimeState({
+      previousState: 'done',
+      nextState: 'idle'
+    }),
+    true
+  );
+  assert.equal(
+    shouldSettleAgentSessionsFromRuntimeState({
+      previousState: 'idle',
+      nextState: 'idle'
+    }),
+    false
+  );
+  assert.equal(
+    shouldSettleAgentSessionsFromRuntimeState({
+      previousState: 'idle',
+      nextState: 'done'
+    }),
+    true
+  );
+});
+
+test('agent runtime terminal settlement accepts active stale running as evidence', () => {
+  assert.equal(
+    hasAgentTerminalSettlementEvidence({
+      targetSessionId: 'sess_active_terminal',
+      activeSessionId: 'sess_active_terminal',
+      currentState: 'running'
+    }),
+    true
+  );
+  assert.equal(
+    hasAgentTerminalSettlementEvidence({
+      targetSessionId: 'sess_active_terminal',
+      currentRuntimeSessionId: 'sess_active_terminal',
+      overrideState: 'running'
+    }),
+    true
+  );
+  assert.equal(
+    hasAgentTerminalSettlementEvidence({
+      targetSessionId: 'sess_old_terminal',
+      activeSessionId: 'sess_other',
+      currentRuntimeSessionId: 'sess_new',
+      currentState: 'running'
+    }),
+    false
+  );
+});
+
+test('agent runtime terminal session can settle stale running agent state', () => {
+  assert.equal(resolveAgentRuntimeTerminalStateFromSessionStatus('idle'), 'done');
+  assert.equal(resolveAgentRuntimeTerminalStateFromSessionStatus('not_loaded'), null);
+  assert.equal(resolveAgentRuntimeTerminalStateFromSessionStatus('system_error'), 'error');
+  assert.equal(resolveAgentRuntimeTerminalStateFromSessionStatus('running'), null);
+  assert.equal(
+    shouldSettleAgentRuntimeFromTerminalSession({
+      sessionStatus: 'idle',
+      currentState: 'running'
+    }),
+    true
+  );
+  assert.equal(
+    shouldSettleAgentRuntimeFromTerminalSession({
+      sessionStatus: 'not_loaded',
+      currentState: 'running',
+      localStreaming: true
+    }),
+    false
+  );
+  assert.equal(
+    shouldSettleAgentRuntimeFromTerminalSession({
+      sessionStatus: 'idle',
+      currentState: 'idle'
+    }),
+    false
+  );
+});
+
+test('task completion notification requires a locally observed successful terminal transition', () => {
+  assert.equal(
+    shouldNotifyAgentTaskCompletion({ previousState: 'running', nextState: 'done' }),
+    true
+  );
+  assert.equal(
+    shouldNotifyAgentTaskCompletion({ previousState: 'pending', nextState: 'idle' }),
+    true
+  );
+  assert.equal(
+    shouldNotifyAgentTaskCompletion({ previousState: 'idle', nextState: 'done' }),
+    false
+  );
+  assert.equal(
+    shouldNotifyAgentTaskCompletion({ previousState: 'running', nextState: 'error' }),
+    false
+  );
+});
+
+test('task completion notification also recognizes a direct running-to-idle terminal event', () => {
+  assert.equal(
+    shouldNotifyAgentTaskCompletion({ previousState: 'running', nextState: 'idle' }),
+    true
+  );
+});
+
+test('missing polling rows preserve a hot runtime state', () => {
+  assert.equal(shouldPreserveMissingAgentRuntimeState({ previousState: 'running', remoteHasRow: false }), true);
+  assert.equal(shouldPreserveMissingAgentRuntimeState({ previousState: 'pending', remoteHasRow: false }), true);
+  assert.equal(shouldPreserveMissingAgentRuntimeState({ previousState: 'done', remoteHasRow: false }), false);
+  assert.equal(shouldPreserveMissingAgentRuntimeState({ previousState: 'running', remoteHasRow: true }), false);
+});

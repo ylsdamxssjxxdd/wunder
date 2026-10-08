@@ -1,0 +1,812 @@
+use super::SqliteStorage;
+use crate::storage::{ChatSessionRecord, StorageLifecycle};
+use anyhow::Result;
+use rusqlite::types::Value as SqlValue;
+use rusqlite::{params, params_from_iter, OptionalExtension};
+
+pub(super) trait SqliteChatSessionStorage {
+    fn get_chat_session_owner_impl(&self, session_id: &str) -> Result<Option<String>>;
+    fn list_active_chat_session_ids_impl(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<Vec<String>>;
+    fn upsert_chat_session_impl(&self, record: &ChatSessionRecord) -> Result<()>;
+    fn insert_chat_session_if_absent_impl(&self, record: &ChatSessionRecord) -> Result<bool>;
+    fn get_chat_session_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<Option<ChatSessionRecord>>;
+    fn list_chat_sessions_impl(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        parent_session_id: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)>;
+    fn count_child_chat_sessions_impl(
+        &self,
+        user_id: &str,
+        parent_session_ids: &[String],
+    ) -> Result<Vec<(String, i64)>>;
+    fn list_chat_sessions_by_status_impl(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        parent_session_id: Option<&str>,
+        status: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)>;
+    #[allow(clippy::too_many_arguments)]
+    fn list_chat_sessions_filtered_impl(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        parent_session_id: Option<&str>,
+        status: Option<&str>,
+        offset: i64,
+        limit: i64,
+        work_catalog: bool,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)>;
+    fn list_chat_session_agent_ids_impl(&self, user_id: &str) -> Result<Vec<String>>;
+    fn update_chat_session_title_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        title: &str,
+        updated_at: f64,
+    ) -> Result<()>;
+    fn touch_chat_session_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        updated_at: f64,
+        last_message_at: f64,
+    ) -> Result<()>;
+    fn list_chat_sessions_by_workspace_impl(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        status: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)>;
+    fn count_chat_sessions_by_workspace_impl(&self, user_id: &str) -> Result<Vec<(String, i64)>>;
+    fn reassign_chat_sessions_workspace_impl(
+        &self,
+        user_id: &str,
+        from_workspace: &str,
+        to_workspace: &str,
+        updated_at: f64,
+    ) -> Result<u64>;
+    fn delete_chat_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64>;
+}
+
+impl SqliteChatSessionStorage for SqliteStorage {
+    fn get_chat_session_owner_impl(&self, session_id: &str) -> Result<Option<String>> {
+        self.ensure_initialized()?;
+        Ok(self
+            .open()?
+            .query_row(
+                "SELECT user_id FROM chat_sessions WHERE session_id = ?",
+                params![session_id.trim()],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    fn list_active_chat_session_ids_impl(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<Vec<String>> {
+        if session_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut result = Vec::new();
+        // Chunk bind parameters to stay within SQLite limits on every distribution.
+        for chunk in session_ids.chunks(100) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let sql = format!("SELECT session_id FROM chat_sessions WHERE user_id = ? AND session_id IN ({placeholders}) AND (status IS NULL OR status = '' OR status = 'active')");
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(
+                params_from_iter(std::iter::once(user_id).chain(chunk.iter().map(String::as_str))),
+                |row| row.get::<_, String>(0),
+            )?;
+            result.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+        }
+        Ok(result)
+    }
+
+    fn upsert_chat_session_impl(&self, record: &ChatSessionRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let tool_overrides = if record.tool_overrides.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.tool_overrides))
+        };
+        let status = {
+            let cleaned = record.status.trim().to_lowercase();
+            if cleaned.is_empty() {
+                "active".to_string()
+            } else {
+                cleaned
+            }
+        };
+        conn.execute(
+            "INSERT INTO chat_sessions (session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, workspace_id, tool_overrides, \
+             parent_session_id, parent_message_id, spawn_label, spawned_by) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(session_id) DO UPDATE SET user_id = excluded.user_id, title = excluded.title, \
+             status = excluded.status, created_at = excluded.created_at, updated_at = excluded.updated_at, \
+             last_message_at = excluded.last_message_at, agent_id = excluded.agent_id, \
+             workspace_id = excluded.workspace_id, \
+             tool_overrides = excluded.tool_overrides, parent_session_id = excluded.parent_session_id, \
+             parent_message_id = excluded.parent_message_id, spawn_label = excluded.spawn_label, \
+             spawned_by = excluded.spawned_by",
+            params![
+                record.session_id,
+                record.user_id,
+                record.title,
+                status,
+                record.created_at,
+                record.updated_at,
+                record.last_message_at,
+                record.agent_id,
+                record.workspace_id,
+                tool_overrides,
+                record.parent_session_id,
+                record.parent_message_id,
+                record.spawn_label,
+                record.spawned_by
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn insert_chat_session_if_absent_impl(&self, record: &ChatSessionRecord) -> Result<bool> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let tool_overrides = if record.tool_overrides.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.tool_overrides))
+        };
+        let status = {
+            let cleaned = record.status.trim().to_lowercase();
+            if cleaned.is_empty() {
+                "active".to_string()
+            } else {
+                cleaned
+            }
+        };
+        let inserted = conn.execute(
+            "INSERT INTO chat_sessions (session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, workspace_id, tool_overrides, \
+             parent_session_id, parent_message_id, spawn_label, spawned_by) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(session_id) DO NOTHING",
+            params![
+                record.session_id,
+                record.user_id,
+                record.title,
+                status,
+                record.created_at,
+                record.updated_at,
+                record.last_message_at,
+                record.agent_id,
+                record.workspace_id,
+                tool_overrides,
+                record.parent_session_id,
+                record.parent_message_id,
+                record.spawn_label,
+                record.spawned_by
+            ],
+        )?;
+        Ok(inserted > 0)
+    }
+
+    fn get_chat_session_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<Option<ChatSessionRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                &format!(
+                    "{} WHERE user_id = ? AND session_id = ?",
+                    chat_session_select_sql()
+                ),
+                params![cleaned_user, cleaned_session],
+                map_chat_session_row,
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn list_chat_sessions_impl(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        parent_session_id: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)> {
+        self.list_chat_sessions_by_status_impl(
+            user_id,
+            agent_id,
+            parent_session_id,
+            Some("active"),
+            offset,
+            limit,
+        )
+    }
+
+    fn list_chat_sessions_by_status_impl(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        parent_session_id: Option<&str>,
+        status: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)> {
+        self.list_chat_sessions_filtered_impl(
+            user_id,
+            agent_id,
+            parent_session_id,
+            status,
+            offset,
+            limit,
+            false,
+        )
+    }
+
+    fn count_child_chat_sessions_impl(
+        &self,
+        user_id: &str,
+        parent_session_ids: &[String],
+    ) -> Result<Vec<(String, i64)>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let parents: Vec<String> = parent_session_ids
+            .iter()
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .collect();
+        if cleaned_user.is_empty() || parents.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let placeholders = parents
+            .iter()
+            .map(|_| "?".to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT parent_session_id, COUNT(*) FROM chat_sessions \
+             WHERE user_id = ? AND parent_session_id IN ({placeholders}) \
+             GROUP BY parent_session_id"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut params_vec: Vec<SqlValue> = Vec::with_capacity(parents.len() + 1);
+        params_vec.push(SqlValue::from(cleaned_user.to_string()));
+        for parent in &parents {
+            params_vec.push(SqlValue::from(parent.clone()));
+        }
+        let rows = stmt
+            .query_map(params_from_iter(params_vec.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<(String, i64)>, _>>()?;
+        Ok(rows)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn list_chat_sessions_filtered_impl(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        parent_session_id: Option<&str>,
+        status: Option<&str>,
+        offset: i64,
+        limit: i64,
+        work_catalog: bool,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+        let conn = self.open()?;
+        let agent_id = agent_id.map(|value| value.trim());
+        let (agent_clause, agent_params) = match agent_id {
+            None => ("".to_string(), Vec::new()),
+            Some("") => (
+                " AND (agent_id IS NULL OR agent_id = '')".to_string(),
+                Vec::new(),
+            ),
+            Some(value) => (
+                " AND agent_id = ?".to_string(),
+                vec![SqlValue::from(value.to_string())],
+            ),
+        };
+        let (mut parent_clause, parent_params) = match parent_session_id {
+            None => ("".to_string(), Vec::new()),
+            Some(value) if value.trim().is_empty() => (
+                " AND (parent_session_id IS NULL OR parent_session_id = '')".to_string(),
+                Vec::new(),
+            ),
+            Some(value) => (
+                " AND parent_session_id = ?".to_string(),
+                vec![SqlValue::from(value.trim().to_string())],
+            ),
+        };
+        let normalized_status = status
+            .map(str::trim)
+            .map(str::to_lowercase)
+            .unwrap_or_default();
+        if work_catalog {
+            // Channel conversations have ordinary root chat-session rows too,
+            // but they belong to the channel inbox rather than the user's
+            // work-thread strip. Exclude them before pagination.
+            parent_clause.push_str(" AND (COALESCE(parent_session_id, '') = '' OR COALESCE(spawned_by, '') NOT IN ('model', 'subagent_control')) AND NOT EXISTS (SELECT 1 FROM channel_sessions AS channel_session WHERE channel_session.session_id = chat_sessions.session_id AND channel_session.user_id = chat_sessions.user_id)");
+        }
+        let (status_clause, status_params) =
+            if normalized_status.is_empty() || normalized_status == "all" {
+                ("".to_string(), Vec::new())
+            } else if normalized_status == "archived" {
+                (
+                    " AND status = ?".to_string(),
+                    vec![SqlValue::from("archived".to_string())],
+                )
+            } else {
+                (
+                    " AND (status IS NULL OR status = '' OR status = ?)".to_string(),
+                    vec![SqlValue::from("active".to_string())],
+                )
+            };
+        let total_sql = format!(
+            "SELECT COUNT(*) FROM chat_sessions WHERE user_id = ?{agent_clause}{parent_clause}{status_clause}"
+        );
+        let mut total_params =
+            Vec::with_capacity(1 + agent_params.len() + parent_params.len() + status_params.len());
+        total_params.push(SqlValue::from(cleaned_user.to_string()));
+        total_params.extend(agent_params.iter().cloned());
+        total_params.extend(parent_params.iter().cloned());
+        total_params.extend(status_params.iter().cloned());
+        let total: i64 =
+            conn.query_row(&total_sql, params_from_iter(total_params.iter()), |row| {
+                row.get(0)
+            })?;
+        let mut sql = format!(
+            "{} WHERE user_id = ?{agent_clause}{parent_clause}{status_clause} ORDER BY created_at DESC, session_id DESC",
+            chat_session_select_sql()
+        );
+        let mut params_list: Vec<SqlValue> = vec![SqlValue::from(cleaned_user.to_string())];
+        params_list.extend(agent_params);
+        params_list.extend(parent_params);
+        params_list.extend(status_params);
+        if limit > 0 {
+            sql.push_str(" LIMIT ? OFFSET ?");
+            params_list.push(SqlValue::from(limit));
+            params_list.push(SqlValue::from(offset.max(0)));
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(params_from_iter(params_list.iter()), map_chat_session_row)?
+            .collect::<std::result::Result<Vec<ChatSessionRecord>, _>>()?;
+        Ok((rows, total))
+    }
+
+    fn list_chat_sessions_by_workspace_impl(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        status: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_workspace = workspace_id.trim();
+        if cleaned_user.is_empty() || cleaned_workspace.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+        let conn = self.open()?;
+        let normalized_status = status
+            .map(str::trim)
+            .map(str::to_lowercase)
+            .unwrap_or_default();
+        let (status_clause, status_param) =
+            if normalized_status.is_empty() || normalized_status == "all" {
+                ("".to_string(), None)
+            } else if normalized_status == "archived" {
+                (" AND status = ?".to_string(), Some("archived".to_string()))
+            } else {
+                (
+                    " AND (status IS NULL OR status = '' OR status = ?)".to_string(),
+                    Some("active".to_string()),
+                )
+            };
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM chat_sessions WHERE user_id = ? AND workspace_id = ?{status_clause}"
+        );
+        let mut count_params: Vec<SqlValue> = Vec::with_capacity(3);
+        count_params.push(SqlValue::from(cleaned_user.to_string()));
+        count_params.push(SqlValue::from(cleaned_workspace.to_string()));
+        if let Some(status) = &status_param {
+            count_params.push(SqlValue::from(status.clone()));
+        }
+        let total: i64 =
+            conn.query_row(&count_sql, params_from_iter(count_params.iter()), |row| {
+                row.get(0)
+            })?;
+        let mut sql = format!(
+            "{} WHERE user_id = ? AND workspace_id = ?{status_clause} ORDER BY last_message_at DESC, session_id DESC",
+            chat_session_select_sql()
+        );
+        let mut params_list = count_params.clone();
+        if limit > 0 {
+            sql.push_str(" LIMIT ? OFFSET ?");
+            params_list.push(SqlValue::from(limit));
+            params_list.push(SqlValue::from(offset.max(0)));
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(params_from_iter(params_list.iter()), map_chat_session_row)?
+            .collect::<std::result::Result<Vec<ChatSessionRecord>, _>>()?;
+        Ok((rows, total))
+    }
+
+    fn count_chat_sessions_by_workspace_impl(&self, user_id: &str) -> Result<Vec<(String, i64)>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT workspace_id, COUNT(*) FROM chat_sessions \
+             WHERE user_id = ? AND (status IS NULL OR status = '' OR status = 'active') \
+             AND workspace_id IS NOT NULL AND workspace_id != '' \
+             GROUP BY workspace_id",
+        )?;
+        let rows = stmt.query_map([cleaned_user], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
+    fn reassign_chat_sessions_workspace_impl(
+        &self,
+        user_id: &str,
+        from_workspace: &str,
+        to_workspace: &str,
+        updated_at: f64,
+    ) -> Result<u64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_from = from_workspace.trim();
+        let cleaned_to = to_workspace.trim();
+        if cleaned_user.is_empty() || cleaned_from.is_empty() || cleaned_to.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "UPDATE chat_sessions SET workspace_id = ?, updated_at = ? \
+             WHERE user_id = ? AND workspace_id = ?",
+            params![cleaned_to, updated_at, cleaned_user, cleaned_from],
+        )?;
+        Ok(affected as u64)
+    }
+
+    fn list_chat_session_agent_ids_impl(&self, user_id: &str) -> Result<Vec<String>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT agent_id FROM chat_sessions \
+                 WHERE user_id = ? AND (status IS NULL OR status = '' OR status = 'active')",
+        )?;
+        let rows = stmt.query_map([cleaned_user], |row| row.get::<_, Option<String>>(0))?;
+        let mut agent_ids = Vec::new();
+        for row in rows {
+            let agent_id = row?.unwrap_or_default();
+            agent_ids.push(agent_id);
+        }
+        Ok(agent_ids)
+    }
+
+    fn update_chat_session_title_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        title: &str,
+        updated_at: f64,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(());
+        }
+        let conn = self.open()?;
+        conn.execute(
+            "UPDATE chat_sessions SET title = ?, updated_at = ? WHERE user_id = ? AND session_id = ?",
+            params![title, updated_at, cleaned_user, cleaned_session],
+        )?;
+        Ok(())
+    }
+
+    fn touch_chat_session_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        updated_at: f64,
+        last_message_at: f64,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(());
+        }
+        let conn = self.open()?;
+        conn.execute(
+            "UPDATE chat_sessions SET updated_at = ?, last_message_at = ? WHERE user_id = ? AND session_id = ?",
+            params![updated_at, last_message_at, cleaned_user, cleaned_session],
+        )?;
+        Ok(())
+    }
+
+    fn delete_chat_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.open()?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM session_goals WHERE user_id = ? AND session_id = ?",
+            params![cleaned_user, cleaned_session],
+        )?;
+        let affected = tx.execute(
+            "DELETE FROM chat_sessions WHERE user_id = ? AND session_id = ?",
+            params![cleaned_user, cleaned_session],
+        )?;
+        tx.execute(
+            "DELETE FROM channel_sessions WHERE user_id = ? AND session_id = ?",
+            params![cleaned_user, cleaned_session],
+        )?;
+        tx.commit()?;
+        Ok(affected as i64)
+    }
+}
+
+fn chat_session_select_sql() -> &'static str {
+    "SELECT session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
+     parent_session_id, parent_message_id, spawn_label, spawned_by, workspace_id FROM chat_sessions"
+}
+
+fn map_chat_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatSessionRecord> {
+    let tool_overrides: Option<String> = row.get(8)?;
+    let status = row
+        .get::<_, Option<String>>(3)?
+        .unwrap_or_else(|| "active".to_string());
+    Ok(ChatSessionRecord {
+        session_id: row.get(0)?,
+        user_id: row.get(1)?,
+        title: row.get(2)?,
+        status: if status.trim().is_empty() {
+            "active".to_string()
+        } else {
+            status
+        },
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
+        last_message_at: row.get(6)?,
+        agent_id: row.get(7)?,
+        tool_overrides: SqliteStorage::parse_string_list(tool_overrides),
+        parent_session_id: row.get(9)?,
+        parent_message_id: row.get(10)?,
+        spawn_label: row.get(11)?,
+        spawned_by: row.get(12)?,
+        workspace_id: row.get(13)?,
+    })
+}
+
+#[cfg(test)]
+mod child_directory_tests {
+    use crate::storage::sqlite::SqliteStorage;
+    use crate::storage::*;
+    use tempfile::tempdir;
+
+    fn build_storage() -> SqliteStorage {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("chat-session-directory.db");
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize sqlite");
+        // Keep the tempdir alive for the whole test by leaking it; the path is
+        // already embedded in the storage handle.
+        std::mem::forget(dir);
+        storage
+    }
+
+    fn session(user: &str, id: &str, parent: Option<&str>, updated_at: f64) -> ChatSessionRecord {
+        ChatSessionRecord {
+            session_id: id.to_string(),
+            user_id: user.to_string(),
+            title: format!("thread {id}"),
+            status: "active".to_string(),
+            created_at: updated_at,
+            updated_at,
+            last_message_at: updated_at,
+            agent_id: None,
+            workspace_id: None,
+            tool_overrides: Vec::new(),
+            parent_session_id: parent.map(str::to_string),
+            parent_message_id: None,
+            spawn_label: parent.map(|_| "subagent".to_string()),
+            spawned_by: None,
+        }
+    }
+
+    #[test]
+    fn deleting_channel_thread_removes_only_its_owned_route() {
+        let storage = build_storage();
+        let user = "fixture-owner";
+        for id in ["fixture-deleted", "fixture-retained"] {
+            storage
+                .upsert_chat_session(&session(user, id, None, 1.0))
+                .unwrap();
+            storage
+                .upsert_channel_session(&ChannelSessionRecord {
+                    channel: "fixture-channel".into(),
+                    account_id: "fixture-account".into(),
+                    peer_kind: "direct".into(),
+                    peer_id: id.into(),
+                    thread_id: None,
+                    session_id: id.into(),
+                    agent_id: None,
+                    user_id: user.into(),
+                    tts_enabled: None,
+                    tts_voice: None,
+                    metadata: None,
+                    last_message_at: 1.0,
+                    created_at: 1.0,
+                    updated_at: 1.0,
+                })
+                .unwrap();
+        }
+        storage
+            .delete_chat_session("fixture-other", "fixture-deleted")
+            .unwrap();
+        assert!(storage
+            .get_channel_session(
+                "fixture-channel",
+                "fixture-account",
+                "direct",
+                "fixture-deleted",
+                None
+            )
+            .unwrap()
+            .is_some());
+        storage
+            .delete_chat_session(user, "fixture-deleted")
+            .unwrap();
+        assert!(storage
+            .get_channel_session(
+                "fixture-channel",
+                "fixture-account",
+                "direct",
+                "fixture-deleted",
+                None
+            )
+            .unwrap()
+            .is_none());
+        assert!(storage
+            .get_channel_session(
+                "fixture-channel",
+                "fixture-account",
+                "direct",
+                "fixture-retained",
+                None
+            )
+            .unwrap()
+            .is_some());
+    }
+
+    /// Directory load gate: a 24-thread catalog pages with correct totals and
+    /// child counts stay per-parent.
+    #[test]
+    fn directory_pages_twenty_four_threads_and_counts_children() {
+        let storage = build_storage();
+        let user = "catalog-user";
+        for index in 0..20 {
+            let record = session(
+                user,
+                &format!("root-{index:02}"),
+                None,
+                1_000.0 + index as f64,
+            );
+            storage.upsert_chat_session(&record).expect("upsert root");
+        }
+        for index in 0..3 {
+            let record = session(user, &format!("child-a-{index}"), Some("root-00"), 2_000.0);
+            storage
+                .upsert_chat_session(&record)
+                .expect("upsert child a");
+        }
+        let record = session(user, "child-b-0", Some("root-01"), 2_100.0);
+        storage
+            .upsert_chat_session(&record)
+            .expect("upsert child b");
+
+        let (page, total) = storage
+            .list_chat_sessions(user, None, None, 0, 10)
+            .expect("first page");
+        assert_eq!(total, 24);
+        assert_eq!(page.len(), 10);
+
+        let mut seen = std::collections::HashSet::new();
+        let mut offset = 0;
+        while let Some((page, _)) = storage
+            .list_chat_sessions(user, None, None, offset, 10)
+            .ok()
+            .filter(|(page, _)| !page.is_empty())
+        {
+            for record in &page {
+                assert!(seen.insert(record.session_id.clone()));
+            }
+            offset += page.len() as i64;
+        }
+        assert_eq!(seen.len(), 24);
+
+        let parents: Vec<String> = vec!["root-00".into(), "root-01".into(), "root-02".into()];
+        let counts = storage
+            .count_child_chat_sessions(user, &parents)
+            .expect("child counts");
+        let mut counts = counts
+            .into_iter()
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(counts.remove("root-00"), Some(3));
+        assert_eq!(counts.remove("root-01"), Some(1));
+        // Parents without children simply have no row, per the trait contract.
+        assert_eq!(counts.remove("root-02"), None);
+
+        let (children, child_total) = storage
+            .list_chat_sessions(user, None, Some("root-00"), 0, 100)
+            .expect("children page");
+        assert_eq!(child_total, 3);
+        assert_eq!(children.len(), 3);
+
+        // Another user's threads never leak across scopes.
+        let (other, other_total) = storage
+            .list_chat_sessions("someone-else", None, None, 0, 100)
+            .expect("other user page");
+        assert_eq!(other_total, 0);
+        assert!(other.is_empty());
+    }
+}

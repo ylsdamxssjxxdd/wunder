@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>系统设置参考 | 使用说明书</title>
+  <meta name="description" content="常用设置项的含义与推荐值，帮助理解各项配置的作用。">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/reference/config","language":"zh-CN","title":"系统设置参考","summary":"常用设置项的含义与推荐值，帮助理解各项配置的作用。","updated_at":"2026-10-06","read_when":[],"source_docs":[],"tab":"参考","group":"系统参考","group_path":["系统参考"],"url":"/docs/zh-CN/reference/config/","headings":[{"id":"section-1","level":1,"text":"系统设置参考"},{"id":"section-2","level":2,"text":"设置分类"},{"id":"section-3","level":2,"text":"基础设置"},{"id":"section-4","level":3,"text":"服务地址与端口"},{"id":"section-5","level":3,"text":"运行模式"},{"id":"section-6","level":3,"text":"并发限制"},{"id":"section-7","level":2,"text":"安全设置"},{"id":"section-8","level":3,"text":"API 密钥"},{"id":"section-9","level":3,"text":"访问路径控制"},{"id":"section-10","level":3,"text":"外部认证密钥"},{"id":"section-11","level":2,"text":"存储设置"},{"id":"section-12","level":3,"text":"数据库类型"},{"id":"section-13","level":3,"text":"工作区位置"},{"id":"section-14","level":3,"text":"向量存储"},{"id":"section-15","level":2,"text":"工具设置"},{"id":"section-16","level":3,"text":"内置工具开关"},{"id":"section-17","level":3,"text":"浏览器工具"},{"id":"section-18","level":3,"text":"MCP 扩展工具"},{"id":"section-19","level":2,"text":"模型设置"},{"id":"section-20","level":3,"text":"可用模型列表"},{"id":"section-21","level":3,"text":"上下文限制"},{"id":"section-22","level":2,"text":"渠道设置"},{"id":"section-23","level":3,"text":"渠道账号绑定"},{"id":"section-24","level":3,"text":"Webhook 配置"},{"id":"section-25","level":2,"text":"配置生效规则"},{"id":"section-26","level":3,"text":"修改后何时生效"},{"id":"section-27","level":3,"text":"配置层级"},{"id":"section-28","level":2,"text":"常见配置误区"},{"id":"section-29","level":2,"text":"按场景的配置建议"},{"id":"section-30","level":3,"text":"个人本地使用（蜂窝 desktop）"},{"id":"section-31","level":3,"text":"团队协作（舰体 server）"},{"id":"section-32","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/reference/api-index","next_slug":"zh-CN/reference/stream-events","markdown":"# 系统设置参考\n\n改设置之前先弄清每一项管什么、改动会影响什么。这页按类别列出常用设置项的含义、推荐做法和常见误区。\n\n## 设置分类\n\nwunder 的设置按职责分为几大类：\n\n- **基础设置**：服务地址、端口、运行模式\n- **安全设置**：访问控制、权限边界\n- **存储设置**：数据存储位置和方式\n- **工具设置**：可用工具范围\n- **模型设置**：AI 模型选择和参数\n- **渠道设置**：外部平台接入\n\n## 基础设置\n\n### 服务地址与端口\n\n决定 wunder 服务监听的网络地址和端口。\n\n- 本地使用：默认值即可\n- 团队部署：设置团队可访问的地址\n\n### 运行模式\n\n决定 wunder 以何种形态运行。\n\n- **蜂窝本地模式**：适合个人本地使用，所有数据存本地\n- **舰体模式**：适合团队/组织使用，支持多用户和集中管理\n\n个人使用选蜂窝本地模式；需要多用户协作、集中管理选舰体模式。\n\n### 并发限制\n\n限制同时活跃的会话数量，防止系统过载。\n\n- 个人使用：默认值足够\n- 团队使用：根据用户数和硬件资源调整\n\n## 安全设置\n\n### API 密钥\n\n保护舰桥和舰体接口的访问安全。注意：\n\n- 密钥应足够复杂（建议超过 16 位，包含字母、数字、特殊字符）\n- 不要使用容易被猜到的密钥\n- 定期更换密钥\n\n### 访问路径控制\n\n限制智能体能访问的文件路径和执行的命令。\n\n- **允许的路径**：指定智能体可以操作的目录范围\n- **禁止的模式**：指定禁止访问的文件类型或路径\n\n安全建议：不要无限制开放整个文件系统，明确指定允许访问的工作目录，禁止访问敏感系统目录。\n\n### 外部认证密钥\n\n当需要把 wunder 嵌入其他系统时，用于验证外部请求。适用于从其他系统调用 wunder 的能力、嵌入式集成等场景。\n\n## 存储设置\n\n### 数据库类型\n\n决定使用哪种数据库存储业务数据。\n\n- **SQLite**：轻量级本地数据库，适合蜂窝本地模式（默认）\n- **PostgreSQL**：专业级数据库，适合舰体多用户模式\n\n### 工作区位置\n\n决定用户文件和智能体产物的存储位置。注意：\n\n- 舰体模式下需要确保工作区目录持久化（使用 NAS 或网络存储）\n- 不要把工作区放在临时目录\n\n### 向量存储\n\n知识库检索功能使用的存储后端，随主存储后端保存：舰体模式使用 PostgreSQL，蜂窝本地模式使用 SQLite。需要使用知识库检索能力时配置。\n\n## 工具设置\n\n### 内置工具开关\n\n控制哪些内置工具可供智能体使用。敏感环境建议关闭命令执行类工具，按实际需求开放必要的工具。\n\n### 浏览器工具\n\n让智能体能够浏览网页、截图。本地使用直接启用；舰体部署可能需要 Docker 容器支持。\n\n### MCP 扩展工具\n\n通过 MCP 协议接入外部工具服务。需要专业数据库操作、特定 API 调用或接入第三方服务时使用。\n\n## 模型设置\n\n### 可用模型列表\n\n决定智能体可以选择哪些 AI 模型。\n\n- 添加模型时需要填写 API 密钥和接口地址\n- 不同模型有不同的计费方式和能力特点\n- 建议提供多个选项让用户按需选择\n\n### 上下文限制\n\n限制对话的上下文长度，防止超出模型能力。设置为模型支持的最大值即可，超出时系统会自动压缩历史内容。\n\n## 渠道设置\n\n### 渠道账号绑定\n\n绑定飞书、企业微信等外部平台账号。需要在对应平台创建应用并获取凭证，按渠道类型填写相关配置。\n\n### Webhook 配置\n\n让外部平台能把消息推送到 wunder。设置可公开访问的接收地址，并在外部平台配置 Webhook URL。\n\n## 配置生效规则\n\n### 修改后何时生效\n\n- **新设置**：立即对新会话生效\n- **已有会话**：不会自动改变，保持创建时的设置\n\n### 配置层级\n\n- **系统默认配置**：最底层，所有未指定值回退到这里\n- **用户个人设置**：覆盖系统默认，只影响该用户\n- **智能体设置**：最上层，只影响该智能体\n\n**生效顺序**：智能体设置 > 用户设置 > 系统默认\n\n## 常见配置误区\n\n| 误区 | 正确理解 |\n|------|----------|\n| 改了设置旧会话自动变 | 旧会话保持创建时的配置，只有新会话使用新设置 |\n| SQLite 和 PostgreSQL 只是性能不同 | SQLite 适合本地单机，PostgreSQL 适合多用户并发 |\n| 工作区可以放临时目录 | 工作区需要持久化，临时目录会被清理 |\n| 密钥简单点方便记忆 | 密钥复杂是安全的基本要求 |\n\n## 按场景的配置建议\n\n### 个人本地使用（蜂窝 desktop）\n\n- 数据库：SQLite（默认）\n- 工作区：本地目录\n- 安全：适度限制敏感路径\n- 工具：按需开放\n\n### 团队协作（舰体 server）\n\n- 数据库：PostgreSQL\n- 工作区：网络存储（持久化）\n- 安全：严格配置密钥和路径限制\n- 工具：按角色分配权限\n\n## 延伸阅读\n\n- [部署与运行](/docs/zh-CN/ops/deployment/)\n- [数据管理](/docs/zh-CN/ops/data-and-storage/)\n- [账户与安全](/docs/zh-CN/ops/auth-and-security/)\n","source_path":"使用说明书/zh-CN/reference/config.md"}</script>
+</body>
+</html>

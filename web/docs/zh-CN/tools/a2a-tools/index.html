@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>A2A 工具 | 使用说明书</title>
+  <meta name="description" content="`a2a@service`、`a2a_observe`、`a2a_wait` 的当前返回结构。">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/a2a-tools","language":"zh-CN","title":"A2A 工具","summary":"`a2a@service`、`a2a_observe`、`a2a_wait` 的当前返回结构。","updated_at":"2026-04-10","read_when":["用户要调用外部 A2A 服务并跟踪任务状态"],"source_docs":["src/services/tools.rs"],"tab":"工具","group":"系统桥接","group_path":["系统桥接"],"url":"/docs/zh-CN/tools/a2a-tools/","headings":[{"id":"section-1","level":1,"text":"A2A 工具"},{"id":"section-2","level":2,"text":"a2a@服务名"},{"id":"section-3","level":2,"text":"a2aobserve"},{"id":"section-4","level":2,"text":"a2await"}],"prev_slug":"zh-CN/tools/user-world","next_slug":"zh-CN/integration/index","markdown":"# A2A 工具\n\nA2A 用于调用外部 A2A 服务并跟踪任务状态，由三个工具组成：\n\n- `a2a@服务名`：提交任务，通常是接收态\n- `a2a_observe`：查看当前快照\n- `a2a_wait`：等待一段时间直到完成或超时\n\n## `a2a@服务名`\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"a2a_send\",\n  \"state\": \"accepted\",\n  \"summary\": \"Submitted task task_xxx to A2A service helper.\",\n  \"data\": {\n    \"endpoint\": \"https://a2a.example.com\",\n    \"service_name\": \"helper\",\n    \"task_id\": \"task_xxx\",\n    \"context_id\": \"ctx_xxx\",\n    \"status\": \"submitted\",\n    \"answer\": null\n  }\n}\n```\n\n## `a2a_observe`\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"a2a_observe\",\n  \"state\": \"running\",\n  \"summary\": \"Observed 2 A2A tasks; 1 still pending.\",\n  \"data\": {\n    \"tasks\": [ ... ],\n    \"pending\": [ ... ],\n    \"pending_total\": 1,\n    \"timeout\": false\n  }\n}\n```\n\n## `a2a_wait`\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"a2a_wait\",\n  \"state\": \"running\",\n  \"summary\": \"Observed 2 A2A tasks; 1 still pending.\",\n  \"data\": {\n    \"tasks\": [ ... ],\n    \"pending\": [ ... ],\n    \"pending_total\": 1,\n    \"elapsed_s\": 1.25,\n    \"timeout\": true\n  },\n  \"next_step_hint\": \"Call a2a_wait again or inspect the pending tasks before assuming the A2A workflow is complete.\"\n}\n```\n\n超时并不代表任务失败，继续 `a2a_wait` 或用 `a2a_observe` 检查未完成任务后再下结论。\n","source_path":"使用说明书/zh-CN/tools/a2a-tools.md"}</script>
+</body>
+</html>

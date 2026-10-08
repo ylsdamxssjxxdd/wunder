@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quick Start | 使用说明书</title>
+  <meta name="description" content="The shortest path to open Beehive, configure a model, and complete your first task.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/start/quickstart","language":"en","title":"Quick Start","summary":"The shortest path to open Beehive, configure a model, and complete your first task.","updated_at":"2026-10-06","read_when":["You're using wunder for the first time","You need to verify a working setup"],"source_docs":["README.md"],"tab":"Getting Started","group":"Onboarding","group_path":["Onboarding"],"url":"/docs/en/start/quickstart/","headings":[{"id":"section-1","level":1,"text":"Quick Start"},{"id":"section-2","level":2,"text":"Step 1: Open Beehive"},{"id":"section-3","level":2,"text":"Shortest path: Desktop app"},{"id":"section-4","level":3,"text":"5 steps to get running"},{"id":"section-5","level":3,"text":"Desktop-only capabilities"},{"id":"section-6","level":2,"text":"Team path: Web browser"},{"id":"section-7","level":3,"text":"Prerequisites"},{"id":"section-8","level":3,"text":"3 steps to deploy"},{"id":"section-9","level":3,"text":"Server core capabilities"},{"id":"section-10","level":2,"text":"Developer path: CLI"},{"id":"section-11","level":3,"text":"Install and run"},{"id":"section-12","level":3,"text":"First session"},{"id":"section-13","level":3,"text":"CLI-only capabilities"},{"id":"section-14","level":2,"text":"Verification checklist"},{"id":"section-15","level":2,"text":"Next steps"}],"prev_slug":"en/index","next_slug":"en/start/desktop","markdown":"# Quick Start\n\nFirst time with wunder? The shortest path is: open Beehive, configure a model, and complete one task. Beehive is where you work — individuals use the desktop app, team members use the web browser.\n\n## Step 1: Open Beehive\n\n| Situation | What to do |\n|----------|--------|\n| Personal use | Install the [desktop app](/docs/en/start/desktop/), launch and go |\n| Team member | After an admin [deploys the server](/docs/en/start/server/), open Beehive in a browser |\n| Automation / scripting | Use the [CLI](/docs/en/start/cli/) from a terminal |\n\nNot sure which to pick? Default to the desktop app — lowest barrier.\n\n## Shortest path: Desktop app\n\nFor individual users, download and go.\n\n### 5 steps to get running\n\n1. **Download and install**\n   - Get the installer for your system from Releases\n   - Install or extract, then launch\n\n2. **Configure the model**\n   - Open \"System Settings\" → \"Model Configuration\"\n   - Enter your API Key and endpoint URL\n   - Click \"Test Connection\" before saving\n\n3. **Start your first conversation**\n   - Go back to the chat interface\n   - Type: `List the files in the current directory`\n   - Press Enter\n\n4. **Watch it work**\n   - Model thinks → calls tools → shows results → replies\n\n5. **Verify**\n   - Saw the full execution process and results? You're up and running.\n\n### Desktop-only capabilities\n\n- **Local-first**: runs locally by default, can also connect to a remote server\n- **Desktop control**: can operate local windows, files, browsers\n- **Persistent workspace**: files are not auto-cleaned\n- **Direct agent editing**: adjust agent configuration and prompts anytime\n\n## Team path: Web browser\n\nFor multi-user collaboration and organizational governance.\n\n### Prerequisites\n\n- Docker and Docker Compose (recommended)\n- At least 4GB available memory\n\n### 3 steps to deploy\n\n1. **Get the code**\n   ```bash\n   git clone <repo-url>\n   cd wunder\n   ```\n\n2. **Start the service**\n   ```bash\n   # x86 architecture\n   docker-compose -f docker-compose-x86.yml up -d\n   \n   # ARM architecture\n   docker-compose -f docker-compose-arm.yml up -d\n   ```\n\n3. **Open Beehive**\n   - Beehive: http://localhost:18002\n   - Admin & docs: http://localhost:18000\n   - Default admin: admin / admin\n\nOnce deployed, team members open Beehive in a browser — no client install needed.\n\n### Server core capabilities\n\n- **Multi-tenancy**: layered management of users, organizations, permissions\n- **Channel integration**: Feishu, WeChat, QQ, and more\n- **Observability**: monitoring, benchmarking, capability evaluation\n\n## Developer path: CLI\n\nFor developers and automation scripts.\n\n### Install and run\n\n```bash\n# Build (requires Rust)\ncargo build --release\n\n# Run\n./target/release/wunder-cli\n```\n\n### First session\n\n```bash\nwunder-cli\n> Write a Hello World Python script\n```\n\n### CLI-only capabilities\n\n- **TUI interface**: terminal interaction\n- **Session management**: `/fork`, `/compact`, `/resume`\n- **JSONL output**: easy pipe and automation integration\n\n## Verification checklist\n\nNo matter which path you chose, confirm:\n\n- [ ] You can successfully start a conversation\n- [ ] You can see intermediate steps and tool calls\n- [ ] You can get the final result\n- [ ] You know what to read next\n\n## Next steps\n\n- Meet Beehive → [Beehive Interface](/docs/en/surfaces/frontend/)\n- Understand the system → [Core Concepts](/docs/en/concepts/)\n- Integrate with existing systems → [Integration Overview](/docs/en/integration/)\n- See all tools → [Tools Overview](/docs/en/tools/)\n- Running into issues → [Troubleshooting](/docs/en/help/troubleshooting/)\n","source_path":"使用说明书/en/start/quickstart.md"}</script>
+</body>
+</html>

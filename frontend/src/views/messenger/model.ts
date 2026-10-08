@@ -1,0 +1,291 @@
+import type { MessengerSection } from '@/stores/sessionHub';
+
+export type DesktopUpdateState = {
+  phase?: string;
+  currentVersion?: string;
+  latestVersion?: string;
+  downloaded?: boolean;
+  progress?: number;
+  message?: string;
+};
+
+export type DesktopInstallResult = {
+  ok?: boolean;
+  state?: DesktopUpdateState;
+};
+
+export type DesktopScreenshotResult = {
+  ok?: boolean;
+  canceled?: boolean;
+  name?: string;
+  path?: string;
+  mimeType?: string;
+  dataUrl?: string;
+  message?: string;
+};
+
+export type DesktopBridge = {
+  toggleDevTools?: () => Promise<boolean> | boolean;
+  checkForUpdates?: () => Promise<DesktopUpdateState> | DesktopUpdateState;
+  getUpdateState?: () => Promise<DesktopUpdateState> | DesktopUpdateState;
+  installUpdate?: () => Promise<DesktopInstallResult | boolean> | DesktopInstallResult | boolean;
+  copyText?: (text: string) => Promise<boolean> | boolean;
+  getMediaAccessStatus?: (kind: 'microphone' | 'camera') => Promise<string> | string;
+  requestMediaAccess?: (kind: 'microphone' | 'camera') => Promise<boolean> | boolean;
+  notify?: (payload: { title: string; body?: string; silent?: boolean }) => Promise<boolean> | boolean;
+  captureScreenshot?: (
+    options?: { hideWindow?: boolean; region?: boolean }
+  ) => Promise<DesktopScreenshotResult | null> | DesktopScreenshotResult | null;
+  chooseDirectory?: (defaultPath?: string) => Promise<string | null> | string | null;
+  openPathWithDefaultApp?: (targetPath: string) => Promise<boolean> | boolean;
+  showControllerHint?: (payload: {
+    x: number;
+    y: number;
+    description?: string;
+    durationMs?: number;
+  }) => Promise<boolean> | boolean;
+  showControllerDone?: (payload: {
+    x: number;
+    y: number;
+    description?: string;
+    durationMs?: number;
+  }) => Promise<boolean> | boolean;
+  showMonitorCountdown?: (payload: { waitMs: number }) => Promise<boolean> | boolean;
+  hideOverlay?: () => Promise<boolean> | boolean;
+  showCompanion?: (payload: {
+    id?: string;
+    selectedId?: string;
+    displayName?: string;
+    description?: string;
+    spritesheetDataUrl?: string;
+    state?: string;
+    scale?: number;
+    x?: number;
+    y?: number;
+    message?: string;
+    messageKind?: 'info' | 'success' | 'warning';
+    messageVisible?: boolean;
+  }) => Promise<boolean> | boolean;
+  updateCompanion?: (payload: {
+    id?: string;
+    selectedId?: string;
+    displayName?: string;
+    description?: string;
+    spritesheetDataUrl?: string;
+    state?: string;
+    scale?: number;
+    x?: number;
+    y?: number;
+    message?: string;
+    messageKind?: 'info' | 'success' | 'warning';
+    messageVisible?: boolean;
+  }) => Promise<boolean> | boolean;
+  hideCompanion?: (payload?: { persistEnabled?: boolean }) => Promise<boolean> | boolean;
+  onCompanionStateChanged?: (
+    listener: (payload: {
+      enabled?: boolean;
+      selectedId?: string;
+      displayName?: string;
+      description?: string;
+      spritesheetDataUrl?: string;
+      state?: string;
+      scale?: number;
+      x?: number;
+      y?: number;
+      message?: string;
+      messageKind?: 'info' | 'success' | 'warning';
+      messageVisible?: boolean;
+    }) => void
+  ) => (() => void) | void;
+  onCompanionCommand?: (
+    listener: (payload: {
+      action?: 'open-chat' | 'hide' | 'set-scale';
+      key?: string;
+      agentId?: string;
+      scale?: number;
+    }) => void
+  ) => (() => void) | void;
+  getCompanionState?: () => Promise<{
+    enabled?: boolean;
+    selectedId?: string;
+    displayName?: string;
+    description?: string;
+    spritesheetDataUrl?: string;
+    state?: string;
+    scale?: number;
+    x?: number;
+    y?: number;
+    message?: string;
+    messageKind?: 'info' | 'success' | 'warning';
+    messageVisible?: boolean;
+  }> | {
+      enabled?: boolean;
+      selectedId?: string;
+      displayName?: string;
+      description?: string;
+      spritesheetDataUrl?: string;
+      state?: string;
+      scale?: number;
+      x?: number;
+      y?: number;
+      message?: string;
+      messageKind?: 'info' | 'success' | 'warning';
+      messageVisible?: boolean;
+    };
+};
+
+export const DEFAULT_AGENT_KEY = '__default__';
+export const USER_CONTAINER_ID = 0;
+export const AGENT_CONTAINER_IDS = Array.from({ length: 10 }, (_, index) => index + 1);
+export const USER_WORLD_UPLOAD_BASE = 'user-world';
+export const WORLD_UPLOAD_SIZE_LIMIT = 1024 * 1024 * 1024;
+export const WORLD_QUICK_EMOJI_STORAGE_KEY = 'wunder_world_quick_emoji';
+export const WORLD_COMPOSER_HEIGHT_STORAGE_KEY = 'wunder_world_composer_height';
+export const MESSENGER_RIGHT_DOCK_WIDTH_STORAGE_KEY = 'wunder_messenger_right_dock_width';
+export const DISMISSED_AGENT_STORAGE_PREFIX = 'messenger_dismissed_agent_conversations';
+export const AGENT_TOOL_OVERRIDE_NONE = '__no_tools__';
+export const WORLD_EMOJI_CATALOG = [
+  '😀',
+  '😁',
+  '😂',
+  '🤣',
+  '😊',
+  '😉',
+  '😍',
+  '😘',
+  '😎',
+  '🤖',
+  '🫡',
+  '🤔',
+  '🤩',
+  '🥳',
+  '😴',
+  '🤯',
+  '😭',
+  '😤',
+  '🤝',
+  '👍',
+  '👏',
+  '🙏',
+  '💪',
+  '🎉',
+  '🌟',
+  '🔥',
+  '💡',
+  '📌',
+  '📎',
+  '✅',
+  '❓',
+  '❗'
+];
+
+export const sectionRouteMap: Record<MessengerSection, string> = {
+  messages: 'chat',
+  agents: 'home',
+  files: 'workspace',
+  more: 'settings'
+};
+
+export const MESSENGER_SEND_KEY_STORAGE_KEY = 'messenger_send_key';
+export const MESSENGER_UI_FONT_SIZE_STORAGE_KEY = 'messenger_ui_font_size';
+export const AGENT_MAIN_READ_AT_STORAGE_PREFIX = 'messenger_agent_main_read_at';
+export const AGENT_MAIN_UNREAD_STORAGE_PREFIX = 'messenger_agent_main_unread';
+export const UNIT_UNGROUPED_ID = '__ungrouped__';
+
+export type AgentLocalCommand = 'new' | 'stop' | 'help' | 'compact' | 'goal';
+
+export type MixedConversation = {
+  key: string;
+  kind: 'agent' | 'direct' | 'group';
+  sourceId: string;
+  agentId: string;
+  icon?: unknown;
+  title: string;
+  preview: string;
+  unread: number;
+  lastAt: number;
+  goalLocked?: boolean;
+  goalStatus?: string;
+};
+
+export type ToolEntry = {
+  name: string;
+  displayName: string;
+  description: string;
+  ownerId: string;
+  source: Record<string, unknown>;
+};
+
+export type AgentFileContainer = {
+  id: number;
+  agentIds: string[];
+  agentNames: string[];
+  preview: string;
+  primaryAgentId: string;
+};
+
+export type AgentOverviewCard = {
+  id: string;
+  name: string;
+  icon?: unknown;
+  description: string;
+  shared: boolean;
+  isDefault: boolean;
+  runtimeState: AgentRuntimeState;
+  hasCron: boolean;
+  hasChannelBinding: boolean;
+  containerId: number;
+  userRounds: number;
+  skillCount: number;
+  mcpCount: number;
+};
+
+export type UnitTreeNode = {
+  id: string;
+  label: string;
+  parentId: string;
+  sortOrder: number;
+  children: UnitTreeNode[];
+};
+
+export type UnitTreeRow = {
+  id: string;
+  label: string;
+  depth: number;
+  count: number;
+  hasChildren: boolean;
+  expanded: boolean;
+};
+
+export type WorldHistoryCategory = 'all' | 'media' | 'document' | 'other_file';
+
+export type WorldHistoryRecord = {
+  key: string;
+  messageId: number;
+  sender: string;
+  createdAt: number;
+  preview: string;
+  rawContent: string;
+  category: Exclude<WorldHistoryCategory, 'all'> | 'text';
+  icon: string;
+};
+
+export type AgentRuntimeState = 'idle' | 'running' | 'done' | 'pending' | 'error';
+export type MessengerSendKeyMode = 'enter' | 'ctrl_enter' | 'none';
+export type MessengerPerfTrace = {
+  label: string;
+  startedAt: number;
+  marks: Array<{ name: string; at: number }>;
+  meta?: Record<string, unknown>;
+};
+
+export type FileContainerMenuTarget = {
+  scope: 'user' | 'agent';
+  id: number;
+};
+
+export type WorldComposerViewRef = {
+  getComposerElement: () => HTMLElement | null;
+  getTextareaElement: () => HTMLTextAreaElement | null;
+  getUploadInputElement: () => HTMLInputElement | null;
+};

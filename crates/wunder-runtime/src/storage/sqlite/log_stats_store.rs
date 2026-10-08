@@ -1,0 +1,616 @@
+use super::SqliteStorage;
+use crate::storage::{StorageLifecycle, TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
+use anyhow::Result;
+use rusqlite::types::Value as SqlValue;
+use rusqlite::{params, params_from_iter};
+use serde_json::{json, Value};
+use std::collections::HashMap;
+
+pub(super) trait SqliteLogStatsStorage {
+    fn get_user_chat_stats_impl(&self) -> Result<HashMap<String, HashMap<String, i64>>>;
+    fn get_user_tool_stats_impl(&self) -> Result<HashMap<String, HashMap<String, i64>>>;
+    fn get_tool_usage_stats_impl(
+        &self,
+        since_time: Option<f64>,
+        until_time: Option<f64>,
+    ) -> Result<HashMap<String, i64>>;
+    fn get_tool_session_usage_impl(
+        &self,
+        tool: &str,
+        since_time: Option<f64>,
+        until_time: Option<f64>,
+    ) -> Result<Vec<HashMap<String, Value>>>;
+    fn get_log_usage_impl(&self) -> Result<u64>;
+    fn delete_logs_by_time_range_impl(
+        &self,
+        start_time: f64,
+        end_time: f64,
+    ) -> Result<HashMap<String, i64>>;
+    fn delete_thread_logs_by_user_impl(&self, user_id: &str) -> Result<i64>;
+    fn delete_tool_logs_impl(&self, user_id: &str) -> Result<i64>;
+    fn delete_tool_logs_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64>;
+    fn delete_artifact_logs_impl(&self, user_id: &str) -> Result<i64>;
+    fn delete_artifact_logs_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64>;
+    fn mark_deleted_session_log_grace_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        deleted_at: f64,
+    ) -> Result<()>;
+    fn list_expired_deleted_session_log_grace_impl(
+        &self,
+        cutoff: f64,
+        limit: i64,
+    ) -> Result<Vec<(String, String)>>;
+    fn delete_deleted_session_log_grace_impl(&self, user_id: &str, session_id: &str) -> Result<()>;
+}
+
+fn append_tool_log_exclusions(filters: &mut Vec<String>, params_list: &mut Vec<SqlValue>) {
+    if !TOOL_LOG_EXCLUDED_NAMES.is_empty() {
+        let placeholders = vec!["?"; TOOL_LOG_EXCLUDED_NAMES.len()].join(", ");
+        filters.push(format!("tool NOT IN ({placeholders})"));
+        for name in TOOL_LOG_EXCLUDED_NAMES {
+            params_list.push(SqlValue::from(name.to_string()));
+        }
+    }
+    let marker = format!("%{TOOL_LOG_SKILL_READ_MARKER}%");
+    filters.push("(data IS NULL OR data NOT LIKE ?)".to_string());
+    params_list.push(SqlValue::from(marker));
+}
+
+impl SqliteLogStatsStorage for SqliteStorage {
+    fn get_user_chat_stats_impl(&self) -> Result<HashMap<String, HashMap<String, i64>>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT l.user_id, COUNT(i.item_id) as chat_records, COALESCE(MAX(i.updated_time), MAX(l.updated_time)) as last_time FROM thread_logs l LEFT JOIN thread_items i ON i.session_id=l.session_id AND i.user_id=l.user_id AND i.visibility='user' AND i.kind IN ('user_message','assistant_message') GROUP BY l.user_id",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, f64>(2).unwrap_or(0.0),
+                ))
+            })?
+            .collect::<std::result::Result<Vec<(String, i64, f64)>, _>>()?;
+        let mut stats = HashMap::new();
+        for (user_id, count, last_time) in rows {
+            let cleaned = user_id.trim();
+            if cleaned.is_empty() {
+                continue;
+            }
+            let mut entry = HashMap::new();
+            entry.insert("chat_records".to_string(), count);
+            entry.insert("last_time".to_string(), last_time.floor() as i64);
+            stats.insert(cleaned.to_string(), entry);
+        }
+        Ok(stats)
+    }
+
+    fn get_user_tool_stats_impl(&self) -> Result<HashMap<String, HashMap<String, i64>>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut query = String::from(
+            "SELECT user_id, COUNT(*) as tool_records, MAX(created_time) as last_time FROM tool_logs",
+        );
+        let mut filters = Vec::new();
+        let mut params_list: Vec<SqlValue> = Vec::new();
+        append_tool_log_exclusions(&mut filters, &mut params_list);
+        if !filters.is_empty() {
+            query.push_str(" WHERE ");
+            query.push_str(&filters.join(" AND "));
+        }
+        query.push_str(" GROUP BY user_id");
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt
+            .query_map(params_from_iter(params_list.iter()), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, f64>(2).unwrap_or(0.0),
+                ))
+            })?
+            .collect::<std::result::Result<Vec<(String, i64, f64)>, _>>()?;
+        let mut stats = HashMap::new();
+        for (user_id, count, last_time) in rows {
+            let cleaned = user_id.trim();
+            if cleaned.is_empty() {
+                continue;
+            }
+            let mut entry = HashMap::new();
+            entry.insert("tool_records".to_string(), count);
+            entry.insert("last_time".to_string(), last_time.floor() as i64);
+            stats.insert(cleaned.to_string(), entry);
+        }
+        Ok(stats)
+    }
+
+    fn get_tool_usage_stats_impl(
+        &self,
+        since_time: Option<f64>,
+        until_time: Option<f64>,
+    ) -> Result<HashMap<String, i64>> {
+        self.ensure_initialized()?;
+        let mut query = String::from("SELECT tool, COUNT(*) as tool_records FROM tool_logs");
+        let mut params_list: Vec<SqlValue> = Vec::new();
+        let mut filters = Vec::new();
+        if let Some(since) = since_time.filter(|value| *value > 0.0) {
+            filters.push("created_time >= ?".to_string());
+            params_list.push(SqlValue::from(since));
+        }
+        if let Some(until) = until_time.filter(|value| *value > 0.0) {
+            filters.push("created_time <= ?".to_string());
+            params_list.push(SqlValue::from(until));
+        }
+        append_tool_log_exclusions(&mut filters, &mut params_list);
+        if !filters.is_empty() {
+            query.push_str(" WHERE ");
+            query.push_str(&filters.join(" AND "));
+        }
+        query.push_str(" GROUP BY tool ORDER BY tool_records DESC");
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt
+            .query_map(params_from_iter(params_list.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<(String, i64)>, _>>()?;
+        let mut stats = HashMap::new();
+        for (tool, count) in rows {
+            let cleaned = tool.trim();
+            if cleaned.is_empty() {
+                continue;
+            }
+            stats.insert(cleaned.to_string(), count);
+        }
+        Ok(stats)
+    }
+
+    fn get_tool_session_usage_impl(
+        &self,
+        tool: &str,
+        since_time: Option<f64>,
+        until_time: Option<f64>,
+    ) -> Result<Vec<HashMap<String, Value>>> {
+        self.ensure_initialized()?;
+        let cleaned = tool.trim();
+        if cleaned.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut query = String::from(
+            "SELECT session_id, user_id, COUNT(*) as tool_calls, MAX(created_time) as last_time FROM tool_logs WHERE tool = ?",
+        );
+        let mut params_list: Vec<SqlValue> = vec![SqlValue::Text(cleaned.to_string())];
+        let mut filters = Vec::new();
+        if let Some(since) = since_time.filter(|value| *value > 0.0) {
+            filters.push("created_time >= ?".to_string());
+            params_list.push(SqlValue::from(since));
+        }
+        if let Some(until) = until_time.filter(|value| *value > 0.0) {
+            filters.push("created_time <= ?".to_string());
+            params_list.push(SqlValue::from(until));
+        }
+        append_tool_log_exclusions(&mut filters, &mut params_list);
+        if !filters.is_empty() {
+            query.push_str(" AND ");
+            query.push_str(&filters.join(" AND "));
+        }
+        query.push_str(" GROUP BY session_id, user_id ORDER BY last_time DESC");
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt
+            .query_map(params_from_iter(params_list.iter()), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, f64>(3).unwrap_or(0.0),
+                ))
+            })?
+            .collect::<std::result::Result<Vec<(String, String, i64, f64)>, _>>()?;
+        let mut sessions = Vec::new();
+        for (session_id, user_id, tool_calls, last_time) in rows {
+            let cleaned_session = session_id.trim();
+            if cleaned_session.is_empty() {
+                continue;
+            }
+            let mut entry = HashMap::new();
+            entry.insert("session_id".to_string(), json!(cleaned_session));
+            entry.insert("user_id".to_string(), json!(user_id.trim()));
+            entry.insert("tool_calls".to_string(), json!(tool_calls));
+            entry.insert("last_time".to_string(), json!(last_time));
+            sessions.push(entry);
+        }
+        Ok(sessions)
+    }
+
+    fn get_log_usage_impl(&self) -> Result<u64> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let dbstat_query = "SELECT COALESCE(SUM(pgsize), 0) \
+            FROM dbstat WHERE name IN ( \
+                'thread_logs', 'thread_turns', 'thread_items', 'thread_item_blocks', 'thread_log_changes', 'thread_log_metrics', \
+                'tool_logs', \
+                'artifact_logs', \
+                'monitor_sessions', \
+                'stream_events', \
+                'memory_task_logs' \
+            )";
+        if let Ok(total) = conn.query_row(dbstat_query, [], |row| row.get::<_, i64>(0)) {
+            return Ok(total.max(0) as u64);
+        }
+        let total: i64 = conn.query_row(
+            "SELECT \
+            (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM tool_logs) + \
+            (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM artifact_logs) + \
+            (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM monitor_sessions) + \
+            (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM stream_events) + \
+            (SELECT COALESCE(SUM( \
+                COALESCE(length(CAST(request_payload AS BLOB)), 0) + \
+                COALESCE(length(CAST(result AS BLOB)), 0) + \
+                COALESCE(length(CAST(error AS BLOB)), 0) \
+            ), 0) FROM memory_task_logs)",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(total.max(0) as u64)
+    }
+
+    fn delete_logs_by_time_range_impl(
+        &self,
+        start_time: f64,
+        end_time: f64,
+    ) -> Result<HashMap<String, i64>> {
+        self.ensure_initialized()?;
+        let start = start_time.min(end_time);
+        let end = start_time.max(end_time);
+        if !start.is_finite() || !end.is_finite() || start < 0.0 || end <= start {
+            return Ok(HashMap::new());
+        }
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let now = Self::now_ts();
+        let live = crate::storage::session_cleanup::LIVE_SESSION_PREDICATE.replace(":now", "?1");
+        // Keep the protection snapshot and all deletion steps in one transaction.
+        tx.execute(
+            &format!(
+                "CREATE TEMP TABLE protected_chat_sessions AS \
+            SELECT c.session_id FROM chat_sessions c WHERE {live}"
+            ),
+            [now],
+        )?;
+        let delete_range = |table: &str, time_field: &str| -> Result<i64> {
+            let sql = format!("DELETE FROM {table} WHERE {time_field} >= ? AND {time_field} <= ? \
+                AND NOT EXISTS (SELECT 1 FROM protected_chat_sessions p WHERE p.session_id = {table}.session_id)");
+            Ok(tx.execute(&sql, params![start, end])? as i64)
+        };
+        let mut results = HashMap::new();
+        results.insert(
+            "tool_logs".to_string(),
+            delete_range("tool_logs", "created_time")?,
+        );
+        results.insert(
+            "artifact_logs".to_string(),
+            delete_range("artifact_logs", "created_time")?,
+        );
+        results.insert(
+            "monitor_sessions".to_string(),
+            delete_range("monitor_sessions", "COALESCE(updated_time, 0)")?,
+        );
+        results.insert(
+            "stream_events".to_string(),
+            delete_range("stream_events", "created_time")?,
+        );
+        results.insert(
+            "memory_task_logs".to_string(),
+            delete_range("memory_task_logs", "updated_time")?,
+        );
+        results.insert(
+            "chat_sessions".to_string(),
+            super::session_cleanup::remove_empty_catalog(&tx, start, end, now)?,
+        );
+        tx.execute("DROP TABLE protected_chat_sessions", [])?;
+        tx.commit()?;
+        Ok(results)
+    }
+
+    fn delete_thread_logs_by_user_impl(&self, user_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        if user_id.trim().is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let mut removed = 0i64;
+        for table in [
+            "thread_item_blocks",
+            "thread_log_changes",
+            "thread_items",
+            "thread_turns",
+            "thread_log_metrics",
+            "thread_logs",
+        ] {
+            removed += tx.execute(
+                &format!("DELETE FROM {table} WHERE user_id=?"),
+                params![user_id],
+            )? as i64;
+        }
+        tx.commit()?;
+        Ok(removed)
+    }
+
+    fn delete_tool_logs_impl(&self, user_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let affected = conn.execute("DELETE FROM tool_logs WHERE user_id = ?", params![user_id])?;
+        Ok(affected as i64)
+    }
+
+    fn delete_tool_logs_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM tool_logs WHERE user_id = ? AND session_id = ?",
+            params![cleaned_user, cleaned_session],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn delete_artifact_logs_impl(&self, user_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM artifact_logs WHERE user_id = ?",
+            params![user_id],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn delete_artifact_logs_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM artifact_logs WHERE user_id = ? AND session_id = ?",
+            params![cleaned_user, cleaned_session],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn mark_deleted_session_log_grace_impl(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        deleted_at: f64,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() || !deleted_at.is_finite() {
+            return Ok(());
+        }
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO deleted_session_log_grace (user_id, session_id, deleted_at) \
+             VALUES (?, ?, ?) \
+             ON CONFLICT (user_id, session_id) DO UPDATE SET deleted_at = excluded.deleted_at",
+            params![cleaned_user, cleaned_session, deleted_at],
+        )?;
+        Ok(())
+    }
+
+    fn list_expired_deleted_session_log_grace_impl(
+        &self,
+        cutoff: f64,
+        limit: i64,
+    ) -> Result<Vec<(String, String)>> {
+        self.ensure_initialized()?;
+        if !cutoff.is_finite() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT user_id, session_id FROM deleted_session_log_grace \
+             WHERE deleted_at <= ? ORDER BY deleted_at ASC LIMIT ?",
+        )?;
+        let rows = stmt
+            .query_map(params![cutoff, limit], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<(String, String)>, _>>()?;
+        Ok(rows)
+    }
+
+    fn delete_deleted_session_log_grace_impl(&self, user_id: &str, session_id: &str) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        conn.execute(
+            "DELETE FROM deleted_session_log_grace WHERE user_id = ? AND session_id = ?",
+            params![user_id, session_id],
+        )?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SqliteStorage;
+    use crate::storage::*;
+    use serde_json::json;
+    use tempfile::tempdir;
+
+    fn build_storage() -> (SqliteStorage, tempfile::TempDir) {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("log-stats-store.db");
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize sqlite");
+        (storage, dir)
+    }
+
+    #[test]
+    fn log_stats_store_counts_filters_usage_and_deletes() {
+        let (storage, _dir) = build_storage();
+
+        storage
+            .append_chat(
+                "user-a",
+                &json!({
+                    "session_id": "session-a",
+                    "role": "user",
+                    "content": "message-a"
+                }),
+            )
+            .expect("append chat a");
+        storage
+            .append_chat(
+                "user-a",
+                &json!({
+                    "session_id": "session-b",
+                    "role": "assistant",
+                    "content": "message-b"
+                }),
+            )
+            .expect("append chat b");
+
+        storage
+            .append_tool_log(
+                "user-a",
+                &json!({
+                    "session_id": "session-a",
+                    "tool": "tool-a",
+                    "ok": true,
+                    "data": { "value": 1 }
+                }),
+            )
+            .expect("append tool a");
+        storage
+            .append_tool_log(
+                "user-a",
+                &json!({
+                    "session_id": "session-a",
+                    "tool": "final_response",
+                    "ok": true
+                }),
+            )
+            .expect("append excluded tool");
+        storage
+            .append_tool_log(
+                "user-a",
+                &json!({
+                    "session_id": "session-b",
+                    "tool": "tool-b",
+                    "ok": true,
+                    "data": { "source": "skill_read" }
+                }),
+            )
+            .expect("append skill read tool");
+        storage
+            .append_tool_log(
+                "user-b",
+                &json!({
+                    "session_id": "session-c",
+                    "tool": "tool-a",
+                    "ok": true
+                }),
+            )
+            .expect("append other user tool");
+
+        storage
+            .append_artifact_log(
+                "user-a",
+                &json!({
+                    "session_id": "session-a",
+                    "kind": "kind-a",
+                    "name": "artifact-a"
+                }),
+            )
+            .expect("append artifact a");
+        storage
+            .append_artifact_log(
+                "user-a",
+                &json!({
+                    "session_id": "session-b",
+                    "kind": "kind-b",
+                    "name": "artifact-b"
+                }),
+            )
+            .expect("append artifact b");
+
+        let chat_stats = storage.get_user_chat_stats().expect("chat stats");
+        assert_eq!(chat_stats["user-a"]["chat_records"], 2);
+
+        let tool_stats = storage.get_user_tool_stats().expect("tool stats");
+        assert_eq!(tool_stats["user-a"]["tool_records"], 1);
+        assert_eq!(tool_stats["user-b"]["tool_records"], 1);
+
+        let usage = storage
+            .get_tool_usage_stats(None, None)
+            .expect("tool usage stats");
+        assert_eq!(usage.get("tool-a"), Some(&2));
+        assert!(!usage.contains_key("tool-b"));
+        assert!(!usage.contains_key("final_response"));
+
+        let sessions = storage
+            .get_tool_session_usage("tool-a", None, None)
+            .expect("tool session usage");
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions
+            .iter()
+            .any(|entry| entry.get("session_id") == Some(&json!("session-a"))));
+        assert!(sessions
+            .iter()
+            .any(|entry| entry.get("session_id") == Some(&json!("session-c"))));
+        assert!(storage.get_log_usage().expect("log usage") > 0);
+
+        assert_eq!(
+            storage
+                .delete_thread_log_by_session("user-a", "session-a")
+                .expect("delete chat by session"),
+            1
+        );
+        assert!(storage
+            .load_thread_context_items("user-a", "session-a", 500, true)
+            .expect("load chat after delete")
+            .is_empty());
+        assert_eq!(
+            storage
+                .delete_thread_logs_by_user("user-a")
+                .expect("delete remaining chat"),
+            1
+        );
+        assert_eq!(
+            storage
+                .delete_tool_logs_by_session("user-a", "session-a")
+                .expect("delete tool by session"),
+            2
+        );
+        assert_eq!(
+            storage
+                .delete_tool_logs("user-a")
+                .expect("delete remaining tools"),
+            1
+        );
+        assert_eq!(
+            storage
+                .delete_artifact_logs_by_session("user-a", "session-a")
+                .expect("delete artifact by session"),
+            1
+        );
+        assert_eq!(
+            storage
+                .delete_artifact_logs("user-a")
+                .expect("delete remaining artifacts"),
+            1
+        );
+    }
+}

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>读图工具 | 使用说明书</title>
+  <meta name="description" content="`read_image` 的用途与返回结构。">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/read-image","language":"zh-CN","title":"读图工具","summary":"`read_image` 的用途与返回结构。","updated_at":"2026-06-05","read_when":["用户要把本地视觉媒体送入当前模型上下文"],"source_docs":["src/services/tools/read_image_tool.rs"],"tab":"工具","group":"文件与代码","group_path":["文件与代码"],"url":"/docs/zh-CN/tools/read-image/","headings":[{"id":"section-1","level":1,"text":"读图工具"},{"id":"section-2","level":2,"text":"最小参数"},{"id":"section-3","level":2,"text":"成功返回"},{"id":"section-4","level":2,"text":"重点"}],"prev_slug":"zh-CN/tools/apply-patch","next_slug":"zh-CN/tools/skill-call","markdown":"# 读图工具\n\n`read_image` 把本地视觉媒体预处理后送入模型上下文，不限于静态图片。当前支持：\n\n- 静态图片\n- GIF 动图\n- 本地视频\n\n## 最小参数\n\n```json\n{\n  \"path\": \"screenshots/demo.png\"\n}\n```\n\nGIF 示例：\n\n```json\n{\n  \"path\": \"captures/demo.gif\",\n  \"frame_step\": 2\n}\n```\n\n视频示例：\n\n```json\n{\n  \"path\": \"captures/demo.mp4\",\n  \"frame_rate\": 1\n}\n```\n\n## 成功返回\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"read_image\",\n  \"state\": \"completed\",\n  \"summary\": \"Prepared visual media screenshots/demo.png for model inspection.\",\n  \"data\": {\n    \"path\": \"screenshots/demo.png\",\n    \"resolved_path\": \"C:/.../screenshots/demo.png\",\n    \"media_kind\": \"image\",\n    \"size_bytes\": 182233,\n    \"result\": {\n      \"kind\": \"image\"\n    }\n  }\n}\n```\n\n## 重点\n\n- 静态图片会直接作为图片输入进入上下文。\n- 模型侧只需传 `path`，查看意图由当前对话上下文提供。\n- GIF 不会再原样送模型。\n  默认只取首帧。\n  如果提供 `frame_step`，则按间隔取帧。\n- 视频会被规范化成图片帧序列，并在可用时附带音轨转写文本。\n- 这个工具结果本身不是图像分析结论，只表示视觉媒体已经准备好，可以继续让模型分析。\n","source_path":"使用说明书/zh-CN/tools/read-image.md"}</script>
+</body>
+</html>

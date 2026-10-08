@@ -1,0 +1,305 @@
+// Token 估算工具：用于近似计算上下文占用并进行裁剪。
+use regex::Regex;
+use serde_json::Value;
+use std::sync::OnceLock;
+
+const APPROX_BYTES_PER_TOKEN: f64 = 4.0;
+const MESSAGE_TOKEN_OVERHEAD: i64 = 4;
+const IMAGE_TOKEN_ESTIMATE: i64 = 256;
+
+pub fn approx_token_count(text: &str) -> i64 {
+    if text.is_empty() {
+        return 0;
+    }
+    ((text.len() as f64) / APPROX_BYTES_PER_TOKEN).ceil() as i64
+}
+
+pub fn trim_text_to_chars(text: &str, max_chars: usize, suffix: &str) -> String {
+    if text.is_empty() || max_chars == 0 {
+        return String::new();
+    }
+
+    let text_chars = text.chars().count();
+    if text_chars <= max_chars {
+        return text.to_string();
+    }
+
+    let suffix_chars = suffix.chars().count();
+    if suffix.is_empty() || max_chars <= suffix_chars + 1 {
+        return text.chars().take(max_chars).collect();
+    }
+
+    let keep_chars = max_chars.saturating_sub(suffix_chars);
+    let trimmed: String = text.chars().take(keep_chars).collect();
+    if trimmed.trim().is_empty() {
+        return text.chars().take(max_chars).collect();
+    }
+    format!("{trimmed}{suffix}")
+}
+
+pub fn trim_text_to_tokens(text: &str, max_tokens: i64, suffix: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    if max_tokens <= 0 {
+        return String::new();
+    }
+    if approx_token_count(text) <= max_tokens {
+        return text.to_string();
+    }
+    // Estimation uses UTF-8 bytes, so trimming must use the same unit. Counting
+    // characters here lets CJK/emoji exceed the requested budget severalfold.
+    let max_bytes = (max_tokens as usize).saturating_mul(APPROX_BYTES_PER_TOKEN as usize);
+    let suffix = if suffix.len() < max_bytes { suffix } else { "" };
+    let mut end = max_bytes.saturating_sub(suffix.len()).min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    if end == 0 {
+        return String::new();
+    }
+    format!("{}{suffix}", &text[..end])
+}
+
+pub fn estimate_message_tokens(message: &Value) -> i64 {
+    if !message.is_object() {
+        return 0;
+    }
+    let content_tokens = estimate_content_tokens(message.get("content").unwrap_or(&Value::Null));
+    let reasoning = message
+        .get("reasoning_content")
+        .or_else(|| message.get("reasoning"))
+        .unwrap_or(&Value::Null);
+    let reasoning_tokens = match reasoning {
+        Value::String(text) => approx_token_count(text),
+        Value::Array(_) | Value::Object(_) => approx_token_count(&reasoning.to_string()),
+        _ => 0,
+    };
+    let tool_calls_tokens = estimate_tool_calls_tokens(message);
+    let tool_call_id_tokens = estimate_tool_call_id_tokens(message);
+    content_tokens
+        + reasoning_tokens
+        + tool_calls_tokens
+        + tool_call_id_tokens
+        + MESSAGE_TOKEN_OVERHEAD
+}
+
+pub fn estimate_messages_tokens(messages: &[Value]) -> i64 {
+    messages.iter().map(estimate_message_tokens).sum()
+}
+
+pub fn trim_messages_to_budget(messages: &[Value], max_tokens: i64) -> Vec<Value> {
+    if messages.is_empty() {
+        return Vec::new();
+    }
+    if max_tokens <= 0 {
+        return vec![messages[messages.len() - 1].clone()];
+    }
+    let mut selected: Vec<Value> = Vec::new();
+    let mut remaining = max_tokens;
+    for message in messages.iter().rev() {
+        let cost = estimate_message_tokens(message);
+        if cost <= remaining {
+            selected.push(message.clone());
+            remaining -= cost;
+            continue;
+        }
+        if selected.is_empty() {
+            selected.push(message.clone());
+        }
+        break;
+    }
+    selected.reverse();
+    selected
+}
+
+fn estimate_tool_calls_tokens(message: &Value) -> i64 {
+    let Some(map) = message.as_object() else {
+        return 0;
+    };
+    for key in [
+        "tool_calls",
+        "toolCalls",
+        "tool_call",
+        "toolCall",
+        "function_call",
+        "functionCall",
+        "function",
+    ] {
+        if let Some(value) = map.get(key) {
+            if value.is_null() {
+                continue;
+            }
+            return estimate_aux_tokens(value);
+        }
+    }
+    0
+}
+
+fn estimate_tool_call_id_tokens(message: &Value) -> i64 {
+    let Some(map) = message.as_object() else {
+        return 0;
+    };
+    for key in ["tool_call_id", "toolCallId", "call_id", "callId"] {
+        if let Some(value) = map.get(key) {
+            if value.is_null() {
+                continue;
+            }
+            return estimate_aux_tokens(value);
+        }
+    }
+    0
+}
+
+fn estimate_aux_tokens(value: &Value) -> i64 {
+    match value {
+        Value::Null => 0,
+        Value::String(text) => approx_token_count(text),
+        Value::Array(_) | Value::Object(_) => approx_token_count(&value.to_string()),
+        _ => approx_token_count(&value.to_string()),
+    }
+}
+
+pub fn estimate_content_tokens(content: &Value) -> i64 {
+    match content {
+        Value::Null => 0,
+        Value::String(text) => estimate_string_tokens(text),
+        Value::Array(items) => items.iter().map(estimate_content_tokens).sum(),
+        Value::Object(map) => {
+            let part_type = map
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_lowercase();
+            if part_type == "text" {
+                return approx_token_count(map.get("text").and_then(Value::as_str).unwrap_or(""));
+            }
+            if part_type == "image_url" || map.contains_key("image_url") {
+                return IMAGE_TOKEN_ESTIMATE;
+            }
+            if let Some(text) = map.get("text").and_then(Value::as_str) {
+                return approx_token_count(text);
+            }
+            approx_token_count(&content.to_string())
+        }
+        _ => approx_token_count(&content.to_string()),
+    }
+}
+
+fn estimate_string_tokens(text: &str) -> i64 {
+    if text.starts_with("data:image/") {
+        return IMAGE_TOKEN_ESTIMATE;
+    }
+    if text.contains("data:image/") {
+        let matches = data_url_regex().find_iter(text).count() as i64;
+        let stripped = data_url_regex().replace_all(text, "[image]");
+        return approx_token_count(&stripped) + matches * IMAGE_TOKEN_ESTIMATE;
+    }
+    approx_token_count(text)
+}
+
+fn data_url_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r"data:image/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=\r\n]+")
+            .expect("static data URL regex should compile")
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_estimate_message_tokens_counts_tool_calls() {
+        let baseline = estimate_message_tokens(&json!({ "role": "assistant", "content": "" }));
+        let message = json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": { "name": "read_file", "arguments": r#"{"path":"a.txt"}"# }
+            }]
+        });
+        let tokens = estimate_message_tokens(&message);
+        assert!(tokens > baseline);
+    }
+
+    #[test]
+    fn test_estimate_message_tokens_counts_tool_call_id() {
+        let baseline = estimate_message_tokens(&json!({ "role": "tool", "content": "ok" }));
+        let message = json!({ "role": "tool", "content": "ok", "tool_call_id": "call_1" });
+        let tokens = estimate_message_tokens(&message);
+        assert!(tokens > baseline);
+    }
+
+    #[test]
+    fn test_trim_text_to_chars_avoids_suffix_only_fragment() {
+        let trimmed = trim_text_to_chars("abcdef", 4, "...(truncated)");
+        assert_eq!(trimmed, "abcd");
+    }
+
+    #[test]
+    fn test_trim_text_to_tokens_prefers_source_over_partial_suffix() {
+        let trimmed = trim_text_to_tokens("abcdef", 1, "...(truncated)");
+        assert_eq!(trimmed, "abcd");
+        assert!(!trimmed.starts_with("..."));
+    }
+
+    #[test]
+    fn test_estimate_content_tokens_counts_embedded_data_urls_as_images() {
+        let content = json!("before data:image/png;base64,abcd after");
+
+        let tokens = estimate_content_tokens(&content);
+
+        assert!(tokens >= IMAGE_TOKEN_ESTIMATE);
+        assert!(tokens < IMAGE_TOKEN_ESTIMATE * 2);
+    }
+
+    #[test]
+    fn test_trim_messages_to_budget_keeps_latest_message_when_budget_too_small() {
+        let messages = vec![
+            json!({ "role": "user", "content": "first" }),
+            json!({ "role": "assistant", "content": "second" }),
+        ];
+
+        let trimmed = trim_messages_to_budget(&messages, 1);
+
+        assert_eq!(
+            trimmed,
+            vec![json!({ "role": "assistant", "content": "second" })]
+        );
+    }
+
+    #[test]
+    fn test_estimate_message_tokens_counts_reasoning_alias() {
+        let baseline = estimate_message_tokens(&json!({ "role": "assistant", "content": "" }));
+        let message = json!({
+            "role": "assistant",
+            "content": "",
+            "reasoning": "intermediate reasoning"
+        });
+
+        assert!(estimate_message_tokens(&message) > baseline);
+    }
+}
+
+#[cfg(test)]
+mod utf8_budget_tests {
+    use super::*;
+
+    #[test]
+    fn trimming_respects_byte_estimate_for_unicode_and_small_budgets() {
+        for text in ["字".repeat(300), "🙂".repeat(300), "a字🙂".repeat(300)] {
+            for budget in 0..128 {
+                for suffix in ["", "...(truncated)", "（省略）"] {
+                    let trimmed = trim_text_to_tokens(&text, budget, suffix);
+                    assert!(approx_token_count(&trimmed) <= budget);
+                    assert!(trimmed.is_char_boundary(trimmed.len()));
+                }
+            }
+        }
+    }
+}

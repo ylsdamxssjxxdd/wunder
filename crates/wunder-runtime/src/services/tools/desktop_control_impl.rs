@@ -1,0 +1,1965 @@
+use super::{build_model_tool_success, ToolContext};
+use crate::config::{Config, DesktopControllerConfig};
+use crate::core::blocking;
+use crate::storage::USER_PRIVATE_CONTAINER_ID;
+use anyhow::{anyhow, Result};
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
+use image::ImageEncoder;
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
+use tokio::fs;
+use tokio::time::{sleep, Duration};
+use tracing::warn;
+use uuid::Uuid;
+
+pub const TOOL_DESKTOP_CONTROLLER: &str = "桌面控制器";
+pub const TOOL_DESKTOP_MONITOR: &str = "桌面监视器";
+pub const TOOL_DESKTOP_CONTROLLER_ALIAS: &str = "desktop_controller";
+pub const TOOL_DESKTOP_MONITOR_ALIAS: &str = "desktop_monitor";
+pub const TOOL_DESKTOP_CONTROLLER_ALIAS_SHORT: &str = "controller";
+pub const TOOL_DESKTOP_MONITOR_ALIAS_SHORT: &str = "monitor";
+
+const MAX_MONITOR_WAIT_MS: u64 = 30_000;
+const MAX_SCREENSHOT_BYTES: u64 = 8 * 1024 * 1024;
+const OVERLAY_HINT_MS: u64 = 2000;
+const OVERLAY_DONE_MS: u64 = 2000;
+const OVERLAY_JITTER_MS: u64 = 120;
+const OVERLAY_HIDE_DELAY_MS: u64 = 80;
+const MAX_SESSION_FRAME_CACHE: usize = 2048;
+
+static LAST_SESSION_SCREENSHOTS: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
+
+#[derive(Clone, Copy, Debug)]
+struct BBox {
+    x1: i32,
+    y1: i32,
+    x2: i32,
+    y2: i32,
+}
+
+impl BBox {
+    fn center(&self) -> (i32, i32) {
+        let mut x1 = self.x1;
+        let mut y1 = self.y1;
+        let mut x2 = self.x2;
+        let mut y2 = self.y2;
+        if x1 > x2 {
+            std::mem::swap(&mut x1, &mut x2);
+        }
+        if y1 > y2 {
+            std::mem::swap(&mut y1, &mut y2);
+        }
+        ((x1 + x2) / 2, (y1 + y2) / 2)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DesktopAction {
+    LeftClick,
+    LeftDoubleClick,
+    RightClick,
+    MiddleClick,
+    LeftHold,
+    RightHold,
+    MiddleHold,
+    LeftRelease,
+    RightRelease,
+    MiddleRelease,
+    ScrollDown,
+    ScrollUp,
+    PressKey,
+    TypeText,
+    Delay,
+    MoveMouse,
+    DragDrop,
+}
+
+impl DesktopAction {
+    fn from_raw(raw: &str) -> Option<Self> {
+        let mut cleaned = raw.trim().to_lowercase();
+        cleaned = cleaned.replace('-', "_");
+        cleaned.retain(|ch| !ch.is_whitespace());
+        match cleaned.as_str() {
+            "left_click" => Some(Self::LeftClick),
+            "left_double_click" => Some(Self::LeftDoubleClick),
+            "right_click" => Some(Self::RightClick),
+            "middle_click" => Some(Self::MiddleClick),
+            "left_hold" => Some(Self::LeftHold),
+            "right_hold" => Some(Self::RightHold),
+            "middle_hold" => Some(Self::MiddleHold),
+            "left_release" => Some(Self::LeftRelease),
+            "right_release" => Some(Self::RightRelease),
+            "middle_release" => Some(Self::MiddleRelease),
+            "scroll_down" => Some(Self::ScrollDown),
+            "scroll_up" => Some(Self::ScrollUp),
+            "press_key" | "keyboard" => Some(Self::PressKey),
+            "type_text" | "send_text" => Some(Self::TypeText),
+            "delay" | "sleep" => Some(Self::Delay),
+            "move_mouse" | "move" => Some(Self::MoveMouse),
+            "drag_drop" | "drag" => Some(Self::DragDrop),
+            _ => None,
+        }
+    }
+}
+
+struct DesktopControllerArgs {
+    bbox: BBox,
+    action: DesktopAction,
+    action_raw: String,
+    description: String,
+    key: Option<String>,
+    text: Option<String>,
+    delay_ms: u64,
+    duration_ms: u64,
+    scroll_steps: i32,
+    to_bbox: Option<BBox>,
+}
+
+struct DesktopScreenshot {
+    path: PathBuf,
+    download_url: String,
+    norm_width: i32,
+    norm_height: i32,
+    screen_width: i32,
+    screen_height: i32,
+    size_bytes: usize,
+}
+
+fn overlay_stream_enabled(context: &ToolContext<'_>) -> bool {
+    context
+        .event_emitter
+        .as_ref()
+        .map(|emitter| emitter.stream_enabled())
+        .unwrap_or(false)
+}
+
+fn emit_overlay_event(context: &ToolContext<'_>, event_type: &str, payload: Value) {
+    if !overlay_stream_enabled(context) {
+        return;
+    }
+    if let Some(emitter) = context.event_emitter.as_ref() {
+        emitter.emit(event_type, payload);
+    }
+}
+
+fn session_frame_cache() -> &'static Mutex<HashMap<String, PathBuf>> {
+    LAST_SESSION_SCREENSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn remember_previous_screenshot_for_session(
+    session_id: &str,
+    current_path: &Path,
+) -> Option<PathBuf> {
+    let key = sanitize_session_id(session_id);
+    let cache = session_frame_cache();
+    let mut guard = match cache.lock() {
+        Ok(lock) => lock,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let previous = guard
+        .get(&key)
+        .cloned()
+        .filter(|path| path != current_path && path.exists());
+    guard.insert(key, current_path.to_path_buf());
+    trim_session_frame_cache(&mut guard);
+    previous
+}
+
+fn trim_session_frame_cache(cache: &mut HashMap<String, PathBuf>) {
+    if cache.len() <= MAX_SESSION_FRAME_CACHE {
+        return;
+    }
+    cache.retain(|_, path| path.exists());
+    if cache.len() <= MAX_SESSION_FRAME_CACHE {
+        return;
+    }
+    let overflow = cache.len().saturating_sub(MAX_SESSION_FRAME_CACHE);
+    if overflow == 0 {
+        return;
+    }
+    let evict_keys: Vec<String> = cache.keys().take(overflow).cloned().collect();
+    for key in evict_keys {
+        cache.remove(&key);
+    }
+}
+
+pub fn is_desktop_controller_tool_name(name: &str) -> bool {
+    let cleaned = name.trim();
+    if cleaned == TOOL_DESKTOP_CONTROLLER {
+        return true;
+    }
+    matches!(
+        cleaned.to_ascii_lowercase().as_str(),
+        TOOL_DESKTOP_CONTROLLER_ALIAS | TOOL_DESKTOP_CONTROLLER_ALIAS_SHORT
+    )
+}
+
+pub fn is_desktop_monitor_tool_name(name: &str) -> bool {
+    let cleaned = name.trim();
+    if cleaned == TOOL_DESKTOP_MONITOR {
+        return true;
+    }
+    matches!(
+        cleaned.to_ascii_lowercase().as_str(),
+        TOOL_DESKTOP_MONITOR_ALIAS | TOOL_DESKTOP_MONITOR_ALIAS_SHORT
+    )
+}
+
+pub fn is_desktop_control_tool_name(name: &str) -> bool {
+    is_desktop_controller_tool_name(name) || is_desktop_monitor_tool_name(name)
+}
+
+pub fn desktop_tools_enabled(config: &Config) -> bool {
+    config.server.mode.trim().eq_ignore_ascii_case("desktop")
+        && config.tools.desktop_controller.enabled
+}
+
+pub async fn tool_desktop_controller(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    ensure_desktop_enabled(context.config)?;
+    let payload = parse_desktop_controller_args(args)?;
+    let started_at = Instant::now();
+    let config = context.config.tools.desktop_controller.clone();
+
+    let norm_width = config.norm_width.max(1);
+    let norm_height = config.norm_height.max(1);
+
+    let (screen_width, screen_height) = screen_size()?;
+    let screen_max_x = (screen_width - 1).max(0);
+    let screen_max_y = (screen_height - 1).max(0);
+
+    let (cx_norm_raw, cy_norm_raw) = payload.bbox.center();
+    let cx_norm = cx_norm_raw.clamp(0, norm_width);
+    let cy_norm = cy_norm_raw.clamp(0, norm_height);
+    let cx = map_coord(cx_norm, norm_width, screen_max_x);
+    let cy = map_coord(cy_norm, norm_height, screen_max_y);
+    let description = payload.description.clone();
+    let mut done_coords: Option<(i32, i32)> = None;
+    if overlay_stream_enabled(context) {
+        emit_overlay_event(
+            context,
+            "desktop_controller_hint",
+            json!({
+                "x": cx,
+                "y": cy,
+                "description": &description,
+                "duration_ms": OVERLAY_HINT_MS,
+            }),
+        );
+        if OVERLAY_HINT_MS > 0 {
+            sleep(Duration::from_millis(
+                OVERLAY_HINT_MS.saturating_add(OVERLAY_JITTER_MS),
+            ))
+            .await;
+        }
+    }
+
+    match payload.action {
+        DesktopAction::LeftClick => {
+            mouse_click(MouseButton::Left, cx, cy)?;
+        }
+        DesktopAction::LeftDoubleClick => {
+            mouse_double_click(MouseButton::Left, cx, cy)?;
+        }
+        DesktopAction::RightClick => {
+            mouse_click(MouseButton::Right, cx, cy)?;
+        }
+        DesktopAction::MiddleClick => {
+            mouse_click(MouseButton::Middle, cx, cy)?;
+        }
+        DesktopAction::LeftHold => {
+            mouse_down(MouseButton::Left, cx, cy)?;
+        }
+        DesktopAction::RightHold => {
+            mouse_down(MouseButton::Right, cx, cy)?;
+        }
+        DesktopAction::MiddleHold => {
+            mouse_down(MouseButton::Middle, cx, cy)?;
+        }
+        DesktopAction::LeftRelease => {
+            mouse_up(MouseButton::Left, cx, cy)?;
+        }
+        DesktopAction::RightRelease => {
+            mouse_up(MouseButton::Right, cx, cy)?;
+        }
+        DesktopAction::MiddleRelease => {
+            mouse_up(MouseButton::Middle, cx, cy)?;
+        }
+        DesktopAction::ScrollDown => {
+            mouse_scroll(cx, cy, -payload.scroll_steps)?;
+        }
+        DesktopAction::ScrollUp => {
+            mouse_scroll(cx, cy, payload.scroll_steps)?;
+        }
+        DesktopAction::PressKey => {
+            let key = payload
+                .key
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.key_required")))?;
+            send_key_sequence(key)?;
+        }
+        DesktopAction::TypeText => {
+            let text = payload.text.as_deref().unwrap_or("").to_string();
+            if text.trim().is_empty() {
+                return Err(anyhow!(crate::i18n::t(
+                    "tool.desktop_controller.text_required"
+                )));
+            }
+            mouse_click(MouseButton::Left, cx, cy)?;
+            send_unicode_text(&text)?;
+        }
+        DesktopAction::Delay => {
+            if payload.delay_ms > 0 {
+                sleep(Duration::from_millis(payload.delay_ms)).await;
+            }
+        }
+        DesktopAction::MoveMouse => {
+            smooth_move(cx, cy, payload.duration_ms).await?;
+        }
+        DesktopAction::DragDrop => {
+            let to_bbox = payload.to_bbox.ok_or_else(|| {
+                anyhow!(crate::i18n::t("tool.desktop_controller.to_bbox_required"))
+            })?;
+            let (to_cx_norm_raw, to_cy_norm_raw) = to_bbox.center();
+            let to_cx_norm = to_cx_norm_raw.clamp(0, norm_width);
+            let to_cy_norm = to_cy_norm_raw.clamp(0, norm_height);
+            let to_cx = map_coord(to_cx_norm, norm_width, screen_max_x);
+            let to_cy = map_coord(to_cy_norm, norm_height, screen_max_y);
+            mouse_down(MouseButton::Left, cx, cy)?;
+            let drag_duration = if payload.duration_ms > 0 {
+                payload.duration_ms
+            } else {
+                400
+            };
+            smooth_move(to_cx, to_cy, drag_duration).await?;
+            mouse_up(MouseButton::Left, to_cx, to_cy)?;
+            done_coords = Some((to_cx, to_cy));
+        }
+    }
+
+    let screenshot = capture_screenshot(&config).await?;
+    let previous_screenshot_path =
+        remember_previous_screenshot_for_session(context.session_id, &screenshot.path);
+    persist_screenshot_to_user_container(context, &screenshot).await;
+    if overlay_stream_enabled(context) {
+        let (done_x, done_y) = done_coords.unwrap_or((cx, cy));
+        emit_overlay_event(
+            context,
+            "desktop_controller_hint_done",
+            json!({
+                "x": done_x,
+                "y": done_y,
+                "description": &description,
+                "duration_ms": OVERLAY_DONE_MS,
+            }),
+        );
+        if OVERLAY_DONE_MS > 0 {
+            sleep(Duration::from_millis(
+                OVERLAY_DONE_MS.saturating_add(OVERLAY_JITTER_MS),
+            ))
+            .await;
+        }
+    }
+    let elapsed_ms = started_at.elapsed().as_millis() as u64;
+    let prompt = build_followup_prompt(
+        crate::i18n::t("tool.desktop_controller.followup_prompt"),
+        screenshot.norm_width,
+        screenshot.norm_height,
+    );
+    Ok(build_model_tool_success(
+        "desktop_controller",
+        "completed",
+        format!("Completed desktop action {}.", payload.action_raw),
+        json!({
+            "action": payload.action_raw,
+            "description": description,
+            "center_norm": [cx_norm, cy_norm],
+            "center_screen": [cx, cy],
+            "normalized_width": screenshot.norm_width,
+            "normalized_height": screenshot.norm_height,
+            "screen_width": screenshot.screen_width,
+            "screen_height": screenshot.screen_height,
+            "screenshot_path": screenshot.path.to_string_lossy().to_string(),
+            "previous_screenshot_path": previous_screenshot_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().to_string()),
+            "screenshot_download_url": screenshot.download_url,
+            "screenshot_bytes": screenshot.size_bytes,
+            "elapsed_ms": elapsed_ms,
+            "followup_prompt": prompt,
+        }),
+    ))
+}
+
+pub async fn tool_desktop_monitor(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    ensure_desktop_enabled(context.config)?;
+    let wait_ms = parse_monitor_wait_ms(args)?;
+    let config = context.config.tools.desktop_controller.clone();
+    if overlay_stream_enabled(context) {
+        emit_overlay_event(
+            context,
+            "desktop_monitor_countdown",
+            json!({ "wait_ms": wait_ms }),
+        );
+    }
+    if wait_ms > 0 {
+        sleep(Duration::from_millis(wait_ms)).await;
+    }
+    if overlay_stream_enabled(context) {
+        emit_overlay_event(context, "desktop_monitor_countdown_done", json!({}));
+        if OVERLAY_HIDE_DELAY_MS > 0 {
+            sleep(Duration::from_millis(OVERLAY_HIDE_DELAY_MS)).await;
+        }
+    }
+    let screenshot = capture_screenshot(&config).await?;
+    let previous_screenshot_path =
+        remember_previous_screenshot_for_session(context.session_id, &screenshot.path);
+    persist_screenshot_to_user_container(context, &screenshot).await;
+    let prompt = build_followup_prompt(
+        crate::i18n::t("tool.desktop_monitor.followup_prompt"),
+        screenshot.norm_width,
+        screenshot.norm_height,
+    );
+    Ok(build_model_tool_success(
+        "desktop_monitor",
+        "completed",
+        "Captured a desktop screenshot for inspection.",
+        json!({
+            "wait_ms": wait_ms,
+            "normalized_width": screenshot.norm_width,
+            "normalized_height": screenshot.norm_height,
+            "screen_width": screenshot.screen_width,
+            "screen_height": screenshot.screen_height,
+            "screenshot_path": screenshot.path.to_string_lossy().to_string(),
+            "previous_screenshot_path": previous_screenshot_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().to_string()),
+            "screenshot_download_url": screenshot.download_url,
+            "screenshot_bytes": screenshot.size_bytes,
+            "followup_prompt": prompt,
+            "note": args.get("note"),
+        }),
+    ))
+}
+
+pub async fn build_followup_user_message(result_data: &Value) -> Result<Option<Value>> {
+    let payload = parse_followup_payload(result_data)?;
+    let current_data_url = read_screenshot_data_url(&payload.current_path).await?;
+    let previous_data_url = if let Some(previous_path) = payload
+        .previous_path
+        .as_ref()
+        .filter(|path| path.as_path() != payload.current_path.as_path())
+    {
+        match read_screenshot_data_url(previous_path).await {
+            Ok(data_url) => Some(data_url),
+            Err(err) => {
+                warn!(
+                    "desktop followup previous screenshot unavailable {}: {err}",
+                    previous_path.display()
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let mut content = vec![json!({ "type": "text", "text": payload.prompt })];
+    if let Some(previous_data_url) = previous_data_url {
+        content.push(json!({
+            "type": "image_url",
+            "image_url": { "url": previous_data_url }
+        }));
+    }
+    content.push(json!({
+        "type": "image_url",
+        "image_url": { "url": current_data_url }
+    }));
+    Ok(Some(json!({
+        "role": "user",
+        "content": content
+    })))
+}
+
+fn parse_followup_payload(result_data: &Value) -> Result<FollowupPayload> {
+    let obj = result_data
+        .as_object()
+        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.capture_failed")))?;
+    let current_path = obj
+        .get("screenshot_path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.capture_failed")))?;
+    let previous_path = obj
+        .get("previous_screenshot_path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let prompt = obj
+        .get("followup_prompt")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| crate::i18n::t("tool.desktop_controller.followup_prompt"));
+    Ok(FollowupPayload {
+        current_path: PathBuf::from(current_path),
+        previous_path,
+        prompt,
+    })
+}
+
+async fn read_screenshot_data_url(path: &Path) -> Result<String> {
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_controller.capture_failed")))?;
+    if bytes.len() as u64 > MAX_SCREENSHOT_BYTES {
+        return Err(anyhow!(crate::i18n::t(
+            "tool.desktop_controller.capture_too_large"
+        )));
+    }
+    Ok(format!("data:image/png;base64,{}", STANDARD.encode(bytes)))
+}
+
+struct FollowupPayload {
+    current_path: PathBuf,
+    previous_path: Option<PathBuf>,
+    prompt: String,
+}
+
+fn parse_desktop_controller_args(args: &Value) -> Result<DesktopControllerArgs> {
+    let obj = args
+        .as_object()
+        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.invalid_args")))?;
+    let bbox_value = obj
+        .get("bbox")
+        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.bbox_required")))?;
+    let bbox = parse_bbox(bbox_value)?;
+    let action_raw = obj
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.action_required")))?;
+    let description = obj
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| action_raw.to_string());
+    let action = DesktopAction::from_raw(action_raw)
+        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.unknown_action")))?;
+    let delay_ms = parse_u64(obj.get("delay_ms")).unwrap_or(0);
+    let duration_ms = parse_u64(obj.get("duration_ms")).unwrap_or(0);
+    let scroll_steps = parse_i32(obj.get("scroll_steps")).unwrap_or(1).max(1);
+    let to_bbox = obj.get("to_bbox").and_then(|value| parse_bbox(value).ok());
+    Ok(DesktopControllerArgs {
+        bbox,
+        action,
+        action_raw: action_raw.to_string(),
+        description,
+        key: obj
+            .get("key")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        text: obj
+            .get("text")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        delay_ms,
+        duration_ms,
+        scroll_steps,
+        to_bbox,
+    })
+}
+
+fn parse_monitor_wait_ms(args: &Value) -> Result<u64> {
+    let obj = args
+        .as_object()
+        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_monitor.wait_required")))?;
+    let raw = obj
+        .get("wait_ms")
+        .or_else(|| obj.get("wait"))
+        .or_else(|| obj.get("delay_ms"));
+    let wait_ms = parse_u64(raw)
+        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_monitor.wait_required")))?;
+    Ok(wait_ms.min(MAX_MONITOR_WAIT_MS))
+}
+
+fn parse_bbox(value: &Value) -> Result<BBox> {
+    let arr = match value {
+        Value::Array(arr) => arr.clone(),
+        Value::String(raw) => {
+            let raw = raw.trim();
+            if raw.is_empty() {
+                return Err(anyhow!(crate::i18n::t(
+                    "tool.desktop_controller.invalid_bbox"
+                )));
+            }
+            let parsed = serde_json::from_str::<Value>(raw)
+                .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_controller.invalid_bbox")))?;
+            parsed
+                .as_array()
+                .cloned()
+                .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.invalid_bbox")))?
+        }
+        _ => {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.invalid_bbox"
+            )))
+        }
+    };
+    if arr.len() == 4 {
+        let x1 = parse_i32(Some(&arr[0]))
+            .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.invalid_bbox")))?;
+        let y1 = parse_i32(Some(&arr[1]))
+            .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.invalid_bbox")))?;
+        let x2 = parse_i32(Some(&arr[2]))
+            .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.invalid_bbox")))?;
+        let y2 = parse_i32(Some(&arr[3]))
+            .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.invalid_bbox")))?;
+        return Ok(BBox { x1, y1, x2, y2 });
+    }
+    if arr.len() == 2 {
+        let cx = parse_i32(Some(&arr[0]))
+            .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.invalid_bbox")))?;
+        let cy = parse_i32(Some(&arr[1]))
+            .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.invalid_bbox")))?;
+        return Ok(BBox {
+            x1: cx,
+            y1: cy,
+            x2: cx,
+            y2: cy,
+        });
+    }
+    Err(anyhow!(crate::i18n::t(
+        "tool.desktop_controller.invalid_bbox"
+    )))
+}
+
+fn parse_i32(value: Option<&Value>) -> Option<i32> {
+    let value = value?;
+    if let Some(num) = value.as_i64() {
+        return Some(num as i32);
+    }
+    if let Some(num) = value.as_f64() {
+        return Some(num.round() as i32);
+    }
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .and_then(|text| text.parse::<f64>().ok())
+        .map(|num| num.round() as i32)
+}
+
+fn parse_u64(value: Option<&Value>) -> Option<u64> {
+    let value = value?;
+    if let Some(num) = value.as_u64() {
+        return Some(num);
+    }
+    if let Some(num) = value.as_i64() {
+        if num >= 0 {
+            return Some(num as u64);
+        }
+    }
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .and_then(|text| text.parse::<f64>().ok())
+        .filter(|num| num.is_finite() && *num >= 0.0)
+        .map(|num| num.round() as u64)
+}
+
+fn ensure_desktop_enabled(config: &Config) -> Result<()> {
+    if desktop_tools_enabled(config) {
+        return Ok(());
+    }
+    Err(anyhow!(crate::i18n::t("tool.desktop_controller.disabled")))
+}
+
+fn build_followup_prompt(base: String, norm_width: i32, norm_height: i32) -> String {
+    if norm_width > 0 && norm_height > 0 {
+        format!("{base} (normalized {norm_width}x{norm_height})")
+    } else {
+        base
+    }
+}
+
+fn map_coord(value: i32, src_max: i32, dst_max: i32) -> i32 {
+    if dst_max <= 0 {
+        return 0;
+    }
+    if src_max <= 0 {
+        return value.clamp(0, dst_max);
+    }
+    let clamped = value.clamp(0, src_max);
+    let numerator = i64::from(clamped) * i64::from(dst_max) + i64::from(src_max) / 2;
+    let mapped = (numerator / i64::from(src_max)) as i32;
+    mapped.clamp(0, dst_max)
+}
+
+async fn capture_screenshot(config: &DesktopControllerConfig) -> Result<DesktopScreenshot> {
+    let norm_width = config.norm_width.max(1);
+    let norm_height = config.norm_height.max(1);
+    let timeout_ms = config.capture_timeout_ms.max(100);
+    let max_frames = config.max_frames.max(1);
+    let screenshot = match blocking::run_external_with_timeout(
+        "tools.desktop_control.capture_screenshot",
+        Duration::from_millis(timeout_ms),
+        move || capture_screenshot_blocking(norm_width, norm_height).map_err(anyhow::Error::msg),
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(err) if err.to_string().contains("timed out") => {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_timeout"
+            )));
+        }
+        Err(err) => return Err(err),
+    };
+    cleanup_old_frames(&screenshot.path, max_frames);
+    Ok(screenshot)
+}
+
+async fn persist_screenshot_to_user_container(
+    context: &ToolContext<'_>,
+    screenshot: &DesktopScreenshot,
+) {
+    let workspace_id = context
+        .workspace
+        .scoped_user_id_by_container(context.user_id, USER_PRIVATE_CONTAINER_ID);
+    if let Err(err) = context.workspace.ensure_user_root(&workspace_id) {
+        warn!(
+            "desktop screenshot persist skipped: ensure user root failed user_id={} error={err}",
+            context.user_id
+        );
+        return;
+    }
+    let safe_session = sanitize_session_id(context.session_id);
+    let filename = screenshot
+        .path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| format!("desktop_shot_{}.png", Uuid::new_v4().simple()));
+    let relative = format!("desktop_controller/{safe_session}/{filename}");
+    let dest = match context.workspace.resolve_path(&workspace_id, &relative) {
+        Ok(path) => path,
+        Err(err) => {
+            warn!(
+                "desktop screenshot persist skipped: resolve path failed user_id={} error={err}",
+                context.user_id
+            );
+            return;
+        }
+    };
+    if let Some(parent) = dest.parent() {
+        if let Err(err) = fs::create_dir_all(parent).await {
+            warn!(
+                "desktop screenshot persist skipped: create dir failed user_id={} error={err}",
+                context.user_id
+            );
+            return;
+        }
+    }
+    if let Err(err) = fs::copy(&screenshot.path, &dest).await {
+        warn!(
+            "desktop screenshot persist skipped: copy failed user_id={} error={err}",
+            context.user_id
+        );
+    }
+}
+
+fn cleanup_old_frames(path: &Path, max_frames: usize) {
+    let Some(dir) = path.parent() else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<(PathBuf, std::time::SystemTime)> = entries
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let path = entry.path();
+            let meta = entry.metadata().ok()?;
+            if !meta.is_file() {
+                return None;
+            }
+            let modified = meta.modified().ok()?;
+            Some((path, modified))
+        })
+        .collect();
+    if files.len() <= max_frames {
+        return;
+    }
+    files.sort_by_key(|(_, modified)| *modified);
+    let excess = files.len().saturating_sub(max_frames);
+    for (path, _) in files.into_iter().take(excess) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn capture_screenshot_blocking(norm_width: i32, norm_height: i32) -> Result<DesktopScreenshot> {
+    let (screen_width, screen_height, rgba) = capture_screen_rgba()?;
+    let resized = resize_rgba(
+        &rgba,
+        screen_width as u32,
+        screen_height as u32,
+        norm_width as u32,
+        norm_height as u32,
+    )?;
+    let png = encode_png(&resized, norm_width as u32, norm_height as u32)?;
+    if png.len() as u64 > MAX_SCREENSHOT_BYTES {
+        return Err(anyhow!(crate::i18n::t(
+            "tool.desktop_controller.capture_too_large"
+        )));
+    }
+    let dir = resolve_temp_dir()?.join("desktop_controller");
+    std::fs::create_dir_all(&dir)
+        .map_err(|err| anyhow!(format!("create temp dir failed: {err}")))?;
+    let filename = format!("desktop_shot_{}.png", Uuid::new_v4().simple());
+    let path = dir.join(&filename);
+    std::fs::write(&path, &png)
+        .map_err(|err| anyhow!(format!("write screenshot failed: {err}")))?;
+    let download_url = format!("/wunder/temp_dir/download?filename=desktop_controller/{filename}");
+    Ok(DesktopScreenshot {
+        path,
+        download_url,
+        norm_width,
+        norm_height,
+        screen_width,
+        screen_height,
+        size_bytes: png.len(),
+    })
+}
+
+fn resolve_temp_dir() -> Result<PathBuf> {
+    const TEMP_DIR_ROOT_ENV: &str = "WUNDER_TEMP_DIR_ROOT";
+    if let Ok(value) = std::env::var(TEMP_DIR_ROOT_ENV) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            let candidate = PathBuf::from(trimmed);
+            if candidate.is_absolute() {
+                return Ok(candidate);
+            }
+            let root = std::env::current_dir().map_err(|err| anyhow!(err))?;
+            return Ok(root.join(candidate));
+        }
+    }
+    let root = std::env::current_dir().map_err(|err| anyhow!(err))?;
+    Ok(root.join("config").join("data").join("temp_dir"))
+}
+
+fn sanitize_session_id(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return "default".to_string();
+    }
+    let sanitized = trimmed
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if sanitized.trim().is_empty() {
+        "default".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn resize_rgba(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    norm_width: u32,
+    norm_height: u32,
+) -> Result<Vec<u8>> {
+    let image = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(width, height, rgba.to_vec())
+        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.capture_failed")))?;
+    let resized = image::imageops::resize(
+        &image,
+        norm_width,
+        norm_height,
+        image::imageops::FilterType::Triangle,
+    );
+    Ok(resized.into_raw())
+}
+
+fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    let encoder = image::codecs::png::PngEncoder::new(&mut buf);
+    encoder
+        .write_image(rgba, width, height, image::ExtendedColorType::Rgba8)
+        .map_err(|err| anyhow!(format!("encode png failed: {err}")))?;
+    Ok(buf)
+}
+
+fn screen_size() -> Result<(i32, i32)> {
+    let (width, height) = screen_metrics()?;
+    if width <= 0 || height <= 0 {
+        return Err(anyhow!(crate::i18n::t(
+            "tool.desktop_controller.capture_failed"
+        )));
+    }
+    Ok((width, height))
+}
+
+#[cfg(windows)]
+fn screen_metrics() -> Result<(i32, i32)> {
+    crate::core::dpi::init_process_dpi_awareness();
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+    let width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+    let height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+    Ok((width, height))
+}
+
+#[cfg(target_os = "linux")]
+fn screen_metrics() -> Result<(i32, i32)> {
+    with_x11(|xlib, display, screen| unsafe {
+        Ok((
+            (xlib.XDisplayWidth)(display, screen),
+            (xlib.XDisplayHeight)(display, screen),
+        ))
+    })
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn screen_metrics() -> Result<(i32, i32)> {
+    Err(anyhow!(crate::i18n::t(
+        "tool.desktop_controller.unsupported_platform"
+    )))
+}
+
+#[cfg(windows)]
+fn capture_screen_rgba() -> Result<(i32, i32, Vec<u8>)> {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::Graphics::Gdi::{
+        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
+        GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CAPTUREBLT,
+        DIB_RGB_COLORS, HBITMAP, HDC, RGBQUAD, SRCCOPY,
+    };
+
+    let (width, height) = screen_metrics()?;
+    if width <= 0 || height <= 0 {
+        return Err(anyhow!(crate::i18n::t(
+            "tool.desktop_controller.capture_failed"
+        )));
+    }
+
+    unsafe {
+        let screen_dc: HDC = GetDC(HWND::default());
+        if screen_dc == 0 {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        let mem_dc: HDC = CreateCompatibleDC(screen_dc);
+        if mem_dc == 0 {
+            ReleaseDC(HWND::default(), screen_dc);
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        let bmp: HBITMAP = CreateCompatibleBitmap(screen_dc, width, height);
+        if bmp == 0 {
+            DeleteDC(mem_dc);
+            ReleaseDC(HWND::default(), screen_dc);
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        let old = SelectObject(mem_dc, bmp as _);
+        let ok = BitBlt(
+            mem_dc,
+            0,
+            0,
+            width,
+            height,
+            screen_dc,
+            0,
+            0,
+            SRCCOPY | CAPTUREBLT,
+        );
+        if ok == 0 {
+            SelectObject(mem_dc, old);
+            DeleteObject(bmp as _);
+            DeleteDC(mem_dc);
+            ReleaseDC(HWND::default(), screen_dc);
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+
+        let mut bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB,
+                biSizeImage: 0,
+                biXPelsPerMeter: 0,
+                biYPelsPerMeter: 0,
+                biClrUsed: 0,
+                biClrImportant: 0,
+            },
+            bmiColors: [RGBQUAD {
+                rgbBlue: 0,
+                rgbGreen: 0,
+                rgbRed: 0,
+                rgbReserved: 0,
+            }; 1],
+        };
+
+        let mut buffer = vec![0u8; (width * height * 4) as usize];
+        let scan = GetDIBits(
+            mem_dc,
+            bmp,
+            0,
+            height as u32,
+            buffer.as_mut_ptr() as *mut _,
+            &mut bmi,
+            DIB_RGB_COLORS,
+        );
+
+        SelectObject(mem_dc, old);
+        DeleteObject(bmp as _);
+        DeleteDC(mem_dc);
+        ReleaseDC(HWND::default(), screen_dc);
+
+        if scan == 0 {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+
+        for pixel in buffer.chunks_mut(4) {
+            let b = pixel[0];
+            let r = pixel[2];
+            pixel[0] = r;
+            pixel[2] = b;
+            pixel[3] = 255;
+        }
+        Ok((width, height, buffer))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn capture_screen_rgba() -> Result<(i32, i32, Vec<u8>)> {
+    with_x11(|xlib, display, screen| unsafe {
+        let width = (xlib.XDisplayWidth)(display, screen);
+        let height = (xlib.XDisplayHeight)(display, screen);
+        if width <= 0 || height <= 0 {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        let root = (xlib.XRootWindow)(display, screen);
+        let visual = (xlib.XDefaultVisual)(display, screen);
+        if visual.is_null() {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        let image = (xlib.XGetImage)(
+            display,
+            root,
+            0,
+            0,
+            width as u32,
+            height as u32,
+            !0 as std::ffi::c_ulong,
+            x11_dl::xlib::ZPixmap,
+        );
+        if image.is_null() {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        let image_ref = &*image;
+        let bytes_per_pixel = (image_ref.bits_per_pixel / 8) as usize;
+        if bytes_per_pixel != 3 && bytes_per_pixel != 4 {
+            (xlib.XDestroyImage)(image);
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        let bytes = std::slice::from_raw_parts(
+            image_ref.data as *const u8,
+            image_ref.bytes_per_line as usize * height as usize,
+        );
+        let little_endian = image_ref.byte_order == x11_dl::xlib::LSBFirst;
+        let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+        for row in 0..height as usize {
+            let line_start = row * image_ref.bytes_per_line as usize;
+            for pixel in bytes[line_start..line_start + width as usize * bytes_per_pixel]
+                .chunks_exact(bytes_per_pixel)
+            {
+                let value = if bytes_per_pixel == 4 {
+                    if little_endian {
+                        u32::from_le_bytes([pixel[0], pixel[1], pixel[2], pixel[3]])
+                    } else {
+                        u32::from_be_bytes([pixel[0], pixel[1], pixel[2], pixel[3]])
+                    }
+                } else if little_endian {
+                    u32::from(pixel[0]) | u32::from(pixel[1]) << 8 | u32::from(pixel[2]) << 16
+                } else {
+                    u32::from(pixel[2]) | u32::from(pixel[1]) << 8 | u32::from(pixel[0]) << 16
+                };
+                rgba.push(x11_color(value, (*visual).red_mask));
+                rgba.push(x11_color(value, (*visual).green_mask));
+                rgba.push(x11_color(value, (*visual).blue_mask));
+                rgba.push(255);
+            }
+        }
+        (xlib.XDestroyImage)(image);
+        Ok((width, height, rgba))
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn with_x11<T>(
+    operation: impl FnOnce(&x11_dl::xlib::Xlib, *mut x11_dl::xlib::Display, i32) -> Result<T>,
+) -> Result<T> {
+    let xlib = x11_dl::xlib::Xlib::open().map_err(|error| anyhow!("无法加载 X11：{error}"))?;
+    unsafe {
+        let display = (xlib.XOpenDisplay)(std::ptr::null());
+        if display.is_null() {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.unsupported_platform"
+            )));
+        }
+        let screen = (xlib.XDefaultScreen)(display);
+        let result = operation(&xlib, display, screen);
+        (xlib.XCloseDisplay)(display);
+        result
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn with_xtest<T>(
+    operation: impl FnOnce(
+        &x11_dl::xlib::Xlib,
+        &x11_dl::xtest::Xf86vmode,
+        *mut x11_dl::xlib::Display,
+        i32,
+    ) -> Result<T>,
+) -> Result<T> {
+    let xlib = x11_dl::xlib::Xlib::open().map_err(|error| anyhow!("无法加载 X11：{error}"))?;
+    let xtest = x11_dl::xtest::Xf86vmode::open()
+        .map_err(|error| anyhow!("当前 X11 会话没有 XTest 扩展：{error}"))?;
+    unsafe {
+        let display = (xlib.XOpenDisplay)(std::ptr::null());
+        if display.is_null() {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.unsupported_platform"
+            )));
+        }
+        let screen = (xlib.XDefaultScreen)(display);
+        let result = operation(&xlib, &xtest, display, screen);
+        (xlib.XCloseDisplay)(display);
+        result
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn x11_color(value: u32, mask: std::ffi::c_ulong) -> u8 {
+    if mask == 0 {
+        return 0;
+    }
+    let shift = mask.trailing_zeros();
+    let field = (value as u64 & mask) >> shift;
+    let max = mask >> shift;
+    ((field * 255 + max / 2) / max) as u8
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn capture_screen_rgba() -> Result<(i32, i32, Vec<u8>)> {
+    Err(anyhow!(crate::i18n::t(
+        "tool.desktop_controller.unsupported_platform"
+    )))
+}
+
+#[derive(Clone, Copy)]
+enum MouseButton {
+    Left,
+    Right,
+    Middle,
+}
+
+fn mouse_click(button: MouseButton, x: i32, y: i32) -> Result<()> {
+    mouse_down(button, x, y)?;
+    mouse_up(button, x, y)?;
+    Ok(())
+}
+
+fn mouse_double_click(button: MouseButton, x: i32, y: i32) -> Result<()> {
+    mouse_click(button, x, y)?;
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    mouse_click(button, x, y)?;
+    Ok(())
+}
+
+fn mouse_down(button: MouseButton, x: i32, y: i32) -> Result<()> {
+    set_cursor_pos(x, y)?;
+    match button {
+        MouseButton::Left => send_mouse_event(MouseEvent::LeftDown),
+        MouseButton::Right => send_mouse_event(MouseEvent::RightDown),
+        MouseButton::Middle => send_mouse_event(MouseEvent::MiddleDown),
+    }
+}
+
+fn mouse_up(button: MouseButton, x: i32, y: i32) -> Result<()> {
+    set_cursor_pos(x, y)?;
+    match button {
+        MouseButton::Left => send_mouse_event(MouseEvent::LeftUp),
+        MouseButton::Right => send_mouse_event(MouseEvent::RightUp),
+        MouseButton::Middle => send_mouse_event(MouseEvent::MiddleUp),
+    }
+}
+
+fn mouse_scroll(x: i32, y: i32, steps: i32) -> Result<()> {
+    set_cursor_pos(x, y)?;
+    send_mouse_wheel(steps)
+}
+
+async fn smooth_move(x: i32, y: i32, duration_ms: u64) -> Result<()> {
+    if duration_ms == 0 {
+        return set_cursor_pos(x, y);
+    }
+    let (sx, sy) = cursor_pos().unwrap_or((x, y));
+    let steps = ((duration_ms as f64 / 1000.0) * 60.0).max(1.0) as i32;
+    let step_ms = (duration_ms / steps.max(1) as u64).max(1);
+    for i in 1..=steps {
+        let t = i as f64 / steps as f64;
+        let nx = (sx as f64 + (x - sx) as f64 * t).round() as i32;
+        let ny = (sy as f64 + (y - sy) as f64 * t).round() as i32;
+        set_cursor_pos(nx, ny)?;
+        sleep(Duration::from_millis(step_ms)).await;
+    }
+    Ok(())
+}
+
+fn send_key_sequence(keys: &str) -> Result<()> {
+    let parts: Vec<&str> = keys
+        .split('+')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if parts.is_empty() {
+        return Err(anyhow!(crate::i18n::t(
+            "tool.desktop_controller.key_required"
+        )));
+    }
+    let mut modifiers = Vec::new();
+    let mut main = None;
+    for part in parts {
+        if let Some(modifier) = parse_modifier(part) {
+            modifiers.push(modifier);
+        } else if main.is_none() {
+            main = Some(part);
+        }
+    }
+    if let Some(main_key) = main {
+        for m in &modifiers {
+            key_down(*m)?;
+        }
+        send_key(main_key)?;
+        for m in modifiers.iter().rev() {
+            key_up(*m)?;
+        }
+        return Ok(());
+    }
+    if modifiers.is_empty() {
+        return Err(anyhow!(crate::i18n::t(
+            "tool.desktop_controller.key_required"
+        )));
+    }
+    for modifier in modifiers {
+        key_down(modifier)?;
+        key_up(modifier)?;
+    }
+    Ok(())
+}
+
+fn send_unicode_text(text: &str) -> Result<()> {
+    for ch in text.chars() {
+        send_unicode_char(ch)?;
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    Ok(())
+}
+
+fn build_vk_for_key(key: &str) -> Option<VkCode> {
+    let key = key.trim().to_lowercase();
+    if key.is_empty() {
+        return None;
+    }
+    let named = match key.as_str() {
+        "enter" | "return" => Some(0x0D),
+        "tab" => Some(0x09),
+        "esc" | "escape" => Some(0x1B),
+        "backspace" | "back" => Some(0x08),
+        "delete" | "del" => Some(0x2E),
+        "insert" | "ins" => Some(0x2D),
+        "home" => Some(0x24),
+        "end" => Some(0x23),
+        "pageup" | "pgup" => Some(0x21),
+        "pagedown" | "pgdn" => Some(0x22),
+        "left" | "arrowleft" => Some(0x25),
+        "right" | "arrowright" => Some(0x27),
+        "up" | "arrowup" => Some(0x26),
+        "down" | "arrowdown" => Some(0x28),
+        "space" => Some(0x20),
+        "win" | "meta" | "super" => Some(0x5B),
+        _ => None,
+    };
+    if let Some(vk) = named {
+        return Some(VkCode::Raw(vk as u16));
+    }
+    if key.starts_with('f') && key.len() <= 3 {
+        if let Ok(num) = key[1..].parse::<u8>() {
+            if (1..=24).contains(&num) {
+                return Some(VkCode::Raw(0x70 + (num as u16 - 1)));
+            }
+        }
+    }
+    if key.len() == 1 {
+        let ch = key.chars().next().unwrap();
+        if ch.is_ascii_alphanumeric() {
+            return Some(VkCode::Raw(ch.to_ascii_uppercase() as u16));
+        }
+    }
+    None
+}
+
+fn parse_modifier(key: &str) -> Option<VkCode> {
+    match key.trim().to_lowercase().as_str() {
+        "ctrl" | "control" => Some(VkCode::Control),
+        "shift" => Some(VkCode::Shift),
+        "alt" => Some(VkCode::Alt),
+        "win" | "meta" | "super" => Some(VkCode::LWin),
+        _ => None,
+    }
+}
+
+fn send_key(key: &str) -> Result<()> {
+    let vk = build_vk_for_key(key)
+        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.key_required")))?;
+    key_down(vk)?;
+    key_up(vk)?;
+    Ok(())
+}
+
+fn key_down(key: VkCode) -> Result<()> {
+    send_key_event(key, false)
+}
+
+fn key_up(key: VkCode) -> Result<()> {
+    send_key_event(key, true)
+}
+
+fn send_unicode_char(ch: char) -> Result<()> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+            SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
+        };
+        // SendInput accepts UTF-16 code units. A scalar above U+FFFF therefore
+        // needs two press/release pairs; casting directly to u16 used to lose
+        // the upper surrogate and broke emoji and supplementary CJK text.
+        let mut units = [0u16; 2];
+        let units = ch.encode_utf16(&mut units);
+        let mut inputs = Vec::with_capacity(units.len() * 2);
+        for unit in units.iter().copied() {
+            for flags in [KEYEVENTF_UNICODE, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP] {
+                inputs.push(INPUT {
+                    r#type: INPUT_KEYBOARD,
+                    Anonymous: windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
+                        ki: KEYBDINPUT {
+                            wVk: 0,
+                            wScan: unit,
+                            dwFlags: flags,
+                            time: 0,
+                            dwExtraInfo: 0,
+                        },
+                    },
+                });
+            }
+        }
+        let sent = unsafe {
+            SendInput(
+                inputs.len() as u32,
+                inputs.as_mut_ptr(),
+                std::mem::size_of::<INPUT>() as i32,
+            )
+        };
+        if sent != inputs.len() as u32 {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // XStringToKeysym is a direct mapping only for characters represented
+        // by the active XKB layout. It must not receive a UTF-8 Chinese or
+        // emoji string and then pretend the result is a usable key symbol.
+        if !ch.is_ascii() {
+            return send_linux_unicode_input(ch);
+        }
+        let name = std::ffi::CString::new(ch.to_string()).map_err(|_| anyhow!("无效字符"))?;
+        with_xtest(|xlib, xtest, display, _| unsafe {
+            let keysym = (xlib.XStringToKeysym)(name.as_ptr());
+            if keysym == 0 {
+                return Err(anyhow!("当前 X11 键盘布局不支持该字符"));
+            }
+            let keycode = (xlib.XKeysymToKeycode)(display, keysym);
+            if keycode == 0
+                || (xtest.XTestFakeKeyEvent)(display, keycode as u32, 1, 0) == 0
+                || (xtest.XTestFakeKeyEvent)(display, keycode as u32, 0, 0) == 0
+            {
+                return Err(anyhow!(crate::i18n::t(
+                    "tool.desktop_controller.capture_failed"
+                )));
+            }
+            (xlib.XFlush)(display);
+            Ok(())
+        })
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        let _ = ch;
+        Err(anyhow!(crate::i18n::t(
+            "tool.desktop_controller.unsupported_platform"
+        )))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn send_linux_unicode_input(ch: char) -> Result<()> {
+    // GTK, Qt and common X11 input methods accept Ctrl+Shift+U followed by a
+    // hexadecimal Unicode codepoint and Enter. XTest can synthesize that
+    // sequence without a clipboard or an input-method dependency.
+    let codepoint = unicode_input_codepoint(ch);
+    with_xtest(|xlib, xtest, display, _| unsafe {
+        let send_named = |name: &str, pressed: bool| -> Result<()> {
+            let name = std::ffi::CString::new(name)
+                .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_controller.key_required")))?;
+            let keysym = (xlib.XStringToKeysym)(name.as_ptr());
+            let keycode = (xlib.XKeysymToKeycode)(display, keysym);
+            if keysym == 0
+                || keycode == 0
+                || (xtest.XTestFakeKeyEvent)(display, keycode as u32, i32::from(pressed), 0) == 0
+            {
+                return Err(anyhow!(crate::i18n::t(
+                    "tool.desktop_controller.capture_failed"
+                )));
+            }
+            Ok(())
+        };
+
+        send_named("Control_L", true)?;
+        send_named("Shift_L", true)?;
+        send_named("u", true)?;
+        send_named("u", false)?;
+        send_named("Shift_L", false)?;
+        send_named("Control_L", false)?;
+        for digit in codepoint.chars() {
+            let name = std::ffi::CString::new(digit.to_string())
+                .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_controller.key_required")))?;
+            let keysym = (xlib.XStringToKeysym)(name.as_ptr());
+            let keycode = (xlib.XKeysymToKeycode)(display, keysym);
+            if keysym == 0
+                || keycode == 0
+                || (xtest.XTestFakeKeyEvent)(display, keycode as u32, 1, 0) == 0
+                || (xtest.XTestFakeKeyEvent)(display, keycode as u32, 0, 0) == 0
+            {
+                return Err(anyhow!(crate::i18n::t(
+                    "tool.desktop_controller.capture_failed"
+                )));
+            }
+        }
+        send_named("Return", true)?;
+        send_named("Return", false)?;
+        (xlib.XFlush)(display);
+        Ok(())
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn unicode_input_codepoint(ch: char) -> String {
+    format!("{:x}", ch as u32)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod unicode_input_tests {
+    use super::unicode_input_codepoint;
+
+    #[test]
+    fn unicode_codepoint_uses_lowercase_hex_without_prefix() {
+        assert_eq!(unicode_input_codepoint('中'), "4e2d");
+        assert_eq!(unicode_input_codepoint('😀'), "1f600");
+    }
+}
+
+#[derive(Clone, Copy)]
+enum VkCode {
+    Control,
+    Shift,
+    Alt,
+    LWin,
+    Raw(u16),
+}
+
+#[cfg(windows)]
+fn send_key_event(key: VkCode, key_up: bool) -> Result<()> {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
+        VK_CONTROL, VK_LWIN, VK_MENU, VK_SHIFT,
+    };
+    let vk: u16 = match key {
+        VkCode::Control => VK_CONTROL,
+        VkCode::Shift => VK_SHIFT,
+        VkCode::Alt => VK_MENU,
+        VkCode::LWin => VK_LWIN,
+        VkCode::Raw(value) => value,
+    };
+    let mut flags = if key_up { KEYEVENTF_KEYUP } else { 0 };
+    if is_extended_key(vk) {
+        flags |= KEYEVENTF_EXTENDEDKEY;
+    }
+    let input = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let sent = unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) };
+    if sent == 0 {
+        return Err(anyhow!(crate::i18n::t(
+            "tool.desktop_controller.capture_failed"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn send_key_event(key: VkCode, key_up: bool) -> Result<()> {
+    let name = match key {
+        VkCode::Control => "Control_L".to_string(),
+        VkCode::Shift => "Shift_L".to_string(),
+        VkCode::Alt => "Alt_L".to_string(),
+        VkCode::LWin => "Super_L".to_string(),
+        VkCode::Raw(value) => x11_key_name(value)
+            .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.key_required")))?,
+    };
+    let name = std::ffi::CString::new(name)
+        .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_controller.key_required")))?;
+    with_xtest(|xlib, xtest, display, _| unsafe {
+        let keysym = (xlib.XStringToKeysym)(name.as_ptr());
+        let keycode = (xlib.XKeysymToKeycode)(display, keysym);
+        if keysym == 0
+            || keycode == 0
+            || (xtest.XTestFakeKeyEvent)(display, keycode as u32, i32::from(!key_up), 0) == 0
+        {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        (xlib.XFlush)(display);
+        Ok(())
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn x11_key_name(value: u16) -> Option<String> {
+    let name = match value {
+        0x0D => "Return".to_string(),
+        0x09 => "Tab".to_string(),
+        0x1B => "Escape".to_string(),
+        0x08 => "BackSpace".to_string(),
+        0x2E => "Delete".to_string(),
+        0x2D => "Insert".to_string(),
+        0x24 => "Home".to_string(),
+        0x23 => "End".to_string(),
+        0x21 => "Page_Up".to_string(),
+        0x22 => "Page_Down".to_string(),
+        0x25 => "Left".to_string(),
+        0x27 => "Right".to_string(),
+        0x26 => "Up".to_string(),
+        0x28 => "Down".to_string(),
+        0x20 => "space".to_string(),
+        0x5B => "Super_L".to_string(),
+        value if (0x70..=0x87).contains(&value) => format!("F{}", value - 0x70 + 1),
+        value if matches!(value, 0x30..=0x39 | 0x41..=0x5A | 0x61..=0x7A) => {
+            char::from_u32(u32::from(value)).map(|ch| ch.to_string())?
+        }
+        _ => return None,
+    };
+    Some(name)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn send_key_event(key: VkCode, _key_up: bool) -> Result<()> {
+    let _ = match key {
+        VkCode::Raw(value) => value,
+        VkCode::Control | VkCode::Shift | VkCode::Alt | VkCode::LWin => 0,
+    };
+    Err(anyhow!(crate::i18n::t(
+        "tool.desktop_controller.unsupported_platform"
+    )))
+}
+
+#[cfg(windows)]
+fn is_extended_key(vk: u16) -> bool {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        VK_DELETE, VK_DOWN, VK_END, VK_HOME, VK_INSERT, VK_LEFT, VK_NEXT, VK_PRIOR, VK_RIGHT, VK_UP,
+    };
+    matches!(
+        vk,
+        VK_INSERT
+            | VK_DELETE
+            | VK_HOME
+            | VK_END
+            | VK_PRIOR
+            | VK_NEXT
+            | VK_LEFT
+            | VK_RIGHT
+            | VK_UP
+            | VK_DOWN
+    )
+}
+
+#[cfg(windows)]
+fn set_cursor_pos(x: i32, y: i32) -> Result<()> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::SetCursorPos;
+    let ok = unsafe { SetCursorPos(x, y) };
+    if ok == 0 {
+        return Err(anyhow!(crate::i18n::t(
+            "tool.desktop_controller.capture_failed"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn set_cursor_pos(x: i32, y: i32) -> Result<()> {
+    with_xtest(|xlib, xtest, display, screen| unsafe {
+        if (xtest.XTestFakeMotionEvent)(display, screen, x, y, 0) == 0 {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        (xlib.XFlush)(display);
+        Ok(())
+    })
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn set_cursor_pos(_x: i32, _y: i32) -> Result<()> {
+    Err(anyhow!(crate::i18n::t(
+        "tool.desktop_controller.unsupported_platform"
+    )))
+}
+
+#[cfg(windows)]
+fn cursor_pos() -> Option<(i32, i32)> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut point = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
+    let ok = unsafe { GetCursorPos(&mut point) };
+    if ok == 0 {
+        return None;
+    }
+    Some((point.x, point.y))
+}
+
+#[cfg(target_os = "linux")]
+fn cursor_pos() -> Option<(i32, i32)> {
+    with_x11(|xlib, display, screen| unsafe {
+        let root = (xlib.XRootWindow)(display, screen);
+        let mut root_return = 0;
+        let mut child_return = 0;
+        let mut root_x = 0;
+        let mut root_y = 0;
+        let mut win_x = 0;
+        let mut win_y = 0;
+        let mut mask = 0;
+        if (xlib.XQueryPointer)(
+            display,
+            root,
+            &mut root_return,
+            &mut child_return,
+            &mut root_x,
+            &mut root_y,
+            &mut win_x,
+            &mut win_y,
+            &mut mask,
+        ) == 0
+        {
+            return Err(anyhow!("X11 cursor unavailable"));
+        }
+        Ok((root_x, root_y))
+    })
+    .ok()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn cursor_pos() -> Option<(i32, i32)> {
+    None
+}
+
+enum MouseEvent {
+    LeftDown,
+    LeftUp,
+    RightDown,
+    RightUp,
+    MiddleDown,
+    MiddleUp,
+}
+
+#[cfg(windows)]
+fn send_mouse_event(event: MouseEvent) -> Result<()> {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+        MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
+        MOUSEINPUT,
+    };
+    let flags = match event {
+        MouseEvent::LeftDown => MOUSEEVENTF_LEFTDOWN,
+        MouseEvent::LeftUp => MOUSEEVENTF_LEFTUP,
+        MouseEvent::RightDown => MOUSEEVENTF_RIGHTDOWN,
+        MouseEvent::RightUp => MOUSEEVENTF_RIGHTUP,
+        MouseEvent::MiddleDown => MOUSEEVENTF_MIDDLEDOWN,
+        MouseEvent::MiddleUp => MOUSEEVENTF_MIDDLEUP,
+    };
+    let input = INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
+            mi: MOUSEINPUT {
+                dx: 0,
+                dy: 0,
+                mouseData: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let sent = unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) };
+    if sent == 0 {
+        return Err(anyhow!(crate::i18n::t(
+            "tool.desktop_controller.capture_failed"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn send_mouse_event(event: MouseEvent) -> Result<()> {
+    let button = match event {
+        MouseEvent::LeftDown | MouseEvent::LeftUp => 1,
+        MouseEvent::MiddleDown | MouseEvent::MiddleUp => 2,
+        MouseEvent::RightDown | MouseEvent::RightUp => 3,
+    };
+    let press = matches!(
+        event,
+        MouseEvent::LeftDown | MouseEvent::MiddleDown | MouseEvent::RightDown
+    );
+    with_xtest(|xlib, xtest, display, _| unsafe {
+        if (xtest.XTestFakeButtonEvent)(display, button, i32::from(press), 0) == 0 {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_failed"
+            )));
+        }
+        (xlib.XFlush)(display);
+        Ok(())
+    })
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn send_mouse_event(_event: MouseEvent) -> Result<()> {
+    Err(anyhow!(crate::i18n::t(
+        "tool.desktop_controller.unsupported_platform"
+    )))
+}
+
+#[cfg(windows)]
+fn send_mouse_wheel(steps: i32) -> Result<()> {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_MOUSE, MOUSEEVENTF_WHEEL, MOUSEINPUT,
+    };
+    let delta = steps * 120;
+    let input = INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
+            mi: MOUSEINPUT {
+                dx: 0,
+                dy: 0,
+                mouseData: delta as u32,
+                dwFlags: MOUSEEVENTF_WHEEL,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let sent = unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) };
+    if sent == 0 {
+        return Err(anyhow!(crate::i18n::t(
+            "tool.desktop_controller.capture_failed"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn send_mouse_wheel(steps: i32) -> Result<()> {
+    if steps == 0 {
+        return Ok(());
+    }
+    let button = if steps > 0 { 4 } else { 5 };
+    with_xtest(|xlib, xtest, display, _| unsafe {
+        for _ in 0..steps.unsigned_abs() {
+            if (xtest.XTestFakeButtonEvent)(display, button, 1, 0) == 0
+                || (xtest.XTestFakeButtonEvent)(display, button, 0, 0) == 0
+            {
+                return Err(anyhow!(crate::i18n::t(
+                    "tool.desktop_controller.capture_failed"
+                )));
+            }
+        }
+        (xlib.XFlush)(display);
+        Ok(())
+    })
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn send_mouse_wheel(_steps: i32) -> Result<()> {
+    Err(anyhow!(crate::i18n::t(
+        "tool.desktop_controller.unsupported_platform"
+    )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{ImageBuffer, Rgba};
+    use uuid::Uuid;
+
+    fn write_test_png(path: &Path, rgba: [u8; 4]) {
+        let image = ImageBuffer::<Rgba<u8>, _>::from_pixel(2, 2, Rgba(rgba));
+        image.save(path).expect("save test png");
+    }
+
+    #[tokio::test]
+    async fn build_followup_user_message_includes_previous_and_current_frame() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "wunder-desktop-followup-{}",
+            Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+        let previous_path = temp_dir.join("previous.png");
+        let current_path = temp_dir.join("current.png");
+        write_test_png(&previous_path, [255, 0, 0, 255]);
+        write_test_png(&current_path, [0, 255, 0, 255]);
+
+        let payload = json!({
+            "screenshot_path": current_path.to_string_lossy().to_string(),
+            "previous_screenshot_path": previous_path.to_string_lossy().to_string(),
+            "followup_prompt": "check desktop"
+        });
+        let message = build_followup_user_message(&payload)
+            .await
+            .expect("build followup")
+            .expect("message");
+        let content = message
+            .get("content")
+            .and_then(Value::as_array)
+            .expect("content array");
+        assert_eq!(content.len(), 3);
+        assert_eq!(
+            content[0]
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "check desktop"
+        );
+        assert!(content[1]
+            .get("image_url")
+            .and_then(Value::as_object)
+            .and_then(|obj| obj.get("url"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .starts_with("data:image/png;base64,"));
+        assert!(content[2]
+            .get("image_url")
+            .and_then(Value::as_object)
+            .and_then(|obj| obj.get("url"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .starts_with("data:image/png;base64,"));
+
+        let _ = std::fs::remove_file(previous_path);
+        let _ = std::fs::remove_file(current_path);
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn remember_previous_screenshot_uses_session_cache() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "wunder-desktop-frame-cache-{}",
+            Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+        let first_path = temp_dir.join("first.png");
+        let second_path = temp_dir.join("second.png");
+        write_test_png(&first_path, [255, 255, 255, 255]);
+        write_test_png(&second_path, [0, 0, 0, 255]);
+
+        let session = format!("session-{}", Uuid::new_v4().simple());
+        let first_previous = remember_previous_screenshot_for_session(&session, &first_path);
+        assert!(first_previous.is_none());
+
+        let second_previous = remember_previous_screenshot_for_session(&session, &second_path);
+        assert_eq!(second_previous.as_deref(), Some(first_path.as_path()));
+
+        let _ = std::fs::remove_file(first_path);
+        let _ = std::fs::remove_file(second_path);
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn parse_desktop_controller_args_falls_back_description_to_action() {
+        let payload = parse_desktop_controller_args(&json!({
+            "bbox": [10, 20, 30, 40],
+            "action": "left_click"
+        }))
+        .expect("parse desktop controller args");
+        assert_eq!(payload.action_raw, "left_click");
+        assert_eq!(payload.description, "left_click");
+    }
+}

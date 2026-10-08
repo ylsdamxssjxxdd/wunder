@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Core Channels | 使用说明书</title>
+  <meta name="description" content="Core Channels explains why wunder allows multiple entry points, but absolutely forbids these entries from growing into multiple independent runtimes.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/concepts/core-channels","language":"en","title":"Core Channels","summary":"Core Channels explains why wunder allows multiple entry points, but absolutely forbids these entries from growing into multiple independent runtimes.","updated_at":"2026-10-06","read_when":["You are integrating multiple entry points","You want to determine whether a capability belongs in the core or the integration layer"],"source_docs":["docs/总体设计.md"],"tab":"Core","group":"10 Core Ideas","group_path":["10 Core Ideas"],"url":"/docs/en/concepts/core-channels/","headings":[{"id":"section-1","level":1,"text":"Core Channels"},{"id":"section-2","level":2,"text":"Bottom Line"},{"id":"section-3","level":2,"text":"Why It Must Be a Core Concept"},{"id":"section-4","level":2,"text":"What This Core Truly Protects"},{"id":"section-5","level":2,"text":"Key Constraints"},{"id":"section-6","level":2,"text":"Design Priorities"},{"id":"section-7","level":3,"text":"Priority 1: Channel diversification cannot break thread semantics"},{"id":"section-8","level":3,"text":"Priority 2: Entry differences are \"surface,\" not \"skeleton\""},{"id":"section-9","level":3,"text":"Priority 3: More entries means unified semantics matter more"},{"id":"section-10","level":2,"text":"Common Misconceptions"},{"id":"section-11","level":2,"text":"Boundaries with Other Cores"},{"id":"section-12","level":2,"text":"Further Reading"}],"prev_slug":"en/concepts/core-memory","next_slug":"en/concepts/core-scheduled-tasks","markdown":"# Core Channels\n\nwunder has multiple runtime forms and access methods, but these entry points should not grow into mutually fragmented systems. Core Channels focuses on the balance between \"how entry points diversify\" and \"how the core remains singular.\"\n\n![Channels diagram: HTTP, WebSocket, Desktop, CLI, third-party channels all accessing a unified runtime core](/docs/assets/manual/core-channels.svg)\n\n## Bottom Line\n\n- Channels are just entry layer differences, not business core differences.\n- New entries should prioritize reusing existing capabilities like threads, tools, events, and governance, rather than duplicating logic.\n- The more channels you build, the more you need to converge, not create more exceptions.\n\n## Why It Must Be a Core Concept\n\nWithout Channels as a core, the system easily evolves like this:\n\n- Chat WebSocket has its own state machine.\n- `/wunder` SSE has its own state machine.\n- Desktop/CLI each adds another layer of special cases.\n- Third-party channels, after protocol translation, casually rewrite business logic.\n\nThe end result is multiple entry points each doing their own thing, with thread semantics, tool semantics, and event semantics no longer unified.\n\n## What This Core Truly Protects\n\n- Protects core singularity: All entries share the same threads, tools, events, and governance capabilities.\n- Protects protocol boundaries: The integration layer handles protocol adaptation, not redefining business reality.\n- Protects evolution speed: New entries can extend without rebuilding an entire system.\n\n## Key Constraints\n\n| Constraint | Purpose |\n|------|------|\n| Multiple entries, one core | Avoid one system growing into multiple semi-independent products |\n| Integration layer only does protocol adaptation | Prevent entry layer from tampering with thread, tool, and event semantics |\n| New channels prioritize reusing existing capabilities | Control maintenance cost and behavioral drift |\n| Local forms also preserve core semantics | Desktop and CLI cannot become exceptional systems |\n\n## Design Priorities\n\n### Priority 1: Channel diversification cannot break thread semantics\n\nRegardless of whether messages come from web, desktop, CLI, or third-party platforms, they should ultimately fall back to the same thread and event system.\n\n### Priority 2: Entry differences are \"surface,\" not \"skeleton\"\n\nDifferent channels can have different authentication, protocols, message formats, and connection methods, but these should all stop at the entry surface.\n\n### Priority 3: More entries means unified semantics matter more\n\nChannels are not about showing off by connecting more, but about making the same capabilities available across different entries. The real challenge is expanding entries without expanding chaos.\n\n## Common Misconceptions\n\n- Desktop, CLI, and Server are runtime form differences, not three independent product cores.\n- Third-party channel integration is protocol adaptation, not re-implementing an orchestration system.\n- More channels means more need for convergence, not more need for exceptional branches.\n\n## Boundaries with Other Cores\n\n- Difference from [Realtime](/docs/en/concepts/core-realtime/): Channels discuss \"where it comes in from,\" realtime discusses \"how state continuously goes out.\"\n- Difference from [Multi-user Management](/docs/en/concepts/core-multi-user-management/): Channels discuss entry unification, multi-user management discusses governance unification.\n- Difference from [Stability](/docs/en/concepts/core-stability/): Channels are responsible for not fragmenting, stability is responsible for not crashing.\n\n## Further Reading\n\n- [Core Overview](/docs/en/concepts/)\n- [System Architecture](/docs/en/concepts/architecture/)\n- [Integration Overview](/docs/en/integration/)\n- [Chat WebSocket](/docs/en/integration/chat-ws/)\n","source_path":"使用说明书/en/concepts/core-channels.md"}</script>
+</body>
+</html>

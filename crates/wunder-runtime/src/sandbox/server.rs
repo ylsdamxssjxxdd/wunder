@@ -1,0 +1,2388 @@
+use anyhow::{anyhow, Result};
+use axum::body::{Body, Bytes};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::convert::Infallible;
+use std::fs::OpenOptions;
+use std::hash::{Hash, Hasher};
+use std::path::{Component, Path, PathBuf};
+use std::process::Stdio;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::time::Instant;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::process::Command;
+use tokio::sync::{mpsc, Mutex as AsyncMutex, Notify};
+use tokio::time::{timeout, Duration};
+use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+
+use crate::command_utils;
+use crate::core::python_runtime;
+use crate::core::tool_args::recover_tool_args_value as recover_tool_args_value_lossy;
+use crate::i18n;
+use crate::services::tools::command_options::{
+    apply_time_budget_secs, parse_command_budget, parse_dry_run,
+};
+use crate::services::tools::command_output_guard::{
+    derive_capture_policies, render_command_output, CommandOutputCapture, CommandOutputCaptureMeta,
+    CommandOutputCollector, CommandOutputPolicy, STDERR_CAPTURE_POLICY, STDOUT_CAPTURE_POLICY,
+};
+use crate::services::tools::tool_error::{
+    build_execute_command_failure_data, build_execute_command_failure_message, with_error_meta,
+    ToolErrorMeta,
+};
+use std::fs;
+use std::io::ErrorKind;
+use tracing::warn;
+
+#[path = "file_runtime.rs"]
+mod file_runtime;
+use file_runtime::execute_builtin_file_tool;
+
+const DEFAULT_COMMAND_TIMEOUT_S: f64 = 120.0;
+const PTC_TIMEOUT_S: u64 = 60;
+const PTC_DIR_NAME: &str = "ptc_temp";
+const RULES_CACHE_CAPACITY: usize = 512;
+const RULES_CACHE_TTL: Duration = Duration::from_secs(600);
+const STREAM_READ_CHUNK_SIZE: usize = 4096;
+const STREAM_DRAIN_TIMEOUT_MS: u64 = 2000;
+const COMMAND_SESSION_RETENTION: Duration = Duration::from_secs(5 * 60);
+const MAX_ACTIVE_COMMAND_SESSIONS: usize = 16;
+const COMMAND_SESSION_DELTA_BYTES: usize = 256 * 1024;
+
+#[derive(Debug, Deserialize)]
+struct SandboxToolRequest {
+    user_id: String,
+    #[serde(default)]
+    session_id: String,
+    #[serde(default)]
+    language: String,
+    #[serde(default)]
+    tool: String,
+    #[serde(default)]
+    args: Value,
+    #[serde(default)]
+    workspace_root: String,
+    #[serde(default)]
+    container_root: String,
+    #[serde(default)]
+    allow_commands: Vec<String>,
+    #[serde(default)]
+    network: String,
+    #[serde(default)]
+    readonly_rootfs: bool,
+    #[serde(default)]
+    idle_ttl_s: u64,
+    #[serde(default)]
+    resources: SandboxResources,
+}
+
+#[derive(Debug, Deserialize)]
+struct SandboxCommandSessionControlRequest {
+    user_id: String,
+    session_id: String,
+    command_session_id: String,
+    #[serde(default)]
+    input: String,
+    #[serde(default)]
+    after_seq: u64,
+    #[serde(default)]
+    yield_time_ms: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct SandboxCommandSessionSnapshot {
+    command_session_id: String,
+    status: &'static str,
+    seq: u64,
+    exit_code: Option<i32>,
+    timed_out: bool,
+    error: Option<String>,
+    #[serde(default)]
+    deltas: Vec<SandboxCommandSessionDelta>,
+    stdout: String,
+    stderr: String,
+    dropped: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SandboxCommandSessionDelta {
+    seq: u64,
+    stream: &'static str,
+    delta: String,
+}
+
+struct SandboxCommandSessionState {
+    running: bool,
+    seq: u64,
+    exit_code: Option<i32>,
+    timed_out: bool,
+    error: Option<String>,
+    deltas: VecDeque<SandboxCommandSessionDelta>,
+    delta_bytes: usize,
+    first_seq: u64,
+    expires_at: Option<Instant>,
+}
+
+struct SandboxCommandSession {
+    user_id: String,
+    session_id: String,
+    stdin: AsyncMutex<Option<tokio::process::ChildStdin>>,
+    cancel: CancellationToken,
+    changed: Notify,
+    state: Mutex<SandboxCommandSessionState>,
+}
+
+impl SandboxCommandSession {
+    fn snapshot(&self, after_seq: u64) -> SandboxCommandSessionSnapshot {
+        let state = self.state.lock();
+        let stdout = state
+            .deltas
+            .iter()
+            .filter(|item| item.stream == "stdout")
+            .map(|item| item.delta.as_str())
+            .collect::<String>();
+        let stderr = state
+            .deltas
+            .iter()
+            .filter(|item| item.stream == "stderr")
+            .map(|item| item.delta.as_str())
+            .collect::<String>();
+        SandboxCommandSessionSnapshot {
+            command_session_id: String::new(),
+            status: if state.running { "running" } else { "exited" },
+            seq: state.seq,
+            exit_code: state.exit_code,
+            timed_out: state.timed_out,
+            error: state.error.clone(),
+            deltas: state
+                .deltas
+                .iter()
+                .filter(|item| item.seq > after_seq)
+                .cloned()
+                .collect(),
+            stdout,
+            stderr,
+            dropped: after_seq > 0 && after_seq.saturating_add(1) < state.first_seq,
+        }
+    }
+
+    fn append_delta(&self, stream: &'static str, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        let delta = String::from_utf8_lossy(bytes).into_owned();
+        if delta.is_empty() {
+            return;
+        }
+        let mut state = self.state.lock();
+        state.seq = state.seq.saturating_add(1);
+        let seq = state.seq;
+        state.delta_bytes = state.delta_bytes.saturating_add(delta.len());
+        state
+            .deltas
+            .push_back(SandboxCommandSessionDelta { seq, stream, delta });
+        while state.delta_bytes > COMMAND_SESSION_DELTA_BYTES {
+            let Some(removed) = state.deltas.pop_front() else {
+                break;
+            };
+            state.delta_bytes = state.delta_bytes.saturating_sub(removed.delta.len());
+            state.first_seq = removed.seq.saturating_add(1);
+        }
+        drop(state);
+        self.changed.notify_waiters();
+    }
+
+    fn finish(&self, exit_code: Option<i32>, timed_out: bool, error: Option<String>) {
+        let mut state = self.state.lock();
+        state.running = false;
+        state.seq = state.seq.saturating_add(1);
+        state.exit_code = exit_code;
+        state.timed_out = timed_out;
+        state.error = error;
+        state.expires_at = Some(Instant::now() + COMMAND_SESSION_RETENTION);
+        drop(state);
+        self.changed.notify_waiters();
+    }
+}
+
+#[derive(Default)]
+struct SandboxCommandSessionManager {
+    sessions: dashmap::DashMap<String, Arc<SandboxCommandSession>>,
+    active_sessions: AtomicUsize,
+}
+
+impl SandboxCommandSessionManager {
+    fn prune_expired(&self) {
+        let now = Instant::now();
+        let expired = self
+            .sessions
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .state
+                    .lock()
+                    .expires_at
+                    .filter(|deadline| *deadline <= now)
+                    .map(|_| entry.key().clone())
+            })
+            .collect::<Vec<_>>();
+        for id in expired {
+            self.sessions.remove(&id);
+        }
+    }
+
+    fn try_reserve_active(&self) -> bool {
+        let mut current = self.active_sessions.load(Ordering::Acquire);
+        loop {
+            if current >= MAX_ACTIVE_COMMAND_SESSIONS {
+                return false;
+            }
+            match self.active_sessions.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    fn release_active(&self) {
+        let previous = self.active_sessions.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(
+            previous > 0,
+            "sandbox command session reservation underflow"
+        );
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct SandboxResources {
+    cpu: f32,
+    memory_mb: u64,
+    pids: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct SandboxToolResponse {
+    ok: bool,
+    data: Value,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    error: String,
+    #[serde(default)]
+    debug_events: Vec<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SandboxReleaseRequest {
+    user_id: String,
+    #[serde(default)]
+    session_id: String,
+    #[serde(default)]
+    language: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SandboxReleaseResponse {
+    ok: bool,
+    #[serde(default)]
+    message: String,
+}
+
+struct SandboxContext {
+    workspace_root: PathBuf,
+    container_root: PathBuf,
+    allow_commands: Arc<HashSet<String>>,
+}
+
+struct ToolResult {
+    ok: bool,
+    data: Value,
+    error: String,
+}
+
+#[derive(Clone)]
+struct CachedSandboxRules {
+    allow_commands: Arc<HashSet<String>>,
+}
+
+struct RulesCacheEntry {
+    rules: CachedSandboxRules,
+    last_used: Instant,
+}
+
+struct SandboxRulesCache {
+    entries: HashMap<u64, RulesCacheEntry>,
+    order: VecDeque<u64>,
+}
+
+impl SandboxRulesCache {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn get(&mut self, key: u64) -> Option<CachedSandboxRules> {
+        let now = Instant::now();
+        if let Some(entry) = self.entries.get(&key) {
+            if now.duration_since(entry.last_used) > RULES_CACHE_TTL {
+                self.entries.remove(&key);
+                self.remove_from_order(key);
+                return None;
+            }
+        }
+        if let Some(entry) = self.entries.get_mut(&key) {
+            entry.last_used = now;
+            let rules = entry.rules.clone();
+            self.touch(key);
+            return Some(rules);
+        }
+        None
+    }
+
+    fn insert(&mut self, key: u64, rules: CachedSandboxRules) {
+        let now = Instant::now();
+        self.entries.insert(
+            key,
+            RulesCacheEntry {
+                rules,
+                last_used: now,
+            },
+        );
+        self.touch(key);
+        self.evict_expired(now);
+        self.evict_overflow();
+    }
+
+    fn touch(&mut self, key: u64) {
+        self.remove_from_order(key);
+        self.order.push_back(key);
+    }
+
+    fn remove_from_order(&mut self, key: u64) {
+        if let Some(pos) = self.order.iter().position(|item| *item == key) {
+            self.order.remove(pos);
+        }
+    }
+
+    fn evict_expired(&mut self, now: Instant) {
+        loop {
+            let Some(&key) = self.order.front() else {
+                break;
+            };
+            let expired = self
+                .entries
+                .get(&key)
+                .map(|entry| now.duration_since(entry.last_used) > RULES_CACHE_TTL)
+                .unwrap_or(true);
+            if !expired {
+                break;
+            }
+            self.order.pop_front();
+            self.entries.remove(&key);
+        }
+    }
+
+    fn evict_overflow(&mut self) {
+        while self.entries.len() > RULES_CACHE_CAPACITY {
+            if let Some(key) = self.order.pop_front() {
+                self.entries.remove(&key);
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+static SANDBOX_RULES_CACHE: OnceLock<Mutex<SandboxRulesCache>> = OnceLock::new();
+static COMMAND_SESSIONS: OnceLock<SandboxCommandSessionManager> = OnceLock::new();
+
+fn rules_cache() -> &'static Mutex<SandboxRulesCache> {
+    SANDBOX_RULES_CACHE.get_or_init(|| Mutex::new(SandboxRulesCache::new()))
+}
+
+fn command_sessions() -> &'static SandboxCommandSessionManager {
+    COMMAND_SESSIONS.get_or_init(SandboxCommandSessionManager::default)
+}
+
+pub fn build_router() -> Router {
+    Router::new()
+        .route("/health", get(health))
+        .route("/sandboxes/execute_tool", post(execute_tool))
+        .route(
+            "/sandboxes/execute_command_stream",
+            post(execute_command_stream),
+        )
+        .route(
+            "/sandboxes/command-sessions/launch",
+            post(launch_command_session),
+        )
+        .route(
+            "/sandboxes/command-sessions/poll",
+            post(poll_command_session),
+        )
+        .route(
+            "/sandboxes/command-sessions/stdin",
+            post(write_command_session_stdin),
+        )
+        .route(
+            "/sandboxes/command-sessions/cancel",
+            post(cancel_command_session),
+        )
+        .route("/sandboxes/release", post(release_sandbox))
+}
+
+pub fn validate_runtime_readonly(readonly_rootfs: bool) -> Result<()> {
+    if !readonly_rootfs {
+        return Ok(());
+    }
+
+    let config_path = std::env::var("WUNDER_CONFIG_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/app/config/wunder.yaml"));
+    ensure_path_not_writable(&config_path, "sandbox config path")?;
+
+    let repo_probe = Path::new("/app/Cargo.toml");
+    if repo_probe.exists() {
+        ensure_path_not_writable(repo_probe, "sandbox repo mount")?;
+    }
+
+    Ok(())
+}
+
+pub fn warn_if_rootfs_is_readonly(readonly_rootfs: bool) {
+    if readonly_rootfs {
+        return;
+    }
+
+    let probe_path = PathBuf::from(format!(
+        "/.wunder-rootfs-write-probe-{}",
+        std::process::id()
+    ));
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe_path)
+    {
+        Ok(_) => {
+            let _ = fs::remove_file(&probe_path);
+        }
+        Err(err) if err.kind() == ErrorKind::ReadOnlyFilesystem => {
+            warn!(
+                error = %err,
+                "sandbox root filesystem is still read-only while WUNDER_SANDBOX_READONLY_ROOTFS is disabled; check docker compose read_only or container runtime flags"
+            );
+        }
+        Err(err) if err.kind() != ErrorKind::AlreadyExists => {
+            warn!(
+                error = %err,
+                "sandbox root filesystem write probe failed while WUNDER_SANDBOX_READONLY_ROOTFS is disabled"
+            );
+        }
+        Err(_) => {}
+    }
+}
+
+fn ensure_path_not_writable(path: &Path, label: &str) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if OpenOptions::new().write(true).open(path).is_ok() {
+        return Err(anyhow!(
+            "{label} is writable while sandbox.readonly_rootfs=true: {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+async fn health() -> impl IntoResponse {
+    Json(json!({ "ok": true }))
+}
+
+async fn execute_tool(Json(request): Json<SandboxToolRequest>) -> impl IntoResponse {
+    let language = i18n::resolve_language([request.language.as_str()]);
+    i18n::with_language(language, async move {
+        let response = handle_execute_tool(request).await;
+        (StatusCode::OK, Json(response))
+    })
+    .await
+}
+
+async fn execute_command_stream(Json(request): Json<SandboxToolRequest>) -> impl IntoResponse {
+    let language = i18n::resolve_language([request.language.as_str()]);
+    let (tx, rx) = mpsc::channel::<Result<Bytes, Infallible>>(64);
+    tokio::spawn(async move {
+        i18n::with_language(language, async move {
+            // Dropping the execution future kills its child and aborts pipe readers.
+            let response = tokio::select! {
+                biased;
+                _ = tx.closed() => return,
+                response = timeout(
+                    Duration::from_secs(super::sandbox_timeout_seconds()),
+                    handle_execute_command_stream(request, tx.clone()),
+                ) => match response {
+                    Ok(response) => response,
+                    Err(_) => SandboxToolResponse {
+                        ok: false,
+                        data: json!({ "error_meta": { "code": "SANDBOX_COMMAND_TIMEOUT", "retryable": false } }),
+                        error: "sandbox command stream timed out".to_string(),
+                        debug_events: Vec::new(),
+                    },
+                },
+            };
+            // A stalled consumer must not retain the response task after the
+            // command deadline, even when the bounded channel is already full.
+            let _ = timeout(
+                Duration::from_millis(STREAM_DRAIN_TIMEOUT_MS),
+                send_stream_json(
+                    &tx,
+                    json!({
+                        "type": "final",
+                        "payload": response,
+                    }),
+                ),
+            )
+            .await;
+        })
+        .await;
+    });
+
+    (
+        StatusCode::OK,
+        [
+            (CONTENT_TYPE, "application/x-ndjson"),
+            (CACHE_CONTROL, "no-cache"),
+            (
+                axum::http::header::HeaderName::from_static("x-accel-buffering"),
+                "no",
+            ),
+        ],
+        Body::from_stream(ReceiverStream::new(rx)),
+    )
+}
+
+async fn launch_command_session(Json(request): Json<SandboxToolRequest>) -> impl IntoResponse {
+    let language = i18n::resolve_language([request.language.as_str()]);
+    i18n::with_language(language, async move {
+        let response = launch_command_session_inner(request).await;
+        (StatusCode::OK, Json(response))
+    })
+    .await
+}
+
+async fn poll_command_session(
+    Json(request): Json<SandboxCommandSessionControlRequest>,
+) -> impl IntoResponse {
+    let response = poll_command_session_inner(request, false).await;
+    (StatusCode::OK, Json(response))
+}
+
+async fn write_command_session_stdin(
+    Json(request): Json<SandboxCommandSessionControlRequest>,
+) -> impl IntoResponse {
+    let response = poll_command_session_inner(request, true).await;
+    (StatusCode::OK, Json(response))
+}
+
+async fn cancel_command_session(
+    Json(request): Json<SandboxCommandSessionControlRequest>,
+) -> impl IntoResponse {
+    command_sessions().prune_expired();
+    let response = command_sessions()
+        .sessions
+        .get(request.command_session_id.trim())
+        .filter(|entry| entry.user_id == request.user_id && entry.session_id == request.session_id)
+        .map(|entry| {
+            entry.cancel.cancel();
+            json!({"ok": true})
+        })
+        .unwrap_or_else(|| json!({"ok": false, "error": "unknown command session"}));
+    (StatusCode::OK, Json(response))
+}
+
+async fn poll_command_session_inner(
+    request: SandboxCommandSessionControlRequest,
+    write_stdin: bool,
+) -> Value {
+    command_sessions().prune_expired();
+    let Some(session) = command_sessions()
+        .sessions
+        .get(request.command_session_id.trim())
+        .filter(|entry| entry.user_id == request.user_id && entry.session_id == request.session_id)
+        .map(|entry| Arc::clone(entry.value()))
+    else {
+        return json!({"ok": false, "error": "unknown command session"});
+    };
+    if write_stdin && !request.input.is_empty() {
+        let mut stdin = session.stdin.lock().await;
+        let Some(stdin) = stdin.as_mut() else {
+            return json!({"ok": false, "error": "command stdin is unavailable"});
+        };
+        if let Err(error) = stdin.write_all(request.input.as_bytes()).await {
+            return json!({"ok": false, "error": format!("failed to write command stdin: {error}")});
+        }
+    }
+    // Register the waiter before the snapshot so a concurrently appended
+    // delta or exit cannot be missed between observing `running` and waiting.
+    let notified = session.changed.notified();
+    let initial = session.snapshot(request.after_seq);
+    if initial.status == "running" && request.yield_time_ms > 0 {
+        let _ = timeout(
+            Duration::from_millis(request.yield_time_ms.clamp(1, 60_000)),
+            notified,
+        )
+        .await;
+    }
+    let mut snapshot = session.snapshot(request.after_seq);
+    snapshot.command_session_id = request.command_session_id;
+    json!({"ok": true, "data": snapshot})
+}
+
+async fn launch_command_session_inner(request: SandboxToolRequest) -> Value {
+    command_sessions().prune_expired();
+    let args = recover_tool_args_value(&request.args);
+    let command_budget = parse_command_budget(&args);
+    let content = args
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if content.is_empty() {
+        return json!({"ok": false, "error": i18n::t("tool.exec.command_required")});
+    }
+    let workdir = args.get("workdir").and_then(Value::as_str).unwrap_or("");
+    let container_root = if request.container_root.trim().is_empty() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(request.container_root.trim())
+    };
+    let workspace_root = if request.workspace_root.trim().is_empty() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(request.workspace_root.trim())
+    };
+    let rules = resolve_cached_rules(
+        &workspace_root,
+        &container_root,
+        &["*".to_string()],
+        &[],
+        &request.allow_commands,
+    );
+    let context = SandboxContext {
+        workspace_root,
+        container_root,
+        allow_commands: rules.allow_commands,
+    };
+    let cwd = match resolve_path(
+        &context,
+        if workdir.trim().is_empty() {
+            "."
+        } else {
+            workdir
+        },
+    ) {
+        Ok(path) if path.is_dir() => path,
+        Ok(_) => return json!({"ok": false, "error": i18n::t("tool.exec.workdir_not_dir")}),
+        Err(error) => return json!({"ok": false, "error": error}),
+    };
+    let allow_all = context.allow_commands.contains("*");
+    let commands = if allow_all {
+        vec![content.clone()]
+    } else {
+        content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    };
+    if commands.len() != 1 {
+        return json!({"ok": false, "error": "background command sessions accept exactly one command"});
+    }
+    if let Some(max_commands) = command_budget.max_commands {
+        if commands.len() > max_commands {
+            return json!({
+                "ok": false,
+                "error": format!("command count {} exceeds budget limit {max_commands}", commands.len()),
+            });
+        }
+    }
+    let command_text = commands.into_iter().next().unwrap_or_default();
+    if !allow_all
+        && !context
+            .allow_commands
+            .iter()
+            .any(|allowed| command_text.to_lowercase().starts_with(allowed))
+    {
+        return json!({"ok": false, "error": i18n::t("tool.exec.not_allowed")});
+    }
+    let timeout_s = apply_time_budget_secs(
+        parse_timeout_secs(args.get("timeout_s")).unwrap_or(DEFAULT_COMMAND_TIMEOUT_S),
+        &command_budget,
+    );
+    let command_env = python_runtime::resolve_desktop_command_env();
+    let overrides = command_utils::CommandProgramOverrides {
+        pip_bin: command_env.command_overrides.pip_bin.clone(),
+        git_bin: command_env.command_overrides.git_bin.clone(),
+        rg_bin: command_env.command_overrides.rg_bin.clone(),
+    };
+    let mut command = command_utils::build_direct_command_with_overrides(
+        &command_text,
+        &cwd,
+        command_env
+            .python_runtime
+            .as_ref()
+            .map(|runtime| runtime.bin.as_path()),
+        overrides,
+    )
+    .or_else(|| command_utils::build_direct_command(&command_text, &cwd))
+    .unwrap_or_else(|| command_utils::build_shell_command(&command_text, &cwd));
+    python_runtime::apply_desktop_command_env(&mut command, &command_env);
+    apply_streaming_command_env(&mut command);
+    command
+        .kill_on_drop(true)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if !command_sessions().try_reserve_active() {
+        return json!({"ok": false, "error": "active command session limit reached"});
+    }
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            command_sessions().release_active();
+            return json!({"ok": false, "error": error.to_string()});
+        }
+    };
+    let id = format!("sandcmd_{}", Uuid::new_v4().simple());
+    let session = Arc::new(SandboxCommandSession {
+        user_id: request.user_id,
+        session_id: request.session_id,
+        stdin: AsyncMutex::new(child.stdin.take()),
+        cancel: CancellationToken::new(),
+        changed: Notify::new(),
+        state: Mutex::new(SandboxCommandSessionState {
+            running: true,
+            seq: 0,
+            exit_code: None,
+            timed_out: false,
+            error: None,
+            deltas: VecDeque::new(),
+            delta_bytes: 0,
+            first_seq: 1,
+            expires_at: None,
+        }),
+    });
+    command_sessions()
+        .sessions
+        .insert(id.clone(), Arc::clone(&session));
+    let yield_time_ms = args
+        .get("yield_time_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(750)
+        .clamp(50, 10_000);
+    spawn_sandbox_command_session(child, Arc::clone(&session), timeout_s);
+    let initial = timeout(Duration::from_millis(yield_time_ms), async {
+        loop {
+            let notified = session.changed.notified();
+            let snapshot = session.snapshot(0);
+            if snapshot.status != "running" {
+                break snapshot;
+            }
+            notified.await;
+        }
+    })
+    .await
+    .ok();
+    if let Some(mut snapshot) = initial {
+        snapshot.command_session_id = id.clone();
+        return json!({"ok": true, "data": snapshot});
+    }
+    json!({"ok": true, "data": {"command_session_id": id, "status": "running"}})
+}
+
+async fn release_sandbox(Json(request): Json<SandboxReleaseRequest>) -> impl IntoResponse {
+    let language = i18n::resolve_language([request.language.as_str()]);
+    i18n::with_language(language, async move {
+        let _ = (&request.user_id, &request.session_id);
+        let response = SandboxReleaseResponse {
+            ok: true,
+            message: i18n::t("sandbox.message.release_not_required"),
+        };
+        (StatusCode::OK, Json(response))
+    })
+    .await
+}
+
+async fn send_stream_json(tx: &mpsc::Sender<Result<Bytes, Infallible>>, value: Value) -> bool {
+    tx.send(Ok(Bytes::from(format!("{value}\n")))).await.is_ok()
+}
+
+async fn handle_execute_tool(request: SandboxToolRequest) -> SandboxToolResponse {
+    // Touch reserved fields to keep payload compatibility without warnings.
+    let _ = (
+        &request.user_id,
+        &request.session_id,
+        &request.network,
+        request.readonly_rootfs,
+        request.idle_ttl_s,
+        request.resources.cpu,
+        request.resources.memory_mb,
+        request.resources.pids,
+    );
+    let container_root = if request.container_root.trim().is_empty() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(request.container_root.trim())
+    };
+    let workspace_root = if request.workspace_root.trim().is_empty() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(request.workspace_root.trim())
+    };
+
+    let rules = resolve_cached_rules(
+        &workspace_root,
+        &container_root,
+        &["*".to_string()],
+        &[],
+        &request.allow_commands,
+    );
+
+    let context = SandboxContext {
+        workspace_root,
+        container_root,
+        allow_commands: rules.allow_commands,
+    };
+
+    let args = if request.args.is_null() {
+        json!({})
+    } else {
+        request.args.clone()
+    };
+
+    let result = match request.tool.as_str() {
+        "执行命令" => execute_command(&context, &args).await,
+        "ptc" => execute_ptc(&context, &args).await,
+        "列出文件" | "搜索内容" | "读取文件" | "写入文件" | "编辑" => {
+            execute_builtin_file_tool(&request, &context, &args).await
+        }
+        _ => ToolResult {
+            ok: false,
+            data: json!({}),
+            error: i18n::t("sandbox.error.unsupported_tool"),
+        },
+    };
+
+    SandboxToolResponse {
+        ok: result.ok,
+        data: if result.data.is_object() {
+            result.data
+        } else {
+            json!({ "result": result.data })
+        },
+        error: result.error,
+        debug_events: Vec::new(),
+    }
+}
+
+async fn handle_execute_command_stream(
+    request: SandboxToolRequest,
+    tx: mpsc::Sender<Result<Bytes, Infallible>>,
+) -> SandboxToolResponse {
+    let _ = (
+        &request.user_id,
+        &request.session_id,
+        &request.network,
+        request.readonly_rootfs,
+        request.idle_ttl_s,
+        request.resources.cpu,
+        request.resources.memory_mb,
+        request.resources.pids,
+    );
+    let container_root = if request.container_root.trim().is_empty() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(request.container_root.trim())
+    };
+    let workspace_root = if request.workspace_root.trim().is_empty() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(request.workspace_root.trim())
+    };
+    let rules = resolve_cached_rules(
+        &workspace_root,
+        &container_root,
+        &["*".to_string()],
+        &[],
+        &request.allow_commands,
+    );
+    let context = SandboxContext {
+        workspace_root,
+        container_root,
+        allow_commands: rules.allow_commands,
+    };
+    let args = if request.args.is_null() {
+        json!({})
+    } else {
+        request.args.clone()
+    };
+    let result = execute_command_streaming(&context, &args, tx).await;
+
+    SandboxToolResponse {
+        ok: result.ok,
+        data: if result.data.is_object() {
+            result.data
+        } else {
+            json!({ "result": result.data })
+        },
+        error: result.error,
+        debug_events: Vec::new(),
+    }
+}
+
+fn recover_tool_args_value(args: &Value) -> Value {
+    recover_tool_args_value_lossy(args)
+}
+
+async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
+    let args = recover_tool_args_value(args);
+    let dry_run = parse_dry_run(&args);
+    let command_budget = parse_command_budget(&args);
+    let content = args
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if content.is_empty() {
+        return ToolResult {
+            ok: false,
+            data: with_error_meta(
+                json!({}),
+                ToolErrorMeta::new(
+                    "TOOL_EXEC_COMMAND_REQUIRED",
+                    Some("请在 content 中提供要执行的命令或脚本文本。".to_string()),
+                    false,
+                    None,
+                ),
+            ),
+            error: i18n::t("tool.exec.command_required"),
+        };
+    }
+
+    let timeout_s = parse_timeout_secs(args.get("timeout_s")).unwrap_or(DEFAULT_COMMAND_TIMEOUT_S);
+    let timeout_s = apply_time_budget_secs(timeout_s, &command_budget);
+    let workdir = args
+        .get("workdir")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let workdir = if workdir.is_empty() { "." } else { &workdir };
+    let cwd = match resolve_path(context, workdir) {
+        Ok(path) => path,
+        Err(error) => {
+            return ToolResult {
+                ok: false,
+                data: with_error_meta(
+                    json!({ "workdir": workdir }),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_WORKDIR_INVALID",
+                        Some("请确认 workdir 路径存在且在允许范围内。".to_string()),
+                        false,
+                        None,
+                    ),
+                ),
+                error,
+            };
+        }
+    };
+    if !cwd.exists() {
+        return ToolResult {
+            ok: false,
+            data: with_error_meta(
+                json!({ "workdir": workdir }),
+                ToolErrorMeta::new(
+                    "TOOL_EXEC_WORKDIR_NOT_FOUND",
+                    Some("请确认 workdir 路径存在且在允许范围内。".to_string()),
+                    false,
+                    None,
+                ),
+            ),
+            error: i18n::t("tool.exec.workdir_not_found"),
+        };
+    }
+    if !cwd.is_dir() {
+        return ToolResult {
+            ok: false,
+            data: with_error_meta(
+                json!({ "workdir": workdir }),
+                ToolErrorMeta::new(
+                    "TOOL_EXEC_WORKDIR_NOT_DIR",
+                    Some("请将 workdir 指向目录而非文件。".to_string()),
+                    false,
+                    None,
+                ),
+            ),
+            error: i18n::t("tool.exec.workdir_not_dir"),
+        };
+    }
+
+    let allow_all = context.allow_commands.contains("*");
+    let (stdout_policy, stderr_policy) =
+        derive_capture_policies(command_budget.output_budget_bytes);
+    let effective_output_budget_bytes = stdout_policy
+        .max_bytes()
+        .saturating_add(stderr_policy.max_bytes());
+    let mut results = Vec::new();
+    let mut guarded_total_bytes: usize = 0;
+    let mut guarded_omitted_bytes: usize = 0;
+    let mut guarded_total_commands: usize = 0;
+    let mut guarded_truncated_commands: usize = 0;
+
+    let commands = if allow_all {
+        vec![content.clone()]
+    } else {
+        content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    };
+    if let Some(max_commands) = command_budget.max_commands {
+        if commands.len() > max_commands {
+            return ToolResult {
+                ok: false,
+                data: with_error_meta(
+                    json!({
+                        "command_count": commands.len(),
+                        "max_commands": max_commands,
+                    }),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_BUDGET_COMMAND_LIMIT",
+                        Some("请减少单次执行命令数量，或提高 max_commands 预算。".to_string()),
+                        true,
+                        Some(200),
+                    ),
+                ),
+                error: format!(
+                    "command count {} exceeds budget limit {}",
+                    commands.len(),
+                    max_commands
+                ),
+            };
+        }
+    }
+    if dry_run {
+        return ToolResult {
+            ok: true,
+            data: json!({
+                "dry_run": true,
+                "workdir": cwd.to_string_lossy().to_string(),
+                "command_count": commands.len(),
+                "commands": commands,
+                "timeout_s": timeout_s,
+                "budget": command_budget.to_json(),
+                "meta": {
+                    "output_guard": {
+                        "effective_total_bytes": effective_output_budget_bytes,
+                    }
+                }
+            }),
+            error: String::new(),
+        };
+    }
+
+    for command in commands {
+        if command.trim().is_empty() {
+            continue;
+        }
+        if !allow_all {
+            let lower = command.to_lowercase();
+            if !context
+                .allow_commands
+                .iter()
+                .any(|item| lower.starts_with(item))
+            {
+                return ToolResult {
+                    ok: false,
+                    data: with_error_meta(
+                        json!({ "command": command }),
+                        ToolErrorMeta::new(
+                            "TOOL_EXEC_NOT_ALLOWED",
+                            Some("命令不在 allow_commands 白名单内。".to_string()),
+                            false,
+                            None,
+                        ),
+                    ),
+                    error: i18n::t("tool.exec.not_allowed"),
+                };
+            }
+        }
+
+        let output =
+            run_shell_command(&command, &cwd, timeout_s, stdout_policy, stderr_policy).await;
+
+        let output = match output {
+            Ok(output) => output,
+            Err(detail) => {
+                return ToolResult {
+                    ok: false,
+                    data: with_error_meta(
+                        json!({
+                            "command": command,
+                        }),
+                        ToolErrorMeta::new(
+                            "TOOL_EXEC_COMMAND_FAILED",
+                            Some("请检查命令内容、运行环境或可执行文件是否存在。".to_string()),
+                            true,
+                            Some(200),
+                        ),
+                    ),
+                    error: i18n::t_with_params(
+                        "tool.exec.command_failed",
+                        &std::collections::HashMap::from([("detail".to_string(), detail)]),
+                    ),
+                };
+            }
+        };
+
+        let command_total_bytes = output
+            .stdout_capture
+            .total_bytes
+            .saturating_add(output.stderr_capture.total_bytes);
+        let command_omitted_bytes = output
+            .stdout_capture
+            .omitted_bytes
+            .saturating_add(output.stderr_capture.omitted_bytes);
+        let command_truncated = output.stdout_capture.truncated || output.stderr_capture.truncated;
+        guarded_total_bytes = guarded_total_bytes.saturating_add(command_total_bytes);
+        guarded_omitted_bytes = guarded_omitted_bytes.saturating_add(command_omitted_bytes);
+        guarded_total_commands = guarded_total_commands.saturating_add(1);
+        if command_truncated {
+            guarded_truncated_commands = guarded_truncated_commands.saturating_add(1);
+        }
+
+        results.push(json!({
+            "command": command,
+            "returncode": output.returncode,
+            "stdout": output.stdout,
+            "stderr": output.stderr,
+            "output_meta": {
+                "truncated": command_truncated,
+                "total_bytes": command_total_bytes,
+                "omitted_bytes": command_omitted_bytes,
+                "stdout": output.stdout_capture.to_json(),
+                "stderr": output.stderr_capture.to_json(),
+            },
+        }));
+
+        if output.timed_out {
+            return ToolResult {
+                ok: false,
+                data: with_error_meta(
+                    build_execute_command_failure_data(
+                        &results,
+                        guarded_total_commands,
+                        guarded_truncated_commands > 0,
+                        guarded_omitted_bytes,
+                        true,
+                    ),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_TIMEOUT",
+                        Some(
+                            "命令执行超时，可拆分脚本或提高 timeout/budget.time_budget_ms 后重试。"
+                                .to_string(),
+                        ),
+                        true,
+                        Some(500),
+                    ),
+                ),
+                error: build_execute_command_failure_message(&results, true),
+            };
+        }
+
+        if output.returncode != 0 {
+            return ToolResult {
+                ok: false,
+                data: with_error_meta(
+                    build_execute_command_failure_data(
+                        &results,
+                        guarded_total_commands,
+                        guarded_truncated_commands > 0,
+                        guarded_omitted_bytes,
+                        false,
+                    ),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_NON_ZERO_EXIT",
+                        Some("命令返回非 0，请先根据 stderr 修正后再重试。".to_string()),
+                        false,
+                        None,
+                    ),
+                ),
+                error: build_execute_command_failure_message(&results, false),
+            };
+        }
+    }
+
+    ToolResult {
+        ok: true,
+        data: json!({
+            "results": results,
+            "meta": {
+                "output_guard": {
+                    "truncated": guarded_truncated_commands > 0,
+                    "commands": guarded_total_commands,
+                    "truncated_commands": guarded_truncated_commands,
+                    "total_bytes": guarded_total_bytes,
+                    "omitted_bytes": guarded_omitted_bytes,
+                    "effective_total_bytes": effective_output_budget_bytes,
+                }
+            },
+            "budget": command_budget.to_json()
+        }),
+        error: String::new(),
+    }
+}
+
+async fn execute_command_streaming(
+    context: &SandboxContext,
+    args: &Value,
+    tx: mpsc::Sender<Result<Bytes, Infallible>>,
+) -> ToolResult {
+    let args = recover_tool_args_value(args);
+    let dry_run = parse_dry_run(&args);
+    let command_budget = parse_command_budget(&args);
+    let content = args
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if content.is_empty() {
+        return ToolResult {
+            ok: false,
+            data: with_error_meta(
+                json!({}),
+                ToolErrorMeta::new(
+                    "TOOL_EXEC_COMMAND_REQUIRED",
+                    Some("请在 content 中提供要执行的命令或脚本文本。".to_string()),
+                    false,
+                    None,
+                ),
+            ),
+            error: i18n::t("tool.exec.command_required"),
+        };
+    }
+
+    let timeout_s = parse_timeout_secs(args.get("timeout_s")).unwrap_or(DEFAULT_COMMAND_TIMEOUT_S);
+    let timeout_s = apply_time_budget_secs(timeout_s, &command_budget);
+    let workdir = args
+        .get("workdir")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let workdir = if workdir.is_empty() { "." } else { &workdir };
+    let cwd = match resolve_path(context, workdir) {
+        Ok(path) => path,
+        Err(error) => {
+            return ToolResult {
+                ok: false,
+                data: with_error_meta(
+                    json!({ "workdir": workdir }),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_WORKDIR_INVALID",
+                        Some("请确认 workdir 路径存在且在允许范围内。".to_string()),
+                        false,
+                        None,
+                    ),
+                ),
+                error,
+            };
+        }
+    };
+    if !cwd.exists() {
+        return ToolResult {
+            ok: false,
+            data: with_error_meta(
+                json!({ "workdir": workdir }),
+                ToolErrorMeta::new(
+                    "TOOL_EXEC_WORKDIR_NOT_FOUND",
+                    Some("请确认 workdir 路径存在且在允许范围内。".to_string()),
+                    false,
+                    None,
+                ),
+            ),
+            error: i18n::t("tool.exec.workdir_not_found"),
+        };
+    }
+    if !cwd.is_dir() {
+        return ToolResult {
+            ok: false,
+            data: with_error_meta(
+                json!({ "workdir": workdir }),
+                ToolErrorMeta::new(
+                    "TOOL_EXEC_WORKDIR_NOT_DIR",
+                    Some("请将 workdir 指向目录而非文件。".to_string()),
+                    false,
+                    None,
+                ),
+            ),
+            error: i18n::t("tool.exec.workdir_not_dir"),
+        };
+    }
+
+    let allow_all = context.allow_commands.contains("*");
+    let (stdout_policy, stderr_policy) =
+        derive_capture_policies(command_budget.output_budget_bytes);
+    let effective_output_budget_bytes = stdout_policy
+        .max_bytes()
+        .saturating_add(stderr_policy.max_bytes());
+    let commands = if allow_all {
+        vec![content.clone()]
+    } else {
+        content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    };
+    if let Some(max_commands) = command_budget.max_commands {
+        if commands.len() > max_commands {
+            return ToolResult {
+                ok: false,
+                data: with_error_meta(
+                    json!({
+                        "command_count": commands.len(),
+                        "max_commands": max_commands,
+                    }),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_BUDGET_COMMAND_LIMIT",
+                        Some("请减少单次执行命令数量，或提高 max_commands 预算。".to_string()),
+                        true,
+                        Some(200),
+                    ),
+                ),
+                error: format!(
+                    "command count {} exceeds budget limit {}",
+                    commands.len(),
+                    max_commands
+                ),
+            };
+        }
+    }
+    if dry_run {
+        return ToolResult {
+            ok: true,
+            data: json!({
+                "dry_run": true,
+                "workdir": cwd.to_string_lossy().to_string(),
+                "command_count": commands.len(),
+                "commands": commands,
+                "timeout_s": timeout_s,
+                "budget": command_budget.to_json(),
+                "meta": {
+                    "output_guard": {
+                        "effective_total_bytes": effective_output_budget_bytes,
+                    }
+                }
+            }),
+            error: String::new(),
+        };
+    }
+
+    let mut results = Vec::new();
+    let mut guarded_total_bytes: usize = 0;
+    let mut guarded_omitted_bytes: usize = 0;
+    let mut guarded_total_commands: usize = 0;
+    let mut guarded_truncated_commands: usize = 0;
+
+    for (command_index, command) in commands.into_iter().enumerate() {
+        if command.trim().is_empty() {
+            continue;
+        }
+        if !allow_all {
+            let lower = command.to_lowercase();
+            if !context
+                .allow_commands
+                .iter()
+                .any(|item| lower.starts_with(item))
+            {
+                return ToolResult {
+                    ok: false,
+                    data: with_error_meta(
+                        json!({ "command": command }),
+                        ToolErrorMeta::new(
+                            "TOOL_EXEC_NOT_ALLOWED",
+                            Some("命令不在 allow_commands 白名单内。".to_string()),
+                            false,
+                            None,
+                        ),
+                    ),
+                    error: i18n::t("tool.exec.not_allowed"),
+                };
+            }
+        }
+
+        let _ = send_stream_json(
+            &tx,
+            json!({
+                "type": "command_start",
+                "command_index": command_index,
+                "command": command,
+                "cwd": cwd.to_string_lossy().to_string(),
+            }),
+        )
+        .await;
+        let output = run_shell_command_streaming(
+            &command,
+            &cwd,
+            timeout_s,
+            stdout_policy,
+            stderr_policy,
+            CommandStreamSink {
+                tx: tx.clone(),
+                command_index,
+            },
+        )
+        .await;
+
+        let output = match output {
+            Ok(output) => output,
+            Err(detail) => {
+                let _ = send_stream_json(
+                    &tx,
+                    json!({
+                        "type": "command_exit",
+                        "command_index": command_index,
+                        "exit_code": null,
+                        "timed_out": false,
+                        "error": detail,
+                    }),
+                )
+                .await;
+                return ToolResult {
+                    ok: false,
+                    data: with_error_meta(
+                        json!({
+                            "command": command,
+                        }),
+                        ToolErrorMeta::new(
+                            "TOOL_EXEC_COMMAND_FAILED",
+                            Some("请检查命令内容、运行环境或可执行文件是否存在。".to_string()),
+                            true,
+                            Some(200),
+                        ),
+                    ),
+                    error: i18n::t_with_params(
+                        "tool.exec.command_failed",
+                        &std::collections::HashMap::from([("detail".to_string(), detail)]),
+                    ),
+                };
+            }
+        };
+
+        let command_total_bytes = output
+            .stdout_capture
+            .total_bytes
+            .saturating_add(output.stderr_capture.total_bytes);
+        let command_omitted_bytes = output
+            .stdout_capture
+            .omitted_bytes
+            .saturating_add(output.stderr_capture.omitted_bytes);
+        let command_truncated = output.stdout_capture.truncated || output.stderr_capture.truncated;
+        guarded_total_bytes = guarded_total_bytes.saturating_add(command_total_bytes);
+        guarded_omitted_bytes = guarded_omitted_bytes.saturating_add(command_omitted_bytes);
+        guarded_total_commands = guarded_total_commands.saturating_add(1);
+        if command_truncated {
+            guarded_truncated_commands = guarded_truncated_commands.saturating_add(1);
+        }
+
+        let _ = send_stream_json(
+            &tx,
+            json!({
+                "type": "command_exit",
+                "command_index": command_index,
+                "exit_code": output.returncode,
+                "timed_out": output.timed_out,
+            }),
+        )
+        .await;
+
+        results.push(json!({
+            "command": command,
+            "command_index": command_index,
+            "returncode": output.returncode,
+            "stdout": output.stdout,
+            "stderr": output.stderr,
+            "output_meta": {
+                "truncated": command_truncated,
+                "total_bytes": command_total_bytes,
+                "omitted_bytes": command_omitted_bytes,
+                "stdout": output.stdout_capture.to_json(),
+                "stderr": output.stderr_capture.to_json(),
+            },
+        }));
+
+        if output.timed_out {
+            return ToolResult {
+                ok: false,
+                data: with_error_meta(
+                    build_execute_command_failure_data(
+                        &results,
+                        guarded_total_commands,
+                        guarded_truncated_commands > 0,
+                        guarded_omitted_bytes,
+                        true,
+                    ),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_TIMEOUT",
+                        Some(
+                            "命令执行超时，可拆分脚本或提高 timeout/budget.time_budget_ms 后重试。"
+                                .to_string(),
+                        ),
+                        true,
+                        Some(500),
+                    ),
+                ),
+                error: build_execute_command_failure_message(&results, true),
+            };
+        }
+
+        if output.returncode != 0 {
+            return ToolResult {
+                ok: false,
+                data: with_error_meta(
+                    build_execute_command_failure_data(
+                        &results,
+                        guarded_total_commands,
+                        guarded_truncated_commands > 0,
+                        guarded_omitted_bytes,
+                        false,
+                    ),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_NON_ZERO_EXIT",
+                        Some("命令返回非 0，请先根据 stderr 修正后再重试。".to_string()),
+                        false,
+                        None,
+                    ),
+                ),
+                error: build_execute_command_failure_message(&results, false),
+            };
+        }
+    }
+
+    ToolResult {
+        ok: true,
+        data: json!({
+            "results": results,
+            "meta": {
+                "output_guard": {
+                    "truncated": guarded_truncated_commands > 0,
+                    "commands": guarded_total_commands,
+                    "truncated_commands": guarded_truncated_commands,
+                    "total_bytes": guarded_total_bytes,
+                    "omitted_bytes": guarded_omitted_bytes,
+                    "effective_total_bytes": effective_output_budget_bytes,
+                }
+            },
+            "budget": command_budget.to_json()
+        }),
+        error: String::new(),
+    }
+}
+
+async fn execute_ptc(context: &SandboxContext, args: &Value) -> ToolResult {
+    let args = recover_tool_args_value(args);
+    let filename = args
+        .get("filename")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let workdir = args
+        .get("workdir")
+        .and_then(Value::as_str)
+        .unwrap_or(".")
+        .trim()
+        .to_string();
+    let content = args.get("content").and_then(Value::as_str).unwrap_or("");
+
+    if filename.is_empty() {
+        return ToolResult {
+            ok: false,
+            data: json!({}),
+            error: i18n::t("tool.ptc.filename_required"),
+        };
+    }
+    if content.trim().is_empty() {
+        return ToolResult {
+            ok: false,
+            data: json!({}),
+            error: i18n::t("tool.ptc.content_required"),
+        };
+    }
+
+    let mut script_name = PathBuf::from(&filename);
+    if script_name.file_name().and_then(|name| name.to_str()) != Some(&filename) {
+        return ToolResult {
+            ok: false,
+            data: json!({}),
+            error: i18n::t("tool.ptc.filename_invalid"),
+        };
+    }
+    if script_name.extension().is_none() {
+        script_name.set_extension("py");
+    }
+    if script_name
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_lowercase())
+        != Some("py".to_string())
+    {
+        return ToolResult {
+            ok: false,
+            data: json!({}),
+            error: i18n::t("tool.ptc.ext_invalid"),
+        };
+    }
+
+    let workdir_path = match resolve_path(context, &workdir) {
+        Ok(path) => path,
+        Err(error) => {
+            return ToolResult {
+                ok: false,
+                data: json!({}),
+                error,
+            };
+        }
+    };
+    let ptc_root = match resolve_path(context, PTC_DIR_NAME) {
+        Ok(path) => path,
+        Err(error) => {
+            return ToolResult {
+                ok: false,
+                data: json!({}),
+                error,
+            };
+        }
+    };
+
+    if let Err(err) = tokio::fs::create_dir_all(&workdir_path).await {
+        return ToolResult {
+            ok: false,
+            data: json!({}),
+            error: i18n::t_with_params(
+                "tool.ptc.exec_error",
+                &std::collections::HashMap::from([("detail".to_string(), err.to_string())]),
+            ),
+        };
+    }
+    let script_path =
+        match crate::services::tools::ptc_script::save_script(&ptc_root, &script_name, content)
+            .await
+        {
+            Ok(path) => path,
+            Err(err) => {
+                return ToolResult {
+                    ok: false,
+                    data: json!({}),
+                    error: i18n::t_with_params(
+                        "tool.ptc.exec_error",
+                        &HashMap::from([("detail".to_string(), err.to_string())]),
+                    ),
+                }
+            }
+        };
+
+    let output = run_python_script(&script_path, &workdir_path, PTC_TIMEOUT_S).await;
+    let output = match output {
+        Ok(output) => output,
+        Err(detail) => {
+            return ToolResult {
+                ok: false,
+                data: json!({}),
+                error: i18n::t_with_params(
+                    "tool.ptc.exec_error",
+                    &std::collections::HashMap::from([("detail".to_string(), detail)]),
+                ),
+            };
+        }
+    };
+
+    let data = json!({
+        "path": script_path.to_string_lossy().to_string(),
+        "workdir": workdir_path.to_string_lossy().to_string(),
+        "returncode": output.returncode,
+        "stdout": output.stdout,
+        "stderr": output.stderr,
+    });
+
+    if output.returncode != 0 {
+        return ToolResult {
+            ok: false,
+            data,
+            error: i18n::t("tool.ptc.exec_failed"),
+        };
+    }
+
+    ToolResult {
+        ok: true,
+        data,
+        error: String::new(),
+    }
+}
+
+struct CommandOutput {
+    returncode: i32,
+    stdout: String,
+    stderr: String,
+    timed_out: bool,
+    stdout_capture: CommandOutputCaptureMeta,
+    stderr_capture: CommandOutputCaptureMeta,
+}
+
+#[derive(Clone)]
+struct CommandStreamSink {
+    tx: mpsc::Sender<Result<Bytes, Infallible>>,
+    command_index: usize,
+}
+
+impl CommandStreamSink {
+    async fn emit_delta(&self, stream: &'static str, chunk: &[u8]) {
+        if chunk.is_empty() {
+            return;
+        }
+        let delta = String::from_utf8_lossy(chunk).into_owned();
+        if delta.is_empty() {
+            return;
+        }
+        let _ = send_stream_json(
+            &self.tx,
+            json!({
+                "type": "delta",
+                "command_index": self.command_index,
+                "stream": stream,
+                "delta": delta,
+            }),
+        )
+        .await;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandErrorKind {
+    SpawnNotFound,
+    SpawnFailed,
+    WaitFailed,
+}
+
+#[derive(Debug)]
+struct CommandError {
+    kind: CommandErrorKind,
+    detail: String,
+}
+
+impl CommandError {
+    fn from_spawn(err: std::io::Error) -> Self {
+        let kind = if command_utils::is_not_found_error(&err) {
+            CommandErrorKind::SpawnNotFound
+        } else {
+            CommandErrorKind::SpawnFailed
+        };
+        CommandError {
+            kind,
+            detail: err.to_string(),
+        }
+    }
+
+    fn from_wait(err: std::io::Error) -> Self {
+        CommandError {
+            kind: CommandErrorKind::WaitFailed,
+            detail: err.to_string(),
+        }
+    }
+}
+
+async fn run_shell_command(
+    command: &str,
+    cwd: &Path,
+    timeout_s: f64,
+    stdout_policy: CommandOutputPolicy,
+    stderr_policy: CommandOutputPolicy,
+) -> Result<CommandOutput, String> {
+    run_shell_command_inner(command, cwd, timeout_s, stdout_policy, stderr_policy, None).await
+}
+
+async fn run_shell_command_streaming(
+    command: &str,
+    cwd: &Path,
+    timeout_s: f64,
+    stdout_policy: CommandOutputPolicy,
+    stderr_policy: CommandOutputPolicy,
+    stream_sink: CommandStreamSink,
+) -> Result<CommandOutput, String> {
+    run_shell_command_inner(
+        command,
+        cwd,
+        timeout_s,
+        stdout_policy,
+        stderr_policy,
+        Some(stream_sink),
+    )
+    .await
+}
+
+async fn run_shell_command_inner(
+    command: &str,
+    cwd: &Path,
+    timeout_s: f64,
+    stdout_policy: CommandOutputPolicy,
+    stderr_policy: CommandOutputPolicy,
+    stream_sink: Option<CommandStreamSink>,
+) -> Result<CommandOutput, String> {
+    let command_env = python_runtime::resolve_desktop_command_env();
+    let command_overrides = command_utils::CommandProgramOverrides {
+        pip_bin: command_env.command_overrides.pip_bin.clone(),
+        git_bin: command_env.command_overrides.git_bin.clone(),
+        rg_bin: command_env.command_overrides.rg_bin.clone(),
+    };
+
+    if let Some(mut cmd) = command_utils::build_direct_command_with_overrides(
+        command,
+        cwd,
+        command_env
+            .python_runtime
+            .as_ref()
+            .map(|runtime| runtime.bin.as_path()),
+        command_overrides,
+    )
+    .or_else(|| command_utils::build_direct_command(command, cwd))
+    {
+        python_runtime::apply_desktop_command_env(&mut cmd, &command_env);
+        apply_streaming_command_env(&mut cmd);
+        match run_command_output(
+            cmd,
+            timeout_s,
+            stdout_policy,
+            stderr_policy,
+            stream_sink.clone(),
+        )
+        .await
+        {
+            Ok(output) => return Ok(output),
+            Err(err) if err.kind == CommandErrorKind::SpawnNotFound => {}
+            Err(err) => return Err(err.detail),
+        }
+    }
+
+    let mut cmd = command_utils::build_shell_command(command, cwd);
+    python_runtime::apply_desktop_command_env(&mut cmd, &command_env);
+    apply_streaming_command_env(&mut cmd);
+    run_command_output(cmd, timeout_s, stdout_policy, stderr_policy, stream_sink)
+        .await
+        .map_err(|err| err.detail)
+}
+
+fn apply_streaming_command_env(cmd: &mut Command) {
+    cmd.env("PYTHONUNBUFFERED", "1")
+        .env("PYTHONIOENCODING", "utf-8")
+        .env("PYTHONLEGACYWINDOWSSTDIO", "utf-8");
+}
+
+async fn run_python_script(
+    script_path: &Path,
+    workdir: &Path,
+    timeout_s: u64,
+) -> Result<CommandOutput, String> {
+    let runtime = python_runtime::resolve_python_runtime();
+    let python_bin = runtime
+        .as_ref()
+        .map(|value| value.bin.to_string_lossy().to_string())
+        .unwrap_or_else(|| "python3".to_string());
+    let mut cmd = Command::new(python_bin);
+    cmd.arg(script_path);
+    cmd.current_dir(workdir);
+    cmd.env("PYTHONIOENCODING", "utf-8");
+    if let Some(runtime) = runtime.as_ref() {
+        python_runtime::apply_python_env(&mut cmd, runtime);
+    } else {
+        python_runtime::apply_system_python_env_if_configured(&mut cmd);
+    }
+    command_utils::apply_platform_spawn_options(&mut cmd);
+    run_command_output(
+        cmd,
+        timeout_s as f64,
+        STDOUT_CAPTURE_POLICY,
+        STDERR_CAPTURE_POLICY,
+        None,
+    )
+    .await
+    .map_err(|err| err.detail)
+}
+
+async fn run_command_output(
+    mut cmd: Command,
+    timeout_s: f64,
+    stdout_policy: CommandOutputPolicy,
+    stderr_policy: CommandOutputPolicy,
+    stream_sink: Option<CommandStreamSink>,
+) -> Result<CommandOutput, CommandError> {
+    cmd.kill_on_drop(true);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(CommandError::from_spawn)?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let stdout_task = stdout.map(|stream| {
+        CaptureTask(tokio::spawn(read_stream_capture(
+            stream,
+            stdout_policy,
+            stream_sink.clone(),
+            "stdout",
+        )))
+    });
+    let stderr_task = stderr.map(|stream| {
+        CaptureTask(tokio::spawn(read_stream_capture(
+            stream,
+            stderr_policy,
+            stream_sink.clone(),
+            "stderr",
+        )))
+    });
+
+    let mut timed_out = false;
+    let status = if timeout_s > 0.0 {
+        match timeout(Duration::from_secs_f64(timeout_s), child.wait()).await {
+            Ok(result) => Some(result.map_err(CommandError::from_wait)?),
+            Err(_) => {
+                timed_out = true;
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                None
+            }
+        }
+    } else {
+        Some(child.wait().await.map_err(CommandError::from_wait)?)
+    };
+    let stdout_capture = join_capture_task(stdout_task, stdout_policy).await?;
+    let stderr_capture = join_capture_task(stderr_task, stderr_policy).await?;
+    let stdout = render_command_output(&stdout_capture, decode_command_output);
+    let stderr = render_command_output(&stderr_capture, decode_command_output);
+    let returncode = status.and_then(|item| item.code()).unwrap_or(-1);
+
+    Ok(CommandOutput {
+        returncode,
+        stdout,
+        stderr,
+        timed_out,
+        stdout_capture: stdout_capture.meta,
+        stderr_capture: stderr_capture.meta,
+    })
+}
+
+fn spawn_sandbox_command_session(
+    mut child: tokio::process::Child,
+    session: Arc<SandboxCommandSession>,
+    timeout_s: f64,
+) {
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    tokio::spawn(async move {
+        let stdout_task = stdout.map(|reader| {
+            let session = Arc::clone(&session);
+            tokio::spawn(async move {
+                read_sandbox_command_session_stream(reader, session, "stdout").await
+            })
+        });
+        let stderr_task = stderr.map(|reader| {
+            let session = Arc::clone(&session);
+            tokio::spawn(async move {
+                read_sandbox_command_session_stream(reader, session, "stderr").await
+            })
+        });
+        let (status, timed_out, error) = if timeout_s > 0.0 {
+            tokio::select! {
+                _ = session.cancel.cancelled() => {
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    (None, false, Some("command cancelled".to_string()))
+                }
+                result = timeout(Duration::from_secs_f64(timeout_s), child.wait()) => match result {
+                    Ok(Ok(status)) => (Some(status), false, None),
+                    Ok(Err(error)) => (None, false, Some(error.to_string())),
+                    Err(_) => {
+                        let _ = child.kill().await;
+                        let _ = child.wait().await;
+                        (None, true, None)
+                    }
+                }
+            }
+        } else {
+            tokio::select! {
+                _ = session.cancel.cancelled() => {
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    (None, false, Some("command cancelled".to_string()))
+                }
+                result = child.wait() => match result {
+                    Ok(status) => (Some(status), false, None),
+                    Err(error) => (None, false, Some(error.to_string())),
+                }
+            }
+        };
+        if let Some(handle) = stdout_task {
+            let _ = handle.await;
+        }
+        if let Some(handle) = stderr_task {
+            let _ = handle.await;
+        }
+        session.finish(status.and_then(|item| item.code()), timed_out, error);
+        command_sessions().release_active();
+    });
+}
+
+async fn read_sandbox_command_session_stream<R>(
+    mut reader: R,
+    session: Arc<SandboxCommandSession>,
+    stream: &'static str,
+) where
+    R: AsyncRead + Unpin,
+{
+    let mut chunk = vec![0u8; STREAM_READ_CHUNK_SIZE];
+    loop {
+        match reader.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(read) => session.append_delta(stream, &chunk[..read]),
+        }
+    }
+}
+
+struct CaptureTask(tokio::task::JoinHandle<Result<CommandOutputCapture, CommandError>>);
+
+impl Drop for CaptureTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn join_capture_task(
+    handle: Option<CaptureTask>,
+    policy: CommandOutputPolicy,
+) -> Result<CommandOutputCapture, CommandError> {
+    let Some(mut handle) = handle else {
+        return Ok(CommandOutputCollector::new(policy).finish());
+    };
+    match timeout(
+        Duration::from_millis(STREAM_DRAIN_TIMEOUT_MS),
+        &mut handle.0,
+    )
+    .await
+    {
+        Ok(result) => match result {
+            Ok(output) => output,
+            Err(err) => Err(CommandError {
+                kind: CommandErrorKind::WaitFailed,
+                detail: err.to_string(),
+            }),
+        },
+        Err(_) => {
+            handle.0.abort();
+            Ok(CommandOutputCollector::new(policy).finish())
+        }
+    }
+}
+
+async fn read_stream_capture<R>(
+    mut reader: R,
+    policy: CommandOutputPolicy,
+    stream_sink: Option<CommandStreamSink>,
+    stream_name: &'static str,
+) -> Result<CommandOutputCapture, CommandError>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    let mut collector = CommandOutputCollector::new(policy);
+    let mut chunk = vec![0u8; STREAM_READ_CHUNK_SIZE];
+    loop {
+        let read = reader
+            .read(&mut chunk)
+            .await
+            .map_err(CommandError::from_wait)?;
+        if read == 0 {
+            break;
+        }
+        collector.push_chunk(&chunk[..read]);
+        if let Some(stream_sink) = stream_sink.as_ref() {
+            stream_sink.emit_delta(stream_name, &chunk[..read]).await;
+        }
+    }
+    Ok(collector.finish())
+}
+
+fn decode_command_output(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).to_string()
+}
+
+fn resolve_path(context: &SandboxContext, raw_path: &str) -> Result<PathBuf, String> {
+    let (target, _) = resolve_path_with_base(context, raw_path)?;
+    Ok(target)
+}
+
+fn resolve_path_with_base(
+    context: &SandboxContext,
+    raw_path: &str,
+) -> Result<(PathBuf, PathBuf), String> {
+    let trimmed = normalize_container_visible_path(raw_path);
+    let rel = PathBuf::from(&trimmed);
+    if rel.is_absolute() {
+        let target = normalize_posix_path(&rel);
+        let base = PathBuf::from("/");
+        return Ok((target, base));
+    }
+
+    let base = normalize_posix_path(&context.workspace_root);
+    let target = normalize_posix_path(&base.join(rel));
+    Ok((target, base))
+}
+
+fn resolve_cached_rules(
+    workspace_root: &Path,
+    container_root: &Path,
+    allow_paths: &[String],
+    deny_globs: &[String],
+    allow_commands: &[String],
+) -> CachedSandboxRules {
+    let allow_paths = normalize_allow_paths_for_cache(container_root, allow_paths);
+    let deny_globs = normalize_deny_globs_for_cache(deny_globs);
+    let allow_commands = normalize_allow_commands_for_cache(allow_commands);
+    let key = build_rules_cache_key(
+        container_root,
+        workspace_root,
+        &allow_paths,
+        &deny_globs,
+        &allow_commands,
+    );
+
+    if let Some(rules) = {
+        let mut cache = rules_cache().lock();
+        cache.get(key)
+    } {
+        return rules;
+    }
+
+    let allow_commands = allow_commands.into_iter().collect::<HashSet<_>>();
+    let rules = CachedSandboxRules {
+        allow_commands: Arc::new(allow_commands),
+    };
+
+    let mut cache = rules_cache().lock();
+    if let Some(existing) = cache.get(key) {
+        return existing;
+    }
+    cache.insert(key, rules.clone());
+    rules
+}
+
+fn normalize_allow_paths_for_cache(_container_root: &Path, _allow_paths: &[String]) -> Vec<String> {
+    vec!["/".to_string()]
+}
+
+fn normalize_deny_globs_for_cache(_patterns: &[String]) -> Vec<String> {
+    Vec::new()
+}
+
+fn normalize_allow_commands_for_cache(commands: &[String]) -> Vec<String> {
+    let mut output = commands
+        .iter()
+        .map(|item| item.trim().to_lowercase())
+        .filter(|item| !item.is_empty())
+        .collect::<Vec<_>>();
+    output.sort();
+    output.dedup();
+    output
+}
+
+fn build_rules_cache_key(
+    container_root: &Path,
+    workspace_root: &Path,
+    allow_paths: &[String],
+    deny_globs: &[String],
+    allow_commands: &[String],
+) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    "sandbox_rules_v1".hash(&mut hasher);
+    container_root.to_string_lossy().hash(&mut hasher);
+    workspace_root.to_string_lossy().hash(&mut hasher);
+    hash_list(&mut hasher, allow_paths);
+    hash_list(&mut hasher, deny_globs);
+    hash_list(&mut hasher, allow_commands);
+    hasher.finish()
+}
+
+fn hash_list(hasher: &mut DefaultHasher, items: &[String]) {
+    items.len().hash(hasher);
+    for item in items {
+        item.hash(hasher);
+    }
+}
+
+fn normalize_posix_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::RootDir => normalized.push(Path::new("/")),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+            _ => {}
+        }
+    }
+    if normalized.as_os_str().is_empty() {
+        PathBuf::from("/")
+    } else {
+        normalized
+    }
+}
+
+fn normalize_slashes(input: &str) -> String {
+    input.replace('\\', "/")
+}
+
+fn normalize_container_visible_path(input: &str) -> String {
+    let normalized = normalize_slashes(input.trim());
+    let without_current = normalized.strip_prefix("./").unwrap_or(&normalized);
+    if without_current == "workspaces" {
+        return "/workspaces".to_string();
+    }
+    if let Some(rest) = without_current.strip_prefix("workspaces/") {
+        return format!("/workspaces/{rest}");
+    }
+    normalized
+}
+
+fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
+    match value {
+        Some(Value::Number(num)) => num.as_f64(),
+        Some(Value::String(text)) => text.trim().parse::<f64>().ok(),
+        Some(Value::Bool(flag)) => Some(if *flag { 1.0 } else { 0.0 }),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+#[path = "server_concurrency_tests.rs"]
+mod concurrency_tests;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::HashSet;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn parse_timeout_secs_accepts_float_number_and_string() {
+        let numeric = json!(1.5);
+        let text = json!("2.25");
+        assert_eq!(parse_timeout_secs(Some(&numeric)), Some(1.5));
+        assert_eq!(parse_timeout_secs(Some(&text)), Some(2.25));
+    }
+
+    #[test]
+    fn parse_timeout_secs_handles_bool_and_invalid_values() {
+        let enabled = json!(true);
+        let disabled = json!(false);
+        let invalid = json!("oops");
+        assert_eq!(parse_timeout_secs(Some(&enabled)), Some(1.0));
+        assert_eq!(parse_timeout_secs(Some(&disabled)), Some(0.0));
+        assert_eq!(parse_timeout_secs(Some(&invalid)), None);
+        assert_eq!(parse_timeout_secs(None), None);
+    }
+
+    #[test]
+    fn ensure_path_not_writable_detects_writable_file() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("probe.txt");
+        fs::write(&path, "probe").expect("write probe");
+
+        let err = ensure_path_not_writable(&path, "probe").expect_err("probe should fail");
+        assert!(err.to_string().contains("probe"));
+    }
+
+    #[test]
+    fn validate_runtime_readonly_skips_probe_when_disabled() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("config.yaml");
+        fs::write(&path, "demo: true\n").expect("write config");
+
+        let _ = path;
+        validate_runtime_readonly(false).expect("readonly probe should be skipped");
+    }
+
+    #[test]
+    fn resolve_path_uses_workspace_root_for_empty_dot_and_relative_paths() {
+        let temp = tempdir().expect("tempdir");
+        let workspace_root = temp.path().join("workspace").join("admin__c__1");
+        let context = SandboxContext {
+            workspace_root: workspace_root.clone(),
+            container_root: temp.path().join("container"),
+            allow_commands: Arc::new(HashSet::new()),
+        };
+
+        assert_eq!(
+            resolve_path(&context, "").expect("empty path"),
+            normalize_posix_path(&workspace_root)
+        );
+        assert_eq!(
+            resolve_path(&context, ".").expect("dot path"),
+            normalize_posix_path(&workspace_root)
+        );
+        assert_eq!(
+            resolve_path(&context, "README.md").expect("relative path"),
+            normalize_posix_path(&workspace_root.join("README.md"))
+        );
+    }
+
+    #[test]
+    fn resolve_path_accepts_public_workspaces_relative_prefix() {
+        let temp = tempdir().expect("tempdir");
+        let context = SandboxContext {
+            workspace_root: temp.path().join("workspace").join("admin__c__1"),
+            container_root: PathBuf::from("/"),
+            allow_commands: Arc::new(HashSet::new()),
+        };
+
+        assert_eq!(
+            resolve_path(&context, "workspaces/admin__c__1").expect("relative public path"),
+            PathBuf::from("/workspaces/admin__c__1")
+        );
+        assert_eq!(
+            resolve_path(&context, "./workspaces/admin__c__1/report.txt").expect("dot public path"),
+            PathBuf::from("/workspaces/admin__c__1/report.txt")
+        );
+    }
+}

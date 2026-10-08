@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CLI Usage | 使用说明书</title>
+  <meta name="description" content="The entry point for developers and automation. Terminal-driven, scriptable, JSONL output.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/start/cli","language":"en","title":"CLI Usage","summary":"The entry point for developers and automation. Terminal-driven, scriptable, JSONL output.","updated_at":"2026-04-10","read_when":["You want to use wunder in the terminal","You want to integrate wunder into scripts or automation"],"source_docs":["crates/wunder-cli/main.rs"],"tab":"Getting Started","group":"Onboarding","group_path":["Onboarding"],"url":"/docs/en/start/cli/","headings":[{"id":"section-1","level":1,"text":"CLI Usage"},{"id":"section-2","level":2,"text":"When to Choose CLI"},{"id":"section-3","level":2,"text":"Installation"},{"id":"section-4","level":2,"text":"First Session"},{"id":"section-5","level":2,"text":"Common Commands"},{"id":"section-6","level":2,"text":"TUI Interface"},{"id":"section-7","level":2,"text":"Runtime Files"},{"id":"section-8","level":2,"text":"JSONL Output"},{"id":"section-9","level":2,"text":"Automation Scenarios"},{"id":"section-10","level":2,"text":"Next Steps"}],"prev_slug":"en/start/server","next_slug":"en/start/hubs","markdown":"# CLI Usage\n\nCLI is the entry point for developers and automation. Use it directly in the terminal — no GUI needed.\n\n## When to Choose CLI\n\n| Scenario | Choose CLI |\n|----------|-----------|\n| Prefer terminal operations | ✅ |\n| Need scripting and automation | ✅ |\n| Want to pipe output to other tools | ✅ |\n| Don't want to install Desktop | ✅ |\n| Need a graphical interface | ❌ Choose Desktop |\n\n## Installation\n\n```bash\n# Build (requires Rust toolchain)\ncargo build --release -p wunder-cli\n\n# Run\n./target/release/wunder-cli\n```\n\n## First Session\n\n```bash\nwunder-cli\n> Write a Hello World Python script\n```\n\nYou'll see: model thinks → calls tools → shows results → gives reply.\n\n## Common Commands\n\n| Command | Action |\n|---------|--------|\n| `/new` | Create new thread |\n| `/stop` | Stop current execution |\n| `/compact` | Compress current conversation |\n| `/fork` | Fork current thread |\n| `/resume` | Resume a previous thread |\n| `/help` | Show help |\n| `/quit` | Exit |\n\n## TUI Interface\n\nCLI includes a built-in TUI (Terminal User Interface), similar to Codex:\n\n- Top: Conversation area\n- Bottom: Input area\n- Side: Thread list\n\n## Runtime Files\n\nBy default, CLI stores runtime files under the user's `.wunder` directory:\n\n- Runtime config and SQLite state: `~/.wunder/cli/WUNDER_TEMP/`\n- User tools and skills: `~/.wunder/user_tools/` and `~/.wunder/skills/`\n- Temporary file APIs: the same `~/.wunder/cli/WUNDER_TEMP/` root through `WUNDER_TEMP_DIR_ROOT`\n\nUse `--temp-root <path>` only when a script needs an isolated runtime directory.\n\n## JSONL Output\n\nCLI supports JSONL format output for piping and automation:\n\n```bash\nwunder-cli --format jsonl\n```\n\nEach line is a JSON object with event type and content.\n\n## Automation Scenarios\n\nCLI is great for:\n\n- Calling agents in CI/CD pipelines\n- Batch processing tasks\n- Combining with other CLI tools\n- Scheduled task triggers\n\n## Next Steps\n\n- [Quick Start](/docs/en/start/quickstart/)\n- [Core Concepts](/docs/en/concepts/)\n- [Tools Overview](/docs/en/tools/)\n","source_path":"使用说明书/en/start/cli.md"}</script>
+</body>
+</html>

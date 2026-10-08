@@ -1,0 +1,1969 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title data-i18n="app.title">Wunder Simple Chat</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f7fb;
+        --panel: #ffffff;
+        --border: #e2e6f0;
+        --text: #1f2a44;
+        --muted: #5f6c8a;
+        --primary: #2563eb;
+        --primary-weak: rgba(37, 99, 235, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        color: var(--text);
+        background: var(--bg);
+      }
+
+      .app {
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+        gap: 8px;
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+      }
+
+      header .brand {
+        font-weight: 600;
+        font-size: 16px;
+      }
+
+      header .brand-row {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      header .brand-subtitle {
+        font-size: 11px;
+        color: var(--muted);
+        line-height: 1.3;
+      }
+
+      header .actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .layout {
+        flex: 1;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 300px;
+        min-height: 0;
+        gap: 8px;
+        padding: 8px;
+      }
+
+      .chat-panel {
+        display: flex;
+        flex-direction: column;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--panel);
+        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      .chat-list {
+        flex: 1;
+        padding: 14px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .message {
+        max-width: 80%;
+        padding: 10px 12px;
+        border-radius: 10px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+      }
+
+      .message.user {
+        align-self: flex-end;
+        background: var(--primary);
+        color: #fff;
+        border-color: var(--primary);
+        box-shadow: 0 1px 3px rgba(37, 99, 235, 0.2);
+      }
+
+      .message.assistant {
+        align-self: flex-start;
+      }
+
+      .chat-input {
+        border-top: 1px solid var(--border);
+        padding: 10px 12px;
+        background: transparent;
+        display: grid;
+        gap: 8px;
+      }
+
+      .chat-input textarea {
+        width: 100%;
+        min-height: 52px;
+        max-height: 180px;
+        resize: vertical;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 13px;
+        background: #fff;
+      }
+
+      .chat-input textarea:focus {
+        outline: 2px solid var(--primary-weak);
+        border-color: var(--primary);
+      }
+
+      .input-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .status-inline {
+        font-size: 11px;
+        color: var(--muted);
+        margin-right: auto;
+        padding-right: 6px;
+      }
+
+      .attachments {
+        display: grid;
+        gap: 6px;
+      }
+
+      .attachments.hidden {
+        display: none;
+      }
+
+      .attachment-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .attachment-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 6px;
+        border-radius: 5px;
+        border: 1px solid var(--border);
+        background: #f1f4ff;
+      }
+
+      .attachment-name {
+        max-width: 260px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .attachment-remove {
+        border: none;
+        background: transparent;
+        color: var(--muted);
+        font-size: 13px;
+        padding: 0 4px;
+        line-height: 1;
+        cursor: pointer;
+      }
+
+      .attachment-remove:hover {
+        color: #ef4444;
+      }
+
+      .message-meta {
+        margin-top: 4px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .message.user .message-meta {
+        color: rgba(255, 255, 255, 0.85);
+      }
+
+      details.reasoning {
+        margin-top: 6px;
+        border: 1px dashed var(--border);
+        border-radius: 8px;
+        padding: 5px 7px;
+        background: #f7f8ff;
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      details.reasoning summary {
+        cursor: pointer;
+        font-weight: 600;
+      }
+
+      details.reasoning pre {
+        margin: 6px 0 0;
+        white-space: pre-wrap;
+        font-family: "Consolas", "Courier New", monospace;
+        color: var(--text);
+      }
+
+      button {
+        border: none;
+        border-radius: 7px;
+        padding: 6px 12px;
+        font-size: 13px;
+        cursor: pointer;
+        background: var(--primary);
+        color: #fff;
+      }
+
+      button.secondary {
+        background: #e9edf7;
+        color: var(--text);
+      }
+
+      button.danger {
+        background: #ef4444;
+        color: #fff;
+      }
+
+      .file-input {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        border: 0;
+      }
+
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      .side-panel {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 8px;
+        min-height: 0;
+      }
+
+      .settings-panel,
+      .history-panel {
+        background: var(--panel);
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      .settings-panel {
+        overflow-y: auto;
+      }
+
+      .history-panel {
+        gap: 8px;
+      }
+
+      .history-panel h2 {
+        margin: 0;
+        font-size: 14px;
+      }
+
+      .history-body {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .history-list {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .history-item {
+        width: 100%;
+        text-align: left;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 8px 10px;
+        background: #f8f9ff;
+        color: var(--text);
+      }
+
+      .history-item:hover {
+        border-color: var(--primary);
+      }
+
+      .history-item.active {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 2px var(--primary-weak);
+        background: #f4f7ff;
+      }
+
+      .history-title {
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .history-meta {
+        margin-top: 3px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .history-preview {
+        margin-top: 4px;
+        font-size: 11px;
+        color: var(--text);
+        opacity: 0.85;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .history-empty {
+        font-size: 11px;
+        color: var(--muted);
+        padding: 4px;
+      }
+
+      .settings-panel h2 {
+        margin: 0;
+        font-size: 14px;
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .field label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+      }
+
+      .field input,
+      .field select {
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        padding: 7px 9px;
+        font-size: 13px;
+      }
+
+      .field input:focus,
+      .field select:focus {
+        outline: 2px solid var(--primary-weak);
+        border-color: var(--primary);
+      }
+
+      .field.checkbox {
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .field.checkbox label {
+        text-transform: none;
+        letter-spacing: normal;
+        font-size: 13px;
+        color: var(--text);
+      }
+
+      .inline-input {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+
+      .inline-input button {
+        padding: 6px 8px;
+        font-size: 11px;
+      }
+
+      details.advanced {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: #fafbff;
+      }
+
+      details.advanced summary {
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      details.advanced .advanced-body {
+        margin-top: 8px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .settings-actions {
+        display: flex;
+        gap: 6px;
+      }
+
+      .hint {
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      @media (max-width: 900px) {
+        .layout {
+          grid-template-columns: 1fr;
+          grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+        }
+
+        .chat-panel {
+          border-bottom: 1px solid var(--border);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header>
+        <div class="brand-row">
+          <div class="brand" data-i18n="app.title">Wunder Simple Chat</div>
+          <div class="brand-subtitle" data-i18n="app.subtitle">
+            Admin console: /. This page is only for quick chat testing.
+          </div>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="newChatBtn" type="button" data-i18n="button.newChat">
+            New Chat
+          </button>
+        </div>
+      </header>
+
+      <div class="layout">
+        <main class="chat-panel">
+          <div class="chat-list" id="chatList"></div>
+          <form class="chat-input" id="chatForm">
+            <div class="attachments hidden" id="attachmentsWrap">
+              <div id="attachmentList" class="attachment-list"></div>
+            </div>
+            <textarea
+              id="questionInput"
+              placeholder="Type your message..."
+              data-i18n-placeholder="placeholder.question"
+              rows="3"
+            ></textarea>
+            <div class="input-actions">
+              <div class="status-inline" id="statusText" data-i18n="status.ready">Ready.</div>
+              <input
+                id="fileInput"
+                class="file-input"
+                type="file"
+                multiple
+                accept="image/*,.txt,.md,.markdown,.json,.yaml,.yml,.csv,.log"
+              />
+              <button class="secondary" id="fileSelectBtn" type="button" data-i18n="button.attach">
+                Attach Files
+              </button>
+              <button id="sendBtn" type="submit" data-i18n="button.send">Send</button>
+            </div>
+          </form>
+        </main>
+
+        <aside class="side-panel">
+          <section class="settings-panel">
+            <h2 data-i18n="settings.title">Model Settings</h2>
+            <div class="field">
+              <label for="baseUrl" data-i18n="label.endpoint">Endpoint</label>
+              <input
+                id="baseUrl"
+                type="text"
+                placeholder="https://api.openai.com"
+                data-i18n-placeholder="placeholder.endpoint"
+                autocomplete="off"
+              />
+            </div>
+            <div class="field">
+              <label for="apiKey" data-i18n="label.apiKey">API Key</label>
+              <div class="inline-input">
+                <input id="apiKey" type="password" placeholder="sk-..." data-i18n-placeholder="placeholder.apiKey" />
+                <button class="secondary" id="toggleApiKey" type="button" data-i18n="button.show">Show</button>
+              </div>
+            </div>
+            <div class="field">
+              <label for="modelName" data-i18n="label.model">Model</label>
+              <input id="modelName" type="text" placeholder="gpt-4o-mini" data-i18n-placeholder="placeholder.model" />
+            </div>
+            <div class="field">
+              <label for="temperature" data-i18n="label.temperature">Temperature</label>
+              <input id="temperature" type="number" min="0" max="2" step="0.1" />
+            </div>
+
+            <details class="advanced">
+              <summary data-i18n="label.advanced">Advanced</summary>
+              <div class="advanced-body">
+                <div class="field">
+                  <label for="maxOutput" data-i18n="label.maxOutput">Max Output Tokens</label>
+                  <input id="maxOutput" type="number" min="1" step="1" placeholder="Optional" data-i18n-placeholder="placeholder.optional" />
+                </div>
+                <div class="field">
+                  <label for="timeoutS" data-i18n="label.timeout">Timeout (s)</label>
+                  <input id="timeoutS" type="number" min="1" step="1" />
+                </div>
+                <div class="field">
+                  <label for="retryCount" data-i18n="label.retry">Retry</label>
+                  <input id="retryCount" type="number" min="0" step="1" />
+                </div>
+                <div class="field checkbox">
+                  <input id="streamToggle" type="checkbox" />
+                  <label for="streamToggle" data-i18n="label.stream">Stream response</label>
+                </div>
+                <div class="field">
+                  <label for="maxContext" data-i18n="label.maxContext">Max Context Tokens</label>
+                  <input id="maxContext" type="number" min="1" step="1" placeholder="Optional" data-i18n-placeholder="placeholder.optional" />
+                </div>
+                <div class="field">
+                  <label for="userId" data-i18n="label.userId">User ID</label>
+                  <input id="userId" type="text" autocomplete="off" />
+                </div>
+                <div class="field">
+                  <label for="sessionId" data-i18n="label.sessionId">Session ID</label>
+                  <input id="sessionId" type="text" autocomplete="off" />
+                </div>
+                <div class="settings-actions">
+                  <button class="secondary" id="resetSettingsBtn" type="button" data-i18n="button.resetSettings">
+                    Reset Settings
+                  </button>
+                </div>
+              </div>
+            </details>
+
+            <div class="hint" data-i18n="hint.storage">Settings are stored in your browser.</div>
+          </section>
+
+          <section class="history-panel">
+            <h2 data-i18n="history.title">History</h2>
+            <div class="history-body">
+              <div class="history-list" id="historyList"></div>
+              <div class="history-empty" id="historyEmpty" data-i18n="history.empty">No history yet.</div>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </div>
+
+    <script>
+      const STORAGE_KEY = "wunder_simple_chat_settings";
+      const HISTORY_KEY = "wunder_simple_chat_history";
+      const MAX_HISTORY_MESSAGES = 200;
+      const MAX_HISTORY_SESSIONS = 20;
+
+      const I18N = {
+        en: {
+          "app.title": "Wunder Simple Chat",
+          "app.subtitle": "Admin console: /. This page is only for quick chat testing.",
+          "status.ready": "Ready.",
+          "status.preparingAttachments": "Preparing attachments...",
+          "status.sending": "Sending...",
+          "status.done": "Done.",
+          "status.stopped": "Stopped.",
+          "status.newSessionReady": "New session ready.",
+          "status.settingsReset": "Settings reset.",
+          "status.attachmentWarning": "Attachment warning: {detail}{more}",
+          "status.attachmentWarningMore": " (+{count} more)",
+          "button.newChat": "New Chat",
+          "button.stop": "Stop",
+          "button.send": "Send",
+          "button.attach": "Attach Files",
+          "button.resetSettings": "Reset Settings",
+          "button.show": "Show",
+          "button.hide": "Hide",
+          "settings.title": "Model Settings",
+          "label.endpoint": "Endpoint",
+          "label.apiKey": "API Key",
+          "label.model": "Model",
+          "label.temperature": "Temperature",
+          "label.maxOutput": "Max Output Tokens",
+          "label.timeout": "Timeout (s)",
+          "label.retry": "Retry",
+          "label.stream": "Stream response",
+          "label.advanced": "Advanced",
+          "label.maxContext": "Max Context Tokens",
+          "label.userId": "User ID",
+          "label.sessionId": "Session ID",
+          "label.attachments": "Attachments",
+          "label.reasoning": "Reasoning",
+          "label.removeAttachment": "Remove attachment",
+          "history.title": "History",
+          "history.empty": "No history yet.",
+          "history.session": "Session",
+          "history.messages": "messages",
+          "history.previewEmpty": "No preview available.",
+          "placeholder.question": "Type your message...",
+          "placeholder.endpoint": "https://api.openai.com",
+          "placeholder.apiKey": "sk-...",
+          "placeholder.model": "gpt-4o-mini",
+          "placeholder.optional": "Optional",
+          "hint.storage": "Settings are stored in your browser.",
+          "error.readImage": "Failed to read image.",
+          "error.readFile": "Failed to read file.",
+          "error.requestFailed": "Request failed.",
+          "error.requestFailedStatus": "Request failed ({status}).",
+          "error.noResponse": "No response.",
+          "error.fillEndpoint": "Please fill model endpoint.",
+          "error.fillApiKey": "Please fill API key.",
+          "error.fillModel": "Please fill model name.",
+          "error.unsupportedFile": "Unsupported file type.",
+        },
+        zh: {
+          "app.title": "Wunder 简单聊天",
+          "app.subtitle": "Wunder 管理员页面位于 /，本页仅用于简单聊天测试。",
+          "status.ready": "就绪。",
+          "status.preparingAttachments": "正在准备附件...",
+          "status.sending": "发送中...",
+          "status.done": "完成。",
+          "status.stopped": "已停止。",
+          "status.newSessionReady": "新会话已就绪。",
+          "status.settingsReset": "设置已重置。",
+          "status.attachmentWarning": "附件警告：{detail}{more}",
+          "status.attachmentWarningMore": "（另有{count}个）",
+          "button.newChat": "新建会话",
+          "button.stop": "停止",
+          "button.send": "发送",
+          "button.attach": "选择文件",
+          "button.resetSettings": "重置设置",
+          "button.show": "显示",
+          "button.hide": "隐藏",
+          "settings.title": "模型设置",
+          "label.endpoint": "模型端点",
+          "label.apiKey": "API Key",
+          "label.model": "模型名称",
+          "label.temperature": "温度",
+          "label.maxOutput": "最大输出 Token",
+          "label.timeout": "超时（秒）",
+          "label.retry": "重试次数",
+          "label.stream": "流式响应",
+          "label.advanced": "高级",
+          "label.maxContext": "最大上下文 Token",
+          "label.userId": "用户 ID",
+          "label.sessionId": "会话 ID",
+          "label.attachments": "附件",
+          "label.reasoning": "思考过程",
+          "label.removeAttachment": "移除附件",
+          "history.title": "历史记录",
+          "history.empty": "暂无历史记录。",
+          "history.session": "会话",
+          "history.messages": "条消息",
+          "history.previewEmpty": "暂无内容。",
+          "placeholder.question": "输入你的问题...",
+          "placeholder.endpoint": "https://api.openai.com",
+          "placeholder.apiKey": "sk-...",
+          "placeholder.model": "gpt-4o-mini",
+          "placeholder.optional": "可选",
+          "hint.storage": "设置将保存在你的浏览器中。",
+          "error.readImage": "读取图片失败。",
+          "error.readFile": "读取文件失败。",
+          "error.requestFailed": "请求失败。",
+          "error.requestFailedStatus": "请求失败（{status}）。",
+          "error.noResponse": "没有返回结果。",
+          "error.fillEndpoint": "请填写模型端点。",
+          "error.fillApiKey": "请填写 API Key。",
+          "error.fillModel": "请填写模型名称。",
+          "error.unsupportedFile": "不支持该文件类型。",
+        },
+      };
+
+      const normalizeLanguage = (value) => {
+        const raw = String(value || "").toLowerCase();
+        if (!raw) {
+          return "";
+        }
+        if (raw.startsWith("zh")) {
+          return "zh";
+        }
+        if (raw.startsWith("en")) {
+          return "en";
+        }
+        return "";
+      };
+
+      const detectLanguage = () => {
+        const candidates = [];
+        if (Array.isArray(navigator.languages)) {
+          candidates.push(...navigator.languages);
+        }
+        if (navigator.language) {
+          candidates.push(navigator.language);
+        }
+        if (document.documentElement.lang) {
+          candidates.push(document.documentElement.lang);
+        }
+        for (const candidate of candidates) {
+          const normalized = normalizeLanguage(candidate);
+          if (normalized) {
+            return normalized;
+          }
+        }
+        return "en";
+      };
+
+      const languageState = {
+        value: detectLanguage(),
+      };
+
+      const t = (key, params) => {
+        const table = I18N[languageState.value] || I18N.en;
+        let value = table[key] || I18N.en[key] || "";
+        if (params && value) {
+          Object.entries(params).forEach(([paramKey, paramValue]) => {
+            value = value.replace(
+              new RegExp(`\\{${paramKey}\\}`, "g"),
+              String(paramValue)
+            );
+          });
+        }
+        return value || key;
+      };
+
+      const applyI18n = () => {
+        document.documentElement.lang = languageState.value === "zh" ? "zh-CN" : "en";
+        document.querySelectorAll("[data-i18n]").forEach((node) => {
+          const key = node.getAttribute("data-i18n");
+          if (!key) {
+            return;
+          }
+          node.textContent = t(key);
+        });
+        document.querySelectorAll("[data-i18n-placeholder]").forEach((node) => {
+          const key = node.getAttribute("data-i18n-placeholder");
+          if (!key) {
+            return;
+          }
+          node.setAttribute("placeholder", t(key));
+        });
+      };
+
+      const elements = {
+        chatList: document.getElementById("chatList"),
+        chatForm: document.getElementById("chatForm"),
+        questionInput: document.getElementById("questionInput"),
+        attachmentsWrap: document.getElementById("attachmentsWrap"),
+        fileInput: document.getElementById("fileInput"),
+        fileSelectBtn: document.getElementById("fileSelectBtn"),
+        attachmentList: document.getElementById("attachmentList"),
+        sendBtn: document.getElementById("sendBtn"),
+        statusText: document.getElementById("statusText"),
+        newChatBtn: document.getElementById("newChatBtn"),
+        historyList: document.getElementById("historyList"),
+        historyEmpty: document.getElementById("historyEmpty"),
+        baseUrl: document.getElementById("baseUrl"),
+        apiKey: document.getElementById("apiKey"),
+        modelName: document.getElementById("modelName"),
+        temperature: document.getElementById("temperature"),
+        maxOutput: document.getElementById("maxOutput"),
+        timeoutS: document.getElementById("timeoutS"),
+        retryCount: document.getElementById("retryCount"),
+        streamToggle: document.getElementById("streamToggle"),
+        maxContext: document.getElementById("maxContext"),
+        userId: document.getElementById("userId"),
+        sessionId: document.getElementById("sessionId"),
+        toggleApiKey: document.getElementById("toggleApiKey"),
+        resetSettingsBtn: document.getElementById("resetSettingsBtn"),
+      };
+
+      const defaultSettings = {
+        baseUrl: "",
+        apiKey: "",
+        modelName: "",
+        temperature: 0.7,
+        maxOutput: "",
+        timeoutS: 60,
+        retryCount: 1,
+        stream: true,
+        maxContext: "",
+        userId: "",
+        sessionId: "",
+      };
+
+      const state = {
+        controller: null,
+        streaming: false,
+        activeMessage: null,
+        selectedFiles: [],
+        history: [],
+        activeSessionId: "",
+        activeUserId: "",
+        historySaveTimer: null,
+        historyDirty: false,
+      };
+
+      const createId = (prefix) => {
+        if (window.crypto && typeof window.crypto.randomUUID === "function") {
+          return `${prefix}_${window.crypto.randomUUID().replace(/-/g, "")}`;
+        }
+        return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+      };
+
+      const safeJsonParse = (text) => {
+        try {
+          return JSON.parse(text);
+        } catch (error) {
+          return null;
+        }
+      };
+
+      const loadSettings = () => {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) {
+          return { ...defaultSettings };
+        }
+        const parsed = safeJsonParse(raw);
+        if (!parsed || typeof parsed !== "object") {
+          return { ...defaultSettings };
+        }
+        return { ...defaultSettings, ...parsed };
+      };
+
+      const saveSettings = (settings) => {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+      };
+
+      const applySettings = (settings) => {
+        elements.baseUrl.value = settings.baseUrl || "";
+        elements.apiKey.value = settings.apiKey || "";
+        elements.modelName.value = settings.modelName || "";
+        elements.temperature.value =
+          settings.temperature === "" || settings.temperature === null
+            ? ""
+            : settings.temperature;
+        elements.maxOutput.value = settings.maxOutput || "";
+        elements.timeoutS.value =
+          settings.timeoutS === "" || settings.timeoutS === null ? "" : settings.timeoutS;
+        elements.retryCount.value =
+          settings.retryCount === "" || settings.retryCount === null ? "" : settings.retryCount;
+        elements.streamToggle.checked = Boolean(settings.stream);
+        elements.maxContext.value = settings.maxContext || "";
+        elements.userId.value = settings.userId || "";
+        elements.sessionId.value = settings.sessionId || "";
+      };
+
+      const readFloat = (value) => {
+        const cleaned = String(value || "").trim();
+        if (!cleaned) {
+          return "";
+        }
+        const parsed = Number(cleaned);
+        if (!Number.isFinite(parsed)) {
+          return "";
+        }
+        return parsed;
+      };
+
+      const readInt = (value) => {
+        const cleaned = String(value || "").trim();
+        if (!cleaned) {
+          return "";
+        }
+        const parsed = Number.parseInt(cleaned, 10);
+        if (!Number.isFinite(parsed)) {
+          return "";
+        }
+        return parsed;
+      };
+
+      const readSettings = () => ({
+        baseUrl: elements.baseUrl.value.trim(),
+        apiKey: elements.apiKey.value.trim(),
+        modelName: elements.modelName.value.trim(),
+        temperature: readFloat(elements.temperature.value),
+        maxOutput: readInt(elements.maxOutput.value),
+        timeoutS: readInt(elements.timeoutS.value),
+        retryCount: readInt(elements.retryCount.value),
+        stream: elements.streamToggle.checked,
+        maxContext: readInt(elements.maxContext.value),
+        userId: elements.userId.value.trim(),
+        sessionId: elements.sessionId.value.trim(),
+      });
+
+      const syncSettings = () => {
+        const settings = readSettings();
+        saveSettings(settings);
+        return settings;
+      };
+
+      const buildHistoryKey = (userId, sessionId) => `${userId}::${sessionId}`;
+
+      const readHistoryStore = () => {
+        const raw = localStorage.getItem(HISTORY_KEY);
+        if (!raw) {
+          return {};
+        }
+        const parsed = safeJsonParse(raw);
+        if (!parsed || typeof parsed !== "object") {
+          return {};
+        }
+        return parsed;
+      };
+
+      const writeHistoryStore = (store) => {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(store));
+      };
+
+      const formatHistoryTimestamp = (timestamp) => {
+        if (!timestamp) {
+          return "";
+        }
+        const date = new Date(timestamp);
+        if (Number.isNaN(date.getTime())) {
+          return "";
+        }
+        const locale = languageState.value === "zh" ? "zh-CN" : "en-US";
+        return new Intl.DateTimeFormat(locale, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        }).format(date);
+      };
+
+      const truncateText = (text, maxLength) => {
+        const trimmed = String(text || "").trim();
+        if (!trimmed) {
+          return "";
+        }
+        if (trimmed.length <= maxLength) {
+          return trimmed;
+        }
+        return `${trimmed.slice(0, maxLength)}…`;
+      };
+
+      const buildHistoryPreview = (messages) => {
+        if (!Array.isArray(messages)) {
+          return "";
+        }
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+          const entry = messages[index];
+          if (!entry) {
+            continue;
+          }
+          if (entry.text && String(entry.text).trim()) {
+            return String(entry.text).trim();
+          }
+          if (Array.isArray(entry.attachments) && entry.attachments.length) {
+            return `${t("label.attachments")}: ${entry.attachments.join(", ")}`;
+          }
+        }
+        return "";
+      };
+
+      const parseHistoryKey = (key, entry) => {
+        const raw = String(key || "");
+        if (raw.includes("::")) {
+          const parts = raw.split("::");
+          return {
+            userId: parts.shift() || "",
+            sessionId: parts.join("::"),
+          };
+        }
+        return {
+          userId: entry?.userId || "",
+          sessionId: raw,
+        };
+      };
+
+      const renderHistoryList = () => {
+        if (!elements.historyList || !elements.historyEmpty) {
+          return;
+        }
+        const previousScrollTop = elements.historyList.scrollTop;
+        const store = readHistoryStore();
+        const items = Object.entries(store || {})
+          .map(([key, value]) => {
+            const parsed = parseHistoryKey(key, value);
+            const sessionId = parsed.sessionId || value?.sessionId || "";
+            const userId = parsed.userId || value?.userId || "";
+            return {
+              key,
+              sessionId,
+              userId,
+              updatedAt: value?.updatedAt || 0,
+              messages: Array.isArray(value?.messages) ? value.messages : [],
+            };
+          })
+          .filter((entry) => {
+            if (!entry.sessionId) {
+              return false;
+            }
+            if (state.activeUserId && entry.userId && entry.userId !== state.activeUserId) {
+              return false;
+            }
+            return true;
+          })
+          .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+        elements.historyList.innerHTML = "";
+        if (!items.length) {
+          elements.historyEmpty.hidden = false;
+          return;
+        }
+        elements.historyEmpty.hidden = true;
+
+        items.forEach((entry) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "history-item";
+          if (entry.sessionId === state.activeSessionId) {
+            button.classList.add("active");
+          }
+          button.title = entry.sessionId;
+
+          const title = document.createElement("div");
+          title.className = "history-title";
+          const shortId =
+            entry.sessionId.length > 10
+              ? `${entry.sessionId.slice(0, 10)}…`
+              : entry.sessionId;
+          title.textContent = `${t("history.session")} ${shortId}`;
+
+          const meta = document.createElement("div");
+          meta.className = "history-meta";
+          const updatedText = formatHistoryTimestamp(entry.updatedAt);
+          const countText = entry.messages.length
+            ? `${entry.messages.length} ${t("history.messages")}`
+            : "";
+          meta.textContent = [updatedText, countText].filter(Boolean).join(" · ");
+
+          const preview = document.createElement("div");
+          preview.className = "history-preview";
+          preview.textContent =
+            truncateText(buildHistoryPreview(entry.messages), 80) ||
+            t("history.previewEmpty");
+
+          button.append(title, meta, preview);
+          button.addEventListener("click", () => {
+            elements.sessionId.value = entry.sessionId;
+            const next = syncSettings();
+            setActiveSession(next.userId, entry.sessionId);
+          });
+
+          elements.historyList.appendChild(button);
+        });
+        if (previousScrollTop) {
+          elements.historyList.scrollTop = Math.min(
+            previousScrollTop,
+            elements.historyList.scrollHeight
+          );
+        }
+      };
+
+      const serializeHistoryMessages = (messages) =>
+        messages.slice(-MAX_HISTORY_MESSAGES).map((item) => ({
+          role: item.role,
+          text: item.text || "",
+          attachments: Array.isArray(item.attachments) ? item.attachments : [],
+          reasoning: item.reasoning || "",
+        }));
+
+      const pruneHistoryStore = (store) => {
+        const entries = Object.entries(store || {});
+        if (entries.length <= MAX_HISTORY_SESSIONS) {
+          return store;
+        }
+        const sorted = entries.sort((a, b) => (b[1]?.updatedAt || 0) - (a[1]?.updatedAt || 0));
+        const trimmed = sorted.slice(0, MAX_HISTORY_SESSIONS);
+        const next = {};
+        trimmed.forEach(([key, value]) => {
+          next[key] = value;
+        });
+        return next;
+      };
+
+      const saveHistoryNow = () => {
+        if (!state.historyDirty) {
+          return;
+        }
+        const userId = state.activeUserId;
+        const sessionId = state.activeSessionId;
+        if (!userId || !sessionId) {
+          return;
+        }
+        const store = readHistoryStore();
+        const key = buildHistoryKey(userId, sessionId);
+        if (!state.history.length) {
+          delete store[key];
+        } else {
+          store[key] = {
+            userId,
+            updatedAt: Date.now(),
+            messages: serializeHistoryMessages(state.history),
+          };
+        }
+        const pruned = pruneHistoryStore(store);
+        try {
+          writeHistoryStore(pruned);
+        } catch (error) {
+          // fallback: drop reasoning if storage is full
+          if (pruned[key]) {
+            const fallback = {
+              ...pruned,
+              [key]: {
+                ...pruned[key],
+                messages: pruned[key].messages.map((item) => ({ ...item, reasoning: "" })),
+              },
+            };
+            try {
+              writeHistoryStore(fallback);
+            } catch (innerError) {
+              // ignore storage failures
+            }
+          }
+        }
+        state.historyDirty = false;
+        renderHistoryList();
+      };
+
+      const scheduleHistorySave = () => {
+        if (state.historySaveTimer) {
+          clearTimeout(state.historySaveTimer);
+        }
+        state.historySaveTimer = setTimeout(() => {
+          state.historySaveTimer = null;
+          saveHistoryNow();
+        }, 250);
+      };
+
+      const setActiveSession = (userId, sessionId) => {
+        const normalizedUser = String(userId || "").trim();
+        const normalizedSession = String(sessionId || "").trim();
+        if (!normalizedUser || !normalizedSession) {
+          return;
+        }
+        if (
+          state.activeSessionId === normalizedSession &&
+          state.activeUserId === normalizedUser
+        ) {
+          return;
+        }
+        saveHistoryNow();
+        state.activeUserId = normalizedUser;
+        state.activeSessionId = normalizedSession;
+        restoreHistory();
+      };
+
+      const restoreHistory = () => {
+        elements.chatList.innerHTML = "";
+        const store = readHistoryStore();
+        const key = buildHistoryKey(state.activeUserId, state.activeSessionId);
+        const entry = store[key] || store[state.activeSessionId];
+        const messages = Array.isArray(entry?.messages) ? entry.messages : [];
+        state.history = messages.map((item) => ({
+          role: item.role,
+          text: item.text || "",
+          attachments: Array.isArray(item.attachments) ? item.attachments : [],
+          reasoning: item.reasoning || "",
+        }));
+        state.history.forEach((message, index) => {
+          const bubble = appendMessage(
+            message.role,
+            message.text,
+            message.attachments,
+            { historyIndex: index }
+          );
+          if (message.role === "assistant" && message.reasoning) {
+            setReasoning(bubble, message.reasoning);
+          }
+        });
+        state.historyDirty = false;
+        renderHistoryList();
+      };
+
+      const clearHistoryForSession = () => {
+        state.history = [];
+        state.historyDirty = true;
+        saveHistoryNow();
+        elements.chatList.innerHTML = "";
+        renderHistoryList();
+      };
+
+      const ensureIds = (settings) => {
+        let updated = false;
+        if (!settings.userId) {
+          settings.userId = createId("user");
+          updated = true;
+        }
+        if (!settings.sessionId) {
+          settings.sessionId = createId("session");
+          updated = true;
+        }
+        if (updated) {
+          applySettings(settings);
+          saveSettings(settings);
+        }
+        return settings;
+      };
+
+      const setStatus = (text) => {
+        elements.statusText.textContent = text;
+      };
+
+      const updateApiKeyToggleLabel = () => {
+        if (!elements.toggleApiKey) {
+          return;
+        }
+        const hidden = elements.apiKey.type === "password";
+        elements.toggleApiKey.textContent = hidden ? t("button.show") : t("button.hide");
+      };
+
+      const getFileExtension = (name) => {
+        const parts = String(name || "").split(".");
+        if (parts.length < 2) {
+          return "";
+        }
+        return parts.pop().toLowerCase();
+      };
+
+      const buildModelEndpoint = (baseUrl) => {
+        const trimmed = String(baseUrl || "").trim();
+        if (!trimmed) {
+          return "";
+        }
+        if (/\/chat\/completions\/?$/.test(trimmed) || /\/responses\/?$/.test(trimmed)) {
+          return trimmed.replace(/\/+$/, "");
+        }
+        return `${trimmed.replace(/\/+$/, "")}/chat/completions`;
+      };
+
+      const isImageFile = (file) => {
+        if (file.type && file.type.startsWith("image/")) {
+          return true;
+        }
+        const ext = getFileExtension(file.name);
+        return ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(ext);
+      };
+
+      const isTextFile = (file) => {
+        if (file.type && file.type.startsWith("text/")) {
+          return true;
+        }
+        if (file.type === "application/json") {
+          return true;
+        }
+        const ext = getFileExtension(file.name);
+        return ["txt", "md", "markdown", "json", "yml", "yaml", "csv", "log"].includes(ext);
+      };
+
+      const formatFileSize = (bytes) => {
+        if (!Number.isFinite(bytes)) {
+          return "";
+        }
+        const units = ["B", "KB", "MB", "GB"];
+        let size = bytes;
+        let index = 0;
+        while (size >= 1024 && index < units.length - 1) {
+          size /= 1024;
+          index += 1;
+        }
+        return `${size.toFixed(size >= 10 ? 1 : 2)} ${units[index]}`;
+      };
+
+      const updateAttachmentList = () => {
+        elements.attachmentList.innerHTML = "";
+        if (!state.selectedFiles.length) {
+          if (elements.attachmentsWrap) {
+            elements.attachmentsWrap.classList.add("hidden");
+          }
+          return;
+        }
+        if (elements.attachmentsWrap) {
+          elements.attachmentsWrap.classList.remove("hidden");
+        }
+        state.selectedFiles.forEach((file, index) => {
+          const item = document.createElement("div");
+          item.className = "attachment-item";
+          const nameNode = document.createElement("span");
+          nameNode.className = "attachment-name";
+          const size = formatFileSize(file.size);
+          nameNode.textContent = size ? `${file.name} (${size})` : file.name;
+          const removeBtn = document.createElement("button");
+          removeBtn.type = "button";
+          removeBtn.className = "attachment-remove";
+          removeBtn.textContent = "×";
+          removeBtn.setAttribute("aria-label", t("label.removeAttachment"));
+          removeBtn.setAttribute("title", t("label.removeAttachment"));
+          removeBtn.disabled = state.streaming;
+          removeBtn.addEventListener("click", () => {
+            removeAttachmentAt(index);
+          });
+          item.append(nameNode, removeBtn);
+          elements.attachmentList.appendChild(item);
+        });
+      };
+
+      const removeAttachmentAt = (index) => {
+        if (index < 0 || index >= state.selectedFiles.length) {
+          return;
+        }
+        state.selectedFiles.splice(index, 1);
+        if (elements.fileInput) {
+          elements.fileInput.value = "";
+        }
+        updateAttachmentList();
+      };
+
+      const clearAttachments = () => {
+        state.selectedFiles = [];
+        if (elements.fileInput) {
+          elements.fileInput.value = "";
+        }
+        updateAttachmentList();
+      };
+
+      const readFileAsDataUrl = (file) =>
+        new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result || "");
+          reader.onerror = () => reject(new Error(t("error.readImage")));
+          reader.readAsDataURL(file);
+        });
+
+      const readFileAsText = (file) =>
+        new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result || "");
+          reader.onerror = () => reject(new Error(t("error.readFile")));
+          reader.readAsText(file);
+        });
+
+      const buildAttachments = async () => {
+        const attachments = [];
+        const names = [];
+        const errors = [];
+        if (!state.selectedFiles.length) {
+          return { attachments, names };
+        }
+        for (const file of state.selectedFiles) {
+          try {
+            if (isImageFile(file)) {
+              const dataUrl = await readFileAsDataUrl(file);
+              if (!dataUrl) {
+                continue;
+              }
+              attachments.push({
+                name: file.name,
+                content: dataUrl,
+                content_type: file.type || "image/*",
+              });
+              names.push(file.name);
+              continue;
+            }
+            if (isTextFile(file)) {
+              const content = await readFileAsText(file);
+              if (!content) {
+                continue;
+              }
+              attachments.push({
+                name: file.name,
+                content,
+                content_type: file.type || "text/plain",
+              });
+              names.push(file.name);
+              continue;
+            }
+            errors.push(`${file.name}: ${t("error.unsupportedFile")}`);
+          } catch (error) {
+            const message = error?.message || t("error.readFile");
+            errors.push(`${file.name}: ${message}`);
+          }
+        }
+        if (errors.length) {
+          const note =
+            errors.length > 1 ? t("status.attachmentWarningMore", { count: errors.length - 1 }) : "";
+          setStatus(t("status.attachmentWarning", { detail: errors[0], more: note }));
+        }
+        return { attachments, names };
+      };
+
+      const addHistoryEntry = (role, text, attachments, reasoning = "") => {
+        const entry = {
+          role,
+          text: text || "",
+          attachments: Array.isArray(attachments) ? attachments : [],
+          reasoning: reasoning || "",
+        };
+        state.history.push(entry);
+        state.historyDirty = true;
+        scheduleHistorySave();
+        return state.history.length - 1;
+      };
+
+      const getHistoryIndex = (bubble) => {
+        const raw = bubble?.dataset?.historyIndex;
+        if (!raw) {
+          return null;
+        }
+        const parsed = Number.parseInt(raw, 10);
+        if (!Number.isFinite(parsed)) {
+          return null;
+        }
+        return parsed;
+      };
+
+      const updateHistoryText = (bubble, text) => {
+        const index = getHistoryIndex(bubble);
+        if (index === null || !state.history[index]) {
+          return;
+        }
+        const nextText = text || "";
+        if (state.history[index].text === nextText) {
+          return;
+        }
+        state.history[index].text = nextText;
+        state.historyDirty = true;
+        scheduleHistorySave();
+      };
+
+      const updateHistoryReasoning = (bubble, text, append) => {
+        const index = getHistoryIndex(bubble);
+        if (index === null || !state.history[index]) {
+          return;
+        }
+        const current = state.history[index].reasoning || "";
+        if (append && !text) {
+          return;
+        }
+        const nextReasoning = append ? `${current}${text}` : text || "";
+        if (nextReasoning === current) {
+          return;
+        }
+        state.history[index].reasoning = nextReasoning;
+        state.historyDirty = true;
+        scheduleHistorySave();
+      };
+
+      const appendMessage = (role, text, meta, options = {}) => {
+        const bubble = document.createElement("div");
+        bubble.className = `message ${role}`;
+        const textNode = document.createElement("div");
+        textNode.className = "message-text";
+        textNode.textContent = text;
+        bubble.appendChild(textNode);
+        if (Array.isArray(meta) && meta.length) {
+          const metaNode = document.createElement("div");
+          metaNode.className = "message-meta";
+          metaNode.textContent = `${t("label.attachments")}: ${meta.join(", ")}`;
+          bubble.appendChild(metaNode);
+        }
+        if (role === "assistant") {
+          const details = document.createElement("details");
+          details.className = "reasoning";
+          details.hidden = true;
+          const summary = document.createElement("summary");
+          summary.textContent = t("label.reasoning");
+          const pre = document.createElement("pre");
+          pre.className = "reasoning-content";
+          details.append(summary, pre);
+          bubble.appendChild(details);
+        }
+        if (options.historyIndex !== undefined && options.historyIndex !== null) {
+          bubble.dataset.historyIndex = String(options.historyIndex);
+        }
+        elements.chatList.appendChild(bubble);
+        elements.chatList.scrollTop = elements.chatList.scrollHeight;
+        return bubble;
+      };
+
+      const updateMessage = (bubble, text) => {
+        const textNode = bubble.querySelector(".message-text");
+        if (textNode) {
+          textNode.textContent = text;
+        } else {
+          bubble.textContent = text;
+        }
+        updateHistoryText(bubble, text);
+        elements.chatList.scrollTop = elements.chatList.scrollHeight;
+      };
+
+      const getMessageText = (bubble) => {
+        const textNode = bubble.querySelector(".message-text");
+        if (textNode) {
+          return textNode.textContent || "";
+        }
+        return bubble.textContent || "";
+      };
+
+      const appendReasoning = (bubble, delta) => {
+        if (!delta) {
+          return;
+        }
+        const pre = bubble.querySelector(".reasoning-content");
+        if (!pre) {
+          return;
+        }
+        pre.textContent = `${pre.textContent || ""}${delta}`;
+        const details = bubble.querySelector("details.reasoning");
+        if (details) {
+          details.hidden = false;
+        }
+        updateHistoryReasoning(bubble, delta, true);
+        elements.chatList.scrollTop = elements.chatList.scrollHeight;
+      };
+
+      const setReasoning = (bubble, text) => {
+        if (!text) {
+          return;
+        }
+        const pre = bubble.querySelector(".reasoning-content");
+        if (!pre) {
+          return;
+        }
+        pre.textContent = text;
+        const details = bubble.querySelector("details.reasoning");
+        if (details) {
+          details.hidden = false;
+        }
+        updateHistoryReasoning(bubble, text, false);
+        elements.chatList.scrollTop = elements.chatList.scrollHeight;
+      };
+
+      const setStreaming = (active) => {
+        state.streaming = active;
+        elements.sendBtn.textContent = active ? t("button.stop") : t("button.send");
+        elements.sendBtn.classList.toggle("danger", active);
+        elements.questionInput.disabled = active;
+        if (elements.fileInput) {
+          elements.fileInput.disabled = active;
+        }
+        if (elements.fileSelectBtn) {
+          elements.fileSelectBtn.disabled = active;
+        }
+        updateAttachmentList();
+      };
+
+      const buildUserContent = (question, attachments) => {
+        let text = question;
+        const images = [];
+        const textAttachments = [];
+        (attachments || []).forEach((attachment) => {
+          if (!attachment || !attachment.content) {
+            return;
+          }
+          if (
+            attachment.content_type?.startsWith("image/") ||
+            String(attachment.content).startsWith("data:image")
+          ) {
+            images.push(attachment);
+          } else {
+            textAttachments.push(attachment);
+          }
+        });
+        if (textAttachments.length) {
+          const blocks = textAttachments.map(
+            (attachment) => `[${t("label.attachments")}: ${attachment.name}]\n${attachment.content}`
+          );
+          text = `${text}\n\n${blocks.join("\n\n")}`;
+        }
+        if (!images.length) {
+          return text;
+        }
+        const content = [{ type: "text", text }];
+        images.forEach((attachment) => {
+          content.push({
+            type: "image_url",
+            image_url: { url: attachment.content },
+          });
+        });
+        return content;
+      };
+
+      const buildMessagesForRequest = (question, attachments) => {
+        const messages = [];
+        const history = Array.isArray(state.history) ? state.history : [];
+        history.forEach((entry, index) => {
+          if (!entry || !entry.role) {
+            return;
+          }
+          const text = entry.text || "";
+          if (entry.role === "assistant") {
+            if (String(text).trim()) {
+              messages.push({ role: "assistant", content: text });
+            }
+            return;
+          }
+          if (entry.role === "user") {
+            const isLast = index === history.length - 1 && text === question;
+            if (isLast) {
+              const content = buildUserContent(question, attachments);
+              if (content) {
+                messages.push({ role: "user", content });
+              }
+              return;
+            }
+            if (text) {
+              messages.push({ role: "user", content: text });
+            }
+          }
+        });
+        if (!messages.length || messages[messages.length - 1]?.role !== "user") {
+          const content = buildUserContent(question, attachments);
+          if (content) {
+            messages.push({ role: "user", content });
+          }
+        }
+        return messages;
+      };
+
+      const buildPayload = (messages, settings) => {
+        const payload = {
+          model: settings.modelName,
+          messages,
+          stream: settings.stream,
+        };
+        if (settings.temperature !== "") {
+          payload.temperature = settings.temperature;
+        }
+        if (settings.maxOutput !== "") {
+          payload.max_tokens = settings.maxOutput;
+        }
+        return payload;
+      };
+
+      const buildHeaders = (settings) => {
+        const headers = {
+          "Content-Type": "application/json",
+        };
+        if (settings.apiKey) {
+          headers.Authorization = `Bearer ${settings.apiKey}`;
+        }
+        return headers;
+      };
+
+      const scheduleTimeout = (controller, timeoutS) => {
+        if (!controller || !timeoutS || timeoutS <= 0) {
+          return null;
+        }
+        return setTimeout(() => {
+          controller.abort();
+        }, timeoutS * 1000);
+      };
+
+      const extractDelta = (payload) => {
+        const delta = payload?.choices?.[0]?.delta || {};
+        const content = delta?.content || "";
+        const reasoning =
+          delta?.reasoning || delta?.reasoning_content || delta?.thinking || "";
+        return { content, reasoning };
+      };
+
+      const extractMessage = (payload) => {
+        const choice = payload?.choices?.[0] || {};
+        const message = choice?.message || {};
+        const content = message?.content || choice?.text || "";
+        const reasoning =
+          message?.reasoning || message?.reasoning_content || message?.thinking || "";
+        return { content, reasoning };
+      };
+
+      const sendStream = async (endpoint, payload, assistantBubble, settings, controller) => {
+        const headers = buildHeaders(settings);
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) {
+          throw new Error(t("error.requestFailedStatus", { status: response.status }));
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        let done = false;
+        while (!done) {
+          const { value, done: streamDone } = await reader.read();
+          if (streamDone) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split(/\r?\n/);
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) {
+              continue;
+            }
+            const dataText = trimmed.slice(5).trim();
+            if (!dataText) {
+              continue;
+            }
+            if (dataText === "[DONE]") {
+              done = true;
+              break;
+            }
+            const payloadChunk = safeJsonParse(dataText);
+            if (!payloadChunk) {
+              continue;
+            }
+            const { content, reasoning } = extractDelta(payloadChunk);
+            if (content) {
+              const current = getMessageText(assistantBubble);
+              updateMessage(assistantBubble, current + content);
+            }
+            if (reasoning) {
+              appendReasoning(assistantBubble, reasoning);
+            }
+          }
+        }
+      };
+
+      const sendNonStream = async (endpoint, payload, assistantBubble, settings, controller) => {
+        const headers = buildHeaders(settings);
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(t("error.requestFailedStatus", { status: response.status }));
+        }
+        const result = await response.json();
+        const { content, reasoning } = extractMessage(result);
+        if (content) {
+          updateMessage(assistantBubble, content);
+        } else {
+          updateMessage(assistantBubble, t("error.noResponse"));
+        }
+        if (reasoning) {
+          setReasoning(assistantBubble, reasoning);
+        }
+      };
+
+      const validateSettings = (settings) => {
+        if (!settings.baseUrl) {
+          setStatus(t("error.fillEndpoint"));
+          return false;
+        }
+        if (!settings.apiKey) {
+          setStatus(t("error.fillApiKey"));
+          return false;
+        }
+        if (!settings.modelName) {
+          setStatus(t("error.fillModel"));
+          return false;
+        }
+        return true;
+      };
+
+      const sendMessage = async (question) => {
+        const settings = ensureIds(syncSettings());
+        setActiveSession(settings.userId, settings.sessionId);
+        if (!validateSettings(settings)) {
+          return;
+        }
+        const endpoint = buildModelEndpoint(settings.baseUrl);
+        if (!endpoint) {
+          setStatus(t("error.fillEndpoint"));
+          return;
+        }
+        setStreaming(true);
+        setStatus(t("status.preparingAttachments"));
+        state.controller = new AbortController();
+        const timeoutId = scheduleTimeout(state.controller, settings.timeoutS);
+        let assistantBubble = null;
+        try {
+          const { attachments, names } = await buildAttachments();
+          const userIndex = addHistoryEntry("user", question, names);
+          appendMessage("user", question, names, { historyIndex: userIndex });
+          const messages = buildMessagesForRequest(question, attachments);
+          const assistantIndex = addHistoryEntry("assistant", "");
+          assistantBubble = appendMessage("assistant", "", null, { historyIndex: assistantIndex });
+          setStatus(t("status.sending"));
+          const payload = buildPayload(messages, settings);
+          if (settings.stream) {
+            await sendStream(endpoint, payload, assistantBubble, settings, state.controller);
+          } else {
+            await sendNonStream(endpoint, payload, assistantBubble, settings, state.controller);
+          }
+          setStatus(t("status.done"));
+        } catch (error) {
+          if (error && error.name === "AbortError") {
+            if (assistantBubble && !getMessageText(assistantBubble)) {
+              updateMessage(assistantBubble, t("status.stopped"));
+            }
+            setStatus(t("status.stopped"));
+            return;
+          }
+          const message = error?.message || t("error.requestFailed");
+          if (assistantBubble) {
+            updateMessage(assistantBubble, message);
+          } else {
+            const errorIndex = addHistoryEntry("assistant", message);
+            appendMessage("assistant", message, null, { historyIndex: errorIndex });
+          }
+          setStatus(message);
+        } finally {
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
+          setStreaming(false);
+          state.controller = null;
+          clearAttachments();
+        }
+      };
+
+      const initialize = () => {
+        applyI18n();
+        const settings = ensureIds(loadSettings());
+        applySettings(settings);
+        syncSettings();
+        updateAttachmentList();
+        setActiveSession(settings.userId, settings.sessionId);
+        setStatus(t("status.ready"));
+        updateApiKeyToggleLabel();
+
+        elements.toggleApiKey.addEventListener("click", () => {
+          const hidden = elements.apiKey.type === "password";
+          elements.apiKey.type = hidden ? "text" : "password";
+          updateApiKeyToggleLabel();
+        });
+
+        if (elements.fileInput) {
+          elements.fileInput.addEventListener("change", (event) => {
+            const files = Array.from(event.target.files || []);
+            if (files.length) {
+              state.selectedFiles = state.selectedFiles.concat(files);
+            }
+            if (elements.fileInput) {
+              elements.fileInput.value = "";
+            }
+            updateAttachmentList();
+          });
+        }
+
+        if (elements.fileSelectBtn) {
+          elements.fileSelectBtn.addEventListener("click", () => {
+            if (!state.streaming && elements.fileInput) {
+              elements.fileInput.click();
+            }
+          });
+        }
+
+        elements.chatForm.addEventListener("submit", (event) => {
+          event.preventDefault();
+          if (state.streaming) {
+            if (state.controller) {
+              state.controller.abort();
+              setStatus(t("status.stopped"));
+            }
+            return;
+          }
+          const text = elements.questionInput.value.trim();
+          if (!text) {
+            return;
+          }
+          elements.questionInput.value = "";
+          sendMessage(text);
+        });
+
+        elements.questionInput.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            elements.sendBtn.click();
+          }
+        });
+
+        elements.newChatBtn.addEventListener("click", () => {
+          elements.sessionId.value = createId("session");
+          const next = syncSettings();
+          setActiveSession(next.userId, next.sessionId);
+          clearAttachments();
+          setStatus(t("status.newSessionReady"));
+        });
+
+        elements.resetSettingsBtn.addEventListener("click", () => {
+          const reset = { ...defaultSettings, userId: createId("user"), sessionId: createId("session") };
+          applySettings(reset);
+          saveSettings(reset);
+          setActiveSession(reset.userId, reset.sessionId);
+          clearAttachments();
+          setStatus(t("status.settingsReset"));
+        });
+
+        const sessionInputs = [elements.userId, elements.sessionId];
+        sessionInputs.forEach((input) => {
+          input.addEventListener("change", () => {
+            const next = syncSettings();
+            setActiveSession(next.userId, next.sessionId);
+          });
+        });
+        [
+          elements.baseUrl,
+          elements.apiKey,
+          elements.modelName,
+          elements.temperature,
+          elements.maxOutput,
+          elements.timeoutS,
+          elements.retryCount,
+          elements.streamToggle,
+          elements.maxContext,
+        ].forEach((input) => {
+          input.addEventListener("change", syncSettings);
+        });
+      };
+
+      initialize();
+    </script>
+  </body>
+</html>

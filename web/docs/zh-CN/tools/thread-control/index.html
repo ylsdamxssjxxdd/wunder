@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>会话线程控制 | 使用说明书</title>
+  <meta name="description" content="`thread_control` 的动作、线程关系与返回结构。">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/thread-control","language":"zh-CN","title":"会话线程控制","summary":"`thread_control` 的动作、线程关系与返回结构。","updated_at":"2026-04-10","read_when":["用户要创建、切换、归档或切换任务线程"],"source_docs":["src/services/tools/thread_control_tool.rs"],"tab":"工具","group":"会话与协作","group_path":["会话与协作"],"url":"/docs/zh-CN/tools/thread-control/","headings":[{"id":"section-1","level":1,"text":"会话线程控制"},{"id":"section-2","level":2,"text":"主要动作"},{"id":"section-3","level":2,"text":"返回骨架"},{"id":"section-4","level":2,"text":"list"},{"id":"section-5","level":2,"text":"create"},{"id":"section-6","level":2,"text":"和 subagentcontrol 的区别"}],"prev_slug":"zh-CN/tools/sleep","next_slug":"zh-CN/tools/subagent-control","markdown":"# 会话线程控制\n\n`thread_control` 管的是当前用户与智能体的会话线程，而不是子智能体运行控制。\n\n## 主要动作\n\n- `list`\n- `info`\n- `create`\n- `switch`\n- `back`\n- `update_title`\n- `archive`\n- `restore`\n\n## 返回骨架\n\n它成功时统一是：\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"create\",\n  \"state\": \"completed\",\n  \"summary\": \"Created a new thread.\",\n  \"data\": { ... }\n}\n```\n\n有些动作还会附带 `next_step_hint`。\n\n## `list`\n\n典型返回：\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"list\",\n  \"state\": \"completed\",\n  \"summary\": \"Listed 5 threads.\",\n  \"data\": {\n    \"scope\": \"branch\",\n    \"status\": \"active\",\n    \"items\": [\n      {\n        \"id\": \"sess_xxx\",\n        \"title\": \"工具文档更新\",\n        \"status\": \"active\",\n        \"created_at\": \"2026-04-10T10:00:00+08:00\",\n        \"updated_at\": \"2026-04-10T10:03:00+08:00\",\n        \"last_message_at\": \"2026-04-10T10:03:00+08:00\",\n        \"agent_id\": \"agent_docs\",\n        \"parent_session_id\": null,\n        \"spawn_label\": null,\n        \"runtime_status\": \"idle\"\n      }\n    ]\n  }\n}\n```\n\n## `create`\n\n除了新建线程，`create` 还支持通过 `switch` 控制新建后是否立刻切换过去、是否设置为任务线程。\n\n\n## 和 `subagent_control` 的区别\n\n- `thread_control`：管会话线程本身\n- `subagent_control`：管临时派生的子智能体运行\n\n如果用户想管理任务线程与归档状态，用 `thread_control`。  \n如果用户想等子智能体跑完、打断它、看它历史，用 `subagent_control`。\n","source_path":"使用说明书/zh-CN/tools/thread-control.md"}</script>
+</body>
+</html>

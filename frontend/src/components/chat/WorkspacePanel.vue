@@ -1,0 +1,4475 @@
+<template>
+  <div class="workspace-panel">
+    <div class="workspace-header">
+      <div class="workspace-title-row">
+        <div class="workspace-title-group">
+          <span class="workspace-title-icon" aria-hidden="true">
+            <i class="fa-solid fa-box-archive"></i>
+          </span>
+          <div class="workspace-title">{{ panelTitle }}</div>
+          <div v-if="showContainerId" class="workspace-container-id">{{ normalizedContainerId }}</div>
+        </div>
+        <div class="workspace-header-actions">
+          <button
+            class="workspace-icon-btn"
+            type="button"
+            :title="t('common.upload')"
+            :aria-label="t('common.upload')"
+            :disabled="loading || isReadonlyFileSystem"
+            @click="triggerUpload"
+          >
+            <i class="fa-solid fa-upload workspace-icon" aria-hidden="true"></i>
+          </button>
+          <button
+            class="workspace-icon-btn"
+            type="button"
+            :title="t('common.refresh')"
+            :aria-label="t('common.refresh')"
+            :disabled="loading"
+            @click="refreshWorkspace"
+          >
+            <i class="fa-solid fa-rotate-right workspace-icon" aria-hidden="true"></i>
+          </button>
+          <button
+            v-if="isWorkspaceFileSystem"
+            class="workspace-icon-btn"
+            type="button"
+            :title="t('workspace.binding.title')"
+            :aria-label="t('workspace.binding.title')"
+            :disabled="loading"
+            @click="openWorkspaceBindingDialog"
+          >
+            <i class="fa-solid fa-folder-tree workspace-icon" aria-hidden="true"></i>
+          </button>
+          <button
+            class="workspace-icon-btn danger"
+            type="button"
+            :title="t(isWorkspaceFileSystem && !state.selectedPaths.size ? 'workspace.clear.action' : 'workspace.panel.clear')"
+            :aria-label="t(isWorkspaceFileSystem && !state.selectedPaths.size ? 'workspace.clear.action' : 'workspace.panel.clear')"
+            :disabled="loading || isReadonlyFileSystem"
+            @click="handleHeaderDelete"
+          >
+            <i class="fa-solid fa-trash-can workspace-icon" aria-hidden="true"></i>
+          </button>
+        </div>
+      </div>
+      <div class="workspace-search workspace-search--header">
+        <i class="fa-solid fa-magnifying-glass workspace-search-icon" aria-hidden="true"></i>
+        <input
+          v-model="searchKeyword"
+          type="text"
+          :placeholder="t('workspace.search.placeholder')"
+          @input="handleSearchInput"
+          @keydown="handleSearchKeydown"
+        />
+      </div>
+    </div>
+
+    <div
+      :class="[
+        'workspace-upload-progress',
+        `is-${uploadProgress.mode}`,
+        { active: uploadProgress.active, indeterminate: uploadProgress.indeterminate }
+      ]"
+      aria-live="polite"
+    >
+      <div class="workspace-upload-bar">
+        <div class="workspace-upload-bar-fill" :style="uploadProgressBarStyle"></div>
+      </div>
+      <div class="workspace-upload-text">{{ uploadProgressText }}</div>
+    </div>
+
+    <div
+      ref="listRef"
+      :class="[
+        'workspace-list',
+        {
+          dragover: draggingOver,
+          virtual: workspaceVirtual,
+          refreshing: loading && displayEntries.length > 0
+        }
+      ]"
+      @scroll="handleListScroll"
+      @dragenter="handleListDragEnter"
+      @dragover="handleListDragOver"
+      @dragleave="handleListDragLeave"
+      @drop="handleListDrop"
+      @contextmenu.prevent="openContextMenu($event, null)"
+    >
+      <div v-if="loading && displayEntries.length === 0" class="workspace-skeleton" aria-hidden="true"></div>
+      <div v-else-if="displayEntries.length === 0" class="workspace-empty">{{ emptyText }}</div>
+      <template v-else>
+        <div
+          v-if="workspacePaddingTop"
+          class="workspace-spacer"
+          :style="{ height: `${workspacePaddingTop}px` }"
+        ></div>
+        <div
+          v-for="item in workspaceEntries"
+          :key="item.entry.path"
+          :class="[
+            'workspace-item',
+            item.entry.type === 'dir' ? 'is-folder' : '',
+            state.selectedPaths.has(item.entry.path) ? 'is-selected' : '',
+            selectedEntry && selectedEntry.path === item.entry.path ? 'active' : ''
+          ]"
+          :style="{ '--workspace-indent': `${item.depth * 16}px` }"
+          :data-workspace-path="item.entry.path"
+          :draggable="state.renamingPath === item.entry.path || isReadonlyFileSystem ? 'false' : 'true'"
+          @click="handleWorkspaceItemClick($event, item.entry)"
+          @dblclick="handleWorkspaceItemDoubleClick(item.entry)"
+          @contextmenu.prevent.stop="openContextMenu($event, item.entry)"
+          @dragstart="handleItemDragStart($event, item.entry)"
+          @dragend="handleItemDragEnd"
+          @dragenter="handleItemDragEnter($event, item.entry)"
+          @dragover="handleItemDragOver($event, item.entry)"
+          @dragleave="handleItemDragLeave($event, item.entry)"
+          @drop="handleItemDrop($event, item.entry)"
+        >
+          <div class="workspace-item-main">
+            <button
+              class="workspace-item-caret"
+              :class="{
+                hidden: !isTreeView || item.entry.type !== 'dir',
+                expanded: state.expanded.has(item.entry.path)
+              }"
+              type="button"
+              :aria-label="t('workspace.action.expandDir')"
+              @click.stop="toggleWorkspaceDirectory(item.entry)"
+            >
+              <i class="fa-solid fa-chevron-right workspace-caret-icon" aria-hidden="true"></i>
+            </button>
+            <span :class="['workspace-item-icon', item.icon.className]" :title="item.icon.label">
+              <img
+                class="workspace-item-icon-img"
+                :src="item.icon.icon"
+                :alt="item.icon.label"
+              />
+            </span>
+            <div
+              class="workspace-item-name"
+              :title="state.renamingPath === item.entry.path ? '' : item.entry.name"
+            >
+              <input
+                v-if="state.renamingPath === item.entry.path"
+                v-model="state.renamingValue"
+                class="workspace-item-rename"
+                type="text"
+                :data-rename-path="item.entry.path"
+                draggable="false"
+                @click.stop
+                @pointerdown.stop
+                @mousedown.stop
+                @keydown.enter.prevent="finishWorkspaceRename(item.entry, state.renamingValue)"
+                @keydown.esc.prevent="cancelWorkspaceRename"
+                @blur="finishWorkspaceRename(item.entry, state.renamingValue)"
+              />
+              <span v-else>{{ item.entry.name }}</span>
+            </div>
+          </div>
+          <div class="workspace-item-meta">{{ getEntryMeta(item.entry) }}</div>
+        </div>
+        <div
+          v-if="workspacePaddingBottom"
+          class="workspace-spacer"
+          :style="{ height: `${workspacePaddingBottom}px` }"
+        ></div>
+      </template>
+    </div>
+
+    <input ref="uploadInputRef" type="file" multiple style="display: none" @change="handleUploadInput" />
+
+    <Teleport to="body">
+      <div
+        v-show="contextMenu.visible"
+        ref="menuRef"
+        class="workspace-context-menu"
+        :style="menuStyle"
+        @contextmenu.prevent
+      >
+        <button class="workspace-menu-btn" :disabled="isReadonlyFileSystem" @click="handleNewFile">
+          {{ t('workspace.menu.newFile') }}
+        </button>
+        <button class="workspace-menu-btn" :disabled="isReadonlyFileSystem" @click="handleNewFolder">
+          {{ t('workspace.menu.newFolder') }}
+        </button>
+        <button class="workspace-menu-btn" :disabled="!contextMenuHasSelection" @click="handleQuotePath">
+          {{ t('workspace.menu.quotePath') }}
+        </button>
+        <button class="workspace-menu-btn" :disabled="!contextMenuCanEdit" @click="handleEdit">
+          {{ contextMenuEditLabel }}
+        </button>
+        <button class="workspace-menu-btn" :disabled="isReadonlyFileSystem || !contextMenuSingleEntry" @click="handleRename">
+          {{ t('workspace.menu.rename') }}
+        </button>
+        <button class="workspace-menu-btn" :disabled="isReadonlyFileSystem || !contextMenuHasSelection" @click="handleCopy">
+          {{ t('workspace.menu.copy') }}
+        </button>
+        <button class="workspace-menu-btn" :disabled="!contextMenuSingleEntry" @click="handleDownload">
+          {{ resourceActionLabel }}
+        </button>
+        <button class="workspace-menu-btn" :disabled="!contextMenuSingleEntry" @click="handleProperties">
+          {{ t('workspace.menu.properties') }}
+        </button>
+        <button class="workspace-menu-btn danger" :disabled="isReadonlyFileSystem || !contextMenuHasSelection" @click="handleDelete">
+          {{ t('common.delete') }}
+        </button>
+      </div>
+    </Teleport>
+
+    <el-dialog
+      v-model="properties.visible"
+      :title="t('workspace.properties.title')"
+      width="560px"
+      top="clamp(10px, 5vh, 44px)"
+      class="workspace-dialog workspace-dialog--properties"
+      :show-close="false"
+      append-to-body
+      @closed="state.properties.entry = null"
+    >
+      <template #header>
+        <div class="messenger-dialog-header">
+          <div class="messenger-dialog-header-copy"><strong>{{ t('workspace.properties.title') }}</strong></div>
+          <button class="messenger-dialog-close" type="button" :aria-label="t('common.close')" @click="closePropertiesDialog">
+            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+          </button>
+        </div>
+      </template>
+      <div v-if="properties.entry" class="workspace-properties">
+        <div class="workspace-properties-head">
+          <span :class="['workspace-properties-icon', propertiesIcon.className]" :title="propertiesIcon.label">
+            <img
+              class="workspace-properties-icon-img"
+              :src="propertiesIcon.icon"
+              :alt="propertiesIcon.label"
+            />
+          </span>
+          <div class="workspace-properties-title-block">
+            <div class="workspace-properties-title" :title="properties.entry.name || t('workspace.properties.unnamed')">
+              {{ properties.entry.name || t('workspace.properties.unnamed') }}
+            </div>
+            <div class="workspace-properties-subtitle">{{ propertiesTypeLabel }}</div>
+          </div>
+        </div>
+        <dl class="workspace-properties-list">
+          <template v-for="row in propertiesRows" :key="row.key">
+            <dt>{{ row.label }}</dt>
+            <dd :title="row.value">{{ row.value }}</dd>
+          </template>
+        </dl>
+        <div v-if="propertiesHint" class="workspace-properties-hint">{{ propertiesHint }}</div>
+      </div>
+    </el-dialog>
+
+    <el-dialog
+      v-model="preview.visible"
+      :title="t('workspace.preview.dialogTitle')"
+      width="720px"
+      top="clamp(10px, 4vh, 36px)"
+      class="workspace-dialog workspace-dialog--file-preview"
+      :show-close="false"
+      append-to-body
+    >
+      <template #header>
+        <div class="messenger-dialog-header">
+          <div class="messenger-dialog-header-copy">
+            <strong>{{ t('workspace.preview.dialogTitle') }}</strong>
+            <span :title="previewMeta">{{ preview.entry?.name || t('workspace.preview.dialogTitle') }}</span>
+          </div>
+          <div class="messenger-dialog-header-actions">
+            <button class="workspace-btn secondary" type="button" @click="downloadPreview">
+              <i class="fa-solid fa-download" aria-hidden="true"></i>
+              {{ resourceActionLabel }}
+            </button>
+            <button class="messenger-dialog-close" type="button" :aria-label="t('common.close')" @click="closePreview">
+              <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
+      </template>
+      <div v-if="preview.hint" class="workspace-preview-hint">{{ preview.hint }}</div>
+      <div
+        class="workspace-preview"
+        :class="{
+          embed: preview.embed,
+          'is-image': preview.type === 'image',
+          'is-svg': preview.type === 'svg',
+          'is-audio': preview.type === 'audio',
+          'is-video': preview.type === 'video'
+        }"
+      >
+        <div v-if="preview.loading" class="workspace-empty">
+          {{ t('workspace.preview.loading') }}
+        </div>
+        <template v-else>
+          <ZoomableImagePreview
+            v-if="preview.embed && preview.type === 'image'"
+            :image-url="preview.url"
+            :alt="preview.entry?.name || t('workspace.preview.dialogTitle')"
+            :active="preview.visible"
+          />
+          <iframe
+            v-else-if="preview.embed && (preview.type === 'html' || preview.type === 'pdf' || preview.type === 'svg')"
+            :src="preview.url"
+            :title="preview.entry?.name || t('workspace.preview.dialogTitle')"
+          />
+          <audio
+            v-else-if="preview.embed && preview.type === 'audio'"
+            class="workspace-preview-audio"
+            :src="preview.url"
+            controls
+            preload="metadata"
+          ></audio>
+          <video
+            v-else-if="preview.embed && preview.type === 'video'"
+            class="workspace-preview-video"
+            :src="preview.url"
+            controls
+            preload="metadata"
+          ></video>
+          <WorkspaceTextPreview
+            v-else-if="preview.type === 'text'"
+            :content="preview.content"
+            :source-path="preview.entry?.path || preview.entry?.name || ''"
+            wrapper-class="messenger-markdown"
+          />
+          <pre v-else class="workspace-preview-text">{{ preview.content }}</pre>
+        </template>
+      </div>
+    </el-dialog>
+
+    <Teleport v-if="editor.visible && editor.fullscreen" to=".messenger-view">
+      <div
+        :class="[
+          'workspace-editor-shell',
+          'workspace-editor-shell--modal',
+          'workspace-editor-shell--with-sidebar',
+          sidebarVisible ? 'is-sidebar-visible' : 'is-sidebar-hidden'
+        ]"
+      >
+        <div class="workspace-editor-panel workspace-dialog workspace-dialog--file-editor workspace-editor-panel--with-sidebar">
+          <div class="workspace-editor-head">
+            <div class="workspace-editor-header">
+              <div class="workspace-editor-header-left">
+                <div class="workspace-editor-header-title">
+                  {{ editor.entry?.name || t('workspace.editor.dialogTitle') }}
+                </div>
+              </div>
+              <div class="workspace-editor-head-actions">
+                <button
+                  class="workspace-btn secondary workspace-editor-icon-btn"
+                  type="button"
+                  :disabled="editor.loading || isReadonlyFileSystem"
+                  :title="t('common.save')"
+                  :aria-label="t('common.save')"
+                  @click="saveEditor"
+                >
+                  <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
+                </button>
+                <button
+                  v-if="editorPreviewToggleVisible"
+                  class="workspace-btn secondary workspace-editor-icon-btn"
+                  type="button"
+                  :title="editor.previewMode ? t('workspace.editor.previewSource') : t('workspace.editor.previewRendered')"
+                  :aria-label="editor.previewMode ? t('workspace.editor.previewSource') : t('workspace.editor.previewRendered')"
+                  @click="toggleEditorPreview"
+                >
+                  <i
+                    :class="[
+                      'fa-solid',
+                      editor.previewMode ? 'fa-code' : 'fa-eye'
+                    ]"
+                    aria-hidden="true"
+                  ></i>
+                </button>
+                <button
+                  class="workspace-btn secondary workspace-editor-icon-btn"
+                  type="button"
+                  :title="editor.fullscreen ? t('workspace.editor.exitFullscreen') : t('workspace.editor.enterFullscreen')"
+                  :aria-label="editor.fullscreen ? t('workspace.editor.exitFullscreen') : t('workspace.editor.enterFullscreen')"
+                  @click="toggleEditorFullscreen"
+                >
+                  <i
+                    :class="[
+                      'fa-solid',
+                      editor.fullscreen ? 'fa-compress' : 'fa-expand'
+                    ]"
+                    aria-hidden="true"
+                  ></i>
+                </button>
+                <button
+                  class="workspace-btn secondary workspace-editor-icon-btn workspace-editor-close-btn"
+                  type="button"
+                  :title="t('common.close')"
+                  :aria-label="t('common.close')"
+                  @click="closeEditor"
+                >
+                  <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="workspace-editor-body">
+            <div v-if="editor.previewMode" class="workspace-editor-preview">
+              <div v-if="editorPreviewType === 'html'" class="workspace-editor-preview-frame">
+                <iframe class="workspace-editor-preview-iframe" :src="editorHtmlPreviewUrl"></iframe>
+              </div>
+              <div v-else class="workspace-editor-preview-markdown messenger-markdown">
+                <div class="markdown-body" v-html="editorPreviewHtml"></div>
+              </div>
+            </div>
+            <div v-else class="workspace-editor-code">
+              <CodeMirrorEditor
+                v-model="editor.content"
+                :source-path="editor.entry?.path || editor.entry?.name || ''"
+                :readonly="editor.loading || isReadonlyFileSystem"
+                :placeholder="editor.loading ? t('common.loading') : t('workspace.preview.emptyContent')"
+                light-surface
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+    <el-dialog
+      v-else
+      v-model="editor.visible"
+      :title="t('workspace.editor.dialogTitle')"
+      width="720px"
+      top="clamp(10px, 4vh, 36px)"
+      class="workspace-dialog workspace-dialog--file-editor"
+      append-to-body
+      :show-close="false"
+    >
+      <template #header>
+        <div class="workspace-editor-header">
+          <div class="workspace-editor-header-left">
+            <div class="workspace-editor-header-title">
+              {{ editor.entry?.name || t('workspace.editor.dialogTitle') }}
+            </div>
+          </div>
+          <div class="workspace-editor-head-actions">
+            <button
+              class="workspace-btn secondary workspace-editor-icon-btn"
+              type="button"
+              :disabled="editor.loading || isReadonlyFileSystem"
+              :title="t('common.save')"
+              :aria-label="t('common.save')"
+              @click="saveEditor"
+            >
+              <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
+            </button>
+            <button
+              v-if="editorPreviewToggleVisible"
+              class="workspace-btn secondary workspace-editor-icon-btn"
+              type="button"
+              :title="editor.previewMode ? t('workspace.editor.previewSource') : t('workspace.editor.previewRendered')"
+              :aria-label="editor.previewMode ? t('workspace.editor.previewSource') : t('workspace.editor.previewRendered')"
+              @click="toggleEditorPreview"
+            >
+              <i
+                :class="[
+                  'fa-solid',
+                  editor.previewMode ? 'fa-code' : 'fa-eye'
+                ]"
+                aria-hidden="true"
+              ></i>
+            </button>
+            <button
+              class="workspace-btn secondary workspace-editor-icon-btn"
+              type="button"
+              :title="editor.fullscreen ? t('workspace.editor.exitFullscreen') : t('workspace.editor.enterFullscreen')"
+              :aria-label="editor.fullscreen ? t('workspace.editor.exitFullscreen') : t('workspace.editor.enterFullscreen')"
+              @click="toggleEditorFullscreen"
+            >
+              <i
+                :class="[
+                  'fa-solid',
+                  editor.fullscreen ? 'fa-compress' : 'fa-expand'
+                ]"
+                aria-hidden="true"
+              ></i>
+            </button>
+            <button
+              class="workspace-btn secondary workspace-editor-icon-btn workspace-editor-close-btn"
+              type="button"
+              :title="t('common.close')"
+              :aria-label="t('common.close')"
+              @click="closeEditor"
+            >
+              <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
+      </template>
+      <div class="workspace-editor-body">
+        <div v-if="editor.previewMode" class="workspace-editor-preview">
+          <div v-if="editorPreviewType === 'html'" class="workspace-editor-preview-frame">
+            <iframe class="workspace-editor-preview-iframe" :src="editorHtmlPreviewUrl"></iframe>
+          </div>
+          <div v-else class="workspace-editor-preview-markdown messenger-markdown">
+            <div class="markdown-body" v-html="editorPreviewHtml"></div>
+          </div>
+        </div>
+        <div v-else class="workspace-editor-code">
+          <CodeMirrorEditor
+            v-model="editor.content"
+            :source-path="editor.entry?.path || editor.entry?.name || ''"
+            :readonly="editor.loading || isReadonlyFileSystem"
+            :placeholder="editor.loading ? t('common.loading') : t('workspace.preview.emptyContent')"
+            light-surface
+          />
+        </div>
+      </div>
+    </el-dialog>
+
+    <OnlyOfficeEditorDialog
+      v-model:visible="onlyOffice.visible"
+      :path="onlyOffice.entry?.path || ''"
+      :agent-id="normalizedAgentId"
+      :container-id="normalizedContainerId"
+      :preserve-sidebar="preserveDockLayout"
+      :sidebar-visible="sidebarVisible"
+      @fallback="handleOnlyOfficeFallback"
+      @saved="handleOnlyOfficeSaved"
+    />
+
+    <DrawioEditorDialog
+      v-model:visible="drawio.visible"
+      :path="drawio.entry?.path || ''"
+      :agent-id="normalizedAgentId"
+      :container-id="normalizedContainerId"
+      :preserve-sidebar="preserveDockLayout"
+      :sidebar-visible="sidebarVisible"
+      @fallback="handleDrawioFallback"
+      @saved="handleDrawioSaved"
+    />
+
+    <WorkspaceNewFileDialog
+      v-model:visible="state.newFileDialog.visible"
+      :file-type-options="workspaceNewFileTemplates"
+      @confirm="handleWorkspaceNewFileConfirm"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue';
+import type { AxiosProgressEvent } from 'axios';
+import type { WorkspaceThemeIconResolver } from './workspaceIcons';
+import { ElMessage, ElMessageBox } from 'element-plus';
+
+import {
+  batchWunderWorkspaceAction,
+  clearWorkspace,
+  copyWunderWorkspaceEntry,
+  createWunderWorkspaceDir,
+  downloadWunderWorkspaceArchive,
+  downloadWunderWorkspaceFile,
+  fetchWunderWorkspaceContent,
+  moveWunderWorkspaceEntry,
+  saveWunderWorkspaceFile,
+  searchWunderWorkspace,
+  uploadWunderWorkspace
+} from '@/api/workspace';
+
+import DrawioEditorDialog from '@/components/chat/DrawioEditorDialog.vue';
+import OnlyOfficeEditorDialog from '@/components/chat/OnlyOfficeEditorDialog.vue';
+import CodeMirrorEditor from '@/components/common/CodeMirrorEditor.vue';
+import WorkspaceTextPreview from '@/components/common/WorkspaceTextPreview.vue';
+import WorkspaceNewFileDialog, {
+  type WorkspaceNewFileTemplate
+} from '@/components/chat/WorkspaceNewFileDialog.vue';
+import ZoomableImagePreview from '@/components/common/ZoomableImagePreview.vue';
+import { buildWorkspaceHtmlPreviewDocument } from './workspaceHtmlPreview';
+import {
+  collectWorkspaceRefreshTargets,
+  findWorkspaceEntryByPath,
+  getWorkspaceParentPath,
+  hasLoadedWorkspaceDirectoryChildren,
+  preserveWorkspaceExpandedChildren,
+  shouldAcceptWorkspaceTreeVersion,
+  shouldWorkspacePreviewReload
+} from './workspacePanelRefreshPlanner';
+import { clearWorkspaceDragPaths, hasWorkspaceDragPaths, readWorkspaceDragPaths, setWorkspaceDragPaths } from './workspaceDrag';
+
+import { getRuntimeConfig } from '@/config/runtime';
+import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { useI18n } from '@/i18n';
+import { showApiError } from '@/utils/apiError';
+import { renderMarkdown } from '@/utils/markdown';
+import {
+  buildWorkspaceTreeCacheKey,
+  cloneWorkspaceEntries,
+  normalizeWorkspacePath,
+  normalizeWorkspaceEntries,
+  readWorkspaceTreeCache,
+  writeWorkspaceTreeCache
+} from '@/utils/workspaceTreeCache';
+import { chatPerf } from '@/utils/chatPerf';
+
+const props = defineProps({
+  agentId: {
+    type: String,
+    default: ''
+  },
+  containerId: {
+    type: [Number, String],
+    default: 1
+  },
+  title: {
+    type: String,
+    default: ''
+  },
+  initialFocusPath: {
+    type: String,
+    default: ''
+  },
+  showContainerId: {
+    type: Boolean,
+    default: true
+  },
+  preserveDockLayout: {
+    type: Boolean,
+    default: false
+  },
+  sidebarVisible: {
+    type: Boolean,
+    default: true
+  },
+  emptyText: {
+    type: String,
+    default: ''
+  },
+  fileSystem: {
+    type: Object,
+    default: null
+  },
+  disableWorkspaceEditors: {
+    type: Boolean,
+    default: false
+  }
+});
+
+const emit = defineEmits<{
+  (event: 'stats', payload: { latestUpdatedAt: number; entryCount: number }): void;
+  (event: 'quote-path', payload: { paths: string[] }): void;
+  (event: 'open-workspace-binding', payload: { containerId: number; currentPath: string }): void;
+}>();
+
+const { t } = useI18n();
+const panelTitle = computed(() => props.title || t('workspace.title'));
+const showContainerId = computed(() => props.showContainerId);
+const preserveDockLayout = computed(() => props.preserveDockLayout);
+const sidebarVisible = computed(() => props.sidebarVisible);
+const shouldRunWorkspaceBackgroundWork = computed(() => sidebarVisible.value !== false);
+const desktopLocalMode = false;
+const getDesktopBridge = (): {
+  openPathWithDefaultApp?: (targetPath: string) => Promise<boolean> | boolean;
+} | null => {
+  if (typeof window === 'undefined') return null;
+  const runtimeWindow = window as Window & { wunderDesktop?: Record<string, unknown> };
+  const bridge = runtimeWindow.wunderDesktop;
+  return bridge && typeof bridge === 'object' ? (bridge as { openPathWithDefaultApp?: (targetPath: string) => Promise<boolean> | boolean }) : null;
+};
+const resolveDesktopAbsoluteWorkspacePath = (relativePath: string): string => {
+  const normalized = normalizeWorkspacePath(relativePath);
+  if (!normalized) return '';
+  const runtime = getRuntimeConfig() as {
+    workspace_root?: string;
+    container_roots?: Array<{ container_id?: number; root?: string }> | Record<string, string>;
+  };
+  let workspaceRoot = '';
+  const rawContainerRoots = runtime?.container_roots;
+  if (Array.isArray(rawContainerRoots)) {
+    const matched = rawContainerRoots.find((item) => Number(item?.container_id) === normalizedContainerId.value);
+    workspaceRoot = String(matched?.root || '').trim();
+  } else if (rawContainerRoots && typeof rawContainerRoots === 'object') {
+    workspaceRoot = String((rawContainerRoots as Record<string, string>)[String(normalizedContainerId.value)] || '').trim();
+  }
+  if (!workspaceRoot) {
+    workspaceRoot = String(runtime?.workspace_root || '').trim();
+  }
+  if (!workspaceRoot) return normalized.replace(/\//g, '\\');
+  let root = workspaceRoot.replace(/[\\/]+$/, '');
+  const looksLikeContainerScoped = /(?:^|[\\/])desktop_user(?:__c__\d+)?$/i.test(root);
+  if (!looksLikeContainerScoped) {
+    const scope =
+      normalizedContainerId.value > 0
+        ? `desktop_user__c__${normalizedContainerId.value}`
+        : 'desktop_user';
+    root = `${root}\\${scope}`;
+  }
+  return pathJoinWindows(root, normalized);
+};
+
+const pathJoinWindows = (basePath: string, relativePath: string): string => {
+  const base = String(basePath || '').trim();
+  const relative = String(relativePath || '').trim().replace(/\//g, '\\');
+  if (!base) return relative;
+  return `${base.replace(/[\\/]+$/, '')}\\${relative.replace(/^\\+/, '')}`;
+};
+
+const resolveDesktopAbsoluteWorkspacePathAsync = async (relativePath: string): Promise<string> =>
+  resolveDesktopAbsoluteWorkspacePath(normalizeWorkspacePath(relativePath));
+const resourceActionLabel = computed(() =>
+  desktopLocalMode ? t('workspace.action.exportCopy') : t('common.download')
+);
+
+const TEXT_EXTENSIONS = new Set([
+  'txt',
+  'md',
+  'markdown',
+  'log',
+  'json',
+  'yaml',
+  'yml',
+  'toml',
+  'ini',
+  'cfg',
+  'conf',
+  'properties',
+  'env',
+  'xml',
+  'csv',
+  'tsv',
+  'py',
+  'pyi',
+  'pyw',
+  'js',
+  'jsx',
+  'ts',
+  'tsx',
+  'css',
+  'scss',
+  'sass',
+  'less',
+  'html',
+  'htm',
+  'xhtml',
+  'sh',
+  'bash',
+  'zsh',
+  'fish',
+  'bat',
+  'cmd',
+  'ps1',
+  'sql',
+  'c',
+  'cc',
+  'cpp',
+  'cxx',
+  'h',
+  'hh',
+  'hpp',
+  'hxx',
+  'rs',
+  'java',
+  'kt',
+  'kts',
+  'go',
+  'php',
+  'vue',
+  'astro',
+  'svelte',
+  'dockerfile',
+  'gitignore'
+]);
+const HTML_PREVIEW_EXTENSIONS = new Set(['html', 'htm', 'xhtml']);
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'wmf', 'emf']);
+const METAFILE_IMAGE_EXTENSIONS = new Set(['wmf', 'emf']);
+const IMAGE_MIME_TYPES = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  wmf: 'image/png',
+  emf: 'image/png'
+};
+const AUDIO_MIME_TYPES = {
+  aac: 'audio/aac',
+  flac: 'audio/flac',
+  m4a: 'audio/mp4',
+  mp3: 'audio/mpeg',
+  ogg: 'audio/ogg',
+  wav: 'audio/wav'
+};
+const VIDEO_MIME_TYPES = {
+  avi: 'video/x-msvideo',
+  mkv: 'video/x-matroska',
+  mov: 'video/quicktime',
+  mp4: 'video/mp4',
+  webm: 'video/webm'
+};
+const PDF_EXTENSIONS = new Set(['pdf']);
+const ONLYOFFICE_WORD_EXTENSIONS = new Set([
+  'doc',
+  'docm',
+  'docx',
+  'dot',
+  'dotm',
+  'dotx',
+  'epub',
+  'fb2',
+  'fodt',
+  'hml',
+  'hwp',
+  'hwpx',
+  'mht',
+  'mhtml',
+  'odt',
+  'ott',
+  'pages',
+  'rtf',
+  'stw',
+  'sxw',
+  'wps',
+  'wpt'
+]);
+const ONLYOFFICE_EXCEL_EXTENSIONS = new Set([
+  'csv',
+  'et',
+  'ett',
+  'fods',
+  'numbers',
+  'ods',
+  'ots',
+  'sxc',
+  'tsv',
+  'xls',
+  'xlsb',
+  'xlsm',
+  'xlsx',
+  'xlt',
+  'xltm',
+  'xltx'
+]);
+const ONLYOFFICE_PPT_EXTENSIONS = new Set([
+  'dps',
+  'dpt',
+  'fodp',
+  'key',
+  'odg',
+  'odp',
+  'otp',
+  'pot',
+  'potm',
+  'potx',
+  'pps',
+  'ppsm',
+  'ppsx',
+  'ppt',
+  'pptm',
+  'pptx',
+  'sxi'
+]);
+const ONLYOFFICE_PDF_EXTENSIONS = new Set(['djvu', 'oxps', 'pdf', 'xps']);
+const ONLYOFFICE_DIAGRAM_EXTENSIONS = new Set(['vsdm', 'vsdx', 'vssm', 'vssx', 'vstm', 'vstx']);
+const ONLYOFFICE_TEXT_ALIAS_EXTENSIONS = new Set([
+  'astro',
+  'bash',
+  'bat',
+  'c',
+  'cc',
+  'cfg',
+  'cmd',
+  'conf',
+  'cpp',
+  'cs',
+  'css',
+  'cxx',
+  'dart',
+  'fish',
+  'go',
+  'gradle',
+  'h',
+  'hpp',
+  'java',
+  'jl',
+  'js',
+  'json',
+  'jsx',
+  'kt',
+  'kts',
+  'less',
+  'log',
+  'lua',
+  'php',
+  'pl',
+  'pm',
+  'ps1',
+  'py',
+  'r',
+  'rb',
+  'rs',
+  'sass',
+  'scss',
+  'sh',
+  'sql',
+  'svelte',
+  'swift',
+  'toml',
+  'ts',
+  'tsx',
+  'vue',
+  'yaml',
+  'yml',
+  'zsh'
+]);
+const ONLYOFFICE_EXTENSIONS = new Set([
+  ...ONLYOFFICE_WORD_EXTENSIONS,
+  ...ONLYOFFICE_EXCEL_EXTENSIONS,
+  ...ONLYOFFICE_PPT_EXTENSIONS,
+  ...ONLYOFFICE_PDF_EXTENSIONS,
+  ...ONLYOFFICE_DIAGRAM_EXTENSIONS,
+  ...ONLYOFFICE_TEXT_ALIAS_EXTENSIONS
+]);
+const ONLYOFFICE_DOCUMENT_EXTENSIONS = new Set([
+  ...ONLYOFFICE_WORD_EXTENSIONS,
+  ...ONLYOFFICE_EXCEL_EXTENSIONS,
+  ...ONLYOFFICE_PPT_EXTENSIONS,
+  ...ONLYOFFICE_PDF_EXTENSIONS,
+  ...ONLYOFFICE_DIAGRAM_EXTENSIONS
+]);
+const DRAWIO_EXTENSIONS = new Set(['dio', 'drawio']);
+const CODE_EXTENSIONS = new Set([
+  'py',
+  'pyi',
+  'pyw',
+  'js',
+  'jsx',
+  'ts',
+  'tsx',
+  'css',
+  'scss',
+  'sass',
+  'less',
+  'html',
+  'htm',
+  'xhtml',
+  'sh',
+  'bash',
+  'zsh',
+  'fish',
+  'bat',
+  'cmd',
+  'ps1',
+  'sql',
+  'c',
+  'cc',
+  'cpp',
+  'cxx',
+  'h',
+  'hh',
+  'hpp',
+  'hxx',
+  'rs',
+  'java',
+  'kt',
+  'kts',
+  'go',
+  'php',
+  'vue',
+  'astro',
+  'svelte'
+]);
+const ARCHIVE_EXTENSIONS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'bz2']);
+const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a']);
+const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm']);
+const WORKSPACE_DOC_ICON_BASE = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/, '/')}doc-icons`;
+const WORKSPACE_FOLDER_ICON = `${WORKSPACE_DOC_ICON_BASE}/folder.png`;
+const WORKSPACE_DEFAULT_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/other.png`;
+const WORKSPACE_TEXT_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/txt.png`;
+const WORKSPACE_HTML_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/html.png`;
+const WORKSPACE_PDF_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/pdf.png`;
+const WORKSPACE_WORD_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/docx.png`;
+const WORKSPACE_EXCEL_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/xlsx.png`;
+const WORKSPACE_PPT_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/pptx.png`;
+const WORKSPACE_DIAGRAM_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/processon_flow.png`;
+const WORKSPACE_DRAWIO_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/processon_flow.png`;
+const WORKSPACE_ICON_IDLE_TIMEOUT = 1200;
+const MAX_TEXT_PREVIEW_SIZE = 512 * 1024;
+// Align the client-side guard with Wunder's workspace upload limit.
+const MAX_WORKSPACE_UPLOAD_BYTES = 1024 * 1024 * 1024;
+const WORKSPACE_SEARCH_DEBOUNCE_MS = 300;
+const WORKSPACE_AUTO_REFRESH_DEBOUNCE_MS = 400;
+const WORKSPACE_SETTLE_REFRESH_DELAY_MS = 1400;
+const WORKSPACE_INCREMENTAL_REFRESH_MAX_TARGETS = 6;
+const WORKSPACE_INCREMENTAL_REFRESH_MAX_BATCH = 3;
+const WORKSPACE_COPY_MAX_RENAME_ATTEMPTS = 1000;
+
+type UploadProgressOptions = {
+  mode?: 'upload' | 'download';
+  percent?: number;
+  loaded?: number;
+  total?: number;
+  indeterminate?: boolean;
+};
+
+type PromptInputOptions = {
+  title?: string;
+  placeholder?: string;
+  defaultValue?: string;
+};
+
+type WorkspaceUploadOptions = {
+  refreshTree?: boolean;
+  relativePaths?: string[];
+};
+
+type WorkspacePanelFileSystem = {
+  key?: string;
+  readonly?: boolean;
+  supportsWorkspaceEditors?: boolean;
+  withParams?: (params?: Record<string, unknown>) => Record<string, unknown>;
+  appendFormData?: (formData: FormData) => void;
+  listContent: (params: Record<string, unknown>) => Promise<{ data?: Record<string, unknown> }>;
+  search: (params: Record<string, unknown>) => Promise<{ data?: Record<string, unknown> }>;
+  upload: (formData: FormData, config?: {
+    onUploadProgress?: (event: AxiosProgressEvent) => void;
+  }) => Promise<unknown>;
+  createDir: (payload: Record<string, unknown>) => Promise<unknown>;
+  moveEntry: (payload: Record<string, unknown>) => Promise<unknown>;
+  copyEntry: (payload: Record<string, unknown>) => Promise<unknown>;
+  batchAction: (payload: Record<string, unknown>) => Promise<{ data?: Record<string, unknown> }>;
+  saveFile: (payload: Record<string, unknown>) => Promise<unknown>;
+  downloadFile: (params: Record<string, unknown>, config?: {
+    onDownloadProgress?: (event: AxiosProgressEvent) => void;
+  }) => Promise<{ data: Blob; headers?: Record<string, string> }>;
+  downloadArchive: (params: Record<string, unknown>, config?: {
+    onDownloadProgress?: (event: AxiosProgressEvent) => void;
+  }) => Promise<{ data: Blob; headers?: Record<string, string> }>;
+};
+
+type DirectoryReaderLike = {
+  readEntries: (
+    successCallback: (entries: FileSystemEntryLike[]) => void,
+    errorCallback?: (reason: DOMException) => void
+  ) => void;
+};
+
+type FileSystemEntryLike = {
+  isFile?: boolean;
+  isDirectory?: boolean;
+  name?: string;
+  fullPath?: string;
+  file?: (successCallback: (file: File) => void, errorCallback?: (reason: DOMException) => void) => void;
+  createReader?: () => DirectoryReaderLike;
+};
+
+type DataTransferItemLike = DataTransferItem & {
+  webkitGetAsEntry?: () => FileSystemEntryLike | null;
+};
+
+type WorkspaceDroppedFile = {
+  file: File;
+  relativePath: string;
+};
+
+const normalizedAgentId = computed(() => String(props.agentId || '').trim());
+const normalizedContainerId = computed(() => {
+  const parsed = Number.parseInt(String(props.containerId ?? ''), 10);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.min(10, Math.max(0, parsed));
+});
+
+const withAgentParams = (params = {}) => {
+  const agentId = normalizedAgentId.value;
+  const next = { ...params, container_id: normalizedContainerId.value };
+  if (!agentId) return next;
+  return { ...next, agent_id: agentId };
+};
+
+const appendAgentId = (formData) => {
+  const agentId = normalizedAgentId.value;
+  if (agentId) {
+    formData.append('agent_id', agentId);
+  }
+  formData.append('container_id', String(normalizedContainerId.value));
+};
+
+const defaultWorkspaceFileSystem = computed<WorkspacePanelFileSystem>(() => ({
+  key: `workspace:${normalizedAgentId.value}:${normalizedContainerId.value}`,
+  readonly: false,
+  supportsWorkspaceEditors: true,
+  withParams: withAgentParams,
+  appendFormData: appendAgentId,
+  listContent: fetchWunderWorkspaceContent,
+  search: searchWunderWorkspace,
+  upload: uploadWunderWorkspace,
+  createDir: createWunderWorkspaceDir,
+  moveEntry: moveWunderWorkspaceEntry,
+  copyEntry: copyWunderWorkspaceEntry,
+  batchAction: batchWunderWorkspaceAction,
+  saveFile: saveWunderWorkspaceFile,
+  downloadFile: downloadWunderWorkspaceFile,
+  downloadArchive: downloadWunderWorkspaceArchive
+}) as WorkspacePanelFileSystem);
+
+const activeFileSystem = computed<WorkspacePanelFileSystem>(() => {
+  const configured = props.fileSystem && typeof props.fileSystem === 'object'
+    ? props.fileSystem as WorkspacePanelFileSystem
+    : null;
+  if (!configured) {
+    return defaultWorkspaceFileSystem.value;
+  }
+  return {
+    ...defaultWorkspaceFileSystem.value,
+    ...configured,
+    supportsWorkspaceEditors:
+      configured.supportsWorkspaceEditors === true && props.disableWorkspaceEditors !== true,
+    readonly: configured.readonly === true
+  };
+});
+
+const withFsParams = (params = {}) => activeFileSystem.value.withParams?.(params) || params;
+const appendFsFormData = (formData) => activeFileSystem.value.appendFormData?.(formData);
+const activeFileSystemKey = computed(() => activeFileSystem.value.key || defaultWorkspaceFileSystem.value.key || 'workspace');
+const isWorkspaceFileSystem = computed(() => !props.fileSystem);
+const isReadonlyFileSystem = computed(() => activeFileSystem.value.readonly === true);
+const supportsWorkspaceEditors = computed(
+  () => activeFileSystem.value.supportsWorkspaceEditors === true && props.disableWorkspaceEditors !== true
+);
+
+const listRef = ref(null);
+const uploadInputRef = ref(null);
+const menuRef = ref(null);
+const listScrollTop = ref(0);
+// Shared transfer progress state for workspace uploads and downloads.
+const uploadProgress = reactive({
+  active: false,
+  mode: 'upload' as 'upload' | 'download',
+  indeterminate: false,
+  percent: 0,
+  loaded: 0,
+  total: 0
+});
+let uploadProgressCount = 0;
+let downloadProgressCount = 0;
+
+const state = reactive({
+  path: '',
+  parent: null,
+  entries: [],
+  expanded: new Set(),
+  selectedPaths: new Set(),
+  lastSelectedPath: '',
+  selected: null,
+  searchKeyword: '',
+  searchMode: false,
+  sortBy: 'name',
+  sortOrder: 'asc',
+  renamingPath: '',
+  renamingValue: '',
+  loading: false,
+  visualLoading: false,
+  draggingOver: false,
+  preview: {
+    visible: false,
+    entry: null,
+    content: '',
+    hint: '',
+    loading: false,
+    embed: false,
+    type: '',
+    url: ''
+  },
+  editor: {
+    visible: false,
+    entry: null,
+    content: '',
+    loading: false,
+    previewMode: false,
+    fullscreen: false
+  },
+  onlyOffice: {
+    visible: false,
+    entry: null,
+    fallbackEntry: null
+  },
+  drawio: {
+    visible: false,
+    entry: null,
+    fallbackEntry: null
+  },
+  newFileDialog: {
+    visible: false
+  },
+  properties: {
+    visible: false,
+    entry: null
+  },
+  contextMenu: {
+    visible: false,
+    x: 0,
+    y: 0,
+    primaryPath: '',
+    selectionPaths: []
+  }
+});
+
+const canGoUp = computed(() => Boolean(state.path));
+const selectedEntry = computed(() => state.selected);
+const loading = computed(() => state.visualLoading);
+const draggingOver = computed(() => state.draggingOver);
+const preview = computed(() => state.preview);
+const editor = computed(() => state.editor);
+const properties = computed(() => state.properties);
+const onlyOffice = computed(() => state.onlyOffice);
+const drawio = computed(() => state.drawio);
+const editorPreviewType = computed(() => {
+  const extension = getWorkspaceExtension(state.editor.entry);
+  if (extension === 'html' || extension === 'htm' || extension === 'xhtml') return 'html';
+  if (extension === 'md' || extension === 'markdown') return 'markdown';
+  return '';
+});
+const editorPreviewToggleVisible = computed(() => Boolean(editorPreviewType.value));
+const editorPreviewHtml = computed(() =>
+  editorPreviewType.value === 'markdown' ? renderMarkdown(String(state.editor.content || '')) : ''
+);
+const editorHtmlPreviewUrl = ref('');
+let editorHtmlPreviewBuildSerial = 0;
+let editorHtmlPreviewObjectUrls: string[] = [];
+const workspaceNewFileTemplates = computed<WorkspaceNewFileTemplate[]>(() => [
+  {
+    id: 'text',
+    label: t('workspace.createFile.type.text'),
+    extension: 'txt',
+    extensionLabel: '.txt',
+    icon: WORKSPACE_TEXT_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.text'),
+    defaultName: 'untitled.txt',
+    content: ''
+  },
+  {
+    id: 'markdown',
+    label: t('workspace.createFile.type.markdown'),
+    extension: 'md',
+    extensionLabel: '.md',
+    icon: WORKSPACE_TEXT_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.markdown'),
+    defaultName: 'notes.md',
+    content: '# Title\n'
+  },
+  {
+    id: 'word',
+    label: t('workspace.createFile.type.word'),
+    extension: 'docx',
+    extensionLabel: '.docx',
+    icon: WORKSPACE_WORD_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.word'),
+    defaultName: 'document.docx',
+    content: ''
+  },
+  {
+    id: 'sheet',
+    label: t('workspace.createFile.type.sheet'),
+    extension: 'xlsx',
+    extensionLabel: '.xlsx',
+    icon: WORKSPACE_EXCEL_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.sheet'),
+    defaultName: 'sheet.xlsx',
+    content: ''
+  },
+  {
+    id: 'slides',
+    label: t('workspace.createFile.type.slides'),
+    extension: 'pptx',
+    extensionLabel: '.pptx',
+    icon: WORKSPACE_PPT_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.slides'),
+    defaultName: 'slides.pptx',
+    content: ''
+  },
+  {
+    id: 'diagram',
+    label: t('workspace.createFile.type.flowchart'),
+    extension: 'drawio',
+    extensionLabel: '.drawio',
+    icon: WORKSPACE_DIAGRAM_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.flowchart'),
+    defaultName: 'flowchart.drawio',
+    content: '<mxfile><diagram name=\"Flowchart\"></diagram></mxfile>'
+  }
+]);
+const contextMenu = computed(() => state.contextMenu);
+const emptyText = computed(() => {
+  if (state.searchMode) return t('workspace.empty.search');
+  if (props.emptyText) return props.emptyText;
+  return t('workspace.emptyPermanent');
+});
+const searchKeyword = computed({
+  get: () => state.searchKeyword,
+  set: (value) => {
+    state.searchKeyword = value;
+  }
+});
+const isTreeView = computed(() => !state.searchMode);
+const displayEntries = computed(() => {
+  const result = [];
+  const walk = (entries, depth) => {
+    entries.forEach((entry) => {
+      result.push({ entry, depth });
+      if (
+        !state.searchMode &&
+        entry.type === 'dir' &&
+        state.expanded.has(entry.path) &&
+        Array.isArray(entry.children) &&
+        entry.children.length
+      ) {
+        walk(entry.children, depth + 1);
+      }
+    });
+  };
+  if (Array.isArray(state.entries)) {
+    walk(state.entries, 0);
+  }
+  return result;
+});
+const WORKSPACE_ROW_HEIGHT = 28;
+const WORKSPACE_OVERSCAN = 8;
+const workspaceVirtual = computed(() => displayEntries.value.length > 120);
+const workspaceViewportHeight = computed(() => listRef.value?.clientHeight || 0);
+const workspaceVisibleCount = computed(() =>
+  Math.max(1, Math.ceil(workspaceViewportHeight.value / WORKSPACE_ROW_HEIGHT))
+);
+const workspaceStartIndex = computed(() => {
+  if (!workspaceVirtual.value) return 0;
+  const raw = Math.floor(listScrollTop.value / WORKSPACE_ROW_HEIGHT) - WORKSPACE_OVERSCAN;
+  const maxStart = Math.max(0, displayEntries.value.length - workspaceVisibleCount.value);
+  return Math.max(0, Math.min(raw, maxStart));
+});
+const workspaceEndIndex = computed(() => {
+  if (!workspaceVirtual.value) return displayEntries.value.length;
+  return Math.min(
+    displayEntries.value.length,
+    workspaceStartIndex.value + workspaceVisibleCount.value + WORKSPACE_OVERSCAN * 2
+  );
+});
+const workspaceEntries = computed(() =>
+  (workspaceVirtual.value
+    ? displayEntries.value.slice(workspaceStartIndex.value, workspaceEndIndex.value)
+    : displayEntries.value
+  ).map((item) => ({
+    ...item,
+    icon: getEntryIcon(item.entry)
+  }))
+);
+const workspacePaddingTop = computed(() =>
+  workspaceVirtual.value ? workspaceStartIndex.value * WORKSPACE_ROW_HEIGHT : 0
+);
+const workspacePaddingBottom = computed(() =>
+  workspaceVirtual.value
+    ? Math.max(0, (displayEntries.value.length - workspaceEndIndex.value) * WORKSPACE_ROW_HEIGHT)
+    : 0
+);
+// Keep the virtual spacer aligned with the real scroll container after remounts,
+// layout/theme changes, and incremental refreshes.
+const syncWorkspaceListViewport = async ({ reset = false } = {}) => {
+  await nextTick();
+  const listElement = listRef.value;
+  if (!listElement) {
+    listScrollTop.value = 0;
+    return;
+  }
+  if (reset && listElement.scrollTop !== 0) {
+    listElement.scrollTop = 0;
+  }
+  const maxScrollTop = Math.max(0, listElement.scrollHeight - listElement.clientHeight);
+  if (listElement.scrollTop > maxScrollTop) {
+    listElement.scrollTop = maxScrollTop;
+  }
+  listScrollTop.value = Math.max(0, listElement.scrollTop || 0);
+};
+
+const buildWorkspacePathChain = (path) => {
+  const normalized = normalizeWorkspacePath(path);
+  if (!normalized) return [];
+  const parts = normalized.split('/').filter(Boolean);
+  const chain = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    chain.push(parts.slice(0, index + 1).join('/'));
+  }
+  return chain;
+};
+
+const scrollWorkspaceEntryIntoView = async (path) => {
+  const targetPath = normalizeWorkspacePath(path);
+  if (!targetPath) return;
+  await nextTick();
+  const listElement = listRef.value as HTMLElement | null;
+  if (!listElement) return;
+  const targetElement = Array.from(listElement.querySelectorAll('.workspace-item') as NodeListOf<HTMLElement>).find(
+    (node) => node.getAttribute('data-workspace-path') === targetPath
+  );
+  if (targetElement?.scrollIntoView) {
+    targetElement.scrollIntoView({ block: 'nearest' });
+    listScrollTop.value = Math.max(0, listElement.scrollTop || 0);
+    return;
+  }
+  const targetIndex = displayEntries.value.findIndex((item) => item.entry.path === targetPath);
+  if (targetIndex < 0) return;
+  listElement.scrollTop = Math.max(0, targetIndex * WORKSPACE_ROW_HEIGHT - WORKSPACE_ROW_HEIGHT * 2);
+  listScrollTop.value = Math.max(0, listElement.scrollTop || 0);
+};
+
+// Reveal a nested artifact path from the workspace root without changing the panel's current route.
+const revealWorkspacePath = async (rawPath, options: { scroll?: boolean } = {}) => {
+  const targetPath = normalizeWorkspacePath(rawPath);
+  if (!targetPath || state.searchMode) return false;
+  const chain = buildWorkspacePathChain(targetPath);
+  if (!chain.length) return false;
+  for (let index = 0; index < chain.length - 1; index += 1) {
+    const dirPath = chain[index];
+    const entry = findWorkspaceEntryByPath(state.entries, dirPath);
+    if (!entry || entry.type !== 'dir') return false;
+    if (!state.expanded.has(dirPath)) {
+      state.expanded.add(dirPath);
+      state.expanded = new Set(state.expanded);
+    }
+    if (hasLoadedWorkspaceDirectoryChildren(entry)) continue;
+    try {
+      const { data } = await activeFileSystem.value.listContent(withFsParams({
+        path: dirPath,
+        include_content: true,
+        depth: 1,
+        sort_by: state.sortBy,
+        order: state.sortOrder
+      }));
+      attachWorkspaceChildren(state.entries, dirPath, data.entries || []);
+      emitWorkspaceStats(state.entries);
+    } catch (error) {
+      state.expanded.delete(dirPath);
+      state.expanded = new Set(state.expanded);
+      return false;
+    }
+  }
+  const targetEntry = findWorkspaceEntryByPath(state.entries, targetPath);
+  if (!targetEntry) return false;
+  if (targetEntry.type === 'dir') {
+    if (!state.expanded.has(targetPath)) {
+      state.expanded.add(targetPath);
+      state.expanded = new Set(state.expanded);
+    }
+    if (!hasLoadedWorkspaceDirectoryChildren(targetEntry)) {
+      try {
+        const { data } = await activeFileSystem.value.listContent(withFsParams({
+          path: targetPath,
+          include_content: true,
+          depth: 1,
+          sort_by: state.sortBy,
+          order: state.sortOrder
+        }));
+        attachWorkspaceChildren(state.entries, targetPath, data.entries || []);
+        emitWorkspaceStats(state.entries);
+      } catch (error) {
+        state.expanded.delete(targetPath);
+        state.expanded = new Set(state.expanded);
+        return false;
+      }
+    }
+  }
+  setWorkspaceSelection([targetPath], targetPath);
+  if (options.scroll !== false) {
+    await scrollWorkspaceEntryIntoView(targetPath);
+  }
+  return true;
+};
+const flatEntries = computed(() => displayEntries.value.map((item) => item.entry));
+const singleSelectedEntry = computed(() => {
+  if (state.selectedPaths.size !== 1) {
+    return null;
+  }
+  const path = String(Array.from(state.selectedPaths)[0] || '').trim();
+  return findWorkspaceEntryByPath(state.entries, path) || state.selected;
+});
+const contextMenuSelectionPaths = computed(() => {
+  if (Array.isArray(state.contextMenu.selectionPaths) && state.contextMenu.selectionPaths.length) {
+    return state.contextMenu.selectionPaths.filter((path) => Boolean(path));
+  }
+  return Array.from(state.selectedPaths);
+});
+const contextMenuSingleEntry = computed(() => {
+  if (contextMenuSelectionPaths.value.length === 1) {
+    const [path] = contextMenuSelectionPaths.value;
+    return findWorkspaceEntryByPath(state.entries, path) || state.selected;
+  }
+  if (state.contextMenu.primaryPath) {
+    return findWorkspaceEntryByPath(state.entries, state.contextMenu.primaryPath) || state.selected;
+  }
+  return null;
+});
+const contextMenuHasSelection = computed(() => contextMenuSelectionPaths.value.length > 0);
+const contextMenuCanEdit = computed(() => {
+  const entry = contextMenuSingleEntry.value;
+  return Boolean(
+    entry &&
+    (isWorkspaceTextEditable(entry) || isWorkspaceOfficeEditable(entry) || isWorkspaceDrawioEditable(entry))
+  );
+});
+const contextMenuEditLabel = computed(() =>
+  contextMenuSingleEntry.value &&
+  (isWorkspaceOfficeEditable(contextMenuSingleEntry.value) || isWorkspaceDrawioEditable(contextMenuSingleEntry.value))
+    ? t('workspace.onlyoffice.edit')
+    : t('common.edit')
+);
+const menuStyle = computed(() => ({ left: `${state.contextMenu.x}px`, top: `${state.contextMenu.y}px` }));
+const uploadProgressText = computed(() => {
+  if (!uploadProgress.active) return '';
+  const baseLabel =
+    uploadProgress.mode === 'download'
+      ? resourceActionLabel.value
+      : t('common.upload');
+  const hasTotal = Number.isFinite(uploadProgress.total) && uploadProgress.total > 0;
+  const hasLoaded = Number.isFinite(uploadProgress.loaded) && uploadProgress.loaded > 0;
+  const keyPrefix =
+    uploadProgress.mode === 'download' ? 'workspace.download.progress' : 'workspace.upload.progress';
+  if (hasTotal) {
+    const safePercent = Math.max(
+      0,
+      Math.min(100, Math.round((uploadProgress.loaded / uploadProgress.total) * 100))
+    );
+    return t(`${keyPrefix}.full`, {
+      label: baseLabel,
+      percent: safePercent,
+      loaded: formatBytes(uploadProgress.loaded),
+      total: formatBytes(uploadProgress.total)
+    });
+  }
+  if (hasLoaded) {
+    return t(`${keyPrefix}.partial`, {
+      label: baseLabel,
+      loaded: formatBytes(uploadProgress.loaded)
+    });
+  }
+  return t(`${keyPrefix}.loading`, { label: baseLabel });
+});
+const uploadProgressBarStyle = computed(() => {
+  if (!uploadProgress.active) {
+    return { width: '0%' };
+  }
+  if (uploadProgress.indeterminate) {
+    return { width: '30%' };
+  }
+  const safePercent = Math.max(0, Math.min(100, Number(uploadProgress.percent) || 0));
+  return { width: `${safePercent}%` };
+});
+
+const previewMeta = computed(() => {
+  const entry = state.preview.entry;
+  if (!entry) return '';
+  const parts = [];
+  if (entry.path) parts.push(entry.path);
+  if (Number.isFinite(entry.size)) parts.push(formatBytes(entry.size));
+  const updated = formatWorkspaceTimestamp(entry.updated_time);
+  if (updated) {
+    parts.push(updated);
+  }
+  return parts.join(' · ');
+});
+
+let searchTimer = null;
+let autoRefreshTimer = null;
+let autoRefreshPending = false;
+let autoRefreshForceFullReload = false;
+let autoRefreshTargetPaths = new Set<string>();
+const workspaceDirectoryLoadingPaths = new Set<string>();
+let latestWorkspaceTreeVersion = 0;
+let pendingWorkspaceTreeVersion: number | null = null;
+let settleRefreshTimer = null;
+let settleRefreshPending = false;
+let settleRefreshPreviewPath = '';
+let stopWorkspaceRefreshListener = null;
+const workspacePanelRefreshSourceId = `workspace-panel-${Math.random().toString(36).slice(2, 10)}`;
+const workspaceThemeIconResolver = shallowRef<WorkspaceThemeIconResolver | null>(null);
+let workspaceThemeIconResolverPromise: Promise<WorkspaceThemeIconResolver | null> | null = null;
+let workspaceThemeIconWarmupHandle: number | null = null;
+let workspaceThemeIconWarmupUsesIdleCallback = false;
+const joinWorkspacePath = (basePath, name) =>
+  normalizeWorkspacePath([basePath, name].filter(Boolean).join('/'));
+
+const splitWorkspaceEntryName = (name: string) => {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return { base: '', extension: '' };
+  if (trimmed.toLowerCase().endsWith('.drawio.xml')) {
+    return { base: trimmed.slice(0, -'.drawio.xml'.length), extension: '.drawio.xml' };
+  }
+  const dotIndex = trimmed.lastIndexOf('.');
+  if (dotIndex <= 0 || dotIndex === trimmed.length - 1) {
+    return { base: trimmed, extension: '' };
+  }
+  return {
+    base: trimmed.slice(0, dotIndex),
+    extension: trimmed.slice(dotIndex)
+  };
+};
+
+const buildWorkspaceCopyName = (name: string, suffixIndex: number) => {
+  const trimmed = String(name || '').trim() || 'item';
+  if (suffixIndex <= 0) return trimmed;
+  const { base, extension } = splitWorkspaceEntryName(trimmed);
+  return `${base}（${suffixIndex}）${extension}`;
+};
+
+const buildWorkspaceCopyDestination = (
+  targetDir: string,
+  entry: { name?: string; path?: string },
+  suffixIndex: number
+) => {
+  const entryName = String(entry?.name || entry?.path || 'item').trim() || 'item';
+  const nextName = buildWorkspaceCopyName(entryName, suffixIndex);
+  return joinWorkspacePath(targetDir, nextName);
+};
+
+const getWorkspaceVisibleEntryPaths = () => {
+  const paths = new Set<string>();
+  const visit = (entries: unknown[]) => {
+    if (!Array.isArray(entries)) return;
+    entries.forEach((entry) => {
+      if (!entry || typeof entry !== 'object') return;
+      const source = entry as Record<string, unknown>;
+      const path = normalizeWorkspacePath(source.path);
+      if (path) paths.add(path);
+      if (Array.isArray(source.children)) {
+        visit(source.children);
+      }
+    });
+  };
+  visit(state.entries);
+  return paths;
+};
+
+const resolveWorkspaceCopyExistingPaths = async (
+  targetDir: string,
+  cache: Map<string, Set<string>>
+) => {
+  const normalizedTargetDir = normalizeWorkspacePath(targetDir);
+  const cached = cache.get(normalizedTargetDir);
+  if (cached) return cached;
+  const visiblePaths = getWorkspaceVisibleEntryPaths();
+  const existingPaths = new Set<string>(visiblePaths);
+  try {
+    const snapshot = await fetchWorkspaceDirectorySnapshot(normalizedTargetDir);
+    const snapshotEntries = Array.isArray(snapshot?.entries) ? snapshot.entries : [];
+    snapshotEntries.forEach((item) => {
+      const path = normalizeWorkspacePath((item as Record<string, unknown>)?.path);
+      if (path) existingPaths.add(path);
+    });
+  } catch (error) {
+    // Visible entries still prevent most collisions; backend validation remains authoritative.
+  }
+  cache.set(normalizedTargetDir, existingPaths);
+  return existingPaths;
+};
+
+const resolveWorkspaceCopyDestination = async (
+  targetDir: string,
+  entry: { name?: string; path?: string },
+  options: { reservedPaths?: Set<string>; existingPathCache?: Map<string, Set<string>> } = {}
+) => {
+  const reservedPaths = options.reservedPaths ?? new Set<string>();
+  const existingPathCache = options.existingPathCache ?? new Map<string, Set<string>>();
+  const existingPaths = await resolveWorkspaceCopyExistingPaths(targetDir, existingPathCache);
+  for (let index = 1; index < WORKSPACE_COPY_MAX_RENAME_ATTEMPTS; index += 1) {
+    const destination = buildWorkspaceCopyDestination(targetDir, entry, index);
+    if (!destination || reservedPaths.has(destination) || existingPaths.has(destination)) {
+      continue;
+    }
+    reservedPaths.add(destination);
+    existingPaths.add(destination);
+    return destination;
+  }
+  return buildWorkspaceCopyDestination(targetDir, entry, WORKSPACE_COPY_MAX_RENAME_ATTEMPTS);
+};
+
+const getWorkspaceSelectionEntries = () =>
+  getActionSelectionPaths()
+    .map((path) => findWorkspaceEntryByPath(state.entries, path))
+    .filter((entry): entry is { path: string; name?: string; type?: string } => Boolean(entry?.path));
+
+const normalizeWorkspaceEntryText = (value) => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return text
+    .replace(/^\\\\\?\\/, '')
+    .replace(/^\/\/\?\//, '')
+    .replace(/\\/g, '/');
+};
+
+const getWorkspaceExtension = (entry) => {
+  const rawName = normalizeWorkspaceEntryText(entry?.name || entry?.path || '');
+  const baseName = rawName.split('/').pop() || '';
+  if (baseName.toLowerCase().endsWith('.drawio.xml')) {
+    return 'drawio.xml';
+  }
+  const dotIndex = baseName.lastIndexOf('.');
+  if (dotIndex === -1 || dotIndex === baseName.length - 1) return '';
+  return baseName.slice(dotIndex + 1).toLowerCase();
+};
+
+const isWorkspaceMetafileImage = (entry) => METAFILE_IMAGE_EXTENSIONS.has(getWorkspaceExtension(entry));
+
+const withWorkspacePreviewParams = (entry) => {
+  const params = { path: entry.path };
+  if (!isWorkspaceFileSystem.value || !isWorkspaceMetafileImage(entry)) {
+    return params;
+  }
+  return { ...params, preview: 'png' };
+};
+
+const normalizeWorkspaceEventPathValue = (value) => {
+  const text = String(value || '').trim();
+  if (!text || text === '/' || text === '.') return '';
+  const normalized = normalizeWorkspacePath(text);
+  return normalized === '.' ? '' : normalized;
+};
+
+const normalizeWorkspaceTreeVersion = (value) => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+};
+
+const normalizeWorkspaceEventPaths = (detail) => {
+  if (!detail || typeof detail !== 'object') return [];
+  const source = detail as Record<string, unknown>;
+  const pathKeys = [
+    'path',
+    'paths',
+    'changed_paths',
+    'changedPaths',
+    'target_path',
+    'targetPath',
+    'source_path',
+    'sourcePath',
+    'destination',
+    'destination_path',
+    'destinationPath',
+    'file',
+    'files'
+  ];
+  const result = new Set<string>();
+
+  const appendPathLike = (value: unknown) => {
+    if (value === null || value === undefined) return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => appendPathLike(item));
+      return;
+    }
+    if (typeof value === 'string') {
+      const normalized = normalizeWorkspaceEventPathValue(value);
+      if (normalized || value.trim() === '/' || value.trim() === '.') {
+        result.add(normalized);
+      }
+      return;
+    }
+    if (typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      appendPathLike(
+        record.path ??
+        record.relative_path ??
+        record.relativePath ??
+        record.target_path ??
+        record.targetPath ??
+        record.source_path ??
+        record.sourcePath ??
+        record.destination ??
+        record.destination_path ??
+        record.destinationPath
+      );
+    }
+  };
+
+  pathKeys.forEach((key) => appendPathLike(source[key]));
+  if (source.data && typeof source.data === 'object') {
+    const nested = source.data as Record<string, unknown>;
+    pathKeys.forEach((key) => appendPathLike(nested[key]));
+  }
+
+  return Array.from(result);
+};
+
+const nowPerf = () =>
+  typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+
+const isValidWorkspaceName = (value) => {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return false;
+  if (trimmed === '.' || trimmed === '..') return false;
+  return !(/[\\/]/.test(trimmed));
+};
+
+const isValidWorkspacePath = (value) => {
+  const normalized = normalizeWorkspacePath(value);
+  if (!normalized) return true;
+  return normalized.split('/').filter(Boolean).every(isValidWorkspaceName);
+};
+
+const ensureWritableFileSystem = () => {
+  if (!isReadonlyFileSystem.value) return true;
+  ElMessage.warning(t('userTools.skills.file.readonly'));
+  return false;
+};
+
+const isWorkspaceTextEditable = (entry) => {
+  if (!entry || entry.type !== 'file') return false;
+  const extension = getWorkspaceExtension(entry);
+  if (!TEXT_EXTENSIONS.has(extension)) return false;
+  const sizeValue = Number.isFinite(entry.size) ? entry.size : 0;
+  return sizeValue <= MAX_TEXT_PREVIEW_SIZE;
+};
+
+const isWorkspaceOfficeEditable = (entry) => {
+  if (!supportsWorkspaceEditors.value) return false;
+  if (!entry || entry.type !== 'file') return false;
+  return ONLYOFFICE_DOCUMENT_EXTENSIONS.has(getWorkspaceExtension(entry));
+};
+
+const isWorkspaceDrawioEditable = (entry) => {
+  if (!supportsWorkspaceEditors.value) return false;
+  if (!entry || entry.type !== 'file') return false;
+  const extension = getWorkspaceExtension(entry);
+  return DRAWIO_EXTENSIONS.has(extension) || extension === 'drawio.xml';
+};
+
+const resolveWorkspaceFallbackFileIcon = (extension) => {
+  if (PDF_EXTENSIONS.has(extension)) {
+    return WORKSPACE_PDF_FILE_ICON;
+  }
+  if (DRAWIO_EXTENSIONS.has(extension) || extension === 'drawio.xml') {
+    return WORKSPACE_DRAWIO_FILE_ICON;
+  }
+  if (ONLYOFFICE_WORD_EXTENSIONS.has(extension)) {
+    return WORKSPACE_WORD_FILE_ICON;
+  }
+  if (ONLYOFFICE_EXCEL_EXTENSIONS.has(extension)) {
+    return WORKSPACE_EXCEL_FILE_ICON;
+  }
+  if (ONLYOFFICE_PPT_EXTENSIONS.has(extension)) {
+    return WORKSPACE_PPT_FILE_ICON;
+  }
+  if (extension === 'html' || extension === 'htm' || extension === 'xhtml') {
+    return WORKSPACE_HTML_FILE_ICON;
+  }
+  if (TEXT_EXTENSIONS.has(extension) || CODE_EXTENSIONS.has(extension)) {
+    return WORKSPACE_TEXT_FILE_ICON;
+  }
+  return WORKSPACE_DEFAULT_FILE_ICON;
+};
+
+const loadWorkspaceThemeIconsInBackground = async () => {
+  if (workspaceThemeIconResolver.value) {
+    return workspaceThemeIconResolver.value;
+  }
+  workspaceThemeIconResolverPromise ??= import('./workspaceIcons')
+    .then((module) => module.loadWorkspaceThemeIconResolver())
+    .then((resolver) => {
+      workspaceThemeIconResolver.value = resolver;
+      return resolver;
+    })
+    .catch((error) => {
+      console.warn('[workspace] failed to warmup theme icons', error);
+      return null;
+    });
+  return workspaceThemeIconResolverPromise;
+};
+
+const cancelWorkspaceThemeIconWarmup = () => {
+  if (workspaceThemeIconWarmupHandle === null || typeof window === 'undefined') {
+    return;
+  }
+  if (workspaceThemeIconWarmupUsesIdleCallback && typeof window.cancelIdleCallback === 'function') {
+    window.cancelIdleCallback(workspaceThemeIconWarmupHandle);
+  } else {
+    window.clearTimeout(workspaceThemeIconWarmupHandle);
+  }
+  workspaceThemeIconWarmupHandle = null;
+  workspaceThemeIconWarmupUsesIdleCallback = false;
+};
+
+const scheduleWorkspaceThemeIconWarmup = () => {
+  if (workspaceThemeIconResolver.value || workspaceThemeIconResolverPromise) {
+    return;
+  }
+  cancelWorkspaceThemeIconWarmup();
+  const runWarmup = () => {
+    workspaceThemeIconWarmupHandle = null;
+    workspaceThemeIconWarmupUsesIdleCallback = false;
+    void loadWorkspaceThemeIconsInBackground();
+  };
+  if (typeof window === 'undefined') {
+    runWarmup();
+    return;
+  }
+  if (typeof window.requestIdleCallback === 'function') {
+    workspaceThemeIconWarmupUsesIdleCallback = true;
+    workspaceThemeIconWarmupHandle = window.requestIdleCallback(runWarmup, {
+      timeout: WORKSPACE_ICON_IDLE_TIMEOUT
+    });
+    return;
+  }
+  workspaceThemeIconWarmupHandle = window.setTimeout(runWarmup, 16);
+};
+
+const getEntryIcon = (entry) => {
+  if (entry.type === 'dir') {
+    return {
+      icon: WORKSPACE_FOLDER_ICON,
+      className: 'icon-vscode',
+      label: t('workspace.icon.folder')
+    };
+  }
+  const ext = getWorkspaceExtension(entry);
+  if (DRAWIO_EXTENSIONS.has(ext) || ext === 'drawio.xml') {
+    return { icon: WORKSPACE_DRAWIO_FILE_ICON, className: 'icon-vscode', label: t('workspace.icon.diagram') };
+  }
+  const icon =
+    workspaceThemeIconResolver.value?.resolveFileIconPath(String(entry?.name || entry?.path || ''), ext) ||
+    resolveWorkspaceFallbackFileIcon(ext);
+  if (IMAGE_EXTENSIONS.has(ext)) {
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.image') };
+  }
+  if (PDF_EXTENSIONS.has(ext)) {
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.pdf') };
+  }
+  if (ONLYOFFICE_WORD_EXTENSIONS.has(ext)) {
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.word') };
+  }
+  if (ONLYOFFICE_EXCEL_EXTENSIONS.has(ext)) {
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.excel') };
+  }
+  if (ONLYOFFICE_PPT_EXTENSIONS.has(ext)) {
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.ppt') };
+  }
+  if (ARCHIVE_EXTENSIONS.has(ext)) {
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.archive') };
+  }
+  if (AUDIO_EXTENSIONS.has(ext)) {
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.audio') };
+  }
+  if (VIDEO_EXTENSIONS.has(ext)) {
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.video') };
+  }
+  if (CODE_EXTENSIONS.has(ext)) {
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.code') };
+  }
+  if (TEXT_EXTENSIONS.has(ext)) {
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.text') };
+  }
+  if (ONLYOFFICE_EXTENSIONS.has(ext)) {
+    return { icon, className: 'icon-vscode', label: t('workspace.icon.office') };
+  }
+  return { icon, className: 'icon-vscode', label: t('workspace.icon.file') };
+};
+
+const getEntryMeta = (entry) => {
+  const parts = [];
+  if (entry.type === 'dir') {
+    parts.push(t('workspace.meta.folder'));
+  } else {
+    parts.push(formatBytes(entry.size || 0));
+  }
+  if (state.searchMode && entry.path) {
+    parts.push(entry.path);
+  }
+  return parts.join(' · ');
+};
+
+const formatBytes = (size) => {
+  const value = Number(size) || 0;
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+};
+
+const resolveWorkspaceEntryTypeLabel = (entry) => {
+  if (!entry) return t('workspace.properties.unavailable');
+  if (entry.type === 'dir') return t('workspace.meta.folder');
+  const extension = getWorkspaceExtension(entry);
+  const iconLabel = getEntryIcon(entry).label || t('workspace.icon.file');
+  return extension ? `${iconLabel} (.${extension})` : iconLabel;
+};
+
+const normalizeWorkspaceTimestamp = (value) => {
+  if (value === null || value === undefined) return 0;
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) return date.getTime();
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+};
+
+const formatWorkspaceTimestamp = (value) => {
+  const timestamp = normalizeWorkspaceTimestamp(value);
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString();
+};
+
+const collectLoadedDirectoryStats = (entry) => {
+  const result = {
+    loaded: Array.isArray(entry?.children),
+    files: 0,
+    folders: 0,
+    size: 0
+  };
+  const walk = (items) => {
+    if (!Array.isArray(items)) return;
+    items.forEach((item) => {
+      if (!item || typeof item !== 'object') return;
+      if (item.type === 'dir') {
+        result.folders += 1;
+        walk(item.children);
+        return;
+      }
+      result.files += 1;
+      result.size += Number(item.size || 0);
+    });
+  };
+  if (result.loaded) {
+    walk(entry.children);
+  }
+  return result;
+};
+
+const propertiesEntry = computed(() => state.properties.entry);
+const propertiesIcon = computed(() => {
+  const entry = propertiesEntry.value;
+  if (!entry) {
+    return { icon: WORKSPACE_DEFAULT_FILE_ICON, className: 'icon-vscode', label: t('workspace.icon.file') };
+  }
+  return getEntryIcon(entry);
+});
+const propertiesTypeLabel = computed(() => resolveWorkspaceEntryTypeLabel(propertiesEntry.value));
+const propertiesRows = computed(() => {
+  const entry = propertiesEntry.value;
+  if (!entry) return [];
+  const normalizedPath = normalizeWorkspacePath(entry.path || '');
+  const rows = [
+    { key: 'name', label: t('workspace.properties.name'), value: String(entry.name || t('workspace.properties.unnamed')) },
+    { key: 'type', label: t('workspace.properties.type'), value: resolveWorkspaceEntryTypeLabel(entry) },
+    { key: 'path', label: t('workspace.properties.path'), value: normalizedPath ? `/${normalizedPath}` : '/' }
+  ];
+  if (entry.type === 'dir') {
+    const stats = collectLoadedDirectoryStats(entry);
+    rows.push({
+      key: 'children',
+      label: t('workspace.properties.children'),
+      value: stats.loaded
+        ? t('workspace.properties.loadedChildrenSummary', { folders: stats.folders, files: stats.files })
+        : t('workspace.properties.notLoaded')
+    });
+    rows.push({
+      key: 'loaded-size',
+      label: t('workspace.properties.loadedSize'),
+      value: stats.loaded ? formatBytes(stats.size) : t('workspace.properties.notLoaded')
+    });
+  } else {
+    const extension = getWorkspaceExtension(entry);
+    if (extension) {
+      rows.push({ key: 'extension', label: t('workspace.properties.extension'), value: `.${extension}` });
+    }
+    rows.push({ key: 'size', label: t('workspace.properties.size'), value: formatBytes(entry.size || 0) });
+  }
+  rows.push({
+    key: 'modified',
+    label: t('workspace.properties.modified'),
+    value:
+      formatWorkspaceTimestamp(entry.updated_time || entry.updatedAt || entry.modified_at || entry.modifiedTime) ||
+      t('workspace.properties.unavailable')
+  });
+  if (isWorkspaceFileSystem.value) {
+    rows.push({
+      key: 'container',
+      label: t('workspace.properties.container'),
+      value: String(normalizedContainerId.value)
+    });
+  }
+  return rows;
+});
+const propertiesHint = computed(() => {
+  const entry = propertiesEntry.value;
+  if (!entry || entry.type !== 'dir') return '';
+  return Array.isArray(entry.children)
+    ? t('workspace.properties.loadedScopeHint')
+    : t('workspace.properties.unloadedScopeHint');
+});
+
+const collectWorkspaceStats = (entries) => {
+  let latestUpdatedAt = 0;
+  let entryCount = 0;
+  const walk = (items) => {
+    if (!Array.isArray(items)) return;
+    items.forEach((entry) => {
+      if (!entry || typeof entry !== 'object') return;
+      entryCount += 1;
+      const updatedTs = normalizeWorkspaceTimestamp(entry.updated_time || entry.updatedAt || entry.modified_at);
+      if (updatedTs > latestUpdatedAt) {
+        latestUpdatedAt = updatedTs;
+      }
+      if (Array.isArray(entry.children) && entry.children.length) {
+        walk(entry.children);
+      }
+    });
+  };
+  walk(entries);
+  return { latestUpdatedAt, entryCount };
+};
+
+const emitWorkspaceStats = (entries = state.entries) => {
+  emit('stats', collectWorkspaceStats(entries));
+};
+
+// Keep the shared transfer indicator stable across concurrent upload/download requests.
+const setUploadProgress = (options: UploadProgressOptions = {}) => {
+  const {
+    mode = uploadProgress.mode || 'upload',
+    percent = 0,
+    loaded = 0,
+    total = 0,
+    indeterminate = false
+  } = options;
+  uploadProgress.active = true;
+  uploadProgress.mode = mode;
+  uploadProgress.indeterminate = indeterminate;
+  uploadProgress.percent = percent;
+  uploadProgress.loaded = loaded;
+  uploadProgress.total = total;
+};
+
+const resetUploadProgress = () => {
+  uploadProgress.active = false;
+  uploadProgress.mode = 'upload';
+  uploadProgress.indeterminate = false;
+  uploadProgress.percent = 0;
+  uploadProgress.loaded = 0;
+  uploadProgress.total = 0;
+};
+
+const beginUploadProgress = () => {
+  uploadProgressCount += 1;
+  setUploadProgress({ mode: 'upload', percent: 0, loaded: 0, total: 0, indeterminate: true });
+};
+
+const endUploadProgress = () => {
+  uploadProgressCount = Math.max(0, uploadProgressCount - 1);
+  if (uploadProgressCount === 0 && downloadProgressCount === 0) {
+    resetUploadProgress();
+  }
+};
+
+const beginDownloadProgress = () => {
+  downloadProgressCount += 1;
+  setUploadProgress({ mode: 'download', percent: 0, loaded: 0, total: 0, indeterminate: true });
+};
+
+const endDownloadProgress = () => {
+  downloadProgressCount = Math.max(0, downloadProgressCount - 1);
+  if (uploadProgressCount === 0 && downloadProgressCount === 0) {
+    resetUploadProgress();
+  }
+};
+
+const updateTransferProgress = (
+  mode: 'upload' | 'download',
+  event: AxiosProgressEvent
+) => {
+  const loaded = Number(event.loaded) || 0;
+  const total = Number.isFinite(event.total) ? Number(event.total) : 0;
+  if (total > 0) {
+    const percent = (loaded / total) * 100;
+    setUploadProgress({ mode, percent, loaded, total, indeterminate: false });
+    return;
+  }
+  setUploadProgress({ mode, loaded, total: 0, indeterminate: true });
+};
+
+const resolveWorkspaceEntryName = (path) => {
+  const entry = findWorkspaceEntryByPath(state.entries, path);
+  if (entry?.name) return entry.name;
+  const fallback = String(path || '').split('/').pop();
+  return fallback || t('common.unknown');
+};
+
+const attachWorkspaceChildren = (entries, targetPath, children) => {
+  const target = findWorkspaceEntryByPath(entries, targetPath);
+  if (!target || target.type !== 'dir') return false;
+  target.children = normalizeWorkspaceEntries(Array.isArray(children) ? children : []);
+  target.childrenLoaded = true;
+  return true;
+};
+
+const resetWorkspaceSelection = () => {
+  state.selectedPaths = new Set();
+  state.selected = null;
+  state.lastSelectedPath = '';
+};
+
+const setWorkspaceSelection = (paths, primaryPath) => {
+  state.selectedPaths = new Set(paths.filter(Boolean));
+  state.selected =
+    primaryPath && state.selectedPaths.has(primaryPath)
+      ? findWorkspaceEntryByPath(state.entries, primaryPath)
+      : null;
+  if (primaryPath) {
+    state.lastSelectedPath = primaryPath;
+  }
+};
+
+const toggleWorkspaceSelection = (path) => {
+  if (!path) return;
+  if (state.selectedPaths.has(path)) {
+    state.selectedPaths.delete(path);
+    if (state.selected?.path === path) {
+      state.selected = null;
+    }
+  } else {
+    state.selectedPaths.add(path);
+    state.selected = findWorkspaceEntryByPath(state.entries, path);
+    state.lastSelectedPath = path;
+  }
+};
+
+const getWorkspaceSelectionPaths = (): string[] =>
+  Array.from(state.selectedPaths)
+    .map((path) => String(path || '').trim())
+    .filter(Boolean);
+
+const reconcileWorkspaceSelection = () => {
+  if (!state.selectedPaths.size) {
+    state.selected = null;
+    return;
+  }
+  const nextSelectedPaths = new Set<string>();
+  state.selectedPaths.forEach((path: string) => {
+    if (findWorkspaceEntryByPath(state.entries, path)) {
+      nextSelectedPaths.add(path);
+    }
+  });
+  state.selectedPaths = nextSelectedPaths;
+  const preferredPath =
+    state.lastSelectedPath && nextSelectedPaths.has(state.lastSelectedPath)
+      ? state.lastSelectedPath
+      : Array.from(nextSelectedPaths)[0] || '';
+  state.selected = preferredPath ? findWorkspaceEntryByPath(state.entries, preferredPath) : null;
+  if (!preferredPath) {
+    state.lastSelectedPath = '';
+  }
+};
+
+const reconcileWorkspaceRenameState = () => {
+  const renamingPath = String(state.renamingPath || '').trim();
+  if (!renamingPath) {
+    state.renamingValue = '';
+    return;
+  }
+  if (!findWorkspaceEntryByPath(state.entries, renamingPath)) {
+    state.renamingPath = '';
+    state.renamingValue = '';
+  }
+};
+
+const syncWorkspacePreviewEntry = () => {
+  const previewPath = normalizeWorkspacePath(state.preview.entry?.path || '');
+  if (!previewPath) return;
+  const nextEntry = findWorkspaceEntryByPath(state.entries, previewPath);
+  if (nextEntry?.type === 'file') {
+    state.preview.entry = nextEntry;
+    return;
+  }
+  if (state.preview.visible) {
+    closePreview();
+  }
+};
+
+const commitWorkspaceTreeVersion = (nextVersion: number | null = pendingWorkspaceTreeVersion) => {
+  if (nextVersion === null) return;
+  latestWorkspaceTreeVersion = Math.max(latestWorkspaceTreeVersion, nextVersion);
+  if (pendingWorkspaceTreeVersion !== null && pendingWorkspaceTreeVersion <= latestWorkspaceTreeVersion) {
+    pendingWorkspaceTreeVersion = null;
+  }
+};
+
+const confirmAction = async (message, title = t('common.notice')) => {
+  try {
+    await ElMessageBox.confirm(message, title, {
+      confirmButtonText: t('common.confirm'),
+      cancelButtonText: t('common.cancel'),
+      type: 'warning'
+    });
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
+const promptInput = async (message: string, options: PromptInputOptions = {}) => {
+  const {
+    title = t('common.notice'),
+    placeholder = '',
+    defaultValue = ''
+  } = options;
+  try {
+    const { value } = await ElMessageBox.prompt(message, title, {
+      confirmButtonText: t('common.confirm'),
+      cancelButtonText: t('common.cancel'),
+      inputValue: defaultValue,
+      inputPlaceholder: placeholder
+    });
+    return value;
+  } catch (error) {
+    return null;
+  }
+};
+
+const loadWorkspace = async ({
+  path = state.path,
+  resetExpanded = false,
+  resetSearch = false,
+  background = false
+} = {}) => {
+  const preserveInteraction = background;
+  const currentPath = normalizeWorkspacePath(path);
+  const cacheKey = buildWorkspaceTreeCacheKey(
+    activeFileSystemKey.value,
+    currentPath,
+    state.sortBy,
+    state.sortOrder
+  );
+  const cachedTree = readWorkspaceTreeCache(cacheKey);
+  const hasCachedEntries = Boolean(cachedTree && Array.isArray(cachedTree.entries) && cachedTree.entries.length > 0);
+  const hasFallbackEntries = hasCachedEntries || (preserveInteraction && state.entries.length > 0);
+  const shouldApplyCachedTree = !preserveInteraction || state.entries.length === 0;
+  if (shouldApplyCachedTree && cachedTree) {
+    state.path = normalizeWorkspacePath(cachedTree.path);
+    state.parent = cachedTree.parent ? normalizeWorkspacePath(cachedTree.parent) : null;
+    state.entries = cloneWorkspaceEntries(cachedTree.entries);
+    emitWorkspaceStats(state.entries);
+  }
+  if (!preserveInteraction) {
+    state.loading = true;
+  }
+  // Keep background sync fully silent to avoid empty-state skeleton flicker.
+  state.visualLoading = !background;
+  if (resetSearch) {
+    state.searchMode = false;
+    state.searchKeyword = '';
+  }
+  if (resetExpanded) {
+    state.expanded = new Set();
+  }
+  if (!preserveInteraction) {
+    state.renamingPath = '';
+    state.renamingValue = '';
+    resetWorkspaceSelection();
+  }
+  try {
+    const { data } = await activeFileSystem.value.listContent(withFsParams({
+      path: currentPath,
+      include_content: true,
+      depth: 1,
+      sort_by: state.sortBy,
+      order: state.sortOrder
+    }));
+    const payload = data || {};
+    const normalizedPath = normalizeWorkspacePath(payload.path ?? currentPath);
+    commitWorkspaceTreeVersion(normalizeWorkspaceTreeVersion(payload.tree_version ?? payload.treeVersion));
+    state.path = normalizedPath;
+    const parentPath = getWorkspaceParentPath(normalizedPath);
+    state.parent = parentPath ? parentPath : null;
+    const nextEntries = normalizeWorkspaceEntries(Array.isArray(payload.entries) ? payload.entries : []);
+    if (preserveInteraction && state.expanded.size) {
+      preserveWorkspaceExpandedChildren({
+        nextEntries,
+        previousEntries: state.entries,
+        expandedPaths: state.expanded as Iterable<string>
+      });
+    }
+    state.entries = nextEntries;
+    emitWorkspaceStats(state.entries);
+    writeWorkspaceTreeCache(cacheKey, {
+      path: normalizedPath,
+      parent: state.parent,
+      entries: state.entries
+    });
+    if (state.expanded.size) {
+      const filtered = new Set();
+      state.expanded.forEach((value: string) => {
+        if (!normalizedPath || value === normalizedPath || value.startsWith(`${normalizedPath}/`)) {
+          filtered.add(value);
+        }
+      });
+      state.expanded = filtered;
+    }
+    await hydrateExpandedEntries();
+    reconcileWorkspaceSelection();
+    reconcileWorkspaceRenameState();
+    syncWorkspacePreviewEntry();
+    await syncWorkspaceListViewport({ reset: !preserveInteraction });
+    return true;
+  } catch (error) {
+    showApiError(error, t('workspace.loadFailed'));
+    if (!hasFallbackEntries) {
+      state.entries = [];
+      emitWorkspaceStats(state.entries);
+    }
+    reconcileWorkspaceSelection();
+    reconcileWorkspaceRenameState();
+    await syncWorkspaceListViewport({ reset: !preserveInteraction });
+    return false;
+  } finally {
+    if (!preserveInteraction) {
+      state.loading = false;
+    }
+    state.visualLoading = false;
+    if (autoRefreshPending) {
+      scheduleWorkspaceAutoRefresh();
+    }
+  }
+};
+
+const loadWorkspaceSearch = async ({ background = false } = {}) => {
+  const preserveInteraction = background;
+  const keyword = String(state.searchKeyword || '').trim();
+  if (!keyword) {
+    state.searchMode = false;
+    return loadWorkspace({ resetSearch: true, background });
+  }
+  if (!preserveInteraction) {
+    state.loading = true;
+  }
+  state.visualLoading = !background;
+  if (!preserveInteraction) {
+    state.renamingPath = '';
+    state.renamingValue = '';
+    resetWorkspaceSelection();
+  }
+  try {
+    const { data } = await activeFileSystem.value.search(withFsParams({ keyword, offset: 0, limit: 200 })
+    );
+    const payload = data || {};
+    commitWorkspaceTreeVersion(normalizeWorkspaceTreeVersion(payload.tree_version ?? payload.treeVersion));
+    state.entries = normalizeWorkspaceEntries(Array.isArray(payload.entries) ? payload.entries : []);
+    state.searchMode = true;
+    emitWorkspaceStats(state.entries);
+    reconcileWorkspaceSelection();
+    reconcileWorkspaceRenameState();
+    syncWorkspacePreviewEntry();
+    await syncWorkspaceListViewport({ reset: !preserveInteraction });
+    return true;
+  } catch (error) {
+    showApiError(error, t('workspace.searchFailed'));
+    state.entries = [];
+    emitWorkspaceStats(state.entries);
+    reconcileWorkspaceSelection();
+    reconcileWorkspaceRenameState();
+    await syncWorkspaceListViewport({ reset: !preserveInteraction });
+    return false;
+  } finally {
+    if (!preserveInteraction) {
+      state.loading = false;
+    }
+    state.visualLoading = false;
+    if (autoRefreshPending) {
+      scheduleWorkspaceAutoRefresh();
+    }
+  }
+};
+
+const reloadWorkspaceView = async ({ background = false } = {}) => {
+  if (state.searchMode && String(state.searchKeyword || '').trim()) {
+    return loadWorkspaceSearch({ background });
+  }
+  return loadWorkspace({ resetSearch: true, background });
+};
+
+const fetchWorkspaceDirectorySnapshot = async (path) => {
+  const targetPath = normalizeWorkspacePath(path);
+  const { data } = await activeFileSystem.value.listContent(withFsParams({
+    path: targetPath,
+    include_content: true,
+    depth: 1,
+    sort_by: state.sortBy,
+    order: state.sortOrder
+  }));
+  const payload = data || {};
+  const resolvedPath = normalizeWorkspacePath(payload.path ?? targetPath);
+  const entryType = String(payload.type ?? payload.entry_type ?? '').trim().toLowerCase();
+  if (entryType && entryType !== 'dir') {
+    return null;
+  }
+  return {
+    path: resolvedPath,
+    entries: normalizeWorkspaceEntries(Array.isArray(payload.entries) ? payload.entries : []),
+    treeVersion: normalizeWorkspaceTreeVersion(payload.tree_version ?? payload.treeVersion)
+  };
+};
+
+const reloadWorkspaceDirectoryPath = async (path) => {
+  const snapshot = await fetchWorkspaceDirectorySnapshot(path);
+  if (!snapshot) return false;
+  const targetPath = normalizeWorkspacePath(snapshot.path);
+  // Patch current view directly when the changed directory is the visible root.
+  if (targetPath === state.path) {
+    state.path = targetPath;
+    state.parent = getWorkspaceParentPath(targetPath) || null;
+    const nextEntries = preserveWorkspaceExpandedChildren({
+      nextEntries: snapshot.entries,
+      previousEntries: state.entries,
+      expandedPaths: state.expanded as Iterable<string>
+    });
+    state.entries = nextEntries;
+    emitWorkspaceStats(state.entries);
+    commitWorkspaceTreeVersion(snapshot.treeVersion);
+    writeWorkspaceTreeCache(
+      buildWorkspaceTreeCacheKey(
+        activeFileSystemKey.value,
+        targetPath,
+        state.sortBy,
+        state.sortOrder
+      ),
+      {
+        path: targetPath,
+        parent: state.parent,
+        entries: state.entries
+      }
+    );
+    reconcileWorkspaceSelection();
+    await hydrateExpandedEntries();
+    syncWorkspacePreviewEntry();
+    await syncWorkspaceListViewport();
+    return true;
+  }
+  const sourcePath = normalizeWorkspacePath(path);
+  const directTarget = findWorkspaceEntryByPath(state.entries, targetPath);
+  const fallbackTarget = sourcePath !== targetPath ? findWorkspaceEntryByPath(state.entries, sourcePath) : null;
+  const previousChildren = Array.isArray(directTarget?.children)
+    ? directTarget.children
+    : Array.isArray(fallbackTarget?.children)
+      ? fallbackTarget.children
+      : [];
+  const nextChildren = preserveWorkspaceExpandedChildren({
+    nextEntries: snapshot.entries,
+    previousEntries: previousChildren,
+    expandedPaths: state.expanded as Iterable<string>
+  });
+  const attached =
+    attachWorkspaceChildren(state.entries, targetPath, nextChildren) ||
+    (sourcePath !== targetPath && attachWorkspaceChildren(state.entries, sourcePath, nextChildren));
+  if (!attached) return false;
+  commitWorkspaceTreeVersion(snapshot.treeVersion);
+  emitWorkspaceStats(state.entries);
+  reconcileWorkspaceSelection();
+  await hydrateExpandedEntries();
+  syncWorkspacePreviewEntry();
+  await syncWorkspaceListViewport();
+  return true;
+};
+
+const refreshWorkspacePathWithFallback = async (path) => {
+  try {
+    const patched = await reloadWorkspaceDirectoryPath(path);
+    if (patched) return true;
+  } catch (error) {
+    // Fallback to full reload when path patching is not possible.
+  }
+  return reloadWorkspaceView();
+};
+
+const enqueueWorkspaceAutoRefreshTargets = (targets = []) => {
+  if (autoRefreshForceFullReload) return;
+  for (const target of targets) {
+    autoRefreshTargetPaths.add(normalizeWorkspacePath(target));
+    if (autoRefreshTargetPaths.size > WORKSPACE_INCREMENTAL_REFRESH_MAX_TARGETS) {
+      autoRefreshForceFullReload = true;
+      autoRefreshTargetPaths = new Set<string>();
+      return;
+    }
+  }
+};
+
+const scheduleWorkspaceSettleRefresh = ({ previewPath = '' } = {}) => {
+  settleRefreshPending = true;
+  if (previewPath) {
+    settleRefreshPreviewPath = normalizeWorkspacePath(previewPath);
+  }
+  if (settleRefreshTimer) {
+    clearTimeout(settleRefreshTimer);
+  }
+  settleRefreshTimer = setTimeout(async () => {
+    settleRefreshTimer = null;
+    if (!settleRefreshPending) return;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      return;
+    }
+    if (state.loading) {
+      scheduleWorkspaceSettleRefresh({ previewPath: settleRefreshPreviewPath });
+      return;
+    }
+    settleRefreshPending = false;
+    const previewPathToReload = settleRefreshPreviewPath;
+    settleRefreshPreviewPath = '';
+    const refreshStartAt = nowPerf();
+    const refreshed = await reloadWorkspaceView({ background: true });
+    if (refreshed && previewPathToReload) {
+      void openPreview(
+        findWorkspaceEntryByPath(state.entries, previewPathToReload) || state.preview.entry
+      );
+    }
+    chatPerf.count('workspace.panel.refresh', 1, {
+      mode: 'settle',
+      preview: previewPathToReload ? 1 : 0
+    });
+    chatPerf.recordDuration('workspace.panel.refresh.settle.ms', nowPerf() - refreshStartAt, {
+      preview: previewPathToReload ? 1 : 0
+    });
+  }, WORKSPACE_SETTLE_REFRESH_DELAY_MS);
+};
+
+const scheduleWorkspaceAutoRefresh = () => {
+  if (!shouldRunWorkspaceBackgroundWork.value) {
+    return;
+  }
+  autoRefreshPending = true;
+  if (autoRefreshTimer) return;
+  autoRefreshTimer = setTimeout(async () => {
+    const refreshStartAt = nowPerf();
+    autoRefreshTimer = null;
+    if (!autoRefreshPending) return;
+    if (state.loading || workspaceDirectoryLoadingPaths.size > 0) {
+      scheduleWorkspaceAutoRefresh();
+      return;
+    }
+    autoRefreshPending = false;
+    const shouldFullReload =
+      autoRefreshForceFullReload || state.searchMode || autoRefreshTargetPaths.size === 0;
+    const incrementalTargets = shouldFullReload
+      ? []
+      : Array.from(autoRefreshTargetPaths).slice(0, WORKSPACE_INCREMENTAL_REFRESH_MAX_BATCH);
+    autoRefreshForceFullReload = false;
+    autoRefreshTargetPaths = new Set<string>();
+    if (incrementalTargets.length) {
+      let patched = true;
+      for (const target of incrementalTargets) {
+        try {
+          const ok = await reloadWorkspaceDirectoryPath(target);
+          if (!ok) {
+            patched = false;
+            break;
+          }
+        } catch (error) {
+          patched = false;
+          break;
+        }
+      }
+      if (patched) {
+        commitWorkspaceTreeVersion();
+        chatPerf.count('workspace.panel.refresh', 1, {
+          mode: 'incremental',
+          targets: incrementalTargets.length
+        });
+        chatPerf.recordDuration('workspace.panel.refresh.incremental.ms', nowPerf() - refreshStartAt, {
+          targets: incrementalTargets.length
+        });
+        return;
+      }
+      chatPerf.count('workspace.panel.refresh', 1, {
+        mode: 'fallback',
+        targets: incrementalTargets.length
+      });
+    }
+    const reloaded = await reloadWorkspaceView({ background: true });
+    if (reloaded) {
+      commitWorkspaceTreeVersion();
+    }
+    chatPerf.count('workspace.panel.refresh', 1, {
+      mode: shouldFullReload ? 'full' : 'fallback-full',
+      targets: incrementalTargets.length
+    });
+    chatPerf.recordDuration('workspace.panel.refresh.full.ms', nowPerf() - refreshStartAt, {
+      mode: shouldFullReload ? 'full' : 'fallback-full',
+      targets: incrementalTargets.length
+    });
+  }, WORKSPACE_AUTO_REFRESH_DEBOUNCE_MS);
+};
+
+// Prefer path-based patching for realtime updates, fallback to full reload when signals are weak.
+const scheduleWorkspaceAutoRefreshByDetail = (detail: Record<string, unknown> = {}) => {
+  const nextTreeVersion = normalizeWorkspaceTreeVersion(
+    detail?.treeVersion ?? detail?.tree_version ?? detail?.version
+  );
+  if (!shouldAcceptWorkspaceTreeVersion(nextTreeVersion, latestWorkspaceTreeVersion)) {
+    return false;
+  }
+  if (nextTreeVersion !== null) {
+    pendingWorkspaceTreeVersion = Math.max(pendingWorkspaceTreeVersion ?? 0, nextTreeVersion);
+  }
+  const changedPaths = normalizeWorkspaceEventPaths(detail);
+  chatPerf.count('workspace.panel.refresh.event', 1, {
+    hasPaths: changedPaths.length > 0,
+    pathCount: changedPaths.length
+  });
+  if (!changedPaths.length) {
+    autoRefreshForceFullReload = true;
+    autoRefreshTargetPaths = new Set<string>();
+    scheduleWorkspaceAutoRefresh();
+    return true;
+  }
+  const { targets, forceFullReload } = collectWorkspaceRefreshTargets({
+    currentPath: state.path,
+    changedPaths,
+    entries: state.entries,
+    maxTargets: WORKSPACE_INCREMENTAL_REFRESH_MAX_TARGETS
+  });
+  if (forceFullReload) {
+    autoRefreshForceFullReload = true;
+    autoRefreshTargetPaths = new Set<string>();
+    scheduleWorkspaceAutoRefresh();
+    return true;
+  }
+  if (!targets.length) {
+    return false;
+  }
+  enqueueWorkspaceAutoRefreshTargets(targets);
+  scheduleWorkspaceAutoRefresh();
+  return true;
+};
+
+const hydrateExpandedEntries = async () => {
+  const expandedPaths = Array.from(state.expanded);
+  if (!expandedPaths.length) return;
+  for (const rawPath of expandedPaths) {
+    const path = String(rawPath || '').trim();
+    const entry = findWorkspaceEntryByPath(state.entries, path);
+    if (!entry || entry.type !== 'dir' || hasLoadedWorkspaceDirectoryChildren(entry)) {
+      continue;
+    }
+    try {
+      const { data } = await activeFileSystem.value.listContent(withFsParams({
+        path,
+        include_content: true,
+        depth: 1,
+        sort_by: state.sortBy,
+        order: state.sortOrder
+      }));
+      attachWorkspaceChildren(state.entries, path, data.entries || []);
+      emitWorkspaceStats(state.entries);
+    } catch (error) {
+      state.expanded.delete(path);
+      state.expanded = new Set(state.expanded);
+    }
+  }
+};
+
+const toggleWorkspaceDirectory = async (entry) => {
+  if (!entry || entry.type !== 'dir' || state.searchMode) return;
+  const entryPath = normalizeWorkspacePath(entry.path);
+  if (!entryPath) return;
+  if (state.expanded.has(entryPath)) {
+    state.expanded.delete(entryPath);
+    state.expanded = new Set(state.expanded);
+    return;
+  }
+  if (workspaceDirectoryLoadingPaths.has(entryPath)) return;
+  state.expanded.add(entryPath);
+  state.expanded = new Set(state.expanded);
+  const currentEntry = findWorkspaceEntryByPath(state.entries, entryPath) || entry;
+  if (hasLoadedWorkspaceDirectoryChildren(currentEntry)) return;
+  workspaceDirectoryLoadingPaths.add(entryPath);
+  try {
+    const { data } = await activeFileSystem.value.listContent(withFsParams({
+      path: entryPath,
+      include_content: true,
+      depth: 1,
+      sort_by: state.sortBy,
+      order: state.sortOrder
+    }));
+    attachWorkspaceChildren(state.entries, entryPath, data.entries || []);
+    emitWorkspaceStats(state.entries);
+  } catch (error) {
+    state.expanded.delete(entryPath);
+    state.expanded = new Set(state.expanded);
+    showApiError(error, t('workspace.expandFailed'));
+  } finally {
+    workspaceDirectoryLoadingPaths.delete(entryPath);
+    if (autoRefreshPending) {
+      scheduleWorkspaceAutoRefresh();
+    }
+  }
+};
+
+const refreshWorkspace = async () => {
+  const ok = await reloadWorkspaceView();
+  if (ok) {
+    ElMessage.success(
+      state.searchMode ? t('workspace.refresh.searchSuccess') : t('workspace.refresh.success')
+    );
+  }
+};
+
+const handleHeaderDelete = async () => {
+  if (!ensureWritableFileSystem()) return;
+  if (!getWorkspaceSelectionPaths().length) {
+    if (!isWorkspaceFileSystem.value) {
+      ElMessage.info(t('workspace.delete.noneSelected'));
+      return;
+    }
+    const params = withAgentParams();
+    const agentId = normalizedAgentId.value;
+    const containerId = normalizedContainerId.value;
+    const fileSystemKey = activeFileSystemKey.value;
+    if (!(await confirmAction(t('workspace.clear.confirm')))) return;
+    try {
+      await clearWorkspace(params);
+      ElMessage.success(t('workspace.clear.success'));
+    } catch (error) {
+      showApiError(error, t('workspace.clear.failed'));
+    } finally {
+      emitWorkspaceRefresh({
+        reason: 'workspace-clear',
+        sourceId: workspacePanelRefreshSourceId,
+        agentId,
+        containerId,
+        paths: ['']
+      });
+      if (activeFileSystemKey.value === fileSystemKey) {
+        await loadWorkspace({ path: '', resetExpanded: true, resetSearch: true });
+      }
+    }
+    return;
+  }
+  await deleteWorkspaceSelection();
+};
+
+const handleGoUp = async () => {
+  if (!canGoUp.value) return;
+  state.path = state.parent || '';
+  state.expanded = new Set();
+  state.selected = null;
+  await loadWorkspace({ resetExpanded: true, resetSearch: true });
+};
+
+const handleSearchInput = () => {
+  if (searchTimer) {
+    clearTimeout(searchTimer);
+  }
+  searchTimer = setTimeout(() => {
+    if (state.searchKeyword.trim()) {
+      loadWorkspaceSearch();
+    } else {
+      loadWorkspace({ resetSearch: true, resetExpanded: true });
+    }
+  }, WORKSPACE_SEARCH_DEBOUNCE_MS);
+};
+
+const handleSearchKeydown = (event) => {
+  if (event.key !== 'Escape') return;
+  state.searchKeyword = '';
+  loadWorkspace({ resetSearch: true, resetExpanded: true });
+};
+
+const triggerUpload = () => {
+  if (!ensureWritableFileSystem()) return;
+  if (!uploadInputRef.value) return;
+  uploadInputRef.value.value = '';
+  uploadInputRef.value.click();
+};
+
+const uploadWorkspaceFiles = async (
+  files: File[] | FileList,
+  targetPath: string,
+  options: WorkspaceUploadOptions = {}
+) => {
+  if (!files || !files.length) return;
+  if (!ensureWritableFileSystem()) return;
+  const { refreshTree = true, relativePaths = [] } = options;
+  const fileList = Array.from(files);
+  const totalBytes = fileList.reduce((sum: number, file) => sum + (Number(file?.size) || 0), 0);
+  // Keep client-side validation aligned with the workspace upload limit.
+  if (totalBytes > MAX_WORKSPACE_UPLOAD_BYTES) {
+    throw new Error(
+      t('workspace.upload.tooLarge', { limit: formatBytes(MAX_WORKSPACE_UPLOAD_BYTES) })
+    );
+  }
+  const formData = new FormData();
+  formData.append('path', normalizeWorkspacePath(targetPath));
+  appendFsFormData(formData);
+  fileList.forEach((file, index) => {
+    formData.append('files', file as Blob);
+    if (relativePaths.length) {
+      formData.append('relative_paths', relativePaths[index] ?? '');
+    }
+  });
+  beginUploadProgress();
+  try {
+    await activeFileSystem.value.upload(formData, {
+      onUploadProgress: (event) => {
+        updateTransferProgress('upload', event);
+      }
+    });
+  } finally {
+    endUploadProgress();
+  }
+  if (refreshTree) {
+    await refreshWorkspacePathWithFallback(targetPath);
+  }
+};
+
+const handleUploadInput = async (event: Event) => {
+  const target = event.target as HTMLInputElement | null;
+  const files = target?.files ? Array.from(target.files) : [];
+  if (!files.length) return;
+  try {
+    await uploadWorkspaceFiles(files, state.path);
+    ElMessage.success(t('workspace.upload.success'));
+  } catch (error) {
+    showApiError(error, error.message || t('workspace.upload.failed'));
+  }
+};
+
+const focusWorkspaceList = () => {
+  const activeElement = document.activeElement;
+  if (
+    activeElement instanceof HTMLInputElement ||
+    activeElement instanceof HTMLTextAreaElement ||
+    activeElement instanceof HTMLSelectElement ||
+    activeElement?.getAttribute?.('contenteditable') === 'true'
+  ) {
+    return;
+  }
+  listRef.value?.focus?.({ preventScroll: true });
+};
+
+const handleWorkspaceItemClick = (event, entry) => {
+  focusWorkspaceList();
+  if (!entry || state.renamingPath) return;
+  const path = entry.path;
+  if (!path) return;
+  const useRange = event.shiftKey && state.lastSelectedPath;
+  const useToggle = event.metaKey || event.ctrlKey;
+  if (useRange) {
+    const flat = flatEntries.value;
+    const startIndex = flat.findIndex((item) => item.path === state.lastSelectedPath);
+    const endIndex = flat.findIndex((item) => item.path === path);
+    if (startIndex !== -1 && endIndex !== -1) {
+      const [from, to] = startIndex < endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
+      const rangePaths = flat.slice(from, to + 1).map((item) => item.path);
+      if (useToggle) {
+        rangePaths.forEach((rangePath) => state.selectedPaths.add(rangePath));
+        state.selected = entry;
+        state.lastSelectedPath = path;
+      } else {
+        setWorkspaceSelection(rangePaths, path);
+      }
+      return;
+    }
+  }
+  if (useToggle) {
+    toggleWorkspaceSelection(path);
+    return;
+  }
+  setWorkspaceSelection([path], path);
+};
+
+const handleWorkspaceItemDoubleClick = (entry) => {
+  if (!entry || state.renamingPath) return;
+  if (entry.type === 'dir') {
+    // Folder double click only toggles tree expansion to avoid accidental navigation.
+    void toggleWorkspaceDirectory(entry);
+    return;
+  }
+  if (isWorkspaceDrawioEditable(entry)) {
+    openDrawioEditor(entry);
+    return;
+  }
+  if (isWorkspaceOfficeEditable(entry)) {
+    openOnlyOfficeEditor(entry);
+    return;
+  }
+  if (isWorkspaceTextEditable(entry)) {
+    openEditor(entry);
+    return;
+  }
+  openPreview(entry);
+};
+
+const closeContextMenu = () => {
+  state.contextMenu.visible = false;
+};
+
+const closePropertiesDialog = () => {
+  state.properties.visible = false;
+};
+
+const openPropertiesDialog = (entry) => {
+  if (!entry) return;
+  state.properties.entry = entry;
+  state.properties.visible = true;
+};
+
+const openContextMenu = async (event, entry) => {
+  const nextSelectionPaths = entry?.path
+    ? state.selectedPaths.has(entry.path)
+      ? getWorkspaceSelectionPaths()
+      : [entry.path]
+    : [];
+  if (entry?.path && !state.selectedPaths.has(entry.path)) {
+    setWorkspaceSelection([entry.path], entry.path);
+  }
+  if (entry?.path) {
+    state.selected = entry;
+  }
+  state.contextMenu.primaryPath = entry?.path || nextSelectionPaths[0] || '';
+  state.contextMenu.selectionPaths = nextSelectionPaths;
+  state.contextMenu.visible = true;
+  state.contextMenu.x = event.clientX;
+  state.contextMenu.y = event.clientY;
+  await nextTick();
+  const menuRect = menuRef.value?.getBoundingClientRect();
+  if (!menuRect) return;
+  const maxLeft = Math.max(8, window.innerWidth - menuRect.width - 8);
+  const maxTop = Math.max(8, window.innerHeight - menuRect.height - 8);
+  state.contextMenu.x = Math.min(Math.max(8, state.contextMenu.x), maxLeft);
+  state.contextMenu.y = Math.min(Math.max(8, state.contextMenu.y), maxTop);
+};
+
+const handleEdit = () => {
+  const targetEntry = contextMenuSingleEntry.value;
+  closeContextMenu();
+  if (!targetEntry) return;
+  if (isWorkspaceDrawioEditable(targetEntry)) {
+    openDrawioEditor(targetEntry);
+    return;
+  }
+  if (isWorkspaceOfficeEditable(targetEntry)) {
+    openOnlyOfficeEditor(targetEntry);
+    return;
+  }
+  openEditor(targetEntry);
+};
+
+const handleRename = () => {
+  if (!ensureWritableFileSystem()) return;
+  const targetEntry = contextMenuSingleEntry.value;
+  closeContextMenu();
+  if (!targetEntry) return;
+  startWorkspaceRename(targetEntry);
+};
+
+const handleNewFile = async () => {
+  if (!ensureWritableFileSystem()) return;
+  closeContextMenu();
+  await createWorkspaceFile();
+};
+
+const handleNewFolder = async () => {
+  if (!ensureWritableFileSystem()) return;
+  closeContextMenu();
+  await createWorkspaceFolder();
+};
+
+const handleQuotePath = () => {
+  const selectedPaths = getActionSelectionPaths().map((path) => normalizeWorkspacePath(path)).filter(Boolean);
+  closeContextMenu();
+  if (!selectedPaths.length) return;
+  emit('quote-path', { paths: selectedPaths });
+};
+
+const handleDownload = async () => {
+  const targetEntry = contextMenuSingleEntry.value;
+  closeContextMenu();
+  if (!targetEntry) return;
+  await downloadEntry(targetEntry);
+};
+
+const handleProperties = () => {
+  const targetEntry = contextMenuSingleEntry.value;
+  closeContextMenu();
+  if (!targetEntry) return;
+  openPropertiesDialog(targetEntry);
+};
+
+const handleDelete = async () => {
+  if (!ensureWritableFileSystem()) return;
+  closeContextMenu();
+  await deleteWorkspaceSelection();
+};
+
+const handleCopy = async () => {
+  if (!ensureWritableFileSystem()) return;
+  closeContextMenu();
+  await copyWorkspaceSelectionInPlace();
+};
+
+const startWorkspaceRename = async (entry) => {
+  if (!ensureWritableFileSystem()) return;
+  state.renamingPath = entry.path;
+  state.renamingValue = entry.name || '';
+  await nextTick();
+  const input = listRef.value?.querySelector(`input[data-rename-path="${entry.path}"]`);
+  if (input) {
+    input.focus();
+    input.select();
+  }
+};
+
+const cancelWorkspaceRename = () => {
+  state.renamingPath = '';
+  state.renamingValue = '';
+};
+
+const finishWorkspaceRename = async (entry, nextName) => {
+  if (!entry || state.renamingPath !== entry.path) return;
+  state.renamingPath = '';
+  if (!ensureWritableFileSystem()) {
+    state.renamingValue = '';
+    return;
+  }
+  const trimmed = String(nextName || '').trim();
+  if (!trimmed || !isValidWorkspaceName(trimmed)) {
+    ElMessage.warning(t('workspace.name.invalid'));
+    state.renamingValue = '';
+    return;
+  }
+  if (trimmed === entry.name) {
+    state.renamingValue = '';
+    return;
+  }
+  const parentPath = getWorkspaceParentPath(entry.path);
+  const destination = joinWorkspacePath(parentPath, trimmed);
+  try {
+    await activeFileSystem.value.moveEntry(withFsParams({ source: entry.path, destination }));
+    await refreshWorkspacePathWithFallback(parentPath);
+    ElMessage.success(t('workspace.rename.success'));
+  } catch (error) {
+    showApiError(error, t('workspace.rename.failed'));
+  } finally {
+    state.renamingValue = '';
+  }
+};
+
+const notifyBatchResult = (payload, actionLabel) => {
+  const data = payload?.data || {};
+  const failed = Array.isArray(data.failed) ? data.failed : [];
+  const succeeded = Array.isArray(data.succeeded) ? data.succeeded : [];
+  if (failed.length) {
+    ElMessage.warning(
+      t('workspace.batch.partial', {
+        action: actionLabel,
+        success: succeeded.length,
+        failed: failed.length
+      })
+    );
+  } else {
+    ElMessage.success(t('workspace.batch.success', { action: actionLabel }));
+  }
+};
+
+const getActionSelectionPaths = () => {
+  const selectedPaths = getWorkspaceSelectionPaths();
+  if (selectedPaths.length) {
+    return selectedPaths;
+  }
+  const menuSelectionPaths = contextMenuSelectionPaths.value;
+  if (menuSelectionPaths.length) {
+    return [...menuSelectionPaths];
+  }
+  return state.contextMenu.primaryPath ? [state.contextMenu.primaryPath] : [];
+};
+
+const deleteWorkspaceSelection = async () => {
+  if (!ensureWritableFileSystem()) return;
+  const selectedPaths = getActionSelectionPaths();
+  if (!selectedPaths.length) return;
+  const singleName =
+    selectedPaths.length === 1 ? resolveWorkspaceEntryName(selectedPaths[0]) : '';
+  const confirmed = await confirmAction(
+    selectedPaths.length === 1
+      ? t('workspace.delete.confirm.single', { name: singleName })
+      : t('workspace.delete.confirm.multi', { count: selectedPaths.length })
+  );
+  if (!confirmed) return;
+  try {
+    const response = await activeFileSystem.value.batchAction(withFsParams({ action: 'delete', paths: selectedPaths }));
+    notifyBatchResult(response.data, t('common.delete'));
+    await reloadWorkspaceView();
+    if (isWorkspaceFileSystem.value) {
+      emitWorkspaceRefresh({
+        reason: 'workspace-delete',
+        sourceId: workspacePanelRefreshSourceId,
+        agentId: normalizedAgentId.value,
+        containerId: normalizedContainerId.value,
+        paths: selectedPaths
+      });
+    }
+  } catch (error) {
+    showApiError(error, t('workspace.delete.failed'));
+  }
+};
+
+const moveWorkspaceSelectionToDirectory = async () => {
+  if (!ensureWritableFileSystem()) return;
+  const selectedPaths = getWorkspaceSelectionPaths();
+  if (!selectedPaths.length) {
+    ElMessage.info(t('workspace.selection.empty'));
+    return;
+  }
+  const targetDirInput = await promptInput(t('workspace.move.prompt'), {
+    placeholder: t('workspace.move.placeholder'),
+    defaultValue: ''
+  });
+  if (targetDirInput === null) return;
+  const targetDir = normalizeWorkspacePath(targetDirInput.trim());
+  if (!isValidWorkspacePath(targetDir)) {
+    ElMessage.warning(t('workspace.path.invalid'));
+    return;
+  }
+  try {
+    const response = await activeFileSystem.value.batchAction(withFsParams({
+      action: 'move',
+      paths: selectedPaths,
+      destination: targetDir
+    }));
+    notifyBatchResult(response.data, t('workspace.action.move'));
+    await reloadWorkspaceView();
+  } catch (error) {
+    showApiError(error, t('workspace.move.failed'));
+  }
+};
+
+const copyWorkspaceSelectionInPlace = async () => {
+  if (!ensureWritableFileSystem()) return;
+  const entries = getWorkspaceSelectionEntries()
+    .map((entry) => ({
+      path: normalizeWorkspacePath(String(entry.path || '')),
+      name: String(entry.name || entry.path || '').trim() || 'item'
+    }))
+    .filter((entry) => Boolean(entry.path));
+  if (!entries.length) {
+    ElMessage.info(t('workspace.selection.empty'));
+    return;
+  }
+  const reservedPaths = new Set<string>();
+  const existingPathCache = new Map<string, Set<string>>();
+  const changedDirs = new Set<string>();
+  let copiedCount = 0;
+  try {
+    for (const entry of entries) {
+      const targetDir = normalizeWorkspacePath(getWorkspaceParentPath(entry.path));
+      const destination = await resolveWorkspaceCopyDestination(targetDir, entry, {
+        reservedPaths,
+        existingPathCache
+      });
+      if (destination === entry.path) {
+        continue;
+      }
+      await activeFileSystem.value.copyEntry(withFsParams({
+        source: entry.path,
+        destination
+      }));
+      changedDirs.add(targetDir);
+      copiedCount += 1;
+    }
+    if (!copiedCount) {
+      ElMessage.info(t('workspace.copy.noop'));
+      return;
+    }
+    if (changedDirs.size === 1) {
+      await refreshWorkspacePathWithFallback(Array.from(changedDirs)[0] || '');
+    } else {
+      await reloadWorkspaceView();
+    }
+    ElMessage.success(t('workspace.copy.success', { count: copiedCount }));
+  } catch (error) {
+    showApiError(error, t('workspace.copy.failed'));
+  }
+};
+
+const moveWorkspaceEntryToDirectory = async (entry) => {
+  if (!ensureWritableFileSystem()) return;
+  if (!entry) return;
+  const targetDirInput = await promptInput(t('workspace.move.prompt'), {
+    placeholder: t('workspace.move.placeholder'),
+    defaultValue: ''
+  });
+  if (targetDirInput === null) return;
+  const targetDir = normalizeWorkspacePath(targetDirInput.trim());
+  if (!isValidWorkspacePath(targetDir)) {
+    ElMessage.warning(t('workspace.path.invalid'));
+    return;
+  }
+  const sourceName = entry.name || entry.path.split('/').pop();
+  if (!sourceName) {
+    ElMessage.error(t('workspace.move.sourceMissing'));
+    return;
+  }
+  const destination = joinWorkspacePath(targetDir, sourceName);
+  if (destination === entry.path) {
+    ElMessage.info(t('workspace.move.sameDir'));
+    return;
+  }
+  try {
+    await activeFileSystem.value.moveEntry(withFsParams({ source: entry.path, destination }));
+    await reloadWorkspaceView();
+    ElMessage.success(t('workspace.move.success', { target: targetDir || '/' }));
+  } catch (error) {
+    showApiError(error, t('workspace.move.failed'));
+  }
+};
+
+const resolveWorkspaceCreationDirectoryPath = () => {
+  const target = singleSelectedEntry.value;
+  if (target?.type === 'dir') {
+    return normalizeWorkspacePath(target.path);
+  }
+  if (target?.type === 'file') {
+    return normalizeWorkspacePath(getWorkspaceParentPath(target.path));
+  }
+  return normalizeWorkspacePath(state.path);
+};
+
+const createWorkspaceFile = async () => {
+  if (!ensureWritableFileSystem()) return;
+  state.newFileDialog.visible = true;
+};
+
+const handleWorkspaceNewFileConfirm = async (payload: {
+  name: string;
+  content: string;
+  typeId: string;
+}) => {
+  if (!ensureWritableFileSystem()) return;
+  const trimmed = String(payload.name || '').trim();
+  if (!isValidWorkspaceName(trimmed)) {
+    ElMessage.warning(t('workspace.name.invalid'));
+    return;
+  }
+  const targetDir = resolveWorkspaceCreationDirectoryPath();
+  const targetPath = joinWorkspacePath(targetDir, trimmed);
+  try {
+    await activeFileSystem.value.saveFile(withFsParams({ path: targetPath, content: payload.content || '', create_if_missing: true })
+    );
+    state.newFileDialog.visible = false;
+    await refreshWorkspacePathWithFallback(targetDir);
+    ElMessage.success(t('workspace.createFile.success', { name: trimmed }));
+  } catch (error) {
+    showApiError(error, t('workspace.createFile.failed'));
+  }
+};
+
+const createWorkspaceFolder = async () => {
+  if (!ensureWritableFileSystem()) return;
+  const folderName = await promptInput(t('workspace.createFolder.prompt'), {
+    placeholder: t('workspace.createFolder.placeholder')
+  });
+  if (folderName === null) return;
+  const trimmed = String(folderName || '').trim();
+  if (!isValidWorkspaceName(trimmed)) {
+    ElMessage.warning(t('workspace.name.invalid'));
+    return;
+  }
+  const targetDir = resolveWorkspaceCreationDirectoryPath();
+  const targetPath = joinWorkspacePath(targetDir, trimmed);
+  try {
+    await activeFileSystem.value.createDir(withFsParams({ path: targetPath }));
+    await refreshWorkspacePathWithFallback(targetDir);
+    ElMessage.success(t('workspace.createFolder.success'));
+  } catch (error) {
+    showApiError(error, t('workspace.createFolder.failed'));
+  }
+};
+
+const getFilenameFromHeaders = (headers, fallback) => {
+  const disposition = headers?.['content-disposition'];
+  if (!disposition) return fallback;
+  const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+  if (utf8Match) {
+    return decodeURIComponent(utf8Match[1]);
+  }
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  return match ? match[1] : fallback;
+};
+
+const saveBlob = (blob, filename) => {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename || t('workspace.download.defaultName');
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
+const downloadEntry = async (entry) => {
+  beginDownloadProgress();
+  try {
+    if (entry.type === 'dir') {
+      ElMessage.info(t('workspace.download.archivePreparing', {
+        name: entry.name || t('workspace.download.folder')
+      }));
+      const response = await activeFileSystem.value.downloadArchive(withFsParams({ path: entry.path }), {
+        onDownloadProgress: (event) => updateTransferProgress('download', event)
+      });
+      const filename = getFilenameFromHeaders(
+        response.headers,
+        `${entry.name || t('workspace.download.folder')}.zip`
+      );
+      saveBlob(response.data, filename);
+      ElMessage.success(resolveWorkspaceArchiveSuccessText());
+      return;
+    }
+    ElMessage.info(t('workspace.download.preparing', {
+      name: entry.name || t('workspace.download.defaultName')
+    }));
+    const response = await activeFileSystem.value.downloadFile(withFsParams({ path: entry.path }), {
+      onDownloadProgress: (event) => updateTransferProgress('download', event)
+    });
+    const filename = getFilenameFromHeaders(
+      response.headers,
+      entry.name || t('workspace.download.defaultName')
+    );
+    saveBlob(response.data, filename);
+    ElMessage.success(t('workspace.download.success'));
+  } catch (error) {
+    ElMessage.error(resolveWorkspaceTransferFailedText());
+  } finally {
+    endDownloadProgress();
+  }
+};
+
+const downloadArchive = async () => {
+  beginDownloadProgress();
+  try {
+    ElMessage.info(t('workspace.download.archivePreparing', {
+      name: t('workspace.download.defaultName')
+    }));
+    const response = await activeFileSystem.value.downloadArchive(withFsParams({}), {
+      onDownloadProgress: (event) => updateTransferProgress('download', event)
+    });
+    const filename = getFilenameFromHeaders(response.headers, 'workspace.zip');
+    saveBlob(response.data, filename);
+    ElMessage.success(resolveWorkspaceArchiveSuccessText());
+  } catch (error) {
+    ElMessage.error(resolveWorkspaceArchiveFailedText());
+  } finally {
+    endDownloadProgress();
+  }
+};
+
+const readDirectoryEntries = (reader: DirectoryReaderLike): Promise<FileSystemEntryLike[]> =>
+  new Promise((resolve) => {
+    const entries: FileSystemEntryLike[] = [];
+    const readBatch = () => {
+      reader.readEntries(
+        (batch: FileSystemEntryLike[]) => {
+          if (!batch.length) {
+            resolve(entries);
+            return;
+          }
+          entries.push(...batch);
+          readBatch();
+        },
+        () => resolve(entries)
+      );
+    };
+    readBatch();
+  });
+
+const walkEntry = async (entry: FileSystemEntryLike, prefix: string): Promise<WorkspaceDroppedFile[]> => {
+  if (!entry) return [];
+  if (entry.isFile) {
+    const file = await new Promise<File | null>((resolve) => {
+      entry.file((target) => resolve(target), () => resolve(null));
+    });
+    if (!file) return [];
+    return [
+      {
+        file,
+        relativePath: `${prefix}${file.name}`
+      }
+    ];
+  }
+  if (entry.isDirectory) {
+    const nextPrefix = `${prefix}${entry.name}/`;
+    const reader = entry.createReader();
+    const children = await readDirectoryEntries(reader);
+    const nested = await Promise.all(children.map((child) => walkEntry(child, nextPrefix)));
+    return nested.flat();
+  }
+  return [];
+};
+
+const collectDroppedFiles = async (
+  dataTransfer: DataTransfer | null | undefined
+): Promise<WorkspaceDroppedFile[]> => {
+  const items = Array.from(dataTransfer?.items || []) as DataTransferItemLike[];
+  if (items.length) {
+    const batches = await Promise.all(
+      items.map((item: DataTransferItemLike) => {
+        const entry = item.webkitGetAsEntry?.();
+        if (entry) {
+          return walkEntry(entry, '');
+        }
+        const file = item.getAsFile();
+        return file ? [{ file, relativePath: file.name }] : [];
+      })
+    );
+    return batches.flat();
+  }
+  const files = Array.from(dataTransfer?.files || []);
+  return files.map((file) => ({
+    file,
+    relativePath: file.webkitRelativePath || file.name
+  }));
+};
+
+const uploadWorkspaceGroups = async (items, basePath) => {
+  const files = items.map((item) => item.file).filter(Boolean);
+  const relativePaths = items.map((item) => normalizeWorkspacePath(item.relativePath || item.file?.name || ''));
+  await uploadWorkspaceFiles(files, basePath, { refreshTree: false, relativePaths });
+  await refreshWorkspacePathWithFallback(basePath);
+};
+
+const hasExternalFileDrag = (dataTransfer) => {
+  if (!dataTransfer || hasWorkspaceDragPaths(dataTransfer)) return false;
+  const types = Array.from(dataTransfer.types || []);
+  return types.includes('Files') || Boolean(dataTransfer.items?.length) || Boolean(dataTransfer.files?.length);
+};
+
+const resolveExternalDropBasePath = (entry) => {
+  if (entry?.type === 'dir') {
+    return normalizeWorkspacePath(entry.path);
+  }
+  return state.path;
+};
+
+const handleListDragEnter = (event) => {
+  if (isReadonlyFileSystem.value) return;
+  event.preventDefault();
+  state.draggingOver = true;
+};
+
+const handleListScroll = (event) => {
+  listScrollTop.value = event.target.scrollTop || 0;
+};
+
+const handleListDragOver = (event) => {
+  if (isReadonlyFileSystem.value) return;
+  event.preventDefault();
+  state.draggingOver = true;
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = hasWorkspaceDragPaths(event.dataTransfer) ? 'move' : 'copy';
+  }
+};
+
+const handleListDragLeave = (event) => {
+  if (!event.currentTarget.contains(event.relatedTarget)) {
+    state.draggingOver = false;
+  }
+};
+
+const handleListDrop = async (event) => {
+  event.preventDefault();
+  state.draggingOver = false;
+  if (!ensureWritableFileSystem()) {
+    clearWorkspaceDragPaths();
+    return;
+  }
+  const internalPaths = readWorkspaceDragPaths(event.dataTransfer);
+  if (internalPaths.length) {
+    const targetDir = normalizeWorkspacePath(state.path);
+    const filtered = filterMoveTargets(internalPaths, targetDir);
+    if (!filtered.length) return;
+    try {
+      const response = await activeFileSystem.value.batchAction(withFsParams({
+        action: 'move',
+        paths: filtered,
+        destination: targetDir
+      }));
+      notifyBatchResult(response.data, t('workspace.action.move'));
+      await reloadWorkspaceView();
+    } catch (error) {
+      showApiError(error, t('workspace.move.failed'));
+    }
+    clearWorkspaceDragPaths();
+    return;
+  }
+  const dropped = await collectDroppedFiles(event.dataTransfer);
+  if (!dropped.length) return;
+  try {
+    await uploadWorkspaceGroups(dropped, state.path);
+    ElMessage.success(t('workspace.dragUpload.success'));
+  } catch (error) {
+    ElMessage.error(
+      error.response?.data?.detail || error.message || t('workspace.dragUpload.failed')
+    );
+  }
+};
+
+const handleItemDragStart = (event, entry) => {
+  if (state.renamingPath === entry?.path || isReadonlyFileSystem.value) {
+    event.preventDefault();
+    return;
+  }
+  if (!event.dataTransfer || !entry?.path) return;
+  if (!state.selectedPaths.has(entry.path)) {
+    setWorkspaceSelection([entry.path], entry.path);
+  }
+  const selectedPaths = state.selectedPaths.has(entry.path)
+    ? getWorkspaceSelectionPaths()
+    : [entry.path];
+  setWorkspaceDragPaths(event.dataTransfer, selectedPaths);
+  event.dataTransfer.effectAllowed = 'move';
+  event.currentTarget?.classList?.add('dragging');
+};
+
+const handleItemDragEnd = (event) => {
+  event.currentTarget?.classList?.remove('dragging');
+  clearWorkspaceDragPaths();
+};
+
+const handleItemDragEnter = (event, entry) => {
+  if (isReadonlyFileSystem.value) return;
+  const internalDrag = hasWorkspaceDragPaths(event.dataTransfer);
+  const externalFileDrag = hasExternalFileDrag(event.dataTransfer);
+  if (!internalDrag && !externalFileDrag) return;
+  if (internalDrag && (!entry || entry.type !== 'dir')) return;
+  event.preventDefault();
+  state.draggingOver = true;
+  if (entry?.type === 'dir') {
+    event.currentTarget?.classList?.add('drop-target');
+  }
+};
+
+const handleItemDragOver = (event, entry) => {
+  if (isReadonlyFileSystem.value) return;
+  const internalDrag = hasWorkspaceDragPaths(event.dataTransfer);
+  const externalFileDrag = hasExternalFileDrag(event.dataTransfer);
+  if (!internalDrag && !externalFileDrag) return;
+  if (internalDrag && (!entry || entry.type !== 'dir')) return;
+  event.preventDefault();
+  state.draggingOver = true;
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = internalDrag ? 'move' : 'copy';
+  }
+};
+
+const handleItemDragLeave = (event, entry) => {
+  if (entry?.type === 'dir' && !event.currentTarget?.contains(event.relatedTarget)) {
+    event.currentTarget?.classList?.remove('drop-target');
+  }
+  if (!listRef.value?.contains(event.relatedTarget)) {
+    state.draggingOver = false;
+  }
+};
+
+const filterMoveTargets = (paths, targetDir) => {
+  const filtered = [];
+  let blocked = false;
+  paths.forEach((path) => {
+    const normalized = normalizeWorkspacePath(path);
+    if (!normalized || normalized === targetDir) return;
+    const entry = findWorkspaceEntryByPath(state.entries, normalized);
+    if (entry?.type === 'dir' && (targetDir === normalized || targetDir.startsWith(`${normalized}/`))) {
+      blocked = true;
+      return;
+    }
+    filtered.push(normalized);
+  });
+  if (blocked) {
+    ElMessage.warning(t('workspace.move.blocked'));
+  }
+  return filtered;
+};
+
+const handleItemDrop = async (event, entry) => {
+  event.preventDefault();
+  event.stopPropagation();
+  event.currentTarget?.classList?.remove('drop-target');
+  state.draggingOver = false;
+  if (!ensureWritableFileSystem()) {
+    clearWorkspaceDragPaths();
+    return;
+  }
+  const internalPaths = readWorkspaceDragPaths(event.dataTransfer);
+  if (internalPaths.length) {
+    if (!entry || entry.type !== 'dir') return;
+    const targetDir = normalizeWorkspacePath(entry.path);
+    const filtered = filterMoveTargets(internalPaths, targetDir);
+    if (!filtered.length) return;
+    try {
+      const response = await activeFileSystem.value.batchAction(withFsParams({
+        action: 'move',
+        paths: filtered,
+        destination: targetDir
+      }));
+      notifyBatchResult(response.data, t('workspace.move.toFolder', { name: entry.name || t('workspace.meta.folder') }));
+      await reloadWorkspaceView();
+    } catch (error) {
+      showApiError(error, t('workspace.move.failed'));
+    }
+    clearWorkspaceDragPaths();
+    return;
+  }
+  const dropped = await collectDroppedFiles(event.dataTransfer);
+  if (!dropped.length) return;
+  const uploadBasePath = resolveExternalDropBasePath(entry);
+  try {
+    // When the list is fully occupied, external drags land on item nodes instead of the list shell.
+    await uploadWorkspaceGroups(dropped, uploadBasePath);
+    ElMessage.success(t('workspace.dragUpload.success'));
+  } catch (error) {
+    ElMessage.error(
+      error.response?.data?.detail || error.message || t('workspace.dragUpload.failed')
+    );
+  }
+};
+
+const handleUpDragOver = (event) => {
+  if (isReadonlyFileSystem.value) return;
+  if (!hasWorkspaceDragPaths(event.dataTransfer)) return;
+  if (!state.path) return;
+  event.preventDefault();
+  event.currentTarget?.classList?.add('dragover');
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'move';
+  }
+};
+
+const handleUpDragLeave = (event) => {
+  if (!event.currentTarget?.contains(event.relatedTarget)) {
+    event.currentTarget?.classList?.remove('dragover');
+  }
+};
+
+const handleUpDrop = async (event) => {
+  if (!state.path) return;
+  event.preventDefault();
+  event.currentTarget?.classList?.remove('dragover');
+  if (!ensureWritableFileSystem()) {
+    clearWorkspaceDragPaths();
+    return;
+  }
+  const sourcePaths = readWorkspaceDragPaths(event.dataTransfer);
+  if (!sourcePaths.length) return;
+  const parentPath = getWorkspaceParentPath(state.path);
+  try {
+    const response = await activeFileSystem.value.batchAction(withFsParams({
+      action: 'move',
+      paths: sourcePaths,
+      destination: parentPath
+    }));
+    notifyBatchResult(response.data, t('workspace.action.moveToParent'));
+    await reloadWorkspaceView();
+  } catch (error) {
+    showApiError(error, t('workspace.move.failed'));
+  }
+  clearWorkspaceDragPaths();
+};
+
+let previewHtmlObjectUrls: string[] = [];
+
+const clearPreviewUrl = () => {
+  if (state.preview.url) {
+    URL.revokeObjectURL(state.preview.url);
+  }
+  previewHtmlObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+  previewHtmlObjectUrls = [];
+  state.preview.url = '';
+};
+
+const resolvePreviewUnsupportedHint = () =>
+  desktopLocalMode ? t('workspace.preview.unsupportedHintLocal') : t('workspace.preview.unsupportedHint');
+
+const resolvePreviewTooLargeHint = () =>
+  desktopLocalMode ? t('workspace.preview.tooLargeHintLocal') : t('workspace.preview.tooLargeHint');
+
+const resolveWorkspaceTransferFailedText = () =>
+  desktopLocalMode ? t('workspace.download.exportFailed') : t('workspace.download.failed');
+
+const resolveWorkspaceArchiveSuccessText = () =>
+  desktopLocalMode
+    ? t('workspace.download.exportArchiveSuccess')
+    : t('workspace.download.archiveSuccess');
+
+const resolveWorkspaceArchiveFailedText = () =>
+  desktopLocalMode
+    ? t('workspace.download.exportArchiveFailed')
+    : t('workspace.download.archiveFailed');
+
+const openPreviewWithoutOnlyOffice = async (entry) => {
+  if (!entry || entry.type !== 'file') return;
+  state.preview.entry = entry;
+  state.preview.visible = true;
+  state.preview.content = '';
+  state.preview.hint = '';
+  state.preview.loading = true;
+  state.preview.embed = false;
+  state.preview.type = '';
+  clearPreviewUrl();
+
+  const extension = getWorkspaceExtension(entry);
+  const sizeValue = Number.isFinite(entry.size) ? entry.size : 0;
+  const canPreviewText = sizeValue <= MAX_TEXT_PREVIEW_SIZE;
+  const isTextPreview = TEXT_EXTENSIONS.has(extension);
+
+  if (DRAWIO_EXTENSIONS.has(extension) || extension === 'drawio.xml') {
+    state.preview.hint = resolvePreviewUnsupportedHint();
+    state.preview.content = t('workspace.preview.empty');
+    state.preview.loading = false;
+    return;
+  }
+  const loadHtmlPreview = async () => {
+    const response = await activeFileSystem.value.downloadFile(
+      withFsParams(withWorkspacePreviewParams(entry))
+    );
+    const sourceBlob = response.data instanceof Blob ? response.data : new Blob([response.data]);
+    const previewDocument = await buildWorkspaceHtmlPreviewDocument({
+      rawHtml: await sourceBlob.text(),
+      entryPath: normalizeWorkspacePath(entry.path || ''),
+      fetchResource: async (relativePath) => {
+        const resourceResponse = await activeFileSystem.value.downloadFile(
+          withFsParams({ path: normalizeWorkspacePath(relativePath) })
+        );
+        const resourceBlob = resourceResponse.data;
+        return resourceBlob instanceof Blob ? resourceBlob : new Blob([resourceBlob]);
+      }
+    });
+    const blob = new Blob([previewDocument.html], { type: 'text/html; charset=utf-8' });
+    previewHtmlObjectUrls = previewDocument.objectUrls;
+    state.preview.embed = true;
+    state.preview.type = 'html';
+    state.preview.url = URL.createObjectURL(blob);
+  };
+  // Large HTML is still a renderable document. Download the full stream and let
+  // the browser render it in an iframe instead of putting the source into the
+  // text preview (which is intentionally capped for ordinary text files).
+  if (isTextPreview && !canPreviewText && HTML_PREVIEW_EXTENSIONS.has(extension)) {
+    try {
+      await loadHtmlPreview();
+    } catch {
+      state.preview.hint = t('workspace.preview.loadFailedHint');
+      state.preview.content = t('workspace.preview.empty');
+    } finally {
+      state.preview.loading = false;
+    }
+    return;
+  }
+  if (isTextPreview) {
+    if (!canPreviewText) {
+      state.preview.hint = resolvePreviewTooLargeHint();
+      state.preview.content = t('workspace.preview.empty');
+      state.preview.loading = false;
+      return;
+    }
+    try {
+      const response = await activeFileSystem.value.listContent(withFsParams({
+        path: entry.path,
+        include_content: true,
+        max_bytes: MAX_TEXT_PREVIEW_SIZE
+      }));
+      const payload = response.data || {};
+      if (payload.truncated) {
+        if (HTML_PREVIEW_EXTENSIONS.has(extension)) {
+          try {
+            await loadHtmlPreview();
+          } catch {
+            state.preview.hint = t('workspace.preview.loadFailedHint');
+            state.preview.content = t('workspace.preview.empty');
+          }
+          state.preview.loading = false;
+          return;
+        }
+        state.preview.hint = t('workspace.preview.truncatedHint');
+      }
+      state.preview.embed = false;
+      state.preview.type = 'text';
+      state.preview.content = typeof payload.content === 'string' ? payload.content : '';
+      state.preview.loading = false;
+      return;
+    } catch {
+      state.preview.hint = t('workspace.preview.loadFailedHint');
+      state.preview.content = t('workspace.preview.empty');
+      state.preview.loading = false;
+      return;
+    }
+  }
+  if (ONLYOFFICE_DOCUMENT_EXTENSIONS.has(extension)) {
+    state.preview.hint = resolvePreviewUnsupportedHint();
+    state.preview.content = t('workspace.preview.empty');
+    state.preview.loading = false;
+    return;
+  }
+  const isMediaPreview =
+    IMAGE_EXTENSIONS.has(extension) ||
+    PDF_EXTENSIONS.has(extension) ||
+    AUDIO_EXTENSIONS.has(extension) ||
+    VIDEO_EXTENSIONS.has(extension);
+  if (!isMediaPreview && !canPreviewText) {
+    state.preview.hint = resolvePreviewTooLargeHint();
+    state.preview.content = t('workspace.preview.empty');
+    state.preview.loading = false;
+    return;
+  }
+
+  try {
+    if (extension === 'svg') {
+      try {
+        const response = await activeFileSystem.value.listContent(withFsParams({
+          path: entry.path,
+          include_content: true,
+          max_bytes: MAX_TEXT_PREVIEW_SIZE
+        }));
+        const payload = response.data || {};
+        if (payload.truncated) {
+          state.preview.hint = t('workspace.preview.truncatedHint');
+          state.preview.content = t('workspace.preview.empty');
+          return;
+        }
+        const text = typeof payload.content === 'string' ? payload.content : '';
+        if (text) {
+          const blob = new Blob([text], { type: IMAGE_MIME_TYPES.svg });
+          state.preview.embed = true;
+          state.preview.type = 'svg';
+          state.preview.url = URL.createObjectURL(blob);
+          return;
+        }
+      } catch (error) {
+        // Fall back to download when content preview fails.
+      }
+    }
+    if (
+      IMAGE_EXTENSIONS.has(extension) ||
+      PDF_EXTENSIONS.has(extension) ||
+      AUDIO_EXTENSIONS.has(extension) ||
+      VIDEO_EXTENSIONS.has(extension)
+    ) {
+      const response = await activeFileSystem.value.downloadFile(withFsParams(withWorkspacePreviewParams(entry)));
+      let blob = response.data;
+      if (IMAGE_EXTENSIONS.has(extension)) {
+        const expectedMime = IMAGE_MIME_TYPES[extension] || '';
+        if (
+          expectedMime &&
+          (!blob.type || blob.type === 'application/octet-stream' || blob.type !== expectedMime)
+        ) {
+          blob = blob.slice(0, blob.size, expectedMime);
+        }
+        state.preview.embed = true;
+        state.preview.type = extension === 'svg' ? 'svg' : 'image';
+        state.preview.url = URL.createObjectURL(blob);
+      } else if (AUDIO_EXTENSIONS.has(extension)) {
+        const expectedMime = AUDIO_MIME_TYPES[extension] || '';
+        if (
+          expectedMime &&
+          (!blob.type || blob.type === 'application/octet-stream' || blob.type !== expectedMime)
+        ) {
+          blob = blob.slice(0, blob.size, expectedMime);
+        }
+        state.preview.embed = true;
+        state.preview.type = 'audio';
+        state.preview.url = URL.createObjectURL(blob);
+      } else if (VIDEO_EXTENSIONS.has(extension)) {
+        const expectedMime = VIDEO_MIME_TYPES[extension] || '';
+        if (
+          expectedMime &&
+          (!blob.type || blob.type === 'application/octet-stream' || blob.type !== expectedMime)
+        ) {
+          blob = blob.slice(0, blob.size, expectedMime);
+        }
+        state.preview.embed = true;
+        state.preview.type = 'video';
+        state.preview.url = URL.createObjectURL(blob);
+      } else {
+        state.preview.embed = true;
+        state.preview.type = 'pdf';
+        state.preview.url = URL.createObjectURL(blob);
+      }
+      return;
+    }
+    const response = await activeFileSystem.value.listContent(withFsParams({
+      path: entry.path,
+      include_content: true,
+      max_bytes: MAX_TEXT_PREVIEW_SIZE
+    }));
+    const payload = response.data || {};
+    if (payload.truncated) {
+      state.preview.hint = t('workspace.preview.truncatedHint');
+    }
+    state.preview.embed = false;
+    state.preview.type = 'text';
+    state.preview.content = typeof payload.content === 'string' ? payload.content : '';
+  } catch (error) {
+    state.preview.hint = t('workspace.preview.loadFailedHint');
+    state.preview.content = t('workspace.preview.empty');
+  } finally {
+    state.preview.loading = false;
+  }
+};
+
+const openPreview = async (entry) => {
+  if (!entry || entry.type !== 'file') return;
+  if (isWorkspaceDrawioEditable(entry)) {
+    openDrawioEditor(entry);
+    return;
+  }
+  if (isWorkspaceOfficeEditable(entry)) {
+    openOnlyOfficeEditor(entry);
+    return;
+  }
+  await openPreviewWithoutOnlyOffice(entry);
+};
+
+const openOnlyOfficeEditor = (entry) => {
+  if (!entry || entry.type !== 'file') return;
+  if (desktopLocalMode) {
+    const bridge = getDesktopBridge();
+    if (bridge?.openPathWithDefaultApp) {
+      void (async () => {
+        try {
+          const absolutePath = await resolveDesktopAbsoluteWorkspacePathAsync(entry.path);
+          console.info('[desktop-debug][workspace-panel] open-onlyoffice', {
+            path: entry.path,
+            containerId: normalizedContainerId.value,
+            desktopLocalMode: desktopLocalMode,
+            absolutePath
+          });
+          const opened = Boolean(
+            await bridge.openPathWithDefaultApp(absolutePath)
+          );
+          if (opened) {
+            return;
+          }
+        } catch (error) {
+          console.warn('[desktop-debug][workspace-panel] open-onlyoffice default app failed, fallback to onlyoffice', {
+            path: entry.path,
+            error: error instanceof Error ? error.message : String(error || '')
+          });
+        }
+        state.preview.visible = false;
+        state.onlyOffice.fallbackEntry = entry;
+        state.onlyOffice.entry = entry;
+        state.onlyOffice.visible = true;
+      })();
+      return;
+    }
+  }
+  state.preview.visible = false;
+  state.onlyOffice.fallbackEntry = entry;
+  state.onlyOffice.entry = entry;
+  state.onlyOffice.visible = true;
+};
+
+const openDrawioEditor = (entry) => {
+  if (!entry || entry.type !== 'file') return;
+  void (async () => {
+    const absolutePath = desktopLocalMode
+      ? await resolveDesktopAbsoluteWorkspacePathAsync(entry.path)
+      : '';
+    console.info('[desktop-debug][workspace-panel] open-drawio', {
+      path: entry.path,
+      containerId: normalizedContainerId.value,
+      desktopLocalMode: desktopLocalMode,
+      absolutePath
+    });
+    state.preview.visible = false;
+    state.drawio.fallbackEntry = entry;
+    state.drawio.entry = entry;
+    state.drawio.visible = true;
+  })();
+};
+
+const openWorkspaceBindingDialog = () => {
+  emit('open-workspace-binding', {
+    containerId: normalizedContainerId.value,
+    currentPath: state.path || '/'
+  });
+};
+
+const handleDrawioFallback = async (payload: { path?: string; message?: string } = {}) => {
+  const fallbackPath = normalizeWorkspacePath(payload.path || '');
+  const fallbackEntry =
+    (fallbackPath && findWorkspaceEntryByPath(state.entries, fallbackPath)) || state.drawio.fallbackEntry || null;
+  state.drawio.visible = false;
+  state.drawio.entry = null;
+  state.drawio.fallbackEntry = null;
+  if (!fallbackEntry) return;
+  if (desktopLocalMode) {
+    const bridge = getDesktopBridge();
+    let opened = false;
+    if (bridge?.openPathWithDefaultApp) {
+      try {
+        opened = Boolean(
+          await bridge.openPathWithDefaultApp(
+            await resolveDesktopAbsoluteWorkspacePathAsync(fallbackEntry.path)
+          )
+        );
+      } catch {
+        opened = false;
+      }
+    }
+    if (opened) {
+      return;
+    }
+  }
+  await openPreviewWithoutOnlyOffice(fallbackEntry);
+};
+
+const handleDrawioSaved = async (payload: { path?: string } = {}) => {
+  const changedPath = normalizeWorkspacePath(payload.path || state.drawio.entry?.path || '');
+  if (!changedPath) return;
+  await refreshWorkspacePathWithFallback(getWorkspaceParentPath(changedPath));
+  if (isWorkspaceFileSystem.value) {
+    emitWorkspaceRefresh({
+      reason: 'workspace-drawio-save',
+      sourceId: workspacePanelRefreshSourceId,
+      agentId: normalizedAgentId.value,
+      containerId: normalizedContainerId.value,
+      path: changedPath,
+      paths: [changedPath]
+    });
+  }
+};
+
+const handleOnlyOfficeFallback = async (payload: { path?: string; message?: string } = {}) => {
+  const fallbackPath = normalizeWorkspacePath(payload.path || '');
+  const fallbackEntry =
+    (fallbackPath && findWorkspaceEntryByPath(state.entries, fallbackPath)) || state.onlyOffice.fallbackEntry || null;
+  state.onlyOffice.visible = false;
+  state.onlyOffice.entry = null;
+  state.onlyOffice.fallbackEntry = null;
+  if (!fallbackEntry) return;
+  if (desktopLocalMode) {
+    const bridge = getDesktopBridge();
+    let opened = false;
+    if (bridge?.openPathWithDefaultApp) {
+      try {
+        opened = Boolean(
+          await bridge.openPathWithDefaultApp(
+            await resolveDesktopAbsoluteWorkspacePathAsync(fallbackEntry.path)
+          )
+        );
+      } catch {
+        opened = false;
+      }
+    }
+    if (opened) {
+      return;
+    }
+  }
+  await openPreviewWithoutOnlyOffice(fallbackEntry);
+};
+
+const handleOnlyOfficeSaved = async (payload: { path?: string } = {}) => {
+  const changedPath = normalizeWorkspacePath(payload.path || state.onlyOffice.entry?.path || '');
+  if (!changedPath) return;
+  await refreshWorkspacePathWithFallback(getWorkspaceParentPath(changedPath));
+  if (isWorkspaceFileSystem.value) {
+    emitWorkspaceRefresh({
+      reason: 'workspace-onlyoffice-save',
+      sourceId: workspacePanelRefreshSourceId,
+      agentId: normalizedAgentId.value,
+      containerId: normalizedContainerId.value,
+      path: changedPath,
+      paths: [changedPath]
+    });
+  }
+};
+
+const closePreview = () => {
+  state.preview.visible = false;
+  state.preview.entry = null;
+  state.preview.content = '';
+  state.preview.hint = '';
+  state.preview.embed = false;
+  state.preview.type = '';
+  clearPreviewUrl();
+};
+
+const downloadPreview = async () => {
+  if (!state.preview.entry) return;
+  await downloadEntry(state.preview.entry);
+};
+
+const openEditor = async (entry) => {
+  if (!entry || entry.type !== 'file') return;
+  if (!isWorkspaceTextEditable(entry)) {
+    ElMessage.warning(t('workspace.editor.previewOnly'));
+    return;
+  }
+  state.editor.entry = entry;
+  state.editor.visible = true;
+  state.editor.content = '';
+  state.editor.loading = true;
+  try {
+    const response = await activeFileSystem.value.listContent(withFsParams({
+      path: entry.path,
+      include_content: true,
+      max_bytes: MAX_TEXT_PREVIEW_SIZE
+    }));
+    const payload = response.data || {};
+    if (payload.truncated) {
+      ElMessage.warning(t('workspace.editor.tooLarge'));
+      closeEditor();
+      return;
+    }
+    state.editor.content = typeof payload.content === 'string' ? payload.content : '';
+  } catch (error) {
+    ElMessage.error(t('workspace.editor.loadFailed'));
+    closeEditor();
+  } finally {
+    state.editor.loading = false;
+  }
+};
+
+const revokeEditorHtmlPreviewUrls = () => {
+  if (editorHtmlPreviewUrl.value) {
+    URL.revokeObjectURL(editorHtmlPreviewUrl.value);
+    editorHtmlPreviewUrl.value = '';
+  }
+  editorHtmlPreviewObjectUrls.forEach((url) => {
+    URL.revokeObjectURL(url);
+  });
+  editorHtmlPreviewObjectUrls = [];
+};
+
+const createWorkspaceHtmlPreviewResourceFetcher = () => async (relativePath: string) => {
+  const response = await activeFileSystem.value.downloadFile(withFsParams({ path: normalizeWorkspacePath(relativePath) }));
+  const blob = response.data;
+  return blob instanceof Blob ? blob : new Blob([blob]);
+};
+
+const rebuildEditorHtmlPreview = async () => {
+  const serial = ++editorHtmlPreviewBuildSerial;
+  if (!state.editor.visible || !state.editor.previewMode || editorPreviewType.value !== 'html') {
+    revokeEditorHtmlPreviewUrls();
+    return;
+  }
+  const entryPath = normalizeWorkspacePath(state.editor.entry?.path || '');
+  try {
+    const previewDocument = await buildWorkspaceHtmlPreviewDocument({
+      rawHtml: String(state.editor.content || ''),
+      entryPath,
+      fetchResource: createWorkspaceHtmlPreviewResourceFetcher()
+    });
+    const previewBlob = new Blob([previewDocument.html], { type: 'text/html' });
+    const previewUrl = URL.createObjectURL(previewBlob);
+    if (serial !== editorHtmlPreviewBuildSerial) {
+      URL.revokeObjectURL(previewUrl);
+      previewDocument.objectUrls.forEach((url) => URL.revokeObjectURL(url));
+      return;
+    }
+    revokeEditorHtmlPreviewUrls();
+    editorHtmlPreviewUrl.value = previewUrl;
+    editorHtmlPreviewObjectUrls = previewDocument.objectUrls;
+  } catch {
+    if (serial !== editorHtmlPreviewBuildSerial) return;
+    const fallbackUrl = URL.createObjectURL(new Blob([String(state.editor.content || '')], { type: 'text/html' }));
+    revokeEditorHtmlPreviewUrls();
+    editorHtmlPreviewUrl.value = fallbackUrl;
+  }
+};
+
+const closeEditor = () => {
+  revokeEditorHtmlPreviewUrls();
+  editorHtmlPreviewBuildSerial += 1;
+  state.editor.visible = false;
+  state.editor.entry = null;
+  state.editor.content = '';
+  state.editor.loading = false;
+  state.editor.previewMode = false;
+  state.editor.fullscreen = false;
+};
+
+const toggleEditorPreview = () => {
+  if (!editorPreviewToggleVisible.value) return;
+  state.editor.previewMode = !state.editor.previewMode;
+};
+
+const toggleEditorFullscreen = () => {
+  state.editor.fullscreen = !state.editor.fullscreen;
+};
+
+const saveEditor = async () => {
+  if (!state.editor.entry) return;
+  if (!ensureWritableFileSystem()) return;
+  const parentPath = getWorkspaceParentPath(state.editor.entry.path);
+  try {
+    await activeFileSystem.value.saveFile(withFsParams({
+        path: state.editor.entry.path,
+        content: state.editor.content
+      })
+    );
+    ElMessage.success(t('common.saved'));
+    await refreshWorkspacePathWithFallback(parentPath);
+  } catch (error) {
+    showApiError(error, t('workspace.editor.saveFailed'));
+  }
+};
+
+const handleGlobalClick = (event) => {
+  if (!menuRef.value?.contains(event.target)) {
+    closeContextMenu();
+  }
+};
+
+const handleDocumentVisibilityChange = () => {
+  if (!shouldRunWorkspaceBackgroundWork.value) {
+    return;
+  }
+  if (typeof document === 'undefined' || document.visibilityState !== 'visible') {
+    return;
+  }
+  if (settleRefreshPending && !settleRefreshTimer) {
+    scheduleWorkspaceSettleRefresh({ previewPath: settleRefreshPreviewPath });
+  }
+};
+
+onMounted(async () => {
+  if (shouldRunWorkspaceBackgroundWork.value) {
+    scheduleWorkspaceThemeIconWarmup();
+    await loadWorkspace();
+    await revealWorkspacePath(props.initialFocusPath);
+  }
+  if (isWorkspaceFileSystem.value) {
+    stopWorkspaceRefreshListener = onWorkspaceRefresh((event) => {
+      if (!shouldRunWorkspaceBackgroundWork.value) {
+        return;
+      }
+      const detail =
+        event?.detail && typeof event.detail === 'object'
+          ? (event.detail as Record<string, unknown>)
+          : {};
+      if (String(detail.sourceId || '').trim() === workspacePanelRefreshSourceId) return;
+      const eventAgentId = String(detail.agentId ?? detail.agent_id ?? '').trim();
+      const eventContainerRaw = detail.containerId ?? detail.container_id;
+      const eventContainerId = Number.parseInt(String(eventContainerRaw ?? ''), 10);
+      const currentAgentId = normalizedAgentId.value;
+      if (eventAgentId && eventAgentId !== currentAgentId) return;
+      if (Number.isFinite(eventContainerId) && eventContainerId !== normalizedContainerId.value) return;
+      const changedPaths = normalizeWorkspaceEventPaths(detail);
+      const previewPath =
+        state.preview.visible && shouldWorkspacePreviewReload(state.preview.entry?.path || '', changedPaths)
+          ? String(state.preview.entry?.path || '').trim()
+          : '';
+      const scheduled = scheduleWorkspaceAutoRefreshByDetail(detail);
+      if (scheduled && previewPath) {
+        scheduleWorkspaceSettleRefresh({ previewPath });
+      }
+    });
+  }
+  document.addEventListener('click', handleGlobalClick);
+  document.addEventListener('visibilitychange', handleDocumentVisibilityChange);
+  window.addEventListener('resize', closeContextMenu);
+});
+
+watch(
+  shouldRunWorkspaceBackgroundWork,
+  async (visible, wasVisible) => {
+    if (visible === wasVisible) return;
+    if (!visible) {
+      return;
+    }
+    scheduleWorkspaceThemeIconWarmup();
+    if (!state.entries.length) {
+      await loadWorkspace({ path: '', resetExpanded: true, resetSearch: true });
+    }
+    await revealWorkspacePath(props.initialFocusPath);
+  },
+  { immediate: false }
+);
+
+watch(
+  () => activeFileSystemKey.value,
+  async (value, oldValue) => {
+    if (value === oldValue) return;
+    if (!shouldRunWorkspaceBackgroundWork.value) return;
+    state.path = '';
+    state.parent = null;
+    state.expanded = new Set();
+    state.searchMode = false;
+    state.searchKeyword = '';
+    closePreview();
+    closeEditor();
+    await loadWorkspace({ path: '', resetExpanded: true, resetSearch: true });
+    await revealWorkspacePath(props.initialFocusPath);
+  }
+);
+
+watch(
+  () => String(props.initialFocusPath || '').trim(),
+  async (value, oldValue) => {
+    if (!value || value === oldValue) return;
+    if (!shouldRunWorkspaceBackgroundWork.value) return;
+    await revealWorkspacePath(value);
+  }
+);
+
+watch(
+  listRef,
+  () => {
+    void syncWorkspaceListViewport();
+  },
+  { flush: 'post' }
+);
+
+watch(
+  () => [displayEntries.value.length, workspaceVirtual.value],
+  () => {
+    void syncWorkspaceListViewport();
+  },
+  { flush: 'post' }
+);
+
+watch(
+  () => [
+    state.editor.visible,
+    state.editor.previewMode,
+    editorPreviewType.value,
+    state.editor.entry?.path || '',
+    state.editor.content,
+    normalizedAgentId.value,
+    normalizedContainerId.value
+  ],
+  () => {
+    void rebuildEditorHtmlPreview();
+  },
+  { flush: 'post' }
+);
+
+onBeforeUnmount(() => {
+  clearPreviewUrl();
+  revokeEditorHtmlPreviewUrls();
+  editorHtmlPreviewBuildSerial += 1;
+  cancelWorkspaceThemeIconWarmup();
+  if (searchTimer) {
+    clearTimeout(searchTimer);
+  }
+  if (autoRefreshTimer) {
+    clearTimeout(autoRefreshTimer);
+    autoRefreshTimer = null;
+  }
+  if (settleRefreshTimer) {
+    clearTimeout(settleRefreshTimer);
+    settleRefreshTimer = null;
+  }
+  if (stopWorkspaceRefreshListener) {
+    stopWorkspaceRefreshListener();
+    stopWorkspaceRefreshListener = null;
+  }
+  document.removeEventListener('click', handleGlobalClick);
+  document.removeEventListener('visibilitychange', handleDocumentVisibilityChange);
+  window.removeEventListener('resize', closeContextMenu);
+});
+
+defineExpose({
+  refreshView: reloadWorkspaceView,
+  revealPath: revealWorkspacePath
+});
+</script>

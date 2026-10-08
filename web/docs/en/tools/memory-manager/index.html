@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Memory Manager | 使用说明书</title>
+  <meta name="description" content="Explains the `memory_manager` actions, compact structure, and the &quot;short index injection + get full detail&quot; workflow.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/memory-manager","language":"en","title":"Memory Manager","summary":"Explains the `memory_manager` actions, compact structure, and the \"short index injection + get full detail\" workflow.","updated_at":"2026-04-12","read_when":["You need to add, search, read, update, or remove long-term memory fragments"],"source_docs":["src/services/tools/memory_manager_tool.rs","src/services/memory_fragments.rs"],"tab":"Tools","group":"Sessions and Collaboration","group_path":["Sessions and Collaboration"],"url":"/docs/en/tools/memory-manager/","headings":[{"id":"section-1","level":1,"text":"Memory Manager"},{"id":"section-2","level":2,"text":"Usage Rules"},{"id":"section-3","level":2,"text":"list"},{"id":"section-4","level":2,"text":"search"},{"id":"section-5","level":2,"text":"get"},{"id":"section-6","level":2,"text":"Write Example"},{"id":"section-7","level":2,"text":"Important Notes"}],"prev_slug":"en/tools/subagent-control","next_slug":"en/tools/channel","markdown":"# Memory Manager\n\n`memory_manager` manages long-term memory for the current agent inside the current user scope.\n\nSupported actions:\n\n- `list`\n- `search`\n- `get`\n- `add`\n- `update`\n- `remove`\n- `clear`\n\n## Usage Rules\n\n- The system prompt only receives compact memory indexes: `memory_id + title`\n- Full `content` is not auto-injected into the prompt\n- Use `list/search` first, then `get(memory_id)` for the full detail\n- Model-facing `memory_id` should stay within 8 characters when possible\n- `add/update` should use only the compact field set:\n  - `title`\n  - `content`\n  - `tag`\n  - `related_memory_id`\n  - `memory_time`\n\n## `list`\n\nReturns recent memory indexes. Default limit is 30.\n\n```json\n{\n  \"action\": \"list\",\n  \"data\": {\n    \"count\": 1,\n    \"items\": [\n      {\n        \"memory_id\": \"0695f345\",\n        \"title\": \"User name\",\n        \"tag\": \"profile\",\n        \"updated_at\": 1775957851\n      }\n    ]\n  }\n}\n```\n\n## `search`\n\nSearches matching titles or content. Default limit is 10.\n\n```json\n{\n  \"action\": \"search\",\n  \"data\": {\n    \"query\": \"Zhou Huajian\",\n    \"count\": 1,\n    \"items\": [\n      {\n        \"memory_id\": \"0695f345\",\n        \"title\": \"User name\",\n        \"tag\": \"profile\",\n        \"snippet\": \"The user's name is Zhou Huajian. This came from the user's self-introduction.\",\n        \"matched_in\": [\"content\"],\n        \"updated_at\": 1775957851\n      }\n    ]\n  }\n}\n```\n\n## `get`\n\nLoads the full detail for one memory.\n\n```json\n{\n  \"action\": \"get\",\n  \"data\": {\n    \"memory_id\": \"0695f345\",\n    \"item\": {\n      \"memory_id\": \"0695f345\",\n      \"title\": \"User name\",\n      \"content\": \"The user's name is Zhou Huajian. This came from the user's self-introduction.\",\n      \"tag\": \"profile\",\n      \"related_memory_id\": null,\n      \"memory_time\": 1775957820,\n      \"updated_at\": 1775957851\n    }\n  }\n}\n```\n\n## Write Example\n\n```json\n{\n  \"action\": \"add\",\n  \"title\": \"User name\",\n  \"content\": \"The user's name is Zhou Huajian. This came from the user's self-introduction.\",\n  \"tag\": \"profile\",\n  \"memory_time\": \"2026-04-12T08:37:00+08:00\"\n}\n```\n\n## Important Notes\n\nThese old fields are no longer part of the recommended protocol:\n\n- `summary`\n- `tags`\n- `entities`\n- `category`\n\nPractical rule:\n\n- `list/search` are the main retrieval actions\n- `get` is the only full-detail read action\n- Writes only affect later new threads, not an already frozen thread system prompt\n","source_path":"使用说明书/en/tools/memory-manager.md"}</script>
+</body>
+</html>

@@ -1,0 +1,94 @@
+import { Theme } from "theme.slint";
+
+// Shared drag coordinates let each row expose the live insertion target.
+export global DragPreview {
+    in-out property <bool> active: false;
+    in-out property <length> pointer-y: 0px;
+    in-out property <length> source-y: -1px;
+}
+
+export component DragRow inherits Rectangle {
+    in property <string> label;
+    in property <bool> enabled: true;
+    in property <bool> selected;
+    in property <color> selected-color: Theme.accent-soft;
+    out property <bool> hover: touch.has-hover;
+    callback activate();
+    callback move-by(int);
+    private property <length> start-y;
+    private property <bool> dragging;
+    private property <bool> drop-target: DragPreview.active && DragPreview.source-y != root.absolute-position.y && DragPreview.pointer-y >= root.absolute-position.y && DragPreview.pointer-y < root.absolute-position.y + root.height;
+    private property <bool> insert-after: DragPreview.pointer-y >= root.absolute-position.y + root.height / 2;
+    border-radius: Theme.radius-lg;
+    background: root.selected ? root.selected-color : touch.has-hover || touch.pressed ? Theme.accent-soft : transparent;
+    border-width: root.dragging ? 1px : 0px;
+    border-color: Theme.accent;
+    opacity: root.dragging ? 0.88 : 1;
+    accessible-role: button; accessible-label: root.label;
+    accessible-action-default => { if root.enabled { root.activate(); } }
+    forward-focus: focus;
+    focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == " " || event.text == "\n" { root.activate(); return accept; }
+            return reject;
+        }
+    }
+    touch := TouchArea {
+        enabled: root.enabled; mouse-cursor: root.dragging ? move : pointer;
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                root.start-y = self.mouse-y;
+                root.dragging = false;
+                DragPreview.active = false;
+                DragPreview.source-y = root.absolute-position.y;
+                DragPreview.pointer-y = root.absolute-position.y + self.mouse-y;
+                focus.focus();
+            }
+            if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+                if root.dragging { root.move-by(round((self.mouse-y - root.start-y) / root.height)); }
+                else { root.activate(); }
+                root.dragging = false;
+                DragPreview.active = false;
+                DragPreview.source-y = -1px;
+            }
+            if event.kind == PointerEventKind.cancel {
+                root.dragging = false;
+                DragPreview.active = false;
+                DragPreview.source-y = -1px;
+            }
+        }
+        moved => {
+            DragPreview.pointer-y = root.absolute-position.y + self.mouse-y;
+            if self.pressed && abs(self.mouse-y - root.start-y) > 6px {
+                root.dragging = true;
+                DragPreview.active = true;
+            }
+        }
+    }
+    @children
+    // Target rows show a highlighted seam that animates from before to after.
+    if root.drop-target : Rectangle {
+        x: 2px;
+        y: root.insert-after ? parent.height - 2px : 0px;
+        width: parent.width - 4px;
+        height: 2px;
+        z: 100;
+        background: Theme.accent;
+        opacity: 0.96;
+        animate y { duration: 110ms; easing: ease-out; }
+    }
+    if root.drop-target : Rectangle {
+        x: 4px;
+        y: 2px;
+        width: parent.width - 8px;
+        height: parent.height - 4px;
+        z: 99;
+        border-radius: Theme.radius-sm;
+        border-width: 1px;
+        border-color: Theme.accent.transparentize(0.6);
+        background: Theme.accent.transparentize(0.91);
+        opacity: 0.9;
+        animate opacity { duration: 100ms; easing: ease-out; }
+    }
+}

@@ -1,0 +1,130 @@
+// The visual tokens live in design_tokens.slint and are re-exported here so
+// every page keeps importing Theme (and the data structs) from theme.slint.
+import { Theme } from "design_tokens.slint";
+export { Theme }
+export struct Conversation { id: string, agent-id: string, workspace-id: string, workspace-name: string, workspace-color: string, title: string, preview: string, time: string, consumed-tokens: string, tool-calls: string, quota-used: string, runtime-status: string, locked: bool, goal-active: bool, goal-objective: string, goal-seconds: int, goal-paused: bool }
+// One bound user folder in the sidebar tree. `expanded`/`selected` are pure
+// view state owned by the workspace projection, not persisted.
+export struct WorkspaceCard { workspace-id: string, name: string, icon: string, color: string, root-path: string, thread-count: int, expanded: bool, selected: bool }
+// One flat sidebar tree row; kind 0 is a workspace header, kind 1 a thread
+// under it. `payload` is the workspace or thread index the callbacks expect.
+// Built in one bounded Rust pass so the Slint thread never merges models.
+export struct SidebarRow { kind: int, workspace-id: string, name: string, icon: string, color: string, thread-count: int, expanded: bool, selected: bool, thread-id: string, title: string, status: string, active: bool, payload: int }
+export struct ThreadLogEvent { event-type: string, time: string, summary: string, raw: string, order: int, round: int }
+export struct TextBlock { text: string, styled: styled-text, kind: int, table-cells: [string], table-columns: int, table-rows: [string], image: image, image-source: string, language: string }
+// A bounded, stable projection of one tool invocation. Detail text is only
+// laid out after the user expands that entry, so streaming tool output never
+// causes the full chat history to be reparsed.
+export struct WorkflowLine { ratio: float, text: string, kind: string, number: string }
+export struct WorkflowSection { title: string, meta: string, kind: string, lines: [WorkflowLine] }
+export struct ToolWorkflowEntry { id: string, title: string, preview: string, detail: string, state: string, tokens: string, duration: string, icon: string, sections: [WorkflowSection] }
+// One diff card of the timeline (§7.4). Lines stay flat and pre-bounded so a
+// long patch never rebuilds the whole message list while it streams.
+export struct PatchLine { number: string, text: string, kind: string }
+export struct PatchCard { path: string, action: string, added: string, deleted: string, lines: [PatchLine] }
+// One flat, pre-projected timeline entry (§7). `kind` selects the component:
+// 0 user bubble, 1 assistant body, 2 reasoning entry, 3 tool entry,
+// 4 tool group bar, 5 turn divider. `payload` is the row index a fold toggle
+// addresses (its own index for entries and group bars, the first row of the
+// turn for a divider).
+// One end-of-turn metric. `key` doubles as the icon key and as the label used
+// for the tooltip; Slint has no map, so the icon resolves through StatsIcons.
+export struct TurnStatMetric { key: string, value: string }
+
+export struct TimelineRow {
+    kind: int,
+    id: string,
+    visible: bool,
+    text: string,
+    blocks: [TextBlock],
+    summary: string,
+    tool-name: string,
+    tool-icon: string,
+    target: string,
+    detail: string,
+    status-kind: int,
+    foldable: bool,
+    open: bool,
+    group-idx: int,
+    group-open: bool,
+    payload: int,
+    patch: [PatchCard],
+    // End-of-turn metrics (duration / speed / context occupancy / consumed
+    // tokens / tool calls). Empty for rows that end no turn. Built by
+    // `src/turn_stats.rs` and rendered as icon + value, mirroring the web
+    // messenger's MessageStats.vue.
+    stats: [TurnStatMetric]
+}
+
+export struct TimelineCounts { rows: int, answers: int }
+
+// One step of the status dock's execution plan (§StatusDock). `status` is the
+// runtime's own vocabulary: "pending" | "in_progress" | "completed".
+export struct PlanStep { step: string, status: string }
+
+// Stable desktop navigation identifiers. The two-column shell has exactly two
+// surfaces: the chat (with its sidebar) and the settings sheet. The old rail
+// pages are gone and their content lives in the sheet's categories, so a page
+// identifier no longer needs to be independent of a rail slot.
+export enum DesktopPage { messages, settings }
+// Screenshot attachment state remains in the UI projection until send. The
+// data URL is forwarded through the native Rust façade without an HTTP hop.
+export struct ChatAttachment { name: string, mime-type: string, data-url: string }
+export struct FileCard { name: string, path: string, entry-type: string, size: string, modified: string, icon: image, depth: int, expanded: bool }
+export struct CronCard { id: string, name: string, enabled: bool, schedule: string, next-run: string, last-status: string, last-error: string }
+export struct CronRunCard { run-id: string, status: string, trigger: string, summary: string, error: string, duration: string, created-at: string }
+export struct PromptPackCard { id: string, readonly: bool, locale: string, is-active: bool, is-lang-default: bool }
+// Avatar dialog models. `AvatarOption.key` is "initial" or "avatar-NNN";
+// empty `image` cells render the agent-initial glyph. `CompanionCard.preview`
+// carries the companion idle frame (empty until the sheet is loaded).
+// Slint has no string→color conversion, so the palette ships as one
+// Rust-owned array carrying both the payload hex and its brush.
+export struct AvatarOption { key: string, image: image }
+export struct AvatarColorChip { hex: string, brush: color }
+export struct CompanionCard { id: string, name: string, description: string, glyph: string, preview: image }
+// Channel projections stay secret-free: the runtime only sends `_set` flags
+// and non-secret guided prefill values, never token or secret content.
+export struct ChannelCatalogCard { channel: string, name: string, description: string }
+export struct ChannelAccountCard { channel: string, account-id: string, name: string, status: string, active: bool, configured: bool, peer-kind: string, agent-id: string, created-at: string, updated-at: string, summary: string, secret-set: bool, app-id: string, corp-id: string, wechat-agent-id: string, original-id: string, weixin-bot-id: string, weixin-user-id: string, bot-type: string, domain: string }
+export struct ChannelBindingCard { binding-id: string, peer-kind: string, peer-id: string, agent-id: string, enabled: bool }
+export struct ChannelLogCard { time: string, level: string, event: string, message: string }
+export struct AgentCard {
+    goal-active: bool,
+    id: string,
+    name: string,
+    description: string,
+    model: string,
+    system-prompt: string,
+    status: string,
+    icon-glyph: string,
+    icon-tone: int,
+    // Canonical icon payload, sent back verbatim when the editor is saved.
+    icon-config: string,
+    // Resolved avatar visual (static image or companion idle frame). Empty
+    // images fall back to the glyph + tone bubble.
+    icon-image: image,
+    tool-count: int,
+    tool-names: [string],
+    preset-questions: [string],
+    approval-mode: string,
+    preview-skill: bool,
+    silent: bool,
+    prefer-mother: bool,
+    preset-question-count: int
+}
+export struct ToolCard { name: string, description: string, category: string, enabled: bool, icon: string, tone: string }
+// One row of the built-in agent's tool list. The projection is bounded and
+// rebuilt natively: the view never matches tool names itself.
+export struct AgentToolOption { name: string, description: string, category: string, enabled: bool }
+export struct ModelCard { key: string, provider: string, model: string, base-url: string, model-type: string, is-default: bool, is-cloud: bool,
+    temperature: string, timeout-s: string, max-output: string, thinking-token-budget: string, max-rounds: string, max-context: string,
+    tts-voice: string, tts-response-format: string, tts-speed: string, tts-instructions: string,
+    asr-language: string, asr-response-format: string, asr-temperature: string, asr-prompt: string,
+    image-size: string, image-output-format: string, image-steps: string, image-guidance-scale: string, image-negative-prompt: string,
+    video-size: string, video-seconds: string, video-fps: string, video-negative-prompt: string }
+// `avatar-color` stays the raw `#rrggbb` preference; `avatar-brush` is the same
+// value resolved natively, because Slint has no string→color cast. Avatar
+// surfaces (the sidebar settings button) paint the brush and print the glyph.
+export struct ProfileCard { user-id: string, username: string, email: string, unit: string, unit-id: string, sessions: string, sessions-last-7d: string, tool-calls: string, tokens: string, agents: string, last-active: string, avatar-icon: string, avatar-glyph: string, avatar-color: string, avatar-brush: color }
+export struct LanPeerCard { peer-id: string, display-name: string, address: string }
+

@@ -1,0 +1,42 @@
+import { Theme } from "theme.slint";
+
+export global RuntimeStatus {
+    public pure function normalize(value: string) -> string {
+        // "模型请求正在排队" is the status dock's queued phrase (it embeds the
+        // waiting position, hence the prefix match rather than equality).
+        if value == "pending" || value == "queued" || value == "waiting_input" || value == "waiting_user_input" || value.starts-with("正在排队") || value.starts-with("任务已排队") || value.starts-with("模型请求正在排队") || value.starts-with("等待") { return "pending"; }
+        if value == "error" || value == "failed" || value == "rejected" || value.starts-with("执行失败") { return "error"; }
+        if value == "done" || value == "finished" || value == "completed" || value == "success" || value.starts-with("任务完成") || value.starts-with("输出已结束") { return "done"; }
+        if value == "running" || value == "streaming" || value == "executing" || value.starts-with("正在") || value.starts-with("模型响应中") || value.starts-with("目标") { return "running"; }
+        return "idle";
+    }
+}
+
+// Same geometry, glyphs and palette as AgentAvatar.vue (sm / status-only).
+export component RuntimeBadge inherits Rectangle {
+    in property <string> status;
+    in property <bool> avatar-badge: false;
+    out property <string> state: RuntimeStatus.normalize(root.status);
+    width: root.avatar-badge ? 16px : 20px;
+    height: self.width;
+    border-radius: self.width / 2;
+    border-width: root.avatar-badge ? 2px : 0px;
+    border-color: white;
+    background: root.state == "running" ? Theme.accent : root.state == "done" ? #3ca976 : root.state == "pending" ? #8b6bd0 : root.state == "error" ? #cd4a60 : #f3f4f6;
+    if root.state != "running" : Image {
+        width: 10px; height: 10px;
+        source: root.state == "done" ? @image-url("../assets/icons/status-check.svg") : root.state == "pending" ? @image-url("../assets/icons/status-clock.svg") : root.state == "error" ? @image-url("../assets/icons/status-error.svg") : @image-url("../assets/icons/status-pause.svg");
+        image-fit: contain; colorize: root.state == "idle" ? #6b7280 : white;
+    }
+    if root.state == "running" : spinner := Rectangle {
+        width: 10px; height: 10px;
+        // The desktop software renderer does not support transform-rotation.
+        // Rotate the six dot positions directly, with the web's 1.48s period.
+        private property <angle> phase: mod(animation-tick(), 1480ms) / 1480ms * 360deg;
+        for offset in [{x: 0, y: -4.1}, {x: 3.55, y: -2.05}, {x: 3.55, y: 2.05}, {x: 0, y: 4.1}, {x: -3.55, y: 2.05}, {x: -3.55, y: -2.05}] : Rectangle {
+            x: 3.3px + (offset.x * cos(spinner.phase) - offset.y * sin(spinner.phase)) * 1px;
+            y: 3.3px + (offset.x * sin(spinner.phase) + offset.y * cos(spinner.phase)) * 1px;
+            width: 3.4px; height: 3.4px; border-radius: 1.7px; background: white;
+        }
+    }
+}

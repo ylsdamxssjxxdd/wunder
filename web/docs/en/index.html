@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>wunder | 使用说明书</title>
+  <meta name="description" content="wunder is an agent system that executes tasks. You describe a goal in Beehive, and agents break it down, call tools, and deliver results.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/index","language":"en","title":"wunder","summary":"wunder is an agent system that executes tasks. You describe a goal in Beehive, and agents break it down, call tools, and deliver results.","updated_at":"2026-10-07","read_when":["First time learning about wunder","Need to quickly decide where to start"],"source_docs":["README.md","docs/设计文档/01-系统总体设计.md"],"tab":"Getting Started","group":"Home","group_path":["Home"],"url":"/docs/en/","headings":[{"id":"section-1","level":1,"text":"wunder"},{"id":"section-2","level":2,"text":"Beehive: your workbench"},{"id":"section-3","level":2,"text":"What it can do"},{"id":"section-4","level":2,"text":"Workbench and system structure"},{"id":"section-5","level":2,"text":"Pick your entry by role"},{"id":"section-6","level":2,"text":"Key features"},{"id":"section-7","level":2,"text":"Quick navigation"},{"id":"section-8","level":2,"text":"Further reading"}],"prev_slug":"zh-CN/help/glossary","next_slug":"en/start/quickstart","markdown":"# wunder\n\n<p class=\"docs-eyebrow\">An agent system that executes tasks<\/p>\n\n## Beehive: your workbench\n\nYou use wunder through **Beehive**. Beehive is the user-side workbench, covering chat, the working directory, agent settings, and tools. Open Beehive, describe your goal, and agents break it down, call tools, and deliver results.\n\nBeehive is available in two ways:\n\n| Way | For | Notes |\n|------|------|------|\n| **Desktop app** | Individual users | Local install, runs out of the box, can operate local files and desktop |\n| **Web browser** | Teams / Organizations | Browser access, multi-user, unified management |\n\nBoth share the same workbench with identical capabilities. Individual users just install the desktop app; for teams, an admin deploys the server and members access Beehive in a browser. Developers and automation scenarios can also use the [CLI](/docs/en/start/cli/).\n\n## What it can do\n\n- **Files & code**: read files, edit code, run commands, refactor projects\n- **Office automation**: organize documents, generate reports, process spreadsheets, take meeting notes\n- **Task splitting**: when work can run in parallel, the agent spawns temporary subagents, collects their results, and merges them back\n- **Continuous tasks**: scheduled checks, recurring reminders, cross-channel message handling\n- **System integration**: connect external services, turn recurring flows into skills\n\n## Workbench and system structure\n\nBeehive uses a two-column layout: the left sidebar holds new task, search, the workspace thread tree, the working directory, and settings; the right side is chat. All daily chat, file handling, agent settings, and tool usage happen here. Every user has exactly one agent instance and one fixed cloud working directory. See [Meet Beehive](/docs/en/surfaces/frontend/).\n\nThe system is organized top-down:\n\n![Top-down structure from wunder to thread: wunder, user, agent, and thread progressively land in a concrete conversation.](/docs/assets/manual/08-hierarchy-structure.svg)\n\nYou send a message → the agent keeps working in its thread, spawning temporary subagents when work can be split.\n\n## Pick your entry by role\n\n<div class=\"docs-card-grid\">\n  <a class=\"docs-card\" href=\"/docs/en/start/quickstart/\">\n    <strong>First time<\/strong>\n    <span>Complete your first task.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/surfaces/frontend/\">\n    <strong>Meet Beehive<\/strong>\n    <span>Chat, the working directory, agent settings, and tools.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/start/desktop/\">\n    <strong>Individual users<\/strong>\n    <span>Download the desktop app and run locally.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/start/server/\">\n    <strong>Team admins<\/strong>\n    <span>Deploy the server, manage users and permissions.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/surfaces/web-admin/\">\n    <strong>Admin surface<\/strong>\n    <span>System config, user and channel governance.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/start/cli/\">\n    <strong>Developers<\/strong>\n    <span>Terminal-driven, scripting, automation.<\/span>\n  <\/a>\n<\/div>\n\n## Key features\n\n| Feature | Description |\n|------|------|\n| **Unified workbench** | Desktop and web share the same Beehive, with identical capabilities |\n| **Multi-user & permissions** | Layered control over users, organizations, token quotas, and permissions |\n| **One agent per user** | Each user has exactly one agent instance, bound 1:1 to an admin-side preset; work that can run in parallel is split across temporary subagents |\n| **Rich tool ecosystem** | Built-in tools + MCP external tools + skill packs + knowledge bases |\n| **Open interfaces** | WebSocket real-time, RESTful API, A2A interop standard |\n\n## Quick navigation\n\n- **First time** → [Quick Start](/docs/en/start/quickstart/)\n- **Understand the system** → [Core Concepts](/docs/en/concepts/)\n- **Integrate with existing systems** → [Integration Overview](/docs/en/integration/)\n- **Running into issues** → [Troubleshooting](/docs/en/help/troubleshooting/) or [FAQ](/docs/en/help/faq/)\n\n## Further reading\n\n- [Documentation Hub](/docs/en/start/hubs/)\n- [API Index](/docs/en/reference/api-index/)\n- [System Overview (design doc)](/docs/设计文档/01-系统总体设计.md)\n","source_path":"使用说明书/en/index.md"}</script>
+</body>
+</html>

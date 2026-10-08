@@ -1,0 +1,85 @@
+// Dynamic tool icon lookup mirroring web/shared/tool-visuals.js. Rust computes
+// the icon key (src/tool_icons.rs); Slint maps keys to images here because
+// @image-url needs compile-time literals.
+export global ToolIcons {
+    public pure function image(name: string) -> image {
+        name == "terminal" ? @image-url("../assets/icons/terminal.svg") :
+        name == "file-lines" ? @image-url("../assets/icons/file-lines.svg") :
+        name == "folder-open" ? @image-url("../assets/icons/folder-open.svg") :
+        name == "magnifying-glass" ? @image-url("../assets/icons/magnifying-glass.svg") :
+        name == "globe" ? @image-url("../assets/icons/fa-globe.svg") :
+        name == "glasses" ? @image-url("../assets/icons/fa-glasses.svg") :
+        name == "clock" ? @image-url("../assets/icons/fa-clock.svg") :
+        name == "hourglass-half" ? @image-url("../assets/icons/fa-hourglass-half.svg") :
+        name == "memory" ? @image-url("../assets/icons/fa-memory.svg") :
+        name == "image" ? @image-url("../assets/icons/fa-image.svg") :
+        name == "microphone-lines" ? @image-url("../assets/icons/fa-microphone-lines.svg") :
+        name == "wave-square" ? @image-url("../assets/icons/fa-wave-square.svg") :
+        name == "paintbrush" ? @image-url("../assets/icons/fa-paintbrush.svg") :
+        name == "film" ? @image-url("../assets/icons/fa-film.svg") :
+        name == "comments" ? @image-url("../assets/icons/comments.svg") :
+        name == "file-circle-plus" ? @image-url("../assets/icons/fa-file-circle-plus.svg") :
+        name == "file-pen" ? @image-url("../assets/icons/fa-file-pen.svg") :
+        name == "pen-to-square" ? @image-url("../assets/icons/fa-pen-to-square.svg") :
+        name == "code" ? @image-url("../assets/icons/fa-code.svg") :
+        name == "database" ? @image-url("../assets/icons/database.svg") :
+        name == "plug" ? @image-url("../assets/icons/plug.svg") :
+        name == "wrench" ? @image-url("../assets/icons/wrench.svg") :
+        name == "paper-plane" ? @image-url("../assets/icons/paper-plane.svg") :
+        name == "book" ? @image-url("../assets/icons/book.svg") :
+        name == "book-open" ? @image-url("../assets/icons/fa-book-open.svg") :
+        name == "eye" ? @image-url("../assets/icons/eye.svg") :
+        name == "bullseye" ? @image-url("../assets/icons/fa-bullseye.svg") :
+        name == "circle-question" ? @image-url("../assets/icons/fa-circle-question.svg") :
+        name == "table-columns" ? @image-url("../assets/icons/fa-table-columns.svg") :
+        name == "window-maximize" ? @image-url("../assets/icons/fa-window-maximize.svg") :
+        name == "computer-mouse" ? @image-url("../assets/icons/fa-computer-mouse.svg") :
+        name == "display" ? @image-url("../assets/icons/fa-display.svg") :
+        name == "earth-asia" ? @image-url("../assets/icons/fa-earth-asia.svg") :
+        name == "share-from-square" ? @image-url("../assets/icons/fa-share-from-square.svg") :
+        name == "gauge-high" ? @image-url("../assets/icons/gauge-high.svg") :
+        name == "bee" ? @image-url("../assets/icons/bee.svg") :
+        name == "diagram-project" ? @image-url("../assets/icons/fa-diagram-project.svg") :
+        name == "code-branch" ? @image-url("../assets/icons/fa-code-branch.svg") :
+        name == "dragon" ? @image-url("../assets/icons/fa-dragon.svg") :
+        name == "compress" ? @image-url("../assets/icons/fa-compress.svg") :
+        @image-url("../assets/icons/fa-toolbox.svg");
+    }
+
+    // Badge palette from AbilityIconBadge.vue (rgba tones composited on white).
+    public pure function tone-background(tone: string) -> color {
+        tone == "skill" ? #fef3e2 :
+        tone == "mcp" ? #e2f4fc :
+        tone == "knowledge" ? #e2f7f0 :
+        tone == "shared" ? #f1ebfe :
+        tone == "automation" ? #ecedfd :
+        tone == "search" ? #e5f8ec :
+        tone == "file" ? #e8f0fe :
+        tone == "terminal" ? #e7e8eb :
+        #ffffff;
+    }
+
+    public pure function tone-border(tone: string) -> color {
+        tone == "skill" ? #fde8c4 :
+        tone == "mcp" ? #c5e9fa :
+        tone == "knowledge" ? #c6eee1 :
+        tone == "shared" ? #e3d8fd :
+        tone == "automation" ? #dadafc :
+        tone == "search" ? #caf1d8 :
+        tone == "file" ? #d0e1fd :
+        tone == "terminal" ? #caced3 :
+        #e8ebef;
+    }
+
+    public pure function tone-color(tone: string) -> color {
+        tone == "skill" ? #b45309 :
+        tone == "mcp" ? #0369a1 :
+        tone == "knowledge" ? #047857 :
+        tone == "shared" ? #6d28d9 :
+        tone == "automation" ? #4338ca :
+        tone == "search" ? #15803d :
+        tone == "file" ? #1d4ed8 :
+        tone == "terminal" ? #0f172a :
+        #334155;
+    }
+}

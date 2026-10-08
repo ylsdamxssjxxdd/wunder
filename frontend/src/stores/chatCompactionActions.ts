@@ -1,0 +1,503 @@
+import { applyChatThreadServerEvent, submitChatThreadTurn, getChatThreadState } from '@/realtime/chat/chatThreadRuntime';
+import { syncChatThreadShell } from './chatThreadEffects';
+import { markRuntimeProjectionChanged } from '@/realtime/chat/chatRuntimeProjectionInvalidation';
+import { readChatRealtimeRevision } from './chatSnapshotFreshness';
+import { defineStore } from 'pinia';
+
+import {
+  archiveSession as archiveSessionApi,
+  cancelMessageStream,
+  compactSession as compactSessionApi,
+  controlSessionSubagents as controlSessionSubagentsApi,
+  createSession,
+  deleteSession as deleteSessionApi,
+  getSession,
+  getSessionGoal,
+  getSessionEvents,
+  getSessionHistoryPage,
+  getSessionSubagents,
+  listSessions,
+  openChatSocket,
+  renameSession as renameSessionApi,
+  restoreSession as restoreSessionApi,
+  setSessionGoal as setSessionGoalApi,
+  submitMessageFeedback as submitMessageFeedbackApi,
+  updateSessionTools as updateSessionToolsApi
+} from '@/api/chat';
+import { t } from '@/i18n';
+import { formatStructuredErrorText } from '@/utils/streamError';
+import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
+import {
+  buildChatRequestTextInputOverflowError,
+  resolveChatRequestTextInputOverflow
+} from '@/utils/chatRequestInputLimit';
+import {
+  hasActiveSubagentsAfterLatestUser,
+  hasRunningAssistantMessage,
+  hasStreamingAssistantMessage,
+  isSessionBusyFromSignals,
+  isThreadRuntimeBusy,
+  isThreadRuntimeWaiting,
+  normalizeThreadRuntimeStatus
+} from '@/utils/chatSessionRuntime';
+import {
+  isSubagentItemActive,
+  normalizeSubagentRuntimeFlag,
+  isSubagentStatusFailed,
+  isSubagentStatusSuccessful,
+  normalizeSubagentRuntimeStatus
+} from '@/utils/subagentRuntime';
+import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from '@/utils/chatTiming';
+import {
+  mergeSessionsByIdPreservingRuntimeFields
+} from '@/stores/chatSessionMerge';
+import {
+  estimateChatTextTokens,
+  estimateRequestContextTokens,
+  resolveRequestContextPreviewTokens
+} from '@/utils/chatContextEstimate';
+import { resolveWorkflowDurationMs } from '@/utils/toolWorkflowTiming';
+import { summarizeTurnDecodeSpeed } from '@/utils/turnDecodeSpeed';
+import {
+  normalizeMessageFeedback,
+  normalizeMessageFeedbackVote
+} from '@/utils/messageFeedback';
+import { createWsMultiplexer } from '@/utils/ws';
+import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
+import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { chatPerf } from '@/utils/chatPerf';
+import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { resolveAccessToken } from '@/api/requestAuth';
+import {
+  createChatRuntimeProjection,
+  applyChatRuntimeEvent
+} from '@/realtime/chat/chatRuntimeReducer';
+import {
+  selectLegacyMessageStatus,
+  selectVisibleMessageProjections,
+  selectSessionBusy,
+  selectSessionBusyReason,
+  selectSessionRuntimeStatus
+} from '@/realtime/chat/chatRuntimeSelectors';
+import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
+import {
+  clearTrailingPendingAssistantMessages,
+  clearSupersededPendingAssistantMessages,
+  findPendingAssistantMessage,
+  isPendingAssistantMessage,
+  stopPendingAssistantMessage
+} from './chatPendingMessage';
+import {
+  captureChatSnapshotScheduleContext,
+  resolveChatSnapshotScheduleSource
+} from './chatSnapshotScheduler';
+import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
+import {
+  normalizeStreamLifecyclePhase,
+  shouldForcePreserveWatcherForActiveSession,
+  shouldApplyForegroundDetailHydration,
+  shouldKeepForegroundInteractiveRuntime,
+  shouldKeepForegroundLiveMessagesDuringRunningGap,
+  shouldKeepForegroundLiveMessages,
+  shouldRestartWatchAfterInteractiveStream
+} from './chatWatchLifecycle';
+import { isCompactionSummaryEvent } from '@/utils/chatCompactionWorkflow';
+import {
+  dedupeTerminalCompactionMarkersInPlace,
+  isCompactionMarkerAssistantMessage,
+  isSupersededRunningManualCompactionMarker,
+  mergeCompactionMarkersIntoMessages,
+  shouldPreserveTerminalCompactionMarkerState
+} from './chatCompactionMarker';
+import {
+  replaceMessageArrayKeepingReference,
+  resolveRealtimeMessageArrayReference
+} from './chatMessageArraySync';
+import { useCommandSessionStore } from './commandSessions';
+import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
+
+import { buildWorkflowItem } from './chatDemoPanels';
+import { clearSessionWatcher, setSessionLoading } from './chatRuntimeControls';
+import { bindRuntimeMessageToUserRound, buildRuntimeDebugSnapshot, cacheSessionMessages, clearRuntimePendingManualCompaction, clearSessionEventsSnapshot, ensureRuntime, getSessionMessages, markRuntimePendingManualCompaction, notifySessionSnapshot, syncChatRuntimeProjectionStatus, touchSessionUpdatedAt } from './chatRuntimeState';
+import { chatPageLifecycle } from './chatSharedState';
+import { buildMessage } from './chatStats';
+import { abortResumeStream, buildPendingManualCompactionMarkerMessage, finalizeManualCompactionAsCancelled, finalizeManualCompactionAsRequestFailed, findRunningManualCompactionMarkerMessage, isAbortRequestError, startSessionWatcher } from './chatWatcher';
+import { buildDetail, cloneCompactionDebugPayload, normalizeCompactionDebugText, summarizeCompactionWorkflowItemsForDebug } from './chatWorkflowHydration';
+
+export const chatCompactionActions = {
+    async compactSession(
+      sessionId,
+      payload: Record<string, unknown> = {},
+      localCompactionCommandMessageId: unknown = ''
+    ) {
+      const targetId = String(sessionId || this.activeSessionId || '').trim();
+      if (!targetId) {
+        throw new Error(t('chat.command.compactMissingSession'));
+      }
+      {
+        const activeSessionIdForManual = String(this.activeSessionId || '').trim();
+        const runtimeForManual = ensureRuntime(targetId);
+        const shouldWatchActiveSession = activeSessionIdForManual === targetId;
+        const debugPayloadEnabled = isChatDebugEnabled();
+        const targetMessages =
+          shouldWatchActiveSession
+            ? this.messages
+            : getSessionMessages(targetId) || [];
+        const now = Date.now();
+        const compactClientId = String(localCompactionCommandMessageId || `compact:${targetId}:${now}`);
+        submitChatThreadTurn(this, targetId, compactClientId, '/compact');
+        let compactionMessage = findRunningManualCompactionMarkerMessage(targetMessages);
+        if (!compactionMessage) {
+          compactionMessage = buildPendingManualCompactionMarkerMessage(now);
+          targetMessages.push(compactionMessage);
+          cacheSessionMessages(targetId, targetMessages);
+          touchSessionUpdatedAt(this, targetId, now);
+          if (shouldWatchActiveSession) {
+            notifySessionSnapshot(this, targetId, targetMessages, true);
+          }
+          chatDebugLog('chat.compaction.manual', 'local-marker-created', {
+            sessionId: targetId,
+            messageCount: targetMessages.length,
+            marker: summarizeCompactionWorkflowItemsForDebug(compactionMessage.workflowItems)
+          });
+        }
+        clearSessionEventsSnapshot(targetId);
+        chatDebugLog('chat.compaction.manual', 'start', {
+          sessionId: targetId,
+          activeSessionId: activeSessionIdForManual,
+          shouldWatchActiveSession,
+          debugPayloadEnabled,
+          payload: cloneCompactionDebugPayload(payload, {}),
+          runtime: buildRuntimeDebugSnapshot(runtimeForManual)
+        });
+        runtimeForManual.stopRequested = false;
+        if (runtimeForManual.compactController) {
+          runtimeForManual.compactController.abort();
+        }
+        runtimeForManual.compactController = new AbortController();
+        if (shouldWatchActiveSession) {
+          markRuntimePendingManualCompaction(runtimeForManual, targetId);
+        }
+        const compactControllerForManual = runtimeForManual?.compactController || null;
+        if (
+          shouldWatchActiveSession &&
+          !runtimeForManual?.watchController &&
+          !runtimeForManual?.sendController &&
+          !runtimeForManual?.resumeController
+        ) {
+          startSessionWatcher(this, targetId);
+        }
+        const previousStatus = this.sessionRuntimeStatus(targetId);
+        setSessionLoading(this, targetId, true);
+        const compactionRevision = readChatRealtimeRevision(runtimeForManual);
+        try {
+          const requestPayload = {
+            ...(payload && typeof payload === 'object' ? payload : {}),
+            client_message_id: compactClientId
+          };
+          const { data } = await compactSessionApi(targetId, requestPayload, {
+            signal: compactControllerForManual?.signal
+          });
+          const accepted = data?.data ?? data;
+          if (accepted?.turn_id) {
+            applyChatThreadServerEvent(this, targetId, 'stream_started', {
+              ...accepted, client_message_id: compactClientId
+            });
+          }
+          const acceptedRound = Number(
+            data?.data?.user_round ?? data?.user_round ?? data?.data?.userRound ?? data?.userRound
+          );
+          if (Number.isFinite(acceptedRound) && acceptedRound > 0 && compactionMessage) {
+            const userRound = Math.trunc(acceptedRound);
+            compactionMessage.stream_round = userRound;
+            compactionMessage.user_round = userRound;
+            compactionMessage.user_turn_id = `user-turn:${targetId}:round:${userRound}`;
+            bindRuntimeMessageToUserRound(this, targetId, compactionMessage.message_id, userRound);
+            const firstWorkflow = Array.isArray(compactionMessage.workflowItems)
+              ? compactionMessage.workflowItems[0]
+              : null;
+            if (firstWorkflow && typeof firstWorkflow === 'object') {
+              const detail = buildDetail({
+                user_round: userRound,
+                trigger_mode: 'manual',
+                stage: 'compacting',
+                status: 'loading',
+                summary: t('chat.workflow.compactionRunning')
+              });
+              firstWorkflow.detail = detail;
+            }
+            const requestedMessageId = String(localCompactionCommandMessageId || '').trim();
+            const commandMessage = requestedMessageId
+              ? targetMessages.find((message) => String(message?.message_id || '') === requestedMessageId)
+              : [...targetMessages].reverse().find((message) =>
+                message?.role === 'user' && message?.manual_compaction_command === true
+              );
+            if (commandMessage?.role === 'user') {
+              const canonicalTurnId = `user-turn:${targetId}:round:${userRound}`;
+              commandMessage.user_turn_id = canonicalTurnId;
+              commandMessage.userTurnId = canonicalTurnId;
+              commandMessage.user_round = userRound;
+              commandMessage.stream_round = userRound;
+              bindRuntimeMessageToUserRound(
+                this,
+                targetId,
+                commandMessage.message_id,
+                userRound
+              );
+              cacheSessionMessages(targetId, targetMessages);
+              touchSessionUpdatedAt(this, targetId, Date.now());
+              if (shouldWatchActiveSession) {
+                notifySessionSnapshot(this, targetId, targetMessages, true);
+              }
+            }
+          }
+          chatDebugLog('chat.compaction.manual', 'accepted', {
+            sessionId: targetId,
+            response:
+              data?.data && typeof data.data === 'object'
+                ? data.data
+                : data ?? null
+          });
+          return data?.data?.message || data?.message || '';
+        } catch (error) {
+          const pending = getChatThreadState(targetId)?.turns.get(`pending:${compactClientId}`);
+          if (pending) {
+            pending.status = isAbortRequestError(error) ? 'cancelled' : 'failed';
+            syncChatThreadShell(this, targetId);
+            markRuntimeProjectionChanged(this, { sessionId: targetId, reason: 'compact_failed', immediate: true });
+          }
+          if (isAbortRequestError(error)) {
+            const abortReason = chatPageLifecycle.pageUnloading ? 'page-unload' : 'request-cancelled';
+            if (!chatPageLifecycle.pageUnloading) {
+              clearRuntimePendingManualCompaction(runtimeForManual, targetId, abortReason);
+              finalizeManualCompactionAsCancelled(compactionMessage);
+              cacheSessionMessages(targetId, targetMessages);
+              touchSessionUpdatedAt(this, targetId, Date.now());
+              if (shouldWatchActiveSession) {
+                notifySessionSnapshot(this, targetId, targetMessages, true);
+              }
+            }
+            chatDebugLog('chat.compaction.manual', abortReason, {
+              sessionId: targetId,
+              marker: summarizeCompactionWorkflowItemsForDebug(compactionMessage?.workflowItems),
+              runtime: buildRuntimeDebugSnapshot(runtimeForManual)
+            });
+          } else {
+            clearRuntimePendingManualCompaction(runtimeForManual, targetId, 'request-failed');
+            finalizeManualCompactionAsRequestFailed(compactionMessage, error);
+            cacheSessionMessages(targetId, targetMessages);
+            touchSessionUpdatedAt(this, targetId, Date.now());
+            if (shouldWatchActiveSession) {
+              notifySessionSnapshot(this, targetId, targetMessages, true);
+            }
+            const detailText = String(
+              error?.response?.data?.detail || error?.message || t('common.requestFailed')
+            ).trim();
+            chatDebugLog('chat.compaction.manual', 'request-failed', {
+              sessionId: targetId,
+              code: String(error?.response?.data?.code || error?.code || ''),
+              message: normalizeCompactionDebugText(detailText),
+              marker: summarizeCompactionWorkflowItemsForDebug(compactionMessage?.workflowItems)
+            });
+          }
+          if (!chatPageLifecycle.pageUnloading) {
+            if (readChatRealtimeRevision(runtimeForManual) === compactionRevision) {
+              // A rejected HTTP command never started a server turn.
+              syncChatRuntimeProjectionStatus(this, targetId, previousStatus);
+            }
+            setSessionLoading(this, targetId, false);
+          }
+          throw error;
+        } finally {
+          if (
+            runtimeForManual &&
+            runtimeForManual.compactController === compactControllerForManual
+          ) {
+            runtimeForManual.compactController = null;
+          }
+          chatDebugLog('chat.compaction.manual', 'finalize', {
+            sessionId: targetId,
+            shouldWatchActiveSession,
+            runtime: buildRuntimeDebugSnapshot(runtimeForManual)
+          });
+        }
+      }
+      return '';
+      /*
+      const activeSessionId = String(this.activeSessionId || '').trim();
+      const shouldResumeWatcher = activeSessionId === targetId;
+      if (shouldResumeWatcher) {
+        abortResumeStream(targetId);
+        clearSessionWatcher();
+      }
+      const runtime = ensureRuntime(targetId);
+      chatDebugLog('chat.compaction.manual', 'start', {
+        sessionId: targetId,
+        activeSessionId,
+        shouldResumeWatcher,
+        payload: cloneCompactionDebugPayload(payload, {}),
+        runtime: buildRuntimeDebugSnapshot(runtime)
+      });
+      if (runtime) {
+        runtime.stopRequested = false;
+        if (runtime.compactController) {
+          runtime.compactController.abort();
+        }
+        runtime.compactController = new AbortController();
+      }
+      const compactController = runtime?.compactController || null;
+      const targetMessages =
+        activeSessionId === targetId
+          ? this.messages
+          : getSessionMessages(targetId) || [];
+      const now = Date.now();
+      const workflowRef = `compaction:manual:${now}`;
+      const progressDetail = {
+        stage: 'compacting',
+        summary: t('chat.workflow.compactionRunning'),
+        trigger_mode: 'manual'
+      };
+      const compactionMessage = {
+        ...buildMessage('assistant', '', now),
+        workflowItems: [
+          buildWorkflowItem(
+            t('chat.workflow.compactionRunning'),
+            buildDetail(progressDetail),
+            'loading',
+            {
+              isTool: true,
+              eventType: 'compaction_progress',
+              toolName: '涓婁笅鏂囧帇缂?,
+              toolCallId: workflowRef
+            }
+          )
+        ],
+        workflowStreaming: true,
+        reasoningStreaming: false,
+        stream_incomplete: true
+      };
+      targetMessages.push(compactionMessage);
+      chatDebugLog('chat.compaction.manual', 'local-marker-created', {
+        sessionId: targetId,
+        workflowRef,
+        messageCount: targetMessages.length
+      });
+      setSessionLoading(this, targetId, true);
+      cacheSessionMessages(targetId, targetMessages);
+      touchSessionUpdatedAt(this, targetId, now);
+      notifySessionSnapshot(this, targetId, targetMessages, true);
+      try {
+        const { data } = await compactSessionApi(targetId, payload, {
+          signal: compactController?.signal
+        });
+        const resultData =
+          data?.data && typeof data.data === 'object' ? data.data : {};
+        if (Array.isArray(compactionMessage.workflowItems) && compactionMessage.workflowItems.length > 0) {
+          compactionMessage.workflowItems[0].status = 'completed';
+          compactionMessage.workflowItems[0].detail = buildDetail({
+            ...(resultData as Record<string, unknown>),
+            status: 'done',
+            trigger_mode: 'manual'
+          });
+          (compactionMessage.workflowItems[0] as Record<string, unknown>).eventType = 'compaction';
+        }
+        compactionMessage.workflowItems.push(
+          buildWorkflowItem(
+            t('chat.toolWorkflow.compaction.title'),
+            buildDetail({
+              ...(resultData as Record<string, unknown>),
+              status: 'done',
+              trigger_mode: 'manual'
+            }),
+            'completed',
+            {
+              isTool: true,
+              eventType: 'compaction',
+              toolName: '涓婁笅鏂囧帇缂?,
+              toolCallId: workflowRef
+            }
+          )
+        );
+        compactionMessage.workflowItems.length = 1;
+        compactionMessage.workflowStreaming = false;
+        compactionMessage.reasoningStreaming = false;
+        compactionMessage.stream_incomplete = false;
+        chatDebugLog('chat.compaction.manual', 'request-success', {
+          sessionId: targetId,
+          workflowRef,
+          result: cloneCompactionDebugPayload(resultData, {}),
+          marker: summarizeCompactionWorkflowItemsForDebug(compactionMessage.workflowItems)
+        });
+        return data?.data?.message || data?.message || '';
+      } catch (error) {
+        if (isAbortRequestError(error)) {
+          chatDebugLog('chat.compaction.manual', 'request-cancelled', {
+            sessionId: targetId,
+            workflowRef,
+            runtime: buildRuntimeDebugSnapshot(runtime)
+          });
+          finalizeManualCompactionAsCancelled(compactionMessage);
+          return '';
+        }
+        const detailText = String(
+          error?.response?.data?.detail || error?.message || t('common.requestFailed')
+        ).trim();
+        const failedDetail = buildDetail({
+          stage: 'context_overflow_recovery',
+          status: 'failed',
+          trigger_mode: 'manual',
+          error_code: String(error?.response?.data?.code || 'MANUAL_COMPACTION_FAILED'),
+          error_message: detailText
+        });
+        if (Array.isArray(compactionMessage.workflowItems) && compactionMessage.workflowItems.length > 0) {
+          compactionMessage.workflowItems[0].status = 'failed';
+          compactionMessage.workflowItems[0].detail = failedDetail;
+          (compactionMessage.workflowItems[0] as Record<string, unknown>).eventType = 'compaction';
+        }
+        compactionMessage.workflowItems.push(
+          buildWorkflowItem(
+            t('chat.toolWorkflow.compaction.title'),
+            failedDetail,
+            'failed',
+            {
+              isTool: true,
+              eventType: 'compaction',
+              toolName: '涓婁笅鏂囧帇缂?,
+              toolCallId: workflowRef
+            }
+          )
+        );
+        compactionMessage.workflowItems.length = 1;
+        compactionMessage.workflowStreaming = false;
+        compactionMessage.reasoningStreaming = false;
+        compactionMessage.stream_incomplete = false;
+        chatDebugLog('chat.compaction.manual', 'request-failed', {
+          sessionId: targetId,
+          workflowRef,
+          code: String(error?.response?.data?.code || error?.code || ''),
+          message: normalizeCompactionDebugText(detailText),
+          marker: summarizeCompactionWorkflowItemsForDebug(compactionMessage.workflowItems)
+        });
+        throw error;
+      } finally {
+        if (runtime && runtime.compactController === compactController) {
+          runtime.compactController = null;
+        }
+        setSessionLoading(this, targetId, false);
+        cacheSessionMessages(targetId, targetMessages);
+        touchSessionUpdatedAt(this, targetId, Date.now());
+        notifySessionSnapshot(this, targetId, targetMessages, true);
+        if (shouldResumeWatcher && String(this.activeSessionId || '').trim() === targetId) {
+          startSessionWatcher(this, targetId);
+        }
+        chatDebugLog('chat.compaction.manual', 'finalize', {
+          sessionId: targetId,
+          workflowRef,
+          shouldResumeWatcher,
+          marker: summarizeCompactionWorkflowItemsForDebug(compactionMessage.workflowItems),
+          runtime: buildRuntimeDebugSnapshot(runtime)
+        });
+      }
+      */
+    },
+};

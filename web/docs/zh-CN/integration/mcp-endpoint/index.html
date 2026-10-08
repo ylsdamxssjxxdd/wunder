@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MCP 入口 | 使用说明书</title>
+  <meta name="description" content="wunder 同时支持自托管 MCP 服务 `/wunder/mcp` 与外部 MCP 服务接入。">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/integration/mcp-endpoint","language":"zh-CN","title":"MCP 入口","summary":"wunder 同时支持自托管 MCP 服务 `/wunder/mcp` 与外部 MCP 服务接入。","updated_at":"2026-10-06","read_when":["用户要把 wunder 作为 MCP 服务暴露出去","用户要理解 wunder 内部 MCP 与 extra_mcp 的关系"],"source_docs":["docs/API文档.md","docs/设计文档/01-系统总体设计.md","src/services/mcp.rs","config/wunder-example.yaml"],"tab":"接入","group":"扩展接入","group_path":["扩展接入"],"url":"/docs/zh-CN/integration/mcp-endpoint/","headings":[{"id":"section-1","level":1,"text":"MCP 入口"},{"id":"section-2","level":2,"text":"自托管 MCP 端点"},{"id":"section-3","level":2,"text":"自托管 MCP 的适用场景"},{"id":"section-4","level":2,"text":"配置示例"},{"id":"section-5","level":2,"text":"external MCP 和 extramcp"},{"id":"section-6","level":2,"text":"舰桥查看 MCP"},{"id":"section-7","level":2,"text":"MCP 和工具目录的关系"},{"id":"section-8","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/integration/a2a","next_slug":"zh-CN/surfaces/index","markdown":"# MCP 入口\n\n当前 Rust MCP 使用 rmcp 3.5.0，内置服务通过 Streamable HTTP 支持 MCP 2026-07-28 的请求级元数据协商。外部服务接入也统一使用 SDK 的 Streamable HTTP 客户端；旧版 SSE 传输和自写初始化客户端已移除。\n\nMCP 在 wunder 里是正式接入面。\n\n先分清两件事：\n\n1. wunder 自己暴露的 MCP 服务是 `/wunder/mcp`\n2. wunder 也可以作为 MCP 客户端去接别的服务，比如 `extra_mcp`\n\n## 自托管 MCP 端点\n\n- `POST /wunder/mcp`\n- 传输方式：Streamable HTTP\n- 协议协商：SDK 自动优先使用 2026-07-28；与旧服务互通时由 SDK 按支持列表协商，不要手写 `initialize`\n\n当前 Rust 端内置暴露两个工具：\n\n- `excute`\n- `doc2md`\n\n注意，工具名当前实际就是 `excute`。这是现有公开工具标识，调用方应按该名称传递。\n\n## 自托管 MCP 的适用场景\n\n适合这些场景：\n\n- 让外部系统通过 MCP 方式调用 wunder 的能力\n- 把 wunder 挂入另一个 MCP 编排体系\n- 在同一套协议下暴露内部任务执行与文档解析能力\n\n## 配置示例\n\n```yaml\nmcp:\n  servers:\n    - name: wunder\n      endpoint: http://127.0.0.1:8000/wunder/mcp\n      enabled: false\n      transport: streamable-http\n```\n\n启用后，wunder 会把这个 MCP 服务视为一个可调用的 MCP server。\n\n## external MCP 和 extra_mcp\n\n仓库里还保留了一个典型外部 MCP 服务：\n\n- `extra_mcp`\n\n它通常用来承载：\n\n- `db_query`\n- `db_export`\n- `kb_query`\n\n`extra_mcp` 默认也使用 Streamable HTTP。Python 服务的 SDK 依赖由其独立运行环境管理；它会按 Python SDK 支持的版本与客户端协商，不能假定其具备 Rust rmcp 3.5.0 的全部 2026-07-28 扩展。\n\n也就是说：\n\n- `/wunder/mcp` 偏“wunder 自己暴露出去”\n- `extra_mcp` 偏“wunder 去接进来的外部能力”\n\n## 舰桥查看 MCP\n\n舰桥已有一套 MCP 配置和调试入口，用来：\n\n- 配置 `mcp.servers`\n- 刷新工具清单\n- 调试远端工具调用\n\n因此文档接入顺序通常是：\n\n1. 先在配置里声明 MCP server\n2. 再在舰桥确认工具规格是否能拉到\n3. 最后在 agent 或工具目录里开放给模型使用\n\n## MCP 和工具目录的关系\n\nwunder 不会把 MCP 当成“旁路系统”。\n\n它会把 MCP 工具和这些能力一起汇总进工具视图：\n\n- 内置工具\n- A2A 工具\n- Skills\n- 知识库工具\n- 用户自建工具\n\n所以对模型来说，MCP 最终还是工具目录的一部分。\n\n## 延伸阅读\n\n- [工具体系](/docs/zh-CN/concepts/tools/)\n- [A2A 接口](/docs/zh-CN/integration/a2a/)\n- [配置说明](/docs/zh-CN/reference/config/)\n","source_path":"使用说明书/zh-CN/integration/mcp-endpoint.md"}</script>
+</body>
+</html>

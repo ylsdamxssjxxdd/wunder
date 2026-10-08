@@ -1,0 +1,36 @@
+.workspace-view {
+  display: grid;
+  grid-template-columns: 220px 1fr 260px;
+  gap: 16px;
+  height: calc(100vh - 120px);
+}
+
+.workspace-sidebar,
+.workspace-main,
+.workspace-preview {
+  background: var(--dark-panel);
+  border: 1px solid var(--dark-border);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.workspace-actions {
+  margin-bottom: 12px;
+}
+
+.file-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.preview-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.preview-empty {
+  color: var(--dark-muted);
+}
+

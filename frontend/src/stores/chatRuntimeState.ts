@@ -1,0 +1,2871 @@
+import { getChatThreadStatus } from '@/realtime/chat/chatThreadRuntime';
+import { emitSubagentPoolChanged } from '@/utils/subagentPoolEvents';
+import { applySessionQuotaUsage } from './chatSessionQuota';
+import { defineStore } from 'pinia';
+import { markRaw, toRaw } from 'vue';
+import { isSessionUnavailable, markSessionUnavailable } from './chatSessionAvailability';
+import { isChatSnapshotCurrent, readChatRealtimeRevision } from './chatSnapshotFreshness';
+
+import {
+  archiveSession as archiveSessionApi,
+  cancelMessageStream,
+  compactSession as compactSessionApi,
+  controlSessionSubagents as controlSessionSubagentsApi,
+  createSession,
+  deleteSession as deleteSessionApi,
+  getSession,
+  getSessionGoal,
+  getSessionEvents,
+  getSessionEventsWithParams,
+  getSessionHistoryPage,
+  getSessionSubagents,
+  listSessions,
+  openChatSocket,
+  renameSession as renameSessionApi,
+  restoreSession as restoreSessionApi,
+  setSessionGoal as setSessionGoalApi,
+  submitMessageFeedback as submitMessageFeedbackApi,
+  updateSessionTools as updateSessionToolsApi
+} from '@/api/chat';
+import { t } from '@/i18n';
+import { formatStructuredErrorText } from '@/utils/streamError';
+import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
+import {
+  buildChatRequestTextInputOverflowError,
+  resolveChatRequestTextInputOverflow
+} from '@/utils/chatRequestInputLimit';
+import {
+  hasActiveSubagentsAfterLatestUser,
+  hasRunningAssistantMessage,
+  hasStreamingAssistantMessage,
+  isSessionBusyFromSignals,
+  isThreadRuntimeBusy,
+  isThreadRuntimeWaiting,
+  normalizeThreadRuntimeStatus
+} from '@/utils/chatSessionRuntime';
+import {
+  isSubagentItemActive,
+  normalizeSubagentRuntimeFlag,
+  isSubagentStatusFailed,
+  isSubagentStatusSuccessful,
+  normalizeSubagentRuntimeStatus
+} from '@/utils/subagentRuntime';
+import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from '@/utils/chatTiming';
+import {
+  mergeSessionsByIdPreservingRuntimeFields
+} from '@/stores/chatSessionMerge';
+import {
+  estimateChatTextTokens,
+  estimateRequestContextTokens,
+  resolveRequestContextPreviewTokens
+} from '@/utils/chatContextEstimate';
+import { resolveWorkflowDurationMs } from '@/utils/toolWorkflowTiming';
+import { summarizeTurnDecodeSpeed } from '@/utils/turnDecodeSpeed';
+import {
+  normalizeMessageFeedback,
+  normalizeMessageFeedbackVote
+} from '@/utils/messageFeedback';
+import { createWsMultiplexer } from '@/utils/ws';
+import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
+import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { chatPerf } from '@/utils/chatPerf';
+import { chatDebugLog, isChatDebugEnabled, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
+import {
+  isCommandStreamRuntimeEvent,
+  isCommandStreamVisualizationEnabled
+} from '@/utils/commandStreamVisualization';
+import {
+  summarizeChatMessageDebugList,
+  summarizeChatMessageDebugSnapshot
+} from '@/utils/chatMessageDebug';
+import { resolveAccessToken } from '@/api/requestAuth';
+import {
+  createChatRuntimeProjection,
+  applyChatRuntimeEvent,
+  bindChatRuntimeMessageToUserRound
+} from '@/realtime/chat/chatRuntimeReducer';
+import {
+  applyChatRuntimeEventsWithInvalidation,
+  clearRuntimeProjectionInvalidation,
+  markRuntimeProjectionChanged
+} from '@/realtime/chat/chatRuntimeProjectionInvalidation';
+export { clearRuntimeProjectionInvalidation } from '@/realtime/chat/chatRuntimeProjectionInvalidation';
+import {
+  buildCanonicalClientMessageSubmittedEvent,
+  buildCanonicalSessionEventsSnapshot,
+  buildCanonicalStreamRuntimeEvents
+} from '@/realtime/chat/chatRuntimeBridge';
+import {
+  selectLegacyMessageStatus,
+  selectVisibleMessageProjections,
+  selectSessionBusy,
+  selectSessionBusyReason,
+  selectSessionRuntimeStatus
+} from '@/realtime/chat/chatRuntimeSelectors';
+import {
+  compareChatRuntimeShadow,
+  summarizeChatRuntimeShadowReport
+} from '@/realtime/chat/chatRuntimeShadow';
+import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
+import {
+  clearTrailingPendingAssistantMessages,
+  clearSupersededPendingAssistantMessages,
+  findPendingAssistantMessage,
+  isPendingAssistantMessage,
+  stopPendingAssistantMessage
+} from './chatPendingMessage';
+import {
+  captureChatSnapshotScheduleContext,
+  resolveChatSnapshotScheduleSource
+} from './chatSnapshotScheduler';
+import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
+import {
+  normalizeStreamLifecyclePhase,
+  shouldForcePreserveWatcherForActiveSession,
+  shouldApplyForegroundDetailHydration,
+  shouldKeepForegroundInteractiveRuntime,
+  shouldKeepForegroundLiveMessagesDuringRunningGap,
+  shouldKeepForegroundLiveMessages,
+  shouldRestartWatchAfterInteractiveStream
+} from './chatWatchLifecycle';
+import {
+  hasRuntimeControllers as hasRuntimeControllersBase,
+  resolveRuntimeDerivedStatus,
+  shouldPreserveWatchRunningStatus
+} from './chatRuntimeDerivedStatus';
+import { isCompactionSummaryEvent } from '@/utils/chatCompactionWorkflow';
+import {
+  dedupeTerminalCompactionMarkersInPlace,
+  isCompactionMarkerAssistantMessage,
+  isSupersededRunningManualCompactionMarker,
+  mergeCompactionMarkersIntoMessages,
+  shouldPreserveTerminalCompactionMarkerState
+} from './chatCompactionMarker';
+import { settleTerminalAssistantArtifacts } from './chatTerminalArtifacts';
+import {
+  replaceMessageArrayKeepingReference,
+  resolveRealtimeMessageArrayReference
+} from './chatMessageArraySync';
+import { useCommandSessionStore } from './commandSessions';
+import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
+import { chatWatcherSharedState } from './chatSharedState';
+
+import { clearSessionCommandSessions, ensureGreetingMessage, removeDemoChatSession, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
+import { DEFAULT_AGENT_KEY, applyDesktopOverlayEvent, normalizeAgentKey, patchSessionRuntimeFields, persistAgentSession, persistDraftSession, resolvePersistedSessionId } from './chatPersist';
+import { abortWatchStream, clearRuntimeInteractiveControllers, clearSessionWatcher, clearWatchdog, isWindowingEnabled, resolveMessageWindowLimit, resolveMessageWindowThreshold, setSessionLoading } from './chatRuntimeControls';
+import { clearChatSnapshot, scheduleChatSnapshot } from './chatSnapshot';
+import { buildMessage, clearAssistantRetryState, normalizeContextTokens, normalizeContextTotalTokens, normalizeMessageSubagents, parseOptionalCount, resolveTimestampIso, resolveTimestampMs } from './chatStats';
+import { assignStreamEventId, normalizeFlag, normalizeStreamEventId, normalizeStreamRound } from './chatStreamIds';
+import { SessionDetailSnapshotCacheEntry, SessionEventsSnapshotCacheEntry, ThreadControlSession } from './chatTypes';
+import { settleStoppedRuntimeLocalState } from './chatRuntimeStopSettlement';
+import { abortResumeStream, abortSendStream } from './chatWatcher';
+import { isTerminalRuntimeStatus, normalizeAssistantContent, normalizeStreamEventType, sessionWorkflowState } from './chatWorkflowHydration';
+
+export const sessionRuntime = new Map();
+export const sessionMessages = new Map();
+export const sessionProtectedRealtimeMessages = new Map();
+export const sessionListCache = new Map();
+export const sessionListCacheInFlight = new Map();
+export const sessionEventsSnapshotCache = new Map<string, SessionEventsSnapshotCacheEntry>();
+export const sessionEventsSnapshotInFlight = new Map<string, Promise<Record<string, unknown> | null>>();
+export const sessionDetailSnapshotCache = new Map<string, SessionDetailSnapshotCacheEntry>();
+export const sessionHydratedMessageVersion = new Map<string, string>();
+export const sessionDetailPrefetchInFlight = new Map();
+export const sessionSubagentsInFlight = new Map();
+export const sessionSubagentsCache = new Map<string, { cachedAt: number; items: unknown[] }>();
+export const sessionDetailWarmState = new Map();
+export const sessionHistoryState = new Map();
+export const sessionRuntimeShadowState = new Map<string, { fingerprint: string; loggedAt: number }>();
+
+export const SESSION_LIST_CACHE_TTL_MS = 15 * 1000;
+export const SESSION_EVENTS_CACHE_TTL_MS = 2500;
+export const SESSION_EVENTS_RUNNING_CACHE_TTL_MS = 600;
+export const SESSION_DETAIL_SNAPSHOT_TTL_MS = 2500;
+export const SESSION_DETAIL_WARM_TTL_MS = 20 * 1000;
+export const SESSION_SUBAGENTS_CACHE_TTL_MS = 12 * 1000;
+
+const normalizeSessionEventsSnapshotLimit = (value: unknown): number | null => {
+  const limit = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(limit) && limit > 0 ? limit : null;
+};
+
+const resolveSessionEventsSnapshotCacheKey = (sessionId, limit: unknown = null): string => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return '';
+  const normalizedLimit = normalizeSessionEventsSnapshotLimit(limit);
+  return normalizedLimit === null ? sessionKey : `${sessionKey}|limit:${normalizedLimit}`;
+};
+
+const isSessionEventsSnapshotCacheKeyForSession = (cacheKey: string, sessionKey: string): boolean =>
+  cacheKey === sessionKey || cacheKey.startsWith(`${sessionKey}|`);
+export const SESSION_RUNTIME_SHADOW_LOG_COOLDOWN_MS = 1500;
+
+export const resolveSessionKey = (sessionId) => String(sessionId || '').trim();
+
+export const buildHistoryState = () => ({
+  beforeId: null,
+  hasMore: true,
+  loading: false,
+  windowLimit: resolveMessageWindowLimit(false)
+});
+
+export const getHistoryState = (sessionId, options: { reset?: boolean } = {}) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key) return buildHistoryState();
+  const reset = options.reset === true;
+  let state = sessionHistoryState.get(key);
+  if (!state || reset) {
+    state = buildHistoryState();
+    sessionHistoryState.set(key, state);
+  }
+  return state;
+};
+
+export const updateHistoryState = (sessionId, patch) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key) return null;
+  const state = getHistoryState(key);
+  Object.assign(state, patch);
+  return state;
+};
+
+export const findOldestItemSeq = (messages) => {
+  if (!Array.isArray(messages)) return null;
+  for (let i = 0; i < messages.length; i += 1) {
+    const message = messages[i];
+    const id = Number.parseInt(String(message?.created_seq ?? ''), 10);
+    if (Number.isFinite(id) && id > 0) {
+      return id;
+    }
+  }
+  return null;
+};
+
+export const normalizeFeedbackMatchText = (value) =>
+  normalizeAssistantContent(String(value || ''))
+    .replace(/\s+/g, ' ')
+    .trim();
+
+export const applyMessageWindow = (store, sessionId, messages, options: { force?: boolean } = {}) => {
+  if (!store || !isWindowingEnabled()) return;
+  const key = resolveSessionKey(sessionId);
+  if (!key || !Array.isArray(messages)) return;
+  const state = getHistoryState(key);
+  const desktopMode = false;
+  const defaultLimit = resolveMessageWindowLimit(desktopMode);
+  const defaultThreshold = resolveMessageWindowThreshold(desktopMode);
+  const limit = Number(state.windowLimit) || defaultLimit;
+  const threshold = Math.max(defaultThreshold, limit);
+  if (!options.force && messages.length <= threshold) return;
+  if (messages.length <= limit) return;
+  const overflow = messages.length - limit;
+  if (overflow <= 0) return;
+  messages.splice(0, overflow);
+  const visibleBeforeId = findOldestItemSeq(messages);
+  if (visibleBeforeId) {
+    updateHistoryState(key, {
+      beforeId: visibleBeforeId,
+      hasMore: true
+    });
+  }
+};
+
+export const applyHistoryMeta = (sessionId, detail, messages) => {
+  const beforeId = Number.parseInt(
+    String(
+      detail?.before_seq ??
+        detail?.beforeSeq ??
+        detail?.beforeSeq ??
+        ''
+    ),
+    10
+  );
+  const hasMore =
+    detail?.has_more ??
+    detail?.hasMore ??
+    detail?.has_more ??
+    detail?.hasMore ??
+    null;
+  const resolvedBeforeId =
+    Number.isFinite(beforeId) && beforeId > 0 ? beforeId : findOldestItemSeq(messages);
+  updateHistoryState(sessionId, {
+    beforeId: resolvedBeforeId,
+    hasMore: hasMore === null ? Boolean(resolvedBeforeId) : Boolean(hasMore)
+  });
+};
+
+export const cloneSerializable = (value, fallback) => {
+  if (typeof structuredClone === 'function') {
+    try {
+      return structuredClone(value);
+    } catch (error) {
+      // Fallback to JSON clone when structuredClone fails.
+    }
+  }
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (error) {
+    return fallback;
+  }
+};
+
+export const cloneSessionList = (sessions) => {
+  const cloned = cloneSerializable(Array.isArray(sessions) ? sessions : [], []);
+  return Array.isArray(cloned) ? cloned : [];
+};
+
+export const cloneSessionEventsPayload = (payload) => {
+  const cloned = cloneSerializable(payload, null);
+  return cloned && typeof cloned === 'object' && !Array.isArray(cloned) ? cloned : null;
+};
+
+const asSessionPayloadRecord = (payload) =>
+  payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload
+    : null;
+
+const buildSessionEventsCachePayload = (cloned) => {
+  if (
+    false &&
+    cloned &&
+    typeof cloned === 'object'
+  ) {
+    return {
+      ...(cloned as Record<string, unknown>),
+      events: [],
+      rounds: []
+    };
+  }
+  return cloned;
+};
+
+export const cloneSessionDetailPayload = (payload) => {
+  const cloned = cloneSerializable(payload, null);
+  return cloned && typeof cloned === 'object' && !Array.isArray(cloned) ? cloned : null;
+};
+
+const buildDesktopSessionEventsCachePayload = (payload): Record<string, unknown> | null => {
+  const record = asSessionPayloadRecord(payload);
+  if (!record) return null;
+  const { events: _events, rounds: _rounds, ...rest } = record as Record<string, unknown>;
+  return {
+    ...rest,
+    events: [],
+    rounds: []
+  };
+};
+
+const buildDesktopSessionDetailCachePayload = (payload): Record<string, unknown> | null => {
+  const record = asSessionPayloadRecord(payload);
+  if (!record) return null;
+  const { transcript: _transcript, ...rest } = record as Record<string, unknown>;
+  return {
+    ...rest
+  };
+};
+
+const buildSessionDetailCachePayload = (cloned) => {
+  if (
+    false &&
+    cloned &&
+    typeof cloned === 'object' &&
+    Array.isArray((cloned as Record<string, unknown>).transcript)
+  ) {
+    const { transcript: _transcript, ...rest } = cloned as Record<string, unknown>;
+    return {
+      ...rest
+    };
+  }
+  return cloned;
+};
+
+export const appendFingerprintHash = (seed, value) => {
+  let hash = seed >>> 0;
+  const text = String(value ?? '');
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+};
+
+export const buildSessionMessageFingerprint = (messages) => {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return '0';
+  }
+  let hash = 2166136261;
+  messages.forEach((message, index) => {
+    const record = message && typeof message === 'object' ? message : {};
+    const attachments = Array.isArray(record.attachments) ? record.attachments.length : 0;
+    const subagents = Array.isArray(record.subagents) ? record.subagents.length : 0;
+    const planSteps = Array.isArray(record?.plan?.steps)
+      ? record.plan.steps.length
+      : Array.isArray(record?.plan)
+        ? record.plan.length
+        : 0;
+    const questionPanelSelected = Array.isArray(record?.questionPanel?.selected)
+      ? record.questionPanel.selected.length
+      : 0;
+    hash = appendFingerprintHash(
+      hash,
+      [
+        index,
+        String(record.role || ''),
+        String(record.created_at || ''),
+        String(record.item_id ?? ''),
+        String(record.stream_event_id ?? ''),
+        String(record.stream_round ?? ''),
+        String(record.content || '').length,
+        String(record.reasoning || '').length,
+        attachments,
+        subagents,
+        String(record?.feedback?.vote ?? ''),
+        record?.feedback?.locked === true ? 1 : 0,
+        planSteps,
+        String(record?.questionPanel?.status ?? ''),
+        questionPanelSelected,
+        record?.hiddenInternal === true ? 1 : 0
+      ].join('|')
+    );
+  });
+  return hash.toString(36);
+};
+
+export const buildWorkflowRoundsFingerprint = (rounds) => {
+  if (!Array.isArray(rounds) || rounds.length === 0) {
+    return '0';
+  }
+  let hash = 2166136261;
+  rounds.forEach((round, index) => {
+    const events = Array.isArray(round?.events) ? round.events : [];
+    const lastEvent = events.length > 0 ? events[events.length - 1] : null;
+    hash = appendFingerprintHash(
+      hash,
+      [
+        index,
+        String(round?.user_round ?? round?.round ?? ''),
+        events.length,
+        String(lastEvent?.event ?? lastEvent?.type ?? ''),
+        String(lastEvent?.timestamp ?? '')
+      ].join('|')
+    );
+  });
+  return hash.toString(36);
+};
+
+export const buildSessionHydratedMessageVersion = (sessionDetail, eventsPayload) => {
+  const messages = Array.isArray(sessionDetail?.transcript) ? sessionDetail.transcript : [];
+  const rounds = Array.isArray(eventsPayload?.rounds) ? eventsPayload.rounds : [];
+  const remoteLastEventId =
+    normalizeStreamEventId(eventsPayload?.last_event_id ?? eventsPayload?.lastEventId) || 0;
+  const running = eventsPayload?.running === true ? 1 : 0;
+  return [
+    buildSessionMessageFingerprint(messages),
+    buildWorkflowRoundsFingerprint(rounds),
+    remoteLastEventId,
+    running
+  ].join(':');
+};
+
+export const readSessionHydratedMessageVersion = (sessionId) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return '';
+  return String(sessionHydratedMessageVersion.get(sessionKey) || '');
+};
+
+export const writeSessionHydratedMessageVersion = (sessionId, version) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return '';
+  const nextVersion = String(version || '').trim();
+  if (!nextVersion) {
+    sessionHydratedMessageVersion.delete(sessionKey);
+    return '';
+  }
+  sessionHydratedMessageVersion.set(sessionKey, nextVersion);
+  return nextVersion;
+};
+
+export const clearSessionEventsSnapshot = (sessionId, options: { keepInFlight?: boolean; limit?: unknown } = {}) => {
+  const baseSessionKey = resolveSessionKey(sessionId);
+  if (!baseSessionKey) return;
+  const scopedKey = resolveSessionEventsSnapshotCacheKey(baseSessionKey, options.limit);
+  const keys =
+    normalizeSessionEventsSnapshotLimit(options.limit) === null
+      ? [...sessionEventsSnapshotCache.keys()].filter((key) =>
+          isSessionEventsSnapshotCacheKeyForSession(key, baseSessionKey)
+        )
+      : [scopedKey];
+  for (const key of keys) {
+    sessionEventsSnapshotCache.delete(key);
+  }
+  sessionDetailSnapshotCache.delete(baseSessionKey);
+  sessionHydratedMessageVersion.delete(baseSessionKey);
+  if (options.keepInFlight !== true) {
+    const inflightKeys =
+      normalizeSessionEventsSnapshotLimit(options.limit) === null
+        ? [...sessionEventsSnapshotInFlight.keys()].filter((key) =>
+            isSessionEventsSnapshotCacheKeyForSession(key, baseSessionKey)
+          )
+        : [scopedKey];
+    for (const key of inflightKeys) {
+      sessionEventsSnapshotInFlight.delete(key);
+    }
+  }
+};
+
+export const cacheSessionDetailSnapshot = (sessionId, payload) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return null;
+  if (false) {
+    const payloadRecord = asSessionPayloadRecord(payload);
+    if (!payloadRecord) return null;
+    sessionDetailSnapshotCache.set(sessionKey, {
+      cachedAt: Date.now(),
+      payload: buildDesktopSessionDetailCachePayload(payloadRecord)
+    });
+    return payloadRecord;
+  }
+  const clonedPayload = cloneSessionDetailPayload(payload);
+  const cachedPayload = buildSessionDetailCachePayload(clonedPayload);
+  sessionDetailSnapshotCache.set(sessionKey, {
+    cachedAt: Date.now(),
+    payload: cachedPayload
+  });
+  return false
+    ? clonedPayload
+    : cloneSessionDetailPayload(clonedPayload);
+};
+
+export const readSessionDetailSnapshot = (sessionId) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return null;
+  const entry = sessionDetailSnapshotCache.get(sessionKey);
+  if (!entry) return null;
+  if (false) {
+    return null;
+  }
+  if (!Number.isFinite(entry.cachedAt) || Date.now() - entry.cachedAt > SESSION_DETAIL_SNAPSHOT_TTL_MS) {
+    sessionDetailSnapshotCache.delete(sessionKey);
+    return null;
+  }
+  return cloneSessionDetailPayload(entry.payload);
+};
+
+export const cacheSessionEventsSnapshot = (sessionId, payload) => {
+  const sessionKey = resolveSessionEventsSnapshotCacheKey(
+    sessionId,
+    payload?.limit ?? payload?.requested_limit ?? null
+  );
+  if (!sessionKey) return null;
+  const baseSessionKey = resolveSessionKey(sessionId);
+  if (false) {
+    const payloadRecord = asSessionPayloadRecord(payload);
+    if (!payloadRecord) return null;
+    const cachedPayload = buildDesktopSessionEventsCachePayload(payloadRecord);
+    sessionEventsSnapshotCache.set(sessionKey, {
+      cachedAt: Date.now(),
+      limit: normalizeSessionEventsSnapshotLimit(
+        cachedPayload?.limit ?? cachedPayload?.requested_limit ?? null
+      ),
+      running: cachedPayload?.running === true,
+      lastEventId: normalizeStreamEventId(
+        cachedPayload?.last_event_id ?? cachedPayload?.lastEventId
+      ),
+      payload: cachedPayload
+    });
+    return payloadRecord;
+  }
+  const clonedPayload = cloneSessionEventsPayload(payload);
+  const cachedPayload = buildSessionEventsCachePayload(clonedPayload);
+  sessionEventsSnapshotCache.set(sessionKey, {
+    cachedAt: Date.now(),
+    limit: normalizeSessionEventsSnapshotLimit(
+      cachedPayload?.limit ?? cachedPayload?.requested_limit ?? null
+    ),
+    running: cachedPayload?.running === true,
+    lastEventId: normalizeStreamEventId(
+      cachedPayload?.last_event_id ?? cachedPayload?.lastEventId
+    ),
+    payload: cachedPayload
+  });
+  return false
+    ? clonedPayload
+    : cloneSessionEventsPayload(clonedPayload);
+};
+
+export const readSessionEventsSnapshot = (
+  sessionId,
+  options: { allowRunning?: boolean; minLastEventId?: unknown; limit?: unknown } = {}
+) => {
+  const baseSessionKey = resolveSessionKey(sessionId);
+  if (!baseSessionKey) return null;
+  if (false) {
+    return null;
+  }
+  const sessionKey = resolveSessionEventsSnapshotCacheKey(baseSessionKey, options.limit);
+  const entry = sessionEventsSnapshotCache.get(sessionKey);
+  if (!entry || !isChatSnapshotCurrent(getRuntime(baseSessionKey), entry.payload)) return null;
+  const ttlMs = entry.running ? SESSION_EVENTS_RUNNING_CACHE_TTL_MS : SESSION_EVENTS_CACHE_TTL_MS;
+  if (!Number.isFinite(entry.cachedAt) || Date.now() - entry.cachedAt > ttlMs) {
+    sessionEventsSnapshotCache.delete(sessionKey);
+    return null;
+  }
+  if (entry.running && options.allowRunning !== true) {
+    return null;
+  }
+  const runtime = sessionRuntime.get(baseSessionKey) || null;
+  if (runtime?.sendController || runtime?.resumeController) {
+    return null;
+  }
+  const minLastEventId = normalizeStreamEventId(options.minLastEventId);
+  if (minLastEventId !== null) {
+    const cachedLastEventId = normalizeStreamEventId(entry.lastEventId);
+    if (cachedLastEventId === null || cachedLastEventId < minLastEventId) {
+      return null;
+    }
+  }
+  return cloneSessionEventsPayload(entry.payload);
+};
+
+export const loadSessionEventsSnapshot = (
+  sessionId,
+  options: {
+    allowCached?: boolean;
+    allowRunningCache?: boolean;
+    dedupeInFlight?: boolean;
+    limit?: unknown;
+    minLastEventId?: unknown;
+    signal?: AbortSignal;
+    shouldCache?: () => boolean;
+  } = {}
+) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) {
+    return Promise.resolve(null);
+  }
+  const limit = Number.parseInt(String(options.limit ?? ''), 10);
+  const cacheKey = resolveSessionEventsSnapshotCacheKey(sessionKey, limit);
+  if (options.allowCached !== false) {
+    const cached = readSessionEventsSnapshot(sessionKey, {
+      allowRunning: options.allowRunningCache === true,
+      minLastEventId: options.minLastEventId,
+      limit
+    });
+    if (cached) {
+      return Promise.resolve(cached);
+    }
+  }
+  const inFlight = sessionEventsSnapshotInFlight.get(cacheKey);
+  if (inFlight && options.dedupeInFlight !== false) {
+    return inFlight;
+  }
+  const snapshotRuntime = ensureRuntime(sessionKey);
+  const requestRevision = readChatRealtimeRevision(snapshotRuntime);
+  const snapshotRequestId = Number(snapshotRuntime.snapshotRequestId || 0) + 1;
+  snapshotRuntime.snapshotRequestId = snapshotRequestId;
+  const requestApi = Number.isFinite(limit) && limit > 0
+    ? getSessionEventsWithParams(sessionKey, { limit }, { signal: options.signal })
+    : getSessionEvents(sessionKey, { signal: options.signal });
+  const request = requestApi.then((response) => {
+    const payload = response?.data?.data;
+    const normalizedPayload =
+      payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? { ...payload, __clientRuntimeRevision: requestRevision, __clientSnapshotRequestId: snapshotRequestId }
+        : { __clientRuntimeRevision: requestRevision, __clientSnapshotRequestId: snapshotRequestId };
+    const shouldCache = typeof options.shouldCache === 'function'
+      ? options.shouldCache()
+      : true;
+    if (!shouldCache) {
+      return {
+        ...normalizedPayload,
+        requested_limit: Number.isFinite(limit) && limit > 0 ? limit : null
+      };
+    }
+    return cacheSessionEventsSnapshot(sessionKey, {
+      ...normalizedPayload,
+      requested_limit: Number.isFinite(limit) && limit > 0 ? limit : null
+    });
+  });
+  sessionEventsSnapshotInFlight.set(cacheKey, request);
+  return request.finally(() => {
+    if (sessionEventsSnapshotInFlight.get(cacheKey) === request) {
+      sessionEventsSnapshotInFlight.delete(cacheKey);
+    }
+  });
+};
+
+export const loadSessionWorkflowEventsSnapshot = (
+  sessionId,
+  options: { fromUserRound?: unknown; toUserRound?: unknown; signal?: AbortSignal } = {}
+) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return Promise.resolve(null);
+  const parseRound = (value: unknown): number | null => {
+    const parsed = Number.parseInt(String(value ?? ''), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  };
+  const fromUserRound = parseRound(options.fromUserRound);
+  const toUserRound = parseRound(options.toUserRound);
+  // The events endpoint supports an omitted range and returns all durable
+  // workflow rows. This is required for refreshed transcripts that only carry
+  // generated turn ids and therefore have no numeric round hint.
+  if (fromUserRound !== null && toUserRound !== null && fromUserRound > toUserRound) {
+    return Promise.resolve(null);
+  }
+  const params: Record<string, string | number | boolean> = { workflow_only: true };
+  if (fromUserRound !== null) params.from_user_round = fromUserRound;
+  if (toUserRound !== null) params.to_user_round = toUserRound;
+  return getSessionEventsWithParams(sessionKey, {
+    ...params
+  }, { signal: options.signal }).then((response) => {
+    const payload = response?.data?.data;
+    return payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : null;
+  });
+};
+
+export const resolveTerminableSubagentSessionIds = (items: unknown[]): string[] =>
+  normalizeMessageSubagents(items)
+    .filter((item) => item.canTerminate && !item.terminal)
+    .map((item) => String(item.session_id || '').trim())
+    .filter(Boolean);
+
+export const filterSessionsByAgent = (agentId, sourceSessions = []) => {
+  const normalizedAgentIdRaw = String(agentId || '').trim();
+  const normalizedAgentId =
+    normalizedAgentIdRaw === DEFAULT_AGENT_KEY ? '' : normalizedAgentIdRaw;
+  return (Array.isArray(sourceSessions) ? sourceSessions : []).filter((session) => {
+    const sessionAgentId = String(session?.agent_id || '').trim();
+    return normalizedAgentId ? sessionAgentId === normalizedAgentId : !sessionAgentId;
+  });
+};
+
+export const resolveInitialSessionIdFromList = (agentId, sourceSessions = []) => {
+  const sessions = filterSessionsByAgent(agentId, sourceSessions);
+  if (!sessions.length) return '';
+  const persistedSessionId = resolvePersistedSessionId(agentId);
+  if (persistedSessionId && sessions.some((session) => session.id === persistedSessionId)) {
+    return persistedSessionId;
+  }
+  return sessions[0]?.id || '';
+};
+
+export const resolveSessionListCacheKey = (agentId) => normalizeAgentKey(agentId);
+
+export const readSessionListCache = (agentId, options: { maxAgeMs?: number } = {}) => {
+  const cacheKey = resolveSessionListCacheKey(agentId);
+  const cached = sessionListCache.get(cacheKey);
+  if (!cached) return null;
+  const requestedMaxAgeMs = Number(options?.maxAgeMs);
+  const maxAgeMs = Number.isFinite(requestedMaxAgeMs)
+    ? Math.max(0, requestedMaxAgeMs)
+    : SESSION_LIST_CACHE_TTL_MS;
+  if (!Number.isFinite(cached.cachedAt) || Date.now() - cached.cachedAt > maxAgeMs) {
+    sessionListCache.delete(cacheKey);
+    return null;
+  }
+  return cloneSessionList(cached.sessions);
+};
+
+export const readSessionListCacheEntry = (agentId, options: { maxAgeMs?: number } = {}) => {
+  const cacheKey = resolveSessionListCacheKey(agentId);
+  const cached = sessionListCache.get(cacheKey);
+  if (!cached) return null;
+  const requestedMaxAgeMs = Number(options?.maxAgeMs);
+  const maxAgeMs = Number.isFinite(requestedMaxAgeMs)
+    ? Math.max(0, requestedMaxAgeMs)
+    : SESSION_LIST_CACHE_TTL_MS;
+  if (!Number.isFinite(cached.cachedAt) || Date.now() - cached.cachedAt > maxAgeMs) {
+    sessionListCache.delete(cacheKey);
+    return null;
+  }
+  return {
+    cachedAt: cached.cachedAt,
+    sessions: cloneSessionList(cached.sessions)
+  };
+};
+
+export const writeSessionListCache = (agentId, sessions) => {
+  const cacheKey = resolveSessionListCacheKey(agentId);
+  sessionListCache.set(cacheKey, {
+    cachedAt: Date.now(),
+    sessions: cloneSessionList(sessions)
+  });
+};
+
+export const normalizeThreadControlSession = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const session = value as Record<string, unknown>;
+  const id = resolveSessionKey(session.id ?? session.session_id ?? session.sessionId);
+  if (!id) return null;
+  return {
+    ...session,
+    id
+  } as ThreadControlSession;
+};
+
+export const applyThreadControlSessionPatch = (store, session, options: { allowArchived?: boolean } = {}) => {
+  const normalized = normalizeThreadControlSession(session);
+  if (!normalized) return null;
+  const targetId = resolveSessionKey(normalized.id);
+  if (!targetId) return null;
+  if (isSessionUnavailable(store, targetId)) return null;
+  const status = String(normalized.status || '').trim().toLowerCase();
+  const allowArchived = options.allowArchived === true;
+  const targetAgentId = String(normalized.agent_id || '').trim();
+  if (status === 'archived' && !allowArchived) {
+    store.sessions = (Array.isArray(store.sessions) ? store.sessions : []).filter(
+      (item) => resolveSessionKey(item?.id) !== targetId
+    );
+    if (resolvePersistedSessionId(targetAgentId) === targetId) {
+      persistAgentSession(targetAgentId, '');
+    }
+    return { ...normalized, id: targetId };
+  }
+  const index = (Array.isArray(store.sessions) ? store.sessions : []).findIndex(
+    (item) => resolveSessionKey(item?.id) === targetId
+  );
+  if (index >= 0) {
+    const current = store.sessions[index] || {};
+    store.sessions[index] = patchSessionRuntimeFields({
+      ...current,
+      ...normalized,
+      id: targetId
+    });
+    return store.sessions[index];
+  }
+  const merged = patchSessionRuntimeFields({ ...normalized, id: targetId });
+  store.sessions.unshift(merged);
+  return merged;
+};
+
+export const applyThreadControlCaches = (store, agentIds: Set<string>) => {
+  store.sessions = sortSessionsByActivity(store.sessions);
+  agentIds.forEach((agentId) => {
+    writeSessionListCache(agentId, filterSessionsByAgent(agentId, store.sessions));
+  });
+  syncDemoChatCache({ sessions: store.sessions });
+};
+
+export const handleThreadControlWorkflowEvent = async (store, payloadRaw) => {
+  const payload =
+    payloadRaw && typeof payloadRaw === 'object' && !Array.isArray(payloadRaw)
+      ? (payloadRaw as Record<string, unknown>)
+      : {};
+  const primarySession = normalizeThreadControlSession(payload.session);
+  const switchSession = normalizeThreadControlSession(
+    payload.switch_session ?? payload.switchSession ?? payload.session
+  );
+  const activeSessionId = resolveSessionKey(store?.activeSessionId);
+  const retainIds = new Set(
+    [activeSessionId, resolveSessionKey(switchSession?.id)].filter(Boolean)
+  );
+  const affectedAgentIds = new Set<string>();
+  const applyPatch = (session, options: { allowArchived?: boolean } = {}) => {
+    const patched = applyThreadControlSessionPatch(store, session, options);
+    if (!patched) return null;
+    affectedAgentIds.add(String(patched.agent_id || '').trim());
+    return patched;
+  };
+
+  const patchedPrimary = applyPatch(primarySession, {
+    allowArchived: retainIds.has(resolveSessionKey(primarySession?.id))
+  });
+  const patchedSwitch = applyPatch(switchSession, { allowArchived: true });
+
+
+  if (patchedPrimary?.status === 'archived') {
+    const archivedAgentId = String(patchedPrimary.agent_id || '').trim();
+    if (resolvePersistedSessionId(archivedAgentId) === patchedPrimary.id) {
+      persistAgentSession(archivedAgentId, '');
+    }
+  }
+
+  applyThreadControlCaches(store, affectedAgentIds);
+
+  // A background task may update its summary, but cannot steal the user's foreground task.
+  const shouldSwitch = payload.switch === true &&
+    resolveSessionKey(payload.previous_session_id) === activeSessionId;
+  const targetSwitchId = resolveSessionKey(
+    patchedSwitch?.id ?? payload.switch_session_id ?? payload.switchSessionId ?? ''
+  );
+  if (shouldSwitch && targetSwitchId && targetSwitchId !== activeSessionId) {
+    await store.loadSessionDetail(targetSwitchId);
+  }
+};
+
+export const resolveChatHttpStatus = (error) => {
+  const status = Number(error?.response?.status ?? error?.status ?? 0);
+  return Number.isFinite(status) ? status : 0;
+};
+
+export const isSessionUnavailableStatus = (status) => [401, 403, 404].includes(Number(status || 0));
+
+export const hasKnownSessionInStore = (store, sessionId) => {
+  const targetId = resolveSessionKey(sessionId);
+  if (!targetId) return false;
+  if (isSessionUnavailable(store, targetId)) return false;
+  // Catalog pages are partial. Only explicit server rejection makes an id unavailable.
+  return true;
+};
+
+export const purgeUnavailableSession = (store, sessionId) => {
+  const targetId = resolveSessionKey(sessionId);
+  if (!targetId) return '';
+  markSessionUnavailable(store, targetId);
+  const sessions = Array.isArray(store?.sessions) ? store.sessions : [];
+  const targetSession = sessions.find((item) => resolveSessionKey(item?.id) === targetId) || null;
+  const targetAgentId = String(targetSession?.agent_id || '').trim();
+  abortResumeStream(targetId);
+  abortSendStream(targetId);
+  abortWatchStream(targetId);
+  if (resolveSessionKey(store?.activeSessionId) === targetId) {
+    clearSessionWatcher();
+  }
+  setSessionLoading(store, targetId, false);
+  if (typeof store?.clearPendingApprovals === 'function') {
+    store.clearPendingApprovals({ sessionId: targetId });
+  }
+  sessionRuntime.delete(targetId);
+  sessionMessages.delete(targetId);
+  sessionProtectedRealtimeMessages.delete(targetId);
+  clearSessionEventsSnapshot(targetId);
+  sessionDetailWarmState.delete(targetId);
+  sessionDetailPrefetchInFlight.delete(targetId);
+  sessionSubagentsInFlight.delete(targetId);
+  sessionSubagentsCache.delete(targetId);
+  sessionHistoryState.delete(targetId);
+  sessionWorkflowState.delete(targetId);
+  clearSessionCommandSessions(targetId);
+  removeDemoChatSession(targetId);
+  clearChatSnapshot(targetId);
+
+  const nextSessions = sessions.filter((item) => resolveSessionKey(item?.id) !== targetId);
+  if (Array.isArray(store?.sessions)) {
+    store.sessions = nextSessions;
+  }
+  if (resolvePersistedSessionId(targetAgentId) === targetId) {
+    persistAgentSession(targetAgentId, '');
+  }
+  writeSessionListCache(targetAgentId, filterSessionsByAgent(targetAgentId, nextSessions));
+  // All-agent and prefetched lists must lose the same entry, or navigation can resurrect it.
+  for (const entry of sessionListCache.values()) {
+    entry.sessions = entry.sessions.filter((item) => resolveSessionKey(item?.id) !== targetId);
+  }
+
+  if (resolveSessionKey(store?.activeSessionId) === targetId) {
+    store.activeSessionId = null;
+    store.draftAgentId = targetAgentId;
+    store.draftToolOverrides = null;
+    store.messages = ensureGreetingMessage([], {
+      greeting: store?.greetingOverride
+    });
+    persistDraftSession();
+  }
+  syncDemoChatCache({
+    sessions: Array.isArray(store?.sessions) ? store.sessions : nextSessions,
+    sessionId: store?.activeSessionId || null,
+    messages: Array.isArray(store?.messages) ? store.messages : []
+  });
+  return targetAgentId;
+};
+
+export const markSessionDetailWarm = (sessionId) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return;
+  sessionDetailWarmState.set(sessionKey, Date.now() + SESSION_DETAIL_WARM_TTL_MS);
+};
+
+export const isSessionDetailWarm = (sessionId) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return false;
+  const warmUntil = Number(sessionDetailWarmState.get(sessionKey));
+  if (!Number.isFinite(warmUntil)) {
+    sessionDetailWarmState.delete(sessionKey);
+    return false;
+  }
+  if (warmUntil <= Date.now()) {
+    sessionDetailWarmState.delete(sessionKey);
+    return false;
+  }
+  return true;
+};
+
+export const ensureRuntime = (sessionId) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key) return null;
+  if (!sessionRuntime.has(key)) {
+    sessionRuntime.set(key, {
+      sendController: null,
+      compactController: null,
+      resumeController: null,
+      sendRequestId: null,
+      resumeRequestId: null,
+      sendAbortReason: '',
+      resumeAbortReason: '',
+      sendStartedAt: 0,
+      sendLastEventAt: 0,
+      resumeStartedAt: 0,
+      resumeLastEventAt: 0,
+      watchController: null,
+      watchActiveRoundCount: 0,
+      watchRequestId: null,
+      watchLastEventAt: 0,
+      watchdogTimer: null,
+      watchdogBusy: false,
+      watchReconcileTimer: null,
+      watchReconcileAt: 0,
+      slowClientResumeTimer: null,
+      slowClientResumeAfterEventId: 0,
+      streamLifecycle: 'idle',
+      stopRequested: false,
+      pendingManualCompaction: null,
+      lastEventId: 0,
+      remoteLastEventId: 0,
+      threadLogCursor: 0,
+      threadStatus: 'not_loaded',
+      loaded: false,
+      activeTurnId: '',
+      pendingApprovalIds: [],
+      pendingApprovalCount: 0,
+      waitingForUserInput: false,
+      lastThreadStatusAt: 0
+    });
+  }
+  return sessionRuntime.get(key);
+};
+
+export const getRuntime = (sessionId) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key) return null;
+  return sessionRuntime.get(key) || null;
+};
+
+export const refreshRuntimeStreamLifecycle = (runtime) => {
+  if (!runtime) return 'idle';
+  if (runtime.sendController) {
+    runtime.streamLifecycle = 'sending';
+    return runtime.streamLifecycle;
+  }
+  if (runtime.resumeController) {
+    runtime.streamLifecycle = 'resuming';
+    return runtime.streamLifecycle;
+  }
+  if (runtime.watchController) {
+    runtime.streamLifecycle = 'watching';
+    return runtime.streamLifecycle;
+  }
+  runtime.streamLifecycle = 'idle';
+  return runtime.streamLifecycle;
+};
+
+export const getRuntimeStreamLifecycle = (runtime) =>
+  normalizeStreamLifecyclePhase(runtime?.streamLifecycle);
+
+export function resolveRuntimeSessionId(sessionId, payload) {
+  const direct = resolveSessionKey(sessionId ?? payload?.session_id ?? payload?.sessionId);
+  if (direct) return direct;
+  const threadId = String(payload?.thread_id ?? payload?.threadId ?? '').trim();
+  if (!threadId.startsWith('thread_')) return null;
+  return resolveSessionKey(threadId.slice('thread_'.length));
+}
+
+export function normalizeRuntimeApprovalIds(value) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+export function resolveRuntimeLoading(store, sessionId, runtime) {
+  const key = resolveSessionKey(sessionId);
+  if (!key) return false;
+  if (Boolean(store?.loadingBySession?.[key])) {
+    return true;
+  }
+  return hasRuntimeControllers(runtime);
+}
+
+export function hasRuntimeControllers(runtime) {
+  return hasRuntimeControllersBase(runtime);
+}
+
+export function applyRuntimeDerivedStatus(store, sessionId, runtime) {
+  if (!runtime) return 'not_loaded';
+  const loading = resolveRuntimeLoading(store, sessionId, runtime);
+  const nextStatus = resolveRuntimeDerivedStatus({ runtime, loading });
+  if (nextStatus === 'waiting_user_input') {
+    runtime.threadStatus = nextStatus;
+    runtime.loaded = true;
+    return runtime.threadStatus;
+  }
+  if (nextStatus === 'waiting_approval') {
+    runtime.threadStatus = nextStatus;
+    runtime.loaded = true;
+    return runtime.threadStatus;
+  }
+  if (nextStatus === 'running') {
+    if (shouldPreserveWatchRunningStatus(runtime, loading)) {
+      runtime.loaded = true;
+      chatDebugLog('chat.store.loading', 'preserve-watch-running', {
+        sessionId: resolveSessionKey(sessionId),
+        runtime: buildRuntimeDebugSnapshot(runtime)
+      });
+      return nextStatus;
+    }
+    runtime.threadStatus = nextStatus;
+    runtime.loaded = true;
+    return runtime.threadStatus;
+  }
+  runtime.threadStatus = nextStatus;
+  return runtime.threadStatus;
+}
+
+export function applySessionRuntimeSnapshot(runtime, snapshot) {
+  if (!runtime || !snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+    return false;
+  }
+  const source = snapshot as Record<string, unknown>;
+  const turn =
+    source.turn && typeof source.turn === 'object' && !Array.isArray(source.turn)
+      ? (source.turn as Record<string, unknown>)
+      : {};
+  const pendingApprovalIds = normalizeRuntimeApprovalIds(
+    turn.pending_approval_ids ?? turn.pendingApprovalIds
+  );
+  const waitingForUserInput = normalizeFlag(
+    turn.waiting_for_user_input ?? turn.waitingForUserInput
+  );
+  const explicitApprovalCount = Number.parseInt(
+    String(turn.pending_approval_count ?? turn.pendingApprovalCount ?? ''),
+    10
+  );
+  runtime.loaded =
+    source.loaded === undefined
+      ? runtime.loaded || normalizeThreadRuntimeStatus(source.thread_status ?? source.status) !== 'not_loaded'
+      : normalizeFlag(source.loaded);
+  runtime.activeTurnId = String(
+    source.active_turn_id ?? source.activeTurnId ?? turn.turn_id ?? turn.turnId ?? ''
+  ).trim();
+  runtime.pendingApprovalIds = pendingApprovalIds;
+  runtime.pendingApprovalCount =
+    Number.isFinite(explicitApprovalCount) && explicitApprovalCount >= 0
+      ? explicitApprovalCount
+      : pendingApprovalIds.length;
+  runtime.waitingForUserInput = waitingForUserInput;
+  runtime.threadStatus = normalizeThreadRuntimeStatus(source.thread_status ?? source.status);
+  runtime.lastThreadStatusAt = Date.now();
+  if (runtime.waitingForUserInput) {
+    runtime.threadStatus = 'waiting_user_input';
+    runtime.loaded = true;
+  } else if (runtime.pendingApprovalCount > 0) {
+    runtime.threadStatus = 'waiting_approval';
+    runtime.loaded = true;
+  } else if (runtime.threadStatus === 'not_loaded') {
+    runtime.loaded = false;
+    runtime.activeTurnId = '';
+  }
+  return true;
+}
+
+export function applySessionRuntimeEvent(store, sessionId, payload, eventType = 'thread_status') {
+  const targetId = resolveRuntimeSessionId(sessionId, payload);
+  if (!targetId) return null;
+  const runtime = ensureRuntime(targetId);
+  if (!runtime) return null;
+  // Durable turns own liveness; a delayed monitor control cannot reopen them.
+  const durableStatus = getChatThreadStatus(targetId);
+  if (durableStatus) {
+    runtime.threadStatus = normalizeThreadRuntimeStatus(durableStatus);
+    return runtime;
+  }
+  const projectedStatus = store.runtimeProjection?.sessions?.[targetId]?.runtimeStatus;
+  const payloadStatus = normalizeThreadRuntimeStatus(payload?.thread_status ?? payload?.status);
+  if (projectedStatus && payloadStatus !== normalizeThreadRuntimeStatus(projectedStatus)) {
+    // Rejected or buffered WS events cannot update approval/control side state.
+    runtime.threadStatus = normalizeThreadRuntimeStatus(projectedStatus);
+    return runtime;
+  }
+  const applied = applySessionRuntimeSnapshot(runtime, payload);
+  if (!applied && eventType === 'thread_closed') {
+    runtime.loaded = false;
+    runtime.activeTurnId = '';
+    runtime.pendingApprovalIds = [];
+    runtime.pendingApprovalCount = 0;
+    runtime.waitingForUserInput = false;
+    runtime.threadStatus = 'not_loaded';
+    runtime.lastThreadStatusAt = Date.now();
+  } else if (applied && eventType === 'thread_closed') {
+    runtime.loaded = false;
+    runtime.activeTurnId = '';
+    runtime.pendingApprovalIds = [];
+    runtime.pendingApprovalCount = 0;
+    runtime.waitingForUserInput = false;
+    runtime.threadStatus = 'not_loaded';
+  }
+  // The canonical reducer has already sequenced this event. Never apply a
+  // second unsequenced status event that can bypass replay/deduplication.
+  const canonicalStatus = store.runtimeProjection?.sessions?.[targetId]?.runtimeStatus;
+  if (canonicalStatus) runtime.threadStatus = normalizeThreadRuntimeStatus(canonicalStatus);
+  if (
+    isTerminalRuntimeStatus(runtime.threadStatus) &&
+    !shouldDeferTerminalRuntimeSettlement(store, targetId, runtime, eventType)
+  ) {
+    settleTerminalSessionRuntime(store, targetId, {
+      eventType,
+      failed: runtime.threadStatus === 'system_error'
+    });
+  }
+  return runtime;
+}
+
+export function shouldDeferTerminalRuntimeSettlement(store, sessionId, runtime, eventType = '') {
+  const targetId = resolveSessionKey(sessionId);
+  if (!targetId || !runtime) return false;
+  const normalizedEventType = String(eventType || '').trim().toLowerCase();
+  if (normalizedEventType !== 'thread_status' && normalizedEventType !== 'thread_closed') {
+    return false;
+  }
+  if (!runtime.sendController && !runtime.resumeController) {
+    return false;
+  }
+  const targetMessages = resolveSessionKey(store?.activeSessionId) === targetId
+    ? store?.messages
+    : getSessionMessages(targetId);
+  if (!Array.isArray(targetMessages) || !findPendingAssistantMessage(targetMessages)) {
+    return false;
+  }
+  chatDebugLog('chat.store.terminal-debug', 'defer-terminal-runtime-settlement', {
+    sessionId: targetId,
+    eventType: normalizedEventType,
+    runtime: buildRuntimeDebugSnapshot(runtime),
+    latestAssistant: buildLatestAssistantRuntimeDebugSnapshot(targetMessages)
+  });
+  return true;
+}
+
+export function settleTerminalSessionRuntime(
+  store,
+  sessionId,
+  options: { eventType?: string; failed?: boolean } = {}
+) {
+  const targetId = resolveSessionKey(sessionId);
+  if (!targetId) return false;
+  const runtime = ensureRuntime(targetId);
+  if (!runtime) return false;
+  const beforeRuntime = buildRuntimeDebugSnapshot(runtime);
+  // Server terminal state is authoritative; local stream controllers are only UI locks here.
+  clearRuntimeInteractiveControllers(runtime, {
+    abort: true,
+    abortReason: 'local_recovery'
+  });
+  clearWatchdog(runtime);
+  runtime.stopRequested = false;
+  runtime.pendingApprovalIds = [];
+  runtime.pendingApprovalCount = 0;
+  runtime.waitingForUserInput = false;
+  if (runtime.threadStatus === 'running') {
+    runtime.threadStatus = 'idle';
+  }
+  const targetMessages = resolveSessionKey(store?.activeSessionId) === targetId
+    ? store?.messages
+    : getSessionMessages(targetId);
+  chatDebugLog('chat.store.terminal-debug', 'before-settle-terminal', {
+    sessionId: targetId,
+    eventType: options.eventType || 'terminal_runtime',
+    loadingBySession: Boolean(store?.loadingBySession?.[targetId]),
+    runtime: beforeRuntime,
+    streamingAssistantCount: countAssistantStreamingMessages(targetMessages),
+    latestAssistant: buildLatestAssistantRuntimeDebugSnapshot(targetMessages),
+    ...(isChatDebugVerboseEnabled()
+      ? { messages: buildMessageIdentityDebugList(targetMessages) }
+      : {})
+  });
+  const settledTerminalArtifacts = settleTerminalAssistantArtifacts(targetMessages, {
+    failed: options.failed === true || runtime.threadStatus === 'system_error'
+  });
+  setSessionLoading(store, targetId, false);
+  chatDebugLog('chat.store.terminal-debug', 'after-settle-terminal', {
+    sessionId: targetId,
+    eventType: options.eventType || 'terminal_runtime',
+    loadingBySession: Boolean(store?.loadingBySession?.[targetId]),
+    runtime: buildRuntimeDebugSnapshot(runtime),
+    streamingAssistantCount: countAssistantStreamingMessages(targetMessages),
+    latestAssistant: buildLatestAssistantRuntimeDebugSnapshot(targetMessages),
+    settledTerminalArtifacts,
+    ...(isChatDebugVerboseEnabled()
+      ? { messages: buildMessageIdentityDebugList(targetMessages) }
+      : {})
+  });
+  if (settledTerminalArtifacts) {
+    notifySessionSnapshot(store, targetId, targetMessages, true);
+  }
+  chatDebugLog('chat.store.runtime', 'settle-terminal-state', {
+    sessionId: targetId,
+    eventType: options.eventType || 'terminal_runtime',
+    threadStatus: runtime.threadStatus,
+    settledTerminalArtifacts,
+    beforeRuntime,
+    afterRuntime: buildRuntimeDebugSnapshot(runtime)
+  });
+  return true;
+}
+
+export function settleUserStoppedSessionRuntime(store, sessionId) {
+  const targetId = resolveSessionKey(sessionId);
+  if (!targetId) return false;
+  const runtime = ensureRuntime(targetId);
+  if (!runtime) return false;
+  const beforeRuntime = buildRuntimeDebugSnapshot(runtime);
+  const targetMessages = resolveSessionKey(store?.activeSessionId) === targetId
+    ? store?.messages
+    : getSessionMessages(targetId);
+  settleStoppedRuntimeLocalState(runtime, { abortReason: 'user_stop' });
+  if (chatWatcherSharedState.sessionWatchSessionId === targetId) {
+    chatWatcherSharedState.sessionWatchSessionId = '';
+  }
+  if (typeof store?.clearPendingApprovals === 'function') {
+    store.clearPendingApprovals({ sessionId: targetId });
+  }
+  setSessionLoading(store, targetId, false);
+  syncChatRuntimeProjectionStatus(store, targetId, 'cancelled', {
+    eventType: 'session_runtime'
+  });
+  chatDebugLog('chat.store.runtime', 'settle-user-stopped-state', {
+    sessionId: targetId,
+    beforeRuntime,
+    afterRuntime: buildRuntimeDebugSnapshot(runtime),
+    latestMessage: buildMessageIdentityDebugSnapshot(
+      Array.isArray(store?.messages) ? store.messages[store.messages.length - 1] : null,
+      Array.isArray(store?.messages) ? store.messages.length - 1 : -1
+    ),
+    ...(isChatDebugVerboseEnabled()
+      ? { messages: buildMessageIdentityDebugList(targetMessages) }
+      : {})
+  });
+  return true;
+}
+
+export function syncSessionPendingApprovalRuntime(store, sessionId) {
+  const key = resolveSessionKey(sessionId);
+  if (!key) return null;
+  const runtime = ensureRuntime(key);
+  if (!runtime) return null;
+  const approvals = Array.isArray(store?.pendingApprovals)
+    ? store.pendingApprovals.filter((item) => resolveSessionKey(item?.session_id) === key)
+    : [];
+  runtime.pendingApprovalIds = approvals
+    .map((item) => String(item?.approval_id || '').trim())
+    .filter(Boolean);
+  runtime.pendingApprovalCount = runtime.pendingApprovalIds.length;
+  applyRuntimeDerivedStatus(store, key, runtime);
+  return runtime;
+}
+
+export const getSessionMessages = (sessionId) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key) return null;
+  return sessionMessages.get(key) || null;
+};
+
+export const resolveSessionMessageArray = (store, sessionId, fallbackMessages = null) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key) {
+    return Array.isArray(fallbackMessages) ? fallbackMessages : [];
+  }
+  return resolveRealtimeMessageArrayReference({
+    sessionId: key,
+    activeSessionId: resolveSessionKey(store?.activeSessionId),
+    activeMessages: store?.messages,
+    cachedMessages: getSessionMessages(key),
+    fallbackMessages
+  });
+};
+
+export const cacheSessionMessages = (sessionId, messages) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key || !Array.isArray(messages)) return;
+  sessionMessages.set(key, messages);
+};
+
+export const hasSubmittedUserMessage = (messages) =>
+  (Array.isArray(messages) ? messages : []).some((message) => {
+    if (!message || message.isGreeting || String(message.role || '').trim() !== 'user') {
+      return false;
+    }
+    const hasText = Boolean(String(message.content || '').trim());
+    const hasAttachments = Array.isArray(message.attachments) && message.attachments.length > 0;
+    return hasText || hasAttachments;
+  });
+
+export const isSessionSpawnedFromAnotherThread = (session) => {
+  if (!session || typeof session !== 'object') return false;
+  const source = session as Record<string, unknown>;
+  return Boolean(
+    String(source.parent_session_id ?? '').trim()
+    || String(source.parent_message_id ?? '').trim()
+    || String(source.spawned_by ?? '').trim()
+    || String(source.spawn_label ?? '').trim()
+  );
+};
+
+export const isReusableFreshSession = (session, fallbackMessages = null) => {
+  if (!session || typeof session !== 'object') return false;
+  const sessionId = resolveSessionKey(session.id);
+  if (!sessionId) return false;
+  const status = String(session.status || '').trim().toLowerCase();
+  if (status === 'archived') return false;
+  // "New thread" can only reuse root sessions. Spawned/subagent threads must not be recycled.
+  if (isSessionSpawnedFromAnotherThread(session)) return false;
+  if (isThreadRuntimeBusy(normalizeThreadRuntimeStatus(getRuntime(sessionId)?.threadStatus))) return false;
+  if (session.orchestration_lock?.active || Number(session.consumed_tokens) > 0 || Number(session.tool_calls) > 0) return false;
+  const cachedMessages = getSessionMessages(sessionId);
+  const messages = Array.isArray(cachedMessages) && cachedMessages.length ? cachedMessages : fallbackMessages;
+  if (hasSubmittedUserMessage(messages)) {
+    return false;
+  }
+  const createdAt = resolveTimestampMs(session.created_at);
+  const lastMessageAt = resolveTimestampMs(session.last_message_at);
+  // Even a message sent immediately after creation consumes the draft. Unknown
+  // timestamps are not proof of an empty thread after caches have been evicted.
+  return createdAt !== null && lastMessageAt !== null && lastMessageAt <= createdAt;
+};
+
+export const touchSessionUpdatedAt = (store, sessionId, timestamp) => {
+  if (!store || !Array.isArray(store.sessions)) return;
+  const key = resolveSessionKey(sessionId);
+  if (!key) return;
+  const session = store.sessions.find((item) => String(item?.id || '').trim() === key);
+  if (!session) return;
+  const resolved = resolveTimestampIso(timestamp);
+  session.updated_at = resolved || new Date().toISOString();
+};
+
+export const resolveSessionContextTokens = (store, sessionId) => {
+  if (!store || !Array.isArray(store.sessions)) return null;
+  const key = resolveSessionKey(sessionId);
+  if (!key) return null;
+  const session = store.sessions.find((item) => resolveSessionKey(item?.id) === key);
+  if (!session || typeof session !== 'object') return null;
+  return normalizeContextTokens(
+    session.context_occupancy_tokens ??
+      session.contextOccupancyTokens ??
+      session.context_usage?.context_occupancy_tokens ??
+      session.context_usage?.contextOccupancyTokens ??
+      session.contextTokens ??
+      session.context_tokens ??
+      session.context_usage?.contextTokens ??
+      session.context_usage?.context_tokens
+  );
+};
+
+export const syncSessionContextTokens = (store, sessionId, contextTokens, contextTotalTokens = null) => {
+  if (!store || !Array.isArray(store.sessions)) return;
+  const key = resolveSessionKey(sessionId);
+  const normalized = parseOptionalCount(contextTokens);
+  const normalizedTotal = normalizeContextTotalTokens(contextTotalTokens);
+  if (!key || normalized === null) return;
+  const index = store.sessions.findIndex((item) => resolveSessionKey(item?.id) === key);
+  if (index < 0) return;
+  const current = store.sessions[index] || {};
+  const next = {
+    ...current,
+    context_tokens: normalized,
+    context_occupancy_tokens: normalized,
+    contextTokens: normalized,
+    contextOccupancyTokens: normalized,
+    ...(normalizedTotal !== null
+      ? {
+          context_max_tokens: normalizedTotal,
+          context_total_tokens: normalizedTotal,
+          contextTotalTokens: normalizedTotal
+        }
+      : {})
+  };
+  store.sessions[index] = next;
+  const agentId = String(next.agent_id || '').trim();
+  writeSessionListCache(agentId, filterSessionsByAgent(agentId, store.sessions));
+  syncDemoChatCache({ sessions: store.sessions });
+};
+
+export const notifySessionSnapshot = (store, sessionId, messages, immediate = false, options: { skipWindowing?: boolean } = {}) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key || !Array.isArray(messages)) return;
+  dedupeTerminalCompactionMarkersInPlace(messages);
+  cacheSessionMessages(key, messages);
+  inspectChatRuntimeShadow(store, key, messages, {
+    phase: 'legacy-snapshot'
+  });
+  const activeKey = resolveSessionKey(store?.activeSessionId);
+  if (activeKey && activeKey === key) {
+    if (options.skipWindowing !== true) {
+      applyMessageWindow(store, key, messages);
+    }
+    scheduleChatSnapshot(store, immediate);
+  }
+};
+
+export const ensureChatRuntimeProjectionForStore = (store): ChatRuntimeProjection | null => {
+  if (!store || typeof store !== 'object') return null;
+  if (!store.runtimeProjection) {
+    store.runtimeProjection = createChatRuntimeProjection();
+  }
+  // The reducer owns mutations; only explicit render clocks enter Vue reactivity.
+  return markRaw(toRaw(store.runtimeProjection)) as ChatRuntimeProjection;
+};
+
+export const resolveProjectionAgentId = (store, sessionId): string => {
+  const key = resolveSessionKey(sessionId);
+  if (!key || !Array.isArray(store?.sessions)) return '';
+  const session = store.sessions.find((item) => resolveSessionKey(item?.id) === key);
+  return String(session?.agent_id || '').trim();
+};
+
+export const syncChatRuntimeProjectionFromSnapshot = (
+  store,
+  sessionId,
+  messages = null,
+  options: { immediate?: boolean; loading?: boolean; running?: boolean; authoritative?: boolean; preserveLive?: boolean } = {}
+) => {
+  const key = resolveSessionKey(sessionId);
+  const projection = ensureChatRuntimeProjectionForStore(store);
+  if (!key || !projection) return;
+  projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
+  const targetMessages = Array.isArray(messages)
+    ? messages
+    : getSessionMessages(key) || (resolveSessionKey(store?.activeSessionId) === key ? store?.messages : []);
+  const projectionMessages = Array.isArray(targetMessages)
+    ? targetMessages.filter((message) => !isSyntheticUiOnlyMessage(message))
+    : [];
+  const runtime = getRuntime(key);
+  const loading =
+    options.loading === undefined
+      ? Boolean(store?.loadingBySession?.[key])
+      : Boolean(options.loading);
+  const running =
+    options.running === undefined
+      ? loading || isThreadRuntimeBusy(runtime?.threadStatus)
+      : Boolean(options.running);
+  const currentStatus = normalizeThreadRuntimeStatus(runtime?.threadStatus);
+  const snapshotRuntimeStatus = running || loading
+    ? 'running'
+    : currentStatus === 'queued'
+      ? 'queued'
+      : currentStatus === 'completed' || currentStatus === 'failed' || currentStatus === 'cancelled'
+        ? currentStatus
+        : 'idle';
+  const result = applyChatRuntimeEvent(projection, {
+    event_type: 'session_snapshot',
+    source: 'snapshot',
+    strict: false,
+    session_id: key,
+    agent_id: resolveProjectionAgentId(store, key),
+    messages: projectionMessages,
+    payload: {
+      transcript: projectionMessages,
+      runtime_status: snapshotRuntimeStatus,
+      preserve_live: options.preserveLive === true,
+      authoritative: options.authoritative === true
+    },
+    authoritative: options.authoritative === true
+  });
+  if (result.applied) {
+    markRuntimeProjectionChanged(store, {
+      immediate: options.immediate === true || options.loading !== undefined || options.running !== undefined,
+      sessionId: key,
+      reason: 'snapshot-reconcile'
+    });
+  }
+};
+
+const isSyntheticUiOnlyMessage = (message: unknown): boolean =>
+  Boolean(
+    message &&
+      typeof message === 'object' &&
+      !Array.isArray(message) &&
+      ((message as Record<string, unknown>).isGreeting === true ||
+        (message as Record<string, unknown>).is_greeting === true)
+  );
+
+const isUsageContextStreamEvent = (eventType) => {
+  const normalized = String(eventType || '').trim().toLowerCase();
+  return (
+    normalized === 'token_usage' ||
+    normalized === 'round_usage' ||
+    normalized === 'context_usage' ||
+    normalized === 'quota_usage' ||
+    normalized === 'model_request_usage'
+  );
+};
+
+const syncSessionUsageFromRuntimeProjection = (store, sessionId) => {
+  const key = resolveSessionKey(sessionId);
+  const projection = store?.runtimeProjection as ChatRuntimeProjection | undefined;
+  if (!key || !projection) return;
+  const assistants = selectVisibleMessageProjections(projection, key)
+    .filter((message) => message.role === 'assistant' && message.display?.stats);
+  const assistant = assistants[assistants.length - 1];
+  const stats = (assistant?.display?.stats as Record<string, unknown> | undefined) || {};
+  const contextTokens = normalizeContextTokens(
+    stats.contextTokens ?? stats.context_tokens ?? stats.context_occupancy_tokens ??
+      stats.contextOccupancyTokens ?? (stats.context_usage as Record<string, unknown> | undefined)?.context_occupancy_tokens ??
+      (stats.context_usage as Record<string, unknown> | undefined)?.contextTokens
+  );
+  const contextTotalTokens = normalizeContextTotalTokens(
+    stats.contextTotalTokens ?? stats.context_total_tokens ?? stats.context_max_tokens ?? stats.max_context
+  );
+  const consumedByUserTurn = new Map<string, number>();
+  const fallbackToolCallsByUserTurn = new Map<string, number>();
+  assistants.forEach((message) => {
+    const value = (message.display?.stats as Record<string, unknown> | undefined)?.quotaConsumed ??
+      (message.display?.stats as Record<string, unknown> | undefined)?.quota_consumed ??
+      (message.display?.stats as Record<string, unknown> | undefined)?.request_consumed_tokens;
+    const parsed = Number(value);
+    const turn = String(message.userTurnId || message.id);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      consumedByUserTurn.set(turn, Math.max(consumedByUserTurn.get(turn) || 0, parsed));
+    }
+    const items = Array.isArray(message.workflowItems) ? message.workflowItems : [];
+    if (items.length === 0) {
+      const stats = message.display?.stats as Record<string, unknown> | undefined;
+      const explicit = Number(stats?.toolCalls ?? stats?.tool_calls ?? 0);
+      if (Number.isFinite(explicit) && explicit > 0) {
+        fallbackToolCallsByUserTurn.set(turn, Math.max(
+          fallbackToolCallsByUserTurn.get(turn) || 0,
+          Math.trunc(explicit)
+        ));
+      }
+    }
+  });
+  const toolCallKeys = new Set<string>();
+  assistants.forEach((message) => {
+    const items = Array.isArray(message.workflowItems) ? message.workflowItems : [];
+    items.forEach((item, index) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return;
+      const record = item as Record<string, unknown>;
+      const eventType = String(record.eventType ?? record.event_type ?? record.event ?? '').trim().toLowerCase();
+      const isTool = record.isTool === true || record.is_tool === true ||
+        ['tool_call', 'tool_result', 'tool_output', 'tool_output_delta', 'tool_call_started',
+          'tool_call_completed', 'tool_call_failed'].includes(eventType);
+      if (!isTool) return;
+      const ref = String(
+        record.toolCallId ?? record.tool_call_id ?? record.callId ?? record.call_id ??
+        record.commandSessionId ?? record.command_session_id ?? record.approvalId ?? record.approval_id ?? ''
+      ).trim();
+      const toolName = String(record.toolName ?? record.tool_name ?? record.tool ?? record.name ?? '').trim();
+      const key = ref
+        ? `ref:${ref}`
+        : `turn:${message.userTurnId}:${message.modelTurnId}:${toolName}:${index}`;
+      toolCallKeys.add(key);
+    });
+  });
+  const toolCalls = toolCallKeys.size + Array.from(fallbackToolCallsByUserTurn.values())
+    .reduce((sum, value) => sum + value, 0);
+  const session = Array.isArray(store.sessions)
+    ? store.sessions.find((item) => resolveSessionKey(item?.id) === key)
+    : null;
+  if (!session) return;
+  const currentConsumed = Number(session.consumed_tokens ?? session.consumedTokens ?? 0);
+  const projectedConsumed = Array.from(consumedByUserTurn.values()).reduce((sum, value) => sum + value, 0);
+  const nextConsumed = Math.max(Number.isFinite(currentConsumed) ? currentConsumed : 0, projectedConsumed);
+  const next = {
+    ...session,
+    ...(Number.isFinite(nextConsumed) && nextConsumed >= 0
+      ? { consumed_tokens: Math.trunc(nextConsumed), consumedTokens: Math.trunc(nextConsumed) }
+      : {}),
+    tool_calls: toolCalls,
+    toolCalls,
+    ...(contextTokens !== null
+      ? { context_tokens: contextTokens, context_occupancy_tokens: contextTokens, contextTokens, contextOccupancyTokens: contextTokens }
+      : {}),
+    ...(contextTotalTokens !== null
+      ? { context_total_tokens: contextTotalTokens, context_max_tokens: contextTotalTokens, contextTotalTokens }
+      : {})
+  };
+  const index = store.sessions.indexOf(session);
+  if (index >= 0) {
+    store.sessions[index] = next;
+    const agentId = String(next.agent_id || '').trim();
+    writeSessionListCache(agentId, filterSessionsByAgent(agentId, store.sessions));
+    syncDemoChatCache({ sessions: store.sessions });
+  }
+};
+
+const COMMAND_SESSION_STREAM_EVENTS = new Set([
+  'command_session_delta',
+  'command_session_start',
+  'command_session_status',
+  'command_session_exit',
+  'command_session_summary'
+]);
+
+const extractCanonicalStreamData = (payload) => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return {};
+  const data = payload.data;
+  return data && typeof data === 'object' && !Array.isArray(data)
+    ? data
+    : payload;
+};
+
+const normalizeCommandSessionRef = (payload, data) => {
+  for (const source of [data, payload]) {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
+    const ref = String(source.command_session_id ?? source.commandSessionId ?? '').trim();
+    if (ref) return ref;
+  }
+  return '';
+};
+
+const COMMAND_SESSION_TOOL_OUTPUT_EVENTS = new Set([
+  'tool_output',
+  'tool_output_delta'
+]);
+
+const DESKTOP_OVERLAY_STREAM_EVENTS = new Set([
+  'desktop_controller_hint',
+  'desktop_controller_hint_done',
+  'desktop_monitor_countdown',
+  'desktop_monitor_countdown_done'
+]);
+
+const applyCommandSessionCanonicalSideEffect = (runtimeStore, sessionId, eventType, payload, data) => {
+  const normalizedEventType = String(eventType || '').trim().toLowerCase();
+  if (
+    !COMMAND_SESSION_STREAM_EVENTS.has(normalizedEventType) &&
+    !COMMAND_SESSION_TOOL_OUTPUT_EVENTS.has(normalizedEventType)
+  ) {
+    return false;
+  }
+  const commandSessionId = normalizeCommandSessionRef(payload, data);
+  if (!commandSessionId) return false;
+  const source = data && typeof data === 'object' && !Array.isArray(data)
+    ? data
+    : payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload
+      : {};
+  if (normalizedEventType === 'tool_output_delta') {
+    // command_session_delta is the authoritative live stream for command sessions.
+    // Legacy tool_output_delta still drives workflow projection, but appending it here
+    // would duplicate the same command output in the terminal tail.
+    return true;
+  }
+  const commandStore = useCommandSessionStore();
+  if (
+    normalizedEventType === 'command_session_delta' ||
+    normalizedEventType === 'tool_output' ||
+    normalizedEventType === 'tool_output_delta'
+  ) {
+    const entry = commandStore.appendDelta(
+      resolveSessionKey(sessionId),
+      commandSessionId,
+      source.stream,
+      source.delta ?? source.output ?? source.content ?? source.text ?? '',
+      source
+    );
+    if (entry) {
+      markRuntimeProjectionChanged(runtimeStore, {
+        sessionId: resolveSessionKey(sessionId),
+        reason: 'command-session-delta'
+      });
+    }
+    return true;
+  }
+  const entry = commandStore.upsertSnapshot(
+    resolveSessionKey(sessionId) || String(source.session_id ?? source.sessionId ?? ''),
+    source
+  );
+  if (entry) {
+    markRuntimeProjectionChanged(runtimeStore, {
+      sessionId: resolveSessionKey(sessionId),
+      reason: 'command-session-snapshot'
+    });
+  }
+  return true;
+};
+
+const isSubagentCanonicalEvent = (eventType: string): boolean =>
+  eventType.startsWith('subagent_');
+
+const isTeamCanonicalEvent = (eventType: string): boolean =>
+  eventType.startsWith('team_');
+
+const isSubagentControlToolResultEvent = (
+  eventType: string,
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>
+): boolean => {
+  if (eventType !== 'tool_result') return false;
+  const normalized = String(
+    data.tool ??
+      data.name ??
+      payload.tool ??
+      payload.name ??
+      ''
+  ).trim().toLowerCase();
+  return normalized.includes('subagent') ||
+    normalized.includes('child_agent') ||
+    normalized.includes('子智能体');
+};
+
+const applyCollaborationCanonicalSideEffect = (
+  sessionId,
+  eventType: string,
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>
+) => {
+  const agentIds = new Set(
+    [
+      data.agent_id,
+      data.agentId,
+      payload.agent_id,
+      payload.agentId
+    ]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  );
+  if (isSubagentCanonicalEvent(eventType) || isSubagentControlToolResultEvent(eventType, payload, data)) {
+    const key = resolveSessionKey(sessionId);
+    if (key) {
+      sessionSubagentsCache.delete(key);
+      emitSubagentPoolChanged(key);
+    }
+  }
+  if (agentIds.size > 0) {
+    emitAgentRuntimeRefresh({ agentIds: Array.from(agentIds) });
+  }
+};
+
+const collectCanonicalWorkspacePathHints = (
+  data: Record<string, unknown>,
+  payload: Record<string, unknown>
+): string[] => {
+  const values = [
+    data.path,
+    data.file_path,
+    data.filePath,
+    data.workspace_path,
+    data.workspacePath,
+    payload.path,
+    payload.file_path,
+    payload.filePath,
+    payload.workspace_path,
+    payload.workspacePath
+  ];
+  for (const source of [data.paths, data.changed_paths, data.changedPaths, payload.paths, payload.changed_paths, payload.changedPaths]) {
+    if (Array.isArray(source)) {
+      source.forEach((value) => values.push(value));
+    }
+  }
+  return Array.from(new Set(
+    values
+      .map((value) => String(value ?? '').trim())
+      .filter(Boolean)
+  ));
+};
+
+const applyWorkspaceUpdateCanonicalSideEffect = (
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>
+) => {
+  const changedPaths = collectCanonicalWorkspacePathHints(data, payload);
+  emitWorkspaceRefresh({
+    sessionId: payload.session_id ?? payload.sessionId ?? data.session_id ?? data.sessionId ?? null,
+    workspaceId: data.workspace_id ?? data.workspaceId ?? payload.workspace_id ?? payload.workspaceId ?? null,
+    agentId: data.agent_id ?? data.agentId ?? payload.agent_id ?? payload.agentId ?? '',
+    containerId: data.container_id ?? data.containerId ?? payload.container_id ?? payload.containerId ?? null,
+    treeVersion: data.tree_version ?? data.treeVersion ?? payload.tree_version ?? payload.treeVersion ?? null,
+    reason: data.reason || payload.reason || 'workspace_update',
+    ...(changedPaths.length ? { path: changedPaths[0], paths: changedPaths } : {})
+  });
+};
+
+export const applyCanonicalStreamSideEffects = (
+  store,
+  sessionId,
+  eventType,
+  payload
+) => {
+  const normalizedEventType = String(eventType || '').trim().toLowerCase();
+  const data = extractCanonicalStreamData(payload);
+  if (normalizedEventType === 'thread_control') {
+    void handleThreadControlWorkflowEvent(store, data);
+    return;
+  }
+  if (normalizedEventType === 'workspace_update') {
+    applyWorkspaceUpdateCanonicalSideEffect(payload, data);
+    return;
+  }
+  if (DESKTOP_OVERLAY_STREAM_EVENTS.has(normalizedEventType)) {
+    applyDesktopOverlayEvent(normalizedEventType, data);
+    return;
+  }
+  applyCommandSessionCanonicalSideEffect(store, sessionId, normalizedEventType, payload, data);
+  if (isSubagentCanonicalEvent(normalizedEventType) || isTeamCanonicalEvent(normalizedEventType) || normalizedEventType === 'tool_result') {
+    applyCollaborationCanonicalSideEffect(sessionId, normalizedEventType, payload, data);
+  }
+};
+
+export const syncChatRuntimeProjectionStatus = (
+  store,
+  sessionId,
+  status,
+  options: { eventType?: string } = {}
+) => {
+  const key = resolveSessionKey(sessionId);
+  const projection = ensureChatRuntimeProjectionForStore(store);
+  if (!key || !projection) return;
+  projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
+  const result = applyChatRuntimeEvent(projection, {
+    event_type: options.eventType || 'session_runtime',
+    source: 'legacy',
+    strict: false,
+    session_id: key,
+    agent_id: resolveProjectionAgentId(store, key),
+    runtime_status: status
+  });
+  if (result.applied) {
+    const runtime = ensureRuntime(key);
+    runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
+    markRuntimeProjectionChanged(store, {
+      immediate: true,
+      sessionId: key,
+      reason: 'runtime-status'
+    });
+  }
+  inspectChatRuntimeShadow(store, key, null, {
+    phase: options.eventType || 'session_runtime',
+    legacyBusy: isThreadRuntimeBusy(status)
+  });
+};
+
+export const inspectChatRuntimeShadow = (
+  store,
+  sessionId,
+  messages = null,
+  options: { phase?: string; legacyBusy?: boolean | null } = {}
+) => {
+  if (!isChatDebugEnabled() || !isChatDebugVerboseEnabled()) return null;
+  const key = resolveSessionKey(sessionId);
+  const projection = store?.runtimeProjection as ChatRuntimeProjection | undefined;
+  if (!key || !projection) return null;
+  const activeKey = resolveSessionKey(store?.activeSessionId);
+  const targetMessages = Array.isArray(messages)
+    ? messages
+    : activeKey === key
+      ? store?.messages
+      : getSessionMessages(key);
+  if (!Array.isArray(targetMessages)) return null;
+  const legacyBusy =
+    options.legacyBusy === undefined
+      ? Boolean(store?.loadingBySession?.[key]) || isThreadRuntimeBusy(getRuntime(key)?.threadStatus)
+      : options.legacyBusy;
+  const report = compareChatRuntimeShadow({
+    projection,
+    sessionId: key,
+    legacyMessages: targetMessages,
+    legacyBusy,
+    phase: options.phase
+  });
+  if (report.ok) return report;
+
+  const now = Date.now();
+  const previous = sessionRuntimeShadowState.get(key);
+  if (
+    previous &&
+    previous.fingerprint === report.fingerprint &&
+    now - previous.loggedAt < SESSION_RUNTIME_SHADOW_LOG_COOLDOWN_MS
+  ) {
+    return report;
+  }
+  sessionRuntimeShadowState.set(key, {
+    fingerprint: report.fingerprint,
+    loggedAt: now
+  });
+  chatDebugLog('chat.runtime.shadow', 'projection-legacy-drift', {
+    ...summarizeChatRuntimeShadowReport(report),
+    legacyMessages: buildMessageIdentityDebugList(targetMessages),
+    projectedMessages: buildMessageIdentityDebugList(
+      selectVisibleMessageProjections(projection, key).map((item) => item.raw || {
+        role: item.role,
+        content: item.content,
+        reasoning: item.reasoning,
+        message_id: item.id,
+        user_turn_id: item.userTurnId,
+        model_turn_id: item.modelTurnId,
+        runtime_status: item.status,
+        created_at: item.createdAt,
+        workflowItems: item.workflowItems,
+        subagents: item.subagents,
+        cancelled: item.cancelled,
+        failed: item.failed,
+        final: item.final
+      })
+    )
+  });
+  return report;
+};
+
+export const applyCanonicalStreamRuntimeEvent = (
+  store,
+  sessionId,
+  eventType,
+  payload,
+  eventId,
+  options: {
+    requestId?: string;
+    phase?: string;
+    clientMessageId?: string | null;
+    userTurnId?: string | null;
+    modelTurnId?: string | null;
+    assistantMessageId?: string | null;
+    onSyncRequired?: (reason: string) => void;
+    sideEffects?: boolean;
+  } = {}
+) => {
+  const key = resolveSessionKey(sessionId);
+  const projection = ensureChatRuntimeProjectionForStore(store);
+  if (!key || !projection) return [];
+  const normalizedEventType = String(eventType || '').trim().toLowerCase();
+  // Workspace mutations update the file panel cache only. They must not enter
+  // the chat projection, otherwise every file write invalidates the message
+  // list and can trigger a session-detail reload while a turn is still live.
+  const workspaceSideEffectOnly = normalizedEventType === 'workspace_update';
+  projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
+  const events = buildCanonicalStreamRuntimeEvents({
+    sessionId: key,
+    eventType,
+    payload: payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : { value: payload },
+    eventId,
+    requestId: options.requestId,
+    clientMessageId: options.clientMessageId,
+    userTurnId: options.userTurnId,
+    modelTurnId: options.modelTurnId,
+    assistantMessageId: options.assistantMessageId,
+    phase: options.phase
+  });
+  const projectionEvents =
+    (!workspaceSideEffectOnly && !isCommandStreamVisualizationEnabled() && isCommandStreamRuntimeEvent(eventType))
+      ? []
+      : events;
+  const results = applyChatRuntimeEventsWithInvalidation(store, projection, projectionEvents, {
+    immediate: options.phase === 'snapshot',
+    reason: `stream:${options.phase || 'ws'}`
+  });
+  // Quota can precede the assistant message; absolute totals remain replay-safe.
+  if ((eventType === 'quota_usage' || eventType === 'model_request_usage') && applySessionQuotaUsage(
+    store.sessions, key, extractCanonicalStreamData(payload)
+  )) {
+    const next = store.sessions.find((item) => resolveSessionKey(item?.id) === key);
+    for (const entry of sessionListCache.values()) {
+      const index = entry.sessions.findIndex((item) => resolveSessionKey(item?.id) === key);
+      if (index >= 0) {
+        entry.sessions[index] = {
+          ...entry.sessions[index],
+          model_request_count: next.model_request_count,
+          quota_used: next.quota_used
+        };
+      }
+    }
+    syncDemoChatCache({ sessions: store.sessions });
+  }
+  const visibleResults = results.filter((result) =>
+    result.applied && (!result.cursorOnly || (result.drained ?? 0) > 0)
+  );
+  if (visibleResults.length > 0) {
+    const runtime = ensureRuntime(key);
+    runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
+  }
+  if (visibleResults.length > 0 && (
+    isUsageContextStreamEvent(eventType) ||
+    ['llm_output', 'tool_call', 'tool_result', 'tool_call_completed', 'tool_call_failed', 'final', 'turn_completed'].includes(String(eventType).toLowerCase())
+  )) {
+    syncSessionUsageFromRuntimeProjection(store, key);
+  }
+  const isCommandProjectionOnlyEvent =
+    !isCommandStreamVisualizationEnabled() && isCommandStreamRuntimeEvent(eventType);
+  if (
+    options.sideEffects === true ||
+    (workspaceSideEffectOnly && results.some((result) => result.applied)) ||
+    isCommandProjectionOnlyEvent ||
+    (
+      (options.phase === 'watch' || options.phase === 'snapshot') &&
+      results.some((result) => result.applied)
+    )
+  ) {
+    applyCanonicalStreamSideEffects(store, key, eventType, payload);
+  }
+  if (
+    results.some((result) => result.applied) &&
+    (eventType === 'approval_request' || eventType === 'approval_result' || eventType === 'approval_resolved')
+  ) {
+    const data = extractCanonicalStreamData(payload);
+    if (eventType === 'approval_request') {
+      store.enqueueApprovalRequest?.(options.requestId || data.request_id || data.requestId, key, data);
+    } else {
+      store.resolveApprovalResult?.(data);
+    }
+  }
+  const session = projection.sessions[key];
+  if (
+    typeof options.onSyncRequired === 'function' &&
+    session?.syncRequired &&
+    results.some((result) =>
+      result.reason === 'event_seq_gap' ||
+      result.reason === 'event_seq_gap_timeout' ||
+      result.reason === 'pending_event_seq_gap'
+    )
+  ) {
+    const reason = results.some((result) =>
+      result.reason === 'event_seq_gap' ||
+      result.reason === 'event_seq_gap_timeout'
+    )
+      ? 'event_seq_gap'
+      : 'pending_event_seq_gap';
+    options.onSyncRequired(reason);
+  }
+  return events;
+};
+
+export const applyCanonicalClientMessageSubmittedRuntimeEvent = (
+  store,
+  payload: {
+    sessionId: string;
+    content: string;
+    clientMessageId: string;
+    createdAt?: unknown;
+    userTurnId?: string;
+    modelTurnId?: string;
+    assistantMessageId?: string;
+    attachments?: unknown[];
+  }
+) => {
+  const key = resolveSessionKey(payload?.sessionId);
+  const projection = ensureChatRuntimeProjectionForStore(store);
+  if (!key || !projection) return null;
+  projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
+  const event = buildCanonicalClientMessageSubmittedEvent({
+    sessionId: key,
+    agentId: resolveProjectionAgentId(store, key),
+    content: payload.content,
+    clientMessageId: payload.clientMessageId,
+    createdAt: payload.createdAt,
+    userTurnId: payload.userTurnId,
+    attachments: payload.attachments
+  });
+  const result = applyChatRuntimeEvent(projection, event);
+  const assistantMessageId = String(payload.assistantMessageId || '').trim();
+  const modelTurnId = String(payload.modelTurnId || '').trim();
+  const assistantResult =
+    assistantMessageId && modelTurnId
+      ? applyChatRuntimeEvent(projection, {
+          event_type: 'assistant_message_created',
+          source: 'local',
+          strict: false,
+          session_id: key,
+          agent_id: resolveProjectionAgentId(store, key),
+          event_id: `local:${key}:${assistantMessageId}:placeholder`,
+          user_turn_id: payload.userTurnId || event.user_turn_id,
+          model_turn_id: modelTurnId,
+          message_id: assistantMessageId,
+          created_at: payload.createdAt,
+          payload: {
+            client_message_id: assistantMessageId
+          }
+        })
+      : null;
+  if (result.applied || assistantResult?.applied) {
+    const runtime = ensureRuntime(key);
+    runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
+    markRuntimeProjectionChanged(store, {
+      immediate: true,
+      sessionId: key,
+      reason: 'client-submitted'
+    });
+  }
+  return event;
+};
+
+export const applyLocalChatMessageRuntimeEvent = (
+  store,
+  payload: {
+    sessionId: string;
+    role: 'user' | 'assistant';
+    content: string;
+    messageId: string;
+    createdAt?: unknown;
+    userTurnId?: string;
+    modelTurnId?: string;
+    display?: Record<string, unknown>;
+  }
+) => {
+  const key = resolveSessionKey(payload?.sessionId);
+  const projection = ensureChatRuntimeProjectionForStore(store);
+  if (!key || !projection) return null;
+  const role = payload.role === 'assistant' ? 'assistant' : 'user';
+  const messageId = String(payload.messageId || '').trim();
+  if (!messageId) return null;
+  projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
+  const userTurnId = String(payload.userTurnId || `local-command-turn:${messageId}`).trim();
+  const modelTurnId = role === 'assistant'
+    ? String(payload.modelTurnId || `local-command-model:${messageId}`).trim()
+    : '';
+  const event = {
+    event_type: role === 'assistant' ? 'assistant_final' : 'user_message_created',
+    source: 'local',
+    strict: false,
+    session_id: key,
+    agent_id: resolveProjectionAgentId(store, key),
+    event_id: `local:${key}:${messageId}:message`,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: messageId,
+    role,
+    content: String(payload.content || ''),
+    created_at: payload.createdAt,
+    payload: {
+      ...(payload.display && typeof payload.display === 'object' ? payload.display : {}),
+      local_ui_message: true
+    }
+  };
+  const result = applyChatRuntimeEvent(projection, event);
+  if (result.applied) {
+    const runtime = ensureRuntime(key);
+    runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
+    markRuntimeProjectionChanged(store, {
+      immediate: true,
+      sessionId: key,
+      reason: 'local-message'
+    });
+  }
+  return event;
+};
+
+/** Binds an optimistic command row to the durable user round returned by HTTP. */
+export const bindRuntimeMessageToUserRound = (
+  store,
+  sessionId: unknown,
+  messageId: unknown,
+  userRound: unknown
+): boolean => {
+  const key = resolveSessionKey(sessionId);
+  const projection = ensureChatRuntimeProjectionForStore(store);
+  if (!key || !projection) return false;
+  const bound = bindChatRuntimeMessageToUserRound(projection, key, messageId, userRound);
+  if (!bound) return false;
+  const runtime = ensureRuntime(key);
+  runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
+  markRuntimeProjectionChanged(store, {
+    immediate: true,
+    sessionId: key,
+    reason: 'bind-user-round'
+  });
+  return true;
+};
+
+export const applyLocalAssistantTurnTerminalRuntimeEvent = (
+  store,
+  payload: {
+    sessionId: string;
+    terminal: 'completed' | 'failed' | 'cancelled';
+    content?: unknown;
+    reason?: unknown;
+    requestId?: string | null;
+    userTurnId?: string | null;
+    modelTurnId?: string | null;
+    assistantMessageId?: string | null;
+  }
+) => {
+  const key = resolveSessionKey(payload?.sessionId);
+  const projection = ensureChatRuntimeProjectionForStore(store);
+  if (!key || !projection) return null;
+  projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
+  const session = projection.sessions[key];
+  const requestedAssistantMessageId = String(payload.assistantMessageId || '').trim();
+  const projectedAssistant = requestedAssistantMessageId
+    ? session?.messageById?.[requestedAssistantMessageId] || null
+    : null;
+  const activeProjectedAssistant = projectedAssistant || Object.values(session?.messageById || {})
+    .filter((message) =>
+      message?.role === 'assistant' &&
+      (
+        message.status === 'placeholder' ||
+        message.status === 'waiting_first_output' ||
+        message.status === 'streaming' ||
+        message.status === 'tooling'
+      )
+    )
+    .sort((left, right) => Number(right.updatedSeq || 0) - Number(left.updatedSeq || 0))[0] || null;
+  const modelTurnId = String(payload.modelTurnId || activeProjectedAssistant?.modelTurnId || '').trim();
+  const userTurnId = String(payload.userTurnId || activeProjectedAssistant?.userTurnId || '').trim();
+  const assistantMessageId = String(requestedAssistantMessageId || activeProjectedAssistant?.id || '').trim();
+  const event = {
+    event_type:
+      payload.terminal === 'completed'
+        ? 'turn_completed'
+        : payload.terminal === 'cancelled'
+          ? 'turn_cancelled'
+          : 'turn_failed',
+    source: 'local',
+    strict: false,
+    session_id: key,
+    agent_id: resolveProjectionAgentId(store, key),
+    event_id: `local:${key}:${modelTurnId || payload.requestId || Date.now()}:${payload.terminal}`,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId,
+    content: String(payload.content || ''),
+    payload: {
+      reason: String(payload.reason || payload.terminal || ''),
+      source_event_type:
+        payload.terminal === 'completed'
+          ? 'local_completed'
+          : payload.terminal === 'cancelled'
+            ? 'local_cancelled'
+            : 'local_failed'
+    }
+  };
+  const result = applyChatRuntimeEvent(projection, event);
+  if (result.applied) {
+    const runtime = ensureRuntime(key);
+    runtime.realtimeRevision = readChatRealtimeRevision(runtime) + 1;
+    markRuntimeProjectionChanged(store, {
+      immediate: true,
+      sessionId: key,
+      reason: `local-turn-${payload.terminal}`
+    });
+  }
+  return event;
+};
+
+export const applyCanonicalSessionEventsSnapshot = (
+  store,
+  sessionId,
+  payload,
+  options: { phase?: string; includeRuntime?: boolean } = {}
+) => {
+  const key = resolveSessionKey(sessionId);
+  const projection = ensureChatRuntimeProjectionForStore(store);
+  if (!key || !projection) return [];
+  projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
+  const snapshotPayload = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : {};
+  if (!isChatSnapshotCurrent(getRuntime(key), snapshotPayload)) return [];
+  const includeRuntime = options.includeRuntime !== false;
+  const projectionPayload = includeRuntime
+    ? snapshotPayload
+    : (() => {
+        const { runtime: _runtime, running: _running, queued: _queued, ...workflowPayload } = snapshotPayload;
+        return workflowPayload;
+      })();
+  const snapshotEvents = buildCanonicalSessionEventsSnapshot({
+    sessionId: key,
+    payload: projectionPayload,
+    phase: options.phase
+  });
+  // A history-only restoration must retain durable workflow cards but omit
+  // historical runtime transitions. Otherwise an old `thread_status: running`
+  // record can revive a thread that the detail endpoint has already declared
+  // finished.
+  const events = includeRuntime
+    ? snapshotEvents
+    : snapshotEvents.filter((event) =>
+      event.event_type !== 'session_runtime' &&
+      event.event_type !== 'session_idle' &&
+      event.event_type !== 'queue_status'
+    );
+  const sessionBefore = projection.sessions[key];
+  const runtimeBefore = sessionBefore && !includeRuntime
+    ? { runtimeStatus: sessionBefore.runtimeStatus, busyReason: sessionBefore.busyReason }
+    : null;
+  // Restore the current runtime inside the same reduction batch, before any
+  // render invalidation. Historical workflow events must never flash as live.
+  if (runtimeBefore) {
+    events.push({
+      event_type: ['idle', 'completed', 'not_loaded'].includes(runtimeBefore.runtimeStatus)
+        ? 'session_idle' : 'session_runtime', source: 'snapshot', strict: false,
+      session_id: key, runtime_status: runtimeBefore.runtimeStatus,
+      payload: { runtime_status: runtimeBefore.runtimeStatus }
+    });
+  }
+  applyChatRuntimeEventsWithInvalidation(store, projection, events, {
+    immediate: true,
+    reason: 'session-events-snapshot'
+  });
+  // Approval recovery needs the complete snapshot because an idle session can
+  // return persisted events by round instead of at the top level. A scoped
+  // workflow-history request must not clear approvals from the current turn.
+  if (includeRuntime && snapshotPayload.workflow_only !== true) {
+    store.restorePendingApprovals?.(key, snapshotPayload);
+  }
+  inspectChatRuntimeShadow(store, key, null, {
+    phase: options.phase || 'session-events-snapshot'
+  });
+  return events;
+};
+
+export const shouldApplySessionEventsSnapshotToProjection = (
+  payload,
+  runtime = null
+): boolean => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return false;
+  }
+  if (payload.running === true) {
+    return true;
+  }
+  if (payload.queued === true) {
+    return true;
+  }
+  // The session detail endpoint is authoritative for restoration. A false
+  // running flag means the durable turn is over; stale local controllers or
+  // an old thread_status event must not briefly revive its spinner.
+  if (payload.running === false) {
+    return false;
+  }
+  if (hasRuntimeControllers(runtime)) {
+    return true;
+  }
+  const runtimeStatus = normalizeThreadRuntimeStatus(runtime?.threadStatus);
+  return isThreadRuntimeBusy(runtimeStatus);
+};
+
+export const resolveCanonicalSessionTranscript = (sessionDetail, fallbackMessages = null) => {
+  if (Array.isArray(sessionDetail?.transcript)) {
+    return sessionDetail.transcript;
+  }
+  return Array.isArray(fallbackMessages) ? fallbackMessages : [];
+};
+
+export const hasCanonicalSessionTranscript = (sessionDetail): boolean =>
+  Array.isArray(sessionDetail?.transcript);
+
+export const shouldPreferCachedMessages = (cached, server) => {
+  if (!Array.isArray(cached) || cached.length === 0) return false;
+  if (!Array.isArray(server) || server.length === 0) return true;
+  if (cached.some((message) => isPendingAssistantMessage(message))) {
+    return true;
+  }
+  const cachedLastAssistant = [...cached].reverse().find((message) => message?.role === 'assistant');
+  const serverLastAssistant = [...server].reverse().find((message) => message?.role === 'assistant');
+  if (cachedLastAssistant || serverLastAssistant) {
+    const cachedEventId = normalizeStreamEventId(cachedLastAssistant?.stream_event_id);
+    const serverEventId = normalizeStreamEventId(serverLastAssistant?.stream_event_id);
+    if (cachedEventId !== null && (serverEventId === null || cachedEventId > serverEventId)) {
+      return true;
+    }
+    const cachedContentLen = String(cachedLastAssistant?.content || '').length;
+    const serverContentLen = String(serverLastAssistant?.content || '').length;
+    if (cachedContentLen > serverContentLen) {
+      return true;
+    }
+  }
+  return cached.length > server.length;
+};
+
+export const MANUAL_COMPACTION_PENDING_MARKER_TTL_MS = 30_000;
+
+export const clearCompletedAssistantStreamingState = (messages) => {
+  // Only called after idle hydration. A local marker's age cannot override
+  // the server's terminal state, including immediately after manual compaction.
+  if (!Array.isArray(messages)) return;
+  messages.forEach((message) => {
+    if (!message || message.role !== 'assistant') return;
+    if (isCompactionMarkerAssistantMessage(message)) {
+      // The optimistic progress card may outlive its terminal stream event.
+      // Settle it with the bubble; active workflow items also imply tooling.
+      settleTerminalAssistantArtifacts([message]);
+    }
+    if (!stopPendingAssistantMessage(message)) {
+      message.workflowStreaming = false;
+      message.stream_incomplete = false;
+      message.reasoningStreaming = false;
+    }
+    if (['running', 'streaming', 'tooling', 'waiting_first_output', 'placeholder'].includes(message.status)) {
+      message.status = 'final';
+      message.final = true;
+    }
+    settleTerminalAssistantArtifacts([message]);
+    clearAssistantRetryState(message);
+  });
+};
+
+export const countAssistantStreamingMessages = (messages) => {
+  if (!Array.isArray(messages)) return 0;
+  return messages.reduce((count, message) => {
+    if (!message || message.role !== 'assistant') {
+      return count;
+    }
+    return count + (isPendingAssistantMessage(message) ? 1 : 0);
+  }, 0);
+};
+
+export const buildLatestAssistantRuntimeDebugSnapshot = (messages) => {
+  if (!Array.isArray(messages) || messages.length === 0) return null;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== 'assistant') continue;
+    return {
+      index,
+      contentLength: String(message.content || '').length,
+      reasoningLength: String(message.reasoning || '').length,
+      workflowStreaming: normalizeFlag(message.workflowStreaming),
+      reasoningStreaming: normalizeFlag(message.reasoningStreaming),
+      streamIncomplete: normalizeFlag(message.stream_incomplete),
+      resumeAvailable: normalizeFlag(message.resume_available),
+      slowClient: normalizeFlag(message.slow_client),
+      workflowItemCount: Array.isArray(message.workflowItems) ? message.workflowItems.length : 0,
+      subagentCount: Array.isArray(message.subagents) ? message.subagents.length : 0,
+      questionPanelStatus: String(message?.questionPanel?.status || '').trim().toLowerCase()
+    };
+  }
+  return null;
+};
+
+export const buildMessageIdentityDebugList = (messages, options: { limit?: number } = {}) =>
+  summarizeChatMessageDebugList(Array.isArray(messages) ? messages : [], options);
+
+export const buildMessageIdentityDebugSnapshot = (message, index = -1) =>
+  summarizeChatMessageDebugSnapshot(message, index);
+
+export function buildRuntimeDebugSnapshot(runtime) {
+  const pendingManualCompactionStartedAt = Number(
+    runtime?.pendingManualCompaction?.startedAt ?? 0
+  );
+  return {
+    threadStatus: normalizeThreadRuntimeStatus(runtime?.threadStatus),
+    loaded: Boolean(runtime?.loaded),
+    streamLifecycle: normalizeStreamLifecyclePhase(runtime?.streamLifecycle),
+    hasWatchController: Boolean(runtime?.watchController),
+    watchActiveRoundCount: Number(runtime?.watchActiveRoundCount) || 0,
+    hasSendController: Boolean(runtime?.sendController),
+    hasResumeController: Boolean(runtime?.resumeController),
+    sendAborted: runtime?.sendController?.signal?.aborted === true,
+    resumeAborted: runtime?.resumeController?.signal?.aborted === true,
+    sendAbortReason: String(runtime?.sendAbortReason || ''),
+    resumeAbortReason: String(runtime?.resumeAbortReason || ''),
+    pendingManualCompaction: Boolean(runtime?.pendingManualCompaction),
+    pendingManualCompactionAgeMs:
+      Number.isFinite(pendingManualCompactionStartedAt) && pendingManualCompactionStartedAt > 0
+        ? Math.max(0, Date.now() - pendingManualCompactionStartedAt)
+        : null
+  };
+}
+
+export const readRuntimePendingManualCompaction = (runtime, sessionId = null) => {
+  const pending = runtime?.pendingManualCompaction;
+  if (!pending || typeof pending !== 'object') {
+    return null;
+  }
+  const startedAt = Number((pending as Record<string, unknown>).startedAt ?? 0);
+  if (
+    Number.isFinite(startedAt) &&
+    startedAt > 0 &&
+    Date.now() - startedAt > MANUAL_COMPACTION_PENDING_MARKER_TTL_MS
+  ) {
+    runtime.pendingManualCompaction = null;
+    chatDebugLog('chat.compaction.manual', 'pending-marker-cleared', {
+      sessionId,
+      reason: 'stale',
+      pendingAgeMs: Math.max(0, Date.now() - startedAt)
+    });
+    return null;
+  }
+  return pending as Record<string, unknown>;
+};
+
+export const markRuntimePendingManualCompaction = (runtime, sessionId = null) => {
+  if (!runtime) return;
+  runtime.pendingManualCompaction = {
+    startedAt: Date.now()
+  };
+  chatDebugLog('chat.compaction.manual', 'pending-marker-set', {
+    sessionId,
+    runtime: buildRuntimeDebugSnapshot(runtime)
+  });
+};
+
+export const clearRuntimePendingManualCompaction = (runtime, sessionId = null, reason = 'clear') => {
+  const pending = readRuntimePendingManualCompaction(runtime, sessionId);
+  if (!pending) return false;
+  const startedAt = Number(pending.startedAt ?? 0);
+  runtime.pendingManualCompaction = null;
+  chatDebugLog('chat.compaction.manual', 'pending-marker-cleared', {
+    sessionId,
+    reason,
+    pendingAgeMs:
+      Number.isFinite(startedAt) && startedAt > 0 ? Math.max(0, Date.now() - startedAt) : null
+  });
+  return true;
+};
+
+export const claimRuntimePendingManualCompaction = (runtime, sessionId = null, roundNumber = null) => {
+  const pending = readRuntimePendingManualCompaction(runtime, sessionId);
+  if (!pending) return false;
+  const startedAt = Number(pending.startedAt ?? 0);
+  runtime.pendingManualCompaction = null;
+  chatDebugLog('chat.compaction.manual', 'pending-marker-claimed', {
+    sessionId,
+    round: normalizeStreamRound(roundNumber),
+    pendingAgeMs:
+      Number.isFinite(startedAt) && startedAt > 0 ? Math.max(0, Date.now() - startedAt) : null
+  });
+  return true;
+};
+
+export const summarizeWorkflowItemsForDebug = (items) => {
+  if (!Array.isArray(items) || items.length === 0) {
+    return [];
+  }
+  return items.slice(-3).map((item) => ({
+    eventType: String(item?.eventType || item?.event || '').trim().toLowerCase() || null,
+    status: String(item?.status || '').trim().toLowerCase() || null,
+    toolName: String(item?.toolName || item?.tool || item?.name || '').trim() || null,
+    toolCallId: String(item?.toolCallId || item?.tool_call_id || '').trim() || null
+  }));
+};
+
+export const summarizeAssistantMessageForDebug = (message) => {
+  if (!message || message.role !== 'assistant') {
+    return null;
+  }
+  return {
+    createdAt: String(message.created_at || '').trim() || null,
+    streamEventId: normalizeStreamEventId(message.stream_event_id),
+    streamRound: normalizeStreamRound(message.stream_round),
+    streamIncomplete: normalizeFlag(message.stream_incomplete),
+    workflowStreaming: normalizeFlag(message.workflowStreaming),
+    reasoningStreaming: normalizeFlag(message.reasoningStreaming),
+    contentLength: String(message.content || '').length,
+    reasoningLength: String(message.reasoning || '').length,
+    contextTokens: normalizeContextTokens(message.stats?.contextTokens),
+    contextTotalTokens: normalizeContextTotalTokens(message.stats?.contextTotalTokens),
+    workflowItemCount: Array.isArray(message.workflowItems) ? message.workflowItems.length : 0,
+    workflowTail: summarizeWorkflowItemsForDebug(message.workflowItems),
+    questionPanelStatus: String(message?.questionPanel?.status || '').trim() || null,
+    manualCompactionMarker: normalizeFlag(
+      message?.manual_compaction_marker ?? message?.manualCompactionMarker
+    )
+  };
+};
+
+export const summarizeMessagesForDebug = (messages) => {
+  if (!Array.isArray(messages)) {
+    return {
+      messageCount: 0,
+      assistantCount: 0,
+      pendingAssistant: null,
+      tailAssistant: null
+    };
+  }
+  const assistants = messages.filter((message) => message?.role === 'assistant' && !message?.isGreeting);
+  return {
+    messageCount: messages.length,
+    assistantCount: assistants.length,
+    pendingAssistant: summarizeAssistantMessageForDebug(findPendingAssistantMessage(messages)),
+    tailAssistant: summarizeAssistantMessageForDebug(assistants[assistants.length - 1] || null)
+  };
+};
+
+export const isForegroundRealtimeAssistant = (message) =>
+  Boolean(
+    message &&
+      message.role === 'assistant' &&
+      !message.isGreeting &&
+      !message.hiddenInternal &&
+      isPendingAssistantMessage(message)
+  );
+
+export const shouldPreserveUnmatchedLiveAssistant = (message) => {
+  if (!message || message.role !== 'assistant' || message.isGreeting) {
+    return false;
+  }
+  if (isPendingAssistantMessage(message)) {
+    return true;
+  }
+  if (
+    isCompactionMarkerAssistantMessage(message) &&
+    !normalizeFlag(message?.workflowStreaming) &&
+    !normalizeFlag(message?.reasoningStreaming) &&
+    !normalizeFlag(message?.stream_incomplete)
+  ) {
+    return true;
+  }
+  return false;
+};
+
+export const mergeForegroundHydratedMessagesWithLive = (liveMessages, hydratedMessages) => {
+  if (!Array.isArray(hydratedMessages)) {
+    return {
+      messages: Array.isArray(liveMessages) ? liveMessages : [],
+      debug: {
+        matchedLiveAssistantCount: 0,
+        appendedLivePending: false,
+        pendingAssistantPreserved: false
+      }
+    };
+  }
+  const mergedMessages = hydratedMessages.slice();
+  if (!Array.isArray(liveMessages) || liveMessages.length === 0) {
+    return {
+      messages: mergedMessages,
+      debug: {
+        matchedLiveAssistantCount: 0,
+        appendedLivePending: false,
+        pendingAssistantPreserved: false
+      }
+    };
+  }
+  const liveAssistants = liveMessages.filter(
+    (message) => message?.role === 'assistant' && !message?.isGreeting
+  );
+  const identityKeysOf = (message) => {
+    const record = message && typeof message === 'object' ? message : {};
+    const role = String(record.role || '').trim();
+    const keys = [
+      record.message_id ?? record.messageId ?? record.id,
+      record.user_turn_id ?? record.userTurnId,
+      record.model_turn_id ?? record.modelTurnId
+    ].map((value) => String(value ?? '').trim()).filter(Boolean)
+      .map((value) => `${role}:${value}`);
+    if (role === 'user') {
+      const round = Number(record.user_round ?? record.userRound ?? record.user_turn_index ?? record.userTurnIndex);
+      if (Number.isFinite(round) && round > 0) keys.push(`user:round:${round}`);
+    }
+    return keys;
+  };
+  const existingIdentities = new Set(mergedMessages.flatMap(identityKeysOf));
+  const preservedLiveMessages = liveMessages.filter((message) => {
+    if (!message || message.isGreeting || (message.role !== 'user' && message.role !== 'assistant')) return false;
+    const identities = identityKeysOf(message);
+    if (identities.some((identity) => existingIdentities.has(identity))) return false;
+    if (message.role === 'user') return true;
+    return shouldPreserveUnmatchedLiveAssistant(message);
+  });
+  preservedLiveMessages.forEach((message) => {
+    identityKeysOf(message).forEach((identity) => existingIdentities.add(identity));
+    mergedMessages.push(message);
+  });
+  const livePendingAssistant = findPendingAssistantMessage(liveMessages);
+  let appendedLivePending = false;
+  const suppressedLivePendingCompaction =
+    isCompactionMarkerAssistantMessage(livePendingAssistant) &&
+    isSupersededRunningManualCompactionMarker(livePendingAssistant, mergedMessages);
+  // Check if livePendingAssistant was already matched by checking its index in liveAssistants
+  const livePendingIdentities = livePendingAssistant ? identityKeysOf(livePendingAssistant) : [];
+  const livePendingAlreadyMatched = Boolean(
+    livePendingAssistant && (
+      mergedMessages.includes(livePendingAssistant) ||
+      livePendingIdentities.some((identity) => existingIdentities.has(identity))
+    )
+  );
+  if (
+    isForegroundRealtimeAssistant(livePendingAssistant) &&
+    !livePendingAlreadyMatched &&
+    !suppressedLivePendingCompaction
+  ) {
+    mergedMessages.push(livePendingAssistant);
+    appendedLivePending = true;
+  }
+  const roundOf = (message) => {
+    const record = message && typeof message === 'object' ? message : {};
+    for (const value of [record.user_round, record.userRound, record.user_turn_index, record.userTurnIndex, record.stream_round, record.streamRound]) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+    const turn = String(record.user_turn_id ?? record.userTurnId ?? '');
+    const match = turn.match(/(?:round:|user:)(\d+)/i);
+    return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+  };
+  const orderedMessages = mergedMessages
+    .map((message, index) => ({ message, index }))
+    .sort((left, right) => {
+      const roundDiff = roundOf(left.message) - roundOf(right.message);
+      if (roundDiff !== 0) return roundDiff;
+      const leftRole = left.message?.role === 'user' ? 0 : 1;
+      const rightRole = right.message?.role === 'user' ? 0 : 1;
+      if (leftRole !== rightRole) return leftRole - rightRole;
+      const leftTurn = Number(left.message?.turn_index ?? left.message?.turnIndex ?? 0);
+      const rightTurn = Number(right.message?.turn_index ?? right.message?.turnIndex ?? 0);
+      if (Number.isFinite(leftTurn) && Number.isFinite(rightTurn) && leftTurn !== rightTurn) return leftTurn - rightTurn;
+      return left.index - right.index;
+    })
+    .map(({ message }) => message);
+  return {
+    messages: orderedMessages,
+    debug: {
+      matchedLiveAssistantCount: 0,
+      liveAssistantCount: liveAssistants.length,
+      appendedLivePending,
+      suppressedLivePendingCompaction,
+      pendingAssistantPreserved: Boolean(
+        livePendingAssistant && mergedMessages.includes(livePendingAssistant)
+      ),
+      livePendingAssistant: summarizeAssistantMessageForDebug(livePendingAssistant),
+      liveMessages: summarizeMessagesForDebug(liveMessages),
+      hydratedMessages: summarizeMessagesForDebug(hydratedMessages),
+      mergedMessages: summarizeMessagesForDebug(mergedMessages)
+    }
+  };
+};
+
+export const captureRealtimeWorkflowMutationBaseline = (message, messages) => ({
+  messageIndex: Array.isArray(messages) ? messages.indexOf(message) : -1,
+  workflowItemCount: Array.isArray(message?.workflowItems) ? message.workflowItems.length : 0,
+  summary: summarizeAssistantMessageForDebug(message)
+});
+
+export const logRealtimeWorkflowMutation = ({
+  phase,
+  sessionId,
+  eventType,
+  eventId,
+  roundNumber,
+  userRoundNumber,
+  message,
+  messages,
+  before
+}) => {
+  if (!isChatDebugEnabled()) {
+    return;
+  }
+  const normalizedEventType = normalizeStreamEventType(eventType);
+  const afterMessageIndex = Array.isArray(messages) ? messages.indexOf(message) : -1;
+  const afterWorkflowItemCount = Array.isArray(message?.workflowItems) ? message.workflowItems.length : 0;
+  const detached = before.messageIndex >= 0 && afterMessageIndex < 0;
+  const workflowChanged = before.workflowItemCount !== afterWorkflowItemCount;
+  const shouldLog =
+    detached ||
+    workflowChanged ||
+    normalizedEventType === 'tool_call' ||
+    normalizedEventType === 'tool_result' ||
+    normalizedEventType === 'tool_output_delta' ||
+    normalizedEventType === 'approval_request' ||
+    normalizedEventType === 'llm_output';
+  if (!shouldLog) {
+    return;
+  }
+  chatDebugLog('chat.store.runtime', 'realtime-workflow-mutation', {
+    phase,
+    sessionId,
+    eventType: normalizedEventType,
+    eventId: normalizeStreamEventId(eventId),
+    roundNumber: normalizeStreamRound(roundNumber),
+    userRoundNumber: normalizeStreamRound(userRoundNumber),
+    messageIndexBefore: before.messageIndex,
+    messageIndexAfter: afterMessageIndex,
+    messageDetached: detached,
+    workflowItemCountBefore: before.workflowItemCount,
+    workflowItemCountAfter: afterWorkflowItemCount,
+    before: before.summary,
+    after: summarizeAssistantMessageForDebug(message),
+    pendingAssistant: summarizeAssistantMessageForDebug(findPendingAssistantMessage(messages))
+  });
+};

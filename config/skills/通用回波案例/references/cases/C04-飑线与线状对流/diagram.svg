@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">C04 飑线与线状对流示意图</title>
+  <desc id="desc">长条状强对流线前缘伴随阵风锋，局地嵌入强回波核和速度辐合。</desc>
+  <defs>
+    <linearGradient id="line" x1="0" x2="1">
+      <stop offset="0" stop-color="#fde68a"/>
+      <stop offset="0.45" stop-color="#f97316"/>
+      <stop offset="0.75" stop-color="#dc2626"/>
+      <stop offset="1" stop-color="#7f1d1d"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#334155"/>
+    </marker>
+  </defs>
+  <rect width="960" height="540" fill="#f8fafc"/>
+  <rect x="42" y="52" width="650" height="428" rx="8" fill="#ecfeff" stroke="#94a3b8"/>
+  <path d="M178 92 C224 166 232 250 210 330 C202 362 206 410 240 452 L372 452 C336 406 328 360 344 318 C376 238 356 154 306 92 Z" fill="url(#line)" opacity="0.95"/>
+  <path d="M356 92 C402 160 414 252 388 338 C376 380 396 422 432 452 L548 452 C510 404 500 360 516 318 C548 232 520 146 472 92 Z" fill="url(#line)" opacity="0.9"/>
+  <path d="M160 106 C210 176 218 250 196 326 C186 365 192 414 224 454" fill="none" stroke="#0ea5e9" stroke-width="4" stroke-dasharray="9 7"/>
+  <path d="M540 260 C590 260 630 260 668 260" stroke="#334155" stroke-width="3" marker-end="url(#arrow)"/>
+  <text x="564" y="246" fill="#334155" font-size="16">推进方向</text>
+  <text x="70" y="88" fill="#0f172a" font-size="22" font-weight="700">线状强对流</text>
+  <text x="72" y="392" fill="#0ea5e9" font-size="17" font-weight="700">阵风锋/前沿</text>
+  <line x1="166" y1="378" x2="195" y2="332" stroke="#0ea5e9" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="725" y="84" width="196" height="138" rx="8" fill="#fff7ed" stroke="#fed7aa"/>
+  <text x="745" y="118" fill="#9a3412" font-size="18" font-weight="700">重点段落</text>
+  <text x="745" y="148" fill="#334155" font-size="15">弓形段</text>
+  <text x="745" y="174" fill="#334155" font-size="15">嵌入强单体</text>
+  <text x="745" y="200" fill="#334155" font-size="15">速度辐合段</text>
+  <rect x="725" y="260" width="196" height="132" rx="8" fill="#ffffff" stroke="#94a3b8"/>
+  <text x="745" y="294" fill="#0f172a" font-size="18" font-weight="700">主要风险</text>
+  <text x="745" y="324" fill="#334155" font-size="15">雷暴大风</text>
+  <text x="745" y="350" fill="#334155" font-size="15">短时强降水</text>
+  <text x="745" y="376" fill="#334155" font-size="15">局地冰雹</text>
+  <text x="42" y="514" fill="#64748b" font-size="14">线状系统内风险差异大，需要逐段判读前沿、速度和地面实况。</text>
+</svg>
+

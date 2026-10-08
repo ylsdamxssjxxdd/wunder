@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">C02 弓形回波与雷暴大风示意图</title>
+  <desc id="desc">线状强回波向前凸出形成弓形，后侧入流箭头指向弓顶，前缘标注大风风险区。</desc>
+  <defs>
+    <linearGradient id="bow" x1="0" x2="1">
+      <stop offset="0" stop-color="#fde68a"/>
+      <stop offset="0.42" stop-color="#f97316"/>
+      <stop offset="0.78" stop-color="#dc2626"/>
+      <stop offset="1" stop-color="#7f1d1d"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#334155"/>
+    </marker>
+  </defs>
+  <rect width="960" height="540" fill="#f8fafc"/>
+  <rect x="38" y="50" width="650" height="430" rx="8" fill="#ecfeff" stroke="#94a3b8"/>
+  <g fill="none" stroke="#cbd5e1" stroke-width="1">
+    <circle cx="360" cy="266" r="90"/>
+    <circle cx="360" cy="266" r="180"/>
+    <circle cx="360" cy="266" r="270"/>
+    <line x1="38" y1="266" x2="688" y2="266"/>
+  </g>
+  <path d="M156 140 C386 142 548 198 604 272 C548 350 386 403 156 402 C238 350 270 300 270 272 C270 238 238 190 156 140 Z" fill="url(#bow)" opacity="0.94"/>
+  <path d="M210 206 C352 205 494 230 560 276 C494 316 350 340 210 338 C252 304 270 286 270 270 C270 250 252 230 210 206 Z" fill="#facc15" opacity="0.5"/>
+  <path d="M604 272 C642 276 660 278 682 280" stroke="#7f1d1d" stroke-width="8" stroke-linecap="round"/>
+  <text x="72" y="86" fill="#0f172a" font-size="22" font-weight="700">弓形强回波</text>
+  <text x="572" y="254" fill="#7f1d1d" font-size="18" font-weight="700">弓顶</text>
+  <text x="440" y="118" fill="#334155" font-size="17">后侧入流</text>
+  <line x1="450" y1="132" x2="520" y2="230" stroke="#334155" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="230" y1="450" x2="560" y2="450" stroke="#334155" stroke-width="3" marker-end="url(#arrow)"/>
+  <text x="260" y="437" fill="#334155" font-size="16">系统移动方向</text>
+  <rect x="720" y="86" width="200" height="120" rx="8" fill="#fff7ed" stroke="#fed7aa"/>
+  <text x="740" y="120" fill="#9a3412" font-size="18" font-weight="700">重点风险</text>
+  <text x="740" y="150" fill="#334155" font-size="15">弓顶及前缘：</text>
+  <text x="740" y="176" fill="#334155" font-size="15">雷暴大风</text>
+  <rect x="720" y="244" width="200" height="142" rx="8" fill="#ffffff" stroke="#94a3b8"/>
+  <text x="740" y="278" fill="#0f172a" font-size="18" font-weight="700">核验资料</text>
+  <text x="740" y="308" fill="#334155" font-size="15">径向速度强风带</text>
+  <text x="740" y="334" fill="#334155" font-size="15">地面阵风实况</text>
+  <text x="740" y="360" fill="#334155" font-size="15">连续体扫演变</text>
+  <text x="38" y="514" fill="#64748b" font-size="14">示意图仅表示典型结构；大风判断必须结合速度产品和地面观测。</text>
+</svg>
+

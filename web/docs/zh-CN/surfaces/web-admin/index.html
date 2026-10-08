@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>舰桥界面 | 使用说明书</title>
+  <meta name="description" content="管理员的后台工作台。模型配置、工具管理、用户治理、渠道接入，都在这里。">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/surfaces/web-admin","language":"zh-CN","title":"舰桥界面","summary":"管理员的后台工作台。模型配置、工具管理、用户治理、渠道接入，都在这里。","updated_at":"2026-10-07","read_when":[],"source_docs":[],"tab":"界面","group":"前端与桌面","group_path":["前端与桌面"],"url":"/docs/zh-CN/surfaces/web-admin/","headings":[{"id":"section-1","level":1,"text":"舰桥界面"},{"id":"section-2","level":2,"text":"适用场景"},{"id":"section-3","level":2,"text":"核心功能"},{"id":"section-4","level":3,"text":"模型配置"},{"id":"section-5","level":3,"text":"预设智能体"},{"id":"section-6","level":3,"text":"工具管理"},{"id":"section-7","level":3,"text":"用户与单位"},{"id":"section-8","level":3,"text":"渠道管理"},{"id":"section-9","level":3,"text":"系统监控"},{"id":"section-10","level":2,"text":"访问方式"},{"id":"section-11","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/surfaces/frontend","next_slug":"zh-CN/surfaces/desktop-ui","markdown":"# 舰桥界面\n\n舰桥是系统管理员的后台工作台，普通用户登录后不会看到它。\n\n## 适用场景\n\n- 需要配置模型和 API Key\n- 需要管理用户、单位、权限\n- 需要接入外部渠道（飞书、微信等）\n- 需要管理工具和技能\n- 需要查看系统运行状态\n\n## 核心功能\n\n### 模型配置\n\n- 添加、编辑、删除模型\n- 配置 API Key 和端点\n- 测试模型连接\n- 设置默认模型\n\n### 预设智能体\n\n- 管理预设智能体模板（模板可以有多份）\n- 配置头像、名称、描述、模型、工具、提示词与内置技能\n- 逐项声明「允许用户自定义」的字段（系统提示词、欢迎语、默认模型、推理强度、工具集合、审批模式）\n- 「绑定用户」区块：查看绑定该预设的用户，批量绑定 / 换绑 / 解绑（解绑需指定新预设）\n- 同步到绑定用户实例：「同步未自定义项」只覆盖用户未改动的字段，「强制覆盖」全字段覆盖；同步前预览影响用户数，不改写已冻结线程的系统提示词\n- 预设表单不再包含蜂群字段与容器 ID 字段\n\n### 工具管理\n\n- 查看所有可用工具\n- 启用 / 禁用工具\n- 管理技能文件\n- 配置 MCP / A2A 服务\n\n### 用户与单位\n\n- 用户列表与状态管理\n- 单位（组织）管理\n- 权限与角色分配\n- 令牌管理\n\n### 渠道管理\n\n- 配置飞书、企业微信、QQ 等渠道\n- 管理渠道接入凭证\n- 查看渠道运行状态\n\n### 系统监控\n\n- 服务健康状态\n- 性能指标\n- 日志查看\n\n日志管理按时间清理后，会同步移除内容已经清空的历史线程条目。空白草稿、仍有历史的线程、有定时任务或活动目标的线程会保留；运行中、排队中和等待审批的线程会跳过日志清理。清除用户数据则会同时删除该用户的线程目录，不能仅凭监控列表为空判断线程已删除。\n\n## 访问方式\n\n舰桥通常在舰体（server）部署后通过浏览器访问，默认端口 18000。\n\n## 延伸阅读\n\n- [舰体部署](/docs/zh-CN/start/server/)\n- [认证与安全](/docs/zh-CN/ops/auth-and-security/)\n- [配置说明](/docs/zh-CN/reference/config/)\n","source_path":"使用说明书/zh-CN/surfaces/web-admin.md"}</script>
+</body>
+</html>

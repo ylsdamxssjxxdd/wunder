@@ -1,0 +1,244 @@
+import axios from 'axios';
+import type { AxiosError } from 'axios';
+
+import { resolveAccessToken } from '@/api/requestAuth';
+import { getCurrentLanguage } from '@/i18n';
+import { resolveApiBase } from '@/config/runtime';
+import { localizeApiErrorText, resolveApiError } from '@/utils/apiError';
+import { FORCE_LOGOUT_LOGIN_PATH, resolveLogoutRedirectPath } from '@/utils/authNavigation';
+import { clearAccessTokenIfCurrent } from '@/utils/authTokenStorage';
+import { clearMaintenance, isMaintenanceStatus, markMaintenance } from '@/utils/maintenance';
+
+type HttpError = AxiosError & {
+  code?: string;
+  config?: {
+    url?: string;
+    __wunderAuthToken?: string;
+  };
+  response?: {
+    status?: number;
+    headers?: Record<string, unknown>;
+    data?: {
+      error?: {
+        code?: string;
+        message?: string;
+      };
+      detail?: {
+        code?: string;
+        message?: string;
+      };
+      code?: string;
+      message?: string;
+    };
+  };
+};
+
+const asHttpError = (error: unknown): HttpError => (error || {}) as HttpError;
+
+const api = axios.create({
+  timeout: 30000
+});
+
+const AUTH_FREE_ENDPOINTS = new Set([
+  '/auth/demo',
+  '/auth/login',
+  '/auth/register',
+  '/auth/reset_password',
+  '/auth/settings'
+]);
+
+const shouldSkipStoredAuthorization = (url: unknown): boolean => {
+  const normalized = String(url || '').trim();
+  if (!normalized) {
+    return false;
+  }
+  try {
+    const parsed = new URL(normalized, 'http://wunder.local');
+    return AUTH_FREE_ENDPOINTS.has(parsed.pathname.replace(/^\/wunder/, ''));
+  } catch {
+    return AUTH_FREE_ENDPOINTS.has(normalized.split('?')[0].replace(/^\/wunder/, ''));
+  }
+};
+
+api.interceptors.request.use((config) => {
+  const apiBase = resolveApiBase();
+  if (apiBase) {
+    config.baseURL = apiBase;
+  }
+  const skipStoredAuthorization = shouldSkipStoredAuthorization(config.url);
+  if (skipStoredAuthorization) {
+    delete config.headers.Authorization;
+    delete config.headers.authorization;
+  }
+  const token = skipStoredAuthorization ? '' : resolveAccessToken();
+  (config as typeof config & { __wunderAuthToken?: string }).__wunderAuthToken = token;
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  const language = getCurrentLanguage();
+  if (language) {
+    config.headers['x-wunder-language'] = language;
+    config.headers['accept-language'] = language;
+  }
+  return config;
+});
+
+const isCanceledRequest = (error: unknown) => asHttpError(error)?.code === 'ERR_CANCELED';
+
+let authRedirecting = false;
+
+const resolveUnauthorizedRedirectPath = (): string => {
+  if (typeof window === 'undefined') {
+    return FORCE_LOGOUT_LOGIN_PATH;
+  }
+  return resolveLogoutRedirectPath(window.location.pathname);
+};
+
+const resolveHttpErrorCode = (error: HttpError): string => {
+  const headerCode = String(error.response?.headers?.['x-error-code'] || '').trim().toUpperCase();
+  if (headerCode) {
+    return headerCode;
+  }
+  const bodyCode = String(
+    error.response?.data?.error?.code ||
+      error.response?.data?.detail?.code ||
+      error.response?.data?.code ||
+      ''
+  )
+    .trim()
+    .toUpperCase();
+  return bodyCode;
+};
+
+const isProfileRequest = (error: HttpError): boolean => {
+  const url = String(error.config?.url || '').trim().toLowerCase();
+  return url === '/auth/me' || url.endsWith('/auth/me');
+};
+
+const shouldForceAuthRedirect = (error: HttpError): boolean => {
+  if (error.response?.status !== 401 || isCanceledRequest(error)) {
+    return false;
+  }
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  const currentPath = String(window.location.pathname || '').trim().toLowerCase();
+  if (
+    currentPath === '/login' ||
+    currentPath === '/register' ||
+    currentPath === '/admin/login'
+  ) {
+    return false;
+  }
+  const code = resolveHttpErrorCode(error);
+  if (code === 'AUTH_REQUIRED' || code === 'SESSION_REPLACED') {
+    return true;
+  }
+  return isProfileRequest(error);
+};
+
+const forceLogoutAndRedirect = (token: string): void => {
+  if (typeof window === 'undefined' || authRedirecting) {
+    return;
+  }
+  authRedirecting = true;
+  if (token) {
+    clearAccessTokenIfCurrent(token);
+  }
+  const targetPath = resolveUnauthorizedRedirectPath();
+  const currentFullPath = `${window.location.pathname}${window.location.search}`;
+  if (currentFullPath === targetPath) {
+    authRedirecting = false;
+    return;
+  }
+  window.location.replace(targetPath);
+};
+
+const shouldEnterMaintenance = (error: unknown) => {
+  if (!error || isCanceledRequest(error)) return false;
+  const source = asHttpError(error);
+  const status = source.response?.status;
+  if (isMaintenanceStatus(status)) {
+    return true;
+  }
+  if (status) {
+    return false;
+  }
+  if (source.code === 'ECONNABORTED') {
+    return false;
+  }
+  return true;
+};
+
+const shouldClearMaintenance = (error: unknown) => {
+  const source = asHttpError(error);
+  const status = source.response?.status;
+  if (!status) return false;
+  return !isMaintenanceStatus(status);
+};
+
+const localizeResponseErrorPayload = (error: HttpError): void => {
+  const responseData = error.response?.data;
+  if (!responseData || typeof responseData !== 'object') {
+    return;
+  }
+  const payload = responseData as Record<string, unknown>;
+  const detail = payload.detail;
+  const status = error.response?.status ?? null;
+
+  if (typeof detail === 'string') {
+    payload.detail = localizeApiErrorText(detail, status, '');
+  } else if (detail && typeof detail === 'object') {
+    const detailRecord = detail as Record<string, unknown>;
+    if (typeof detailRecord.message === 'string') {
+      detailRecord.message = localizeApiErrorText(detailRecord.message, status, '');
+    }
+  }
+
+  if (typeof payload.message === 'string') {
+    payload.message = localizeApiErrorText(payload.message, status, '');
+  }
+  if (typeof payload.error_message === 'string') {
+    payload.error_message = localizeApiErrorText(payload.error_message, status, '');
+  }
+  if (payload.error && typeof payload.error === 'object') {
+    const errorRecord = payload.error as Record<string, unknown>;
+    if (typeof errorRecord.message === 'string') {
+      errorRecord.message = localizeApiErrorText(errorRecord.message, status, '');
+    }
+  }
+};
+
+api.interceptors.response.use(
+  (response) => {
+    clearMaintenance();
+    return response;
+  },
+  (error: unknown) => {
+    const source = asHttpError(error);
+    const localized = resolveApiError(source, '');
+    if (localized.message) {
+      try {
+        source.message = localized.message;
+      } catch {
+        // ignore readonly message edge cases
+      }
+    }
+    localizeResponseErrorPayload(source);
+    if (shouldForceAuthRedirect(source)) {
+      clearMaintenance();
+      forceLogoutAndRedirect(String(source.config?.__wunderAuthToken || '').trim());
+    }
+    if (shouldEnterMaintenance(source)) {
+      markMaintenance({
+        status: source.response?.status,
+        reason: source.code || 'network'
+      });
+    } else if (shouldClearMaintenance(source)) {
+      clearMaintenance();
+    }
+    return Promise.reject(source);
+  }
+);
+
+export default api;

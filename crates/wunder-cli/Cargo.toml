@@ -1,0 +1,53 @@
+[package]
+name = "wunder-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["sqlite-storage"]
+desktop-control = ["wunder-runtime/desktop-control"]
+doc2md = ["wunder-runtime/doc2md"]
+host-metrics = ["wunder-runtime/host-metrics"]
+mcp = ["wunder-runtime/mcp"]
+postgres-storage = ["wunder-runtime/postgres-storage"]
+sqlite-storage = ["wunder-runtime/sqlite-storage"]
+web-fetch = ["wunder-runtime/web-fetch"]
+xmpp = ["wunder-runtime/xmpp"]
+
+[[bin]]
+name = "wunder-cli"
+path = "main.rs"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+chrono.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+crossterm.workspace = true
+futures.workspace = true
+pulldown-cmark.workspace = true
+ratatui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+shell-words.workspace = true
+textwrap.workspace = true
+tokio.workspace = true
+toml_edit = { version = "0.23", default-features = false, features = ["parse", "display"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+unicode-width.workspace = true
+url.workspace = true
+uuid.workspace = true
+walkdir.workspace = true
+zip.workspace = true
+wunder-runtime = { path = "../wunder-runtime", default-features = false }
+
+[target.'cfg(not(target_vendor = "win7"))'.dependencies]
+reqwest.workspace = true
+syntect.workspace = true
+
+[target.'cfg(target_vendor = "win7")'.dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "multipart", "rustls-no-provider"] }

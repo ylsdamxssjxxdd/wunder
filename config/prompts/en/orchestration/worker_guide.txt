@@ -1,0 +1,4 @@
+[First Worker Message Guide]
+The system automatically adds worker role, situation, and artifact directory guidance at dispatch time. You only need to state the subtask goal, deliverables, and success criteria.
+
+{{worker_first_dispatch_blocks}}

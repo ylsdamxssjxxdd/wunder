@@ -1,0 +1,355 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { resolveAbilityVisual, resolveToolIconClass } from '../../src/utils/abilityVisuals';
+import { buildDefaultAgentOverviewSource } from '../../src/views/messenger/agentOverviewCards';
+import { resolveAgentOverviewAbilityCounts } from '../../src/views/messenger/agentOverviewAbilities';
+import {
+  extractPromptToolingPreview,
+  inferPromptToolingAbilityMeta
+} from '../../src/utils/promptToolingPreview';
+
+test('prompt tooling preview infers skill meta for skill-like tools', () => {
+  assert.deepEqual(
+    inferPromptToolingAbilityMeta({
+      name: 'Skill Builder',
+      description: 'Create reusable workflow templates for prompts.'
+    }),
+    {
+      kind: 'skill',
+      group: 'skills',
+      source: 'skills'
+    }
+  );
+});
+
+test('text edit tool uses a dedicated file edit icon', () => {
+  assert.equal(resolveToolIconClass('edit_file2'), 'fa-file-pen');
+  assert.equal(resolveToolIconClass('文本编辑'), 'fa-file-pen');
+  assert.equal(resolveAbilityVisual({ name: '文本编辑' }).icon, 'fa-file-pen');
+});
+
+test('prompt tooling preview keeps MCP and knowledge tones aligned with shared ability visuals', () => {
+  const preview = extractPromptToolingPreview({
+    tooling_preview: {
+      selected_tool_names: ['Skill Builder', 'github@get_issue', 'Policy Knowledge Search'],
+      llm_tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'skill_creator',
+            description: 'Create reusable workflow templates for prompts.'
+          }
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'github_get_issue',
+            description: 'GitHub MCP endpoint for issue lookup.'
+          }
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'policy_knowledge_search',
+            description: 'Search policy knowledge base documents.'
+          }
+        }
+      ],
+      llm_tool_name_map: {
+        skill_creator: 'Skill Builder',
+        github_get_issue: 'github@get_issue',
+        policy_knowledge_search: 'Policy Knowledge Search'
+      }
+    }
+  });
+
+  const byName = new Map(preview.items.map((item) => [item.name, item]));
+  const skillItem = byName.get('Skill Builder');
+  const mcpItem = byName.get('github@get_issue');
+  const knowledgeItem = byName.get('Policy Knowledge Search');
+
+  assert.ok(skillItem);
+  assert.ok(mcpItem);
+  assert.ok(knowledgeItem);
+
+  assert.deepEqual(
+    skillItem && {
+      kind: skillItem.kind,
+      group: skillItem.group,
+      source: skillItem.source
+    },
+    {
+      kind: 'skill',
+      group: 'skills',
+      source: 'skills'
+    }
+  );
+  assert.equal(resolveAbilityVisual(skillItem || {}).tone, 'skill');
+  assert.equal(resolveAbilityVisual(skillItem || {}).icon, 'fa-book');
+
+  assert.deepEqual(
+    mcpItem && {
+      kind: mcpItem.kind,
+      group: mcpItem.group,
+      source: mcpItem.source
+    },
+    {
+      kind: 'tool',
+      group: 'mcp',
+      source: 'mcp'
+    }
+  );
+  assert.equal(resolveAbilityVisual(mcpItem || {}).tone, 'mcp');
+  assert.equal(resolveAbilityVisual(mcpItem || {}).icon, 'fa-plug');
+
+  assert.deepEqual(
+    knowledgeItem && {
+      kind: knowledgeItem.kind,
+      group: knowledgeItem.group,
+      source: knowledgeItem.source
+    },
+    {
+      kind: 'tool',
+      group: 'knowledge',
+      source: 'knowledge'
+    }
+  );
+  assert.equal(resolveAbilityVisual(knowledgeItem || {}).tone, 'knowledge');
+  assert.equal(resolveAbilityVisual(knowledgeItem || {}).icon, 'fa-database');
+});
+
+test('prompt tooling preview tolerates display-only llm tool name map entries', () => {
+  const preview = extractPromptToolingPreview({
+    tooling_preview: {
+      selected_tool_names: ['extra_mcp@kb_query_product_docs'],
+      selected_tool_display_map: {
+        'extra_mcp@kb_query_product_docs': '知识库检索（产品文档）'
+      },
+      llm_tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'tool_2d9e84',
+            description: 'Search product knowledge base.'
+          }
+        }
+      ],
+      llm_tool_name_map: {
+        tool_2d9e84: '知识库检索（产品文档）',
+        'extra_mcp@kb_query_product_docs': '知识库检索（产品文档）'
+      }
+    }
+  });
+
+  assert.ok(
+    preview.items.some(
+      (item) =>
+        item.name === '知识库检索（产品文档）' &&
+        item.protocolName === 'tool_2d9e84'
+    )
+  );
+  assert.equal(preview.items.filter((item) => item.name === '知识库检索（产品文档）').length, 1);
+  assert.equal(
+    preview.items.find((item) => item.name === '知识库检索（产品文档）')?.description,
+    'Search product knowledge base.'
+  );
+});
+
+test('prompt tooling preview keeps wrapped MCP tools on plug icon', () => {
+  const preview = extractPromptToolingPreview({
+    tooling_preview: {
+      selected_tool_names: ['extra_mcp@db_export_company_all_personnel'],
+      selected_tool_display_map: {
+        'extra_mcp@db_export_company_all_personnel': '数据库导出（人员信息）'
+      },
+      llm_tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'tool_856773',
+            description: '将表数据导出为 xlsx 或 csv 文件。'
+          }
+        }
+      ],
+      llm_tool_name_map: {
+        tool_856773: '数据库导出（人员信息）',
+        'extra_mcp@db_export_company_all_personnel': '数据库导出（人员信息）'
+      }
+    }
+  });
+
+  const item = preview.items.find((entry) => entry.name === '数据库导出（人员信息）');
+  assert.ok(item);
+  assert.equal(item?.protocolName, 'tool_856773');
+  assert.equal(item?.group, 'mcp');
+  assert.equal(item?.source, 'mcp');
+  assert.equal(resolveAbilityVisual(item || {}).icon, 'fa-plug');
+});
+
+test('prompt tooling preview raw json prefers actual model request payload', () => {
+  const preview = extractPromptToolingPreview({
+    tooling_preview: {
+      selected_tool_names: ['extra_mcp@db_query_sample'],
+      llm_tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'tool_sample',
+            description: 'Run a sample query.'
+          }
+        }
+      ],
+      llm_tool_name_map: {
+        tool_sample: '数据库查询（示例）',
+        'extra_mcp@db_query_sample': '数据库查询（示例）'
+      },
+      model_request: {
+        model: 'sample-model',
+        messages: [
+          {
+            role: 'system',
+            content: 'system prompt'
+          }
+        ],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'tool_sample',
+              description: 'Run a sample query.'
+            }
+          }
+        ]
+      }
+    }
+  });
+
+  const raw = JSON.parse(preview.text) as Record<string, unknown>;
+  assert.equal(raw.model, 'sample-model');
+  assert.ok(Array.isArray(raw.messages));
+  assert.ok(!Object.prototype.hasOwnProperty.call(raw, 'llm_tool_name_map'));
+});
+
+test('agent overview counts only selected structured skills and MCP items', () => {
+  assert.deepEqual(
+    resolveAgentOverviewAbilityCounts({
+      declared_tool_names: ['read_file', 'write_file', 'github@get_issue', 'search_web'],
+      declared_skill_names: ['planner'],
+      ability_items: [
+        {
+          runtime_name: 'planner',
+          name: 'planner',
+          kind: 'skill',
+          group: 'skills',
+          source: 'skill',
+          selected: true
+        },
+        {
+          runtime_name: 'github@get_issue',
+          name: 'github@get_issue',
+          kind: 'tool',
+          group: 'mcp',
+          source: 'mcp',
+          selected: true
+        },
+        {
+          runtime_name: 'read_file',
+          name: 'read_file',
+          kind: 'tool',
+          group: 'builtin',
+          source: 'builtin',
+          selected: true
+        }
+      ]
+    }),
+    {
+      skillCount: 1,
+      mcpCount: 1
+    }
+  );
+});
+
+test('agent overview does not infer MCP count from declared tool names without explicit MCP data', () => {
+  assert.deepEqual(
+    resolveAgentOverviewAbilityCounts({
+      declared_tool_names: ['read_file', 'write_file', 'search_web'],
+      declared_skill_names: ['planner']
+    }),
+    {
+      skillCount: 1,
+      mcpCount: 0
+    }
+  );
+});
+
+test('agent overview infers MCP count from configured MCP runtime names', () => {
+  assert.deepEqual(
+    resolveAgentOverviewAbilityCounts({
+      declared_tool_names: ['read_file', 'connector@template_read'],
+      declared_skill_names: ['planner']
+    }),
+    {
+      skillCount: 1,
+      mcpCount: 1
+    }
+  );
+});
+
+test('agent overview falls back to runtime names when legacy ability items are builtin', () => {
+  assert.deepEqual(
+    resolveAgentOverviewAbilityCounts({
+      declared_tool_names: ['connector@template_read'],
+      ability_items: [
+        {
+          runtime_name: 'connector@template_read',
+          name: 'connector@template_read',
+          kind: 'tool',
+          group: 'builtin',
+          source: 'builtin',
+          selected: true
+        }
+      ]
+    }),
+    {
+      skillCount: 0,
+      mcpCount: 1
+    }
+  );
+});
+
+test('default agent overview source preserves ability counts for grid cards', () => {
+  const source = buildDefaultAgentOverviewSource({
+    profile: {
+      name: 'Default',
+      ability_items: [
+        {
+          runtime_name: 'planner',
+          name: 'planner',
+          kind: 'skill',
+          group: 'skills',
+          source: 'skill',
+          selected: true
+        },
+        {
+          runtime_name: 'connector@template_read',
+          name: 'connector@template_read',
+          kind: 'tool',
+          group: 'mcp',
+          source: 'mcp',
+          selected: true
+        }
+      ],
+      declared_tool_names: ['connector@template_read'],
+      declared_skill_names: ['planner']
+    },
+    defaultAgentKey: '__default__',
+    defaultName: 'Default Agent',
+    defaultDescription: 'Default entry'
+  });
+
+  assert.deepEqual(resolveAgentOverviewAbilityCounts(source), {
+    skillCount: 1,
+    mcpCount: 1
+  });
+});

@@ -1,0 +1,4465 @@
+import { APP_CONFIG } from "../app.config.js?v=20260110-04";
+import { elements } from "./elements.js?v=20260710-01";
+import { state } from "./state.js";
+import { appendLog } from "./log.js?v=20260108-02";
+import {
+  formatBytes,
+  formatDuration,
+  formatDurationLong,
+  formatTimestamp,
+  formatTokenCount,
+  resolveToolIconClass,
+} from "./utils.js?v=20251229-02";
+import { getWunderBase } from "./api.js";
+import { notify } from "./notify.js";
+import { appendQueuePriorityAction } from "./monitor-queue.js";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260710-01";
+import { filterRemovedSwarmTools } from "../shared/deprecated-tools.js";
+
+const ONE_HOUR_MS = 60 * 60 * 1000;
+const DEFAULT_MONITOR_TIME_RANGE_HOURS = 3;
+// Token 趋势默认展示的时间桶数量，避免折线图从最早记录开始导致卡顿
+const TOKEN_TREND_MAX_BUCKETS = 24;
+// Token 趋势保留的最大时间桶数量，避免长期运行后趋势数据膨胀
+const TOKEN_TREND_RETENTION_BUCKETS = 96;
+// 用户管理线程列表分页尺寸，避免一次渲染过多行
+const DEFAULT_MONITOR_SESSION_PAGE_SIZE = 100;
+const MONITOR_DETAIL_EVENT_PAGE_SIZE = 100;
+let tokenTrendChart = null;
+let statusChart = null;
+let statusChartClickBound = false;
+let statusChartDomClickBound = false;
+let statusChartZrClickBound = false;
+let tokenTrendZoomBound = false;
+let mcpToolNameSet = new Set();
+let userDashboardLoading = false;
+// 监控轮询配置：full 为完整监控面板，sessions 为用户管理页轻量轮询
+let monitorPollMode = "full";
+let monitorPollIntervalMs = APP_CONFIG.monitorPollIntervalMs;
+let monitorLoadPromise = null;
+// 工具热力图按总调用次数渐变配色（10/20/30/40 次为蓝/绿/黄/红）
+const TOOL_HEATMAP_ZERO_RGB = [230, 233, 240];
+const TOOL_HEATMAP_MAX_VALUE = 40;
+const TOOL_HEATMAP_MIN_LIGHTNESS = 46;
+const TOOL_HEATMAP_MAX_LIGHTNESS = 90;
+const TOOL_HEATMAP_MIN_SATURATION = 52;
+const TOOL_HEATMAP_MAX_SATURATION = 82;
+const TOOL_HEATMAP_HUE_ANCHORS = [
+  { value: 10, hue: 210 },
+  { value: 20, hue: 135 },
+  { value: 30, hue: 50 },
+  { value: 40, hue: 5 },
+];
+const TOOL_HEATMAP_TILE_SIZE = 68;
+const TOOL_HEATMAP_GAP = 8;
+const TOOL_LIST_CACHE_MS = 5 * 60 * 1000;
+const USER_DASHBOARD_TTL_MS = 60 * 1000;
+const DEFAULT_LOG_CLEANUP_HOURS = 24;
+// 热力图需要区分常见文件操作工具的图标，避免全部显示为同一文件样式
+// 线程状态环图配色与图例配置
+const STATUS_CHART_COLORS = ["#38bdf8", "#f59e0b", "#22c55e", "#fb7185", "#94a3b8"];
+const STATUS_CHART_EMPTY_COLOR = "#ffffff";
+const getStatusLegend = () => [
+  t("monitor.status.active"),
+  t("monitor.status.queued"),
+  t("monitor.status.finished"),
+  t("monitor.status.failed"),
+  t("monitor.status.cancelled"),
+];
+const STATUS_CHART_EMPTY_NAME = "__empty__";
+let latestStatusChartData = null;
+// 线程状态图例与后端状态字段映射，便于点击后过滤记录
+const getStatusLabelToKey = () => ({
+  [t("monitor.status.active")]: "active",
+  [t("monitor.status.queued")]: "queued",
+  [t("monitor.status.finished")]: "finished",
+  [t("monitor.status.failed")]: "error",
+  [t("monitor.status.cancelled")]: "cancelled",
+});
+
+// 兼容旧版状态结构，避免缓存 state.js 时导致监控图表异常
+const MONITOR_DETAIL_TEXT_FALLBACKS = {
+  "monitor.detail.filter.allTypes": {
+    zh: "全部类型",
+    en: "All event types",
+  },
+  "monitor.detail.filter.keywordPlaceholder": {
+    zh: "输入事件关键词",
+    en: "Search event payload",
+  },
+  "monitor.detail.pagination.previous": {
+    zh: "上一页",
+    en: "Previous",
+  },
+  "monitor.detail.pagination.last": { zh: "尾页", en: "Last page" },
+  "monitor.detail.pagination.next": {
+    zh: "下一页",
+    en: "Next",
+  },
+  "monitor.detail.pagination.info": {
+    zh: "第 {page} 页 · {start}-{end}/{total} 条",
+    en: "Page {page} · {start}-{end}/{total}",
+  },
+  "monitor.detail.filter.profile.normal": {
+    zh: "普通日志",
+    en: "Normal logs",
+  },
+  "monitor.detail.filter.profile.debug": {
+    zh: "调试日志",
+    en: "Debug logs",
+  },
+  "monitor.detail.repair.badge": {
+    zh: "已修复",
+    en: "Repaired",
+  },
+  "monitor.detail.repair.argsSummary": {
+    zh: "参数已修复",
+    en: "Args repaired",
+  },
+  "monitor.detail.repair.historySummary": {
+    zh: "已清洗 {count} 条历史参数",
+    en: "Sanitized {count} history args",
+  },
+  "monitor.detail.repair.lossyJson": {
+    zh: "已在执行前修复损坏的 JSON 参数",
+    en: "Repaired malformed JSON arguments before execution",
+  },
+  "monitor.detail.repair.rawWrapped": {
+    zh: "已在执行前包装原始参数，避免上游请求失败",
+    en: "Wrapped raw arguments before execution to avoid upstream failures",
+  },
+  "monitor.detail.repair.nonObjectWrapped": {
+    zh: "已在执行前将非对象参数包装为 JSON",
+    en: "Wrapped non-object arguments into JSON before execution",
+  },
+  "monitor.detail.repair.sanitizeBeforeRequest": {
+    zh: "已在请求前清洗 {count} 条工具调用参数",
+    en: "Sanitized {count} tool-call argument payloads before request",
+  },
+};
+
+const applyMonitorDetailTextParams = (template, params = {}) => {
+  return Object.keys(params).reduce(
+    (result, paramKey) =>
+      result.replace(new RegExp(`\{${paramKey}\}`, "g"), String(params[paramKey])),
+    template
+  );
+};
+
+const resolveMonitorDetailText = (key, params = {}) => {
+  const translated = t(key, params);
+  if (translated && translated !== key) {
+    return translated;
+  }
+  const fallback = MONITOR_DETAIL_TEXT_FALLBACKS[key];
+  if (!fallback) {
+    return translated || key;
+  }
+  const language = String(getCurrentLanguage() || "").toLowerCase();
+  const template = language.startsWith("en") ? fallback.en : fallback.zh;
+  return applyMonitorDetailTextParams(template, params);
+};
+
+const ensureMonitorState = () => {
+  if (!state.monitor) {
+    state.monitor = {
+      sessions: [],
+      selected: null,
+      tokenTrend: [],
+      tokenDeltas: [],
+      tokenUsageBySession: {},
+      toolStats: [],
+      availableTools: [],
+      availableToolsUpdatedAt: 0,
+      availableToolsLanguage: "",
+      tokenZoomLocked: false,
+      tokenZoomInitialized: false,
+      userFilter: "",
+      sessionStatusFilter: "all",
+      feedbackFilter: "all",
+      timeRangeHours: DEFAULT_MONITOR_TIME_RANGE_HOURS,
+      serviceSnapshot: null,
+      pagination: {
+        pageSize: DEFAULT_MONITOR_SESSION_PAGE_SIZE,
+        activePage: 1,
+      },
+      timeFilter: {
+        enabled: false,
+        start: "",
+        end: "",
+      },
+    };
+  }
+  if (!Array.isArray(state.monitor.tokenTrend)) {
+    state.monitor.tokenTrend = [];
+  }
+  if (!Array.isArray(state.monitor.tokenDeltas)) {
+    state.monitor.tokenDeltas = [];
+  }
+  if (!state.monitor.tokenUsageBySession || typeof state.monitor.tokenUsageBySession !== "object") {
+    state.monitor.tokenUsageBySession = {};
+  }
+  if (!Array.isArray(state.monitor.toolStats)) {
+    state.monitor.toolStats = [];
+  }
+  if (!Array.isArray(state.monitor.availableTools)) {
+    state.monitor.availableTools = [];
+  }
+  if (!Number.isFinite(state.monitor.availableToolsUpdatedAt)) {
+    state.monitor.availableToolsUpdatedAt = 0;
+  }
+  if (typeof state.monitor.availableToolsLanguage !== "string") {
+    state.monitor.availableToolsLanguage = "";
+  }
+  if (!Array.isArray(state.monitor.sessions)) {
+    state.monitor.sessions = [];
+  }
+  if (!Object.prototype.hasOwnProperty.call(state.monitor, "detail")) {
+    state.monitor.detail = null;
+  } else if (state.monitor.detail && typeof state.monitor.detail !== "object") {
+    state.monitor.detail = null;
+  }
+  if (!state.monitor.detailFilters || typeof state.monitor.detailFilters !== "object") {
+    state.monitor.detailFilters = {
+      eventType: "",
+      keyword: "",
+      round: 0,
+    };
+  }
+  if (typeof state.monitor.detailFilters.eventType !== "string") {
+    state.monitor.detailFilters.eventType = "";
+  }
+  if (typeof state.monitor.detailFilters.keyword !== "string") {
+    state.monitor.detailFilters.keyword = "";
+  }
+  const parsedDetailRound = Number.parseInt(
+    String(state.monitor.detailFilters.round ?? 0),
+    10
+  );
+  state.monitor.detailFilters.round =
+    Number.isFinite(parsedDetailRound) && parsedDetailRound > 0
+      ? parsedDetailRound
+      : 0;
+  if (typeof state.monitor.tokenZoomLocked !== "boolean") {
+    state.monitor.tokenZoomLocked = false;
+  }
+  if (typeof state.monitor.tokenZoomInitialized !== "boolean") {
+    state.monitor.tokenZoomInitialized = false;
+  }
+  if (typeof state.monitor.userFilter !== "string") {
+    state.monitor.userFilter = "";
+  }
+  const normalizedSessionStatusFilter = String(
+    state.monitor.sessionStatusFilter || ""
+  )
+    .trim()
+    .toLowerCase();
+  state.monitor.sessionStatusFilter = [
+    "all",
+    "active",
+    "queued",
+    "history",
+    "finished",
+    "error",
+    "cancelled",
+  ].includes(normalizedSessionStatusFilter)
+    ? normalizedSessionStatusFilter
+    : "all";
+  const normalizedFeedbackFilter = String(state.monitor.feedbackFilter || "")
+    .trim()
+    .toLowerCase();
+  state.monitor.feedbackFilter = ["all", "up", "down", "none", "mixed"].includes(
+    normalizedFeedbackFilter
+  )
+    ? normalizedFeedbackFilter
+    : "all";
+  if (!Number.isFinite(state.monitor.timeRangeHours)) {
+    state.monitor.timeRangeHours = DEFAULT_MONITOR_TIME_RANGE_HOURS;
+  }
+  if (!state.monitor.serviceSnapshot) {
+    state.monitor.serviceSnapshot = null;
+  }
+  if (!state.monitor.timeFilter || typeof state.monitor.timeFilter !== "object") {
+    state.monitor.timeFilter = {
+      enabled: false,
+      start: "",
+      end: "",
+    };
+  }
+  if (typeof state.monitor.timeFilter.enabled !== "boolean") {
+    state.monitor.timeFilter.enabled = false;
+  }
+  if (typeof state.monitor.timeFilter.start !== "string") {
+    state.monitor.timeFilter.start = "";
+  }
+  if (typeof state.monitor.timeFilter.end !== "string") {
+    state.monitor.timeFilter.end = "";
+  }
+  // 鍒嗛〉鐘舵€佸吋瀹规棫缂撳瓨锛岄伩鍏嶅垏鎹㈢敤鎴锋垨鍒锋柊鍚庨〉鐮佸紓甯?
+  if (!state.monitor.pagination || typeof state.monitor.pagination !== "object") {
+    state.monitor.pagination = {
+      pageSize: DEFAULT_MONITOR_SESSION_PAGE_SIZE,
+      activePage: 1,
+    };
+  }
+  if (
+    !Number.isFinite(state.monitor.pagination.pageSize) ||
+    state.monitor.pagination.pageSize <= 0
+  ) {
+    state.monitor.pagination.pageSize = DEFAULT_MONITOR_SESSION_PAGE_SIZE;
+  }
+  if (
+    !Number.isFinite(state.monitor.pagination.activePage) ||
+    state.monitor.pagination.activePage < 1
+  ) {
+    state.monitor.pagination.activePage = 1;
+  }
+};
+
+// 鏍煎紡鍖栫洃瑙嗘椂闂达紝淇濊瘉灞曠ず绠€娲?
+const formatMonitorHours = (value) => {
+  const hours = Number(value);
+  if (!Number.isFinite(hours)) {
+    return String(DEFAULT_MONITOR_TIME_RANGE_HOURS);
+  }
+  return hours.toFixed(2).replace(/\.?0+$/, "");
+};
+
+const resolveMonitorTimeRangeHours = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_MONITOR_TIME_RANGE_HOURS;
+  }
+  return parsed;
+};
+
+// 获取当前监视时间范围（小时）
+const getMonitorTimeRangeHours = () => resolveMonitorTimeRangeHours(state.monitor.timeRangeHours);
+
+// 获取当前监视时间范围（毫秒），避免小数导致时间戳对齐误差
+const getMonitorTimeRangeMs = () =>
+  Math.max(1, Math.round(getMonitorTimeRangeHours() * ONE_HOUR_MS));
+
+// 获取 Token 趋势的保留窗口，避免前端长时间运行后堆积过多历史
+const getTokenTrendRetentionMs = () => {
+  const intervalMs = getMonitorTimeRangeMs();
+  if (!intervalMs) {
+    return 0;
+  }
+  return Math.max(intervalMs, intervalMs * TOKEN_TREND_RETENTION_BUCKETS);
+};
+
+const parseMonitorFilterTimestamp = (value) => {
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const resolveMonitorTimeFilterRange = () => {
+  if (!state.monitor.timeFilter?.enabled) {
+    return null;
+  }
+  const start = parseMonitorFilterTimestamp(state.monitor.timeFilter.start);
+  const end = parseMonitorFilterTimestamp(state.monitor.timeFilter.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return null;
+  }
+  if (end <= start) {
+    return null;
+  }
+  return { start, end };
+};
+
+// 格式化筛选区间标签，便于图表标题提示
+const formatMonitorFilterLabel = (range) => {
+  const locale = getCurrentLanguage();
+  const format = (timestamp) =>
+    new Date(timestamp).toLocaleString(locale, {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  return t("monitor.filter.range", { start: format(range.start), end: format(range.end) });
+};
+
+const getMonitorTimeRangeLabel = () => {
+  const hours = getMonitorTimeRangeHours();
+  return t("monitor.window.everyHours", { hours: formatMonitorHours(hours) });
+};
+
+// 生成监视时间窗口的文案标签，用于近况统计
+const getMonitorTimeWindowLabel = () => {
+  const range = resolveMonitorTimeFilterRange();
+  if (range) {
+    return formatMonitorFilterLabel(range);
+  }
+  const hours = getMonitorTimeRangeHours();
+  return t("monitor.window.recentHours", { hours: formatMonitorHours(hours) });
+};
+
+const updateMonitorChartTitles = () => {
+  const label = getMonitorTimeRangeLabel();
+  if (elements.serviceTokenTitle) {
+    elements.serviceTokenTitle.textContent = t("monitor.chart.tokenTrend", { label });
+  }
+  if (elements.serviceStatusTitle) {
+    const windowLabel = getMonitorTimeWindowLabel();
+    elements.serviceStatusTitle.textContent = t("monitor.chart.statusRatio", {
+      label: windowLabel,
+    });
+  }
+  if (elements.toolHeatmapTitle) {
+    const windowLabel = getMonitorTimeWindowLabel();
+    const text = t("monitor.chart.toolHeatmap", { label: windowLabel });
+    const label = elements.toolHeatmapTitle.querySelector("[data-role='title']");
+    if (label) {
+      label.textContent = text;
+    } else {
+      elements.toolHeatmapTitle.textContent = text;
+    }
+  }
+};
+
+// 规范化监视时间设置并刷新相关展示
+const applyMonitorTimeRange = (value, options = {}) => {
+  const { resetTrend = false } = options;
+  const hours = resolveMonitorTimeRangeHours(value);
+  state.monitor.timeRangeHours = hours;
+  state.monitor.tokenZoomLocked = false;
+  const hoursText = formatMonitorHours(hours);
+  if (elements.monitorTimeRange && elements.monitorTimeRange.value !== hoursText) {
+    elements.monitorTimeRange.value = hoursText;
+  }
+  updateMonitorChartTitles();
+  if (resetTrend) {
+    state.monitor.tokenDeltas = [];
+    state.monitor.tokenUsageBySession = {};
+  }
+  if (state.monitor.sessions.length || state.monitor.serviceSnapshot) {
+    renderServiceCharts(state.monitor.serviceSnapshot, state.monitor.sessions);
+  } else {
+    renderTokenTrendChart();
+  }
+};
+
+const syncMonitorTimeFilterInputs = () => {
+  if (!elements.monitorTimeFilterToggle || !elements.monitorTimeStart || !elements.monitorTimeEnd) {
+    return;
+  }
+  const filter = state.monitor.timeFilter || { enabled: false, start: "", end: "" };
+  elements.monitorTimeFilterToggle.checked = Boolean(filter.enabled);
+  if (elements.monitorTimeStart.value !== filter.start) {
+    elements.monitorTimeStart.value = filter.start;
+  }
+  if (elements.monitorTimeEnd.value !== filter.end) {
+    elements.monitorTimeEnd.value = filter.end;
+  }
+  const disabled = !filter.enabled;
+  elements.monitorTimeStart.disabled = disabled;
+  elements.monitorTimeEnd.disabled = disabled;
+};
+
+// 搴旂敤绛涢€夋椂闂村苟鍒锋柊鍥捐〃
+const applyMonitorTimeFilter = async (options = {}) => {
+  const { refresh = false } = options;
+  if (!elements.monitorTimeFilterToggle || !elements.monitorTimeStart || !elements.monitorTimeEnd) {
+    return;
+  }
+  state.monitor.timeFilter = {
+    enabled: Boolean(elements.monitorTimeFilterToggle.checked),
+    start: String(elements.monitorTimeStart.value || ""),
+    end: String(elements.monitorTimeEnd.value || ""),
+  };
+  state.monitor.tokenZoomLocked = false;
+  syncMonitorTimeFilterInputs();
+  updateMonitorChartTitles();
+  const range = resolveMonitorTimeFilterRange();
+  if (
+    state.monitor.timeFilter.enabled &&
+    state.monitor.timeFilter.start &&
+    state.monitor.timeFilter.end &&
+    !range
+  ) {
+    notify(t("monitor.filter.invalidRange"), "warning");
+    return;
+  }
+  if (refresh) {
+    try {
+      await loadMonitorData();
+    } catch (error) {
+      appendLog(t("monitor.refreshFailed", { message: error.message }));
+    }
+    return;
+  }
+  if (state.monitor.sessions.length || state.monitor.serviceSnapshot) {
+    renderServiceCharts(state.monitor.serviceSnapshot, state.monitor.sessions);
+  } else {
+    renderTokenTrendChart();
+  }
+};
+
+// 初始化图表实例，避免重复创建导致内存占用增长
+const ensureMonitorCharts = () => {
+  if (!window.echarts) {
+    return false;
+  }
+  if (elements.serviceTokenChart && !tokenTrendChart) {
+    tokenTrendChart = window.echarts.init(elements.serviceTokenChart);
+  }
+  if (elements.serviceStatusChart && !statusChart) {
+    statusChart = window.echarts.init(elements.serviceStatusChart);
+    statusChartClickBound = false;
+  }
+  bindStatusChartClick();
+  bindTokenTrendZoom();
+  return Boolean(tokenTrendChart || statusChart);
+};
+
+// 鐐瑰嚮绾跨▼鐘舵€佺幆鍥炬椂鎵撳紑瀵瑰簲璁板綍鍒楄〃
+const handleStatusChartClick = (params) => {
+  if (params?.seriesType && params.seriesType !== "pie") return;
+  const label = String(params?.name || "");
+  if (!label || label === STATUS_CHART_EMPTY_NAME) {
+    return;
+  }
+  // Keep the machine status on each slice. Translated labels are presentation
+  // data and are not a reliable event key when the locale changes.
+  const statusKey = String(params?.data?.statusKey || resolveStatusKey(label));
+  if (!statusKey) {
+    return;
+  }
+  openMonitorStatusModal(statusKey, label);
+};
+
+// Resolve a pie slice from viewport coordinates. ECharts renders the pie on a
+// canvas and some browser/ECharts combinations stop the bubbling click before
+// it reaches the chart container, so this small geometry fallback is kept
+// independent from the renderer event payload.
+const resolveStatusAtPoint = (clientX, clientY) => {
+  if (elements.monitorStatusModal?.classList.contains("active")) return;
+  const chart = latestStatusChartData;
+  const chartDom = elements.serviceStatusChart;
+  if (!chart || chart.isEmpty || !chart.data?.length || !chartDom) return;
+  const rect = chartDom.getBoundingClientRect();
+  const width = chartDom.clientWidth || rect.width;
+  const height = chartDom.clientHeight || rect.height;
+  if (!(width > 0 && height > 0)) return;
+
+  const option = statusChart?.getOption?.()?.series?.[0] || {};
+  const center = Array.isArray(option.center) ? option.center : ["50%", "45%"];
+  const resolvePercent = (value, base, fallback) => {
+    const numeric = Number.parseFloat(String(value));
+    if (!Number.isFinite(numeric)) return fallback;
+    return String(value).includes("%") ? (numeric / 100) * base : numeric;
+  };
+  const centerX = resolvePercent(center[0], width, width * 0.5);
+  const centerY = resolvePercent(center[1], height, height * 0.45);
+  const radiusValues = Array.isArray(option.radius) ? option.radius : ["52%", "78%"];
+  const innerRadius = resolvePercent(radiusValues[0], Math.min(width, height) / 2, Math.min(width, height) * 0.26);
+  const outerRadius = resolvePercent(radiusValues[1], Math.min(width, height) / 2, Math.min(width, height) * 0.39);
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+  const dx = x - centerX;
+  const dy = y - centerY;
+  const distance = Math.hypot(dx, dy);
+  if (distance < innerRadius || distance > outerRadius) return;
+  let angle = Math.atan2(dx, -dy);
+  if (angle < 0) angle += Math.PI * 2;
+  const total = chart.data.reduce((sum, item) => sum + Math.max(0, Number(item.value) || 0), 0);
+  if (total <= 0) return;
+  let cursor = 0;
+  for (const item of chart.data) {
+    const value = Math.max(0, Number(item.value) || 0);
+    const end = cursor + (value / total) * Math.PI * 2;
+    if (value > 0 && angle >= cursor && angle <= end) {
+      handleStatusChartClick({ name: item.name, data: item, seriesType: "pie" });
+      return;
+    }
+    cursor = end;
+  }
+};
+
+// 仅绑定一次点击事件，避免重复注册导致多次弹窗
+const bindStatusChartClick = () => {
+  if (!statusChart) {
+    return;
+  }
+  // ECharts can retain handlers when an instance is reused after a resize or
+  // hot reload. Rebinding is idempotent and prevents stale closures.
+  statusChart.off("click", handleStatusChartClick);
+  statusChart.on("click", handleStatusChartClick);
+  statusChartClickBound = true;
+  const chartDom = elements.serviceStatusChart;
+  if (chartDom && !statusChartDomClickBound) {
+    // Keep a DOM fallback for browsers/ECharts builds that do not deliver a
+    // pie click after a canvas is resized or replaced. The modal check makes
+    // this idempotent when the normal ECharts event already handled the click.
+    statusChartDomClickBound = true;
+    // Capture phase runs before ECharts can stop propagation on its canvas.
+    chartDom.addEventListener("click", (event) => {
+      // Let ECharts process its own event first. The delayed fallback only
+      // runs when no modal was opened by the renderer handler.
+      window.setTimeout(() => {
+        if (!elements.monitorStatusModal?.classList.contains("active")) {
+          resolveStatusAtPoint(event.clientX, event.clientY);
+        }
+      }, 0);
+    }, true);
+    const zr = statusChart.getZr?.();
+    if (zr && !statusChartZrClickBound) {
+      statusChartZrClickBound = true;
+      zr.on("click", (event) => {
+        const rect = chartDom.getBoundingClientRect();
+        const x = Number(event.zrX ?? event.offsetX);
+        const y = Number(event.zrY ?? event.offsetY);
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+          resolveStatusAtPoint(rect.left + x, rect.top + y);
+        }
+      });
+    }
+  }
+};
+
+const bindTokenTrendZoom = () => {
+  if (!tokenTrendChart || tokenTrendZoomBound) {
+    return;
+  }
+  tokenTrendZoomBound = true;
+  tokenTrendChart.on("datazoom", () => {
+    if (state.monitor) {
+      state.monitor.tokenZoomLocked = true;
+    }
+  });
+};
+
+const formatTokenTrendLabel = (timestamp) =>
+  new Date(timestamp).toLocaleString(getCurrentLanguage(), {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+const formatTokenRate = (value, options = {}) => {
+  if (!Number.isFinite(value)) {
+    return "-";
+  }
+  const tokens = Math.max(0, Number(value));
+  const useMillion = tokens >= 1_000_000;
+  const useThousand = tokens >= 1_000 && tokens < 1_000_000;
+  const base = useMillion ? 1_000_000 : useThousand ? 1_000 : 1;
+  const unit = useMillion ? "m" : useThousand ? "k" : "";
+  const scaled = tokens / base;
+  const prefix = options.lowerBound ? ">=" : "";
+  return `${prefix}${scaled.toFixed(1)}${unit} ${t("monitor.detail.tokenRate.unit")}`;
+};
+
+const formatDurationSeconds = (seconds) => {
+  if (!Number.isFinite(seconds)) {
+    return "-";
+  }
+  const value = Math.max(0, Number(seconds));
+  const hours = Math.floor(value / 3600);
+  const minutes = Math.floor((value % 3600) / 60);
+  const remaining = value - hours * 3600 - minutes * 60;
+  const parts = [];
+  if (hours > 0) {
+    parts.push(`${hours}h`);
+  }
+  if (minutes > 0 || hours > 0) {
+    parts.push(`${minutes}m`);
+  }
+  parts.push(`${remaining.toFixed(1)}s`);
+  return parts.join(" ");
+};
+
+const parseMetricNumber = (value) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const resolveSessionContextTokens = (session) => {
+  const peak = parseMetricNumber(session?.context_tokens_peak);
+  if (Number.isFinite(peak)) {
+    return peak;
+  }
+  const current = parseMetricNumber(session?.context_tokens);
+  if (Number.isFinite(current)) {
+    return current;
+  }
+  const legacy = parseMetricNumber(session?.token_usage);
+  return Number.isFinite(legacy) ? legacy : null;
+};
+
+// Cumulative consumed tokens for billing/cost tracking
+const resolveSessionConsumedTokens = (session) => {
+  const consumed = parseMetricNumber(session?.consumed_tokens);
+  if (Number.isFinite(consumed) && consumed >= 0) {
+    return consumed;
+  }
+  // Fallback: estimate from context tokens peak (legacy sessions)
+  const peak = parseMetricNumber(session?.context_tokens_peak);
+  if (Number.isFinite(peak)) {
+    return peak;
+  }
+  return parseMetricNumber(session?.context_tokens) || null;
+};
+
+const floorToIntervalBoundary = (timestamp, intervalMs) => {
+  const date = new Date(timestamp);
+  const midnight = new Date(date);
+  midnight.setHours(0, 0, 0, 0);
+  const offset = timestamp - midnight.getTime();
+  const index = Math.floor(offset / intervalMs);
+  return midnight.getTime() + index * intervalMs;
+};
+
+// 记录 token 澧為噺锛屼究浜庢寜灏忔椂姹囨€?
+const recordTokenDeltas = (sessions) => {
+  const usageMap = state.monitor.tokenUsageBySession;
+  (sessions || []).forEach((session) => {
+    const sessionId = session?.session_id;
+    if (!sessionId) {
+      return;
+    }
+    const current = resolveSessionConsumedTokens(session) || 0;
+    const previous = Number(usageMap[sessionId]) || 0;
+    const delta = current - previous;
+    if (delta > 0) {
+      const timestamp = resolveSessionTimestamp(session) || Date.now();
+      state.monitor.tokenDeltas.push({ timestamp, value: delta });
+    }
+    usageMap[sessionId] = current;
+  });
+  pruneTokenDeltas(Date.now());
+};
+
+// 瑁佸壀杩囨棫鐨?token 增量，避免长期运行后趋势数据膨胀
+const pruneTokenDeltas = (nowMs) => {
+  const deltas = state.monitor.tokenDeltas;
+  if (!Array.isArray(deltas) || !deltas.length) {
+    return;
+  }
+  const timeRange = resolveMonitorTimeFilterRange();
+  let cutoff = null;
+  if (timeRange && Number.isFinite(timeRange.start)) {
+    cutoff = timeRange.start;
+  } else {
+    const retentionMs = getTokenTrendRetentionMs();
+    if (retentionMs) {
+      cutoff = nowMs - retentionMs;
+    }
+  }
+  if (!Number.isFinite(cutoff)) {
+    return;
+  }
+  const filtered = deltas.filter((item) => {
+    const timestamp = Number(item?.timestamp);
+    return Number.isFinite(timestamp) && timestamp >= cutoff;
+  });
+  if (filtered.length !== deltas.length) {
+    state.monitor.tokenDeltas = filtered;
+  }
+};
+
+// 姹囨€?token 增量，生成按时间间隔的折线图数据
+const buildTokenSeries = (sessions) => {
+  const deltas = state.monitor.tokenDeltas || [];
+  const intervalMs = getMonitorTimeRangeMs();
+  if (!intervalMs) {
+    return { labels: [], values: [], latestValue: 0 };
+  }
+  pruneTokenDeltas(Date.now());
+  const timeRange = resolveMonitorTimeFilterRange();
+  let now = Date.now();
+  if (timeRange) {
+    now = timeRange.end;
+    const startBoundary = floorToIntervalBoundary(timeRange.start, intervalMs);
+    if (!Number.isFinite(startBoundary) || !Number.isFinite(now)) {
+      return { labels: [], values: [], latestValue: 0 };
+    }
+    const totals = new Map();
+    if (Array.isArray(deltas)) {
+      deltas.forEach((item) => {
+        const timestamp = Number(item?.timestamp);
+        if (!Number.isFinite(timestamp)) {
+          return;
+        }
+        if (timestamp < timeRange.start || timestamp > timeRange.end) {
+          return;
+        }
+        const bucketIndex = Math.max(0, Math.floor((timestamp - startBoundary) / intervalMs));
+        totals.set(bucketIndex, (totals.get(bucketIndex) || 0) + (Number(item?.value) || 0));
+      });
+    }
+    const labels = [formatTokenTrendLabel(startBoundary)];
+    const values = [0];
+    let cursor = startBoundary;
+    let bucketIndex = 0;
+    while (cursor + intervalMs <= now) {
+      const bucketValue = totals.get(bucketIndex) || 0;
+      cursor += intervalMs;
+      labels.push(formatTokenTrendLabel(cursor));
+      values.push(bucketValue);
+      bucketIndex += 1;
+    }
+    if (cursor < now) {
+      const bucketValue = totals.get(bucketIndex) || 0;
+      labels.push(formatTokenTrendLabel(now));
+      values.push(bucketValue);
+    }
+    const latestValue = values.length ? values[values.length - 1] : 0;
+    return { labels, values, latestValue };
+  }
+  const sessionStartTimes = (sessions || [])
+    .map((session) => parseMonitorTimestamp(session?.start_time))
+    .filter((value) => Number.isFinite(value));
+  const deltaTimes = Array.isArray(deltas) ? deltas.map((item) => item.timestamp) : [];
+  const earliest = Math.min(...[...sessionStartTimes, ...deltaTimes].filter(Number.isFinite));
+  const retentionMs = getTokenTrendRetentionMs();
+  const retentionStart =
+    Number.isFinite(retentionMs) && retentionMs > 0 ? now - retentionMs : null;
+  const startBase = Number.isFinite(retentionStart)
+    ? Number.isFinite(earliest)
+      ? Math.max(earliest, retentionStart)
+      : retentionStart
+    : earliest;
+  if (!Number.isFinite(startBase)) {
+    return { labels: [], values: [], latestValue: 0 };
+  }
+  const startBoundary = floorToIntervalBoundary(startBase, intervalMs);
+  const totals = new Map();
+  if (Array.isArray(deltas)) {
+    deltas.forEach((item) => {
+      const timestamp = Number(item?.timestamp);
+      if (!Number.isFinite(timestamp)) {
+        return;
+      }
+      if (timestamp < startBoundary || timestamp > now) {
+        return;
+      }
+      const bucketIndex = Math.max(0, Math.floor((timestamp - startBoundary) / intervalMs));
+      totals.set(bucketIndex, (totals.get(bucketIndex) || 0) + (Number(item?.value) || 0));
+    });
+  }
+  const labels = [formatTokenTrendLabel(startBoundary)];
+  const values = [0];
+  let cursor = startBoundary;
+  let bucketIndex = 0;
+  while (cursor + intervalMs <= now) {
+    const bucketValue = totals.get(bucketIndex) || 0;
+    cursor += intervalMs;
+    labels.push(formatTokenTrendLabel(cursor));
+    values.push(bucketValue);
+    bucketIndex += 1;
+  }
+  if (cursor < now) {
+    const bucketValue = totals.get(bucketIndex) || 0;
+    labels.push(formatTokenTrendLabel(now));
+    values.push(bucketValue);
+  }
+  const latestValue = values.length ? values[values.length - 1] : 0;
+  return { labels, values, latestValue };
+};
+
+// 规范化工具列表，保留类别用于图标选择
+const normalizeAvailableTools = (payload) => {
+  const tools = [];
+  const seen = new Set();
+  mcpToolNameSet = new Set();
+  const resolveAbilityCategory = (item, fallback) => {
+    const grouped = String(item?.group || "").toLowerCase();
+    const sourced = String(item?.source || "").toLowerCase();
+    const key = `${grouped}:${sourced}`;
+    if (key.includes("mcp")) return "mcp";
+    if (key.includes("knowledge")) return "knowledge";
+    if (key.includes("skill")) return "skill";
+    if (key.includes("a2a")) return "a2a";
+    if (key.includes("shared")) return "shared";
+    return fallback;
+  };
+  const pushTool = (item, category) => {
+    const runtimeName = String(
+      item?.runtime_name ?? item?.runtimeName ?? item?.tool_name ?? item?.toolName ?? item?.name ?? ""
+    ).trim();
+    const displayName = String(
+      item?.display_name ?? item?.displayName ?? item?.title ?? item?.name ?? runtimeName
+    ).trim();
+    const key = runtimeName || displayName;
+    if (!key || seen.has(key)) {
+      return;
+    }
+    const resolvedCategory = resolveAbilityCategory(item, category);
+    tools.push({
+      name: displayName || runtimeName,
+      displayName: displayName || runtimeName,
+      runtimeName: runtimeName || displayName,
+      category: resolvedCategory,
+    });
+    seen.add(key);
+    if (resolvedCategory === "mcp") {
+      mcpToolNameSet.add(runtimeName || displayName);
+      mcpToolNameSet.add(displayName || runtimeName);
+    }
+  };
+  const pushList = (items, category) => {
+    (Array.isArray(items) ? items : []).forEach((item) => {
+      pushTool(item, category);
+    });
+  };
+  pushList(payload?.items, "other");
+  pushList(payload?.builtin_tools, "builtin");
+  pushList(payload?.mcp_tools, "mcp");
+  pushList(payload?.user_mcp_tools, "mcp");
+  pushList(payload?.knowledge_tools, "knowledge");
+  pushList(payload?.user_knowledge_tools, "knowledge");
+  pushList(payload?.skills, "skill");
+  pushList(payload?.user_skills, "skill");
+  pushList(payload?.user_tools, "user");
+  pushList(payload?.shared_tools, "shared");
+  // 蜂群工具已全链路移除：工具热力图统计口径不再包含它们（待后端移除后一并删除该过滤）
+  return filterRemovedSwarmTools(tools);
+};
+
+const loadAvailableTools = async (options = {}) => {
+  const { force = false } = options;
+  const now = Date.now();
+  const language = getCurrentLanguage();
+  const languageChanged = state.monitor.availableToolsLanguage !== language;
+  if (
+    !force &&
+    !languageChanged &&
+    state.monitor.availableTools.length &&
+    now - state.monitor.availableToolsUpdatedAt < TOOL_LIST_CACHE_MS
+  ) {
+    return state.monitor.availableTools;
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/tools`;
+  const response = await fetch(endpoint);
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  const result = await response.json();
+  state.monitor.availableTools = normalizeAvailableTools(result);
+  state.monitor.availableToolsUpdatedAt = now;
+  state.monitor.availableToolsLanguage = language;
+  return state.monitor.availableTools;
+};
+
+// 灏?HSL 转为 RGB，便于计算文字对比色
+const hslToRgb = (hue, saturation, lightness) => {
+  const h = ((Number(hue) || 0) % 360) / 360;
+  const s = Math.max(0, Math.min(1, (Number(saturation) || 0) / 100));
+  const l = Math.max(0, Math.min(1, (Number(lightness) || 0) / 100));
+  if (s === 0) {
+    const gray = Math.round(l * 255);
+    return [gray, gray, gray];
+  }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const hueToRgb = (t) => {
+    let value = t;
+    if (value < 0) value += 1;
+    if (value > 1) value -= 1;
+    if (value < 1 / 6) return p + (q - p) * 6 * value;
+    if (value < 1 / 2) return q;
+    if (value < 2 / 3) return p + (q - p) * (2 / 3 - value) * 6;
+    return p;
+  };
+  return [
+    Math.round(hueToRgb(h + 1 / 3) * 255),
+    Math.round(hueToRgb(h) * 255),
+    Math.round(hueToRgb(h - 1 / 3) * 255),
+  ];
+};
+
+const resolveHeatmapHue = (value) => {
+  const anchors = TOOL_HEATMAP_HUE_ANCHORS;
+  if (!anchors.length) {
+    return 210;
+  }
+  if (value <= anchors[0].value) {
+    return anchors[0].hue;
+  }
+  for (let i = 1; i < anchors.length; i += 1) {
+    const next = anchors[i];
+    if (value <= next.value) {
+      const prev = anchors[i - 1];
+      const span = next.value - prev.value || 1;
+      const ratio = (value - prev.value) / span;
+      return prev.hue + (next.hue - prev.hue) * ratio;
+    }
+  }
+  return anchors[anchors.length - 1].hue;
+};
+
+const resolveHeatmapColor = (totalCalls) => {
+  const value = Math.max(0, Number(totalCalls) || 0);
+  if (value <= 0) {
+    return { color: `rgb(${TOOL_HEATMAP_ZERO_RGB.join(", ")})`, rgb: TOOL_HEATMAP_ZERO_RGB };
+  }
+  const clamped = Math.min(value, TOOL_HEATMAP_MAX_VALUE);
+  const ratio = clamped / TOOL_HEATMAP_MAX_VALUE;
+  const hue = resolveHeatmapHue(clamped);
+  const saturation =
+    TOOL_HEATMAP_MIN_SATURATION +
+    ratio * (TOOL_HEATMAP_MAX_SATURATION - TOOL_HEATMAP_MIN_SATURATION);
+  const lightness =
+    TOOL_HEATMAP_MAX_LIGHTNESS -
+    ratio * (TOOL_HEATMAP_MAX_LIGHTNESS - TOOL_HEATMAP_MIN_LIGHTNESS);
+  const rgb = hslToRgb(hue, saturation, lightness);
+  return { color: `rgb(${rgb.join(", ")})`, rgb };
+};
+
+const resolveHeatmapTextColor = (rgb) => {
+  const [r, g, b] = rgb;
+  const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  return luminance >= 0.65 ? "#0f172a" : "#f8fafc";
+};
+
+
+// 根据工具名称选择更贴合的图标
+const resolveToolIcon = (name, category, runtimeName = "") => {
+  const toolName = String(name || "").trim();
+  const runtimeToolName = String(runtimeName || "").trim();
+  const categoryKey = String(category || "").toLowerCase();
+  const unifiedIcon = resolveToolIconClass(
+    [toolName, runtimeToolName, categoryKey].filter(Boolean).join(" ")
+  );
+  if (unifiedIcon && unifiedIcon !== "fa-toolbox") {
+    return unifiedIcon;
+  }
+  if (
+    categoryKey === "mcp" ||
+    mcpToolNameSet.has(runtimeToolName) ||
+    mcpToolNameSet.has(toolName)
+  ) {
+    return "fa-plug";
+  }
+  if (runtimeToolName.includes("@") || toolName.includes("@")) {
+    return "fa-plug";
+  }
+  if (categoryKey === "knowledge") {
+    return "fa-database";
+  }
+  if (categoryKey === "skill") {
+    return "fa-book";
+  }
+  if (categoryKey === "user" || categoryKey === "shared") {
+    return "fa-wrench";
+  }
+  return "fa-toolbox";
+};
+
+// Compact overview counters while keeping zero explicit.  Detailed event rows
+// remain unabridged; this formatter is only for the dense metadata grid.
+const formatHeatmapCount = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return "0";
+  }
+  const count = Math.max(0, Math.round(parsed));
+  if (count < 1000) {
+    return String(count);
+  }
+  const unit = count >= 1_000_000 ? "m" : "k";
+  const divisor = unit === "m" ? 1_000_000 : 1_000;
+  const scaled = count / divisor;
+  return `${scaled.toFixed(scaled >= 100 ? 0 : 1).replace(/\.0$/, "")}${unit}`;
+};
+
+// 规整工具统计结构，避免缺字段导致渲染异常
+// 蜂群工具已全链路移除：统计口径直接丢弃其历史调用记录（待后端移除后一并删除该过滤）
+const normalizeToolStats = (toolStats) =>
+  filterRemovedSwarmTools(toolStats)
+    .map((item) => ({
+      name: String(item?.tool ?? item?.name ?? "").trim(),
+      runtimeName: String(item?.tool_name ?? item?.runtime_name ?? item?.name ?? "").trim(),
+      category: String(item?.category ?? item?.group ?? "").trim(),
+      calls: Number(item?.calls ?? item?.count ?? item?.tool_calls ?? 0),
+    }))
+    .filter((item) => item.name);
+
+// 合并工具列表与调用次数，确保未调用工具也展示
+const buildHeatmapItems = (toolStats) => {
+  const normalized = normalizeToolStats(toolStats);
+  const statsByRuntime = new Map(normalized.map((item) => [item.runtimeName || item.name, item]));
+  const statsByDisplay = new Map(normalized.map((item) => [item.name, item]));
+  const items = [];
+  const seen = new Set();
+  (state.monitor.availableTools || []).forEach((tool) => {
+    const displayName = String(tool?.displayName || tool?.name || "").trim();
+    const runtimeName = String(tool?.runtimeName || tool?.name || displayName).trim();
+    const key = runtimeName || displayName;
+    if (!key || seen.has(key)) {
+      return;
+    }
+    const stat =
+      statsByRuntime.get(runtimeName) ||
+      statsByDisplay.get(displayName) ||
+      statsByDisplay.get(runtimeName);
+    const resolvedRuntimeName = String(stat?.runtimeName || runtimeName || displayName).trim();
+    items.push({
+      name: String(stat?.name || displayName || resolvedRuntimeName).trim(),
+      runtimeName: resolvedRuntimeName,
+      calls: Number(stat?.calls ?? 0),
+      category: stat?.category || tool?.category || "other",
+    });
+    seen.add(key);
+  });
+  normalized.forEach((item) => {
+    const key = item.runtimeName || item.name;
+    if (seen.has(key)) {
+      return;
+    }
+    items.push({
+      name: item.name,
+      runtimeName: item.runtimeName || item.name,
+      calls: item.calls,
+      category: item.category || "other",
+    });
+    seen.add(key);
+  });
+  return items;
+};
+
+const captureHorizontalScrollState = (container) => {
+  if (!container) {
+    return null;
+  }
+  const storedScrollLeft = Number(container.dataset.scrollLeft || "");
+  const maxScrollLeft = Math.max(0, container.scrollWidth - container.clientWidth);
+  const currentScrollLeft = Math.max(0, container.scrollLeft || 0);
+  const scrollLeft =
+    Number.isFinite(storedScrollLeft) && storedScrollLeft >= 0
+      ? storedScrollLeft
+      : currentScrollLeft;
+  return {
+    scrollLeft,
+    pinnedRight: maxScrollLeft > 0 && maxScrollLeft - scrollLeft <= 16,
+  };
+};
+
+const restoreHorizontalScrollState = (container, snapshot) => {
+  if (!container || !snapshot) {
+    return;
+  }
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const nextMaxScrollLeft = Math.max(0, container.scrollWidth - container.clientWidth);
+      const nextScrollLeft = snapshot.pinnedRight
+        ? nextMaxScrollLeft
+        : Math.min(snapshot.scrollLeft, nextMaxScrollLeft);
+      container.scrollLeft = nextScrollLeft;
+      container.dataset.scrollLeft = String(nextScrollLeft);
+    });
+  });
+};
+
+const bindToolHeatmapScrollPersistence = () => {
+  if (!elements.toolHeatmapWrap || elements.toolHeatmapWrap.dataset.boundScroll === "1") {
+    if (!elements.toolHeatmapGrid || elements.toolHeatmapGrid.dataset.boundClick === "1") return;
+  }
+  if (elements.toolHeatmapGrid && elements.toolHeatmapGrid.dataset.boundClick !== "1") {
+    elements.toolHeatmapGrid.dataset.boundClick = "1";
+    elements.toolHeatmapGrid.addEventListener("click", (event) => {
+      const tile = event.target?.closest?.(".tool-heatmap-item");
+      const toolName = String(tile?.dataset?.toolName || "").trim();
+      if (toolName) openMonitorToolModal(toolName);
+    });
+    elements.toolHeatmapGrid.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const tile = event.target?.closest?.(".tool-heatmap-item");
+      const toolName = String(tile?.dataset?.toolName || "").trim();
+      if (!toolName) return;
+      event.preventDefault();
+      openMonitorToolModal(toolName);
+    });
+  }
+  if (!elements.toolHeatmapWrap || elements.toolHeatmapWrap.dataset.boundScroll === "1") {
+    return;
+  }
+  elements.toolHeatmapWrap.dataset.boundScroll = "1";
+  elements.toolHeatmapWrap.addEventListener("scroll", () => {
+    elements.toolHeatmapWrap.dataset.scrollLeft = String(
+      Math.max(0, elements.toolHeatmapWrap.scrollLeft || 0)
+    );
+  });
+};
+
+const renderToolHeatmap = (toolStats) => {
+  if (!elements.toolHeatmapGrid || !elements.toolHeatmapEmpty) {
+    return;
+  }
+  const normalized = buildHeatmapItems(toolStats);
+  const scrollSnapshot = captureHorizontalScrollState(elements.toolHeatmapWrap);
+  elements.toolHeatmapGrid.textContent = "";
+  if (!normalized.length) {
+    elements.toolHeatmapEmpty.style.display = "block";
+    elements.toolHeatmapGrid.style.display = "none";
+    return;
+  }
+  elements.toolHeatmapEmpty.style.display = "none";
+  elements.toolHeatmapGrid.style.display = "grid";
+  const wrapHeight = elements.toolHeatmapWrap?.clientHeight || 0;
+  const rows = Math.max(
+    1,
+    Math.floor((wrapHeight + TOOL_HEATMAP_GAP) / (TOOL_HEATMAP_TILE_SIZE + TOOL_HEATMAP_GAP))
+  );
+  elements.toolHeatmapGrid.style.setProperty("--heatmap-rows", String(rows));
+  normalized.forEach((item) => {
+    const { color, rgb } = resolveHeatmapColor(item.calls);
+    const tile = document.createElement("div");
+    tile.className = "tool-heatmap-item";
+    tile.dataset.toolName = item.runtimeName || item.name;
+    tile.setAttribute("role", "button");
+    tile.tabIndex = 0;
+    tile.style.backgroundColor = color;
+    tile.style.color = resolveHeatmapTextColor(rgb);
+    tile.title = t("monitor.toolHeatmap.tileTitle", {
+      name: item.name,
+      count: formatHeatmapCount(item.calls),
+    });
+    const icon = document.createElement("i");
+    const iconToken = resolveToolIcon(item.name, item.category, item.runtimeName);
+    icon.className = `fa-solid ${iconToken}`;
+    const name = document.createElement("span");
+    name.className = "tool-heatmap-name";
+    name.textContent = item.name;
+    tile.appendChild(icon);
+    tile.appendChild(name);
+    elements.toolHeatmapGrid.appendChild(tile);
+  });
+  restoreHorizontalScrollState(elements.toolHeatmapWrap, scrollSnapshot);
+};
+
+// 渲染系统监视指标
+const renderMonitorMetrics = (system) => {
+  if (!system) {
+    elements.metricCpu.textContent = "-";
+    elements.metricMemory.textContent = "-";
+    elements.metricMemoryDetail.textContent = "";
+    elements.metricProcessMemory.textContent = "-";
+    elements.metricProcessCpu.textContent = "-";
+    elements.metricUptime.textContent = "-";
+    elements.metricDisk.textContent = "-";
+    elements.metricDiskDetail.textContent = "";
+    elements.metricLogUsage.textContent = "-";
+    elements.metricWorkspaceUsage.textContent = "-";
+    return;
+  }
+  elements.metricCpu.textContent = `${system.cpu_percent.toFixed(1)}%`;
+  elements.metricMemory.textContent = formatBytes(system.memory_used);
+  elements.metricMemoryDetail.textContent = t("monitor.metric.memory.detail", {
+    total: formatBytes(system.memory_total),
+    available: formatBytes(system.memory_available),
+  });
+  elements.metricProcessMemory.textContent = formatBytes(system.process_rss);
+  elements.metricProcessCpu.textContent = `${system.process_cpu_percent.toFixed(1)}%`;
+  elements.metricUptime.textContent = formatDurationLong(system.uptime_s);
+  const hasDisk = Number.isFinite(system.disk_total) && system.disk_total > 0;
+  elements.metricDisk.textContent =
+    hasDisk && Number.isFinite(system.disk_percent)
+      ? `${system.disk_percent.toFixed(1)}%`
+      : "-";
+  elements.metricDiskDetail.textContent = hasDisk
+    ? t("monitor.metric.disk.detail", {
+        used: formatBytes(system.disk_used),
+        total: formatBytes(system.disk_total),
+        free: formatBytes(system.disk_free),
+      })
+    : "";
+  elements.metricLogUsage.textContent = formatBytes(system.log_used);
+  elements.metricWorkspaceUsage.textContent = formatBytes(system.workspace_used);
+};
+
+const toDatetimeLocalValue = (date) => {
+  const pad = (value) => String(value).padStart(2, "0");
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hour = pad(date.getHours());
+  const minute = pad(date.getMinutes());
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+};
+
+const parseDatetimeLocalSeconds = (value) => {
+  const date = new Date(value || "");
+  const timestamp = date.getTime();
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+  return timestamp / 1000;
+};
+
+const setMonitorLogCleanupStatus = (message = "", kind = "") => {
+  if (!elements.monitorLogCleanupStatus) {
+    return;
+  }
+  elements.monitorLogCleanupStatus.textContent = message;
+  elements.monitorLogCleanupStatus.dataset.kind = kind;
+};
+
+const openMonitorLogCleanupModal = () => {
+  if (!elements.monitorLogCleanupModal) {
+    return;
+  }
+  const now = new Date();
+  const start = new Date(now.getTime() - DEFAULT_LOG_CLEANUP_HOURS * ONE_HOUR_MS);
+  if (elements.monitorLogCleanupStart && !elements.monitorLogCleanupStart.value) {
+    elements.monitorLogCleanupStart.value = toDatetimeLocalValue(start);
+  }
+  if (elements.monitorLogCleanupEnd) {
+    elements.monitorLogCleanupEnd.value = toDatetimeLocalValue(now);
+  }
+  setMonitorLogCleanupStatus(t("monitor.logs.modal.hint"), "");
+  elements.monitorLogCleanupModal.classList.add("active");
+};
+
+const closeMonitorLogCleanupModal = () => {
+  elements.monitorLogCleanupModal?.classList.remove("active");
+};
+
+const summarizeDeletedLogs = (deleted) => {
+  if (!deleted || typeof deleted !== "object") {
+    return "";
+  }
+  return Object.entries(deleted)
+    .filter(([, count]) => Number(count) > 0)
+    .map(([table, count]) => `${table}: ${count}`)
+    .join(" · ");
+};
+
+const submitMonitorLogCleanup = async () => {
+  const startSeconds = parseDatetimeLocalSeconds(elements.monitorLogCleanupStart?.value);
+  const endSeconds = parseDatetimeLocalSeconds(elements.monitorLogCleanupEnd?.value);
+  if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || endSeconds <= startSeconds) {
+    setMonitorLogCleanupStatus(t("monitor.logs.invalidRange"), "error");
+    return;
+  }
+  const confirmed = window.confirm(t("monitor.logs.confirm"));
+  if (!confirmed) {
+    return;
+  }
+  const submitBtn = elements.monitorLogCleanupSubmit;
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.setAttribute("aria-busy", "true");
+  }
+  setMonitorLogCleanupStatus(t("monitor.logs.deleting"), "");
+  try {
+    const wunderBase = getWunderBase();
+    const response = await fetch(`${wunderBase}/admin/monitor/logs/cleanup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        start_time: startSeconds,
+        end_time: endSeconds,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(t("common.requestFailed", { status: response.status }));
+    }
+    const result = await response.json();
+    if (result.system) {
+      renderMonitorMetrics(result.system);
+    }
+    const summary = summarizeDeletedLogs(result.deleted);
+    const message = t("monitor.logs.deleted", {
+      count: result.deleted_total ?? 0,
+      detail: summary || "-",
+    });
+    setMonitorLogCleanupStatus(message, "success");
+    notify(message, "success");
+    await loadMonitorData();
+  } catch (error) {
+    const message = t("monitor.logs.deleteFailed", { message: error.message });
+    setMonitorLogCleanupStatus(message, "error");
+    notify(message, "error");
+    appendLog(message);
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.removeAttribute("aria-busy");
+    }
+  }
+};
+
+const renderServiceMetrics = (service) => {
+  if (!service) {
+    elements.metricServiceActive.textContent = "-";
+    if (elements.metricServiceQueued) {
+      elements.metricServiceQueued.textContent = "-";
+    }
+    elements.metricServiceHistory.textContent = "-";
+    elements.metricServiceTotal.textContent = "-";
+    if (elements.metricServiceTokenAvg) {
+      elements.metricServiceTokenAvg.textContent = "-";
+    }
+    elements.metricServiceAvg.textContent = "-";
+    if (elements.metricServicePrefillSpeed) {
+      elements.metricServicePrefillSpeed.textContent = "-";
+    }
+    if (elements.metricServiceDecodeSpeed) {
+      elements.metricServiceDecodeSpeed.textContent = "-";
+    }
+    return;
+  }
+  elements.metricServiceActive.textContent = `${service.active_sessions ?? 0}`;
+  if (elements.metricServiceQueued) {
+    elements.metricServiceQueued.textContent = `${service.queued_sessions ?? 0}`;
+  }
+  elements.metricServiceHistory.textContent = `${service.history_sessions ?? 0}`;
+  elements.metricServiceTotal.textContent = `${service.total_sessions ?? 0}`;
+  if (elements.metricServiceTokenAvg) {
+    const avgTokens = parseMetricNumber(service.avg_context_tokens);
+    elements.metricServiceTokenAvg.textContent = formatTokenCount(avgTokens);
+  }
+  elements.metricServiceAvg.textContent = formatDurationLong(service.avg_elapsed_s);
+  if (elements.metricServicePrefillSpeed) {
+    const prefillSpeed = parseMetricNumber(service.avg_prefill_speed_tps);
+    elements.metricServicePrefillSpeed.textContent = formatTokenRate(prefillSpeed);
+  }
+  if (elements.metricServiceDecodeSpeed) {
+    const decodeSpeed = parseMetricNumber(service.avg_decode_speed_tps);
+    elements.metricServiceDecodeSpeed.textContent = formatTokenRate(decodeSpeed);
+  }
+};
+
+// 渲染用户看板指标，复用用户管理页统计并加 TTL 避免频繁请求
+const ensureUserDashboardState = () => {
+  if (!state.users || typeof state.users !== "object") {
+    state.users = { list: [], loaded: false, updatedAt: 0 };
+  }
+  if (!Array.isArray(state.users.list)) {
+    state.users.list = [];
+  }
+  if (typeof state.users.loaded !== "boolean") {
+    state.users.loaded = false;
+  }
+  if (!Number.isFinite(state.users.updatedAt)) {
+    state.users.updatedAt = 0;
+  }
+  if (!("summary" in state.users)) {
+    state.users.summary = null;
+  }
+  if (!Number.isFinite(state.users.summaryUpdatedAt)) {
+    state.users.summaryUpdatedAt = 0;
+  }
+};
+
+const normalizeUserDashboardStats = (item) => ({
+  user_id: String(item?.user_id || ""),
+  active_sessions: Number(item?.active_sessions) || 0,
+  history_sessions: Number(item?.history_sessions) || 0,
+  total_sessions: Number(item?.total_sessions) || 0,
+  chat_records: Number(item?.chat_records) || 0,
+  tool_calls: Number(item?.tool_calls) || 0,
+  context_tokens: Number(item?.context_tokens) || 0,
+});
+
+const resolveUserDashboardSummary = () => {
+  ensureUserDashboardState();
+  if (
+    state.users.summary &&
+    Number.isFinite(state.users.summaryUpdatedAt) &&
+    state.users.summaryUpdatedAt === state.users.updatedAt
+  ) {
+    const cachedSummary = state.users.summary;
+    const hasData = Boolean(state.users.loaded || cachedSummary.user_count > 0);
+    return { summary: cachedSummary, hasData };
+  }
+  const summary = {
+    user_count: 0,
+    active_sessions: 0,
+    history_sessions: 0,
+    total_sessions: 0,
+    chat_records: 0,
+    tool_calls: 0,
+    context_tokens: 0,
+  };
+  if (!Array.isArray(state.users.list)) {
+    return { summary, hasData: false };
+  }
+  summary.user_count = state.users.list.length;
+  state.users.list.forEach((item) => {
+    summary.active_sessions += Number(item?.active_sessions) || 0;
+    summary.history_sessions += Number(item?.history_sessions) || 0;
+    summary.total_sessions += Number(item?.total_sessions) || 0;
+    summary.chat_records += Number(item?.chat_records) || 0;
+    summary.tool_calls += Number(item?.tool_calls) || 0;
+    summary.context_tokens += Number(item?.context_tokens) || 0;
+  });
+  state.users.summary = summary;
+  state.users.summaryUpdatedAt = state.users.updatedAt;
+  const hasData = Boolean(state.users.loaded || summary.user_count > 0);
+  return { summary, hasData };
+};
+
+const renderUserDashboardMetrics = (summary, hasData) => {
+  if (!elements.metricUserCount) {
+    return;
+  }
+  if (!hasData || !summary) {
+    elements.metricUserCount.textContent = "-";
+    elements.metricUserSessions.textContent = "-";
+    elements.metricUserRecords.textContent = "-";
+    elements.metricUserTools.textContent = "-";
+    elements.metricUserActive.textContent = "-";
+    elements.metricUserTokens.textContent = "-";
+    return;
+  }
+  elements.metricUserCount.textContent = `${summary.user_count}`;
+  elements.metricUserSessions.textContent = `${summary.total_sessions}`;
+  elements.metricUserRecords.textContent = `${summary.chat_records}`;
+  elements.metricUserTools.textContent = `${summary.tool_calls}`;
+  elements.metricUserActive.textContent = `${summary.active_sessions}`;
+  elements.metricUserTokens.textContent = formatTokenCount(summary.consumed_tokens || summary.context_tokens);
+};
+
+const shouldRefreshUserDashboard = (options = {}) => {
+  const { force = false } = options;
+  if (force) {
+    return true;
+  }
+  const updatedAt = Number(state.users.updatedAt) || 0;
+  if (!updatedAt) {
+    return true;
+  }
+  return Date.now() - updatedAt > USER_DASHBOARD_TTL_MS;
+};
+
+const refreshUserDashboardSummary = async (options = {}) => {
+  ensureUserDashboardState();
+  if (!shouldRefreshUserDashboard(options)) {
+    const { summary, hasData } = resolveUserDashboardSummary();
+    renderUserDashboardMetrics(summary, hasData);
+    return summary;
+  }
+  if (userDashboardLoading) {
+    return null;
+  }
+  userDashboardLoading = true;
+  try {
+    const wunderBase = getWunderBase();
+    const endpoint = `${wunderBase}/admin/users`;
+    const response = await fetch(endpoint);
+    if (response.ok) {
+      const result = await response.json();
+      state.users.list = Array.isArray(result.users)
+        ? result.users.map(normalizeUserDashboardStats)
+        : [];
+      state.users.loaded = true;
+      state.users.updatedAt = Date.now();
+    }
+  } catch (error) {
+    state.users.updatedAt = Date.now();
+  } finally {
+    userDashboardLoading = false;
+    const { summary, hasData } = resolveUserDashboardSummary();
+    renderUserDashboardMetrics(summary, hasData);
+  }
+  return null;
+};
+
+// 计算所有会话累计 consumed token 数量
+const resolveTotalTokens = (sessions) =>
+  (sessions || []).reduce((sum, session) => sum + (resolveSessionConsumedTokens(session) || 0), 0);
+
+const parseMonitorTimestamp = (value) => {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const resolveMonitorDetailScopedEvents = (session, events) => {
+  const sourceEvents = Array.isArray(events) ? events.filter(Boolean) : [];
+  if (!sourceEvents.length) {
+    return [];
+  }
+  const sessionTraceId = String(session?.trace_id || "").trim();
+  const traceMatched = sessionTraceId
+    ? sourceEvents.filter((event) => {
+        const eventTraceId = String(
+          event?.trace_id ?? event?.data?.trace_id ?? event?.data?.data?.trace_id ?? ""
+        ).trim();
+        return eventTraceId && eventTraceId === sessionTraceId;
+      })
+    : [];
+  const traceEvents = traceMatched.length ? traceMatched : sourceEvents;
+  const declaredRounds = collectMonitorDetailRoundOptions(session, traceEvents);
+  const latestRound = declaredRounds.length ? declaredRounds[declaredRounds.length - 1] : 0;
+  const scopeEvents =
+    latestRound > 0
+      ? traceEvents.filter((event) => resolveMonitorEventRound(event) === latestRound)
+      : traceEvents;
+  const candidateEvents = scopeEvents.length ? scopeEvents : traceEvents;
+  const terminalIndex = candidateEvents.findIndex((event) => {
+    const eventType = String(event?.type || "").trim().toLowerCase();
+    return (
+      eventType === "turn_terminal" ||
+      eventType === "final" ||
+      eventType === "finished"
+    );
+  });
+  if (terminalIndex >= 0) {
+    return candidateEvents.slice(0, terminalIndex + 1);
+  }
+  return candidateEvents;
+};
+
+const resolveMonitorDetailTimeRange = (session, events) => {
+  let startMs = null;
+  let endMs = null;
+  resolveMonitorDetailScopedEvents(session, events).forEach((event) => {
+    const ts = parseMonitorTimestamp(event?.timestamp);
+    if (!Number.isFinite(ts)) {
+      return;
+    }
+    startMs = startMs === null ? ts : Math.min(startMs, ts);
+    endMs = endMs === null ? ts : Math.max(endMs, ts);
+  });
+  const fallbackStart = parseMonitorTimestamp(session?.start_time);
+  if (startMs === null && Number.isFinite(fallbackStart)) {
+    startMs = fallbackStart;
+  }
+  const fallbackEnd = parseMonitorTimestamp(session?.updated_time || session?.start_time);
+  if (endMs === null && Number.isFinite(fallbackEnd)) {
+    endMs = fallbackEnd;
+  }
+  if (startMs !== null && endMs !== null && endMs < startMs) {
+    const swapped = startMs;
+    startMs = endMs;
+    endMs = swapped;
+  }
+  return { startMs, endMs };
+};
+
+const resolveMonitorDetailElapsedSeconds = (session, events) => {
+  const fallback = parseMetricNumber(session?.elapsed_s);
+  if (Number.isFinite(fallback) && fallback >= 0) {
+    return fallback;
+  }
+  const { startMs, endMs } = resolveMonitorDetailTimeRange(session, events);
+  if (Number.isFinite(startMs) && Number.isFinite(endMs)) {
+    return Math.max(0, (endMs - startMs) / 1000);
+  }
+  return null;
+};
+
+const normalizeMonitorDetailCount = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+const resolveMonitorDetailToolCalls = (session, events) => {
+  const sessionCalls = parseMetricNumber(session?.tool_calls);
+  if (Number.isFinite(sessionCalls) && sessionCalls >= 0) {
+    return Math.round(sessionCalls);
+  }
+  let calls = 0;
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    if (event?.type === "tool_call") {
+      calls += 1;
+    }
+  });
+  if (calls <= 0) {
+    const fallback = parseMetricNumber(session?.tool_calls);
+    if (Number.isFinite(fallback)) {
+      calls = Math.max(0, Math.round(fallback));
+    }
+  }
+  return calls;
+};
+
+const resolveMonitorDetailQuota = (session, events) => {
+  const sessionQuota = parseMetricNumber(session?.model_request_count ?? session?.quota_used);
+  if (Number.isFinite(sessionQuota) && sessionQuota >= 0) {
+    return Math.round(sessionQuota);
+  }
+  let consumed = 0;
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    if (event?.type !== "quota_usage" && event?.type !== "model_request_usage") {
+      return;
+    }
+    const data = event?.data;
+    const rawIncrement =
+      data && typeof data === "object"
+        ? data.request_count ?? data.consumed ?? data.count ?? data.used
+        : null;
+    const increment = normalizeMonitorDetailCount(rawIncrement);
+    consumed += increment > 0 ? increment : 1;
+  });
+  if (consumed <= 0) {
+    const fallback = parseMetricNumber(
+      session?.quota_consumed ?? session?.quotaConsumed ?? session?.quota
+    );
+    if (Number.isFinite(fallback)) {
+      consumed = Math.max(0, Math.round(fallback));
+    }
+  }
+  return consumed;
+};
+
+const buildMonitorDetailTtftSummary = (ttftMs) => {
+  if (!Number.isFinite(ttftMs) || ttftMs <= 0) {
+    return "";
+  }
+  const durationText =
+    ttftMs < 1000 ? `${Math.max(1, Math.round(ttftMs))}ms` : formatDurationSeconds(ttftMs / 1000);
+  return t("monitor.session.ttft", {
+    duration: durationText,
+  });
+};
+
+const escapeMonitorDetailHtml = (value) =>
+  String(value ?? "-")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const resolveMonitorDetailAgentName = (session) =>
+  String(session?.agent_name || session?.agent_id || "-").trim() || "-";
+
+const buildMonitorDetailMeta = (session, events, { userRoundTotal, itemTotal }) => {
+  const items = [];
+  const add = (icon, label, value) => {
+    const text = String(value ?? "-").trim() || "-";
+    items.push(
+      `<div class="monitor-detail-overview-item"><i class="${icon}" aria-hidden="true"></i><div><span>${escapeMonitorDetailHtml(label)}</span><strong title="${escapeMonitorDetailHtml(text)}">${escapeMonitorDetailHtml(text)}</strong></div></div>`
+    );
+  };
+  add("fa-solid fa-user", t("monitor.detail.meta.userName"), session?.user_name || session?.username || session?.user_id);
+  add("fa-solid fa-robot", t("monitor.detail.meta.agent"), resolveMonitorDetailAgentName(session));
+  add("fa-solid fa-circle-info", t("monitor.detail.meta.status"), getSessionStatusLabel(session?.status));
+
+  const elapsedSeconds = resolveMonitorDetailElapsedSeconds(session, events);
+  add(
+    "fa-regular fa-clock",
+    t("monitor.detail.meta.elapsed"),
+    Number.isFinite(elapsedSeconds) ? formatDurationSeconds(elapsedSeconds) : "-"
+  );
+  add(
+    "fa-solid fa-arrow-rotate-right",
+    t("monitor.detail.meta.rounds"),
+    formatHeatmapCount(Number.isFinite(userRoundTotal) ? userRoundTotal : session?.user_rounds)
+  );
+  add(
+    "fa-solid fa-screwdriver-wrench",
+    t("monitor.detail.meta.tools"),
+    formatHeatmapCount(resolveMonitorDetailToolCalls(session, events))
+  );
+  add(
+    "fa-solid fa-coins",
+    t("monitor.detail.meta.quota"),
+    formatHeatmapCount(resolveMonitorDetailQuota(session, events))
+  );
+
+  const consumedTokens = resolveSessionConsumedTokens(session);
+  add(
+    "fa-solid fa-bolt",
+    t("monitor.detail.meta.tokens"),
+    Number.isFinite(consumedTokens) ? formatHeatmapCount(consumedTokens) : "0"
+  );
+
+  const ttftMs = parseMetricNumber(session?.ttft_ms);
+  add(
+    "fa-solid fa-bolt-lightning",
+    t("monitor.detail.meta.ttft"),
+    Number.isFinite(ttftMs) && ttftMs > 0
+      ? formatDurationSeconds(ttftMs / 1000)
+      : "-"
+  );
+
+  const prefillSpeed = parseMetricNumber(session?.prefill_speed_tps);
+  add(
+    "fa-solid fa-arrow-up",
+    t("monitor.detail.meta.prefill"),
+    Number.isFinite(prefillSpeed) && prefillSpeed > 0
+      ? formatTokenRate(prefillSpeed, { lowerBound: Boolean(session?.prefill_speed_lower_bound) })
+      : "-"
+  );
+
+  const decodeSpeed = parseMetricNumber(session?.decode_speed_tps);
+  add(
+    "fa-solid fa-arrow-down",
+    t("monitor.detail.meta.decode"),
+    Number.isFinite(decodeSpeed) && decodeSpeed > 0 ? formatTokenRate(decodeSpeed) : "-"
+  );
+  add(
+    "fa-solid fa-list",
+    t("monitor.detail.meta.events"),
+    formatHeatmapCount(Number.isFinite(itemTotal) ? itemTotal : events.length)
+  );
+  add("fa-solid fa-fingerprint", t("monitor.detail.meta.sessionId"), session?.session_id);
+
+  return `<div class="monitor-detail-overview-title"><i class="fa-solid fa-chart-simple" aria-hidden="true"></i>${escapeMonitorDetailHtml(t("monitor.detail.overview"))}</div><div class="monitor-detail-overview-grid">${items.join("")}</div>`;
+};
+
+// 鑾峰彇浼氳瘽鐨勫彲姣旇緝鏃堕棿鎴?
+const resolveSessionTimestamp = (session) => {
+  const updated = parseMonitorTimestamp(session?.updated_time);
+  if (updated) {
+    return updated;
+  }
+  const started = parseMonitorTimestamp(session?.start_time);
+  return started || null;
+};
+
+const filterSessionsByInterval = (sessions) => {
+  const timeRange = resolveMonitorTimeFilterRange();
+  if (timeRange) {
+    return (sessions || []).filter((session) => {
+      const timestamp = resolveSessionTimestamp(session);
+      if (!timestamp) {
+        return true;
+      }
+      return timestamp >= timeRange.start && timestamp <= timeRange.end;
+    });
+  }
+  const windowMs = getMonitorTimeRangeMs();
+  if (!windowMs) {
+    return sessions || [];
+  }
+  const cutoff = Date.now() - windowMs;
+  return (sessions || []).filter((session) => {
+    const timestamp = resolveSessionTimestamp(session);
+    if (!timestamp) {
+      return true;
+    }
+    return timestamp >= cutoff;
+  });
+};
+
+// 更新 token 瓒嬪娍鎶樼嚎鍥?
+const renderTokenTrendChart = () => {
+  if (!tokenTrendChart) {
+    return;
+  }
+  const { labels, values } = buildTokenSeries(state.monitor.sessions);
+  if (elements.serviceTokenChart) {
+    elements.serviceTokenChart.style.width = "100%";
+  }
+  const shouldApplyZoom = !state.monitor.tokenZoomLocked || !state.monitor.tokenZoomInitialized;
+  const option = {
+    grid: {
+      left: 42,
+      right: 16,
+      top: 20,
+      bottom: 24,
+    },
+    tooltip: {
+      trigger: "axis",
+      formatter: (params) => {
+        const point = params?.[0];
+        if (!point) {
+          return "";
+        }
+        return `${point.axisValue}<br/>Token ${formatTokenCount(point.data)}`;
+      },
+    },
+    xAxis: {
+      type: "category",
+      data: labels,
+      boundaryGap: false,
+      axisLabel: {
+        color: "#94a3b8",
+      },
+      axisTick: { show: false },
+      axisLine: { lineStyle: { color: "#e2e8f0" } },
+    },
+    yAxis: {
+      type: "value",
+      axisLabel: {
+        color: "#94a3b8",
+        formatter: (value) => formatTokenCount(value),
+      },
+      splitLine: {
+        lineStyle: { color: "#e2e8f0" },
+      },
+    },
+    series: [
+      {
+        name: "Token",
+        type: "line",
+        data: values,
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { color: "#3b82f6", width: 2 },
+        areaStyle: { color: "rgba(59, 130, 246, 0.15)" },
+      },
+    ],
+  };
+  if (shouldApplyZoom) {
+    const zoomConfig = {
+      id: "tokenZoom",
+      type: "inside",
+      xAxisIndex: 0,
+      filterMode: "none",
+    };
+    if (labels.length) {
+      const visiblePoints = Math.min(labels.length, TOKEN_TREND_MAX_BUCKETS + 1);
+      const startIndex = Math.max(0, labels.length - visiblePoints);
+      zoomConfig.startValue = labels[startIndex];
+      zoomConfig.endValue = labels[labels.length - 1];
+    }
+    option.dataZoom = [zoomConfig];
+  }
+  tokenTrendChart.setOption(option, false);
+  state.monitor.tokenZoomInitialized = true;
+  if (tokenTrendChart) {
+    tokenTrendChart.resize();
+  }
+};
+
+const ACTIVE_STATUSES = new Set(["running", "cancelling"]);
+const QUEUED_STATUSES = new Set(["queued", "waiting"]);
+const TERMINAL_STATUSES = new Set(["finished", "error", "cancelled"]);
+
+const normalizeSessionStatus = (status) =>
+  String(status || "")
+    .trim()
+    .toLowerCase();
+
+const statusMatches = (status, key) => {
+  const normalized = normalizeSessionStatus(status);
+  if (key === "active") {
+    return ACTIVE_STATUSES.has(normalized);
+  }
+  if (key === "queued") {
+    return QUEUED_STATUSES.has(normalized);
+  }
+  if (key === "history") {
+    return TERMINAL_STATUSES.has(normalized);
+  }
+  return normalized === key;
+};
+
+// 姹囨€荤嚎绋嬬姸鎬佸崰姣旓紝渚夸簬鍥捐〃灞曠ず
+const resolveStatusCounts = (sessions) => {
+  const counts = {
+    active: 0,
+    queued: 0,
+    finished: 0,
+    error: 0,
+    cancelled: 0,
+  };
+  (sessions || []).forEach((session) => {
+    const status = normalizeSessionStatus(session?.status);
+    if (statusMatches(status, "active")) {
+      counts.active += 1;
+      return;
+    }
+    if (statusMatches(status, "queued")) {
+      counts.queued += 1;
+      return;
+    }
+    if (status === "finished") {
+      counts.finished += 1;
+    } else if (status === "error") {
+      counts.error += 1;
+    } else if (status === "cancelled") {
+      counts.cancelled += 1;
+    }
+  });
+  return counts;
+};
+
+const buildStatusChartData = (counts) => {
+  const [activeLabel, queuedLabel, finishedLabel, failedLabel, cancelledLabel] =
+    getStatusLegend();
+  const raw = [
+    { value: counts.active, name: activeLabel, statusKey: "active" },
+    { value: counts.queued, name: queuedLabel, statusKey: "queued" },
+    { value: counts.finished, name: finishedLabel, statusKey: "finished" },
+    { value: counts.error, name: failedLabel, statusKey: "error" },
+    { value: counts.cancelled, name: cancelledLabel, statusKey: "cancelled" },
+  ];
+  const total = raw.reduce((sum, item) => sum + item.value, 0);
+  const visibleCount = raw.filter((item) => item.value > 0).length;
+  const normalized = raw.map((item) => {
+    if (item.value > 0) {
+      return item;
+    }
+    return {
+      ...item,
+      itemStyle: {
+        borderWidth: 0,
+      },
+      emphasis: { disabled: true },
+    };
+  });
+  if (total <= 0) {
+    return {
+      data: [
+        ...normalized,
+        {
+          value: 1,
+          name: STATUS_CHART_EMPTY_NAME,
+          itemStyle: {
+            color: STATUS_CHART_EMPTY_COLOR,
+            borderColor: "#e2e8f0",
+            borderWidth: 2,
+            borderRadius: 8,
+          },
+        },
+      ],
+      isEmpty: true,
+      visibleCount: 0,
+    };
+  }
+  return { data: normalized, isEmpty: false, visibleCount };
+};
+
+// 鏇存柊鏈嶅姟鐘舵€佸崰姣斿浘琛?
+const renderServiceStatusChart = (service, sessions) => {
+  if (!statusChart) {
+    return;
+  }
+  const counts = Array.isArray(sessions)
+    ? resolveStatusCounts(sessions)
+    : {
+        active: Number(service?.active_sessions) || 0,
+        queued: Number(service?.queued_sessions) || 0,
+        finished: Number(service?.finished_sessions) || 0,
+        error: Number(service?.error_sessions) || 0,
+        cancelled: Number(service?.cancelled_sessions) || 0,
+      };
+  const { data, isEmpty, visibleCount } = buildStatusChartData(counts);
+  latestStatusChartData = { data, isEmpty };
+  const padAngle = isEmpty || visibleCount <= 1 ? 0 : 1;
+  const ringStyle = isEmpty
+    ? {
+        borderColor: "#e2e8f0",
+        borderWidth: 2,
+        borderRadius: 8,
+        shadowBlur: 0,
+      }
+    : {
+        borderColor: "rgba(15, 23, 42, 0.6)",
+        borderWidth: 2,
+        borderRadius: 6,
+        shadowBlur: 0,
+      };
+  statusChart.setOption(
+    {
+      tooltip: {
+        trigger: "item",
+        show: !isEmpty,
+        backgroundColor: "rgba(15, 23, 42, 0.95)",
+        borderColor: "rgba(59, 130, 246, 0.35)",
+        textStyle: { color: "#e2e8f0" },
+      },
+      legend: {
+        bottom: 2,
+        show: true,
+        icon: "circle",
+        itemWidth: 8,
+        itemHeight: 8,
+        data: getStatusLegend(),
+        textStyle: {
+          color: "#64748b",
+          fontSize: 13,
+        },
+      },
+      series: [
+        {
+          type: "pie",
+          radius: ["52%", "78%"],
+          center: ["50%", "45%"],
+          avoidLabelOverlap: true,
+          label: { show: false },
+          emphasis: {
+            label: {
+              show: !isEmpty,
+              fontSize: 12,
+              formatter: "{b}: {c}",
+              color: "#f8fafc",
+            },
+          },
+          labelLine: { show: false },
+          padAngle,
+          itemStyle: ringStyle,
+          data,
+          color: STATUS_CHART_COLORS,
+          silent: isEmpty,
+        },
+      ],
+    },
+    true
+  );
+};
+
+const renderServiceCharts = (service, sessions) => {
+  updateMonitorChartTitles();
+  const scopedSessions = filterSessionsByInterval(sessions);
+  const totalTokens = resolveTotalTokens(scopedSessions);
+  if (elements.metricServiceTokenTotal) {
+    elements.metricServiceTokenTotal.textContent = formatTokenCount(totalTokens);
+  }
+  if (!ensureMonitorCharts()) {
+    return;
+  }
+  renderTokenTrendChart();
+  renderServiceStatusChart(service, scopedSessions);
+  resizeMonitorCharts();
+};
+
+const resizeMonitorCharts = () => {
+  if (tokenTrendChart) {
+    renderTokenTrendChart();
+  }
+  if (statusChart) {
+    statusChart.resize();
+  }
+  renderToolHeatmap(state.monitor.toolStats);
+};
+
+const getSessionStatusLabel = (status) => {
+  const normalized = normalizeSessionStatus(status);
+  const mapping = {
+    running: t("monitor.sessionStatus.running"),
+    cancelling: t("monitor.sessionStatus.cancelling"),
+    queued: t("monitor.sessionStatus.queued"),
+    waiting: t("monitor.sessionStatus.queued"),
+    finished: t("monitor.sessionStatus.finished"),
+    error: t("monitor.sessionStatus.error"),
+    cancelled: t("monitor.sessionStatus.cancelled"),
+  };
+  return mapping[normalized] || normalized || "-";
+};
+
+const buildStatusBadge = (status) => {
+  const span = document.createElement("span");
+  const normalized = normalizeSessionStatus(status);
+  const className = statusMatches(normalized, "queued") ? "queued" : normalized;
+  span.className = `monitor-status ${className}`;
+  span.textContent = getSessionStatusLabel(status);
+  return span;
+};
+
+const sortSessionsByUpdate = (sessions) =>
+  [...sessions].sort((a, b) => new Date(b.updated_time).getTime() - new Date(a.updated_time).getTime());
+
+const filterSessionsByUser = (sessions) => {
+  const userId = String(state.monitor.userFilter || "").trim();
+  if (!userId) {
+    return sessions;
+  }
+  return (sessions || []).filter((session) => String(session?.user_id || "") === userId);
+};
+
+const normalizeMonitorSessionStatusFilter = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (
+    ["all", "active", "queued", "history", "finished", "error", "cancelled"].includes(
+      normalized
+    )
+  ) {
+    return normalized;
+  }
+  return "all";
+};
+
+const normalizeMonitorFeedbackFilter = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (["all", "up", "down", "none", "mixed"].includes(normalized)) {
+    return normalized;
+  }
+  return "all";
+};
+
+const resolveSessionFeedbackCounts = (session) => {
+  const up = Math.max(0, Math.floor(Number(session?.feedback_up_count) || 0));
+  const down = Math.max(0, Math.floor(Number(session?.feedback_down_count) || 0));
+  const totalRaw = Number(session?.feedback_total_count);
+  const total =
+    Number.isFinite(totalRaw) && totalRaw >= 0 ? Math.floor(totalRaw) : up + down;
+  return { up, down, total };
+};
+
+const resolveSessionFeedbackStatus = (session) => {
+  const normalized = String(session?.feedback_status || "")
+    .trim()
+    .toLowerCase();
+  if (["up", "down", "mixed", "none"].includes(normalized)) {
+    return normalized;
+  }
+  const counts = resolveSessionFeedbackCounts(session);
+  if (counts.total <= 0) return "none";
+  if (counts.up > 0 && counts.down > 0) return "mixed";
+  if (counts.up > 0) return "up";
+  if (counts.down > 0) return "down";
+  return "none";
+};
+
+const filterSessionsByStatus = (sessions) => {
+  const filter = normalizeMonitorSessionStatusFilter(
+    state.monitor.sessionStatusFilter
+  );
+  if (filter === "all") {
+    return sessions;
+  }
+  if (filter === "active") {
+    return (sessions || []).filter((session) => statusMatches(session?.status, "active"));
+  }
+  if (filter === "queued") {
+    return (sessions || []).filter((session) => statusMatches(session?.status, "queued"));
+  }
+  if (filter === "history") {
+    return (sessions || []).filter((session) => statusMatches(session?.status, "history"));
+  }
+  return (sessions || []).filter((session) => {
+    if (filter === "finished") return statusMatches(session?.status, "finished");
+    if (filter === "error") return statusMatches(session?.status, "error");
+    if (filter === "cancelled") return statusMatches(session?.status, "cancelled");
+    return true;
+  });
+};
+
+const filterSessionsByFeedback = (sessions) => {
+  const filter = normalizeMonitorFeedbackFilter(state.monitor.feedbackFilter);
+  if (filter === "all") {
+    return sessions;
+  }
+  return (sessions || []).filter((session) => {
+    const feedbackStatus = resolveSessionFeedbackStatus(session);
+    if (filter === "none") return feedbackStatus === "none";
+    return feedbackStatus === filter;
+  });
+};
+
+const buildSessionFeedbackSummary = (session) => {
+  const counts = resolveSessionFeedbackCounts(session);
+  if (counts.total <= 0) {
+    return t("monitor.feedback.none");
+  }
+  return `${t("monitor.feedback.up")} ${counts.up} / ${t("monitor.feedback.down")} ${counts.down}`;
+};
+
+const syncMonitorSessionFilterInputs = () => {
+  if (elements.monitorStatusFilter) {
+    elements.monitorStatusFilter.value = normalizeMonitorSessionStatusFilter(
+      state.monitor.sessionStatusFilter
+    );
+  }
+  if (elements.monitorFeedbackFilter) {
+    elements.monitorFeedbackFilter.value = normalizeMonitorFeedbackFilter(
+      state.monitor.feedbackFilter
+    );
+  }
+};
+
+// 璇诲彇鍒嗛〉閰嶇疆锛岀‘淇濆垎椤靛昂瀵镐负姝ｆ暣鏁?
+const resolveMonitorPageSize = () => {
+  const rawValue = Math.floor(Number(state.monitor.pagination?.pageSize));
+  if (!Number.isFinite(rawValue) || rawValue <= 0) {
+    return DEFAULT_MONITOR_SESSION_PAGE_SIZE;
+  }
+  return rawValue;
+};
+
+const clampMonitorPage = (value, totalPages) => {
+  const page = Number(value);
+  if (!Number.isFinite(page) || page < 1) {
+    return 1;
+  }
+  if (!Number.isFinite(totalPages) || totalPages <= 0) {
+    return 1;
+  }
+  return Math.min(page, totalPages);
+};
+
+const resolveMonitorPageSlice = (sessions, pageKey, options = {}) => {
+  const { sorted = false } = options;
+  const pageSize = resolveMonitorPageSize();
+  const total = Array.isArray(sessions) ? sessions.length : 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const currentPage = clampMonitorPage(state.monitor.pagination?.[pageKey], totalPages);
+  if (state.monitor.pagination) {
+    state.monitor.pagination[pageKey] = currentPage;
+  }
+  const ordered = sorted ? sessions || [] : sortSessionsByUpdate(sessions || []);
+  const startIndex = (currentPage - 1) * pageSize;
+  const pageSessions = ordered.slice(startIndex, startIndex + pageSize);
+  return { total, totalPages, currentPage, pageSize, sessions: pageSessions };
+};
+
+const resolveMonitorPaginationElement = (key, id) => {
+  if (elements[key]) {
+    return elements[key];
+  }
+  const node = document.getElementById(id);
+  if (node) {
+    elements[key] = node;
+  }
+  return node;
+};
+
+const getMonitorPaginationElements = (type) => {
+  if (type !== "active") return null;
+  return {
+    container: resolveMonitorPaginationElement(
+      "monitorActivePagination",
+      "monitorActivePagination"
+    ),
+    info: resolveMonitorPaginationElement("monitorActivePageInfo", "monitorActivePageInfo"),
+    prev: resolveMonitorPaginationElement("monitorActivePrevBtn", "monitorActivePrevBtn"),
+    next: resolveMonitorPaginationElement("monitorActiveNextBtn", "monitorActiveNextBtn"),
+  };
+};
+
+const renderMonitorPagination = (type, pageData) => {
+  const controls = getMonitorPaginationElements(type);
+  if (!controls?.container || !controls.info || !controls.prev || !controls.next) {
+    return;
+  }
+  if (!pageData || pageData.total <= 0) {
+    controls.container.style.display = "none";
+    return;
+  }
+  controls.container.style.display = "flex";
+  controls.info.textContent = t("pagination.info", {
+    total: pageData.total,
+    current: pageData.currentPage,
+    pages: pageData.totalPages,
+    size: pageData.pageSize,
+  });
+  controls.prev.disabled = pageData.currentPage <= 1;
+  controls.next.disabled = pageData.currentPage >= pageData.totalPages;
+};
+
+const renderMonitorTable = (body, emptyNode, sessions, options = {}) => {
+  const { emptyText = t("common.noData"), skipSort = false } = options;
+  if (!body || !emptyNode) {
+    return;
+  }
+  body.textContent = "";
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    emptyNode.textContent = emptyText;
+    emptyNode.style.display = "block";
+    return;
+  }
+  emptyNode.style.display = "none";
+  const sorted = skipSort ? sessions : sortSessionsByUpdate(sessions);
+  sorted.forEach((session) => {
+    const row = document.createElement("tr");
+    const startCell = document.createElement("td");
+    startCell.textContent = formatTimestamp(session.start_time);
+    const sessionCell = document.createElement("td");
+    const rawSessionId = session.session_id || "";
+    sessionCell.textContent = rawSessionId ? rawSessionId.slice(0, 4) : "-";
+    if (rawSessionId) {
+      sessionCell.title = rawSessionId;
+    }
+    const userCell = document.createElement("td");
+    userCell.textContent = session.user_id || "-";
+    const questionCell = document.createElement("td");
+    questionCell.textContent = session.question || "-";
+    const statusCell = document.createElement("td");
+    statusCell.appendChild(buildStatusBadge(session.status || ""));
+    const feedbackCell = document.createElement("td");
+    feedbackCell.textContent = buildSessionFeedbackSummary(session);
+    const tokenCell = document.createElement("td");
+    tokenCell.textContent = formatTokenCount(resolveSessionConsumedTokens(session));
+    const elapsedCell = document.createElement("td");
+    elapsedCell.textContent = formatDuration(session.elapsed_s);
+    const stageCell = document.createElement("td");
+    stageCell.textContent = session.stage || "-";
+    const actionCell = document.createElement("td");
+    appendQueuePriorityAction(actionCell, session, loadMonitorData);
+    if (statusMatches(session.status, "active") || statusMatches(session.status, "queued")) {
+      const btn = document.createElement("button");
+      btn.className = "danger";
+      btn.textContent = t("monitor.actions.cancel");
+      btn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        requestCancelSession(session.session_id);
+      });
+      actionCell.appendChild(btn);
+    } else {
+      const btn = document.createElement("button");
+      btn.className = "danger";
+      btn.textContent = t("monitor.actions.delete");
+      btn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        requestDeleteSession(session.session_id);
+      });
+      actionCell.appendChild(btn);
+    }
+    row.appendChild(startCell);
+    row.appendChild(sessionCell);
+    row.appendChild(userCell);
+    row.appendChild(questionCell);
+    row.appendChild(statusCell);
+    row.appendChild(feedbackCell);
+    row.appendChild(tokenCell);
+    row.appendChild(elapsedCell);
+    row.appendChild(stageCell);
+    row.appendChild(actionCell);
+    row.addEventListener("click", () => {
+      if (!session.session_id) {
+        return;
+      }
+      openMonitorDetail(session.session_id);
+    });
+    body.appendChild(row);
+  });
+};
+
+const renderMonitorSessions = (sessions) => {
+  if (!elements.monitorTableBody || !elements.monitorEmpty) {
+    return;
+  }
+  syncMonitorSessionFilterInputs();
+  const filteredByUser = filterSessionsByUser(sessions || []);
+  const filteredByStatus = filterSessionsByStatus(filteredByUser);
+  const filteredByFeedback = filterSessionsByFeedback(filteredByStatus);
+  const activePage = resolveMonitorPageSlice(filteredByFeedback, "activePage");
+  renderMonitorTable(elements.monitorTableBody, elements.monitorEmpty, activePage.sessions, {
+    emptyText: t("monitor.empty.sessions"),
+  });
+  renderMonitorPagination("active", activePage);
+};
+
+const updateMonitorPage = (pageKey, delta) => {
+  ensureMonitorState();
+  const current = Number(state.monitor.pagination?.[pageKey]) || 1;
+  const nextPage = Math.max(1, current + delta);
+  if (state.monitor.pagination) {
+    state.monitor.pagination[pageKey] = nextPage;
+  }
+  renderMonitorSessions(state.monitor.sessions);
+};
+
+// 缁戝畾鍒嗛〉鎸夐挳浜嬩欢锛岄伩鍏嶉噸澶嶆煡鎵?DOM
+const bindMonitorPagination = () => {
+  if (elements.monitorActivePrevBtn) {
+    elements.monitorActivePrevBtn.addEventListener("click", () => {
+      updateMonitorPage("activePage", -1);
+    });
+  }
+  if (elements.monitorActiveNextBtn) {
+    elements.monitorActiveNextBtn.addEventListener("click", () => {
+      updateMonitorPage("activePage", 1);
+    });
+  }
+};
+
+const bindMonitorSessionFilters = () => {
+  if (elements.monitorStatusFilter) {
+    elements.monitorStatusFilter.addEventListener("change", () => {
+      ensureMonitorState();
+      state.monitor.sessionStatusFilter = normalizeMonitorSessionStatusFilter(
+        elements.monitorStatusFilter.value
+      );
+      if (state.monitor.pagination) {
+        state.monitor.pagination.activePage = 1;
+      }
+      renderMonitorSessions(state.monitor.sessions);
+    });
+  }
+  if (elements.monitorFeedbackFilter) {
+    elements.monitorFeedbackFilter.addEventListener("change", () => {
+      ensureMonitorState();
+      state.monitor.feedbackFilter = normalizeMonitorFeedbackFilter(
+        elements.monitorFeedbackFilter.value
+      );
+      if (state.monitor.pagination) {
+        state.monitor.pagination.activePage = 1;
+      }
+      renderMonitorSessions(state.monitor.sessions);
+    });
+  }
+};
+
+const resolveStatusKey = (label) => getStatusLabelToKey()[label] || "";
+
+const matchSessionByStatusKey = (session, key) => {
+  return statusMatches(session?.status, key);
+};
+
+const renderMonitorStatusList = (sessions) => {
+  if (!elements.monitorStatusList) {
+    return;
+  }
+  elements.monitorStatusList.textContent = "";
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    elements.monitorStatusList.textContent = t("common.noRecords");
+    return;
+  }
+  sortSessionsByUpdate(sessions).forEach((session) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "list-item monitor-status-item";
+
+    const header = document.createElement("div");
+    header.className = "monitor-status-item-header";
+    const title = document.createElement("div");
+    title.className = "monitor-status-item-title";
+    title.textContent = session?.question || t("monitor.session.noQuestion");
+    const badge = buildStatusBadge(session?.status || "");
+    header.appendChild(title);
+    header.appendChild(badge);
+
+    const metaParts = [];
+    metaParts.push(session?.session_id || "-");
+    metaParts.push(session?.user_id || "-");
+    const timeText = formatTimestamp(session?.updated_time || session?.start_time);
+    if (timeText && timeText !== "-") {
+      metaParts.push(timeText);
+    }
+    const meta = document.createElement("small");
+    meta.textContent = metaParts.join(" · ");
+
+    const detailParts = [];
+    const tokenText = formatTokenCount(resolveSessionConsumedTokens(session));
+    if (tokenText && tokenText !== "-") {
+      detailParts.push(t("monitor.session.consumedTokens", { token: tokenText }));
+    }
+    const elapsedText = formatDuration(session?.elapsed_s);
+    if (elapsedText && elapsedText !== "-") {
+      detailParts.push(t("monitor.session.elapsed", { elapsed: elapsedText }));
+    }
+    const ttftMs = parseMetricNumber(session?.ttft_ms);
+    const ttftSummary = buildMonitorDetailTtftSummary(ttftMs);
+    if (ttftSummary) {
+      detailParts.push(ttftSummary);
+    }
+    const prefillSpeed = parseMetricNumber(session?.prefill_speed_tps);
+    if (Number.isFinite(prefillSpeed) && prefillSpeed > 0) {
+      detailParts.push(
+        t("monitor.session.prefillSpeed", { speed: formatTokenRate(prefillSpeed) })
+      );
+    }
+    const decodeSpeed = parseMetricNumber(session?.decode_speed_tps);
+    if (Number.isFinite(decodeSpeed) && decodeSpeed > 0) {
+      detailParts.push(
+        t("monitor.session.decodeSpeed", { speed: formatTokenRate(decodeSpeed) })
+      );
+    }
+    if (session?.stage) {
+      detailParts.push(t("monitor.session.stage", { stage: session.stage }));
+    }
+    const detail = document.createElement("small");
+    detail.textContent = detailParts.join(" · ");
+
+    item.appendChild(header);
+    item.appendChild(meta);
+    if (detailParts.length) {
+      item.appendChild(detail);
+    }
+    item.addEventListener("click", () => {
+      if (!session?.session_id) {
+        return;
+      }
+      openMonitorDetail(session.session_id);
+    });
+    elements.monitorStatusList.appendChild(item);
+  });
+};
+
+// 瑙ｆ瀽宸ュ叿璋冪敤浼氳瘽鐨勬椂闂存埑锛屼紭鍏堜娇鐢ㄦ渶杩戣皟鐢ㄦ椂闂?
+const resolveToolSessionTimestamp = (session) => {
+  const raw = session?.last_time || session?.updated_time || session?.start_time;
+  const parsed = new Date(raw).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+// 娓叉煋宸ュ叿璋冪敤浼氳瘽鍒楄〃锛屼繚鎸佷笌绾跨▼鐘舵€佸脊绐椾竴鑷寸殑椋庢牸
+const renderMonitorToolList = (sessions, toolName = "") => {
+  if (!elements.monitorToolList) {
+    return;
+  }
+  const focusToolName = String(toolName || "").trim();
+  elements.monitorToolList.textContent = "";
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    elements.monitorToolList.textContent = t("common.noRecords");
+    return;
+  }
+  [...sessions]
+    .sort((a, b) => resolveToolSessionTimestamp(b) - resolveToolSessionTimestamp(a))
+    .forEach((session) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "list-item monitor-status-item";
+
+      const header = document.createElement("div");
+      header.className = "monitor-status-item-header";
+      const title = document.createElement("div");
+      title.className = "monitor-status-item-title";
+    title.textContent = session?.question || t("monitor.session.noQuestion");
+      const badge = buildStatusBadge(session?.status || "");
+      header.appendChild(title);
+      header.appendChild(badge);
+
+      const metaParts = [];
+      metaParts.push(session?.session_id || "-");
+      metaParts.push(session?.user_id || "-");
+      const timeText = formatTimestamp(
+        session?.last_time || session?.updated_time || session?.start_time
+      );
+      if (timeText && timeText !== "-") {
+        metaParts.push(timeText);
+      }
+      const meta = document.createElement("small");
+      meta.textContent = metaParts.join(" · ");
+
+      const detailParts = [];
+      detailParts.push(
+        t("monitor.tool.calls", { count: formatHeatmapCount(session?.tool_calls) })
+      );
+      const tokenText = formatTokenCount(resolveSessionContextTokens(session));
+      if (tokenText && tokenText !== "-") {
+        detailParts.push(`Token ${tokenText}`);
+      }
+      const elapsedText = formatDuration(session?.elapsed_s);
+      if (elapsedText && elapsedText !== "-") {
+        detailParts.push(t("monitor.session.elapsed", { elapsed: elapsedText }));
+      }
+      const ttftMs = parseMetricNumber(session?.ttft_ms);
+      const ttftSummary = buildMonitorDetailTtftSummary(ttftMs);
+      if (ttftSummary) {
+        detailParts.push(ttftSummary);
+      }
+      const prefillSpeed = parseMetricNumber(session?.prefill_speed_tps);
+      if (Number.isFinite(prefillSpeed) && prefillSpeed > 0) {
+        detailParts.push(
+          t("monitor.session.prefillSpeed", { speed: formatTokenRate(prefillSpeed) })
+        );
+      }
+      const decodeSpeed = parseMetricNumber(session?.decode_speed_tps);
+      if (Number.isFinite(decodeSpeed) && decodeSpeed > 0) {
+        detailParts.push(
+          t("monitor.session.decodeSpeed", { speed: formatTokenRate(decodeSpeed) })
+        );
+      }
+      if (session?.stage) {
+        detailParts.push(t("monitor.session.stage", { stage: session.stage }));
+      }
+      const detail = document.createElement("small");
+      detail.textContent = detailParts.join(" · ");
+
+      item.appendChild(header);
+      item.appendChild(meta);
+      if (detailParts.length) {
+        item.appendChild(detail);
+      }
+      item.addEventListener("click", () => {
+        if (!session?.session_id) {
+          return;
+        }
+        openMonitorDetail(session.session_id, { focusTool: focusToolName });
+      });
+      elements.monitorToolList.appendChild(item);
+    });
+};
+
+// 鑾峰彇鎸囧畾宸ュ叿鐨勮皟鐢ㄤ細璇濆垪琛?
+const fetchMonitorToolSessions = async (toolName) => {
+  const wunderBase = getWunderBase();
+  const params = new URLSearchParams({ tool: toolName });
+  const timeRange = resolveMonitorTimeFilterRange();
+  if (timeRange) {
+    params.set("start_time", (timeRange.start / 1000).toFixed(3));
+    params.set("end_time", (timeRange.end / 1000).toFixed(3));
+  } else {
+    params.set("tool_hours", String(getMonitorTimeRangeHours()));
+  }
+  const endpoint = `${wunderBase}/admin/monitor/tool_usage?${params.toString()}`;
+  const response = await fetch(endpoint);
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  const result = await response.json();
+  return {
+    sessions: Array.isArray(result.sessions) ? result.sessions : [],
+    toolName: String(result.tool_name || toolName || "").trim(),
+  };
+};
+
+// 打开工具调用明细弹窗
+const openMonitorToolModal = async (toolName) => {
+  if (!elements.monitorToolModal) {
+    return;
+  }
+  const cleaned = String(toolName || "").trim();
+  if (!cleaned) {
+    return;
+  }
+  closeMonitorDetail();
+  closeMonitorStatusModal();
+  if (elements.monitorToolTitle) {
+    elements.monitorToolTitle.textContent = t("monitor.toolModal.title", { tool: cleaned });
+  }
+  if (elements.monitorToolMeta) {
+    const windowLabel = getMonitorTimeWindowLabel();
+    elements.monitorToolMeta.textContent = t("monitor.toolModal.meta.loading", {
+      label: windowLabel,
+    });
+  }
+  if (elements.monitorToolList) {
+    elements.monitorToolList.textContent = t("common.loading");
+  }
+  elements.monitorToolModal.classList.add("active");
+  try {
+    const { sessions, toolName: focusToolName } = await fetchMonitorToolSessions(cleaned);
+    if (elements.monitorToolMeta) {
+      const windowLabel = getMonitorTimeWindowLabel();
+      elements.monitorToolMeta.textContent = t("monitor.toolModal.meta.total", {
+        label: windowLabel,
+        total: sessions.length,
+      });
+    }
+    renderMonitorToolList(sessions, focusToolName || cleaned);
+  } catch (error) {
+    appendLog(t("monitor.toolDetailLoadFailed", { message: error.message }));
+    if (elements.monitorToolList) {
+      elements.monitorToolList.textContent = t("common.loadFailed");
+    }
+  }
+};
+
+// 关闭工具调用弹窗
+const closeMonitorToolModal = () => {
+  elements.monitorToolModal?.classList.remove("active");
+};
+
+// 鎵撳紑绾跨▼鐘舵€佹槑缁嗗脊绐楋紝鏄剧ず瀵瑰簲鐘舵€佺殑浼氳瘽璁板綍
+const openMonitorStatusModal = (statusKey, label = "") => {
+  if (!elements.monitorStatusModal) {
+    return;
+  }
+  const key = String(statusKey || "").trim();
+  if (!key) {
+    return;
+  }
+  closeMonitorDetail();
+  closeMonitorToolModal();
+  const displayLabel = label || getStatusLegend()[
+    ["active", "queued", "finished", "error", "cancelled"].indexOf(key)
+  ] || key;
+  const scopedSessions = filterSessionsByInterval(state.monitor.sessions || []);
+  const matchedSessions = scopedSessions.filter((session) => matchSessionByStatusKey(session, key));
+  if (elements.monitorStatusTitle) {
+    elements.monitorStatusTitle.textContent = t("monitor.statusModal.title", { status: displayLabel });
+  }
+  if (elements.monitorStatusMeta) {
+    const windowLabel = getMonitorTimeWindowLabel();
+    elements.monitorStatusMeta.textContent = t("monitor.statusModal.meta.total", {
+      label: windowLabel,
+      total: matchedSessions.length,
+    });
+  }
+  renderMonitorStatusList(matchedSessions);
+  elements.monitorStatusModal.classList.add("active");
+};
+
+// 鍏抽棴绾跨▼鐘舵€佹槑缁嗗脊绐?
+const closeMonitorStatusModal = () => {
+  elements.monitorStatusModal?.classList.remove("active");
+};
+
+export const loadMonitorData = async (options = {}) => {
+  if (monitorLoadPromise) {
+    return monitorLoadPromise;
+  }
+  monitorLoadPromise = (async () => {
+    ensureMonitorState();
+    const mode = options?.mode === "sessions" ? "sessions" : "full";
+    const wunderBase = getWunderBase();
+    const toolListPromise =
+      mode === "full"
+        ? loadAvailableTools().catch((error) => {
+            appendLog(t("monitor.toolListLoadFailed", { message: error.message }));
+            return null;
+          })
+        : Promise.resolve(null);
+    const params = new URLSearchParams({ active_only: "false" });
+    const timeRange = resolveMonitorTimeFilterRange();
+    if (timeRange) {
+      params.set("start_time", (timeRange.start / 1000).toFixed(3));
+      params.set("end_time", (timeRange.end / 1000).toFixed(3));
+    } else {
+      const toolHours = getMonitorTimeRangeHours();
+      params.set("tool_hours", String(toolHours));
+    }
+    const endpoint = `${wunderBase}/admin/monitor?${params.toString()}`;
+    const response = await fetch(endpoint);
+    if (!response.ok) {
+      throw new Error(t("common.requestFailed", { status: response.status }));
+    }
+    const result = await response.json();
+    const sessions = Array.isArray(result.sessions) ? result.sessions : [];
+    state.monitor.sessions = sessions;
+    if (mode === "full") {
+      renderMonitorMetrics(result.system);
+      renderServiceMetrics(result.service);
+      refreshUserDashboardSummary({ silent: true });
+      state.monitor.serviceSnapshot = result.service || null;
+      state.monitor.toolStats = Array.isArray(result.tool_stats) ? result.tool_stats : [];
+      recordTokenDeltas(sessions);
+    }
+    renderMonitorSessions(state.monitor.sessions);
+    if (mode === "full") {
+      if (elements.metricServiceTokenTotal) {
+        renderServiceCharts(result.service, state.monitor.sessions);
+      }
+      renderToolHeatmap(state.monitor.toolStats);
+      toolListPromise.then((tools) => {
+        if (!tools) {
+          return;
+        }
+        renderToolHeatmap(state.monitor.toolStats);
+      });
+    }
+  })();
+  try {
+    await monitorLoadPromise;
+  } finally {
+    monitorLoadPromise = null;
+  }
+};
+
+// 鍒囨崲鐢ㄦ埛绛涢€夋潯浠跺苟鍗虫椂鍒锋柊绾跨▼琛ㄦ牸
+export const setMonitorUserFilter = (userId) => {
+  ensureMonitorState();
+  state.monitor.userFilter = String(userId || "").trim();
+  if (state.monitor.pagination) {
+    state.monitor.pagination.activePage = 1;
+  }
+  renderMonitorSessions(state.monitor.sessions);
+};
+
+export const toggleMonitorPolling = (enabled, options = {}) => {
+  const mode = options?.mode === "sessions" ? "sessions" : "full";
+  const intervalMs =
+    typeof options?.intervalMs === "number" && options.intervalMs > 0
+      ? options.intervalMs
+      : APP_CONFIG.monitorPollIntervalMs;
+  const immediate = options?.immediate !== false;
+  if (enabled) {
+    const shouldRestart =
+      !state.runtime.monitorPollTimer ||
+      monitorPollMode !== mode ||
+      monitorPollIntervalMs !== intervalMs;
+    if (state.runtime.monitorPollTimer && shouldRestart) {
+      clearInterval(state.runtime.monitorPollTimer);
+      state.runtime.monitorPollTimer = null;
+    }
+    monitorPollMode = mode;
+    monitorPollIntervalMs = intervalMs;
+    if (!state.runtime.monitorPollTimer) {
+      if (immediate) {
+        loadMonitorData({ mode }).catch((error) => {
+          appendLog(t("monitor.refreshFailed", { message: error.message }));
+        });
+      }
+      state.runtime.monitorPollTimer = setInterval(() => {
+        loadMonitorData({ mode }).catch(() => {});
+      }, intervalMs);
+    }
+  } else if (state.runtime.monitorPollTimer) {
+    clearInterval(state.runtime.monitorPollTimer);
+    state.runtime.monitorPollTimer = null;
+  }
+};
+
+const escapeMonitorHtml = (value) =>
+  String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const unwrapMonitorEventData = (payload) => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return payload;
+  }
+  const hasSessionId = typeof payload.session_id === "string" && payload.session_id.trim();
+  const hasTimestamp = typeof payload.timestamp === "string" && payload.timestamp.trim();
+  const inner = payload.data;
+  if (hasSessionId && hasTimestamp && inner && typeof inner === "object") {
+    return inner;
+  }
+  return payload;
+};
+
+const MONITOR_TIMESTAMP_RE =
+  /\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})?)\]/g;
+
+const highlightMonitorTimestamps = (detailText) =>
+  escapeMonitorHtml(detailText).replace(
+    MONITOR_TIMESTAMP_RE,
+    '<span class="log-timestamp">[$1]</span>'
+  );
+
+const normalizeMonitorToolName = (value) => String(value || "").trim().toLowerCase();
+
+const fallbackMonitorEventDataText = (value) => {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return `[array(${value.length})]`;
+  }
+  if (typeof value === "object") {
+    try {
+      const keys = Object.keys(value);
+      if (keys.length === 0) {
+        return "{}";
+      }
+      const preview = {};
+      keys.slice(0, 8).forEach((key) => {
+        const field = value[key];
+        if (field === null || field === undefined) {
+          preview[key] = field;
+          return;
+        }
+        if (typeof field === "string" || typeof field === "number" || typeof field === "boolean") {
+          preview[key] = field;
+          return;
+        }
+        if (typeof field === "bigint") {
+          preview[key] = field.toString();
+          return;
+        }
+        if (Array.isArray(field)) {
+          preview[key] = `[array(${field.length})]`;
+          return;
+        }
+        preview[key] = "[object]";
+      });
+      if (keys.length > 8) {
+        preview.__extra_keys__ = keys.length - 8;
+      }
+      const text = JSON.stringify(preview);
+      return typeof text === "string" ? text : "{...}";
+    } catch (_error) {
+      return "{...}";
+    }
+  }
+  return String(value);
+};
+
+// Safely serialize event payloads to avoid "[object Object]" in log title/detail.
+const safeStringifyMonitorEventData = (value, pretty = false) => {
+  const seen = new WeakSet();
+  try {
+    const text = JSON.stringify(
+      value,
+      (_key, current) => {
+        if (typeof current === "bigint") {
+          return current.toString();
+        }
+        if (typeof current === "function") {
+          return `[Function ${current.name || "anonymous"}]`;
+        }
+        if (typeof current === "symbol") {
+          return String(current);
+        }
+        if (current instanceof Error) {
+          return {
+            name: current.name,
+            message: current.message,
+            stack: current.stack,
+          };
+        }
+        if (current && typeof current === "object") {
+          if (seen.has(current)) {
+            return "[Circular]";
+          }
+          seen.add(current);
+          if (current instanceof Map) {
+            return Object.fromEntries(current);
+          }
+          if (current instanceof Set) {
+            return Array.from(current);
+          }
+        }
+        return current;
+      },
+      pretty ? 2 : undefined
+    );
+    if (typeof text === "string") {
+      return text;
+    }
+  } catch (_error) {
+    // Ignore and fallback to structured preview.
+  }
+  return fallbackMonitorEventDataText(value);
+};
+
+// 格式化事件数据为可展示文本，确保异常数据不会打断渲染
+const stringifyMonitorEventData = (data) => {
+  const resolved = unwrapMonitorEventData(data);
+  if (typeof resolved === "string") {
+    return resolved;
+  }
+  return safeStringifyMonitorEventData(resolved, false);
+};
+
+const MONITOR_EVENT_TITLE_MAX_LENGTH = 120;
+
+const truncateMonitorEventTitle = (value) => {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) {
+    return "";
+  }
+  if (text.length <= MONITOR_EVENT_TITLE_MAX_LENGTH) {
+    return text;
+  }
+  return `${text.slice(0, MONITOR_EVENT_TITLE_MAX_LENGTH)}...`;
+};
+
+// Extract readable scalar text from nested summary/error objects.
+const extractMonitorEventTitleText = (value, depth = 0) => {
+  if (value === null || value === undefined || depth > 3) {
+    return "";
+  }
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint"
+  ) {
+    return String(value).trim();
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const text = extractMonitorEventTitleText(item, depth + 1);
+      if (text) {
+        return text;
+      }
+    }
+    return "";
+  }
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+  const source = value;
+  for (const key of [
+    "summary",
+    "message",
+    "question",
+    "reason",
+    "error",
+    "tool",
+    "tool_name",
+    "toolName",
+    "name",
+    "model",
+    "model_name",
+    "stage",
+    "status",
+    "code",
+    "title",
+  ]) {
+    const text = extractMonitorEventTitleText(source[key], depth + 1);
+    if (text) {
+      return text;
+    }
+  }
+  return "";
+};
+
+const formatMonitorEventTimestamp = (value) => {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+  return parsed.toLocaleTimeString(getCurrentLanguage());
+};
+
+const resolveMonitorEventTitle = (event) => {
+  const eventType = String(event?.type || "").trim().toLowerCase();
+  const data = unwrapMonitorEventData(event?.data);
+  const repairSummary = resolveMonitorRepairSummary(resolveMonitorEventRepair(event));
+  if (data && typeof data === "object") {
+    const candidates =
+      eventType === "user_input"
+        ? [
+            data.message,
+            data.question,
+            data.input,
+            data.content,
+            data.summary,
+            data.error,
+            data.reason,
+            data.tool,
+            data.tool_name,
+            data.toolName,
+            data.name,
+            data.model,
+            data.model_name,
+            data.stage,
+            data.status,
+          ]
+        : [
+            data.summary,
+            data.message,
+            data.question,
+            data.error,
+            data.reason,
+            data.tool,
+            data.tool_name,
+            data.toolName,
+            data.name,
+            data.model,
+            data.model_name,
+            data.stage,
+            data.status,
+          ];
+    let summary = "";
+    for (const candidate of candidates) {
+      summary = extractMonitorEventTitleText(candidate);
+      if (summary) {
+        break;
+      }
+    }
+    const title = truncateMonitorEventTitle(
+      repairSummary && summary ? `${summary} · ${repairSummary}` : summary || repairSummary
+    );
+    if (title) {
+      return title;
+    }
+  }
+  if (typeof data === "string") {
+    const title = truncateMonitorEventTitle(
+      repairSummary ? `${data} · ${repairSummary}` : data
+    );
+    if (title) {
+      return title;
+    }
+  }
+  const raw = stringifyMonitorEventData(data);
+  const title = truncateMonitorEventTitle(
+    repairSummary && raw ? `${raw} · ${repairSummary}` : raw || repairSummary
+  );
+  return title || "-";
+};
+
+// 鎷兼帴鍗曟潯浜嬩欢鏂囨湰锛屼繚鎸佷笌鍘嗗彶灞曠ず涓€鑷?
+const buildMonitorEventLine = (event) => {
+  const timestamp = event?.timestamp || "";
+  const eventType = event?.type || "unknown";
+  const eventId = Number(event?.event_id);
+  const prefix = Number.isFinite(eventId) && eventId > 0 ? "#" + eventId + " " : "";
+  const dataText = stringifyMonitorEventData(event?.data);
+  return "[" + timestamp + "] " + prefix + eventType + ": " + dataText;
+};
+
+const resolveMonitorEventToolName = (event) => {
+  const data = unwrapMonitorEventData(event?.data);
+  if (!data || typeof data !== "object") {
+    return "";
+  }
+  const tool = data.tool ?? data.tool_name ?? data.toolName;
+  return typeof tool === "string" ? tool.trim() : "";
+};
+
+const resolveMonitorEventRepair = (event) => {
+  const data = unwrapMonitorEventData(event?.data);
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+  const candidates = [data.repair, data.meta?.repair];
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+};
+
+const parseMonitorRepairCount = (value) => {
+  const count = Number.parseInt(String(value ?? 0), 10);
+  return Number.isFinite(count) && count > 0 ? count : 0;
+};
+
+const resolveMonitorRepairSummary = (repair) => {
+  if (!repair || typeof repair !== "object") {
+    return "";
+  }
+  const strategy = String(repair.strategy || "")
+    .trim()
+    .toLowerCase();
+  const count = parseMonitorRepairCount(repair.count);
+  switch (strategy) {
+    case "sanitize_before_request":
+      return count > 0
+        ? resolveMonitorDetailText("monitor.detail.repair.historySummary", { count })
+        : resolveMonitorDetailText("monitor.detail.repair.badge");
+    case "lossy_json_string_repair":
+    case "raw_arguments_wrapped":
+    case "non_object_arguments_wrapped":
+      return resolveMonitorDetailText("monitor.detail.repair.argsSummary");
+    default:
+      return resolveMonitorDetailText("monitor.detail.repair.badge");
+  }
+};
+
+const resolveMonitorRepairNote = (repair) => {
+  if (!repair || typeof repair !== "object") {
+    return "";
+  }
+  const strategy = String(repair.strategy || "")
+    .trim()
+    .toLowerCase();
+  const count = parseMonitorRepairCount(repair.count);
+  switch (strategy) {
+    case "sanitize_before_request":
+      return count > 0
+        ? resolveMonitorDetailText("monitor.detail.repair.sanitizeBeforeRequest", { count })
+        : resolveMonitorDetailText("monitor.detail.repair.badge");
+    case "lossy_json_string_repair":
+      return resolveMonitorDetailText("monitor.detail.repair.lossyJson");
+    case "raw_arguments_wrapped":
+      return resolveMonitorDetailText("monitor.detail.repair.rawWrapped");
+    case "non_object_arguments_wrapped":
+      return resolveMonitorDetailText("monitor.detail.repair.nonObjectWrapped");
+    default:
+      return resolveMonitorDetailText("monitor.detail.repair.badge");
+  }
+};
+
+const normalizeMonitorDetailEventType = (value) => String(value || "").trim();
+
+const parseMonitorDetailRound = (value, fallback = 0) => {
+  const parsed = Number.parseInt(String(value ?? fallback), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return Math.max(0, fallback);
+  }
+  return parsed;
+};
+
+const resolveMonitorEventRound = (event) => {
+  const data = event?.data && typeof event.data === "object" ? event.data : {};
+  return (
+    parseMonitorDetailRound(event?.__userRound) ||
+    parseMonitorDetailRound(event?.user_round) ||
+    parseMonitorDetailRound(event?.round) ||
+    parseMonitorDetailRound(data?.user_round) ||
+    parseMonitorDetailRound(data?.round)
+  );
+};
+
+const resolveMonitorDetailQuestionTextFromPayload = (payload) => {
+  const data = unwrapMonitorEventData(payload);
+  if (typeof data === "string") {
+    return data.trim();
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return "";
+  }
+  const candidate =
+    data.message || data.question || data.input || data.content || data.prompt || data.text;
+  return String(candidate || "").trim();
+};
+
+const collectMonitorDetailRoundOptions = (session, events) => {
+  const rounds = new Set();
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    const round = resolveMonitorEventRound(event);
+    if (round > 0) {
+      rounds.add(round);
+    }
+  });
+  const declaredRoundCount = parseMonitorDetailRound(session?.user_rounds || session?.rounds);
+  if (rounds.size === 0 && declaredRoundCount > 0) {
+    for (let round = 1; round <= declaredRoundCount; round += 1) {
+      rounds.add(round);
+    }
+  }
+  if (rounds.size === 0 && String(session?.question || "").trim()) {
+    rounds.add(1);
+  }
+  return Array.from(rounds).sort((left, right) => left - right);
+};
+
+const buildMonitorDetailRoundQuestionMap = (events, roundOptions, sessionQuestion) => {
+  const questionByRound = new Map();
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    const round = resolveMonitorEventRound(event);
+    if (round <= 0) {
+      return;
+    }
+    const question = resolveMonitorDetailQuestionTextFromPayload(event?.data);
+    if (!question) {
+      return;
+    }
+    const eventType = String(event?.type || "")
+      .trim()
+      .toLowerCase();
+    if (eventType === "user_input" || eventType === "received") {
+      if (!questionByRound.has(round)) {
+        questionByRound.set(round, question);
+      }
+      return;
+    }
+    if (!questionByRound.has(round)) {
+      questionByRound.set(round, question);
+    }
+  });
+  const latestRound = Array.isArray(roundOptions) && roundOptions.length
+    ? roundOptions[roundOptions.length - 1]
+    : 0;
+  const cleanedSessionQuestion = String(sessionQuestion || "").trim();
+  if (latestRound > 0 && cleanedSessionQuestion && !questionByRound.has(latestRound)) {
+    questionByRound.set(latestRound, cleanedSessionQuestion);
+  }
+  return questionByRound;
+};
+
+const resolveMonitorDetailQuestionByRound = () => {
+  const detail = state.monitor?.detail;
+  if (!detail) {
+    return "";
+  }
+  const selectedRound = parseMonitorDetailRound(state.monitor?.detailFilters?.round);
+  if (selectedRound > 0 && detail.roundQuestions instanceof Map) {
+    const question = String(detail.roundQuestions.get(selectedRound) || "").trim();
+    if (question) {
+      return question;
+    }
+  }
+  return String(detail.session?.question || "").trim();
+};
+
+const renderMonitorDetailQuestion = () => {
+  if (!elements.monitorDetailQuestion) {
+    return;
+  }
+  elements.monitorDetailQuestion.textContent = resolveMonitorDetailQuestionByRound();
+};
+
+const normalizeMonitorDetailFeedbackList = (items) =>
+  (Array.isArray(items) ? items : [])
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const vote = String(item.vote || "")
+        .trim()
+        .toLowerCase();
+      if (vote !== "up" && vote !== "down") {
+        return null;
+      }
+      const historyId = Number.parseInt(
+        String(item.history_id ?? item.historyId ?? ""),
+        10
+      );
+      const userId = String(item.user_id ?? item.userId ?? "").trim();
+      const createdAt = String(item.created_at ?? item.createdAt ?? "").trim();
+      return {
+        vote,
+        historyId: Number.isFinite(historyId) && historyId > 0 ? historyId : 0,
+        userId,
+        createdAt,
+      };
+    })
+    .filter(Boolean);
+
+const syncMonitorDetailRoundFilter = () => {
+  if (!elements.monitorDetailRoundFilter) {
+    return;
+  }
+  const detail = state.monitor?.detail;
+  const roundOptions = Array.isArray(detail?.roundOptions) ? detail.roundOptions : [];
+  const filterNode = elements.monitorDetailRoundFilter;
+  filterNode.textContent = "";
+  if (roundOptions.length === 0) {
+    const option = document.createElement("option");
+    option.value = "0";
+    option.textContent = resolveMonitorDetailText("monitor.detail.round.none");
+    filterNode.appendChild(option);
+    filterNode.disabled = true;
+    filterNode.value = "0";
+    state.monitor.detailFilters.round = 0;
+    return;
+  }
+  roundOptions.forEach((round) => {
+    const option = document.createElement("option");
+    option.value = String(round);
+    option.textContent = resolveMonitorDetailText("monitor.detail.round", { round });
+    filterNode.appendChild(option);
+  });
+  filterNode.disabled = false;
+  const selectedRound = parseMonitorDetailRound(state.monitor?.detailFilters?.round);
+  const finalRound = roundOptions.includes(selectedRound)
+    ? selectedRound
+    : roundOptions[roundOptions.length - 1];
+  state.monitor.detailFilters.round = finalRound;
+  filterNode.value = String(finalRound);
+};
+
+const collectMonitorDetailEventTypes = (events) => {
+  const types = new Set();
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    const eventType = normalizeMonitorDetailEventType(event?.type || "");
+    if (eventType) {
+      types.add(eventType);
+    }
+  });
+  return Array.from(types).sort((left, right) => left.localeCompare(right));
+};
+
+const resetMonitorDetailFilters = () => {
+  ensureMonitorState();
+  state.monitor.detailFilters.eventType = "";
+  state.monitor.detailFilters.keyword = "";
+  state.monitor.detailFilters.round = 0;
+  if (elements.monitorDetailTypeFilter) {
+    elements.monitorDetailTypeFilter.value = "";
+  }
+  if (elements.monitorDetailKeyword) {
+    elements.monitorDetailKeyword.value = "";
+  }
+  if (elements.monitorDetailRoundFilter) {
+    elements.monitorDetailRoundFilter.textContent = "";
+    const option = document.createElement("option");
+    option.value = "0";
+    option.textContent = resolveMonitorDetailText("monitor.detail.round.none");
+    elements.monitorDetailRoundFilter.appendChild(option);
+    elements.monitorDetailRoundFilter.value = "0";
+    elements.monitorDetailRoundFilter.disabled = true;
+  }
+};
+
+const syncMonitorDetailFilterControls = (events) => {
+  if (!elements.monitorDetailTypeFilter) {
+    return;
+  }
+  const selectedType = normalizeMonitorDetailEventType(state.monitor?.detailFilters?.eventType);
+  const eventTypes = collectMonitorDetailEventTypes(events);
+  const availableTypes = new Set(eventTypes);
+  state.monitor.detailFilters.eventType = availableTypes.has(selectedType) ? selectedType : "";
+  const filterNode = elements.monitorDetailTypeFilter;
+  filterNode.textContent = "";
+  const allOption = document.createElement("option");
+  allOption.value = "";
+  allOption.textContent = resolveMonitorDetailText("monitor.detail.filter.allTypes");
+  filterNode.appendChild(allOption);
+  eventTypes.forEach((eventType) => {
+    const option = document.createElement("option");
+    option.value = eventType;
+    option.textContent = eventType;
+    filterNode.appendChild(option);
+  });
+  filterNode.value = state.monitor.detailFilters.eventType;
+  if (elements.monitorDetailKeyword) {
+    elements.monitorDetailKeyword.setAttribute(
+      "placeholder",
+      resolveMonitorDetailText("monitor.detail.filter.keywordPlaceholder")
+    );
+    if (document.activeElement !== elements.monitorDetailKeyword) {
+      elements.monitorDetailKeyword.value = state.monitor.detailFilters.keyword || "";
+    }
+  }
+};
+
+const resolveMonitorDetailFilteredEvents = (events) => {
+  const selectedType = normalizeMonitorDetailEventType(state.monitor?.detailFilters?.eventType);
+  const keyword = String(state.monitor?.detailFilters?.keyword || "")
+    .trim()
+    .toLowerCase();
+  return (Array.isArray(events) ? events : []).filter((event) => {
+    const eventType = normalizeMonitorDetailEventType(event?.type || "");
+    if (selectedType && eventType !== selectedType) {
+      return false;
+    }
+    if (!keyword) {
+      return true;
+    }
+    const haystack = (eventType + " " + stringifyMonitorEventData(event?.data)).toLowerCase();
+    return haystack.includes(keyword);
+  });
+};
+
+const renderMonitorDetailWithFilters = (events, options = {}) => {
+  syncMonitorDetailFilterControls(events);
+  const filtered = resolveMonitorDetailFilteredEvents(events);
+  const focusTool = typeof options?.focusTool === "string" ? options.focusTool.trim() : "";
+  const selectedRound = parseMonitorDetailRound(
+    options?.focusRound ?? state.monitor?.detailFilters?.round
+  );
+  const focusLine = renderMonitorDetailEvents(filtered, { focusTool, selectedRound });
+  if (focusTool) {
+    scrollMonitorDetailToLine(focusLine);
+    return focusLine;
+  }
+  if (selectedRound > 0) {
+    scrollMonitorDetailToRound(selectedRound);
+  }
+  return focusLine;
+};
+
+const renderMonitorDetailEvents = (events, options = {}) => {
+  if (!elements.monitorDetailEvents) {
+    return null;
+  }
+  const container = elements.monitorDetailEvents;
+  container.textContent = "";
+  if (!Array.isArray(events) || events.length === 0) {
+    container.textContent = t("monitor.detail.noEvents");
+    return null;
+  }
+  const focusToolName = normalizeMonitorToolName(options.focusTool);
+  const selectedRound = parseMonitorDetailRound(options.selectedRound);
+  const fragment = document.createDocumentFragment();
+  let focusNode = null;
+  let fallbackNode = null;
+  events.forEach((event) => {
+    const lineText = buildMonitorEventLine(event);
+    const normalizedLineText = normalizeMonitorToolName(lineText);
+    const eventType = String(event?.type || "unknown");
+    const eventTypeLower = eventType.toLowerCase();
+    const round = resolveMonitorEventRound(event);
+    const repair = resolveMonitorEventRepair(event);
+    const repairBadgeText = repair
+      ? resolveMonitorDetailText("monitor.detail.repair.badge")
+      : "";
+    const repairNote = resolveMonitorRepairNote(repair);
+    const item = document.createElement("details");
+    item.className = "log-item monitor-event-item";
+    if (repair) {
+      item.classList.add("monitor-event-item--repaired");
+    }
+    if (round > 0) {
+      item.dataset.round = String(round);
+      if (selectedRound > 0 && round === selectedRound) {
+        item.classList.add("monitor-event-item--round");
+      }
+    }
+    const summary = document.createElement("summary");
+    summary.className = "log-summary";
+    const timeNode = document.createElement("span");
+    timeNode.className = "log-time";
+    timeNode.textContent = `[${formatMonitorEventTimestamp(event?.timestamp)}]`;
+    summary.appendChild(timeNode);
+    const eventNode = document.createElement("span");
+    eventNode.className = "log-event";
+    const eventId = Number(event?.event_id);
+    eventNode.textContent =
+      Number.isFinite(eventId) && eventId > 0 ? "#" + eventId + " " + eventType : eventType;
+    summary.appendChild(eventNode);
+    const titleNode = document.createElement("span");
+    titleNode.className = "log-title";
+    titleNode.textContent = resolveMonitorEventTitle(event);
+    summary.appendChild(titleNode);
+    if (repairBadgeText) {
+      const badgeNode = document.createElement("span");
+      badgeNode.className = "monitor-event-badge monitor-event-badge--repair";
+      badgeNode.textContent = repairBadgeText;
+      summary.appendChild(badgeNode);
+    }
+    if (round > 0) {
+      const roundNode = document.createElement("span");
+      roundNode.className = "monitor-event-round";
+      roundNode.textContent = resolveMonitorDetailText("monitor.detail.round", { round });
+      summary.appendChild(roundNode);
+    }
+    item.appendChild(summary);
+    if (repairNote) {
+      const noteNode = document.createElement("div");
+      noteNode.className = "monitor-event-note monitor-event-note--repair";
+      noteNode.textContent = repairNote;
+      item.appendChild(noteNode);
+    }
+    const detailNode = document.createElement("div");
+    detailNode.className = "log-detail";
+    item.addEventListener(
+      "toggle",
+      () => {
+        if (item.open && !detailNode.dataset.rendered) {
+          detailNode.innerHTML = highlightMonitorTimestamps(lineText);
+          detailNode.dataset.rendered = "true";
+        }
+      },
+      { once: true }
+    );
+    item.appendChild(detailNode);
+    const eventTool = resolveMonitorEventToolName(event);
+    const matchesToolName =
+      focusToolName &&
+      (normalizeMonitorToolName(eventTool) === focusToolName ||
+        normalizedLineText.includes(focusToolName));
+    if (matchesToolName) {
+      item.classList.add("monitor-event-item--tool");
+      if (!focusNode && eventTypeLower === "tool_call") {
+        focusNode = item;
+      } else if (!fallbackNode && eventTypeLower === "tool_result") {
+        fallbackNode = item;
+      }
+    }
+    fragment.appendChild(item);
+  });
+  container.appendChild(fragment);
+  if (!focusNode && fallbackNode) {
+    focusNode = fallbackNode;
+  }
+  if (focusNode) {
+    focusNode.classList.add("monitor-event-item--focus");
+  }
+  return focusNode;
+};
+
+// 滚动事件列表到目标位置，避免用户手动查找
+// 查找可滚动的父容器，兼容弹窗内部多级滚动布局
+const resolveMonitorScrollContainer = (line) => {
+  let current = line?.parentElement || null;
+  while (current && current !== document.body) {
+    const style = window.getComputedStyle(current);
+    const overflowY = style?.overflowY || "";
+    if (
+      (overflowY === "auto" || overflowY === "scroll") &&
+      current.scrollHeight > current.clientHeight
+    ) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return elements.monitorDetailEvents || null;
+};
+
+// 滚动事件列表到目标位置，避免用户手动查找
+const scrollMonitorDetailToLine = (line) => {
+  if (!line) {
+    return;
+  }
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const container = resolveMonitorScrollContainer(line);
+      if (!container) {
+        return;
+      }
+      const containerRect = container.getBoundingClientRect();
+      const lineRect = line.getBoundingClientRect();
+      const offset = lineRect.top - containerRect.top;
+      const target =
+        container.scrollTop + offset - container.clientHeight / 2 + lineRect.height / 2;
+      container.scrollTop = Math.max(0, target);
+    });
+  });
+};
+
+const scrollMonitorDetailToRound = (round) => {
+  if (!elements.monitorDetailEvents || round <= 0) {
+    return;
+  }
+  const selector = `.monitor-event-item[data-round="${round}"]`;
+  const target = elements.monitorDetailEvents.querySelector(selector);
+  if (!target) {
+    return;
+  }
+  elements.monitorDetailEvents
+    .querySelectorAll(".monitor-event-item--round-focus")
+    .forEach((node) => node.classList.remove("monitor-event-item--round-focus"));
+  target.classList.add("monitor-event-item--round-focus");
+  scrollMonitorDetailToLine(target);
+  window.setTimeout(() => {
+    target.classList.remove("monitor-event-item--round-focus");
+  }, 1400);
+};
+
+const setMonitorDetailExportEnabled = (enabled) => {
+  if (!elements.monitorDetailExport) {
+    return;
+  }
+  elements.monitorDetailExport.disabled = !enabled;
+};
+
+const sanitizeFilenamePart = (value, fallback) => {
+  const text = String(value || "").trim();
+  const safe = text.replace(/[\\/:*?"<>|]+/g, "_");
+  if (safe) {
+    return safe;
+  }
+  return fallback || "session";
+};
+
+const buildMonitorDetailExportFilename = (sessionId) => {
+  const safeSessionId = sanitizeFilenamePart(sessionId, "session");
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `monitor-detail-${safeSessionId}-${timestamp}.jsonl`;
+};
+
+const downloadBlob = (blob, filename) => {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+};
+
+const MONITOR_EXPORT_MAX_STRING_CHARS = 1200;
+const MONITOR_EXPORT_MAX_ARRAY_ITEMS = 24;
+const MONITOR_EXPORT_MAX_OBJECT_KEYS = 24;
+const MONITOR_EXPORT_MAX_DEPTH = 6;
+
+const shouldPreserveMonitorExportString = (path) => {
+  if (!Array.isArray(path) || path.length === 0) return false;
+  const last = String(path[path.length - 1] || "").trim();
+  return last === "model_observation";
+};
+
+const compactMonitorExportText = (value, preserveFull = false) => {
+  const text = String(value || "");
+  if (preserveFull) {
+    return text;
+  }
+  if (text.length <= MONITOR_EXPORT_MAX_STRING_CHARS) {
+    return text;
+  }
+  return `${text.slice(0, MONITOR_EXPORT_MAX_STRING_CHARS)}...(truncated)`;
+};
+
+const compactMonitorExportValue = (value, depth = 0, path = []) => {
+  if (typeof value === "string") {
+    return compactMonitorExportText(value, shouldPreserveMonitorExportString(path));
+  }
+  if (value === null || value === undefined) {
+    return value ?? null;
+  }
+  if (typeof value !== "object") {
+    return value;
+  }
+  if (depth >= MONITOR_EXPORT_MAX_DEPTH) {
+    return "[truncated depth]";
+  }
+  if (Array.isArray(value)) {
+    if (value.length <= MONITOR_EXPORT_MAX_ARRAY_ITEMS) {
+      return value.map((item, index) => compactMonitorExportValue(item, depth + 1, [...path, String(index)]));
+    }
+    const headCount = Math.max(1, Math.floor(MONITOR_EXPORT_MAX_ARRAY_ITEMS * 0.75));
+    const tailCount = Math.max(1, MONITOR_EXPORT_MAX_ARRAY_ITEMS - headCount);
+    const omitted = value.length - headCount - tailCount;
+    const head = value
+      .slice(0, headCount)
+      .map((item, index) => compactMonitorExportValue(item, depth + 1, [...path, String(index)]));
+    const tailStart = Math.max(value.length - tailCount, 0);
+    const tail = value
+      .slice(-tailCount)
+      .map((item, index) => compactMonitorExportValue(item, depth + 1, [...path, String(tailStart + index)]));
+    return [...head, { __truncated: true, omitted_items: Math.max(0, omitted) }, ...tail];
+  }
+  const source = value || {};
+  const keys = Object.keys(source);
+  const output = {};
+  keys.slice(0, MONITOR_EXPORT_MAX_OBJECT_KEYS).forEach((key) => {
+    output[key] = compactMonitorExportValue(source[key], depth + 1, [...path, key]);
+  });
+  if (keys.length > MONITOR_EXPORT_MAX_OBJECT_KEYS) {
+    output.__truncated = true;
+    output.__omitted_keys = keys.length - MONITOR_EXPORT_MAX_OBJECT_KEYS;
+  }
+  return output;
+};
+
+const normalizeMonitorExportTimestamp = (value) => {
+  const text = String(value || "").trim();
+  if (text) {
+    const parsed = new Date(text);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+  const parsed = parseMonitorTimestamp(value);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return new Date(parsed).toISOString();
+  }
+  return "";
+};
+
+const normalizeThreadLogTurnsForMonitor = (turns) => {
+  return (Array.isArray(turns) ? turns : []).map((turn) => {
+    const payload = turn?.payload && typeof turn.payload === "object" ? turn.payload : {};
+    const round = parseMonitorDetailRound(turn?.user_turn_index);
+    return {
+      type: String(payload.kind || payload.role || turn?.status || "turn"),
+      data: payload,
+      timestamp: turn?.updated_time || turn?.created_time || "",
+      __userRound: round,
+    };
+  }).filter((event) => event.__userRound > 0);
+};
+
+const normalizeThreadLogTurnItemsForMonitor = (turn) => {
+  const items = Array.isArray(turn?.items) ? turn.items : [];
+  return items.map((item) => {
+    const payload = item?.payload && typeof item.payload === "object" ? item.payload : {};
+    const round = parseMonitorDetailRound(turn?.user_turn_index);
+    return {
+      type: String(item?.kind || payload.kind || payload.role || "item"),
+      data: payload,
+      timestamp: item?.updated_time || item?.created_time || turn?.updated_time || "",
+      __userRound: round,
+      __itemId: String(item?.item_id || ""),
+    };
+  }).filter((event) => event.__userRound > 0);
+};
+
+let monitorTurnRequest = 0;
+const loadMonitorDetailThreadTurn = async (sessionId, round, next = false) => {
+  const detail = state.monitor?.detail;
+  if (!detail || !sessionId || round <= 0) return;
+  const summary = detail.threadTurns?.find((turn) => Number(turn.user_turn_index) === round);
+  if (!summary?.turn_id) return;
+  const token = ++monitorTurnRequest;
+  try {
+    const after = next ? detail.itemAfter : -1;
+    const response = await fetch(`${getWunderBase()}/admin/monitor/${encodeURIComponent(sessionId)}/thread-log/turns/${encodeURIComponent(summary.turn_id)}?item_after=${after}&limit=100`);
+    if (!response.ok) throw new Error(t("common.requestFailed", { status: response.status }));
+    const turn = (await response.json())?.data?.turn;
+    if (token !== monitorTurnRequest || state.monitor?.detail !== detail || state.monitor.detailFilters.round !== round) return;
+    detail.events = normalizeThreadLogTurnItemsForMonitor(turn);
+    const userItem = detail.events.find((event) => {
+      const type = String(event?.type || "").trim().toLowerCase();
+      const data = event?.data && typeof event.data === "object" ? event.data : {};
+      const role = String(data?.role || "").trim().toLowerCase();
+      return type === "user_message" || role === "user";
+    });
+    const question = resolveMonitorDetailQuestionTextFromPayload(userItem?.data);
+    if (question) {
+      if (!(detail.roundQuestions instanceof Map)) detail.roundQuestions = new Map();
+      detail.roundQuestions.set(round, question);
+    }
+    detail.itemAfter = Number(turn?.next_after ?? -1);
+    detail.itemHasMore = Boolean(turn?.has_more);
+    renderMonitorDetailQuestion();
+    renderMonitorDetailWithFilters(detail.events, { focusRound: round });
+    // Item pages replace the rendered rows; browsing a large turn never grows the DOM.
+    const navigation = document.createElement("div");
+    navigation.className = "monitor-detail-pagination";
+    if (detail.itemHasMore) {
+      const label = t("monitor.detail.pagination.next");
+      const advance = true;
+      const button = document.createElement("button"); button.type = "button";
+      button.textContent = label;
+      button.addEventListener("click", () => void loadMonitorDetailThreadTurn(sessionId, round, advance));
+      navigation.appendChild(button);
+    }
+    if (navigation.childElementCount > 0) elements.monitorDetailEvents?.appendChild(navigation);
+  } catch (error) { notify(error?.message || String(error), "error"); }
+};
+
+// Panel navigation can reveal a chart that was initialized while its panel
+// was hidden. Resize and repaint on the next frame so the canvas and heatmap
+// hit targets match the visible layout before the user clicks them.
+export const refreshMonitorPanelLayout = () => {
+  ensureMonitorCharts();
+  requestAnimationFrame(() => {
+    resizeMonitorCharts();
+  });
+};
+
+const syncMonitorDetailPagination = () => {
+  const detail = state.monitor?.detail;
+  const offset = Number(detail?.offset) || 0;
+  const limit = Number(detail?.limit) || MONITOR_DETAIL_EVENT_PAGE_SIZE;
+  const total = Number(detail?.total) || 0;
+  const count = Array.isArray(detail?.threadTurns) ? detail.threadTurns.length : 0;
+  const page = Math.floor(offset / limit) + 1;
+  const start = count > 0 ? offset + 1 : 0;
+  const end = count > 0 ? offset + count : 0;
+  const lastOffset = total > 0 ? Math.floor((total - 1) / limit) * limit : 0;
+  if (elements.monitorDetailPageInfo) {
+    elements.monitorDetailPageInfo.textContent = resolveMonitorDetailText("monitor.detail.pagination.info", {
+      page, start, end, total,
+    });
+  }
+  if (elements.monitorDetailPagePrev) {
+    elements.monitorDetailPagePrev.disabled = offset <= 0 || Boolean(detail?.loading);
+  }
+  if (elements.monitorDetailPageNext) {
+    elements.monitorDetailPageNext.disabled = !detail?.hasMore || Boolean(detail?.loading);
+  }
+  if (elements.monitorDetailPageLast) {
+    elements.monitorDetailPageLast.hidden = true;
+  }
+};
+
+const resolveMonitorEventType = (event) =>
+  String(event?.type || event?.event || "unknown").trim() || "unknown";
+
+const normalizeMonitorBoolean = (value) => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    if (["true", "1", "yes", "y", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no", "n", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+  return null;
+};
+
+const summarizeMonitorExportEvents = (events) => {
+  const summary = {
+    final_answer_present: false,
+    final_answer_preview: "",
+    turn_terminal_status: "",
+    turn_terminal_stop_reason: "",
+    thread_closure_reason: "",
+    final_tool_result_ok: null,
+    tool_call_count: 0,
+    tool_result_count: 0,
+    tool_retry_count: 0,
+    tool_results: [],
+  };
+  const toolMap = new Map();
+  events.forEach((event, index) => {
+    const eventType = resolveMonitorEventType(event).toLowerCase();
+    const data = unwrapMonitorEventData(event?.data);
+    const order = index + 1;
+    if (eventType === "final") {
+      const answer = String(data?.answer || "").trim();
+      if (answer) {
+        summary.final_answer_present = true;
+        summary.final_answer_preview = compactMonitorExportText(answer);
+      }
+    } else if (eventType === "turn_terminal") {
+      summary.turn_terminal_status = String(data?.status || "").trim();
+      summary.turn_terminal_stop_reason = String(data?.stop_reason || "").trim();
+    } else if (eventType === "thread_closed") {
+      summary.thread_closure_reason = String(data?.reason || "").trim();
+    } else if (eventType === "tool_call") {
+      summary.tool_call_count += 1;
+      const toolCallId = String(data?.tool_call_id || "").trim();
+      const fallbackId = `fallback_call_${order}`;
+      const key = toolCallId || fallbackId;
+      const existing = toolMap.get(key) || {
+        key,
+        tool_call_id: toolCallId || null,
+        tool: String(data?.tool_display_name || data?.tool || data?.name || "").trim(),
+        function_name: String(data?.tool_function_name || "").trim() || null,
+        call_order: order,
+        call_round: resolveMonitorEventRound(event) || null,
+        args: compactMonitorExportValue(data?.args ?? null),
+        attempts: 0,
+        retries: 0,
+        ok: null,
+        last_error: "",
+        result_order: null,
+        result_timestamp: "",
+      };
+      existing.tool = existing.tool || String(data?.tool_display_name || data?.tool || data?.name || "").trim();
+      existing.function_name =
+        existing.function_name || String(data?.tool_function_name || "").trim() || null;
+      existing.args =
+        existing.args ?? compactMonitorExportValue(data?.args ?? null);
+      toolMap.set(key, existing);
+    } else if (eventType === "tool_result") {
+      summary.tool_result_count += 1;
+      const toolCallId = String(data?.tool_call_id || "").trim();
+      const fallbackId = `fallback_result_${order}`;
+      const key = toolCallId || fallbackId;
+      const existing = toolMap.get(key) || {
+        key,
+        tool_call_id: toolCallId || null,
+        tool: String(data?.tool_display_name || data?.tool || data?.name || "").trim(),
+        function_name: String(data?.tool_function_name || "").trim() || null,
+        call_order: null,
+        call_round: resolveMonitorEventRound(event) || null,
+        args: null,
+        attempts: 0,
+        retries: 0,
+        ok: null,
+        last_error: "",
+        result_order: null,
+        result_timestamp: "",
+      };
+      existing.tool = existing.tool || String(data?.tool_display_name || data?.tool || data?.name || "").trim();
+      existing.function_name =
+        existing.function_name || String(data?.tool_function_name || "").trim() || null;
+      existing.attempts += 1;
+      existing.retries = Math.max(0, existing.attempts - 1);
+      const okValue = normalizeMonitorBoolean(data?.ok);
+      if (okValue !== null) {
+        existing.ok = okValue;
+      }
+      existing.result_order = order;
+      existing.result_timestamp = normalizeMonitorExportTimestamp(event?.timestamp);
+      const errorText = String(data?.error || data?.meta?.error_detail_head || "").trim();
+      if (errorText) {
+        existing.last_error = compactMonitorExportText(errorText);
+      }
+      toolMap.set(key, existing);
+    }
+  });
+  const toolResults = Array.from(toolMap.values())
+    .sort((left, right) => {
+      const leftOrder = Number.isFinite(left.call_order) ? left.call_order : left.result_order || Number.MAX_SAFE_INTEGER;
+      const rightOrder = Number.isFinite(right.call_order) ? right.call_order : right.result_order || Number.MAX_SAFE_INTEGER;
+      return leftOrder - rightOrder;
+    })
+    .map((item) => ({
+      tool_call_id: item.tool_call_id,
+      tool: item.tool || "",
+      function_name: item.function_name,
+      call_order: item.call_order,
+      call_round: item.call_round,
+      attempts: item.attempts,
+      retries: item.retries,
+      ok: item.ok,
+      last_error: item.last_error || null,
+      result_order: item.result_order,
+      result_timestamp: item.result_timestamp || "",
+      args: item.args,
+    }));
+  summary.tool_results = toolResults;
+  summary.tool_retry_count = toolResults.reduce((total, item) => total + Math.max(0, Number(item.retries) || 0), 0);
+  if (toolResults.length > 0) {
+    const lastResolved = [...toolResults]
+      .reverse()
+      .find((item) => typeof item.ok === "boolean");
+    if (lastResolved) {
+      summary.final_tool_result_ok = lastResolved.ok;
+    }
+  }
+  return summary;
+};
+
+const buildMonitorDetailExportLines = (eventsOverride = null) => {
+  const detail = state.monitor?.detail;
+  if (!detail) {
+    return null;
+  }
+  const session =
+    detail.session && typeof detail.session === "object" && !Array.isArray(detail.session)
+      ? detail.session
+      : {};
+  const events = Array.isArray(eventsOverride)
+    ? eventsOverride
+    : Array.isArray(detail.events)
+      ? detail.events
+      : [];
+  const feedback = Array.isArray(detail.feedback) ? detail.feedback : [];
+  const exportSummary = summarizeMonitorExportEvents(events);
+  const eventTypes = Array.from(
+    new Set(
+      events.map((event) => {
+        const eventType = resolveMonitorEventType(event);
+        return eventType || "unknown";
+      })
+    )
+  ).sort((left, right) => left.localeCompare(right));
+  const lines = [
+    {
+      record_type: "meta",
+      export_schema_version: 3,
+      export_format: "jsonl",
+      exported_at: new Date().toISOString(),
+      summary: {
+        event_count: events.length,
+        feedback_count: feedback.length,
+        event_types: eventTypes,
+        final_answer_present: exportSummary.final_answer_present,
+        final_answer_preview: exportSummary.final_answer_preview,
+        turn_terminal_status: exportSummary.turn_terminal_status,
+        turn_terminal_stop_reason: exportSummary.turn_terminal_stop_reason,
+        thread_closure_reason: exportSummary.thread_closure_reason,
+        final_tool_result_ok: exportSummary.final_tool_result_ok,
+        tool_call_count: exportSummary.tool_call_count,
+        tool_result_count: exportSummary.tool_result_count,
+        tool_retry_count: exportSummary.tool_retry_count,
+        tool_results: exportSummary.tool_results,
+      },
+      session: compactMonitorExportValue(session),
+      compact_policy: {
+        max_string_chars: MONITOR_EXPORT_MAX_STRING_CHARS,
+        max_array_items: MONITOR_EXPORT_MAX_ARRAY_ITEMS,
+        max_object_keys: MONITOR_EXPORT_MAX_OBJECT_KEYS,
+        max_depth: MONITOR_EXPORT_MAX_DEPTH,
+      },
+    },
+  ];
+  events.forEach((event, index) => {
+    const eventType = resolveMonitorEventType(event);
+    lines.push({
+      record_type: "event",
+      order: index + 1,
+      event_id: Number.isFinite(Number(event?.event_id)) ? Number(event.event_id) : null,
+      round: resolveMonitorEventRound(event),
+      event: eventType,
+      timestamp: normalizeMonitorExportTimestamp(event?.timestamp),
+      title: resolveMonitorEventTitle(event),
+      data: compactMonitorExportValue(unwrapMonitorEventData(event?.data)),
+    });
+  });
+  feedback.forEach((item, index) => {
+    lines.push({
+      record_type: "feedback",
+      order: index + 1,
+      data: compactMonitorExportValue(item),
+    });
+  });
+  return lines;
+};
+
+const exportMonitorDetailLogs = async () => {
+  try {
+    const detail = state.monitor?.detail;
+    const sessionId = String(detail?.session?.session_id || "").trim();
+    if (!detail || !sessionId) {
+      notify(t("monitor.detail.exportEmpty"), "warning");
+      return;
+    }
+    const response = await fetch(`${getWunderBase()}/admin/monitor/${encodeURIComponent(sessionId)}/thread-log/export`);
+    if (!response.ok) throw new Error(t("common.requestFailed", { status: response.status }));
+    downloadBlob(await response.blob(), buildMonitorDetailExportFilename(sessionId));
+    notify(t("monitor.detail.exported"), "success");
+  } catch (error) {
+    const message = error?.message || String(error);
+    notify(t("monitor.detail.exportFailed", { message }), "error");
+  }
+};
+
+export const openMonitorDetail = async (sessionId, options = {}) => {
+  return loadMonitorDetailPage(sessionId, 0, { ...options, resetFilters: true });
+};
+
+const loadMonitorDetailPage = async (sessionId, offset = 0, options = {}) => {
+  // Modal state is mutually exclusive. A status chart selection must not
+  // survive into the session log view (and vice versa).
+  closeMonitorStatusModal();
+  closeMonitorToolModal();
+  const wunderBase = getWunderBase();
+  const safeOffset = Math.max(0, Number.parseInt(String(offset), 10) || 0);
+  const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}?offset=${safeOffset}&limit=${MONITOR_DETAIL_EVENT_PAGE_SIZE}`;
+  setMonitorDetailExportEnabled(false);
+  if (state.monitor?.detail) {
+    state.monitor.detail.loading = true;
+    syncMonitorDetailPagination();
+  } else {
+    state.monitor.detail = null;
+  }
+  try {
+    const response = await fetch(endpoint);
+    if (response.status === 404) {
+      if (state.monitor?.detail) {
+        state.monitor.detail.loading = false;
+      }
+      const deletedMessage = t("monitor.detailLoadFailed", { message: t("monitor.deleted") });
+      appendLog(deletedMessage);
+      notify(deletedMessage, "warning");
+      return;
+    }
+    if (!response.ok) {
+      throw new Error(t("common.requestFailed", { status: response.status }));
+    }
+    const result = await response.json();
+    const session = result.session || {};
+    if (!session.session_id) {
+      if (state.monitor?.detail) {
+        state.monitor.detail.loading = false;
+      }
+      const deletedMessage = t("monitor.detailLoadFailed", { message: t("monitor.deleted") });
+      appendLog(deletedMessage);
+      notify(deletedMessage, "warning");
+      return;
+    }
+    state.monitor.selected = session.session_id;
+    elements.monitorDetailTitle.textContent = t("monitor.detail.title", {
+      sessionId: session.session_id || "-",
+    });
+    const previous = state.monitor?.detail;
+    const page = Math.floor(safeOffset / MONITOR_DETAIL_EVENT_PAGE_SIZE);
+    const cursors = previous?.session?.session_id === sessionId && !options.resetFilters
+      ? previous.turnCursors || [null] : [null];
+    const before = cursors[page];
+    const threadResponse = await fetch(`${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}/thread-log/turns?limit=${MONITOR_DETAIL_EVENT_PAGE_SIZE}${before ? `&before=${before}` : ""}`);
+    if (!threadResponse.ok) throw new Error(t("common.requestFailed", { status: threadResponse.status }));
+    const catalog = (await threadResponse.json()).data;
+    let threadTurns = Array.isArray(catalog?.turns) ? catalog.turns : [];
+    const pinned = !options.resetFilters && previous?.threadTurns?.find((turn) => Number(turn.user_turn_index) === state.monitor.detailFilters.round);
+    if (pinned && !threadTurns.some((turn) => turn.turn_id === pinned.turn_id)) threadTurns.push(pinned);
+    cursors[page + 1] = catalog?.next_before;
+    const events = normalizeThreadLogTurnsForMonitor(threadTurns);
+    const roundOptions = threadTurns.map((turn) => Number(turn.user_turn_index)).sort((a, b) => a - b);
+    const roundQuestions = buildMonitorDetailRoundQuestionMap(
+      events,
+      roundOptions,
+      session.question
+    );
+    const feedback = normalizeMonitorDetailFeedbackList(result.feedback);
+    const itemTotal = Number(catalog?.item_total);
+    const userRoundTotal = Number(catalog?.user_round_total);
+    elements.monitorDetailMeta.innerHTML = buildMonitorDetailMeta(session, events, {
+      itemTotal: Number.isFinite(itemTotal) ? itemTotal : events.length,
+      userRoundTotal: Number.isFinite(userRoundTotal) ? userRoundTotal : roundOptions.length,
+    });
+    state.monitor.detail = {
+      session,
+      events,
+      threadTurns,
+      turnCursors: cursors,
+      itemAfter: -1,
+      itemHasMore: false,
+      roundOptions,
+      roundQuestions,
+      feedback,
+      offset: safeOffset,
+      limit: MONITOR_DETAIL_EVENT_PAGE_SIZE,
+      total: Number.isFinite(userRoundTotal) ? userRoundTotal : roundOptions.length,
+      hasMore: Boolean(catalog?.has_more),
+      loading: false,
+    };
+    if (options.resetFilters) {
+      resetMonitorDetailFilters();
+    }
+    syncMonitorDetailRoundFilter();
+    renderMonitorDetailQuestion();
+    setMonitorDetailExportEnabled(true);
+    const focusTool =
+      typeof options?.focusTool === "string" ? options.focusTool.trim() : "";
+    renderMonitorDetailWithFilters(events, {
+      focusTool,
+      focusRound: state.monitor.detailFilters.round,
+    });
+    syncMonitorDetailPagination();
+    if (elements.monitorDetailEvents) {
+      elements.monitorDetailEvents.scrollTop = 0;
+    }
+    elements.monitorDetailModal.classList.add("active");
+    await loadMonitorDetailThreadTurn(sessionId, state.monitor.detailFilters.round);
+  } catch (error) {
+    if (state.monitor?.detail) {
+      state.monitor.detail.loading = false;
+      syncMonitorDetailPagination();
+    }
+    const message = t("monitor.detailLoadFailed", { message: error.message });
+    appendLog(message);
+    notify(message, "error");
+  }
+};
+
+const closeMonitorDetail = () => {
+  elements.monitorDetailModal.classList.remove("active");
+  state.monitor.detail = null;
+  resetMonitorDetailFilters();
+  setMonitorDetailExportEnabled(false);
+};
+
+const requestDeleteSession = async (sessionId) => {
+  if (!sessionId) {
+    return;
+  }
+  const confirmed = window.confirm(t("monitor.deleteConfirm", { sessionId }));
+  if (!confirmed) {
+    return;
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}`;
+  const response = await fetch(endpoint, { method: "DELETE" });
+  if (!response.ok) {
+    appendLog(t("monitor.deleteFailed", { status: response.status }));
+    return;
+  }
+  const result = await response.json();
+  appendLog(result.message || t("monitor.deleted"));
+  await loadMonitorData();
+  if (state.monitor.selected === sessionId) {
+    state.monitor.selected = null;
+    closeMonitorDetail();
+  }
+};
+
+const requestCancelSession = async (sessionId) => {
+  if (!sessionId) {
+    return;
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/monitor/${encodeURIComponent(sessionId)}/cancel`;
+  const response = await fetch(endpoint, { method: "POST" });
+  if (!response.ok) {
+    appendLog(t("monitor.cancelFailed", { status: response.status }));
+    notify(t("monitor.cancelFailed", { status: response.status }), "error");
+    return;
+  }
+  const result = await response.json();
+  appendLog(result.message || t("monitor.cancelRequested"));
+  notify(result.message || t("monitor.cancelRequested"), "info");
+  await loadMonitorData();
+  if (state.monitor.selected === sessionId) {
+    await openMonitorDetail(sessionId);
+  }
+};
+
+export const initMonitorPanel = () => {
+  ensureMonitorState();
+  bindToolHeatmapScrollPersistence();
+  ensureMonitorCharts();
+  bindMonitorPagination();
+  bindMonitorSessionFilters();
+  syncMonitorSessionFilterInputs();
+  window.addEventListener("resize", resizeMonitorCharts);
+  if (elements.monitorTimeRange) {
+    applyMonitorTimeRange(elements.monitorTimeRange.value || state.monitor.timeRangeHours);
+    const applyInputValue = () => {
+      applyMonitorTimeRange(elements.monitorTimeRange.value || state.monitor.timeRangeHours);
+    };
+    elements.monitorTimeRange.addEventListener("change", applyInputValue);
+    elements.monitorTimeRange.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        applyInputValue();
+      }
+    });
+  } else {
+    updateMonitorChartTitles();
+  }
+  syncMonitorTimeFilterInputs();
+  if (elements.monitorTimeFilterToggle && elements.monitorTimeStart && elements.monitorTimeEnd) {
+    const applyFilter = () => applyMonitorTimeFilter({ refresh: true });
+    elements.monitorTimeFilterToggle.addEventListener("change", applyFilter);
+    elements.monitorTimeStart.addEventListener("change", applyFilter);
+    elements.monitorTimeEnd.addEventListener("change", applyFilter);
+  }
+  elements.monitorLogManageBtn?.addEventListener("click", openMonitorLogCleanupModal);
+  elements.monitorLogCleanupClose?.addEventListener("click", closeMonitorLogCleanupModal);
+  elements.monitorLogCleanupCancel?.addEventListener("click", closeMonitorLogCleanupModal);
+  elements.monitorLogCleanupSubmit?.addEventListener("click", submitMonitorLogCleanup);
+  elements.monitorRefreshBtn.addEventListener("click", async () => {
+    try {
+      await loadMonitorData();
+      notify(t("monitor.refreshSuccess"), "success");
+    } catch (error) {
+      appendLog(t("monitor.refreshFailed", { message: error.message }));
+      notify(t("monitor.refreshFailed", { message: error.message }), "error");
+    }
+  });
+  if (elements.monitorDetailExport) {
+    elements.monitorDetailExport.addEventListener("click", exportMonitorDetailLogs);
+    setMonitorDetailExportEnabled(false);
+  }
+  if (elements.monitorDetailTypeFilter) {
+    elements.monitorDetailTypeFilter.addEventListener("change", () => {
+      if (!state.monitor?.detail) {
+        return;
+      }
+      state.monitor.detailFilters.eventType = normalizeMonitorDetailEventType(
+        elements.monitorDetailTypeFilter.value
+      );
+      renderMonitorDetailWithFilters(state.monitor.detail.events || []);
+    });
+  }
+  if (elements.monitorDetailKeyword) {
+    elements.monitorDetailKeyword.addEventListener("input", () => {
+      if (!state.monitor?.detail) {
+        return;
+      }
+      state.monitor.detailFilters.keyword = String(elements.monitorDetailKeyword.value || "");
+      renderMonitorDetailWithFilters(state.monitor.detail.events || []);
+    });
+  }
+  if (elements.monitorDetailRoundFilter) {
+    elements.monitorDetailRoundFilter.addEventListener("change", () => {
+      if (!state.monitor?.detail) {
+        return;
+      }
+      state.monitor.detailFilters.round = parseMonitorDetailRound(
+        elements.monitorDetailRoundFilter.value
+      );
+      renderMonitorDetailQuestion();
+      renderMonitorDetailWithFilters(state.monitor.detail.events || [], {
+        focusRound: state.monitor.detailFilters.round,
+      });
+      void loadMonitorDetailThreadTurn(
+        state.monitor.detail.session?.session_id,
+        state.monitor.detailFilters.round
+      );
+    });
+  }
+  if (elements.monitorDetailPagePrev) {
+    elements.monitorDetailPagePrev.addEventListener("click", () => {
+      const detail = state.monitor?.detail;
+      if (!detail || detail.loading) return;
+      void loadMonitorDetailPage(
+        detail.session?.session_id,
+        Math.max(0, (Number(detail.offset) || 0) - MONITOR_DETAIL_EVENT_PAGE_SIZE)
+      );
+    });
+  }
+  if (elements.monitorDetailPageNext) {
+    elements.monitorDetailPageNext.addEventListener("click", () => {
+      const detail = state.monitor?.detail;
+      if (!detail || detail.loading || !detail.hasMore) return;
+      void loadMonitorDetailPage(
+        detail.session?.session_id,
+        (Number(detail.offset) || 0) + MONITOR_DETAIL_EVENT_PAGE_SIZE
+      );
+    });
+  }
+  if (elements.monitorDetailPageLast) {
+    elements.monitorDetailPageLast.addEventListener("click", () => {
+      const detail = state.monitor?.detail;
+      if (!detail || detail.loading || !detail.hasMore) return;
+      const limit = Number(detail.limit) || MONITOR_DETAIL_EVENT_PAGE_SIZE;
+      const total = Number(detail.total) || 0;
+      void loadMonitorDetailPage(
+        detail.session?.session_id,
+        total > 0 ? Math.floor((total - 1) / limit) * limit : 0
+      );
+    });
+  }
+  elements.monitorDetailClose.addEventListener("click", closeMonitorDetail);
+  elements.monitorDetailModal.addEventListener("click", (event) => {
+    if (event.target === elements.monitorDetailModal) {
+      closeMonitorDetail();
+    }
+  });
+  if (elements.monitorStatusClose) {
+    elements.monitorStatusClose.addEventListener("click", closeMonitorStatusModal);
+  }
+  if (elements.monitorStatusModal) {
+    elements.monitorStatusModal.addEventListener("click", (event) => {
+      if (event.target === elements.monitorStatusModal) {
+        closeMonitorStatusModal();
+      }
+    });
+  }
+  if (elements.monitorToolClose) {
+    elements.monitorToolClose.addEventListener("click", closeMonitorToolModal);
+  }
+  if (elements.monitorToolModal) {
+    elements.monitorToolModal.addEventListener("click", (event) => {
+      if (event.target === elements.monitorToolModal) {
+        closeMonitorToolModal();
+      }
+    });
+  }
+};
+
+

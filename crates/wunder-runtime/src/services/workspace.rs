@@ -1,0 +1,3774 @@
+// 工作区管理：路径校验、文件读写、目录操作与压缩打包。
+use crate::core::atomic_write::atomic_write_text;
+use crate::core::blocking;
+use crate::i18n;
+use crate::path_utils::{
+    normalize_path_for_compare, normalize_target_path, strip_windows_verbatim_prefix,
+};
+use crate::storage::{
+    normalize_workspace_container_id, StorageBackend, DEFAULT_SANDBOX_CONTAINER_ID,
+    USER_PRIVATE_CONTAINER_ID,
+};
+use anyhow::{anyhow, Result};
+use chrono::{DateTime, Local};
+use dashmap::DashMap;
+use parking_lot::{Mutex, RwLock};
+use regex::Regex;
+use serde::Serialize;
+use serde_json::{json, Value};
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicI64};
+use std::sync::mpsc::{self, SyncSender, TrySendError};
+use std::sync::{Arc, OnceLock};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::runtime::Handle;
+use tracing::{info, warn};
+use walkdir::WalkDir;
+
+const TREE_CACHE_TTL_S: f64 = 5.0;
+const TREE_CACHE_IDLE_TTL_S: f64 = 300.0;
+const TREE_CACHE_MAX_USERS: usize = 512;
+const SEARCH_INDEX_TTL_S: f64 = 10.0;
+const SEARCH_INDEX_MAX_ITEMS: usize = 200_000;
+const SEARCH_CACHE_IDLE_TTL_S: f64 = 300.0;
+const SEARCH_CACHE_MAX_USERS: usize = 256;
+const STORAGE_WRITE_QUEUE_SIZE: usize = 2048;
+const TEMP_FILES_IDLE_TTL_S: f64 = 0.0;
+const TEMP_FILES_CLEANUP_INTERVAL_S: f64 = 3600.0;
+const SESSION_ACTIVITY_META_PREFIX: &str = "session_activity:";
+const PUBLIC_WORKSPACE_ROOT: &str = "/workspaces";
+const WORKSPACE_SINGLE_ROOT_ENV: &str = "WUNDER_WORKSPACE_SINGLE_ROOT";
+const USER_PRIVATE_PERSISTENT_ROOTS: &[&str] = &["global", "knowledge", "skills"];
+pub const DEFAULT_DELETED_SESSION_LOG_GRACE_HOURS: i64 = 24;
+const DELETED_SESSION_LOG_CLEANUP_BATCH: i64 = 32;
+/// Usage summary cache: short TTL, invalidated whenever the tree is marked dirty.
+const USAGE_STATS_TTL_S: f64 = 15.0;
+const USAGE_STATS_MAX_USERS: usize = 128;
+const USAGE_STATS_MAX_ENTRIES: usize = 60_000;
+const USAGE_STATS_MAX_DEPTH: usize = 24;
+const USAGE_STATS_RECENT_LIMIT: usize = 8;
+pub const USAGE_STATS_RECENT_MAX: usize = 32;
+const USAGE_STATS_KEY_SEPARATOR: char = '\u{1}';
+/// 扁平化作用域的一次性目录迁移标记（per user）。
+const FLATTEN_MIGRATION_META_PREFIX: &str = "workspace_flatten_migrated_v1:";
+const FLATTEN_MIGRATION_CACHE_MAX: usize = 4096;
+
+fn effective_temp_cleanup_idle_ttl_s(single_root: bool) -> f64 {
+    // Single-root mode points to a user-managed local workspace (CLI/Desktop),
+    // so it must never be treated as disposable temp space.
+    if single_root {
+        0.0
+    } else {
+        TEMP_FILES_IDLE_TTL_S
+    }
+}
+
+type WorkspaceEntriesPage = (Vec<WorkspaceEntry>, u64, String, Option<String>, u64);
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceDirectoryBranch {
+    pub path: String,
+    pub directories: Vec<WorkspaceEntry>,
+    pub total_directories: u64,
+}
+
+/// Workspace entry path relative to the user root, always slash-separated;
+/// falls back to the absolute form when the entry escapes the root so callers
+/// keep an unambiguous value instead of a silently wrong relative one.
+fn relative_entry_path(root: &std::path::Path, entry_path: &std::path::Path) -> String {
+    entry_path
+        .strip_prefix(root)
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| {
+            if normalize_path_for_compare(entry_path) == normalize_path_for_compare(root) {
+                String::new()
+            } else {
+                entry_path.to_string_lossy().replace('\\', "/")
+            }
+        })
+}
+
+async fn run_workspace_db<T, F>(label: &'static str, task: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    blocking::run_db(label, task).await
+}
+
+async fn run_workspace_fs<T, F>(label: &'static str, task: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    blocking::run_fs(label, task).await
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceEntry {
+    pub name: String,
+    pub path: String,
+    #[serde(rename = "type")]
+    pub entry_type: String,
+    pub size: u64,
+    pub updated_time: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub children: Option<Vec<WorkspaceEntry>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceTreeSnapshot {
+    pub tree: String,
+    pub version: u64,
+}
+
+/// Bounded usage summary for one workspace subtree.
+/// `path` fields of `recent` are always relative to the user workspace root.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceUsageSummary {
+    pub files: u64,
+    pub dirs: u64,
+    pub used_bytes: u64,
+    /// True when the walk hit `USAGE_STATS_MAX_ENTRIES` and stopped early.
+    pub truncated: bool,
+    #[serde(default)]
+    pub recent: Vec<WorkspaceEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct UsageStatsCacheEntry {
+    summary: WorkspaceUsageSummary,
+    built_ts: f64,
+    last_access_ts: f64,
+}
+
+#[derive(Default)]
+struct UsageStatsCache {
+    entries: HashMap<String, UsageStatsCacheEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct TreeCacheEntry {
+    tree: String,
+    built_ts: f64,
+    last_access_ts: f64,
+    version: u64,
+}
+
+#[derive(Default)]
+struct TreeCache {
+    cache: HashMap<String, TreeCacheEntry>,
+    dirty: HashSet<String>,
+}
+
+#[derive(Default)]
+struct RetentionState {
+    last_cleanup: f64,
+    running: bool,
+}
+
+#[derive(Default, Clone)]
+struct UserUsageCache {
+    data: HashMap<String, HashMap<String, i64>>,
+    updated_ts: f64,
+}
+
+#[derive(Debug, Clone)]
+struct SearchIndexEntry {
+    entry: WorkspaceEntry,
+    name_lower: String,
+    is_dir: bool,
+}
+
+#[derive(Debug, Clone)]
+struct SearchIndex {
+    entries: Arc<Vec<SearchIndexEntry>>,
+    built_ts: f64,
+    last_access_ts: f64,
+    version: u64,
+}
+
+enum StorageWrite {
+    Chat { user_id: String, payload: Value },
+    ToolLog { user_id: String, payload: Value },
+    ArtifactLog { user_id: String, payload: Value },
+    Flush { done: SyncSender<()> },
+}
+
+struct StorageWriteQueue {
+    sender: SyncSender<StorageWrite>,
+    storage: Arc<dyn StorageBackend>,
+}
+
+impl StorageWriteQueue {
+    fn new(storage: Arc<dyn StorageBackend>) -> Self {
+        let (sender, receiver) = mpsc::sync_channel(STORAGE_WRITE_QUEUE_SIZE);
+        let worker_storage = storage.clone();
+        if let Err(err) = thread::Builder::new()
+            .name("wunder-storage-writer".to_string())
+            .spawn(move || {
+                while let Ok(task) = receiver.recv() {
+                    if let Err(err) = Self::apply_write(&worker_storage, task) {
+                        warn!("storage write failed: {err}");
+                    }
+                }
+            })
+        {
+            warn!("failed to spawn storage writer thread: {err}");
+        }
+        Self { sender, storage }
+    }
+
+    fn enqueue(&self, task: StorageWrite) -> Result<()> {
+        match self.sender.try_send(task) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(task)) | Err(TrySendError::Disconnected(task)) => {
+                Self::apply_write(&self.storage, task)
+            }
+        }
+    }
+
+    fn apply_write(storage: &Arc<dyn StorageBackend>, task: StorageWrite) -> Result<()> {
+        match task {
+            StorageWrite::Chat { user_id, payload } => storage.append_chat(&user_id, &payload),
+            StorageWrite::ToolLog { user_id, payload } => {
+                storage.append_tool_log(&user_id, &payload)
+            }
+            StorageWrite::ArtifactLog { user_id, payload } => {
+                storage.append_artifact_log(&user_id, &payload)
+            }
+            StorageWrite::Flush { done } => {
+                let _ = done.send(());
+                Ok(())
+            }
+        }
+    }
+
+    fn flush(&self) -> bool {
+        let (done_tx, done_rx) = mpsc::sync_channel(0);
+        if self
+            .sender
+            .send(StorageWrite::Flush { done: done_tx })
+            .is_err()
+        {
+            return false;
+        }
+        done_rx.recv_timeout(Duration::from_secs(2)).is_ok()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PurgeResult {
+    pub chat_sessions: i64,
+    pub chat_records: i64,
+    pub tool_records: i64,
+    pub workspace_deleted: bool,
+    pub legacy_history_deleted: bool,
+}
+
+pub struct WorkspaceManager {
+    root: PathBuf,
+    single_root: bool,
+    /// Cloud form: one agent per user, so agent/container scoping is flattened
+    /// and every user keeps exactly one directory (`root/<user>`).
+    /// This is deliberately NOT the CLI/desktop `single_root` switch, which maps
+    /// a bare user id onto the shared root path.
+    flatten_agent_scope: AtomicBool,
+    /// 已完成扁平化目录迁移的用户（进程内记忆，避免每次 ensure 都读 meta）。
+    flatten_migration_done: Mutex<HashSet<String>>,
+    container_roots: RwLock<HashMap<i32, PathBuf>>,
+    /// Desktop workspaces: workspace_id -> real host folder. Scoped ids in the
+    /// `{user}__w__{workspace_id}` form resolve to these roots verbatim.
+    workspace_roots: RwLock<HashMap<String, PathBuf>>,
+    storage: Arc<dyn StorageBackend>,
+    write_queue: OnceLock<StorageWriteQueue>,
+    stream_event_retention_hours: i64,
+    deleted_session_log_grace_hours: AtomicI64,
+    retention_interval_s: f64,
+    retention_state: Arc<Mutex<RetentionState>>,
+    temp_cleanup_interval_s: f64,
+    temp_cleanup_idle_ttl_s: f64,
+    temp_cleanup_state: Arc<Mutex<RetentionState>>,
+    versions: DashMap<String, u64>,
+    path_guard: Option<Regex>,
+    tree_cache: Mutex<TreeCache>,
+    tree_cache_ttl_s: f64,
+    tree_cache_idle_ttl_s: f64,
+    tree_cache_max_users: usize,
+    search_cache: Mutex<HashMap<String, SearchIndex>>,
+    search_cache_ttl_s: f64,
+    search_cache_max_items: usize,
+    search_cache_idle_ttl_s: f64,
+    search_cache_max_users: usize,
+    user_usage_cache: Mutex<UserUsageCache>,
+    user_usage_cache_ttl_s: f64,
+    usage_stats_cache: Mutex<UsageStatsCache>,
+    usage_stats_ttl_s: f64,
+    usage_stats_max_users: usize,
+}
+
+impl WorkspaceManager {
+    pub fn new(
+        root: &str,
+        storage: Arc<dyn StorageBackend>,
+        stream_event_retention_hours: i64,
+        container_roots: &HashMap<i32, String>,
+    ) -> Self {
+        let stream_event_retention_hours =
+            normalize_stream_event_retention_hours(stream_event_retention_hours);
+        let single_root = workspace_single_root_enabled();
+        let temp_cleanup_idle_ttl_s = effective_temp_cleanup_idle_ttl_s(single_root);
+        if let Err(err) = storage.ensure_initialized() {
+            warn!("storage initialization failed: {err}");
+        }
+        let normalized_container_roots = normalize_container_roots(container_roots);
+        Self {
+            root: PathBuf::from(root),
+            single_root,
+            flatten_agent_scope: AtomicBool::new(false),
+            flatten_migration_done: Mutex::new(HashSet::new()),
+            container_roots: RwLock::new(normalized_container_roots),
+            workspace_roots: RwLock::new(HashMap::new()),
+            storage,
+            write_queue: OnceLock::new(),
+            stream_event_retention_hours,
+            deleted_session_log_grace_hours: AtomicI64::new(
+                DEFAULT_DELETED_SESSION_LOG_GRACE_HOURS,
+            ),
+            retention_interval_s: 3600.0,
+            retention_state: Arc::new(Mutex::new(RetentionState::default())),
+            temp_cleanup_interval_s: TEMP_FILES_CLEANUP_INTERVAL_S,
+            temp_cleanup_idle_ttl_s,
+            temp_cleanup_state: Arc::new(Mutex::new(RetentionState::default())),
+            versions: DashMap::new(),
+            path_guard: match Regex::new(r#"[\\:*?\"<>|]"#) {
+                Ok(regex) => Some(regex),
+                Err(err) => {
+                    warn!("invalid workspace path guard regex: {err}");
+                    None
+                }
+            },
+            tree_cache: Mutex::new(TreeCache::default()),
+            tree_cache_ttl_s: TREE_CACHE_TTL_S,
+            tree_cache_idle_ttl_s: TREE_CACHE_IDLE_TTL_S,
+            tree_cache_max_users: TREE_CACHE_MAX_USERS,
+            search_cache: Mutex::new(HashMap::new()),
+            search_cache_ttl_s: SEARCH_INDEX_TTL_S,
+            search_cache_max_items: SEARCH_INDEX_MAX_ITEMS,
+            search_cache_idle_ttl_s: SEARCH_CACHE_IDLE_TTL_S,
+            search_cache_max_users: SEARCH_CACHE_MAX_USERS,
+            user_usage_cache: Mutex::new(UserUsageCache::default()),
+            user_usage_cache_ttl_s: 5.0,
+            usage_stats_cache: Mutex::new(UsageStatsCache::default()),
+            usage_stats_ttl_s: USAGE_STATS_TTL_S,
+            usage_stats_max_users: USAGE_STATS_MAX_USERS,
+        }
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn set_deleted_session_log_grace_hours(&self, hours: i64) {
+        self.deleted_session_log_grace_hours
+            .store(hours.max(0), std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn deleted_session_log_grace_hours(&self) -> i64 {
+        self.deleted_session_log_grace_hours
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn container_roots(&self) -> HashMap<i32, String> {
+        self.container_roots
+            .read()
+            .iter()
+            .map(|(container_id, path)| (*container_id, path.to_string_lossy().to_string()))
+            .collect()
+    }
+
+    pub fn set_container_roots(&self, container_roots: HashMap<i32, String>) {
+        let normalized = normalize_container_roots(&container_roots);
+        let mut guard = self.container_roots.write();
+        *guard = normalized;
+    }
+
+    /// Bind a desktop workspace id to its real host folder. The folder is used
+    /// verbatim as the tool root; no sandbox mapping or copy is involved.
+    pub fn register_workspace_root(&self, workspace_id: &str, root: &str) {
+        let cleaned = workspace_id.trim();
+        let root_path = PathBuf::from(root.trim());
+        if cleaned.is_empty() || root_path.as_os_str().is_empty() {
+            return;
+        }
+        self.workspace_roots
+            .write()
+            .insert(cleaned.to_string(), root_path);
+    }
+
+    pub fn unregister_workspace_root(&self, workspace_id: &str) {
+        self.workspace_roots.write().remove(workspace_id.trim());
+    }
+
+    /// Scoped storage key for one desktop workspace.
+    pub fn scoped_user_id_for_workspace(&self, user_id: &str, workspace_id: &str) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        let workspace_id = workspace_id.trim();
+        if workspace_id.is_empty() {
+            return safe_user;
+        }
+        format!("{safe_user}{}{}", WORKSPACE_SCOPE_SEPARATOR, workspace_id)
+    }
+
+    pub fn workspace_root(&self, user_id: &str) -> PathBuf {
+        let safe_id = self.safe_user_id(user_id);
+        if let Some(workspace_key) = extract_workspace_key_from_scoped_user(&safe_id) {
+            if let Some(path) = self.workspace_roots.read().get(&workspace_key).cloned() {
+                return path;
+            }
+            return self.root.join(safe_id);
+        }
+        let container_id = extract_container_id_from_scoped_user(&safe_id);
+        if let Some(path) = self.container_roots.read().get(&container_id).cloned() {
+            return path;
+        }
+        if self.single_root {
+            if container_id == USER_PRIVATE_CONTAINER_ID {
+                return self.root.clone();
+            }
+            return self.root.join(safe_id);
+        }
+        self.root.join(safe_id)
+    }
+
+    /// Enable the cloud form: one agent per user, no agent/container scoping.
+    /// Every user keeps exactly one directory (`root/<user>`); the CLI/desktop
+    /// `single_root` mode is a separate switch and is not affected.
+    pub fn set_flatten_agent_scope(&self, enabled: bool) {
+        self.flatten_agent_scope
+            .store(enabled, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn flatten_agent_scope_enabled(&self) -> bool {
+        self.flatten_agent_scope
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn scoped_user_id(&self, user_id: &str, agent_id: Option<&str>) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        if self.single_root || self.flatten_agent_scope_enabled() {
+            return safe_user;
+        }
+        let agent_id = agent_id
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+        let Some(agent_id) = agent_id else {
+            return safe_user;
+        };
+        let safe_agent = self.safe_scope_component(agent_id);
+        if safe_agent.is_empty() {
+            safe_user
+        } else {
+            let scoped = format!(
+                "{safe_user}__a__{}",
+                self.short_scope_component(&safe_agent)
+            );
+            let legacy = format!("{safe_user}__agent__{safe_agent}");
+            let previous = format!(
+                "{safe_user}__a__{}",
+                self.short_scope_component_with_len(&safe_agent, 3, 6)
+            );
+            if scoped == legacy {
+                return scoped;
+            }
+            let scoped_root = self.workspace_root(&scoped);
+            let mut migrated = false;
+            if !scoped_root.exists() {
+                for candidate in [previous.as_str(), legacy.as_str()] {
+                    if candidate == scoped.as_str() {
+                        continue;
+                    }
+                    let candidate_root = self.workspace_root(candidate);
+                    if candidate_root.exists() {
+                        if let Err(err) = fs::rename(&candidate_root, &scoped_root) {
+                            warn!("failed to migrate workspace {candidate} -> {scoped}: {err}");
+                            return candidate.to_string();
+                        }
+                        self.clear_workspace_cache(candidate);
+                        migrated = true;
+                        break;
+                    }
+                }
+            }
+            if !migrated && scoped_root.exists() {
+                return scoped;
+            }
+            if self.workspace_root(&previous).exists() {
+                return previous;
+            }
+            scoped
+        }
+    }
+
+    pub fn scoped_user_id_by_container(&self, user_id: &str, sandbox_container_id: i32) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        if self.flatten_agent_scope_enabled() {
+            return safe_user;
+        }
+        let container_id = normalize_workspace_container_id(sandbox_container_id);
+        if container_id == USER_PRIVATE_CONTAINER_ID {
+            return safe_user;
+        }
+        format!("{safe_user}__c__{container_id}")
+    }
+
+    pub fn scoped_user_id_variants(&self, user_id: &str, agent_id: Option<&str>) -> Vec<String> {
+        let safe_user = self.safe_user_id(user_id);
+        if self.single_root || self.flatten_agent_scope_enabled() {
+            return vec![safe_user];
+        }
+        let agent_id = agent_id
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+        let Some(agent_id) = agent_id else {
+            return vec![safe_user];
+        };
+        let safe_agent = self.safe_scope_component(agent_id);
+        if safe_agent.is_empty() {
+            return vec![safe_user];
+        }
+        let scoped = format!(
+            "{safe_user}__a__{}",
+            self.short_scope_component(&safe_agent)
+        );
+        let legacy = format!("{safe_user}__agent__{safe_agent}");
+        let previous = format!(
+            "{safe_user}__a__{}",
+            self.short_scope_component_with_len(&safe_agent, 3, 6)
+        );
+        let mut variants = vec![scoped, legacy, previous];
+        variants.sort();
+        variants.dedup();
+        variants
+    }
+
+    fn safe_user_id(&self, user_id: &str) -> String {
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return "anonymous".to_string();
+        }
+        let output = self.safe_scope_component(cleaned);
+        if output.trim().is_empty() {
+            "anonymous".to_string()
+        } else {
+            output
+        }
+    }
+
+    fn safe_scope_component(&self, value: &str) -> String {
+        let cleaned = value.trim();
+        if cleaned.is_empty() {
+            return String::new();
+        }
+        let mut output = String::with_capacity(cleaned.len());
+        for ch in cleaned.chars() {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                output.push(ch);
+            } else {
+                output.push('_');
+            }
+        }
+        output
+    }
+
+    fn short_scope_component(&self, value: &str) -> String {
+        self.short_scope_component_with_len(value, 3, 5)
+    }
+
+    fn short_scope_component_with_len(
+        &self,
+        value: &str,
+        prefix_len: usize,
+        hash_len: usize,
+    ) -> String {
+        let cleaned = self.safe_scope_component(value);
+        let target_len = prefix_len + hash_len;
+        if cleaned.len() <= target_len || hash_len == 0 {
+            return cleaned;
+        }
+        let prefix = cleaned.chars().take(prefix_len).collect::<String>();
+        let mask = if hash_len >= 16 {
+            u64::MAX
+        } else {
+            (1u64 << (hash_len * 4)) - 1
+        };
+        let hash = fnv1a_hash64(cleaned.as_bytes()) & mask;
+        format!("{prefix}{hash:0width$x}", width = hash_len)
+    }
+
+    fn clear_workspace_cache(&self, user_id: &str) {
+        let safe_id = self.safe_user_id(user_id);
+        {
+            let mut cache = self.tree_cache.lock();
+            cache.cache.remove(&safe_id);
+            cache.dirty.remove(&safe_id);
+        }
+        {
+            let mut cache = self.search_cache.lock();
+            cache.remove(&safe_id);
+        }
+        let _ = self.versions.remove(&safe_id);
+        {
+            let mut cache = self.user_usage_cache.lock();
+            cache.data.remove(user_id);
+            cache.updated_ts = 0.0;
+        }
+    }
+
+    fn user_root(&self, user_id: &str) -> PathBuf {
+        self.workspace_root(user_id)
+    }
+
+    pub fn public_root(&self, user_id: &str) -> PathBuf {
+        if self.single_root {
+            return PathBuf::from(PUBLIC_WORKSPACE_ROOT);
+        }
+        let safe_id = self.safe_user_id(user_id);
+        PathBuf::from(PUBLIC_WORKSPACE_ROOT).join(safe_id)
+    }
+
+    pub fn display_path(&self, user_id: &str, target: &Path) -> String {
+        let user_root = self.user_root(user_id);
+        let normalized_user_root = normalize_target_path(&user_root);
+        let normalized_target = normalize_target_path(target);
+        if let Ok(rel) = normalized_target.strip_prefix(&normalized_user_root) {
+            let public_root = self.public_root(user_id);
+            let display = if rel.as_os_str().is_empty() {
+                public_root
+            } else {
+                public_root.join(rel)
+            };
+            let mut text = display.to_string_lossy().replace('\\', "/");
+            if rel.as_os_str().is_empty() && !text.ends_with('/') {
+                text.push('/');
+            }
+            return text;
+        }
+        normalized_target.to_string_lossy().to_string()
+    }
+
+    pub fn map_public_path(&self, user_id: &str, target: &Path) -> Option<PathBuf> {
+        let public_root = self.public_root(user_id);
+        if !target.starts_with(&public_root) {
+            return None;
+        }
+        let rel = target.strip_prefix(&public_root).ok()?;
+        let user_root = self.user_root(user_id);
+        if rel.as_os_str().is_empty() {
+            Some(user_root)
+        } else {
+            Some(user_root.join(rel))
+        }
+    }
+
+    pub fn replace_public_root_in_text(&self, user_id: &str, text: &str) -> String {
+        let public_root = self
+            .public_root(user_id)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if public_root.is_empty() {
+            return text.to_string();
+        }
+        let user_root = self.user_root(user_id).to_string_lossy().replace('\\', "/");
+        if public_root == user_root || !text.contains(&public_root) {
+            return text.to_string();
+        }
+        text.replace(&public_root, &user_root)
+    }
+
+    fn session_context_tokens_key(&self, user_id: &str, session_id: &str) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        let safe_session = session_id
+            .trim()
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        let safe_session = if safe_session.trim().is_empty() {
+            "default".to_string()
+        } else {
+            safe_session
+        };
+        format!("session_context_tokens:{safe_user}:{safe_session}")
+    }
+
+    fn session_reasoning_effort_key(&self, user_id: &str, session_id: &str) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        let safe_session = session_id
+            .trim()
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        let safe_session = if safe_session.trim().is_empty() {
+            "default".to_string()
+        } else {
+            safe_session
+        };
+        format!("session_reasoning_effort:{safe_user}:{safe_session}")
+    }
+
+    fn session_context_overflow_key(&self, user_id: &str, session_id: &str) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        let safe_session = session_id
+            .trim()
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        let safe_session = if safe_session.trim().is_empty() {
+            "default".to_string()
+        } else {
+            safe_session
+        };
+        format!("session_context_overflow:{safe_user}:{safe_session}")
+    }
+
+    fn session_context_limit_hint_key(&self, user_id: &str, session_id: &str) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        let safe_session = session_id
+            .trim()
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        let safe_session = if safe_session.trim().is_empty() {
+            "default".to_string()
+        } else {
+            safe_session
+        };
+        format!("session_context_limit_hint:{safe_user}:{safe_session}")
+    }
+
+    fn session_frozen_tool_overrides_key(&self, user_id: &str, session_id: &str) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        let safe_session = session_id
+            .trim()
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        let safe_session = if safe_session.trim().is_empty() {
+            "default".to_string()
+        } else {
+            safe_session
+        };
+        format!("session_frozen_tool_overrides:{safe_user}:{safe_session}")
+    }
+
+    fn session_frozen_tool_call_mode_key(&self, user_id: &str, session_id: &str) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        let safe_session = session_id
+            .trim()
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        let safe_session = if safe_session.trim().is_empty() {
+            "default".to_string()
+        } else {
+            safe_session
+        };
+        format!("session_frozen_tool_call_mode:{safe_user}:{safe_session}")
+    }
+
+    fn maybe_schedule_retention_cleanup(&self) {
+        let grace_hours = self.deleted_session_log_grace_hours();
+        if self.stream_event_retention_hours <= 0 && grace_hours <= 0 {
+            return;
+        }
+        let now = now_ts();
+        {
+            let mut state = self.retention_state.lock();
+            if state.running || now - state.last_cleanup < self.retention_interval_s {
+                return;
+            }
+            state.running = true;
+            state.last_cleanup = now;
+        }
+        let storage = self.storage.clone();
+        // Stream events are replay buffers; only rows older than the retention
+        // window are removed, chat history stays durable.
+        let retention_enabled = self.stream_event_retention_hours > 0;
+        let cutoff = now - (self.stream_event_retention_hours as f64) * 3600.0;
+        let state = self.retention_state.clone();
+        if let Ok(handle) = Handle::try_current() {
+            handle.spawn(async move {
+                let _ = run_workspace_db("workspace.retention.cleanup", move || {
+                    if retention_enabled {
+                        let deleted = storage.cleanup_retention(cutoff)?;
+                        let removed = deleted.get("stream_events").copied().unwrap_or(0);
+                        if removed > 0 {
+                            info!(removed, cutoff, "expired stream events removed");
+                        }
+                    }
+                    cleanup_expired_deleted_session_logs(storage.as_ref(), grace_hours, now);
+                    Ok(())
+                })
+                .await;
+                let mut guard = state.lock();
+                guard.running = false;
+            });
+        } else {
+            if retention_enabled {
+                if let Ok(deleted) = storage.cleanup_retention(cutoff) {
+                    let removed = deleted.get("stream_events").copied().unwrap_or(0);
+                    if removed > 0 {
+                        info!(removed, cutoff, "expired stream events removed");
+                    }
+                }
+            }
+            cleanup_expired_deleted_session_logs(storage.as_ref(), grace_hours, now);
+            let mut guard = state.lock();
+            guard.running = false;
+        }
+    }
+
+    fn maybe_schedule_temp_cleanup(&self) {
+        if self.temp_cleanup_idle_ttl_s <= 0.0 {
+            return;
+        }
+        let now = now_ts();
+        {
+            let mut state = self.temp_cleanup_state.lock();
+            if state.running || now - state.last_cleanup < self.temp_cleanup_interval_s {
+                return;
+            }
+            state.running = true;
+            state.last_cleanup = now;
+        }
+        let root = self.root.clone();
+        let storage = self.storage.clone();
+        let idle_ttl_s = self.temp_cleanup_idle_ttl_s;
+        let state = self.temp_cleanup_state.clone();
+        if let Ok(handle) = Handle::try_current() {
+            handle.spawn(async move {
+                let _ = run_workspace_fs("workspace.temp.cleanup", move || {
+                    cleanup_idle_temp_files(&root, &storage, idle_ttl_s);
+                    Ok(())
+                })
+                .await;
+                let mut guard = state.lock();
+                guard.running = false;
+            });
+        } else {
+            cleanup_idle_temp_files(&root, &storage, idle_ttl_s);
+            let mut guard = state.lock();
+            guard.running = false;
+        }
+    }
+
+    pub fn resolve_path(&self, user_id: &str, path: &str) -> Result<PathBuf> {
+        let trimmed = path.trim();
+        if trimmed.is_empty() || trimmed == "." {
+            return Ok(self.user_root(user_id));
+        }
+        let user_root = self.user_root(user_id);
+        let public_like = trimmed.replace('\\', "/");
+        let public_target = public_like
+            .strip_prefix("workspaces/")
+            .or_else(|| public_like.strip_prefix("/workspaces/"))
+            .map(|public_relative| PathBuf::from(PUBLIC_WORKSPACE_ROOT).join(public_relative));
+        if let Some(public_target) = public_target {
+            if let Some(mapped) = self.map_public_path(user_id, &public_target) {
+                return Ok(mapped);
+            }
+            return Err(anyhow!(i18n::t("error.path_out_of_bounds")));
+        }
+        let target_path = Path::new(trimmed);
+        if target_path.is_absolute() {
+            if let Some(mapped) = self.map_public_path(user_id, target_path) {
+                return Ok(mapped);
+            }
+            return Ok(target_path.to_path_buf());
+        }
+        if let Some(ref guard) = self.path_guard {
+            if guard.is_match(trimmed) && !trimmed.is_empty() {
+                return Err(anyhow!("路径包含非法字符"));
+            }
+        }
+        let target = normalize_target_path(&user_root.join(target_path));
+        Ok(target)
+    }
+
+    pub fn ensure_user_root(&self, user_id: &str) -> Result<PathBuf> {
+        let user_root = self.user_root(user_id);
+        // A desktop workspace points at a real host folder; silently recreating
+        // it after the user moved or unplugged it would hide the problem.
+        if extract_workspace_key_from_scoped_user(&self.safe_user_id(user_id)).is_some() {
+            if !user_root.exists() {
+                return Err(anyhow::anyhow!(i18n::t("workspace.root_missing")
+                    .replace("{path}", &user_root.to_string_lossy())));
+            }
+            return Ok(user_root);
+        }
+        fs::create_dir_all(&user_root)?;
+        self.migrate_legacy_scoped_dirs(&self.safe_user_id(user_id));
+        Ok(user_root)
+    }
+
+    /// 云端形态一次性迁移：把历史按智能体/容器隔离的目录
+    /// （`{user}__a__*` / `{user}__agent__*` / `{user}__c__*`）内容并入用户根。
+    /// 每个用户只做一次（进程内记忆 + 持久 meta 标记），重名追加 `(2)`、`(3)`… 后缀。
+    fn migrate_legacy_scoped_dirs(&self, safe_user: &str) {
+        if !self.flatten_agent_scope_enabled() || safe_user.is_empty() {
+            return;
+        }
+        {
+            let mut guard = self.flatten_migration_done.lock();
+            if guard.contains(safe_user) {
+                return;
+            }
+            if guard.len() >= FLATTEN_MIGRATION_CACHE_MAX {
+                guard.clear();
+            }
+        }
+        let meta_key = format!("{FLATTEN_MIGRATION_META_PREFIX}{safe_user}");
+        if matches!(self.storage.get_meta(&meta_key), Ok(Some(_))) {
+            self.flatten_migration_done
+                .lock()
+                .insert(safe_user.to_string());
+            return;
+        }
+        let user_root = self.user_root(safe_user);
+        let mut moved = 0_usize;
+        let mut merged_dirs = 0_usize;
+        if let Some(parent) = user_root.parent() {
+            if let Ok(entries) = fs::read_dir(parent) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if !is_legacy_scope_dir_for(&name, safe_user) {
+                        continue;
+                    }
+                    let source = entry.path();
+                    if !source.is_dir() {
+                        continue;
+                    }
+                    if let Err(err) = fs::create_dir_all(&user_root) {
+                        warn!("flatten migration: create user root failed: {err}");
+                        return;
+                    }
+                    moved += move_dir_contents_merging(&source, &user_root);
+                    if fs::read_dir(&source)
+                        .map(|mut iter| iter.next().is_none())
+                        .unwrap_or(false)
+                    {
+                        let _ = fs::remove_dir(&source);
+                    }
+                    merged_dirs += 1;
+                }
+            }
+        }
+        if let Err(err) = self.storage.set_meta(&meta_key, "1") {
+            warn!("flatten migration: persist marker failed: {err}");
+        }
+        self.flatten_migration_done
+            .lock()
+            .insert(safe_user.to_string());
+        if merged_dirs > 0 {
+            info!(
+                user = safe_user,
+                merged_dirs, moved, "merged legacy scoped workspace dirs into the user root"
+            );
+            self.clear_workspace_cache(safe_user);
+        }
+    }
+
+    /// Bounded, briefly cached usage summary for one workspace subtree.
+    ///
+    /// The walk stops at `USAGE_STATS_MAX_ENTRIES` entries and reports
+    /// `truncated = true` instead of stalling on a huge tree.
+    pub fn workspace_usage_summary(
+        &self,
+        user_id: &str,
+        relative_path: &str,
+        recent_limit: usize,
+    ) -> Result<WorkspaceUsageSummary> {
+        let safe_id = self.safe_user_id(user_id);
+        let normalized = normalize_relative_path(relative_path);
+        let key = format!("{safe_id}{USAGE_STATS_KEY_SEPARATOR}{normalized}");
+        let now = now_ts();
+        if let Some(summary) = self.cached_usage_summary(&key, now) {
+            return Ok(summary);
+        }
+        let target = if normalized.is_empty() {
+            self.ensure_user_root(&safe_id)?
+        } else {
+            self.resolve_path(&safe_id, &normalized)?
+        };
+        if !target.exists() {
+            return Err(anyhow!(i18n::t("workspace.error.path_not_found")));
+        }
+        let user_root = self.user_root(&safe_id);
+        let limit = recent_limit.min(USAGE_STATS_RECENT_MAX);
+        let summary = compute_workspace_usage(&user_root, &target, limit);
+        self.store_usage_summary(key, &summary, now);
+        Ok(summary)
+    }
+
+    pub async fn workspace_usage_summary_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        relative_path: &str,
+        recent_limit: usize,
+    ) -> Result<WorkspaceUsageSummary> {
+        let user_id = user_id.to_string();
+        let relative_path = relative_path.to_string();
+        let workspace = Arc::clone(self);
+        run_workspace_fs("workspace.usage_summary", move || {
+            workspace.workspace_usage_summary(&user_id, &relative_path, recent_limit)
+        })
+        .await
+    }
+
+    fn cached_usage_summary(&self, key: &str, now: f64) -> Option<WorkspaceUsageSummary> {
+        let mut cache = self.usage_stats_cache.lock();
+        let stale = match cache.entries.get(key) {
+            Some(entry) => now - entry.built_ts > self.usage_stats_ttl_s,
+            None => return None,
+        };
+        if stale {
+            cache.entries.remove(key);
+            return None;
+        }
+        let entry = cache.entries.get_mut(key)?;
+        entry.last_access_ts = now;
+        Some(entry.summary.clone())
+    }
+
+    fn store_usage_summary(&self, key: String, summary: &WorkspaceUsageSummary, now: f64) {
+        let mut cache = self.usage_stats_cache.lock();
+        cache.entries.insert(
+            key,
+            UsageStatsCacheEntry {
+                summary: summary.clone(),
+                built_ts: now,
+                last_access_ts: now,
+            },
+        );
+        if cache.entries.len() > self.usage_stats_max_users {
+            evict_usage_stats_locked(&mut cache, self.usage_stats_max_users, now);
+        }
+    }
+
+    /// Drop cached usage summaries for one workspace id (all subtree keys).
+    pub fn invalidate_usage_stats(&self, user_id: &str) {
+        let prefix = format!("{}{USAGE_STATS_KEY_SEPARATOR}", self.safe_user_id(user_id));
+        let mut cache = self.usage_stats_cache.lock();
+        cache.entries.retain(|key, _| !key.starts_with(&prefix));
+    }
+
+    pub fn touch_user_session(&self, user_id: &str) {
+        let safe_id = self.safe_user_id(user_id);
+        let key = session_activity_key(&safe_id);
+        let now = now_ts();
+        if let Err(err) = self.storage.set_meta(&key, &now.to_string()) {
+            warn!("failed to record session activity for {safe_id}: {err}");
+        }
+        self.maybe_schedule_temp_cleanup();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn list_workspace_entries(
+        &self,
+        user_id: &str,
+        relative_path: &str,
+        keyword: Option<&str>,
+        offset: u64,
+        limit: u64,
+        sort_by: &str,
+        order: &str,
+    ) -> Result<WorkspaceEntriesPage> {
+        let normalized = normalize_relative_path(relative_path);
+        let target = self.resolve_path(
+            user_id,
+            if normalized.is_empty() {
+                "."
+            } else {
+                &normalized
+            },
+        )?;
+        if !target.exists() {
+            return Err(anyhow!(i18n::t("workspace.error.path_not_found")));
+        }
+        if !target.is_dir() {
+            return Err(anyhow!(i18n::t("workspace.error.path_not_dir")));
+        }
+
+        let root = normalize_target_path(&self.user_root(user_id));
+        let keyword = keyword.unwrap_or("").trim().to_lowercase();
+        let mut entries: Vec<(WorkspaceEntry, f64)> = Vec::new();
+        for entry in fs::read_dir(&target)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !keyword.is_empty() && !name.to_lowercase().contains(&keyword) {
+                continue;
+            }
+            let meta = entry.metadata()?;
+            let updated_ts = meta
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_secs_f64())
+                .unwrap_or(0.0);
+            let updated = meta.modified().ok().map(|time| {
+                let dt: DateTime<Local> = time.into();
+                dt.to_rfc3339()
+            });
+            let entry_type = if meta.is_dir() { "dir" } else { "file" };
+            let entry_path = normalize_target_path(entry.path().as_path());
+            let rel_path = relative_entry_path(&root, &entry_path);
+            let entry = WorkspaceEntry {
+                name,
+                path: rel_path,
+                entry_type: entry_type.to_string(),
+                size: if meta.is_dir() { 0 } else { meta.len() },
+                updated_time: updated.unwrap_or_default(),
+                children: None,
+            };
+            entries.push((entry, updated_ts));
+        }
+
+        let total = entries.len() as u64;
+        let sort_field = match sort_by {
+            "size" | "updated_time" | "name" => sort_by,
+            _ => "name",
+        };
+        let reverse = order.eq_ignore_ascii_case("desc");
+        let sort_key = |payload: &(WorkspaceEntry, f64)| match sort_field {
+            "size" => payload.0.size as f64,
+            "updated_time" => payload.1,
+            _ => 0.0,
+        };
+        let sort_name = |payload: &(WorkspaceEntry, f64)| payload.0.name.to_lowercase();
+
+        let mut dirs = Vec::new();
+        let mut files = Vec::new();
+        for payload in entries {
+            if payload.0.entry_type == "dir" {
+                dirs.push(payload);
+            } else {
+                files.push(payload);
+            }
+        }
+
+        match sort_field {
+            "name" => {
+                dirs.sort_by_key(sort_name);
+                files.sort_by_key(sort_name);
+            }
+            _ => {
+                dirs.sort_by(|a, b| {
+                    sort_key(a)
+                        .partial_cmp(&sort_key(b))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                files.sort_by(|a, b| {
+                    sort_key(a)
+                        .partial_cmp(&sort_key(b))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+            }
+        }
+        if reverse {
+            dirs.reverse();
+            files.reverse();
+        }
+        let mut combined = Vec::with_capacity(dirs.len() + files.len());
+        for (entry, _) in dirs.into_iter().chain(files.into_iter()) {
+            combined.push(entry);
+        }
+
+        let safe_offset = offset as usize;
+        let safe_limit = limit as usize;
+        let sliced = if safe_offset == 0 && safe_limit == 0 {
+            combined
+        } else if safe_limit == 0 {
+            combined.into_iter().skip(safe_offset).collect()
+        } else {
+            combined
+                .into_iter()
+                .skip(safe_offset)
+                .take(safe_limit)
+                .collect()
+        };
+        let parent = if normalized.is_empty() {
+            None
+        } else {
+            let parent_path = Path::new(&normalized)
+                .parent()
+                .map(|path| path.to_string_lossy().to_string());
+            match parent_path.as_deref() {
+                Some("") | Some(".") | None => Some(String::new()),
+                Some(value) => Some(value.to_string()),
+            }
+        };
+        let tree_version = self.get_tree_version(user_id);
+        Ok((sliced, tree_version, normalized, parent, total))
+    }
+
+    /// Bounded directory-only branch listing for tree views: immediate child
+    /// directories of `relative_path`, name-sorted, capped at `limit` with the
+    /// pre-cap total returned so callers can flag truncation. Files are never
+    /// enumerated here so a deep tree scan stays cheap.
+    pub fn list_workspace_directories(
+        &self,
+        user_id: &str,
+        relative_path: &str,
+        limit: u64,
+    ) -> Result<WorkspaceDirectoryBranch> {
+        let normalized = normalize_relative_path(relative_path);
+        let target = self.resolve_path(
+            user_id,
+            if normalized.is_empty() {
+                "."
+            } else {
+                &normalized
+            },
+        )?;
+        if !target.exists() {
+            return Err(anyhow!(i18n::t("workspace.error.path_not_found")));
+        }
+        if !target.is_dir() {
+            return Err(anyhow!(i18n::t("workspace.error.path_not_dir")));
+        }
+        let root = normalize_target_path(&self.user_root(user_id));
+        let mut directories: Vec<WorkspaceEntry> = Vec::new();
+        for entry in fs::read_dir(&target)? {
+            let entry = entry?;
+            let meta = entry.metadata()?;
+            if !meta.is_dir() {
+                continue;
+            }
+            let entry_path = normalize_target_path(entry.path().as_path());
+            directories.push(WorkspaceEntry {
+                name: entry.file_name().to_string_lossy().to_string(),
+                path: relative_entry_path(&root, &entry_path),
+                entry_type: "dir".to_string(),
+                size: 0,
+                updated_time: String::new(),
+                children: None,
+            });
+        }
+        let total = directories.len() as u64;
+        directories.sort_by_key(|entry: &WorkspaceEntry| entry.name.to_lowercase());
+        let limit = limit.max(1) as usize;
+        directories.truncate(limit);
+        Ok(WorkspaceDirectoryBranch {
+            path: normalized,
+            directories,
+            total_directories: total,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn list_workspace_entries_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        relative_path: &str,
+        keyword: Option<&str>,
+        offset: u64,
+        limit: u64,
+        sort_by: &str,
+        order: &str,
+    ) -> Result<WorkspaceEntriesPage> {
+        let user_id = user_id.to_string();
+        let relative_path = relative_path.to_string();
+        let keyword = keyword.map(|value| value.to_string());
+        let sort_by = sort_by.to_string();
+        let order = order.to_string();
+        let workspace = Arc::clone(self);
+        run_workspace_fs("workspace.list_entries", move || {
+            workspace.list_workspace_entries(
+                &user_id,
+                &relative_path,
+                keyword.as_deref(),
+                offset,
+                limit,
+                &sort_by,
+                &order,
+            )
+        })
+        .await
+    }
+
+    pub async fn load_history_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        run_workspace_db("workspace.load_history", move || {
+            workspace.load_history(&user_id, &session_id, limit)
+        })
+        .await
+    }
+
+    pub async fn load_session_system_prompt_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+        language: Option<&str>,
+    ) -> Result<Option<String>> {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let language = language.map(|value| value.to_string());
+        let workspace = Arc::clone(self);
+        run_workspace_db("workspace.load_session_system_prompt", move || {
+            workspace.load_session_system_prompt(&user_id, &session_id, language.as_deref())
+        })
+        .await
+    }
+
+    pub async fn load_session_frozen_tool_overrides_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<Vec<String>> {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        run_workspace_db("workspace.load_session_frozen_tool_overrides", move || {
+            Ok(workspace.load_session_frozen_tool_overrides(&user_id, &session_id))
+        })
+        .await
+        .unwrap_or(None)
+    }
+
+    pub async fn load_session_frozen_tool_call_mode_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<String> {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        run_workspace_db("workspace.load_session_frozen_tool_call_mode", move || {
+            Ok(workspace.load_session_frozen_tool_call_mode(&user_id, &session_id))
+        })
+        .await
+        .unwrap_or(None)
+    }
+
+    pub async fn load_session_context_tokens_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+    ) -> i64 {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        run_workspace_db("workspace.load_session_context_tokens", move || {
+            Ok(workspace.load_session_context_tokens(&user_id, &session_id))
+        })
+        .await
+        .unwrap_or(0)
+    }
+
+    pub async fn save_session_context_tokens_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+        total_tokens: i64,
+    ) {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        let _ = run_workspace_db("workspace.save_session_context_tokens", move || {
+            workspace.save_session_context_tokens(&user_id, &session_id, total_tokens);
+            Ok(())
+        })
+        .await;
+    }
+
+    pub async fn load_session_context_overflow_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+    ) -> bool {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        run_workspace_db("workspace.load_session_context_overflow", move || {
+            Ok(workspace.load_session_context_overflow(&user_id, &session_id))
+        })
+        .await
+        .unwrap_or(false)
+    }
+
+    pub async fn save_session_context_overflow_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+        overflowed: bool,
+    ) {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        let _ = run_workspace_db("workspace.save_session_context_overflow", move || {
+            workspace.save_session_context_overflow(&user_id, &session_id, overflowed);
+            Ok(())
+        })
+        .await;
+    }
+
+    pub async fn delete_session_context_overflow_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+    ) -> i64 {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        run_workspace_db("workspace.delete_session_context_overflow", move || {
+            Ok(workspace.delete_session_context_overflow(&user_id, &session_id))
+        })
+        .await
+        .unwrap_or(0)
+    }
+
+    pub async fn load_session_context_limit_hint_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<i64> {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        run_workspace_db("workspace.load_session_context_limit_hint", move || {
+            Ok(workspace.load_session_context_limit_hint(&user_id, &session_id))
+        })
+        .await
+        .unwrap_or(None)
+    }
+
+    pub async fn save_session_context_limit_hint_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+        limit_hint: Option<i64>,
+    ) {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        let _ = run_workspace_db("workspace.save_session_context_limit_hint", move || {
+            workspace.save_session_context_limit_hint(&user_id, &session_id, limit_hint);
+            Ok(())
+        })
+        .await;
+    }
+
+    pub async fn delete_session_context_limit_hint_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+    ) -> i64 {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        run_workspace_db("workspace.delete_session_context_limit_hint", move || {
+            Ok(workspace.delete_session_context_limit_hint(&user_id, &session_id))
+        })
+        .await
+        .unwrap_or(0)
+    }
+
+    pub fn append_chat(&self, user_id: &str, payload: &Value) -> Result<()> {
+        self.write_queue().enqueue(StorageWrite::Chat {
+            user_id: user_id.to_string(),
+            payload: payload.clone(),
+        })?;
+        self.maybe_schedule_retention_cleanup();
+        Ok(())
+    }
+
+    pub fn append_tool_log(&self, user_id: &str, payload: &Value) -> Result<()> {
+        self.write_queue().enqueue(StorageWrite::ToolLog {
+            user_id: user_id.to_string(),
+            payload: payload.clone(),
+        })?;
+        self.maybe_schedule_retention_cleanup();
+        Ok(())
+    }
+
+    pub fn append_artifact_log(&self, user_id: &str, payload: &Value) -> Result<()> {
+        self.write_queue().enqueue(StorageWrite::ArtifactLog {
+            user_id: user_id.to_string(),
+            payload: payload.clone(),
+        })?;
+        self.maybe_schedule_retention_cleanup();
+        Ok(())
+    }
+
+    pub async fn flush_writes_async(self: &Arc<Self>) -> bool {
+        let workspace = Arc::clone(self);
+        run_workspace_db("workspace.flush_writes", move || {
+            Ok(workspace.flush_writes())
+        })
+        .await
+        .unwrap_or(false)
+    }
+
+    pub fn flush_writes(&self) -> bool {
+        self.write_queue.get().is_none_or(StorageWriteQueue::flush)
+    }
+
+    fn write_queue(&self) -> &StorageWriteQueue {
+        // File-only sandbox contexts never need a storage writer thread.
+        self.write_queue
+            .get_or_init(|| StorageWriteQueue::new(Arc::clone(&self.storage)))
+    }
+
+    pub fn load_history(&self, user_id: &str, session_id: &str, limit: i64) -> Result<Vec<Value>> {
+        let limit = normalize_history_limit(limit);
+        self.storage
+            .load_thread_context_items(user_id, session_id, limit.unwrap_or(0), true)
+    }
+
+    pub fn load_execution_history(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        turn_id: &str,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        self.storage.load_thread_execution_context(
+            user_id,
+            session_id,
+            turn_id,
+            normalize_history_limit(limit).unwrap_or(0),
+        )
+    }
+
+    pub fn load_artifact_logs(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        self.storage.load_artifact_logs(user_id, session_id, limit)
+    }
+
+    /// Read the durable ThreadLog change cursor used by chat reconnects.
+    /// This is deliberately separate from the diagnostic stream event store.
+    pub fn load_thread_changes(&self, session_id: &str, after_seq: i64, limit: i64) -> Vec<Value> {
+        self.storage
+            .list_thread_changes_by_session(session_id, after_seq.max(0), limit.clamp(1, 500))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|change| {
+                let cursor = change["change_seq"].as_i64().unwrap_or(0);
+                json!({"event":"thread_change", "event_id":cursor, "data":{
+                    "change_type":change["change_type"], "turn_id":change["turn_id"],
+                    "item_id":change["item_id"], "revision":change["revision"], "cursor":cursor
+                }})
+            })
+            .collect()
+    }
+
+    pub fn try_load_thread_changes(
+        &self,
+        session_id: &str,
+        after_seq: i64,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        if after_seq
+            > self
+                .storage
+                .latest_thread_change_seq_by_session(session_id)?
+        {
+            return Ok(vec![json!({"event":"thread_snapshot_required","data":{}})]);
+        }
+        let changes = self.storage.list_thread_changes_by_session(
+            session_id,
+            after_seq.max(0),
+            limit.clamp(1, 500),
+        )?;
+        let mut frames = Vec::with_capacity(changes.len());
+        for change in changes {
+            if change["change_type"] == "snapshot_required" {
+                frames.push(json!({"event":"thread_snapshot_required","data":change}));
+                break;
+            }
+            let cursor = change["change_seq"].as_i64().unwrap_or(0);
+            let mut payload = change["payload"].clone();
+            if change["change_type"] == "text_block" {
+                payload = payload.get("data").cloned().unwrap_or(payload);
+                if let Some(map) = payload.as_object_mut() {
+                    map.entry("field")
+                        .or_insert_with(|| change["payload"]["field"].clone());
+                    map.entry("block_index")
+                        .or_insert_with(|| change["payload"]["block_index"].clone());
+                    map.insert("item_id".into(), change["item_id"].clone());
+                }
+            }
+            let frame = json!({"event":"thread_change","data":{
+                "change_type":change["change_type"], "turn_id":change["turn_id"],
+                "item_id":change["item_id"], "revision":change["revision"], "cursor":cursor,
+                "payload":payload
+            }});
+            frames.push(frame);
+        }
+        Ok(frames)
+    }
+
+    pub fn latest_thread_change_seq(&self, session_id: &str) -> Result<i64> {
+        self.storage
+            .latest_thread_change_seq_by_session(session_id)
+            .map(|seq| seq.max(0))
+    }
+
+    /// I5 atomic snapshot (根治方案): `{cursor,turns,items,blocks,item_total}`
+    /// read in one transaction. Used for full reload when the durable change
+    /// window was trimmed and no cursor can safely replay.
+    pub fn try_load_thread_snapshot(&self, user_id: &str, session_id: &str) -> Result<Value> {
+        self.storage.thread_snapshot(user_id, session_id)
+    }
+
+    /// Compatibility projection for non-chat diagnostics only.
+    pub fn load_stream_events(
+        &self,
+        session_id: &str,
+        after_event_id: i64,
+        limit: i64,
+    ) -> Vec<Value> {
+        crate::services::thread_log::replay(
+            self.storage.as_ref(),
+            session_id,
+            after_event_id,
+            limit,
+        )
+        .unwrap_or_default()
+    }
+
+    pub fn load_recent_stream_events(&self, session_id: &str, limit: i64) -> Vec<Value> {
+        self.storage
+            .load_recent_stream_events(session_id, limit)
+            .unwrap_or_default()
+    }
+
+    pub fn load_session_system_prompt(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        language: Option<&str>,
+    ) -> Result<Option<String>> {
+        let normalized_language =
+            language.map(|value| crate::i18n::normalize_language(Some(value), true));
+        // Frozen prompts are ThreadLog system Items.  The old conversation
+        // table may still contain a compatibility mirror, but it is never a
+        // source for prompt reuse once the thread log exists.
+        let history = self
+            .storage
+            .load_thread_context_items(user_id, session_id, 0, true)?;
+        for value in history.into_iter().filter(|value| {
+            value.get("role").and_then(Value::as_str) == Some("system")
+                && value
+                    .get("meta")
+                    .and_then(Value::as_object)
+                    .and_then(|meta| meta.get("type"))
+                    .and_then(Value::as_str)
+                    == Some("system_prompt")
+        }) {
+            let meta = value.get("meta").and_then(Value::as_object);
+            if let Some(expected) = normalized_language.as_ref() {
+                let stored = meta
+                    .and_then(|meta| meta.get("language"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if !stored.is_empty()
+                    && crate::i18n::normalize_language(Some(stored), true) != *expected
+                {
+                    continue;
+                }
+            }
+            if let Some(content) = value.get("content").and_then(Value::as_str) {
+                let content = content.trim();
+                if !content.is_empty() {
+                    return Ok(Some(content.to_string()));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn load_session_frozen_tool_overrides(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<Vec<String>> {
+        let key = self.session_frozen_tool_overrides_key(user_id, session_id);
+        self.storage
+            .get_meta(&key)
+            .ok()
+            .flatten()
+            .and_then(|raw| serde_json::from_str::<Vec<String>>(raw.trim()).ok())
+    }
+
+    pub fn save_session_frozen_tool_overrides(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        tool_overrides: &[String],
+    ) {
+        let key = self.session_frozen_tool_overrides_key(user_id, session_id);
+        let serialized = serde_json::to_string(tool_overrides).unwrap_or_else(|_| "[]".to_string());
+        let _ = self.storage.set_meta(&key, &serialized);
+    }
+
+    pub fn load_session_frozen_tool_call_mode(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<String> {
+        let key = self.session_frozen_tool_call_mode_key(user_id, session_id);
+        self.storage.get_meta(&key).ok().flatten().and_then(|raw| {
+            let cleaned = raw.trim();
+            if matches!(cleaned, "tool_call" | "function_call" | "freeform_call") {
+                Some(cleaned.to_string())
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn save_session_frozen_tool_call_mode(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        tool_call_mode: &str,
+    ) {
+        let cleaned = tool_call_mode.trim();
+        if !matches!(cleaned, "tool_call" | "function_call" | "freeform_call") {
+            return;
+        }
+        let key = self.session_frozen_tool_call_mode_key(user_id, session_id);
+        let _ = self.storage.set_meta(&key, cleaned);
+    }
+
+    pub fn load_session_context_tokens(&self, user_id: &str, session_id: &str) -> i64 {
+        let key = self.session_context_tokens_key(user_id, session_id);
+        let Ok(value) = self.storage.get_meta(&key) else {
+            return 0;
+        };
+        value
+            .and_then(|raw| raw.trim().parse::<i64>().ok())
+            .unwrap_or(0)
+    }
+
+    pub fn save_session_context_tokens(&self, user_id: &str, session_id: &str, total_tokens: i64) {
+        let key = self.session_context_tokens_key(user_id, session_id);
+        let value = total_tokens.max(0).to_string();
+        let _ = self.storage.set_meta(&key, &value);
+    }
+
+    /// Thread-local reasoning selection. `default` deliberately remains a
+    /// durable value: it clears a previous override while preserving the user's
+    /// choice to follow the model configuration for this thread.
+    pub fn load_session_reasoning_effort(&self, user_id: &str, session_id: &str) -> String {
+        let key = self.session_reasoning_effort_key(user_id, session_id);
+        self.storage
+            .get_meta(&key)
+            .ok()
+            .flatten()
+            .and_then(|value| {
+                crate::services::llm::normalize_reasoning_effort(Some(value.trim())).or_else(|| {
+                    (value.trim().eq_ignore_ascii_case("default")).then(|| "default".to_string())
+                })
+            })
+            .unwrap_or_else(|| "default".to_string())
+    }
+
+    pub fn save_session_reasoning_effort(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        value: &str,
+    ) -> Result<String> {
+        let normalized = crate::services::llm::normalize_reasoning_effort(Some(value.trim()))
+            .unwrap_or_else(|| "default".to_string());
+        let key = self.session_reasoning_effort_key(user_id, session_id);
+        self.storage.set_meta(&key, &normalized)?;
+        Ok(normalized)
+    }
+
+    pub fn delete_session_reasoning_effort(&self, user_id: &str, session_id: &str) -> i64 {
+        self.storage
+            .delete_meta_prefix(&self.session_reasoning_effort_key(user_id, session_id))
+            .unwrap_or(0) as i64
+    }
+
+    pub fn load_session_context_overflow(&self, user_id: &str, session_id: &str) -> bool {
+        let key = self.session_context_overflow_key(user_id, session_id);
+        let Ok(value) = self.storage.get_meta(&key) else {
+            return false;
+        };
+        matches!(
+            value.as_deref().map(str::trim),
+            Some("1") | Some("true") | Some("yes")
+        )
+    }
+
+    pub fn save_session_context_overflow(&self, user_id: &str, session_id: &str, overflowed: bool) {
+        let key = self.session_context_overflow_key(user_id, session_id);
+        if overflowed {
+            let _ = self.storage.set_meta(&key, "1");
+        } else {
+            let _ = self.storage.delete_meta_prefix(&key);
+        }
+    }
+
+    pub fn delete_session_context_tokens(&self, user_id: &str, session_id: &str) -> i64 {
+        let key = self.session_context_tokens_key(user_id, session_id);
+        self.storage.delete_meta_prefix(&key).unwrap_or(0) as i64
+    }
+
+    pub fn delete_session_context_overflow(&self, user_id: &str, session_id: &str) -> i64 {
+        let key = self.session_context_overflow_key(user_id, session_id);
+        self.storage.delete_meta_prefix(&key).unwrap_or(0) as i64
+    }
+
+    pub fn load_session_context_limit_hint(&self, user_id: &str, session_id: &str) -> Option<i64> {
+        let key = self.session_context_limit_hint_key(user_id, session_id);
+        let Ok(value) = self.storage.get_meta(&key) else {
+            return None;
+        };
+        value.and_then(|raw| raw.trim().parse::<i64>().ok().filter(|limit| *limit > 0))
+    }
+
+    pub fn save_session_context_limit_hint(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit_hint: Option<i64>,
+    ) {
+        let key = self.session_context_limit_hint_key(user_id, session_id);
+        if let Some(limit_hint) = limit_hint.filter(|value| *value > 0) {
+            let _ = self.storage.set_meta(&key, &limit_hint.to_string());
+        } else {
+            let _ = self.storage.delete_meta_prefix(&key);
+        }
+    }
+
+    pub fn delete_session_context_limit_hint(&self, user_id: &str, session_id: &str) -> i64 {
+        let key = self.session_context_limit_hint_key(user_id, session_id);
+        self.storage.delete_meta_prefix(&key).unwrap_or(0) as i64
+    }
+
+    /// Build the durable frozen system-prompt item for a session. This only
+    /// reads the thread's first turn and assembles the item payload; it never
+    /// writes. The write must go through the unified ThreadLog commit exit so
+    /// the change cursor is published only on the real commit. Returns None for
+    /// an empty prompt (nothing durable to freeze).
+    pub fn build_session_system_prompt_item(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        prompt: &str,
+        language: Option<&str>,
+    ) -> Result<Option<serde_json::Value>> {
+        let content = prompt.trim();
+        if content.is_empty() {
+            return Ok(None);
+        }
+        let payload = serde_json::json!({
+            "role": "system",
+            "content": content,
+            "session_id": session_id,
+            "timestamp": Local::now().to_rfc3339(),
+            "meta": {
+                "type": "system_prompt",
+                "language": language.unwrap_or("").trim(),
+            }
+        });
+        // A frozen prompt is a durable internal Item, independent from the
+        // compatibility conversation mirror.
+        let turn = self
+            .storage
+            .list_thread_turns(user_id, session_id, None, 1)?
+            .into_iter()
+            .next()
+            .and_then(|turn| {
+                turn.get("turn_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!("thread turn is required before freezing system prompt")
+            })?;
+        let item = json!({
+            "session_id": session_id,
+            "turn_id": turn,
+            "item_id": format!("{session_id}:system-prompt"),
+            "kind": "system_message",
+            "status": "completed",
+            "visibility": "model_internal",
+            "meta": {"type": "system_prompt", "language": language.unwrap_or("").trim()},
+            "role": "system",
+            "content": content,
+            "timestamp": payload["timestamp"].clone()
+        });
+        Ok(Some(item))
+    }
+
+    pub fn get_user_usage_stats(&self) -> HashMap<String, HashMap<String, i64>> {
+        let now = now_ts();
+        {
+            let cache = self.user_usage_cache.lock();
+            if cache.updated_ts > 0.0 && now - cache.updated_ts < self.user_usage_cache_ttl_s {
+                return cache.data.clone();
+            }
+        }
+        let chat_stats = self.storage.get_user_chat_stats().unwrap_or_default();
+        let tool_stats = self.storage.get_user_tool_stats().unwrap_or_default();
+        let mut combined: HashMap<String, HashMap<String, i64>> = HashMap::new();
+        for (user_id, stats) in chat_stats {
+            let mut entry = HashMap::new();
+            entry.insert(
+                "chat_records".to_string(),
+                *stats.get("chat_records").unwrap_or(&0),
+            );
+            entry.insert("tool_records".to_string(), 0);
+            combined.insert(user_id, entry);
+        }
+        for (user_id, stats) in tool_stats {
+            let entry = combined.entry(user_id).or_insert_with(|| {
+                let mut entry = HashMap::new();
+                entry.insert("chat_records".to_string(), 0);
+                entry.insert("tool_records".to_string(), 0);
+                entry
+            });
+            let count = *stats.get("tool_records").unwrap_or(&0);
+            entry.insert("tool_records".to_string(), count);
+        }
+        let mut cache = self.user_usage_cache.lock();
+        cache.data = combined.clone();
+        cache.updated_ts = now;
+        combined
+    }
+
+    pub fn get_tool_usage_stats(
+        &self,
+        since_time: Option<f64>,
+        until_time: Option<f64>,
+    ) -> Vec<HashMap<String, Value>> {
+        let stats = self
+            .storage
+            .get_tool_usage_stats(since_time, until_time)
+            .unwrap_or_default();
+        stats
+            .into_iter()
+            .map(|(tool, calls)| {
+                let mut entry = HashMap::new();
+                entry.insert("tool".to_string(), json!(tool));
+                entry.insert("calls".to_string(), json!(calls));
+                entry
+            })
+            .collect()
+    }
+
+    pub fn get_tool_session_usage(
+        &self,
+        tool: &str,
+        since_time: Option<f64>,
+        until_time: Option<f64>,
+    ) -> Vec<HashMap<String, Value>> {
+        self.storage
+            .get_tool_session_usage(tool, since_time, until_time)
+            .unwrap_or_default()
+    }
+
+    pub fn purge_session_data(&self, user_id: &str, session_id: &str) {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return;
+        }
+        // Removing a thread from the user projection must not destroy its
+        // durable audit history. Administrators remove logs explicitly through
+        // the monitor cleanup endpoint.
+        let _ = self.storage.release_session_lock(cleaned_session);
+        let _ = self.delete_session_context_tokens(cleaned_user, cleaned_session);
+        let _ = self.delete_session_reasoning_effort(cleaned_user, cleaned_session);
+        let _ = self.delete_session_context_overflow(cleaned_user, cleaned_session);
+        let _ = self.delete_session_context_limit_hint(cleaned_user, cleaned_session);
+    }
+
+    pub fn purge_session_logs(&self, user_id: &str, session_id: &str) {
+        purge_session_logs_with_storage(self.storage.as_ref(), user_id, session_id);
+    }
+
+    /// User-facing session deletion: durable logs are kept for a grace window
+    /// (`observability.deleted_session_log_grace_hours`) and purged later by the
+    /// retention cleanup. A non-positive grace purges immediately.
+    pub fn schedule_deleted_session_log_cleanup(self: &Arc<Self>, user_id: &str, session_id: &str) {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return;
+        }
+        let grace_hours = self.deleted_session_log_grace_hours();
+        if grace_hours <= 0 {
+            let workspace = Arc::clone(self);
+            let user_id = cleaned_user.to_string();
+            let session_id = cleaned_session.to_string();
+            if let Ok(handle) = Handle::try_current() {
+                handle.spawn(async move {
+                    let _ = run_workspace_db("workspace.deleted_session_logs.purge", move || {
+                        workspace.purge_session_logs(&user_id, &session_id);
+                        Ok(())
+                    })
+                    .await;
+                });
+            } else {
+                self.purge_session_logs(cleaned_user, cleaned_session);
+            }
+            return;
+        }
+        if let Err(err) =
+            self.storage
+                .mark_deleted_session_log_grace(cleaned_user, cleaned_session, now_ts())
+        {
+            warn!("mark deleted session log grace failed: {err}");
+        }
+    }
+
+    /// Remove a user's durable projection and workspace while preserving audit
+    /// logs. Log retention is an administrator concern; ordinary lifecycle
+    /// operations must not silently erase chat/tool/stream history.
+    pub fn purge_user_data(&self, user_id: &str) -> Result<PurgeResult> {
+        self.purge_user_data_inner(user_id, false)
+    }
+
+    /// Explicit destructive variant used by administrator cleanup flows.
+    /// This is the only user-wide workspace entry point that removes logs.
+    pub fn purge_user_data_with_logs(&self, user_id: &str) -> Result<PurgeResult> {
+        self.purge_user_data_inner(user_id, true)
+    }
+
+    fn purge_user_data_inner(&self, user_id: &str, delete_logs: bool) -> Result<PurgeResult> {
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(PurgeResult {
+                chat_sessions: 0,
+                chat_records: 0,
+                tool_records: 0,
+                workspace_deleted: false,
+                legacy_history_deleted: false,
+            });
+        }
+        // Directory deletion must succeed before reporting a successful user purge.
+        let chat_sessions = self.storage.delete_chat_sessions_by_user(cleaned)?;
+        let chat_deleted = if delete_logs {
+            self.storage
+                .delete_thread_logs_by_user(cleaned)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let tool_deleted = if delete_logs {
+            self.storage.delete_tool_logs(cleaned).unwrap_or(0)
+        } else {
+            0
+        };
+        let _ = self.storage.delete_memory_records_by_user(cleaned);
+        let _ = self.storage.delete_memory_settings_by_user(cleaned);
+        if delete_logs {
+            let _ = self.storage.delete_artifact_logs(cleaned);
+        }
+        let workspace_root = self.workspace_root(cleaned);
+        let workspace_deleted = if self.single_root && workspace_root == self.root {
+            false
+        } else {
+            fs::remove_dir_all(&workspace_root).is_ok()
+        };
+        let legacy_history_deleted = false;
+        let safe_id = self.safe_user_id(cleaned);
+        {
+            let mut cache = self.tree_cache.lock();
+            cache.cache.remove(&safe_id);
+            cache.dirty.remove(&safe_id);
+        }
+        {
+            let mut cache = self.search_cache.lock();
+            cache.remove(&safe_id);
+        }
+        let _ = self.versions.remove(&safe_id);
+        {
+            let mut cache = self.user_usage_cache.lock();
+            cache.data.remove(cleaned);
+            cache.updated_ts = 0.0;
+        }
+        let _ = self
+            .storage
+            .delete_meta_prefix(&format!("session_context_tokens:{safe_id}:"));
+        let _ = self
+            .storage
+            .delete_meta_prefix(&format!("session_context_overflow:{safe_id}:"));
+        let _ = self
+            .storage
+            .delete_meta_prefix(&format!("session_context_limit_hint:{safe_id}:"));
+        let _ = self
+            .storage
+            .delete_meta_prefix(&format!("session_reasoning_effort:{safe_id}:"));
+        let _ = self.storage.delete_session_locks_by_user(cleaned);
+        if delete_logs {
+            let _ = self.storage.delete_stream_events_by_user(cleaned);
+        }
+        Ok(PurgeResult {
+            chat_sessions,
+            chat_records: chat_deleted,
+            tool_records: tool_deleted,
+            workspace_deleted,
+            legacy_history_deleted,
+        })
+    }
+
+    pub fn write_file(
+        &self,
+        user_id: &str,
+        path: &str,
+        content: &str,
+        create_if_missing: bool,
+    ) -> Result<()> {
+        let target = self.resolve_path(user_id, path)?;
+        if !create_if_missing && !target.exists() {
+            return Err(anyhow!("文件不存在"));
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        atomic_write_text(&target, content)?;
+        self.bump_version(user_id);
+        Ok(())
+    }
+
+    pub fn search_workspace_entries(
+        &self,
+        user_id: &str,
+        keyword: &str,
+        offset: u64,
+        limit: u64,
+        include_files: bool,
+        include_dirs: bool,
+    ) -> Result<(Vec<WorkspaceEntry>, u64)> {
+        let keyword = keyword.trim().to_lowercase();
+        if keyword.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+        let root = self.ensure_user_root(user_id)?;
+        let safe_id = self.safe_user_id(user_id);
+        let safe_offset = offset;
+        let safe_limit = limit;
+        let version = self.get_tree_version(user_id);
+        let now = now_ts();
+        if let Some(index) = self.get_search_index(&safe_id, version, now) {
+            return Ok(search_from_index(
+                &index,
+                &keyword,
+                safe_offset,
+                safe_limit,
+                include_files,
+                include_dirs,
+            ));
+        }
+        if let Some(index) = self.build_search_index(&root, version) {
+            let result = search_from_index(
+                &index,
+                &keyword,
+                safe_offset,
+                safe_limit,
+                include_files,
+                include_dirs,
+            );
+            self.store_search_index(safe_id, index);
+            return Ok(result);
+        }
+        Ok(search_by_walkdir(
+            &root,
+            &keyword,
+            safe_offset,
+            safe_limit,
+            include_files,
+            include_dirs,
+        ))
+    }
+
+    pub async fn search_workspace_entries_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        keyword: &str,
+        offset: u64,
+        limit: u64,
+        include_files: bool,
+        include_dirs: bool,
+    ) -> Result<(Vec<WorkspaceEntry>, u64)> {
+        let user_id = user_id.to_string();
+        let keyword = keyword.to_string();
+        let workspace = Arc::clone(self);
+        run_workspace_fs("workspace.search_entries", move || {
+            workspace.search_workspace_entries(
+                &user_id,
+                &keyword,
+                offset,
+                limit,
+                include_files,
+                include_dirs,
+            )
+        })
+        .await
+    }
+
+    pub fn get_workspace_tree_snapshot(&self, user_id: &str) -> WorkspaceTreeSnapshot {
+        let safe_id = self.safe_user_id(user_id);
+        let now = now_ts();
+        {
+            let mut cache = self.tree_cache.lock();
+            let dirty = cache.dirty.contains(&safe_id);
+            if let Some(entry) = cache.cache.get_mut(&safe_id) {
+                entry.last_access_ts = now;
+                let stale = now - entry.built_ts >= self.tree_cache_ttl_s;
+                if !dirty || !stale {
+                    let snapshot = WorkspaceTreeSnapshot {
+                        tree: entry.tree.clone(),
+                        version: entry.version,
+                    };
+                    self.evict_tree_cache_locked(&mut cache, now);
+                    return snapshot;
+                }
+            }
+            self.evict_tree_cache_locked(&mut cache, now);
+        }
+        let tree = self.refresh_workspace_tree(user_id);
+        WorkspaceTreeSnapshot {
+            tree,
+            version: self.get_tree_cache_version(user_id),
+        }
+    }
+
+    pub fn refresh_workspace_tree(&self, user_id: &str) -> String {
+        let root = match self.ensure_user_root(user_id) {
+            Ok(path) => path,
+            Err(_) => return i18n::t("workspace.tree.empty"),
+        };
+        let tree = if Handle::try_current().is_ok() {
+            tokio::task::block_in_place(|| build_workspace_tree(&root, 2))
+        } else {
+            build_workspace_tree(&root, 2)
+        };
+        let now = now_ts();
+        let safe_id = self.safe_user_id(user_id);
+        let mut cache = self.tree_cache.lock();
+        let was_dirty = cache.dirty.remove(&safe_id);
+        let entry = cache
+            .cache
+            .entry(safe_id.clone())
+            .or_insert(TreeCacheEntry {
+                tree: String::new(),
+                built_ts: 0.0,
+                last_access_ts: now,
+                version: 0,
+            });
+        let changed = entry.tree != tree;
+        if changed {
+            entry.version = entry.version.saturating_add(1).max(1);
+            if !was_dirty {
+                self.increment_version(&safe_id);
+            }
+        }
+        entry.tree = tree.clone();
+        entry.built_ts = now;
+        entry.last_access_ts = now;
+        self.evict_tree_cache_locked(&mut cache, now);
+        drop(cache);
+        self.invalidate_usage_stats(&safe_id);
+        tree
+    }
+
+    pub fn mark_tree_dirty(&self, user_id: &str) {
+        let safe_id = self.safe_user_id(user_id);
+        self.increment_version(&safe_id);
+        self.invalidate_usage_stats(&safe_id);
+        let mut cache = self.tree_cache.lock();
+        cache.dirty.insert(safe_id);
+    }
+
+    pub fn clear_workspace_contents(&self, user_id: &str) -> Result<u64> {
+        let safe_id = self.safe_user_id(user_id);
+        let workspace_root = self.workspace_root(&safe_id);
+        if !workspace_root.exists() {
+            self.clear_workspace_cache(&safe_id);
+            self.mark_tree_dirty(&safe_id);
+            return Ok(0);
+        }
+        if !workspace_root.is_dir() {
+            return Err(anyhow!(
+                "workspace root is not a directory: {}",
+                workspace_root.display()
+            ));
+        }
+        let removed = clear_dir_contents(&workspace_root);
+        self.clear_workspace_cache(&safe_id);
+        self.mark_tree_dirty(&safe_id);
+        Ok(removed)
+    }
+
+    pub fn clear_container_workspace(&self, user_id: &str, container_id: i32) -> Result<u64> {
+        let workspace_id = self.scoped_user_id_by_container(user_id, container_id);
+        self.ensure_user_root(&workspace_id)?;
+        self.clear_workspace_contents(&workspace_id)
+    }
+
+    pub fn clear_work_state_contents(&self, user_id: &str) -> Result<u64> {
+        let safe_id = self.safe_user_id(user_id);
+        let workspace_root = self.workspace_root(&safe_id);
+        if !workspace_root.exists() {
+            self.clear_workspace_cache(&safe_id);
+            self.mark_tree_dirty(&safe_id);
+            return Ok(0);
+        }
+        if !workspace_root.is_dir() {
+            return Err(anyhow!(
+                "workspace root is not a directory: {}",
+                workspace_root.display()
+            ));
+        }
+        let removed =
+            if extract_container_id_from_scoped_user(&safe_id) == USER_PRIVATE_CONTAINER_ID {
+                clear_dir_contents_except(&workspace_root, USER_PRIVATE_PERSISTENT_ROOTS)
+            } else {
+                clear_dir_contents(&workspace_root)
+            };
+        self.clear_workspace_cache(&safe_id);
+        self.mark_tree_dirty(&safe_id);
+        Ok(removed)
+    }
+
+    pub fn get_tree_version(&self, user_id: &str) -> u64 {
+        let safe_id = self.safe_user_id(user_id);
+        self.versions.get(&safe_id).map(|value| *value).unwrap_or(0)
+    }
+
+    pub fn get_tree_cache_version(&self, user_id: &str) -> u64 {
+        let safe_id = self.safe_user_id(user_id);
+        let cache = self.tree_cache.lock();
+        cache
+            .cache
+            .get(&safe_id)
+            .map(|entry| entry.version)
+            .unwrap_or(0)
+    }
+
+    pub fn bump_version(&self, user_id: &str) {
+        self.mark_tree_dirty(user_id);
+    }
+
+    fn increment_version(&self, safe_id: &str) {
+        let mut entry = self.versions.entry(safe_id.to_string()).or_insert(0);
+        *entry += 1;
+    }
+
+    fn evict_tree_cache_locked(&self, cache: &mut TreeCache, now: f64) {
+        let idle_ttl = self.tree_cache_idle_ttl_s;
+        if idle_ttl > 0.0 {
+            let cutoff = now - idle_ttl;
+            let mut stale_keys = Vec::new();
+            for (key, entry) in cache.cache.iter() {
+                let last_access = if entry.last_access_ts > 0.0 {
+                    entry.last_access_ts
+                } else {
+                    entry.built_ts
+                };
+                if last_access > 0.0 && last_access < cutoff {
+                    stale_keys.push(key.clone());
+                }
+            }
+            for key in stale_keys {
+                cache.cache.remove(&key);
+                cache.dirty.remove(&key);
+            }
+        }
+
+        let max_entries = self.tree_cache_max_users;
+        if max_entries > 0 && cache.cache.len() > max_entries {
+            let mut items = cache
+                .cache
+                .iter()
+                .map(|(key, entry)| {
+                    let last_access = if entry.last_access_ts > 0.0 {
+                        entry.last_access_ts
+                    } else {
+                        entry.built_ts
+                    };
+                    (key.clone(), last_access)
+                })
+                .collect::<Vec<_>>();
+            items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+            let overflow = cache.cache.len().saturating_sub(max_entries);
+            for (key, _) in items.into_iter().take(overflow) {
+                cache.cache.remove(&key);
+                cache.dirty.remove(&key);
+            }
+        }
+    }
+
+    fn evict_search_cache_locked(&self, cache: &mut HashMap<String, SearchIndex>, now: f64) {
+        let idle_ttl = self.search_cache_idle_ttl_s;
+        if idle_ttl > 0.0 {
+            let cutoff = now - idle_ttl;
+            let mut stale_keys = Vec::new();
+            for (key, entry) in cache.iter() {
+                let last_access = if entry.last_access_ts > 0.0 {
+                    entry.last_access_ts
+                } else {
+                    entry.built_ts
+                };
+                if last_access > 0.0 && last_access < cutoff {
+                    stale_keys.push(key.clone());
+                }
+            }
+            for key in stale_keys {
+                cache.remove(&key);
+            }
+        }
+
+        let max_entries = self.search_cache_max_users;
+        if max_entries > 0 && cache.len() > max_entries {
+            let mut items = cache
+                .iter()
+                .map(|(key, entry)| {
+                    let last_access = if entry.last_access_ts > 0.0 {
+                        entry.last_access_ts
+                    } else {
+                        entry.built_ts
+                    };
+                    (key.clone(), last_access)
+                })
+                .collect::<Vec<_>>();
+            items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+            let overflow = cache.len().saturating_sub(max_entries);
+            for (key, _) in items.into_iter().take(overflow) {
+                cache.remove(&key);
+            }
+        }
+    }
+
+    fn get_search_index(&self, safe_id: &str, version: u64, now: f64) -> Option<SearchIndex> {
+        let mut cache = self.search_cache.lock();
+        let entry = cache.get_mut(safe_id)?;
+        if entry.version != version {
+            cache.remove(safe_id);
+            self.evict_search_cache_locked(&mut cache, now);
+            return None;
+        }
+        if now - entry.built_ts >= self.search_cache_ttl_s {
+            cache.remove(safe_id);
+            self.evict_search_cache_locked(&mut cache, now);
+            return None;
+        }
+        entry.last_access_ts = now;
+        let cloned = entry.clone();
+        self.evict_search_cache_locked(&mut cache, now);
+        Some(cloned)
+    }
+
+    fn store_search_index(&self, safe_id: String, index: SearchIndex) {
+        let mut cache = self.search_cache.lock();
+        cache.insert(safe_id, index);
+        self.evict_search_cache_locked(&mut cache, now_ts());
+    }
+
+    fn build_search_index(&self, root: &Path, version: u64) -> Option<SearchIndex> {
+        let mut entries = Vec::new();
+        for entry in WalkDir::new(root)
+            .min_depth(1)
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+        {
+            if entries.len() >= self.search_cache_max_items {
+                return None;
+            }
+            let file_type = entry.file_type();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.is_empty() {
+                continue;
+            }
+            let meta = entry.metadata().ok();
+            let updated = meta
+                .as_ref()
+                .and_then(|meta| meta.modified().ok())
+                .map(|time| {
+                    let dt: DateTime<Local> = time.into();
+                    dt.to_rfc3339()
+                });
+            let entry_path = normalize_target_path(entry.path());
+            let rel = entry_path
+                .strip_prefix(root)
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_else(|_| entry_path.to_string_lossy().to_string());
+            let is_dir = file_type.is_dir();
+            let entry = WorkspaceEntry {
+                name: name.clone(),
+                path: rel.replace('\\', "/"),
+                entry_type: if is_dir { "dir" } else { "file" }.to_string(),
+                size: meta.map(|meta| meta.len()).unwrap_or(0),
+                updated_time: updated.unwrap_or_default(),
+                children: None,
+            };
+            entries.push(SearchIndexEntry {
+                entry,
+                name_lower: name.to_lowercase(),
+                is_dir,
+            });
+        }
+        let now = now_ts();
+        Some(SearchIndex {
+            entries: Arc::new(entries),
+            built_ts: now,
+            last_access_ts: now,
+            version,
+        })
+    }
+}
+
+fn normalize_relative_path(value: &str) -> String {
+    let trimmed = strip_windows_verbatim_prefix(value).replace('\\', "/");
+    let trimmed = trimmed.trim();
+    if trimmed.is_empty() || trimmed == "." || trimmed == "/" {
+        return String::new();
+    }
+    if let Some(stripped) = trimmed.strip_prefix('/') {
+        if stripped.len() >= 3
+            && stripped.as_bytes()[1] == b':'
+            && stripped.as_bytes()[2] == b'/'
+            && stripped.as_bytes()[0].is_ascii_alphabetic()
+        {
+            return stripped.to_string();
+        }
+    }
+    trimmed.trim_start_matches('/').to_string()
+}
+
+fn session_activity_key(safe_id: &str) -> String {
+    format!("{SESSION_ACTIVITY_META_PREFIX}{safe_id}")
+}
+
+fn parse_session_activity_ts(value: Option<String>) -> Option<f64> {
+    value.and_then(|value| value.parse::<f64>().ok())
+}
+
+fn dir_modified_ts(path: &Path) -> Option<f64> {
+    fs::metadata(path)
+        .ok()
+        .and_then(|meta| meta.modified().ok())
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs_f64())
+}
+
+fn cleanup_idle_temp_files(root: &Path, storage: &Arc<dyn StorageBackend>, idle_ttl_s: f64) {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    let now = now_ts();
+    for entry in entries.flatten() {
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(_) => continue,
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let safe_id = entry.file_name().to_string_lossy().to_string();
+        if safe_id.is_empty() {
+            continue;
+        }
+        let workspace_root = entry.path();
+        if !workspace_root.exists() {
+            continue;
+        }
+        let last_seen = parse_session_activity_ts(
+            storage
+                .get_meta(&session_activity_key(&safe_id))
+                .ok()
+                .flatten(),
+        )
+        .or_else(|| dir_modified_ts(&workspace_root));
+        let Some(last_seen) = last_seen else {
+            continue;
+        };
+        if now - last_seen < idle_ttl_s {
+            continue;
+        }
+        let _ = clear_dir_contents(&workspace_root);
+    }
+}
+
+fn clear_dir_contents(path: &Path) -> u64 {
+    clear_dir_contents_except(path, &[])
+}
+
+fn clear_dir_contents_except(path: &Path, preserved_names: &[&str]) -> u64 {
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(err) => {
+            warn!("failed to read temp dir {}: {err}", path.display());
+            return 0;
+        }
+    };
+    let mut removed = 0u64;
+    let preserved = preserved_names
+        .iter()
+        .map(|name| name.trim())
+        .filter(|name| !name.is_empty())
+        .collect::<HashSet<_>>();
+    for entry in entries.flatten() {
+        let entry_name = entry.file_name().to_string_lossy().to_string();
+        if preserved.contains(entry_name.as_str()) {
+            continue;
+        }
+        let target = entry.path();
+        let result = match entry.file_type() {
+            Ok(file_type) if file_type.is_dir() => fs::remove_dir_all(&target),
+            Ok(_) => fs::remove_file(&target),
+            Err(err) => Err(err),
+        };
+        if let Err(err) = result {
+            warn!("failed to remove temp entry {}: {err}", target.display());
+            continue;
+        }
+        removed = removed.saturating_add(1);
+    }
+    removed
+}
+
+const WORKSPACE_TREE_MAX_LINES: usize = 320;
+const WORKSPACE_TREE_MAX_ENTRIES_PER_DIR: usize = 120;
+
+fn build_workspace_tree(root: &Path, max_depth: usize) -> String {
+    if !root.exists() {
+        return i18n::t("workspace.tree.empty");
+    }
+    let mut lines = Vec::new();
+    let mut truncated = false;
+    build_workspace_tree_inner(root, 0, max_depth, &mut lines, &mut truncated);
+    if truncated {
+        lines.push("... (workspace tree truncated)".to_string());
+    }
+    if lines.is_empty() {
+        i18n::t("workspace.tree.empty")
+    } else {
+        lines.join("\n")
+    }
+}
+
+fn build_workspace_tree_inner(
+    path: &Path,
+    depth: usize,
+    max_depth: usize,
+    lines: &mut Vec<String>,
+    truncated: &mut bool,
+) {
+    if depth > max_depth || lines.len() >= WORKSPACE_TREE_MAX_LINES {
+        *truncated = true;
+        return;
+    }
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    let mut dirs: Vec<(String, PathBuf)> = Vec::new();
+    let mut files: Vec<String> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if should_skip_workspace_tree_entry(&name) {
+            continue;
+        }
+        let meta = match entry.metadata() {
+            Ok(meta) => meta,
+            Err(_) => continue,
+        };
+        if meta.is_dir() {
+            dirs.push((name, entry.path()));
+        } else {
+            files.push(name);
+        }
+    }
+    dirs.sort_by_key(|item| item.0.to_lowercase());
+    files.sort_by_key(|item| item.to_lowercase());
+    let prefix = "  ".repeat(depth);
+    for (dir_count, (name, dir_path)) in dirs.into_iter().enumerate() {
+        if lines.len() >= WORKSPACE_TREE_MAX_LINES {
+            *truncated = true;
+            break;
+        }
+        if dir_count >= WORKSPACE_TREE_MAX_ENTRIES_PER_DIR {
+            *truncated = true;
+            break;
+        }
+        lines.push(format!("{prefix}{name}/"));
+        if depth < max_depth {
+            build_workspace_tree_inner(&dir_path, depth + 1, max_depth, lines, truncated);
+            if *truncated {
+                break;
+            }
+        }
+    }
+    if *truncated {
+        return;
+    }
+    for (file_count, name) in files.into_iter().enumerate() {
+        if lines.len() >= WORKSPACE_TREE_MAX_LINES {
+            *truncated = true;
+            break;
+        }
+        if file_count >= WORKSPACE_TREE_MAX_ENTRIES_PER_DIR {
+            *truncated = true;
+            break;
+        }
+        lines.push(format!("{prefix}{name}"));
+    }
+}
+
+fn should_skip_workspace_tree_entry(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        ".git"
+            | ".svn"
+            | ".hg"
+            | "node_modules"
+            | "target"
+            | "dist"
+            | "build"
+            | ".next"
+            | "wunder_temp"
+            | "__pycache__"
+            | ".idea"
+            | ".vscode"
+    )
+}
+
+fn search_from_index(
+    index: &SearchIndex,
+    keyword: &str,
+    offset: u64,
+    limit: u64,
+    include_files: bool,
+    include_dirs: bool,
+) -> (Vec<WorkspaceEntry>, u64) {
+    let mut matched = 0u64;
+    let mut results = Vec::new();
+    for item in index.entries.iter() {
+        if item.is_dir && !include_dirs {
+            continue;
+        }
+        if !item.is_dir && !include_files {
+            continue;
+        }
+        if !item.name_lower.contains(keyword) {
+            continue;
+        }
+        matched += 1;
+        if matched <= offset {
+            continue;
+        }
+        if limit == 0 || results.len() < limit as usize {
+            results.push(item.entry.clone());
+        }
+    }
+    (results, matched)
+}
+
+fn search_by_walkdir(
+    root: &Path,
+    keyword: &str,
+    offset: u64,
+    limit: u64,
+    include_files: bool,
+    include_dirs: bool,
+) -> (Vec<WorkspaceEntry>, u64) {
+    let mut matched = 0u64;
+    let mut results = Vec::new();
+    for entry in WalkDir::new(root)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+    {
+        let file_type = entry.file_type();
+        if file_type.is_dir() && !include_dirs {
+            continue;
+        }
+        if file_type.is_file() && !include_files {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.to_lowercase().contains(keyword) {
+            continue;
+        }
+        matched += 1;
+        if matched <= offset {
+            continue;
+        }
+        let meta = entry.metadata().ok();
+        let updated = meta
+            .as_ref()
+            .and_then(|meta| meta.modified().ok())
+            .map(|time| {
+                let dt: DateTime<Local> = time.into();
+                dt.to_rfc3339()
+            });
+        let rel = entry
+            .path()
+            .strip_prefix(root)
+            .unwrap_or(entry.path())
+            .to_string_lossy()
+            .to_string();
+        if limit == 0 || results.len() < limit as usize {
+            results.push(WorkspaceEntry {
+                name,
+                path: rel.replace('\\', "/"),
+                entry_type: if file_type.is_dir() { "dir" } else { "file" }.to_string(),
+                size: meta.map(|meta| meta.len()).unwrap_or(0),
+                updated_time: updated.unwrap_or_default(),
+                children: None,
+            });
+        }
+    }
+    (results, matched)
+}
+
+fn normalize_history_limit(limit: i64) -> Option<i64> {
+    if limit <= 0 {
+        // A zero limit historically meant "all rows".  That makes a long
+        // thread an unbounded memory and model-context read.  Keep the call
+        // contract while bounding the database query at a safe upper page.
+        Some(2_000)
+    } else {
+        Some(limit.min(2_000))
+    }
+}
+
+fn normalize_stream_event_retention_hours(value: i64) -> i64 {
+    if value <= 0 {
+        0
+    } else {
+        value
+    }
+}
+
+fn purge_session_logs_with_storage(storage: &dyn StorageBackend, user_id: &str, session_id: &str) {
+    let cleaned_user = user_id.trim();
+    let cleaned_session = session_id.trim();
+    if cleaned_user.is_empty() || cleaned_session.is_empty() {
+        return;
+    }
+    let _ = storage.delete_tool_logs_by_session(cleaned_user, cleaned_session);
+    let _ = storage.delete_artifact_logs_by_session(cleaned_user, cleaned_session);
+    let _ = storage.delete_stream_events_by_session(cleaned_session);
+    let _ = storage.delete_thread_log_by_session(cleaned_user, cleaned_session);
+}
+
+/// Purge durable logs for sessions whose deletion grace window has expired and
+/// clear their tombstones. Returns the number of sessions fully purged.
+fn cleanup_expired_deleted_session_logs(
+    storage: &dyn StorageBackend,
+    grace_hours: i64,
+    now: f64,
+) -> i64 {
+    if grace_hours <= 0 {
+        return 0;
+    }
+    let cutoff = now - (grace_hours as f64) * 3600.0;
+    let expired = match storage
+        .list_expired_deleted_session_log_grace(cutoff, DELETED_SESSION_LOG_CLEANUP_BATCH)
+    {
+        Ok(rows) => rows,
+        Err(err) => {
+            warn!("list expired deleted session log grace failed: {err}");
+            return 0;
+        }
+    };
+    let mut purged = 0i64;
+    for (user_id, session_id) in expired {
+        purge_session_logs_with_storage(storage, &user_id, &session_id);
+        if let Err(err) = storage.delete_deleted_session_log_grace(&user_id, &session_id) {
+            warn!("clear deleted session log grace failed: {err}");
+            continue;
+        }
+        purged += 1;
+    }
+    if purged > 0 {
+        info!(purged, "deleted session logs purged after grace window");
+    }
+    purged
+}
+
+fn workspace_single_root_enabled() -> bool {
+    let Some(raw) = env::var(WORKSPACE_SINGLE_ROOT_ENV).ok() else {
+        return false;
+    };
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+/// Insert one recently modified file into a bounded "newest N" keeper.
+fn push_recent_usage_entry(
+    recent: &mut Vec<(SystemTime, WorkspaceEntry)>,
+    limit: usize,
+    modified: SystemTime,
+    entry: WorkspaceEntry,
+) {
+    if limit == 0 {
+        return;
+    }
+    if recent.len() < limit {
+        recent.push((modified, entry));
+        return;
+    }
+    let mut oldest_index = 0_usize;
+    let mut oldest_ts = recent[0].0;
+    for (index, (ts, _)) in recent.iter().enumerate() {
+        if *ts < oldest_ts {
+            oldest_ts = *ts;
+            oldest_index = index;
+        }
+    }
+    if modified > oldest_ts {
+        recent[oldest_index] = (modified, entry);
+    }
+}
+
+/// Bounded walk of one workspace subtree: counts, byte total and the newest
+/// `recent_limit` files. Stops early (with `truncated = true`) on huge trees.
+fn compute_workspace_usage(
+    user_root: &Path,
+    target: &Path,
+    recent_limit: usize,
+) -> WorkspaceUsageSummary {
+    let mut files = 0_u64;
+    let mut dirs = 0_u64;
+    let mut used_bytes = 0_u64;
+    let mut visited = 0_usize;
+    let mut truncated = false;
+    let mut recent: Vec<(SystemTime, WorkspaceEntry)> =
+        Vec::with_capacity(recent_limit.min(32) + 1);
+
+    let walker = WalkDir::new(target)
+        .max_depth(USAGE_STATS_MAX_DEPTH)
+        .follow_links(false);
+    for entry in walker.into_iter().filter_map(|item| item.ok()) {
+        if entry.depth() == 0 {
+            continue;
+        }
+        visited += 1;
+        if visited > USAGE_STATS_MAX_ENTRIES {
+            truncated = true;
+            break;
+        }
+        let file_type = entry.file_type();
+        if file_type.is_dir() {
+            dirs += 1;
+            continue;
+        }
+        if !file_type.is_file() {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        let size = metadata.len();
+        files += 1;
+        used_bytes = used_bytes.saturating_add(size);
+        let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
+        let entry_path = entry.path();
+        let relative = relative_entry_path(user_root, entry_path);
+        push_recent_usage_entry(
+            &mut recent,
+            recent_limit,
+            modified,
+            WorkspaceEntry {
+                name: entry.file_name().to_string_lossy().to_string(),
+                path: relative,
+                entry_type: "file".to_string(),
+                size,
+                updated_time: DateTime::<Local>::from(modified).to_rfc3339(),
+                children: None,
+            },
+        );
+    }
+
+    recent.sort_by(|left, right| right.0.cmp(&left.0));
+    WorkspaceUsageSummary {
+        files,
+        dirs,
+        used_bytes,
+        truncated,
+        recent: recent.into_iter().map(|(_, entry)| entry).collect(),
+    }
+}
+
+fn evict_usage_stats_locked(cache: &mut UsageStatsCache, max_users: usize, now: f64) {
+    if cache.entries.len() <= max_users {
+        return;
+    }
+    cache
+        .entries
+        .retain(|_, entry| now - entry.last_access_ts <= USAGE_STATS_TTL_S * 8.0);
+    while cache.entries.len() > max_users {
+        let oldest = cache
+            .entries
+            .iter()
+            .min_by(|left, right| left.1.last_access_ts.total_cmp(&right.1.last_access_ts))
+            .map(|(key, _)| key.clone());
+        match oldest {
+            Some(key) => {
+                cache.entries.remove(&key);
+            }
+            None => break,
+        }
+    }
+}
+
+/// `{user}__a__*` / `{user}__agent__*` / `{user}__c__*` 是扁平化之前的按智能体/容器隔离目录。
+fn is_legacy_scope_dir_for(name: &str, safe_user: &str) -> bool {
+    let Some(rest) = name.strip_prefix(safe_user) else {
+        return false;
+    };
+    rest.starts_with("__a__") || rest.starts_with("__agent__") || rest.starts_with("__c__")
+}
+
+/// 把 `source` 下的内容并入 `target`，重名追加 `(2)`、`(3)`… 后缀；返回移动条目数。
+fn move_dir_contents_merging(source: &Path, target: &Path) -> usize {
+    let mut moved = 0_usize;
+    let Ok(entries) = fs::read_dir(source) else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        let from = entry.path();
+        let Some(file_name) = from.file_name() else {
+            continue;
+        };
+        let display_name = file_name.to_string_lossy().to_string();
+        let mut to = target.join(file_name);
+        if to.exists() {
+            to = unique_merged_path(target, &display_name);
+        }
+        match fs::rename(&from, &to) {
+            Ok(()) => moved += 1,
+            Err(err) => warn!(
+                "flatten migration: move {} -> {} failed: {err}",
+                from.display(),
+                to.display()
+            ),
+        }
+    }
+    moved
+}
+
+fn unique_merged_path(target_dir: &Path, name: &str) -> PathBuf {
+    let path = Path::new(name);
+    let stem = path
+        .file_stem()
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_else(|| name.to_string());
+    let extension = path
+        .extension()
+        .map(|value| value.to_string_lossy().to_string());
+    for index in 2..1000 {
+        let candidate = match extension.as_deref() {
+            Some(ext) if !ext.is_empty() => format!("{stem} ({index}).{ext}"),
+            _ => format!("{stem} ({index})"),
+        };
+        let candidate_path = target_dir.join(candidate);
+        if !candidate_path.exists() {
+            return candidate_path;
+        }
+    }
+    target_dir.join(format!("{stem} (migrated)"))
+}
+
+fn normalize_container_roots(container_roots: &HashMap<i32, String>) -> HashMap<i32, PathBuf> {
+    let mut output = HashMap::new();
+    for (container_id, root) in container_roots {
+        let normalized_id = normalize_workspace_container_id(*container_id);
+        let trimmed = root.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        output.insert(normalized_id, PathBuf::from(trimmed));
+    }
+    output
+}
+
+/// Scope marker between the safe user id and the workspace id.
+pub const WORKSPACE_SCOPE_SEPARATOR: &str = "__w__";
+
+fn extract_workspace_key_from_scoped_user(user_id: &str) -> Option<String> {
+    let (_, key) = user_id.rsplit_once(WORKSPACE_SCOPE_SEPARATOR)?;
+    let key = key.trim();
+    (!key.is_empty()).then(|| key.to_string())
+}
+
+fn extract_container_id_from_scoped_user(user_id: &str) -> i32 {
+    if let Some((_, suffix)) = user_id.rsplit_once("__c__") {
+        if let Ok(parsed) = suffix.parse::<i32>() {
+            return normalize_workspace_container_id(parsed);
+        }
+    }
+    if user_id.contains("__a__") || user_id.contains("__agent__") {
+        return DEFAULT_SANDBOX_CONTAINER_ID;
+    }
+    USER_PRIVATE_CONTAINER_ID
+}
+
+fn fnv1a_hash64(data: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in data {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn now_ts() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+#[path = "workspace_concurrency_tests.rs"]
+mod concurrency_tests;
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_temp_cleanup_idle_ttl_s, TEMP_FILES_IDLE_TTL_S};
+    use crate::storage::{SqliteStorage, StorageBackend};
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::fs;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+
+    fn build_workspace_manager() -> (super::WorkspaceManager, tempfile::TempDir) {
+        let dir = tempdir().expect("tempdir");
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            dir.path()
+                .join("workspace-tests.db")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        storage
+            .ensure_initialized()
+            .expect("initialize sqlite storage");
+        let manager = super::WorkspaceManager::new(
+            &dir.path().join("workspaces").to_string_lossy(),
+            storage,
+            0,
+            &HashMap::new(),
+        );
+        (manager, dir)
+    }
+
+    #[test]
+    fn single_root_workspace_never_uses_temp_cleanup_ttl() {
+        assert_eq!(effective_temp_cleanup_idle_ttl_s(true), 0.0);
+    }
+
+    #[test]
+    fn flatten_agent_scope_flattens_scoped_ids() {
+        let (workspace, _dir) = build_workspace_manager();
+        workspace.set_flatten_agent_scope(true);
+        assert!(workspace.flatten_agent_scope_enabled());
+
+        assert_eq!(workspace.scoped_user_id("alice", Some("writer")), "alice");
+        assert_eq!(workspace.scoped_user_id_by_container("alice", 3), "alice");
+        assert_eq!(
+            workspace.scoped_user_id_variants("alice", Some("writer")),
+            vec!["alice".to_string()]
+        );
+        let bare_root = workspace.workspace_root("alice");
+        let scoped_root =
+            workspace.workspace_root(&workspace.scoped_user_id("alice", Some("writer")));
+        assert_eq!(
+            scoped_root, bare_root,
+            "cloud form keeps exactly one directory per user"
+        );
+    }
+
+    #[test]
+    fn flatten_migration_merges_legacy_scoped_dirs() {
+        let (workspace, dir) = build_workspace_manager();
+        workspace.set_flatten_agent_scope(true);
+        // 迁移标记在首次 ensure 时落库，因此历史目录必须在首次访问前就存在。
+        let root = dir.path().join("workspaces");
+        let user_root = root.join("owner");
+        fs::create_dir_all(&user_root).expect("user root");
+        fs::write(user_root.join("keep.txt"), b"keep").expect("keep");
+        let legacy = root.join("owner__a__abc123");
+        fs::create_dir_all(legacy.join("nested")).expect("legacy dir");
+        fs::write(legacy.join("keep.txt"), b"conflict").expect("conflict file");
+        fs::write(legacy.join("nested").join("new.txt"), b"new").expect("new file");
+
+        let resolved = workspace.ensure_user_root("owner").expect("ensure root");
+
+        assert_eq!(resolved, user_root);
+        assert_eq!(
+            fs::read_to_string(user_root.join("keep.txt")).expect("kept file"),
+            "keep"
+        );
+        assert_eq!(
+            fs::read_to_string(user_root.join("keep (2).txt")).expect("merged file"),
+            "conflict"
+        );
+        assert!(user_root.join("nested").join("new.txt").exists());
+        assert!(!legacy.exists(), "emptied legacy dir should be removed");
+    }
+
+    #[test]
+    fn workspace_usage_summary_counts_files_and_keeps_recent_paths() {
+        let (workspace, _dir) = build_workspace_manager();
+        let root = workspace.ensure_user_root("owner").expect("user root");
+        fs::create_dir_all(root.join("src")).expect("create src");
+        fs::write(root.join("src").join("foo.rs"), b"hello").expect("write foo");
+        fs::write(root.join("notes.md"), b"world!").expect("write notes");
+
+        let summary = workspace
+            .workspace_usage_summary("owner", "", 2)
+            .expect("usage summary");
+
+        assert_eq!(summary.files, 2);
+        assert_eq!(summary.dirs, 1);
+        assert_eq!(summary.used_bytes, 11);
+        assert!(!summary.truncated);
+        assert_eq!(summary.recent.len(), 2);
+        assert!(
+            summary
+                .recent
+                .iter()
+                .any(|entry| entry.path == "src/foo.rs"),
+            "recent paths stay relative to the workspace root: {:?}",
+            summary
+                .recent
+                .iter()
+                .map(|entry| &entry.path)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn workspace_usage_summary_cache_refreshes_after_tree_dirty() {
+        let (workspace, _dir) = build_workspace_manager();
+        let root = workspace.ensure_user_root("owner").expect("user root");
+        fs::write(root.join("a.txt"), b"a").expect("write a");
+
+        let first = workspace
+            .workspace_usage_summary("owner", "", 8)
+            .expect("first summary");
+        assert_eq!(first.files, 1);
+
+        fs::write(root.join("b.txt"), b"bb").expect("write b");
+        let cached = workspace
+            .workspace_usage_summary("owner", "", 8)
+            .expect("cached summary");
+        assert_eq!(
+            cached.files, 1,
+            "short TTL cache is expected to serve the old value"
+        );
+
+        workspace.mark_tree_dirty("owner");
+        let fresh = workspace
+            .workspace_usage_summary("owner", "", 8)
+            .expect("fresh summary");
+        assert_eq!(fresh.files, 2);
+        assert_eq!(fresh.used_bytes, 3);
+    }
+
+    #[test]
+    fn thread_log_recovery_emits_blocks_and_skips_private_items_without_transport_ids() {
+        let (workspace, _dir) = build_workspace_manager();
+        workspace
+            .storage
+            .upsert_chat_session(&crate::storage::ChatSessionRecord {
+                session_id: "thread".into(),
+                user_id: "owner".into(),
+                title: "Thread".into(),
+                status: "active".into(),
+                created_at: 1.0,
+                updated_at: 1.0,
+                last_message_at: 1.0,
+                agent_id: None,
+                workspace_id: None,
+                tool_overrides: vec![],
+                parent_session_id: None,
+                parent_message_id: None,
+                spawn_label: None,
+                spawned_by: None,
+            })
+            .unwrap();
+        let turn = workspace
+            .storage
+            .accept_thread_turn("owner", "thread", &json!({"content":"input"}))
+            .unwrap();
+        workspace
+            .storage
+            .append_thread_item(
+                "owner",
+                &json!({"session_id":"thread",
+            "turn_id":turn["turn_id"], "item_id":"answer", "kind":"assistant_message",
+            "role":"assistant", "status":"running", "visibility":"user"}),
+            )
+            .unwrap();
+        let cursor = workspace.latest_thread_change_seq("thread").unwrap();
+        workspace.storage.upsert_thread_text_block("owner", "thread", &json!({
+            "item_id":"answer", "field":"content", "block_index":0, "event_id":900,
+            "data":{"content":"prefix", "field":"content", "block_index":0, "content_offset":0}
+        })).unwrap();
+        workspace
+            .storage
+            .append_thread_item(
+                "owner",
+                &json!({"session_id":"thread",
+            "turn_id":turn["turn_id"], "item_id":"private", "kind":"system_message",
+            "role":"system", "visibility":"model_internal", "content":"internal"}),
+            )
+            .unwrap();
+        let frames = workspace
+            .try_load_thread_changes("thread", cursor, 100)
+            .unwrap();
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0]["event"], "thread_change");
+        assert_eq!(frames[0]["data"]["change_type"], "text_block");
+        assert_eq!(frames[0]["data"]["payload"]["content"], "prefix");
+        assert_eq!(frames[0]["data"]["cursor"], cursor + 1);
+        assert_eq!(frames[1]["data"]["change_type"], "item_upsert");
+        assert!(frames.iter().all(|frame| frame.get("event_id").is_none()));
+        assert_eq!(
+            workspace
+                .try_load_thread_changes("thread", 900, 100)
+                .unwrap()[0]["event"],
+            "thread_snapshot_required"
+        );
+    }
+
+    #[test]
+    fn deleted_session_log_grace_purges_only_expired_sessions() {
+        let dir = tempdir().expect("tempdir");
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            dir.path()
+                .join("grace-tests.db")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        storage
+            .ensure_initialized()
+            .expect("initialize sqlite storage");
+        let manager = Arc::new(super::WorkspaceManager::new(
+            &dir.path().join("workspaces").to_string_lossy(),
+            storage.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        manager.set_deleted_session_log_grace_hours(24);
+        assert_eq!(manager.deleted_session_log_grace_hours(), 24);
+
+        for session in ["session-old", "session-new"] {
+            storage
+                .append_chat(
+                    "user-a",
+                    &json!({"session_id": session, "role": "user", "content": "hello"}),
+                )
+                .expect("append chat");
+            storage
+                .append_tool_log(
+                    "user-a",
+                    &json!({"session_id": session, "tool": "tool-a", "ok": true}),
+                )
+                .expect("append tool");
+            storage
+                .append_artifact_log(
+                    "user-a",
+                    &json!({"session_id": session, "kind": "kind-a", "name": "a"}),
+                )
+                .expect("append artifact");
+            storage
+                .append_stream_event(
+                    session,
+                    "user-a",
+                    1,
+                    &json!({"event": "tool_call", "data": {"data": {"user_round": 1}}}),
+                )
+                .expect("append stream event");
+        }
+
+        let now = super::now_ts();
+        storage
+            .mark_deleted_session_log_grace("user-a", "session-old", now - 25.0 * 3600.0)
+            .expect("mark expired tombstone");
+        storage
+            .mark_deleted_session_log_grace("user-a", "session-new", now)
+            .expect("mark fresh tombstone");
+
+        let purged = super::cleanup_expired_deleted_session_logs(storage.as_ref(), 24, now);
+        assert_eq!(purged, 1);
+
+        assert!(storage
+            .load_thread_context_items("user-a", "session-old", 500, true)
+            .expect("load old chat")
+            .is_empty());
+        assert_eq!(
+            storage
+                .load_thread_context_items("user-a", "session-new", 500, true)
+                .expect("load new chat")
+                .len(),
+            1
+        );
+        assert!(storage
+            .load_stream_events("session-old", 0, 8)
+            .expect("load old stream events")
+            .is_empty());
+        assert_eq!(
+            storage
+                .load_stream_events("session-new", 0, 8)
+                .expect("load new stream events")
+                .len(),
+            1
+        );
+
+        let remaining = storage
+            .list_expired_deleted_session_log_grace(now + 3600.0, 32)
+            .expect("list remaining tombstones");
+        assert_eq!(
+            remaining,
+            vec![("user-a".to_string(), "session-new".to_string())]
+        );
+
+        // A non-positive grace purges immediately without a tombstone.
+        manager.set_deleted_session_log_grace_hours(0);
+        manager.schedule_deleted_session_log_cleanup("user-a", "session-new");
+        assert!(storage
+            .load_thread_context_items("user-a", "session-new", 500, true)
+            .expect("load new chat after immediate purge")
+            .is_empty());
+    }
+
+    #[test]
+    fn multi_root_workspace_keeps_default_temp_cleanup_ttl() {
+        assert_eq!(
+            effective_temp_cleanup_idle_ttl_s(false),
+            TEMP_FILES_IDLE_TTL_S
+        );
+    }
+
+    #[test]
+    fn resolve_path_maps_public_workspace_path_without_leading_slash() {
+        let (workspace, _dir) = build_workspace_manager();
+        let resolved = workspace
+            .resolve_path(
+                "alice__c__1",
+                "workspaces/alice__c__1/orchestration/demo/round_01/worker/report.md",
+            )
+            .expect("resolve public-like path");
+
+        assert_eq!(
+            resolved,
+            workspace
+                .workspace_root("alice__c__1")
+                .join("orchestration")
+                .join("demo")
+                .join("round_01")
+                .join("worker")
+                .join("report.md")
+        );
+        assert!(!resolved
+            .to_string_lossy()
+            .replace('\\', "/")
+            .contains("workspaces/alice__c__1/workspaces/alice__c__1"));
+    }
+
+    #[test]
+    fn resolve_path_rejects_public_workspace_path_for_another_scope() {
+        let (workspace, _dir) = build_workspace_manager();
+        let error = workspace
+            .resolve_path(
+                "alice__c__1",
+                "workspaces/bob__c__1/orchestration/demo/round_01/worker/report.md",
+            )
+            .expect_err("reject cross-scope public-like path");
+
+        assert!(error.to_string().contains("路径越界"));
+    }
+
+    #[test]
+    fn session_context_overflow_flag_roundtrip_and_manual_clear() {
+        let (workspace, _dir) = build_workspace_manager();
+        let user_id = "u1";
+        let session_id = "s1";
+
+        assert!(!workspace.load_session_context_overflow(user_id, session_id));
+        workspace.save_session_context_overflow(user_id, session_id, true);
+        assert!(workspace.load_session_context_overflow(user_id, session_id));
+
+        workspace.save_session_context_overflow(user_id, session_id, false);
+        assert!(!workspace.load_session_context_overflow(user_id, session_id));
+    }
+
+    #[test]
+    fn session_context_limit_hint_roundtrip_and_manual_clear() {
+        let (workspace, _dir) = build_workspace_manager();
+        let user_id = "u-limit";
+        let session_id = "s-limit";
+
+        assert_eq!(
+            workspace.load_session_context_limit_hint(user_id, session_id),
+            None
+        );
+        workspace.save_session_context_limit_hint(user_id, session_id, Some(8192));
+        assert_eq!(
+            workspace.load_session_context_limit_hint(user_id, session_id),
+            Some(8192)
+        );
+
+        workspace.save_session_context_limit_hint(user_id, session_id, None);
+        assert_eq!(
+            workspace.load_session_context_limit_hint(user_id, session_id),
+            None
+        );
+    }
+
+    #[test]
+    fn purge_session_data_clears_context_overflow_tokens_and_reasoning_meta() {
+        let (workspace, _dir) = build_workspace_manager();
+        let user_id = "u2";
+        let session_id = "s-overflow";
+
+        workspace.save_session_context_overflow(user_id, session_id, true);
+        workspace.save_session_context_tokens(user_id, session_id, 98765);
+        workspace.save_session_context_limit_hint(user_id, session_id, Some(4096));
+        workspace
+            .save_session_reasoning_effort(user_id, session_id, "high")
+            .expect("save reasoning effort");
+        assert!(workspace.load_session_context_overflow(user_id, session_id));
+        assert_eq!(
+            workspace.load_session_context_tokens(user_id, session_id),
+            98765
+        );
+        assert_eq!(
+            workspace.load_session_context_limit_hint(user_id, session_id),
+            Some(4096)
+        );
+        assert_eq!(
+            workspace.load_session_reasoning_effort(user_id, session_id),
+            "high"
+        );
+
+        workspace.purge_session_data(user_id, session_id);
+        assert!(!workspace.load_session_context_overflow(user_id, session_id));
+        assert_eq!(
+            workspace.load_session_context_tokens(user_id, session_id),
+            0
+        );
+        assert_eq!(
+            workspace.load_session_context_limit_hint(user_id, session_id),
+            None
+        );
+        assert_eq!(
+            workspace.load_session_reasoning_effort(user_id, session_id),
+            "default"
+        );
+    }
+
+    #[test]
+    fn session_reasoning_effort_is_thread_local_and_normalized() {
+        let (workspace, _dir) = build_workspace_manager();
+
+        assert_eq!(
+            workspace.load_session_reasoning_effort("user-a", "thread-a"),
+            "default"
+        );
+        assert_eq!(
+            workspace
+                .save_session_reasoning_effort("user-a", "thread-a", "x_high")
+                .expect("save normalized effort"),
+            "xhigh"
+        );
+        assert_eq!(
+            workspace.load_session_reasoning_effort("user-a", "thread-a"),
+            "xhigh"
+        );
+        assert_eq!(
+            workspace.load_session_reasoning_effort("user-a", "thread-b"),
+            "default"
+        );
+        assert_eq!(
+            workspace
+                .save_session_reasoning_effort("user-a", "thread-a", "unknown")
+                .expect("reset invalid effort to default"),
+            "default"
+        );
+        assert_eq!(
+            workspace.load_session_reasoning_effort("user-a", "thread-a"),
+            "default"
+        );
+    }
+
+    #[test]
+    fn purge_user_data_preserves_audit_logs_until_explicit_cleanup() {
+        let (workspace, _dir) = build_workspace_manager();
+        let storage = workspace.storage.clone();
+        let user_id = "u-audit";
+        let session_id = "s-audit";
+        workspace
+            .save_session_reasoning_effort(user_id, session_id, "medium")
+            .expect("save reasoning effort");
+        storage
+            .append_chat(user_id, &json!({"session_id": session_id, "role": "user"}))
+            .expect("append chat history");
+        storage
+            .append_tool_log(user_id, &json!({"session_id": session_id, "tool": "tool"}))
+            .expect("append tool log");
+        storage
+            .append_stream_event(session_id, user_id, 1, &json!({"event": "progress"}))
+            .expect("append stream event");
+
+        workspace
+            .purge_user_data(user_id)
+            .expect("purge projection");
+        assert_eq!(
+            workspace.load_session_reasoning_effort(user_id, session_id),
+            "default"
+        );
+        assert_eq!(
+            storage
+                .load_thread_context_items(user_id, session_id, 500, true)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            storage.load_stream_events(session_id, 0, 10).unwrap().len(),
+            1
+        );
+
+        workspace
+            .purge_user_data_with_logs(user_id)
+            .expect("purge logs");
+        assert!(storage
+            .load_thread_context_items(user_id, session_id, 500, true)
+            .unwrap()
+            .is_empty());
+        assert!(storage
+            .load_stream_events(session_id, 0, 10)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn clear_work_state_contents_preserves_private_persistent_roots() {
+        let (workspace, _dir) = build_workspace_manager();
+        let user_id = "alice";
+        let private_root = workspace.workspace_root(user_id);
+        fs::create_dir_all(private_root.join("skills").join("demo")).expect("create skills dir");
+        fs::create_dir_all(private_root.join("knowledge").join("demo"))
+            .expect("create knowledge dir");
+        fs::create_dir_all(private_root.join("global")).expect("create global dir");
+        fs::create_dir_all(private_root.join("chat_media").join("derived"))
+            .expect("create chat media dir");
+        fs::write(
+            private_root.join("skills").join("demo").join("SKILL.md"),
+            "# skill\n",
+        )
+        .expect("write skill file");
+        fs::write(
+            private_root.join("knowledge").join("demo").join("note.txt"),
+            "kb",
+        )
+        .expect("write knowledge file");
+        fs::write(
+            private_root.join("global").join("tooling.json"),
+            "{\"ok\":true}",
+        )
+        .expect("write tooling config");
+        fs::write(
+            private_root
+                .join("chat_media")
+                .join("derived")
+                .join("clip.txt"),
+            "temp",
+        )
+        .expect("write transient file");
+        fs::write(private_root.join("scratch.txt"), "temp").expect("write scratch file");
+
+        let removed = workspace
+            .clear_work_state_contents(user_id)
+            .expect("clear work state");
+
+        assert_eq!(removed, 2);
+        assert!(private_root
+            .join("skills")
+            .join("demo")
+            .join("SKILL.md")
+            .exists());
+        assert!(private_root
+            .join("knowledge")
+            .join("demo")
+            .join("note.txt")
+            .exists());
+        assert!(private_root.join("global").join("tooling.json").exists());
+        assert!(!private_root.join("chat_media").exists());
+        assert!(!private_root.join("scratch.txt").exists());
+    }
+}

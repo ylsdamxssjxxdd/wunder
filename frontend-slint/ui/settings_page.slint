@@ -1,0 +1,1565 @@
+import { I18n } from "i18n.slint";
+import { Theme, PromptPackCard, ToolCard, ModelCard, LanPeerCard, ProfileCard, FileCard, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AgentToolOption } from "theme.slint";
+import { Action, Avatar, FormField, MiddleHeader, MiddleFooter, PageState, PageStateKind } from "components.slint";
+import { TextEditBase } from "textedit-base.slint";
+import { DragRow } from "drag_row.slint";
+import { ModelPresets } from "model_presets.slint";
+import { CheckBox, ComboBox, ScrollView, Switch } from "std-widgets.slint";
+import { CronPage } from "cron_page.slint";
+import { ChannelsPage } from "channels_page.slint";
+import { ToolsPage, ToolResource } from "tools_page.slint";
+import { ExpertData, MemoryCard, ArchiveCard, RuntimePoint, HeatCard } from "expert_data.slint";
+import { AvatarDialogState } from "avatar_dialog.slint";
+
+// Web-style settings navigation entry: 36px circular icon badge, title and
+// subtitle rows, solid accent background with white text when selected.
+component SettingsNavItem inherits Rectangle {
+    in property <image> icon;
+    in property <string> title;
+    in property <string> subtitle;
+    in property <bool> selected: false;
+    callback clicked();
+    height: 60px;
+    border-radius: Theme.radius-lg;
+    background: root.selected ? Theme.accent : (touch.has-hover ? Theme.accent-soft : transparent);
+    Rectangle {
+        x: 10px; y: 12px; width: 36px; height: 36px; border-radius: 18px;
+        background: root.selected ? #ffffff3d : #ececec;
+        Image { x: 9px; y: 9px; width: 18px; height: 18px; source: root.icon; colorize: root.selected ? white : #5a5a5a; }
+    }
+    Text { x: 56px; y: 12px; width: parent.width - 66px; height: 18px; text: root.title; color: root.selected ? white : Theme.text; font-size: Theme.font-md; font-weight: 600; overflow: elide; }
+    Text { x: 56px; y: 31px; width: parent.width - 66px; height: 15px; text: root.subtitle; color: root.selected ? #ffffffd1 : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// White rounded card grouping settings rows (web settings card).
+component SettingsCard inherits Rectangle {
+    border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+    VerticalLayout { padding-left: 16px; padding-right: 16px; padding-top: 14px; padding-bottom: 14px; spacing: 0px; @children }
+}
+
+// Card-internal title + subtitle header followed by a divider.
+component SettingsCardHeader inherits VerticalLayout {
+    in property <string> title;
+    in property <string> subtitle: "";
+    in property <color> title-color: Theme.text;
+    spacing: 3px;
+    Text { text: root.title; color: root.title-color; font-size: Theme.font-headline; font-weight: 700; }
+    if root.subtitle != "" : Text { text: root.subtitle; color: Theme.muted; font-size: Theme.font-xs; wrap: word-wrap; }
+    Rectangle { height: 9px; }
+    Rectangle { height: 1px; background: Theme.border; }
+}
+
+// Web-style model form section head: small accent icon plus a bold title.
+component FormSectionHead inherits Rectangle {
+    in property <image> icon;
+    in property <string> title;
+    height: 24px;
+    Image { x: 0px; y: 4px; width: 16px; height: 16px; source: root.icon; colorize: Theme.accent-deep; }
+    Text { x: 26px; width: parent.width - 26px; height: 24px; text: root.title; color: Theme.text; font-size: Theme.font-md; font-weight: 700; vertical-alignment: center; overflow: elide; }
+}
+
+// One row of the built-in agent's tool list (§9.3): tool name and description
+// on the left, the enable switch on the right. The switch only reports intent;
+// `toggle-agent-tool` owns the selection set on the Rust side.
+component AgentToolRow inherits Rectangle {
+    in property <string> name;
+    in property <string> description;
+    in property <bool> enabled: false;
+    in property <bool> last: false;
+    callback toggled();
+    height: 50px;
+    Text {
+        x: 0px; y: 7px; width: parent.width - 60px; height: 18px;
+        text: root.name; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; overflow: elide;
+    }
+    Text {
+        x: 0px; y: 26px; width: parent.width - 60px; height: 16px;
+        text: root.description == "" ? I18n.stc_agent_tool_no_desc : root.description;
+        color: Theme.muted; font-size: Theme.font-2xs; overflow: elide;
+    }
+    Switch {
+        x: parent.width - 44px; y: (parent.height - 22px) / 2; width: 44px; height: 22px;
+        checked: root.enabled;
+        toggled => { root.toggled(); }
+    }
+    if !root.last : Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
+}
+
+// Label above a dropdown, matching FormField's vertical rhythm so the two
+// can share one grid row.
+component FormCombo inherits VerticalLayout {
+    in property <string> label;
+    in property <[string]> items;
+    in property <string> value;
+    // Locked forms (cloud model entries) disable the dropdown without
+    // hiding the current selection.
+    in property <bool> enabled: true;
+    callback selected(string);
+    spacing: 7px;
+    Text { height: 18px; text: root.label; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+    // min-width: 0 keeps long preset labels from hogging shared form rows;
+    // the dropdown still fills its column.
+    ComboBox { min-width: 0px; height: 36px; model: root.items; current-value: root.value; enabled: root.enabled; selected(value) => { root.selected(value); } }
+}
+
+// Web settings row: label (+ optional note) on the left, controls on the
+// right, 1px bottom divider unless `last`.
+component SettingRow inherits Rectangle {
+    in property <string> label;
+    in property <string> note: "";
+    in property <bool> last: false;
+    height: row.preferred-height + (root.last ? 0px : 1px);
+    row := HorizontalLayout {
+        padding-top: 12px; padding-bottom: 12px; spacing: 12px;
+        VerticalLayout {
+            horizontal-stretch: 1; spacing: 3px;
+            Text { text: root.label; color: Theme.text; font-size: Theme.font-md; font-weight: 600; }
+            if root.note != "" : Text { text: root.note; color: Theme.muted; font-size: Theme.font-xs; wrap: word-wrap; }
+        }
+        @children
+    }
+    if !root.last : Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
+}
+
+// Settings shell (§9): a 12-category navigation on the left and the selected
+// category's cards on the right. It replaces the old five-tab entity page; the
+// per-category panels below reuse the existing native callbacks unchanged.
+export component SettingsPage inherits Rectangle {
+    in property <bool> loading: false;
+    in property <bool> saving: false;
+    in property <[ModelCard]> models;
+    in property <int> selected-model: -1;
+    in property <ModelCard> selected-card;
+    callback delete-model(string);
+    in-out property <string> workspace-root;
+    in-out property <string> language;
+    in-out property <string> python-path;
+    in-out property <string> git-path;
+    in-out property <string> rg-path;
+    in property <string> python-status;
+    in property <string> git-status;
+    in property <string> rg-status;
+    in-out property <bool> importing-supplement: false;
+    in-out property <string> supplement-status;
+    callback import-supplement();
+    callback pick-python-path();
+    callback pick-git-path();
+    callback pick-rg-path();
+    in-out property <bool> lan-enabled: false;
+    in-out property <string> lan-name;
+    in property <string> lan-peer-id;
+    in property <string> lan-endpoint;
+    in property <int> lan-peer-count;
+    in property <[LanPeerCard]> lan-peers;
+    // ---- cloud account (§6.1) ----
+    // Login state, quota snapshot and the drafts are wired two-way to the
+    // shell; the native side owns every cloud call and pushes results back.
+    in-out property <bool> cloud-logged-in: false;
+    in-out property <bool> cloud-expired: false;
+    in-out property <string> cloud-username;
+    in-out property <string> cloud-balance;
+    in-out property <string> cloud-concurrency;
+    in-out property <bool> cloud-quota-warn: false;
+    in-out property <bool> cloud-sync-enabled: true;
+    in-out property <bool> cloud-busy: false;
+    in-out property <string> cloud-error;
+    in-out property <string> cloud-server-draft;
+    in-out property <string> cloud-user-draft;
+    in-out property <string> cloud-pass-draft;
+    // Engine connection machine (`online|reconnecting|expired|logged_out`);
+    // the relative-time strings are pre-formatted natively in Chinese.
+    in-out property <string> cloud-connection;
+    in-out property <string> cloud-last-error;
+    in-out property <string> cloud-last-success;
+    in-out property <string> cloud-next-retry;
+    callback cloud-login();
+    callback cloud-logout();
+    callback cloud-refresh-account();
+    callback cloud-toggle-sync(bool);
+    // Engine-managed cloud entries (`cloud/<id>`): the editor locks them and
+    // removes the delete shortcut; logout clears them in one go. Guards
+    // against the new-model draft inheriting a previously selected cloud key.
+    property <bool> cloud-locked: root.selected-key.starts-with("cloud/") && !root.model-creating;
+    // Status row projection: dot color and copy per engine connection state.
+    property <color> cloud-dot-color: root.cloud-connection == "online" ? Theme.success
+        : root.cloud-connection == "reconnecting" ? Theme.warning
+        : root.cloud-connection == "expired" ? Theme.danger
+        : Theme.muted;
+    property <string> cloud-state-text: root.cloud-connection == "online" ? I18n.st_cl_connected
+        : root.cloud-connection == "reconnecting" ? I18n.st_cl_reconnecting
+        : root.cloud-connection == "expired" ? I18n.st_cl_expired
+        : I18n.st_cl_logged_out;
+    in property <string> selected-key;
+    in property <string> selected-provider;
+    in property <string> selected-model-name;
+    in property <string> selected-base-url;
+    in property <string> selected-type;
+    in property <bool> selected-is-default;
+    callback select-model(int);
+    callback create-model();
+    callback move-model(int, int);
+    callback save-model();
+    callback set-default-model(string);
+    // The models tab edits the selected model in place: every editor draft
+    // lives here and is wired two-way to the shell by main.slint.
+    in-out property <bool> model-creating: false;
+    in-out property <string> model-key-draft;
+    in-out property <string> model-provider-draft;
+    in-out property <string> model-name-draft;
+    in-out property <string> model-base-url-draft;
+    in-out property <string> model-token-draft;
+    in-out property <string> model-type-draft: "llm";
+    in-out property <string> model-temperature-draft;
+    in-out property <string> model-timeout-draft;
+    in-out property <string> model-max-output-draft;
+    in-out property <string> model-thinking-budget-draft;
+    in-out property <string> model-max-rounds-draft;
+    in-out property <string> model-max-context-draft;
+    in-out property <string> model-tts-voice-draft;
+    in-out property <string> model-tts-format-draft;
+    in-out property <string> model-tts-speed-draft;
+    in-out property <string> model-tts-instructions-draft;
+    in-out property <string> model-asr-language-draft;
+    in-out property <string> model-asr-format-draft;
+    in-out property <string> model-asr-temperature-draft;
+    in-out property <string> model-asr-prompt-draft;
+    in-out property <string> model-image-size-draft;
+    in-out property <string> model-image-format-draft;
+    in-out property <string> model-image-steps-draft;
+    in-out property <string> model-image-guidance-draft;
+    in-out property <string> model-image-negative-draft;
+    in-out property <string> model-video-size-draft;
+    in-out property <string> model-video-seconds-draft;
+    in-out property <string> model-video-fps-draft;
+    in-out property <string> model-video-negative-draft;
+    in property <[string]> model-provider-presets;
+    in property <[string]> model-type-presets;
+    callback probe-model-context();
+    callback probe-model-voices();
+    callback refresh();
+    callback save-runtime(string, string, string, string, string);
+    callback save-lan(bool, string);
+    callback save-preferences();
+    callback refresh-prompt-packs();
+    callback select-prompt-pack(string);
+    callback save-prompt-segment();
+    callback create-prompt-pack();
+    callback delete-prompt-pack();
+    callback set-active-prompt-pack();
+    callback refresh-prompt-preview();
+    callback export-diagnostics();
+    callback reset-work-state();
+    in-out property <string> theme;
+    in-out property <string> send-key;
+    in-out property <float> font-size: 14;
+    in property <string> app-version: "";
+    in property <[PromptPackCard]> prompt-packs;
+    in property <[string]> prompt-pack-names;
+    in property <string> prompt-active;
+    in-out property <string> selected-pack;
+    in-out property <int> selected-segment: 0;
+    in-out property <string> prompt-draft;
+    in property <bool> prompt-readonly;
+    in property <bool> prompt-loading: false;
+    in-out property <bool> reset-confirm-open: false;
+    in-out property <string> pack-name-draft;
+    in property <string> prompt-preview;
+    in property <bool> prompt-preview-loading: false;
+    in property <string> status;
+    // 0 general, 1 models, 2 tools, 3 agent, 4 companion, 5 scheduled tasks,
+    // 6 memories, 7 channels, 8 activity, 9 prompt packs, 10 archived threads,
+    // 11 help.
+    in-out property <int> settings-tab: 0;
+    // Category filter typed into the navigation search box. Slint 1.18 strings
+    // have no substring test, so the filter runs natively and the matching
+    // categories come back as a bit set (bit N = category N).
+    in-out property <string> settings-query: "";
+    // One flag per §9.2 category, in spec order. Slint 1.18 has no bitwise
+    // operators, so the native search projection ships booleans rather than a
+    // mask; an all-true list means "no query".
+    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true];
+    out property <bool> settings-has-matches: root.count-visible() > 0;
+    out property <int> settings-visible-count: root.count-visible();    // How many categories the current query keeps; the empty state and the test
+    // projections both read this instead of re-deriving the flags.
+    pure function count-visible() -> int {
+        return (root.settings-category-flags[0] ? 1 : 0)
+            + (root.settings-category-flags[1] ? 1 : 0)
+            + (root.settings-category-flags[2] ? 1 : 0)
+            + (root.settings-category-flags[3] ? 1 : 0)
+            + (root.settings-category-flags[4] ? 1 : 0)
+            + (root.settings-category-flags[5] ? 1 : 0)
+            + (root.settings-category-flags[6] ? 1 : 0)
+            + (root.settings-category-flags[7] ? 1 : 0)
+            + (root.settings-category-flags[8] ? 1 : 0)
+            + (root.settings-category-flags[9] ? 1 : 0)
+            + (root.settings-category-flags[10] ? 1 : 0)
+            + (root.settings-category-flags[11] ? 1 : 0);
+    }
+    // Slint cannot test a substring, so the query is projected out and the
+    // matching categories come back as a bit set.
+    changed settings-query => { root.settings-search(root.settings-query); }
+    callback settings-search(string);
+    callback leave-settings();
+
+    // ---- embedded category state -------------------------------------------
+    // The heavy surfaces own their own components; the shell only forwards
+    // state and callbacks, so their logic stays in one place.
+    in-out property <string> tool-manager-status;
+    in-out property <bool> tools-loading: false;
+    in-out property <bool> tools-working: false;
+    in-out property <int> tools-tab: 0;
+    in-out property <int> tools-selected: -1;
+    in-out property <[ToolCard]> tools-builtin;
+    in-out property <[ToolCard]> tools-mcp;
+    in-out property <[ToolCard]> tools-skills;
+    in-out property <[ToolCard]> tools-knowledge;
+    in-out property <[ToolResource]> tools-servers;
+    in-out property <[ToolResource]> tools-skill-resources;
+    in-out property <[ToolResource]> tools-bases;
+    in-out property <[ToolCard]> tools-server-tools;
+    in-out property <[FileCard]> tools-files;
+    in-out property <string> tools-search;
+    in-out property <string> tools-file-path;
+    in-out property <string> tools-content;
+    in-out property <string> tools-directory;
+    in-out property <bool> tools-has-more;
+    callback refresh-tools();
+    callback select-tool-resource(int, int);
+    callback open-tool-file(string, bool);
+    callback more-tool-files();
+    callback search-tool-files(string);
+    callback tool-manager-action(string, string, string);
+
+    in-out property <bool> cron-loading: false;
+    in-out property <[CronCard]> cron-jobs;
+    in-out property <[string]> cron-agent-names: [I18n.common_default_agent];
+    in-out property <bool> cron-editor-open: false;
+    in-out property <bool> cron-editor-saving: false;
+    in-out property <int> cron-edit-kind: 0;
+    in-out property <string> cron-edit-name;
+    in-out property <string> cron-edit-at;
+    in-out property <string> cron-edit-every;
+    in-out property <string> cron-edit-cron;
+    in-out property <string> cron-edit-tz;
+    in-out property <string> cron-edit-message;
+    in-out property <int> cron-edit-agent: 0;
+    in-out property <bool> cron-edit-delete-after: false;
+    in-out property <bool> cron-edit-enabled: true;
+    in-out property <bool> cron-runs-open: false;
+    in-out property <bool> cron-runs-loading: false;
+    in-out property <string> cron-runs-title;
+    in-out property <[CronRunCard]> cron-runs;
+    callback refresh-cron();
+    callback toggle-cron(string, bool);
+    callback delete-cron(string);
+    callback run-cron-now(string);
+    callback open-cron-runs(string);
+    callback close-cron-runs();
+    callback open-cron-creator();
+    callback edit-cron-job(string);
+    callback save-cron-editor();
+    callback cancel-cron-editor();
+
+    in-out property <bool> channel-loading: false;
+    in-out property <[ChannelCatalogCard]> channel-catalog;
+    in-out property <[ChannelAccountCard]> channel-accounts;
+    in-out property <int> selected-channel-account: -1;
+    in-out property <[ChannelBindingCard]> channel-bindings;
+    in-out property <bool> channel-bindings-loading: false;
+    in-out property <bool> channel-logs-loading: false;
+    in-out property <[ChannelLogCard]> channel-logs;
+    in-out property <bool> channel-editor-open: false;
+    in-out property <bool> channel-editor-saving: false;
+    in-out property <string> channel-edit-id;
+    in-out property <int> channel-edit-kind: 0;
+    in-out property <int> channel-edit-agent: 0;
+    in-out property <[string]> channel-agent-names: [I18n.common_default_agent];
+    in-out property <[string]> channel-catalog-names;
+    in-out property <string> channel-edit-name;
+    in-out property <bool> channel-edit-enabled: true;
+    in-out property <bool> channel-edit-group-chat: true;
+    in-out property <string> channel-edit-app-id;
+    in-out property <string> channel-edit-app-secret;
+    in-out property <string> channel-edit-corp-id;
+    in-out property <string> channel-edit-wechat-agent;
+    in-out property <string> channel-edit-secret;
+    in-out property <string> channel-edit-token;
+    in-out property <string> channel-edit-aes-key;
+    in-out property <string> channel-edit-original-id;
+    in-out property <string> channel-edit-api-base;
+    in-out property <string> channel-edit-bot-token;
+    in-out property <string> channel-edit-bot-id;
+    in-out property <string> channel-edit-user-id;
+    in-out property <string> channel-edit-domain;
+    in-out property <string> channel-edit-config-json;
+    in-out property <bool> channel-delete-open: false;
+    in-out property <bool> channel-qr-open: false;
+    in-out property <int> channel-qr-state: 0;
+    in-out property <image> channel-qr-image;
+    in-out property <string> channel-qr-message;
+    callback refresh-channels();
+    callback select-channel-account(int);
+    callback open-channel-creator();
+    callback edit-channel-account();
+    callback save-channel-editor();
+    callback cancel-channel-editor();
+    callback request-delete-channel();
+    callback confirm-delete-channel();
+    callback cancel-delete-channel();
+    callback toggle-channel-account(bool);
+    callback open-channel-logs();
+    callback probe-channel-logs();
+    callback clear-channel-logs();
+    callback delete-channel-binding(string, string);
+    callback start-channel-qr();
+    callback cancel-channel-qr();
+    callback reconnect-channel();
+
+    in-out property <bool> expert-loading: false;
+    in-out property <bool> expert-saving: false;
+    in-out property <string> expert-error;
+    in-out property <[MemoryCard]> expert-memories;
+    in-out property <[ArchiveCard]> expert-archives;
+    in-out property <[RuntimePoint]> expert-points;
+    in-out property <[HeatCard]> expert-heat;
+    in-out property <string> expert-duration;
+    in-out property <string> expert-tokens;
+    in-out property <string> expert-calls;
+    in-out property <string> expert-chart-path;
+    in-out property <string> expert-chart-max;
+    in-out property <string> expert-date;
+    in-out property <int> expert-archive-page: 0;
+    in-out property <int> expert-archive-total: 0;
+    in-out property <string> expert-query;
+    in-out property <string> expert-category: "全部标签";
+    in-out property <[string]> expert-categories: ["全部标签"];
+    in-out property <bool> memory-editor-open: false;
+    in-out property <string> memory-edit-id;
+    in-out property <string> memory-edit-title;
+    in-out property <string> memory-edit-content;
+    in-out property <string> memory-edit-category;
+    in-out property <[string]> expert-agent-names: [I18n.common_default_agent];
+    callback refresh-expert();
+    callback replicate-expert-memory(int);
+    callback open-expert-memory(int);
+    callback save-expert-memory();
+    callback delete-expert-memory(string);
+    callback open-expert-archive(string);
+    callback select-expert-date(string);
+    callback open-thread-log();
+    callback export-thread-log();
+
+    // ---- permission mode (§8.4) is echoed in the agent category ----
+    in-out property <string> permission-mode: "full_auto";
+    // ---- built-in agent editor (§9.3 分类 4) ----
+    // The personal build owns exactly one agent, so this category is a single
+    // form. Every editable field is two-way bound to the Rust projection and
+    // flags itself dirty; the system prompt is display-only because the
+    // repository freezes a thread's prompt after it is first set.
+    in-out property <string> selected-agent-name;
+    in-out property <string> selected-agent-description;
+    in-out property <string> selected-agent-model;
+    in-out property <string> selected-agent-system-prompt;
+    in-out property <bool> selected-agent-preview-skill: false;
+    in-out property <bool> selected-agent-silent: false;
+    in-out property <bool> selected-agent-prefer-mother: false;
+    // Conversational (llm) model keys. The built-in agent may name one of
+    // these; the runtime accepts only keys that exist in this list. An empty
+    // list means no conversational model is configured yet.
+    in property <[string]> agent-model-options;
+    // Preset questions live on the agent record and stay two-way bound: the
+    // Rust projection owns the list, the rows only add and remove entries.
+    in-out property <[string]> selected-agent-preset-questions;
+    // Tools available to this agent, projected by Rust so no native string
+    // matching happens in the view. `enabled` mirrors the agent's selection.
+    in property <[AgentToolOption]> agent-tool-options;
+    in-out property <string> agent-tool-query;
+    in-out property <string> agent-question-draft;
+    callback agent-model-picked(string);
+    callback toggle-agent-tool-option(string);
+    callback add-agent-question();
+    callback remove-agent-question(int);
+    callback save-agent-form();
+    callback refresh-agent-dirty();
+    // Editing names, descriptions and questions all discard pending work, so
+    // every field reports changes back to the shared dirty tracker.
+    changed selected-agent-name => { root.refresh-agent-dirty(); }
+    changed selected-agent-description => { root.refresh-agent-dirty(); }
+    changed selected-agent-preview-skill => { root.refresh-agent-dirty(); }
+    changed selected-agent-silent => { root.refresh-agent-dirty(); }
+    changed selected-agent-prefer-mother => { root.refresh-agent-dirty(); }
+    changed selected-agent-model => { root.refresh-agent-dirty(); }
+    callback open-info(string, string);
+
+
+    private property <bool> model-delete-open: false;
+    background: Theme.chat;
+
+    function palette-name(index: int) -> string {
+        return index == 1 ? "hula-green" : index == 2 ? "minimal" : index == 3 ? "tech-blue" : "eva-orange";
+    }
+    // Per-type list icons, mirroring the web messenger model list.
+    public pure function model-icon(kind: string) -> image {
+        kind == "embedding" ? @image-url("../assets/icons/log-fingerprint.svg") :
+        kind == "asr" ? @image-url("../assets/icons/fa-microphone-lines.svg") :
+        kind == "tts" ? @image-url("../assets/icons/fa-wave-square.svg") :
+        kind == "image" ? @image-url("../assets/icons/fa-image.svg") :
+        kind == "video" ? @image-url("../assets/icons/fa-film.svg") :
+        @image-url("../assets/icons/brain.svg");
+    }
+    function apply-font-size() {
+        Theme.font-scale = clamp(root.font-size, 12.0, 20.0) / 14.0;
+    }
+    // Slider drag applies the scale live; persistence happens once on release.
+    function set-font-from-x(x: length, persist: bool) {
+        root.font-size = clamp(round(12.0 + x / 1px / 132.0 * 8.0), 12, 20);
+        root.apply-font-size();
+        if persist { root.save-preferences(); }
+    }
+
+    HorizontalLayout {
+        spacing: 0px;
+        // §9.1 navigation column.
+        SettingsNav := Rectangle {
+            width: 260px;
+            background: Theme.middle;
+            Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+            VerticalLayout {
+                spacing: 0px;
+                // Back to the workbench.
+                Rectangle {
+                    height: 46px;
+                    background: settings-back.has-hover ? Theme.hover : transparent;
+                    accessible-role: button; accessible-label: I18n.stc_back;
+                    accessible-action-default => { root.leave-settings(); }
+                    Image { x: 14px; y: 16px; width: 14px; height: 14px; source: @image-url("../assets/icons/chevron-left.svg"); colorize: Theme.text-secondary; image-fit: contain; }
+                    Text { x: 34px; y: 0px; width: parent.width - 44px; height: parent.height; text: I18n.stc_back; color: Theme.text; font-size: Theme.font-md; font-weight: 600; vertical-alignment: center; }
+                    settings-back := TouchArea { x: 0px; y: 0px; width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.leave-settings(); } }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                Rectangle {
+                    height: 46px; background: transparent;
+                    Rectangle {
+                        x: 12px; y: 8px; width: parent.width - 24px; height: 30px;
+                        border-radius: Theme.radius-sm; background: Theme.surface;
+                        border-width: 1px; border-color: Theme.border;
+                        Image { x: 8px; y: 8px; width: 13px; height: 13px; source: @image-url("../assets/icons/magnifying-glass.svg"); colorize: Theme.muted; image-fit: contain; }
+                        query := TextInput {
+                            x: 28px; y: 0px; width: parent.width - 36px; height: parent.height;
+                            text <=> root.settings-query;
+                            single-line: true;
+                            font-size: Theme.font-sm; color: Theme.text;
+                            vertical-alignment: center;
+                        }
+                        if root.settings-query == "" : Text {
+                            x: 28px; y: 0px; width: parent.width - 36px; height: parent.height;
+                            text: I18n.stc_search; color: Theme.muted; font-size: Theme.font-sm;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { alignment: start; padding-left: 10px; padding-right: 10px; padding-bottom: 10px; spacing: 4px;
+                        SettingsNavItem {
+                            visible: root.settings-category-flags[0];
+                            icon: @image-url("../assets/icons/fa-sliders.svg");
+                            title: I18n.stc_general; subtitle: I18n.stc_general_note;
+                            selected: root.settings-tab == 0;
+                            clicked => { root.settings-tab = 0;  }
+                        }
+                        SettingsNavItem {
+                            visible: root.settings-category-flags[1];
+                            icon: @image-url("../assets/icons/robot.svg");
+                            title: I18n.stc_models; subtitle: I18n.stc_models_note;
+                            selected: root.settings-tab == 1;
+                            clicked => { root.settings-tab = 1; root.refresh(); }
+                        }
+                        SettingsNavItem {
+                            visible: root.settings-category-flags[2];
+                            icon: @image-url("../assets/icons/fa-toolbox.svg");
+                            title: I18n.stc_tools; subtitle: I18n.stc_tools_note;
+                            selected: root.settings-tab == 2;
+                            clicked => { root.settings-tab = 2; root.refresh(); }
+                        }
+                        SettingsNavItem {
+                            visible: root.settings-category-flags[3];
+                            icon: @image-url("../assets/icons/fa-user.svg");
+                            title: I18n.stc_agent; subtitle: I18n.stc_agent_note;
+                            selected: root.settings-tab == 3;
+                            clicked => { root.settings-tab = 3;  }
+                        }
+                        SettingsNavItem {
+                            visible: root.settings-category-flags[4];
+                            icon: @image-url("../assets/icons/bee.svg");
+                            title: I18n.stc_pet; subtitle: I18n.stc_pet_note;
+                            selected: root.settings-tab == 4;
+                            clicked => { root.settings-tab = 4;  }
+                        }
+                        SettingsNavItem {
+                            visible: root.settings-category-flags[5];
+                            icon: @image-url("../assets/icons/fa-clock.svg");
+                            title: I18n.stc_cron; subtitle: I18n.stc_cron_note;
+                            selected: root.settings-tab == 5;
+                            clicked => { root.settings-tab = 5; root.refresh(); }
+                        }
+                        SettingsNavItem {
+                            visible: root.settings-category-flags[6];
+                            icon: @image-url("../assets/icons/fa-memory.svg");
+                            title: I18n.stc_memory; subtitle: I18n.stc_memory_note;
+                            selected: root.settings-tab == 6;
+                            clicked => { root.settings-tab = 6; root.refresh(); }
+                        }
+                        SettingsNavItem {
+                            visible: root.settings-category-flags[7];
+                            icon: @image-url("../assets/icons/plug.svg");
+                            title: I18n.stc_channels; subtitle: I18n.stc_channels_note;
+                            selected: root.settings-tab == 7;
+                            clicked => { root.settings-tab = 7; root.refresh(); }
+                        }
+                        SettingsNavItem {
+                            visible: root.settings-category-flags[8];
+                            icon: @image-url("../assets/icons/log-chart.svg");
+                            title: I18n.stc_runs; subtitle: I18n.stc_runs_note;
+                            selected: root.settings-tab == 8;
+                            clicked => { root.settings-tab = 8;  }
+                        }
+                        SettingsNavItem {
+                            visible: root.settings-category-flags[9];
+                            icon: @image-url("../assets/icons/file-lines.svg");
+                            title: I18n.stc_prompts; subtitle: I18n.stc_prompts_note;
+                            selected: root.settings-tab == 9;
+                            clicked => { root.settings-tab = 9; root.refresh-prompt-packs(); }
+                        }
+                        SettingsNavItem {
+                            visible: root.settings-category-flags[10];
+                            icon: @image-url("../assets/icons/box-archive.svg");
+                            title: I18n.stc_archives; subtitle: I18n.stc_archives_note;
+                            selected: root.settings-tab == 10;
+                            clicked => { root.settings-tab = 10;  }
+                        }
+                        SettingsNavItem {
+                            visible: root.settings-category-flags[11];
+                            icon: @image-url("../assets/icons/fa-book-open.svg");
+                            title: I18n.stc_help; subtitle: I18n.stc_help_note;
+                            selected: root.settings-tab == 11;
+                            clicked => { root.settings-tab = 11;  }
+                        }
+                        // A live query that matches nothing says so instead of
+                        // leaving an empty column with no explanation.
+                        if !root.settings-has-matches : Rectangle {
+                            height: 96px;
+                            Text {
+                                x: 10px; y: 12px; width: parent.width - 20px; height: 40px;
+                                text: I18n.stc_none_title; color: Theme.text; font-size: Theme.font-md; font-weight: 600;
+                                wrap: word-wrap; vertical-alignment: top;
+                            }
+                            Text {
+                                x: 10px; y: 48px; width: parent.width - 20px; height: 40px;
+                                text: I18n.stc_none_note; color: Theme.muted; font-size: Theme.font-xs;
+                                wrap: word-wrap; vertical-alignment: top;
+                            }
+                        }
+                    }
+                }
+                MiddleFooter { text: root.status; }
+            }
+        }
+        Rectangle {
+            width: root.width - SettingsNav.width;
+            VerticalLayout {
+                width: parent.width;
+                spacing: 0px;
+                HorizontalLayout {
+                    height: 62px; padding-left: 24px; padding-right: 24px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
+                    VerticalLayout { spacing: 1px;
+                        Text { height: 25px; text: root.settings-tab == 0 ? I18n.stc_general : root.settings-tab == 1 ? I18n.stc_models : root.settings-tab == 2 ? I18n.stc_tools : root.settings-tab == 3 ? I18n.stc_agent : root.settings-tab == 4 ? I18n.stc_pet : root.settings-tab == 5 ? I18n.stc_cron : root.settings-tab == 6 ? I18n.stc_memory : root.settings-tab == 7 ? I18n.stc_channels : root.settings-tab == 8 ? I18n.stc_runs : root.settings-tab == 9 ? I18n.stc_prompts : root.settings-tab == 10 ? I18n.stc_archives : root.settings-tab == 11 ? I18n.stc_help : I18n.stc_general; color: Theme.text; font-size: 22px; font-weight: 700; overflow: elide; }
+                        Text { height: 17px; text: root.settings-tab == 0 ? I18n.stc_general_note : root.settings-tab == 1 ? I18n.stc_models_note : root.settings-tab == 2 ? I18n.stc_tools_note : root.settings-tab == 3 ? I18n.stc_agent_note : root.settings-tab == 4 ? I18n.stc_pet_note : root.settings-tab == 5 ? I18n.stc_cron_note : root.settings-tab == 6 ? I18n.stc_memory_note : root.settings-tab == 7 ? I18n.stc_channels_note : root.settings-tab == 8 ? I18n.stc_runs_note : root.settings-tab == 9 ? I18n.stc_prompts_note : root.settings-tab == 10 ? I18n.stc_archives_note : root.settings-tab == 11 ? I18n.stc_help_note : I18n.stc_general_note; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    if root.settings-tab == 1 : Action { icon: @image-url("../assets/icons/save.svg"); label: I18n.st_models_save; primary: true; enabled: !root.loading && !root.saving && !root.cloud-locked && root.model-key-draft != "" && root.model-name-draft != "" && root.model-provider-draft != "" && (root.model-creating || root.selected-key != ""); clicked => { root.save-model(); } }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                    if root.settings-tab == 0 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                        VerticalLayout { padding: 24px; spacing: 14px; alignment: start;
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.st_version_title; subtitle: I18n.st_version_latest; }
+                                SettingRow { label: I18n.st_version_number; last: true;
+                                    Text { text: root.app-version; color: Theme.text; font-size: Theme.font-md; font-weight: 700; vertical-alignment: center; }
+                                }
+                            }
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.st_tab_general; subtitle: I18n.st_nav_subtitle; }
+                                SettingRow { label: I18n.st_send_key; note: root.send-key == "ctrl_enter" ? I18n.st_send_enter_newline : root.send-key == "none" ? I18n.st_send_button_note : I18n.st_send_enter_direct;
+                                    ComboBox { width: 160px; height: 38px; model: [I18n.st_send_enter, I18n.st_send_ctrl_enter, I18n.st_send_button]; current-index: root.send-key == "ctrl_enter" ? 1 : root.send-key == "none" ? 2 : 0;
+                                        selected(value) => { root.send-key = self.current-index == 1 ? "ctrl_enter" : self.current-index == 2 ? "none" : "enter"; root.save-preferences(); } }
+                                }
+                                SettingRow { label: I18n.st_ui_language; note: I18n.st_language_hint;
+                                    ComboBox { width: 132px; height: 38px; model: ["zh-CN", "en-US"]; current-index: root.language == "en-US" ? 1 : 0; enabled: !root.saving && !root.loading;
+                                        selected(value) => { root.language = value; root.save-runtime(root.workspace-root, root.language, root.python-path, root.git-path, root.rg-path); } }
+                                }
+                                SettingRow { label: I18n.st_palette; note: I18n.st_palette_note;
+                                    ComboBox { width: 150px; height: 38px; model: [I18n.st_palette_eva, I18n.st_palette_hula, I18n.st_palette_minimal, I18n.st_palette_tech]; current-index: root.theme == "hula-green" ? 1 : root.theme == "minimal" ? 2 : root.theme == "tech-blue" ? 3 : 0;
+                                        selected(value) => { root.theme = root.palette-name(self.current-index); Theme.palette = root.theme; root.save-preferences(); } }
+                                }
+                                SettingRow { label: I18n.st_font_size; note: I18n.st_font_size_note; last: true;
+                                    HorizontalLayout { spacing: 10px;
+                                        Rectangle { width: 106px; height: 34px; border-radius: 17px; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+                                            Text { x: 0px; width: 32px; height: parent.height; text: "-"; color: root.font-size > 12 ? Theme.text : Theme.muted; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; }
+                                            Text { x: 32px; width: 42px; height: parent.height; text: round(root.font-size); color: Theme.text; font-size: Theme.font-md; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                                            Text { x: parent.width - 32px; width: 32px; height: parent.height; text: "+"; color: root.font-size < 20 ? Theme.text : Theme.muted; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; }
+                                            TouchArea { x: 0px; width: 32px; height: parent.height; mouse-cursor: pointer; enabled: root.font-size > 12; clicked => { root.font-size = round(root.font-size) - 1; root.apply-font-size(); root.save-preferences(); } }
+                                            TouchArea { x: parent.width - 32px; width: 32px; height: parent.height; mouse-cursor: pointer; enabled: root.font-size < 20; clicked => { root.font-size = round(root.font-size) + 1; root.apply-font-size(); root.save-preferences(); } }
+                                        }
+                                        // Accent-colored slider (std Slider ignores the Theme palette).
+                                        Rectangle { width: 132px; height: 34px;
+                                            Rectangle { x: 0px; y: (parent.height - 4px) / 2; width: parent.width; height: 4px; border-radius: 2px; background: Theme.border;
+                                                Rectangle { x: 0px; y: 0px; width: parent.width * (root.font-size - 12) / 8; height: 4px; border-radius: 2px; background: Theme.accent; }
+                                            }
+                                            Rectangle { x: parent.width * (root.font-size - 12) / 8 - 8px; y: (parent.height - 16px) / 2; width: 16px; height: 16px; border-radius: 8px; background: white; border-width: 2px; border-color: Theme.accent; }
+                                            TouchArea {
+                                                mouse-cursor: pointer;
+                                                pointer-event(event) => {
+                                                    if event.kind == PointerEventKind.down { root.set-font-from-x(self.mouse-x, false); }
+                                                    if event.kind == PointerEventKind.up { root.set-font-from-x(self.mouse-x, true); }
+                                                }
+                                                moved => { if self.pressed { root.set-font-from-x(self.mouse-x, false); } }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.st_tab_runtime; subtitle: I18n.st_exec_paths_note; }
+                                Rectangle { height: 10px; }
+                                Rectangle { height: 62px;
+                                    FormField { width: parent.width - 120px; label: I18n.st_python_path; placeholder: I18n.st_python_hint; text <=> root.python-path; read-only: root.saving || root.loading; }
+                                    Action { x: parent.width - 110px; y: 22px; width: 110px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-python-path(); } }
+                                }
+                                Text { height: 18px; text: root.python-status; color: root.python-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                Rectangle { height: 62px;
+                                    FormField { width: parent.width - 120px; label: I18n.st_git_path; placeholder: I18n.st_git_hint; text <=> root.git-path; read-only: root.saving || root.loading; }
+                                    Action { x: parent.width - 110px; y: 22px; width: 110px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-git-path(); } }
+                                }
+                                Text { height: 18px; text: root.git-status; color: root.git-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                Rectangle { height: 62px;
+                                    FormField { width: parent.width - 120px; label: I18n.st_rg_path; placeholder: I18n.st_rg_hint; text <=> root.rg-path; read-only: root.saving || root.loading; }
+                                    Action { x: parent.width - 110px; y: 22px; width: 110px; height: 34px; label: I18n.st_browse; show-label: true; enabled: !root.saving && !root.loading; clicked => { root.pick-rg-path(); } }
+                                }
+                                Text { height: 18px; text: root.rg-status; color: root.rg-status.starts-with("⚠") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                Rectangle { height: 8px; }
+                                HorizontalLayout { height: 34px;
+                                    Action { width: 128px; label: root.importing-supplement ? I18n.st_supplement_importing : I18n.st_supplement_import; show-label: true; primary: true; enabled: !root.importing-supplement && !root.saving && !root.loading; clicked => { root.import-supplement(); } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                Text { height: 18px; text: root.supplement-status; color: root.supplement-status.starts-with("导入失败") ? Theme.danger : Theme.muted; font-size: Theme.font-xs; overflow: elide; visible: root.supplement-status != ""; }
+                                Rectangle { height: 8px; }
+                                HorizontalLayout { height: 34px; Rectangle { horizontal-stretch: 1; } Action { width: 108px; label: root.saving ? I18n.common_saving : I18n.ag_save_settings; show-label: true; primary: true; enabled: !root.saving && !root.loading; clicked => { root.save-runtime(root.workspace-root, root.language, root.python-path, root.git-path, root.rg-path); } } }
+                            }
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.st_lan_title; subtitle: root.lan-enabled ? I18n.st_lan_on : I18n.st_lan_off; }
+                                Rectangle { height: 10px; }
+                                FormField { label: I18n.st_lan_node_name; placeholder: I18n.st_lan_node_name_hint; text <=> root.lan-name; read-only: root.saving || root.loading; }
+                                Text { height: 18px; text: I18n.st_lan_node_id + root.lan-peer-id; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                Text { height: 18px; text: I18n.st_lan_listen + root.lan-endpoint + I18n.st_lan_discovered_prefix + root.lan-peer-count + I18n.st_lan_discovered_suffix; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                ScrollView { height: 84px; horizontal-scrollbar-policy: always-off; VerticalLayout { alignment: start; spacing: 3px; for peer in root.lan-peers : Rectangle { height: 24px; border-radius: 5px; background: Theme.accent-soft; Text { x: 8px; width: parent.width - 16px; height: parent.height; text: peer.display-name + "  ·  " + peer.address; color: Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; } } if root.lan-peer-count == 0 : Text { height: 20px; text: I18n.st_lan_empty; color: Theme.muted; font-size: Theme.font-2xs; } } }
+                                Rectangle { height: 8px; }
+                                HorizontalLayout { height: 34px; Rectangle { horizontal-stretch: 1; } Action { width: 128px; label: root.lan-enabled ? I18n.st_lan_disable : I18n.st_lan_enable; show-label: true; primary: root.lan-enabled; enabled: !root.saving && !root.loading; clicked => { root.save-lan(!root.lan-enabled, root.lan-name); } } }
+                            }
+                            // ---- cloud account (§6.1) ----
+                            // Server address + account + secret login. The
+                            // native side validates and calls the engine
+                            // CloudService; the session file and the token
+                            // never surface here.
+                            SettingsCard {
+                                SettingsCardHeader {
+                                    title: I18n.st_cl_title;
+                                    // While signed in the server draft is pinned to
+                                    // the session's server by the native projection.
+                                    subtitle: root.cloud-logged-in && !root.cloud-expired ? root.cloud-server-draft : I18n.st_cl_subtitle;
+                                }
+                                Rectangle { height: 10px; }
+                                FormField {
+                                    label: I18n.st_cl_server;
+                                    placeholder: "http://192.168.1.10:8000";
+                                    text <=> root.cloud-server-draft;
+                                    read-only: root.cloud-busy || (root.cloud-logged-in && !root.cloud-expired);
+                                }
+                                HorizontalLayout { spacing: 10px;
+                                    FormField {
+                                        horizontal-stretch: 1;
+                                        label: I18n.st_cl_username;
+                                        placeholder: I18n.st_cl_username_hint;
+                                        text <=> root.cloud-user-draft;
+                                        read-only: root.cloud-busy || (root.cloud-logged-in && !root.cloud-expired);
+                                    }
+                                    FormField {
+                                        horizontal-stretch: 1;
+                                        label: I18n.st_cl_password;
+                                        placeholder: I18n.st_cl_password_hint;
+                                        text <=> root.cloud-pass-draft;
+                                        secret: true;
+                                        read-only: root.cloud-busy;
+                                    }
+                                }
+                                Rectangle { height: 2px; }
+                                // Connection state row: the engine connection
+                                // machine rendered as a colored dot plus copy.
+                                HorizontalLayout { height: 20px; spacing: 6px;
+                                    VerticalLayout { alignment: center; width: 8px;
+                                        Rectangle { width: 8px; height: 8px; border-radius: 4px; background: root.cloud-dot-color; }
+                                    }
+                                    Text { height: parent.height; text: root.cloud-state-text; color: root.cloud-dot-color; font-size: Theme.font-xs; vertical-alignment: center; overflow: elide; }
+                                }
+                                if root.cloud-connection == "online" && root.cloud-last-success != "" : Text { height: 15px; text: root.cloud-last-success; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                                if root.cloud-connection == "reconnecting" && root.cloud-last-error != "" : Text { height: 15px; text: root.cloud-last-error; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                                if root.cloud-connection == "reconnecting" && root.cloud-next-retry != "" : Text { height: 15px; text: I18n.st_cl_retry_in(root.cloud-next-retry); color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                                // Signed in: account · balance · concurrency; signed
+                                // out keeps the quiet how-to hint under the state row.
+                                if root.cloud-logged-in && !root.cloud-expired : Text {
+                                    height: 18px;
+                                    text: root.cloud-username + " · " + I18n.st_cl_quota_prefix + " " + root.cloud-balance + " · " + I18n.st_cl_concurrency_prefix + " " + root.cloud-concurrency;
+                                    color: root.cloud-quota-warn ? Theme.danger : Theme.muted;
+                                    font-size: Theme.font-xs; overflow: elide;
+                                }
+                                if !root.cloud-logged-in && root.cloud-error == "" : Text { height: 18px; text: I18n.st_cl_offline_hint; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                if root.cloud-error != "" : Text { height: 18px; text: root.cloud-error; color: Theme.danger; font-size: Theme.font-xs; overflow: elide; }
+                                Rectangle { height: 8px; }
+                                HorizontalLayout { height: 34px; spacing: 10px;
+                                    if !root.cloud-logged-in || root.cloud-expired : Action {
+                                        width: 108px; show-label: true; primary: true;
+                                        label: root.cloud-busy ? I18n.st_cl_logging_in : (root.cloud-logged-in ? I18n.st_cl_relogin : I18n.st_cl_login);
+                                        enabled: !root.cloud-busy && (root.cloud-server-draft.starts-with("http://") || root.cloud-server-draft.starts-with("https://"));
+                                        clicked => { root.cloud-login(); }
+                                    }
+                                    if root.cloud-logged-in : Action {
+                                        width: 108px; show-label: true;
+                                        label: root.cloud-busy ? I18n.st_cl_logging_in : I18n.st_cl_logout;
+                                        enabled: !root.cloud-busy;
+                                        clicked => { root.cloud-logout(); }
+                                    }
+                                    if root.cloud-logged-in : Action {
+                                        width: 108px; show-label: true;
+                                        label: I18n.st_cl_refresh;
+                                        enabled: root.cloud-logged-in && !root.cloud-expired && !root.cloud-busy;
+                                        clicked => { root.cloud-refresh-account(); }
+                                    }
+                                    // Lightweight retry while the engine reports a
+                                    // degraded connection: a failed refresh keeps the
+                                    // state, a success flips back to online.
+                                    if root.cloud-connection == "reconnecting" || root.cloud-connection == "expired" : Action {
+                                        width: 108px; show-label: true;
+                                        label: root.cloud-busy ? I18n.st_cl_logging_in : I18n.st_cl_retry;
+                                        enabled: !root.cloud-busy;
+                                        clicked => { root.cloud-refresh-account(); }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                SettingRow {
+                                    label: I18n.st_cl_sync;
+                                    note: I18n.st_cl_sync_note;
+                                    last: true;
+                                    Switch {
+                                        checked <=> root.cloud-sync-enabled;
+                                        enabled: root.cloud-logged-in && !root.cloud-busy;
+                                        toggled => { root.cloud-toggle-sync(root.cloud-sync-enabled); }
+                                    }
+                                }
+                            }
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.st_reset_title; subtitle: I18n.st_reset_note; title-color: Theme.danger; }
+                                Rectangle { height: 10px; }
+                                HorizontalLayout { height: 34px;
+                                    Action { width: 140px; label: I18n.st_reset_title; show-label: true; danger: true; enabled: !root.loading && !root.saving; clicked => { root.reset-confirm-open = true; } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                            }
+                        }
+                    }
+                    // Models tab, mirroring the web messenger model settings:
+                    // config list on the left (drag to reorder), the selected
+                    // model's full form exposed on the right.
+                    if root.settings-tab == 1 : HorizontalLayout { vertical-stretch: 1; padding: 8px; spacing: 14px;
+                        Rectangle { width: 236px; border-radius: Theme.radius-md; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+                            VerticalLayout { padding: 12px; spacing: 10px;
+                                HorizontalLayout { height: 30px; spacing: 6px;
+                                    Text { height: 30px; text: I18n.st_models_list_title; color: Theme.text; font-size: Theme.font-md; font-weight: 600; vertical-alignment: center; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); enabled: !root.loading; label: I18n.common_refresh; clicked => { root.refresh(); } }
+                                    Action { icon: @image-url("../assets/icons/plus.svg"); label: I18n.model_editor_add; show-label: true; primary: true; enabled: !root.loading && !root.saving; clicked => { root.create-model(); } }
+                                }
+                                ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                                    VerticalLayout { alignment: start; spacing: 6px;
+                                        for model[index] in root.models : DragRow {
+                                            height: 58px;
+                                            label: model.key;
+                                            selected: root.selected-model == index;
+                                            activate => { root.select-model(index); }
+                                            move-by(delta) => { root.move-model(index, delta); }
+                                            clip: true;
+                                            Image { x: 10px; y: (parent.height - 18px) / 2; width: 18px; height: 18px; source: root.model-icon(model.model-type); colorize: Theme.accent-deep; }
+                                            // Cloud entries keep room for their badge next to the key.
+                                            Text { x: 36px; y: 11px; width: parent.width - (model.is-default ? 94px : 48px) - (model.is-cloud ? 34px : 0px); height: 18px; text: model.key; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; overflow: elide; }
+                                            Text { x: 36px; y: 32px; width: parent.width - (model.is-default ? 94px : 48px) - (model.is-cloud ? 34px : 0px); height: 15px; text: (model.model == "" && model.base-url == "") ? I18n.st_models_no_info : (model.model + " · " + model.base-url); color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                                            // Engine-managed cloud entries (`cloud/<id>`): the
+                                            // badge marks them in the list; they are
+                                            // refreshed on sign-in and removed on logout.
+                                            if model.is-cloud : Rectangle {
+                                                x: parent.width - (model.is-default ? 82px : 52px); y: (parent.height - 16px) / 2; width: 26px; height: 16px;
+                                                border-radius: 8px; background: Theme.accent-soft;
+                                                Text { width: parent.width; height: parent.height; text: I18n.st_cl_badge; color: Theme.accent; font-size: Theme.font-2xs; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                                            }
+                                            // Default models carry the web's hanging bookmark ribbon.
+                                            if model.is-default : Rectangle {
+                                                x: parent.width - 44px; y: 0px; width: 32px; height: 19px;
+                                                background: @linear-gradient(180deg, #fef3c7 0%, #fde68a 100%);
+                                                Text { y: 2px; width: parent.width; height: 15px; text: I18n.st_models_default_badge; color: #9a670d; font-size: Theme.font-2xs; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+                                            }
+                                            if model.is-default : Rectangle {
+                                                x: parent.width - 32.5px; y: 14.5px; width: 9px; height: 9px;
+                                                transform-rotation: 45deg;
+                                                background: #fde68a;
+                                            }
+                                        }
+                                        if root.models.length == 0 : PageState { height: 48px; kind: root.loading ? PageStateKind.loading : PageStateKind.empty; message: root.loading ? I18n.st_models_loading : I18n.st_models_empty; }
+                                    }
+                                }
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; border-radius: Theme.radius-md; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+                            if root.selected-key == "" && !root.model-creating : PageState { kind: PageStateKind.empty; message: I18n.st_pick_model; }
+                            if root.selected-key != "" || root.model-creating : VerticalLayout { padding: 16px; spacing: 12px;
+                                HorizontalLayout { height: 46px; spacing: 8px;
+                                    VerticalLayout { horizontal-stretch: 1; spacing: 2px;
+                                        Text { height: 26px; text: root.model-creating ? I18n.model_editor_add : root.selected-key; color: Theme.text; font-size: Theme.font-headline; font-weight: 700; overflow: elide; }
+                                        Text { height: 17px; text: root.model-creating ? I18n.st_model_new_hint : ((root.selected-is-default ? I18n.st_models_default_badge + " · " : "") + I18n.st_model_colon + root.selected-model-name + " · " + root.selected-base-url); color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                    }
+                                    Action { height: 32px; icon: @image-url("../assets/icons/fa-star.svg"); label: root.selected-is-default ? I18n.st_is_default : I18n.st_set_default; show-label: true; enabled: !root.loading && !root.saving && !root.model-creating && !root.cloud-locked && root.selected-key != "" && !root.selected-is-default; clicked => { root.set-default-model(root.selected-key); } }
+                                    // Cloud entries keep the delete slot visible but inert:
+                                    // they are engine-managed and cleared together on logout.
+                                    Action { height: 32px; icon: @image-url("../assets/icons/trash.svg"); label: root.cloud-locked ? I18n.st_cl_remove : I18n.common_delete; show-label: true; danger: true; enabled: !root.loading && !root.saving && !root.model-creating && !root.cloud-locked && root.selected-key != ""; clicked => { root.model-delete-open = true; } }
+                                }
+                                if root.cloud-locked : Text { height: 17px; text: I18n.st_cl_locked_note; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                                    VerticalLayout { alignment: start; spacing: 14px;
+                                        SettingsCard {
+                                            FormSectionHead { icon: @image-url("../assets/icons/gear.svg"); title: I18n.st_model_section_basic; }
+                                            Rectangle { height: 4px; }
+                                            FormField { label: I18n.model_key_label; placeholder: I18n.model_key_placeholder; read-only: (!root.model-creating && root.selected-key != "") || root.cloud-locked; text <=> root.model-key-draft; }
+                                            FormCombo {
+                                                label: I18n.st_model_type_label;
+                                                enabled: !root.cloud-locked;
+                                                items: [I18n.st_type_llm, I18n.st_type_embedding, I18n.st_type_asr, I18n.st_type_tts, I18n.st_type_image, I18n.st_type_video];
+                                                value: root.model-type-draft == "embedding" ? I18n.st_type_embedding : root.model-type-draft == "asr" ? I18n.st_type_asr : root.model-type-draft == "tts" ? I18n.st_type_tts : root.model-type-draft == "image" ? I18n.st_type_image : root.model-type-draft == "video" ? I18n.st_type_video : I18n.st_type_llm;
+                                                selected(value) => { root.model-type-draft = value == I18n.st_type_embedding ? "embedding" : value == I18n.st_type_asr ? "asr" : value == I18n.st_type_tts ? "tts" : value == I18n.st_type_image ? "image" : value == I18n.st_type_video ? "video" : "llm"; }
+                                            }
+                                            HorizontalLayout { spacing: 10px;
+                                                FormCombo {
+                                                    horizontal-stretch: 1;
+                                                    label: I18n.model_provider_label;
+                                                    enabled: !root.cloud-locked;
+                                                    items: root.model-provider-presets;
+                                                    value: root.model-provider-draft == "" ? root.model-provider-presets[0] : root.model-provider-draft;
+                                                    selected(provider) => {
+                                                        if (provider == root.model-provider-presets[0]) {
+                                                            root.model-provider-draft = "";
+                                                        } else {
+                                                            root.model-provider-draft = provider;
+                                                            root.model-base-url-draft = ModelPresets.base-url(provider);
+                                                        }
+                                                    }
+                                                }
+                                                FormField { horizontal-stretch: 1; label: I18n.model_name_label; placeholder: I18n.model_name_placeholder; read-only: root.cloud-locked; text <=> root.model-name-draft; }
+                                            }
+                                            FormField { label: I18n.model_base_url_label; placeholder: I18n.model_base_url_placeholder; read-only: root.cloud-locked; text <=> root.model-base-url-draft; }
+                                            FormField { label: I18n.model_token_label; placeholder: I18n.model_token_placeholder; secret: true; read-only: root.cloud-locked; text <=> root.model-token-draft; }
+                                        }
+                                        // Generation / multimodal parameters per type.
+                                        if root.model-type-draft == "llm" || root.model-type-draft == "" : SettingsCard {
+                                            FormSectionHead { icon: @image-url("../assets/icons/fa-sliders.svg"); title: I18n.st_params_llm; }
+                                            Rectangle { height: 4px; }
+                                            HorizontalLayout { spacing: 10px;
+                                                FormField { horizontal-stretch: 1; label: "temperature"; placeholder: "0.7"; read-only: root.cloud-locked; text <=> root.model-temperature-draft; }
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_timeout; placeholder: "120"; read-only: root.cloud-locked; text <=> root.model-timeout-draft; }
+                                            }
+                                            HorizontalLayout { spacing: 10px;
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_max_output; placeholder: I18n.st_param_model_default; read-only: root.cloud-locked; text <=> root.model-max-output-draft; }
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_thinking; placeholder: I18n.st_param_model_default; read-only: root.cloud-locked; text <=> root.model-thinking-budget-draft; }
+                                            }
+                                            FormField { label: I18n.st_param_max_rounds; placeholder: "1000"; read-only: root.cloud-locked; text <=> root.model-max-rounds-draft; }
+                                            HorizontalLayout { spacing: 10px;
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_max_context; placeholder: I18n.st_param_context_hint; read-only: root.cloud-locked; text <=> root.model-max-context-draft; }
+                                                Rectangle { width: 104px; height: 62px;
+                                                    Action { y: 26px; width: 104px; label: I18n.model_probe_context; show-label: true; enabled: !root.saving && !root.cloud-locked && root.model-name-draft != "" && root.model-base-url-draft != ""; clicked => { root.probe-model-context(); } }
+                                                }
+                                            }
+                                        }
+                                        if root.model-type-draft == "embedding" : SettingsCard {
+                                            FormSectionHead { icon: @image-url("../assets/icons/fa-sliders.svg"); title: I18n.st_params_llm; }
+                                            Rectangle { height: 6px; }
+                                            Text { height: 18px; text: I18n.st_params_empty_hint; color: Theme.muted; font-size: Theme.font-sm; }
+                                        }
+                                        if root.model-type-draft == "asr" : SettingsCard {
+                                            FormSectionHead { icon: @image-url("../assets/icons/fa-sliders.svg"); title: I18n.st_params_asr; }
+                                            Rectangle { height: 4px; }
+                                            HorizontalLayout { spacing: 10px;
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_asr_language; placeholder: I18n.st_param_asr_language_hint; text <=> root.model-asr-language-draft; }
+                                                FormCombo {
+                                                    horizontal-stretch: 1;
+                                                    label: I18n.st_param_asr_format;
+                                                    items: [I18n.st_param_default_option, "json", "text", "verbose_json", "srt", "vtt"];
+                                                    value: root.model-asr-format-draft == "" ? I18n.st_param_default_option : root.model-asr-format-draft;
+                                                    selected(v) => { root.model-asr-format-draft = v == I18n.st_param_default_option ? "" : v; }
+                                                }
+                                            }
+                                            HorizontalLayout { spacing: 10px;
+                                                FormField { horizontal-stretch: 1; label: "temperature"; placeholder: "0 - 2"; text <=> root.model-asr-temperature-draft; }
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_asr_prompt; placeholder: I18n.st_param_model_default; text <=> root.model-asr-prompt-draft; }
+                                            }
+                                        }
+                                        if root.model-type-draft == "tts" : SettingsCard {
+                                            FormSectionHead { icon: @image-url("../assets/icons/fa-sliders.svg"); title: I18n.st_params_tts; }
+                                            Rectangle { height: 4px; }
+                                            HorizontalLayout { spacing: 10px;
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_tts_voice; placeholder: I18n.st_param_model_default; text <=> root.model-tts-voice-draft; }
+                                                FormCombo {
+                                                    horizontal-stretch: 1;
+                                                    label: I18n.st_param_tts_format;
+                                                    items: [I18n.st_param_default_option, "wav", "mp3", "flac", "aac", "opus", "pcm"];
+                                                    value: root.model-tts-format-draft == "" ? I18n.st_param_default_option : root.model-tts-format-draft;
+                                                    selected(v) => { root.model-tts-format-draft = v == I18n.st_param_default_option ? "" : v; }
+                                                }
+                                            }
+                                            HorizontalLayout { spacing: 10px;
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_tts_speed; placeholder: "0.25 - 4"; text <=> root.model-tts-speed-draft; }
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_tts_instructions; placeholder: I18n.st_param_model_default; text <=> root.model-tts-instructions-draft; }
+                                            }
+                                            Rectangle { width: 104px; height: 30px;
+                                                Action { width: 104px; label: I18n.model_probe_voices; show-label: true; enabled: !root.saving && root.model-name-draft != "" && root.model-base-url-draft != ""; clicked => { root.probe-model-voices(); } }
+                                            }
+                                        }
+                                        if root.model-type-draft == "image" : SettingsCard {
+                                            FormSectionHead { icon: @image-url("../assets/icons/fa-sliders.svg"); title: I18n.st_params_image; }
+                                            Rectangle { height: 4px; }
+                                            HorizontalLayout { spacing: 10px;
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_image_size; placeholder: I18n.st_param_image_size_hint; text <=> root.model-image-size-draft; }
+                                                FormCombo {
+                                                    horizontal-stretch: 1;
+                                                    label: I18n.st_param_image_format;
+                                                    items: [I18n.st_param_default_option, "png", "jpeg", "webp"];
+                                                    value: root.model-image-format-draft == "" ? I18n.st_param_default_option : root.model-image-format-draft;
+                                                    selected(v) => { root.model-image-format-draft = v == I18n.st_param_default_option ? "" : v; }
+                                                }
+                                            }
+                                            HorizontalLayout { spacing: 10px;
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_image_steps; placeholder: "1 - 200"; text <=> root.model-image-steps-draft; }
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_image_guidance; placeholder: "0 - 20"; text <=> root.model-image-guidance-draft; }
+                                            }
+                                            FormField { label: I18n.st_param_negative; placeholder: I18n.st_param_model_default; text <=> root.model-image-negative-draft; }
+                                        }
+                                        if root.model-type-draft == "video" : SettingsCard {
+                                            FormSectionHead { icon: @image-url("../assets/icons/fa-sliders.svg"); title: I18n.st_params_video; }
+                                            Rectangle { height: 4px; }
+                                            HorizontalLayout { spacing: 10px;
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_video_size; placeholder: I18n.st_param_video_size_hint; text <=> root.model-video-size-draft; }
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_video_seconds; placeholder: "≥ 0.5"; text <=> root.model-video-seconds-draft; }
+                                            }
+                                            HorizontalLayout { spacing: 10px;
+                                                FormField { horizontal-stretch: 1; label: "FPS"; placeholder: "≥ 1"; text <=> root.model-video-fps-draft; }
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_negative; placeholder: I18n.st_param_model_default; text <=> root.model-video-negative-draft; }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if root.settings-tab == 11 : Rectangle { vertical-stretch: 1;
+                        VerticalLayout { padding: 24px; spacing: 12px; alignment: start;
+                            Text { height: 28px; text: I18n.st_tab_help; color: Theme.text; font-size: Theme.font-headline; font-weight: 700; }
+                            Text { text: I18n.st_help_native_note; color: Theme.muted; font-size: Theme.font-md; wrap: word-wrap; }
+                            Text { height: 22px; text: I18n.st_diagnostics; color: Theme.text; font-size: Theme.font-lg; font-weight: 600; }
+                            HorizontalLayout { height: 32px; spacing: 8px;
+                                Action { width: 110px; label: I18n.st_export_diagnostics; show-label: true; enabled: !root.loading; clicked => { root.export-diagnostics(); } }
+                                Text { height: 30px; text: I18n.st_diagnostics_note; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; overflow: elide; }
+                            }
+                            Rectangle { vertical-stretch: 1; }
+                        }
+                    }
+                    if root.settings-tab == 2 : ToolsPage {
+                        loading: root.tools-loading; working: root.tools-working; status: root.tool-manager-status;
+                        builtin-tools: root.tools-builtin; mcp-tools: root.tools-mcp;
+                        skill-tools: root.tools-skills; knowledge-tools: root.tools-knowledge;
+                        servers: root.tools-servers; skills: root.tools-skill-resources; bases: root.tools-bases;
+                        files: root.tools-files; server-tools: root.tools-server-tools;
+                        tab <=> root.tools-tab; selected <=> root.tools-selected;
+                        file-path <=> root.tools-file-path; content <=> root.tools-content;
+                        has-more: root.tools-has-more; directory: root.tools-directory;
+                        search <=> root.tools-search;
+                        refresh => { root.refresh-tools(); }
+                        select-resource(kind, index) => { root.select-tool-resource(kind, index); }
+                        open-file(path, preview) => { root.open-tool-file(path, preview); }
+                        more-files => { root.more-tool-files(); }
+                        search-files(query) => { root.search-tool-files(query); }
+                        action(kind, id, value) => { root.tool-manager-action(kind, id, value); }
+                        inspect(label, value) => { root.open-info(label, value); }
+                        copy-path(value) => { root.tool-manager-status = value; }
+                    }
+
+                    if root.settings-tab == 3 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                        VerticalLayout { padding: 24px; spacing: 16px; alignment: start;
+                            // §9.3: the personal build ships one built-in agent,
+                            // so this category is a single form rather than a
+                            // list. The system prompt stays read-only: a thread
+                            // freezes its prompt on first use and rewriting it
+                            // would break the model's prompt cache.
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.stc_agent; subtitle: I18n.stc_agent_note; }
+                                Rectangle { height: 10px; }
+                                HorizontalLayout { spacing: 12px;
+                                    FormField {
+                                        horizontal-stretch: 1;
+                                        label: I18n.ag_name_label;
+                                        placeholder: I18n.ag_name_placeholder;
+                                        text <=> root.selected-agent-name;
+                                        error: root.selected-agent-name.is-empty ? I18n.stc_agent_name_required : "";
+                                        read-only: root.saving;
+                                    }
+                                    FormField {
+                                        horizontal-stretch: 1;
+                                        label: I18n.ag_greeting_label;
+                                        placeholder: I18n.ag_greeting_placeholder;
+                                        text <=> root.selected-agent-description;
+                                        read-only: root.saving;
+                                    }
+                                }
+                                Rectangle { height: 8px; }
+                                // §9.4: dropdowns use a fixed-width ComboBox in a
+                                // settings row, matching the general tab. The
+                                // runtime only accepts a key that is still
+                                // configured, and the native projection keeps the
+                                // stored value in this list.
+                                SettingRow { label: I18n.common_default_model; note: I18n.stc_agent_model_hint; last: true;
+                                    ComboBox {
+                                        width: 200px; height: 38px;
+                                        enabled: !root.saving;
+                                        model: root.agent-model-options;
+                                        current-value: root.selected-agent-model;
+                                        selected(value) => { root.agent-model-picked(value); }
+                                    }
+                                }
+                            }
+                            // Tool selection. Filtering happens natively because
+                            // Slint 1.18 strings have no substring test.
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.ag_tool_capability; subtitle: I18n.stc_agent_tools_note; }
+                                Rectangle { height: 10px; }
+                                Rectangle {
+                                    height: 34px; border-radius: Theme.radius-sm; background: Theme.panel;
+                                    border-width: 1px; border-color: Theme.border;
+                                    Image { x: 9px; y: 10px; width: 13px; height: 13px; source: @image-url("../assets/icons/magnifying-glass.svg"); colorize: Theme.muted; image-fit: contain; }
+                                    agent-tool-search := TextInput {
+                                        x: 30px; y: 0px; width: parent.width - 38px; height: parent.height;
+                                        text <=> root.agent-tool-query;
+                                        single-line: true;
+                                        font-size: Theme.font-sm; color: Theme.text; vertical-alignment: center;
+                                    }
+                                    if root.agent-tool-query == "" : Text {
+                                        x: 30px; y: 0px; width: parent.width - 38px; height: parent.height;
+                                        text: I18n.ag_search_tools; color: Theme.muted; font-size: Theme.font-sm;
+                                        vertical-alignment: center; overflow: elide;
+                                    }
+                                }
+                                Rectangle { height: 8px; }
+                                for option[index] in root.agent-tool-options : AgentToolRow {
+                                    name: option.name;
+                                    description: option.description;
+                                    enabled: option.enabled;
+                                    last: index == root.agent-tool-options.length - 1;
+                                    toggled => { root.toggle-agent-tool-option(option.name); }
+                                }
+                                if root.agent-tool-options.length == 0 : Text {
+                                    height: 44px; text: root.agent-tool-query.is-empty ? I18n.ag_empty : I18n.ag_no_matching_tool;
+                                    color: Theme.muted; font-size: Theme.font-sm;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            // Preset questions: a bounded list with per-row delete
+                            // plus one draft row, matching the old agent editor.
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.ag_preset_questions; subtitle: I18n.stc_agent_questions_note; }
+                                Rectangle { height: 10px; }
+                                for question[index] in root.selected-agent-preset-questions : Rectangle {
+                                    height: 38px;
+                                    Text {
+                                        x: 0px; y: 0px; width: parent.width - 40px; height: parent.height;
+                                        text: question; color: Theme.text-secondary; font-size: Theme.font-sm;
+                                        vertical-alignment: center; overflow: elide;
+                                    }
+                                    Action {
+                                        x: parent.width - 30px; y: 4px; width: 30px; height: 30px;
+                                        icon: @image-url("../assets/icons/xmark.svg"); label: I18n.common_delete;
+                                        enabled: !root.saving;
+                                        clicked => { root.remove-agent-question(index); }
+                                    }
+                                    Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
+                                }
+                                Rectangle { height: 4px; }
+                                HorizontalLayout { spacing: 8px;
+                                    Rectangle {
+                                        horizontal-stretch: 1; height: 36px; border-radius: Theme.radius-sm;
+                                        background: Theme.panel; border-width: 1px; border-color: Theme.border;
+                                        agent-question-input := TextInput {
+                                            x: 10px; y: 0px; width: parent.width - 20px; height: parent.height;
+                                            text <=> root.agent-question-draft;
+                                            single-line: true; enabled: !root.saving;
+                                            font-size: Theme.font-sm; color: Theme.text; vertical-alignment: center;
+                                            accepted => { root.add-agent-question(); }
+                                        }
+                                        if root.agent-question-draft == "" : Text {
+                                            x: 10px; y: 0px; width: parent.width - 20px; height: parent.height;
+                                            text: I18n.stc_agent_question_placeholder; color: Theme.muted; font-size: Theme.font-sm;
+                                            vertical-alignment: center; overflow: elide;
+                                        }
+                                    }
+                                    Action {
+                                        width: 30px; height: 30px; icon: @image-url("../assets/icons/plus.svg");
+                                        label: I18n.stc_agent_question_add; primary: true;
+                                        enabled: !root.saving && !root.agent-question-draft.is-empty;
+                                        clicked => { root.add-agent-question(); }
+                                    }
+                                }
+                            }
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.stc_agent_behavior; subtitle: I18n.stc_agent_behavior_note; }
+                                SettingRow { label: I18n.ag_preview_skill; note: I18n.stc_agent_preview_skill_note;
+                                    Switch { checked: root.selected-agent-preview-skill; enabled: !root.saving; toggled => { root.selected-agent-preview-skill = self.checked; } }
+                                }
+                                SettingRow { label: I18n.ag_silent_run; note: I18n.stc_agent_silent_note;
+                                    Switch { checked: root.selected-agent-silent; enabled: !root.saving; toggled => { root.selected-agent-silent = self.checked; } }
+                                }
+                                SettingRow { label: I18n.ag_prefer_mother; note: I18n.stc_agent_prefer_mother_note; last: true;
+                                    Switch { checked: root.selected-agent-prefer-mother; enabled: !root.saving; toggled => { root.selected-agent-prefer-mother = self.checked; } }
+                                }
+                            }
+                            // Read-only by repository rule: the system prompt is
+                            // frozen per thread after it is first set.
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.ag_system_prompt; subtitle: I18n.stc_agent_prompt_frozen; }
+                                Rectangle { height: 10px; }
+                                Rectangle {
+                                    height: 132px; border-radius: Theme.radius-sm; background: Theme.panel;
+                                    border-width: 1px; border-color: Theme.border;
+                                    TextEditBase {
+                                        x: 1px; y: 1px; width: parent.width - 2px; height: parent.height - 2px;
+                                        text: root.selected-agent-system-prompt;
+                                        placeholder-text: I18n.stc_agent_prompt_empty;
+                                        placeholder-color: Theme.muted;
+                                        read-only: true; wrap: word-wrap;
+                                        foreground: Theme.text-secondary; font-size: Theme.font-sm;
+                                        background: transparent; border-width: 0px;
+                                        scroll-view-padding: 10px;
+                                        selection-background-color: Theme.accent; selection-foreground-color: white;
+                                    }
+                                }
+                                Rectangle { height: 8px; }
+                                Text { height: 17px; text: I18n.stc_agent_prompt_readonly; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                            }
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.stc_agent_run; subtitle: I18n.stc_agent_run_note; }
+                                SettingRow { label: I18n.cp_permission; note: I18n.cp_permission_note; last: true;
+                                    Text { text: root.permission-mode; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
+                                }
+                            }
+                            HorizontalLayout { height: 36px; spacing: 10px;
+                                Action {
+                                    width: 110px; label: root.saving ? I18n.common_saving : I18n.ag_save_settings;
+                                    show-label: true; primary: true;
+                                    enabled: !root.saving && !root.loading && !root.selected-agent-name.is-empty;
+                                    clicked => { root.save-agent-form(); }
+                                }
+                                Text {
+                                    height: 34px; vertical-alignment: center;
+                                    text: root.saving ? I18n.stc_agent_saving : I18n.stc_agent_saved_note;
+                                    color: Theme.muted; font-size: Theme.font-xs; overflow: elide;
+                                }
+                            }
+                        }
+                    }
+
+                    if root.settings-tab == 4 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                        VerticalLayout { padding: 24px; spacing: 16px; alignment: start;
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.stc_pet; subtitle: I18n.stc_pet_note; }
+                                SettingRow { label: I18n.pet_show; note: I18n.pet_show_note;
+                                    Switch {
+                                        checked: AvatarDialogState.companion-show;
+                                        toggled => { AvatarDialogState.companion-show = self.checked; }
+                                    }
+                                }
+                                SettingRow { label: I18n.pet_hints; note: I18n.pet_hints_note;
+                                    Switch {
+                                        checked: AvatarDialogState.companion-hints;
+                                        toggled => { AvatarDialogState.companion-hints = self.checked; }
+                                    }
+                                }
+                                SettingRow { label: I18n.pet_scale; note: I18n.pet_scale_note; last: true;
+                                    Text { text: AvatarDialogState.companion-scale-index; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
+                                }
+                            }
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.stc_pet_tab; subtitle: I18n.pet_library_subtitle; }
+                                SettingRow { label: I18n.pet_library_title; note: I18n.pet_library_note;
+                                    HorizontalLayout { spacing: 8px;
+                                        Action {
+                                            label: I18n.pet_open_library; show-label: true;
+                                            clicked => { AvatarDialogState.kind = 1; AvatarDialogState.open = true; AvatarDialogState.open-requested(); }
+                                        }
+                                        Action { label: I18n.pet_import; show-label: true; clicked => { AvatarDialogState.open-requested(); AvatarDialogState.import-companion(); } }
+                                    }
+                                }
+                                if AvatarDialogState.companions.length == 0 : Text {
+                                    height: 44px; text: I18n.pet_library_empty; color: Theme.muted; font-size: Theme.font-sm;
+                                    vertical-alignment: center;
+                                }
+                                for companion in AvatarDialogState.companions : Rectangle {
+                                    height: 58px;
+                                    Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
+                                    Image {
+                                        x: 0px; y: 9px; width: 40px; height: 40px;
+                                        source: companion.preview; image-fit: contain;
+                                    }
+                                    Text { x: 50px; y: 9px; width: parent.width - 190px; height: 19px; text: companion.name; color: Theme.text; font-size: Theme.font-md; font-weight: 600; vertical-alignment: center; overflow: elide; }
+                                    Text { x: 50px; y: 29px; width: parent.width - 190px; height: 17px; text: companion.description; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                    if companion.id == AvatarDialogState.companion-id : Rectangle {
+                                        x: parent.width - 148px; y: 17px; width: 62px; height: 24px; border-radius: 12px;
+                                        background: Theme.accent-soft;
+                                        Text { width: parent.width; height: parent.height; text: I18n.pet_in_use; color: Theme.accent; font-size: Theme.font-2xs; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                    Action {
+                                        x: parent.width - 78px; y: 16px; width: 30px; height: 26px;
+                                        icon: @image-url("../assets/icons/trash.svg"); label: I18n.common_delete;
+                                        clicked => { AvatarDialogState.delete-companion(companion.id); }
+                                    }
+                                    pet-row := TouchArea {
+                                        x: 0px; y: 0px; width: parent.width - 86px; height: parent.height;
+                                        mouse-cursor: pointer;
+                                        clicked => { AvatarDialogState.select-companion(companion.id); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.settings-tab == 5 : CronPage {
+                        loading: root.cron-loading; jobs: root.cron-jobs; agent-names <=> root.cron-agent-names;
+                        editor-open <=> root.cron-editor-open; editor-saving <=> root.cron-editor-saving;
+                        editor-kind <=> root.cron-edit-kind; editor-name <=> root.cron-edit-name;
+                        editor-at <=> root.cron-edit-at; editor-every <=> root.cron-edit-every;
+                        editor-cron <=> root.cron-edit-cron; editor-tz <=> root.cron-edit-tz;
+                        editor-message <=> root.cron-edit-message; editor-agent <=> root.cron-edit-agent;
+                        editor-delete-after <=> root.cron-edit-delete-after; editor-enabled <=> root.cron-edit-enabled;
+                        runs-open <=> root.cron-runs-open; runs-loading: root.cron-runs-loading;
+                        runs-title: root.cron-runs-title; runs: root.cron-runs;
+                        refresh => { root.refresh-cron(); }
+                        toggle(id, enabled) => { root.toggle-cron(id, enabled); }
+                        delete(id) => { root.delete-cron(id); }
+                        run-now(id) => { root.run-cron-now(id); }
+                        open-runs(id) => { root.open-cron-runs(id); }
+                        close-runs => { root.close-cron-runs(); }
+                        open-creator => { root.open-cron-creator(); }
+                        edit-job(id) => { root.edit-cron-job(id); }
+                        save-editor => { root.save-cron-editor(); }
+                        cancel-editor => { root.cancel-cron-editor(); }
+                    }
+
+                    if root.settings-tab == 6 : ExpertData {
+                        tab: 0;
+                        loading: root.expert-loading; error: root.expert-error;
+                        memories: root.expert-memories; archives: root.expert-archives;
+                        points: root.expert-points; heat: root.expert-heat;
+                        duration: root.expert-duration; tokens: root.expert-tokens; calls: root.expert-calls;
+                        chart-path: root.expert-chart-path; chart-max: root.expert-chart-max;
+                        selected-date: root.expert-date;
+                        archive-page: root.expert-archive-page; archive-total: root.expert-archive-total;
+                        query <=> root.expert-query; category <=> root.expert-category;
+                        categories: root.expert-categories;
+                        editor-open <=> root.memory-editor-open; edit-id <=> root.memory-edit-id;
+                        edit-title <=> root.memory-edit-title; edit-content <=> root.memory-edit-content;
+                        edit-category <=> root.memory-edit-category;
+                        saving: root.expert-saving; agent-names: root.expert-agent-names;
+                        replicate-memory(index) => { root.replicate-expert-memory(index); }
+                        refresh => { root.refresh-expert(); }
+                        save-memory => { root.save-expert-memory(); }
+                        delete-memory(id) => { root.delete-expert-memory(id); }
+                        open-memory(index) => { root.open-expert-memory(index); }
+                        archive-turn(index) => { root.open-expert-memory(index); }
+                        open-archive(id) => { root.open-expert-archive(id); }
+                        select-date(date) => { root.select-expert-date(date); }
+                    }
+
+                    if root.settings-tab == 7 : ChannelsPage {
+                        loading: root.channel-loading; catalog: root.channel-catalog;
+                        accounts: root.channel-accounts; selected: root.selected-channel-account;
+                        bindings: root.channel-bindings; bindings-loading: root.channel-bindings-loading;
+                        logs-loading: root.channel-logs-loading; logs: root.channel-logs;
+                        editor-open: root.channel-editor-open; editor-saving: root.channel-editor-saving;
+                        editor-id: root.channel-edit-id; editor-kind <=> root.channel-edit-kind;
+                        editor-agent <=> root.channel-edit-agent;
+                        agent-names: root.channel-agent-names; catalog-names: root.channel-catalog-names;
+                        delete-open: root.channel-delete-open; qr-open: root.channel-qr-open;
+                        qr-state: root.channel-qr-state; qr-image: root.channel-qr-image; qr-message: root.channel-qr-message;
+                        edit-name <=> root.channel-edit-name; edit-enabled <=> root.channel-edit-enabled;
+                        edit-group-chat <=> root.channel-edit-group-chat;
+                        edit-app-id <=> root.channel-edit-app-id; edit-app-secret <=> root.channel-edit-app-secret;
+                        edit-corp-id <=> root.channel-edit-corp-id; edit-wechat-agent <=> root.channel-edit-wechat-agent;
+                        edit-secret <=> root.channel-edit-secret; edit-token <=> root.channel-edit-token;
+                        edit-aes-key <=> root.channel-edit-aes-key; edit-original-id <=> root.channel-edit-original-id;
+                        edit-api-base <=> root.channel-edit-api-base; edit-bot-token <=> root.channel-edit-bot-token;
+                        edit-bot-id <=> root.channel-edit-bot-id; edit-user-id <=> root.channel-edit-user-id;
+                        edit-domain <=> root.channel-edit-domain; edit-config-json <=> root.channel-edit-config-json;
+                        refresh => { root.refresh-channels(); }
+                        select-account(index) => { root.select-channel-account(index); }
+                        open-creator => { root.open-channel-creator(); }
+                        edit-account => { root.edit-channel-account(); }
+                        save-editor => { root.save-channel-editor(); }
+                        cancel-editor => { root.cancel-channel-editor(); }
+                        request-delete => { root.request-delete-channel(); }
+                        confirm-delete => { root.confirm-delete-channel(); }
+                        cancel-delete => { root.cancel-delete-channel(); }
+                        toggle(enabled) => { root.toggle-channel-account(enabled); }
+                        open-logs => { root.open-channel-logs(); }
+                        probe-logs => { root.probe-channel-logs(); }
+                        clear-logs => { root.clear-channel-logs(); }
+                        delete-binding(account, target) => { root.delete-channel-binding(account, target); }
+                        start-qr => { root.start-channel-qr(); }
+                        cancel-qr => { root.cancel-channel-qr(); }
+                        reconnect => { root.reconnect-channel(); }
+                    }
+
+                    if root.settings-tab == 8 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                        VerticalLayout { padding: 24px; spacing: 16px; alignment: start;
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.stc_runs_tab; subtitle: I18n.stc_runs_note; }
+                                HorizontalLayout { spacing: 12px;
+                                    for item in [
+                                        { label: I18n.stc_runs_duration, value: root.expert-duration },
+                                        { label: I18n.stc_runs_tokens, value: root.expert-tokens },
+                                        { label: I18n.stc_runs_calls, value: root.expert-calls }
+                                    ] : Rectangle {
+                                        horizontal-stretch: 1; height: 78px; border-radius: Theme.radius-lg;
+                                        background: Theme.panel; border-width: 1px; border-color: Theme.border;
+                                        VerticalLayout { padding: 12px; spacing: 2px;
+                                            Text { height: 17px; text: item.label; color: Theme.muted; font-size: Theme.font-xs; }
+                                            Text { height: 32px; text: item.value; color: Theme.text; font-size: Theme.font-display; font-weight: 700; }
+                                        }
+                                    }
+                                }
+                                SettingRow { label: I18n.stc_runs_flow; note: I18n.stc_runs_flow_note; last: true;
+                                    HorizontalLayout { spacing: 8px;
+                                        Action { label: I18n.stc_runs_open; show-label: true; clicked => { root.open-thread-log(); } }
+                                        Action { label: I18n.stc_runs_export; show-label: true; clicked => { root.export-thread-log(); } }
+                                    }
+                                }
+                            }
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.stc_runs_heat; subtitle: I18n.stc_runs_heat_note; }
+                                if root.expert-heat.length == 0 : Text { height: 44px; text: I18n.stc_runs_empty; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
+                                HorizontalLayout { spacing: 4px; alignment: start;
+                                    for cell in root.expert-heat : Rectangle {
+                                        width: 18px; height: 18px; border-radius: 4px;
+                                        background: cell.intensity <= 0.0 ? Theme.hover
+                                            : cell.intensity < 0.34 ? Theme.accent-soft
+                                            : cell.intensity < 0.67 ? Theme.accent-secondary
+                                            : Theme.accent;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.settings-tab == 10 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                        VerticalLayout { padding: 24px; spacing: 16px; alignment: start;
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.stc_archives; subtitle: I18n.stc_archives_note; }
+                                if root.expert-archives.length == 0 : Text { height: 48px; text: I18n.stc_archives_empty; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
+                                for archive in root.expert-archives : Rectangle {
+                                    height: 54px;
+                                    Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
+                                    Text { x: 0px; y: 8px; width: parent.width - 140px; height: 20px; text: archive.title; color: Theme.text; font-size: Theme.font-md; font-weight: 600; vertical-alignment: center; overflow: elide; }
+                                    Text { x: 0px; y: 29px; width: parent.width - 140px; height: 17px; text: archive.time; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                    Action {
+                                        x: parent.width - 72px; y: 13px; width: 72px;
+                                        label: I18n.stc_archives_open; show-label: true;
+                                        clicked => { root.open-expert-archive(archive.id); }
+                                    }
+                                    archive-row := TouchArea {
+                                        x: 0px; y: 0px; width: parent.width - 80px; height: parent.height;
+                                        mouse-cursor: pointer;
+                                        clicked => { root.open-expert-archive(archive.id); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if root.settings-tab == 9 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                        VerticalLayout { padding: 20px; spacing: 14px;
+                            Rectangle { horizontal-stretch: 1; border-radius: Theme.radius-md; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+                                VerticalLayout { padding: 14px; spacing: 10px;
+                                    HorizontalLayout { height: 30px; spacing: 8px;
+                                        Text { text: I18n.pm_pack; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; }
+                                        ComboBox { horizontal-stretch: 1; height: 30px; model: root.prompt-pack-names; selected(value) => { root.select-prompt-pack(value); } }
+                                        Action { label: I18n.pm_set_active; show-label: true; primary: true; enabled: !root.prompt-loading && root.selected-pack != "" && root.selected-pack != root.prompt-active; clicked => { root.set-active-prompt-pack(); } }
+                                        Action { label: I18n.pm_new; show-label: true; enabled: !root.prompt-loading; clicked => { root.create-prompt-pack(); } }
+                                        Action { label: I18n.pm_delete_custom; show-label: true; enabled: !root.prompt-loading && root.selected-pack != "" && !root.prompt-readonly; clicked => { root.delete-prompt-pack(); } }
+                                    }
+                                    HorizontalLayout { spacing: 6px;                                         Rectangle { width: 90px; height: 22px; border-radius: 4px; background: Theme.accent-soft; Text { width: parent.width; height: parent.height; text: I18n.pm_active_tag + root.prompt-active; color: Theme.accent-deep; font-size: Theme.font-2xs; horizontal-alignment: center; vertical-alignment: center; } }
+                                        Rectangle { width: 90px; height: 22px; border-radius: 4px; background: Theme.surface; Text { width: parent.width; height: parent.height; text: I18n.pm_lang_default_tag; color: Theme.muted; font-size: Theme.font-2xs; horizontal-alignment: center; vertical-alignment: center; visible: root.prompt-packs.length > 0 && root.prompt-packs[0].is-lang-default; } }
+                                        Rectangle { width: 120px; height: 22px; border-radius: 4px; background: Theme.surface; Text { width: parent.width; height: parent.height; text: I18n.pm_sync_tag + root.prompt-active; color: Theme.muted; font-size: Theme.font-2xs; horizontal-alignment: center; vertical-alignment: center; visible: root.prompt-readonly; } }
+                                        Rectangle { horizontal-stretch: 1; }
+                                    }
+                                }
+                            }
+                            Rectangle { horizontal-stretch: 1; border-radius: Theme.radius-md; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+                                HorizontalLayout { vertical-stretch: 1; spacing: 10px;
+                                    Rectangle { width: 190px; border-radius: Theme.radius-sm; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                                        ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                                            VerticalLayout { alignment: start; padding: 8px; spacing: 4px;
+                                                for segment[index] in [{key: "role", label: I18n.pm_segment_role}, {key: "engineering", label: I18n.pm_segment_engineering}, {key: "tools_protocol", label: I18n.pm_segment_tool_protocol}, {key: "skills_protocol", label: I18n.pm_segment_skill_protocol}, {key: "memory", label: I18n.pm_segment_memory}, {key: "extra", label: I18n.pm_segment_attach}] : Rectangle { horizontal-stretch: 1; height: 42px; border-radius: Theme.radius-sm; background: root.selected-segment == index ? Theme.accent-soft : transparent; border-width: 1px; border-color: root.selected-segment == index ? Theme.accent : transparent;
+                                                    VerticalLayout { spacing: 1px; Text { text: segment.label; color: root.selected-segment == index ? Theme.accent-deep : Theme.text; font-size: Theme.font-xs; font-weight: 600; } Text { text: segment.key; color: Theme.muted; font-size: 9px; overflow: elide; } }
+                                                    TouchArea { clicked => { root.selected-segment = index; root.select-prompt-pack(root.selected-pack); } }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; border-radius: Theme.radius-sm; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                                        VerticalLayout { padding: 12px; spacing: 8px;
+                                            HorizontalLayout { height: 22px; Text { text: root.selected-pack == "" ? I18n.pm_segment_edit : I18n.pm_segment_edit_prefix + root.selected-pack; color: Theme.text; font-size: 13px; font-weight: 700; overflow: elide; } Rectangle { horizontal-stretch: 1; } Text { text: root.prompt-readonly ? I18n.pm_readonly_hint : I18n.pm_editable_hint; color: root.prompt-readonly ? Theme.muted : Theme.success; font-size: Theme.font-2xs; vertical-alignment: center; } }
+                                            TextEditBase { vertical-stretch: 1; text <=> root.prompt-draft; read-only: root.prompt-readonly || root.prompt-loading; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-sm; background: Theme.panel; border-width: 1px; border-color: Theme.border; border-radius: Theme.radius-sm; selection-background-color: Theme.accent; selection-foreground-color: white; }
+                                            HorizontalLayout { height: 30px; Rectangle { horizontal-stretch: 1; } Action { width: 96px; label: I18n.pm_save_segment; show-label: true; primary: true; enabled: !root.prompt-readonly && !root.prompt-loading && root.selected-pack != ""; clicked => { root.save-prompt-segment(); } } }
+                                        }
+                                    }
+                                }
+                            }
+                            Rectangle { horizontal-stretch: 1; border-radius: Theme.radius-md; background: Theme.panel; border-width: 1px; border-color: Theme.border;
+                                VerticalLayout { padding: 14px; spacing: 8px;
+                                    HorizontalLayout { height: 22px; Text { text: I18n.pm_preview_title; color: Theme.text; font-size: 13px; font-weight: 700; } Rectangle { horizontal-stretch: 1; } Action { label: I18n.pm_preview_refresh; show-label: true; enabled: !root.prompt-preview-loading; clicked => { root.refresh-prompt-preview(); } } }
+                                    Text { text: I18n.pm_preview_hint; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                                    TextEditBase { vertical-stretch: 1; text: root.prompt-preview; read-only: true; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-xs; background: Theme.panel; border-width: 1px; border-color: Theme.border; border-radius: Theme.radius-sm; scroll-view-padding: 8px; selection-background-color: Theme.accent; selection-foreground-color: white; }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    if root.model-delete-open : Rectangle { background: Theme.overlay; TouchArea { clicked => { root.model-delete-open = false; } }
+        Rectangle { width: min(400px, parent.width - 44px); height: 180px; border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border; TouchArea { }
+            VerticalLayout { padding: 20px; spacing: 10px;
+                Text { height: 24px; text: I18n.ag_delete_confirm_title; color: Theme.text; font-size: Theme.font-xl; font-weight: 600; }
+                Text { vertical-stretch: 1; text: I18n.ag_delete_prefix + root.selected-key + I18n.ag_delete_suffix; color: Theme.muted; font-size: Theme.font-sm; wrap: word-wrap; }
+                HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; } Action { label: I18n.common_cancel; show-label: true; clicked => { root.model-delete-open = false; } } Action { width: 76px; label: I18n.common_delete; show-label: true; primary: true; clicked => { root.model-delete-open = false; root.delete-model(root.selected-key); } } }
+            }
+        }
+    }
+}

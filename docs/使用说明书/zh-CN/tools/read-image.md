@@ -1,0 +1,73 @@
+---
+title: 读图工具
+summary: `read_image` 的用途与返回结构。
+read_when:
+  - 用户要把本地视觉媒体送入当前模型上下文
+source_docs:
+  - src/services/tools/read_image_tool.rs
+updated_at: 2026-06-05
+---
+
+# 读图工具
+
+`read_image` 把本地视觉媒体预处理后送入模型上下文，不限于静态图片。当前支持：
+
+- 静态图片
+- GIF 动图
+- 本地视频
+
+## 最小参数
+
+```json
+{
+  "path": "screenshots/demo.png"
+}
+```
+
+GIF 示例：
+
+```json
+{
+  "path": "captures/demo.gif",
+  "frame_step": 2
+}
+```
+
+视频示例：
+
+```json
+{
+  "path": "captures/demo.mp4",
+  "frame_rate": 1
+}
+```
+
+## 成功返回
+
+```json
+{
+  "ok": true,
+  "action": "read_image",
+  "state": "completed",
+  "summary": "Prepared visual media screenshots/demo.png for model inspection.",
+  "data": {
+    "path": "screenshots/demo.png",
+    "resolved_path": "C:/.../screenshots/demo.png",
+    "media_kind": "image",
+    "size_bytes": 182233,
+    "result": {
+      "kind": "image"
+    }
+  }
+}
+```
+
+## 重点
+
+- 静态图片会直接作为图片输入进入上下文。
+- 模型侧只需传 `path`，查看意图由当前对话上下文提供。
+- GIF 不会再原样送模型。
+  默认只取首帧。
+  如果提供 `frame_step`，则按间隔取帧。
+- 视频会被规范化成图片帧序列，并在可用时附带音轨转写文本。
+- 这个工具结果本身不是图像分析结论，只表示视觉媒体已经准备好，可以继续让模型分析。

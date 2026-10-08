@@ -1,0 +1,195 @@
+:root {
+  --dark-bg: #f1f1f1;
+  --dark-panel: #ffffff;
+  --dark-border: #e3e3e3;
+  --dark-text: #18181c;
+  --dark-muted: #808080;
+  /* 默认强调色 = 方案 §11.1 的暖色赤陶系 token（--mz-primary / -hover / -soft / -tint）。
+     这里是全站唯一在 :root 上生效的强调色来源；配套变量按同一色阶推导：
+     soft 阶梯 = tint↔soft 的等距混色，gradient-* 为同族中间值（§11.1 不做渐变，
+     仅保留变量以兼容遗留样式），disabled 取浅暖灰。 */
+  --ui-accent: #c96443;
+  --ui-accent-rgb: 201, 100, 67;
+  --ui-accent-secondary: #dfac9a;
+  --ui-accent-secondary-rgb: 223, 172, 154;
+  --ui-accent-deep: #b55637;
+  --user-edit-caret: var(--ui-accent-deep);
+  --user-edit-selection-bg: rgba(var(--ui-accent-rgb), 0.24);
+  --user-edit-cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='24' viewBox='0 0 16 24'%3E%3Cpath d='M5 2.5h6M8 2.5v19M5 21.5h6' fill='none' stroke='%230f172a' stroke-width='4' stroke-linecap='round'/%3E%3Cpath d='M5 2.5h6M8 2.5v19M5 21.5h6' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E")
+      8 12,
+    text;
+  --ui-accent-soft: #f6e9e3;
+  --ui-accent-soft-2: #f0dad1;
+  --ui-accent-soft-3: #fbf4f1;
+  --ui-accent-soft-4: #ebcbbf;
+  --ui-accent-soft-5: #e5bbac;
+  --ui-accent-gradient-start: #ebcbbf;
+  --ui-accent-gradient-mid: #d4886f;
+  --ui-accent-hover: #b55637;
+  --ui-accent-disabled: #e3ddd9;
+  --ui-accent-link-hover: #b55637;
+  --accent: var(--ui-accent);
+  --scrollbar-size: 7px;
+}
+
+:root[data-user-accent='eva-orange'] {
+  /* 默认色板，与 :root 保持一致（§11.1 暖色赤陶系）。 */
+  --ui-accent: #c96443;
+  --ui-accent-rgb: 201, 100, 67;
+  --ui-accent-secondary: #dfac9a;
+  --ui-accent-secondary-rgb: 223, 172, 154;
+  --ui-accent-deep: #b55637;
+  --ui-accent-soft: #f6e9e3;
+  --ui-accent-soft-2: #f0dad1;
+  --ui-accent-soft-3: #fbf4f1;
+  --ui-accent-soft-4: #ebcbbf;
+  --ui-accent-soft-5: #e5bbac;
+  --ui-accent-gradient-start: #ebcbbf;
+  --ui-accent-gradient-mid: #d4886f;
+  --ui-accent-hover: #b55637;
+  --ui-accent-disabled: #e3ddd9;
+  --ui-accent-link-hover: #b55637;
+}
+
+:root[data-user-accent='claw-orange'] {
+  --ui-accent: #ff5c00;
+  --ui-accent-rgb: 255, 92, 0;
+  --ui-accent-secondary: #ff7a2e;
+  --ui-accent-secondary-rgb: 255, 122, 46;
+  --ui-accent-deep: #e05200;
+  --ui-accent-soft: #fff3e6;
+  --ui-accent-soft-2: #fff0e0;
+  --ui-accent-soft-3: #fff7f1;
+  --ui-accent-soft-4: #ffe9d6;
+  --ui-accent-soft-5: #ffe3cc;
+  --ui-accent-gradient-start: #ff9a5f;
+  --ui-accent-gradient-mid: #ff5c00;
+  --ui-accent-hover: #e05200;
+  --ui-accent-disabled: #ffc7a1;
+  --ui-accent-link-hover: #cc4a00;
+}
+
+:root[data-user-accent='hula-green'] {
+  --ui-accent: #16ad8d;
+  --ui-accent-rgb: 22, 173, 141;
+  --ui-accent-secondary: #5dcbb0;
+  --ui-accent-secondary-rgb: 93, 203, 176;
+  --ui-accent-deep: #0e8d72;
+  --ui-accent-soft: #e7f7f2;
+  --ui-accent-soft-2: #e4f6f0;
+  --ui-accent-soft-3: #effbf7;
+  --ui-accent-soft-4: #dbf2eb;
+  --ui-accent-soft-5: #d4efe7;
+  --ui-accent-gradient-start: #8ce3cf;
+  --ui-accent-gradient-mid: #29c7a2;
+  --ui-accent-hover: #109a7d;
+  --ui-accent-disabled: #a8e0d3;
+  --ui-accent-link-hover: #0b7e67;
+}
+
+:root[data-user-accent='minimal'] {
+  --ui-accent: #8f9aad;
+  --ui-accent-rgb: 143, 154, 173;
+  --ui-accent-secondary: #b5bfce;
+  --ui-accent-secondary-rgb: 181, 191, 206;
+  --ui-accent-deep: #9ba6ba;
+  --ui-accent-soft: #f3f4f6;
+  --ui-accent-soft-2: #f5f6f7;
+  --ui-accent-soft-3: #f6f7f8;
+  --ui-accent-soft-4: #eceff3;
+  --ui-accent-soft-5: #e9edf1;
+  --ui-accent-gradient-start: #dde2ea;
+  --ui-accent-gradient-mid: #c2cad8;
+  --ui-accent-hover: #a5afc2;
+  --ui-accent-disabled: #cfd5de;
+  --ui-accent-link-hover: #8b95a9;
+}
+
+:root[data-user-accent='tech-blue'] {
+  --ui-accent: #38bdf8;
+  --ui-accent-rgb: 56, 189, 248;
+  --ui-accent-secondary: #7c9cff;
+  --ui-accent-secondary-rgb: 124, 156, 255;
+  --ui-accent-deep: #0ea5e9;
+  --ui-accent-soft: #e7f7ff;
+  --ui-accent-soft-2: #dff3ff;
+  --ui-accent-soft-3: #f1f9ff;
+  --ui-accent-soft-4: #d7eeff;
+  --ui-accent-soft-5: #cae9ff;
+  --ui-accent-gradient-start: #6edbff;
+  --ui-accent-gradient-mid: #4f8dff;
+  --ui-accent-hover: #22acee;
+  --ui-accent-disabled: #9ed9f4;
+  --ui-accent-link-hover: #0284c7;
+}
+
+/* 单一浅色基调：B6 移除了深浅切换（data-user-theme），把原本挂在
+   `:root[data-user-theme='light']` 上的 color-scheme 显式落到 :root，
+   避免深色系统偏好下出现深色滚动条/表单控件。 */
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  background: var(--dark-bg);
+  color: var(--dark-text);
+}
+
+:root :is(
+    input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']):not([type='button']):not([type='submit']):not([type='reset']):not([readonly]):not(:disabled),
+    textarea:not([readonly]):not(:disabled),
+    [contenteditable='true'],
+    [contenteditable='plaintext-only'],
+    .el-input__inner:not([readonly]):not(:disabled),
+    .el-textarea__inner:not([readonly]):not(:disabled)
+  ) {
+  caret-color: var(--user-edit-caret);
+  cursor: var(--user-edit-cursor);
+}
+
+:root :is(
+    input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']):not([type='button']):not([type='submit']):not([type='reset']),
+    textarea,
+    [contenteditable='true'],
+    [contenteditable='plaintext-only'],
+    .el-input__inner,
+    .el-textarea__inner
+  )::selection {
+  background: var(--user-edit-selection-bg);
+}
+
+::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.42);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.58);
+}
+
+.el-overlay-dialog {
+  overflow: hidden;
+}

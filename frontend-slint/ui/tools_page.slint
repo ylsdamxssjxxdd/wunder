@@ -1,0 +1,523 @@
+import { Theme, ToolCard, FileCard } from "theme.slint";
+import { ToolsTheme } from "tools_theme.slint";
+import { ToolText, ToolButton, ToolNavigation, ToolGroup } from "tools_widgets.slint";
+import { I18n } from "i18n.slint";
+import { ModalDialog, ConfirmDialog, FormField } from "components.slint";
+// ContextMenuArea/Menu/MenuItem are builtin elements in Slint 1.18: no std-widgets import.
+import { ScrollView, ListView, LineEdit, TextEdit, Button, ComboBox } from "std-widgets.slint";
+
+export struct ToolResource { name: string, description: string, detail: string, readonly: bool }
+export struct McpServerDraft { name: string, display-name: string, endpoint: string, transport: string, description: string, headers: string }
+export struct KnowledgeInfo { name: string, description: string, base-type: string, embedding-model: string, chunk-size: string, chunk-overlap: string, ragflow-dataset-id: string }
+
+// Shared state for the tool-manager forms. The Rust controller reads the
+// drafts, validates them and answers through the callbacks, so the dialogs
+// never route state through the main window.
+export global ToolsDialog {
+    in-out property <[McpServerDraft]> server-configs;
+    in-out property <[KnowledgeInfo]> base-configs;
+    // MCP server add/edit form.
+    in-out property <bool> mcp-open: false;
+    in-out property <bool> mcp-new: true;
+    in-out property <string> mcp-previous;
+    in-out property <string> mcp-name;
+    in-out property <string> mcp-display-name;
+    in-out property <string> mcp-endpoint;
+    in-out property <string> mcp-transport: "auto";
+    in-out property <string> mcp-description;
+    in-out property <string> mcp-headers;
+    in-out property <string> mcp-preview;
+    in-out property <string> mcp-headers-error;
+    in property <[string]> transport-model: ["auto", "sse", "http", "streamable-http"];
+    callback refresh-mcp-feedback();
+    callback save-mcp();
+    // Knowledge base add/edit form.
+    in-out property <bool> kb-open: false;
+    in-out property <bool> kb-new: true;
+    in-out property <string> kb-previous;
+    in-out property <string> kb-name;
+    in-out property <string> kb-description;
+    in-out property <int> kb-type-index: 0;
+    in-out property <bool> kb-advanced-open: false;
+    in-out property <string> kb-embedding-model;
+    in-out property <string> kb-chunk-size;
+    in-out property <string> kb-chunk-overlap;
+    in-out property <string> kb-dataset-id;
+    in property <[string]> kb-type-model: [I18n.tm_type_vector, I18n.tm_type_literal, I18n.tm_type_ragflow];
+    callback save-kb();
+    // Skill archive import goes through the native file picker.
+    callback import-skill();
+    public function reset-mcp() {
+        mcp-new = true;
+        mcp-previous = "";
+        mcp-name = "";
+        mcp-display-name = "";
+        mcp-endpoint = "";
+        mcp-transport = "auto";
+        mcp-description = "";
+        mcp-headers = "";
+        refresh-mcp-feedback();
+    }
+    public function open-mcp-edit(config: McpServerDraft) {
+        mcp-new = false;
+        mcp-previous = config.name;
+        mcp-name = config.name;
+        mcp-display-name = config.display-name;
+        mcp-endpoint = config.endpoint;
+        mcp-transport = config.transport == "" ? "auto" : config.transport;
+        mcp-description = config.description;
+        mcp-headers = config.headers;
+        refresh-mcp-feedback();
+    }
+    public function reset-kb() {
+        kb-new = true;
+        kb-previous = "";
+        kb-name = "";
+        kb-description = "";
+        kb-type-index = 0;
+        kb-advanced-open = false;
+        kb-embedding-model = "";
+        kb-chunk-size = "";
+        kb-chunk-overlap = "";
+        kb-dataset-id = "";
+    }
+    public function open-kb-edit(info: KnowledgeInfo) {
+        kb-new = false;
+        kb-previous = info.name;
+        kb-name = info.name;
+        kb-description = info.description;
+        kb-type-index = info.base-type == "literal" ? 1 : info.base-type == "ragflow" ? 2 : 0;
+        kb-advanced-open = false;
+        kb-embedding-model = info.embedding-model;
+        kb-chunk-size = info.chunk-size;
+        kb-chunk-overlap = info.chunk-overlap;
+        kb-dataset-id = info.ragflow-dataset-id;
+    }
+}
+
+// Label above a dialog field; dialogs pass explicit colors when needed.
+component FormFieldLabel inherits ToolText {
+    height: 20px;
+    font-size: 13px;
+    color: #6b7280;
+}
+
+// Multiline form area with a bordered box, used for description / headers /
+// struct preview fields.
+component FormArea inherits Rectangle {
+    in property <string> label;
+    in property <string> placeholder;
+    in-out property <string> text <=> edit.text;
+    in property <bool> read-only: false;
+    callback edited();
+    horizontal-stretch: 1;
+    height: 118px;
+    forward-focus: edit;
+    VerticalLayout {
+        spacing: 6px;
+        FormFieldLabel { text: root.label; visible: root.label != ""; }
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: edit.has-focus ? ToolsTheme.accent : root.read-only ? #e8e8e8 : #dcdcdc;
+            background: root.read-only ? #f7f7f7 : white;
+            clip: true;
+            edit := TextEdit {
+                x: 10px; y: 6px;
+                width: parent.width - 20px;
+                height: parent.height - 12px;
+                placeholder-text: root.placeholder;
+                read-only: root.read-only;
+                font-family: ToolsTheme.font;
+                font-size: 13px;
+                edited => { root.edited(); }
+            }
+        }
+    }
+}
+
+// Dialog shell matching the web user-tools dialogs: header with title and a
+// bordered close button, a scrollable body, and a right-aligned cancel/save
+// footer.
+component FormDialog inherits Rectangle {
+    in property <string> title;
+    in property <length> card-width: 640px;
+    in property <length> card-height: 640px;
+    in property <bool> dismissable: true;
+    in property <bool> save-enabled: true;
+    callback dismissed();
+    callback saved();
+    width: 100%; height: 100%;
+    background: Theme.overlay;
+    TouchArea { clicked => { if root.dismissable { root.dismissed(); } } }
+    Rectangle {
+        width: min(root.card-width, root.width - 48px);
+        height: min(root.card-height, root.height - 48px);
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2;
+        border-radius: 12px;
+        background: white;
+        border-width: 1px;
+        border-color: #e5e5e5;
+        TouchArea { }
+        VerticalLayout {
+            spacing: 0px;
+            HorizontalLayout {
+                padding-left: 24px; padding-right: 16px; padding-top: 18px; padding-bottom: 14px;
+                ToolText { height: 30px; text: root.title; font-size: 20px; font-weight: 700; color: #252525; }
+                Rectangle { horizontal-stretch: 1; }
+                ToolButton { icon: @image-url("../assets/icons/xmark.svg"); label: I18n.tm_close; clicked => { root.dismissed(); } }
+            }
+            Rectangle { height: 1px; background: #ececec; }
+            VerticalLayout {
+                vertical-stretch: 1;
+                padding-left: 24px; padding-right: 24px; padding-top: 18px; padding-bottom: 8px;
+                @children
+            }
+            Rectangle { height: 1px; background: #ececec; }
+            HorizontalLayout {
+                padding-left: 24px; padding-right: 24px; padding-top: 12px; padding-bottom: 16px; spacing: 10px;
+                Rectangle { horizontal-stretch: 1; }
+                ToolButton { width: 76px; label: I18n.common_cancel; show-label: true; clicked => { root.dismissed(); } }
+                ToolButton { width: 76px; label: I18n.tm_save; show-label: true; primary: true; enabled: root.save-enabled; clicked => { root.saved(); } }
+            }
+        }
+    }
+}
+
+export component ToolsPage inherits Rectangle {
+    min-width: 0px; min-height: 0px; preferred-width: 1304px; preferred-height: 748px;
+    in property <bool> loading;
+    in property <bool> working;
+    in property <string> status;
+    in property <[ToolCard]> builtin-tools;
+    in property <[ToolCard]> mcp-tools;
+    in property <[ToolCard]> skill-tools;
+    in property <[ToolCard]> knowledge-tools;
+    in property <[ToolResource]> servers;
+    in property <[ToolResource]> skills;
+    in property <[ToolResource]> bases;
+    in property <[FileCard]> files;
+    in property <[ToolCard]> server-tools;
+    in-out property <int> tab: 0;
+    in-out property <int> selected: -1;
+    in-out property <string> file-path;
+    in-out property <string> content;
+    in property <bool> has-more;
+    in property <string> directory;
+    callback refresh();
+    callback select-resource(int, int);
+    callback open-file(string, bool);
+    callback more-files();
+    callback search-files(string);
+    callback action(string, string, string);
+    callback inspect(string, string);
+    callback copy-path(string);
+    in-out property <string> search;
+    private property <string> operation;
+    private property <string> draft-name;
+    private property <bool> deleting: false;
+    private property <[ToolResource]> resources: root.tab == 1 ? root.servers : root.tab == 2 ? root.skills : root.bases;
+    private property <bool> active: root.selected >= 0 && root.selected < root.resources.length;
+    private property <bool> readonly: root.active && root.resources[root.selected].readonly;
+    background: Theme.chat;
+    function switch-tab(value: int) { if !root.working { root.tab = value; root.selected = -1; root.search = ""; root.file-path = ""; root.content = ""; root.select-resource(value, -1); } }
+    function edit(op: string) { root.operation = op; root.draft-name = op == "edit" && root.active ? root.resources[root.selected].name : ""; }
+    function open-mcp-dialog(new: bool) {
+        if new {
+            ToolsDialog.reset-mcp();
+        } else {
+            if !root.active { return; }
+            ToolsDialog.open-mcp-edit(ToolsDialog.server-configs[root.selected]);
+        }
+        ToolsDialog.mcp-open = true;
+    }
+    function open-kb-dialog(new: bool) {
+        if new {
+            ToolsDialog.reset-kb();
+        } else {
+            if !root.active { return; }
+            ToolsDialog.open-kb-edit(ToolsDialog.base-configs[root.selected]);
+        }
+        ToolsDialog.kb-open = true;
+    }
+    HorizontalLayout {
+        width: parent.width; height: parent.height; spacing: 0px;
+        Rectangle {
+            width: Theme.middle-width; background: Theme.middle;
+            VerticalLayout {
+                padding-left: 8px; padding-right: 8px; spacing: 0px; alignment: start;
+                ToolText { height: 34px; text: I18n.tm_admin; color: ToolsTheme.muted; }
+                ToolNavigation { title: I18n.tm_admin; subtitle: I18n.tm_admin_desc; icon: @image-url("../assets/icons/shield.svg"); selected: root.tab == 0; clicked => { root.switch-tab(0); } }
+                ToolText { height: 42px; text: I18n.tm_custom; color: ToolsTheme.muted; }
+                ToolNavigation { title: I18n.tl_cat_mcp; subtitle: I18n.tm_mcp_desc; icon: @image-url("../assets/icons/plug.svg"); selected: root.tab == 1; clicked => { root.switch-tab(1); } }
+                Rectangle { height: 4px; }
+                ToolNavigation { title: I18n.tm_skills; subtitle: I18n.tm_skills_desc; icon: @image-url("../assets/icons/book.svg"); selected: root.tab == 2; clicked => { root.switch-tab(2); } }
+                Rectangle { height: 4px; }
+                ToolNavigation { title: I18n.tm_knowledge; subtitle: I18n.tm_knowledge_desc; icon: @image-url("../assets/icons/database.svg"); selected: root.tab == 3; clicked => { root.switch-tab(3); } }
+                Rectangle { vertical-stretch: 1; }
+                if root.loading || root.working : ToolText { height: 24px; text: I18n.tl_loading; color: ToolsTheme.muted; }
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                padding-left: 20px; padding-right: 20px; padding-top: 16px; padding-bottom: 22px;
+                Rectangle {
+                    border-radius: 12px; border-width: 1px;
+                    border-color: root.tab == 0 ? #dfdfdf : #ffe1cb;
+                    background: root.tab == 0 ? white : ToolsTheme.panel;
+                    VerticalLayout {
+                        padding: root.tab == 0 ? 12px : 10px; spacing: 8px;
+                        ToolText { height: 20px; text: root.tab == 0 ? I18n.tm_admin : root.tab == 1 ? I18n.tl_cat_mcp : root.tab == 2 ? I18n.tl_cat_skills : I18n.tl_cat_kb; font-size: 16px; font-weight: 700; color: root.tab == 0 ? #252525 : ToolsTheme.text; }
+                        ToolText { height: 20px; text: root.tab == 0 ? I18n.tm_admin_desc : root.tab == 1 ? I18n.tm_mcp_tip : root.tab == 2 ? I18n.tm_skill_tip : I18n.tm_kb_tip; color: root.tab == 0 ? #676767 : ToolsTheme.muted; }
+                        if root.tab == 0 : ScrollView {
+                            vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                            VerticalLayout { alignment: start; spacing: 10px;
+                                ToolGroup { title: I18n.tl_cat_builtin; kind: 0; tools: root.builtin-tools; inspect(name, description) => { root.inspect(name, description); } }
+                                ToolGroup { title: I18n.tl_cat_mcp; kind: 1; tools: root.mcp-tools; inspect(name, description) => { root.inspect(name, description); } }
+                                ToolGroup { title: I18n.tm_skills; kind: 2; tools: root.skill-tools; inspect(name, description) => { root.inspect(name, description); } }
+                                ToolGroup { title: I18n.tm_knowledge; kind: 3; tools: root.knowledge-tools; inspect(name, description) => { root.inspect(name, description); } }
+                            }
+                        }
+                        if root.tab != 0 : HorizontalLayout {
+                            vertical-stretch: 1; spacing: root.tab == 1 ? 16px : 10px;
+                            VerticalLayout {
+                                width: root.tab == 1 ? 300px : root.tab == 2 ? 280px : 220px;
+                                spacing: 10px;
+                                HorizontalLayout { height: 28px; spacing: 8px;
+                                    ToolText { horizontal-stretch: 1; text: root.tab == 1 ? I18n.tm_servers : root.tab == 2 ? I18n.tm_skill_list : I18n.tm_kb_list; }
+                                    if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/plus.svg"); label: I18n.tm_import; enabled: !root.working; clicked => { ToolsDialog.import-skill(); } }
+                                    if root.tab == 3 : ToolButton { icon: @image-url("../assets/icons/plus.svg"); label: I18n.tm_add; enabled: !root.working; clicked => { root.open-kb-dialog(true); } }
+                                    ToolButton { icon: @image-url("../assets/icons/rotate-right.svg"); label: I18n.common_refresh; enabled: !root.loading && !root.working; clicked => { root.refresh(); } }
+                                    if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/file-lines.svg"); label: I18n.tm_export; enabled: !root.working && root.active; clicked => { root.edit("export"); } }
+                                    if root.tab == 1 : ToolButton { icon: @image-url("../assets/icons/plus.svg"); primary: true; label: I18n.tm_add; enabled: !root.working; clicked => { root.open-mcp-dialog(true); } }
+                                    if root.tab == 3 : ToolButton { icon: @image-url("../assets/icons/pen.svg"); label: I18n.tm_edit; enabled: root.active && !root.working; clicked => { root.open-kb-dialog(false); } }
+                                    if root.tab == 3 : ToolButton { icon: @image-url("../assets/icons/trash.svg"); danger: true; label: I18n.common_delete; enabled: root.active && !root.working; clicked => { root.deleting = true; } }
+                                }
+                                Rectangle {
+                                    vertical-stretch: 1; background: root.tab == 2 ? #f9f9f9 : white; border-radius: 10px; border-width: 1px; border-color: ToolsTheme.border;
+                                    ListView { x: 10px; y: 10px; width: parent.width - 20px; height: parent.height - 20px;
+                                        for item[index] in root.resources : Rectangle {
+                                            height: root.tab == 2 ? 64px : 58px;
+                                            Rectangle { height: parent.height - 8px; border-radius: 10px; border-width: 1px; border-color: root.selected == index ? #ffc99e : ToolsTheme.border; background: root.selected == index ? ToolsTheme.soft : white;
+                                                ToolText { x: 10px; y: 7px; height: 18px; width: parent.width - (root.tab == 2 ? 68px : 20px); text: item.name; font-weight: 700; color: #303030; }
+                                                if root.tab == 2 : ToolText { x: parent.width - 48px; y: 7px; width: 42px; height: 18px; text: item.readonly ? I18n.tm_global : I18n.tm_local; font-size: 11px; font-weight: 600; color: item.readonly ? #303030 : #65a7ff; }
+                                                ToolText { x: 10px; y: 31px; height: 17px; width: parent.width - 20px; text: item.description; color: ToolsTheme.muted; }
+                                                TouchArea { enabled: !root.working; mouse-cursor: pointer; clicked => { root.selected = index; root.file-path = ""; root.content = ""; root.select-resource(root.tab, index); } }
+                                            }
+                                        }
+                                    }
+                                    if root.resources.length == 0 : ToolText { x: 8px; y: 8px; width: parent.width - 16px; height: 20px; text: root.loading ? I18n.tl_loading : root.tab == 1 ? I18n.tm_no_servers : root.tab == 2 ? I18n.tm_no_skills : I18n.tm_no_kb; color: ToolsTheme.muted; }
+                                }
+                            }
+                            if root.tab == 1 : VerticalLayout {
+                                horizontal-stretch: 1; spacing: 10px;
+                                HorizontalLayout { height: 32px; spacing: 8px;
+                                    ToolText { horizontal-stretch: 1; text: root.active ? root.resources[root.selected].name : I18n.tm_no_detail; font-size: 16px; font-weight: 700; }
+                                    ToolButton { icon: @image-url("../assets/icons/plug.svg"); label: I18n.tm_connect; show-label: true; primary: true; enabled: root.active && !root.working; clicked => { root.action("connect", "", ""); } }
+                                    ToolButton { width: 48px; label: I18n.tm_edit; show-label: true; enabled: root.active && !root.working; clicked => { root.open-mcp-dialog(false); } }
+                                    ToolButton { width: 48px; label: I18n.common_delete; show-label: true; danger: true; enabled: root.active && !root.working; clicked => { root.deleting = true; } }
+                                }
+                                ToolText { height: 18px; text: I18n.tm_mcp_tools_tip; color: ToolsTheme.muted; }
+                                Rectangle { vertical-stretch: 1; background: white; border-radius: 10px; border-width: 1px; border-color: ToolsTheme.border;
+                                    ListView { x: 10px; y: 10px; width: parent.width - 20px; height: parent.height - 20px;
+                                        for tool in root.server-tools : Rectangle { height: 62px;
+                                            ToolText { height: 22px; text: tool.name; font-weight: 600; }
+                                            ToolText { y: 24px; height: 32px; text: tool.description; wrap: word-wrap; color: ToolsTheme.muted; }
+                                            TouchArea { mouse-cursor: pointer; clicked => { root.inspect(tool.name, tool.description); } }
+                                        }
+                                    }
+                                    if root.server-tools.length == 0 : ToolText { x: 10px; y: 10px; height: 20px; text: I18n.tm_select_tool; color: ToolsTheme.muted; }
+                                }
+                            }
+                            if root.tab == 2 || root.tab == 3 : VerticalLayout {
+                                horizontal-stretch: root.tab == 2 ? 1 : 0;
+                                min-width: 0px;
+                                preferred-width: root.tab == 3 ? 280px : 300px;
+                                max-width: root.tab == 3 ? 280px : 100000px;
+                                spacing: 8px;
+                                HorizontalLayout { height: 28px; spacing: 8px;
+                                    if root.tab == 2 : Image { width: 20px; height: 20px; source: @image-url("../assets/icons/box-archive.svg"); colorize: ToolsTheme.deep; }
+                                    ToolText { horizontal-stretch: 1; text: root.tab == 3 ? I18n.tm_files : root.active ? root.resources[root.selected].name : I18n.tm_select_skill; color: root.tab == 2 ? #6b7280 : ToolsTheme.text; font-weight: root.tab == 2 ? 600 : 400; }
+                                    ToolButton { icon: @image-url("../assets/icons/upload.svg"); label: I18n.tm_upload; enabled: root.active && !root.readonly && !root.working; clicked => { root.edit("upload"); } }
+                                    ToolButton { icon: root.tab == 3 ? @image-url("../assets/icons/plus.svg") : @image-url("../assets/icons/rotate-right.svg"); label: root.tab == 3 ? I18n.tm_add : I18n.common_refresh; enabled: root.active && !root.working; clicked => { if root.tab == 3 { root.edit("file"); } else { root.select-resource(root.tab, root.selected); } } }
+                                    if root.tab == 2 : ToolButton { icon: @image-url("../assets/icons/trash.svg"); label: I18n.common_delete; enabled: root.active && !root.readonly && !root.working; clicked => { root.deleting = true; } }
+                                }
+                                if root.tab == 2 : HorizontalLayout { height: 28px;
+                                    LineEdit { width: 192px; placeholder-text: I18n.tm_search_files; text <=> root.search; edited(value) => { root.search-files(value); } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    if root.directory != "" : ToolButton { icon: @image-url("../assets/icons/chevron-left.svg"); label: ".."; clicked => { root.open-file("..", true); } }
+                                }
+                                // Skill and knowledge file areas keep the same
+                                // right-click operations as the chat dock.
+                                ContextMenuArea {
+                                    vertical-stretch: 1;
+                                    enabled: !root.working;
+                                    Menu {
+                                        MenuItem { title: I18n.tm_upload; activated => { if root.tab == 2 && root.active && !root.readonly { root.edit("upload"); } } }
+                                        MenuItem { title: root.tab == 3 ? I18n.tm_add : I18n.tm_save; activated => { if root.tab == 3 { root.edit("file"); } } }
+                                        MenuItem { title: I18n.common_refresh; activated => { root.refresh(); } }
+                                    }
+                                    Rectangle { background: white; border-radius: 10px; border-width: 1px; border-color: ToolsTheme.border;
+                                        ListView { x: 8px; y: 8px; width: parent.width - 16px; height: parent.height - 16px;
+                                            for file in root.files : ContextMenuArea {
+                                                height: 30px;
+                                                Menu {
+                                                    MenuItem { title: I18n.common_open; activated => { root.open-file(file.path, file.entry-type == "dir"); } }
+                                                    MenuItem { title: I18n.dk_copy_path; activated => { root.copy-path(file.path); } }
+                                                    MenuItem { title: I18n.common_refresh; activated => { root.refresh(); } }
+                                                }
+                                                Rectangle {
+                                                    background: file-touch.has-hover || root.file-path == file.path ? ToolsTheme.soft : transparent;
+                                                    HorizontalLayout { padding-left: 4px; padding-right: 4px; spacing: 8px; cross-axis-alignment: center;
+                                                        Image { width: 12px; height: 12px; source: @image-url("../assets/icons/chevron-right.svg"); visible: file.entry-type == "dir"; colorize: ToolsTheme.muted; }
+                                                        Image { width: 18px; height: 18px; source: file.icon; }
+                                                        ToolText { horizontal-stretch: 1; text: file.name; color: #333333; font-size: 14px; }
+                                                        ToolText { text: file.entry-type == "dir" ? I18n.tm_folder : file.size; color: ToolsTheme.muted; font-size: 10px; }
+                                                    }
+                                                    file-touch := TouchArea { enabled: !root.working; mouse-cursor: pointer; clicked => { root.open-file(file.path, file.entry-type == "dir"); } }
+                                                }
+                                            }
+                                        }
+                                        if !root.active : ToolText { x: 8px; y: 8px; height: 20px; text: root.tab == 3 ? I18n.tm_select_kb : I18n.tm_select_skill; color: ToolsTheme.muted; }
+                                    }
+                                }
+                                if root.has-more : Button { text: I18n.tm_more; enabled: !root.working; clicked => { root.more-files(); } }
+                            }
+                            if root.tab == 3 : VerticalLayout {
+                                horizontal-stretch: 1; spacing: 10px;
+                                HorizontalLayout { height: 28px;
+                                    ToolText { horizontal-stretch: 1; text: root.file-path == "" ? I18n.tm_select_file : root.file-path; font-size: 16px; font-weight: 700; }
+                                    ToolButton { icon: @image-url("../assets/icons/save.svg"); primary: true; label: I18n.tm_save; enabled: root.file-path != "" && !root.working; clicked => { root.action("save", root.file-path, root.content); } }
+                                }
+                                Rectangle { vertical-stretch: 1; background: #f7f7f7; border-width: 1px; border-color: #e0e0e0; border-radius: 10px;
+                                    if root.file-path == "" : ToolText { x: 12px; y: 12px; height: 20px; text: I18n.tm_select_file; color: #b19380; }
+                                    if root.file-path != "" : TextEdit { x: 8px; y: 8px; width: parent.width - 16px; height: parent.height - 16px; text <=> root.content; read-only: root.working; }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if root.tab == 2 && root.file-path != "" : ModalDialog {
+        card-width: 850px; card-height: 650px; dismissed => { root.file-path = ""; }
+        ToolText { height: 24px; text: root.file-path; font-weight: 700; }
+        TextEdit { vertical-stretch: 1; text <=> root.content; read-only: root.readonly || root.working; }
+        HorizontalLayout { height: 30px; spacing: 8px;
+            ToolText { horizontal-stretch: 1; text: root.readonly ? I18n.tm_readonly : ""; color: ToolsTheme.muted; }
+            Button { text: I18n.common_close; clicked => { root.file-path = ""; } }
+            Button { text: I18n.tm_save; enabled: !root.readonly && !root.working; clicked => { root.action("save", root.file-path, root.content); } }
+        }
+    }
+    // Remaining simple forms: skill archive export, file upload and new file.
+    if root.operation != "" : ModalDialog {
+        card-width: 540px; card-height: 220px; dismissable: !root.working; dismissed => { root.operation = ""; }
+        ToolText { text: root.operation == "export" ? I18n.tm_export : root.operation == "upload" ? I18n.tm_upload : I18n.tm_new_file; height: 24px; font-size: 16px; font-weight: 700; }
+        ToolText { text: root.operation == "file" ? I18n.tm_name : I18n.tm_path; height: 20px; }
+        LineEdit { text <=> root.draft-name; enabled: !root.working; }
+        Rectangle { vertical-stretch: 1; }
+        HorizontalLayout { spacing: 8px; Rectangle { horizontal-stretch: 1; }
+            Button { text: I18n.common_cancel; enabled: !root.working; clicked => { root.operation = ""; } }
+            Button { text: I18n.tm_save; enabled: !root.working && root.draft-name != ""; clicked => { root.action(root.operation, root.draft-name, ""); root.operation = ""; } }
+        }
+    }
+    // MCP server form, aligned with the web user-tools dialog.
+    if ToolsDialog.mcp-open : FormDialog {
+        title: ToolsDialog.mcp-new ? I18n.tm_mcp_add_title : I18n.tm_mcp_edit_title;
+        card-width: 640px;
+        card-height: 680px;
+        dismissable: !root.working;
+        save-enabled: !root.working && ToolsDialog.mcp-name != "" && ToolsDialog.mcp-endpoint != "" && ToolsDialog.mcp-headers-error == "";
+        dismissed => { ToolsDialog.mcp-open = false; }
+        saved => { ToolsDialog.save-mcp(); ToolsDialog.mcp-open = false; }
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout { spacing: 14px; alignment: start;
+                FormField { label: I18n.tm_name; placeholder: I18n.tm_unique_name_ph; enabled: !root.working; text <=> ToolsDialog.mcp-name; edited => { ToolsDialog.refresh-mcp-feedback(); } }
+                FormField { label: I18n.tm_display_name; placeholder: I18n.tm_display_name_ph; enabled: !root.working; text <=> ToolsDialog.mcp-display-name; edited => { ToolsDialog.refresh-mcp-feedback(); } }
+                FormField { label: I18n.tm_endpoint; placeholder: "http://127.0.0.1:9000/mcp"; enabled: !root.working; text <=> ToolsDialog.mcp-endpoint; edited => { ToolsDialog.refresh-mcp-feedback(); } }
+                VerticalLayout { spacing: 6px;
+                    FormFieldLabel { text: I18n.tm_transport; }
+                    ComboBox {
+                        height: 34px;
+                        model: ToolsDialog.transport-model;
+                        current-value <=> ToolsDialog.mcp-transport;
+                        enabled: !root.working;
+                        selected => { ToolsDialog.refresh-mcp-feedback(); }
+                    }
+                }
+                FormArea { label: I18n.tm_desc; placeholder: I18n.tm_desc_ph; text <=> ToolsDialog.mcp-description; edited => { ToolsDialog.refresh-mcp-feedback(); } }
+                FormArea { label: I18n.tm_headers; placeholder: "{\"Authorization\":\"Bearer ...\"}"; text <=> ToolsDialog.mcp-headers; edited => { ToolsDialog.refresh-mcp-feedback(); } }
+                if ToolsDialog.mcp-headers-error != "" : ToolText { height: 16px; text: ToolsDialog.mcp-headers-error; color: #d54c65; }
+                FormArea { label: I18n.tm_struct_preview; placeholder: I18n.tm_struct_ph; text <=> ToolsDialog.mcp-preview; read-only: true; height: 150px; }
+            }
+        }
+    }
+    // Knowledge base form, aligned with the web knowledge dialog.
+    if ToolsDialog.kb-open : FormDialog {
+        title: ToolsDialog.kb-new ? I18n.tm_kb_add_title : I18n.tm_kb_edit_title;
+        card-width: 560px;
+        card-height: 640px;
+        dismissable: !root.working;
+        save-enabled: !root.working && ToolsDialog.kb-name != "";
+        dismissed => { ToolsDialog.kb-open = false; }
+        saved => { ToolsDialog.save-kb(); ToolsDialog.kb-open = false; }
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout { spacing: 14px; alignment: start;
+                FormField { label: I18n.tm_name; placeholder: I18n.tm_kb_name_ph; enabled: !root.working; read-only: !ToolsDialog.kb-new; text <=> ToolsDialog.kb-name; }
+                FormArea { label: I18n.tm_desc; placeholder: I18n.tm_desc_ph; text <=> ToolsDialog.kb-description; height: 130px; }
+                VerticalLayout { spacing: 6px;
+                    FormFieldLabel { text: I18n.tm_type; }
+                    ComboBox {
+                        height: 34px;
+                        model: ToolsDialog.kb-type-model;
+                        current-index <=> ToolsDialog.kb-type-index;
+                        enabled: !root.working && ToolsDialog.kb-new;
+                    }
+                }
+                VerticalLayout { spacing: 10px;
+                    Rectangle {
+                        height: 44px;
+                        border-radius: 10px;
+                        background: #f7f7f7;
+                        border-width: 1px;
+                        border-color: #ececec;
+                        HorizontalLayout {
+                            padding-left: 14px; padding-right: 12px; spacing: 8px;
+                            ToolText { height: parent.height; text: I18n.tm_advanced; font-size: 14px; font-weight: 700; color: #303030; }
+                            Rectangle { horizontal-stretch: 1; }
+                            Image {
+                                width: 12px; height: 12px;
+                                source: @image-url("../assets/icons/chevron-down.svg");
+                                colorize: #606060;
+                                transform-rotation: ToolsDialog.kb-advanced-open ? 180deg : 0deg;
+                            }
+                        }
+                        TouchArea { mouse-cursor: pointer; clicked => { ToolsDialog.kb-advanced-open = !ToolsDialog.kb-advanced-open; } }
+                    }
+                    if ToolsDialog.kb-advanced-open && ToolsDialog.kb-type-index == 0 : VerticalLayout { spacing: 14px;
+                        FormField { label: I18n.tm_embedding_model; placeholder: I18n.tm_embedding_ph; text <=> ToolsDialog.kb-embedding-model; }
+                        HorizontalLayout { spacing: 10px;
+                            FormField { label: I18n.tm_chunk_size; placeholder: I18n.tm_chunk_size_ph; horizontal-stretch: 1; text <=> ToolsDialog.kb-chunk-size; }
+                            FormField { label: I18n.tm_chunk_overlap; placeholder: I18n.tm_chunk_overlap_ph; horizontal-stretch: 1; text <=> ToolsDialog.kb-chunk-overlap; }
+                        }
+                        ToolText { height: 18px; text: I18n.tm_kb_vector_tip; color: ToolsTheme.muted; }
+                    }
+                    if ToolsDialog.kb-advanced-open && ToolsDialog.kb-type-index == 2 : VerticalLayout { spacing: 14px;
+                        FormField { label: I18n.tm_dataset_id; placeholder: I18n.tm_dataset_ph; text <=> ToolsDialog.kb-dataset-id; }
+                        ToolText { height: 18px; text: I18n.tm_kb_ragflow_tip; color: ToolsTheme.muted; }
+                    }
+                    if ToolsDialog.kb-advanced-open && ToolsDialog.kb-type-index == 1 : ToolText { height: 18px; text: I18n.tm_kb_literal_tip; color: ToolsTheme.muted; }
+                }
+            }
+        }
+    }
+    if root.deleting : ConfirmDialog { title: I18n.common_delete; message: I18n.tm_confirm_delete; confirm-label: I18n.common_delete; cancel-label: I18n.common_cancel; danger: true; confirmed => { root.deleting = false; root.action("delete", "", ""); } canceled => { root.deleting = false; } }
+}

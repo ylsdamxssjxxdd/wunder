@@ -1,0 +1,81 @@
+[Tools Protocol]
+
+[[TOOL_CALL_MODE_TOOL_CALL]]
+Tool signatures are provided inside the <tools> </tools> XML tag:
+<tools>
+{available_tools_describe}
+</tools>
+Each tool call must follow:
+1. Put the call inside a <tool_call>...</tool_call> block.
+2. Inside the block, output valid JSON with only two keys: "name" (string) and "arguments" (object). Example:
+<tool_call>
+{"name":"final_response","arguments":{"content":"Task completed. Anything else I can help with?"}}
+</tool_call>
+
+Tool results will come back as a user message with prefix "tool_response: ".
+[[/TOOL_CALL_MODE_TOOL_CALL]]
+
+[[TOOL_CALL_MODE_FREEFORM_CALL]]
+Tool signatures are provided inside the <tools> </tools> XML tag:
+<tools>
+{available_tools_describe}
+</tools>
+
+In this mode, prefer the model's native tool-calling channel whenever the API exposes it.
+The XML protocol below is only a fallback when native tool calling is unavailable.
+
+Native freeform strategy:
+1. Use native structured tool calls for normal JSON tools.
+2. Use native custom/freeform tool calls for grammar tools such as apply_patch.
+3. Freeform input must be the grammar body itself, not wrapped JSON.
+
+apply_patch rules (Codex-aligned):
+- NEVER wrap patch text in JSON strings or markdown fences.
+- Input must start with *** Begin Patch and end with *** End Patch.
+- Before calling, self-check the complete skeleton: first line is *** Begin Patch, last line is *** End Patch; do not leave a dangling @@ or unclosed hunk at the end.
+- Use the right section header: *** Add File:, *** Update File:, *** Delete File:, *** Move to:.
+- After @@ in Update File hunks, every line must start with one of: space / + / -. Blank context lines must be encoded as a single leading space line (" ").
+- When a line changes, write it explicitly as -old followed by +new; do not leave both versions as ordinary context lines.
+- Prefer one small patch at a time, touching only a small number of files and local regions; do not pack many distant edits into one apply_patch attempt.
+- If you are unsure whether the patch will match, prefer dry_run first and apply for real only after the preview looks correct.
+- Keep 2-3 lines of raw current-file context around each change when possible; never copy read_file display artifacts such as >>> path, line numbers, or separators.
+- Keep edits minimal and surgical; avoid unrelated reformat/reordering.
+- On errors, use error_code/hint/retryable to make the smallest possible retry. If the edit is close to a whole-file rewrite or spans many distant regions, stop expanding apply_patch and switch to write_file.
+
+Fallback XML example (only when native tool calling is unavailable):
+<tool_call>
+<name>apply_patch</name>
+<input>
+*** Begin Patch
+*** Update File: src/main.rs
+@@
+-fn main() { println!("old"); }
++fn main() { println!("new"); }
+*** End Patch
+</input>
+</tool_call>
+Tool results will come back as a user message with prefix "tool_response: ".
+[[/TOOL_CALL_MODE_FREEFORM_CALL]]
+
+[[HAS_A2UI_TOOL]]
+[A2UI UI Generation Guide]
+
+When you need to output an A2UI UI, you must only call the a2ui tool for the final response and do not call the final reply tool.
+
+Requirements:
+1. Wrap the tool call JSON in <tool_call> ... </tool_call>.
+2. arguments must include:
+   - uid: the UI surface identifier; later messages will render on the surfaceId derived from this uid.
+   - a2ui: an array of A2UI JSON messages; each message contains exactly one action (beginRendering/surfaceUpdate/dataModelUpdate/deleteSurface).
+3. If surfaceId is missing, the system will fill it with uid.
+4. Optional: add a short explanation in arguments.content.
+5. Do not output Markdown code fences; only return the JSON message array in a2ui.
+
+General rules:
+- a2ui is a message array; each message must contain exactly one action: beginRendering / surfaceUpdate / dataModelUpdate / deleteSurface.
+- Common order: beginRendering -> surfaceUpdate -> dataModelUpdate; use deleteSurface only when cleaning up.
+- Components use an adjacency list: flatten all components in surfaceUpdate.components; root points to the root component id.
+- dataModelUpdate.contents is a list of key + typed values (valueString/valueNumber/valueBoolean/valueMap); valueMap supports nested objects.
+- List templates use List.children.template: dataBinding points to the list data; template uses relative paths (e.g. "name") from dataContext.
+- Primary action buttons should include "primary": true.
+[[/HAS_A2UI_TOOL]]

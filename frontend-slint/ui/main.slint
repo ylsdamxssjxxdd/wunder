@@ -1,0 +1,1234 @@
+import { MemoryCard, ArchiveCard, RuntimePoint, HeatCard } from "expert_data.slint";
+export { MemoryCard, ArchiveCard, RuntimePoint, HeatCard }
+import { ExpertToolGroup } from "expert_widgets.slint";
+export { ExpertToolGroup }
+import { RuntimeStatus } from "runtime_status.slint";
+import { I18n } from "i18n.slint";
+import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, AgentToolOption, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep } from "theme.slint";
+import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
+import { Composer, GoalBanner, StatusDock } from "composer.slint";
+import { TerminalView, TermSpan } from "terminal_view.slint";
+import { TimelineView } from "timeline.slint";
+import { Sidebar, WorkspaceVisual } from "sidebar.slint";
+import { SettingsPage } from "settings_page.slint";
+import { ThreadLogDialog, LogMetric } from "thread_log.slint";
+export { LogMetric }
+import { ToolResource, ToolsDialog, McpServerDraft, KnowledgeInfo } from "tools_page.slint";
+export { ToolResource, ToolsDialog, McpServerDraft, KnowledgeInfo }
+import { AvatarDialog, AvatarDialogState } from "avatar_dialog.slint";
+export { AvatarDialogState }
+import { WorkspaceDialog, WorkspaceDialogState } from "workspace_dialog.slint";
+export { WorkspaceDialogState }
+import { TextEditBase } from "textedit-base.slint";
+import { ListView, ScrollView, ComboBox } from "std-widgets.slint";
+import { ModelPresets } from "model_presets.slint";
+export { ModelPresets }
+// `TimelineView` is deliberately absent: nothing in Rust names it, and an
+// exported component that does not inherit Window only earns a build warning.
+export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, AgentToolOption, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep }
+export { AppTray } from "tray.slint";
+export { TrayNotice } from "tray-notice.slint";
+export { ScreenshotOverlay } from "screenshot_overlay.slint";
+
+export component MainWindow inherits Window {
+    in-out property <[SidebarRow]> sidebar-rows: [
+        { kind: 0, workspace-id: "ws-preview-a", name: I18n.ws_preview_default, icon: "folder", color: "blue", thread-count: 2, expanded: true, selected: true, thread-id: "", title: "", status: "", active: false, payload: 0 },
+        { kind: 1, workspace-id: "ws-preview-a", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t1", title: I18n.main_preview_prompt, status: "done", active: true, payload: 0 },
+        { kind: 1, workspace-id: "ws-preview-a", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t2", title: I18n.main_preview_step_title2, status: "idle", active: false, payload: 1 },
+        { kind: 0, workspace-id: "ws-preview-b", name: I18n.ws_preview_docs, icon: "coffee", color: "orange", thread-count: 1, expanded: true, selected: false, thread-id: "", title: "", status: "", active: false, payload: 1 },
+        { kind: 1, workspace-id: "ws-preview-b", name: "", icon: "", color: "", thread-count: 0, expanded: false, selected: false, thread-id: "t3", title: I18n.main_preview_step_title1, status: "running", active: false, payload: 2 }
+    ];
+    in-out property <[WorkspaceCard]> workspaces: [
+        { workspace-id: "ws-preview-a", name: I18n.ws_preview_default, icon: "folder", color: "blue", root-path: I18n.ws_preview_root_a, thread-count: 2, expanded: true, selected: true },
+        { workspace-id: "ws-preview-b", name: I18n.ws_preview_docs, icon: "coffee", color: "orange", root-path: I18n.ws_preview_root_b, thread-count: 1, expanded: true, selected: false }
+    ];
+    in-out property <int> selected-workspace: 0;
+    callback select-row(int);
+    callback workspace-menu(int, int);
+    callback new-workspace();
+    callback move-row(int, int);
+    callback open-workspace-folder(string);
+    callback rename-thread(int, string);
+    callback archive-thread(int);
+    in-out property <DesktopPage> page: DesktopPage.messages;
+    // Settings render in an internal overlay window instead of taking over
+    // the chat area; the sidebar width is user-draggable.
+    in-out property <bool> settings-open: false;
+    in-out property <length> sidebar-width: Theme.sidebar-width;
+
+    in-out property <bool> expert-loading;
+    in-out property <bool> expert-saving;
+    in-out property <string> expert-error;
+    in-out property <[MemoryCard]> expert-memories;
+    in-out property <[ArchiveCard]> expert-archives;
+    in-out property <[RuntimePoint]> expert-points;
+    in-out property <[HeatCard]> expert-heat;
+    in-out property <string> expert-duration;
+    in-out property <string> expert-tokens;
+    in-out property <string> expert-calls;
+    in-out property <string> expert-chart-path;
+    in-out property <string> expert-chart-max;
+    in-out property <string> expert-date;
+    in-out property <int> expert-archive-page;
+    in-out property <int> expert-archive-total;
+    in-out property <string> expert-query;
+    in-out property <string> expert-category: "全部标签";
+    in-out property <[string]> expert-categories: ["全部标签"];
+    in-out property <bool> memory-editor-open;
+    in-out property <string> memory-edit-id;
+    in-out property <string> memory-edit-title;
+    in-out property <string> memory-edit-content;
+    in-out property <string> memory-edit-category;
+    in-out property <[string]> expert-agent-names;
+    callback replicate-expert-memory(int);
+    callback open-expert-memory(int);
+    callback save-expert-memory();
+    callback delete-expert-memory(string);
+    callback open-expert-archive(string);
+    in-out property <int> expert-tab: 0;
+    in-out property <[ExpertToolGroup]> expert-tool-groups;
+    in-out property <string> expert-tool-keyword;
+    in-out property <[string]> expert-model-names;
+    in-out property <[string]> expert-hive-names: ["默认蜂群"];
+    in-out property <[string]> expert-hive-ids;
+    in-out property <[string]> expert-hive-filters: ["全部蜂群"];
+    in-out property <string> expert-hive: "默认蜂群";
+    callback refresh-expert();
+    callback probe-expert-channel();
+    callback search-expert-tools();
+    callback toggle-expert-tool-group(string);
+    callback edit-agent-question(int, string);
+    title: I18n.app_window_title;
+    // Open the desktop workbench maximized. The native bootstrap repeats this
+    // after mapping on window managers that defer the initial request.
+    maximized: true;
+    preferred-width: 1280px; preferred-height: 860px;
+    min-width: Theme.min-window-width; min-height: Theme.min-window-height;
+    default-font-family: "Microsoft YaHei"; default-font-size: Theme.font-md;
+    icon: @image-url("../assets/app-icon.png");
+    background: Theme.panel;
+    in-out property <int> selected-agent: -1;
+    in-out property <int> selected-model: -1;
+    in-out property <string> active-session-id;
+    in-out property <string> active-agent-id;
+    in-out property <string> heading;
+    in-out property <bool> busy: false;
+    in-out property <bool> command-pending: false;
+    // Terminal mode routes the composer input to the local shell instead of
+    // the model; toggled from the TerminalAction button in the composer.
+    in-out property <bool> terminal-mode: false;
+    callback terminal-toggled(bool);
+    callback terminal-interrupt();
+    callback terminal-clear();
+    callback terminal-scrolled(int);
+    callback terminal-scroll-to(int);
+    // The panel measures its own cell box, so a window resize changes the grid
+    // even while the shell prints nothing. The screen model has to follow and
+    // tell the shell, or the two disagree about where a line ends.
+    callback terminal-geometry-changed();
+    in-out property <int> terminal-measured-cols: 0;
+    in-out property <int> terminal-measured-rows: 0;
+    changed terminal-measured-cols => { root.terminal-geometry-changed(); }
+    changed terminal-measured-rows => { root.terminal-geometry-changed(); }
+    in-out property <[TermSpan]> terminal-spans;
+    in-out property <string> terminal-status;
+    in-out property <bool> terminal-error: false;
+    in-out property <int> terminal-rows: 24;
+    in-out property <int> terminal-cols: 80;
+    in-out property <int> terminal-view-offset: 0;
+    in-out property <int> terminal-history-depth: 0;
+    in-out property <bool> terminal-caret-visible: false;
+    in-out property <int> terminal-caret-row: 0;
+    in-out property <int> terminal-caret-col: 0;
+    in-out property <string> command-feedback;
+    changed command-feedback => {
+        ToastState.message = root.command-feedback;
+        ToastState.kind = root.command-feedback.starts-with("命令执行失败") ? 2 : 0;
+        ToastState.revision += 1;
+    }
+    // Backend errors only ever land on `status`, which no chat view renders;
+    // surface error-shaped statuses as toasts so a failed runtime or storage
+    // read can never look like a dead UI again.
+    changed status => {
+        if root.status.starts-with(I18n.cp_error_prefix) || root.status.starts-with(I18n.cp_fail_prefix) {
+            ToastState.message = root.status;
+            ToastState.kind = 2;
+            ToastState.revision += 1;
+        }
+    }
+    in-out property <bool> goal-active: false;
+    // Goal banner state; the projection and the observer goal tick write the
+    // objective, the accumulated seconds and the paused flag. The preview
+    // values only exist so slint-viewer renders the banner without a backend.
+    in-out property <string> goal-objective: I18n.tlp_organize;
+    in-out property <int> goal-seconds: 0;
+    in-out property <string> goal-elapsed: I18n.cpv_goal_elapsed_demo;
+    in-out property <bool> goal-paused: false;
+    in-out property <bool> goal-editing: false;
+    in-out property <string> goal-edit-draft;
+    callback goal-save(string);
+    callback goal-pause-toggle();
+    callback goal-clear();
+    // ---- status dock (activity capsule above the goal banner) ----
+    // The preview defaults exist so slint-viewer renders the dock without a
+    // backend; the native projection resets them on connect and overwrites
+    // them from the live turn on every flush frame.
+    in-out property <bool> activity-active: true;
+    in-out property <string> activity-text: I18n.dock_queue_prefix + 2 + I18n.dock_queue_suffix;
+    in-out property <int> activity-steps-done: 0;
+    in-out property <int> activity-steps-total: 3;
+    in-out property <int> activity-files-changed: 2;
+    in-out property <int> activity-added-lines: 118;
+    in-out property <int> activity-deleted-lines: 12;
+    in-out property <string> activity-plan-explanation: I18n.dock_demo_explain;
+    in-out property <[PlanStep]> activity-plan-steps: [
+        { step: I18n.dock_demo_step_1, status: "completed" },
+        { step: I18n.dock_demo_step_2, status: "in_progress" },
+        { step: I18n.dock_demo_step_3, status: "pending" },
+    ];
+    // Dismissal clears through the Rust side (plan cache + turn state) so the
+    // next flush frame cannot silently restore the checklist.
+    callback activity-plan-dismiss();
+    // Fractional offset of every user turn for the right-edge ruler. The
+    // preview marks match the fixture timeline (user rows at 0 and 3 of 6).
+    in-out property <[float]> turn-marks: [0.0, 0.5];
+    in-out property <bool> connected: false;
+    in-out property <bool> chat-loading: false;
+    in-out property <bool> session-loading: false;
+    in-out property <bool> creating-session: false;
+    in-out property <bool> agents-loading: false;
+    in-out property <bool> tools-loading: false;
+    in-out property <bool> tools-working: false;
+    in-out property <int> tools-tab: 0;
+    in-out property <int> tools-selected: -1;
+    in-out property <[ToolCard]> tools-builtin;
+    in-out property <[ToolCard]> tools-mcp;
+    in-out property <[ToolCard]> tools-skills;
+    in-out property <[ToolCard]> tools-knowledge;
+    in-out property <[ToolResource]> tools-servers;
+    in-out property <[ToolResource]> tools-skill-resources;
+    in-out property <[ToolResource]> tools-bases;
+    in-out property <[ToolCard]> tools-server-tools;
+    in-out property <[FileCard]> tools-files;
+    in-out property <[FileCard]> tools-all-files;
+    in-out property <string> tools-search;
+    in-out property <string> tools-file-path;
+    in-out property <string> tools-content;
+    in-out property <string> tools-directory;
+    in-out property <bool> tools-has-more;
+    callback select-tool-resource(int, int);
+    callback open-tool-file(string, bool);
+    callback more-tool-files();
+    callback search-tool-files(string);
+    callback tool-manager-action(string, string, string);
+    in-out property <bool> settings-loading: false;
+    in-out property <bool> saving: false;
+    in-out property <string> draft;
+    in-out property <[ChatAttachment]> pending-attachments: [];
+    in-out property <string> status: I18n.chat_demo_status;
+    in-out property <string> dialog-title;
+    in-out property <string> dialog-text;
+    in-out property <bool> dialog-open: false;
+    in-out property <bool> thread-log-open: false;
+    in-out property <[LogMetric]> thread-log-metrics;
+    in-out property <[ThreadLogEvent]> thread-log-events;
+    in-out property <[string]> thread-log-round-options;
+    in-out property <[string]> thread-log-types;
+    in-out property <string> thread-log-title;
+    in-out property <string> thread-log-question;
+    in-out property <string> thread-log-query;
+    in-out property <string> thread-log-page-info;
+    in-out property <string> thread-log-error;
+    in-out property <int> thread-log-round: 0;
+    in-out property <int> thread-log-type: 0;
+    in-out property <bool> thread-log-loading;
+    in-out property <bool> thread-log-previous;
+    in-out property <bool> thread-log-next;
+    in-out property <bool> thread-log-more;
+    callback filter-thread-log();
+    callback select-log-round(int);
+    callback log-page(int);
+    callback more-log-items();
+    callback export-thread-log();
+    in-out property <bool> more-open: false;
+    // Read-only mirror of the timeline viewport offset; the native smoke checks
+    // use it to prove the view does not jump while the user reads back.
+    out property <length> scroll-y: follow_view.scroll-y;
+    // Threads of all workspaces, newest activity first; the sidebar tree and
+    // the active-thread summary are projections of this bounded list.
+    in-out property <[Conversation]> conversations: [];
+    // Derived by the native projection from the same bounded conversation list
+    // rendered in the sidebar tree.
+    in-out property <int> active-thread-count: 0;
+    in-out property <string> active-thread-status: "idle";
+    // This preview timeline is replaced immediately by the native projection.
+    // It intentionally exercises every entry type in slint-viewer: user bubble,
+    // body block, folded turn divider, tool group bar and one unfolded diff.
+    // `h` is the height the native layout measured for each row; the fixture
+    // states it because the viewer has no projection to report one.
+    in-out property <[TimelineRow]> timeline: [
+        { kind: 0, visible: true, text: I18n.main_preview_step_title2, foldable: false, group-idx: -1, group-open: false, payload: 0 },
+        { kind: 5, visible: true, open: false, foldable: false, group-idx: -1, group-open: false, payload: 1 },
+        { kind: 1, visible: false, text: I18n.main_preview_answer, foldable: true, group-idx: -1, group-open: false, payload: 2 },
+        { kind: 0, visible: true, text: I18n.main_preview_prompt, foldable: false, group-idx: -1, group-open: false, payload: 3 },
+        { kind: 1, visible: true, text: I18n.main_preview_answer, foldable: true, group-idx: -1, group-open: false, payload: 4 },
+        { kind: 4, visible: true, text: I18n.tl_tool_calls(2), open: true, foldable: false, group-idx: 0, group-open: true, payload: 5 },
+        { kind: 2, visible: true, tool-name: I18n.msg_thought, summary: I18n.main_preview_reasoning, detail: I18n.main_preview_reasoning, status-kind: 0, open: false, foldable: true, group-idx: 0, group-open: true, payload: 6 },
+        { kind: 3, visible: true, tool-name: I18n.main_preview_step_title1, tool-icon: "folder-open", target: I18n.ws_preview_root_a, detail: I18n.main_preview_detail1, status-kind: 0, open: false, foldable: true, group-idx: 0, group-open: true, payload: 7 },
+        { kind: 3, visible: true, tool-name: I18n.main_preview_step_title2, tool-icon: "file-pen", target: I18n.pd_preview_path, status-kind: 0, open: true, foldable: true, group-idx: 0, group-open: true, payload: 8,
+            patch: [{
+                path: I18n.pd_preview_path, action: I18n.pd_action_update, added: "41", deleted: "41",
+                lines: [
+                    { number: "136", text: "fn run(...) {", kind: "context" },
+                    { number: "137", text: "    let old = previous();", kind: "delete" },
+                    { number: "137", text: "    let new = current();", kind: "add" },
+                    { number: "138", text: "}", kind: "context" }
+                ]
+            }]
+        }
+    ];
+    in-out property <[AgentCard]> agents: [];
+    in-out property <[ToolCard]> tools: [];
+    in-out property <bool> cron-loading: false;
+    in-out property <[CronCard]> cron-jobs: [];
+    in-out property <[PromptPackCard]> prompt-packs: [];
+    in-out property <[string]> prompt-pack-names: [];
+    in-out property <string> prompt-active;
+    in-out property <string> prompt-selected-pack;
+    in-out property <int> prompt-selected-segment: 0;
+    in-out property <string> prompt-draft;
+    in-out property <bool> prompt-readonly: false;
+    in-out property <bool> prompt-loading: false;
+    in-out property <bool> reset-confirm-open: false;
+    in-out property <string> pack-name-draft;
+    in-out property <string> prompt-preview;
+    in-out property <bool> prompt-preview-loading: false;
+    in-out property <bool> cron-delete-open: false;
+    in-out property <string> cron-delete-pending;
+    in-out property <[string]> cron-agent-names: [I18n.common_default_agent];
+    in-out property <bool> cron-editor-open: false;
+    in-out property <bool> cron-editor-saving: false;
+    in-out property <string> cron-edit-id;
+    in-out property <int> cron-editor-kind: 0;
+    in-out property <string> cron-edit-name;
+    in-out property <string> cron-edit-at;
+    in-out property <string> cron-edit-every;
+    in-out property <string> cron-edit-cron;
+    in-out property <string> cron-edit-tz;
+    in-out property <string> cron-edit-message;
+    in-out property <int> cron-edit-agent: 0;
+    in-out property <bool> cron-edit-delete-after: false;
+    in-out property <bool> cron-edit-enabled: true;
+    in-out property <bool> cron-runs-open: false;
+    in-out property <bool> cron-runs-loading: false;
+    in-out property <string> cron-runs-title;
+    in-out property <[CronRunCard]> cron-runs: [];
+    in-out property <bool> channel-loading: false;
+    in-out property <[ChannelCatalogCard]> channel-catalog: [];
+    in-out property <[ChannelAccountCard]> channel-accounts: [];
+    in-out property <int> selected-channel-account: -1;
+    in-out property <[ChannelBindingCard]> channel-bindings: [];
+    in-out property <bool> channel-bindings-loading: false;
+    in-out property <bool> channel-logs-loading: false;
+    in-out property <[ChannelLogCard]> channel-logs: [];
+    in-out property <bool> channel-editor-open: false;
+    in-out property <bool> channel-editor-saving: false;
+    in-out property <string> channel-edit-id;
+    in-out property <int> channel-edit-kind: 0;
+    in-out property <int> channel-edit-agent: 0;
+    in-out property <[string]> channel-agent-names: [I18n.common_default_agent];
+    in-out property <[string]> channel-catalog-names: [];
+    in-out property <string> channel-edit-name;
+    in-out property <bool> channel-edit-enabled: true;
+    in-out property <bool> channel-edit-group-chat: true;
+    in-out property <string> channel-edit-app-id;
+    in-out property <string> channel-edit-app-secret;
+    in-out property <string> channel-edit-corp-id;
+    in-out property <string> channel-edit-wechat-agent;
+    in-out property <string> channel-edit-secret;
+    in-out property <string> channel-edit-token;
+    in-out property <string> channel-edit-aes-key;
+    in-out property <string> channel-edit-original-id;
+    in-out property <string> channel-edit-api-base;
+    in-out property <string> channel-edit-bot-token;
+    in-out property <string> channel-edit-bot-id;
+    in-out property <string> channel-edit-user-id;
+    in-out property <string> channel-edit-domain;
+    in-out property <string> channel-edit-config-json;
+    in-out property <bool> channel-delete-open: false;
+    in-out property <bool> channel-qr-open: false;
+    in-out property <int> channel-qr-state: 0;
+    in-out property <image> channel-qr-image;
+    in-out property <string> channel-qr-message;
+    callback refresh-channels();
+    callback select-channel-account(int);
+    callback open-channel-creator();
+    callback edit-channel-account();
+    callback save-channel-editor();
+    callback cancel-channel-editor();
+    callback request-delete-channel();
+    callback confirm-delete-channel();
+    callback cancel-delete-channel();
+    callback toggle-channel-account(bool);
+    callback open-channel-logs();
+    callback close-channel-logs();
+    callback delete-channel-binding(string, string);
+    callback start-channel-qr();
+    callback cancel-channel-qr();
+    callback reconnect-channel();
+    in-out property <[ModelCard]> models: [
+        { key: I18n.common_default_model, provider: "", model: I18n.common_unknown, base-url: "", model-type: "llm", is-default: true, is-cloud: false }
+    ];
+    in-out property <string> selected-agent-name;
+    in-out property <string> selected-agent-description;
+    in-out property <string> selected-agent-model;
+    in-out property <string> selected-agent-system-prompt;
+    in-out property <string> selected-agent-status;
+    in-out property <string> workspace-root;
+    in-out property <string> runtime-language;
+    in-out property <string> runtime-theme;
+    in-out property <string> runtime-send-key;
+    in-out property <float> runtime-font-size: 14;
+    in-out property <string> app-version: "dev";
+    in-out property <string> runtime-python;
+    in-out property <string> runtime-git;
+    in-out property <string> runtime-rg;
+    in-out property <string> runtime-python-status;
+    in-out property <string> runtime-git-status;
+    in-out property <string> runtime-rg-status;
+    in-out property <bool> importing-supplement: false;
+    in-out property <string> supplement-status;
+    callback import-supplement();
+    callback pick-python-path();
+    callback pick-git-path();
+    callback pick-rg-path();
+    // Screenshot/fixture hook for the settings page's active panel.
+    in-out property <int> settings-active-panel: 0;
+    in-out property <bool> lan-enabled: false;
+    in-out property <string> lan-name;
+    in-out property <string> lan-peer-id;
+    in-out property <string> lan-endpoint;
+    in-out property <int> lan-peer-count: 0;
+    in-out property <[LanPeerCard]> lan-peers: [];
+    // ---- cloud account state (§6.1) ----
+    // Login state and the quota snapshot are projected natively; the drafts
+    // and the error line live on the shell so the settings card stays plain
+    // two-way data. The password draft never leaves the process.
+    in-out property <bool> cloud-logged-in: false;
+    in-out property <bool> cloud-expired: false;
+    in-out property <string> cloud-username;
+    in-out property <string> cloud-balance;
+    in-out property <string> cloud-concurrency;
+    in-out property <bool> cloud-quota-warn: false;
+    in-out property <bool> cloud-sync-enabled: true;
+    // Active cloud queue position from the `cloud_queue` incremental event,
+    // or -1 when no turn is waiting.
+    in-out property <int> cloud-queue-position: -1;
+    in-out property <bool> cloud-busy: false;
+    in-out property <string> cloud-error;
+    // Engine connection machine (`online|reconnecting|expired|logged_out`)
+    // plus the pre-formatted relative strings for the settings status row.
+    in-out property <string> cloud-connection;
+    in-out property <string> cloud-last-error;
+    in-out property <string> cloud-last-success;
+    in-out property <string> cloud-next-retry;
+    in-out property <string> cloud-server-draft;
+    in-out property <string> cloud-user-draft;
+    in-out property <string> cloud-pass-draft;
+    callback cloud-login();
+    callback cloud-logout();
+    callback cloud-refresh-account();
+    callback cloud-toggle-sync(bool);
+    in-out property <string> selected-model-key;
+    in-out property <string> selected-model-provider;
+    in-out property <string> selected-model-name;
+    in-out property <string> selected-model-base-url;
+    in-out property <string> selected-model-type;
+    in-out property <bool> selected-model-is-default: false;
+    in-out property <ModelCard> selected-model-card;
+    // The models settings tab edits the selected model in place; `creating`
+    // marks the unsaved new-model draft where the config key stays editable.
+    in-out property <bool> model-creating: false;
+    in-out property <string> model-key-draft;
+    in-out property <string> model-provider-draft;
+    in-out property <string> model-name-draft;
+    in-out property <string> model-base-url-draft;
+    in-out property <string> model-token-draft;
+    in-out property <string> model-type-draft: "llm";
+    in-out property <string> model-temperature-draft;
+    in-out property <string> model-timeout-draft;
+    in-out property <string> model-max-output-draft;
+    in-out property <string> model-thinking-budget-draft;
+    in-out property <string> model-max-rounds-draft;
+    in-out property <string> model-max-context-draft;
+    in-out property <string> model-tts-voice-draft;
+    in-out property <string> model-tts-format-draft;
+    in-out property <string> model-tts-speed-draft;
+    in-out property <string> model-tts-instructions-draft;
+    in-out property <string> model-asr-language-draft;
+    in-out property <string> model-asr-format-draft;
+    in-out property <string> model-asr-temperature-draft;
+    in-out property <string> model-asr-prompt-draft;
+    in-out property <string> model-image-size-draft;
+    in-out property <string> model-image-format-draft;
+    in-out property <string> model-image-steps-draft;
+    in-out property <string> model-image-guidance-draft;
+    in-out property <string> model-image-negative-draft;
+    in-out property <string> model-video-size-draft;
+    in-out property <string> model-video-seconds-draft;
+    in-out property <string> model-video-fps-draft;
+    in-out property <string> model-video-negative-draft;
+    in property <[string]> model-provider-presets: ["自定义（手动填写服务地址）", "openai_compatible", "openai", "anthropic", "openrouter", "siliconflow", "deepseek", "moonshot", "qwen", "groq", "mistral", "together", "vllm_omni", "whisper_cpp", "ollama", "lmstudio"];
+    in property <[string]> model-type-presets: ["llm", "embedding", "asr", "tts", "image", "video"];
+    in-out property <bool> stopping: false;
+    in-out property <bool> recording: false;
+    in-out property <bool> transcribing: false;
+    in-out property <string> recording-elapsed: "";
+    in-out property <bool> recording-pulse: false;
+    in-out property <bool> follow-output: true;
+    in-out property <int> stream-updates;
+    in-out property <int> stream-bytes;
+    in-out property <float> stream-max-ui-ms;
+    in-out property <int> stream-max-backlog;
+    in-out property <float> context-usage: 0.0;
+    in-out property <bool> context-known: false;
+    in-out property <float> context-used: -1;
+    in-out property <float> context-capacity: -1;
+    in-out property <string> context-counts;
+    in-out property <string> reasoning-effort: "default";
+    callback stop-generation();
+    callback save-session-reasoning-effort(string);
+    callback copy-raw(string);
+    copy-buffer := TextInput { width: 0px; height: 0px; }
+    copy-raw(raw) => { copy-buffer.text = raw; copy-buffer.select-all(); copy-buffer.copy(); copy-buffer.text = ""; }
+    callback send-message();
+    callback capture-screenshot(bool, bool);
+    callback record-voice();
+    callback remove-attachment(int);
+    callback select-conversation(int);
+    callback new-thread();
+    callback refresh-chat();
+    callback refresh-agents();
+    callback select-agent(int);
+    callback refresh-agent-dirty();
+    callback agent-return-chat();
+    callback agent-leave-confirmed();
+    callback agent-leave-canceled();
+    callback save-agent(string, string, string, string, string, [string], [string], int, string, bool, bool, bool);
+    callback toggle-agent-tool(string);
+    callback add-agent-question();
+    callback remove-agent-question(int);
+    callback refresh-cron();
+    callback toggle-cron(string, bool);
+    callback delete-cron(string);
+    callback probe-model-context();
+    callback probe-model-voices();
+    callback save-preferences();
+    callback refresh-prompt-packs();
+    callback select-prompt-pack(string);
+    callback save-prompt-segment();
+    callback create-prompt-pack();
+    callback delete-prompt-pack();
+    callback set-active-prompt-pack();
+    callback refresh-prompt-preview();
+    callback open-prompt-preview();
+    in-out property <bool> prompt-preview-open: false;
+    callback confirm-delete-prompt-pack();
+    callback export-diagnostics();
+    callback reset-work-state();
+    callback run-cron-now(string);
+    callback open-cron-runs(string);
+    callback close-cron-runs();
+    callback open-cron-creator();
+    callback edit-cron-job(string);
+    callback save-cron-editor();
+    callback cancel-cron-editor();
+    in-out property <string> selected-agent-icon-config;
+    in-out property <[string]> selected-agent-tool-names: [];
+    in-out property <[string]> selected-agent-preset-questions: [];
+    in-out property <string> selected-agent-approval-mode: "suggest";
+    in-out property <bool> selected-agent-preview-skill: false;
+    in-out property <bool> selected-agent-silent: false;
+    in-out property <bool> selected-agent-prefer-mother: false;
+    in-out property <string> agent-question-draft;
+    // §9.3 agent form projections. The model and tool lists are built natively:
+    // only configured conversational models are selectable, and the tool list
+    // carries the filtered, switch-state projection the form renders.
+    in-out property <[string]> agent-model-options: [];
+    in-out property <[AgentToolOption]> agent-tool-options: [];
+    in-out property <string> agent-tool-query;
+    callback agent-model-picked(string);
+    callback toggle-agent-tool-option(string);
+    callback refresh-agent-tool-options();
+    callback save-agent-form();
+    // Unsaved-change tracking for the agent editor: the clean baseline is
+    // captured in Rust, every bound field change recomputes the dirty flag.
+    in-out property <bool> agent-dirty: false;
+    in-out property <string> agent-form-snapshot;
+    in-out property <bool> agent-leave-confirm-open: false;
+    // The avatar glyph stays empty until the profile loads: the shell fills it
+    // with the signed-in name's first character, and an empty mark falls back to
+    // the shared "me" label. The profile-colour default matches the backend.
+    in-out property <ProfileCard> profile: { user-id: "", username: "", email: "", unit: "", unit-id: "", sessions: "0", sessions-last-7d: "0", tool-calls: "0", tokens: "0", agents: "0", last-active: "", avatar-icon: "initial", avatar-glyph: "", avatar-color: "#3b82f6", avatar-brush: #3b82f6 };
+    in-out property <bool> profile-loading: false;
+    callback refresh-profile();
+    callback save-profile-avatar(string, string);
+    callback save-profile(string, string, string);
+    in-out property <bool> profile-edit-open: false;
+    in-out property <string> profile-username-draft;
+    in-out property <string> profile-email-draft;
+    in-out property <string> profile-unit-draft;
+    callback refresh-tools();
+    callback open-file-native(string);
+    callback save-runtime(string, string, string, string, string);
+    callback save-lan(bool, string);
+    callback refresh-settings();
+    callback select-model(int);
+    callback move-model(int, int);
+    callback save-model();
+    callback set-default-model(string);
+    callback delete-model(string);
+    // The native projection bumps scroll-revision; TimelineView owns the
+    // follow-output scroll itself, so no handler is needed here.
+
+    // The workspace the active thread belongs to; drives the top bar. The
+    // native layer always seeds one workspace, so indexing stays in range.
+    out property <bool> has-active-workspace: root.selected-workspace >= 0
+        && root.selected-workspace < root.workspaces.length;
+    out property <string> active-workspace-name: root.has-active-workspace ? root.workspaces[root.selected-workspace].name : "";
+    out property <string> active-workspace-icon: root.has-active-workspace ? root.workspaces[root.selected-workspace].icon : "";
+    out property <string> active-workspace-color: root.has-active-workspace ? root.workspaces[root.selected-workspace].color : "";
+    // One timeline fold toggle: the Rust projection patches only the rows the
+    // fold owns (itself, its tool batch, or its whole earlier turn).
+    callback timeline-toggle(int);
+    callback timeline-open(string);
+    // Save one answer block as a text file through the native layer.
+    callback timeline-download(string);
+    // Bounded introspection for the native smoke checks and the companion
+    // bubble: the row count and the answer text of the active thread.
+    callback timeline-counts() -> TimelineCounts;
+    callback timeline-last-answer() -> string;
+
+    // §8.3 model switcher inside the composer. `models` is the *filtered* view
+    // the popover renders; the unfiltered catalogue stays natively and its size
+    // is mirrored here so the popover can tell "no match" from "none added".
+    in-out property <int> model-catalogue-count: 0;
+    // Search text of the model popover; the filter runs natively because Slint
+    // 1.18 strings have no substring test.
+    callback search-models(string);
+    // §8.5 branch of the workspace folder, when the backend can detect one.
+    in-out property <string> active-workspace-branch: "";
+    // Root folder of the active workspace, used by the composer's "open
+    // workspace folder" action.
+    out property <string> active-workspace-root: root.has-active-workspace ? root.workspaces[root.selected-workspace].root-path : "";
+    // Logical-pixel centre of the sidebar's settings button and of the settings
+    // window's close button. The native smoke check drives real pointer events,
+    // and a real click needs the layout's own numbers rather than a repeated
+    // guess about where the overlay lands.
+    out property <length> settings-button-x: root.sidebar-width / 2;
+    out property <length> settings-button-y: sidebar_view.height - 20px;
+    out property <length> settings-back-x: (root.width - min(1080px, root.width - 72px)) / 2
+        + min(1080px, root.width - 72px) - 22px;
+    out property <length> settings-back-y: 22px;
+    // §8.4 permission mode preference; the backend remains the authority.
+    in-out property <string> permission-mode: "full_auto";
+    callback save-permission-mode(string);
+    // §9.1 settings search. Slint 1.18 strings have no substring test, so the
+    // query is filtered natively and the matching categories come back as one
+    // flag per category, in §9.2 order.
+    in-out property <string> settings-query: "";
+    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true];
+    callback filter-settings-categories(string);
+    // Actions the embedded category pages raise that had no shell entry point
+    // while those pages were unmounted.
+    callback open-thread-log();
+    callback request-channel-delete();
+    callback confirm-channel-delete();
+    callback cancel-channel-delete();
+    callback probe-channel-logs();
+    callback clear-channel-logs();
+    callback select-expert-date(string);
+    // §8.2 more-menu and attachment actions. "Open workspace folder" reuses the
+    // sidebar's handler; file attachment is picked on a worker thread because
+    // the native dialog blocks.
+    callback open-active-workspace();
+    callback pick-attachments();
+
+    function open-info(title: string, text: string) {
+        root.dialog-title = title; root.dialog-text = text; root.dialog-open = true;
+    }
+    function clear-model-param-drafts() {
+        root.model-temperature-draft = ""; root.model-timeout-draft = ""; root.model-max-output-draft = "";
+        root.model-thinking-budget-draft = ""; root.model-max-rounds-draft = ""; root.model-max-context-draft = "";
+        root.model-tts-voice-draft = ""; root.model-tts-format-draft = ""; root.model-tts-speed-draft = ""; root.model-tts-instructions-draft = "";
+        root.model-asr-language-draft = ""; root.model-asr-format-draft = ""; root.model-asr-temperature-draft = ""; root.model-asr-prompt-draft = "";
+        root.model-image-size-draft = ""; root.model-image-format-draft = ""; root.model-image-steps-draft = ""; root.model-image-guidance-draft = ""; root.model-image-negative-draft = "";
+        root.model-video-size-draft = ""; root.model-video-seconds-draft = ""; root.model-video-fps-draft = ""; root.model-video-negative-draft = "";
+    }
+    function open-new-model() {
+        root.model-creating = true;
+        root.model-key-draft = ""; root.model-provider-draft = "openai_compatible"; root.model-name-draft = "";
+        root.model-base-url-draft = ""; root.model-token-draft = ""; root.model-type-draft = "llm";
+        root.clear-model-param-drafts();
+    }
+
+    Rectangle {
+        width: parent.width; height: parent.height;
+        HorizontalLayout {
+            spacing: 0px;
+            sidebar_view := Sidebar {
+                width: root.sidebar-width;
+                rows: root.sidebar-rows;
+                active-thread-id: root.active-session-id;
+                // Signed-in identity travels from the profile projection so the
+                // sidebar never owns a second copy of the avatar state.
+                user-initial: root.profile.avatar-glyph;
+                user-color: root.profile.avatar-brush;
+                // Cloud quota badge (§6.1): blank hides the pill, warn marks
+                // a balance at or below 10% of the daily grant.
+                cloud-quota-text: root.cloud-logged-in ? root.cloud-balance : "";
+                cloud-quota-warn: root.cloud-quota-warn;
+                cloud-quota-expired: root.cloud-connection == "expired";
+                cloud-quota-reconnecting: root.cloud-connection == "reconnecting";
+                busy: root.creating-session || root.session-loading || root.chat-loading;
+                new-task => { root.new-thread(); }
+                select-row(index) => { root.select-row(index); }
+                workspace-menu(workspace, action) => { root.workspace-menu(workspace, action); }
+                new-workspace => { root.new-workspace(); }
+                move-row(index, delta) => { root.move-row(index, delta); }
+                archive-thread(index) => { root.archive-thread(index); }
+                rename-thread(index, title) => { root.rename-thread(index, title); }
+                open-settings => { root.more-open = false; root.settings-open = true; root.settings-active-panel = 0; root.refresh-settings(); }
+            }
+            // Sidebar width drag handle: press and drag to resize, clamped so
+            // the tree never collapses or eats the chat area.
+            Rectangle {
+                width: 6px;
+                background: resize-touch.pressed ? Theme.accent
+                    : resize-touch.has-hover ? Theme.border-strong : transparent;
+                resize-touch := TouchArea {
+                    mouse-cursor: ew-resize;
+                    property <length> start-x;
+                    property <length> start-width;
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.down {
+                            root.sidebar-width = clamp(root.sidebar-width, 170px, 420px);
+                            start-width = root.sidebar-width;
+                            start-x = self.mouse-x;
+                        }
+                    }
+                    moved => {
+                        if self.pressed {
+                            root.sidebar-width = clamp(start-width + (self.mouse-x - start-x), 170px, 420px);
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+                background: Theme.chat;
+                VerticalLayout {
+                    spacing: 0px;
+                    // Chat top bar: workspace identity plus the thread title.
+                    HorizontalLayout {
+                        height: Theme.header-height; padding-left: 16px; padding-right: 16px; spacing: 8px;
+                        Rectangle {
+                            visible: root.has-active-workspace;
+                            y: (parent.height - 22px) / 2;
+                            width: 22px; height: 22px; border-radius: 6px;
+                            background: WorkspaceVisual.color(root.active-workspace-color);
+                            Image { x: 2px; y: 2px; width: 18px; height: 18px; source: WorkspaceVisual.icon(root.active-workspace-icon); colorize: white; }
+                        }
+                        Text {
+                            visible: root.has-active-workspace;
+                            text: root.active-workspace-name;
+                            color: Theme.muted; font-size: Theme.font-lg;
+                            vertical-alignment: center; overflow: elide;
+                        }
+                        Text {
+                            visible: root.has-active-workspace && root.heading != "";
+                            text: "·"; color: Theme.border-strong; font-size: Theme.font-lg; vertical-alignment: center;
+                        }
+                        Text {
+                            height: parent.height; text: root.heading;
+                            color: Theme.text; font-size: 15px; font-weight: 600;
+                            overflow: elide; vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                    }
+                    Rectangle { height: 1px; background: Theme.border; }
+                    // The transcript holder is a small wrapper so the timeline
+                    // stays reachable from outside: a `public function` cannot
+                    // name an element that an `if` may remove, so the two views
+                    // toggle on `visible` instead of being conditionally built.
+                    follow_view := Rectangle {
+                        vertical-stretch: 1;
+                        out property <length> scroll-y: timeline_view.scroll-y;
+                        public function scroll-to-end() { timeline_view.scroll-to-end(); }
+                        timeline_view := TimelineView {
+                            visible: !root.terminal-mode;
+                            rows: root.timeline;
+                            turn-marks: root.turn-marks;
+                            follow-output <=> root.follow-output;
+                            toggle(index) => { root.timeline-toggle(index); }
+                            copy-text(text) => { root.copy-raw(text); }
+                            download-text(text) => { root.timeline-download(text); }
+                            open-resource(id) => { root.timeline-open(id); }
+                        }
+                        TerminalView {
+                            visible: root.terminal-mode;
+                            x: 0px; y: 0px; width: 100%; height: 100%;
+                            spans: root.terminal-spans;
+                            status: root.terminal-status;
+                            error: root.terminal-error;
+                            rows: root.terminal-rows;
+                            cols: root.terminal-cols;
+                            view-offset: root.terminal-view-offset;
+                            history-depth: root.terminal-history-depth;
+                            caret-visible: root.terminal-caret-visible;
+                            caret-row: root.terminal-caret-row;
+                            caret-col: root.terminal-caret-col;
+                            clear => { root.terminal-clear(); }
+                            interrupt => { root.terminal-interrupt(); }
+                            scrolled(delta) => { root.terminal-scrolled(delta); }
+                            scroll-to(row) => { root.terminal-scroll-to(row); }
+                            measured-cols <=> root.terminal-measured-cols;
+                            measured-rows <=> root.terminal-measured-rows;
+                        }
+                    }
+                    // Status dock: the activity capsule sits between the
+                    // timeline and the goal banner; its plan card overlaps the
+                    // timeline via negative y. Queue position is folded into
+                    // the activity text by the native projection, so the old
+                    // cloud-queue banner is gone.
+                    if root.activity-active : StatusDock {
+                        active: root.activity-active;
+                        status-text: root.activity-text;
+                        steps-done: root.activity-steps-done;
+                        steps-total: root.activity-steps-total;
+                        files-changed: root.activity-files-changed;
+                        added-lines: root.activity-added-lines;
+                        deleted-lines: root.activity-deleted-lines;
+                        plan-explanation: root.activity-plan-explanation;
+                        plan-steps: root.activity-plan-steps;
+                        plan-dismiss => { root.activity-plan-dismiss(); }
+                    }
+                    if root.goal-objective != "" : GoalBanner {
+                        objective: root.goal-objective;
+                        elapsed: root.goal-elapsed;
+                        paused: root.goal-paused;
+                        editing <=> root.goal-editing;
+                        edit-draft <=> root.goal-edit-draft;
+                        save(text) => { root.goal-save(text); }
+                        pause-toggle => { root.goal-pause-toggle(); }
+                        clear => { root.goal-clear(); }
+                    }
+                    Composer {
+                        draft <=> root.draft; busy: root.command-pending || root.busy || root.session-loading || root.creating-session || root.chat-loading;
+                        terminal-mode: root.terminal-mode;
+                        command => { root.terminal-mode = !root.terminal-mode; root.terminal-toggled(root.terminal-mode); }
+                        send-key: root.runtime-send-key;
+                        interrupt => { root.terminal-interrupt(); }
+                        context-usage: root.context-usage; context-known: root.context-known; context-counts: root.context-counts; reasoning-effort <=> root.reasoning-effort;
+                        models: root.models;
+                        model-catalogue-count: root.model-catalogue-count;
+                        cloud-ready: root.cloud-logged-in && !root.cloud-expired;
+                        model-name: root.selected-model-name != "" ? root.selected-model-name : root.selected-agent-model;
+                        model-key: root.selected-model-key;
+                        model-saving: root.saving;
+                        select-model(index, key) => { root.set-default-model(key); }
+                        set-default-model(key) => { root.set-default-model(key); }
+                        open-model-settings => { root.settings-open = true; root.settings-active-panel = 1; root.refresh-settings(); }
+                        search-models(query) => { root.search-models(query); }
+                        workspace-name: root.active-workspace-name;
+                        branch-name: root.active-workspace-branch;
+                        permission-mode <=> root.permission-mode;
+                        permission-changed(value) => { root.save-permission-mode(value); }
+                        attachments: root.pending-attachments;
+                        generating: root.busy || root.goal-active; stopping: root.stopping; stop => { root.stop-generation(); }
+                        recording: root.recording; transcribing: root.transcribing; recording-elapsed: root.recording-elapsed; recording-pulse: root.recording-pulse;
+                        send => { root.send-message(); }
+                        screenshot(hide-window, region) => { root.capture-screenshot(hide-window, region); }
+                        record-voice => { root.record-voice(); }
+                        reasoning-effort-changed(value) => { root.save-session-reasoning-effort(value); }
+                        remove-attachment(index) => { root.remove-attachment(index); }
+                    }
+                }
+            }
+        }
+    }
+
+    // Settings live in an internal overlay window instead of replacing the
+    // chat area: the shield closes it on click-away, the card swallows stray
+    // clicks and the header row carries the window title plus close action.
+    if root.settings-open : Rectangle {
+        z: 220;
+        background: Theme.overlay;
+        TouchArea { clicked => { root.settings-open = false; } }
+        Rectangle {
+            width: min(1080px, root.width - 72px);
+            height: min(720px, root.height - 56px);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-xl;
+            background: Theme.panel;
+            border-width: 1px;
+            border-color: Theme.border;
+            clip: true;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000033;
+            TouchArea { }
+            VerticalLayout {
+                spacing: 0px;
+                HorizontalLayout {
+                    height: 44px;
+                    padding-left: 16px; padding-right: 8px; spacing: 8px;
+                    Image { y: (parent.height - 18px) / 2; width: 18px; height: 18px; source: @image-url("../assets/icons/gear.svg"); colorize: Theme.muted; }
+                    Text {
+                        height: parent.height;
+                        text: I18n.sidebar_settings;
+                        color: Theme.text; font-size: Theme.font-lg; font-weight: 600;
+                        vertical-alignment: center; horizontal-stretch: 1;
+                    }
+                    Action {
+                        width: 28px; height: 28px;
+                        icon: @image-url("../assets/icons/xmark.svg");
+                        clicked => { root.settings-open = false; }
+                    }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                SettingsPage {
+        loading: root.settings-loading; saving: root.saving;
+        status: root.status;
+        models: root.models; selected-model: root.selected-model;
+        workspace-root <=> root.workspace-root; language <=> root.runtime-language;
+        // The profile card and its edit dialog stay on the shell (the rail's
+        // profile route owns them); the settings page no longer shows a
+        // separate identity panel, so nothing is bound through it.
+        python-path <=> root.runtime-python; git-path <=> root.runtime-git; rg-path <=> root.runtime-rg;
+        python-status: root.runtime-python-status; git-status: root.runtime-git-status; rg-status: root.runtime-rg-status;
+        importing-supplement <=> root.importing-supplement; supplement-status <=> root.supplement-status;
+        import-supplement => { root.import-supplement(); }
+        pick-python-path => { root.pick-python-path(); }
+        pick-git-path => { root.pick-git-path(); }
+        pick-rg-path => { root.pick-rg-path(); }
+        lan-enabled <=> root.lan-enabled; lan-name <=> root.lan-name; lan-peer-id: root.lan-peer-id; lan-endpoint: root.lan-endpoint; lan-peer-count: root.lan-peer-count; lan-peers: root.lan-peers;
+        save-runtime(workspace, language, python, git, rg) => { root.save-runtime(workspace, language, python, git, rg); }
+        save-lan(enabled, name) => { root.save-lan(enabled, name); }
+        selected-key: root.selected-model-key; selected-provider: root.selected-model-provider;
+        selected-model-name: root.selected-model-name; selected-base-url: root.selected-model-base-url;
+        selected-type: root.selected-model-type; selected-is-default: root.selected-model-is-default;
+        selected-card: root.selected-model-card;
+        delete-model(key) => { root.delete-model(key); }
+        select-model(index) => { root.select-model(index); }
+        create-model => { root.open-new-model(); }
+        move-model(from, delta) => { root.move-model(from, delta); }
+        save-model => { root.save-model(); }
+        set-default-model(key) => { root.set-default-model(key); }
+        refresh => { root.refresh-settings(); }
+        // ---- cloud account (§6.1) ----
+        cloud-logged-in <=> root.cloud-logged-in;
+        cloud-expired <=> root.cloud-expired;
+        cloud-username <=> root.cloud-username;
+        cloud-balance <=> root.cloud-balance;
+        cloud-concurrency <=> root.cloud-concurrency;
+        cloud-quota-warn <=> root.cloud-quota-warn;
+        cloud-sync-enabled <=> root.cloud-sync-enabled;
+        cloud-busy <=> root.cloud-busy;
+        cloud-error <=> root.cloud-error;
+        cloud-connection <=> root.cloud-connection;
+        cloud-last-error <=> root.cloud-last-error;
+        cloud-last-success <=> root.cloud-last-success;
+        cloud-next-retry <=> root.cloud-next-retry;
+        cloud-server-draft <=> root.cloud-server-draft;
+        cloud-user-draft <=> root.cloud-user-draft;
+        cloud-pass-draft <=> root.cloud-pass-draft;
+        cloud-login => { root.cloud-login(); }
+        cloud-logout => { root.cloud-logout(); }
+        cloud-refresh-account => { root.cloud-refresh-account(); }
+        cloud-toggle-sync(enabled) => { root.cloud-toggle-sync(enabled); }
+        model-creating <=> root.model-creating;
+        model-key-draft <=> root.model-key-draft;
+        model-provider-draft <=> root.model-provider-draft;
+        model-provider-presets: root.model-provider-presets;
+        model-type-presets: root.model-type-presets;
+        model-name-draft <=> root.model-name-draft;
+        model-base-url-draft <=> root.model-base-url-draft;
+        model-token-draft <=> root.model-token-draft;
+        model-type-draft <=> root.model-type-draft;
+        model-temperature-draft <=> root.model-temperature-draft;
+        model-timeout-draft <=> root.model-timeout-draft;
+        model-max-output-draft <=> root.model-max-output-draft;
+        model-thinking-budget-draft <=> root.model-thinking-budget-draft;
+        model-max-rounds-draft <=> root.model-max-rounds-draft;
+        model-max-context-draft <=> root.model-max-context-draft;
+        model-tts-voice-draft <=> root.model-tts-voice-draft;
+        model-tts-format-draft <=> root.model-tts-format-draft;
+        model-tts-speed-draft <=> root.model-tts-speed-draft;
+        model-tts-instructions-draft <=> root.model-tts-instructions-draft;
+        model-asr-language-draft <=> root.model-asr-language-draft;
+        model-asr-format-draft <=> root.model-asr-format-draft;
+        model-asr-temperature-draft <=> root.model-asr-temperature-draft;
+        model-asr-prompt-draft <=> root.model-asr-prompt-draft;
+        model-image-size-draft <=> root.model-image-size-draft;
+        model-image-format-draft <=> root.model-image-format-draft;
+        model-image-steps-draft <=> root.model-image-steps-draft;
+        model-image-guidance-draft <=> root.model-image-guidance-draft;
+        model-image-negative-draft <=> root.model-image-negative-draft;
+        model-video-size-draft <=> root.model-video-size-draft;
+        model-video-seconds-draft <=> root.model-video-seconds-draft;
+        model-video-fps-draft <=> root.model-video-fps-draft;
+        model-video-negative-draft <=> root.model-video-negative-draft;
+        probe-model-context => { root.probe-model-context(); }
+        probe-model-voices => { root.probe-model-voices(); }
+        theme <=> root.runtime-theme;
+        send-key <=> root.runtime-send-key;
+        font-size <=> root.runtime-font-size;
+        app-version: root.app-version;
+        save-preferences => { root.save-preferences(); }
+        prompt-packs: root.prompt-packs;
+        prompt-pack-names: root.prompt-pack-names;
+        prompt-active: root.prompt-active;
+        selected-pack <=> root.prompt-selected-pack;
+        selected-segment <=> root.prompt-selected-segment;
+        prompt-draft <=> root.prompt-draft;
+        prompt-readonly: root.prompt-readonly;
+        prompt-loading: root.prompt-loading;
+        reset-confirm-open <=> root.reset-confirm-open;
+        settings-tab <=> root.settings-active-panel;
+        pack-name-draft <=> root.pack-name-draft;
+        prompt-preview: root.prompt-preview;
+        prompt-preview-loading: root.prompt-preview-loading;
+        refresh-prompt-packs => { root.refresh-prompt-packs(); }
+        select-prompt-pack(id) => { root.select-prompt-pack(id); }
+        save-prompt-segment => { root.save-prompt-segment(); }
+        create-prompt-pack => { root.create-prompt-pack(); }
+        delete-prompt-pack => { root.delete-prompt-pack(); }
+        set-active-prompt-pack => { root.set-active-prompt-pack(); }
+        refresh-prompt-preview => { root.refresh-prompt-preview(); }
+        export-diagnostics => { root.export-diagnostics(); }
+        reset-work-state => { root.reset-work-state(); }
+        // ---- embedded category state (§9.2) ----
+        tool-manager-status: root.status;
+        tools-loading: root.tools-loading; tools-working: root.tools-working;
+        tools-tab <=> root.tools-tab; tools-selected <=> root.tools-selected;
+        tools-builtin: root.tools-builtin; tools-mcp: root.tools-mcp;
+        tools-skills: root.tools-skills; tools-knowledge: root.tools-knowledge;
+        tools-servers: root.tools-servers; tools-skill-resources: root.tools-skill-resources;
+        tools-bases: root.tools-bases; tools-server-tools: root.tools-server-tools;
+        tools-files: root.tools-files; tools-search <=> root.tools-search;
+        tools-file-path <=> root.tools-file-path; tools-content <=> root.tools-content;
+        tools-directory: root.tools-directory; tools-has-more: root.tools-has-more;
+        refresh-tools => { root.refresh-tools(); }
+        select-tool-resource(kind, index) => { root.select-tool-resource(kind, index); }
+        open-tool-file(path, preview) => { root.open-tool-file(path, preview); }
+        more-tool-files => { root.more-tool-files(); }
+        search-tool-files(query) => { root.search-tool-files(query); }
+        tool-manager-action(kind, id, value) => { root.tool-manager-action(kind, id, value); }
+
+        cron-loading: root.cron-loading; cron-jobs: root.cron-jobs;
+        cron-agent-names <=> root.cron-agent-names;
+        cron-editor-open <=> root.cron-editor-open; cron-editor-saving <=> root.cron-editor-saving;
+        cron-edit-kind <=> root.cron-editor-kind; cron-edit-name <=> root.cron-edit-name;
+        cron-edit-at <=> root.cron-edit-at; cron-edit-every <=> root.cron-edit-every;
+        cron-edit-cron <=> root.cron-edit-cron; cron-edit-tz <=> root.cron-edit-tz;
+        cron-edit-message <=> root.cron-edit-message; cron-edit-agent <=> root.cron-edit-agent;
+        cron-edit-delete-after <=> root.cron-edit-delete-after; cron-edit-enabled <=> root.cron-edit-enabled;
+        cron-runs-open <=> root.cron-runs-open; cron-runs-loading: root.cron-runs-loading;
+        cron-runs-title: root.cron-runs-title; cron-runs: root.cron-runs;
+        refresh-cron => { root.refresh-cron(); }
+        toggle-cron(id, enabled) => { root.toggle-cron(id, enabled); }
+        delete-cron(id) => { root.delete-cron(id); }
+        run-cron-now(id) => { root.run-cron-now(id); }
+        open-cron-runs(id) => { root.open-cron-runs(id); }
+        close-cron-runs => { root.close-cron-runs(); }
+        open-cron-creator => { root.open-cron-creator(); }
+        edit-cron-job(id) => { root.edit-cron-job(id); }
+        save-cron-editor => { root.save-cron-editor(); }
+        cancel-cron-editor => { root.cancel-cron-editor(); }
+
+        channel-loading: root.channel-loading; channel-catalog: root.channel-catalog;
+        channel-accounts: root.channel-accounts; selected-channel-account: root.selected-channel-account;
+        channel-bindings: root.channel-bindings; channel-bindings-loading: root.channel-bindings-loading;
+        channel-logs-loading: root.channel-logs-loading; channel-logs: root.channel-logs;
+        channel-editor-open: root.channel-editor-open; channel-editor-saving: root.channel-editor-saving;
+        channel-edit-id: root.channel-edit-id; channel-edit-kind <=> root.channel-edit-kind;
+        channel-edit-agent <=> root.channel-edit-agent;
+        channel-agent-names: root.channel-agent-names; channel-catalog-names: root.channel-catalog-names;
+        channel-delete-open: root.channel-delete-open; channel-qr-open: root.channel-qr-open;
+        channel-qr-state: root.channel-qr-state; channel-qr-image: root.channel-qr-image;
+        channel-qr-message: root.channel-qr-message;
+        channel-edit-name <=> root.channel-edit-name; channel-edit-enabled <=> root.channel-edit-enabled;
+        channel-edit-group-chat <=> root.channel-edit-group-chat;
+        channel-edit-app-id <=> root.channel-edit-app-id;
+        channel-edit-app-secret <=> root.channel-edit-app-secret;
+        channel-edit-corp-id <=> root.channel-edit-corp-id;
+        channel-edit-wechat-agent <=> root.channel-edit-wechat-agent;
+        channel-edit-secret <=> root.channel-edit-secret; channel-edit-token <=> root.channel-edit-token;
+        channel-edit-aes-key <=> root.channel-edit-aes-key;
+        channel-edit-original-id <=> root.channel-edit-original-id;
+        channel-edit-api-base <=> root.channel-edit-api-base;
+        channel-edit-bot-token <=> root.channel-edit-bot-token;
+        channel-edit-bot-id <=> root.channel-edit-bot-id;
+        channel-edit-user-id <=> root.channel-edit-user-id;
+        channel-edit-domain <=> root.channel-edit-domain;
+        channel-edit-config-json <=> root.channel-edit-config-json;
+        refresh-channels => { root.refresh-channels(); }
+        select-channel-account(index) => { root.select-channel-account(index); }
+        open-channel-creator => { root.open-channel-creator(); }
+        edit-channel-account => { root.edit-channel-account(); }
+        save-channel-editor => { root.save-channel-editor(); }
+        cancel-channel-editor => { root.cancel-channel-editor(); }
+        request-delete-channel => { root.request-delete-channel(); }
+        confirm-delete-channel => { root.confirm-delete-channel(); }
+        cancel-delete-channel => { root.cancel-delete-channel(); }
+        toggle-channel-account(enabled) => { root.toggle-channel-account(enabled); }
+        open-channel-logs => { root.open-channel-logs(); }
+        probe-channel-logs => { root.probe-channel-logs(); }
+        clear-channel-logs => { root.clear-channel-logs(); }
+        delete-channel-binding(account, target) => { root.delete-channel-binding(account, target); }
+        start-channel-qr => { root.start-channel-qr(); }
+        cancel-channel-qr => { root.cancel-channel-qr(); }
+        reconnect-channel => { root.reconnect-channel(); }
+
+        expert-loading: root.expert-loading; expert-saving: root.expert-saving;
+        expert-error: root.expert-error; expert-memories: root.expert-memories;
+        expert-archives: root.expert-archives; expert-points: root.expert-points;
+        expert-heat: root.expert-heat; expert-duration: root.expert-duration;
+        expert-tokens: root.expert-tokens; expert-calls: root.expert-calls;
+        expert-chart-path: root.expert-chart-path; expert-chart-max: root.expert-chart-max;
+        expert-date: root.expert-date; expert-archive-page: root.expert-archive-page;
+        expert-archive-total: root.expert-archive-total;
+        expert-query <=> root.expert-query; expert-category <=> root.expert-category;
+        expert-categories: root.expert-categories;
+        memory-editor-open <=> root.memory-editor-open; memory-edit-id <=> root.memory-edit-id;
+        memory-edit-title <=> root.memory-edit-title; memory-edit-content <=> root.memory-edit-content;
+        memory-edit-category <=> root.memory-edit-category;
+        expert-agent-names: root.expert-agent-names;
+        refresh-expert => { root.refresh-expert(); }
+        replicate-expert-memory(index) => { root.replicate-expert-memory(index); }
+        open-expert-memory(index) => { root.open-expert-memory(index); }
+        save-expert-memory => { root.save-expert-memory(); }
+        delete-expert-memory(id) => { root.delete-expert-memory(id); }
+        open-expert-archive(id) => { root.open-expert-archive(id); }
+        select-expert-date(date) => { root.select-expert-date(date); }
+        open-thread-log => { root.open-thread-log(); }
+        export-thread-log => { root.export-thread-log(); }
+
+        settings-query <=> root.settings-query;
+        settings-category-flags: root.settings-category-flags;
+        settings-search(query) => { root.filter-settings-categories(query); }
+        leave-settings => { root.more-open = false; root.settings-open = false; }
+        // §9.3 agent form. Every editable field is two-way bound so the settings
+        // panel writes the drafts the native save handler reads back, and the
+        // panel's own `changed` hooks keep the dirty flag honest.
+        selected-agent-name <=> root.selected-agent-name;
+        selected-agent-description <=> root.selected-agent-description;
+        selected-agent-model <=> root.selected-agent-model;
+        selected-agent-system-prompt: root.selected-agent-system-prompt;
+        selected-agent-preview-skill <=> root.selected-agent-preview-skill;
+        selected-agent-silent <=> root.selected-agent-silent;
+        selected-agent-prefer-mother <=> root.selected-agent-prefer-mother;
+        agent-model-options: root.agent-model-options;
+        agent-tool-options: root.agent-tool-options;
+        agent-tool-query <=> root.agent-tool-query;
+        agent-question-draft <=> root.agent-question-draft;
+        agent-model-picked(key) => { root.agent-model-picked(key); }
+        toggle-agent-tool-option(name) => { root.toggle-agent-tool-option(name); }
+        add-agent-question => { root.add-agent-question(); }
+        remove-agent-question(index) => { root.remove-agent-question(index); }
+        save-agent-form => { root.save-agent-form(); }
+        refresh-agent-dirty => { root.refresh-agent-dirty(); }
+        changed agent-tool-query => { root.refresh-agent-tool-options(); }
+        permission-mode <=> root.permission-mode;
+        open-info(title, text) => { root.open-info(title, text); }
+        }
+            }
+        }
+    }
+
+    if root.dialog-open : InfoDialog {
+        title: root.dialog-title;
+        message: root.dialog-text;
+        close-label: I18n.info_ack;
+        closed => { root.dialog-open = false; }
+    }
+    if root.thread-log-open : ThreadLogDialog {
+        title: root.thread-log-title; metrics: root.thread-log-metrics; events: root.thread-log-events;
+        rounds: root.thread-log-round-options; types: root.thread-log-types;
+        selected-round <=> root.thread-log-round; selected-type <=> root.thread-log-type;
+        query <=> root.thread-log-query; question: root.thread-log-question;
+        page-info: root.thread-log-page-info; loading: root.thread-log-loading; error: root.thread-log-error;
+        previous: root.thread-log-previous; next: root.thread-log-next; more: root.thread-log-more;
+        close => { root.thread-log-open = false; }
+        filter => { root.filter-thread-log(); }
+        select-round(index) => { root.select-log-round(index); }
+        page(delta) => { root.log-page(delta); }
+        load-more => { root.more-log-items(); }
+        export-log => { root.export-thread-log(); }
+    }
+    if root.cron-delete-open : ConfirmDialog {
+        title: I18n.cron_delete_title;
+        message: I18n.cron_delete_message;
+        confirm-label: I18n.common_confirm_delete;
+        cancel-label: I18n.common_cancel;
+        danger: true;
+        confirmed => { root.cron-delete-open = false; root.delete-cron(root.cron-delete-pending); }
+        canceled => { root.cron-delete-open = false; }
+    }
+    if root.reset-confirm-open : ConfirmDialog {
+        title: I18n.reset_title;
+        message: I18n.reset_message;
+        confirm-label: I18n.reset_confirm;
+        cancel-label: I18n.common_cancel;
+        danger: true;
+        confirmed => { root.reset-confirm-open = false; root.reset-work-state(); }
+        canceled => { root.reset-confirm-open = false; }
+    }
+    if root.agent-leave-confirm-open : ConfirmDialog {
+        title: I18n.ag_unsaved_title;
+        message: I18n.ag_unsaved_confirm;
+        confirm-label: I18n.common_discard;
+        cancel-label: I18n.common_cancel;
+        danger: true;
+        confirmed => { root.agent-leave-confirm-open = false; root.agent-leave-confirmed(); }
+        canceled => { root.agent-leave-confirm-open = false; root.agent-leave-canceled(); }
+    }
+    if root.profile-edit-open : Rectangle {
+        z: 100; background: Theme.overlay; TouchArea { clicked => { root.profile-edit-open = false; } }
+        Rectangle { width: min(460px, parent.width - 48px); height: 300px; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; border-radius: Theme.radius-xl; background: Theme.surface; border-width: 1px; border-color: Theme.border; TouchArea { }
+            VerticalLayout { padding: 20px; spacing: 10px; Text { height: 24px; text: I18n.profile_edit_title; color: Theme.text; font-size: 17px; font-weight: 600; } FormField { label: I18n.profile_username; text <=> root.profile-username-draft; } FormField { label: I18n.profile_email; text <=> root.profile-email-draft; } FormField { label: I18n.profile_unit_optional; text <=> root.profile-unit-draft; } Rectangle { vertical-stretch: 1; } HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; } Action { label: I18n.common_cancel; show-label: true; clicked => { root.profile-edit-open = false; } } Action { label: I18n.common_save; show-label: true; primary: true; enabled: root.profile-username-draft != ""; clicked => { root.save-profile(root.profile-username-draft, root.profile-email-draft, root.profile-unit-draft); root.profile-edit-open = false; } } } }
+        }
+    }
+    if root.prompt-preview-open : Rectangle {
+        background: #0f172a80; z: 100;
+        TouchArea { clicked => { root.prompt-preview-open = false; } }
+        Rectangle {
+            x: max(16px, (root.width - 560px) / 2); y: max(16px, (root.height - 420px) / 2);
+            width: min(560px, root.width - 32px); height: min(420px, root.height - 32px);
+            border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border; z: 101;
+            VerticalLayout { padding: 16px; spacing: 10px;
+                HorizontalLayout { height: 28px;
+                    Text { text: I18n.pm_preview_title; color: Theme.text; font-size: Theme.font-md; font-weight: 700; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Action { width: 28px; height: 28px; icon: @image-url("../assets/icons/xmark.svg"); label: I18n.common_close; show-label: false; clicked => { root.prompt-preview-open = false; } }
+                }
+                Text { text: I18n.pm_preview_hint; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                if root.prompt-preview-loading : Text { height: 40px; text: I18n.common_loading; color: Theme.muted; font-size: Theme.font-sm; horizontal-alignment: center; vertical-alignment: center; }
+                TextEditBase { vertical-stretch: 1; text: root.prompt-preview; read-only: true; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-xs; background: Theme.panel; border-width: 1px; border-color: Theme.border; border-radius: Theme.radius-sm; scroll-view-padding: 8px; selection-background-color: Theme.accent; selection-foreground-color: white; }
+            }
+        }
+    }
+
+    // Agent avatar dialog: window-root overlay driven by the AvatarDialogState
+    // global, so any page can open it without property plumbing.
+    AvatarDialog { z: 260; }
+
+    WorkspaceDialog { z: 270; }
+
+    ToastHost { z: 300; }
+
+    Timer { interval: 6000ms; running: root.command-feedback != ""; triggered => { root.command-feedback = ""; } }
+}
+
+

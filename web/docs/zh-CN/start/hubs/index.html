@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>说明书总览 | 使用说明书</title>
+  <meta name="description" content="按角色找到需要的文档入口。">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/start/hubs","language":"zh-CN","title":"说明书总览","summary":"按角色找到需要的文档入口。","updated_at":"2026-10-07","read_when":["用户不确定先看哪一页","用户希望按角色快速进入正确文档"],"source_docs":["docs/wunder补全文档落地方案.md"],"tab":"开始","group":"导航","group_path":["导航"],"url":"/docs/zh-CN/start/hubs/","headings":[{"id":"section-1","level":1,"text":"说明书总览"},{"id":"section-2","level":2,"text":"我是普通用户"},{"id":"section-3","level":2,"text":"我是管理员"},{"id":"section-4","level":2,"text":"我是开发者 / 集成人员"},{"id":"section-5","level":2,"text":"我在排障"},{"id":"section-6","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/start/cli","next_slug":"zh-CN/start/docs-directory","markdown":"# 说明书总览\n\n按角色挑入口。所有人在[蜂巢](/docs/zh-CN/surfaces/frontend/)里工作，区别只在打开方式和能看到的管理能力。\n\n## 我是普通用户\n\n<div class=\"docs-card-grid docs-card-grid-compact\">\n  <a class=\"docs-card\" href=\"/docs/zh-CN/start/quickstart/\">\n    <strong>快速开始<\/strong>\n    <span>跑通第一个任务。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/surfaces/frontend/\">\n    <strong>蜂巢界面<\/strong>\n    <span>聊天、文件、智能体、工具怎么用。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/start/desktop/\">\n    <strong>蜂窝安装<\/strong>\n    <span>个人用户下载安装就能用。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/help/faq/\">\n    <strong>FAQ<\/strong>\n    <span>常见问题快速答复。<\/span>\n  <\/a>\n<\/div>\n\n## 我是管理员\n\n<div class=\"docs-card-grid docs-card-grid-compact\">\n  <a class=\"docs-card\" href=\"/docs/zh-CN/start/server/\">\n    <strong>舰体部署<\/strong>\n    <span>多人共用，统一管理。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/surfaces/web-admin/\">\n    <strong>舰桥界面<\/strong>\n    <span>模型、工具、用户、渠道管理面板。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/ops/deployment/\">\n    <strong>部署与运行<\/strong>\n    <span>上线前后的关键检查项。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/ops/auth-and-security/\">\n    <strong>认证与安全<\/strong>\n    <span>令牌、鉴权、沙盒环境和审批策略。<\/span>\n  <\/a>\n<\/div>\n\n## 我是开发者 / 集成人员\n\n<div class=\"docs-card-grid docs-card-grid-compact\">\n  <a class=\"docs-card\" href=\"/docs/zh-CN/start/cli/\">\n    <strong>舵机使用<\/strong>\n    <span>终端驱动、脚本化、自动化。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/concepts/\">\n    <strong>核心概览<\/strong>\n    <span>理解系统运行模型。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/integration/\">\n    <strong>接入概览<\/strong>\n    <span>找到适合的接入方式。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/tools/\">\n    <strong>工具总览<\/strong>\n    <span>按任务选工具。<\/span>\n  <\/a>\n<\/div>\n\n## 我在排障\n\n- [帮助中心](/docs/zh-CN/help/)\n- [故障排查](/docs/zh-CN/help/troubleshooting/)\n- [配置说明](/docs/zh-CN/reference/config/)\n\n## 延伸阅读\n\n- [常用说明目录](/docs/zh-CN/start/docs-directory/)\n- [API 索引](/docs/zh-CN/reference/api-index/)\n","source_path":"使用说明书/zh-CN/start/hubs.md"}</script>
+</body>
+</html>

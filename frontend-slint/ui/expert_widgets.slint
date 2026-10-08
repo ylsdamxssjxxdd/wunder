@@ -1,0 +1,89 @@
+import { Theme, ToolCard } from "theme.slint";
+import { Action } from "components.slint";
+import { CheckBox, ScrollView, LineEdit } from "std-widgets.slint";
+import { ToolIcons } from "tool_icons.slint";
+
+export global ExpertTheme {
+    out property <color> text: #303133;
+    out property <color> muted: #909399;
+    out property <color> border: #e6e8ed;
+    out property <color> soft: #f7f8fa;
+    out property <color> accent: #ff9448;
+}
+export struct ExpertToolGroup { title: string, source: string, tools: [ToolCard], all-selected: bool }
+export component ExpertButton inherits Action {
+    show-label: true;
+    width: 92px;
+    height: 30px;
+    border-width: 1px;
+    border-color: root.selected ? #ffcca7 : ExpertTheme.border;
+    border-radius: 16px;
+    background: root.selected ? #fff1e5 : white;
+}
+export component ExpertField inherits VerticalLayout {
+    in property <string> label;
+    in-out property <string> text;
+    in property <string> placeholder-text;
+    in property <bool> enabled: true;
+    spacing: 7px;
+    Text { height: 18px; text: root.label; color: ExpertTheme.text; font-weight: 600; font-size: 12px; }
+    LineEdit { height: 36px; text <=> root.text; placeholder-text: root.placeholder-text; enabled: root.enabled; }
+}
+component ToolTile inherits Rectangle {
+    in property <ToolCard> tool;
+    in property <bool> enabled: true;
+    callback toggle(string);
+    height: 60px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: root.tool.enabled ? #ffcca7 : #ffeadb;
+    background: root.tool.enabled ? #fff0e5 : #fffaf6;
+    HorizontalLayout { padding-left: 10px; padding-right: 10px; padding-top: 8px; padding-bottom: 8px; spacing: 10px;
+        CheckBox { width: 20px; checked: root.tool.enabled; enabled: root.enabled; toggled => { root.toggle(root.tool.name); } }
+        Rectangle { width: 36px; height: 36px; border-radius: 10px; background: ToolIcons.tone-background(root.tool.tone); border-width: 1px; border-color: ToolIcons.tone-border(root.tool.tone);
+            Image { width: 18px; height: 18px; source: ToolIcons.image(root.tool.icon); colorize: ToolIcons.tone-color(root.tool.tone); }
+        }
+        VerticalLayout { horizontal-stretch: 1; spacing: 4px;
+            Text { text: root.tool.name; color: ExpertTheme.text; font-size: 12px; font-weight: 600; overflow: elide; }
+            Text { text: root.tool.description; color: ExpertTheme.muted; font-size: 11px; wrap: word-wrap; overflow: elide; height: 28px; }
+        }
+    }
+    TouchArea { x: 34px; y: 0px; width: parent.width - 34px; height: parent.height; enabled: root.enabled; mouse-cursor: pointer; clicked => { root.toggle(root.tool.name); } }
+}
+export component ExpertToolPicker inherits Rectangle {
+    in property <[ExpertToolGroup]> groups;
+    in property <bool> enabled: true;
+    callback toggle(string);
+    callback toggle-group(string);
+    in property <int> columns: 2;
+    border-radius: 12px;
+    height: group-layout.preferred-height;
+    group-layout := VerticalLayout { spacing: 12px;
+        for row in Math.ceil(root.groups.length / root.columns) : HorizontalLayout { spacing: 12px;
+            for column in root.columns : Rectangle {
+                property <int> idx: row * root.columns + column;
+                property <ExpertToolGroup> group: root.groups[self.idx];
+                visible: self.idx < root.groups.length;
+                horizontal-stretch: 1;
+                height: 320px;
+                border-width: 1px; border-color: ExpertTheme.border; border-radius: 10px;
+                VerticalLayout { padding: 10px; spacing: 8px;
+                    HorizontalLayout { height: 22px;
+                        Text { text: "类型：" + group.title; color: #38465b; font-size: 12px; font-weight: 600; }
+                        Rectangle { horizontal-stretch: 1; }
+                        ExpertButton { width: 48px; height: 22px; selected: true; label: group.all-selected ? "取消全选" : "全选"; enabled: root.enabled; clicked => { root.toggle-group(group.title); } }
+                    }
+                    ScrollView { horizontal-scrollbar-policy: always-off;
+                        VerticalLayout { spacing: 8px; alignment: start;
+                            for pair in Math.ceil(group.tools.length / 2) : HorizontalLayout { spacing: 8px;
+                                for col in 2 : Rectangle { horizontal-stretch: 1; preferred-width: 0px; height: 60px;
+                                    if pair * 2 + col < group.tools.length : ToolTile { width: parent.width; tool: group.tools[pair * 2 + col]; enabled: root.enabled; toggle(name) => { root.toggle(name); } }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,277 @@
+import { ExpertTheme, ExpertButton } from "expert_widgets.slint";
+import { I18n } from "i18n.slint";
+import { Theme, ChannelAccountCard, ChannelBindingCard, ChannelCatalogCard, ChannelLogCard } from "theme.slint";
+import { Action, FormField, PageState, PageStateKind } from "components.slint";
+import { TextEditBase } from "textedit-base.slint";
+import { CheckBox, ComboBox, ScrollView } from "std-widgets.slint";
+
+// Channel accounts follow the shared page form: a full-height middle list
+// separated from the detail main area, like the chat conversation pane.
+export component ChannelsPage inherits Rectangle {
+    in property <bool> loading: false;
+    in property <[ChannelCatalogCard]> catalog;
+    in property <[ChannelAccountCard]> accounts;
+    in property <int> selected: -1;
+    in property <[ChannelBindingCard]> bindings;
+    in property <bool> bindings-loading: false;
+    in property <bool> logs-loading: false;
+    in property <[ChannelLogCard]> logs;
+    in property <bool> editor-open: false;
+    in property <bool> editor-saving: false;
+    in property <string> editor-id;
+    in-out property <int> editor-kind: 0;
+    in-out property <int> editor-agent: 0;
+    in property <[string]> agent-names;
+    in property <[string]> catalog-names;
+    in property <bool> delete-open: false;
+    in property <bool> qr-open: false;
+    in property <int> qr-state: 0;
+    in property <image> qr-image;
+    in property <string> qr-message;
+    in-out property <string> edit-name;
+    in-out property <bool> edit-enabled: true;
+    in-out property <bool> edit-group-chat: true;
+    in-out property <string> edit-app-id;
+    in-out property <string> edit-app-secret;
+    in-out property <string> edit-corp-id;
+    in-out property <string> edit-wechat-agent;
+    in-out property <string> edit-secret;
+    in-out property <string> edit-token;
+    in-out property <string> edit-aes-key;
+    in-out property <string> edit-original-id;
+    in-out property <string> edit-api-base;
+    in-out property <string> edit-bot-token;
+    in-out property <string> edit-bot-id;
+    in-out property <string> edit-user-id;
+    in-out property <string> edit-domain;
+    in-out property <string> edit-config-json;
+    callback refresh();
+    callback select-account(int);
+    callback open-creator();
+    callback edit-account();
+    callback save-editor();
+    callback cancel-editor();
+    callback request-delete();
+    callback confirm-delete();
+    callback cancel-delete();
+    callback toggle(bool);
+    callback open-logs();
+    callback probe-logs();
+    callback clear-logs();
+    callback delete-binding(string, string);
+    callback start-qr();
+    callback cancel-qr();
+    callback reconnect();
+    private property <ChannelAccountCard> current: root.selected >= 0 && root.selected < root.accounts.length ? root.accounts[root.selected] : {
+        channel: "", account-id: "", name: "", status: "", active: false, configured: false,
+        peer-kind: "", agent-id: "", created-at: "", updated-at: "", summary: "", secret-set: false,
+        app-id: "", corp-id: "", wechat-agent-id: "", original-id: "", weixin-bot-id: "",
+        weixin-user-id: "", bot-type: "", domain: ""
+    };
+    private property <string> editor-channel-key: root.editor-kind >= 0 && root.editor-kind < root.catalog.length ? root.catalog[root.editor-kind].channel : "";
+    background: white; border-radius: 12px;
+
+    HorizontalLayout {
+        spacing: 10px;
+        padding: 12px;
+        padding-top: 12px;
+        Rectangle {
+            width: parent.width * 0.30;
+            border-width: 1px; border-color: #e6e8ed; border-radius: 12px;
+            background: white;
+            VerticalLayout {
+                spacing: 0px;
+                HorizontalLayout { height: 42px; padding: 10px; Text { text: "我的渠道账号"; color: #303133; font-size: 14px; font-weight: 600; } Action { width: 48px; icon: @image-url("../assets/icons/plus.svg"); label: "新增"; show-label: true; clicked => { root.open-creator(); } } Action { width: 48px; icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; show-label: true; clicked => { root.refresh(); } } }
+                Rectangle { height: 6px; }
+                ScrollView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { alignment: start; spacing: 4px;
+                        for account[index] in root.accounts : Rectangle {
+                            height: 64px;
+                            Rectangle {
+                                x: 8px; y: 2px; width: parent.width - 16px; height: 60px; border-radius: Theme.radius-lg;
+                                background: root.selected == index ? #fff3e8 : transparent; border-width: 1px; border-color: #ffcca7;
+                                Action { width: parent.width; height: parent.height; label: account.name; clicked => { root.select-account(index); } }
+                                Text { x: 12px; y: 9px; width: parent.width - 24px; height: 19px; text: account.name == "" ? account.account-id : account.name; color: ExpertTheme.text; font-size: Theme.font-md; font-weight: 600; overflow: elide; }
+                                Text { x: 12px; y: 34px; width: parent.width - 24px; height: 16px; text: account.channel + " · " + (account.configured ? I18n.ch_configured : I18n.ch_pending_config); color: account.configured ? Theme.success : Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                            }
+                        }
+                        if root.accounts.length == 0 : PageState { height: 70px; kind: root.loading ? PageStateKind.loading : PageStateKind.empty; message: root.loading ? I18n.common_loading : I18n.ch_accounts_empty; }
+                    }
+                }
+            }
+        }
+        Rectangle {
+            border-width: 1px; border-color: #e6e8ed; border-radius: 12px;
+            horizontal-stretch: 1;
+            VerticalLayout {
+                spacing: 0px;
+                HorizontalLayout {
+                    height: 52px; padding-left: 14px; padding-right: 14px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
+                    VerticalLayout { spacing: 1px;
+                        Text { height: 25px; text: root.selected >= 0 ? (root.current.name == "" ? root.current.account-id : root.current.name) : I18n.ch_accounts_title; color: Theme.text; font-size: Theme.font-headline; font-weight: 700; overflow: elide; }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    if root.selected >= 0 : Action { label: root.current.active ? I18n.common_disable : I18n.common_enable; show-label: true; enabled: !root.loading; clicked => { root.toggle(!root.current.active); } }
+                    if root.selected >= 0 : Action { label: I18n.common_edit; show-label: true; clicked => { root.edit-account(); } }
+                    if root.selected >= 0 && root.current.channel == "xmpp" : Action { label: I18n.ch_reconnect; show-label: true; enabled: !root.loading; clicked => { root.reconnect(); } }
+                    if root.selected >= 0 : Action { label: I18n.common_delete; show-label: true; enabled: !root.loading; clicked => { root.request-delete(); } }
+                    Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: I18n.common_refresh; enabled: !root.loading; clicked => { root.refresh(); } }
+                }
+                if root.selected < 0 : Text { vertical-stretch: 1; text: I18n.ch_pick_account_hint; color: Theme.muted; font-size: Theme.font-md; horizontal-alignment: center; vertical-alignment: center; }
+                if root.selected >= 0 : ScrollView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { alignment: start; padding: 12px; spacing: 10px;
+                        Rectangle { height: 130px; border-radius: 12px; border-width: 1px; border-color: ExpertTheme.border; background: #fafafa;
+                            VerticalLayout { padding: 12px; spacing: 10px;
+                                Text { text: "账号信息"; color: ExpertTheme.text; font-size: 14px; font-weight: 600; }
+                                HorizontalLayout { spacing: 24px;
+                                    VerticalLayout { horizontal-stretch: 1; Text { text: "渠道"; color: ExpertTheme.muted; font-size: 11px; } Text { text: root.current.channel == "weixin" ? "Weixin iLink (New)" : root.current.channel; color: ExpertTheme.text; font-size: 14px; } }
+                                    VerticalLayout { horizontal-stretch: 1; Text { text: "账号 ID"; color: ExpertTheme.muted; font-size: 11px; } Text { text: root.current.account-id; color: ExpertTheme.text; font-size: 13px; overflow: elide; } }
+                                }
+                                Text { text: "配置状态"; color: ExpertTheme.muted; font-size: 11px; }
+                                Text { text: root.current.configured ? "已配置" : "待配置"; color: ExpertTheme.text; font-size: 13px; }
+                            }
+                        }
+                        Rectangle { height: 150px; border-radius: 12px; border-width: 1px; border-color: ExpertTheme.border; background: #fafafa;
+                            VerticalLayout { padding: 12px; spacing: 10px;
+                                Text { text: "渠道配置"; color: ExpertTheme.text; font-size: 14px; font-weight: 600; }
+                                Rectangle { height: 72px; border-radius: 10px; border-width: 1px; border-color: ExpertTheme.border; background: white;
+                                    VerticalLayout { padding: 10px; spacing: 8px;
+                                        Text { text: root.current.channel == "weixin" ? "扫码登录" : "账号连接配置"; color: ExpertTheme.muted; font-size: 11px; }
+                                        HorizontalLayout { ExpertButton { width: 88px; label: root.current.channel == "weixin" ? "生成二维码" : "编辑配置"; clicked => { if root.current.channel == "weixin" { root.start-qr(); } else { root.edit-account(); } } } Rectangle { horizontal-stretch: 1; } }
+                                    }
+                                }
+                                HorizontalLayout { ExpertButton { width: 88px; label: "高级选项"; clicked => { root.edit-account(); } } Rectangle { horizontal-stretch: 1; } }
+                            }
+                        }
+                        Rectangle { height: 300px; border-radius: 12px; border-width: 1px; border-color: ExpertTheme.border; background: #fafafa;
+                            VerticalLayout { padding: 12px; spacing: 10px;
+                                HorizontalLayout { height: 30px; Text { text: "渠道运行日志"; color: ExpertTheme.text; font-size: 14px; font-weight: 600; } Rectangle { horizontal-stretch: 1; } ExpertButton { width: 98px; label: "写入测试日志"; enabled: !root.logs-loading; clicked => { root.probe-logs(); } } ExpertButton { width: 52px; label: "清空"; clicked => { root.clear-logs(); } } ExpertButton { width: 52px; label: "刷新"; enabled: !root.logs-loading; clicked => { root.open-logs(); } } }
+                                ScrollView { horizontal-scrollbar-policy: always-off; VerticalLayout { alignment: start; spacing: 8px;
+                                    for entry in root.logs : Rectangle { height: 56px; border-radius: 10px; background: white; border-width: 1px; border-color: ExpertTheme.border; VerticalLayout { padding: 8px; spacing: 6px; HorizontalLayout { Text { text: entry.level; color: ExpertTheme.muted; font-size: 10px; } Rectangle { horizontal-stretch: 1; } Text { text: entry.time; color: ExpertTheme.muted; font-size: 10px; } } Text { text: entry.message; color: ExpertTheme.text; font-size: 12px; overflow: elide; } } }
+                                    if root.logs.length == 0 : Text { text: root.logs-loading ? "正在加载…" : "暂无运行日志"; color: ExpertTheme.muted; font-size: 12px; }
+                                } }
+                            }
+                        }
+                        Rectangle { height: 1px; background: Theme.border; }
+                        HorizontalLayout { height: 26px; Text { text: I18n.ch_bindings; color: Theme.text; font-size: Theme.font-lg; font-weight: 600; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } Text { text: root.bindings-loading ? I18n.common_loading : root.bindings.length + I18n.ch_bindings_count_suffix; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; } }
+                        for binding in root.bindings : Rectangle {
+                            height: 44px; border-radius: Theme.radius-sm; background: Theme.panel;
+                            Text { x: 12px; y: 6px; width: parent.width - 150px; height: 17px; text: (binding.peer-kind == "group" ? I18n.ch_group_chat : I18n.ch_direct_chat) + " · " + (binding.peer-id == "*" ? I18n.ch_bindings_all_sessions : binding.peer-id) + (binding.enabled ? "" : I18n.ch_disabled_suffix); color: Theme.text; font-size: Theme.font-xs; font-weight: 600; vertical-alignment: center; overflow: elide; }
+                            Text { x: 12px; y: 24px; width: parent.width - 150px; height: 15px; text: binding.agent-id == "" ? I18n.common_default_agent : binding.agent-id; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
+                            Action { x: parent.width - 96px; y: 7px; width: 84px; height: 30px; label: I18n.ch_delete_binding; show-label: true; enabled: !root.loading; clicked => { root.delete-binding(binding.peer-kind, binding.peer-id); } }
+                        }
+                        if root.bindings.length == 0 && !root.bindings-loading : PageState { height: 44px; kind: PageStateKind.empty; message: I18n.ch_bindings_empty; }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.editor-open : Rectangle {
+        Rectangle { background: Theme.overlay; TouchArea { clicked => { } } }
+        Rectangle {
+            x: (parent.width - 480px) / 2; y: 24px; width: 480px; height: parent.height - 48px;
+            border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+            TouchArea { }
+            VerticalLayout { padding: 18px; spacing: 10px;
+                Text { height: 24px; text: root.editor-kind >= 0 && root.editor-kind < root.catalog.length && root.catalog[root.editor-kind].name != "" ? root.catalog[root.editor-kind].name : I18n.ch_accounts_title; color: Theme.text; font-size: Theme.font-xl; font-weight: 700; }
+                ScrollView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { spacing: 9px; alignment: start;
+                        HorizontalLayout { height: 30px; spacing: 10px; Text { width: 84px; text: I18n.common_channels; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } ComboBox { horizontal-stretch: 1; model: root.catalog-names.length == 0 ? [I18n.ch_no_channels] : root.catalog-names; current-index <=> root.editor-kind; enabled: root.editor-id == "" && !root.editor-saving; } }
+                        HorizontalLayout { height: 30px; spacing: 10px; Text { width: 84px; text: I18n.ch_display_name; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } TextInput { horizontal-stretch: 1; height: 30px; text <=> root.edit-name; color: Theme.text; font-size: Theme.font-sm; } }
+                        HorizontalLayout { height: 30px; spacing: 10px; Text { width: 84px; text: I18n.common_ai; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } ComboBox { horizontal-stretch: 1; model: root.agent-names; current-index <=> root.editor-agent; enabled: !root.editor-saving; } }
+                        HorizontalLayout { height: 24px; spacing: 10px; CheckBox { text: I18n.ch_enable_account; checked <=> root.edit-enabled; enabled: !root.editor-saving; } if root.editor-channel-key == "feishu" : CheckBox { text: I18n.ch_receive_group; checked <=> root.edit-group-chat; enabled: !root.editor-saving; } }
+                        if root.editor-channel-key == "feishu" : VerticalLayout { spacing: 7px;
+                            FormField { label: "App ID"; placeholder: I18n.ch_field_feishu_app_id; text <=> root.edit-app-id; }
+                            FormField { label: I18n.ch_field_app_secret; placeholder: I18n.ch_field_writeonly_hint; secret: true; text <=> root.edit-app-secret; }
+                            FormField { label: I18n.ch_field_feishu_domain; placeholder: "open.feishu.cn"; text <=> root.edit-domain; }
+                        }
+                        if root.editor-channel-key == "wechat" : VerticalLayout { spacing: 7px;
+                            FormField { label: I18n.ch_field_corp_id; placeholder: I18n.ch_field_wecom_corp_id; text <=> root.edit-corp-id; }
+                            FormField { label: I18n.ch_field_wecom_agent_id; placeholder: I18n.ch_field_wecom_agent_suffix; text <=> root.edit-wechat-agent; }
+                            FormField { label: I18n.ch_field_wecom_secret; placeholder: I18n.ch_field_writeonly_hint; secret: true; text <=> root.edit-secret; }
+                            FormField { label: I18n.ch_field_token_optional; placeholder: I18n.ch_field_token_hint; text <=> root.edit-token; }
+                            FormField { label: I18n.ch_field_aes_optional; placeholder: I18n.ch_field_aes_hint; secret: true; text <=> root.edit-aes-key; }
+                            FormField { label: I18n.ch_field_wecom_domain; placeholder: "qyapi.weixin.qq.com"; text <=> root.edit-domain; }
+                        }
+                        if root.editor-channel-key == "wechat_mp" : VerticalLayout { spacing: 7px;
+                            FormField { label: "App ID"; placeholder: I18n.ch_field_mp_app_id; text <=> root.edit-app-id; }
+                            FormField { label: I18n.ch_field_app_secret; placeholder: I18n.ch_field_writeonly_hint; secret: true; text <=> root.edit-app-secret; }
+                            FormField { label: I18n.ch_field_token_optional; placeholder: I18n.ch_field_token_hint; text <=> root.edit-token; }
+                            FormField { label: I18n.ch_field_aes_optional; placeholder: I18n.ch_field_aes_hint; secret: true; text <=> root.edit-aes-key; }
+                            FormField { label: I18n.ch_field_mp_original_id; placeholder: I18n.ch_field_mp_original_hint; text <=> root.edit-original-id; }
+                            FormField { label: I18n.ch_field_mp_domain; placeholder: "api.weixin.qq.com"; text <=> root.edit-domain; }
+                        }
+                        if root.editor-channel-key == "weixin" : VerticalLayout { spacing: 7px;
+                            FormField { label: I18n.ch_field_api_base_optional; placeholder: "https://ilinkai.weixin.qq.com"; text <=> root.edit-api-base; }
+                            FormField { label: I18n.ch_field_bot_token; placeholder: I18n.ch_field_writeonly_hint; secret: true; text <=> root.edit-bot-token; }
+                            HorizontalLayout { height: 30px; spacing: 8px; Text { text: I18n.ch_no_token_hint; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; } Action { width: 92px; label: I18n.ch_qr_login_button; show-label: true; enabled: !root.editor-saving; clicked => { root.start-qr(); } } }
+                            FormField { label: I18n.ch_field_bot_id; placeholder: I18n.ch_field_bot_id_placeholder; text <=> root.edit-bot-id; }
+                            FormField { label: I18n.ch_field_user_id; placeholder: I18n.ch_field_user_id_placeholder; text <=> root.edit-user-id; }
+                        }
+                        if root.editor-channel-key != "feishu" && root.editor-channel-key != "wechat" && root.editor-channel-key != "wechat_mp" && root.editor-channel-key != "weixin" : Text { height: 34px; text: I18n.ch_guided_form_empty; color: Theme.muted; font-size: Theme.font-xs; wrap: word-wrap; }
+                        Text { height: 18px; text: I18n.ch_advanced_json; color: Theme.muted; font-size: Theme.font-xs; }
+                        TextEditBase { height: 110px; text <=> root.edit-config-json; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-xs; background: Theme.panel; border-width: 1px; border-color: Theme.border; border-radius: Theme.radius-sm; scroll-view-padding: 8px; }
+                    }
+                }
+                HorizontalLayout { height: 34px; spacing: 8px; Rectangle { horizontal-stretch: 1; }
+                    Action { width: 84px; label: root.editor-saving ? I18n.common_saving : I18n.common_save; show-label: true; primary: true; enabled: !root.editor-saving; clicked => { root.save-editor(); } }
+                    Action { width: 84px; label: I18n.common_cancel; show-label: true; enabled: !root.editor-saving; clicked => { root.cancel-editor(); } }
+                }
+            }
+        }
+    }
+
+    if root.qr-open : Rectangle {
+        Rectangle { background: Theme.overlay; TouchArea { clicked => { root.cancel-qr(); } } }
+        Rectangle {
+            x: (parent.width - min(360px, parent.width - 40px)) / 2;
+            y: (parent.height - 460px) / 2;
+            width: min(360px, parent.width - 40px); height: 460px;
+            border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+            TouchArea { }
+            VerticalLayout { padding: 20px; spacing: 12px;
+                HorizontalLayout { height: 26px;
+                    Text { text: I18n.ch_qr_title; color: Theme.text; font-size: Theme.font-xl; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; }
+                    Action { width: 30px; icon: @image-url("../assets/icons/xmark.svg"); label: I18n.common_cancel; clicked => { root.cancel-qr(); } }
+                }
+                if root.qr-state <= 1 : VerticalLayout { spacing: 10px;
+                    Rectangle {
+                        width: 220px; height: 220px; border-radius: Theme.radius-md; background: white;
+                        border-width: 1px; border-color: Theme.border;
+                        Image { x: 10px; y: 10px; width: 200px; height: 200px; source: root.qr-image; image-fit: contain; }
+                    }
+                    Text { height: 18px; text: root.qr-state == 0 ? I18n.ch_qr_waiting : I18n.ch_qr_scan_hint; color: Theme.muted; font-size: Theme.font-sm; horizontal-alignment: center; }
+                }
+                if root.qr-state == 2 : Text { vertical-stretch: 1; text: I18n.ch_qr_success; color: Theme.success; font-size: Theme.font-md; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
+                if root.qr-state == 3 : Text { vertical-stretch: 1; text: I18n.ch_qr_expired; color: Theme.warning; font-size: Theme.font-md; horizontal-alignment: center; vertical-alignment: center; }
+                if root.qr-state == 4 : Text { vertical-stretch: 1; text: I18n.ch_qr_canceled; color: Theme.muted; font-size: Theme.font-md; horizontal-alignment: center; vertical-alignment: center; }
+                if root.qr-state == 5 : Text { vertical-stretch: 1; text: I18n.ch_qr_failed_prefix + root.qr-message; color: Theme.danger; font-size: Theme.font-sm; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
+                HorizontalLayout { height: 34px; spacing: 8px; Rectangle { horizontal-stretch: 1; }
+                    if root.qr-state >= 3 : Action { width: 110px; label: I18n.ch_qr_refresh; show-label: true; primary: true; clicked => { root.start-qr(); } }
+                    Action { width: 72px; label: I18n.common_close; show-label: true; clicked => { root.cancel-qr(); } }
+                }
+            }
+        }
+    }
+
+    if root.delete-open : Rectangle {
+        Rectangle { background: Theme.overlay; TouchArea { clicked => { root.cancel-delete(); } } }
+        Rectangle {
+            x: (parent.width - 380px) / 2; y: (parent.height - 150px) / 2; width: 380px; height: 150px;
+            border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+            TouchArea { }
+            VerticalLayout { padding: 18px; spacing: 12px;
+                Text { text: I18n.err_op_delete_channel; color: Theme.text; font-size: 15px; font-weight: 700; }
+                Text { vertical-stretch: 1; text: I18n.ch_delete_message; color: Theme.muted; font-size: Theme.font-sm; wrap: word-wrap; }
+                HorizontalLayout { height: 32px; spacing: 8px; Rectangle { horizontal-stretch: 1; }
+                    Action { width: 96px; label: I18n.common_confirm_delete; show-label: true; clicked => { root.confirm-delete(); } }
+                    Action { width: 72px; label: I18n.common_cancel; show-label: true; primary: true; clicked => { root.cancel-delete(); } }
+                }
+            }
+        }
+    }
+}

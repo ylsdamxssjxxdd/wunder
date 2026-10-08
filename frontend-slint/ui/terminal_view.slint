@@ -1,0 +1,191 @@
+import { Theme } from "theme.slint";
+import { Action } from "components.slint";
+import { I18n } from "i18n.slint";
+
+// Terminal-style output panel. The composer below stays the input line, so this
+// element only renders the shell transcript.
+//
+// The Rust side runs a real screen model and hands over the positioned colour
+// runs for one viewport, so the panel is a plain absolute grid: one item per
+// styled run, sized from measured cell metrics, with no text layout of its own.
+// That keeps the cost per update proportional to what is on screen rather than
+// to the whole transcript, and it lets a program redraw in place, wrap, or paint
+// a background exactly as it would on a terminal.
+//
+// Visual language follows the classic terminal, not the chat theme.
+
+/// One horizontal run of identically styled cells, placed on the cell grid.
+export struct TermSpan {
+    text: string,
+    fg: color,
+    /// Transparent where the run sits on the panel background.
+    bg: color,
+    bold: bool,
+    underline: bool,
+    row: int,
+    col: int,
+    cells: int,
+}
+
+export component TerminalView inherits Rectangle {
+    in property <[TermSpan]> spans;
+    in property <string> status;
+    /// True while the last shell state was a failure/exited-with-error.
+    in property <bool> error: false;
+
+    // Viewport state, owned by the screen model on the Rust side.
+    in property <int> view-offset: 0;
+    in property <int> history-depth: 0;
+    in property <bool> caret-visible: false;
+    in property <int> caret-row: 0;
+    in property <int> caret-col: 0;
+    // What the model should be sized to, and the geometry it was sized from.
+    in property <int> rows: 24;
+    in property <int> cols: 80;
+
+    callback clear();
+    callback interrupt();
+    /// Rows to move, positive going up into history.
+    callback scrolled(int);
+    /// Absolute row to put at the top of the viewport.
+    callback scroll-to(int);
+
+    /// How many whole cells the panel currently has room for. The model is sized
+    /// from this when the frame is painted, which covers the first layout as
+    /// well as later resizes; a change callback would only ever see the latter.
+    in-out property <int> measured-cols: screen.grid-cols;
+    in-out property <int> measured-rows: screen.grid-rows;
+
+    in property <length> font-size: 13px;
+    in property <string> font-family: "Consolas";
+
+    // Cell metrics come from measuring a run of the widest monospace glyph, kept
+    // transparent rather than hidden so it still gets laid out. Everything else
+    // in the panel is placed in multiples of these.
+    metrics := Text {
+        text: "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM";
+        opacity: 0;
+        font-family: root.font-family;
+        font-size: root.font-size;
+    }
+    in property <length> cell-width: max(1px, metrics.width / 50);
+    in property <length> cell-height: max(1px, metrics.height);
+
+    background: #16181d;
+
+    VerticalLayout {
+        spacing: 0px;
+        Rectangle {
+            height: 34px; background: #1f252e;
+            HorizontalLayout {
+                padding-left: 12px; padding-right: 8px; spacing: 8px;
+                Text { text: I18n.cp_terminal_panel_title; color: #9fb3c8; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+                Text { text: root.status != "" ? root.status : I18n.cp_terminal_idle; color: root.error ? #f48f8f : #7fd6a0; font-size: 11px; vertical-alignment: center; }
+                Action { width: 26px; height: 26px; icon: @image-url("../assets/icons/trash.svg"); icon-size: 14px; label: I18n.cp_terminal_clear; clicked => { root.clear(); } }
+                Action { width: 26px; height: 26px; icon: @image-url("../assets/icons/stop.svg"); icon-size: 14px; label: I18n.cp_terminal_interrupt; clicked => { root.interrupt(); } }
+            }
+        }
+        screen := Rectangle {
+            vertical-stretch: 1;
+            clip: true;
+
+            // How much room the grid has, in cells. The model is asked to match
+            // it, so a resize never reflows text: only the box changes.
+            out property <int> grid-cols: Math.max(20, Math.floor(self.width / root.cell-width));
+            out property <int> grid-rows: Math.max(3, Math.floor(self.height / root.cell-height));
+
+            grid-area := Rectangle {
+                x: 0px; y: 0px;
+                width: root.cols * root.cell-width;
+                height: root.rows * root.cell-height;
+                // Wheel pixels are accumulated so a high-resolution device still
+                // moves whole rows, one row at a time.
+                in-out property <length> wheel-remain: 0px;
+
+                for sp in root.spans: Rectangle {
+                    x: sp.col * root.cell-width;
+                    y: sp.row * root.cell-height;
+                    width: sp.cells * root.cell-width;
+                    height: root.cell-height;
+                    background: sp.bg;
+                    Text {
+                        x: 0px; y: 0px;
+                        // The run's box is exactly as wide as its cells, and
+                        // rounding at that edge can clip the last glyph, so the
+                        // text box reaches to the end of the row: a run never has
+                        // more glyphs than the cells it was given.
+                        width: (root.cols - sp.col) * root.cell-width;
+                        height: (root.rows - sp.row) * root.cell-height;
+                        text: sp.text;
+                        color: sp.fg;
+                        font-family: root.font-family;
+                        font-size: root.font-size;
+                        font-weight: sp.bold ? 700 : 400;
+                        vertical-alignment: top;
+                    }
+                    // Slint text has no underline, so a run draws its own rule.
+                    Rectangle {
+                        visible: sp.underline;
+                        x: 0px; y: parent.height - 1px;
+                        width: parent.width; height: 1px;
+                        background: sp.fg;
+                    }
+                }
+
+                Rectangle {
+                    visible: root.caret-visible;
+                    x: root.caret-col * root.cell-width;
+                    y: root.caret-row * root.cell-height;
+                    width: root.cell-width; height: root.cell-height;
+                    background: #e8eef5;
+                    opacity: 0.45;
+                }
+
+                TouchArea {
+                    width: parent.width; height: parent.height;
+                    scroll-event(event) => {
+                        if (event.delta-y == 0px) {
+                            return reject;
+                        }
+                        grid-area.wheel-remain += event.delta-y;
+                        let lines = Math.round(grid-area.wheel-remain / root.cell-height);
+                        if (lines != 0) {
+                            root.scrolled(lines);
+                            grid-area.wheel-remain -= lines * root.cell-height;
+                        }
+                        return accept;
+                    }
+                }
+            }
+
+            // Position indicator: the viewport's share of history plus screen.
+            Rectangle {
+                visible: root.history-depth > 0;
+                x: parent.width - 7px; y: 0px;
+                width: 6px; height: parent.height;
+                background: #1f252e;
+                Rectangle {
+                    // The viewport shows rows lines ending `depth - offset` rows
+                    // down the total, so that is where the thumb sits.
+                    property <int> total: root.rows + root.history-depth;
+                    y: parent.height * (self.total - root.rows - root.view-offset) / self.total;
+                    height: Math.max(18px, parent.height * root.rows / self.total);
+                    width: parent.width;
+                    background: #3a4553;
+                }
+                TouchArea {
+                    width: parent.width; height: parent.height;
+                    mouse-cursor: pointer;
+                    moved => {
+                        if (self.pressed) {
+                            let total = root.rows + root.history-depth;
+                            let top = Math.round(self.mouse-y * total / self.height);
+                            root.scroll-to(Math.max(0, Math.min(root.history-depth, top)));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

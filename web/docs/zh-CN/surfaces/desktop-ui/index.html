@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>蜂窝界面 | 使用说明书</title>
+  <meta name="description" content="蜂巢的本地桌面形态。本地优先，可以直接访问本机文件，有一键重置功能。">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/surfaces/desktop-ui","language":"zh-CN","title":"蜂窝界面","summary":"蜂巢的本地桌面形态。本地优先，可以直接访问本机文件，有一键重置功能。","updated_at":"2026-10-07","read_when":[],"source_docs":[],"tab":"界面","group":"前端与桌面","group_path":["前端与桌面"],"url":"/docs/zh-CN/surfaces/desktop-ui/","headings":[{"id":"section-1","level":1,"text":"蜂窝界面"},{"id":"section-2","level":2,"text":"蜂窝特点"},{"id":"section-3","level":3,"text":"本地优先"},{"id":"section-4","level":3,"text":"本机文件访问"},{"id":"section-5","level":3,"text":"自带运行时"},{"id":"section-6","level":3,"text":"一键重置"},{"id":"section-7","level":2,"text":"界面结构"},{"id":"section-8","level":2,"text":"蜂窝特有功能"},{"id":"section-9","level":3,"text":"蜂窝运行时设置"},{"id":"section-10","level":3,"text":"一键重置工作状态"},{"id":"section-11","level":3,"text":"本地文件能力"},{"id":"section-12","level":2,"text":"适用场景"},{"id":"section-13","level":2,"text":"常见问题"},{"id":"section-14","level":3,"text":"数据在哪里？"},{"id":"section-15","level":3,"text":"本地模式能联网吗？"},{"id":"section-16","level":3,"text":"能迁移到其他电脑吗？"},{"id":"section-17","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/surfaces/web-admin","next_slug":"zh-CN/ops/index","markdown":"# 蜂窝界面\n\n蜂窝（desktop）是蜂巢的本地桌面形态，也是个人用户的主要入口：数据留在本机，智能体可以直接读写本地文件。\n\n## 蜂窝特点\n\n### 本地优先\n\n- 数据留在本机，不经手服务器\n- 无需部署服务端，装好即用\n\n### 本机文件访问\n\n可以直接访问本机文件系统（在安全边界内），比纯网页端更灵活。\n\n### 自带运行时\n\n安装包自带 Python 运行时，省去手动安装和配置。\n\n### 一键重置\n\n异常时可以一键重置工作状态，快速恢复。\n\n## 界面结构\n\n蜂窝复用蜂巢的左右两栏布局，额外提供蜂窝特有的本地能力：\n\n- **左栏**（固定 240px）：新任务、搜索、工作区与线程树、工作目录（文件树 + 工具栏 + 用量条）、底部设置（含蜂窝运行时设置与一键重置）\n- **右栏**：欢迎页或聊天页\n\n蜂窝和网页端都是「一个用户一个智能体实例 + 一个工作目录」，左栏只有这一条工作区与线程树，没有多智能体的列表、新建或切换入口，也没有更换目录的入口。\n\n## 蜂窝特有功能\n\n### 蜂窝运行时设置\n\n配置本地运行环境：Python 路径、本地工作目录、本地工具配置。\n\n### 一键重置工作状态\n\n**什么时候用**：\n- 会话卡在运行中\n- 子智能体运行状态不一致\n- 界面状态和实际不符\n\n**重置后会**：\n- 停止所有运行中的会话\n- 清空排队任务\n- 重建干净的线程\n\n**保留的内容**：\n- 技能、知识库等长期资产\n- 用户配置\n- 工作区文件\n- 会话历史记录\n\n所以重置是「清理工作状态」，不是「恢复出厂设置」。\n\n### 本地文件能力\n\n蜂窝可以让智能体：\n- 读取本机文件\n- 写入本机文件\n- 执行本地命令\n\n这是比网页端更强的能力，但受安全边界限制。\n\n## 适用场景\n\n**适合**：\n- 个人日常使用\n- 需要处理本机文件\n- 不想依赖服务器\n- 注重隐私和数据本地化\n\n**如果需要**：\n- 多用户协作\n- 管理员后台\n- 组织级部署\n\n请直接用浏览器访问舰体（server）的网页端。\n\n## 常见问题\n\n### 数据在哪里？\n\n- 工作区：本地工作目录\n- 会话历史：本地 SQLite 数据库\n- 配置：本地配置文件\n\n### 本地模式能联网吗？\n\n可以。本地模式只是数据存本地，不影响联网访问 AI 模型或网页。\n\n### 能迁移到其他电脑吗？\n\n可以。复制工作目录和数据库文件，在新电脑上配置路径即可。\n\n## 延伸阅读\n\n- [蜂窝入门](/docs/zh-CN/start/desktop/)\n- [蜂巢界面](/docs/zh-CN/surfaces/frontend/)\n- [蜂窝本地模式](/docs/zh-CN/ops/desktop-local-mode/)\n","source_path":"使用说明书/zh-CN/surfaces/desktop-ui.md"}</script>
+</body>
+</html>

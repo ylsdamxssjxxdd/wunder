@@ -1,0 +1,114 @@
+diff --git a/D:/proj/rcho/target/tmp/patch-verify/softbuffer-0.4.8/src/backends/win32.rs b/softbuffer-0.4.8/src/backends/win32.rs
+index 75de23e..678db2e 100644
+--- a/D:/proj/rcho/target/tmp/patch-verify/softbuffer-0.4.8/src/backends/win32.rs
++++ b/softbuffer-0.4.8/src/backends/win32.rs
+@@ -48,9 +48,18 @@ impl Drop for Buffer {
+ }
+ 
+ impl Buffer {
+-    fn new(window_dc: Gdi::HDC, width: NonZeroI32, height: NonZeroI32) -> Self {
++    fn new(
++        window_dc: Gdi::HDC,
++        width: NonZeroI32,
++        height: NonZeroI32,
++    ) -> Result<Self, SoftBufferError> {
+         let dc = Allocator::get().allocate(window_dc);
+-        assert!(!dc.is_null());
++        if dc.is_null() {
++            return Err(SoftBufferError::PlatformError(
++                Some("CreateCompatibleDC failed while resizing the software surface".into()),
++                Some(Box::new(io::Error::last_os_error())),
++            ));
++        }
+ 
+         // Create a new bitmap info struct.
+         let bitmap_info = BitmapInfo {
+@@ -97,21 +106,34 @@ impl Buffer {
+                 0,
+             )
+         };
+-        assert!(!bitmap.is_null());
+-        let pixels = NonNull::new(pixels).unwrap();
++        if bitmap.is_null() {
++            Allocator::get().deallocate(dc);
++            return Err(SoftBufferError::PlatformError(
++                Some("CreateDIBSection failed while resizing the software surface".into()),
++                Some(Box::new(io::Error::last_os_error())),
++            ));
++        }
++        let Some(pixels) = NonNull::new(pixels) else {
++            unsafe { Gdi::DeleteObject(bitmap) };
++            Allocator::get().deallocate(dc);
++            return Err(SoftBufferError::PlatformError(
++                Some("CreateDIBSection returned an empty pixel buffer".into()),
++                None,
++            ));
++        };
+ 
+         unsafe {
+             Gdi::SelectObject(dc, bitmap);
+         }
+ 
+-        Self {
++        Ok(Self {
+             dc,
+             bitmap,
+             width,
+             height,
+             pixels,
+             presented: false,
+-        }
++        })
+     }
+ 
+     #[inline]
+@@ -186,7 +208,7 @@ impl<D: HasDisplayHandle, W: HasWindowHandle> Win32Impl<D, W> {
+                     ))
+                 })()
+                 .ok_or(SoftBufferError::DamageOutOfRange { rect })?;
+-                Gdi::BitBlt(
++                if Gdi::BitBlt(
+                     self.dc.0,
+                     x,
+                     y,
+@@ -196,7 +218,16 @@ impl<D: HasDisplayHandle, W: HasWindowHandle> Win32Impl<D, W> {
+                     x,
+                     y,
+                     Gdi::SRCCOPY,
+-                );
++                ) == 0
++                {
++                    // Do not validate WM_PAINT after a failed copy. Doing so
++                    // tells Win32 that the white client area is current and
++                    // prevents a hidden/re-shown window from being retried.
++                    return Err(SoftBufferError::PlatformError(
++                        Some("BitBlt failed while presenting the software surface".into()),
++                        Some(Box::new(io::Error::last_os_error())),
++                    ));
++                }
+             }
+ 
+             // Validate the window.
+@@ -264,14 +295,20 @@ impl<D: HasDisplayHandle, W: HasWindowHandle> SurfaceInterface<D, W> for Win32Im
+             }
+         }
+ 
+-        self.buffer = Some(Buffer::new(self.dc.0, width, height));
++        // Allocate before replacing the old bitmap. A failed allocation while
++        // dragging a window must leave the last valid GDI surface intact.
++        let buffer = Buffer::new(self.dc.0, width, height)?;
++        self.buffer = Some(buffer);
+ 
+         Ok(())
+     }
+ 
+     fn buffer_mut(&mut self) -> Result<BufferImpl<'_, D, W>, SoftBufferError> {
+         if self.buffer.is_none() {
+-            panic!("Must set size of surface before calling `buffer_mut()`");
++            return Err(SoftBufferError::PlatformError(
++                Some("software surface has no valid bitmap".into()),
++                None,
++            ));
+         }
+ 
+         Ok(BufferImpl(self))

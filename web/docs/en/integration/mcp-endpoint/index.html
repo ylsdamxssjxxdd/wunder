@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MCP Endpoint | 使用说明书</title>
+  <meta name="description" content="wunder supports both a self-hosted MCP service at `/wunder/mcp` and external MCP service integration.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/integration/mcp-endpoint","language":"en","title":"MCP Endpoint","summary":"wunder supports both a self-hosted MCP service at `/wunder/mcp` and external MCP service integration.","updated_at":"2026-10-06","read_when":["You want to expose wunder as an MCP service","You need to understand the relationship between wunder's internal MCP and extra_mcp"],"source_docs":["docs/API文档.md","docs/设计文档/01-系统总体设计.md","src/services/mcp.rs","config/wunder-example.yaml"],"tab":"Integrations","group":"Extended Integrations","group_path":["Extended Integrations"],"url":"/docs/en/integration/mcp-endpoint/","headings":[{"id":"section-1","level":1,"text":"MCP Endpoint"},{"id":"section-2","level":2,"text":"Self-Hosted MCP Endpoint"},{"id":"section-3","level":2,"text":"When to Use the Self-Hosted MCP"},{"id":"section-4","level":2,"text":"Configuration Example"},{"id":"section-5","level":2,"text":"External MCP vs extramcp"},{"id":"section-6","level":2,"text":"How the Admin Panel Handles MCP"},{"id":"section-7","level":2,"text":"Relationship Between MCP and the Tool Catalog"},{"id":"section-8","level":2,"text":"Further Reading"}],"prev_slug":"en/integration/a2a","next_slug":"en/surfaces/index","markdown":"# MCP Endpoint\n\nMCP is not a secondary capability in wunder -- it is a first-class integration surface.\n\nYou need to distinguish two things up front:\n\n1. wunder exposes its own MCP service at `/wunder/mcp`\n2. wunder can also act as an MCP client to connect to external services, such as `extra_mcp`\n\n## Self-Hosted MCP Endpoint\n\n- `POST /wunder/mcp`\n- Transport: Streamable HTTP\n\nThe Rust backend currently exposes two built-in tools:\n\n- `excute`\n- `doc2md`\n\nNote that the tool name is literally `excute` -- the documentation reflects the current code as-is. Do not rewrite it as `execute`.\n\n## When to Use the Self-Hosted MCP\n\nSuitable for these scenarios:\n\n- Letting external systems invoke wunder capabilities via MCP\n- Integrating wunder into another MCP orchestration framework\n- Exposing internal task execution and document parsing capabilities under a unified protocol\n\n## Configuration Example\n\n```yaml\nmcp:\n  servers:\n    - name: wunder\n      endpoint: http://127.0.0.1:8000/wunder/mcp\n      enabled: false\n      transport: streamable-http\n```\n\nOnce enabled, wunder treats this MCP service as a callable MCP server.\n\n## External MCP vs extra_mcp\n\nThe repository also retains a typical external MCP service:\n\n- `extra_mcp`\n\nIt is typically used to host:\n\n- `db_query`\n- `db_export`\n- `kb_query`\n\nIn other words:\n\n- `/wunder/mcp` is for \"what wunder exposes outward\"\n- `extra_mcp` is for \"external capabilities wunder brings in\"\n\n## How the Admin Panel Handles MCP\n\nThe admin panel provides a set of MCP configuration and debugging tools for:\n\n- Configuring `mcp.servers`\n- Refreshing the tool list\n- Debugging remote tool invocations\n\nThe typical integration order is therefore:\n\n1. Declare the MCP server in configuration\n2. Verify in the admin panel that tool specs can be fetched\n3. Expose the tools to the model via the agent or tool catalog\n\n## Relationship Between MCP and the Tool Catalog\n\nwunder does not treat MCP as a side channel.\n\nIt aggregates MCP tools together with these capabilities into a unified tool view:\n\n- Built-in tools\n- A2A tools\n- Skills\n- Knowledge base tools\n- User-created tools\n\nSo from the model's perspective, MCP tools are ultimately part of the tool catalog.\n\n## Further Reading\n\n- [Tool System](/docs/en/concepts/tools/)\n- [A2A Interface](/docs/en/integration/a2a/)\n- [Configuration Reference](/docs/en/reference/config/)\n","source_path":"使用说明书/en/integration/mcp-endpoint.md"}</script>
+</body>
+</html>

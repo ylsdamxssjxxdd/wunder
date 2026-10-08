@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Workspace Routing and File Management | 使用说明书</title>
+  <meta name="description" content="Each user&#x27;s workspace is a single cloud directory. Paths are always workspace-relative, and container-based routing has been converged away.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/reference/workspace-routing","language":"en","title":"Workspace Routing and File Management","summary":"Each user's workspace is a single cloud directory. Paths are always workspace-relative, and container-based routing has been converged away.","updated_at":"2026-10-07","read_when":["You are building file trees, upload/download, or artifact callbacks","You need to know where a path actually lands, or why a file cannot be found"],"source_docs":["docs/API文档.md","docs/设计文档/01-系统总体设计.md"],"tab":"Reference","group":"System Reference","group_path":["System Reference"],"url":"/docs/en/reference/workspace-routing/","headings":[{"id":"section-1","level":1,"text":"Workspace Routing and File Management"},{"id":"section-2","level":2,"text":"Key points on this page"},{"id":"section-3","level":2,"text":"One cloud directory per user"},{"id":"section-4","level":2,"text":"Routing rules"},{"id":"section-5","level":2,"text":"Path conventions"},{"id":"section-6","level":2,"text":"Workspace versus temporary directory"},{"id":"section-7","level":2,"text":"Usage statistics"},{"id":"section-8","level":2,"text":"File management in practice"},{"id":"section-9","level":2,"text":"Uploads and file types"},{"id":"section-10","level":2,"text":"Common pitfalls"},{"id":"section-11","level":2,"text":"Further reading"}],"prev_slug":"en/reference/stream-events","next_slug":"en/reference/prompt-templates","markdown":"# Workspace Routing and File Management\n\nThis page answers two questions: **where a file lands**, and **how to manage it**.\n\n## Key points on this page\n\n- How many workspaces one user has\n- The routing rules for `/wunder/workspace*`\n- How to write paths that are not rejected\n- How the workspace differs from the temporary directory\n\n## One cloud directory per user\n\nIsolation has exactly one layer: by user. Every user's files live in **their own single cloud directory**, partitioned by the server under its data root.\n\n| Convention | Meaning |\n|------|------|\n| **Unique** | There is one workspace directory at any time; opening more threads or subagents never creates another |\n| **Fixed** | You cannot add, delete, or replace the directory, and you cannot bind a folder on your machine |\n| **Isolated** | Path checks are bounded by the user root; out-of-bounds access is rejected |\n| **Persistent** | The workspace is persistent storage and is not cleaned up automatically |\n\n## Routing rules\n\nRouting for `/wunder/workspace*` is now simple:\n\n1. The request carries the authenticated user's identity.\n2. The server resolves that user's workspace root.\n3. The entry is located under that root by the relative path in the request.\n\nAdditional notes:\n\n- **The container parameter is converged**: the historical `container_id` no longer selects a directory — the server always resolves against the user root. The parameter is still accepted during the transition, but 0 and 1 produce the same result, and the frontend no longer offers a container choice.\n- **No more per-agent roots**: the agent dimension no longer participates in directory derivation; `agent_id` only affects conversation and configuration binding.\n- **Subagents do not get their own directory**: a subagent is a temporary work unit created by the main agent and shares the same user directory.\n\n## Path conventions\n\n- The API takes and returns **workspace-relative paths**, for example `docs/plan.md`.\n- The root directory is expressed as an empty string.\n- Never pass a machine absolute path, and never render a server absolute path in the UI.\n- Invalid or out-of-bounds names are rejected outright rather than silently redirected.\n\n## Workspace versus temporary directory\n\n| | Workspace | Temporary directory |\n|--|--------|----------|\n| **Purpose** | Long-lived files and task artifacts | Upload/download transit, document conversion intermediates |\n| **Lifecycle** | Persistent, never cleaned automatically | May be cleaned periodically |\n| **Paths** | Workspace-relative | A separate transit namespace |\n\n**Important**: never put files you need to keep in the temporary directory.\n\n## Usage statistics\n\n`GET /wunder/workspace/stats` returns a bare object with file count, directory count, used bytes, whether the walk was truncated, and recently modified files:\n\n- The walk is bounded; for very large directories it ends early, and `truncated: true` means the counts are lower bounds.\n- `quota_bytes: null` means no quota is configured — the UI then shows only the used amount, with no quota denominator.\n- The welcome-page directory overview card and the usage bar at the bottom of the left sidebar share this data.\n\n## File management in practice\n\n- **Browse**: directories load lazily — children are fetched only when expanded; large directories are paginated and rows are virtualized.\n- **Upload**: use the toolbar, or drag files onto the file tree. Uploads are concurrency-limited and can be cancelled or retried.\n- **Preview and edit**: text, images, Office documents, and diagrams each have a preview or online-edit overlay.\n- **Reference to chat**: use \"Reference to chat\" in a file row menu to bring the file into the composer; timeline entries link back to it.\n- **Batch and archive**: multi-select enables batch delete or archive download.\n- **High-risk operations**: delete and clear-directory require confirmation; frontend confirmation never replaces server-side authorization.\n\n## Uploads and file types\n\n| Type | Handling |\n|------|------|\n| Documents (PDF, Word, Markdown, etc.) | Converted to text automatically for the agent to analyze |\n| Images (PNG, JPG, etc.) | The agent can view and analyze them directly |\n| Audio (MP3, WAV, etc.) | Transcribed to text automatically |\n| Video (MP4, etc.) | Frames are extracted at a configured rate for analysis |\n| Code files | Any programming language file; the agent can read it directly |\n| Other | Stored as-is; the agent can attempt to read it |\n\nSome files must be processed after upload (document-to-text, audio transcription). The send button is disabled until processing finishes — that is a normal protection mechanism.\n\n## Common pitfalls\n\n- **Adding `container_id` to write somewhere else.** It will not: the server resolves against the user root.\n- **Expecting to swap the directory or bind a local folder.** You cannot; the cloud workspace is assigned by the server.\n- **Using the workspace as a temporary directory.** Keep persistent artifacts in the workspace and transit in the temp directory.\n- **Passing a real disk absolute path.** This API uses workspace-relative paths.\n- **Assuming files are cleaned up automatically.** The workspace is not; only the temporary directory is.\n\n## Further reading\n\n- [Workspaces and Working Directory](/docs/en/concepts/workspaces/)\n- [Workspace API](/docs/en/integration/workspace-api/)\n- [Temp Directory and Document Conversion](/docs/en/integration/temp-dir/)\n- [Data & Storage](/docs/en/ops/data-and-storage/)\n","source_path":"使用说明书/en/reference/workspace-routing.md"}</script>
+</body>
+</html>

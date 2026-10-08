@@ -1,0 +1,38 @@
+{
+  "name": "wunder-workspace",
+  "private": true,
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "deps:status": "python scripts/node_modules_profile.py status",
+    "deps:use:auto": "python scripts/node_modules_profile.py use --profile auto",
+    "deps:use:win-x86": "python scripts/node_modules_profile.py use --profile win-x86",
+    "deps:use:linux-x86": "python scripts/node_modules_profile.py use --profile linux-x86",
+    "deps:use:linux-arm": "python scripts/node_modules_profile.py use --profile linux-arm",
+    "deps:adopt:win-x86": "python scripts/node_modules_profile.py adopt --profile win-x86",
+    "deps:adopt:linux-x86": "python scripts/node_modules_profile.py adopt --profile linux-x86",
+    "deps:adopt:linux-arm": "python scripts/node_modules_profile.py adopt --profile linux-arm",
+    "sync:app-version": "python scripts/sync_app_version.py",
+    "build:frontend": "npm run build --workspace wunder-frontend",
+    "build:frontend:desktop": "npm run build:desktop --workspace wunder-frontend",
+    "typecheck:frontend": "npm run typecheck --workspace wunder-frontend",
+    "build:desktop:win7:supplement": "powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch ia32 -PythonProfile common",
+    "build:desktop:win7:supplement:minimal": "powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch ia32 -PythonProfile minimal",
+    "build:desktop:win7:supplement:common": "powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch ia32 -PythonProfile common",
+    "build:desktop:win7:supplement:x64": "powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch x64 -PythonProfile common",
+    "build:desktop:win7:supplement:x64:minimal": "powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch x64 -PythonProfile minimal",
+    "build:desktop:win7:supplement:x64:common": "powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch x64 -PythonProfile common",
+    "build:desktop:win7:supplement:ia32": "powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch ia32 -PythonProfile common",
+    "build:desktop:win7:supplement:ia32:minimal": "powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch ia32 -PythonProfile minimal",
+    "build:desktop:win7:supplement:ia32:common": "powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch ia32 -PythonProfile common",
+    "doctor:cli:win7:gnu": "powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch ia32 -Doctor",
+    "build:cli:win7:gnu": "powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch ia32",
+    "build:cli:win7:gnu:fast": "powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch ia32 -SkipBootstrap",
+    "build:cli:win7:gnu:ia32": "powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch ia32",
+    "build:cli:win7:gnu:ia32:fast": "powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch ia32 -SkipBootstrap",
+    "build:cli:win7:gnu:x64": "powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch x64",
+    "build:cli:win7:gnu:x64:fast": "powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch x64 -SkipBootstrap",
+    "test:chat": "npm run test:chat --workspace wunder-frontend"
+  }
+}

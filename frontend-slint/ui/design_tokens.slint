@@ -1,0 +1,115 @@
+// Single source for the desktop visual language: palette, brushes, status
+// colors, scrims, type scale, radii, spacing and shell layout metrics.
+// The default light palette is the warm terracotta set introduced by the
+// workspace refactor; legacy palettes stay selectable. Slint pages and Rust
+// controllers must reference these tokens instead of repeating literals;
+// theme.slint re-exports this global together with the shared data structs.
+//
+// `palette` and `font-scale` are user preferences persisted in
+// DesktopSettings (theme / font_size) and applied by the native shell at
+// startup and on save. Every accent and font token below is a binding over
+// them, so switching either applies live without a restart.
+export global Theme {
+    // Accent palette: "terracotta" (default; legacy "eva-orange"/"light"
+    // map here too), "hula-green", "minimal", "tech-blue".
+    in-out property <string> palette: "terracotta";
+    // Chat content font scale: persisted font size (12..=20) divided by 14.
+    in-out property <float> font-scale: 1.0;
+
+    // Neutrals.
+    out property <color> text: palette == "terracotta" ? #1F2329 : #32170a;
+    out property <color> text-secondary: palette == "terracotta" ? #3D3D3D : #55402f;
+    out property <color> muted: palette == "terracotta" ? #8A8F99 : #8d6248;
+    out property <color> panel: palette == "terracotta" ? #FBFAF8 : #fffaf6;
+    out property <color> surface: #ffffff;
+    out property <color> border: palette == "terracotta" ? #E8E6E3 : #f0dfd2;
+    out property <color> border-strong: palette == "terracotta" ? #D8D5D0 : #e2c9b4;
+    // Row states for lists, trees and the sidebar.
+    out property <color> hover: palette == "terracotta" ? #F6F5F3 : #fdf3ea;
+    out property <color> selected: palette == "terracotta" ? #F1EFEC : #fbe8d8;
+    out property <color> sidebar: palette == "terracotta" ? #F6F5F3 : #fdf1e6;
+
+    // Accent: primary / hover / soft / tint family.
+    out property <color> accent: palette == "terracotta" ? #C96443 : palette == "hula-green" ? #16ad8d : palette == "minimal" ? #8f9aad : palette == "tech-blue" ? #38bdf8 : #ff9448;
+    out property <color> accent-deep: palette == "terracotta" ? #B55637 : palette == "hula-green" ? #0e8d72 : palette == "minimal" ? #9ba6ba : palette == "tech-blue" ? #0ea5e9 : #e5792e;
+    out property <color> accent-secondary: palette == "terracotta" ? #DFAC9A : palette == "hula-green" ? #5dcbb0 : palette == "minimal" ? #b5bfce : palette == "tech-blue" ? #7c9cff : #ffb26f;
+    out property <color> accent-soft: palette == "terracotta" ? #F6E9E3 : palette == "hula-green" ? #e7f7f2 : palette == "minimal" ? #f3f4f6 : palette == "tech-blue" ? #e7f7ff : #fff3e8;
+    out property <color> bubble: #ffffff;
+    out property <color> mine: palette == "terracotta" ? #F6E9E3 : palette == "hula-green" ? #dbf2eb : palette == "minimal" ? #eceff3 : palette == "tech-blue" ? #d7eeff : #ffe9d7;
+    // Timeline surfaces: the user bubble, the 1px connector that runs through
+    // an expanded tool group, and the monospace diff card cells.
+    out property <color> timeline-bubble: palette == "terracotta" ? #F3F2F0 : #f6ece4;
+    out property <color> timeline-line: palette == "terracotta" ? #E2DFDA : #ecd9c9;
+    out property <color> diff-header: palette == "terracotta" ? #F5F4F2 : #f7ece2;
+    out property <color> diff-add-bg: palette == "terracotta" ? #EAF7F0 : #e6f5ee;
+    out property <color> diff-add-text: palette == "terracotta" ? #14532D : #14532d;
+    out property <color> diff-del-bg: palette == "terracotta" ? #FDECEC : #fae4de;
+    out property <color> diff-del-text: palette == "terracotta" ? #7F1D1D : #7f1d1d;
+    // Reasoning status dot; the completed tone doubles as the success check.
+    out property <color> thought: palette == "terracotta" ? #3E9C7E : #16ad8d;
+
+    // Status colors: log levels, run states, badges and error text, with the
+    // matching soft backgrounds for diff rows and banners.
+    out property <color> success: palette == "terracotta" ? #1A8A5C : #16845d;
+    out property <color> success-bg: palette == "terracotta" ? #EAF7F0 : #e6f5ee;
+    out property <color> warning: palette == "terracotta" ? #C98A2B : #b8860b;
+    out property <color> warning-bg: palette == "terracotta" ? #FBEAE5 : #faf0dc;
+    out property <color> danger: palette == "terracotta" ? #D04A43 : #b63a22;
+    out property <color> danger-bg: palette == "terracotta" ? #FDECEC : #fae4de;
+    out property <color> info: #3b82f6;
+
+    // Unified scrim behind modal dialogs, drawers and overlays.
+    out property <color> overlay: #00000040;
+
+    // Shell surfaces. The legacy gradient brushes stay so existing pages keep
+    // compiling; the workspace layout uses the flat tokens above.
+    out property <brush> rail: @linear-gradient(180deg, accent-secondary 0%, accent-deep 100%);
+    out property <brush> middle: palette == "terracotta" ? sidebar : @linear-gradient(180deg, #fffaf6 0%, #fff6ef 100%);
+    out property <brush> chat: palette == "terracotta" ? panel : @linear-gradient(180deg, #fffbf8 0%, #fff2e8 100%);
+    out property <brush> dock: palette == "terracotta" ? sidebar : @linear-gradient(180deg, #fff8f3 0%, #fff0e5 100%);
+    out property <brush> composer: palette == "terracotta" ? surface : @linear-gradient(180deg, #fff8f3 0%, #fff2e9 100%);
+
+    // Type scale, multiplied by the persisted chat font scale. Odd sizes
+    // (8px/9px/15px/17px/19px) are deliberate one-offs (badges, footers) and
+    // stay literal until they join the scale.
+    out property <length> font-2xs: 10px * font-scale;
+    out property <length> font-xs: 11px * font-scale;
+    out property <length> font-sm: 12px * font-scale;
+    out property <length> font-md: 13px * font-scale;
+    out property <length> font-lg: 14px * font-scale;
+    out property <length> font-xl: 16px * font-scale;
+    out property <length> font-headline: 18px * font-scale;
+    out property <length> font-display: 24px * font-scale;
+
+    // Corner radii. Circular avatars keep their half-width literals.
+    out property <length> radius-sm: 8px;
+    out property <length> radius-md: 10px;
+    out property <length> radius-lg: 12px;
+    out property <length> radius-xl: 14px;
+
+    // Monospace stack for diff cards and tool output previews.
+    out property <string> font-mono: "Consolas";
+    // Timeline metrics (§7): full-width entries with 24px side padding.
+    out property <length> timeline-padding: 24px;
+    out property <length> diff-line-number-width: 56px;
+
+    // Spacing scale.
+    out property <length> space-1: 4px;
+    out property <length> space-2: 8px;
+    out property <length> space-3: 12px;
+    out property <length> space-4: 16px;
+    out property <length> space-5: 20px;
+
+    // Shell layout metrics. The sidebar is fixed-width in the workspace
+    // layout; rail/middle/dock metrics remain only for legacy pages.
+    // min-window-* must stay in sync with the winit min size in main.rs.
+    out property <length> sidebar-width: 240px;
+    out property <length> rail-width: 56px;
+    out property <length> middle-width: 220px;
+    out property <length> dock-width: 284px;
+    out property <length> header-height: 56px;
+    out property <length> middle-header-height: 80px;
+    out property <length> min-window-width: 1024px;
+    out property <length> min-window-height: 700px;
+    out property <length> dock-breakpoint: 1100px;
+}

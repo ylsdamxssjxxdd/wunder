@@ -1,0 +1,1344 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+import {
+  buildAssistantMessageStatsEntries,
+  sumConversationConsumedTokens
+} from '../../src/utils/messageStats';
+import {
+  RETRY_VISIBILITY_GRACE_WINDOW_MS,
+  shouldDisplayTransientRetry
+} from '../../src/utils/retryVisibility';
+import { summarizeTurnDecodeSpeed } from '../../src/utils/turnDecodeSpeed';
+
+const createTranslator = () => {
+  const table: Record<string, string> = {
+    'chat.stats.duration': 'Duration',
+    'chat.stats.speed': 'Speed',
+    'chat.stats.contextTokens': 'Context',
+    'chat.stats.quota': 'Quota',
+    'chat.stats.toolCalls': 'Tools',
+    'messenger.tasks.quota': 'Credits',
+    'chat.stats.userRoundStatus': 'User round {round}',
+    'messenger.messageStatus.compacting': 'Compacting',
+    'messenger.messageStatus.requesting': 'Requesting',
+    'messenger.messageStatus.waitingInput': 'Waiting input',
+    'messenger.messageStatus.done': 'Done',
+    'messenger.messageStatus.error': 'Error',
+    'messenger.messageStatus.modelOutputting': 'Model outputting',
+    'messenger.messageStatus.running': 'Running',
+    'messenger.messageStatus.toolRunning': 'Tool running',
+    'messenger.messageStatus.subagentRunning': 'Sub-agent running',
+    'messenger.messageStatus.queued': 'Queued',
+    'messenger.messageStatus.queuedAhead': 'Queued · {count} ahead',
+    'messenger.messageStatus.resumable': 'Resumable',
+    'messenger.messageStatus.retrying': 'Retrying'
+  };
+  return (key: string, params?: Record<string, unknown>) => {
+    const template = table[key] || key;
+    if (!params) return template;
+    return Object.entries(params).reduce(
+      (output, [name, value]) => output.replace(`{${name}}`, String(value)),
+      template
+    );
+  };
+};
+
+const findEntryValue = (
+  entries: Array<{ label: string; value: string }>,
+  label: string
+): string | null => {
+  const matched = entries.find((item) => item.label === label);
+  return matched ? String(matched.value || '') : null;
+};
+
+test('subagent ownership no longer imports chatMessageLookup round helpers', () => {
+  const source = readFileSync(resolve(process.cwd(), 'src/stores/chatStats.ts'), 'utf8');
+  assert.equal(source.includes("from './chatMessageLookup'"), false);
+  assert.equal(source.includes('findAssistantMessageByUserRound'), false);
+  assert.equal(source.includes('findAssistantMessageByRound'), false);
+});
+
+const ensureBrowserRuntimeStub = (): void => {
+  const root = globalThis as typeof globalThis & {
+    window?: { location?: { origin?: string } };
+    localStorage?: {
+      getItem: (key: string) => string | null;
+      setItem: (key: string, value: string) => void;
+      removeItem: (key: string) => void;
+    };
+  };
+  if (!root.window) {
+    root.window = { location: { origin: 'http://localhost' } };
+  } else if (!root.window.location) {
+    root.window.location = { origin: 'http://localhost' };
+  }
+  if (!root.window.location.origin) {
+    root.window.location.origin = 'http://localhost';
+  }
+  if (!root.localStorage) {
+    const values = new Map<string, string>();
+    root.localStorage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        values.set(key, value);
+      },
+      removeItem: (key: string) => {
+        values.delete(key);
+      }
+    };
+  }
+};
+
+test('message stats present the user-round aggregate speed for the whole bubble', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        usage: {
+          input_tokens: 9731,
+          output_tokens: 171,
+          total_tokens: 9902
+        },
+        decode_duration_s: 1.169925369,
+        decode_duration_total_s: 1.26708126,
+        avg_model_round_speed_tps: 1050.45,
+        avg_model_round_speed_rounds: 2
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Speed'), '1050.5 token/s');
+});
+
+test('normalized message stats prefer the user-round aggregate decode speed', async () => {
+  ensureBrowserRuntimeStub();
+  const { normalizeMessageStats } = await import('../../src/stores/chatStats');
+  const stats = normalizeMessageStats({
+    visible_decode_tokens: 84,
+    visible_decode_duration_s: 1.2,
+    visible_decode_speed_tps: 70,
+    avg_model_round_speed_tps: 280,
+    avg_model_round_speed_rounds: 4
+  });
+  const entries = buildAssistantMessageStatsEntries({ role: 'assistant', stats }, createTranslator());
+
+  assert.equal(stats?.visible_decode_tokens, 84);
+  assert.equal(stats?.visible_decode_duration_s, 1.2);
+  assert.equal(findEntryValue(entries, 'Speed'), '280.0 token/s');
+});
+
+test('message stats derive visible reply speed from stream timing when explicit speed is absent', () => {
+  const entries = buildAssistantMessageStatsEntries({
+    role: 'assistant',
+    stats: {
+      decode_output_tokens: 82,
+      visible_decode_speed_tps: null,
+      stream_timing: { decode_ms: 722 }
+    }
+  }, createTranslator());
+  assert.equal(findEntryValue(entries, 'Speed'), '113.6 token/s');
+});
+
+test('message stats restore generation speed from persisted tokens and duration', () => {
+  const entries = buildAssistantMessageStatsEntries({
+    role: 'assistant',
+    stats: {
+      decode_tokens: 90,
+      decode_duration_s: 1.5,
+      decode_speed_tps: null,
+      visible_decode_speed_tps: null
+    }
+  }, createTranslator());
+  assert.equal(findEntryValue(entries, 'Speed'), '60.0 token/s');
+});
+
+test('message stats retains provider decode speed for a tool-only model round', () => {
+  const entries = buildAssistantMessageStatsEntries({
+    role: 'assistant',
+    stats: {
+      visible_decode_measured: false,
+      decode_output_tokens: 90,
+      decode_duration_s: 1.5,
+      decode_speed_tps: 60
+    }
+  }, createTranslator());
+  assert.equal(findEntryValue(entries, 'Speed'), '60.0 token/s');
+});
+
+test('message stats render a legal zero tool count as zero', () => {
+  const entries = buildAssistantMessageStatsEntries({
+    role: 'assistant',
+    stats: { toolCalls: 0, contextTokens: 12 }
+  }, createTranslator());
+  assert.equal(findEntryValue(entries, 'Tools'), '0');
+});
+
+test('message stats expose quota charges carried as consumed', () => {
+  const entries = buildAssistantMessageStatsEntries({
+    role: 'assistant',
+    stats: { creditsConsumed: 0, consumed: 1 }
+  }, createTranslator());
+  assert.equal(findEntryValue(entries, 'Credits'), '1');
+});
+
+test('message stats show the admitted request total when an exempt request has no account debit', () => {
+  const entries = buildAssistantMessageStatsEntries({
+    role: 'assistant',
+    stats: { modelRequestCount: 1, creditsConsumed: 0, toolCalls: 0 }
+  }, createTranslator());
+  assert.equal(findEntryValue(entries, 'Credits'), '1');
+  assert.equal(findEntryValue(entries, 'Tools'), '0');
+});
+
+test('message stats restore the persisted model request total ahead of a zero account debit', () => {
+  const entries = buildAssistantMessageStatsEntries({
+    role: 'assistant',
+    stats: { account_credits_consumed: 0, model_request_count: 7, toolCalls: 6 }
+  }, createTranslator());
+  assert.equal(findEntryValue(entries, 'Credits'), '7');
+  assert.equal(findEntryValue(entries, 'Tools'), '6');
+});
+
+test('message stats recover a legacy zero account charge from request count', () => {
+  const entries = buildAssistantMessageStatsEntries({
+    role: 'assistant',
+    stats: { model_request_count: 1, creditsConsumed: 0, quotaConsumed: 5927, toolCalls: 0 }
+  }, createTranslator());
+  assert.equal(findEntryValue(entries, 'Credits'), '1');
+});
+
+test('message stats show aggregate speed when it has measured rounds', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        avg_model_round_speed_tps: 1050.45,
+        avg_model_round_speed_rounds: 2,
+        context_tokens: 4027
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Speed'), '1050.5 token/s');
+});
+
+test('message stats keeps persisted aggregate duration after history refresh', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        prefill_duration_total_s: 0.75,
+        decode_duration_total_s: 2.25,
+        avg_model_round_speed_tps: 48,
+        avg_model_round_speed_rounds: 3
+      }
+    },
+    t
+  );
+
+  assert.equal(findEntryValue(entries, 'Duration'), '3.0s');
+});
+
+test('message stats context ignores final usage and round usage totals without occupancy', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        roundUsage: {
+          input_tokens: 4027,
+          output_tokens: 171,
+          total_tokens: 4198
+        },
+        usage: {
+          input_tokens: 3900,
+          output_tokens: 180,
+          total_tokens: 4080
+        }
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), '--');
+});
+
+test('message stats context prefers explicit occupancy over final usage total', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        context_tokens: 7101,
+        roundUsage: {
+          input_tokens: 7180,
+          output_tokens: 47,
+          total_tokens: 7227
+        },
+        usage: {
+          input_tokens: 7101,
+          output_tokens: 126,
+          total_tokens: 7300
+        }
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), '7.1k');
+});
+
+test('message stats context does not fall back to final usage total when explicit occupancy is absent', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        usage: {
+          input_tokens: 9244,
+          output_tokens: 12,
+          total_tokens: 9268
+        }
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), null);
+});
+
+test('message stats context does not fall back to final usage input when explicit occupancy is absent', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        usage: {
+          input_tokens: 4027,
+          output_tokens: 171,
+        }
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), null);
+});
+
+test('message stats context supports explicit context_occupancy_tokens alias', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        context_occupancy_tokens: 6123
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), '6.1k');
+});
+
+test('message stats context supports explicit contextOccupancyTokens alias', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        contextOccupancyTokens: 6124
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), '6.1k');
+});
+
+test('message stats context supports explicit contextTokens alias', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        contextTokens: 6125
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), '6.1k');
+});
+
+test('message stats context supports explicit context_tokens alias', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        context_tokens: 6126
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), '6.1k');
+});
+
+test('message stats context prefers explicit occupancy over accumulated round usage', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        context_occupancy_tokens: 7510,
+        roundUsage: {
+          input_tokens: 83699,
+          output_tokens: 4533,
+          total_tokens: 88232
+        }
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), '7.5k');
+});
+
+test('message stats context prefers observed occupancy alias over cached contextTokens', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        contextTokens: 8795,
+        context_occupancy_tokens: 1693
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), '1.7k');
+});
+
+test('message stats shows quota consumed tokens for the user round', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        quotaConsumed: 4198,
+        roundUsage: {
+          input_tokens: 4027,
+          output_tokens: 171,
+          total_tokens: 4198
+        }
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Quota'), '4.2k');
+});
+
+test('message stats still shows quota consumed after an interrupted response', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stream_incomplete: false,
+      stop_reason: 'interrupted',
+      stats: {
+        quotaConsumed: 1536
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Quota'), '1.5k');
+});
+
+test('message stats interrupted response prefers accumulated user-round quota over latest usage snapshot', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stop_reason: 'interrupted',
+      stats: {
+        quotaConsumed: 1536,
+        usage: {
+          input_tokens: 4800,
+          output_tokens: 200,
+          total_tokens: 5000
+        },
+        contextTokens: 5000
+      }
+    },
+    t
+  );
+
+  assert.equal(findEntryValue(entries, 'Quota'), '1.5k');
+  assert.equal(findEntryValue(entries, 'Context'), '5k');
+});
+
+test('message stats interrupted response falls back to round usage instead of usage snapshot when quota event is missing', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stop_reason: 'interrupted',
+      stats: {
+        quotaConsumed: 1,
+        roundUsage: {
+          input_tokens: 2100,
+          output_tokens: 420,
+          total_tokens: 2520
+        },
+        usage: {
+          input_tokens: 6100,
+          output_tokens: 100,
+          total_tokens: 6200
+        },
+        contextTokens: 6200
+      }
+    },
+    t
+  );
+
+  assert.equal(findEntryValue(entries, 'Quota'), '2.5k');
+  assert.equal(findEntryValue(entries, 'Context'), '6.2k');
+});
+
+test('transient first retry stays hidden during grace window', () => {
+  const nowMs = 1_000_000;
+  assert.equal(
+    shouldDisplayTransientRetry(
+      {
+        retry_attempt: 1,
+        retry_started_at_ms: nowMs - (RETRY_VISIBILITY_GRACE_WINDOW_MS - 1)
+      },
+      nowMs
+    ),
+    false
+  );
+  assert.equal(
+    shouldDisplayTransientRetry(
+      {
+        retry_attempt: 1,
+        retry_started_at_ms: nowMs - RETRY_VISIBILITY_GRACE_WINDOW_MS
+      },
+      nowMs
+    ),
+    true
+  );
+  assert.equal(
+    shouldDisplayTransientRetry(
+      {
+        retry_attempt: 2,
+        retry_started_at_ms: nowMs
+      },
+      nowMs
+    ),
+    true
+  );
+});
+
+test('message stats hides first transient retry before grace window elapses', () => {
+  const t = createTranslator();
+  const nowMs = 1_000_000;
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      retry_state: 'retrying',
+      retry_attempt: 1,
+      retry_started_at_ms: nowMs - 500,
+      workflowItems: [
+        { eventType: 'llm_request', status: 'completed' },
+        { eventType: 'llm_stream_retry', status: 'pending', attempt: 1, maxAttempts: 6, delayS: 1.2 }
+      ],
+      stats: {
+        interaction_start_ms: nowMs - 2_000
+      }
+    },
+    t,
+    null,
+    nowMs
+  );
+  assert.notEqual(entries[0]?.value, 'Retrying');
+  assert.equal(entries[0]?.value, 'Requesting');
+});
+
+test('message stats does not keep retrying status after model output resumes', () => {
+  const t = createTranslator();
+  const nowMs = 1_000_000;
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      retry_state: 'retrying',
+      retry_attempt: 1,
+      retry_started_at_ms: nowMs - 5_000,
+      workflowItems: [
+        { eventType: 'llm_request', status: 'completed' },
+        { eventType: 'llm_stream_retry', status: 'pending', attempt: 1, maxAttempts: 6, delayS: 1.2 },
+        { eventType: 'llm_output', status: 'completed' }
+      ],
+      stats: {
+        interaction_start_ms: nowMs - 7_000
+      }
+    },
+    t,
+    null,
+    nowMs
+  );
+  assert.notEqual(entries[0]?.value, 'Retrying');
+  assert.equal(entries[0]?.value, 'Model outputting');
+});
+
+test('message stats does not keep retrying status after a newer model request starts', () => {
+  const t = createTranslator();
+  const nowMs = 1_000_000;
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      retry_state: 'retrying',
+      retry_attempt: 2,
+      retry_started_at_ms: nowMs - 5_000,
+      workflowItems: [
+        { eventType: 'llm_request', status: 'completed' },
+        { eventType: 'llm_stream_retry', status: 'pending', attempt: 2, maxAttempts: 6, delayS: 1.2 },
+        { eventType: 'llm_request', status: 'completed' }
+      ],
+      stats: {
+        interaction_start_ms: nowMs - 7_000
+      }
+    },
+    t,
+    null,
+    nowMs
+  );
+  assert.notEqual(entries[0]?.value, 'Retrying');
+  assert.equal(entries[0]?.value, 'Requesting');
+});
+
+test('message stats keeps requesting during early progress-only stream window', () => {
+  const t = createTranslator();
+  const startMs = Date.UTC(2026, 4, 1, 10, 9, 16);
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      waiting_updated_at_ms: startMs,
+      waiting_first_output_at_ms: null,
+      waiting_phase_first_output_at_ms: null,
+      workflowItems: [
+        {
+          title: 'Progress',
+          status: 'completed'
+        },
+        {
+          title: 'Thread status',
+          status: 'completed'
+        }
+      ],
+      stats: {
+        interaction_start_ms: startMs,
+        interaction_end_ms: null
+      }
+    },
+    t,
+    null,
+    startMs + 600
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value, 'Requesting');
+  assert.equal(entries[0]?.iconClass, 'fa-solid fa-paper-plane');
+});
+
+test('message stats keeps requesting for bare running assistant placeholder', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      workflowItems: [],
+      stats: {}
+    },
+    t,
+    null,
+    Date.UTC(2026, 4, 1, 10, 39, 46)
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value, 'Requesting');
+  assert.equal(entries[0]?.iconClass, 'fa-solid fa-paper-plane');
+});
+
+test('message stats do not reopen a settled assistant from session-level busy state', () => {
+  const t = createTranslator();
+  const messages = [
+    { role: 'user', content: 'hello' },
+    {
+      role: 'assistant',
+      content: '',
+      workflowItems: [],
+      stream_round: 1,
+      stats: {}
+    }
+  ];
+  const entries = buildAssistantMessageStatsEntries(
+    messages[1],
+    t,
+    messages,
+    Date.UTC(2026, 4, 1, 10, 39, 47)
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value, 'User round 1');
+  assert.equal(entries[0]?.live, false);
+});
+
+test('message stats still shows completed round for inactive assistant without runtime flags', () => {
+  const t = createTranslator();
+  const messages = [
+    { role: 'user', content: 'hello' },
+    {
+      role: 'assistant',
+      content: '',
+      workflowItems: [],
+      stream_round: 1,
+      stats: {}
+    }
+  ];
+  const entries = buildAssistantMessageStatsEntries(
+    messages[1],
+    t,
+    messages,
+    Date.UTC(2026, 4, 1, 10, 39, 48)
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value, 'User round 1');
+  assert.equal(entries[0]?.live, false);
+});
+
+test('message stats keeps requesting when progress updates interaction end before output', () => {
+  const t = createTranslator();
+  const startMs = Date.UTC(2026, 4, 1, 10, 39, 46);
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      waiting_updated_at_ms: startMs + 500,
+      waiting_first_output_at_ms: null,
+      waiting_phase_first_output_at_ms: null,
+      workflowItems: [
+        {
+          title: 'Progress',
+          status: 'completed'
+        },
+        {
+          title: 'Thread status',
+          status: 'completed'
+        }
+      ],
+      stats: {
+        interaction_start_ms: startMs,
+        interaction_end_ms: startMs + 500
+      }
+    },
+    t,
+    null,
+    startMs + 700
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value, 'Requesting');
+});
+
+test('message stats interrupted response falls back to completed model-round usage when round totals are missing', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stop_reason: 'interrupted',
+      stats: {
+        partialQuotaConsumed: 4224,
+        usage: {
+          input_tokens: 4096,
+          output_tokens: 128,
+          total_tokens: 4224
+        },
+        contextTokens: 4224
+      }
+    },
+    t
+  );
+
+  assert.equal(findEntryValue(entries, 'Quota'), '4.2k');
+  assert.equal(findEntryValue(entries, 'Context'), '4.2k');
+});
+
+test('message stats shows queue ahead count in queued status', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stream_incomplete: true,
+      workflowItems: [
+        {
+          eventType: 'queue_enter',
+          status: 'pending',
+          detail: JSON.stringify({
+            queue_ahead: 3,
+            queue_total: 4
+          })
+        }
+      ]
+    },
+    t
+  );
+
+  assert.equal(findEntryValue(entries, ''), 'Queued · 3 ahead');
+});
+
+test('message stats keeps explicit queued status ahead of requesting fallback', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      status: 'queued',
+      runtime_status: 'queued',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      workflowItems: [
+        {
+          eventType: 'llm_request',
+          status: 'completed'
+        },
+        {
+          eventType: 'queue_update',
+          status: 'pending',
+          detail: JSON.stringify({
+            wait_ahead: 2
+          })
+        },
+        {
+          eventType: 'llm_request',
+          status: 'completed'
+        }
+      ],
+      stats: {}
+    },
+    t,
+    null,
+    Date.UTC(2026, 6, 9, 12, 0, 0)
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value, 'Queued · 2 ahead');
+  assert.equal(entries[0]?.iconClass, 'fa-solid fa-clock');
+});
+
+test('message hydration restores queued workflow events from session detail projection', async () => {
+  ensureBrowserRuntimeStub();
+  const { hydrateMessage } = await import('../../src/stores/chatMessageHydration');
+  const t = createTranslator();
+  const hydrated = hydrateMessage(
+    {
+      role: 'assistant',
+      content: '',
+      status: 'queued',
+      stream_incomplete: true,
+      workflow_events: [
+        {
+          event: 'queue_enter',
+          data: {
+            queue_id: 'task_generic',
+            wait_ahead: 1,
+            queue_ahead: 0
+          }
+        }
+      ],
+      stats: {}
+    },
+    {}
+  );
+
+  assert.equal(hydrated.status, 'queued');
+  assert.equal(hydrated.runtime_status, 'queued');
+  assert.equal(hydrated.workflowItems?.[0]?.eventType, 'queue_enter');
+
+  const entries = buildAssistantMessageStatsEntries(
+    hydrated,
+    t,
+    null,
+    Date.UTC(2026, 6, 9, 12, 0, 0)
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value.includes('Queued'), true);
+  assert.equal(entries[0]?.value.includes('0 ahead'), true);
+  assert.notEqual(entries[0]?.value, t('messenger.messageStatus.requesting'));
+  assert.equal(entries[0]?.iconClass, 'fa-solid fa-clock');
+});
+
+test('message stats sums explicit and partial consumed tokens across assistant messages in the same user turn', () => {
+  const t = createTranslator();
+  const messages = [
+    {
+      role: 'user',
+      content: 'draw a heart'
+    },
+    {
+      role: 'assistant',
+      content: 'first model round finished',
+      stop_reason: 'interrupted',
+      stats: {
+        partialQuotaConsumed: 6805,
+        usage: {
+          input_tokens: 6477,
+          output_tokens: 328,
+          total_tokens: 6805
+        },
+        contextTokens: 6805
+      }
+    }
+  ];
+
+  const entries = buildAssistantMessageStatsEntries(messages[1], t, messages);
+  assert.equal(findEntryValue(entries, 'Quota'), '6.8k');
+  assert.equal(sumConversationConsumedTokens(messages), 6805);
+});
+
+test('message stats falls back to user-round total tokens when quota event is missing', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        quotaConsumed: 1,
+        roundUsage: {
+          input_tokens: 3870,
+          output_tokens: 328,
+          total_tokens: 4198
+        }
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Quota'), '4.2k');
+});
+
+test('message stats takes the cumulative maximum across assistant snapshots in the same user turn', () => {
+  const t = createTranslator();
+  const messages = [
+    {
+      role: 'user',
+      content: 'plan this task'
+    },
+    {
+      role: 'assistant',
+      content: 'first step',
+      stats: {
+        quotaConsumed: 1400,
+        roundUsage: {
+          total_tokens: 3200
+        }
+      }
+    },
+    {
+      role: 'assistant',
+      content: 'final answer',
+      stats: {
+        quotaConsumed: 2800,
+        roundUsage: {
+          total_tokens: 3600
+        }
+      }
+    }
+  ];
+
+  const entries = buildAssistantMessageStatsEntries(messages[2], t, messages);
+
+  assert.equal(findEntryValue(entries, 'Quota'), '2.8k');
+  assert.equal(findEntryValue(entries, 'Context'), '--');
+});
+
+test('conversation consumed tokens aggregate by user turn instead of context totals', () => {
+  const messages = [
+    {
+      role: 'user',
+      content: 'first task'
+    },
+    {
+      role: 'assistant',
+      content: 'first answer',
+      stats: {
+        quotaConsumed: 2800,
+        contextTokens: 3600,
+        roundUsage: {
+          total_tokens: 3600
+        }
+      }
+    },
+    {
+      role: 'user',
+      content: 'second task'
+    },
+    {
+      role: 'assistant',
+      content: 'second answer',
+      stats: {
+        quotaConsumed: 4100,
+        contextTokens: 1900,
+        roundUsage: {
+          total_tokens: 1900
+        }
+      }
+    }
+  ];
+
+  assert.equal(sumConversationConsumedTokens(messages), 6900);
+});
+
+test('message stats ignores legacy round-marker quota placeholders when usage totals are present', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        quotaConsumed: 1,
+        roundUsage: {
+          total_tokens: 2048
+        },
+        usage: {
+          total_tokens: 2048
+        }
+      }
+    },
+    t
+  );
+
+  assert.equal(findEntryValue(entries, 'Quota'), '2k');
+});
+
+test('message stats show the explicit visible reply speed without frontend clamping', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        usage: {
+          input_tokens: 19897,
+          output_tokens: 1218,
+          total_tokens: 21115
+        },
+        decode_duration_s: 0.23,
+        avg_model_round_speed_tps: 1800,
+        avg_model_round_speed_rounds: 4,
+        visible_decode_speed_tps: 1800
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Speed'), '1800.0 token/s');
+});
+
+test('message stats prefer the explicit visible reply speed for tool turns', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        toolCalls: 3,
+        usage: {
+          input_tokens: 19897,
+          output_tokens: 1218,
+          total_tokens: 21115
+        },
+        decode_duration_s: 0.23,
+        avg_model_round_speed_tps: 312.5,
+        avg_model_round_speed_rounds: 4,
+        visible_decode_speed_tps: 312.5
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Speed'), '312.5 token/s');
+});
+
+test('message stats hides tool-turn speed when no reliable average exists', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        toolCalls: 1,
+        usage: {
+          input_tokens: 9244,
+          output_tokens: 700,
+          total_tokens: 9944
+        },
+        decode_duration_s: 0.21
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Speed'), '-');
+});
+
+test('message stats keeps compaction status scoped to the assistant bubble that owns it', () => {
+  const t = createTranslator();
+  const pendingAssistant = {
+    role: 'assistant',
+    workflowStreaming: true,
+    workflowItems: [
+      {
+        eventType: 'llm_request',
+        status: 'loading'
+      }
+    ]
+  };
+  const compactionAssistant = {
+    role: 'assistant',
+    workflowStreaming: true,
+    workflowItems: [
+      {
+        eventType: 'compaction_progress',
+        status: 'loading'
+      }
+    ]
+  };
+
+  const entries = buildAssistantMessageStatsEntries(
+    pendingAssistant,
+    t,
+    [pendingAssistant, compactionAssistant]
+  );
+  const compactionEntries = buildAssistantMessageStatsEntries(
+    compactionAssistant,
+    t,
+    [pendingAssistant, compactionAssistant]
+  );
+
+  assert.equal(entries[0]?.value, 'Requesting');
+  assert.equal(compactionEntries[0]?.value, 'Compacting');
+});
+
+test('message stats keeps orphan subagent ownership away from a stopped assistant bubble', async () => {
+  ensureBrowserRuntimeStub();
+  const { attachSubagentsToMessages } = await import('../../src/stores/chatStats');
+  const previousAssistant = {
+    role: 'assistant',
+    stream_round: 1,
+    subagents: [
+      {
+        session_id: 'session-prev',
+        run_id: 'run-prev',
+        title: 'Previous child',
+        status: 'completed'
+      }
+    ]
+  };
+  const stoppedAssistant = {
+    role: 'assistant',
+    stream_round: 2,
+    status: 'cancelled',
+    cancelled: true,
+    stop_reason: 'user_stop',
+    subagents: []
+  };
+  const messages = [
+    { role: 'user', content: 'first' },
+    previousAssistant,
+    { role: 'user', content: 'second' },
+    stoppedAssistant
+  ];
+
+  attachSubagentsToMessages(messages, [
+    {
+      session_id: 'session-prev',
+      run_id: 'run-prev',
+      title: 'Previous child',
+      status: 'failed'
+    }
+  ]);
+
+  assert.equal(previousAssistant.subagents.length, 1);
+  assert.equal(previousAssistant.subagents[0]?.status, 'failed');
+  assert.equal(stoppedAssistant.subagents.length, 0);
+});
+
+test('chat workspace path hints read generated resource aliases', async () => {
+  ensureBrowserRuntimeStub();
+  const { collectWorkspacePathHints } = await import('../../src/stores/chatStats');
+  const paths = collectWorkspacePathHints(
+    {
+      public_path: '/workspaces/user__c__2/images/output.png',
+      outputPath: 'reports/final.pdf'
+    },
+    {
+      data: {
+        workspace_relative_path: 'images/output.png',
+        savedPath: 'audio/result.mp3'
+      },
+      meta: {
+        filePath: 'video/result.mp4'
+      }
+    }
+  );
+
+  assert.deepEqual(paths.sort(), [
+    'audio/result.mp3',
+    'images/output.png',
+    'reports/final.pdf',
+    'video/result.mp4'
+  ]);
+});
+
+test('message stats keeps waiting-input status ahead of stale running flags', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stream_incomplete: true,
+      questionPanel: {
+        status: 'pending'
+      },
+      stats: {
+        usage: {
+          total_tokens: 1200
+        }
+      }
+    },
+    t
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value, 'Waiting input');
+});
+
+test('message stats suppresses completed metrics while compaction is still running', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      workflowItems: [
+        {
+          eventType: 'compaction_progress',
+          status: 'loading'
+        }
+      ],
+      stats: {
+        usage: {
+          total_tokens: 2048
+        },
+        decode_duration_s: 1.2
+      }
+    },
+    t
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value, 'Compacting');
+});
+
+test('message stats keeps active subagent status ahead of stale failed workflow items', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      workflowItems: [
+        {
+          status: 'failed',
+          detail: 'stale parent stream failure'
+        }
+      ],
+      subagents: [
+        {
+          session_id: 'child-session',
+          run_id: 'child-run',
+          status: 'timeout',
+          terminal: 'false',
+          failed: 'false'
+        }
+      ],
+      stats: {
+        usage: {
+          total_tokens: 2048
+        }
+      }
+    },
+    t
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value, 'Sub-agent running');
+});
+
+test('turn decode speed summary matches backend user-round average semantics', () => {
+  const summary = summarizeTurnDecodeSpeed([
+    {
+      prefill: 0.42,
+      decode: 2.4,
+      usage: {
+        output: 120
+      }
+    },
+    {
+      prefill: 0.33,
+      decode: 1.6,
+      usage: {
+        output: 80
+      }
+    },
+    {
+      prefill: 0.28,
+      decode: 0.9,
+      usage: null
+    }
+  ]);
+
+  assert.ok(Math.abs(Number(summary.prefillDurationTotalS) - 1.03) < 1e-9);
+  assert.equal(summary.decodeDurationTotalS, 4);
+  assert.equal(summary.avgModelRoundSpeedRounds, 2);
+  assert.equal(summary.avgModelRoundSpeedTps, 50);
+});
+
+test('turn decode speed summary ignores rounds without both decode time and output tokens', () => {
+  const summary = summarizeTurnDecodeSpeed([
+    {
+      decode: 1.2,
+      usage: {
+        output: 60
+      }
+    },
+    {
+      decode: 0,
+      usage: {
+        output: 100
+      }
+    },
+    {
+      decode: 1.1,
+      usage: {
+        output: 0
+      }
+    }
+  ]);
+
+  assert.equal(summary.decodeDurationTotalS, 1.2);
+  assert.equal(summary.avgModelRoundSpeedRounds, 1);
+  assert.equal(summary.avgModelRoundSpeedTps, 50);
+});
+
+test('final missing decode timing clears an earlier model speed', async () => {
+  ensureBrowserRuntimeStub();
+  const { mergeMessageStats } = await import('../../src/stores/chatStats');
+  const stats = mergeMessageStats({ visible_decode_speed_tps: 70, contextTokens: 100 }, { visible_decode_speed_tps: null });
+  assert.equal(findEntryValue(buildAssistantMessageStatsEntries({ role: 'assistant', stats }, createTranslator()), 'Speed'), '-');
+});

@@ -1,0 +1,390 @@
+// Two-column workspace layout, left column: new-task button, the
+// workspace/thread tree and the settings button. The window shell owns the
+// width (drag handle on the right edge); the chat area adapts on the right.
+// Row states, the selection indicator and the hover-only row actions follow
+// the workspace refactor spec (§5.2). The tree is one flat row model built by
+// the native projection, so the Slint thread only lays out rows; rows
+// drag-reorder through `move-row`.
+import { Theme, SidebarRow } from "theme.slint";
+import { I18n } from "i18n.slint";
+import { ListView } from "std-widgets.slint";
+import { DragRow } from "drag_row.slint";
+
+// Resolve a workspace icon name to a bundled icon; unknown names fall back
+// to the generic folder so a stale icon string can never blank a row. Slint
+// has no top-level free functions, so the resolvers live in a global that the
+// sidebar and the chat top bar both call.
+export global WorkspaceVisual {
+    public pure function icon(name: string) -> image {
+        name == "coffee" ? @image-url("../assets/icons/workspace/coffee.svg")
+        : name == "filter" ? @image-url("../assets/icons/workspace/filter.svg")
+        : name == "cake" ? @image-url("../assets/icons/workspace/cake.svg")
+        : name == "moon" ? @image-url("../assets/icons/workspace/moon.svg")
+        : name == "knight" ? @image-url("../assets/icons/workspace/knight.svg")
+        : name == "robot" ? @image-url("../assets/icons/workspace/robot.svg")
+        : name == "flower" ? @image-url("../assets/icons/workspace/flower.svg")
+        : name == "gear" ? @image-url("../assets/icons/workspace/gear.svg")
+        : name == "swan" ? @image-url("../assets/icons/workspace/swan.svg")
+        : name == "bear" ? @image-url("../assets/icons/workspace/bear.svg")
+        : name == "ghost" ? @image-url("../assets/icons/workspace/ghost.svg")
+        : name == "alien" ? @image-url("../assets/icons/workspace/alien.svg")
+        : name == "bell" ? @image-url("../assets/icons/workspace/bell.svg")
+        : name == "flask" ? @image-url("../assets/icons/workspace/flask.svg")
+        : @image-url("../assets/icons/workspace/folder.svg");
+    }
+
+    // Slint has no string→color conversion, so the palette ships as explicit
+    // branches (§6.3); unknown names fall back to gray.
+    public pure function color(name: string) -> color {
+        name == "red" ? #CD484F
+        : name == "green" ? #4CAF50
+        : name == "blue" ? #1F76AF
+        : name == "brown" ? #8D6E3C
+        : name == "crimson" ? #A93226
+        : name == "pink" ? #E45B9C
+        : name == "purple" ? #6F6AED
+        : name == "yellow" ? #F5C518
+        : name == "orange" ? #FA8C38
+        : name == "teal" ? #17B8A6
+        : name == "bright-blue" ? #1799FE
+        : name == "gray" ? #9AA0A6
+        : name == "black" ? #1F2329
+        : name == "light-purple" ? #B39DDB
+        : name == "light-green" ? #81C784
+        : #9AA0A6;
+    }
+
+    public pure function icon-keys() -> [string] {
+        ["folder", "coffee", "filter", "cake", "moon", "knight", "robot", "flower", "gear",
+         "swan", "bear", "ghost", "alien", "bell", "flask"]
+    }
+
+    public pure function color-keys() -> [string] {
+        ["red", "green", "blue", "brown", "crimson", "pink", "purple", "yellow", "orange",
+         "teal", "bright-blue", "gray", "black", "light-purple", "light-green"]
+    }
+}
+
+// Thread status dot: running is primary, waiting amber, failed red, rest gray.
+component StatusDot inherits Rectangle {
+    in property <string> status;
+    width: 6px; height: 6px; border-radius: 3px;
+    background: status == "running" ? Theme.accent
+        : status == "queued" || status == "waiting" ? Theme.warning
+        : status == "error" || status == "failed" ? Theme.danger
+        : #C4C7CD;
+}
+
+component ThreadRow inherits Rectangle {
+    in property <SidebarRow> data;
+    in property <bool> editing;
+    in property <bool> hover;
+    in-out property <string> rename-draft;
+    callback archive();
+    callback begin-rename();
+    callback commit-rename();
+    height: 28px;
+    background: data.active ? Theme.selected : transparent;
+    // Tree connector line linking the thread to its workspace row.
+    Rectangle { x: 20px; y: 0px; width: 1px; height: parent.height; background: Theme.border; }
+    HorizontalLayout {
+        padding-left: 34px; padding-right: 8px; spacing: 8px;
+        if root.editing : TextInput {
+            width: parent.width - 90px;
+            text <=> root.rename-draft;
+            font-size: Theme.font-md;
+            color: Theme.text;
+            single-line: true;
+            vertical-alignment: center;
+            selection-background-color: Theme.accent-soft; selection-foreground-color: Theme.text;
+            accepted => { root.commit-rename(); }
+            key-pressed(event) => {
+                if event.text == Key.Escape {
+                    root.rename-draft = root.data.title;
+                    root.commit-rename();
+                    return accept;
+                }
+                return reject;
+            }
+        }
+        if !root.editing : StatusDot {
+            y: (parent.height - 6px) / 2;
+            status: data.status;
+        }
+        if !root.editing : Text {
+            vertical-alignment: center;
+            text: data.title;
+            color: data.active ? Theme.text : Theme.text-secondary;
+            font-size: Theme.font-md;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if !root.editing : Rectangle {
+            // Rename and archive appear only while the row is hovered; they
+            // stay fully hidden otherwise, including on the active thread.
+            width: hover ? 46px : 0px;
+            clip: true;
+            animate width { duration: 90ms; }
+            HorizontalLayout {
+                spacing: 3px; alignment: start;
+                Rectangle {
+                    width: 20px; height: 20px; border-radius: 4px;
+                    background: rename-touch.has-hover ? Theme.selected : transparent;
+                    Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/pen.svg"); colorize: Theme.muted; }
+                    rename-touch := TouchArea { mouse-cursor: pointer; clicked => { root.begin-rename(); } }
+                }
+                Rectangle {
+                    width: 20px; height: 20px; border-radius: 4px;
+                    background: archive-touch.has-hover ? Theme.selected : transparent;
+                    Image { x: 3px; y: 3px; width: 14px; height: 14px; source: @image-url("../assets/icons/box-archive.svg"); colorize: Theme.muted; }
+                    archive-touch := TouchArea { mouse-cursor: pointer; clicked => { root.archive(); } }
+                }
+            }
+        }
+    }
+}
+
+export component Sidebar inherits Rectangle {
+    background: Theme.sidebar;
+
+    in property <[SidebarRow]> rows;
+    in property <string> active-thread-id;
+    // Signed-in identity shown on the settings button, projected from the
+    // shell's `ProfileCard`: the mark the native side derived for the account
+    // (the name's first character) and the profile colour, which the native
+    // side converts from the `#rrggbb` preference because Slint has no
+    // string→color cast.
+    in property <string> user-initial;
+    in property <color> user-color;
+    in property <bool> busy;
+    // Cloud quota badge (§6.1): plain balance text projected natively; an
+    // empty string hides the pill, `warn` switches it to the danger tint,
+    // `expired` replaces the number with an expired warning and
+    // `reconnecting` keeps the number but fades the pill out.
+    in property <string> cloud-quota-text;
+    in property <bool> cloud-quota-warn: false;
+    in property <bool> cloud-quota-expired: false;
+    in property <bool> cloud-quota-reconnecting: false;
+
+    callback new-task();
+    callback select-row(int);
+    callback workspace-menu(int, int);
+    callback new-workspace();
+    callback move-row(int, int);
+    callback archive-thread(int);
+    callback rename-thread(int, string);
+    callback open-settings();
+
+    // Sidebar row currently renamed inline; -1 closes the editor. Only one
+    // editor exists at a time, so a single shared draft suffices.
+    property <int> renaming: -1;
+    in-out property <string> rename-draft;
+
+    VerticalLayout {
+        spacing: 0px;
+        Rectangle { height: 12px; }
+        // New task button.
+        Rectangle {
+            height: 38px;
+            HorizontalLayout {
+                padding-left: 12px; padding-right: 12px;
+                Rectangle {
+                    height: 38px; border-radius: 10px;
+                    background: new-touch.has-hover ? Theme.hover : Theme.surface;
+                    border-width: 1px; border-color: Theme.border;
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 12px; spacing: 8px; alignment: start;
+                        Image { y: (parent.height - 18px) / 2; width: 18px; height: 18px; source: @image-url("../assets/icons/rotate-right.svg"); colorize: Theme.text; }
+                        Text { height: parent.height; text: I18n.sidebar_new_task; color: Theme.text; font-size: Theme.font-lg; vertical-alignment: center; }
+                    }
+                    new-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        enabled: !root.busy;
+                        clicked => { root.new-task(); }
+                    }
+                }
+            }
+        }
+        Rectangle { height: 12px; }
+        HorizontalLayout {
+            padding-left: 14px; padding-right: 10px;
+            Text { height: 24px; text: I18n.sidebar_workspaces; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
+            // Creates a workspace bound to a local directory.
+            Rectangle {
+                width: 22px; height: 22px; border-radius: 5px;
+                background: ws-add-touch.has-hover ? Theme.hover : transparent;
+                Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/plus.svg"); colorize: Theme.muted; }
+                ws-add-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    enabled: !root.busy;
+                    accessible-role: button; accessible-label: I18n.ws_dlg_new;
+                    clicked => { root.new-workspace(); }
+                }
+            }
+        }
+        // Workspace/thread tree. Rows drag-reorder among neighbours of the
+        // same kind via `move-row`.
+        ListView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            for row[ri] in root.rows : Rectangle {
+                height: row.kind == 0 ? 34px : 28px;
+                width: parent.width;
+                if row.kind == 0 : ws-drag := DragRow {
+                    height: parent.height;
+                    width: parent.width;
+                    enabled: !root.busy;
+                    selected: row.selected;
+                    selected-color: Theme.selected;
+                    label: row.name;
+                    activate => { root.select-row(ri); }
+                    move-by(delta) => { root.move-row(ri, delta); }
+                    // Selection indicator on the workspace row.
+                    Rectangle { x: 0px; y: 5px; width: 2px; height: 24px; border-radius: 1px; background: row.selected ? Theme.accent : transparent; }
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 10px; spacing: 8px;
+                        Image {
+                            y: (parent.height - 12px) / 2;
+                            width: 12px; height: 12px;
+                            source: row.expanded ? @image-url("../assets/icons/chevron-down.svg") : @image-url("../assets/icons/chevron-right.svg");
+                            colorize: Theme.muted;
+                        }
+                        Rectangle {
+                            y: (parent.height - 22px) / 2;
+                            width: 22px; height: 22px; border-radius: 6px;
+                            background: WorkspaceVisual.color(row.color);
+                            Image { x: 2px; y: 2px; width: 18px; height: 18px; source: WorkspaceVisual.icon(row.icon); colorize: white; }
+                        }
+                        Text {
+                            height: parent.height; text: row.name;
+                            color: Theme.text; font-size: Theme.font-lg;
+                            vertical-alignment: center; overflow: elide;
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            // Thread count yields to the hover actions.
+                            visible: !ws-drag.hover && row.thread-count > 0;
+                            height: parent.height; text: "\{row.thread-count}";
+                            color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center;
+                        }
+                        // Direct actions replace the old ellipsis menu: plus
+                        // spawns a thread in this workspace, pen opens the
+                        // edit dialog (icon, color, folder, reveal, delete).
+                        if ws-drag.hover : HorizontalLayout {
+                            spacing: 2px; alignment: end;
+                            Rectangle {
+                                width: 22px; height: 22px; border-radius: 5px;
+                                background: ws-thread-touch.has-hover ? Theme.selected : transparent;
+                                Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/plus.svg"); colorize: Theme.muted; }
+                                ws-thread-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    accessible-role: button; accessible-label: I18n.ws_menu_new_thread;
+                                    clicked => { root.workspace-menu(ri, 0); }
+                                }
+                            }
+                            Rectangle {
+                                width: 22px; height: 22px; border-radius: 5px;
+                                background: ws-edit-touch.has-hover ? Theme.selected : transparent;
+                                Image { x: 4px; y: 4px; width: 14px; height: 14px; source: @image-url("../assets/icons/pen.svg"); colorize: Theme.muted; }
+                                ws-edit-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    accessible-role: button; accessible-label: I18n.ws_menu_edit;
+                                    clicked => { root.workspace-menu(ri, 1); }
+                                }
+                            }
+                        }
+                    }
+                }
+                if row.kind == 1 : DragRow {
+                    height: parent.height;
+                    width: parent.width;
+                    // Inline rename owns the row while it is open.
+                    enabled: root.renaming != ri;
+                    selected: row.active;
+                    selected-color: Theme.selected;
+                    label: row.title;
+                    activate => { root.select-row(ri); }
+                    move-by(delta) => { root.move-row(ri, delta); }
+                    ThreadRow {
+                        height: parent.height;
+                        width: parent.width;
+                        data: row;
+                        hover: parent.hover;
+                        editing: root.renaming == ri;
+                        rename-draft <=> root.rename-draft;
+                        archive => { root.archive-thread(row.payload); }
+                        begin-rename => {
+                            root.rename-draft = row.title;
+                            root.renaming = ri;
+                        }
+                        commit-rename => {
+                            let title = root.rename-draft;
+                            root.renaming = -1;
+                            if title != row.title { root.rename-thread(row.payload, title); }
+                        }
+                    }
+                }
+            }
+        }
+        Rectangle { height: 1px; background: Theme.border; }
+        // Settings button.
+        Rectangle {
+            height: 40px;
+            HorizontalLayout {
+                padding-left: 12px; padding-right: 12px;
+                Rectangle {
+                    height: 40px; border-radius: 10px;
+                    background: settings-touch.has-hover ? Theme.hover : transparent;
+                    settings-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.open-settings(); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 12px; spacing: 8px; alignment: start;
+                        // The user's avatar leads the row instead of the bare
+                        // gear: the profile colour carries the circle and the
+                        // profile glyph sits on it, the same recipe as the
+                        // avatar dialog preview (white bold glyph on the
+                        // identity colour). The shared "me" label is the
+                        // fallback so the button always marks an identity.
+                        Rectangle {
+                            y: (parent.height - 26px) / 2;
+                            width: 26px; height: 26px; border-radius: 13px;
+                            background: root.user-color;
+                            clip: true;
+                            accessible-role: image;
+                            accessible-label: I18n.profile_title;
+                            Text {
+                                width: 100%; height: 100%;
+                                text: root.user-initial != "" ? root.user-initial : I18n.common_me;
+                                color: white; font-size: 11px; font-weight: 700;
+                                horizontal-alignment: center; vertical-alignment: center;
+                            }
+                        }
+                        Text { height: parent.height; text: I18n.sidebar_settings; color: Theme.text; font-size: Theme.font-lg; vertical-alignment: center; }
+                    }
+                    // Cloud quota pill (§6.1): the plain balance number next
+                    // to the profile row, red at or below 10% of the daily
+                    // grant; hidden while signed out.
+                    if root.cloud-quota-text != "" : Rectangle {
+                        x: parent.width - 72px;
+                        y: (parent.height - 20px) / 2;
+                        width: 60px; height: 20px;
+                        border-radius: 10px;
+                        // Reconnecting keeps the balance readable but visibly
+                        // degraded; expired flips the pill to the danger tint.
+                        opacity: root.cloud-quota-reconnecting ? 0.45 : 1.0;
+                        background: root.cloud-quota-expired || root.cloud-quota-warn ? Theme.danger-bg : Theme.accent-soft;
+                        Text {
+                            width: 100%; height: 100%;
+                            text: root.cloud-quota-expired ? I18n.st_cl_quota_expired : root.cloud-quota-text;
+                            color: root.cloud-quota-expired || root.cloud-quota-warn ? Theme.danger : Theme.accent;
+                            font-size: Theme.font-xs; font-weight: 700;
+                            horizontal-alignment: center; vertical-alignment: center; overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

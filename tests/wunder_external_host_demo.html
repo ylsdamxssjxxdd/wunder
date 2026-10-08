@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wunder 外链宿主页</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5efe6;
+      --panel: #fffaf2;
+      --panel-strong: #fff6e8;
+      --ink: #1f2937;
+      --muted: #6b7280;
+      --line: #decfb8;
+      --accent: #bc5a1f;
+      --accent-strong: #8d3f15;
+      --soft: #f3e2cc;
+      --shadow: rgba(88, 56, 28, 0.14);
+      --ok: #1f6a42;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, #fff6ea 0, transparent 22rem),
+        linear-gradient(180deg, #f8f2e9 0%, #efe3d2 100%);
+    }
+
+    .page {
+      width: min(1600px, calc(100vw - 24px));
+      margin: 24px auto;
+      display: grid;
+      gap: 16px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: 0 18px 44px var(--shadow);
+    }
+
+    .hero {
+      padding: 24px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .hero h1,
+    .section-title {
+      margin: 0;
+      font-weight: 800;
+      line-height: 1.15;
+    }
+
+    .hero h1 {
+      font-size: clamp(1.7rem, 2vw, 2.3rem);
+    }
+
+    .hero p,
+    .hint,
+    .log {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(248px, 296px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .workspace.is-controls-collapsed {
+      grid-template-columns: 72px minmax(0, 1fr);
+    }
+
+    .controls {
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+      position: sticky;
+      top: 16px;
+      align-self: start;
+      overflow: hidden;
+      transition: padding 180ms ease, width 180ms ease;
+    }
+
+    .controls-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .controls-title {
+      margin: 0;
+      font-size: 0.98rem;
+      font-weight: 800;
+      line-height: 1.1;
+    }
+
+    .collapse-toggle {
+      min-width: 44px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: #f7ead8;
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+
+    .controls-body {
+      display: grid;
+      gap: 12px;
+    }
+
+    .controls.is-collapsed {
+      padding: 12px 10px;
+    }
+
+    .controls.is-collapsed .controls-toolbar {
+      justify-content: center;
+    }
+
+    .controls.is-collapsed .controls-title,
+    .controls.is-collapsed .controls-body {
+      display: none;
+    }
+
+    .section-title {
+      font-size: 1rem;
+    }
+
+    .field-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .field label {
+      font-size: 0.94rem;
+      font-weight: 700;
+    }
+
+    .field input,
+    .field textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font: inherit;
+      color: var(--ink);
+      background: #fffefb;
+      outline: none;
+    }
+
+    .field textarea {
+      resize: vertical;
+    }
+
+    .field input:focus,
+    .field textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(188, 90, 31, 0.16);
+    }
+
+    .quick-actions,
+    .actions {
+      display: grid;
+      gap: 8px;
+    }
+
+    .quick-actions {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    button {
+      border: 0;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font: inherit;
+      cursor: pointer;
+      transition: transform 140ms ease, opacity 140ms ease, background 140ms ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    .primary {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+      color: #fff;
+    }
+
+    .secondary {
+      background: var(--soft);
+      color: var(--ink);
+    }
+
+    .ghost {
+      background: #fbf4e8;
+      color: var(--muted);
+      border: 1px solid var(--line);
+    }
+
+    .code-card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+      background: var(--panel-strong);
+      display: grid;
+      gap: 10px;
+    }
+
+    .url-box,
+    .log {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fffefb;
+      padding: 12px 14px;
+    }
+
+    .url-box {
+      word-break: break-all;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.93rem;
+      color: var(--ink);
+      min-height: 68px;
+    }
+
+    .preview {
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .status {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #fffdf9;
+      color: var(--muted);
+    }
+
+    .status strong {
+      color: var(--ok);
+    }
+
+    .status code {
+      color: var(--ink);
+      word-break: break-all;
+    }
+
+    iframe {
+      width: 100%;
+      min-height: 78vh;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #ffffff;
+    }
+
+    .hint-list {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    .hint-list li + li {
+      margin-top: 6px;
+    }
+
+    .log {
+      min-height: 120px;
+      max-height: 240px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.92rem;
+    }
+
+    @media (max-width: 800px) {
+      .workspace,
+      .workspace.is-controls-collapsed {
+        grid-template-columns: 1fr;
+      }
+
+      .controls {
+        position: static;
+      }
+
+      .controls.is-collapsed .controls-title,
+      .controls.is-collapsed .controls-body {
+        display: grid;
+      }
+
+      .controls.is-collapsed .controls-toolbar {
+        justify-content: space-between;
+      }
+
+      .quick-actions {
+        grid-template-columns: 1fr;
+      }
+
+      iframe {
+        min-height: 62vh;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="panel hero">
+      <h1>Wunder 外链宿主页</h1>
+      <p>这个页面模拟“外部系统里嵌一个 Wunder 入口”的最小宿主。填入 `user_id` 和可选 `agent_name` 后，会生成 `http://127.0.0.1:18001/login?...`，你可以直接 iframe 预览、新窗口打开，或者复制给其他本地页面接入。</p>
+    </section>
+
+    <section id="workspace" class="workspace">
+      <aside id="controls" class="panel controls">
+        <div class="controls-toolbar">
+          <h2 class="controls-title">测试控制栏</h2>
+          <button id="toggle-controls" class="collapse-toggle" type="button" aria-expanded="true" title="收起控制栏">收起</button>
+        </div>
+
+        <div class="controls-body">
+          <div class="field-grid">
+            <div class="field">
+              <label for="base-url">Wunder 基地址</label>
+              <input id="base-url" type="text" spellcheck="false" value="http://127.0.0.1:18001" />
+            </div>
+
+            <div class="field">
+              <label for="user-id">用户 ID</label>
+              <input id="user-id" type="text" spellcheck="false" value="demo_user" />
+            </div>
+
+            <div class="field">
+              <label for="agent-name">智能体名称（可选）</label>
+              <input id="agent-name" type="text" spellcheck="false" value="your_agent" />
+            </div>
+
+            <div class="field">
+              <label for="notes">宿主备注（可选）</label>
+              <textarea id="notes" rows="3" spellcheck="false">这里可以写你自己的外部系统说明文字，实际接入时可替换成你的业务页面。</textarea>
+            </div>
+          </div>
+
+          <div class="quick-actions">
+            <button class="secondary" data-preset-user="demo_user" data-preset-agent="">默认智能体</button>
+            <button class="secondary" data-preset-user="demo_user" data-preset-agent="your_agent">指定智能体</button>
+          </div>
+
+          <div class="code-card">
+            <h2 class="section-title">生成链接</h2>
+            <div id="url-box" class="url-box"></div>
+            <p class="hint">当前按本地 `18001` 单端口入口生成。若你改成本地前端直出 `18002`，这里也会同步切换。</p>
+          </div>
+
+          <div class="actions">
+            <button id="load-preview" class="primary" type="button">载入 iframe 预览</button>
+            <button id="open-tab" class="secondary" type="button">新窗口打开</button>
+            <button id="copy-url" class="ghost" type="button">复制链接</button>
+            <button id="clear-log" class="ghost" type="button">清空日志</button>
+          </div>
+
+          <ul class="hint-list">
+            <li>本链路当前设计为本地/桌面免 token 外链，适合你现在接入 wunder 看效果，不适合作为公网匿名入口直接暴露。</li>
+            <li>如果 `agent_name` 未命中已有智能体，会自动回退到默认聊天入口。</li>
+            <li>如果新窗口能打开而 iframe 白屏，优先检查浏览器控制台是否有嵌入安全头报错。</li>
+          </ul>
+
+          <div>
+            <h2 class="section-title" style="margin-bottom: 8px;">调试日志</h2>
+            <div id="log" class="log">页面已就绪。</div>
+          </div>
+        </div>
+      </aside>
+
+      <section class="panel preview">
+        <div class="status">
+          <span>当前预览：</span>
+          <strong id="status-text">未载入</strong>
+          <code id="status-url"></code>
+        </div>
+        <iframe
+          id="preview-frame"
+          title="Wunder external host demo preview"
+          referrerpolicy="no-referrer-when-downgrade"
+          allow="clipboard-read; clipboard-write"
+        ></iframe>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const storageKey = "wunder-external-host-demo";
+    const workspace = document.getElementById("workspace");
+    const controls = document.getElementById("controls");
+    const toggleControlsButton = document.getElementById("toggle-controls");
+    const baseUrlInput = document.getElementById("base-url");
+    const userIdInput = document.getElementById("user-id");
+    const agentNameInput = document.getElementById("agent-name");
+    const notesInput = document.getElementById("notes");
+    const urlBox = document.getElementById("url-box");
+    const previewFrame = document.getElementById("preview-frame");
+    const logNode = document.getElementById("log");
+    const statusText = document.getElementById("status-text");
+    const statusUrl = document.getElementById("status-url");
+
+    const now = () => new Date().toLocaleTimeString("zh-CN", { hour12: false });
+
+    function applyControlsCollapsed(collapsed) {
+      const nextCollapsed = collapsed === true;
+      controls.classList.toggle("is-collapsed", nextCollapsed);
+      workspace.classList.toggle("is-controls-collapsed", nextCollapsed);
+      toggleControlsButton.textContent = nextCollapsed ? "展开" : "收起";
+      toggleControlsButton.title = nextCollapsed ? "展开控制栏" : "收起控制栏";
+      toggleControlsButton.setAttribute("aria-expanded", nextCollapsed ? "false" : "true");
+    }
+
+    function appendLog(message) {
+      const current = logNode.textContent.trim();
+      logNode.textContent = current ? `${current}\n[${now()}] ${message}` : `[${now()}] ${message}`;
+      logNode.scrollTop = logNode.scrollHeight;
+    }
+
+    function normalizeBaseUrl(value) {
+      return String(value || "").trim().replace(/\/+$/, "");
+    }
+
+    function updateStatus(text, url) {
+      statusText.textContent = text;
+      statusUrl.textContent = url || "";
+    }
+
+    function buildLoginUrl() {
+      const baseUrl = normalizeBaseUrl(baseUrlInput.value);
+      const userId = String(userIdInput.value || "").trim();
+      const agentName = String(agentNameInput.value || "").trim();
+      if (!baseUrl || !userId) {
+        return "";
+      }
+      const url = new URL(`${baseUrl}/login`);
+      url.searchParams.set("user_id", userId);
+      if (agentName) {
+        url.searchParams.set("agent_name", agentName);
+      }
+      return url.toString();
+    }
+
+    function persistForm() {
+      const payload = {
+        baseUrl: String(baseUrlInput.value || "").trim(),
+        userId: String(userIdInput.value || "").trim(),
+        agentName: String(agentNameInput.value || "").trim(),
+        notes: String(notesInput.value || ""),
+        controlsCollapsed: controls.classList.contains("is-collapsed")
+      };
+      localStorage.setItem(storageKey, JSON.stringify(payload));
+    }
+
+    function refreshUrl() {
+      const url = buildLoginUrl();
+      urlBox.textContent = url || "请至少填写 Wunder 基地址和用户 ID。";
+      persistForm();
+      return url;
+    }
+
+    function loadPreview() {
+      const url = refreshUrl();
+      if (!url) {
+        appendLog("缺少基地址或用户 ID，无法载入。");
+        updateStatus("未载入", "");
+        return;
+      }
+      updateStatus("载入中", url);
+      appendLog(`开始载入 iframe：${url}`);
+      previewFrame.src = url;
+    }
+
+    function openInNewTab() {
+      const url = refreshUrl();
+      if (!url) {
+        appendLog("缺少基地址或用户 ID，无法打开。");
+        return;
+      }
+      window.open(url, "_blank", "noopener");
+      appendLog(`已请求新窗口打开：${url}`);
+    }
+
+    async function copyUrl() {
+      const url = refreshUrl();
+      if (!url) {
+        appendLog("缺少基地址或用户 ID，无法复制。");
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(url);
+        appendLog(`已复制链接：${url}`);
+      } catch (error) {
+        appendLog(`复制失败：${error}`);
+      }
+    }
+
+    function restoreForm() {
+      try {
+        const raw = localStorage.getItem(storageKey);
+        if (!raw) {
+          applyControlsCollapsed(false);
+          return;
+        }
+        const data = JSON.parse(raw);
+        if (data && typeof data === "object") {
+          baseUrlInput.value = String(data.baseUrl || baseUrlInput.value || "");
+          userIdInput.value = String(data.userId || userIdInput.value || "");
+          agentNameInput.value = String(data.agentName || agentNameInput.value || "");
+          notesInput.value = String(data.notes || notesInput.value || "");
+          applyControlsCollapsed(data.controlsCollapsed === true);
+          appendLog("已恢复上次填写的宿主表单。");
+          return;
+        }
+        applyControlsCollapsed(false);
+      } catch (error) {
+        applyControlsCollapsed(false);
+        appendLog(`恢复本地表单失败：${error}`);
+      }
+    }
+
+    document.getElementById("load-preview").addEventListener("click", loadPreview);
+    document.getElementById("open-tab").addEventListener("click", openInNewTab);
+    document.getElementById("copy-url").addEventListener("click", copyUrl);
+    document.getElementById("clear-log").addEventListener("click", () => {
+      logNode.textContent = "日志已清空。";
+    });
+    toggleControlsButton.addEventListener("click", () => {
+      const nextCollapsed = !controls.classList.contains("is-collapsed");
+      applyControlsCollapsed(nextCollapsed);
+      persistForm();
+    });
+
+    [baseUrlInput, userIdInput, agentNameInput, notesInput].forEach((element) => {
+      element.addEventListener("input", refreshUrl);
+    });
+
+    document.querySelectorAll("[data-preset-user]").forEach((button) => {
+      button.addEventListener("click", () => {
+        userIdInput.value = button.getAttribute("data-preset-user") || "";
+        agentNameInput.value = button.getAttribute("data-preset-agent") || "";
+        const url = refreshUrl();
+        appendLog(`已切换预设：${url || "空"}`);
+      });
+    });
+
+    previewFrame.addEventListener("load", () => {
+      appendLog(`iframe load 事件已触发：${previewFrame.src || "about:blank"}`);
+      updateStatus("已加载", previewFrame.src || "");
+    });
+
+    restoreForm();
+    refreshUrl();
+  </script>
+</body>
+</html>

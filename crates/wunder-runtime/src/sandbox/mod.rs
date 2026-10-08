@@ -1,0 +1,808 @@
+mod command_stream;
+pub mod server;
+
+use crate::config::Config;
+use crate::i18n;
+use crate::user_tools::UserToolBindings;
+use crate::workspace::WorkspaceManager;
+use serde_json::{json, Value};
+use std::collections::HashSet;
+use std::env;
+use std::path::Path;
+use std::sync::OnceLock;
+use std::time::Duration;
+use tracing::warn;
+use url::Url;
+
+pub const DEFAULT_SANDBOX_ENDPOINT: &str = "http://wunder-sandbox:9001";
+pub const DEFAULT_SANDBOX_CONTAINER_ROOT: &str = "/workspaces";
+pub const DEFAULT_SANDBOX_TIMEOUT_S: u64 = 300;
+pub const DEFAULT_SANDBOX_READONLY_ROOTFS: bool = false;
+pub const DEFAULT_SANDBOX_IDLE_TTL_S: u64 = 0;
+pub const DEFAULT_SANDBOX_CPU_LIMIT: f32 = 8.0;
+pub const DEFAULT_SANDBOX_MEMORY_MB: u64 = 8096;
+pub const DEFAULT_SANDBOX_PIDS_LIMIT: u64 = 256;
+
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(reqwest::Client::new)
+}
+
+fn normalize_endpoint(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.contains("://") {
+        let url = Url::parse(trimmed).ok()?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return None;
+        }
+        return Some(trimmed.to_string());
+    }
+    let prefixed = format!("http://{trimmed}");
+    if Url::parse(&prefixed).is_ok() {
+        return Some(prefixed);
+    }
+    None
+}
+
+fn endpoint_host(endpoint: &str) -> Option<String> {
+    Url::parse(endpoint)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "0.0.0.0" | "::1")
+}
+
+fn sandbox_endpoint_candidates(_config: &Config) -> Vec<String> {
+    endpoint_candidates(env::var("WUNDER_SANDBOX_ENDPOINT").ok().as_deref())
+}
+
+fn endpoint_candidates(endpoint: Option<&str>) -> Vec<String> {
+    fn push(candidates: &mut Vec<String>, seen: &mut HashSet<String>, raw: &str) {
+        let Some(normalized) = normalize_endpoint(raw) else {
+            return;
+        };
+        if !seen.insert(normalized.clone()) {
+            return;
+        }
+        candidates.push(normalized);
+    }
+
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+
+    if let Some(value) = endpoint {
+        push(&mut candidates, &mut seen, value);
+    }
+    push(&mut candidates, &mut seen, DEFAULT_SANDBOX_ENDPOINT);
+
+    let mut has_loopback = false;
+    let mut has_sandbox_host = false;
+    for endpoint in &candidates {
+        let Some(host) = endpoint_host(endpoint) else {
+            continue;
+        };
+        if is_loopback_host(&host) {
+            has_loopback = true;
+        }
+        if host.eq_ignore_ascii_case("sandbox") {
+            has_sandbox_host = true;
+        }
+    }
+
+    if has_loopback {
+        push(&mut candidates, &mut seen, "http://sandbox:9001");
+    }
+    if has_sandbox_host {
+        push(&mut candidates, &mut seen, "http://127.0.0.1:9001");
+    }
+
+    candidates
+}
+
+fn looks_like_windows_drive(value: &str) -> bool {
+    value.len() >= 2
+        && value.as_bytes()[1] == b':'
+        && value
+            .chars()
+            .next()
+            .map(|ch| ch.is_ascii_alphabetic())
+            .unwrap_or(false)
+}
+
+fn normalize_container_path(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let replaced = trimmed.replace('\\', "/");
+    if looks_like_windows_drive(&replaced) {
+        return None;
+    }
+    Some(replaced)
+}
+
+fn join_posix(base: &str, child: &str) -> String {
+    let base = base.trim_end_matches('/');
+    let child = child.trim_start_matches('/');
+    if base.is_empty() || base == "/" {
+        if child.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{child}")
+        }
+    } else if child.is_empty() {
+        base.to_string()
+    } else {
+        format!("{base}/{child}")
+    }
+}
+
+fn strip_root_prefix<'a>(value: &'a str, root: &str) -> Option<&'a str> {
+    if value == root {
+        return Some("");
+    }
+    if let Some(remainder) = value.strip_prefix(root) {
+        if remainder.starts_with('/') || remainder.starts_with('\\') {
+            return Some(remainder);
+        }
+    }
+    None
+}
+
+fn replace_root_in_text(text: &str, from_root: &str, to_root: &str) -> String {
+    if from_root.is_empty() || from_root == to_root || !text.contains(from_root) {
+        return text.to_string();
+    }
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(index) = rest.find(from_root) {
+        let (before, after) = rest.split_at(index);
+        output.push_str(before);
+        let remainder = &after[from_root.len()..];
+        let boundary = remainder.chars().next().is_none_or(|ch| {
+            matches!(
+                ch,
+                '/' | '\\' | '"' | '\'' | ' ' | '\n' | '\r' | '\t' | ')' | ']' | '}' | ';' | ','
+            )
+        });
+        if boundary {
+            output.push_str(to_root);
+        } else {
+            output.push_str(from_root);
+        }
+        rest = remainder;
+    }
+    output.push_str(rest);
+    output
+}
+
+fn resolve_container_workspace_root(
+    config: &Config,
+    workspace: &WorkspaceManager,
+    user_id: &str,
+) -> String {
+    let container_root = normalize_container_path(sandbox_container_root())
+        .unwrap_or_else(|| "/workspaces".to_string());
+    let container_root = container_root.trim_end_matches('/');
+    let container_root = if container_root.is_empty() {
+        "/".to_string()
+    } else {
+        container_root.to_string()
+    };
+
+    let public_root = workspace
+        .public_root(user_id)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let safe_id = public_root
+        .rsplit('/')
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("anonymous");
+
+    let base_root = if container_root == "/" {
+        let workspace_root_raw = config.workspace.root.trim();
+        match normalize_container_path(workspace_root_raw) {
+            Some(root) if root.starts_with('/') => {
+                let trimmed = root.trim_end_matches('/');
+                if trimmed.is_empty() {
+                    container_root.to_string()
+                } else {
+                    trimmed.to_string()
+                }
+            }
+            _ => container_root.to_string(),
+        }
+    } else {
+        container_root.to_string()
+    };
+
+    join_posix(&base_root, safe_id)
+}
+
+fn collect_allow_paths(config: &Config, bindings: Option<&UserToolBindings>) -> Vec<String> {
+    let _ = (config, bindings);
+    vec!["*".to_string()]
+}
+
+/// The sandbox service exists for 舰体. The local forms (舵机 cli / 蜂窝
+/// desktop) read and write the user's real folder in-process, so tools must
+/// never be routed to a remote executor that may not even be running.
+pub fn sandbox_enabled(config: &Config) -> bool {
+    !crate::services::prompting::is_local_runtime_mode(&config.server.mode)
+}
+
+pub fn sandbox_container_root() -> &'static str {
+    DEFAULT_SANDBOX_CONTAINER_ROOT
+}
+
+pub fn sandbox_timeout_seconds() -> u64 {
+    env::var("WUNDER_SANDBOX_TIMEOUT_S")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_SANDBOX_TIMEOUT_S)
+}
+
+pub fn sandbox_idle_ttl_seconds() -> u64 {
+    env::var("WUNDER_SANDBOX_IDLE_TTL_S")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_SANDBOX_IDLE_TTL_S)
+}
+
+pub fn sandbox_readonly_rootfs() -> bool {
+    env::var("WUNDER_SANDBOX_READONLY_ROOTFS")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(DEFAULT_SANDBOX_READONLY_ROOTFS)
+}
+
+pub fn sandbox_cpu_limit() -> f32 {
+    env::var("WUNDER_SANDBOX_CPU")
+        .ok()
+        .and_then(|value| value.trim().parse::<f32>().ok())
+        .filter(|value| *value > 0.0)
+        .unwrap_or(DEFAULT_SANDBOX_CPU_LIMIT)
+}
+
+pub fn sandbox_memory_mb() -> u64 {
+    env::var("WUNDER_SANDBOX_MEMORY_MB")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_SANDBOX_MEMORY_MB)
+}
+
+pub fn sandbox_pids_limit() -> u64 {
+    env::var("WUNDER_SANDBOX_PIDS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_SANDBOX_PIDS_LIMIT)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_tool(
+    config: &Config,
+    workspace: &WorkspaceManager,
+    user_id: &str,
+    workspace_id: &str,
+    session_id: &str,
+    tool: &str,
+    args: &Value,
+    user_tool_bindings: Option<&UserToolBindings>,
+) -> Value {
+    let endpoints = sandbox_endpoint_candidates(config);
+    if endpoints.is_empty() {
+        return json!({
+            "ok": false,
+            "data": {},
+            "error": "sandbox endpoint is empty",
+            "sandbox": true,
+        });
+    }
+
+    if let Err(err) = workspace.ensure_user_root(workspace_id) {
+        return json!({
+            "ok": false,
+            "data": { "detail": err.to_string() },
+            "error": "failed to prepare workspace",
+            "sandbox": true,
+        });
+    }
+
+    let public_root = workspace
+        .public_root(workspace_id)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let container_workspace_root =
+        resolve_container_workspace_root(config, workspace, workspace_id);
+
+    let allow_paths = collect_allow_paths(config, user_tool_bindings);
+    let deny_globs = config.security.deny_globs.clone();
+    let allow_commands = config.security.allow_commands.clone();
+
+    let mut mapped_args = if args.is_object() {
+        args.clone()
+    } else {
+        json!({ "raw": args })
+    };
+    if matches!(tool, "执行命令" | "ptc") {
+        if let Value::Object(ref mut map) = mapped_args {
+            if let Some(Value::String(workdir)) = map.get("workdir").cloned() {
+                let trimmed = workdir.trim();
+                let path = Path::new(trimmed);
+                if path.is_absolute() {
+                    if let Some(rest) = strip_root_prefix(trimmed, &public_root) {
+                        let mapped = format!("{container_workspace_root}{rest}");
+                        map.insert("workdir".to_string(), Value::String(mapped));
+                    }
+                }
+            }
+            if let Some(Value::String(content)) = map.get("content").cloned() {
+                let rewritten =
+                    replace_root_in_text(&content, &public_root, &container_workspace_root);
+                if rewritten != content {
+                    map.insert("content".to_string(), Value::String(rewritten));
+                }
+            }
+        }
+    }
+
+    let payload = json!({
+        "user_id": user_id,
+        "session_id": session_id,
+        "language": i18n::get_language(),
+        "tool": tool,
+        "args": mapped_args,
+        "workspace_root": container_workspace_root,
+        "allow_paths": allow_paths,
+        "deny_globs": deny_globs,
+        "allow_commands": allow_commands,
+        "container_root": sandbox_container_root(),
+        "network": "bridge",
+        "readonly_rootfs": sandbox_readonly_rootfs(),
+        "idle_ttl_s": sandbox_idle_ttl_seconds(),
+        "resources": {
+            "cpu": sandbox_cpu_limit(),
+            "memory_mb": sandbox_memory_mb(),
+            "pids": sandbox_pids_limit(),
+        }
+    });
+
+    let timeout_s = sandbox_timeout_seconds().max(1);
+    let mut last_error = json!({});
+
+    for endpoint in &endpoints {
+        let url = format!("{endpoint}/sandboxes/execute_tool");
+        let response = http_client()
+            .post(url)
+            .timeout(Duration::from_secs(timeout_s))
+            .json(&payload)
+            .send()
+            .await;
+
+        let response = match response {
+            Ok(resp) => resp,
+            Err(err) if err.is_connect() => {
+                warn!("sandbox request failed for {endpoint}: {err}");
+                last_error = json!({ "endpoint": endpoint, "detail": err.to_string() });
+                continue;
+            }
+            Err(_) => return command_stream_failure("sandbox tool request interrupted"),
+        };
+
+        let status = response.status();
+        if !status.is_success() {
+            return command_stream_failure("sandbox tool request rejected");
+        }
+        let parsed = match response.json::<Value>().await {
+            Ok(value) => value,
+            Err(_) => return command_stream_failure("sandbox tool response interrupted"),
+        };
+        let ok = parsed.get("ok").and_then(Value::as_bool).unwrap_or(false);
+        let error = parsed
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let data = parsed.get("data").cloned().unwrap_or_else(|| json!({}));
+        let data = rewrite_sandbox_paths(&public_root, &container_workspace_root, tool, data);
+
+        return json!({
+            "ok": ok,
+            "data": data,
+            "error": error,
+            "sandbox": true,
+        });
+    }
+
+    json!({
+        "ok": false,
+        "data": { "tried_endpoints": endpoints, "last_error": last_error },
+        "error": "sandbox request failed",
+        "sandbox": true,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_command_streaming<F>(
+    config: &Config,
+    workspace: &WorkspaceManager,
+    user_id: &str,
+    workspace_id: &str,
+    session_id: &str,
+    args: &Value,
+    user_tool_bindings: Option<&UserToolBindings>,
+    mut on_event: F,
+) -> Option<Value>
+where
+    F: FnMut(Value) + Send,
+{
+    if !sandbox_enabled(config) {
+        return None;
+    }
+    let endpoints = sandbox_endpoint_candidates(config);
+    if endpoints.is_empty() {
+        return Some(json!({
+            "ok": false,
+            "data": {},
+            "error": "sandbox endpoint is empty",
+            "sandbox": true,
+        }));
+    }
+    if let Err(err) = workspace.ensure_user_root(workspace_id) {
+        return Some(json!({
+            "ok": false,
+            "data": { "detail": err.to_string() },
+            "error": "failed to prepare workspace",
+            "sandbox": true,
+        }));
+    }
+
+    let public_root = workspace
+        .public_root(workspace_id)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let container_workspace_root =
+        resolve_container_workspace_root(config, workspace, workspace_id);
+    let allow_paths = collect_allow_paths(config, user_tool_bindings);
+    let deny_globs = config.security.deny_globs.clone();
+    let allow_commands = config.security.allow_commands.clone();
+    let mut mapped_args = if args.is_object() {
+        args.clone()
+    } else {
+        json!({ "raw": args })
+    };
+    if let Value::Object(ref mut map) = mapped_args {
+        if let Some(Value::String(workdir)) = map.get("workdir").cloned() {
+            let trimmed = workdir.trim();
+            let path = Path::new(trimmed);
+            if path.is_absolute() {
+                if let Some(rest) = strip_root_prefix(trimmed, &public_root) {
+                    let mapped = format!("{container_workspace_root}{rest}");
+                    map.insert("workdir".to_string(), Value::String(mapped));
+                }
+            }
+        }
+        if let Some(Value::String(content)) = map.get("content").cloned() {
+            let rewritten = replace_root_in_text(&content, &public_root, &container_workspace_root);
+            if rewritten != content {
+                map.insert("content".to_string(), Value::String(rewritten));
+            }
+        }
+    }
+
+    let payload = json!({
+        "user_id": user_id,
+        "session_id": session_id,
+        "language": i18n::get_language(),
+        "tool": "执行命令",
+        "args": mapped_args,
+        "workspace_root": container_workspace_root,
+        "allow_paths": allow_paths,
+        "deny_globs": deny_globs,
+        "allow_commands": allow_commands,
+        "container_root": sandbox_container_root(),
+        "network": "bridge",
+        "readonly_rootfs": sandbox_readonly_rootfs(),
+        "idle_ttl_s": sandbox_idle_ttl_seconds(),
+        "resources": {
+            "cpu": sandbox_cpu_limit(),
+            "memory_mb": sandbox_memory_mb(),
+            "pids": sandbox_pids_limit(),
+        }
+    });
+
+    let timeout_s = sandbox_timeout_seconds().max(1);
+    let mut last_error = json!({});
+
+    for endpoint in &endpoints {
+        let url = format!("{endpoint}/sandboxes/execute_command_stream");
+        let parsed = match command_stream::request(
+            http_client(),
+            &url,
+            &payload,
+            Duration::from_secs(timeout_s),
+            &mut on_event,
+        )
+        .await
+        {
+            Ok(Some(parsed)) => parsed,
+            Ok(None) => {
+                last_error = json!({ "endpoint": endpoint, "detail": "stream route unavailable" });
+                continue;
+            }
+            Err(err) => {
+                warn!("{err}");
+                return Some(command_stream_failure("sandbox command stream interrupted"));
+            }
+        };
+        let ok = parsed.get("ok").and_then(Value::as_bool).unwrap_or(false);
+        let error = parsed.get("error").and_then(Value::as_str).unwrap_or("");
+        let data = parsed.get("data").cloned().unwrap_or_else(|| json!({}));
+        let data = rewrite_sandbox_paths(&public_root, &container_workspace_root, "执行命令", data);
+        return Some(json!({ "ok": ok, "data": data, "error": error, "sandbox": true }));
+    }
+
+    Some(json!({
+        "ok": false,
+        "data": { "tried_endpoints": endpoints, "last_error": last_error },
+        "error": "sandbox stream request failed",
+        "sandbox": true,
+    }))
+}
+
+/// Start a sandbox command without holding the HTTP request open. The returned
+/// id is owned by the sandbox worker and can be polled through the control API.
+pub async fn launch_command_session(
+    config: &Config,
+    workspace: &WorkspaceManager,
+    user_id: &str,
+    workspace_id: &str,
+    session_id: &str,
+    args: &Value,
+    user_tool_bindings: Option<&UserToolBindings>,
+) -> Option<Value> {
+    if !sandbox_enabled(config) {
+        return None;
+    }
+    let endpoints = sandbox_endpoint_candidates(config);
+    if endpoints.is_empty() || workspace.ensure_user_root(workspace_id).is_err() {
+        return None;
+    }
+    let public_root = workspace
+        .public_root(workspace_id)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let container_workspace_root =
+        resolve_container_workspace_root(config, workspace, workspace_id);
+    let mut mapped_args = if args.is_object() {
+        args.clone()
+    } else {
+        json!({"raw": args})
+    };
+    if let Value::Object(ref mut map) = mapped_args {
+        if let Some(Value::String(content)) = map.get("content").cloned() {
+            let rewritten = replace_root_in_text(&content, &public_root, &container_workspace_root);
+            if rewritten != content {
+                map.insert("content".to_string(), Value::String(rewritten));
+            }
+        }
+    }
+    let payload = json!({
+        "user_id": user_id,
+        "session_id": session_id,
+        "language": i18n::get_language(),
+        "args": mapped_args,
+        "workspace_root": container_workspace_root,
+        "allow_paths": collect_allow_paths(config, user_tool_bindings),
+        "deny_globs": config.security.deny_globs.clone(),
+        "allow_commands": config.security.allow_commands.clone(),
+        "container_root": sandbox_container_root(),
+        "resources": {"cpu": sandbox_cpu_limit(), "memory_mb": sandbox_memory_mb(), "pids": sandbox_pids_limit()}
+    });
+    for endpoint in endpoints {
+        let url = format!("{endpoint}/sandboxes/command-sessions/launch");
+        let response = match http_client()
+            .post(url)
+            .timeout(Duration::from_secs(10))
+            .json(&payload)
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => response.json::<Value>().await.ok(),
+            _ => None,
+        };
+        if let Some(response) = response {
+            return Some(response);
+        }
+    }
+    None
+}
+
+pub async fn control_command_session(
+    config: &Config,
+    user_id: &str,
+    session_id: &str,
+    command_session_id: &str,
+    input: &str,
+    after_seq: u64,
+    yield_time_ms: u64,
+    write_stdin: bool,
+) -> Option<Value> {
+    let endpoints = sandbox_endpoint_candidates(config);
+    let payload = json!({"user_id": user_id, "session_id": session_id, "command_session_id": command_session_id, "input": input, "after_seq": after_seq, "yield_time_ms": yield_time_ms});
+    let route = if write_stdin { "stdin" } else { "poll" };
+    // The server may hold the request for the full yield window before
+    // responding, so the HTTP timeout must exceed it.
+    let request_timeout = Duration::from_millis(yield_time_ms.saturating_add(15_000).max(15_000));
+    for endpoint in endpoints {
+        let response = http_client()
+            .post(format!("{endpoint}/sandboxes/command-sessions/{route}"))
+            .timeout(request_timeout)
+            .json(&payload)
+            .send()
+            .await;
+        let Ok(response) = response else {
+            continue;
+        };
+        if response.status().is_success() {
+            if let Ok(value) = response.json::<Value>().await {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+pub async fn cancel_command_session(
+    config: &Config,
+    user_id: &str,
+    session_id: &str,
+    command_session_id: &str,
+) -> bool {
+    let payload = json!({"user_id": user_id, "session_id": session_id, "command_session_id": command_session_id});
+    for endpoint in sandbox_endpoint_candidates(config) {
+        let response = http_client()
+            .post(format!("{endpoint}/sandboxes/command-sessions/cancel"))
+            .timeout(Duration::from_secs(5))
+            .json(&payload)
+            .send()
+            .await;
+        if let Ok(response) = response {
+            if response.status().is_success()
+                && response
+                    .json::<Value>()
+                    .await
+                    .ok()
+                    .and_then(|value| value.get("ok").and_then(Value::as_bool))
+                    .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn command_stream_failure(error: &str) -> Value {
+    json!({
+        "ok": false,
+        "data": { "error_meta": {
+            "code": "SANDBOX_EXECUTION_INTERRUPTED",
+            "retryable": false,
+            "outcome_unknown": true,
+        } },
+        "error": error,
+        "sandbox": true,
+    })
+}
+
+fn rewrite_sandbox_paths(
+    public_root: &str,
+    container_root: &str,
+    tool: &str,
+    mut data: Value,
+) -> Value {
+    if tool == "执行命令" {
+        replace_paths_in_value(&mut data, container_root, public_root);
+        return data;
+    }
+    if !matches!(
+        tool,
+        "ptc" | "执行命令" | "列出文件" | "搜索内容" | "读取文件" | "写入文件" | "编辑"
+    ) {
+        return data;
+    }
+    replace_paths_in_value(&mut data, container_root, public_root);
+    data
+}
+
+fn replace_paths_in_value(value: &mut Value, from_root: &str, to_root: &str) {
+    match value {
+        Value::String(text) => {
+            let replaced = replace_root_in_text(text, from_root, to_root);
+            if replaced != *text {
+                *text = replaced;
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                replace_paths_in_value(item, from_root, to_root);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values_mut() {
+                replace_paths_in_value(item, from_root, to_root);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::SqliteStorage;
+    use crate::workspace::WorkspaceManager;
+    use std::sync::Arc;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_normalize_endpoint() {
+        assert_eq!(
+            normalize_endpoint("http://sandbox:9001/").as_deref(),
+            Some("http://sandbox:9001")
+        );
+        assert_eq!(
+            normalize_endpoint("sandbox:9001").as_deref(),
+            Some("http://sandbox:9001")
+        );
+        assert_eq!(normalize_endpoint("").as_deref(), None);
+        assert_eq!(normalize_endpoint("ftp://example.com").as_deref(), None);
+    }
+
+    #[test]
+    fn test_sandbox_endpoint_candidates_adds_fallback() {
+        assert_eq!(endpoint_candidates(None), vec![DEFAULT_SANDBOX_ENDPOINT]);
+        assert_eq!(
+            endpoint_candidates(Some("http://sandbox:9001")),
+            vec![
+                "http://sandbox:9001",
+                DEFAULT_SANDBOX_ENDPOINT,
+                "http://127.0.0.1:9001"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_container_workspace_root_prefers_container_root() {
+        let root =
+            std::env::temp_dir().join(format!("wunder-workspace-{}", Uuid::new_v4().simple()));
+        let db_path =
+            std::env::temp_dir().join(format!("wunder-test-{}.db", Uuid::new_v4().simple()));
+        let root_text = root.to_string_lossy().to_string();
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace =
+            WorkspaceManager::new(&root_text, storage, 0, &std::collections::HashMap::new());
+
+        let mut config = Config::default();
+        config.workspace.root = "./config/data/workspaces".to_string();
+
+        let resolved = resolve_container_workspace_root(&config, &workspace, "demo_user");
+        assert_eq!(resolved, "/workspaces/demo_user");
+    }
+}

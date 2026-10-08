@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Web Fetch | 使用说明书</title>
+  <meta name="description" content="The split between `web_search` and `web_fetch`, plus direct fetch, browser fallback, and success or failure results for `web_fetch`.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/web-fetch","language":"en","title":"Web Fetch","summary":"The split between `web_search` and `web_fetch`, plus direct fetch, browser fallback, and success or failure results for `web_fetch`.","updated_at":"2026-05-15","read_when":["You need to read public webpage content rather than drive a browser"],"source_docs":["src/services/tools/web_search_tool.rs","src/services/tools/web_fetch_tool.rs"],"tab":"Tools","group":"Web and Desktop","group_path":["Web and Desktop"],"url":"/docs/en/tools/web-fetch/","headings":[{"id":"section-1","level":1,"text":"Web Fetch"},{"id":"section-2","level":2,"text":"Search vs. fetch"},{"id":"section-3","level":2,"text":"Minimum arguments"},{"id":"section-4","level":2,"text":"Success result"},{"id":"section-5","level":2,"text":"Important fields"},{"id":"section-6","level":2,"text":"Providers"},{"id":"section-7","level":2,"text":"Browser fallback"},{"id":"section-8","level":2,"text":"Failure results"},{"id":"section-9","level":2,"text":"When not to use it"}],"prev_slug":"en/tools/skill-call","next_slug":"en/tools/browser","markdown":"# Web Fetch\n\n## Search vs. fetch\n\n- `web_search`: takes keywords and returns candidate result titles, URLs, and snippets.\n- `web_fetch`: takes one confirmed URL and reads that page's main content.\n\nWhen you only have keywords, start with `web_search`:\n\n```json\n{\n  \"query\": \"example project official docs GitHub\",\n  \"count\": 5\n}\n```\n\nIf you already have a site or domain and only want to search inside it, pass `site` or `sites`; do not build a search-result URL and send it to `web_fetch`:\n\n```json\n{\n  \"site\": \"example.com\",\n  \"query\": \"install configuration\",\n  \"count\": 5\n}\n```\n\nThen pass concrete source URLs to `web_fetch`. Search-result pages may also be fetched as lead pages, but final evidence should come from concrete source pages.\n\n`web_fetch` is still one of the deliberate exceptions in the tool system.  \nOn success, it returns the fetched result object directly rather than the unified `ok/action/state/summary/data` envelope.\n\n## Minimum arguments\n\n```json\n{\n  \"url\": \"https://example.com\"\n}\n```\n\n## Success result\n\n```json\n{\n  \"url\": \"https://example.com\",\n  \"final_url\": \"https://example.com\",\n  \"status\": 200,\n  \"title\": \"Example Domain\",\n  \"content_type\": \"text/html; charset=UTF-8\",\n  \"content_kind\": \"html\",\n  \"fetch_strategy\": \"direct_http\",\n  \"format\": \"markdown\",\n  \"extractor\": \"readability\",\n  \"truncated\": false,\n  \"warning\": null,\n  \"cached\": false,\n  \"fetched_at\": \"2026-04-10T03:00:00Z\",\n  \"content\": \"...\"\n}\n```\n\n## Important fields\n\n- `fetch_strategy`: for example `direct_http` or `browser_fallback`\n- `provider`: present when an external provider such as `firecrawl` handled the fetch\n- `format`: usually `markdown` or `text`\n- `extractor`: the extractor that actually produced the content\n- `truncated`: whether the main content was cut\n- `warning`: extra fetch-time hints or warnings\n\n## Providers\n\nDocker compose now defaults to wunder's built-in web fetcher and does not start a self-hosted Firecrawl group. `tools.web.search.enabled` is disabled by default; if you want keyword search, configure a search provider and enable `web_search` explicitly. Without a search provider, `web_fetch` can still fetch search-result pages as lead pages.\n\n`web_fetch` keeps the model-facing arguments small. Provider selection is configured by the system:\n\n```yaml\ntools:\n  web:\n    fetch:\n      provider: direct # direct | auto | firecrawl\n      firecrawl:\n        api_key: ${FIRECRAWL_API_KEY:-}\n        base_url: ${FIRECRAWL_BASE_URL:-https://api.firecrawl.dev}\n```\n\n- `direct`: built-in wunder HTTP fetcher.\n- `firecrawl`: use Firecrawl `/v2/scrape`.\n- `auto`: use Firecrawl when an API key or custom base URL is configured, otherwise fall back to `direct`.\n\nFirecrawl Cloud uses `https://api.firecrawl.dev` and requires an API key. The admin settings page only stores wunder's connection parameters for an external Firecrawl service and does not control Docker service lifecycle.\n\n## Browser fallback\n\nIf direct HTTP only returns a frontend shell, an anti-bot page, or meaningless HTML, `web_fetch` may automatically attempt browser fallback.  \nWhen that happens successfully, you will see:\n\n```json\n{\n  \"fetch_strategy\": \"browser_fallback\"\n}\n```\n\n## Failure results\n\nOn failure, the tool falls back to the unified failure envelope and adds fetch diagnostics such as:\n\n- `phase`\n- `failure_summary`\n- `error_detail_head`\n- `next_step_hint`\n- `normalized_url`\n- `host`\n- `error_meta.code`\n\n## When not to use it\n\n- If you have search keywords, use a search tool first. `web_fetch` rejects search-result URLs such as `bing.com/search?...`.\n- If you need to click, type, or scroll, use [Browser](/docs/en/tools/browser/)\n- If you need to inspect a local HTML file, this is not the right tool\n","source_path":"使用说明书/en/tools/web-fetch.md"}</script>
+</body>
+</html>

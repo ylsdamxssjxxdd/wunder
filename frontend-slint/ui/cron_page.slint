@@ -1,0 +1,142 @@
+import { I18n } from "i18n.slint";
+import { Theme, CronCard, CronRunCard } from "theme.slint";
+import { Action, PageState, PageStateKind } from "components.slint";
+import { CheckBox, ComboBox, ScrollView } from "std-widgets.slint";
+
+export component CronPage inherits Rectangle {
+    in property <bool> loading: false;
+    in property <[CronCard]> jobs;
+    in-out property <[string]> agent-names: [I18n.common_default_agent];
+    in-out property <bool> editor-open: false;
+    in-out property <bool> editor-saving: false;
+    in-out property <int> editor-kind: 0;
+    in-out property <string> editor-name;
+    in-out property <string> editor-at;
+    in-out property <string> editor-every;
+    in-out property <string> editor-cron;
+    in-out property <string> editor-tz;
+    in-out property <string> editor-message;
+    in-out property <int> editor-agent: 0;
+    in-out property <bool> editor-delete-after: false;
+    in-out property <bool> editor-enabled: true;
+    in-out property <bool> runs-open: false;
+    in property <bool> runs-loading: false;
+    in property <string> runs-title;
+    in property <[CronRunCard]> runs;
+    callback refresh();
+    callback toggle(string, bool);
+    callback delete(string);
+    callback run-now(string);
+    callback open-runs(string);
+    callback close-runs();
+    callback open-creator();
+    callback edit-job(string);
+    callback save-editor();
+    callback cancel-editor();
+    private property <int> selected: -1;
+    private property <CronCard> current: root.selected >= 0 && root.selected < root.jobs.length ? root.jobs[root.selected] : { id: "", name: "", enabled: false, schedule: "", next-run: "", last-status: "", last-error: "" };
+    background: white; border-radius: 12px;
+    HorizontalLayout { x: 12px; y: 12px; width: parent.width - 24px; height: 30px;
+        Text { text: "查看与管理智能体定时任务"; color: #909399; font-size: 12px; }
+        Rectangle { horizontal-stretch: 1; }
+        Action { icon: @image-url("../assets/icons/rotate-right.svg"); label: "刷新"; show-label: true; clicked => { root.refresh(); } }
+        Action { icon: @image-url("../assets/icons/plus.svg"); label: "新建定时任务"; show-label: true; selected: true; clicked => { root.open-creator(); } }
+    }
+    HorizontalLayout {
+        spacing: 10px;
+        padding: 12px;
+        padding-top: 54px;
+        Rectangle {
+            width: parent.width * 0.25;
+            border-width: 1px; border-color: #e6e8ed; border-radius: 12px;
+            background: white;
+            VerticalLayout {
+                spacing: 0px;
+                Rectangle { height: 14px; }
+                ScrollView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { alignment: start; spacing: 4px;
+                        for job[index] in root.jobs : Rectangle {
+                            height: 64px;
+                            Rectangle {
+                                x: 8px; y: 2px; width: parent.width - 16px; height: 60px; border-radius: Theme.radius-lg;
+                                background: root.selected == index ? Theme.accent : transparent;
+                                Action { width: parent.width; height: parent.height; label: job.name; enabled: !root.loading; clicked => { root.selected = index; } }
+                                Text { x: 12px; y: 9px; width: parent.width - 78px; height: 19px; text: job.name; color: root.selected == index ? white : Theme.text; font-size: Theme.font-md; font-weight: 600; overflow: elide; }
+                                Text { x: parent.width - 62px; y: 10px; width: 52px; height: 16px; text: job.enabled ? I18n.common_enabled : I18n.common_disabled; color: root.selected == index ? #ffffffe0 : (job.enabled ? Theme.success : Theme.muted); font-size: Theme.font-2xs; horizontal-alignment: right; }
+                                Text { x: 12px; y: 34px; width: parent.width - 24px; height: 16px; text: job.schedule + I18n.cr_next_prefix + job.next-run; color: root.selected == index ? #ffffffe0 : Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                            }
+                        }
+                        if root.jobs.length == 0 : Rectangle { height: 56px; Text { x: 20px; y: 20px; text: root.loading ? "正在加载…" : "暂无定时任务"; color: Theme.muted; font-size: 12px; } }
+                    }
+                }
+            }
+        }
+        Rectangle {
+            border-width: 1px; border-color: #e6e8ed; border-radius: 12px;
+            horizontal-stretch: 1;
+            VerticalLayout {
+                spacing: 0px;
+                if root.selected >= 0 : HorizontalLayout {
+                    height: 62px; padding-left: 14px; padding-right: 14px; padding-top: 16px; padding-bottom: 16px; spacing: 8px;
+                    VerticalLayout { spacing: 1px;
+                        Text { height: 25px; text: root.selected >= 0 ? root.current.name : I18n.common_cron_tasks; color: Theme.text; font-size: Theme.font-headline; font-weight: 700; overflow: elide; }
+                        Text { height: 17px; text: root.selected >= 0 ? (root.current.enabled ? I18n.common_enabled : I18n.common_disabled) + " · " + root.current.schedule : I18n.cr_pick_task; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Action { label: root.current.enabled ? I18n.common_disable : I18n.common_enable; show-label: true; enabled: root.selected >= 0 && !root.loading; clicked => { root.toggle(root.current.id, !root.current.enabled); } }
+                    Action { icon: @image-url("../assets/icons/pen.svg"); label: "编辑"; show-label: true; enabled: root.selected >= 0 && !root.loading; clicked => { root.edit-job(root.current.id); } }
+                    Action { label: I18n.cr_run_now; show-label: true; enabled: root.selected >= 0 && !root.loading; clicked => { root.run-now(root.current.id); } }
+                    Action { label: I18n.cr_runs; show-label: true; enabled: root.selected >= 0 && !root.runs-loading; clicked => { root.open-runs(root.current.id); } }
+                    Action { label: I18n.common_delete; show-label: true; enabled: root.selected >= 0 && !root.loading; clicked => { root.delete(root.current.id); } }
+                }
+                if root.selected < 0 : Rectangle { vertical-stretch: 1; Text { x: 20px; y: 20px; text: I18n.cr_pick_task_hint; color: Theme.muted; font-size: Theme.font-md; horizontal-alignment: left; vertical-alignment: top; } }
+                if root.selected >= 0 : ScrollView {
+                    vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                    VerticalLayout { alignment: start; padding: 22px; spacing: 10px;
+                        for row in [
+                            {label: I18n.cr_schedule, value: root.current.schedule},
+                            {label: I18n.cr_next_run, value: root.current.next-run},
+                            {label: I18n.cr_last_status, value: root.current.last-status == "" ? I18n.cr_never_run : root.current.last-status}
+                        ] : HorizontalLayout { height: 30px; Rectangle { width: 96px; Text { x: 0px; width: parent.width; height: parent.height; text: row.label; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; } } Text { horizontal-stretch: 1; height: parent.height; text: row.value; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; overflow: elide; } }
+                        HorizontalLayout { height: 30px; Rectangle { width: 96px; Text { x: 0px; width: parent.width; height: parent.height; text: I18n.cr_last_error; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; } } Text { horizontal-stretch: 1; height: parent.height; text: root.current.last-error == "" ? I18n.common_none : root.current.last-error; color: root.current.last-error == "" ? Theme.muted : Theme.danger; font-size: Theme.font-sm; vertical-alignment: center; overflow: elide; } }
+                        Rectangle { height: 1px; background: Theme.border; }
+                        HorizontalLayout { height: 32px; spacing: 8px;
+                            Action { width: 96px; label: I18n.cr_runs; show-label: true; enabled: !root.runs-loading; clicked => { root.open-runs(root.current.id); } }
+                            Action { width: 96px; label: root.current.enabled ? I18n.cr_disable_task : I18n.cr_enable_task; show-label: true; enabled: !root.loading; clicked => { root.toggle(root.current.id, !root.current.enabled); } }
+                            Rectangle { horizontal-stretch: 1; }
+                            Action { width: 84px; label: I18n.cr_delete_task; show-label: true; enabled: !root.loading; clicked => { root.delete(root.current.id); } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if root.runs-open : Rectangle { Rectangle { background: Theme.overlay; TouchArea { clicked => { root.close-runs(); } } } Rectangle { x: parent.width - 420px; y: 0px; width: 420px; height: parent.height; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 16px; spacing: 10px;
+            HorizontalLayout { height: 26px; Text { text: I18n.cr_runs_title_prefix + root.runs-title; color: Theme.text; font-size: 15px; font-weight: 700; horizontal-stretch: 1; overflow: elide; vertical-alignment: center; } Action { width: 30px; icon: @image-url("../assets/icons/xmark.svg"); clicked => { root.close-runs(); } } }
+            Text { height: 18px; text: root.runs-loading ? I18n.common_loading : I18n.cr_runs_recent_prefix + root.runs.length + I18n.cr_runs_recent_suffix; color: Theme.muted; font-size: Theme.font-xs; }
+            ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off; VerticalLayout { spacing: 6px; alignment: start; for run in root.runs : Rectangle { height: 74px; border-radius: Theme.radius-md; background: Theme.panel; VerticalLayout { padding: 10px; spacing: 3px;
+                HorizontalLayout { height: 20px; spacing: 8px; Text { text: run.status; color: run.status == "success" ? Theme.success : (run.status == "running" ? Theme.warning : Theme.danger); font-size: Theme.font-sm; font-weight: 600; vertical-alignment: center; } Text { text: run.trigger == "manual" ? I18n.cr_trigger_manual : I18n.cr_trigger_schedule; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } Text { text: run.created-at + " · " + run.duration; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; } }
+                Text { text: run.error == "" ? (run.summary == "" ? I18n.cr_no_summary : run.summary) : I18n.cr_failure_prefix + run.error; color: run.error == "" ? Theme.text : Theme.danger; font-size: Theme.font-xs; wrap: word-wrap; overflow: elide; }
+            } } if root.runs.length == 0 && !root.runs-loading : PageState { height: 70px; kind: PageStateKind.empty; message: I18n.cr_runs_empty; } } }
+        } } }
+        if root.editor-open : Rectangle { Rectangle { background: Theme.overlay; TouchArea { clicked => { } } } Rectangle { x: (parent.width - 460px) / 2; y: 24px; width: 460px; height: parent.height - 48px; border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border; VerticalLayout { padding: 18px; spacing: 10px;
+            Text { height: 24px; text: I18n.common_cron_tasks; color: Theme.text; font-size: Theme.font-xl; font-weight: 700; }
+            HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.common_name; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-name; color: Theme.text; font-size: Theme.font-sm; } }
+            HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_schedule; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } ComboBox { horizontal-stretch: 1; model: [I18n.cr_kind_once, I18n.cr_kind_interval, I18n.cr_kind_cron]; current-index <=> root.editor-kind; enabled: !root.editor-saving; } }
+            if root.editor-kind == 0 : HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_exec_time; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-at; color: Theme.text; font-size: Theme.font-sm; } }
+            if root.editor-kind == 1 : VerticalLayout { spacing: 8px;
+                HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_interval; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-every; color: Theme.text; font-size: Theme.font-sm; input-type: number; } }
+                HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_first_time; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-at; color: Theme.text; font-size: Theme.font-sm; } }
+            }
+            if root.editor-kind == 2 : VerticalLayout { spacing: 8px;
+                HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_expression; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-cron; color: Theme.text; font-size: Theme.font-sm; } }
+                HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_timezone; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } TextInput { horizontal-stretch: 1; text <=> root.editor-tz; color: Theme.text; font-size: Theme.font-sm; } }
+            }
+            HorizontalLayout { height: 52px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_message; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } TextInput { horizontal-stretch: 1; height: 52px; text <=> root.editor-message; color: Theme.text; font-size: Theme.font-sm; wrap: word-wrap; } }
+            HorizontalLayout { height: 30px; spacing: 10px; Text { width: 64px; text: I18n.cr_field_target_agent; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; } ComboBox { horizontal-stretch: 1; model: root.agent-names; current-index <=> root.editor-agent; enabled: !root.editor-saving; } }
+            HorizontalLayout { height: 24px; spacing: 10px; CheckBox { text: I18n.cr_delete_after_run; checked <=> root.editor-delete-after; enabled: !root.editor-saving; } CheckBox { text: I18n.common_enable; checked <=> root.editor-enabled; enabled: !root.editor-saving; } }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout { height: 34px; spacing: 8px; Rectangle { horizontal-stretch: 1; } Action { width: 84px; label: I18n.common_save; show-label: true; primary: true; enabled: !root.editor-saving; clicked => { root.save-editor(); } } Action { width: 84px; label: I18n.common_cancel; show-label: true; enabled: !root.editor-saving; clicked => { root.cancel-editor(); } } }
+        } } }
+}

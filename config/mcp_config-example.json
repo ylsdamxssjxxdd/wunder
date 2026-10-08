@@ -1,0 +1,58 @@
+{
+  "mcp": {
+    "transport": "streamable-http",
+    "host": "0.0.0.0",
+    "port": 9010
+  },
+  "database": {
+    "default_key": "local_hr_mysql",
+    "description": "公司全量人员信息数据库（50000人）",
+    "export_root": "exports/extra_mcp",
+    "targets": {
+      "local_hr_mysql": {
+        "type": "mysql",
+        "host": "192.168.0.6",
+        "port": 3307,
+        "user": "root",
+        "password": "rootpass123!",
+        "database": "hr_promotion_sim",
+        "connect_timeout": 8,
+        "description": "本地 MySQL 演示库（人力资源晋升场景）"
+      }
+    },
+    "tables": {
+      "company_all_personnel": {
+        "name": "人员信息",
+        "table": "人员信息",
+        "description": "公司所有人员信息（全量50000），用于让模型自主筛选符合晋升条件的人选"
+      }
+    }
+  },
+  "knowledge": {
+    "enabled": true,
+    "base_url": "http://192.168.0.6:9380",
+    "api_key": "ragflow-iUR6fuhanBhyoVPXqpu8OAZ0LDTKZPug9h_4cQlqbN8",
+    "default_key": "product_docs",
+    "request": {
+      "top_k": 8,
+      "similarity_threshold": 0.2,
+      "highlight": true
+    },
+    "targets": {
+      "product_docs": {
+        "name": "产品文档",
+        "dataset_ids": [
+          "089219ce2b7311f19ffc61c96bcdbe56"
+        ],
+        "description": "学校向量库"
+      },
+      "hr_docs": {
+        "name": "人资文档",
+        "dataset_ids": [
+          "64ad8a8c2b7211f19ffc61c96bcdbe56"
+        ],
+        "description": "公司向量库"
+      }
+    }
+  }
+}

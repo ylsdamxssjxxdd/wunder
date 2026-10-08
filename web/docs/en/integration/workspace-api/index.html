@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Workspace API | 使用说明书</title>
+  <meta name="description" content="/wunder/workspace* is not just a file interface - it pins every user to their own single cloud directory.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/integration/workspace-api","language":"en","title":"Workspace API","summary":"/wunder/workspace* is not just a file interface - it pins every user to their own single cloud directory.","updated_at":"2026-10-07","read_when":["You are building workspace panels, file upload/download, or artifact callbacks","You need to know why container_id no longer has any effect"],"source_docs":["docs/API文档.md","docs/设计文档/01-系统总体设计.md"],"tab":"Integrations","group":"Core Interfaces","group_path":["Core Interfaces"],"url":"/docs/en/integration/workspace-api/","headings":[{"id":"section-1","level":1,"text":"Workspace API"},{"id":"section-2","level":2,"text":"Key Points on This Page"},{"id":"section-3","level":2,"text":"Routing Rules (Read First)"},{"id":"section-4","level":2,"text":"Where This Set of Interfaces Is Used"},{"id":"section-5","level":2,"text":"How to Distinguish Common Interfaces"},{"id":"section-6","level":2,"text":"Common Misconceptions"},{"id":"section-7","level":2,"text":"Further Reading"}],"prev_slug":"en/integration/chat-sessions","next_slug":"en/integration/temp-dir","markdown":"# Workspace API\n\nIf you are building file trees, editors, upload/download, or artifact panels, read this page first.\n\n`/wunder/workspace*` is not just a file read/write interface - it determines which user directory a file lands in.\n\n## Key Points on This Page\n\n- What workspace-related interfaces are available\n- How routing converges on \"one directory per user\"\n- When to use the workspace instead of `temp_dir`\n\n## Routing Rules (Read First)\n\nWorkspace routing now has exactly one path:\n\n1. The request carries the authenticated user's identity.\n2. The server resolves that user's workspace root.\n3. The entry is located under that root by the relative path in the request.\n\nAdditional notes:\n\n- `container_id` is converged: the parameter is still accepted during the transition, but it no longer selects a directory — any value resolves against the user root. The frontend offers no container choice.\n- `agent_id` no longer participates in directory derivation; it only affects conversation and configuration binding. Each user has exactly one agent instance.\n- Subagents share the same user directory as the main agent.\n\n## Where This Set of Interfaces Is Used\n\n- File tree and directory browsing\n- File preview and editing\n- Upload, download, and archive packaging\n- Persistent callback of tool artifacts\n- Directory usage statistics (file count, directory count, used capacity, recently modified files)\n\n## How to Distinguish Common Interfaces\n\n- `GET/DELETE /wunder/workspace`\n- `GET /wunder/workspace/content`\n- `GET /wunder/workspace/search`\n- `GET /wunder/workspace/stats`\n- `POST /wunder/workspace/upload`\n- `GET /wunder/workspace/download`\n- `GET /wunder/workspace/archive`\n- `POST /wunder/workspace/dir`\n- `POST /wunder/workspace/move`\n- `POST /wunder/workspace/copy`\n- `POST /wunder/workspace/batch`\n- `POST /wunder/workspace/file`\n\nIf you are building a file panel, you can understand it this way:\n\n- Directory page: `GET /wunder/workspace`\n- File preview: `GET /wunder/workspace/content`\n- Search: `GET /wunder/workspace/search`\n- Usage bar and welcome-page overview: `GET /wunder/workspace/stats`\n- Write file: `POST /wunder/workspace/file`\n- Upload: `POST /wunder/workspace/upload`\n- Export: `GET /wunder/workspace/download` or `archive`\n\nThe `/workspace*` group returns bare objects (no `data` wrapper). In `stats`, `quota_bytes: null` means no quota is configured — the frontend then shows only the used amount and renders no quota denominator.\n\n## Common Misconceptions\n\n- Treating the workspace as a temporary directory. The workspace is for persistent artifacts; `temp_dir` is for transient transfers.\n- Passing real disk absolute paths directly. Every interface here uses workspace-relative paths.\n- Thinking `container_id` can switch to another directory. It cannot: the server always resolves against the user root.\n- Thinking the workspace can be added or replaced. It cannot: each user has one fixed cloud directory.\n\n## Further Reading\n\n- [Workspaces and Working Directory](/docs/en/concepts/workspaces/)\n- [Workspace Routing and File Management](/docs/en/reference/workspace-routing/)\n- [Temp Directory and Document Conversion](/docs/en/integration/temp-dir/)\n","source_path":"使用说明书/en/integration/workspace-api.md"}</script>
+</body>
+</html>

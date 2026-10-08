@@ -1,0 +1,611 @@
+import { defineStore } from 'pinia';
+
+import {
+  archiveSession as archiveSessionApi,
+  cancelMessageStream,
+  compactSession as compactSessionApi,
+  controlSessionSubagents as controlSessionSubagentsApi,
+  createSession,
+  deleteSession as deleteSessionApi,
+  getSession,
+  getSessionGoal,
+  getSessionEvents,
+  getSessionHistoryPage,
+  getSessionSubagents,
+  listSessions,
+  openChatSocket,
+  renameSession as renameSessionApi,
+  restoreSession as restoreSessionApi,
+  setSessionGoal as setSessionGoalApi,
+  submitMessageFeedback as submitMessageFeedbackApi,
+  updateSessionTools as updateSessionToolsApi
+} from '@/api/chat';
+import { t } from '@/i18n';
+import { formatStructuredErrorText } from '@/utils/streamError';
+import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
+import {
+  buildChatRequestTextInputOverflowError,
+  resolveChatRequestTextInputOverflow
+} from '@/utils/chatRequestInputLimit';
+import {
+  hasActiveSubagentsAfterLatestUser,
+  hasRunningAssistantMessage,
+  hasStreamingAssistantMessage,
+  isSessionBusyFromSignals,
+  isThreadRuntimeBusy,
+  isThreadRuntimeWaiting,
+  normalizeThreadRuntimeStatus
+} from '@/utils/chatSessionRuntime';
+import {
+  isSubagentItemActive,
+  normalizeSubagentRuntimeFlag,
+  isSubagentStatusFailed,
+  isSubagentStatusSuccessful,
+  normalizeSubagentRuntimeStatus
+} from '@/utils/subagentRuntime';
+import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from '@/utils/chatTiming';
+import {
+  mergeSessionsByIdPreservingRuntimeFields
+} from '@/stores/chatSessionMerge';
+import {
+  estimateChatTextTokens,
+  estimateRequestContextTokens,
+  resolveRequestContextPreviewTokens
+} from '@/utils/chatContextEstimate';
+import { resolveWorkflowDurationMs } from '@/utils/toolWorkflowTiming';
+import { summarizeTurnDecodeSpeed } from '@/utils/turnDecodeSpeed';
+import {
+  normalizeMessageFeedback,
+  normalizeMessageFeedbackVote
+} from '@/utils/messageFeedback';
+import { createWsMultiplexer } from '@/utils/ws';
+import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
+import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { chatPerf } from '@/utils/chatPerf';
+import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { resolveAccessToken } from '@/api/requestAuth';
+import {
+  createChatRuntimeProjection,
+  applyChatRuntimeEvent
+} from '@/realtime/chat/chatRuntimeReducer';
+import {
+  selectLegacyMessageStatus,
+  selectVisibleMessageProjections,
+  selectSessionBusy,
+  selectSessionBusyReason,
+  selectRuntimeLastAppliedEventId,
+  selectSessionRuntimeStatus
+} from '@/realtime/chat/chatRuntimeSelectors';
+import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
+import {
+  clearTrailingPendingAssistantMessages,
+  clearSupersededPendingAssistantMessages,
+  findPendingAssistantMessage,
+  isPendingAssistantMessage,
+  stopPendingAssistantMessage
+} from './chatPendingMessage';
+import {
+  captureChatSnapshotScheduleContext,
+  resolveChatSnapshotScheduleSource
+} from './chatSnapshotScheduler';
+import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
+import {
+  normalizeStreamLifecyclePhase,
+  shouldForcePreserveWatcherForActiveSession,
+  shouldApplyForegroundDetailHydration,
+  shouldKeepForegroundInteractiveRuntime,
+  shouldKeepForegroundLiveMessagesDuringRunningGap,
+  shouldKeepForegroundLiveMessages,
+  shouldRestartWatchAfterInteractiveStream
+} from './chatWatchLifecycle';
+import { isCompactionSummaryEvent } from '@/utils/chatCompactionWorkflow';
+import {
+  dedupeTerminalCompactionMarkersInPlace,
+  isCompactionMarkerAssistantMessage,
+  isSupersededRunningManualCompactionMarker,
+  mergeCompactionMarkersIntoMessages,
+  shouldPreserveTerminalCompactionMarkerState
+} from './chatCompactionMarker';
+import {
+  replaceMessageArrayKeepingReference,
+  resolveRealtimeMessageArrayReference
+} from './chatMessageArraySync';
+import { useCommandSessionStore } from './commandSessions';
+import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
+
+import { buildWorkflowItem } from './chatDemoPanels';
+import { applyRuntimeDerivedStatus, buildRuntimeDebugSnapshot, ensureRuntime, getRuntime, getSessionMessages, refreshRuntimeStreamLifecycle, resolveSessionKey, syncChatRuntimeProjectionStatus } from './chatRuntimeState';
+import { chatWatcherSharedState } from './chatSharedState';
+import { parseErrorText, resolveTimestampMs } from './chatStats';
+import { getRuntimeLastEventId, normalizeStreamEventId, normalizeStreamRound } from './chatStreamIds';
+
+export const setSessionLoading = (store, sessionId, value) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key) return;
+  const beforeLoading = Boolean(store.loadingBySession[key]);
+  const runtime = ensureRuntime(key);
+  const beforeRuntime = buildRuntimeDebugSnapshot(runtime);
+  if (value) {
+    store.loadingBySession[key] = true;
+  } else if (store.loadingBySession[key]) {
+    delete store.loadingBySession[key];
+  }
+  // Transport cleanup is not a server terminal event. A watch or reconnect can
+  // keep delivering work after the original request has closed.
+  if (value && !isThreadRuntimeWaiting(runtime?.threadStatus)) {
+    syncChatRuntimeProjectionStatus(store, key, 'running');
+  }
+  if (!runtime) return;
+  if (value) {
+    runtime.loaded = true;
+    if (!isThreadRuntimeWaiting(runtime.threadStatus)) {
+      runtime.threadStatus = 'running';
+    }
+    const afterRuntime = buildRuntimeDebugSnapshot(runtime);
+    if (
+      beforeLoading !== Boolean(value) ||
+      beforeRuntime.threadStatus !== afterRuntime.threadStatus
+    ) {
+      chatDebugLog('chat.store.loading', 'set-session-loading', {
+        sessionId: key,
+        nextLoading: true,
+        beforeLoading,
+        beforeRuntime,
+        afterRuntime
+      });
+    }
+    return;
+  }
+  const projectedStatus = store.runtimeProjection?.sessions?.[key]?.runtimeStatus;
+  if (projectedStatus && projectedStatus !== 'not_loaded') {
+    runtime.threadStatus = normalizeThreadRuntimeStatus(projectedStatus);
+  } else {
+    applyRuntimeDerivedStatus(store, key, runtime);
+  }
+  const afterRuntime = buildRuntimeDebugSnapshot(runtime);
+  const hasResidualControllers = afterRuntime.hasSendController || afterRuntime.hasResumeController;
+  if (
+    beforeLoading !== Boolean(value) ||
+    beforeRuntime.threadStatus !== afterRuntime.threadStatus ||
+    hasResidualControllers
+  ) {
+    chatDebugLog('chat.store.loading', 'set-session-loading', {
+      sessionId: key,
+      nextLoading: false,
+      beforeLoading,
+      beforeRuntime,
+      afterRuntime,
+      hasResidualControllers
+    });
+  }
+};
+
+export const clearWatchdog = (runtime) => {
+  if (!runtime) return;
+  if (runtime.watchdogTimer) {
+    clearTimeout(runtime.watchdogTimer);
+    runtime.watchdogTimer = null;
+  }
+  if (runtime.watchReconcileTimer) {
+    clearTimeout(runtime.watchReconcileTimer);
+    runtime.watchReconcileTimer = null;
+  }
+  runtime.watchReconcileAt = 0;
+  runtime.watchdogBusy = false;
+  runtime.watchLastEventAt = 0;
+};
+
+export const clearSlowClientResume = (runtime) => {
+  if (!runtime) return;
+  if (runtime.slowClientResumeTimer) {
+    clearTimeout(runtime.slowClientResumeTimer);
+    runtime.slowClientResumeTimer = null;
+  }
+  runtime.slowClientResumeAfterEventId = 0;
+};
+
+type RuntimeStreamAbortReason = 'user_stop' | 'local_recovery' | 'teardown';
+
+type ClearRuntimeStreamStateOptions = {
+  abort?: boolean;
+  abortReason?: RuntimeStreamAbortReason;
+  requestId?: string | null;
+};
+
+export function clearRuntimeSendStreamState(runtime, options: ClearRuntimeStreamStateOptions = {}) {
+  if (!runtime) return false;
+  const expectedRequestId = String(options.requestId || '').trim();
+  if (expectedRequestId) {
+    const currentRequestId = String(runtime.sendRequestId || '').trim();
+    if (currentRequestId !== expectedRequestId) {
+      return false;
+    }
+  }
+  const controller = runtime.sendController;
+  if (!controller) return false;
+  if (options.abort === true && controller?.signal?.aborted !== true) {
+    runtime.sendAbortReason = runtime.sendAbortReason || options.abortReason || 'teardown';
+    controller.abort();
+  }
+  runtime.sendController = null;
+  runtime.sendRequestId = null;
+  runtime.sendStartedAt = 0;
+  runtime.sendLastEventAt = 0;
+  return true;
+}
+
+export function clearRuntimeResumeStreamState(runtime, options: ClearRuntimeStreamStateOptions = {}) {
+  if (!runtime) return false;
+  const expectedRequestId = String(options.requestId || '').trim();
+  if (expectedRequestId) {
+    const currentRequestId = String(runtime.resumeRequestId || '').trim();
+    if (currentRequestId !== expectedRequestId) {
+      return false;
+    }
+  }
+  const controller = runtime.resumeController;
+  if (!controller) return false;
+  if (options.abort === true && controller?.signal?.aborted !== true) {
+    runtime.resumeAbortReason = runtime.resumeAbortReason || options.abortReason || 'teardown';
+    controller.abort();
+  }
+  runtime.resumeController = null;
+  runtime.resumeRequestId = null;
+  runtime.resumeStartedAt = 0;
+  runtime.resumeLastEventAt = 0;
+  return true;
+}
+
+export function clearRuntimeInteractiveControllers(
+  runtime,
+  options: ClearRuntimeStreamStateOptions = {}
+) {
+  if (!runtime) return false;
+  const clearedSend = clearRuntimeSendStreamState(runtime, options);
+  const clearedResume = clearRuntimeResumeStreamState(runtime, options);
+  if (clearedSend || clearedResume) {
+    runtime.stopRequested = false;
+    refreshRuntimeStreamLifecycle(runtime);
+  }
+  return clearedSend || clearedResume;
+}
+
+export function markRuntimeSendStreamStarted(runtime) {
+  if (!runtime) return;
+  const now = Date.now();
+  runtime.sendAbortReason = '';
+  runtime.sendStartedAt = now;
+  runtime.sendLastEventAt = now;
+}
+
+export function markRuntimeResumeStreamStarted(runtime) {
+  if (!runtime) return;
+  const now = Date.now();
+  runtime.resumeAbortReason = '';
+  runtime.resumeStartedAt = now;
+  runtime.resumeLastEventAt = now;
+}
+
+export function markRuntimeSendStreamActivity(runtime) {
+  if (!runtime?.sendController) return;
+  runtime.sendLastEventAt = Date.now();
+}
+
+export function markRuntimeResumeStreamActivity(runtime) {
+  if (!runtime?.resumeController) return;
+  runtime.resumeLastEventAt = Date.now();
+}
+
+export function recoverRuntimeInteractiveControllers(
+  store,
+  sessionId,
+  runtime,
+  options: {
+    remoteRunning?: unknown;
+    remoteLastEventId?: unknown;
+    localLastEventId?: unknown;
+  } = {}
+) {
+  if (!runtime) return false;
+  const key = resolveSessionKey(sessionId);
+  if (!key) return false;
+  const localSessionMessages =
+    getSessionMessages(key) ||
+    (resolveSessionKey(store?.activeSessionId) === key && Array.isArray(store?.messages)
+      ? store.messages
+      : null);
+  const projectionLastEventId = selectRuntimeLastAppliedEventId(store?.runtimeProjection, key);
+  const localLastEventId = Math.max(
+    normalizeStreamEventId(options.localLastEventId) || 0,
+    resolveMaterializedMessageEventId(localSessionMessages),
+    projectionLastEventId,
+    projectionLastEventId > 0 ? 0 : getRuntimeLastEventId(runtime)
+  );
+  const remoteLastEventId = normalizeStreamEventId(options.remoteLastEventId) || 0;
+  const loading = Boolean(store?.loadingBySession?.[key]);
+  const nowMs = Date.now();
+  const sendReason = resolveInteractiveControllerRecoveryReason({
+    hasController: Boolean(runtime.sendController),
+    controllerAborted: runtime.sendController?.signal?.aborted === true,
+    startedAt: runtime.sendStartedAt,
+    lastEventAt: runtime.sendLastEventAt,
+    loading,
+    remoteRunning: options.remoteRunning,
+    remoteLastEventId,
+    localLastEventId,
+    nowMs
+  });
+  const resumeReason = resolveInteractiveControllerRecoveryReason({
+    hasController: Boolean(runtime.resumeController),
+    controllerAborted: runtime.resumeController?.signal?.aborted === true,
+    startedAt: runtime.resumeStartedAt,
+    lastEventAt: runtime.resumeLastEventAt,
+    loading,
+    remoteRunning: options.remoteRunning,
+    remoteLastEventId,
+    localLastEventId,
+    nowMs
+  });
+  let changed = false;
+  if (sendReason) {
+    chatDebugLog('chat.store.controller-recovery', 'clear-send-controller', {
+      sessionId: key,
+      reason: sendReason,
+      remoteRunning: options.remoteRunning,
+      localLastEventId,
+      remoteLastEventId
+    });
+    changed = clearRuntimeSendStreamState(runtime, {
+      abort: sendReason !== 'aborted' && sendReason !== 'remote_idle',
+      abortReason: 'local_recovery'
+    }) || changed;
+  }
+  if (resumeReason) {
+    chatDebugLog('chat.store.controller-recovery', 'clear-resume-controller', {
+      sessionId: key,
+      reason: resumeReason,
+      remoteRunning: options.remoteRunning,
+      localLastEventId,
+      remoteLastEventId
+    });
+    changed = clearRuntimeResumeStreamState(runtime, {
+      abort: resumeReason !== 'aborted' && resumeReason !== 'remote_idle',
+      abortReason: 'local_recovery'
+    }) || changed;
+  }
+  if (changed) {
+    refreshRuntimeStreamLifecycle(runtime);
+  }
+  return changed;
+}
+
+export const abortWatchStream = (sessionId) => {
+  const runtime = getRuntime(sessionId);
+  if (!runtime) return;
+  if (runtime.watchController) {
+    runtime.watchController.abort();
+    runtime.watchController = null;
+  }
+  runtime.watchActiveRoundCount = 0;
+  runtime.watchRequestId = null;
+  clearWatchdog(runtime);
+  refreshRuntimeStreamLifecycle(runtime);
+};
+
+export const clearSessionWatcher = () => {
+  if (chatWatcherSharedState.sessionWatchSessionId) {
+    abortWatchStream(chatWatcherSharedState.sessionWatchSessionId);
+  }
+  chatWatcherSharedState.sessionWatchSessionId = '';
+};
+
+export const resolveMaxStreamEventId = (messages) => {
+  if (!Array.isArray(messages)) return null;
+  let maxId = 0;
+  messages.forEach((message) => {
+    const eventId = normalizeStreamEventId(message.stream_event_id);
+    if (eventId && eventId > maxId) {
+      maxId = eventId;
+    }
+  });
+  return maxId > 0 ? maxId : null;
+};
+
+export const resolveLastStreamEventId = (messages) => {
+  if (!Array.isArray(messages)) return null;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    const eventId = normalizeStreamEventId(message?.stream_event_id);
+    if (eventId !== null) {
+      return eventId;
+    }
+  }
+  return null;
+};
+
+export const resolveLastAssistantStreamEventId = (messages) => {
+  if (!Array.isArray(messages)) return null;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message?.role !== 'assistant') continue;
+    const eventId = normalizeStreamEventId(message.stream_event_id);
+    if (eventId !== null) {
+      return eventId;
+    }
+  }
+  return null;
+};
+
+export const resolveMaterializedMessageEventId = (messages) =>
+  Math.max(
+    resolveLastStreamEventId(messages) || 0,
+    resolveLastAssistantStreamEventId(messages) || 0,
+    resolveMaxStreamEventId(messages) || 0
+  );
+
+export const resolveHiddenInternalUserEvent = (payload, data) =>
+  Boolean(
+    data?.hidden_internal_user ??
+      data?.hiddenInternalUser ??
+      payload?.hidden_internal_user ??
+      payload?.hiddenInternalUser
+  );
+
+export const resolveKnownSessionEventFloor = (sessionId, messages = getSessionMessages(sessionId)) => {
+  const runtime = getRuntime(sessionId);
+  const messageMaxEventId = resolveMaterializedMessageEventId(messages);
+  return Math.max(getRuntimeLastEventId(runtime), messageMaxEventId);
+};
+
+export const resolveMaxStreamRound = (messages) => {
+  if (!Array.isArray(messages)) return null;
+  let maxRound = 0;
+  messages.forEach((message) => {
+    if (message?.role !== 'assistant') return;
+    const round = normalizeStreamRound(message.stream_round);
+    if (round && round > maxRound) {
+      maxRound = round;
+    }
+  });
+  return maxRound > 0 ? maxRound : null;
+};
+
+export const isDraftSessionBootstrapMessage = (message) =>
+  Boolean(message && typeof message === 'object' && message.draft_session_bootstrap === true);
+
+export const clearDraftSessionBootstrapMessages = (messages) => {
+  if (!Array.isArray(messages)) return;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (!isDraftSessionBootstrapMessage(messages[index])) continue;
+    messages.splice(index, 1);
+  }
+};
+
+export const clearDraftSessionBootstrapMarkers = (messages) => {
+  if (!Array.isArray(messages)) return;
+  messages.forEach((message) => {
+    if (!isDraftSessionBootstrapMessage(message)) return;
+    delete message.draft_session_bootstrap;
+  });
+};
+
+export const markAssistantMessageRequestFailed = (assistantMessage, detail) => {
+  if (!assistantMessage || assistantMessage.role !== 'assistant') return;
+  const normalizedDetail = parseErrorText(detail) || t('chat.workflow.requestFailedDetail');
+  if (!Array.isArray(assistantMessage.workflowItems)) {
+    assistantMessage.workflowItems = [];
+  }
+  assistantMessage.workflowItems.push(
+    buildWorkflowItem(
+      t('chat.workflow.requestFailed'),
+      normalizedDetail,
+      'failed',
+      { eventType: 'request_failed' }
+    )
+  );
+  assistantMessage.workflowStreaming = false;
+  assistantMessage.reasoningStreaming = false;
+  assistantMessage.stream_incomplete = false;
+  if (!assistantMessage.content) {
+    assistantMessage.content = normalizedDetail;
+  }
+};
+
+export const resolveLastAssistantTimestampMs = (messages) => {
+  if (!Array.isArray(messages)) return null;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message?.role !== 'assistant') continue;
+    const timestamp = resolveTimestampMs(message.created_at);
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+  return null;
+};
+
+export const WATCHDOG_IDLE_MS_ACTIVE = 1500;
+export const WATCHDOG_IDLE_MS_BACKGROUND = 14000;
+export const WATCHDOG_IDLE_MS_HIDDEN = 26000;
+export const WATCHDOG_INTERVAL_MS_ACTIVE = 500;
+export const WATCHDOG_INTERVAL_MS_BACKGROUND = 3500;
+export const WATCHDOG_INTERVAL_MS_HIDDEN = 7000;
+export const WATCH_RECONCILE_DELAY_MS = 150;
+export const WATCH_RECONCILE_COOLDOWN_MS = 1800;
+export const SLOW_CLIENT_RESUME_DELAY_MS = 120;
+export const STREAM_FLUSH_BASE_MS = 40;
+export const STREAM_FLUSH_MAX_MS = 160;
+// Keep the chat hot set bounded. Older history is recovered through the stable before_id cursor.
+export const HISTORY_PAGE_LIMIT = 40;
+export const HISTORY_PAGE_MAX = 200;
+export const MESSAGE_WINDOW_LIMIT = 120;
+export const MESSAGE_WINDOW_THRESHOLD = 160;
+// History pagination can temporarily grow the hot window, but never beyond this cap.
+export const MESSAGE_WINDOW_MAX = 320;
+export const DESKTOP_MESSAGE_WINDOW_LIMIT = 64;
+export const DESKTOP_MESSAGE_WINDOW_THRESHOLD = 96;
+export const DESKTOP_MESSAGE_WINDOW_MAX = 192;
+export const SESSION_DETAIL_MESSAGE_LIMIT = 80;
+export const DESKTOP_SESSION_DETAIL_MESSAGE_LIMIT = DESKTOP_MESSAGE_WINDOW_LIMIT;
+export const WINDOWING_ENABLED_KEY = 'wunder_chat_windowing';
+
+export const resolveStreamFlushMs = (messageCount, override) => {
+  if (Number.isFinite(override)) {
+    return Math.min(STREAM_FLUSH_MAX_MS, Math.max(0, Number(override)));
+  }
+  return STREAM_FLUSH_BASE_MS;
+};
+
+export const resolveStreamFlushMsForMessages = (messages) =>
+  resolveStreamFlushMs(Array.isArray(messages) ? messages.length : 0, null);
+
+export const normalizeHistoryPageLimit = (value) => {
+  const parsed = Number.parseInt(String(value ?? HISTORY_PAGE_LIMIT), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return HISTORY_PAGE_LIMIT;
+  return Math.min(parsed, HISTORY_PAGE_MAX);
+};
+
+export const resolveSessionDetailMessageLimit = (desktopMode = false) =>
+  desktopMode ? DESKTOP_SESSION_DETAIL_MESSAGE_LIMIT : SESSION_DETAIL_MESSAGE_LIMIT;
+
+export const resolveMessageWindowLimit = (desktopMode = false) =>
+  desktopMode ? DESKTOP_MESSAGE_WINDOW_LIMIT : MESSAGE_WINDOW_LIMIT;
+
+export const resolveMessageWindowThreshold = (desktopMode = false) =>
+  desktopMode ? DESKTOP_MESSAGE_WINDOW_THRESHOLD : MESSAGE_WINDOW_THRESHOLD;
+
+export const resolveMessageWindowMax = (desktopMode = false) =>
+  desktopMode ? DESKTOP_MESSAGE_WINDOW_MAX : MESSAGE_WINDOW_MAX;
+
+export const isWindowingEnabled = () => {
+  try {
+    const raw = localStorage.getItem(WINDOWING_ENABLED_KEY);
+    if (!raw) return true;
+    return raw !== '0' && raw.toLowerCase() !== 'false';
+  } catch (error) {
+    return true;
+  }
+};
+
+export const isDocumentHidden = () =>
+  typeof document !== 'undefined' && document.visibilityState === 'hidden';
+
+export const resolveWatchdogProfile = (store, sessionId) => {
+  if (isDocumentHidden()) {
+    return {
+      idleMs: WATCHDOG_IDLE_MS_HIDDEN,
+      intervalMs: WATCHDOG_INTERVAL_MS_HIDDEN
+    };
+  }
+  const activeSessionId = resolveSessionKey(store?.activeSessionId);
+  const isForeground = Boolean(activeSessionId && activeSessionId === sessionId);
+  if (isForeground) {
+    return {
+      idleMs: WATCHDOG_IDLE_MS_ACTIVE,
+      intervalMs: WATCHDOG_INTERVAL_MS_ACTIVE
+    };
+  }
+  return {
+    idleMs: WATCHDOG_IDLE_MS_BACKGROUND,
+    intervalMs: WATCHDOG_INTERVAL_MS_BACKGROUND
+  };
+};
+

@@ -1,0 +1,537 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+import os
+from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qs, unquote, urlparse
+
+from ...common.config import get_config_section, get_section_value
+from ...common.env import parse_int
+
+DEFAULT_DB_KEY = "default"
+
+
+@dataclass(frozen=True)
+class DbConfig:
+    engine: str
+    host: str
+    port: int
+    user: str
+    password: str
+    database: str
+    connect_timeout: int
+    description: str | None
+
+
+@dataclass(frozen=True)
+class DbQueryTarget:
+    key: str
+    name: str
+    table: str
+    description: str | None
+    db_key: str | None
+
+
+@dataclass(frozen=True)
+class DbExportConfig:
+    root: Path
+    batch_size: int
+    csv_encoding: str
+    workspace_root: Path
+    workspace_public_root: str
+    workspace_single_root: bool
+
+
+def _normalize_engine(raw: str) -> str:
+    value = raw.lower()
+    if value in ("mysql", "mariadb"):
+        return "mysql"
+    if value in ("postgres", "postgresql"):
+        return "postgres"
+    raise ValueError(f"Unsupported database engine: {raw}")
+
+
+def _get_db_section() -> dict[str, Any]:
+    section = get_config_section("database")
+    if section:
+        return section
+    return get_config_section("personnel")
+
+
+def _get_target_description_map() -> dict[str, str]:
+    config = _get_db_section()
+    raw = get_section_value(config, "target_descriptions", "descriptions")
+    mapping: dict[str, str] = {}
+    if isinstance(raw, dict):
+        mapping.update({str(key): str(value) for key, value in raw.items() if value})
+    default_desc = get_section_value(config, "description", "desc")
+    if default_desc:
+        mapping.setdefault(get_default_db_key(), str(default_desc))
+    return mapping
+
+
+def _get_table_description_map() -> dict[str, str]:
+    config = _get_db_section()
+    raw = get_section_value(config, "table_descriptions", "tables_descriptions")
+    mapping: dict[str, str] = {}
+    if isinstance(raw, dict):
+        mapping.update({str(key): str(value) for key, value in raw.items() if value})
+    return mapping
+
+
+def _parse_query_target(
+    key_hint: str | None,
+    raw: Any,
+    description_map: dict[str, str],
+) -> DbQueryTarget:
+    if isinstance(raw, str):
+        table = raw.strip()
+        if not table:
+            raise ValueError("database.tables contains an empty table name.")
+        key = (key_hint or table).strip()
+        description = description_map.get(key) or description_map.get(table)
+        return DbQueryTarget(
+            key=key,
+            name=table,
+            table=table,
+            description=description,
+            db_key=None,
+        )
+
+    if not isinstance(raw, dict):
+        raise ValueError("database.tables entries must be strings or objects.")
+
+    table = str(raw.get("table") or "").strip()
+    if not table:
+        raise ValueError("database.tables entry is missing table.")
+
+    key = str(raw.get("key") or key_hint or table).strip()
+    if not key:
+        raise ValueError("database.tables entry is missing key.")
+
+    name = str(raw.get("name") or table).strip()
+    if not name:
+        name = table
+
+    description = raw.get("description") or raw.get("desc")
+    if not description:
+        description = description_map.get(key) or description_map.get(table)
+
+    db_key_raw = raw.get("db_key") or raw.get("target")
+    db_key = str(db_key_raw).strip() if db_key_raw else None
+
+    return DbQueryTarget(
+        key=key,
+        name=name,
+        table=table,
+        description=str(description) if description else None,
+        db_key=db_key,
+    )
+
+
+def load_db_query_targets() -> list[DbQueryTarget]:
+    config = _get_db_section()
+    description_map = _get_table_description_map()
+    raw = get_section_value(config, "query_tables", "tables")
+
+    targets: list[DbQueryTarget] = []
+
+    if raw is None:
+        single_table = get_section_value(config, "table", "default_table", "query_table")
+        if isinstance(single_table, str) and single_table.strip():
+            targets.append(
+                _parse_query_target(
+                    key_hint=None,
+                    raw=single_table,
+                    description_map=description_map,
+                )
+            )
+    elif isinstance(raw, dict):
+        for key, value in raw.items():
+            targets.append(
+                _parse_query_target(
+                    key_hint=str(key),
+                    raw=value,
+                    description_map=description_map,
+                )
+            )
+    elif isinstance(raw, (list, tuple)):
+        for value in raw:
+            targets.append(
+                _parse_query_target(
+                    key_hint=None,
+                    raw=value,
+                    description_map=description_map,
+                )
+            )
+    elif isinstance(raw, str):
+        targets.append(
+            _parse_query_target(
+                key_hint=None,
+                raw=raw,
+                description_map=description_map,
+            )
+        )
+    else:
+        raise ValueError("database.tables must be a string, array, or object.")
+
+    seen_keys: set[str] = set()
+    deduped: list[DbQueryTarget] = []
+    for target in targets:
+        if target.key in seen_keys:
+            raise ValueError(f"database.tables has duplicate key: {target.key}")
+        seen_keys.add(target.key)
+        deduped.append(target)
+
+    return deduped
+
+
+def _parse_mysql_dsn(dsn: str, key: str) -> DbConfig:
+    parsed = urlparse(dsn)
+    if parsed.scheme not in ("mysql", "mariadb"):
+        raise ValueError(f"Invalid DSN scheme for '{key}': {parsed.scheme}")
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 3306
+    user = unquote(parsed.username or "")
+    password = unquote(parsed.password or "")
+    database = parsed.path.lstrip("/")
+    if not database:
+        raise ValueError(f"Missing database name in DSN for '{key}'")
+    params = parse_qs(parsed.query)
+    connect_timeout = parse_int(
+        params.get("connect_timeout", [None])[0],
+        5,
+    )
+    return DbConfig(
+        engine="mysql",
+        host=host,
+        port=port,
+        user=user or "root",
+        password=password,
+        database=database,
+        connect_timeout=connect_timeout,
+        description=None,
+    )
+
+
+def _parse_postgres_dsn(dsn: str, key: str) -> DbConfig:
+    parsed = urlparse(dsn)
+    if parsed.scheme not in ("postgres", "postgresql"):
+        raise ValueError(f"Invalid DSN scheme for '{key}': {parsed.scheme}")
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 5432
+    user = unquote(parsed.username or "") or "postgres"
+    password = unquote(parsed.password or "")
+    database = parsed.path.lstrip("/")
+    if not database:
+        raise ValueError(f"Missing database name in DSN for '{key}'")
+    params = parse_qs(parsed.query)
+    connect_timeout = parse_int(
+        params.get("connect_timeout", [None])[0],
+        5,
+    )
+    return DbConfig(
+        engine="postgres",
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        database=database,
+        connect_timeout=connect_timeout,
+        description=None,
+    )
+
+
+def _parse_dsn(dsn: str, key: str) -> DbConfig:
+    parsed = urlparse(dsn)
+    if parsed.scheme in ("mysql", "mariadb"):
+        return _parse_mysql_dsn(dsn, key)
+    if parsed.scheme in ("postgres", "postgresql"):
+        return _parse_postgres_dsn(dsn, key)
+    raise ValueError(f"Invalid DSN scheme for '{key}': {parsed.scheme}")
+
+
+def _parse_target_config(key: str, raw: Any) -> DbConfig:
+    if isinstance(raw, str):
+        return _parse_dsn(raw, key)
+    if not isinstance(raw, dict):
+        raise ValueError(f"Invalid config for '{key}': expected object or DSN string")
+    if "dsn" in raw:
+        cfg = _parse_dsn(str(raw["dsn"]), key)
+        description = raw.get("description") or raw.get("desc")
+        if description:
+            return replace(cfg, description=str(description))
+        return cfg
+    description = raw.get("description") or raw.get("desc")
+    engine = _normalize_engine(raw.get("type") or raw.get("engine") or "mysql")
+    host = raw.get("host") or "127.0.0.1"
+    port_default = 5432 if engine == "postgres" else 3306
+    port = parse_int(
+        str(raw.get("port")) if raw.get("port") is not None else None, port_default
+    )
+    user_default = "postgres" if engine == "postgres" else "root"
+    user = raw.get("user") or user_default
+    password = raw.get("password") or ""
+    database = raw.get("database") or ""
+    if not database:
+        raise ValueError(f"Missing database name for '{key}'")
+    connect_timeout = parse_int(
+        str(raw.get("connect_timeout")) if raw.get("connect_timeout") is not None else None,
+        5,
+    )
+    return DbConfig(
+        engine=engine,
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        database=database,
+        connect_timeout=connect_timeout,
+        description=str(description) if description else None,
+    )
+
+
+def _load_db_targets_raw() -> dict[str, Any] | None:
+    def merge_descriptions(raw_targets: dict[str, Any]) -> dict[str, Any]:
+        description_map = _get_target_description_map()
+        merged: dict[str, Any] = {}
+        for key, value in raw_targets.items():
+            description = description_map.get(key)
+            if isinstance(value, str):
+                if description:
+                    merged[key] = {"dsn": value, "description": description}
+                else:
+                    merged[key] = value
+                continue
+            if isinstance(value, dict):
+                if description and not (value.get("description") or value.get("desc")):
+                    value = {**value, "description": description}
+                merged[key] = value
+                continue
+            merged[key] = value
+        return merged
+
+    config = _get_db_section()
+    targets = get_section_value(config, "targets")
+    if targets is None:
+        return None
+    if not isinstance(targets, dict):
+        raise ValueError("database.targets must be a JSON object")
+    return merge_descriptions(targets)
+
+
+def load_db_targets() -> dict[str, DbConfig] | None:
+    raw_targets = _load_db_targets_raw()
+    if raw_targets is None:
+        return None
+    return {key: _parse_target_config(key, value) for key, value in raw_targets.items()}
+
+
+def _single_db_config(database_override: str | None) -> DbConfig:
+    config = _get_db_section()
+    engine_raw = get_section_value(config, "db_type", "type", "engine") or "mysql"
+    engine = _normalize_engine(engine_raw or "mysql")
+    host = get_section_value(config, "host") or "127.0.0.1"
+    port_default = 5432 if engine == "postgres" else 3306
+    port = parse_int(
+        str(get_section_value(config, "port") or ""),
+        port_default,
+    )
+    user_default = "postgres" if engine == "postgres" else "root"
+    user = get_section_value(config, "user") or user_default
+
+    password = get_section_value(config, "password") or ""
+
+    database = database_override or get_section_value(config, "database") or ""
+    if not database:
+        raise ValueError(
+            "Database name is required. Set database in mcp_config.json or pass database in tool input."
+        )
+    connect_timeout = parse_int(
+        str(get_section_value(config, "connect_timeout") or ""),
+        5,
+    )
+    description = get_section_value(config, "description", "desc")
+    return DbConfig(
+        engine=engine,
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        database=database,
+        connect_timeout=connect_timeout,
+        description=str(description) if description else None,
+    )
+
+
+def get_default_db_key() -> str:
+    config = _get_db_section()
+    return get_section_value(config, "default_key") or DEFAULT_DB_KEY
+
+
+def get_db_config(database_override: str | None, db_key: str | None) -> DbConfig:
+    targets = load_db_targets()
+    if targets:
+        target_key = db_key or get_default_db_key()
+        if target_key not in targets:
+            available = ", ".join(sorted(targets))
+            raise ValueError(
+                f"Unknown db_key '{target_key}'. Available keys: {available}"
+            )
+        selected = targets[target_key]
+        if database_override:
+            return replace(selected, database=database_override)
+        return selected
+    if db_key:
+        raise ValueError("db_key provided but database.targets is not configured.")
+    return _single_db_config(database_override)
+
+
+def summarize_db_targets(db_key: str | None) -> dict[str, Any]:
+    targets = load_db_targets()
+    default_key = get_default_db_key()
+    if targets:
+        keys = sorted(targets)
+        if db_key:
+            if db_key not in targets:
+                available = ", ".join(keys)
+                raise ValueError(
+                    f"Unknown db_key '{db_key}'. Available keys: {available}"
+                )
+            keys = [db_key]
+        summaries = [
+            {
+                "key": key,
+                "engine": targets[key].engine,
+                "host": targets[key].host,
+                "port": targets[key].port,
+                "user": targets[key].user,
+                "database": targets[key].database,
+                "password_set": bool(targets[key].password),
+                "description": targets[key].description,
+            }
+            for key in keys
+        ]
+        return {
+            "ok": True,
+            "default_key": default_key,
+            "count": len(summaries),
+            "targets": summaries,
+        }
+
+    cfg = _single_db_config(None)
+    if db_key and db_key != default_key:
+        raise ValueError(
+            f"Only '{default_key}' is available without database.targets."
+        )
+    summaries = [
+        {
+            "key": default_key,
+            "engine": cfg.engine,
+            "host": cfg.host,
+            "port": cfg.port,
+            "user": cfg.user,
+            "database": cfg.database,
+            "password_set": bool(cfg.password),
+            "description": cfg.description,
+        }
+    ]
+    return {
+        "ok": True,
+        "default_key": default_key,
+        "count": 1,
+        "targets": summaries,
+    }
+
+
+def get_db_export_config() -> DbExportConfig:
+    config = _get_db_section()
+    repo_root = Path(__file__).resolve().parents[3]
+
+    root_raw = os.getenv("EXTRA_MCP_EXPORT_ROOT", "").strip() or get_section_value(config, "export_root")
+    if isinstance(root_raw, str) and root_raw.strip():
+        root_path = Path(root_raw.strip())
+        if not root_path.is_absolute():
+            root_path = (repo_root / root_path).resolve()
+        else:
+            root_path = root_path.resolve()
+    else:
+        root_path = (repo_root / "exports" / "extra_mcp").resolve()
+
+    batch_size = parse_int(
+        os.getenv("EXTRA_MCP_EXPORT_BATCH_SIZE")
+        or str(get_section_value(config, "export_batch_size") or ""),
+        1000,
+    )
+    if batch_size <= 0:
+        batch_size = 1000
+
+    csv_encoding = (
+        os.getenv("EXTRA_MCP_EXPORT_CSV_ENCODING", "").strip()
+        or str(get_section_value(config, "export_csv_encoding") or "utf-8-sig").strip()
+        or "utf-8-sig"
+    )
+
+    workspace_root_raw = (
+        os.getenv("EXTRA_MCP_WORKSPACE_ROOT", "").strip()
+        or os.getenv("WUNDER_WORKSPACE_ROOT", "").strip()
+        or get_section_value(config, "workspace_root")
+    )
+    if isinstance(workspace_root_raw, str) and workspace_root_raw.strip():
+        workspace_root = Path(workspace_root_raw.strip())
+        if not workspace_root.is_absolute():
+            workspace_root = (repo_root / workspace_root).resolve()
+        else:
+            workspace_root = workspace_root.resolve()
+    else:
+        workspace_root = (repo_root / "workspaces").resolve()
+
+    workspace_public_root = (
+        os.getenv("EXTRA_MCP_WORKSPACE_PUBLIC_ROOT", "").strip()
+        or str(get_section_value(config, "workspace_public_root") or "/workspaces").strip()
+        or "/workspaces"
+    )
+    if not workspace_public_root.startswith("/"):
+        workspace_public_root = "/" + workspace_public_root.lstrip("/")
+    workspace_public_root = workspace_public_root.rstrip("/") or "/workspaces"
+
+    workspace_single_root_raw = (
+        os.getenv("EXTRA_MCP_WORKSPACE_SINGLE_ROOT", "").strip()
+        or os.getenv("WUNDER_WORKSPACE_SINGLE_ROOT", "").strip()
+        or str(get_section_value(config, "workspace_single_root") or "")
+    )
+    workspace_single_root = workspace_single_root_raw.lower() in {"1", "true", "yes", "on"}
+
+    return DbExportConfig(
+        root=root_path,
+        batch_size=batch_size,
+        csv_encoding=csv_encoding,
+        workspace_root=workspace_root,
+        workspace_public_root=workspace_public_root,
+        workspace_single_root=workspace_single_root,
+    )
+
+
+def build_db_description_hint() -> str:
+    targets = load_db_targets()
+    if targets:
+        description_map = _get_target_description_map()
+        items = []
+        for key, cfg in targets.items():
+            label = cfg.database
+            description = cfg.description or description_map.get(key)
+            if description:
+                label = f"{label}（{description}）"
+            items.append(f"{key}={label}")
+        return "数据库说明：" + "；".join(items)
+
+    config = _get_db_section()
+    database = get_section_value(config, "database")
+    description = get_section_value(config, "description", "desc")
+    if database:
+        label = str(database)
+        if description:
+            label = f"{label}（{description}）"
+        return "数据库说明：" + label
+    return ""

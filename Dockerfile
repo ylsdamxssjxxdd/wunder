@@ -1,0 +1,223 @@
+ARG RUST_BASE_IMAGE=rust:1.92-slim-bookworm
+FROM ${RUST_BASE_IMAGE}
+
+ENV PATH="/usr/local/cargo/bin:${PATH}"
+
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list ]; then \
+      cp /etc/apt/sources.list /etc/apt/sources.list.bak; \
+      sed -i -E \
+        -e 's~https?://[^ ]+/debian~https://mirrors.tuna.tsinghua.edu.cn/debian~g' \
+        -e 's~https?://security.debian.org/debian-security~https://mirrors.tuna.tsinghua.edu.cn/debian-security~g' \
+        /etc/apt/sources.list; \
+    fi; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+      cp /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list.d/debian.sources.bak; \
+      sed -i -E \
+        -e 's~https?://deb\.debian\.org/debian~https://mirrors.tuna.tsinghua.edu.cn/debian~g' \
+        -e 's~https?://security\.debian\.org/debian-security~https://mirrors.tuna.tsinghua.edu.cn/debian-security~g' \
+        /etc/apt/sources.list.d/debian.sources; \
+    fi; \
+    if [ ! -f /etc/apt/sources.list ] && [ ! -f /etc/apt/sources.list.d/debian.sources ]; then \
+      printf '%s\n' \
+        'deb https://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm main contrib non-free non-free-firmware' \
+        'deb https://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm-updates main contrib non-free non-free-firmware' \
+        'deb https://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm-backports main contrib non-free non-free-firmware' \
+        'deb https://mirrors.tuna.tsinghua.edu.cn/debian-security bookworm-security main contrib non-free non-free-firmware' \
+        > /etc/apt/sources.list; \
+    fi
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates curl git vim ripgrep \
+    python3 python3-pip python3-venv \
+    nodejs build-essential pkg-config cmake ninja-build \
+    libreoffice pandoc ffmpeg \
+    libgl1 libglib2.0-0 \
+    libssl-dev clang \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN rustup component add rustfmt clippy
+RUN cargo install cargo-watch --version 8.4.0 --locked
+
+ENV CARGO_HOME=/usr/local/cargo \
+    CARGO_TARGET_DIR=/tmp/cargo-target \
+    PATH="/usr/local/cargo/bin:${PATH}"
+
+RUN python3 -m pip install --break-system-packages numpy pandas scipy markdown pypandoc langchain langgraph mcp onnx transformers \
+    python-dateutil scikit-learn sqlalchemy psycopg[binary] pymysql pymongo openpyxl xlrd xlwt xlsxwriter PyYAML fastmcp \
+    reportlab pyarrow matplotlib seaborn weasyprint fastapi uvicorn starlette sse-starlette pydantic \
+    jinja2 jupyterlab flask flask-restx requests aiohttp httpx scrapy -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+RUN python3 -m pip install --break-system-packages bcrypt pyjwt python-dotenv oauthlib celery redis opencv-python pillow pygame \
+    pytest faker coverage pytest-mock python-magic unidecode tqdm loguru rich \
+    poetry pipenv beautifulsoup4 typer pywebio python-docx python-pptx PyPDF2 pdf2docx -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+RUN python3 -m pip install --break-system-packages psutil -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+RUN apt-get update && \
+    apt-get install -y ca-certificates curl gnupg && \
+    mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list && \
+    apt-get update && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    poppler-utils qpdf pdftk tesseract-ocr \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --break-system-packages \
+    pypdf pdfplumber pytesseract pdf2image imageio defusedxml playwright \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+ARG INSTALL_PLAYWRIGHT_BROWSERS=1
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+RUN mkdir -p /ms-playwright
+
+RUN if [ "$INSTALL_PLAYWRIGHT_BROWSERS" = "1" ]; then \
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0 python3 -m playwright install --with-deps chromium; \
+    fi \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g docx pptxgenjs playwright react react-dom react-icons sharp \
+  && if [ "$INSTALL_PLAYWRIGHT_BROWSERS" = "1" ]; then \
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0 npx playwright install chromium; \
+    fi
+
+RUN python3 -m pip install --break-system-packages \
+    pytest-asyncio python-jose passlib python-multipart \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+RUN python3 -m pip install --break-system-packages psycopg -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+RUN printf '%s\n' \
+    'export PATH="/usr/local/cargo/bin:${CARGO_HOME:-/usr/local/cargo}/bin:$PATH"' \
+    > /etc/profile.d/cargo-path.sh
+
+# Office skills (ppt/doc/xlsx) offline deps (append-only)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --break-system-packages \
+    "markitdown[docx,pptx,xlsx]" \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple
+  
+# LSP tools (append-only)
+RUN rustup component add rust-analyzer
+RUN npm install -g pyright @vue/language-server typescript typescript-language-server
+
+# LSP extras (append-only)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    clangd \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN npm install -g vscode-langservers-extracted bash-language-server \
+    dockerfile-language-server-nodejs
+
+# Graphics + office extras (append-only)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-dev \
+    libfreetype6 libfontconfig1 libharfbuzz0b libfribidi0 \
+    libcairo2 libcairo2-dev libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf2.0-0 \
+    libjpeg62-turbo libpng16-16 libtiff6 libwebp7 \
+    libopenblas0 liblapack3 libgfortran5 libomp5 \
+    libsm6 libxext6 libxrender1 \
+    libffi-dev libxml2-dev libxslt1-dev zlib1g-dev \
+    graphviz gnuplot \
+    librsvg2-bin ghostscript imagemagick \
+    unoconv wkhtmltopdf \
+    texlive-xetex texlive-latex-base texlive-latex-extra texlive-fonts-recommended \
+    fonts-noto fonts-noto-cjk fonts-dejavu fonts-liberation \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --break-system-packages \
+    plotly kaleido bokeh altair holoviews datashader plotnine \
+    pycairo cairocffi cairosvg svglib svgwrite pydot graphviz networkx \
+    pdfminer.six pikepdf pdfkit ocrmypdf camelot-py \
+    docxtpl mammoth xlsx2csv csvkit \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+# GDAL / GIS extras (append-only)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gdal-bin \
+    libgdal-dev \
+    python3-gdal \
+    proj-bin proj-data libproj-dev \
+    libgeos-dev \
+    libspatialindex-dev \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --break-system-packages \
+    geopandas shapely pyproj rtree fiona rasterio \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+# Cartopy offline data (append-only)
+ENV CARTOPY_DATA_DIR=/usr/local/share/cartopy
+
+RUN python3 -m pip install --break-system-packages \
+    cartopy \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+# Tesseract language packs (append-only)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr-chi-sim \
+    tesseract-ocr-chi-tra \
+    tesseract-ocr-jpn \
+    tesseract-ocr-kor \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Tauri (Linux, GTK/WebKit) build deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgtk-3-dev \
+    libwebkit2gtk-4.1-dev \
+    libjavascriptcoregtk-4.1-dev \
+    libsoup-3.0-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev \
+    patchelf \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+  
+RUN mkdir -p "$CARTOPY_DATA_DIR" && \
+    python3 - <<'PY'
+import cartopy.io.shapereader as shpreader
+
+targets = [
+    ("110m", "physical", "land"),
+    ("110m", "physical", "ocean"),
+    ("110m", "physical", "coastline"),
+    ("110m", "physical", "lakes"),
+    ("110m", "cultural", "admin_0_countries"),
+    ("110m", "cultural", "admin_1_states_provinces"),
+]
+
+for res, cat, name in targets:
+    shpreader.natural_earth(resolution=res, category=cat, name=name)
+PY
+
+
+# Tauri packaging tooling (append-only, keep previous cache layers intact)
+ARG TAURI_CLI_VERSION=2.8.2
+RUN cargo install tauri-cli --version ${TAURI_CLI_VERSION} --locked
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    file wget xdg-utils \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Keep a browser seed outside /ms-playwright because docker-compose mounts
+# host cache there and can hide the image-installed Chromium.
+ENV WUNDER_PLAYWRIGHT_SEED_PATH=/opt/ms-playwright
+RUN set -eux; \
+    mkdir -p "$WUNDER_PLAYWRIGHT_SEED_PATH"; \
+    if find /ms-playwright -maxdepth 1 -type d -name 'chromium*' -print -quit 2>/dev/null | grep -q .; then \
+      cp -a /ms-playwright/. "$WUNDER_PLAYWRIGHT_SEED_PATH"/; \
+    fi
+
+WORKDIR /workspaces
+
+CMD ["/bin/bash"]
+
+# docker build -t wunder-x86 --platform linux/amd64 -f Dockerfile .
+# docker build -t wunder-arm --platform linux/arm64 -f Dockerfile .

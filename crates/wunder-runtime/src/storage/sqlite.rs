@@ -1,0 +1,653 @@
+use crate::schemas::AbilityDescriptor;
+use crate::storage::{
+    normalize_sandbox_container_id, AgentTaskRecord, BridgeCenterAccountRecord, BridgeCenterRecord,
+    BridgeDeliveryLogRecord, BridgeRouteAuditLogRecord, BridgeUserRouteRecord,
+    ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord, ChannelMessageStats,
+    ChannelOutboxRecord, ChannelOutboxStats, ChannelSessionRecord, ChannelUserBindingRecord,
+    ChatSessionRecord, CronJobRecord, CronRunRecord, ExternalLinkRecord, GatewayClientRecord,
+    GatewayNodeRecord, GatewayNodeTokenRecord, ListBridgeCenterAccountsQuery,
+    ListBridgeCentersQuery, ListBridgeDeliveryLogsQuery, ListBridgeRouteAuditLogsQuery,
+    ListBridgeUserRoutesQuery, ListChannelUserBindingsQuery, MediaAssetRecord,
+    MemoryFragmentEmbeddingRecord, MemoryFragmentRecord, MemoryHitRecord, MemoryJobRecord,
+    OrgUnitRecord, PresetBoundAgentRecord, SessionGoalRecord, SessionLockRecord, SessionLockStatus,
+    SessionRunRecord, SpeechJobRecord, UpdateAgentTaskStatusParams,
+    UpdateChannelOutboxStatusParams, UpsertMemoryTaskLogParams, UserAccountRecord,
+    UserAgentAccessRecord, UserAgentPresetBinding, UserAgentRecord, UserExperienceUpdateResult,
+    UserQuotaStatus, UserSessionScopeRecord, UserTokenRecord, UserToolAccessRecord,
+    UserWorldConversationRecord, UserWorldConversationSummaryRecord, UserWorldEventRecord,
+    UserWorldGroupRecord, UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult,
+    UserWorldSendMessageResult, VectorChunkEmbeddingRecord, VectorDocumentRecord,
+    VectorDocumentSummaryRecord,
+};
+use anyhow::Result;
+use chrono::Utc;
+use parking_lot::Mutex;
+use rusqlite::Connection;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+mod agent_directory_store;
+mod agent_message;
+mod agent_runtime_store;
+mod backend_impl;
+mod benchmark_store;
+mod bridge_store;
+mod channel_directory;
+mod channel_runtime;
+mod chat_session;
+mod cloud_store;
+mod conversation_log_store;
+mod cron;
+mod gateway_store;
+mod log_stats_store;
+mod media_store;
+mod memory_store;
+mod meta_store;
+mod monitor_store;
+mod queue_control;
+mod quota_balance_store;
+mod retention_store;
+mod schema;
+mod session_cleanup;
+mod session_goal;
+mod session_lock_store;
+mod session_run;
+mod terminal_transcript_store;
+mod thread_log_store;
+mod user_account_store;
+mod user_world_store;
+mod vector_document_store;
+mod workspace_store;
+
+use agent_directory_store::SqliteAgentDirectoryStorage;
+use agent_runtime_store::SqliteAgentRuntimeStorage;
+use benchmark_store::SqliteBenchmarkStorage;
+use bridge_store::SqliteBridgeStorage;
+use channel_directory::SqliteChannelDirectoryStorage;
+use channel_runtime::SqliteChannelRuntimeStorage;
+use chat_session::SqliteChatSessionStorage;
+use cloud_store::SqliteCloudStorage;
+use conversation_log_store::SqliteConversationLogStorage;
+use cron::SqliteCronStorage;
+use gateway_store::SqliteGatewayStorage;
+use log_stats_store::SqliteLogStatsStorage;
+use media_store::SqliteMediaStorage;
+use memory_store::SqliteMemoryStorage;
+use meta_store::SqliteMetaStorage;
+use monitor_store::SqliteMonitorStorage;
+use quota_balance_store::SqliteQuotaBalanceStorage;
+use retention_store::SqliteRetentionStorage;
+use schema::SqliteSchemaStorage;
+use session_goal::SqliteSessionGoalStorage;
+use session_lock_store::SqliteSessionLockStorage;
+use session_run::SqliteSessionRunStorage;
+use terminal_transcript_store::SqliteTerminalTranscriptStorage;
+use thread_log_store::SqliteThreadLogStorage;
+use user_account_store::SqliteUserAccountStorage;
+use user_world_store::SqliteUserWorldStorage;
+use vector_document_store::SqliteVectorDocumentStorage;
+use workspace_store::SqliteWorkspaceStorage;
+
+pub struct SqliteStorage {
+    db_path: PathBuf,
+    initialized: AtomicBool,
+    init_guard: Mutex<()>,
+    // Set when open() upgrades a legacy database header to incremental
+    // auto-vacuum; ensure_initialized then runs the one-time VACUUM that
+    // persists the change.
+    auto_vacuum_upgrade_pending: AtomicBool,
+    // SQLite has one writer. Reuse one bounded connection for message admission
+    // instead of reopening/checkpointing the WAL for every small queue write.
+    agent_message_connection: Mutex<Option<Connection>>,
+}
+
+impl SqliteStorage {
+    pub fn new(db_path: String) -> Self {
+        let path = if db_path.trim().is_empty() {
+            PathBuf::from("./config/data/wunder.db")
+        } else {
+            PathBuf::from(db_path)
+        };
+        Self {
+            db_path: path,
+            initialized: AtomicBool::new(false),
+            init_guard: Mutex::new(()),
+            auto_vacuum_upgrade_pending: AtomicBool::new(false),
+            agent_message_connection: Mutex::new(None),
+        }
+    }
+
+    fn ensure_db_dir(&self) -> Result<()> {
+        if let Some(parent) = self.db_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        Ok(())
+    }
+
+    fn open(&self) -> Result<Connection> {
+        self.ensure_db_dir()?;
+        let conn = Connection::open(&self.db_path)?;
+        // Parallel child runs can briefly contend on SQLite writes.
+        conn.busy_timeout(Duration::from_secs(5)).ok();
+        conn.pragma_update(None, "journal_mode", "WAL").ok();
+        conn.pragma_update(None, "synchronous", "NORMAL").ok();
+        // Enable incremental auto-vacuum so retention deletes gradually return
+        // pages to the OS. For databases created before this upgrade the header
+        // change only persists after a one-time VACUUM, which
+        // ensure_initialized runs when this flag is set.
+        let auto_vacuum: i64 = conn
+            .pragma_query_value(None, "auto_vacuum", |row| row.get(0))
+            .unwrap_or(0);
+        if auto_vacuum != 2 {
+            conn.pragma_update(None, "auto_vacuum", 2).ok();
+            self.auto_vacuum_upgrade_pending
+                .store(true, Ordering::Relaxed);
+        }
+        Ok(conn)
+    }
+
+    fn now_ts() -> f64 {
+        Utc::now().timestamp_millis() as f64 / 1000.0
+    }
+
+    fn json_to_string(value: &Value) -> String {
+        serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    fn json_from_str(text: &str) -> Option<Value> {
+        if text.trim().is_empty() {
+            return None;
+        }
+        serde_json::from_str::<Value>(text).ok()
+    }
+
+    fn parse_string(value: Option<&Value>) -> Option<String> {
+        match value {
+            Some(Value::String(text)) => Some(text.clone()),
+            Some(other) => Some(other.to_string()),
+            None => None,
+        }
+    }
+
+    fn parse_bool(value: Option<&Value>) -> Option<i64> {
+        match value {
+            Some(Value::Bool(flag)) => Some(if *flag { 1 } else { 0 }),
+            Some(Value::Number(num)) => num.as_i64(),
+            Some(Value::String(text)) => text.parse::<i64>().ok(),
+            _ => None,
+        }
+    }
+
+    fn parse_f64(value: Option<&Value>) -> Option<f64> {
+        match value {
+            Some(Value::Number(num)) => num.as_f64(),
+            Some(Value::String(text)) => text.parse::<f64>().ok(),
+            Some(Value::Bool(flag)) => Some(if *flag { 1.0 } else { 0.0 }),
+            _ => None,
+        }
+    }
+
+    fn parse_string_list(value: Option<String>) -> Vec<String> {
+        let Some(raw) = value else {
+            return Vec::new();
+        };
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Vec::new();
+        }
+        if let Ok(items) = serde_json::from_str::<Vec<String>>(trimmed) {
+            return items
+                .into_iter()
+                .map(|item| item.trim().to_string())
+                .filter(|item| !item.is_empty())
+                .collect();
+        }
+        trimmed
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(|item| item.to_string())
+            .collect()
+    }
+
+    fn json_to_f32_vec(text: &str) -> Vec<f32> {
+        serde_json::from_str::<Vec<f32>>(text).unwrap_or_default()
+    }
+
+    fn parse_i32_list(value: Option<String>) -> Vec<i32> {
+        let Some(raw) = value else {
+            return Vec::new();
+        };
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Vec::new();
+        }
+        if let Ok(items) = serde_json::from_str::<Vec<i32>>(trimmed) {
+            return items.into_iter().filter(|item| *item > 0).collect();
+        }
+        trimmed
+            .split(',')
+            .filter_map(|item| item.trim().parse::<i32>().ok())
+            .filter(|item| *item > 0)
+            .collect()
+    }
+
+    fn string_list_to_json(list: &[String]) -> String {
+        serde_json::to_string(list).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    fn parse_declared_tool_names(value: Option<String>) -> Vec<String> {
+        Self::parse_string_list(value)
+    }
+
+    fn parse_ability_items(value: Option<String>) -> Vec<AbilityDescriptor> {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|raw| !raw.is_empty())
+            .and_then(|raw| serde_json::from_str::<Vec<AbilityDescriptor>>(raw).ok())
+            .unwrap_or_default()
+    }
+
+    fn parse_preset_binding(value: Option<String>) -> Option<UserAgentPresetBinding> {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|raw| !raw.is_empty())
+            .and_then(|raw| serde_json::from_str::<UserAgentPresetBinding>(raw).ok())
+    }
+
+    fn read_user_agent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserAgentRecord> {
+        let tool_names = Self::parse_string_list(row.get(7)?);
+        Ok(UserAgentRecord {
+            agent_id: row.get(0)?,
+            user_id: row.get(1)?,
+            name: row.get(2)?,
+            description: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            system_prompt: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+            preview_skill: row.get::<_, Option<i64>>(22)?.unwrap_or(0) != 0,
+            model_name: row.get::<_, Option<String>>(5)?,
+            ability_items: Self::parse_ability_items(row.get(9)?),
+            tool_names: tool_names.clone(),
+            declared_tool_names: Self::parse_declared_tool_names(row.get(7)?),
+            declared_skill_names: Self::parse_string_list(row.get(8)?),
+            visible_unit_ids: Self::parse_string_list(row.get(23)?),
+            preset_questions: Self::parse_string_list(row.get(18)?),
+            access_level: row.get(10)?,
+            approval_mode: row.get(11)?,
+            is_shared: row.get::<_, Option<i64>>(12)?.unwrap_or(0) != 0,
+            status: row.get(13)?,
+            icon: row.get(14)?,
+            sandbox_container_id: normalize_sandbox_container_id(
+                row.get::<_, Option<i64>>(15)?.unwrap_or(1) as i32,
+            ),
+            created_at: row.get(16)?,
+            updated_at: row.get(17)?,
+            preset_binding: Self::parse_preset_binding(row.get(19)?),
+            silent: row.get::<_, Option<i64>>(20)?.unwrap_or(0) != 0,
+            prefer_mother: row.get::<_, Option<i64>>(21)?.unwrap_or(0) != 0,
+        })
+    }
+
+    fn i32_list_to_json(list: &[i32]) -> String {
+        serde_json::to_string(list).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    fn json_value_or_null(value: Option<String>) -> Value {
+        value
+            .as_deref()
+            .and_then(Self::json_from_str)
+            .unwrap_or(Value::Null)
+    }
+
+    fn normalize_channel_thread_id(value: Option<&str>) -> String {
+        value.unwrap_or("").trim().to_string()
+    }
+
+    fn normalize_channel_thread_value(value: Option<String>) -> Option<String> {
+        value
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SqliteStorage;
+    use crate::storage::*;
+    use chrono::Local;
+    use rusqlite::params;
+    use rusqlite::Connection;
+    use tempfile::tempdir;
+
+    fn sample_user(
+        user_id: &str,
+        quota_balance: i64,
+        quota_granted_total: i64,
+        quota_used_total: i64,
+        last_quota_grant_date: Option<&str>,
+    ) -> UserAccountRecord {
+        UserAccountRecord {
+            user_id: user_id.to_string(),
+            username: user_id.to_string(),
+            email: None,
+            password_hash: "hash".to_string(),
+            roles: vec!["user".to_string()],
+            status: "active".to_string(),
+            access_level: "A".to_string(),
+            unit_id: None,
+            quota_balance,
+            quota_granted_total,
+            quota_used_total,
+            last_quota_grant_date: last_quota_grant_date.map(str::to_string),
+            experience_total: 0,
+            is_demo: false,
+            created_at: 1.0,
+            updated_at: 1.0,
+            last_login_at: None,
+        }
+    }
+
+    #[test]
+    fn legacy_token_accounts_initialize_quota_once() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("legacy-user-accounts.db");
+        let conn = Connection::open(&db_path).expect("open sqlite");
+        conn.execute_batch(
+            "CREATE TABLE user_accounts (
+                user_id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                email TEXT,
+                password_hash TEXT NOT NULL,
+                roles TEXT NOT NULL,
+                status TEXT NOT NULL,
+                access_level TEXT NOT NULL,
+                unit_id TEXT,
+                token_balance INTEGER NOT NULL DEFAULT 0,
+                token_used_total INTEGER NOT NULL DEFAULT 0,
+                last_token_grant_date TEXT,
+                experience_total INTEGER NOT NULL DEFAULT 0,
+                is_demo INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                last_login_at REAL
+            );",
+        )
+        .expect("create legacy user_accounts");
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        conn.execute(
+            "INSERT INTO user_accounts (
+                user_id, username, email, password_hash, roles, status, access_level, unit_id,
+                token_balance, token_used_total, last_token_grant_date, experience_total, is_demo,
+                created_at, updated_at, last_login_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                "user_1",
+                "user_1",
+                Option::<String>::None,
+                "hash",
+                "[\"user\"]",
+                "active",
+                "A",
+                Option::<String>::None,
+                10_000_i64,
+                2_500_i64,
+                today,
+                0_i64,
+                0_i64,
+                1.0_f64,
+                1.0_f64,
+                Option::<f64>::None,
+            ],
+        )
+        .expect("insert legacy row");
+        drop(conn);
+
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize storage");
+
+        let account = storage
+            .get_user_account("user_1")
+            .expect("load user")
+            .expect("user exists");
+        assert_eq!(account.quota_balance, 1_000);
+        assert_eq!(account.quota_granted_total, 1_000);
+        assert_eq!(account.quota_used_total, 0);
+        assert_eq!(
+            account.last_quota_grant_date.as_deref(),
+            Some(today.as_str())
+        );
+        let spent = storage
+            .consume_user_quota("user_1", &today, 1000, 1000)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (spent.balance, spent.used_total, spent.allowed),
+            (0, 1000, true)
+        );
+        drop(storage);
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().unwrap();
+        let denied = storage
+            .consume_user_quota("user_1", &today, 1000, 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (denied.balance, denied.used_total, denied.allowed),
+            (0, 1000, false)
+        );
+    }
+
+    #[test]
+    fn legacy_stream_events_gain_workflow_columns_before_their_index() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("legacy-stream-events.db");
+        let conn = Connection::open(&db_path).expect("open sqlite");
+        conn.execute_batch(
+            "CREATE TABLE stream_events (
+                session_id TEXT NOT NULL,
+                event_id INTEGER NOT NULL,
+                user_id TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                created_time REAL NOT NULL,
+                PRIMARY KEY (session_id, event_id)
+            );
+            INSERT INTO stream_events (session_id, event_id, user_id, payload, created_time)
+            VALUES ('session-a', 1, 'user-a',
+                '{\"event\":\"tool_call\",\"data\":{\"data\":{\"user_round\":3}}}', 1);",
+        )
+        .expect("create legacy stream events");
+        drop(conn);
+
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage
+            .ensure_initialized()
+            .expect("migrate legacy stream events");
+
+        let conn = Connection::open(&db_path).expect("open migrated sqlite");
+        let columns = conn
+            .prepare("PRAGMA table_info(stream_events)")
+            .expect("prepare stream event columns")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("read stream event columns")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect stream event columns");
+        assert!(columns.iter().any(|column| column == "event_type"));
+        assert!(columns.iter().any(|column| column == "user_round"));
+        let workflow_values: (String, Option<i64>) = conn
+            .query_row(
+                "SELECT event_type, user_round FROM stream_events WHERE session_id = 'session-a'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read migrated workflow fields");
+        assert_eq!(workflow_values, ("tool_call".to_string(), Some(3)));
+        let index_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'index' AND name = 'idx_stream_events_session_round'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read workflow index");
+        assert_eq!(index_exists, 1);
+    }
+
+    #[test]
+    fn legacy_thread_blocks_gain_field_identity_without_losing_rows() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("legacy-thread-blocks.db");
+        let conn = Connection::open(&db_path).expect("open sqlite");
+        conn.execute_batch(
+            "CREATE TABLE thread_item_blocks (
+                session_id TEXT NOT NULL, user_id TEXT NOT NULL, item_id TEXT NOT NULL,
+                block_index INTEGER NOT NULL, event_id INTEGER NOT NULL, payload TEXT NOT NULL,
+                PRIMARY KEY(session_id,item_id,block_index)
+              );
+              INSERT INTO thread_item_blocks VALUES
+                ('thread', 'owner', 'item', 0, 1, '{\"field\":\"content\",\"content\":\"text\"}');",
+        )
+        .expect("create legacy blocks");
+        drop(conn);
+
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("migrate thread blocks");
+        let conn = Connection::open(&db_path).expect("open migrated sqlite");
+        let row: (String, String) = conn.query_row(
+            "SELECT field,payload FROM thread_item_blocks WHERE session_id='thread' AND item_id='item'",
+            [], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).expect("read migrated block");
+        assert_eq!(row.0, "content");
+        assert!(row.1.contains("text"));
+    }
+
+    #[test]
+    fn prepare_user_quota_grants_once_per_day() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("prepare-user-quota.db");
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize storage");
+        storage
+            .upsert_user_account(&sample_user("alice", 5, 15, 2, Some("2026-04-09")))
+            .expect("insert user");
+
+        let first = storage
+            .prepare_user_quota("alice", "2026-04-10", 100)
+            .expect("prepare first")
+            .expect("status");
+        assert_eq!(first.balance, 105);
+        assert_eq!(first.granted_total, 115);
+        assert_eq!(first.used_total, 2);
+        assert_eq!(first.last_grant_date.as_deref(), Some("2026-04-10"));
+        assert!(first.allowed);
+
+        let second = storage
+            .prepare_user_quota("alice", "2026-04-10", 100)
+            .expect("prepare second")
+            .expect("status");
+        assert_eq!(second.balance, 105);
+        assert_eq!(second.granted_total, 115);
+        assert_eq!(second.used_total, 2);
+        assert_eq!(second.last_grant_date.as_deref(), Some("2026-04-10"));
+
+        let account = storage
+            .get_user_account("alice")
+            .expect("load user")
+            .expect("user exists");
+        assert_eq!(account.quota_balance, 105);
+        assert_eq!(account.quota_granted_total, 115);
+        assert_eq!(account.quota_used_total, 2);
+    }
+
+    #[test]
+    fn consume_user_quota_rejects_overdraft_without_spending() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("consume-user-quota.db");
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize storage");
+        storage
+            .upsert_user_account(&sample_user("user_1", 50, 50, 10, Some("2026-04-09")))
+            .expect("insert user");
+
+        let status = storage
+            .consume_user_quota("user_1", "2026-04-10", 100, 180)
+            .expect("consume quota")
+            .expect("status");
+        assert_eq!(status.balance, 150);
+        assert_eq!(status.granted_total, 150);
+        assert_eq!(status.used_total, 10);
+        assert_eq!(status.daily_grant, 100);
+
+        assert_eq!(status.last_grant_date.as_deref(), Some("2026-04-10"));
+        assert!(!status.allowed);
+
+        let account = storage
+            .get_user_account("user_1")
+            .expect("load user")
+            .expect("user exists");
+        assert_eq!(account.quota_balance, 150);
+        assert_eq!(account.quota_granted_total, 150);
+        assert_eq!(account.quota_used_total, 10);
+        assert_eq!(account.last_quota_grant_date.as_deref(), Some("2026-04-10"));
+    }
+
+    #[test]
+    fn grant_user_quota_updates_balance_and_granted_total() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("grant-user-quota.db");
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize storage");
+        storage
+            .upsert_user_account(&sample_user("alice", 7, 20, 3, Some("2026-04-09")))
+            .expect("insert user");
+
+        let status = storage
+            .grant_user_quota("alice", "2026-04-10", 100, 30, 123.0)
+            .expect("grant tokens")
+            .expect("status");
+        assert_eq!(status.balance, 137);
+        assert_eq!(status.granted_total, 150);
+        assert_eq!(status.used_total, 3);
+        assert_eq!(status.daily_grant, 100);
+        assert_eq!(status.last_grant_date.as_deref(), Some("2026-04-10"));
+        assert!(status.allowed);
+
+        let account = storage
+            .get_user_account("alice")
+            .expect("load user")
+            .expect("user exists");
+        assert_eq!(account.quota_balance, 137);
+        assert_eq!(account.quota_granted_total, 150);
+        assert_eq!(account.quota_used_total, 3);
+        assert_eq!(account.last_quota_grant_date.as_deref(), Some("2026-04-10"));
+    }
+
+    #[test]
+    fn auto_vacuum_is_enabled_for_existing_databases() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("auto-vacuum-upgrade.db");
+        let conn = Connection::open(&db_path).expect("open sqlite");
+        conn.execute_batch(
+            "CREATE TABLE placeholder (id INTEGER PRIMARY KEY);
+             INSERT INTO placeholder VALUES (1);",
+        )
+        .expect("seed existing database");
+        let before: i64 = conn
+            .pragma_query_value(None, "auto_vacuum", |row| row.get(0))
+            .expect("read initial auto_vacuum");
+        assert_eq!(before, 0);
+        drop(conn);
+
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize storage");
+
+        let conn = Connection::open(&db_path).expect("open upgraded sqlite");
+        let mode: i64 = conn
+            .pragma_query_value(None, "auto_vacuum", |row| row.get(0))
+            .expect("read upgraded auto_vacuum");
+        assert_eq!(mode, 2);
+    }
+}

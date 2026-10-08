@@ -1,0 +1,65 @@
+import {
+  normalizeThreadRuntimeStatus
+} from '@/utils/chatSessionRuntime';
+
+type RuntimeLike = {
+  threadStatus?: unknown;
+  loaded?: boolean;
+  activeTurnId?: unknown;
+  watchController?: unknown;
+  watchActiveRoundCount?: unknown;
+  sendController?: unknown;
+  resumeController?: unknown;
+  compactController?: unknown;
+  waitingForUserInput?: unknown;
+  pendingApprovalCount?: unknown;
+};
+
+type ResolveRuntimeDerivedStatusInput = {
+  runtime?: RuntimeLike | null;
+  loading?: unknown;
+};
+
+export const hasRuntimeControllers = (runtime: RuntimeLike | null | undefined): boolean =>
+  Boolean(runtime?.sendController || runtime?.resumeController || runtime?.compactController);
+
+export const shouldPreserveWatchRunningStatus = (
+  runtime: RuntimeLike | null | undefined,
+  loading: unknown
+): boolean => {
+  if (!runtime || loading) return false;
+  return normalizeThreadRuntimeStatus(runtime.threadStatus) === 'running';
+};
+
+const isExplicitTerminalRuntimeStatus = (status: unknown): boolean => {
+  const current = normalizeThreadRuntimeStatus(status);
+  return current === 'completed' ||
+    current === 'failed' ||
+    current === 'cancelled' ||
+    current === 'system_error';
+};
+
+export const resolveRuntimeDerivedStatus = (
+  input: ResolveRuntimeDerivedStatusInput
+) => {
+  const runtime = input.runtime;
+  if (!runtime) return 'not_loaded';
+  if (runtime.waitingForUserInput) {
+    return 'waiting_user_input';
+  }
+  if (Number(runtime.pendingApprovalCount) > 0) {
+    return 'waiting_approval';
+  }
+  const current = normalizeThreadRuntimeStatus(runtime.threadStatus);
+  if (current === 'queued' || isExplicitTerminalRuntimeStatus(current)) {
+    return current;
+  }
+  const loading = Boolean(input.loading) || hasRuntimeControllers(runtime);
+  if (loading) {
+    return 'running';
+  }
+  if (shouldPreserveWatchRunningStatus(runtime, loading)) {
+    return current;
+  }
+  return runtime.loaded ? 'idle' : 'not_loaded';
+};

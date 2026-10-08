@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Channel Runtime | 使用说明书</title>
+  <meta name="description" content="Channel issues often stem not from the model, but from the access chain: accounts, persistent connections, webhooks, outbox, and download link rewriting.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/ops/channel-runtime","language":"en","title":"Channel Runtime","summary":"Channel issues often stem not from the model, but from the access chain: accounts, persistent connections, webhooks, outbox, and download link rewriting.","updated_at":"2026-10-05","read_when":["You are troubleshooting channel anomalies for Feishu, WeChat, QQBot, WhatsApp, XMPP, etc.","You want to know what channel runtime interfaces are available on both admin and user sides"],"source_docs":["docs/API文档.md","docs/设计文档/01-系统总体设计.md"],"tab":"Operations","group":"Deployment and Operations","group_path":["Deployment and Operations"],"url":"/docs/en/ops/channel-runtime/","headings":[{"id":"section-1","level":1,"text":"Channel Runtime"},{"id":"section-2","level":2,"text":"Key Points on This Page"},{"id":"section-3","level":2,"text":"Most Important Admin Endpoints"},{"id":"section-4","level":2,"text":"User-Side Runtime Log Endpoints"},{"id":"section-5","level":2,"text":"When Not to Blame the Model First"},{"id":"section-6","level":2,"text":"Why Files Often Become Download Links in Channels"},{"id":"section-7","level":2,"text":"Implementation Recommendations"},{"id":"section-8","level":2,"text":"Further Reading"}],"prev_slug":"en/ops/wunderbench","next_slug":"en/reference/index","markdown":"# Channel Runtime\n\nMany channel issues appear as \"the model didn't respond,\" but actually fail much earlier at the access layer.\n\n## Key Points on This Page\n\n- Is the account actually online?\n- Is the persistent connection alive?\n- Is inbound traffic coming in?\n- Is outbound traffic stuck in the outbox?\n\n## Most Important Admin Endpoints\n\n- `GET /wunder/admin/channels/accounts`\n- `POST /wunder/admin/channels/accounts/batch`\n- `DELETE /wunder/admin/channels/accounts/{channel}/{account_id}`\n- `GET /wunder/admin/channels/accounts/{channel}/{account_id}/impact`\n- `GET /wunder/admin/channels/bindings`\n- `GET /wunder/admin/channels/user_bindings`\n- `GET /wunder/admin/channels/sessions`\n\nThese endpoints help answer:\n\n- Which accounts are abnormal?\n- Which bindings will be affected?\n- Which `user_id` / `agent_id` a channel session is actually bound to?\n\n## User-Side Runtime Log Endpoints\n\n- `GET /wunder/channels/runtime_logs`\n- `POST /wunder/channels/runtime_logs/probe`\n\nThese endpoints help answer:\n\n- Have there been recent persistent connection failures, reconnects, or runtime warnings for accounts visible to the current user?\n- Is the log panel blocked by permissions or filter conditions?\n\n## When Not to Blame the Model First\n\nIf you see these symptoms, check the channel layer first:\n\n- Webhook configuration exists, but no inbound traffic\n- Outbound keeps retrying or failing\n- Persistent connection channels are intermittently working\n- External clients cannot open files\n\n## Why Files Often Become Download Links in Channels\n\nBecause channel clients typically cannot directly understand wunder's internal `/workspaces/...` paths.\n\nSo before outbound, these paths are rewritten to:\n\n- `/wunder/temp_dir/download`\n\nIf this link breaks, it looks like \"the message was sent, but the attachment won't open.\"\n\n## Implementation Recommendations\n\n- Channel issues often occur in accounts, persistent connections, outbox, and download rewriting—not necessarily model issues.\n- Admin side (Bridge): check accounts, bindings, and channel sessions; user side (Beehive): check runtime logs.\n- When external attachments won't open, prioritize checking the `temp_dir` download path and rewriting logic.\n\n## Further Reading\n\n- [Channel Webhook](/docs/en/integration/channel-webhook/)\n- [Temp Directory and Document Conversion](/docs/en/integration/temp-dir/)\n- [Admin Interface](/docs/en/surfaces/web-admin/)\n","source_path":"使用说明书/en/ops/channel-runtime.md"}</script>
+</body>
+</html>

@@ -1,0 +1,128 @@
+import { Theme, ThreadLogEvent } from "theme.slint";
+import { Action } from "components.slint";
+import { ScrollView, ComboBox } from "std-widgets.slint";
+
+export struct LogMetric { label: string, value: string, icon: image }
+
+component LogEntry inherits Rectangle {
+    in property <ThreadLogEvent> event;
+    private property <bool> expanded: false;
+    height: root.expanded ? 190px : 28px;
+    background: white; border-width: 1px; border-color: #dce3ed; border-radius: 6px;
+    HorizontalLayout { x: 8px; y: 0px; width: parent.width - 16px; height: 28px; spacing: 8px;
+        Text { text: "[" + root.event.time + "]"; color: #6b7280; font-size: 11px; vertical-alignment: center; }
+        Text { text: "#" + root.event.order + " " + root.event.event-type; color: Theme.accent-deep; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+        Text { text: root.event.summary; color: #1f2937; font-size: 12px; overflow: elide; min-width: 0px; horizontal-stretch: 1; vertical-alignment: center; }
+        Text { text: "用户轮次 " + root.event.round; color: #64748b; font-size: 11px; vertical-alignment: center; }
+    }
+    entry-action := Action { x: 0px; y: 0px; width: parent.width; height: 28px; background: transparent; label: root.event.event-type; clicked => { root.expanded = !root.expanded; } }
+    if root.expanded : Rectangle { x: 1px; y: 29px; width: parent.width - 2px; height: parent.height - 30px; background: #f8fafc;
+        ScrollView { x: 8px; y: 8px; width: parent.width - 16px; height: parent.height - 16px; horizontal-scrollbar-policy: always-off;
+            TextInput { text: root.event.raw; read-only: true; wrap: word-wrap; font-size: 12px; color: #334155; }
+        }
+    }
+}
+
+export component ThreadLogDialog inherits Rectangle {
+    in property <string> title;
+    in property <[LogMetric]> metrics;
+    in property <[ThreadLogEvent]> events;
+    in property <[string]> rounds;
+    in property <[string]> types;
+    in-out property <int> selected-round;
+    in-out property <int> selected-type;
+    in-out property <string> query;
+    in property <string> question;
+    in property <string> page-info;
+    in property <string> error;
+    in property <bool> loading;
+    in property <bool> previous;
+    in property <bool> next;
+    in property <bool> more;
+    callback close();
+    callback filter();
+    callback select-round(int);
+    callback page(int);
+    callback load-more();
+    callback export-log();
+    background: Theme.overlay;
+    TouchArea { clicked => { root.close(); } }
+    Rectangle {
+        width: min(1040px, parent.width - 24px); height: min(760px, parent.height - 24px);
+        background: white; border-radius: 12px; border-width: 1px; border-color: #dcdcdc;
+        TouchArea {}
+        VerticalLayout { padding: 16px; spacing: 0px;
+            HorizontalLayout { height: 58px; padding-left: 16px; padding-right: 16px; spacing: 10px;
+                Text { text: "线程日志"; font-size: 15px; font-weight: 700; color: #1f2937; vertical-alignment: center; }
+                Text { text: root.title; font-size: 12px; color: #64748b; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
+                Action { width: 30px; height: 30px; icon: @image-url("../assets/icons/xmark.svg"); background: #f7f7f7; border-width: 1px; border-color: #d7d7d7; label: "关闭"; clicked => { root.close(); } }
+            }
+            Rectangle { height: 1px; background: #ececec; }
+            HorizontalLayout { padding: 16px; padding-top: 14px; vertical-stretch: 1; spacing: 14px;
+                Rectangle { width: max(286px, parent.width * 0.265); background: #f8fafc; border-width: 1px; border-color: #e4e8ef; border-radius: 10px;
+                    VerticalLayout { padding: 10px; spacing: 10px;
+                        HorizontalLayout { height: 16px; spacing: 7px;
+                            Image { width: 12px; height: 12px; source: @image-url("../assets/icons/log-chart.svg"); colorize: Theme.accent-deep; }
+                            Text { text: "概览"; color: #374151; font-size: 12px; font-weight: 700; horizontal-stretch: 1; }
+                        }
+                        ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
+                            VerticalLayout { spacing: 7px; alignment: start;
+                                for row in ceil(root.metrics.length / 2) : HorizontalLayout { spacing: 7px; height: 46px;
+                                    for col in 2 : Rectangle {
+                                        private property <int> index: row * 2 + col;
+                                        private property <LogMetric> metric: root.metrics[self.index];
+                                        visible: self.index < root.metrics.length; horizontal-stretch: 1;
+                                        background: white; border-width: 1px; border-color: #e4e8ef; border-radius: 7px;
+                                        Image { x: 7px; y: 9px; width: 15px; height: 15px; source: parent.metric.icon; colorize: Theme.accent-deep; image-fit: contain; }
+                                        Text { x: 30px; y: 7px; width: parent.width - 37px; height: 13px; text: parent.metric.label; color: #64748b; font-size: 10px; overflow: elide; }
+                                        Text { x: 30px; y: 23px; width: parent.width - 37px; height: 16px; text: parent.metric.value; color: #1f2937; font-size: 12px; font-weight: 600; overflow: elide; }
+                                    }
+                                }
+                            }
+                        }
+                        Rectangle { height: 30px; horizontal-stretch: 1; border-radius: 15px; background: white; border-width: 1px; border-color: #e5e7eb;
+                            HorizontalLayout { x: (parent.width - 78px) / 2; y: 0px; width: 78px; height: 30px; spacing: 6px;
+                                Image { y: 9px; width: 12px; height: 12px; source: @image-url("../assets/icons/log-download.svg"); colorize: #4b5563; }
+                                Text { height: 30px; text: "导出日志"; color: #4b5563; font-size: 12px; vertical-alignment: center; }
+                            }
+                            export-action := Action { width: parent.width; height: parent.height; label: "导出日志"; background: transparent; enabled: !root.loading; clicked => { root.export-log(); } }
+                        }
+                    }
+                }
+                VerticalLayout { horizontal-stretch: 1; spacing: 8px;
+                    HorizontalLayout { height: 40px; spacing: 10px;
+                        Text { text: "用户轮次"; font-size: 12px; color: #64748b; vertical-alignment: center; }
+                        ComboBox { width: 132px; height: 30px; model: root.rounds; current-index <=> root.selected-round; enabled: !root.loading; selected(value) => { root.select-round(self.current-index); } }
+                        Rectangle { horizontal-stretch: 1; border-radius: 10px; border-width: 1px; border-color: #e4e8ef; background: #f8fafc;
+                            Text { x: 12px; width: parent.width - 24px; height: parent.height; text: root.question; color: #1f2937; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                        }
+                    }
+                    Rectangle { height: 0px; }
+                    Text { height: 16px; text: "事件详情"; color: #4b5563; font-size: 12px; font-weight: 600; }
+                    HorizontalLayout { height: 32px; spacing: 8px;
+                        ComboBox { width: 144px; height: 32px; model: root.types; current-index <=> root.selected-type; selected(value) => { root.filter(); } }
+                        Rectangle { horizontal-stretch: 1; border-radius: 8px; border-width: 1px; border-color: #dce1e8;
+                            TextInput { x: 10px; width: parent.width - 20px; height: parent.height; text <=> root.query; font-size: 12px; color: #1f2937; single-line: true; vertical-alignment: center; edited => { root.filter(); } }
+                            if root.query == "" : Text { x: 10px; height: parent.height; text: "按关键词筛选事件"; color: #808080; font-size: 12px; vertical-alignment: center; }
+                        }
+                    }
+                    Rectangle { vertical-stretch: 1; border-width: 1px; border-color: #e4e8ef; border-radius: 10px; background: #f7f8fb;
+                        ScrollView { x: 8px; y: 8px; width: parent.width - 16px; height: parent.height - 16px; horizontal-scrollbar-policy: always-off;
+                            VerticalLayout { alignment: start; spacing: 6px;
+                                if root.error != "" || root.loading || root.events.length == 0 : Text { height: 40px; text: root.error != "" ? root.error : root.loading ? "正在加载…" : "暂无事件"; font-size: 12px; color: #64748b; wrap: word-wrap; }
+                                for event in root.events : LogEntry { event: event; }
+                            }
+                        }
+                    }
+                    HorizontalLayout { height: 30px; spacing: 8px;
+                        if root.more : Action { width: 90px; label: "下一页事件"; show-label: true; enabled: !root.loading; clicked => { root.load-more(); } }
+                        Rectangle { horizontal-stretch: 1; }
+                        Action { width: 28px; height: 28px; border-radius: 14px; border-width: 1px; border-color: #e5e7eb; icon: @image-url("../assets/icons/chevron-left.svg"); label: "上一页"; enabled: root.previous && !root.loading; clicked => { root.page(-1); } }
+                        Text { text: root.page-info; color: #64748b; font-size: 12px; vertical-alignment: center; }
+                        Action { width: 28px; height: 28px; border-radius: 14px; border-width: 1px; border-color: #e5e7eb; icon: @image-url("../assets/icons/chevron-right.svg"); label: "下一页"; enabled: root.next && !root.loading; clicked => { root.page(1); } }
+                    }
+                }
+            }
+        }
+    }
+}

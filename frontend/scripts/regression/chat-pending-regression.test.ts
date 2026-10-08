@@ -1,0 +1,408 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  clearTrailingPendingAssistantMessages,
+  clearSupersededPendingAssistantMessages,
+  findPendingAssistantMessage,
+  stopPendingAssistantMessage
+} from '../../src/stores/chatPendingMessage';
+import {
+  isSupersededRunningManualCompactionMarker,
+  shouldPreserveTerminalCompactionMarkerState
+} from '../../src/stores/chatCompactionMarker';
+import { isSessionBusyFromSignals } from '../../src/utils/chatSessionRuntime';
+import { isCompactionRunningFromWorkflowItems, resolveLatestCompactionSnapshot } from '../../src/utils/chatCompactionWorkflow';
+import { collectSnapshotApprovalEvents } from '../../src/stores/chatApprovalSnapshot';
+
+const installBrowserStorageStub = () => {
+  if (typeof globalThis.localStorage !== 'undefined') return;
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: () => null,
+      setItem: () => undefined,
+      removeItem: () => undefined,
+      clear: () => undefined
+    }
+  });
+};
+
+test('approval recovery restores a request grouped by round beside top-level events', async () => {
+  const snapshot = {
+    events: [{ event: 'tool_call', data: { data: { tool: 'tool_a' } } }],
+    rounds: [{
+      user_round: 3,
+      events: [{
+        event: 'approval_request',
+        data: {
+          data: {
+            approval_id: 'approval-round-1',
+            tool: 'tool_a',
+            kind: 'exec',
+            summary: 'Approval needed'
+          }
+        }
+      }]
+    }]
+  };
+  const events = collectSnapshotApprovalEvents(snapshot);
+
+  assert.equal(events?.length, 2);
+  assert.deepEqual(
+    events?.map((event) => (event as { event?: string }).event),
+    ['tool_call', 'approval_request']
+  );
+
+  installBrowserStorageStub();
+  const { chatApprovalActions } = await import('../../src/stores/chatApprovalActions');
+  const store = { pendingApprovals: [] };
+  assert.equal(
+    chatApprovalActions.restorePendingApprovals.call(store, 'session-approval', snapshot),
+    true
+  );
+  assert.deepEqual(
+    store.pendingApprovals.map((approval) => ({
+      approval_id: approval.approval_id,
+      session_id: approval.session_id,
+      kind: approval.kind
+    })),
+    [{ approval_id: 'approval-round-1', session_id: 'session-approval', kind: 'exec' }]
+  );
+});
+
+test('approval recovery keeps a later top-level resolution over an older grouped request', async () => {
+  installBrowserStorageStub();
+  const { chatApprovalActions } = await import('../../src/stores/chatApprovalActions');
+  const store = { pendingApprovals: [] };
+  assert.equal(
+    chatApprovalActions.restorePendingApprovals.call(store, 'session-approval', {
+      events: [{
+        event: 'approval_resolved',
+        event_id: 8,
+        data: { data: { approval_id: 'approval-resolved-1', status: 'approved' } }
+      }],
+      rounds: [{
+        user_round: 1,
+        events: [{
+          event: 'approval_request',
+          event_id: 7,
+          data: {
+            data: {
+              approval_id: 'approval-resolved-1',
+              tool: 'tool_a',
+              kind: 'exec',
+              summary: 'Approval needed'
+            }
+          }
+        }]
+      }]
+    }),
+    false
+  );
+  assert.deepEqual(store.pendingApprovals, []);
+});
+
+test('finds the latest trailing pending assistant message', () => {
+  const pending = { role: 'assistant', stream_incomplete: true, content: 'working' };
+  const messages = [
+    { role: 'user', content: 'first' },
+    { role: 'assistant', stream_incomplete: false, content: 'done' },
+    { role: 'user', content: 'second' },
+    pending
+  ];
+  assert.equal(findPendingAssistantMessage(messages), pending);
+});
+
+test('ignores superseded pending assistant messages once a newer user turn exists', () => {
+  const stalePending = { role: 'assistant', stream_incomplete: true, content: 'old pending' };
+  const messages = [
+    { role: 'user', content: 'first' },
+    stalePending,
+    { role: 'user', content: 'continue' }
+  ];
+  assert.equal(findPendingAssistantMessage(messages), null);
+});
+
+test('finds pending assistant even when a non-pending assistant is at the tail', () => {
+  const pending = { role: 'assistant', stream_incomplete: true, content: 'pending before summary' };
+  const messages = [
+    { role: 'user', content: 'first' },
+    pending,
+    { role: 'assistant', stream_incomplete: false, content: 'summary' }
+  ];
+  assert.equal(findPendingAssistantMessage(messages), pending);
+});
+
+test('clears only superseded pending assistant messages', () => {
+  const stalePending = {
+    role: 'assistant',
+    stream_incomplete: true,
+    workflowStreaming: true,
+    reasoningStreaming: true
+  };
+  const activePending = {
+    role: 'assistant',
+    stream_incomplete: true,
+    workflowStreaming: true,
+    reasoningStreaming: true
+  };
+  const messages = [
+    { role: 'user', content: 'first' },
+    stalePending,
+    { role: 'user', content: 'second' },
+    activePending
+  ];
+  assert.equal(clearSupersededPendingAssistantMessages(messages), true);
+  assert.equal(stalePending.stream_incomplete, false);
+  assert.equal(stalePending.workflowStreaming, false);
+  assert.equal(stalePending.reasoningStreaming, false);
+  assert.equal(activePending.stream_incomplete, true);
+});
+
+test('stops an active pending assistant in place', () => {
+  const pending = {
+    role: 'assistant',
+    stream_incomplete: true,
+    workflowStreaming: true,
+    reasoningStreaming: true
+  };
+  assert.equal(stopPendingAssistantMessage(pending), true);
+  assert.equal(pending.stream_incomplete, false);
+  assert.equal(pending.workflowStreaming, false);
+  assert.equal(pending.reasoningStreaming, false);
+});
+
+test('marks a user-stopped pending assistant as cancelled when requested', () => {
+  const pending = {
+    role: 'assistant',
+    stream_incomplete: true,
+    workflowStreaming: true,
+    reasoningStreaming: true,
+    status: 'streaming',
+    failed: false
+  };
+  assert.equal(stopPendingAssistantMessage(pending, { cancelled: true }), true);
+  assert.equal(pending.stream_incomplete, false);
+  assert.equal(pending.workflowStreaming, false);
+  assert.equal(pending.reasoningStreaming, false);
+  assert.equal(pending.status, 'cancelled');
+  assert.equal(pending.cancelled, true);
+  assert.equal(pending.failed, false);
+  assert.equal(pending.final, false);
+  assert.equal(pending.stop_reason, 'user_stop');
+});
+
+test('stops an assistant that only retains workflow and reasoning streaming flags', () => {
+  const pending = {
+    role: 'assistant',
+    stream_incomplete: false,
+    workflowStreaming: true,
+    reasoningStreaming: true
+  };
+  assert.equal(stopPendingAssistantMessage(pending), true);
+  assert.equal(pending.stream_incomplete, false);
+  assert.equal(pending.workflowStreaming, false);
+  assert.equal(pending.reasoningStreaming, false);
+});
+
+test('finds waiting-first-output assistant as pending and stops it with terminal interaction stats', () => {
+  const startedAt = Date.UTC(2026, 3, 30, 2, 12, 0);
+  const pending = {
+    role: 'assistant',
+    content: '',
+    stream_incomplete: false,
+    workflowStreaming: false,
+    reasoningStreaming: false,
+    waiting_updated_at_ms: startedAt,
+    waiting_first_output_at_ms: null,
+    waiting_phase_first_output_at_ms: null,
+    stats: {
+      interaction_start_ms: startedAt,
+      interaction_end_ms: null
+    }
+  };
+  const messages = [
+    { role: 'user', content: 'turn' },
+    pending
+  ];
+  assert.equal(findPendingAssistantMessage(messages), pending);
+  assert.equal(stopPendingAssistantMessage(pending), true);
+  assert.equal(pending.stream_incomplete, false);
+  assert.equal(pending.workflowStreaming, false);
+  assert.equal(pending.reasoningStreaming, false);
+  assert.ok(Number(pending.stats?.interaction_end_ms) >= startedAt);
+  assert.equal(findPendingAssistantMessage(messages), null);
+});
+
+test('clears all trailing pending assistants in current user turn', () => {
+  const firstPending = { role: 'assistant', stream_incomplete: true };
+  const secondPending = { role: 'assistant', workflowStreaming: true, reasoningStreaming: true };
+  const trailingDone = { role: 'assistant', stream_incomplete: false, content: 'done' };
+  const messages = [
+    { role: 'user', content: 'turn' },
+    firstPending,
+    secondPending,
+    trailingDone
+  ];
+  assert.equal(clearTrailingPendingAssistantMessages(messages), 2);
+  assert.equal(firstPending.stream_incomplete, false);
+  assert.equal(secondPending.workflowStreaming, false);
+  assert.equal(secondPending.reasoningStreaming, false);
+});
+
+test('session busy remains true when compaction progress is still running', () => {
+  const messages = [
+    {
+      role: 'assistant',
+      stream_incomplete: false,
+      workflowStreaming: false,
+      reasoningStreaming: false,
+      workflowItems: [{ eventType: 'compaction_progress', status: 'loading' }]
+    }
+  ];
+  assert.equal(isSessionBusyFromSignals(false, messages), true);
+});
+
+test('session busy clears after cancelled compaction is finalized', () => {
+  const messages = [
+    {
+      role: 'assistant',
+      stream_incomplete: false,
+      workflowStreaming: false,
+      reasoningStreaming: false,
+      workflowItems: [
+        { eventType: 'compaction_progress', status: 'completed', detail: '{"status":"cancelled"}' },
+        { eventType: 'compaction', status: 'completed', detail: '{"status":"cancelled"}' }
+      ]
+    }
+  ];
+  assert.equal(isSessionBusyFromSignals(false, messages), false);
+});
+
+test('session busy ignores stale running assistant markers from earlier turns', () => {
+  const messages = [
+    { role: 'user', content: 'first' },
+    {
+      role: 'assistant',
+      stream_incomplete: true,
+      workflowStreaming: true,
+      reasoningStreaming: true,
+      content: 'stale running'
+    },
+    { role: 'user', content: 'second' },
+    {
+      role: 'assistant',
+      stream_incomplete: false,
+      workflowStreaming: false,
+      reasoningStreaming: false,
+      content: 'done'
+    }
+  ];
+  assert.equal(isSessionBusyFromSignals(false, messages), false);
+});
+
+test('compaction running detection prefers detail status when item status is stale', () => {
+  const items = [{ eventType: 'compaction', status: 'completed', detail: '{"status":"loading"}' }];
+  const snapshot = resolveLatestCompactionSnapshot(items);
+  assert.equal(snapshot?.status, 'loading');
+  assert.equal(isCompactionRunningFromWorkflowItems(items), true);
+});
+
+test('compaction progress without explicit status is treated as running', () => {
+  const items = [{ eventType: 'compaction_progress' }];
+  const snapshot = resolveLatestCompactionSnapshot(items);
+  assert.equal(snapshot?.eventType, 'compaction_progress');
+  assert.equal(snapshot?.explicitStatus, false);
+  assert.equal(isCompactionRunningFromWorkflowItems(items), true);
+});
+
+test('compaction progress with explicit completed status is not treated as running', () => {
+  const items = [{ eventType: 'compaction_progress', status: 'completed' }];
+  const snapshot = resolveLatestCompactionSnapshot(items);
+  assert.equal(snapshot?.status, 'completed');
+  assert.equal(snapshot?.explicitStatus, true);
+  assert.equal(isCompactionRunningFromWorkflowItems(items), false);
+});
+
+test('terminal manual compaction marker is not downgraded by a stale running snapshot', () => {
+  const terminal = {
+    role: 'assistant',
+    content: '',
+    created_at: '2026-04-10T10:00:02.000Z',
+    stream_round: 2,
+    workflowStreaming: false,
+    stream_incomplete: false,
+    manual_compaction_marker: true,
+    workflowItems: [
+      {
+        eventType: 'compaction',
+        status: 'completed',
+        toolName: 'context_compaction',
+        toolCallId: 'compaction:manual:demo-2',
+        detail: '{"status":"done","trigger_mode":"manual","user_round":2}'
+      }
+    ]
+  };
+  const running = {
+    role: 'assistant',
+    content: '',
+    created_at: '2026-04-10T10:00:00.000Z',
+    stream_round: 2,
+    workflowStreaming: true,
+    stream_incomplete: true,
+    manual_compaction_marker: true,
+    workflowItems: [
+      {
+        eventType: 'compaction_progress',
+        status: 'loading',
+        toolName: 'context_compaction',
+        toolCallId: 'compaction:manual:demo-2',
+        detail: '{"status":"loading","trigger_mode":"manual","user_round":2}'
+      }
+    ]
+  };
+
+  assert.equal(shouldPreserveTerminalCompactionMarkerState(terminal, running), true);
+});
+
+test('running manual compaction marker is suppressed once the terminal marker is already present', () => {
+  const terminal = {
+    role: 'assistant',
+    content: '',
+    created_at: '2026-04-10T10:00:02.000Z',
+    stream_round: 2,
+    workflowStreaming: false,
+    stream_incomplete: false,
+    manual_compaction_marker: true,
+    workflowItems: [
+      {
+        eventType: 'compaction',
+        status: 'completed',
+        toolName: 'context_compaction',
+        toolCallId: 'compaction:manual:demo-2',
+        detail: '{"status":"done","trigger_mode":"manual","user_round":2}'
+      }
+    ]
+  };
+  const running = {
+    role: 'assistant',
+    content: '',
+    created_at: '2026-04-10T10:00:00.000Z',
+    stream_round: 2,
+    workflowStreaming: true,
+    stream_incomplete: true,
+    manual_compaction_marker: true,
+    workflowItems: [
+      {
+        eventType: 'compaction_progress',
+        status: 'loading',
+        toolName: 'context_compaction',
+        toolCallId: 'compaction:manual:demo-2',
+        detail: '{"status":"loading","trigger_mode":"manual","user_round":2}'
+      }
+    ]
+  };
+
+  assert.equal(isSupersededRunningManualCompactionMarker(running, [terminal]), true);
+});

@@ -1,0 +1,530 @@
+<template>
+  <div class="zoomable-image-preview">
+    <div class="zoomable-image-surface">
+      <div
+        v-if="imageUrl"
+        class="zoomable-image-toolbar"
+        role="toolbar"
+        :aria-label="t('chat.imagePreview')"
+      >
+        <div class="zoomable-image-meta">
+          <span class="zoomable-image-scale" aria-live="polite">{{ scaleLabel }}</span>
+          <span v-if="imageResolutionLabel" class="zoomable-image-resolution">{{ imageResolutionLabel }}</span>
+        </div>
+        <div class="zoomable-image-actions">
+          <button
+            class="zoomable-image-btn"
+            type="button"
+            :title="t('common.zoomOut')"
+            :aria-label="t('common.zoomOut')"
+            :disabled="!canZoomOut"
+            @click="zoomOut"
+          >
+            <i class="fa-solid fa-magnifying-glass-minus" aria-hidden="true"></i>
+          </button>
+          <button
+            class="zoomable-image-btn"
+            type="button"
+            :title="t('common.zoomIn')"
+            :aria-label="t('common.zoomIn')"
+            :disabled="!canZoomIn"
+            @click="zoomIn"
+          >
+            <i class="fa-solid fa-magnifying-glass-plus" aria-hidden="true"></i>
+          </button>
+          <button
+            class="zoomable-image-btn"
+            type="button"
+            :title="t('common.fit')"
+            :aria-label="t('common.fit')"
+            @click="fitToView"
+          >
+            <i class="fa-solid fa-maximize" aria-hidden="true"></i>
+          </button>
+          <button
+            class="zoomable-image-btn zoomable-image-btn--label"
+            type="button"
+            :title="t('common.reset')"
+            :aria-label="t('common.reset')"
+            @click="resetZoom"
+          >
+            100%
+          </button>
+        </div>
+      </div>
+      <div
+        ref="stageRef"
+        class="zoomable-image-stage"
+        :class="{ 'is-pannable': canPan, 'is-dragging': isDragging }"
+        @pointerdown="handlePointerDown"
+        @pointermove="handlePointerMove"
+        @pointerup="stopDragging"
+        @pointercancel="stopDragging"
+        @wheel="handleWheel"
+        @dblclick="handleDoubleClick"
+      >
+        <img
+          v-if="imageUrl"
+          :src="imageUrl"
+          :alt="alt"
+          class="zoomable-image"
+          :style="imageStyle"
+          draggable="false"
+          @dragstart.prevent
+          @load="handleImageLoad"
+        />
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+
+import { useI18n } from '@/i18n';
+
+const WHEEL_ZOOM_STEP = 0.1;
+const DOUBLE_CLICK_TOGGLE_THRESHOLD = 0.05;
+
+const props = withDefaults(
+  defineProps<{
+    imageUrl: string;
+    alt?: string;
+    active?: boolean;
+    minScale?: number;
+    maxScale?: number;
+    step?: number;
+  }>(),
+  {
+    alt: '',
+    active: true,
+    minScale: 0.25,
+    maxScale: 3,
+    step: 0.25
+  }
+);
+
+const { t } = useI18n();
+
+const stageRef = ref<HTMLDivElement | null>(null);
+const naturalWidth = ref(0);
+const naturalHeight = ref(0);
+const stageWidth = ref(0);
+const stageHeight = ref(0);
+const scale = ref(1);
+const isDragging = ref(false);
+const dragPointerId = ref<number | null>(null);
+const dragStartX = ref(0);
+const dragStartY = ref(0);
+const dragStartScrollLeft = ref(0);
+const dragStartScrollTop = ref(0);
+
+let stageResizeObserver: ResizeObserver | null = null;
+
+const renderedWidth = computed(() => naturalWidth.value * scale.value);
+const renderedHeight = computed(() => naturalHeight.value * scale.value);
+const canZoomOut = computed(() => scale.value > props.minScale + 0.001);
+const canZoomIn = computed(() => scale.value < props.maxScale - 0.001);
+const canPan = computed(
+  () => renderedWidth.value > stageWidth.value + 1 || renderedHeight.value > stageHeight.value + 1
+);
+const scaleLabel = computed(() => `${Math.round(scale.value * 100)}%`);
+const imageResolutionLabel = computed(() => {
+  if (!naturalWidth.value || !naturalHeight.value) return '';
+  return `${naturalWidth.value} x ${naturalHeight.value}`;
+});
+const fitScale = computed(() => {
+  if (!naturalWidth.value || !naturalHeight.value || !stageWidth.value || !stageHeight.value) {
+    return 1;
+  }
+  const availableWidth = Math.max(1, stageWidth.value - 24);
+  const availableHeight = Math.max(1, stageHeight.value - 24);
+  return clampScale(Math.min(1, availableWidth / naturalWidth.value, availableHeight / naturalHeight.value));
+});
+const imageStyle = computed(() => {
+  if (!naturalWidth.value) {
+    return { maxWidth: '100%' };
+  }
+  return {
+    width: `${Math.max(1, Math.round(renderedWidth.value))}px`,
+    height: `${Math.max(1, Math.round(renderedHeight.value))}px`,
+    maxWidth: 'none',
+    maxHeight: 'none',
+    flexShrink: 0
+  };
+});
+
+function clampScale(value: number) {
+  return Math.min(props.maxScale, Math.max(props.minScale, value));
+}
+
+function updateStageMetrics() {
+  const stage = stageRef.value;
+  stageWidth.value = stage?.clientWidth || 0;
+  stageHeight.value = stage?.clientHeight || 0;
+}
+
+function bindStageObserver(target: HTMLDivElement | null) {
+  if (stageResizeObserver) {
+    stageResizeObserver.disconnect();
+    stageResizeObserver = null;
+  }
+  if (target && typeof ResizeObserver !== 'undefined') {
+    stageResizeObserver = new ResizeObserver(() => {
+      updateStageMetrics();
+    });
+    stageResizeObserver.observe(target);
+  }
+  updateStageMetrics();
+}
+
+function scheduleAfterLayout(callback: () => void) {
+  void nextTick(() => {
+    window.requestAnimationFrame(() => {
+      updateStageMetrics();
+      callback();
+    });
+  });
+}
+
+function setScale(value: number) {
+  scale.value = Math.round(clampScale(value) * 100) / 100;
+}
+
+function zoomAroundPoint(nextScale: number, clientX?: number, clientY?: number) {
+  const stage = stageRef.value;
+  if (!stage || !naturalWidth.value || !naturalHeight.value) {
+    setScale(nextScale);
+    return;
+  }
+  const previousScale = scale.value || 1;
+  const rect = stage.getBoundingClientRect();
+  const localX = typeof clientX === 'number'
+    ? Math.min(Math.max(0, clientX - rect.left), stage.clientWidth)
+    : stage.clientWidth / 2;
+  const localY = typeof clientY === 'number'
+    ? Math.min(Math.max(0, clientY - rect.top), stage.clientHeight)
+    : stage.clientHeight / 2;
+  const anchorX = stage.scrollLeft + localX;
+  const anchorY = stage.scrollTop + localY;
+  setScale(nextScale);
+  // Keep the content point under the cursor stable during zoom transitions.
+  scheduleAfterLayout(() => {
+    const ratio = scale.value / previousScale;
+    stage.scrollLeft = Math.max(0, anchorX * ratio - localX);
+    stage.scrollTop = Math.max(0, anchorY * ratio - localY);
+  });
+}
+
+function resetZoom() {
+  zoomAroundPoint(1);
+}
+
+function zoomOut() {
+  zoomAroundPoint(scale.value - props.step);
+}
+
+function zoomIn() {
+  zoomAroundPoint(scale.value + props.step);
+}
+
+function fitToView() {
+  const stage = stageRef.value;
+  setScale(fitScale.value);
+  if (!stage) {
+    return;
+  }
+  scheduleAfterLayout(() => {
+    stage.scrollLeft = 0;
+    stage.scrollTop = 0;
+  });
+}
+
+function handleImageLoad(event: Event) {
+  const target = event.target as HTMLImageElement | null;
+  if (!target) return;
+  naturalWidth.value = target.naturalWidth || target.width || 0;
+  naturalHeight.value = target.naturalHeight || target.height || 0;
+  fitToView();
+}
+
+function stopDragging(event?: PointerEvent) {
+  const stage = stageRef.value;
+  if (event && dragPointerId.value !== null && event.pointerId != dragPointerId.value) {
+    return;
+  }
+  if (stage && dragPointerId.value !== null && stage.hasPointerCapture(dragPointerId.value)) {
+    stage.releasePointerCapture(dragPointerId.value);
+  }
+  dragPointerId.value = null;
+  isDragging.value = false;
+}
+
+function handlePointerDown(event: PointerEvent) {
+  const stage = stageRef.value;
+  if (!stage || !canPan.value || event.button !== 0) return;
+  if (!(event.target instanceof HTMLImageElement)) return;
+  dragPointerId.value = event.pointerId;
+  dragStartX.value = event.clientX;
+  dragStartY.value = event.clientY;
+  dragStartScrollLeft.value = stage.scrollLeft;
+  dragStartScrollTop.value = stage.scrollTop;
+  isDragging.value = true;
+  stage.setPointerCapture(event.pointerId);
+  event.preventDefault();
+}
+
+function handlePointerMove(event: PointerEvent) {
+  const stage = stageRef.value;
+  if (!stage || !isDragging.value || dragPointerId.value !== event.pointerId) return;
+  stage.scrollLeft = Math.max(0, dragStartScrollLeft.value - (event.clientX - dragStartX.value));
+  stage.scrollTop = Math.max(0, dragStartScrollTop.value - (event.clientY - dragStartY.value));
+}
+
+function handleWheel(event: WheelEvent) {
+  if (!event.ctrlKey && !event.metaKey) {
+    return;
+  }
+  event.preventDefault();
+  const direction = event.deltaY < 0 ? WHEEL_ZOOM_STEP : -WHEEL_ZOOM_STEP;
+  zoomAroundPoint(scale.value + direction, event.clientX, event.clientY);
+}
+
+function handleDoubleClick(event: MouseEvent) {
+  if (!(event.target instanceof HTMLImageElement)) {
+    return;
+  }
+  const targetScale = Math.abs(scale.value - fitScale.value) <= DOUBLE_CLICK_TOGGLE_THRESHOLD ? 1 : fitScale.value;
+  zoomAroundPoint(targetScale, event.clientX, event.clientY);
+}
+
+watch(
+  stageRef,
+  (nextStage) => {
+    bindStageObserver(nextStage);
+  },
+  { flush: 'post' }
+);
+
+watch(
+  () => props.imageUrl,
+  (nextUrl, previousUrl) => {
+    if (nextUrl === previousUrl) return;
+    naturalWidth.value = 0;
+    naturalHeight.value = 0;
+    setScale(1);
+    stopDragging();
+  }
+);
+
+watch(
+  () => props.active,
+  (nextActive, previousActive) => {
+    if (!nextActive || nextActive === previousActive) return;
+    setScale(1);
+    stopDragging();
+    if (naturalWidth.value > 0) {
+      fitToView();
+    }
+  }
+);
+
+onBeforeUnmount(() => {
+  stopDragging();
+  if (stageResizeObserver) {
+    stageResizeObserver.disconnect();
+    stageResizeObserver = null;
+  }
+});
+</script>
+
+<style scoped>
+.zoomable-image-preview {
+  position: relative;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.zoomable-image-surface {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.zoomable-image-toolbar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(var(--ui-accent-rgb, 77, 216, 255), 0.24);
+  background: rgba(15, 23, 42, 0.72);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.22);
+  max-width: calc(100% - 24px);
+}
+
+.zoomable-image-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.zoomable-image-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.zoomable-image-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid rgba(var(--ui-accent-rgb, 77, 216, 255), 0.26);
+  background: rgba(var(--ui-accent-rgb, 77, 216, 255), 0.12);
+  color: var(--chat-text, var(--el-text-color-primary, #1f2937));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease, color 0.2s ease;
+}
+
+.zoomable-image-btn--label {
+  min-width: 54px;
+  width: auto;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.zoomable-image-btn:hover:not(:disabled),
+.zoomable-image-btn:focus-visible:not(:disabled) {
+  border-color: rgba(var(--ui-accent-rgb, 77, 216, 255), 0.48);
+  background: rgba(var(--ui-accent-rgb, 77, 216, 255), 0.2);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.zoomable-image-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.zoomable-image-scale {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(var(--ui-accent-rgb, 77, 216, 255), 0.28);
+  background: rgba(var(--ui-accent-rgb, 77, 216, 255), 0.12);
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--chat-text, var(--el-text-color-primary, #1f2937));
+}
+
+.zoomable-image-resolution {
+  font-size: 12px;
+  color: var(--chat-muted, var(--el-text-color-secondary, #64748b));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.zoomable-image-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 280px;
+  max-height: 64vh;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid rgba(var(--ui-accent-rgb, 77, 216, 255), 0.2);
+  border-radius: 12px;
+  background-color: rgba(var(--ui-accent-rgb, 77, 216, 255), 0.04);
+  background-image:
+    linear-gradient(
+      45deg,
+      rgba(var(--ui-accent-rgb, 77, 216, 255), 0.06) 25%,
+      transparent 25%,
+      transparent 75%,
+      rgba(var(--ui-accent-rgb, 77, 216, 255), 0.06) 75%,
+      rgba(var(--ui-accent-rgb, 77, 216, 255), 0.06)
+    ),
+    linear-gradient(
+      45deg,
+      rgba(var(--ui-accent-rgb, 77, 216, 255), 0.06) 25%,
+      transparent 25%,
+      transparent 75%,
+      rgba(var(--ui-accent-rgb, 77, 216, 255), 0.06) 75%,
+      rgba(var(--ui-accent-rgb, 77, 216, 255), 0.06)
+    );
+  background-size: 20px 20px;
+  background-position: 0 0, 10px 10px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--ui-accent-rgb, 77, 216, 255), 0.46) transparent;
+}
+
+.zoomable-image-stage.is-pannable {
+  cursor: grab;
+}
+
+.zoomable-image-stage.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.zoomable-image-stage::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.zoomable-image-stage::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.zoomable-image-stage::-webkit-scrollbar-thumb {
+  background: rgba(var(--ui-accent-rgb, 77, 216, 255), 0.42);
+  border-radius: 999px;
+}
+
+.zoomable-image {
+  display: block;
+  height: auto;
+  margin: 0 auto;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.2);
+}
+
+@media (max-width: 768px) {
+  .zoomable-image-toolbar {
+    top: 10px;
+    right: 10px;
+    padding: 8px;
+    max-width: calc(100% - 20px);
+  }
+
+  .zoomable-image-resolution {
+    display: none;
+  }
+
+  .zoomable-image-stage {
+    min-height: 220px;
+    max-height: 56vh;
+    padding: 12px;
+  }
+}
+</style>

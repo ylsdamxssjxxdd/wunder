@@ -1,0 +1,118 @@
+pub mod admin;
+pub mod admin_bridge;
+pub mod admin_multimodal;
+pub mod admin_prompt_templates;
+pub(crate) mod attachment_convert;
+pub mod auth;
+pub mod benchmark;
+pub mod browser_control;
+pub mod channel;
+pub mod chat;
+pub mod chat_goal;
+pub mod chat_ws;
+pub mod cloud;
+pub mod companions;
+pub mod core;
+pub mod core_ws;
+pub mod cron;
+pub mod desktop;
+pub mod desktop_lan;
+pub mod doc2md;
+pub mod drawio;
+pub mod errors;
+pub mod external_links;
+pub mod external_workflows;
+pub mod gateway_ws;
+pub mod onlyoffice;
+pub(crate) mod skill_fs;
+pub mod temp_dir;
+pub mod user_agents;
+pub mod user_channel_logs;
+pub mod user_channels;
+pub mod user_context;
+pub mod user_memory;
+pub mod user_prompt_templates;
+pub mod user_tools;
+pub mod user_world;
+pub mod user_world_ws;
+pub mod workspace;
+pub(crate) mod ws_helpers;
+pub(crate) mod ws_log;
+
+use crate::state::AppState;
+use axum::Router;
+use std::sync::Arc;
+
+pub fn build_router(state: Arc<AppState>) -> Router {
+    Router::new()
+        .merge(auth::router())
+        .merge(browser_control::router())
+        .merge(channel::router())
+        .merge(chat::router())
+        .merge(chat_goal::router())
+        .merge(chat_ws::router())
+        .merge(companions::router())
+        .merge(core_ws::router())
+        .merge(core::router())
+        .merge(cloud::router())
+        .merge(cron::router())
+        .merge(doc2md::router())
+        .merge(external_workflows::router())
+        .merge(gateway_ws::router())
+        .merge(temp_dir::router())
+        .merge(drawio::router())
+        .merge(onlyoffice::router())
+        .merge(workspace::router())
+        .merge(admin::router())
+        .merge(admin_bridge::router())
+        .merge(admin_multimodal::router())
+        .merge(admin_prompt_templates::router())
+        .merge(benchmark::router())
+        .merge(external_links::router())
+        .merge(user_tools::router())
+        .merge(user_prompt_templates::router())
+        .merge(user_world::router())
+        .merge(user_world_ws::router())
+        .merge(user_agents::router())
+        .merge(user_memory::router())
+        .merge(user_channels::router())
+        .merge(user_channel_logs::router())
+        .merge(crate::mcp::router(state.clone()))
+        .with_state(state)
+}
+
+/// Build a reduced router for local desktop mode.
+///
+/// It intentionally omits admin/channel/gateway routes to keep the local
+/// surface minimal while still reusing the same orchestrator/tooling pipeline.
+#[allow(dead_code)]
+pub fn build_desktop_router(state: Arc<AppState>) -> Router {
+    Router::new()
+        .merge(auth::router())
+        .merge(browser_control::router())
+        .merge(chat::router())
+        .merge(chat_goal::router())
+        .merge(chat_ws::router())
+        .merge(companions::router())
+        .merge(core_ws::router())
+        .merge(core::router())
+        .merge(cron::router())
+        .merge(desktop::router())
+        .merge(desktop_lan::router())
+        .merge(external_links::router())
+        .merge(external_workflows::router())
+        .merge(temp_dir::router())
+        .merge(drawio::router())
+        .merge(onlyoffice::router())
+        .merge(workspace::router())
+        .merge(user_tools::router())
+        .merge(user_prompt_templates::router())
+        .merge(user_world::router())
+        .merge(user_world_ws::router())
+        .merge(user_agents::router())
+        .merge(user_memory::router())
+        .merge(user_channels::router())
+        .merge(user_channel_logs::router())
+        .merge(crate::mcp::router(state.clone()))
+        .with_state(state)
+}

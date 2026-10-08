@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Runtime and Online Status | 使用说明书</title>
+  <meta name="description" content="wunder doesn&#x27;t just return message content; it continuously maintains runtime projections of threads and sessions to express states like loaded, waiting, streaming, and idle.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/concepts/presence-and-runtime","language":"en","title":"Runtime and Online Status","summary":"wunder doesn't just return message content; it continuously maintains runtime projections of threads and sessions to express states like loaded, waiting, streaming, and idle.","updated_at":"2026-10-06","read_when":["You are building session lists, status badges, or runtime panels","You are troubleshooting whether a thread is stuck or has finished"],"source_docs":["docs/API文档.md","src/api/chat.rs","src/core/session_runtime.rs"],"tab":"Reference","group":"Deep Dives","group_path":["Deep Dives"],"url":"/docs/en/concepts/presence-and-runtime/","headings":[{"id":"section-1","level":1,"text":"Runtime and Online Status"},{"id":"section-2","level":2,"text":"Key Points on This Page"},{"id":"section-3","level":2,"text":"Don't Confuse the Two Layers of State"},{"id":"section-4","level":3,"text":"Thread Event Status"},{"id":"section-5","level":3,"text":"Session Runtime Projection"},{"id":"section-6","level":2,"text":"Why Not Just Keep a Single running"},{"id":"section-7","level":2,"text":"Most Common Status Judgments on Session Pages"},{"id":"section-8","level":2,"text":"When It's Easiest to Make Mistakes"},{"id":"section-9","level":3,"text":"Treating \"Waiting for Approval\" as \"Already Finished\""},{"id":"section-10","level":3,"text":"Only Reading Status on Detail Pages"},{"id":"section-11","level":3,"text":"Mixing Event Stream and Summary State into One Layer"},{"id":"section-12","level":2,"text":"Implementation Suggestions"},{"id":"section-13","level":2,"text":"Further Reading"}],"prev_slug":"en/concepts/streaming","next_slug":"en/concepts/tools","markdown":"# Runtime and Online Status\n\nwunder sessions are not static history records; they always carry a layer of runtime state.\n\n## Key Points on This Page\n\n- Whether a thread is still alive\n- Why session lists need `runtime`\n- What `running`, `thread_status`, and `terminal_status` each express\n\n## Don't Confuse the Two Layers of State\n\n### Thread Event Status\n\nThe `thread_status` in the event stream is more like \"what the thread is doing right now.\"\n\nCommon values include:\n\n- `running`\n- `waiting_approval`\n- `waiting_user_input`\n- `interrupting`\n- `idle`\n- `not_loaded`\n\n### Session Runtime Projection\n\nThe chat domain further aggregates status into a `runtime` object for direct consumption by list and detail pages.\n\nKey fields include:\n\n- `status`\n- `loaded`\n- `active`\n- `streaming`\n- `waiting`\n- `watcher_count`\n- `pending_approval_count`\n- `monitor_status`\n- `monitor_stage`\n- `terminal_status`\n\n## Why Not Just Keep a Single `running`\n\nBecause `running=true/false` is too coarse.\n\nIt cannot answer these questions:\n\n- Is it continuously outputting, or waiting for approval\n- Is the session loaded into memory\n- Are there any watchers attached to this thread\n- Has this round already reached `completed/failed/cancelled/rejected`\n\nSo wunder now retains `running` as a compatibility field, but stable integrations should look at `runtime`.\n\n## Most Common Status Judgments on Session Pages\n\nIf you are building a list or detail page, this approach is usually sufficient:\n\n- Is it still continuously executing: check `runtime.streaming`\n- Is it in a waiting state: check `runtime.waiting`\n- Has it reached a terminal state: check `runtime.terminal_status`\n- Can it still be observed: check `runtime.loaded` and `runtime.active`\n\n## When It's Easiest to Make Mistakes\n\n### Treating \"Waiting for Approval\" as \"Already Finished\"\n\nThis causes the frontend to incorrectly restore the input box or hide the approval area.\n\n### Only Reading Status on Detail Pages\n\nSession lists, event pages, and thread panels should all reuse the same runtime semantics.\n\n### Mixing Event Stream and Summary State into One Layer\n\nEvents are responsible for the timeline, `runtime` is responsible for the current snapshot.\n\n## Implementation Suggestions\n\n- `thread_status` is suitable for expressing thread state during the process.\n- `runtime` is suitable for direct consumption by session lists, detail pages, and control panels.\n- `running` is just a compatibility field and should no longer serve as a complete state machine.\n\n## Further Reading\n\n- [Sessions and Rounds](/docs/en/concepts/sessions-and-rounds/)\n- [Streaming Execution](/docs/en/concepts/streaming/)\n- [Chat Sessions](/docs/en/integration/chat-sessions/)\n","source_path":"使用说明书/en/concepts/presence-and-runtime.md"}</script>
+</body>
+</html>

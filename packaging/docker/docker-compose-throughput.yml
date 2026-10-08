@@ -1,0 +1,54 @@
+# Isolated acceptance environment; prepare runtime.json before starting.
+services:
+  server:
+    image: wunder-x86:latest
+    platform: linux/amd64
+    working_dir: /app
+    volumes:
+      - ../..:/app
+    ports:
+      - "127.0.0.1:18000:18000"
+    environment:
+      CARGO_HOME: /app/.cargo/x86
+      CARGO_TARGET_DIR: /app/target/x86
+      CARGO_BUILD_JOBS: "8"
+      WUNDER_CONFIG_PATH: /app/temp_dir/throughput-docker/runtime.json
+      WUNDER_STORAGE_BACKEND: postgres
+      WUNDER_POSTGRES_DSN: postgresql://test:test@postgres:5432/test
+      WUNDER_HOST: 0.0.0.0
+      WUNDER_PORT: "18000"
+      WUNDER_WORKSPACE_ROOT: /app/temp_dir/throughput-docker/workspaces
+      WUNDER_USER_TOOLS_ROOT: /app/temp_dir/throughput-docker/user-tools
+      WUNDER_TEMP_DIR_ROOT: /app/temp_dir/throughput-docker/files
+      WUNDER_VECTOR_KNOWLEDGE_ROOT: /app/temp_dir/throughput-docker/vectors
+      WUNDER_SERVER_WORKER_THREADS: "8"
+      RUST_LOG: warn
+    command: ["bash", "-lc", "cargo build --offline --release -j 8 -p wunder-server --bin wunder-server --features mcp,host-metrics,web-fetch && cd /app/temp_dir/throughput-docker/runtime && exec /app/target/x86/release/wunder-server"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      model:
+        condition: service_started
+  postgres:
+    image: postgres:16
+    platform: linux/amd64
+    environment:
+      POSTGRES_DB: test
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+    volumes:
+      - throughput-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test -d test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  model:
+    image: wunder-x86:latest
+    platform: linux/amd64
+    working_dir: /app
+    volumes:
+      - ../..:/app:ro
+    command: ["python3", "/app/scripts/throughput_mock_model.py", "--host", "0.0.0.0", "--port", "18090"]
+volumes:
+  throughput-db:

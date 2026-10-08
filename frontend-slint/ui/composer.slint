@@ -1,0 +1,930 @@
+import { I18n } from "i18n.slint";
+import { Theme, ChatAttachment, ModelCard, PlanStep } from "theme.slint";
+import { Action, TerminalAction } from "components.slint";
+import { TextEditBase } from "textedit-base.slint";
+
+// Slint has neither top-level functions nor module-level constants, so the
+// reasoning ladder lives in a global. Model search deliberately does *not* live
+// here: Slint 1.18 strings offer only is-empty/to-lowercase/starts-with/
+// ends-with/replace-all, with no substring test, so filtering is projected from
+// Rust and the popover only renders what it is handed.
+export global EffortOptions {
+    out property <[{ value: string, label: string }]> all: [
+        { value: "default", label: I18n.cp_effort_default },
+        { value: "none", label: I18n.cp_effort_none },
+        { value: "minimal", label: I18n.cp_effort_minimal },
+        { value: "low", label: I18n.cp_effort_low },
+        { value: "medium", label: I18n.cp_effort_medium },
+        { value: "high", label: I18n.cp_effort_high },
+        { value: "xhigh", label: I18n.cp_effort_xhigh }
+    ];
+    // Short label for a reasoning-effort value; the picker shows it next to the
+    // model name so the active strength reads without opening the popover (§8.3).
+    public pure function short(value: string) -> string {
+        return value == "none" ? I18n.cp_effort_short_none
+            : value == "minimal" ? I18n.cp_effort_short_minimal
+            : value == "low" ? I18n.cp_effort_short_low
+            : value == "medium" ? I18n.cp_effort_short_medium
+            : value == "high" ? I18n.cp_effort_short_high
+            : value == "xhigh" ? I18n.cp_effort_short_xhigh
+            : I18n.cp_effort_short_default;
+    }
+}
+
+// §8.3 model switcher: a trigger in the toolbar plus a popover that sits above
+// the input box. Selection applies to the active thread immediately through the
+// existing set-default-model / reasoning-effort callbacks.
+component ModelPicker inherits Rectangle {
+    in property <[ModelCard]> models: [];
+    // True while the catalogue itself is non-empty; `models` is the *filtered*
+    // view, so an empty result must not be mistaken for "no models configured".
+    in property <bool> has-catalogue: false;
+    in property <string> current-name: "";
+    // Index of the model the thread currently uses, or -1. Computed by the
+    // settings projection: Slint functions cannot scan a model.
+    in property <int> active-index: -1;
+    in property <string> current-key: "";
+    // Cloud session is usable: signed in and not expired (§4.3.5). Cloud
+    // entries grey out and refuse selection while this is false.
+    in property <bool> cloud-ready: true;
+    in-out property <string> effort: "default";
+    in property <bool> saving: false;
+    callback select-model(int, string);
+    callback set-default-model(string);
+    callback effort-changed(string);
+    callback open-settings();
+    // Slint cannot test a substring, so the query is projected out and the
+    // filtered catalogue comes back in `models`.
+    callback search-models(string);
+    in-out property <bool> open: false;
+    private property <string> query: "";
+    changed query => { root.search-models(root.query); }
+    height: 30px;
+
+    trigger := Rectangle {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        border-radius: Theme.radius-sm;
+        background: trigger-touch.has-hover || root.open ? Theme.hover : transparent;
+        accessible-role: button;
+        accessible-label: I18n.cp_model_pick;
+        accessible-action-default => { root.open = !root.open; }
+        Image {
+            x: 8px; y: 7px; width: 16px; height: 16px;
+            source: @image-url("../assets/icons/robot.svg");
+            colorize: root.has-catalogue ? Theme.muted : Theme.border-strong;
+            image-fit: contain;
+        }
+        Text {
+            x: 30px; y: 0px; height: parent.height;
+            width: trigger-label.preferred-width;
+            text: root.has-catalogue ? (root.current-name != "" ? root.current-name : I18n.cp_model_none) : I18n.cp_model_none;
+            color: root.has-catalogue ? Theme.text : Theme.muted;
+            font-size: Theme.font-md; font-weight: 600;
+            vertical-alignment: center; overflow: elide;
+        }
+        trigger-label := Text { text: root.current-name; font-size: Theme.font-md; font-weight: 600; visible: false; }
+        Text {
+            x: 36px + trigger-label.preferred-width; y: 0px; height: parent.height;
+            text: EffortOptions.short(root.effort);
+            color: Theme.muted; font-size: Theme.font-xs;
+            vertical-alignment: center;
+            visible: root.has-catalogue;
+        }
+        Image {
+            x: parent.width - 16px; y: 10px; width: 10px; height: 10px;
+            source: @image-url("../assets/icons/chevron-down.svg");
+            colorize: Theme.muted; image-fit: contain;
+        }
+    }
+    trigger-touch := TouchArea {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        mouse-cursor: pointer;
+        clicked => { root.open = !root.open; }
+    }
+
+    // The popover is anchored to the trigger but drawn upward, which is why it
+    // carries a negative y: it must clear the input box above the toolbar.
+    if root.open : Rectangle {
+        x: parent.width - 300px; y: -352px; width: 300px; height: 342px;
+        z: 30; border-radius: Theme.radius-lg; background: Theme.surface;
+        border-width: 1px; border-color: Theme.border;
+        drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
+        VerticalLayout {
+            padding: 10px; spacing: 8px;
+            // Search field.
+            Rectangle {
+                height: 30px; border-radius: Theme.radius-sm;
+                background: Theme.panel; border-width: 1px; border-color: Theme.border;
+                Image {
+                    x: 8px; y: 8px; width: 13px; height: 13px;
+                    source: @image-url("../assets/icons/magnifying-glass.svg");
+                    colorize: Theme.muted; image-fit: contain;
+                }
+                search := TextInput {
+                    x: 28px; y: 0px; width: parent.width - 36px; height: parent.height;
+                    text <=> root.query;
+                    single-line: true;
+                    font-size: Theme.font-md; color: Theme.text;
+                    vertical-alignment: center;
+                }
+                if root.query == "" : Text {
+                    x: 28px; y: 0px; width: parent.width - 36px; height: parent.height;
+                    text: I18n.cp_model_search; color: Theme.muted; font-size: Theme.font-md;
+                    vertical-alignment: center;
+                }
+            }
+            // An empty result under a live query is not "no models configured",
+            // which is why this tests the model count rather than the catalogue
+            // flag alone.
+            if !root.has-catalogue || root.models.length == 0 : Rectangle {
+                vertical-stretch: 1; border-radius: Theme.radius-sm; background: Theme.panel;
+                VerticalLayout {
+                    alignment: center; padding: 16px; spacing: 10px;
+                    Text {
+                        text: root.query != "" ? I18n.cp_model_no_match : I18n.cp_model_empty;
+                        color: Theme.muted; font-size: Theme.font-sm;
+                        horizontal-alignment: center; wrap: word-wrap;
+                    }
+                    if !root.has-catalogue : Rectangle {
+                        width: 132px; height: 28px; border-radius: Theme.radius-sm;
+                        background: empty-touch.has-hover ? Theme.accent-soft : Theme.surface;
+                        border-width: 1px; border-color: Theme.border;
+                        Text { width: parent.width; height: parent.height; text: I18n.cp_model_settings; color: Theme.accent; font-size: Theme.font-sm; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        empty-touch := TouchArea { mouse-cursor: pointer; clicked => { root.open = false; root.open-settings(); } }
+                    }
+                }
+            }
+            if root.has-catalogue && root.models.length > 0 : Rectangle {
+                vertical-stretch: 1; clip: true;
+                VerticalLayout {
+                    alignment: start; spacing: 0px;
+                    for model[index] in root.models : Rectangle {
+                        height: 38px; border-radius: Theme.radius-sm;
+                        background: row-touch.has-hover ? Theme.hover : transparent;
+                        accessible-role: list-item;
+                        accessible-label: model.model;
+                        // Cloud entries (`cloud/<id>`) stay listed while signed
+                        // out or expired, but grey out and stay unselectable
+                        // until the session returns.
+                        property <bool> cloud-muted: model.is-cloud && !root.cloud-ready;
+                        accessible-action-default => { if !cloud-muted { root.select-model(index, model.key); root.open = false; } }
+                        Image {
+                            x: 10px; y: 11px; width: 16px; height: 16px;
+                            source: @image-url("../assets/icons/robot.svg");
+                            colorize: cloud-muted ? Theme.border : (model.key == root.current-key ? Theme.accent : Theme.muted);
+                            image-fit: contain;
+                        }
+                        Text {
+                            x: 34px; y: 4px; width: parent.width - 74px; height: 17px;
+                            text: model.model != "" ? model.model : model.key;
+                            color: cloud-muted ? Theme.muted : Theme.text; font-size: Theme.font-md; font-weight: 600;
+                            vertical-alignment: center; overflow: elide;
+                        }
+                        Text {
+                            x: 34px; y: 21px; width: parent.width - 74px; height: 15px;
+                            text: cloud-muted ? I18n.st_cl_login_needed : model.provider + (model.model-type != "" ? " · " + model.model-type : "");
+                            color: Theme.muted; font-size: Theme.font-xs;
+                            vertical-alignment: center; overflow: elide;
+                        }
+                        if model.is-default : Rectangle {
+                            x: parent.width - 74px; y: 11px; width: 34px; height: 16px;
+                            border-radius: 8px; background: Theme.accent-soft;
+                            Text { width: parent.width; height: parent.height; text: I18n.cp_model_default_tag; color: Theme.accent; font-size: Theme.font-2xs; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        // A cloud model is never the default (the engine keeps
+                        // the default pinned to a local entry), so the badge
+                        // reuses the default-tag slot.
+                        if model.is-cloud : Rectangle {
+                            x: parent.width - 74px; y: 11px; width: 24px; height: 16px;
+                            border-radius: 8px; background: Theme.accent-soft;
+                            Text { width: parent.width; height: parent.height; text: I18n.st_cl_badge; color: Theme.accent; font-size: Theme.font-2xs; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        if model.key == root.current-key : Image {
+                            x: parent.width - 30px; y: 11px; width: 16px; height: 16px;
+                            source: @image-url("../assets/icons/check.svg");
+                            colorize: Theme.accent; image-fit: contain;
+                        }
+                        row-touch := TouchArea {
+                            x: 0px; y: 0px; width: parent.width; height: parent.height;
+                            enabled: !cloud-muted;
+                            mouse-cursor: cloud-muted ? MouseCursor.default : MouseCursor.pointer;
+                            clicked => { root.select-model(index, model.key); root.open = false; }
+                        }
+                    }
+                }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+            Text { height: 16px; text: I18n.cp_model_effort; color: Theme.muted; font-size: Theme.font-xs; font-weight: 700; vertical-alignment: center; }
+            HorizontalLayout {
+                height: 30px; spacing: 4px;
+                for option in EffortOptions.all : Rectangle {
+                    horizontal-stretch: 1; min-width: 0px;
+                    border-radius: Theme.radius-sm;
+                    background: root.effort == option.value ? Theme.accent-soft : effort-touch.has-hover ? Theme.hover : Theme.panel;
+                    border-width: 1px;
+                    border-color: root.effort == option.value ? Theme.accent : Theme.border;
+                    accessible-role: button;
+                    accessible-label: option.label;
+                    accessible-action-default => { root.effort = option.value; root.effort-changed(option.value); }
+                    Text {
+                        width: parent.width; height: parent.height;
+                        text: EffortOptions.short(option.value);
+                        color: root.effort == option.value ? Theme.accent : Theme.text-secondary;
+                        font-size: Theme.font-sm; font-weight: root.effort == option.value ? 700 : 400;
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                    effort-touch := TouchArea { mouse-cursor: pointer; clicked => { root.effort = option.value; root.effort-changed(option.value); } }
+                }
+            }
+        }
+    }
+}
+
+// The brain glyph doubles as the context-usage gauge (§8.5): the filled part
+// rises with the used share of the window.
+export component ContextUsageIcon inherits Rectangle {
+    in property <float> usage: 0.0;
+    in property <bool> known: false;
+    in property <string> counts;
+    in-out property <bool> open: false;
+    width: 24px; height: 30px;
+    accessible-role: button;
+    accessible-label: I18n.cp_context_usage;
+    accessible-action-default => { root.open = !root.open; }
+    private property <color> usage-color: root.usage >= 0.9 ? Theme.danger : root.usage >= 0.75 ? #d97706 : Theme.accent;
+    Image {
+        x: 3px; y: 6px; width: 18px; height: 18px;
+        source: @image-url("../assets/icons/brain.svg"); colorize: Theme.muted;
+    }
+    Rectangle {
+        x: 3px; y: 24px - 18px * root.usage;
+        width: 18px; height: 18px * root.usage; clip: true;
+        Image {
+            y: -18px * (1.0 - root.usage); width: 18px; height: 18px;
+            source: @image-url("../assets/icons/brain.svg"); colorize: root.usage-color;
+        }
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.open = !root.open; } }
+    // Activate the hover bridge only while visible; it must never eat editor input.
+    panel-hover := TouchArea {
+        x: -202px; y: -306px; width: 226px; height: 310px;
+        enabled: root.open || touch.has-hover || self.has-hover;
+    }
+    if root.open || touch.has-hover || panel-hover.has-hover : Rectangle {
+        x: -202px; y: -216px; width: 226px; height: 208px;
+        z: 20; border-radius: 10px; background: Theme.surface;
+        border-width: 1px; border-color: Theme.border;
+        drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
+        VerticalLayout {
+            padding: 8px; spacing: 0px;
+            HorizontalLayout {
+                height: 24px; padding-left: 8px; padding-right: 8px;
+                Text { text: I18n.cp_context_usage; color: Theme.muted; font-size: 11px; font-weight: 700; }
+                Text { text: root.known ? round(root.usage * 100.0) + "%" : "—"; color: root.usage-color; font-size: 12px; font-weight: 700; horizontal-alignment: right; }
+            }
+            Text { height: 24px; text: root.counts != "" ? root.counts : I18n.cp_usage_empty; color: Theme.muted; font-size: 11px; }
+            Rectangle { height: 1px; background: Theme.border; }
+            Text { height: 32px; text: I18n.cp_thinking_level; color: Theme.muted; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+            Text { height: 100px; text: I18n.cp_usage_effort_hint; color: Theme.text-secondary; font-size: 11px; wrap: word-wrap; vertical-alignment: top; }
+        }
+    }
+}
+
+// One icon control of the goal banner; hover tints it toward the danger tone
+// so the three controls read as a group without stealing focus from the text.
+component GoalTool inherits Rectangle {
+    in property <image> icon;
+    in property <string> tip;
+    callback clicked;
+    width: 24px; height: 24px;
+    border-radius: 6px;
+    background: hit.has-hover ? #FFFFFFB0 : transparent;
+    Image {
+        x: 5px; y: 5px; width: 14px; height: 14px;
+        source: root.icon;
+        colorize: hit.has-hover ? Theme.danger : Theme.muted;
+        image-fit: contain;
+    }
+    hit := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    accessible-role: button;
+    accessible-label: root.tip;
+}
+
+// Six-dot spinner for the status dock; the software renderer has no
+// transform-rotate, so the dot ring is rotated mathematically with the web's
+// 1.48s period (same approach as RuntimeBadge, tint parameterized).
+component DockSpinner inherits Rectangle {
+    in property <color> tint: Theme.accent;
+    width: 12px; height: 12px;
+    private property <angle> phase: mod(animation-tick(), 1480ms) / 1480ms * 360deg;
+    for offset in [{x: 0.0, y: -4.1}, {x: 3.55, y: -2.05}, {x: 3.55, y: 2.05}, {x: 0.0, y: 4.1}, {x: -3.55, y: 2.05}, {x: -3.55, y: -2.05}] : Rectangle {
+        x: (parent.width - 3.4px) / 2 + (offset.x * cos(root.phase) - offset.y * sin(root.phase)) * 1px;
+        y: (parent.height - 3.4px) / 2 + (offset.x * sin(root.phase) + offset.y * cos(root.phase)) * 1px;
+        width: 3.4px; height: 3.4px; border-radius: 1.7px; background: root.tint;
+    }
+}
+
+// §StatusDock: the floating capsule above the goal banner that mirrors the
+// live turn (state phrase, plan progress, file-change stats). Hovering the
+// capsule opens the plan card, which overlaps the timeline via negative y —
+// the same layering trick the composer popovers use. The dock is mounted
+// only while a turn is active, so idle hides the whole row.
+export component StatusDock inherits Rectangle {
+    in property <bool> active: false;
+    in property <string> status-text: "";
+    in property <int> steps-done: 0;
+    in property <int> steps-total: 0;
+    in property <int> files-changed: 0;
+    in property <int> added-lines: 0;
+    in property <int> deleted-lines: 0;
+    in property <string> plan-explanation: "";
+    in property <[PlanStep]> plan-steps: [];
+    callback plan-dismiss();
+    // Bounded checklist: a plan longer than this collapses into a summary
+    // row, keeping the card inside its height budget on the soft renderer.
+    private property <int> max-shown-steps: 8;
+    private property <int> shown-steps: min(root.plan-steps.length, root.max-shown-steps);
+    out property <length> card-height: 47px
+        + (root.plan-explanation != "" ? 36px : 0px)
+        + root.shown-steps * 22px
+        + (root.plan-steps.length > root.max-shown-steps ? 22px : 0px);
+    // The bridge covers capsule + gap + card so the pointer can travel into
+    // the card without the card closing mid-flight; enabled latches on
+    // has-hover, which is what keeps it alive once the capsule is left.
+    bridge := TouchArea {
+        x: (parent.width - 340px) / 2; y: -root.card-height - 8px;
+        width: 340px; height: root.card-height + 36px;
+        enabled: capsule-touch.has-hover || self.has-hover;
+    }
+    out property <bool> plan-open: root.plan-steps.length > 0
+        && (capsule-touch.has-hover || bridge.has-hover);
+    // The runtime publishes Chinese state phrases; map the known ones to the
+    // active locale and fall back to the raw phrase for error strings, whose
+    // detail cannot be enumerated here.
+    public pure function localize(text: string) -> string {
+        if text.starts-with(I18n.dock_state_thinking) { return I18n.dock_state_thinking; }
+        if text.starts-with(I18n.dock_state_generating) { return I18n.dock_state_generating; }
+        if text.starts-with(I18n.dock_state_tool) { return I18n.dock_state_tool; }
+        if text.starts-with(I18n.dock_state_compaction) { return I18n.dock_state_compaction; }
+        if text.starts-with(I18n.dock_state_queue) { return I18n.dock_state_queue; }
+        if text.starts-with(I18n.dock_state_await) { return I18n.dock_state_await; }
+        return text;
+    }
+    height: 28px;
+    HorizontalLayout {
+        alignment: center;
+        capsule := Rectangle {
+            // Sized by the centering layout from its own content; a fixed
+            // elide cap on the status text keeps pathological phrases (raw
+            // runtime errors) from pushing the capsule past the chat width
+            // without tying the width back to the parent (binding loop).
+            height: 26px;
+            border-radius: 13px;
+            background: Theme.surface;
+            border-width: 1px; border-color: Theme.border;
+            drop-shadow-color: #00000018; drop-shadow-blur: 8px; drop-shadow-offset-y: 2px;
+            capsule-row := HorizontalLayout {
+                padding-left: 12px; padding-right: 12px; spacing: 6px;
+                if root.active : DockSpinner { y: (parent.height - self.height) / 2; }
+                if root.active : Text {
+                    height: parent.height;
+                    max-width: 360px;
+                    text: root.localize(root.status-text);
+                    color: Theme.text-secondary; font-size: Theme.font-xs; font-weight: 600;
+                    vertical-alignment: center; overflow: elide;
+                }
+                if root.active && (root.steps-total > 0 || root.files-changed > 0) : Text {
+                    height: parent.height; text: "·";
+                    color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center;
+                }
+                if root.steps-total > 0 : Text {
+                    height: parent.height;
+                    text: I18n.dock_steps + " " + root.steps-done + " / " + root.steps-total;
+                    color: Theme.text-secondary; font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                }
+                if root.steps-total > 0 && root.files-changed > 0 : Text {
+                    height: parent.height; text: "·";
+                    color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center;
+                }
+                if root.files-changed > 0 : Text {
+                    height: parent.height;
+                    text: root.files-changed + I18n.dock_files_suffix;
+                    color: Theme.text-secondary; font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                }
+                // Diff-tone pair: additions in red, deletions in green, so the
+                // numbers read as a patch summary rather than plain counts.
+                if root.files-changed > 0 : Text {
+                    height: parent.height; text: "+" + root.added-lines;
+                    color: #d64545; font-size: Theme.font-xs; font-weight: 600;
+                    vertical-alignment: center;
+                }
+                if root.files-changed > 0 : Text {
+                    height: parent.height; text: "-" + root.deleted-lines;
+                    color: #2f9e44; font-size: Theme.font-xs; font-weight: 600;
+                    vertical-alignment: center;
+                }
+            }
+            capsule-touch := TouchArea { mouse-cursor: root.plan-steps.length > 0 ? MouseCursor.pointer : MouseCursor.default; }
+        }
+    }
+    if root.plan-open : Rectangle {
+        width: 320px; height: root.card-height;
+        x: (parent.width - self.width) / 2;
+        y: -self.height - 8px;
+        z: 30;
+        border-radius: Theme.radius-lg; background: Theme.surface;
+        border-width: 1px; border-color: Theme.border;
+        drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
+        clip: true;
+        VerticalLayout {
+            padding: 8px; spacing: 4px;
+            HorizontalLayout {
+                height: 22px;
+                Text {
+                    text: I18n.dock_plan_title;
+                    color: Theme.text; font-size: Theme.font-sm; font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Rectangle {
+                    width: 22px; height: 22px; border-radius: 6px;
+                    background: close-touch.has-hover ? Theme.hover : transparent;
+                    Image {
+                        x: 4px; y: 4px; width: 14px; height: 14px;
+                        source: @image-url("../assets/icons/xmark.svg");
+                        colorize: close-touch.has-hover ? Theme.danger : Theme.muted;
+                        image-fit: contain;
+                    }
+                    close-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.plan-dismiss(); }
+                    }
+                }
+            }
+            if root.plan-explanation != "" : Text {
+                height: 32px;
+                text: root.plan-explanation;
+                color: Theme.text-secondary; font-size: Theme.font-xs;
+                wrap: word-wrap; overflow: elide; vertical-alignment: top;
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+            VerticalLayout {
+                alignment: start; spacing: 0px;
+                for step[index] in root.plan-steps : Rectangle {
+                    // Rows past the display budget collapse to zero height
+                    // instead of being dropped, which keeps the for-loop flat
+                    // (Slint forbids chaining `for` and `if` in one element).
+                    height: index < root.max-shown-steps ? 22px : 0px;
+                    visible: index < root.max-shown-steps;
+                    border-radius: Theme.radius-sm;
+                    background: step-touch.has-hover ? Theme.hover : transparent;
+                    HorizontalLayout {
+                        padding-left: 4px; padding-right: 4px; spacing: 8px;
+                        Rectangle {
+                            width: 16px;
+                            if step.status == "completed" : Image {
+                                x: 2px; y: 5px; width: 12px; height: 12px;
+                                source: @image-url("../assets/icons/check.svg");
+                                colorize: Theme.accent; image-fit: contain;
+                            }
+                            if step.status == "in_progress" : DockSpinner { x: 2px; y: 5px; }
+                            if step.status != "completed" && step.status != "in_progress" : Rectangle {
+                                x: 3px; y: 6px; width: 10px; height: 10px;
+                                border-radius: 5px;
+                                border-width: 1.5px; border-color: Theme.border-strong;
+                            }
+                        }
+                        Text {
+                            height: parent.height;
+                            text: step.step;
+                            color: Theme.text; font-size: Theme.font-xs;
+                            vertical-alignment: center; overflow: elide;
+                        }
+                    }
+                    step-touch := TouchArea {
+                        x: 0px; y: 0px; width: parent.width; height: parent.height;
+                    }
+                }
+            }
+            if root.plan-steps.length > root.max-shown-steps : Text {
+                height: 18px;
+                text: I18n.dock_plan_more_prefix + (root.plan-steps.length - root.max-shown-steps) + I18n.dock_plan_more_suffix;
+                color: Theme.muted; font-size: Theme.font-2xs;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// §8.1b goal banner: one row above the composer once a session has a goal.
+// It shows the objective, the accumulated active time and three controls;
+// editing swaps the row for an inline input and Enter re-submits the goal.
+export component GoalBanner inherits Rectangle {
+    in property <string> objective;
+    in property <string> elapsed;
+    in property <bool> paused: false;
+    in-out property <bool> editing: false;
+    in-out property <string> edit-draft;
+    callback save(string);
+    callback pause-toggle();
+    callback clear();
+    height: 34px;
+    background: Theme.danger-bg;
+    if root.editing : Rectangle {
+        width: 100%; height: 100%;
+        init => { goal-input.focus(); }
+        HorizontalLayout {
+            padding-left: 16px; padding-right: 10px; spacing: 8px;
+            Image {
+                width: 14px; height: 14px;
+                source: @image-url("../assets/icons/fa-bullseye.svg");
+                colorize: Theme.danger; image-fit: contain;
+            }
+            goal-input := TextInput {
+                height: parent.height;
+                text <=> root.edit-draft;
+                color: Theme.text; font-size: Theme.font-md;
+                vertical-alignment: center;
+                // Enter submits; an empty draft cancels the edit instead of
+                // clearing the goal — clearing stays on the trash control.
+                accepted => {
+                    root.editing = false;
+                    if self.text != "" {
+                        root.save(self.text);
+                    }
+                }
+            }
+            Text {
+                text: I18n.cp_goal_edit_hint;
+                color: Theme.danger; opacity: 0.6; font-size: Theme.font-2xs;
+                vertical-alignment: center;
+            }
+        }
+    }
+    if !root.editing : Rectangle {
+        width: 100%; height: 100%;
+        HorizontalLayout {
+            padding-left: 16px; padding-right: 8px; spacing: 8px;
+            Image {
+                width: 14px; height: 14px;
+                source: @image-url("../assets/icons/fa-bullseye.svg");
+                colorize: Theme.danger; image-fit: contain;
+            }
+            Text {
+                text: I18n.cp_goal_label; color: Theme.danger;
+                font-size: Theme.font-md; font-weight: 700; vertical-alignment: center;
+            }
+            Text {
+                text: "·"; color: Theme.danger; opacity: 0.55;
+                font-size: Theme.font-md; vertical-alignment: center;
+            }
+            if root.paused : Text {
+                text: I18n.cp_goal_paused_tag; color: Theme.warning;
+                font-size: Theme.font-sm; font-weight: 700; vertical-alignment: center;
+            }
+            if !root.paused : Text {
+                text: root.elapsed; color: Theme.danger; opacity: 0.8;
+                font-size: Theme.font-sm; vertical-alignment: center;
+            }
+            Text {
+                horizontal-stretch: 1; min-width: 0px;
+                text: root.objective; color: Theme.text-secondary;
+                font-size: Theme.font-md; overflow: elide; vertical-alignment: center;
+            }
+            GoalTool {
+                icon: @image-url("../assets/icons/pen.svg");
+                tip: I18n.cp_goal_edit;
+                clicked => { root.editing = true; root.edit-draft = root.objective; }
+            }
+            GoalTool {
+                icon: root.paused
+                    ? @image-url("../assets/icons/rotate-right.svg")
+                    : @image-url("../assets/icons/status-pause.svg");
+                tip: root.paused ? I18n.cp_goal_resume : I18n.cp_goal_pause;
+                clicked => { root.pause-toggle(); }
+            }
+            GoalTool {
+                icon: @image-url("../assets/icons/trash.svg");
+                tip: I18n.cp_goal_clear;
+                clicked => { root.clear(); }
+            }
+        }
+    }
+}
+
+export component Composer inherits Rectangle {
+    in-out property <string> draft <=> editor.text;
+    in property <bool> busy: false;
+    in property <bool> generating;
+    in property <bool> stopping;
+    in property <bool> recording: false;
+    in property <bool> transcribing: false;
+    in property <string> recording-elapsed: "";
+    // Alternating phase from the capture clock; drives the breathing outline.
+    in property <bool> recording-pulse: false;
+    in property <float> context-usage: 0.0;
+    in property <bool> context-known: false;
+    in property <string> context-counts;
+    in-out property <string> reasoning-effort: "default";
+    callback reasoning-effort-changed(string);
+    // §8.3: the toolbar owns the model switcher. The catalogue comes straight
+    // from the settings projection, so the picker needs no separate fetch.
+    in property <[ModelCard]> models: [];
+    // Size of the unfiltered catalogue; distinguishes "search found nothing"
+    // from "no models configured".
+    in property <int> model-catalogue-count: 0;
+    in property <string> model-name: "";
+    // Key of the model the active thread uses; the popover marks it, and the
+    // filtered list is matched by key because indices shift under search.
+    in property <string> model-key: "";
+    in property <bool> model-saving: false;
+    // Cloud session usable (signed in, not expired); forwarded to the picker.
+    in property <bool> cloud-ready: true;
+    callback select-model(int, string);
+    callback set-default-model(string);
+    callback open-model-settings();
+    callback search-models(string);
+    in property <[ChatAttachment]> attachments: [];
+    in property <string> send-key: "enter";
+    // §8.5 status line under the box.
+    in property <string> workspace-name: "";
+    in property <string> branch-name: "";
+    // §8.4 permission mode: a plain preference string, reported by the runtime
+    // sheet; enforcement itself stays in the backend.
+    // §8.4 permission mode, named after the runtime's `approval_mode` values
+    // (full_auto / auto_edit / suggest) so the chip and the engine agree.
+    in-out property <string> permission-mode: "full_auto";
+    callback permission-changed(string);
+    callback stop();
+    callback send();
+    callback remove-attachment(int);
+    callback record-voice();
+    callback command();
+    // Terminal mode: Ctrl+C becomes an interrupt instead of copy.
+    callback interrupt();
+    // Terminal mode: the input routes to the local shell. The composer keeps
+    // its visual language (and the send button), only the placeholder and
+    // send semantics change; the backend decides where the text goes.
+    in property <bool> terminal-mode: false;
+    callback screenshot(bool, bool);
+    private property <bool> preset-open: false;
+    private property <bool> command-open: false;
+    private property <bool> screenshot-open: false;
+    private property <bool> model-open: false;
+    private property <bool> permission-open: false;
+    // Composer tool glyphs fill more of their 30px cell than the dense toolbar
+    // default so capture/record/preset read at a uniform weight.
+    private property <length> tool-icon-size: 17px;
+    private property <string> permission-label: root.permission-mode == "auto_edit" ? I18n.cp_permission_write
+        : root.permission-mode == "suggest" ? I18n.cp_permission_command
+        : I18n.cp_permission_full;
+    height: root.attachments.length > 0 ? 240px : 204px;
+    background: Theme.composer;
+    Rectangle { y: 0px; height: 1px; background: Theme.border; }
+    VerticalLayout {
+        padding: 14px; padding-top: 8px; spacing: 6px;
+        if root.attachments.length > 0 : HorizontalLayout {
+            height: 30px; spacing: 6px;
+            for attachment[index] in root.attachments : Rectangle {
+                width: 220px; height: 28px;
+                border-radius: Theme.radius-sm; background: Theme.accent-soft; border-width: 1px; border-color: Theme.border;
+                Text { x: 8px; width: parent.width - 34px; height: parent.height; text: attachment.name; color: Theme.text; font-size: Theme.font-xs; vertical-alignment: center; overflow: elide; }
+                Action { x: parent.width - 27px; y: 2px; width: 24px; height: 24px; icon: @image-url("../assets/icons/xmark.svg"); label: I18n.cp_remove_attachment; clicked => { root.remove-attachment(index); } }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        editor := TextEditBase {
+            accessible-role: text-input;
+            accessible-value <=> self.text;
+            accessible-placeholder-text: self.placeholder-text;
+            accessible-action-set-value(value) => { self.text = value; }
+            min-height: 72px;
+            vertical-stretch: 1;
+            scroll-view-padding: 10px;
+            background: Theme.surface.transparentize(0.18);
+            border-width: 1px; border-radius: Theme.radius-xl;
+            border-color: self.has-focus ? Theme.accent : Theme.border;
+            foreground: Theme.text;
+            placeholder-text: root.terminal-mode ? I18n.cp_terminal_placeholder
+                : (root.workspace-name != "" ? I18n.cp_input_placeholder_workspace(root.workspace-name) : I18n.cp_input_placeholder);
+            placeholder-color: Theme.muted;
+            selection-background-color: Theme.accent-soft;
+            selection-foreground-color: Theme.text;
+            font-size: 14px; font-family: "SimSun";
+            wrap: word-wrap;
+key-pressed(event) => {
+                // Terminal mode: Ctrl+C interrupts the running shell instead
+                // of copying the selection.
+                if event.text == "c" && event.modifiers.control && root.terminal-mode {
+                    root.interrupt();
+                    return accept;
+                }
+                // The send key preference: "enter" sends on plain Enter;
+                // "ctrl_enter" sends only with Ctrl+Enter; "none" leaves all
+                // newlines to the editor and sends via the button only.
+                if event.text == "\n" && !event.modifiers.shift && !event.modifiers.control {
+                    if root.send-key == "enter" && (!root.busy || root.draft.starts-with("/")) { root.send(); }
+                    return root.send-key == "enter" ? accept : reject;
+                }
+                if event.text == "\n" && event.modifiers.control {
+                    if root.send-key == "ctrl_enter" && (!root.busy || root.draft.starts-with("/")) { root.send(); return accept; }
+                    return reject;
+                }
+                return reject;
+            }
+        }
+        // ---- toolbar (§8.2) ----
+        HorizontalLayout {
+            height: 30px; spacing: 6px;
+            // Left: workspace name, permission mode. The upload and plus
+            // entries were removed with the more-menu; capture/voice stay.
+            Rectangle {
+                height: 30px; width: ws-name.preferred-width;
+                visible: root.workspace-name != "";
+                ws-name := Text {
+                    height: parent.height; width: self.preferred-width;
+                    text: root.workspace-name; color: Theme.text-secondary; font-size: Theme.font-sm;
+                    vertical-alignment: center; overflow: elide;
+                }
+            }
+            // The permission chip sizes itself from its label. The visible
+            // chrome is a positioned overlay so it can round its own corners
+            // while the skeleton below keeps the layout honest.
+            Rectangle {
+                height: 30px; width: permission-label.preferred-width + 42px;
+                skeleton := Rectangle {
+                    width: parent.width; height: parent.height;
+                    background: root.permission-open ? Theme.accent-soft : permission-touch.has-hover ? Theme.hover : transparent;
+                    border-radius: Theme.radius-sm;
+                    Image { x: 8px; y: 8px; width: 14px; height: 14px; source: @image-url("../assets/icons/shield.svg"); colorize: root.permission-mode == "full_auto" ? Theme.muted : Theme.accent; image-fit: contain; }
+                    permission-label := Text { x: 27px; y: 0px; width: self.preferred-width; height: parent.height; text: root.permission-label; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; }
+                    Image { x: parent.width - 15px; y: 11px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-down.svg"); colorize: Theme.muted; image-fit: contain; }
+                    accessible-role: combobox; accessible-label: I18n.cp_permission;
+                    permission-touch := TouchArea {
+                        x: 0px; y: 0px; width: parent.width; height: parent.height;
+                        mouse-cursor: pointer;
+                        clicked => { root.permission-open = !root.permission-open; root.model-open = false; }
+                    }
+                }
+                if root.permission-open : Rectangle {
+                    x: 0px; y: -172px; width: 230px; height: 162px; z: 30;
+                    border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                    drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
+                    VerticalLayout { padding: 8px; spacing: 3px;
+                        for option in [
+                            { value: "full_auto", label: I18n.cp_permission_full },
+                            { value: "auto_edit", label: I18n.cp_permission_write },
+                            { value: "suggest", label: I18n.cp_permission_command }
+                        ] : Rectangle {
+                            height: 28px; border-radius: Theme.radius-sm;
+                            background: root.permission-mode == option.value ? Theme.accent-soft : perm-touch.has-hover ? Theme.hover : transparent;
+                            accessible-role: list-item; accessible-label: option.label;
+                            Text { x: 10px; y: 0px; width: parent.width - 18px; height: parent.height; text: option.label; color: root.permission-mode == option.value ? Theme.accent : Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                            perm-touch := TouchArea { x: 0px; y: 0px; width: parent.width; height: parent.height; mouse-cursor: pointer; clicked => { root.permission-mode = option.value; root.permission-changed(option.value); root.permission-open = false; } }
+                        }
+                        Text { height: 42px; text: I18n.cp_permission_note; color: Theme.muted; font-size: Theme.font-2xs; wrap: word-wrap; vertical-alignment: top; }
+                    }
+                }
+            }
+            Rectangle {
+                width: 30px; height: 30px;
+                Action { width: parent.width; height: parent.height; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); icon-size: root.tool-icon-size; label: I18n.ag_preset_questions; selected: root.preset-open; clicked => { root.preset-open = !root.preset-open; root.command-open = false; root.screenshot-open = false; } }
+                if root.preset-open : Rectangle {
+                    x: 0px; y: -106px; width: 206px; height: 96px; z: 30;
+                    border-radius: Theme.radius-md; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                    drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
+                    VerticalLayout { padding: 8px; spacing: 4px;
+                        Text { text: I18n.ag_preset_questions; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; }
+                        for preset in [I18n.cp_preset_q1, I18n.cp_preset_q2] : Rectangle {
+                            height: 28px; border-radius: 5px; background: preset-touch.has-hover ? Theme.accent-soft : transparent;
+                            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: preset; color: Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
+                            preset-touch := TouchArea { mouse-cursor: pointer; clicked => { root.draft = preset; root.preset-open = false; editor.focus(); } }
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                width: 30px; height: 30px;
+                TerminalAction { width: parent.width; height: parent.height; icon-size: root.tool-icon-size; label: root.terminal-mode ? I18n.cp_terminal_exit : I18n.cp_commands; selected: root.terminal-mode; clicked => { root.command-open = false; root.preset-open = false; root.screenshot-open = false; root.command(); } }
+                if !root.terminal-mode && (root.command-open || root.draft == "/") : Rectangle {
+                    x: 0px; y: -202px; width: 250px; height: 192px; z: 30;
+                    border-radius: Theme.radius-md; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                    drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
+                    VerticalLayout { padding: 8px; spacing: 4px;
+                        Text { text: I18n.cp_commands; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; }
+                        for command in [{value: "/help", label: I18n.cp_cmd_help}, {value: "/new", label: I18n.cp_cmd_new}, {value: "/stop", label: I18n.cp_cmd_stop}, {value: "/goal ", label: I18n.cp_cmd_goal}, {value: "/compact", label: I18n.cp_cmd_compact}] : Rectangle {
+                            height: 28px; border-radius: 5px; background: command-touch.has-hover ? Theme.accent-soft : transparent;
+                            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: command.label; color: Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
+                            command-touch := TouchArea { mouse-cursor: pointer; clicked => { root.draft = command.value; root.command-open = false; editor.focus(); } }
+                        }
+                    }
+                }
+            }
+            Action {
+                icon: @image-url("../assets/icons/microphone.svg");
+                icon-size: root.tool-icon-size;
+                label: root.recording ? I18n.cp_stop_recording : (root.transcribing ? I18n.cp_transcribing : I18n.cp_record);
+                enabled: !root.transcribing && !root.busy;
+                selected: root.recording;
+                icon-color: root.recording ? Theme.danger : Theme.muted;
+                pulse: root.recording;
+                pulse-phase: root.recording-pulse;
+                clicked => { root.record-voice(); }
+            }
+            // Live capture feedback: the elapsed timer renders beside the
+            // microphone so a running recording is visible at a glance.
+            if root.recording : Text {
+                height: 30px; vertical-alignment: center;
+                text: root.recording-elapsed;
+                color: Theme.danger;
+                font-size: Theme.font-xs;
+                font-weight: 600;
+            }
+            Rectangle {
+                width: 30px; height: 30px;
+                Action { width: parent.width; height: parent.height; icon: @image-url("../assets/icons/camera.svg"); icon-size: root.tool-icon-size; label: I18n.cp_screenshot; selected: root.screenshot-open; clicked => { root.screenshot-open = !root.screenshot-open; root.preset-open = false; root.command-open = false; } }
+                if root.screenshot-open : Rectangle {
+                    x: 0px; y: -130px; width: 220px; height: 120px; z: 30;
+                    border-radius: Theme.radius-md; background: Theme.surface; border-width: 1px; border-color: Theme.border;
+                    drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
+                    VerticalLayout { padding: 8px; spacing: 4px;
+                        Text { text: I18n.cp_screenshot_mode; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; }
+                        for option in [{label: I18n.cp_shot_fullscreen_hidden, hide: true, region: false}, {label: I18n.cp_shot_region_hidden, hide: true, region: true}, {label: I18n.cp_shot_fullscreen_kept, hide: false, region: false}, {label: I18n.cp_shot_region_kept, hide: false, region: true}] : Rectangle {
+                            height: 22px; border-radius: 5px; background: option-touch.has-hover ? Theme.accent-soft : transparent;
+                            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: option.label; color: Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; }
+                            option-touch := TouchArea { mouse-cursor: pointer; clicked => { root.screenshot-open = false; root.screenshot(option.hide, option.region); } }
+                        }
+                    }
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            // Right: model switcher, context gauge, send.
+            ModelPicker {
+                width: model-label.preferred-width + 62px;
+                models: root.models;
+                has-catalogue: root.model-catalogue-count > 0;
+                current-name: root.model-name;
+                current-key: root.model-key;
+                cloud-ready: root.cloud-ready;
+                effort <=> root.reasoning-effort;
+                saving: root.model-saving;
+                open <=> root.model-open;
+                select-model(index, name) => { root.select-model(index, name); }
+                set-default-model(key) => { root.set-default-model(key); }
+                effort-changed(value) => { root.reasoning-effort-changed(value); }
+                open-settings => { root.open-model-settings(); }
+                search-models(query) => { root.search-models(query); }
+            }
+            model-label := Text { text: root.model-name; font-size: Theme.font-md; font-weight: 600; visible: false; }
+            ContextUsageIcon { usage: root.context-usage; known: root.context-known; counts: root.context-counts; }
+            // Mirrors the web send control: the same accent button swaps between
+            // a filled send glyph and a filled stop square while a reply streams.
+            if root.generating : Action {
+                width: 40px; icon: @image-url("../assets/icons/stop.svg"); icon-size: 16px;
+                label: root.stopping ? I18n.cp_stopping : I18n.cp_stop_generation;
+                primary: true; enabled: !root.stopping;
+                clicked => { root.stop(); }
+            }
+            if !root.generating || root.terminal-mode || root.draft.starts-with("/") : Action { width: 40px; icon: @image-url("../assets/icons/paper-plane.svg"); icon-size: 16px; label: root.busy ? I18n.cp_sending : I18n.cp_send; primary: true; enabled: root.terminal-mode ? (root.draft != "" && !root.busy) : ((root.draft != "" || root.attachments.length > 0) && (!root.busy || root.draft.starts-with("/"))); clicked => { root.send(); } }
+        }
+        // ---- status line (§8.5): branch + context usage; the workspace name
+        // moved into the toolbar and the local badge is gone. ----
+        HorizontalLayout {
+            height: 16px; spacing: 6px;
+            if root.branch-name != "" : Image {
+                y: 2px; width: 12px; height: 12px;
+                source: @image-url("../assets/icons/fa-code-branch.svg"); colorize: Theme.muted; image-fit: contain;
+            }
+            if root.branch-name != "" : Text {
+                height: parent.height; width: self.preferred-width;
+                text: root.branch-name; color: Theme.muted; font-size: Theme.font-xs;
+                vertical-alignment: center; overflow: elide;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            // Context usage as a labelled bar, mirroring the brain gauge.
+            if root.context-known : Text {
+                height: parent.height; width: self.preferred-width;
+                text: I18n.cp_context_usage; color: Theme.muted; font-size: Theme.font-xs;
+                vertical-alignment: center;
+            }
+            if root.context-known : Rectangle {
+                y: 5px; width: 72px; height: 6px; border-radius: 3px;
+                background: Theme.border;
+                Rectangle {
+                    width: parent.width * min(root.context-usage, 1.0);
+                    height: parent.height; border-radius: 3px;
+                    background: root.context-usage >= 0.9 ? Theme.danger : root.context-usage >= 0.75 ? #d97706 : Theme.accent;
+                }
+            }
+            if root.context-known : Text {
+                height: parent.height; width: self.preferred-width;
+                text: round(root.context-usage * 100.0) + "%";
+                color: root.context-usage >= 0.9 ? Theme.danger : Theme.muted;
+                font-size: Theme.font-xs; font-weight: 600;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

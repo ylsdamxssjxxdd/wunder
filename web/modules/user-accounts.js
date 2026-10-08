@@ -1,0 +1,1730 @@
+import { elements } from "./elements.js?v=20261007-01";
+import { state } from "./state.js";
+import { getWunderBase } from "./api.js";
+import { appendLog } from "./log.js?v=20260108-02";
+import { notify } from "./notify.js";
+import { formatTimestamp } from "./utils.js?v=20251229-02";
+import { t } from "./i18n.js?v=20261007-01";
+import { ensureOrgUnitsLoaded, getOrgUnitMap, getOrgUnitOptions } from "./org-units.js?v=20260210-01";
+import { getAuthHeaders } from "./admin-auth.js?v=20260120-01";
+import { isRemovedSwarmTool } from "../shared/deprecated-tools.js";
+import { openImpactConfirmModal } from "./preset-agents.js?v=20261007-01";
+import {
+  CONTRACT_STATE_UNAVAILABLE,
+  CUSTOMIZABLE_FIELD_LABEL_KEYS,
+  getContractState,
+  listPresetAgents,
+  mutatePresetBindings,
+  normalizeUserBindingFields,
+  resetContractState,
+} from "./preset-bindings-api.js?v=20261007-01";
+
+const DEFAULT_USER_ACCOUNT_PAGE_SIZE = 50;
+const DEFAULT_TEST_USER_PASSWORD = "Test@123456";
+const DEFAULT_TEST_USER_PER_UNIT = 1;
+const MAX_TEST_USERS_PER_UNIT = 200;
+const USER_ACCOUNT_ONLINE_REFRESH_MS = 12000;
+let userAccountOnlineRefreshTimer = null;
+let importBusy = false;
+
+const USER_FRONTEND_PORT_BY_ADMIN_PORT = {
+  "18000": "18001",
+  "18001": "18001",
+  "18002": "18002",
+};
+
+const ensureUserAccountsState = () => {
+  if (!state.userAccounts) {
+    state.userAccounts = {
+      list: [],
+      selectedId: "",
+      loaded: false,
+      search: "",
+      unitId: "",
+      loading: false,
+      pendingReload: false,
+      pagination: {
+        pageSize: DEFAULT_USER_ACCOUNT_PAGE_SIZE,
+        page: 1,
+        total: 0,
+      },
+      toolAccess: {},
+    };
+  }
+  if (!state.userAccounts.pagination || typeof state.userAccounts.pagination !== "object") {
+    state.userAccounts.pagination = {
+      pageSize: DEFAULT_USER_ACCOUNT_PAGE_SIZE,
+      page: 1,
+      total: 0,
+    };
+  }
+  if (!Number.isFinite(state.userAccounts.pagination.pageSize) || state.userAccounts.pagination.pageSize <= 0) {
+    state.userAccounts.pagination.pageSize = DEFAULT_USER_ACCOUNT_PAGE_SIZE;
+  }
+  if (!Number.isFinite(state.userAccounts.pagination.page) || state.userAccounts.pagination.page < 1) {
+    state.userAccounts.pagination.page = 1;
+  }
+  if (!Number.isFinite(state.userAccounts.pagination.total) || state.userAccounts.pagination.total < 0) {
+    state.userAccounts.pagination.total = 0;
+  }
+  // 预设下拉数据源：开户时用于选择该用户唯一智能体的模板
+  if (!Array.isArray(state.userAccounts.presets)) {
+    state.userAccounts.presets = [];
+  }
+  if (typeof state.userAccounts.presetsLoaded !== "boolean") {
+    state.userAccounts.presetsLoaded = false;
+  }
+  if (typeof state.userAccounts.bindingAvailable !== "boolean") {
+    state.userAccounts.bindingAvailable = false;
+  }
+  if (!state.panelLoaded) {
+    state.panelLoaded = {};
+  }
+  if (typeof state.panelLoaded.userAccounts !== "boolean") {
+    state.panelLoaded.userAccounts = false;
+  }
+};
+
+const ensureUserAccountElements = () => {
+  const requiredKeys = [
+    "userAccountSearchInput",
+    "userAccountRefreshBtn",
+    "userAccountUnitFilter",
+    "userAccountSeedBtn",
+    "userAccountCleanupBtn",
+    "userAccountCreateBtn",
+    "userAccountTableBody",
+    "userAccountEmpty",
+    "userAccountPagination",
+    "userAccountPageInfo",
+    "userAccountPrevBtn",
+    "userAccountNextBtn",
+    "userAccountModal",
+    "userAccountModalClose",
+    "userAccountModalCancel",
+    "userAccountModalSave",
+    "userAccountImportFile",
+    "userAccountImportBtn",
+    "userAccountImportResult",
+    "userAccountSeedModal",
+    "userAccountSeedModalClose",
+    "userAccountSeedModalCancel",
+    "userAccountSeedModalConfirm",
+    "userAccountSeedCount",
+    "userAccountSeedHint",
+    "userAccountFormUsername",
+    "userAccountFormEmail",
+    "userAccountFormPassword",
+    "userAccountFormUnit",
+    "userAccountFormStatus",
+    "userAccountCreatePreset",
+    "userAccountRebuildBtn",
+    "userAccountRebuildHint",
+    "userAccountBindingNote",
+    "userAccountSettingsModal",
+    "userAccountSettingsClose",
+    "userAccountSettingsCancel",
+    "userAccountSettingsUser",
+    "userAccountQuotaInput",
+    "userAccountQuotaSave",
+    "userAccountQuotaMeta",
+    "userAccountQuotaHint",
+    "userAccountQuotaAdjustInput",
+    "userAccountQuotaGrantBtn",
+    "userAccountQuotaDeductBtn",
+    "userAccountQuotaAdjustHint",
+    "userAccountSettingsPasswordInput",
+    "userAccountSettingsPasswordSave",
+    "userAccountSettingsUnitSelect",
+    "userAccountSettingsUnitSave",
+    "userAccountSettingsRolesInput",
+    "userAccountSettingsRolesSave",
+    "userAccountSettingsDelete",
+    "userAccountToolDefault",
+    "userAccountToolList",
+    "userAccountToolEmpty",
+  ];
+  const missing = requiredKeys.filter((key) => !elements[key]);
+  if (missing.length) {
+    appendLog(t("userAccounts.domMissing", { nodes: missing.join(", ") }));
+    return false;
+  }
+  return true;
+};
+
+const normalizeUserAccount = (item) => {
+  const id = String(item?.id || item?.user_id || item?.userId || "").trim();
+  const username = String(item?.username || item?.user_name || id).trim();
+  const activeSessions = Number(item?.active_sessions ?? item?.activeSessions ?? 0);
+  const online =
+    typeof item?.online === "boolean" ? item.online : Number.isFinite(activeSessions) && activeSessions > 0;
+  const quotaBalance = Number(item?.quota_balance ?? 0);
+  const quotaUsed = Number(item?.quota_used_total ?? 0);
+  const quotaGranted = Number(item?.quota_granted_total ?? 0);
+  const dailyQuotaGrant = Number(item?.daily_quota_grant ?? 0);
+  const unit = item?.unit || item?.unit_profile || null;
+  const unitId = String(item?.unit_id || item?.unitId || unit?.id || unit?.unit_id || "").trim();
+  const unitPath = String(unit?.path_name || unit?.pathName || "").trim();
+  const unitName = String(unit?.name || "").trim();
+  const safeQuotaBalance = Number.isFinite(quotaBalance) ? Math.max(0, Math.floor(quotaBalance)) : 0;
+  const safeQuotaUsed = Number.isFinite(quotaUsed) ? Math.max(0, Math.floor(quotaUsed)) : 0;
+  const safeQuotaGranted = Number.isFinite(quotaGranted) ? Math.max(0, Math.floor(quotaGranted)) : 0;
+  const safeDailyQuotaGrant = Number.isFinite(dailyQuotaGrant) ? Math.max(0, Math.floor(dailyQuotaGrant)) : 0;
+  const activitySeries = Array.isArray(item?.activity_series ?? item?.activitySeries)
+    ? (item.activity_series ?? item.activitySeries)
+        .map((point) => {
+          const raw = point && typeof point === "object" ? point : {};
+          const date = String(raw.date || "").trim();
+          const tokens = Math.max(0, Math.floor(Number(raw.tokens) || 0));
+          return date ? { date, tokens } : null;
+        })
+        .filter(Boolean)
+    : [];
+  // 契约 §12.2.1 第 9) 条：绑定预设 / 唯一智能体 / 已自定义字段
+  const binding = normalizeUserBindingFields(item);
+  return {
+    id,
+    username,
+    email: item?.email || "",
+    unit_id: unitId,
+    unit_name: unitName,
+    unit_path: unitPath,
+    unit_level: Number.isFinite(Number(unit?.level)) ? Number(unit?.level) : null,
+    status: String(item?.status || "active"),
+    roles: Array.isArray(item?.roles) ? item.roles : [],
+    preset_id: binding.preset_id,
+    agent_id: binding.agent_id,
+    customized_fields: binding.customized_fields,
+    binding_available: binding.available,
+    quota_balance: safeQuotaBalance,
+    quota_used_total: safeQuotaUsed,
+    quota_granted_total: safeQuotaGranted,
+    daily_quota_grant: safeDailyQuotaGrant,
+    last_quota_grant_date: String(item?.last_quota_grant_date || "").trim(),
+    last_login_at: item?.last_login_at ?? item?.lastLoginAt ?? null,
+    is_demo: Boolean(item?.is_demo || item?.isDemo),
+    active_sessions: Number.isFinite(activeSessions) ? activeSessions : 0,
+    online,
+    activity_series: activitySeries,
+  };
+};
+
+const customizableFieldLabel = (field) => {
+  const key = String(field || "").trim();
+  if (!key) {
+    return "";
+  }
+  const labelKey = CUSTOMIZABLE_FIELD_LABEL_KEYS[key];
+  return labelKey ? t(labelKey) : key;
+};
+
+const formatLoginTime = (value) => {
+  const ts = Number(value);
+  if (!Number.isFinite(ts) || ts <= 0) {
+    return "-";
+  }
+  return formatTimestamp(ts * 1000);
+};
+
+const resolveUnitLabel = (user) => {
+  if (!user) {
+    return "-";
+  }
+  if (user.unit_name) {
+    return user.unit_name;
+  }
+  const fallback = String(user.unit_path || "").trim();
+  if (fallback) {
+    const parts = fallback.split("/").map((part) => part.trim()).filter(Boolean);
+    if (parts.length) {
+      return parts[parts.length - 1];
+    }
+  }
+  return user.unit_id || "-";
+};
+
+const resolveUnitFilterLabel = (unitId) => {
+  const cleaned = String(unitId || "").trim();
+  if (!cleaned) {
+    return t("userAccounts.filter.unit.all");
+  }
+  const unit = getOrgUnitMap().get(cleaned);
+  return unit?.path_name || unit?.name || cleaned;
+};
+
+const formatQuotaValue = (user) => {
+  if (!user) {
+    return "-";
+  }
+  const balance = Number(user.quota_balance);
+  if (!Number.isFinite(balance)) {
+    return "-";
+  }
+  return isAdminRole(user.roles) ? "∞" : formatQuotaDisplay(balance);
+};
+
+const formatTokenDisplay = (value) => {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) {
+    return "-";
+  }
+  return `${(Math.max(0, amount) / 1000).toFixed(1)}k`;
+};
+
+const formatQuotaDisplay = (value) => Math.max(0, Math.floor(value)).toLocaleString();
+
+const formatQuotaMeta = (user) => {
+  if (!user) {
+    return "";
+  }
+  const balance = Number.isFinite(user.quota_balance) ? Math.max(0, Math.floor(user.quota_balance)) : 0;
+  const used = Number.isFinite(user.quota_used_total) ? Math.max(0, Math.floor(user.quota_used_total)) : 0;
+  const granted = Number.isFinite(user.quota_granted_total) ? Math.max(0, Math.floor(user.quota_granted_total)) : 0;
+  const daily = Number.isFinite(user.daily_quota_grant) ? Math.max(0, Math.floor(user.daily_quota_grant)) : 0;
+  return t("userAccounts.modal.settings.quota.meta", {
+    balance: formatQuotaDisplay(balance),
+    used: formatQuotaDisplay(used),
+    granted: formatQuotaDisplay(granted),
+    daily: formatQuotaDisplay(daily),
+  });
+};
+
+const formatOnlineStatus = (user) =>
+  user?.online ? t("userAccounts.status.online") : t("userAccounts.status.offline");
+
+const formatActivityTooltip = (series) =>
+  Array.isArray(series) && series.length
+    ? series.map((point) => `${point.date}: ${formatTokenDisplay(point.tokens)}`).join(" | ")
+    : t("userAccounts.activity.empty");
+
+const buildActivitySparkline = (series) => {
+  const points = Array.isArray(series) ? series : [];
+  const width = 124;
+  const height = 32;
+  const paddingX = 4;
+  const paddingY = 4;
+  const values = points.map((point) => Math.max(0, Number(point?.tokens) || 0));
+  const maxValue = Math.max(...values, 0);
+  const safeMax = maxValue > 0 ? maxValue : 1;
+  const stepX =
+    points.length > 1 ? (width - paddingX * 2) / (points.length - 1) : width - paddingX * 2;
+  const coordinates = points.map((point, index) => {
+    const value = Math.max(0, Number(point?.tokens) || 0);
+    const x = paddingX + index * stepX;
+    const y = height - paddingY - (value / safeMax) * (height - paddingY * 2);
+    return { x, y };
+  });
+  const linePoints =
+    coordinates.length > 0
+      ? coordinates.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ")
+      : `${paddingX},${height - paddingY} ${width - paddingX},${height - paddingY}`;
+  const areaPoints =
+    coordinates.length > 0
+      ? `${paddingX},${height - paddingY} ${linePoints} ${
+          coordinates[coordinates.length - 1].x
+        },${height - paddingY}`
+      : `${paddingX},${height - paddingY} ${width - paddingX},${height - paddingY}`;
+  const latestValue = values[values.length - 1] || 0;
+  return `
+    <div class="user-account-activity" title="${formatActivityTooltip(points)}">
+      <svg viewBox="0 0 ${width} ${height}" aria-hidden="true" focusable="false">
+        <path class="user-account-activity-area" d="M ${areaPoints} Z"></path>
+        <polyline class="user-account-activity-line" points="${linePoints}"></polyline>
+      </svg>
+      <span class="user-account-activity-value">${formatTokenDisplay(latestValue)}</span>
+    </div>
+  `;
+};
+
+const resolveUnitOptions = () =>
+  getOrgUnitOptions({
+    includeRoot: true,
+    rootLabel: t("userAccounts.unit.default"),
+  });
+
+const syncUserAccountUnitFilter = () => {
+  const select = elements.userAccountUnitFilter;
+  if (!select) {
+    return;
+  }
+  const currentValue = String(state.userAccounts.unitId || "").trim();
+  const options = getOrgUnitOptions({
+    includeRoot: true,
+    rootLabel: t("userAccounts.filter.unit.all"),
+  });
+  select.textContent = "";
+  options.forEach((option) => {
+    const node = document.createElement("option");
+    node.value = option.value;
+    node.textContent = option.label;
+    select.appendChild(node);
+  });
+  select.value = currentValue;
+  select.title = resolveUnitFilterLabel(currentValue);
+};
+
+const syncUnitSelect = (select, selected) => {
+  if (!select) {
+    return;
+  }
+  const options = resolveUnitOptions();
+  select.textContent = "";
+  options.forEach((option) => {
+    const node = document.createElement("option");
+    node.value = option.value;
+    node.textContent = option.label;
+    select.appendChild(node);
+  });
+  select.value = selected || "";
+};
+
+const resolveUserAccountPageSize = () => {
+  const rawValue = Math.floor(Number(state.userAccounts.pagination?.pageSize));
+  if (!Number.isFinite(rawValue) || rawValue <= 0) {
+    return DEFAULT_USER_ACCOUNT_PAGE_SIZE;
+  }
+  return rawValue;
+};
+
+const renderUserAccountPagination = () => {
+  const { userAccountPagination, userAccountPageInfo, userAccountPrevBtn, userAccountNextBtn } =
+    elements;
+  const total = Number(state.userAccounts.pagination?.total) || 0;
+  if (!total) {
+    userAccountPagination.style.display = "none";
+    return;
+  }
+  const pageSize = resolveUserAccountPageSize();
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const currentPage = Math.min(Math.max(1, state.userAccounts.pagination.page), totalPages);
+  state.userAccounts.pagination.page = currentPage;
+  userAccountPagination.style.display = "flex";
+  userAccountPageInfo.textContent = t("pagination.info", {
+    total,
+    current: currentPage,
+    pages: totalPages,
+    size: pageSize,
+  });
+  const busy = state.userAccounts.loading;
+  userAccountPrevBtn.disabled = busy || currentPage <= 1;
+  userAccountNextBtn.disabled = busy || currentPage >= totalPages;
+};
+
+const renderUserAccountRows = () => {
+  elements.userAccountTableBody.textContent = "";
+  if (!state.userAccounts.list.length) {
+    elements.userAccountEmpty.textContent = t("userAccounts.empty");
+    elements.userAccountEmpty.style.display = "block";
+    renderUserAccountBindingNote();
+    renderUserAccountPagination();
+    return;
+  }
+  elements.userAccountEmpty.style.display = "none";
+  const fragment = document.createDocumentFragment();
+  state.userAccounts.list.forEach((user) => {
+    const row = document.createElement("tr");
+
+    const userCell = document.createElement("td");
+    userCell.textContent = user.username || user.id || "-";
+
+    const notReadyHint = t("userAccounts.bindings.notReady");
+    const presetCell = document.createElement("td");
+    presetCell.textContent = user.preset_id || "-";
+    if (user.preset_id) {
+      presetCell.title = user.preset_id;
+    } else {
+      presetCell.title = notReadyHint;
+    }
+
+    const agentCell = document.createElement("td");
+    agentCell.textContent = user.agent_id || "-";
+    if (user.agent_id) {
+      agentCell.title = user.agent_id;
+    } else {
+      agentCell.title = notReadyHint;
+    }
+
+    const customizedCell = document.createElement("td");
+    if (user.customized_fields.length) {
+      const wrap = document.createElement("div");
+      wrap.className = "user-account-customized-list";
+      user.customized_fields.forEach((field) => {
+        const tag = document.createElement("span");
+        tag.className = "user-account-customized-tag";
+        tag.textContent = customizableFieldLabel(field);
+        wrap.appendChild(tag);
+      });
+      customizedCell.appendChild(wrap);
+    } else {
+      customizedCell.textContent = user.binding_available
+        ? t("userAccounts.bindings.customizedNone")
+        : "-";
+      if (!user.binding_available) {
+        customizedCell.title = notReadyHint;
+      }
+    }
+
+    const unitCell = document.createElement("td");
+    unitCell.textContent = resolveUnitLabel(user);
+
+    const onlineCell = document.createElement("td");
+    onlineCell.textContent = formatOnlineStatus(user);
+    onlineCell.className = user.online ? "status-online" : "status-offline";
+
+    const quotaCell = document.createElement("td");
+    quotaCell.textContent = formatQuotaValue(user);
+
+    const loginCell = document.createElement("td");
+    const loginText = formatLoginTime(user.last_login_at);
+    loginCell.textContent = loginText;
+    loginCell.title = loginText === "-" ? "" : loginText;
+
+    const activityCell = document.createElement("td");
+    activityCell.className = "user-account-activity-cell";
+    activityCell.innerHTML = buildActivitySparkline(user.activity_series);
+
+    const actionCell = document.createElement("td");
+    actionCell.className = "user-account-actions";
+
+    const loginBtn = document.createElement("button");
+    loginBtn.type = "button";
+    loginBtn.className = "secondary";
+    loginBtn.textContent = t("userAccounts.action.login");
+    loginBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openUserFrontend(user);
+    });
+    actionCell.appendChild(loginBtn);
+
+    const logoutBtn = document.createElement("button");
+    logoutBtn.type = "button";
+    logoutBtn.className = "secondary";
+    logoutBtn.textContent = t("userAccounts.action.logout");
+    logoutBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      forceLogoutUser(user);
+    });
+    actionCell.appendChild(logoutBtn);
+
+    const settingsBtn = document.createElement("button");
+    settingsBtn.type = "button";
+    settingsBtn.className = "secondary";
+    settingsBtn.textContent = t("userAccounts.action.settings");
+    settingsBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openSettingsModal(user);
+    });
+    actionCell.appendChild(settingsBtn);
+
+    row.appendChild(userCell);
+    row.appendChild(presetCell);
+    row.appendChild(agentCell);
+    row.appendChild(customizedCell);
+    row.appendChild(unitCell);
+    row.appendChild(onlineCell);
+    row.appendChild(quotaCell);
+    row.appendChild(loginCell);
+    row.appendChild(activityCell);
+    row.appendChild(actionCell);
+
+    fragment.appendChild(row);
+  });
+  elements.userAccountTableBody.appendChild(fragment);
+  renderUserAccountBindingNote();
+  renderUserAccountPagination();
+};
+
+// 契约未就绪提示：仅当整页都没有绑定字段时展示一次，避免逐行刷屏
+const renderUserAccountBindingNote = () => {
+  const note = elements.userAccountBindingNote;
+  if (!note) {
+    return;
+  }
+  const hasBindingData = state.userAccounts.list.some((item) => item.binding_available);
+  const missing = !hasBindingData && state.userAccounts.list.length > 0;
+  state.userAccounts.bindingAvailable = hasBindingData;
+  note.textContent = missing ? t("userAccounts.bindings.note") : "";
+  note.style.display = missing ? "block" : "none";
+};
+
+const resolveUserFrontendOrigin = () => {
+  if (typeof window === "undefined" || !window.location) {
+    return "";
+  }
+  const { protocol, hostname, port, origin } = window.location;
+  const mappedPort = USER_FRONTEND_PORT_BY_ADMIN_PORT[String(port || "").trim()];
+  if (mappedPort && mappedPort !== String(port || "").trim()) {
+    return `${protocol}//${hostname}:${mappedPort}`;
+  }
+  return origin || "";
+};
+
+const buildUserFrontendUrl = (userId) => {
+  const trimmedUserId = String(userId || "").trim();
+  if (!trimmedUserId) {
+    return "";
+  }
+  const origin = resolveUserFrontendOrigin();
+  if (!origin) {
+    return "";
+  }
+  const url = new URL("/app/chat", origin);
+  url.searchParams.set("section", "messages");
+  url.searchParams.set("entry", "default");
+  return url.toString();
+};
+
+const issueUserFrontendAccessToken = async (userId) => {
+  const wunderBase = getWunderBase();
+  const response = await fetch(
+    `${wunderBase}/admin/user_accounts/${encodeURIComponent(userId)}/login_token`,
+    { method: "POST" }
+  );
+  if (!response.ok) {
+    const message = await extractResponseMessage(
+      response,
+      t("common.requestFailed", { status: response.status })
+    );
+    throw new Error(message);
+  }
+  const payload = await response.json();
+  const accessToken = String(payload?.data?.access_token || "").trim();
+  if (!accessToken) {
+    throw new Error(t("userAccounts.toast.loginTokenEmpty"));
+  }
+  return accessToken;
+};
+
+const openUserFrontend = async (user) => {
+  const userId = String(user?.id || "").trim();
+  if (!userId) {
+    notify(t("userAccounts.toast.loginOpenFailed"), "error");
+    return;
+  }
+  const targetUrl = buildUserFrontendUrl(userId);
+  if (!targetUrl) {
+    notify(t("userAccounts.toast.loginOpenFailed"), "error");
+    return;
+  }
+  try {
+    const accessToken = await issueUserFrontendAccessToken(userId);
+    const url = new URL(targetUrl);
+    url.searchParams.set("access_token", accessToken);
+    const opened = window.open(url.toString(), "_blank");
+    if (!opened) {
+      notify(t("userAccounts.toast.loginOpenFailed"), "error");
+      return;
+    }
+    try {
+      opened.opener = null;
+    } catch (error) {
+      // Some browsers block opener mutation; the new tab has already been opened.
+    }
+  } catch (error) {
+    notify(
+      t("userAccounts.toast.loginOpenFailedWithMessage", {
+        message: error?.message || t("common.unknownError"),
+      }),
+      "error"
+    );
+  }
+};
+
+const forceLogoutUser = async (user) => {
+  const userId = String(user?.id || "").trim();
+  if (!userId) {
+    notify(t("userAccounts.toast.logoutFailed", { message: t("common.unknownError") }), "error");
+    return;
+  }
+  const confirmed = window.confirm(
+    t("userAccounts.logoutConfirm", { user: user.username || userId })
+  );
+  if (!confirmed) {
+    return;
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(userId)}/logout`;
+  try {
+    const response = await fetch(endpoint, { method: "POST" });
+    if (!response.ok) {
+      const message = await extractResponseMessage(
+        response,
+        t("common.requestFailed", { status: response.status })
+      );
+      notify(t("userAccounts.toast.logoutFailed", { message }), "error");
+      return;
+    }
+    notify(t("userAccounts.toast.logoutSuccess"), "success");
+    const target = state.userAccounts.list.find((item) => item.id === userId);
+    if (target) {
+      target.online = false;
+      renderUserAccountRows();
+    }
+    await loadUserAccounts();
+  } catch (error) {
+    notify(
+      t("userAccounts.toast.logoutFailed", {
+        message: error?.message || t("common.unknownError"),
+      }),
+      "error"
+    );
+  }
+};
+
+const openModal = (modal) => {
+  if (!modal) return;
+  modal.classList.add("active");
+};
+
+const closeModal = (modal) => {
+  if (!modal) return;
+  modal.classList.remove("active");
+};
+
+const extractResponseMessage = async (response, fallback) => {
+  try {
+    const payload = await response.json();
+    return (
+      payload?.error?.message ||
+      payload?.message ||
+      payload?.detail?.message ||
+      fallback
+    );
+  } catch {
+    return fallback;
+  }
+};
+
+const getUserAccountSearchKeyword = () => String(state.userAccounts.search || "").trim();
+
+const setUserAccountsLoading = (loading) => {
+  state.userAccounts.loading = loading;
+  if (elements.userAccountRefreshBtn) {
+    elements.userAccountRefreshBtn.disabled = loading;
+  }
+  if (elements.userAccountPrevBtn) {
+    elements.userAccountPrevBtn.disabled = loading || state.userAccounts.pagination.page <= 1;
+  }
+  if (elements.userAccountNextBtn) {
+    const total = Number(state.userAccounts.pagination?.total) || 0;
+    const pageSize = resolveUserAccountPageSize();
+    const totalPages = total ? Math.max(1, Math.ceil(total / pageSize)) : 1;
+    elements.userAccountNextBtn.disabled =
+      loading || state.userAccounts.pagination.page >= totalPages;
+  }
+};
+
+const setImportBusy = (busy) => {
+  importBusy = busy;
+  if (elements.userAccountImportBtn) {
+    elements.userAccountImportBtn.disabled = busy;
+    elements.userAccountImportBtn.classList.toggle("is-loading", busy);
+  }
+  if (elements.userAccountImportFile) {
+    elements.userAccountImportFile.disabled = busy;
+  }
+};
+
+const resetImportPanel = () => {
+  if (elements.userAccountImportFile) {
+    elements.userAccountImportFile.value = "";
+  }
+  if (elements.userAccountImportResult) {
+    elements.userAccountImportResult.textContent = "";
+    elements.userAccountImportResult.classList.remove("is-error", "is-success");
+  }
+  setImportBusy(false);
+};
+
+const renderImportResult = (data) => {
+  if (!elements.userAccountImportResult) {
+    return;
+  }
+  const created = Number(data?.created) || 0;
+  const failed = Number(data?.failed) || 0;
+  const total = Number(data?.total_rows) || created + failed;
+  const errors = Array.isArray(data?.errors) ? data.errors : [];
+  const summary = t("userAccounts.import.result", { total, created, failed });
+  const errorText = errors
+    .slice(0, 5)
+    .map((item) =>
+      t("userAccounts.import.errorLine", {
+        row: item?.row ?? "-",
+        message: item?.message || t("common.unknownError"),
+      })
+    )
+    .join("\n");
+  elements.userAccountImportResult.textContent = errorText
+    ? `${summary}\n${errorText}`
+    : summary;
+  elements.userAccountImportResult.classList.toggle("is-error", failed > 0);
+  elements.userAccountImportResult.classList.toggle("is-success", created > 0 && failed === 0);
+};
+
+export const loadUserAccounts = async () => {
+  ensureUserAccountsState();
+  if (!ensureUserAccountElements()) {
+    return;
+  }
+  if (state.userAccounts.loading) {
+    state.userAccounts.pendingReload = true;
+    return;
+  }
+  try {
+    await ensureOrgUnitsLoaded({ silent: true });
+  } catch (error) {
+    appendLog(t("userAccounts.toast.unitLoadFailed", { message: error.message }));
+  }
+  syncUserAccountUnitFilter();
+  state.userAccounts.search = String(elements.userAccountSearchInput.value || "").trim();
+  state.userAccounts.unitId = String(elements.userAccountUnitFilter?.value || "").trim();
+  const keyword = getUserAccountSearchKeyword();
+  const unitId = String(state.userAccounts.unitId || "").trim();
+  const pageSize = resolveUserAccountPageSize();
+  const currentPage = Math.max(1, Number(state.userAccounts.pagination.page) || 1);
+  const offset = (currentPage - 1) * pageSize;
+  const wunderBase = getWunderBase();
+  const params = new URLSearchParams();
+  params.set("offset", String(offset));
+  params.set("limit", String(pageSize));
+  if (keyword) {
+    params.set("keyword", keyword);
+  }
+  if (unitId) {
+    params.set("unit_id", unitId);
+  }
+  const endpoint = `${wunderBase}/admin/user_accounts?${params.toString()}`;
+  const shouldShowLoading = !state.userAccounts.loaded || !state.userAccounts.list.length;
+  if (shouldShowLoading) {
+    elements.userAccountEmpty.textContent = t("common.loading");
+    elements.userAccountEmpty.style.display = "block";
+  }
+  setUserAccountsLoading(true);
+  try {
+    const response = await fetch(endpoint);
+    if (!response.ok) {
+      throw new Error(t("common.requestFailed", { status: response.status }));
+    }
+    const result = await response.json();
+    const payload = result?.data || {};
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    state.userAccounts.list = items.map(normalizeUserAccount);
+    state.userAccounts.pagination.total = Number(payload.total) || 0;
+    state.userAccounts.loaded = true;
+    state.panelLoaded.userAccounts = true;
+    renderUserAccountRows();
+  } catch (error) {
+    state.userAccounts.list = [];
+    elements.userAccountEmpty.textContent = t("common.loadFailedWithMessage", {
+      message: error.message,
+    });
+    elements.userAccountEmpty.style.display = "block";
+    renderUserAccountPagination();
+    throw error;
+  } finally {
+    setUserAccountsLoading(false);
+    if (state.userAccounts.pendingReload) {
+      state.userAccounts.pendingReload = false;
+      loadUserAccounts().catch((error) => {
+        appendLog(t("userAccounts.toast.loadFailed", { message: error.message }));
+      });
+    }
+  }
+};
+
+const updateUserAccount = async (userId, payload) => {
+  if (!userId) {
+    return false;
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(userId)}`;
+  try {
+    const response = await fetch(endpoint, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const message = t("common.requestFailed", { status: response.status });
+      notify(message, "error");
+      return false;
+    }
+    notify(t("userAccounts.toast.updateSuccess"), "success");
+    await loadUserAccounts();
+    return true;
+  } catch (error) {
+    notify(t("userAccounts.toast.updateFailed", { message: error.message }), "error");
+    return false;
+  }
+};
+
+const requestDeleteUser = async (userId, options = {}) => {
+  if (!userId) {
+    return false;
+  }
+  // 删除用户会连同其唯一智能体与全部会话一并清理（沿用既有后端清理策略）
+  const confirmed = window.confirm(
+    t("userAccounts.deleteConfirm", {
+      userId,
+      agent: options.agentId || t("userAccounts.bindings.agentPlaceholder"),
+    })
+  );
+  if (!confirmed) {
+    return false;
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(userId)}`;
+  try {
+    const response = await fetch(endpoint, { method: "DELETE" });
+    if (!response.ok) {
+      notify(t("userAccounts.deleteFailed", { status: response.status }), "error");
+      return false;
+    }
+    notify(t("userAccounts.deleteSuccess"), "success");
+    await loadUserAccounts();
+    if (typeof options.onSuccess === "function") {
+      options.onSuccess();
+    }
+    return true;
+  } catch (error) {
+    notify(t("userAccounts.deleteFailed", { status: error.message }), "error");
+    return false;
+  }
+};
+
+// 拉取预设列表用于开户下拉；契约缺字段时仍可使用旧字段，因此失败不阻塞开户
+const loadPresetOptions = async ({ force = false } = {}) => {
+  ensureUserAccountsState();
+  if (state.userAccounts.presetsLoaded && !force) {
+    return state.userAccounts.presets;
+  }
+  const result = await listPresetAgents({ force });
+  if (!result.ok) {
+    state.userAccounts.presets = [];
+    state.userAccounts.presetsLoaded = false;
+    return [];
+  }
+  state.userAccounts.presets = result.items
+    .map((item) => ({
+      preset_id: String(item?.preset_id || "").trim(),
+      name: String(item?.name || "").trim(),
+      is_default_agent: item?.is_default_agent === true,
+    }))
+    .filter((item) => item.preset_id && item.name);
+  state.userAccounts.presetsLoaded = true;
+  return state.userAccounts.presets;
+};
+
+const renderCreatePresetOptions = () => {
+  const select = elements.userAccountCreatePreset;
+  if (!select) {
+    return;
+  }
+  const current = String(select.value || "").trim();
+  select.textContent = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = t("userAccounts.modal.create.preset.default");
+  select.appendChild(placeholder);
+  (state.userAccounts.presets || []).forEach((preset) => {
+    const option = document.createElement("option");
+    option.value = preset.preset_id;
+    option.textContent = preset.is_default_agent
+      ? `${preset.name}（${t("presetAgents.list.defaultBadge")}）`
+      : preset.name;
+    select.appendChild(option);
+  });
+  select.value = (state.userAccounts.presets || []).some((item) => item.preset_id === current) ? current : "";
+};
+
+const openCreateModal = async () => {
+  elements.userAccountFormUsername.value = "";
+  elements.userAccountFormEmail.value = "";
+  elements.userAccountFormPassword.value = "";
+  syncUnitSelect(elements.userAccountFormUnit, "");
+  elements.userAccountFormStatus.value = "active";
+  renderCreatePresetOptions();
+  resetImportPanel();
+  if (elements.userAccountModalTitle) {
+    elements.userAccountModalTitle.textContent = t("userAccounts.modal.create.title");
+  }
+  openModal(elements.userAccountModal);
+  try {
+    await loadPresetOptions();
+    renderCreatePresetOptions();
+  } catch (error) {
+    appendLog(t("userAccounts.toast.presetLoadFailed", { message: error.message || "-" }));
+  }
+};
+
+const submitCreateUser = async () => {
+  const username = String(elements.userAccountFormUsername.value || "").trim();
+  const password = String(elements.userAccountFormPassword.value || "").trim();
+  if (!username || !password) {
+    notify(t("userAccounts.toast.createRequired"), "warn");
+    return;
+  }
+  const email = String(elements.userAccountFormEmail.value || "").trim();
+  const unitId = String(elements.userAccountFormUnit.value || "").trim();
+  const presetId = String(elements.userAccountCreatePreset?.value || "").trim();
+  const payload = {
+    username,
+    email: email || null,
+    password,
+    unit_id: unitId || null,
+    status: elements.userAccountFormStatus.value || "active",
+  };
+  // 开户即按所选预设创建该用户唯一的智能体实例；留空由后端使用默认预设
+  if (presetId) {
+    payload.preset_id = presetId;
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/user_accounts`;
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      notify(t("userAccounts.toast.createFailed", { status: response.status }), "error");
+      return;
+    }
+    closeModal(elements.userAccountModal);
+    notify(t("userAccounts.toast.createSuccess"), "success");
+    await loadUserAccounts();
+  } catch (error) {
+    notify(t("userAccounts.toast.createFailed", { status: error.message }), "error");
+  }
+};
+
+const submitImportUsers = async () => {
+  if (importBusy) {
+    return;
+  }
+  const file = elements.userAccountImportFile?.files?.[0] || null;
+  if (!file) {
+    notify(t("userAccounts.toast.importRequired"), "warn");
+    return;
+  }
+  const formData = new FormData();
+  formData.append("file", file);
+  setImportBusy(true);
+  if (elements.userAccountImportResult) {
+    elements.userAccountImportResult.textContent = t("common.loading");
+    elements.userAccountImportResult.classList.remove("is-error", "is-success");
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/user_accounts/import`;
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: formData,
+    });
+    if (!response.ok) {
+      const message = await extractResponseMessage(
+        response,
+        t("common.requestFailed", { status: response.status })
+      );
+      notify(t("userAccounts.toast.importFailed", { message }), "error");
+      if (elements.userAccountImportResult) {
+        elements.userAccountImportResult.textContent = message;
+        elements.userAccountImportResult.classList.add("is-error");
+      }
+      return;
+    }
+    const payload = await response.json();
+    const data = payload?.data || {};
+    renderImportResult(data);
+    notify(
+      t("userAccounts.toast.importSuccess", {
+        created: Number(data.created) || 0,
+        failed: Number(data.failed) || 0,
+      }),
+      "success"
+    );
+    await loadUserAccounts();
+  } catch (error) {
+    const message = error?.message || t("common.unknownError");
+    notify(t("userAccounts.toast.importFailed", { message }), "error");
+    if (elements.userAccountImportResult) {
+      elements.userAccountImportResult.textContent = message;
+      elements.userAccountImportResult.classList.add("is-error");
+    }
+  } finally {
+    setImportBusy(false);
+  }
+};
+
+let seedBusy = false;
+let cleanupBusy = false;
+
+const setSeedBusy = (busy) => {
+  seedBusy = busy;
+  if (elements.userAccountSeedBtn) {
+    elements.userAccountSeedBtn.disabled = busy;
+  }
+  if (elements.userAccountSeedModalConfirm) {
+    elements.userAccountSeedModalConfirm.disabled = busy;
+  }
+  if (elements.userAccountSeedCount) {
+    elements.userAccountSeedCount.disabled = busy;
+  }
+};
+
+const setCleanupBusy = (busy) => {
+  cleanupBusy = busy;
+  if (elements.userAccountCleanupBtn) {
+    elements.userAccountCleanupBtn.disabled = busy;
+  }
+};
+
+const parseSeedCount = () => {
+  const raw = Number(elements.userAccountSeedCount.value);
+  if (!Number.isFinite(raw)) {
+    return null;
+  }
+  const count = Math.floor(raw);
+  if (count <= 0 || count > MAX_TEST_USERS_PER_UNIT) {
+    return null;
+  }
+  return count;
+};
+
+const openSeedModal = () => {
+  if (seedBusy) {
+    return;
+  }
+  elements.userAccountSeedCount.value = DEFAULT_TEST_USER_PER_UNIT;
+  if (elements.userAccountSeedHint) {
+    elements.userAccountSeedHint.textContent = t("userAccounts.modal.seed.hint", {
+      password: DEFAULT_TEST_USER_PASSWORD,
+      max: MAX_TEST_USERS_PER_UNIT,
+    });
+  }
+  openModal(elements.userAccountSeedModal);
+};
+
+const submitSeedUsers = async () => {
+  if (seedBusy) {
+    return;
+  }
+  const perUnit = parseSeedCount();
+  if (!perUnit) {
+    notify(t("userAccounts.toast.seedCountInvalid", { max: MAX_TEST_USERS_PER_UNIT }), "warn");
+    return;
+  }
+  const confirmed = window.confirm(t("userAccounts.seed.confirm", { count: perUnit }));
+  if (!confirmed) {
+    return;
+  }
+  setSeedBusy(true);
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/user_accounts/test/seed`;
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ per_unit: perUnit }),
+    });
+    if (!response.ok) {
+      notify(t("userAccounts.toast.seedFailed", { status: response.status }), "error");
+      return;
+    }
+    const payload = await response.json();
+    const data = payload?.data || {};
+    const created = Number(data.created) || 0;
+    const unitCount = Number(data.unit_count) || 0;
+    const password = data.password || DEFAULT_TEST_USER_PASSWORD;
+    closeModal(elements.userAccountSeedModal);
+    notify(
+      t("userAccounts.toast.seedSuccess", {
+        created,
+        unitCount,
+        perUnit,
+        password,
+      }),
+      "success"
+    );
+    await loadUserAccounts();
+  } catch (error) {
+    notify(t("userAccounts.toast.seedFailed", { status: error.message }), "error");
+  } finally {
+    setSeedBusy(false);
+  }
+};
+
+const requestCleanupTestUsers = async () => {
+  if (cleanupBusy || seedBusy) {
+    return;
+  }
+  const confirmed = window.confirm(t("userAccounts.cleanup.confirm"));
+  if (!confirmed) {
+    return;
+  }
+  setCleanupBusy(true);
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/user_accounts/test/cleanup`;
+  try {
+    const response = await fetch(endpoint, { method: "POST" });
+    if (!response.ok) {
+      notify(t("userAccounts.toast.cleanupFailed", { status: response.status }), "error");
+      return;
+    }
+    const payload = await response.json();
+    const deleted = Number(payload?.deleted_users) || 0;
+    if (deleted > 0) {
+      notify(t("userAccounts.toast.cleanupSuccess", { deleted }), "success");
+    } else {
+      notify(t("userAccounts.toast.cleanupEmpty"), "info");
+    }
+    await loadUserAccounts();
+  } catch (error) {
+    notify(t("userAccounts.toast.cleanupFailed", { status: error.message }), "error");
+  } finally {
+    setCleanupBusy(false);
+  }
+};
+
+let settingsTarget = null;
+let toolSaveTimer = null;
+
+const isAdminRole = (roles) =>
+  Array.isArray(roles) && (roles.includes("admin") || roles.includes("super_admin"));
+
+const resolveRoleSelection = (roles) => (isAdminRole(roles) ? "admin" : "user");
+
+const userUsesQuota = (user) => !isAdminRole(user?.roles);
+
+const syncQuotaControls = (user) => {
+  const enabled = userUsesQuota(user);
+  const title = enabled ? "" : t("userAccounts.modal.settings.quotaControls.disabledTitle");
+  [
+    elements.userAccountQuotaInput,
+    elements.userAccountQuotaSave,
+    elements.userAccountQuotaAdjustInput,
+    elements.userAccountQuotaGrantBtn,
+    elements.userAccountQuotaDeductBtn,
+  ].forEach((node) => {
+    if (!node) {
+      return;
+    }
+    node.disabled = !enabled;
+    node.title = title;
+  });
+  if (elements.userAccountQuotaHint) {
+    elements.userAccountQuotaHint.textContent = t(
+      enabled
+        ? "userAccounts.modal.settings.quota.hint"
+        : "userAccounts.modal.settings.quota.adminHint"
+    );
+  }
+  if (elements.userAccountQuotaAdjustHint) {
+    elements.userAccountQuotaAdjustHint.textContent = t(
+      enabled
+        ? "userAccounts.modal.settings.quotaAdjust.hint"
+        : "userAccounts.modal.settings.quotaAdjust.adminHint"
+    );
+  }
+};
+
+const syncSettingsTarget = (user) => {
+  settingsTarget = user;
+  if (!user) {
+    return;
+  }
+  elements.userAccountSettingsUser.textContent = user.username || user.id || "-";
+  elements.userAccountQuotaInput.value = Number.isFinite(user.quota_balance) ? user.quota_balance : "";
+  elements.userAccountQuotaMeta.textContent = formatQuotaMeta(user);
+  elements.userAccountQuotaAdjustInput.value = "";
+  if (elements.userAccountSettingsPasswordUsername) {
+    elements.userAccountSettingsPasswordUsername.value = user.username || user.id || "";
+  }
+  elements.userAccountSettingsPasswordInput.value = "";
+  syncUnitSelect(elements.userAccountSettingsUnitSelect, user.unit_id || "");
+  elements.userAccountSettingsRolesInput.value = resolveRoleSelection(user.roles);
+  syncQuotaControls(user);
+  syncRebuildHint(user);
+};
+
+const resolvePresetName = (presetId) => {
+  const preset = (state.userAccounts.presets || []).find((item) => item.preset_id === presetId);
+  return preset?.name || presetId || "-";
+};
+
+const syncRebuildHint = (user) => {
+  const hint = elements.userAccountRebuildHint;
+  if (!hint) {
+    return;
+  }
+  const presetId = String(user?.preset_id || "").trim();
+  hint.textContent = presetId
+    ? t("userAccounts.modal.rebuild.hintWithPreset", { preset: resolvePresetName(presetId) })
+    : t("userAccounts.modal.rebuild.hint");
+};
+
+// 重建智能体：按用户当前绑定的预设重建其唯一智能体实例（危险操作，影响面预览 + 二次确认）
+const requestRebuildAgent = async () => {
+  const user = settingsTarget;
+  if (!user?.id) {
+    return;
+  }
+  const presetId = String(user.preset_id || "").trim();
+  if (!presetId) {
+    notify(t("userAccounts.rebuild.noPreset"), "warn");
+    return;
+  }
+  if (getContractState() === CONTRACT_STATE_UNAVAILABLE) {
+    notify(t("presetAgents.contract.notReady"), "warn");
+    return;
+  }
+  openImpactConfirmModal({
+    title: t("userAccounts.rebuild.title"),
+    summary: t("userAccounts.rebuild.summary", {
+      user: user.username || user.id,
+      preset: resolvePresetName(presetId),
+    }),
+    details: [
+      t("userAccounts.rebuild.agentLine", { agent: user.agent_id || "-" }),
+      t("userAccounts.rebuild.threadLine"),
+      t("userAccounts.rebuild.sessionLine"),
+    ],
+    hint: t("userAccounts.modal.rebuild.hint"),
+    confirmLabel: t("userAccounts.action.rebuild"),
+    danger: true,
+    onConfirm: async () => {
+      // 契约中重建等价于把该用户重新绑定到当前预设（后端据此重建唯一实例）
+      const result = await mutatePresetBindings({ presetId, userIds: [user.id], action: "bind" });
+      if (!result.ok) {
+        if (result.unavailable) {
+          notify(t("presetAgents.contract.notReady"), "warn");
+        } else {
+          notify(t("userAccounts.rebuild.failed", { message: result.message || "-" }), "error");
+        }
+        return false;
+      }
+      notify(t("userAccounts.rebuild.success", { user: user.username || user.id }), "success");
+      await loadUserAccounts();
+      const refreshed = state.userAccounts.list.find((item) => item.id === user.id);
+      if (refreshed) {
+        syncSettingsTarget(refreshed);
+      }
+      return true;
+    },
+  });
+};
+
+const refreshSettingsTarget = () => {
+  if (!settingsTarget?.id) {
+    return;
+  }
+  const updated = state.userAccounts.list.find((item) => item.id === settingsTarget.id);
+  if (updated) {
+    syncSettingsTarget(updated);
+  }
+};
+
+const submitPasswordReset = async () => {
+  if (!settingsTarget?.id) {
+    return;
+  }
+  const password = String(elements.userAccountSettingsPasswordInput.value || "").trim();
+  if (!password) {
+    notify(t("userAccounts.toast.passwordRequired"), "warn");
+    return;
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(settingsTarget.id)}/password`;
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    if (!response.ok) {
+      notify(t("userAccounts.toast.passwordFailed", { status: response.status }), "error");
+      return;
+    }
+    elements.userAccountSettingsPasswordInput.value = "";
+    notify(t("userAccounts.toast.passwordSuccess"), "success");
+  } catch (error) {
+    notify(t("userAccounts.toast.passwordFailed", { status: error.message }), "error");
+  }
+};
+
+const saveQuota = async () => {
+  if (!settingsTarget?.id) {
+    return;
+  }
+  if (!userUsesQuota(settingsTarget)) {
+    notify(t("userAccounts.toast.quotaAdminDisabled"), "warn");
+    return;
+  }
+  const value = elements.userAccountQuotaInput.value.trim();
+  const raw = Number(value);
+  if (!value || !Number.isSafeInteger(raw) || raw < 0) {
+    notify(t("userAccounts.toast.quotaInvalid"), "warn");
+    return;
+  }
+  const ok = await updateUserAccount(settingsTarget.id, { quota_balance: raw });
+  if (ok) {
+    refreshSettingsTarget();
+  }
+};
+
+const adjustUserQuota = async (action) => {
+  if (!settingsTarget?.id) {
+    return;
+  }
+  if (!userUsesQuota(settingsTarget)) {
+    notify(t("userAccounts.toast.quotaAdminDisabled"), "warn");
+    return;
+  }
+  const raw = Number(elements.userAccountQuotaAdjustInput.value);
+  if (!Number.isSafeInteger(raw) || raw <= 0) {
+    notify(t("userAccounts.toast.quotaAdjustInvalid"), "warn");
+    return;
+  }
+  const amount = raw;
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(settingsTarget.id)}/quota_adjustment`;
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, amount }),
+    });
+    if (!response.ok) {
+      const message = await extractResponseMessage(
+        response,
+        t("common.requestFailed", { status: response.status })
+      );
+      notify(t("userAccounts.toast.quotaAdjustFailed", { message }), "error");
+      return;
+    }
+    elements.userAccountQuotaAdjustInput.value = "";
+    await loadUserAccounts();
+    refreshSettingsTarget();
+    notify(
+      action === "grant"
+        ? t("userAccounts.toast.quotaGrantSuccess", { amount })
+        : t("userAccounts.toast.quotaDeductSuccess", { amount }),
+      "success"
+    );
+  } catch (error) {
+    notify(t("userAccounts.toast.quotaAdjustFailed", { message: error.message }), "error");
+  }
+};
+
+const saveRoles = async () => {
+  if (!settingsTarget?.id) {
+    return;
+  }
+  const role = String(elements.userAccountSettingsRolesInput.value || "").trim();
+  const roles = role ? [role] : [];
+  const ok = await updateUserAccount(settingsTarget.id, { roles });
+  if (ok) {
+    refreshSettingsTarget();
+  }
+};
+
+const saveUnit = async () => {
+  if (!settingsTarget?.id) {
+    return;
+  }
+  const unitId = String(elements.userAccountSettingsUnitSelect.value || "").trim();
+  const ok = await updateUserAccount(settingsTarget.id, { unit_id: unitId });
+  if (ok) {
+    refreshSettingsTarget();
+    openSettingsModal(settingsTarget);
+    syncPromptTools();
+  }
+};
+
+const buildToolOptions = (list) =>
+  (Array.isArray(list) ? list : [])
+    // 蜂群工具已全链路移除：用户工具授权选择器不再列出（待后端移除后一并删除该过滤）
+    .filter((item) => !isRemovedSwarmTool(item))
+    .map((item) => {
+      if (!item) return null;
+      const name = item.name || item.tool_name || item.toolName;
+      if (!name) return null;
+      const label = item.display_name || item.displayName || item.title || item.label || name;
+      return {
+        value: String(name),
+        label: String(label || name),
+        description: String(item.description || ""),
+      };
+    })
+    .filter(Boolean);
+
+const buildToolGroups = (payload) => [
+  { label: t("userAccounts.toolGroup.builtin"), options: buildToolOptions(payload.builtin_tools) },
+  { label: t("userAccounts.toolGroup.mcp"), options: buildToolOptions(payload.mcp_tools) },
+  { label: t("userAccounts.toolGroup.a2a"), options: buildToolOptions(payload.a2a_tools) },
+  { label: t("userAccounts.toolGroup.skills"), options: buildToolOptions(payload.skills) },
+  { label: t("userAccounts.toolGroup.knowledge"), options: buildToolOptions(payload.knowledge_tools) },
+  { label: t("userAccounts.toolGroup.user"), options: buildToolOptions(payload.user_tools) },
+  { label: t("userAccounts.toolGroup.shared"), options: buildToolOptions(payload.shared_tools) },
+].filter((group) => group.options.length > 0);
+
+const scheduleToolSave = (options = {}) => {
+  if (toolSaveTimer) {
+    clearTimeout(toolSaveTimer);
+  }
+  const delay = Number.isFinite(options.delay) ? Math.max(0, options.delay) : 400;
+  const silent = options.silent !== false;
+  toolSaveTimer = setTimeout(() => {
+    saveToolAccess({ silent }).catch(() => {});
+  }, delay);
+};
+
+const setToolListDisabled = (list, disabled) => {
+  if (!list) {
+    return;
+  }
+  list.classList.toggle("is-disabled", disabled);
+  list.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+    input.disabled = disabled;
+  });
+};
+
+const renderToolOptions = (list, empty, groups, selected, options = {}) => {
+  if (!list || !empty) {
+    return;
+  }
+  list.textContent = "";
+  if (!groups.length) {
+    empty.style.display = "block";
+    return;
+  }
+  empty.style.display = "none";
+  const selectedSet = new Set(selected || []);
+  const disabled = options.disabled === true;
+  const onChange = options.onChange || (() => scheduleToolSave({ silent: true }));
+  groups.forEach((group) => {
+    const title = document.createElement("div");
+    title.className = "user-account-tool-group-title";
+    title.textContent = group.label;
+    list.appendChild(title);
+    group.options.forEach((option) => {
+      const item = document.createElement("div");
+      item.className = "tool-item";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.value = option.value;
+      checkbox.checked = selectedSet.has(option.value);
+      checkbox.disabled = disabled;
+      checkbox.addEventListener("change", () => onChange());
+      const label = document.createElement("label");
+      const desc = option.description ? `<span class="muted">${option.description}</span>` : "";
+      label.innerHTML = `<strong>${option.label}</strong>${desc}`;
+      item.addEventListener("click", (event) => {
+        if (event.target === checkbox || checkbox.disabled) {
+          return;
+        }
+        checkbox.checked = !checkbox.checked;
+        checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      item.appendChild(checkbox);
+      item.appendChild(label);
+      list.appendChild(item);
+    });
+  });
+};
+
+const loadToolCatalog = async (userId) => {
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/tools?user_id=${encodeURIComponent(userId)}`;
+  const response = await fetch(endpoint);
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  const payload = await response.json();
+  return buildToolGroups(payload || {});
+};
+
+const loadToolAccess = async (userId) => {
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(userId)}/tool_access`;
+  const response = await fetch(endpoint);
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  const payload = await response.json();
+  return {
+    allowed: payload?.data?.allowed_tools ?? null,
+  };
+};
+
+const syncToolAccessToggle = () => {
+  const useDefault = elements.userAccountToolDefault.checked;
+  setToolListDisabled(elements.userAccountToolList, useDefault);
+};
+
+const openSettingsModal = async (user) => {
+  if (!user?.id) {
+    return;
+  }
+  syncSettingsTarget(user);
+  elements.userAccountToolDefault.checked = true;
+  elements.userAccountToolList.textContent = "";
+  elements.userAccountToolEmpty.textContent = t("common.loading");
+  elements.userAccountToolEmpty.style.display = "block";
+  syncToolAccessToggle();
+  openModal(elements.userAccountSettingsModal);
+  // 预设名称需要预设列表；失败时保持「未绑定」提示，不阻塞设置面板
+  loadPresetOptions()
+    .then(() => syncRebuildHint(settingsTarget))
+    .catch(() => syncRebuildHint(settingsTarget));
+  try {
+    const [groups, access] = await Promise.all([
+      loadToolCatalog(user.id),
+      loadToolAccess(user.id),
+    ]);
+    const allowed = access?.allowed ?? null;
+    const useDefault = allowed === null;
+    elements.userAccountToolDefault.checked = useDefault;
+    renderToolOptions(
+      elements.userAccountToolList,
+      elements.userAccountToolEmpty,
+      groups,
+      Array.isArray(allowed) ? allowed : [],
+      { disabled: useDefault }
+    );
+    syncToolAccessToggle();
+  } catch (error) {
+    notify(t("userAccounts.toast.toolLoadFailed", { message: error.message }), "error");
+  }
+};
+
+const collectSelectedTools = (list) => {
+  if (!list) {
+    return [];
+  }
+  return Array.from(list.querySelectorAll('input[type="checkbox"]'))
+    .filter((input) => input.checked)
+    .map((input) => input.value);
+};
+
+const saveToolAccess = async (options = {}) => {
+  if (!settingsTarget?.id) {
+    return;
+  }
+  const silent = options.silent === true;
+  const useDefault = elements.userAccountToolDefault.checked;
+  const allowed = useDefault ? null : collectSelectedTools(elements.userAccountToolList);
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(settingsTarget.id)}/tool_access`;
+  try {
+    const response = await fetch(endpoint, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ allowed_tools: allowed }),
+    });
+    if (!response.ok) {
+      notify(t("userAccounts.toast.toolSaveFailed", { status: response.status }), "error");
+      return;
+    }
+    if (!silent) {
+      notify(t("userAccounts.toast.toolSaveSuccess"), "success");
+    }
+  } catch (error) {
+    notify(t("userAccounts.toast.toolSaveFailed", { status: error.message }), "error");
+  }
+};
+
+export const initUserAccountsPanel = () => {
+  ensureUserAccountsState();
+  if (!ensureUserAccountElements()) {
+    return;
+  }
+  elements.userAccountSearchInput.value = state.userAccounts.search || "";
+  if (elements.userAccountUnitFilter) {
+    elements.userAccountUnitFilter.value = state.userAccounts.unitId || "";
+  }
+  elements.userAccountSearchInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      state.userAccounts.pagination.page = 1;
+      loadUserAccounts().catch((error) => {
+        appendLog(t("userAccounts.toast.loadFailed", { message: error.message }));
+        notify(t("userAccounts.toast.loadFailed", { message: error.message }), "error");
+      });
+    }
+  });
+  elements.userAccountUnitFilter?.addEventListener("change", () => {
+    state.userAccounts.unitId = String(elements.userAccountUnitFilter.value || "").trim();
+    state.userAccounts.pagination.page = 1;
+    loadUserAccounts().catch((error) => {
+      appendLog(t("userAccounts.toast.loadFailed", { message: error.message }));
+      notify(t("userAccounts.toast.loadFailed", { message: error.message }), "error");
+    });
+  });
+  elements.userAccountRefreshBtn.addEventListener("click", async () => {
+    try {
+      // 手动刷新时重置契约状态，便于后端绑定接口上线后无需整页刷新即可恢复
+      resetContractState();
+      state.userAccounts.presetsLoaded = false;
+      await loadUserAccounts();
+      await loadPresetOptions({ force: true });
+      notify(t("userAccounts.toast.loadSuccess"), "success");
+    } catch (error) {
+      appendLog(t("userAccounts.toast.loadFailed", { message: error.message }));
+      notify(t("userAccounts.toast.loadFailed", { message: error.message }), "error");
+    }
+  });
+  elements.userAccountRebuildBtn?.addEventListener("click", requestRebuildAgent);
+  elements.userAccountSeedBtn.addEventListener("click", openSeedModal);
+  elements.userAccountCleanupBtn.addEventListener("click", requestCleanupTestUsers);
+  elements.userAccountCreateBtn.addEventListener("click", openCreateModal);
+  elements.userAccountModalClose?.addEventListener("click", () => closeModal(elements.userAccountModal));
+  elements.userAccountModalCancel.addEventListener("click", () => closeModal(elements.userAccountModal));
+  elements.userAccountModalSave.addEventListener("click", submitCreateUser);
+  elements.userAccountImportBtn.addEventListener("click", submitImportUsers);
+  elements.userAccountSeedModalClose?.addEventListener("click", () =>
+    closeModal(elements.userAccountSeedModal)
+  );
+  elements.userAccountSeedModalCancel.addEventListener("click", () =>
+    closeModal(elements.userAccountSeedModal)
+  );
+  elements.userAccountSeedModalConfirm.addEventListener("click", submitSeedUsers);
+  elements.userAccountSettingsClose?.addEventListener("click", () => closeModal(elements.userAccountSettingsModal));
+  elements.userAccountSettingsCancel.addEventListener("click", () => closeModal(elements.userAccountSettingsModal));
+  elements.userAccountQuotaSave.addEventListener("click", saveQuota);
+  elements.userAccountQuotaGrantBtn.addEventListener("click", () => adjustUserQuota("grant"));
+  elements.userAccountQuotaDeductBtn.addEventListener("click", () => adjustUserQuota("deduct"));
+  elements.userAccountSettingsPasswordSave.addEventListener("click", submitPasswordReset);
+  elements.userAccountSettingsUnitSave.addEventListener("click", saveUnit);
+  elements.userAccountSettingsRolesSave.addEventListener("click", saveRoles);
+  elements.userAccountSettingsDelete.addEventListener("click", () => {
+    requestDeleteUser(settingsTarget?.id, {
+      agentId: settingsTarget?.agent_id || "",
+      onSuccess: () => closeModal(elements.userAccountSettingsModal),
+    });
+  });
+  elements.userAccountToolDefault.addEventListener("change", () => {
+    syncToolAccessToggle();
+    scheduleToolSave({ silent: true });
+  });
+  elements.userAccountPrevBtn.addEventListener("click", async () => {
+    state.userAccounts.pagination.page = Math.max(1, state.userAccounts.pagination.page - 1);
+    await loadUserAccounts();
+  });
+  elements.userAccountNextBtn.addEventListener("click", async () => {
+    state.userAccounts.pagination.page = state.userAccounts.pagination.page + 1;
+    await loadUserAccounts();
+  });
+  if (userAccountOnlineRefreshTimer) {
+    clearInterval(userAccountOnlineRefreshTimer);
+  }
+  userAccountOnlineRefreshTimer = setInterval(() => {
+    if (state.runtime?.activePanel !== "userAccounts") {
+      return;
+    }
+    loadUserAccounts().catch(() => {});
+  }, USER_ACCOUNT_ONLINE_REFRESH_MS);
+  setCleanupBusy(false);
+  syncUserAccountUnitFilter();
+};
+

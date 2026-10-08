@@ -1,0 +1,916 @@
+use crate::config::{Config, KnowledgeBaseConfig};
+use crate::core::blocking;
+use crate::lsp::LspManager;
+use crate::orchestrator::Orchestrator;
+use crate::skills::SkillRegistry;
+use crate::state::AppState;
+use crate::storage::UserAccountRecord;
+use crate::tools::{build_tool_roots, execute_tool, ToolContext, ToolRoots};
+use crate::user_access::{build_user_tool_context, compute_allowed_tool_names};
+use crate::user_tools::UserToolBindings;
+use crate::vector_knowledge;
+use crate::workspace::WorkspaceManager;
+use chrono::Local;
+use futures::future::join_all;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::time::Instant;
+use uuid::Uuid;
+
+const PERF_USER_ID: &str = "performance_admin";
+const PERF_ROOT_DIR: &str = ".wunder_perf";
+const DEFAULT_COMMAND: &str = "echo wunder_perf";
+const COMMAND_TIMEOUT_S: u64 = 5;
+const DEFAULT_SAMPLE_REPEATS: usize = 2;
+const FILE_OPS_SAMPLE_REPEATS: usize = 1;
+
+#[derive(Debug, Deserialize)]
+pub struct PerformanceSampleRequest {
+    pub concurrency: usize,
+    #[serde(default)]
+    pub command: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PerformanceMetricSample {
+    pub key: String,
+    pub avg_ms: Option<f64>,
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PerformanceSampleResponse {
+    pub concurrency: usize,
+    pub metrics: Vec<PerformanceMetricSample>,
+}
+
+struct PerformanceContext {
+    state: Arc<AppState>,
+    config: Arc<Config>,
+    orchestrator: Arc<Orchestrator>,
+    workspace: Arc<WorkspaceManager>,
+    lsp_manager: Arc<LspManager>,
+    skills: Arc<SkillRegistry>,
+    user_tool_bindings: Arc<UserToolBindings>,
+    http: Arc<reqwest::Client>,
+    tool_roots: ToolRoots,
+    user_id: String,
+    workspace_id: String,
+    run_id: String,
+}
+
+struct MetricSummary {
+    avg_ms: Option<f64>,
+    ok: bool,
+    details: Option<Value>,
+    error: Option<String>,
+}
+
+#[derive(Default)]
+struct StepDurations {
+    total_ms: f64,
+    steps: BTreeMap<String, f64>,
+}
+
+impl StepDurations {
+    fn add_step(&mut self, name: &str, elapsed_ms: f64) {
+        self.total_ms += elapsed_ms;
+        *self.steps.entry(name.to_string()).or_insert(0.0) += elapsed_ms;
+    }
+}
+
+pub async fn run_sample(
+    state: Arc<AppState>,
+    request: PerformanceSampleRequest,
+) -> Result<PerformanceSampleResponse, String> {
+    let concurrency = request.concurrency;
+    if concurrency == 0 {
+        return Err("并发数必须大于 0".to_string());
+    }
+    let config = state.config_store.get().await;
+    let max_allowed = config.server.max_active_sessions.max(1);
+    if concurrency > max_allowed {
+        return Err(format!("并发数不能超过 {max_allowed}"));
+    }
+    let skills_snapshot = state.skills.read().await.clone();
+    let user_tool_bindings =
+        state
+            .user_tool_manager
+            .build_bindings(&config, &skills_snapshot, PERF_USER_ID);
+    let tool_roots = build_tool_roots(&config, &skills_snapshot, Some(&user_tool_bindings), &[]);
+
+    let context = PerformanceContext {
+        state: state.clone(),
+        config: Arc::new(config),
+        orchestrator: state.kernel.orchestrator.clone(),
+        workspace: state.workspace.clone(),
+        lsp_manager: state.lsp_manager.clone(),
+        skills: Arc::new(skills_snapshot),
+        user_tool_bindings: Arc::new(user_tool_bindings),
+        http: Arc::new(reqwest::Client::new()),
+        tool_roots,
+        user_id: PERF_USER_ID.to_string(),
+        workspace_id: state.workspace.scoped_user_id(PERF_USER_ID, None),
+        run_id: Uuid::new_v4().simple().to_string(),
+    };
+
+    let command = request
+        .command
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_COMMAND.to_string());
+
+    let mut metrics = Vec::new();
+    metrics.push(build_metric(
+        "prompt_build",
+        measure_repeated(DEFAULT_SAMPLE_REPEATS, || {
+            measure_prompt_build(concurrency, &context)
+        })
+        .await,
+    ));
+    metrics.push(build_metric(
+        "file_ops",
+        measure_repeated(FILE_OPS_SAMPLE_REPEATS, || {
+            measure_file_ops(concurrency, &context)
+        })
+        .await,
+    ));
+    metrics.push(build_metric(
+        "command_exec",
+        measure_repeated(DEFAULT_SAMPLE_REPEATS, || {
+            measure_command_exec(concurrency, &context, &command)
+        })
+        .await,
+    ));
+    metrics.push(build_metric(
+        "tool_access",
+        measure_repeated(DEFAULT_SAMPLE_REPEATS, || {
+            measure_tool_access(concurrency, &context)
+        })
+        .await,
+    ));
+    metrics.push(build_metric(
+        "vector_flow",
+        measure_repeated(DEFAULT_SAMPLE_REPEATS, || {
+            measure_vector_flow(concurrency, &context)
+        })
+        .await,
+    ));
+    metrics.push(build_metric(
+        "log_write",
+        measure_repeated(DEFAULT_SAMPLE_REPEATS, || {
+            measure_log_write(concurrency, &context)
+        })
+        .await,
+    ));
+
+    cleanup_perf_dir(&context).await;
+    cleanup_perf_vector_dir(&context).await;
+
+    Ok(PerformanceSampleResponse {
+        concurrency,
+        metrics,
+    })
+}
+
+fn build_metric(key: &str, summary: MetricSummary) -> PerformanceMetricSample {
+    PerformanceMetricSample {
+        key: key.to_string(),
+        avg_ms: summary.avg_ms,
+        ok: summary.ok,
+        details: summary.details,
+        error: summary.error,
+    }
+}
+
+async fn measure_repeated<F, Fut>(repeats: usize, mut op: F) -> MetricSummary
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = MetricSummary>,
+{
+    let repeats = repeats.max(1);
+    let mut summaries = Vec::with_capacity(repeats);
+    for _ in 0..repeats {
+        summaries.push(op().await);
+    }
+    merge_summaries(summaries)
+}
+
+fn merge_summaries(summaries: Vec<MetricSummary>) -> MetricSummary {
+    let mut values = Vec::new();
+    let mut ok = true;
+    let mut error = None;
+    let mut details = Vec::new();
+    for summary in summaries {
+        if let Some(value) = summary.avg_ms {
+            values.push(value);
+        }
+        ok = ok && summary.ok;
+        if error.is_none() && !summary.ok {
+            error = summary.error;
+        }
+        details.push(summary.details);
+    }
+    let avg_ms = if values.is_empty() {
+        None
+    } else {
+        Some(values.iter().sum::<f64>() / values.len() as f64)
+    };
+    let details = merge_metric_details(details);
+    MetricSummary {
+        avg_ms,
+        ok,
+        details,
+        error,
+    }
+}
+
+fn merge_metric_details(details_list: Vec<Option<Value>>) -> Option<Value> {
+    let mut sums = BTreeMap::new();
+    let mut count = 0usize;
+    for details in details_list {
+        let Some(Value::Object(map)) = details else {
+            continue;
+        };
+        count += 1;
+        for (key, value) in map {
+            if let Some(number) = value.as_f64() {
+                *sums.entry(key).or_insert(0.0) += number;
+            }
+        }
+    }
+    if count == 0 || sums.is_empty() {
+        None
+    } else {
+        Some(Value::Object(
+            sums.into_iter()
+                .map(|(key, value)| (key, json!(value / count as f64)))
+                .collect(),
+        ))
+    }
+}
+
+fn step_details_value(steps: &StepDurations) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert("total_ms".to_string(), json!(steps.total_ms));
+    for (key, value) in &steps.steps {
+        map.insert(key.clone(), json!(value));
+    }
+    Value::Object(map)
+}
+
+fn build_perf_user_record(user_id: &str) -> UserAccountRecord {
+    UserAccountRecord {
+        user_id: user_id.to_string(),
+        username: user_id.to_string(),
+        email: None,
+        password_hash: String::new(),
+        roles: Vec::new(),
+        status: "active".to_string(),
+        access_level: "A".to_string(),
+        unit_id: None,
+        quota_balance: 0,
+        quota_granted_total: 0,
+        quota_used_total: 0,
+        last_quota_grant_date: None,
+        experience_total: 0,
+        is_demo: false,
+        created_at: 0.0,
+        updated_at: 0.0,
+        last_login_at: None,
+    }
+}
+
+async fn measure_prompt_build(concurrency: usize, context: &PerformanceContext) -> MetricSummary {
+    run_concurrent(concurrency, |index| async move {
+        let _ = index;
+        let started = Instant::now();
+        let _prompt = context
+            .orchestrator
+            .build_system_prompt(
+                context.config.as_ref(),
+                &Vec::new(),
+                context.skills.as_ref(),
+                Some(context.user_tool_bindings.as_ref()),
+                &context.user_id,
+                None,
+                false,
+                &context.workspace.scoped_user_id(&context.user_id, None),
+                None,
+                None,
+                false,
+            )
+            .await;
+        Ok((started.elapsed().as_secs_f64() * 1000.0, None))
+    })
+    .await
+}
+
+async fn measure_tool_access(concurrency: usize, context: &PerformanceContext) -> MetricSummary {
+    let user_id = context.user_id.clone();
+    let state = context.state.clone();
+    let user = build_perf_user_record(&user_id);
+    run_concurrent(concurrency, move |_| {
+        let user = user.clone();
+        let state = state.clone();
+        let user_id = user_id.clone();
+        async move {
+            let started = Instant::now();
+            let user_context = build_user_tool_context(state.as_ref(), &user_id).await;
+            let allowed = compute_allowed_tool_names(&user, &user_context);
+            let mut names = allowed.into_iter().collect::<Vec<_>>();
+            names.sort();
+            Ok((started.elapsed().as_secs_f64() * 1000.0, None))
+        }
+    })
+    .await
+}
+
+async fn measure_vector_flow(concurrency: usize, context: &PerformanceContext) -> MetricSummary {
+    let base_name = format!("perf_vector_{}", context.run_id);
+    let root = match vector_knowledge::resolve_vector_root(None, &base_name, true) {
+        Ok(path) => path,
+        Err(err) => {
+            return MetricSummary {
+                avg_ms: None,
+                ok: false,
+                details: None,
+                error: Some(err.to_string()),
+            }
+        }
+    };
+    let base = build_vector_perf_base(&base_name, &root);
+    let content = build_vector_flow_content(&context.run_id);
+    let storage = context.state.storage.clone();
+    run_concurrent(concurrency, move |index| {
+        let base = base.clone();
+        let root = root.clone();
+        let content = content.clone();
+        let storage = storage.clone();
+        async move {
+            let doc_name = format!("perf_doc_{}", index);
+            let started = Instant::now();
+            let mut steps = StepDurations::default();
+
+            let step_started = Instant::now();
+            let meta = vector_knowledge::prepare_document(
+                &base,
+                None,
+                storage.as_ref(),
+                &root,
+                &doc_name,
+                None,
+                &content,
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+            steps.add_step(
+                "prepare_document",
+                step_started.elapsed().as_secs_f64() * 1000.0,
+            );
+
+            let step_started = Instant::now();
+            let content = vector_knowledge::read_vector_document_content(
+                storage.as_ref(),
+                None,
+                &base.name,
+                &root,
+                &meta.doc_id,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+            steps.add_step(
+                "read_document_content",
+                step_started.elapsed().as_secs_f64() * 1000.0,
+            );
+
+            let step_started = Instant::now();
+            let _ = vector_knowledge::build_chunk_previews(&content, &meta).await;
+            steps.add_step(
+                "build_chunk_previews",
+                step_started.elapsed().as_secs_f64() * 1000.0,
+            );
+            Ok((
+                started.elapsed().as_secs_f64() * 1000.0,
+                Some(step_details_value(&steps)),
+            ))
+        }
+    })
+    .await
+}
+
+async fn measure_file_ops(concurrency: usize, context: &PerformanceContext) -> MetricSummary {
+    run_concurrent(concurrency, |index| async move {
+        let dir = format!("{}/{}/{}", PERF_ROOT_DIR, context.run_id, index);
+        let file_path = format!("{dir}/sample.txt");
+        let session_id = format!("perf_file_{}_{}", context.run_id, index);
+        let tool_context = build_tool_context(context, &session_id);
+        prepare_dir(context, &dir).await?;
+
+        let content = format!("performance sample {}\nneedle\n", context.run_id);
+        let started = Instant::now();
+        let mut steps = StepDurations::default();
+        let step_started = Instant::now();
+        run_tool(
+            &tool_context,
+            "列出文件",
+            json!({ "path": dir.clone(), "max_depth": 1 }),
+        )
+        .await?;
+        steps.add_step("list_files", step_started.elapsed().as_secs_f64() * 1000.0);
+        let step_started = Instant::now();
+        run_tool(
+            &tool_context,
+            "写入文件",
+            json!({ "path": file_path.clone(), "content": content }),
+        )
+        .await?;
+        steps.add_step("write_file", step_started.elapsed().as_secs_f64() * 1000.0);
+        let step_started = Instant::now();
+        run_tool(
+            &tool_context,
+            "读取文件",
+            json!({ "files": [{ "path": file_path.clone() }] }),
+        )
+        .await?;
+        steps.add_step("read_file", step_started.elapsed().as_secs_f64() * 1000.0);
+        let step_started = Instant::now();
+        run_tool(
+            &tool_context,
+            "搜索内容",
+            json!({
+                "query": "needle",
+                "path": dir,
+                "file_pattern": "*.txt",
+                "max_depth": 1,
+                "max_files": 10
+            }),
+        )
+        .await?;
+        steps.add_step("search_content", step_started.elapsed().as_secs_f64() * 1000.0);
+        let step_started = Instant::now();
+        run_tool(
+            &tool_context,
+            "编辑",
+            json!({
+                "input": format!(
+                    "*** Begin Patch\n*** Update File: {file_path}\n@@\n-needle\n+needle_replaced\n*** End Patch"
+                )
+            }),
+        )
+        .await?;
+        steps.add_step("apply_patch", step_started.elapsed().as_secs_f64() * 1000.0);
+        Ok((
+            started.elapsed().as_secs_f64() * 1000.0,
+            Some(step_details_value(&steps)),
+        ))
+    })
+    .await
+}
+
+async fn measure_command_exec(
+    concurrency: usize,
+    context: &PerformanceContext,
+    command: &str,
+) -> MetricSummary {
+    let command = command.to_string();
+    run_concurrent(concurrency, move |index| {
+        let command = command.clone();
+        async move {
+            let session_id = format!("perf_cmd_{}_{}", context.run_id, index);
+            let tool_context = build_tool_context(context, &session_id);
+            let started = Instant::now();
+            run_tool(
+                &tool_context,
+                "执行命令",
+                json!({ "content": command, "timeout_s": COMMAND_TIMEOUT_S }),
+            )
+            .await?;
+            Ok((started.elapsed().as_secs_f64() * 1000.0, None))
+        }
+    })
+    .await
+}
+
+async fn measure_log_write(concurrency: usize, context: &PerformanceContext) -> MetricSummary {
+    run_concurrent(concurrency, |index| async move {
+        let workspace = context.workspace.clone();
+        let user_id = context.user_id.clone();
+        let session_id = format!("perf_log_{}_{}", context.run_id, index);
+        let payload = json!({
+            "tool": "performance_log",
+            "session_id": session_id,
+            "ok": true,
+            "error": "",
+            "args": { "index": index },
+            "data": { "tag": "performance" },
+            "timestamp": Local::now().to_rfc3339(),
+        });
+        let started = Instant::now();
+        blocking::run_fs("ops.performance.append_tool_log", move || {
+            workspace.append_tool_log(&user_id, &payload)
+        })
+        .await
+        .map_err(|err| err.to_string())?;
+        Ok((started.elapsed().as_secs_f64() * 1000.0, None))
+    })
+    .await
+}
+
+async fn run_concurrent<F, Fut>(concurrency: usize, op: F) -> MetricSummary
+where
+    F: Fn(usize) -> Fut,
+    Fut: std::future::Future<Output = Result<(f64, Option<Value>), String>>,
+{
+    let mut tasks = Vec::with_capacity(concurrency);
+    for index in 0..concurrency {
+        tasks.push(op(index));
+    }
+    let results = join_all(tasks).await;
+    let mut durations = Vec::new();
+    let mut detail_sums: BTreeMap<String, f64> = BTreeMap::new();
+    let mut detail_count = 0usize;
+    let mut error = None;
+    for result in results {
+        match result {
+            Ok((value, detail)) => {
+                durations.push(value);
+                if let Some(Value::Object(map)) = detail {
+                    detail_count += 1;
+                    for (key, value) in map {
+                        if let Some(number) = value.as_f64() {
+                            *detail_sums.entry(key).or_insert(0.0) += number;
+                        }
+                    }
+                }
+            }
+            Err(message) => {
+                if error.is_none() {
+                    error = Some(message);
+                }
+            }
+        }
+    }
+    let avg_ms = if durations.is_empty() {
+        None
+    } else {
+        Some(durations.iter().sum::<f64>() / durations.len() as f64)
+    };
+    MetricSummary {
+        avg_ms,
+        ok: error.is_none(),
+        details: if detail_count == 0 || detail_sums.is_empty() {
+            None
+        } else {
+            Some(Value::Object(
+                detail_sums
+                    .into_iter()
+                    .map(|(key, value)| (key, json!(value / detail_count as f64)))
+                    .collect(),
+            ))
+        },
+        error,
+    }
+}
+
+fn build_tool_context<'a>(context: &'a PerformanceContext, session_id: &'a str) -> ToolContext<'a> {
+    ToolContext {
+        user_id: &context.user_id,
+        session_id,
+        workspace_id: &context.workspace_id,
+        agent_id: None,
+        user_round: None,
+        model_round: None,
+        is_admin: true,
+        storage: context.state.storage.clone(),
+        orchestrator: Some(context.orchestrator.clone()),
+        monitor: Some(context.state.monitor.clone()),
+        workspace: context.workspace.clone(),
+        lsp_manager: context.lsp_manager.clone(),
+        config: context.config.as_ref(),
+        skills: context.skills.as_ref(),
+        gateway: None,
+        user_world: Some(context.state.projection.user_world.clone()),
+        cron_wake_signal: None,
+        user_tool_manager: None,
+        user_tool_bindings: Some(context.user_tool_bindings.as_ref()),
+        user_tool_store: None,
+        request_config_overrides: None,
+        allow_roots: Some(context.tool_roots.allow_roots.clone()),
+        read_roots: Some(context.tool_roots.read_roots.clone()),
+        command_sessions: Some(context.state.control.command_sessions.clone()),
+        event_emitter: None,
+        http: context.http.as_ref(),
+    }
+}
+
+async fn run_tool(context: &ToolContext<'_>, name: &str, args: Value) -> Result<(), String> {
+    let result = execute_tool(context, name, &args)
+        .await
+        .map_err(|err| err.to_string())?;
+    let ok = result.get("ok").and_then(Value::as_bool);
+    if ok == Some(false) {
+        let message = result
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("tool failed");
+        return Err(message.to_string());
+    }
+    Ok(())
+}
+
+async fn prepare_dir(context: &PerformanceContext, path: &str) -> Result<(), String> {
+    let target = context
+        .workspace
+        .resolve_path(&context.workspace_id, path)
+        .map_err(|err| err.to_string())?;
+    tokio::fs::create_dir_all(&target)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+async fn cleanup_perf_dir(context: &PerformanceContext) {
+    let dir = format!("{}/{}", PERF_ROOT_DIR, context.run_id);
+    let target = context.workspace.resolve_path(&context.workspace_id, &dir);
+    let Ok(target) = target else {
+        return;
+    };
+    let _ = tokio::fs::remove_dir_all(&target).await;
+}
+
+async fn cleanup_perf_vector_dir(context: &PerformanceContext) {
+    let base_name = format!("perf_vector_{}", context.run_id);
+    let owner_key = vector_knowledge::resolve_owner_key(None);
+    let _ = context
+        .state
+        .storage
+        .delete_vector_chunk_embeddings_by_base(&owner_key, &base_name);
+    let _ = context
+        .state
+        .storage
+        .delete_vector_documents_by_base(&owner_key, &base_name);
+    let root = vector_knowledge::resolve_vector_root(None, &base_name, false);
+    let Ok(root) = root else {
+        return;
+    };
+    let _ = tokio::fs::remove_dir_all(&root).await;
+}
+
+fn build_vector_perf_base(base_name: &str, root: &std::path::Path) -> KnowledgeBaseConfig {
+    KnowledgeBaseConfig {
+        name: base_name.to_string(),
+        description: String::new(),
+        root: root.to_string_lossy().to_string(),
+        enabled: true,
+        shared: Some(true),
+        base_type: Some("vector".to_string()),
+        embedding_model: Some("perf".to_string()),
+        ragflow_dataset_id: None,
+        ragflow_dataset_managed: None,
+        chunk_method: None,
+        chunk_delimiter: None,
+        layout_recognize: None,
+        auto_keywords: None,
+        auto_questions: None,
+        html4excel: None,
+        chunk_size: None,
+        chunk_overlap: None,
+        top_k: None,
+        score_threshold: None,
+    }
+}
+
+fn build_vector_flow_content(run_id: &str) -> String {
+    let seed = format!("vector perf sample {run_id} lorem ipsum dolor sit amet.\n");
+    seed.repeat(120)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    #[tokio::test]
+    async fn measure_repeated_uses_at_least_one_sample() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_op = calls.clone();
+
+        let summary = measure_repeated(0, move || {
+            let calls = calls_for_op.clone();
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                MetricSummary {
+                    avg_ms: Some(12.0),
+                    ok: true,
+                    details: Some(json!({ "step": 4.0 })),
+                    error: None,
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(summary.avg_ms, Some(12.0));
+        assert!(summary.ok);
+        assert_eq!(
+            summary
+                .details
+                .as_ref()
+                .and_then(|value| value.get("step"))
+                .and_then(Value::as_f64),
+            Some(4.0)
+        );
+    }
+
+    #[tokio::test]
+    async fn measure_repeated_averages_successful_samples_and_details() {
+        let values = Arc::new([10.0, 30.0]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let values_for_op = values.clone();
+        let calls_for_op = calls.clone();
+
+        let summary = measure_repeated(2, move || {
+            let values = values_for_op.clone();
+            let calls = calls_for_op.clone();
+            async move {
+                let index = calls.fetch_add(1, Ordering::SeqCst);
+                let value = values[index];
+                MetricSummary {
+                    avg_ms: Some(value),
+                    ok: true,
+                    details: Some(json!({ "write_file": value, "read_file": value / 2.0 })),
+                    error: None,
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(summary.avg_ms, Some(20.0));
+        assert!(summary.ok);
+        assert_eq!(
+            summary
+                .details
+                .as_ref()
+                .and_then(|value| value.get("write_file"))
+                .and_then(Value::as_f64),
+            Some(20.0)
+        );
+        assert_eq!(
+            summary
+                .details
+                .as_ref()
+                .and_then(|value| value.get("read_file"))
+                .and_then(Value::as_f64),
+            Some(10.0)
+        );
+    }
+
+    #[test]
+    fn merge_summaries_preserves_first_error_and_partial_average() {
+        let summary = merge_summaries(vec![
+            MetricSummary {
+                avg_ms: Some(40.0),
+                ok: true,
+                details: Some(json!({ "total_ms": 40.0 })),
+                error: None,
+            },
+            MetricSummary {
+                avg_ms: None,
+                ok: false,
+                details: None,
+                error: Some("first failure".to_string()),
+            },
+            MetricSummary {
+                avg_ms: None,
+                ok: false,
+                details: None,
+                error: Some("second failure".to_string()),
+            },
+        ]);
+
+        assert_eq!(summary.avg_ms, Some(40.0));
+        assert!(!summary.ok);
+        assert_eq!(summary.error.as_deref(), Some("first failure"));
+        assert_eq!(
+            summary
+                .details
+                .as_ref()
+                .and_then(|value| value.get("total_ms"))
+                .and_then(Value::as_f64),
+            Some(40.0)
+        );
+    }
+
+    #[test]
+    fn merge_summaries_averages_multiple_detail_fields() {
+        let summary = merge_summaries(vec![
+            MetricSummary {
+                avg_ms: Some(10.0),
+                ok: true,
+                details: Some(json!({ "read_file": 8.0, "write_file": 12.0 })),
+                error: None,
+            },
+            MetricSummary {
+                avg_ms: Some(30.0),
+                ok: true,
+                details: Some(json!({ "read_file": 16.0, "write_file": 24.0 })),
+                error: None,
+            },
+        ]);
+
+        assert_eq!(summary.avg_ms, Some(20.0));
+        assert!(summary.ok);
+        assert_eq!(
+            summary
+                .details
+                .as_ref()
+                .and_then(|value| value.get("read_file"))
+                .and_then(Value::as_f64),
+            Some(12.0)
+        );
+        assert_eq!(
+            summary
+                .details
+                .as_ref()
+                .and_then(|value| value.get("write_file"))
+                .and_then(Value::as_f64),
+            Some(18.0)
+        );
+    }
+
+    #[test]
+    fn merge_summaries_ignores_missing_or_non_object_details() {
+        let summary = merge_summaries(vec![
+            MetricSummary {
+                avg_ms: None,
+                ok: true,
+                details: None,
+                error: None,
+            },
+            MetricSummary {
+                avg_ms: Some(25.0),
+                ok: true,
+                details: Some(json!(["unexpected", 1, 2])),
+                error: None,
+            },
+        ]);
+
+        assert_eq!(summary.avg_ms, Some(25.0));
+        assert!(summary.ok);
+        assert!(summary.details.is_none());
+    }
+
+    #[tokio::test]
+    async fn measure_repeated_keeps_first_error_when_later_samples_succeed() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_op = calls.clone();
+
+        let summary = measure_repeated(3, move || {
+            let calls = calls_for_op.clone();
+            async move {
+                let index = calls.fetch_add(1, Ordering::SeqCst);
+                if index == 0 {
+                    MetricSummary {
+                        avg_ms: None,
+                        ok: false,
+                        details: None,
+                        error: Some("first failure".to_string()),
+                    }
+                } else {
+                    MetricSummary {
+                        avg_ms: Some(15.0 + index as f64),
+                        ok: true,
+                        details: Some(json!({ "step": 1.0 })),
+                        error: None,
+                    }
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert!(!summary.ok);
+        assert_eq!(summary.error.as_deref(), Some("first failure"));
+        assert_eq!(summary.avg_ms, Some(16.5));
+        assert_eq!(
+            summary
+                .details
+                .as_ref()
+                .and_then(|value| value.get("step"))
+                .and_then(Value::as_f64),
+            Some(1.0)
+        );
+    }
+}

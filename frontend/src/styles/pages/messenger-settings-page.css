@@ -1,0 +1,530 @@
+/* ---------------------------------------------------------------------------
+   全屏设置页（方案 §九）：左导航 + 右卡片内容。
+   入口：左栏底部「设置」；出口：左上「返回应用」。
+   依赖 §11 色彩 token（--mz-*），已在 messenger.css / 主题文件中定义。
+--------------------------------------------------------------------------- */
+
+.messenger-settings-frame {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+/* ------------------------------------------------------------------ 左导航 */
+
+.messenger-settings-frame-nav {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 260px;
+  min-height: 0;
+  padding: 16px 12px;
+  border-right: 1px solid var(--mz-border);
+  background: var(--mz-sidebar);
+}
+
+.messenger-settings-frame-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-btn);
+  color: var(--mz-text-secondary);
+  background: var(--mz-surface);
+  font: inherit;
+  font-size: var(--mz-font-md);
+  cursor: pointer;
+}
+
+.messenger-settings-frame-back:hover {
+  color: var(--mz-primary);
+  border-color: var(--mz-primary-soft);
+  background: var(--mz-primary-tint);
+}
+
+.messenger-settings-frame-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  margin: 12px 0;
+  padding: 0 10px;
+  height: 34px;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-btn);
+  background: var(--mz-surface);
+  color: var(--mz-text-muted);
+}
+
+.messenger-settings-frame-search:focus-within {
+  border-color: var(--mz-primary-soft);
+}
+
+.messenger-settings-frame-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--mz-text);
+  font: inherit;
+  font-size: var(--mz-font-md);
+}
+
+.messenger-settings-frame-search--inline {
+  margin: 0;
+  max-width: 260px;
+}
+
+.messenger-settings-frame-nav-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 2px;
+}
+
+.messenger-settings-frame-nav-item {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px 8px 12px;
+  border: 0;
+  border-radius: var(--mz-radius-btn);
+  background: transparent;
+  color: var(--mz-text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.messenger-settings-frame-nav-item:hover {
+  background: var(--mz-surface);
+}
+
+.messenger-settings-frame-nav-item.is-active {
+  background: var(--mz-primary-tint);
+  color: var(--mz-text);
+}
+
+.messenger-settings-frame-nav-item.is-active::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--mz-primary);
+}
+
+.messenger-settings-frame-nav-icon {
+  width: 16px;
+  margin-top: 2px;
+  color: var(--mz-text-muted);
+  text-align: center;
+}
+
+.messenger-settings-frame-nav-item.is-active .messenger-settings-frame-nav-icon {
+  color: var(--mz-primary);
+}
+
+.messenger-settings-frame-nav-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.messenger-settings-frame-nav-title {
+  font-size: var(--mz-font-base);
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.messenger-settings-frame-nav-desc {
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-sm, 12px);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messenger-settings-frame-nav-empty {
+  padding: 16px 10px;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-md);
+}
+
+/* ------------------------------------------------------------ 右侧内容区 */
+
+.messenger-settings-frame-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.messenger-settings-frame-content-head {
+  flex-shrink: 0;
+  padding: 20px 24px 12px;
+  border-bottom: 1px solid var(--mz-border);
+}
+
+.messenger-settings-frame-content-title {
+  margin: 0;
+  color: var(--mz-text);
+  font-size: var(--mz-font-title);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.messenger-settings-frame-content-desc {
+  margin: 4px 0 0;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-md);
+  line-height: 1.5;
+}
+
+.messenger-settings-frame-content-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 24px 32px;
+}
+
+.messenger-settings-frame-category {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 880px;
+}
+
+/* ------------------------------------------------------- 分组卡片与设置项 */
+
+.messenger-settings-group-head {
+  padding: 0 0 10px;
+  border-bottom: 1px dashed var(--mz-border);
+}
+
+.messenger-settings-group-head--row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.messenger-settings-page-row-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.messenger-settings-page-row-icon {
+  width: 16px;
+  margin-top: 3px;
+  color: var(--mz-text-muted);
+  text-align: center;
+}
+
+.messenger-settings-page-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.messenger-settings-page-row-actions .messenger-settings-select {
+  min-width: 160px;
+}
+
+.messenger-settings-page-value {
+  color: var(--mz-text-secondary);
+  font-size: var(--mz-font-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.messenger-settings-page-range {
+  width: 160px;
+}
+
+.messenger-settings-page-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-sm, 12px);
+}
+
+.messenger-settings-page-number {
+  box-sizing: border-box;
+  width: 64px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-btn);
+  background: var(--mz-surface);
+  color: var(--mz-text);
+  font: inherit;
+  font-size: var(--mz-font-md);
+}
+
+.messenger-settings-page-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--mz-border);
+  border-radius: 999px;
+  color: var(--mz-text-muted);
+  background: var(--mz-bg);
+  font-size: var(--mz-font-sm, 12px);
+  white-space: nowrap;
+}
+
+.messenger-settings-page-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--mz-primary-soft);
+  border-radius: 999px;
+  color: var(--mz-primary);
+  background: var(--mz-primary-tint);
+  font-size: var(--mz-font-sm, 12px);
+  white-space: nowrap;
+}
+
+.messenger-settings-page-badge.is-muted {
+  color: var(--mz-text-muted);
+  border-color: var(--mz-border);
+  background: var(--mz-bg);
+}
+
+.messenger-settings-page-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.messenger-settings-page-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.messenger-settings-page-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--mz-border);
+}
+
+.messenger-settings-page-list-item:last-child {
+  border-bottom: 0;
+}
+
+.messenger-settings-page-list-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.messenger-settings-page-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.messenger-settings-page-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 10px 0 0;
+  list-style: none;
+}
+
+.messenger-settings-page-grid-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-card);
+  background: var(--mz-surface);
+}
+
+.messenger-settings-page-grid-item.is-active {
+  border-color: var(--mz-primary-soft);
+  background: var(--mz-primary-tint);
+}
+
+.messenger-settings-page-grid-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 96px;
+  overflow: hidden;
+  border-radius: var(--mz-radius-btn);
+  background: var(--mz-bg);
+}
+
+.messenger-settings-page-grid-meta {
+  width: 100%;
+  min-width: 0;
+  text-align: center;
+}
+
+.messenger-settings-page-grid-meta .messenger-settings-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messenger-settings-page-file-input {
+  display: none;
+}
+
+.messenger-settings-page-note {
+  padding-top: 10px;
+  border-top: 1px dashed var(--mz-border);
+}
+
+.messenger-settings-page-manual {
+  display: flex;
+  height: 420px;
+  margin-top: 10px;
+  overflow: hidden;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-card);
+}
+
+.messenger-settings-page-kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--mz-border-strong);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--mz-surface);
+  color: var(--mz-text);
+  font-family: inherit;
+  font-size: var(--mz-font-sm, 12px);
+}
+
+.messenger-settings-card--danger {
+  border-color: var(--mz-danger-soft, var(--mz-border));
+}
+
+.messenger-settings-card--manual {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 分类内容里复用既有面板时，去掉外层额外边距，保持卡片统一。 */
+.messenger-settings-frame-category .messenger-chat-settings-block {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+
+/* 预设锁定字段角标（AgentSettingsPanel §9.3）。 */
+.messenger-agent-preset-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--mz-border);
+  border-radius: 999px;
+  color: var(--mz-text-muted);
+  background: var(--mz-bg);
+  font-size: var(--mz-font-sm, 12px);
+  white-space: nowrap;
+}
+
+.messenger-agent-preset-lock--block {
+  margin-bottom: 8px;
+}
+
+/* 归档线程面板：搜索 + 分页（长列表限量）。 */
+.messenger-archived-thread-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.messenger-archived-thread-search {
+  box-sizing: border-box;
+  width: 200px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-btn);
+  background: var(--mz-surface);
+  color: var(--mz-text);
+  font: inherit;
+  font-size: var(--mz-font-md);
+}
+
+.messenger-archived-thread-search:focus {
+  outline: none;
+  border-color: var(--mz-primary-soft);
+}
+
+.messenger-archived-thread-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.messenger-archived-thread-pager-meta {
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-sm, 12px);
+}
+
+/* ------------------------------------------------------------ 窄视口适配 */
+
+@media (max-width: 1023px) {
+  .messenger-settings-frame {
+    flex-direction: column;
+  }
+
+  .messenger-settings-frame-nav {
+    width: 100%;
+    max-height: 42%;
+    border-right: 0;
+    border-bottom: 1px solid var(--mz-border);
+  }
+
+  .messenger-settings-frame-content-body {
+    padding: 12px 16px 24px;
+  }
+}

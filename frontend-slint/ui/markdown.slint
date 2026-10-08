@@ -1,0 +1,93 @@
+// Lowest-necessary markdown rendering shared by the chat timeline. Text blocks
+// keep a marker-free plain projection inside a read-only TextInput so content
+// stays selectable and copyable; code and tables keep their own controls.
+import { I18n } from "i18n.slint";
+import { Theme, TextBlock } from "theme.slint";
+import { Action } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export component MarkdownBlock inherits Rectangle {
+    in property <TextBlock> block;
+    callback copy-code(string);
+    callback open-resource(string);
+    callback open-prompt-preview();
+    private property <bool> copied: false;
+    private property <length> image-height: root.block.image.width > 0 ? min(280px, min(root.width, 520px) * root.block.image.height / max(1, root.block.image.width)) : 0px;
+    height: root.block.kind == 1 ? code-layout.preferred-height :
+        root.block.kind == 5 ? min(340px, table-layout.preferred-height + 18px) :
+        root.block.kind == 6 ? root.image-height + 44px :
+        root.block.kind == 7 ? 64px :
+        root.block.kind == 4 ? quote-content.preferred-height + 16px : rich-content.preferred-height;
+    background: root.block.kind == 1 || root.block.kind == 4 ? Theme.accent-soft : transparent;
+    border-radius: 8px;
+    code-layout := VerticalLayout {
+        visible: root.block.kind == 1;
+        padding: 10px; spacing: 6px; alignment: start;
+        HorizontalLayout {
+            height: 24px;
+            Text { text: root.block.language == "" ? I18n.msg_code : root.block.language; color: Theme.muted; font-size: Theme.font-xs; }
+            Rectangle { horizontal-stretch: 1; }
+            Action { width: 64px; height: 24px; label: root.copied ? I18n.msg_copied : I18n.common_copy; show-label: true;
+                clicked => { root.copy-code(root.block.text); root.copied = true; }
+            }
+        }
+        StyledText { text: root.block.styled; default-color: Theme.text; default-font-family: "Consolas"; default-font-size: 13px; }
+    }
+    if root.block.kind == 7 : Rectangle {
+        border-radius: 8px; border-width: 1px; border-color: Theme.border;
+        background: document-hover.has-hover ? Theme.accent-soft : Theme.panel;
+        HorizontalLayout { padding: 10px; spacing: 10px;
+            Image { width: 32px; height: 38px; source: root.block.image; image-fit: contain; }
+            VerticalLayout { spacing: 4px; horizontal-stretch: 1;
+                Text { text: root.block.text; color: Theme.text; font-size: Theme.font-md; overflow: elide; }
+                Text { text: root.block.image-source; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+            }
+            Action { width: 64px; label: I18n.common_open; show-label: true; clicked => { root.open-resource(root.block.image-source); } }
+        }
+        document-hover := TouchArea { mouse-cursor: pointer; clicked => { root.open-resource(root.block.image-source); } }
+    }
+    Timer { interval: 1600ms; running: root.copied; triggered => { root.copied = false; } }
+    quote-content := TextInput {
+        visible: root.block.kind == 4;
+        x: 10px; y: 8px; width: parent.width - 20px; height: self.preferred-height;
+        text: root.block.text; color: Theme.muted; font-size: Theme.font-md; read-only: true; wrap: word-wrap;
+    }
+    image-content := Image {
+        visible: root.block.kind == 6 && root.block.image.width > 0;
+        x: 0px; y: 0px; width: min(parent.width, 520px); height: root.image-height;
+        source: root.block.image; image-fit: contain;
+    }
+    Text {
+        visible: root.block.kind == 6; x: 0px; y: root.image-height + 4px; width: parent.width; height: 36px;
+        text: root.block.text + (root.block.image.width == 0 ? I18n.msg_not_loaded : "") + "\n" + root.block.image-source;
+        color: Theme.muted; font-size: Theme.font-xs; overflow: elide;
+    }
+    ScrollView {
+        visible: root.block.kind == 5;
+        width: parent.width; height: parent.height; horizontal-scrollbar-policy: as-needed;
+        table-layout := VerticalLayout {
+            width: max(root.width, root.block.table-columns * 150px); height: self.preferred-height; spacing: 0px; alignment: start;
+            for row-index in Math.ceil(root.block.table-cells.length / max(1, root.block.table-columns)) : HorizontalLayout {
+                spacing: 0px; height: self.preferred-height;
+                for column-index in root.block.table-columns : Rectangle {
+                    width: max(root.width / max(1, root.block.table-columns), 150px);
+                    min-height: cell-content.preferred-height + 16px;
+                    border-width: 1px; border-color: Theme.border; background: row-index == 0 ? Theme.accent-soft : Theme.panel;
+                    cell-content := TextInput {
+                        x: 8px; y: 8px; width: parent.width - 16px; height: self.preferred-height;
+                        text: root.block.table-cells[row-index * root.block.table-columns + column-index];
+                        color: Theme.text; font-size: Theme.font-sm; font-weight: row-index == 0 ? 600 : 400;
+                        read-only: true; wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+    rich-content := TextInput {
+        visible: root.block.kind != 1 && root.block.kind != 4 && root.block.kind != 5 && root.block.kind != 6 && root.block.kind != 7;
+        x: 0px; y: 0px; width: parent.width; height: self.preferred-height;
+        text: root.block.text; color: Theme.text;
+        font-size: root.block.kind == 10 ? 22px : root.block.kind == 11 ? 19px : root.block.kind == 12 ? 17px : Theme.font-md;
+        read-only: true; wrap: word-wrap;
+    }
+}

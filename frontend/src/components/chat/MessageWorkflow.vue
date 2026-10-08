@@ -1,0 +1,163 @@
+<template>
+  <details v-if="visible" class="message-workflow">
+    <summary>
+      <span class="workflow-title">{{ t('chat.workflow.title') }}</span>
+      <span v-if="count" class="workflow-count">{{ count }}</span>
+      <span v-if="loading" class="workflow-loading"><span class="spinner" /></span>
+      <span v-if="latestItem" class="workflow-latest" :title="latestTitle">{{ latestTitle }}</span>
+      <span v-else class="workflow-spacer" />
+    </summary>
+    <div class="workflow-content">
+      <div v-if="items.length === 0" class="workflow-empty">{{ t('chat.workflow.empty') }}</div>
+      <div
+        v-for="item in items"
+        :key="item.id"
+        :class="['workflow-item', ...getItemClasses(item)]"
+        role="button"
+        tabindex="0"
+        @click="openDetail(item)"
+        @keydown.enter.prevent="openDetail(item)"
+      >
+        <span :class="['status-indicator', item.status]" />
+        <div class="workflow-text">
+          <div class="workflow-title">{{ formatWorkflowTitle(item.title) }}</div>
+        </div>
+      </div>
+    </div>
+  </details>
+  <el-dialog
+    v-model="dialogVisible"
+    :title="t('chat.workflow.nodeDetailTitle')"
+    width="560px"
+    class="workflow-dialog"
+    append-to-body
+  >
+    <div class="workflow-dialog-title">{{ dialogTitle }}</div>
+    <pre class="workflow-dialog-detail">{{ dialogDetail }}</pre>
+  </el-dialog>
+</template>
+
+<script setup lang="ts">
+import { computed, ref } from 'vue';
+
+import { useI18n } from '@/i18n';
+
+// 工作流事件展示组件：承载 SSE 事件列表
+type WorkflowItem = {
+  id?: string | number;
+  title?: string;
+  detail?: string;
+  status?: string;
+  isTool?: boolean;
+  toolCategory?: string;
+};
+
+type Props = {
+  items?: WorkflowItem[];
+  loading?: boolean;
+  visible?: boolean;
+};
+
+const props = withDefaults(defineProps<Props>(), {
+  items: () => [],
+  loading: false,
+  visible: false
+});
+
+const { t } = useI18n();
+
+// 统计数量用于摘要展示
+const count = computed(() => props.items.length);
+const latestItem = computed(() =>
+  props.items.length > 0 ? props.items[props.items.length - 1] : null
+);
+
+const dialogVisible = ref(false);
+const activeItem = ref<WorkflowItem | null>(null);
+
+const openDetail = (item: WorkflowItem) => {
+  activeItem.value = item || null;
+  dialogVisible.value = true;
+};
+
+const getItemClasses = (item: WorkflowItem) => {
+  const classes: string[] = [];
+  if (item?.status) {
+    classes.push(`workflow-item--${item.status}`);
+  }
+  if (item?.isTool) {
+    const category = item.toolCategory || 'default';
+    classes.push('workflow-item--tool', `workflow-item--tool-${category}`);
+    if (item.status === 'loading' || item.status === 'pending') {
+      classes.push('workflow-item--waiting');
+    }
+  }
+  return classes;
+};
+
+const dialogTitle = computed(() =>
+  activeItem.value?.title
+    ? formatWorkflowTitle(activeItem.value.title)
+    : t('chat.workflow.nodeDetailTitle')
+);
+const dialogDetail = computed(() => activeItem.value?.detail || t('chat.workflow.nodeEmpty'));
+
+const formatWorkflowTitle = (rawTitle: unknown) => {
+  const title = String(rawTitle || '').trim();
+  if (!title) return '';
+  if (title === '模型输出') return t('chat.workflow.modelOutput');
+  if (title === '最终回复') return t('chat.workflow.finalResponse');
+  if (title === '问询面板') return t('chat.workflow.questionPanel');
+  if (title === '计划更新') return t('chat.workflow.planUpdate');
+  if (title === '模型请求体') return t('chat.workflow.modelRequest');
+  if (title === '模型请求摘要') return t('chat.workflow.modelRequestSummary');
+  if (title === '进度更新') return t('chat.workflow.progressUpdate');
+  if (title === '错误') return t('chat.workflow.error');
+
+  if (title.startsWith('调用工具：')) {
+    const tool = title.replace('调用工具：', '').trim();
+    return t('chat.workflow.toolCall', {
+      tool: tool || t('chat.workflow.toolUnknown')
+    });
+  }
+  if (title.startsWith('工具结果：')) {
+    const tool = title.replace('工具结果：', '').trim();
+    return t('chat.workflow.toolResult', {
+      tool: tool || t('chat.workflow.toolUnknown')
+    });
+  }
+  if (title.startsWith('工具输出：')) {
+    const tool = title.replace('工具输出：', '').trim();
+    return t('chat.workflow.toolOutput', {
+      tool: tool || t('chat.workflow.toolUnknown')
+    });
+  }
+  if (title === '工具输出') {
+    return t('chat.workflow.toolOutput', { tool: t('chat.workflow.toolUnknown') });
+  }
+  if (title.startsWith('知识库请求体')) {
+    const match = title.match(/^知识库请求体(?:（(.+)）)?$/);
+    const base = match?.[1];
+    return base
+      ? t('chat.workflow.knowledgeRequestWithBase', { base })
+      : t('chat.workflow.knowledgeRequest');
+  }
+  if (title.startsWith('阶段：')) {
+    const stage = title.replace('阶段：', '').trim();
+    return t('chat.workflow.stage', { stage });
+  }
+  const modelRoundMatch = title.match(/^调用模型（第\s*(\d+)\s*轮）$/);
+  if (modelRoundMatch) {
+    return t('chat.workflow.modelCallRound', { round: modelRoundMatch[1] });
+  }
+  if (title.startsWith('事件：')) {
+    const event = title.replace('事件：', '').trim();
+    return t('chat.workflow.event', { event });
+  }
+  return title;
+};
+
+const latestTitle = computed(() =>
+  latestItem.value ? formatWorkflowTitle(latestItem.value.title) : ''
+);
+</script>

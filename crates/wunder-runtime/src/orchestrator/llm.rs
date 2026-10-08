@@ -1,0 +1,1626 @@
+use super::stream_timeout::StreamActivity;
+use super::*;
+use crate::core::llm_speed::LlmSpeedSummary;
+use crate::services::llm::output::OutputDiagnostics;
+use sha2::{Digest, Sha256};
+
+#[derive(Default)]
+struct OutputTiming {
+    first_output_at: Option<Instant>,
+    last_output_at: Option<Instant>,
+    first_content_at: Option<Instant>,
+    last_content_at: Option<Instant>,
+    output_chunk_count: u64,
+    content_delta_chars: usize,
+    reasoning_delta_chars: usize,
+    max_chunk_gap_s: f64,
+}
+
+struct ChatMessageRepairReport {
+    messages: Vec<ChatMessage>,
+    repair: Option<Value>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LlmFailureKind {
+    Other,
+    ContextWindow,
+    Unavailable,
+}
+
+const LLM_UNAVAILABLE_MIN_RETRIES: u32 = 5;
+const LLM_UNAVAILABLE_RETRY_DELAYS_MS: [u64; 5] = [1_200, 3_000, 6_000, 12_000, 20_000];
+const DEFAULT_LLM_MAX_ATTEMPTS: u32 = 2;
+
+impl OutputTiming {
+    fn mark_output(&mut self, now: Instant, content_delta_len: usize, reasoning_delta_len: usize) {
+        if content_delta_len > 0 {
+            self.first_content_at.get_or_insert(now);
+            self.last_content_at = Some(now);
+        }
+        if content_delta_len == 0 && reasoning_delta_len == 0 {
+            return;
+        }
+        if self.first_output_at.is_none() {
+            self.first_output_at = Some(now);
+        }
+        if let Some(previous) = self.last_output_at {
+            self.max_chunk_gap_s = self
+                .max_chunk_gap_s
+                .max(now.saturating_duration_since(previous).as_secs_f64());
+        }
+        self.last_output_at = Some(now);
+        self.output_chunk_count = self.output_chunk_count.saturating_add(1);
+        self.content_delta_chars = self.content_delta_chars.saturating_add(content_delta_len);
+        self.reasoning_delta_chars = self
+            .reasoning_delta_chars
+            .saturating_add(reasoning_delta_len);
+    }
+
+    fn durations(
+        &self,
+        request_start: Instant,
+        response_end: Instant,
+    ) -> (Option<f64>, Option<f64>) {
+        let Some(first_output_at) = self.first_output_at else {
+            return (None, None);
+        };
+        let prefill = first_output_at
+            .saturating_duration_since(request_start)
+            .as_secs_f64();
+        // Match the visible output token numerator with the answer stream only.
+        // Reasoning and tool-only chunks must not define its decode interval.
+        let decode = self.first_content_at.map(|first| {
+            // Providers may deliver the complete visible answer in one chunk.
+            // In that case first and last content timestamps are identical;
+            // measure until response completion instead of reporting 0s and
+            // losing the persisted bubble speed.
+            let last = self.last_content_at.unwrap_or(response_end);
+            let duration = last.saturating_duration_since(first);
+            let duration = if duration.is_zero() {
+                response_end.saturating_duration_since(first)
+            } else {
+                duration
+            };
+            duration.as_secs_f64()
+        });
+        (Some(prefill), decode)
+    }
+
+    fn stream_timing_payload(
+        &self,
+        request_start: Instant,
+        response_end: Instant,
+    ) -> Option<Value> {
+        let first_output_at = self.first_output_at?;
+        let last_output_at = self.last_output_at.unwrap_or(response_end);
+        let prefill_ms = first_output_at
+            .saturating_duration_since(request_start)
+            .as_millis() as u64;
+        let decode_ms = last_output_at
+            .saturating_duration_since(first_output_at)
+            .as_millis() as u64;
+        let content_decode_ms = self.first_content_at.map(|first| {
+            let last = self.last_content_at.unwrap_or(response_end);
+            let duration = last.saturating_duration_since(first);
+            let duration = if duration.is_zero() {
+                response_end.saturating_duration_since(first)
+            } else {
+                duration
+            };
+            duration.as_millis() as u64
+        });
+        Some(json!({
+            "chunk_count": self.output_chunk_count,
+            "content_delta_chars": self.content_delta_chars,
+            "reasoning_delta_chars": self.reasoning_delta_chars,
+            "prefill_ms": prefill_ms,
+            "decode_ms": decode_ms,
+            "content_decode_ms": content_decode_ms,
+            "max_chunk_gap_ms": (self.max_chunk_gap_s * 1000.0).round() as u64,
+        }))
+    }
+}
+
+fn sanitize_chat_messages_for_request(messages: &[ChatMessage]) -> ChatMessageRepairReport {
+    let mut repaired_count = 0usize;
+    let messages = messages
+        .iter()
+        .map(|message| {
+            let tool_calls = message.tool_calls.as_ref().map(|payload| {
+                let sanitized =
+                    crate::core::tool_args::sanitize_tool_call_payload_with_meta(payload);
+                repaired_count = repaired_count.saturating_add(
+                    sanitized
+                        .repair
+                        .as_ref()
+                        .and_then(|value| value.get("count"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0) as usize,
+                );
+                sanitized.value
+            });
+            ChatMessage {
+                role: message.role.clone(),
+                content: message.content.clone(),
+                reasoning_content: message.reasoning_content.clone(),
+                tool_calls,
+                tool_call_id: message.tool_call_id.clone(),
+            }
+        })
+        .collect();
+    let repair = (repaired_count > 0).then(|| {
+        json!({
+            "kind": "chat_messages",
+            "source": "tool_calls",
+            "strategy": "sanitize_before_request",
+            "count": repaired_count,
+        })
+    });
+    ChatMessageRepairReport { messages, repair }
+}
+
+fn build_context_cache_probe(messages: &[ChatMessage], tools: Option<&[Value]>) -> Value {
+    let message_count = messages.len();
+    let message_value = serde_json::to_value(messages).unwrap_or_else(|_| Value::Array(vec![]));
+    let prefix_without_last_value = if message_count > 0 {
+        serde_json::to_value(&messages[..message_count - 1])
+            .unwrap_or_else(|_| Value::Array(vec![]))
+    } else {
+        Value::Array(vec![])
+    };
+    let prefix_without_last_two_value = if message_count > 1 {
+        serde_json::to_value(&messages[..message_count - 2])
+            .unwrap_or_else(|_| Value::Array(vec![]))
+    } else {
+        Value::Array(vec![])
+    };
+    let mut role_counts: HashMap<String, usize> = HashMap::new();
+    let mut tool_message_count = 0usize;
+    let mut assistant_tool_call_message_count = 0usize;
+    let mut content_chars = 0usize;
+    for message in messages {
+        let role = message.role.trim().to_ascii_lowercase();
+        *role_counts.entry(role.clone()).or_default() += 1;
+        if role == "tool" {
+            tool_message_count = tool_message_count.saturating_add(1);
+        }
+        if role == "assistant" && message.tool_calls.is_some() {
+            assistant_tool_call_message_count = assistant_tool_call_message_count.saturating_add(1);
+        }
+        content_chars = content_chars.saturating_add(json_content_len(&message.content));
+    }
+    let mut role_counts_json = Map::new();
+    let mut role_keys = role_counts.keys().cloned().collect::<Vec<_>>();
+    role_keys.sort();
+    for key in role_keys {
+        role_counts_json.insert(key.clone(), json!(role_counts[&key]));
+    }
+    let tail_start = message_count.saturating_sub(8);
+    let tail = messages
+        .iter()
+        .enumerate()
+        .skip(tail_start)
+        .map(|(index, message)| {
+            let mut item = json!({
+                "index": index,
+                "role": message.role,
+                "content_chars": json_content_len(&message.content),
+                "has_reasoning": message
+                    .reasoning_content
+                    .as_deref()
+                    .is_some_and(|text| !text.trim().is_empty()),
+                "has_tool_calls": message.tool_calls.is_some(),
+            });
+            if let Some(tool_call_id) = message
+                .tool_call_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                item["tool_call_id"] = Value::String(tool_call_id.to_string());
+            }
+            item
+        })
+        .collect::<Vec<_>>();
+    let tools_value = tools
+        .map(|items| Value::Array(items.to_vec()))
+        .unwrap_or_else(|| Value::Array(vec![]));
+    let has_native_tools = tools.is_some_and(|items| !items.is_empty());
+    let mut probe = json!({
+        "message_count": message_count,
+        "message_hash": stable_json_hash(&message_value),
+        "prefix_without_last_hash": stable_json_hash(&prefix_without_last_value),
+        "prefix_without_last_message_count": message_count.saturating_sub(1),
+        "prefix_without_last_two_hash": stable_json_hash(&prefix_without_last_two_value),
+        "prefix_without_last_two_message_count": message_count.saturating_sub(2),
+        "role_counts": Value::Object(role_counts_json),
+        "tool_message_count": tool_message_count,
+        "assistant_tool_call_message_count": assistant_tool_call_message_count,
+        "content_chars": content_chars,
+        "tail": tail,
+        "tools_count": tools.map_or(0, <[Value]>::len),
+        "tools_hash": stable_json_hash(&tools_value),
+        "tool_transport": if has_native_tools { "native_tools" } else { "prompt_protocol" },
+    });
+    if has_native_tools {
+        probe["raw_prompt_prefix_stability_risk"] = json!(
+            "native tools may be injected by the model server chat template outside the message prefix"
+        );
+    }
+    if let Some(system_message) = messages.first().filter(|message| message.role == "system") {
+        if let Ok(value) = serde_json::to_value(system_message) {
+            probe["system_message_hash"] = Value::String(stable_json_hash(&value));
+        }
+    }
+    if let Some(last_message) = messages.last() {
+        if let Ok(value) = serde_json::to_value(last_message) {
+            probe["last_message_hash"] = Value::String(stable_json_hash(&value));
+        }
+    }
+    probe
+}
+
+fn stable_json_hash(value: &Value) -> String {
+    let bytes = serde_json::to_vec(value).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hex::encode(hasher.finalize());
+    digest.chars().take(16).collect()
+}
+
+fn json_content_len(value: &Value) -> usize {
+    match value {
+        Value::String(text) => text.chars().count(),
+        Value::Null => 0,
+        other => serde_json::to_string(other).map_or(0, |text| text.chars().count()),
+    }
+}
+
+impl Orchestrator {
+    pub(super) fn resolve_llm_config(
+        &self,
+        config: &Config,
+        model_name: Option<&str>,
+    ) -> Result<(String, LlmModelConfig), OrchestratorError> {
+        let name = model_name
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(config.llm.default.as_str());
+        if !name.trim().is_empty() {
+            if let Some(configured) = config
+                .llm
+                .models
+                .get(name)
+                .filter(|model| is_llm_model(model))
+            {
+                return Ok((name.to_string(), configured.clone()));
+            }
+        }
+        if let Some((fallback_name, fallback)) = config
+            .llm
+            .models
+            .iter()
+            .find(|(_, model)| is_llm_model(model))
+        {
+            return Ok((fallback_name.clone(), fallback.clone()));
+        }
+        let detail = i18n::t("error.llm_config_required");
+        Err(OrchestratorError::llm_unavailable(i18n::t_with_params(
+            "error.llm_unavailable",
+            &HashMap::from([("detail".to_string(), detail)]),
+        )))
+    }
+
+    pub(super) fn resolve_tool_call_mode(
+        &self,
+        config: &Config,
+        model_name: Option<&str>,
+    ) -> ToolCallMode {
+        self.resolve_llm_config(config, model_name)
+            .map(|(_, config)| crate::llm::resolve_tool_call_mode(&config))
+            .unwrap_or(ToolCallMode::FunctionCall)
+    }
+
+    pub(super) fn ensure_not_cancelled(&self, session_id: &str) -> Result<(), OrchestratorError> {
+        if self.monitor.is_cancelled(session_id) {
+            return Err(OrchestratorError::cancelled(i18n::t(
+                "error.session_cancelled",
+            )));
+        }
+        Ok(())
+    }
+
+    pub(super) async fn wait_for_cancelled(&self, session_id: &str) -> OrchestratorError {
+        let mut interval = tokio::time::interval(Duration::from_millis(200));
+        loop {
+            interval.tick().await;
+            if self.monitor.is_cancelled(session_id) {
+                let detail = self
+                    .monitor
+                    .get_record(session_id)
+                    .and_then(|record| record.get("cancel_source").cloned())
+                    .and_then(|value| {
+                        value
+                            .as_str()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_string)
+                    });
+                if let Some(cancel_source) = detail {
+                    return OrchestratorError::cancelled_with_detail(
+                        i18n::t("error.session_cancelled"),
+                        json!({ "cancel_source": cancel_source }),
+                    );
+                }
+                return OrchestratorError::cancelled(i18n::t("error.session_cancelled"));
+            }
+        }
+    }
+
+    pub(super) async fn sleep_or_cancel(
+        &self,
+        session_id: &str,
+        duration: Duration,
+    ) -> Result<(), OrchestratorError> {
+        let cancel = self.wait_for_cancelled(session_id);
+        tokio::select! {
+            _ = tokio::time::sleep(duration) => Ok(()),
+            err = cancel => Err(err),
+        }
+    }
+
+    pub(super) async fn await_with_cancel<F, T>(
+        &self,
+        session_id: &str,
+        timeout_s: u64,
+        fut: F,
+    ) -> Result<Result<T, anyhow::Error>, OrchestratorError>
+    where
+        F: std::future::Future<Output = Result<T, anyhow::Error>>,
+    {
+        let cancel = self.wait_for_cancelled(session_id);
+        if timeout_s > 0 {
+            tokio::select! {
+                res = tokio::time::timeout(Duration::from_secs(timeout_s), fut) => {
+                    Ok(res.map_err(|_| anyhow::anyhow!("timeout")).and_then(|inner| inner))
+                }
+                err = cancel => Err(err),
+            }
+        } else {
+            tokio::select! {
+                res = fut => Ok(res),
+                err = cancel => Err(err),
+            }
+        }
+    }
+
+    pub(super) fn build_chat_messages(&self, messages: &[Value]) -> Vec<ChatMessage> {
+        messages
+            .iter()
+            .filter_map(|message| {
+                let role = message.get("role").and_then(Value::as_str)?.to_string();
+                let content = message.get("content").cloned().unwrap_or(Value::Null);
+                let reasoning_content = message
+                    .get("reasoning_content")
+                    .or_else(|| message.get("reasoning"))
+                    .and_then(Value::as_str)
+                    .and_then(|text| {
+                        if text.trim().is_empty() {
+                            None
+                        } else {
+                            Some(text.to_string())
+                        }
+                    });
+                let tool_calls = message
+                    .get("tool_calls")
+                    .or_else(|| message.get("tool_call"))
+                    .or_else(|| message.get("function_call"))
+                    .cloned();
+                let tool_call_id = message
+                    .get("tool_call_id")
+                    .or_else(|| message.get("toolCallId"))
+                    .or_else(|| message.get("call_id"))
+                    .or_else(|| message.get("callId"))
+                    .and_then(|value| match value {
+                        Value::String(text) => Some(text.clone()),
+                        Value::Number(num) => Some(num.to_string()),
+                        _ => None,
+                    })
+                    .and_then(|text| {
+                        let cleaned = text.trim().to_string();
+                        if cleaned.is_empty() {
+                            None
+                        } else {
+                            Some(cleaned)
+                        }
+                    });
+                Some(ChatMessage {
+                    role,
+                    content,
+                    reasoning_content,
+                    tool_calls,
+                    tool_call_id,
+                })
+            })
+            .collect()
+    }
+
+    pub(super) fn estimate_token_usage(
+        &self,
+        messages: &[Value],
+        content: &str,
+        reasoning: &str,
+    ) -> TokenUsage {
+        let input = estimate_messages_tokens(messages).max(0) as u64;
+        let output = approx_token_count(content).max(0) as u64;
+        let reasoning_tokens = approx_token_count(reasoning).max(0) as u64;
+        TokenUsage {
+            input,
+            output,
+            reasoning: Some(reasoning_tokens),
+            estimated: true,
+            total: input
+                .saturating_add(output)
+                .saturating_add(reasoning_tokens),
+        }
+    }
+
+    pub(super) fn resolve_llm_timeout_s(&self, config: &LlmModelConfig) -> u64 {
+        let timeout_s = config.timeout_s.unwrap_or(DEFAULT_LLM_TIMEOUT_S);
+        if timeout_s == 0 {
+            DEFAULT_LLM_TIMEOUT_S
+        } else {
+            timeout_s
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn call_llm(
+        &self,
+        llm_config: &LlmModelConfig,
+        messages: &[Value],
+        user_id: &str,
+        is_admin: bool,
+        emitter: &EventEmitter,
+        session_id: &str,
+        stream: bool,
+        round_info: RoundInfo,
+        emit_events: bool,
+        emit_quota_events: bool,
+        tools: Option<&[Value]>,
+        llm_config_override: Option<LlmModelConfig>,
+    ) -> Result<
+        (
+            String,
+            String,
+            TokenUsage,
+            Option<Value>,
+            LlmSpeedSummary,
+            OutputDiagnostics,
+        ),
+        OrchestratorError,
+    > {
+        self.ensure_not_cancelled(session_id)?;
+        let mut effective_config = llm_config_override.unwrap_or_else(|| llm_config.clone());
+        if !is_llm_configured(&effective_config) {
+            if effective_config.mock_if_unconfigured.unwrap_or(false) {
+                let content = i18n::t("error.llm_not_configured");
+                let usage = self.estimate_token_usage(messages, &content, "");
+                let decode_output_tokens = usage.output;
+                let round_speed = LlmSpeedSummary::from_usage_and_durations(
+                    Some(usage.input),
+                    Some(decode_output_tokens),
+                    None,
+                    None,
+                );
+                if emit_events {
+                    let mut output_payload = json!({
+                        "content": content,
+                        "reasoning": "",
+                        "usage": usage,
+                        "decode_output_tokens": decode_output_tokens,
+                    });
+                    if let Value::Object(ref mut map) = output_payload {
+                        round_info.insert_into(map);
+                        round_speed.insert_into_map(map);
+                    }
+                    emitter.emit("llm_output", output_payload).await;
+                    let mut usage_payload = json!({
+                        "input_tokens": usage.input,
+                        "output_tokens": usage.output,
+                        "total_tokens": usage.total,
+                        "reasoning_tokens": usage.reasoning,
+                        "estimated": usage.estimated,
+                        "decode_output_tokens": decode_output_tokens,
+                    });
+                    if let Value::Object(ref mut map) = usage_payload {
+                        round_info.insert_into(map);
+                        round_speed.insert_into_map(map);
+                    }
+                    emitter.emit("token_usage", usage_payload).await;
+                }
+                self.account_model_usage(&usage, emitter, user_id, true, round_info, false, "mock")
+                    .await?;
+                let output = OutputDiagnostics::new(&effective_config, None, &usage);
+                return Ok((content, String::new(), usage, None, round_speed, output));
+            }
+            let detail = i18n::t("error.llm_config_missing");
+            return Err(OrchestratorError::llm_unavailable(i18n::t_with_params(
+                "error.llm_unavailable",
+                &HashMap::from([("detail".to_string(), detail)]),
+            )));
+        }
+
+        let virtual_replay = crate::services::virtual_llm::is_virtual_replay_provider(
+            effective_config.provider.as_deref(),
+        );
+        if virtual_replay {
+            // Existing threads retain the protocol frozen with their system prompt.
+            if let Some(mode) = self
+                .workspace
+                .load_session_frozen_tool_call_mode_async(user_id, session_id)
+                .await
+            {
+                effective_config.tool_call_mode = Some(mode);
+            }
+        }
+
+        let client = build_llm_client(&effective_config, self.http.clone());
+        let mut client = if virtual_replay {
+            client
+        } else {
+            self.with_quota_tracking_admission(client, user_id, is_admin, emitter, round_info)
+        };
+        // Cloud queue visibility (§4.4.4): forward queue positions from the
+        // cloud channel wrapper as `cloud_queue` incremental events.
+        if crate::llm::normalize_provider(effective_config.provider.as_deref())
+            == crate::services::cloud::CLOUD_PROVIDER
+        {
+            let queue_emitter = emitter.clone();
+            let queue_session = session_id.to_string();
+            client = client.with_cloud_queue_callback(std::sync::Arc::new(move |position| {
+                let emitter = queue_emitter.clone();
+                let session_id = queue_session.clone();
+                tokio::spawn(async move {
+                    emitter
+                        .emit(
+                            "cloud_queue",
+                            json!({ "position": position, "session_id": session_id }),
+                        )
+                        .await;
+                });
+            }));
+        }
+        let context_manager = ContextManager;
+        let request_messages = context_manager.normalize_messages(messages.to_vec());
+        let message_repair = (request_messages.as_slice() != messages).then(|| {
+            json!({
+                "kind": "chat_messages",
+                "source": "message_sequence",
+                "strategy": "normalize_tool_result_adjacency",
+                "before_count": messages.len(),
+                "after_count": request_messages.len(),
+            })
+        });
+        let chat_messages =
+            sanitize_chat_messages_for_request(&self.build_chat_messages(&request_messages));
+        let native_tools_attached = tools.is_some_and(|items| !items.is_empty());
+        let stream_disabled_reason = crate::llm::should_disable_streaming_for_native_tools(
+            &effective_config,
+            native_tools_attached,
+        )
+        .then_some("native_tools_non_stream_policy");
+        let initial_will_stream = stream && stream_disabled_reason.is_none();
+        let context_cache_probe = build_context_cache_probe(&chat_messages.messages, tools);
+        let virtual_turn = if virtual_replay {
+            let app_config = self.config_store.get().await;
+            let turn = crate::services::virtual_llm::load_turn_for_round(
+                app_config,
+                &effective_config,
+                round_info.user_round,
+                round_info.model_round,
+            )
+            .await
+            .map_err(|err| {
+                OrchestratorError::llm_unavailable(i18n::t_with_params(
+                    "error.llm_unavailable",
+                    &HashMap::from([("detail".to_string(), err.to_string())]),
+                ))
+            })?;
+            Some(
+                crate::services::virtual_llm::request::prepare_turn(
+                    super::virtual_replay_protocol::normalize(
+                        turn,
+                        crate::llm::resolve_tool_call_mode(&effective_config),
+                    ),
+                    &effective_config,
+                    &request_messages,
+                    tools,
+                )
+                .map_err(|error| {
+                    if error.code == "context_length_exceeded" {
+                        OrchestratorError::context_window_exceeded(error.to_string())
+                    } else {
+                        OrchestratorError::invalid_request_with_detail(
+                            error.to_string(),
+                            error.response(),
+                        )
+                    }
+                })?,
+            )
+        } else {
+            None
+        };
+
+        if emit_events {
+            // llm_request events always use the compact profile; the full
+            // request body is never emitted or persisted.
+            let mut request_payload = json!({
+                "provider": effective_config.provider,
+                "model": effective_config.model,
+                "base_url": effective_config.base_url,
+                "stream": initial_will_stream,
+                "stream_requested": stream,
+                "payload_omitted": true,
+                "context_cache_probe": context_cache_probe,
+            });
+            if let Value::Object(ref mut map) = request_payload {
+                if let Some(repair) = chat_messages.repair.clone() {
+                    map.insert("repair".to_string(), repair);
+                }
+                if let Some(repair) = message_repair.clone() {
+                    map.insert("message_repair".to_string(), repair);
+                }
+                if let Some(reason) = stream_disabled_reason {
+                    map.insert(
+                        "stream_disabled_reason".to_string(),
+                        Value::String(reason.to_string()),
+                    );
+                }
+                if let Some(turn) = virtual_turn.as_ref() {
+                    if let Value::Object(meta) =
+                        crate::services::virtual_llm::build_virtual_request_meta(turn)
+                    {
+                        map.extend(meta);
+                    }
+                }
+                round_info.insert_into(map);
+            }
+            emitter.emit("llm_request", request_payload).await;
+        }
+
+        let timeout_s = if is_admin {
+            0
+        } else {
+            self.resolve_llm_timeout_s(&effective_config)
+        };
+        if let Some(virtual_turn) = virtual_turn {
+            let request_started_at = Instant::now();
+            let simulation_speed = effective_config.simulation_speed.unwrap_or_default();
+            // Replay usage may describe an older prompt. Simulate prefill from this request.
+            let input_tokens = virtual_turn.usage.as_ref().map_or(0, |usage| usage.input);
+            self.await_with_cancel(session_id, timeout_s, async {
+                crate::services::virtual_llm::timing::wait_for_prefill(
+                    input_tokens,
+                    simulation_speed,
+                )
+                .await;
+                Ok(())
+            })
+            .await?
+            .map_err(|error| OrchestratorError::llm_unavailable(error.to_string()))?;
+            let output_timing = Arc::new(parking_lot::Mutex::new(OutputTiming::default()));
+            let will_stream = initial_will_stream;
+            if will_stream {
+                let emitter_snapshot = emitter.clone();
+                let timing_snapshot = Arc::clone(&output_timing);
+                let activity = StreamActivity::new();
+                let callback_activity = activity.clone();
+                let on_delta = move |delta: String, reasoning_delta: String| {
+                    callback_activity.touch();
+                    let emitter = emitter_snapshot.clone();
+                    let timing = Arc::clone(&timing_snapshot);
+                    async move {
+                        let delta_len = delta.len();
+                        let reasoning_delta_len = reasoning_delta.len();
+                        timing
+                            .lock()
+                            .mark_output(Instant::now(), delta_len, reasoning_delta_len);
+                        if emit_events && (!delta.is_empty() || !reasoning_delta.is_empty()) {
+                            let mut payload = serde_json::Map::new();
+                            if !delta.is_empty() {
+                                payload.insert("delta".to_string(), Value::String(delta));
+                            }
+                            if !reasoning_delta.is_empty() {
+                                payload.insert(
+                                    "reasoning_delta".to_string(),
+                                    Value::String(reasoning_delta),
+                                );
+                            }
+                            round_info.insert_into(&mut payload);
+                            emitter
+                                .emit("llm_output_delta", Value::Object(payload))
+                                .await;
+                        }
+                        Ok(())
+                    }
+                };
+                let fut = crate::services::virtual_llm::emit_virtual_deltas(
+                    &virtual_turn,
+                    true,
+                    simulation_speed,
+                    on_delta,
+                );
+                self.await_with_cancel(
+                    session_id,
+                    0,
+                    activity.with_idle_timeout(Duration::from_secs(timeout_s), fut),
+                )
+                .await?
+                .map_err(|err| {
+                    OrchestratorError::llm_unavailable(i18n::t_with_params(
+                        "error.llm_unavailable",
+                        &HashMap::from([("detail".to_string(), err.to_string())]),
+                    ))
+                })?;
+            }
+            if !will_stream {
+                self.await_with_cancel(
+                    session_id,
+                    timeout_s,
+                    crate::services::virtual_llm::emit_virtual_deltas(
+                        &virtual_turn,
+                        false,
+                        simulation_speed,
+                        |_, _| std::future::ready(Ok(())),
+                    ),
+                )
+                .await?
+                .map_err(|error| OrchestratorError::llm_unavailable(error.to_string()))?;
+            }
+            let response_finished_at = Instant::now();
+            let content = virtual_turn.content.clone();
+            let reasoning = virtual_turn.reasoning.clone();
+            let tool_calls = virtual_turn.tool_calls.clone();
+            let usage = crate::services::virtual_llm::estimate_virtual_usage(
+                &request_messages,
+                &virtual_turn,
+            );
+            let (prefill_duration_s, decode_duration_s) = if will_stream {
+                output_timing
+                    .lock()
+                    .durations(request_started_at, response_finished_at)
+            } else {
+                (None, None)
+            };
+            let stream_timing = if will_stream {
+                output_timing
+                    .lock()
+                    .stream_timing_payload(request_started_at, response_finished_at)
+            } else {
+                None
+            };
+            // Body speed must use visible answer tokens, excluding hidden reasoning.
+            let decode_output_tokens = if content.trim().is_empty() {
+                usage.output
+            } else {
+                approx_token_count(&content).max(0) as u64
+            };
+            let round_speed = LlmSpeedSummary::from_usage_and_durations(
+                Some(usage.input),
+                Some(decode_output_tokens),
+                prefill_duration_s,
+                decode_duration_s,
+            );
+            let output = OutputDiagnostics::new(&effective_config, None, &usage);
+            if emit_events {
+                let mut output_payload = json!({
+                    "content": content,
+                    "reasoning": reasoning,
+                    "usage": usage,
+                    "decode_output_tokens": decode_output_tokens,
+                    "tool_calls": tool_calls,
+                    "prefill_duration_s": prefill_duration_s,
+                    "decode_duration_s": decode_duration_s,
+                    "stream_timing": stream_timing,
+                });
+                if let Value::Object(ref mut map) = output_payload {
+                    if let Value::Object(meta) =
+                        crate::services::virtual_llm::build_virtual_request_meta(&virtual_turn)
+                    {
+                        map.extend(meta);
+                    }
+                    round_info.insert_into(map);
+                    round_speed.insert_into_map(map);
+                }
+                emitter.emit("llm_output", output_payload).await;
+                let mut usage_payload = json!({
+                    "virtual_replay": true,
+                    "billable": false,
+                    "input_tokens": usage.input,
+                    "output_tokens": usage.output,
+                    "total_tokens": usage.total,
+                        "reasoning_tokens": usage.reasoning,
+                        "estimated": usage.estimated,
+                    "decode_output_tokens": decode_output_tokens,
+                    "prefill_duration_s": prefill_duration_s,
+                    "decode_duration_s": decode_duration_s,
+                });
+                if let Value::Object(ref mut map) = usage_payload {
+                    round_info.insert_into(map);
+                    round_speed.insert_into_map(map);
+                }
+                emitter.emit("token_usage", usage_payload).await;
+            }
+            self.account_model_usage(&usage, emitter, user_id, true, round_info, false, "replay")
+                .await?;
+            // Recorded/estimated usage is diagnostic only; replay never spends user quota.
+            return Ok((content, reasoning, usage, tool_calls, round_speed, output));
+        }
+        let mut attempt = 0u32;
+        let mut last_err: anyhow::Error;
+        loop {
+            self.ensure_not_cancelled(session_id)?;
+            attempt += 1;
+            let request_started_at = Instant::now();
+            let output_timing = Arc::new(parking_lot::Mutex::new(OutputTiming::default()));
+            let will_stream = initial_will_stream;
+            let result = if will_stream {
+                let emitter_snapshot = emitter.clone();
+                let timing_snapshot = Arc::clone(&output_timing);
+                let activity = StreamActivity::new();
+                let callback_activity = activity.clone();
+                let on_delta = move |delta: String, reasoning_delta: String| {
+                    callback_activity.touch();
+                    let emitter = emitter_snapshot.clone();
+                    let timing = Arc::clone(&timing_snapshot);
+                    async move {
+                        let delta_len = delta.len();
+                        let reasoning_delta_len = reasoning_delta.len();
+                        timing
+                            .lock()
+                            .mark_output(Instant::now(), delta_len, reasoning_delta_len);
+                        if emit_events && (!delta.is_empty() || !reasoning_delta.is_empty()) {
+                            let mut payload = serde_json::Map::new();
+                            if !delta.is_empty() {
+                                payload.insert("delta".to_string(), Value::String(delta));
+                            }
+                            if !reasoning_delta.is_empty() {
+                                payload.insert(
+                                    "reasoning_delta".to_string(),
+                                    Value::String(reasoning_delta),
+                                );
+                            }
+                            round_info.insert_into(&mut payload);
+                            emitter
+                                .emit("llm_output_delta", Value::Object(payload))
+                                .await;
+                        }
+                        Ok(())
+                    }
+                };
+                let fut = async {
+                    if tools.is_some() {
+                        client
+                            .stream_complete_with_callback_with_tools(
+                                &chat_messages.messages,
+                                tools,
+                                on_delta,
+                            )
+                            .await
+                    } else {
+                        client
+                            .stream_complete_with_callback(&chat_messages.messages, on_delta)
+                            .await
+                    }
+                };
+                self.await_with_cancel(
+                    session_id,
+                    0,
+                    activity.with_idle_timeout(Duration::from_secs(timeout_s), fut),
+                )
+                .await?
+            } else {
+                let fut = client.complete_with_tools(&chat_messages.messages, tools);
+                self.await_with_cancel(session_id, timeout_s, fut).await?
+            };
+
+            match result {
+                Ok(response) => {
+                    let finish_reason = response.finish_reason;
+                    let response_finished_at = Instant::now();
+                    let content = response.content;
+                    let reasoning = response.reasoning;
+                    let tool_calls = response.tool_calls;
+                    let mut usage = response.usage;
+                    if let Some(item) = usage.as_mut() {
+                        if item.total == 0 {
+                            let total = item.input.saturating_add(item.output);
+                            if total > 0 {
+                                item.total = total;
+                            }
+                        }
+                    }
+                    let usage = usage.filter(|item| item.total > 0).unwrap_or_else(|| {
+                        let mut estimated =
+                            self.estimate_token_usage(&request_messages, &content, &reasoning);
+                        let tool_tokens = tool_calls.as_ref().map_or(0, |calls| {
+                            approx_token_count(&calls.to_string()).max(0) as u64
+                        });
+                        estimated.output = estimated.output.saturating_add(tool_tokens);
+                        estimated.total = estimated.total.saturating_add(tool_tokens);
+                        estimated
+                    });
+                    self.account_model_usage(
+                        &usage,
+                        emitter,
+                        user_id,
+                        is_admin,
+                        round_info,
+                        emit_quota_events,
+                        if emit_events {
+                            "response"
+                        } else {
+                            "compaction"
+                        },
+                    )
+                    .await?;
+                    let (prefill_duration_s, decode_duration_s) = if will_stream {
+                        output_timing
+                            .lock()
+                            .durations(request_started_at, response_finished_at)
+                    } else {
+                        (None, None)
+                    };
+                    let stream_timing = if will_stream {
+                        output_timing
+                            .lock()
+                            .stream_timing_payload(request_started_at, response_finished_at)
+                    } else {
+                        None
+                    };
+                    // OutputTiming already isolates visible content from reasoning
+                    // and tool arguments. A tool call or missing provider usage
+                    // does not invalidate that measured content interval.
+                    // Body speed must use visible answer tokens, excluding hidden reasoning.
+                    let decode_output_tokens = if content.trim().is_empty() {
+                        usage.output
+                    } else {
+                        approx_token_count(&content).max(0) as u64
+                    };
+                    let round_speed = LlmSpeedSummary::from_usage_and_durations(
+                        Some(usage.input),
+                        Some(decode_output_tokens),
+                        prefill_duration_s,
+                        decode_duration_s,
+                    );
+                    let output = OutputDiagnostics::new(&effective_config, finish_reason, &usage);
+                    if emit_events {
+                        let tool_calls_snapshot = tool_calls.clone();
+                        let mut output_payload = json!({
+                            "content": content,
+                            "reasoning": reasoning,
+                            "usage": usage,
+                            "decode_output_tokens": decode_output_tokens,
+                            "tool_calls": tool_calls_snapshot,
+                            "prefill_duration_s": prefill_duration_s,
+                            "decode_duration_s": decode_duration_s,
+                            "stream_timing": stream_timing,
+                        });
+                        if let Value::Object(ref mut map) = output_payload {
+                            round_info.insert_into(map);
+                            round_speed.insert_into_map(map);
+                        }
+                        output.insert_into(&mut output_payload);
+                        emitter.emit("llm_output", output_payload).await;
+                        let mut usage_payload = json!({
+                            "input_tokens": usage.input,
+                            "output_tokens": usage.output,
+                            "total_tokens": usage.total,
+                        "reasoning_tokens": usage.reasoning,
+                        "estimated": usage.estimated,
+                            "decode_output_tokens": decode_output_tokens,
+                            "prefill_duration_s": prefill_duration_s,
+                            "decode_duration_s": decode_duration_s,
+                        });
+                        if let Value::Object(ref mut map) = usage_payload {
+                            round_info.insert_into(map);
+                            round_speed.insert_into_map(map);
+                        }
+                        emitter.emit("token_usage", usage_payload).await;
+                    }
+                    return Ok((content, reasoning, usage, tool_calls, round_speed, output));
+                }
+                Err(err) => {
+                    // Admission failures are terminal, not provider errors eligible for retry.
+                    if err.is::<OrchestratorError>() {
+                        return Err(err
+                            .downcast::<OrchestratorError>()
+                            .expect("admission error"));
+                    }
+                    let failure_kind = classify_llm_error(&err);
+                    let max_attempts = resolve_llm_max_attempts(failure_kind);
+                    let should_retry = attempt < max_attempts;
+                    let retry_delay = resolve_llm_retry_delay(attempt, failure_kind);
+                    if emit_events && should_retry {
+                        let mut retry_payload = json!({
+                            "attempt": attempt,
+                            "max_attempts": max_attempts,
+                            "delay_s": retry_delay.as_secs_f64(),
+                            "retry_reason": llm_retry_reason(failure_kind),
+                            "stream": will_stream,
+                            "will_retry": true,
+                            "error": err.to_string(),
+                        });
+                        if let Value::Object(ref mut map) = retry_payload {
+                            round_info.insert_into(map);
+                        }
+                        emitter.emit("llm_stream_retry", retry_payload).await;
+                    }
+                    last_err = err;
+                    if !should_retry {
+                        break;
+                    }
+                    if !retry_delay.is_zero() {
+                        self.sleep_or_cancel(session_id, retry_delay).await?;
+                    }
+                }
+            }
+        }
+
+        let detail = last_err.to_string();
+        let failure_kind = classify_llm_error(&last_err);
+        let message_key = if matches!(failure_kind, LlmFailureKind::Unavailable) {
+            "error.llm_unavailable"
+        } else {
+            "error.llm_call_failed"
+        };
+        let message = i18n::t_with_params(
+            message_key,
+            &HashMap::from([("detail".to_string(), detail)]),
+        );
+        match failure_kind {
+            LlmFailureKind::ContextWindow => {
+                Err(OrchestratorError::context_window_exceeded(message))
+            }
+            LlmFailureKind::Unavailable => Err(OrchestratorError::llm_unavailable(message)),
+            LlmFailureKind::Other => Err(OrchestratorError::internal(message)),
+        }
+    }
+}
+
+#[cfg(test)]
+fn classify_llm_failure(message: &str) -> LlmFailureKind {
+    if is_context_window_error_text(message) {
+        return LlmFailureKind::ContextWindow;
+    }
+    if is_llm_unavailable_error_text(message) {
+        return LlmFailureKind::Unavailable;
+    }
+    LlmFailureKind::Other
+}
+
+fn classify_llm_error(error: &anyhow::Error) -> LlmFailureKind {
+    let message = error.to_string();
+    if is_context_window_error_text(&message) {
+        return LlmFailureKind::ContextWindow;
+    }
+    if is_llm_request_transport_error(error) || is_llm_unavailable_error_text(&message) {
+        return LlmFailureKind::Unavailable;
+    }
+    LlmFailureKind::Other
+}
+
+fn is_llm_request_transport_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|source| {
+        source.downcast_ref::<reqwest::Error>().is_some_and(|err| {
+            err.is_timeout()
+                || err.is_connect()
+                || err.is_request()
+                || err.is_body()
+                || err.is_decode()
+        })
+    })
+}
+
+fn is_llm_unavailable_error_text(message: &str) -> bool {
+    let normalized = message.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    [
+        "error sending request",
+        "error trying to connect",
+        "connection refused",
+        "connection reset",
+        "connection aborted",
+        "connection closed",
+        "server disconnected",
+        "broken pipe",
+        "failed to connect",
+        "timed out",
+        "timeout",
+        "dns error",
+        "too many requests",
+        "rate limit",
+        "bad gateway",
+        "gateway timeout",
+        "internal server error",
+        "temporarily unavailable",
+        "service unavailable",
+        "unavailable_error",
+        "error decoding response body",
+        "read llm response body",
+        "read body failed",
+        "error reading a body from connection",
+        "unexpected eof",
+        "unexpected end of file",
+        "end of file before message length reached",
+        "loading model",
+        "429",
+        "500 internal server error",
+        "502 bad gateway",
+        "503",
+        "504 gateway timeout",
+        "empty response",
+        "without payload",
+        "without content",
+        "without content, reasoning, or tool calls",
+        "did not return a displayable final answer",
+        "no choices",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+fn resolve_llm_max_attempts(failure_kind: LlmFailureKind) -> u32 {
+    if matches!(failure_kind, LlmFailureKind::Unavailable) {
+        DEFAULT_LLM_MAX_ATTEMPTS.max(LLM_UNAVAILABLE_MIN_RETRIES.saturating_add(1))
+    } else {
+        DEFAULT_LLM_MAX_ATTEMPTS
+    }
+}
+
+fn resolve_llm_retry_delay(attempt: u32, failure_kind: LlmFailureKind) -> Duration {
+    if matches!(failure_kind, LlmFailureKind::Unavailable) {
+        let index = attempt.saturating_sub(1) as usize;
+        let delay_ms = LLM_UNAVAILABLE_RETRY_DELAYS_MS
+            .get(index)
+            .copied()
+            .unwrap_or(*LLM_UNAVAILABLE_RETRY_DELAYS_MS.last().unwrap_or(&30_000));
+        Duration::from_millis(delay_ms)
+    } else {
+        Duration::from_secs_f64((attempt as f64).min(3.0))
+    }
+}
+
+fn llm_retry_reason(failure_kind: LlmFailureKind) -> &'static str {
+    match failure_kind {
+        LlmFailureKind::ContextWindow => "context_window",
+        LlmFailureKind::Unavailable => "llm_unavailable",
+        LlmFailureKind::Other => "provider_error",
+    }
+}
+
+pub(super) fn is_context_window_error_text(message: &str) -> bool {
+    let normalized = message.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    [
+        "context_length_exceeded",
+        "context_window_exceeded",
+        "context length",
+        "context window",
+        "context window of this model",
+        "maximum context",
+        "maximum context length",
+        "max context",
+        "context size",
+        "too many tokens",
+        "your input exceeds the context window",
+        "input exceeds the context window",
+        "input exceeds the model's context window",
+        "prompt is too long",
+        "prompt too long",
+        "input is too long",
+        "input length should be",
+        "range of input length",
+        "range of prompt length",
+        "input length exceeds",
+        "input token count",
+        "prompt token count",
+        "maximum number of tokens",
+        "requested tokens",
+        "requested token count",
+        "context overflow",
+        "token limit exceeded",
+        "reduce the length",
+        "exceeds the model's context window",
+        "exceeds the available context size",
+        "this model's maximum context length is",
+        "requested tokens exceed",
+        "maximum input length",
+        "input too large",
+        "prompt exceeds",
+        "上下文窗口",
+        "上下文长度",
+        "超出模型上下文",
+        "超过模型上下文",
+        "超出最大上下文",
+        "超过最大上下文",
+        "提示词过长",
+        "输入太长",
+        "输入长度应在",
+        "长度范围",
+        "最大输入长度",
+        "最大上下文长度",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+pub(super) fn extract_context_window_limit_hint(message: &str) -> Option<i64> {
+    let text = message.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let regexes = context_window_limit_hint_regexes();
+    for regex in regexes {
+        if let Some(captures) = regex.captures(text) {
+            let raw = captures.get(1).map(|matched| matched.as_str());
+            if let Some(raw) = raw {
+                if let Some(value) = parse_context_limit_number(raw) {
+                    return Some(value);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn context_window_limit_hint_regexes() -> &'static Vec<Regex> {
+    static REGEXES: OnceLock<Vec<Regex>> = OnceLock::new();
+    REGEXES.get_or_init(|| {
+        let patterns = [
+            r"(?i)this model['’]s maximum context length is\s*([0-9][0-9_,]*)",
+            r"(?i)maximum\s+context(?:\s+window)?\s+length\s+is\s*([0-9][0-9_,]*)",
+            r"(?i)context window(?: of this model)?(?: is|:)?\s*([0-9][0-9_,]*)",
+            r"(?i)input length should be\s*\[\s*\d+\s*[,，]\s*([0-9][0-9_,]*)\s*\]",
+            r"(?i)range of input length should be\s*\[\s*\d+\s*[,，]\s*([0-9][0-9_,]*)\s*\]",
+            r"(?i)range of prompt length should be\s*\[\s*\d+\s*[,，]\s*([0-9][0-9_,]*)\s*\]",
+            r"(?i)tokens?\s*\+\s*max_new_tokens\s*must\s*be\s*<=\s*([0-9][0-9_,]*)",
+            r"(?i)at most\s*([0-9][0-9_,]*)\s*tokens",
+            r"最大(?:上下文|输入)(?:长度|窗口)?[^0-9]{0,12}([0-9][0-9_,]*)",
+            r"上下文(?:长度|窗口)[^0-9]{0,12}([0-9][0-9_,]*)",
+            r"长度范围[^\[]*\[\s*\d+\s*[,，]\s*([0-9][0-9_,]*)\s*\]",
+        ];
+        patterns
+            .iter()
+            .filter_map(|pattern| compile_regex(pattern, "context_window_limit_hint"))
+            .collect()
+    })
+}
+
+fn parse_context_limit_number(raw: &str) -> Option<i64> {
+    let digits = raw
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse::<i64>().ok().filter(|value| *value > 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_context_cache_probe, classify_llm_failure, extract_context_window_limit_hint,
+        is_context_window_error_text, is_llm_unavailable_error_text, llm_retry_reason,
+        resolve_llm_max_attempts, resolve_llm_retry_delay, LlmFailureKind,
+        DEFAULT_LLM_MAX_ATTEMPTS, LLM_UNAVAILABLE_MIN_RETRIES,
+    };
+    use crate::core::config::LlmModelConfig;
+    use crate::llm::ChatMessage;
+    use serde_json::json;
+    use std::time::{Duration, Instant};
+
+    fn test_message(role: &str, content: &str) -> ChatMessage {
+        ChatMessage {
+            role: role.to_string(),
+            content: json!(content),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    #[test]
+    fn output_timing_reports_stream_chunk_diagnostics() {
+        let request_start = Instant::now();
+        let first = request_start + Duration::from_millis(120);
+        let second = first + Duration::from_millis(35);
+        let end = second + Duration::from_millis(10);
+        let mut timing = super::OutputTiming::default();
+
+        timing.mark_output(first, 4, 0);
+        timing.mark_output(second, 2, 3);
+
+        let payload = timing
+            .stream_timing_payload(request_start, end)
+            .expect("stream timing payload");
+        assert_eq!(payload["chunk_count"], json!(2));
+        assert_eq!(payload["content_delta_chars"], json!(6));
+        assert_eq!(payload["reasoning_delta_chars"], json!(3));
+        assert_eq!(payload["prefill_ms"], json!(120));
+        assert_eq!(payload["decode_ms"], json!(35));
+        assert_eq!(payload["max_chunk_gap_ms"], json!(35));
+    }
+
+    #[test]
+    fn output_timing_excludes_reasoning_and_empty_tool_chunks_from_decode() {
+        let start = Instant::now();
+        let mut timing = super::OutputTiming::default();
+        timing.mark_output(start + Duration::from_secs(1), 0, 128);
+        timing.mark_output(start + Duration::from_secs(60), 0, 128);
+        timing.mark_output(start + Duration::from_secs(61), 8, 0);
+        timing.mark_output(start + Duration::from_secs(63), 8, 0);
+        timing.mark_output(start + Duration::from_secs(65), 0, 0);
+        assert_eq!(
+            timing.durations(start, start + Duration::from_secs(66)),
+            (Some(1.0), Some(2.0))
+        );
+    }
+
+    #[test]
+    fn tool_round_visible_timing_survives_turn_stats_serialization() {
+        let start = Instant::now();
+        let mut timing = super::OutputTiming::default();
+        timing.mark_output(start + Duration::from_secs(1), 0, 128);
+        timing.mark_output(start + Duration::from_secs(10), 32, 0);
+        timing.mark_output(start + Duration::from_secs(12), 32, 0);
+        // Tool argument chunks do not add visible text or extend its interval.
+        timing.mark_output(start + Duration::from_secs(20), 0, 0);
+        let (prefill, decode) = timing.durations(start, start + Duration::from_secs(21));
+        let summary = crate::core::llm_speed::LlmSpeedSummary::from_usage_and_durations(
+            Some(1000),
+            Some(32),
+            prefill,
+            decode,
+        );
+        let mut accumulator = crate::core::llm_speed::TurnDecodeSpeedAccumulator::default();
+        accumulator.record_summary(&summary);
+        let mut stats = serde_json::Map::new();
+        accumulator.insert_into_map(&mut stats);
+        let restored: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&stats).unwrap()).unwrap();
+        assert_eq!(restored["visible_decode_speed_tps"], json!(16.0));
+        assert_eq!(restored["visible_decode_duration_s"], json!(2.0));
+        assert_eq!(restored["visible_decode_measured"], json!(true));
+    }
+
+    #[test]
+    fn output_timing_measures_single_visible_chunk_until_response_end() {
+        let start = Instant::now();
+        let content = start + Duration::from_secs(1);
+        let end = content + Duration::from_secs(2);
+        let mut timing = super::OutputTiming::default();
+        timing.mark_output(content, 64, 0);
+
+        assert_eq!(timing.durations(start, end), (Some(1.0), Some(2.0)));
+        let payload = timing
+            .stream_timing_payload(start, end)
+            .expect("stream timing payload");
+        assert_eq!(payload["content_decode_ms"], json!(2000));
+    }
+
+    #[test]
+    fn detects_context_window_error_from_common_phrases() {
+        assert!(is_context_window_error_text(
+            "LLM call failed: context_length_exceeded"
+        ));
+        assert!(is_context_window_error_text(
+            "Prompt is too long and exceeds the model's context window."
+        ));
+        assert!(is_context_window_error_text(
+            "This model's maximum context length is 16384 tokens, but you requested 19000 tokens."
+        ));
+        assert!(is_context_window_error_text(
+            "input exceeds the available context size"
+        ));
+        assert!(is_context_window_error_text(
+            "Your input exceeds the context window of this model. Please adjust your input and try again."
+        ));
+        assert!(is_context_window_error_text(
+            "InternalError.Algo.InvalidParameter: Range of input length should be [1, 258048]"
+        ));
+        assert!(is_context_window_error_text(
+            "模型调用失败: prompt too long"
+        ));
+    }
+
+    #[test]
+    fn ignores_non_context_window_error_messages() {
+        assert!(!is_context_window_error_text(
+            "LLM call failed: invalid api key"
+        ));
+        assert!(!is_context_window_error_text("network timeout"));
+    }
+
+    #[test]
+    fn detects_context_window_error_from_chinese_phrases() {
+        assert!(is_context_window_error_text(
+            "模型调用失败：超过模型上下文窗口，请缩短输入后重试。"
+        ));
+        assert!(is_context_window_error_text(
+            "提示词过长，超出最大上下文长度。"
+        ));
+    }
+
+    #[test]
+    fn extracts_context_window_limit_hint_from_common_errors() {
+        assert_eq!(
+            extract_context_window_limit_hint(
+                "This model's maximum context length is 16384 tokens, but you requested 19000 tokens."
+            ),
+            Some(16384)
+        );
+        assert_eq!(
+            extract_context_window_limit_hint(
+                "InternalError.Algo.InvalidParameter: Range of input length should be [1, 258048]"
+            ),
+            Some(258048)
+        );
+        assert_eq!(
+            extract_context_window_limit_hint(
+                "MindIE request failed: Range of prompt length should be [1, 12288]"
+            ),
+            Some(12288)
+        );
+        assert_eq!(
+            extract_context_window_limit_hint(
+                "提示词过长：最大上下文长度为 32768，当前请求 40012。"
+            ),
+            Some(32768)
+        );
+        assert_eq!(extract_context_window_limit_hint("network timeout"), None);
+    }
+
+    #[test]
+    fn detects_llm_unavailable_transport_errors() {
+        assert!(is_llm_unavailable_error_text(
+            "error sending request for url (http://127.0.0.1:8001/v1/chat/completions)"
+        ));
+        assert!(is_llm_unavailable_error_text(
+            "LLM stream request failed: 503 {\"error\":{\"message\":\"Loading model\"}}"
+        ));
+        assert!(is_llm_unavailable_error_text(
+            "error decoding response body"
+        ));
+        assert!(is_llm_unavailable_error_text(
+            "LLM stream request failed: 200 OK (read body failed: error decoding response body)"
+        ));
+        assert!(is_llm_unavailable_error_text("read llm response body"));
+        assert!(is_llm_unavailable_error_text(
+            "LLM request failed: 429 Too Many Requests"
+        ));
+        assert!(is_llm_unavailable_error_text(
+            "LLM stream request failed: 500 Internal Server Error"
+        ));
+        assert!(is_llm_unavailable_error_text(
+            "LLM returned empty response without content, reasoning, or tool calls"
+        ));
+        assert!(is_llm_unavailable_error_text(
+            "LLM stream finished with [DONE] but without payload; fallback request failed"
+        ));
+        assert!(matches!(
+            classify_llm_failure("connection refused"),
+            LlmFailureKind::Unavailable
+        ));
+        assert!(matches!(
+            classify_llm_failure("error decoding response body"),
+            LlmFailureKind::Unavailable
+        ));
+        assert!(matches!(
+            classify_llm_failure("LLM request failed: 500 Internal Server Error"),
+            LlmFailureKind::Unavailable
+        ));
+        assert!(matches!(
+            classify_llm_failure("LLM returned empty response without content"),
+            LlmFailureKind::Unavailable
+        ));
+    }
+
+    #[test]
+    fn llm_unavailable_retries_use_floor_and_long_backoff() {
+        let attempts = resolve_llm_max_attempts(LlmFailureKind::Unavailable);
+        assert_eq!(attempts, LLM_UNAVAILABLE_MIN_RETRIES + 1);
+        assert_eq!(
+            resolve_llm_retry_delay(1, LlmFailureKind::Unavailable).as_millis(),
+            1_200
+        );
+        assert_eq!(
+            resolve_llm_retry_delay(5, LlmFailureKind::Unavailable).as_secs(),
+            20
+        );
+        assert_eq!(
+            llm_retry_reason(LlmFailureKind::Unavailable),
+            "llm_unavailable"
+        );
+    }
+
+    #[test]
+    fn non_unavailable_llm_failures_use_fixed_internal_attempt_budget() {
+        assert_eq!(
+            resolve_llm_max_attempts(LlmFailureKind::Other),
+            DEFAULT_LLM_MAX_ATTEMPTS
+        );
+        assert_eq!(
+            resolve_llm_max_attempts(LlmFailureKind::ContextWindow),
+            DEFAULT_LLM_MAX_ATTEMPTS
+        );
+    }
+
+    #[test]
+    fn context_cache_probe_hashes_append_only_prefixes() {
+        let previous = vec![
+            test_message("system", "stable system"),
+            test_message("user", "first"),
+            test_message("assistant", "answer"),
+        ];
+        let mut appended = previous.clone();
+        appended.push(test_message("assistant", "follow up answer"));
+        appended.push(test_message("user", "next"));
+
+        let previous_probe = build_context_cache_probe(&previous, None);
+        let appended_probe = build_context_cache_probe(&appended, None);
+
+        assert_eq!(
+            previous_probe.get("message_hash"),
+            appended_probe.get("prefix_without_last_two_hash")
+        );
+        assert_ne!(
+            previous_probe.get("message_hash"),
+            appended_probe.get("message_hash")
+        );
+    }
+
+    #[test]
+    fn context_cache_probe_marks_native_tools_prefix_risk() {
+        let messages = vec![test_message("system", "stable system")];
+        let tools = vec![json!({
+            "type": "function",
+            "function": {
+                "name": "demo",
+                "description": "Demo tool",
+                "parameters": { "type": "object" },
+            }
+        })];
+        let probe = build_context_cache_probe(&messages, Some(&tools));
+
+        assert_eq!(probe.get("tool_transport"), Some(&json!("native_tools")));
+        assert_eq!(
+            probe.get("raw_prompt_prefix_stability_risk"),
+            Some(&json!(
+                "native tools may be injected by the model server chat template outside the message prefix"
+            ))
+        );
+    }
+
+    #[test]
+    fn native_tools_keep_streaming_until_retry_recovery() {
+        let config = LlmModelConfig {
+            provider: Some("vllm_ascend".to_string()),
+            base_url: Some("http://10.10.10.10:8000/v1".to_string()),
+            ..Default::default()
+        };
+
+        assert!(!crate::llm::should_disable_streaming_for_native_tools(
+            &config, true
+        ));
+        assert!(!crate::llm::should_disable_streaming_for_native_tools(
+            &config, false
+        ));
+    }
+}

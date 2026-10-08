@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">C05 冰雹强单体示意图</title>
+  <desc id="desc">强单体垂直剖面中，深厚强回波核、弱回波区和较高回波顶提示冰雹判读关注点。</desc>
+  <defs>
+    <linearGradient id="core" y1="1" y2="0">
+      <stop offset="0" stop-color="#fde68a"/>
+      <stop offset="0.42" stop-color="#f97316"/>
+      <stop offset="0.7" stop-color="#dc2626"/>
+      <stop offset="1" stop-color="#7f1d1d"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#334155"/>
+    </marker>
+  </defs>
+  <rect width="960" height="540" fill="#f8fafc"/>
+  <rect x="50" y="52" width="620" height="428" rx="8" fill="#ecfeff" stroke="#94a3b8"/>
+  <g stroke="#cbd5e1" stroke-width="1">
+    <line x1="90" y1="420" x2="630" y2="420"/>
+    <line x1="90" y1="340" x2="630" y2="340"/>
+    <line x1="90" y1="260" x2="630" y2="260"/>
+    <line x1="90" y1="180" x2="630" y2="180"/>
+    <line x1="90" y1="100" x2="630" y2="100"/>
+  </g>
+  <text x="58" y="88" fill="#0f172a" font-size="22" font-weight="700">垂直结构示意</text>
+  <text x="98" y="438" fill="#64748b" font-size="14">近地面</text>
+  <text x="98" y="184" fill="#64748b" font-size="14">-20°C层附近</text>
+  <text x="98" y="344" fill="#64748b" font-size="14">0°C层附近</text>
+  <path d="M292 420 C266 336 294 254 342 204 C394 150 472 110 548 90 C516 166 506 244 534 318 C558 380 532 420 456 420 Z" fill="url(#core)" opacity="0.92"/>
+  <path d="M318 380 C326 304 360 246 420 214 C392 282 394 344 434 392 C394 400 354 396 318 380 Z" fill="#ecfeff" opacity="0.9" stroke="#0ea5e9" stroke-width="3" stroke-dasharray="7 6"/>
+  <text x="338" y="300" fill="#0ea5e9" font-size="17" font-weight="700">弱回波区</text>
+  <text x="500" y="116" fill="#7f1d1d" font-size="17" font-weight="700">高回波顶</text>
+  <line x1="504" y1="126" x2="520" y2="96" stroke="#7f1d1d" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="438" y="238" fill="#7f1d1d" font-size="17" font-weight="700">深厚强回波核</text>
+  <rect x="715" y="82" width="205" height="154" rx="8" fill="#fff7ed" stroke="#fed7aa"/>
+  <text x="735" y="116" fill="#9a3412" font-size="18" font-weight="700">冰雹关注点</text>
+  <text x="735" y="146" fill="#334155" font-size="15">强回波高度</text>
+  <text x="735" y="172" fill="#334155" font-size="15">上升气流支撑</text>
+  <text x="735" y="198" fill="#334155" font-size="15">双偏振特征</text>
+  <rect x="715" y="274" width="205" height="120" rx="8" fill="#ffffff" stroke="#94a3b8"/>
+  <text x="735" y="308" fill="#0f172a" font-size="18" font-weight="700">不要只看</text>
+  <text x="735" y="338" fill="#334155" font-size="15">单层反射率颜色</text>
+  <text x="735" y="364" fill="#334155" font-size="15">单张图像强弱</text>
+  <text x="50" y="514" fill="#64748b" font-size="14">冰雹判读需要垂直结构、环境场、双偏振和地面报告共同支撑。</text>
+</svg>
+

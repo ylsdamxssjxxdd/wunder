@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Architecture | 使用说明书</title>
+  <meta name="description" content="wunder uses one unified orchestration engine. Beehive is how users reach that engine; the deployment form decides where the engine runs.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/concepts/architecture","language":"en","title":"Architecture","summary":"wunder uses one unified orchestration engine. Beehive is how users reach that engine; the deployment form decides where the engine runs.","updated_at":"2026-10-07","read_when":["You want to understand wunder as a whole system","You need to see how APIs, orchestration, tools, frontends, and storage cooperate"],"source_docs":["docs/设计文档/01-系统总体设计.md"],"tab":"Reference","group":"Deep Dives","group_path":["Deep Dives"],"url":"/docs/en/concepts/architecture/","headings":[{"id":"section-1","level":1,"text":"Architecture"},{"id":"section-2","level":2,"text":"Beehive and deployment forms"},{"id":"section-3","level":3,"text":"Hull (server)"},{"id":"section-4","level":3,"text":"Honeycomb (desktop)"},{"id":"section-5","level":3,"text":"Helm (cli)"},{"id":"section-6","level":2,"text":"Top-level structure"},{"id":"section-7","level":2,"text":"Access layer"},{"id":"section-8","level":2,"text":"Orchestration layer"},{"id":"section-9","level":2,"text":"Tools and capability layer"},{"id":"section-10","level":2,"text":"Storage and workspace layer"},{"id":"section-11","level":2,"text":"Frontend layer"},{"id":"section-12","level":2,"text":"The most important architectural constraints right now"},{"id":"section-13","level":2,"text":"Diagram"},{"id":"section-14","level":2,"text":"Further reading"}],"prev_slug":"en/reference/admin-panels","next_slug":"en/concepts/workspaces","markdown":"# Architecture\n\nwunder has a clear architectural goal: use one unified engine to support multiple capability sources, reached by users through Beehive.\n\n## Beehive and deployment forms\n\nHow Beehive reaches users depends on the deployment form. All three deployment forms run the same engine behind the scenes; the differences are only in where it runs and what it governs:\n\n### Hull (server)\n\n**Who it's for**: teams, organizations\n\n**Characteristics**:\n- Supports multiple users simultaneously\n- Centralized management of users, permissions, and resources\n- Can integrate external channels\n- Suited for production deployments\n- Members access Beehive via a web browser\n\n### Honeycomb (desktop)\n\n**Who it's for**: individual users\n\n**Characteristics**:\n- Local install, runs out of the box\n- Can operate local files, windows, and browsers\n- Persistent local workspace\n- Beehive's desktop form\n\n### Helm (cli)\n\n**Who it's for**: developers, automation scenarios\n\n**Characteristics**:\n- Terminal-driven, scriptable\n- Not Beehive — a developer and automation entry\n- JSONL output for easy integration\n\nUsers spend almost all their time in Beehive (Honeycomb or Hull's web). Helm is a complementary entry for automation and scripting, not Beehive.\n\n## Top-level structure\n\nFrom the repository layout and the current implementation, wunder can be understood in five layers:\n\n1. access layer\n2. orchestration layer\n3. tools and capability layer\n4. storage and workspace layer\n5. frontend layer\n\n## Access layer\n\nThe access layer mainly includes:\n\n- the `/wunder` primary interface\n- chat WebSocket\n- the user-facing frontend\n- the admin console (Bridge)\n- channel entry points\n- A2A and MCP entry points\n\nIts role is to unify how the outside world enters the system.\n\n## Orchestration layer\n\nThis is the Engine, mainly composed of:\n\n- `crates/wunder-runtime/src/api/`\n- `crates/wunder-runtime/src/orchestrator/`\n- `crates/wunder-runtime/src/services/`\n- `crates/wunder-runtime/src/core/`\n\nIt is responsible for:\n\n- parsing requests\n- managing sessions and threads\n- building model context\n- issuing model calls\n- handling tool calls\n- recording events and state\n\n## Tools and capability layer\n\nwunder's capabilities do not come from one place only. It unifies multiple sources:\n\n- built-in tools\n- MCP tools\n- Skills\n- knowledge-base capabilities\n- user tools\n- temporary subagents spawned by the main agent\n\nThis is one of the biggest differences between wunder and a pure chat product.\n\n## Storage and workspace layer\n\nWorkspaces and storage are the basis of long-running behavior:\n\n- user workspaces store durable files and artifacts\n- session data supports history and replay\n- monitoring and events support observability\n- long-term memory supports memory injection during thread initialization\n\n## Frontend layer\n\nwunder currently has two user-visible surfaces:\n\n- Beehive (user workbench): `frontend/`, delivered as the Honeycomb desktop app or Hull's web form — this is where users do daily work\n- Bridge (admin console): `web/` — the governance backend\n\nBeehive and Bridge share the same underlying capabilities, but serve different interaction goals. The user frontend and the admin console must remain separate.\n\n## The most important architectural constraints right now\n\n- `server` (Hull) is the server form for teams and organizations\n- Honeycomb (the desktop app) is Beehive's main delivery form for individual users\n- `cli` (Helm) is the developer and automation entry point, not Beehive\n- Beehive and Bridge must remain separate\n- all three runtime forms build on the same Engine; Honeycomb and Helm do not depend on the Hull\n- chat real-time state is WebSocket-only; non-chat streaming endpoints keep their own protocol boundaries\n\n## Diagram\n\nThe manual includes a core hierarchy diagram that is useful for establishing system boundaries first:\n\n- [Hierarchy Diagram: wunder -> user -> agent -> thread](/docs/assets/manual/08-hierarchy-structure.svg)\n\n## Further reading\n\n- [Sessions and Rounds](/docs/en/concepts/sessions-and-rounds/)\n- [Tool System](/docs/en/concepts/tools/)\n- [Deployment and Operations](/docs/en/ops/deployment/)\n","source_path":"使用说明书/en/concepts/architecture.md"}</script>
+</body>
+</html>

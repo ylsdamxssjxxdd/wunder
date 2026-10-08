@@ -1,0 +1,1472 @@
+/* Two-column messenger shell (workbench | settings).
+   Design tokens follow the cloud-usability plan §11.1 and the sidebar metrics
+   follow §5.2; keep this file free of legacy four-zone shell rules. */
+
+.messenger-view {
+  /* §11.1 colour tokens */
+  --mz-primary: #c96443;
+  --mz-primary-hover: #b55637;
+  --mz-primary-soft: #dfac9a;
+  --mz-primary-tint: #f6e9e3;
+  --mz-bg: #fbfaf8;
+  --mz-surface: #ffffff;
+  --mz-sidebar: #f6f5f3;
+  --mz-hover: #f1efec;
+  --mz-selected: #edeae6;
+  --mz-border: #e8e6e3;
+  --mz-border-strong: #d8d5d0;
+  --mz-text: #1f2329;
+  --mz-text-secondary: #3d3d3d;
+  --mz-text-muted: #8a8f99;
+  --mz-success: #1a8a5c;
+  --mz-success-bg: #eaf7f0;
+  --mz-danger: #d04a43;
+  --mz-danger-bg: #fdecec;
+  --mz-warning: #c98a2b;
+  --mz-warning-bg: #fbeae5;
+
+  /* §7 timeline surfaces, mirroring the desktop tokens
+     (`frontend-slint/ui/design_tokens.slint`). Note that desktop `hover`
+     (#F6F5F3) is a different token from desktop `selected` (#F1EFEC): the
+     `--mz-hover` above already holds `selected`, so the timeline rows that
+     need desktop `hover` use `--mz-timeline-hover` instead. */
+  --mz-timeline-bubble: #f3f2f0;
+  --mz-timeline-line: #e2dfda;
+  --mz-timeline-hover: #f6f5f3;
+  --mz-thought: #3e9c7e;
+
+  /* §5.2 sidebar metrics */
+  --mz-sidebar-width: 240px;
+  --mz-sidebar-padding: 12px;
+  --mz-new-task-height: 38px;
+  --mz-search-height: 34px;
+  --mz-group-title-height: 24px;
+  --mz-workspace-row-height: 34px;
+  --mz-thread-row-height: 28px;
+  --mz-thread-indent: 28px;
+  --mz-settings-btn-height: 40px;
+  --mz-site-header-height: 48px;
+  --mz-chat-header-height: 56px;
+  --mz-status-bar-height: 28px;
+
+  /* §11.2 typography / §11.3 radii */
+  --mz-font-xs: 11px;
+  --mz-font-sm: 12px;
+  --mz-font-md: 13px;
+  --mz-font-base: 14px;
+  --mz-font-title: 15px;
+  --mz-radius-tag: 6px;
+  --mz-radius-btn: 10px;
+  --mz-radius-card: 12px;
+  --mz-radius-input: 22px;
+
+  --mz-drawer-breakpoint: 1024px;
+
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--mz-text);
+  background: var(--mz-bg);
+}
+
+.messenger-view.messenger-view--action-blocked {
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- site bar */
+
+.messenger-site-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  height: var(--mz-site-header-height);
+  padding: 0 16px;
+  border-bottom: 1px solid var(--mz-border);
+  background: var(--mz-surface);
+}
+
+.messenger-site-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--mz-text);
+  font-size: var(--mz-font-title);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.messenger-site-brand i {
+  color: var(--mz-primary);
+  font-size: var(--mz-font-base);
+}
+
+.messenger-site-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.messenger-site-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--mz-radius-btn);
+  color: var(--mz-text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: var(--mz-font-md);
+  cursor: pointer;
+}
+
+.messenger-site-action:hover {
+  color: var(--mz-primary);
+  background: var(--mz-hover);
+}
+
+.messenger-site-account {
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.messenger-site-account .messenger-avatar-btn {
+  width: 32px;
+  height: 32px;
+  font-size: var(--mz-font-sm);
+}
+
+/* ------------------------------------------------------------------ shell */
+
+.messenger-shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.messenger-main {
+  display: flex;
+  position: relative;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--mz-bg);
+}
+
+/* ---------------------------------------------------------------- sidebar */
+
+.messenger-sidebar {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: var(--mz-sidebar-width);
+  min-width: var(--mz-sidebar-width);
+  max-width: var(--mz-sidebar-width);
+  min-height: 0;
+  border-right: 1px solid var(--mz-border);
+  background: var(--mz-sidebar);
+  /* Sidebar-local Element Plus accent so inputs/dropdowns stay warm (§11.1). */
+  --el-color-primary: var(--mz-primary);
+  --el-color-primary-light-3: var(--mz-primary-soft);
+  --el-color-primary-light-9: var(--mz-primary-tint);
+}
+
+.messenger-sidebar-top {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px var(--mz-sidebar-padding) 0;
+}
+
+.messenger-sidebar-new-task {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-sizing: border-box;
+  height: var(--mz-new-task-height);
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--mz-radius-btn);
+  color: #ffffff;
+  background: var(--mz-primary);
+  font: inherit;
+  font-size: var(--mz-font-base);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.messenger-sidebar-new-task:hover:not(:disabled) {
+  background: var(--mz-primary-hover);
+}
+
+.messenger-sidebar-new-task:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Upper region: workspace row + thread tree. Keeps its own scroll area. */
+.messenger-sidebar-workspace-region {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.messenger-sidebar-group-title {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  height: var(--mz-group-title-height);
+  padding: 0 var(--mz-sidebar-padding);
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-sm);
+  letter-spacing: 0.02em;
+}
+
+.messenger-sidebar-workspace-row {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  height: var(--mz-workspace-row-height);
+  margin: 0 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+  color: var(--mz-text);
+  font-size: var(--mz-font-base);
+  cursor: pointer;
+}
+
+.messenger-sidebar-workspace-row:hover {
+  background: var(--mz-hover);
+}
+
+.messenger-sidebar-workspace-row.is-selected {
+  background: var(--mz-selected);
+}
+
+.messenger-sidebar-workspace-icon {
+  flex-shrink: 0;
+  color: var(--mz-primary);
+  font-size: var(--mz-font-md);
+}
+
+.messenger-sidebar-workspace-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messenger-sidebar-workspace-meta {
+  flex-shrink: 0;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.messenger-sidebar-workspace-menu {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--mz-radius-tag);
+  color: var(--mz-text-muted);
+  background: transparent;
+  font: inherit;
+  font-size: var(--mz-font-sm);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.messenger-sidebar-workspace-row:hover .messenger-sidebar-workspace-menu,
+.messenger-sidebar-workspace-menu:focus-visible {
+  opacity: 1;
+}
+
+.messenger-sidebar-workspace-menu:hover {
+  color: var(--mz-primary);
+  background: var(--mz-surface);
+}
+
+/* Thread tree -------------------------------------------------------------- */
+
+.mz-thread-tree {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mz-thread-scroll {
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-bottom: 6px;
+}
+
+.mz-thread-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: var(--mz-thread-row-height);
+  margin: 0 6px;
+  /* §5.2: thread rows are indented one rail step under the workspace row. */
+  padding-left: calc(var(--mz-thread-indent) - 6px);
+  border-radius: 7px;
+}
+
+.mz-thread-row:hover {
+  background: var(--mz-hover);
+}
+
+.mz-thread-row.is-active {
+  background: var(--mz-selected);
+}
+
+.mz-thread-row.is-active::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 2px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--mz-primary);
+}
+
+.mz-thread-select {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 100%;
+  padding: 0 4px;
+  border: 0;
+  color: var(--mz-text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: var(--mz-font-md);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mz-thread-row.is-active .mz-thread-select {
+  color: var(--mz-text);
+  font-weight: 500;
+}
+
+.mz-thread-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--mz-text-muted);
+}
+
+.mz-thread-dot.is-idle {
+  background: var(--mz-border-strong);
+}
+
+.mz-thread-dot.is-done {
+  background: var(--mz-text-muted);
+}
+
+.mz-thread-dot.is-pending {
+  background: var(--mz-warning);
+}
+
+.mz-thread-dot.is-error {
+  background: var(--mz-danger);
+}
+
+.mz-thread-dot.is-running {
+  background: var(--mz-primary);
+  animation: mz-thread-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes mz-thread-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(201, 100, 67, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(201, 100, 67, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mz-thread-dot.is-running {
+    animation: none;
+  }
+}
+
+.mz-thread-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mz-thread-menu {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--mz-radius-tag);
+  color: var(--mz-text-muted);
+  background: transparent;
+  font: inherit;
+  font-size: var(--mz-font-sm);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.mz-thread-row:hover .mz-thread-menu,
+.mz-thread-menu:focus-visible {
+  opacity: 1;
+}
+
+.mz-thread-menu:hover {
+  color: var(--mz-primary);
+  background: var(--mz-surface);
+}
+
+.mz-thread-empty,
+.mz-thread-load-more {
+  display: block;
+  width: 100%;
+  padding: 14px 10px;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-sm);
+  text-align: center;
+}
+
+.mz-thread-load-more {
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.mz-thread-load-more:disabled {
+  cursor: default;
+}
+
+/* Splitter between the workspace region and the file region. */
+.messenger-sidebar-splitter {
+  position: relative;
+  flex-shrink: 0;
+  height: 9px;
+  border-top: 1px solid var(--mz-border);
+  border-bottom: 1px solid var(--mz-border);
+  background: var(--mz-sidebar);
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.messenger-sidebar-splitter::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 28px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--mz-border-strong);
+  transform: translate(-50%, -50%);
+}
+
+.messenger-sidebar-splitter:hover::after,
+.messenger-sidebar-splitter.is-dragging::after {
+  background: var(--mz-primary);
+}
+
+/* Lower region: cloud working-directory area (§6). */
+.messenger-sidebar-files-region {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-files {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-files.is-dragover {
+  outline: 1px dashed var(--mz-primary);
+  outline-offset: -2px;
+  background: var(--mz-primary-tint);
+}
+
+.messenger-sidebar-files-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  height: var(--mz-group-title-height);
+  padding: 0 var(--mz-sidebar-padding);
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-sm);
+  letter-spacing: 0.02em;
+}
+
+.workspace-files-head-title {
+  flex-shrink: 0;
+}
+
+.workspace-files-head-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--mz-text-secondary);
+  font-size: var(--mz-font-xs);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-files-head-menu {
+  flex-shrink: 0;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: var(--mz-radius-tag);
+  color: var(--mz-text-muted);
+  background: transparent;
+  font: inherit;
+  font-size: var(--mz-font-sm);
+  cursor: pointer;
+}
+
+.workspace-files-head-menu:hover {
+  color: var(--mz-primary);
+  background: var(--mz-surface);
+}
+
+.messenger-sidebar-files-toolbar {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  padding: 0 var(--mz-sidebar-padding) 6px;
+}
+
+.messenger-sidebar-files-toolbar button {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-tag);
+  color: var(--mz-text-secondary);
+  background: var(--mz-surface);
+  font: inherit;
+  font-size: var(--mz-font-sm);
+  cursor: pointer;
+}
+
+.messenger-sidebar-files-toolbar button:hover:not(:disabled) {
+  color: var(--mz-primary);
+  border-color: var(--mz-primary-soft);
+  background: var(--mz-primary-tint);
+}
+
+.messenger-sidebar-files-toolbar button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.messenger-sidebar-files-toolbar button.is-toggle.is-active {
+  color: #ffffff;
+  border-color: var(--mz-primary);
+  background: var(--mz-primary);
+}
+
+.workspace-files-upload-input {
+  display: none;
+}
+
+.workspace-files-selection {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  margin: 0 var(--mz-sidebar-padding) 4px;
+  padding: 4px 6px;
+  border-radius: var(--mz-radius-tag);
+  background: var(--mz-selected);
+  font-size: var(--mz-font-xs);
+}
+
+.workspace-files-selection-count {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--mz-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-files-selection button {
+  padding: 2px 6px;
+  border: 1px solid var(--mz-border-strong);
+  border-radius: var(--mz-radius-tag);
+  color: var(--mz-text-secondary);
+  background: var(--mz-surface);
+  font: inherit;
+  font-size: var(--mz-font-xs);
+  cursor: pointer;
+}
+
+.workspace-files-selection button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.workspace-files-selection button.is-danger:not(:disabled) {
+  color: var(--mz-danger);
+  border-color: var(--mz-danger);
+}
+
+/* ------------------------------------------------------------------- tree */
+
+.workspace-files-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 0 var(--mz-sidebar-padding);
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-card);
+  background: var(--mz-surface);
+  overflow-x: hidden;
+  overflow-y: auto;
+  outline: none;
+}
+
+.workspace-files-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-file-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  height: 26px;
+  padding-right: 4px;
+  color: var(--mz-text-secondary);
+  font-size: var(--mz-font-sm);
+  cursor: default;
+  user-select: none;
+}
+
+.workspace-file-row:hover {
+  background: var(--mz-hover);
+}
+
+.workspace-file-row.is-active {
+  background: var(--mz-selected);
+}
+
+.workspace-file-row.is-highlighted {
+  background: var(--mz-primary-tint);
+}
+
+.workspace-file-twisty {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 100%;
+  color: var(--mz-text-muted);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.workspace-file-twisty.is-placeholder {
+  cursor: default;
+}
+
+.workspace-file-icon {
+  flex-shrink: 0;
+  width: 13px;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-sm);
+  text-align: center;
+}
+
+.workspace-file-row.is-dir .workspace-file-icon {
+  color: var(--mz-warning);
+}
+
+.workspace-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-file-check {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  accent-color: var(--mz-primary);
+}
+
+.workspace-file-menu {
+  flex-shrink: 0;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: var(--mz-radius-tag);
+  color: var(--mz-text-muted);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.workspace-file-row:hover .workspace-file-menu,
+.workspace-file-menu:focus-visible {
+  opacity: 1;
+}
+
+.workspace-file-menu:hover {
+  color: var(--mz-primary);
+  background: var(--mz-selected);
+}
+
+.workspace-files-more {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 26px;
+  border: 0;
+  color: var(--mz-text-muted);
+  background: transparent;
+  font: inherit;
+  font-size: var(--mz-font-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-files-more:hover:not(:disabled) {
+  color: var(--mz-primary);
+  background: var(--mz-hover);
+}
+
+.workspace-files-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  min-height: 100%;
+  padding: 18px 12px;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-sm);
+  text-align: center;
+}
+
+.workspace-files-state i {
+  font-size: 18px;
+}
+
+.workspace-files-state.is-error {
+  color: var(--mz-danger);
+}
+
+.workspace-files-state-text {
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.workspace-files-state-hint {
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-xs);
+}
+
+.workspace-files-state-action {
+  padding: 3px 10px;
+  border: 1px solid var(--mz-border-strong);
+  border-radius: var(--mz-radius-tag);
+  color: var(--mz-text-secondary);
+  background: var(--mz-surface);
+  font: inherit;
+  font-size: var(--mz-font-xs);
+  cursor: pointer;
+}
+
+.workspace-files-spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--mz-border-strong);
+  border-top-color: var(--mz-primary);
+  border-radius: 50%;
+  animation: workspace-files-spin 0.8s linear infinite;
+}
+
+@keyframes workspace-files-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ------------------------------------------------------------- row menu */
+
+.workspace-files-menu {
+  position: fixed;
+  z-index: 3200;
+  display: flex;
+  flex-direction: column;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-card);
+  background: #ffffff;
+  box-shadow: 0 12px 32px rgba(31, 35, 41, 0.16);
+}
+
+.workspace-files-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--mz-radius-tag);
+  color: var(--mz-text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: var(--mz-font-md);
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-files-menu-item:hover {
+  color: var(--mz-primary);
+  background: var(--mz-hover);
+}
+
+.workspace-files-menu-item.is-danger:hover {
+  color: var(--mz-danger);
+  background: var(--mz-danger-bg);
+}
+
+.workspace-files-menu-item i {
+  width: 13px;
+  text-align: center;
+}
+
+/* -------------------------------------------------------------- uploads */
+
+.workspace-files-uploads {
+  flex-shrink: 0;
+  margin: 4px var(--mz-sidebar-padding) 0;
+  padding: 4px 6px;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-tag);
+  background: var(--mz-surface);
+}
+
+.workspace-files-uploads-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-xs);
+}
+
+.workspace-files-uploads-head span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-files-uploads-head button {
+  padding: 1px 5px;
+  border: 0;
+  border-radius: var(--mz-radius-tag);
+  color: var(--mz-text-muted);
+  background: transparent;
+  font: inherit;
+  font-size: var(--mz-font-xs);
+  cursor: pointer;
+}
+
+.workspace-files-uploads-head button:hover {
+  color: var(--mz-primary);
+}
+
+.workspace-files-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: var(--mz-font-xs);
+}
+
+.workspace-files-upload-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--mz-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-files-upload-track {
+  flex-shrink: 0;
+  width: 48px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--mz-border);
+  overflow: hidden;
+}
+
+.workspace-files-upload-bar {
+  display: block;
+  height: 100%;
+  background: var(--mz-primary);
+  transition: width 120ms linear;
+}
+
+.workspace-files-upload-bar.is-error {
+  background: var(--mz-danger);
+}
+
+.workspace-files-upload-state {
+  flex-shrink: 0;
+  width: 16px;
+  color: var(--mz-text-muted);
+  text-align: center;
+}
+
+.workspace-files-upload-state button {
+  padding: 0 2px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.workspace-files-upload-state button:hover {
+  color: var(--mz-primary);
+}
+
+/* ----------------------------------------------------------- usage bar */
+
+.workspace-files-usage {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  margin: 4px var(--mz-sidebar-padding) 8px;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-files-usage-value {
+  color: var(--mz-text-secondary);
+}
+
+.workspace-files-usage-sep {
+  color: var(--mz-border-strong);
+}
+
+.workspace-files-usage-track {
+  flex: 1;
+  min-width: 24px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--mz-border);
+  overflow: hidden;
+}
+
+.workspace-files-usage-bar {
+  display: block;
+  height: 100%;
+  background: var(--mz-primary);
+}
+
+.workspace-files-usage-flag {
+  flex-shrink: 0;
+  color: var(--mz-warning);
+}
+
+/* --------------------------------------------------- preview modal states
+   预览弹层是 el-dialog append-to-body，DOM 挂在 <body> 下、不在 .messenger-view 子树内，
+   拿不到本文件顶部定义在 .messenger-view 上的 --mz-*。这些规则本身是顶层选择器
+   （.workspace-dialog--file-preview / .workspace-files-preview-state 就在 teleport 出来的
+   元素上，选择器不需要 .messenger-view 祖先），但里面的 var(--mz-*) 会解析失败，
+   声明在计算值时整条失效、文字退回继承值。所以每个 token 引用都必须带同值回退。 */
+
+.workspace-dialog--file-preview .workspace-files-preview {
+  padding: 0;
+}
+
+.workspace-dialog--file-preview .workspace-files-preview.is-audio,
+.workspace-dialog--file-preview .workspace-files-preview.is-video {
+  display: grid;
+  place-items: center;
+}
+
+.workspace-files-preview-state {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: var(--mz-font-base, 14px);
+  text-align: center;
+}
+
+.workspace-files-preview-state i {
+  font-size: 22px;
+}
+
+.workspace-files-preview-state.is-error {
+  color: var(--mz-danger, #d04a43);
+}
+
+/* Quote chips reuse the composer attachment surface (B2 -> B4 hand-off). */
+.workspace-quote-preview {
+  border-bottom: 1px dashed var(--mz-border);
+}
+
+.workspace-quote-item .upload-preview-meta {
+  font-family: Consolas, "SFMono-Regular", Menlo, monospace;
+}
+
+
+.messenger-sidebar-footer {
+  flex-shrink: 0;
+  padding: 8px var(--mz-sidebar-padding) 12px;
+  border-top: 1px solid var(--mz-border);
+}
+
+.messenger-sidebar-settings {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--mz-settings-btn-height);
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--mz-radius-btn);
+  color: var(--mz-text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: var(--mz-font-base);
+  cursor: pointer;
+}
+
+.messenger-sidebar-settings:hover,
+.messenger-sidebar-settings.is-active {
+  color: var(--mz-primary);
+  background: var(--mz-hover);
+}
+
+/* 设置按钮左端的当前用户头像（与站点头部同一份投影，非消息头像族）。 */
+.messenger-sidebar-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  overflow: hidden;
+  border-radius: 50%;
+  color: #ffffff;
+  font-size: var(--mz-font-sm);
+  font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.messenger-sidebar-avatar-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.messenger-sidebar-avatar-text {
+  line-height: 1;
+}
+
+/* -------------------------------------------------------------- chat pane */
+
+.messenger-chat-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+  height: var(--mz-chat-header-height);
+  padding: 0 16px;
+  border-bottom: 1px solid var(--mz-border);
+  background: var(--mz-surface);
+}
+
+.messenger-sidebar-toggle {
+  display: none;
+}
+
+.messenger-chat-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.messenger-chat-workspace {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-base);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messenger-chat-workspace i {
+  color: var(--mz-primary);
+}
+
+.messenger-chat-heading-divider {
+  flex-shrink: 0;
+  color: var(--mz-border-strong);
+  font-size: var(--mz-font-base);
+}
+
+.messenger-chat-title {
+  overflow: hidden;
+  color: var(--mz-text);
+  font-size: var(--mz-font-title);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messenger-chat-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.messenger-header-btn,
+.messenger-header-action-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-btn);
+  color: var(--mz-text-secondary);
+  background: var(--mz-surface);
+  font: inherit;
+  font-size: var(--mz-font-md);
+  cursor: pointer;
+}
+
+.messenger-header-btn:hover,
+.messenger-header-action-text:hover {
+  color: var(--mz-primary);
+  border-color: var(--mz-primary-soft);
+  background: var(--mz-primary-tint);
+}
+
+.messenger-header-btn:disabled,
+.messenger-header-action-text:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.messenger-header-action-text--danger:hover {
+  color: var(--mz-danger);
+  border-color: var(--mz-danger);
+  background: var(--mz-danger-bg);
+}
+
+/* 用户轮次刻度条（`.messenger-turn-ruler`）是 `.messenger-main` 的绝对定位子层：
+   `.messenger-chat-body` 是滚动容器，刻度条挂在它外面才不会跟着内容滚走。
+   条体几何与刻度线样式都在 `sections/MessengerTurnRuler.vue` 的 scoped 样式里。 */
+.messenger-main .messenger-chat-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* §8.1 composer container: 16px sides, 12px bottom; the card floats on the
+   conversation background instead of sitting on a footer strip. */
+.messenger-chat-footer {
+  position: relative;
+  flex-shrink: 0;
+  padding: 8px 16px 12px;
+  border-top: 0;
+  background: transparent;
+}
+
+.messenger-status-bar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+  height: var(--mz-status-bar-height);
+  padding: 0 16px;
+  border-top: 1px solid var(--mz-border);
+  color: var(--mz-text-muted);
+  background: var(--mz-surface);
+  font-size: var(--mz-font-sm);
+}
+
+.messenger-status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messenger-status-sep {
+  color: var(--mz-border-strong);
+}
+
+.messenger-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mz-success);
+}
+
+.messenger-status-dot.is-offline {
+  background: var(--mz-danger);
+}
+
+/* ------------------------------------------------------------ welcome pane */
+
+.messenger-welcome {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  box-sizing: border-box;
+  min-height: 100%;
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.messenger-welcome-greeting {
+  color: var(--mz-text);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.messenger-welcome-greeting strong {
+  color: var(--mz-primary);
+  font-weight: 600;
+}
+
+.messenger-welcome-hint {
+  max-width: 520px;
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-base);
+  line-height: 1.7;
+}
+
+.messenger-welcome-card {
+  width: min(520px, 100%);
+  padding: 16px;
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius-card);
+  background: var(--mz-surface);
+  text-align: left;
+}
+
+.messenger-welcome-card-title {
+  margin-bottom: 8px;
+  color: var(--mz-text);
+  font-size: var(--mz-font-base);
+  font-weight: 600;
+}
+
+.messenger-welcome-card-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border: 1px dashed var(--mz-border-strong);
+  border-radius: var(--mz-radius-btn);
+  color: var(--mz-text-muted);
+  font-size: var(--mz-font-md);
+  line-height: 1.6;
+}
+
+/* -------------------------------------------------------- settings overlay */
+
+.messenger-settings-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--mz-bg);
+}
+
+/* 覆盖层内部的左导航 / 右卡片布局见 `messenger-settings-page.css`。 */
+
+/* -------------------------------------------------------- narrow viewports */
+
+@media (max-width: 1023px) {
+  .messenger-sidebar-toggle {
+    display: inline-flex;
+  }
+
+  .messenger-sidebar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    transform: translateX(-100%);
+    box-shadow: 0 12px 40px rgba(31, 35, 41, 0.18);
+    transition: transform 160ms ease;
+  }
+
+  .messenger-view.messenger-view--drawer-open .messenger-sidebar {
+    transform: translateX(0);
+  }
+
+  .messenger-sidebar-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 55;
+    background: rgba(31, 35, 41, 0.32);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .messenger-sidebar {
+    transition: none;
+  }
+}
+
+/* ------------------------------------------------- §7 时间线行外壳与用户气泡
+   形态对齐桌面端 `frontend-slint/ui/timeline.slint`：聊天区**任何消息都不再有
+   头像、名字或时间标签**，用户消息是右对齐的 `timeline-bubble` 气泡，助手侧由
+   `MessageTimelineAssistant` 渲染全宽正文与沟槽时间线。
+   放在这里（而不是组件 `<style scoped>`）是因为群聊/世界消息路径在
+   `MessengerMessagePanel` 里自带标记，两条路径必须共用同一份度量。
+   选择器前缀 `.messenger-view` 既提供令牌作用域，也保证压过 `messenger.css`
+   里的旧气泡规则。 */
+
+.messenger-view .messenger-message.messenger-message--timeline {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+
+.messenger-view .messenger-message.messenger-message--timeline .messenger-message-main {
+  width: 100%;
+  max-width: 100%;
+  gap: 0;
+  align-items: stretch;
+}
+
+.messenger-view .messenger-message.messenger-message--timeline.mine .messenger-message-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  /* 用户行的 24px 侧边距落在行上（桌面端 `UserBubble` 的 padding 同款），
+     这样 `max-width: 70%` 的基座就是「视口宽 - 48px」。 */
+  padding: 0 24px;
+}
+
+/* §7 时间线让出一个干净视口：左右 24px 的缩进由每一行自己承担
+   （桌面端 `timeline-padding` 同款），外层不再叠加 16px 内边距。 */
+.messenger-view .messenger-chat-body.is-messages {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* §7.2 用户气泡：最宽 min(70%, 内容 + 24px)、圆角 12px、底 `timeline-bubble`、
+   内边距 12px/8px、字号 14px。 */
+.messenger-view .messenger-message.messenger-message--timeline.mine .messenger-message-bubble {
+  max-width: 70%;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--mz-timeline-bubble, #f3f2f0);
+  color: var(--mz-text, #1f2329);
+  font-size: calc(14px * var(--messenger-font-scale, 1));
+  line-height: 1.7;
+}
+
+/* 时间线行距 0：间距由行内内边距承担（桌面端 `TimelineView` 同款）。
+   顶部/底部留白收窄到 2px，避免旧 12px 行距把时间线拉散。 */
+.messenger-view .messenger-chat-body .messenger-message-panel {
+  gap: 2px;
+}
+

@@ -1,0 +1,141 @@
+{
+  "packageName": "wunder-supplement",
+  "defaultBuildRoot": "temp_dir\\win7-gnu-lab\\win7-supplement",
+  "downloadsDir": "downloads",
+  "stageDir": "stage",
+  "distDir": "dist",
+  "layout": {
+    "pythonRoot": "opt\\python",
+    "gitRoot": "opt\\git",
+    "rgRoot": "opt\\rg",
+    "ffmpegRoot": "opt\\ffmpeg"
+  },
+  "python": {
+    "version": "3.8.10",
+    "source": "python.org embeddable package",
+    "defaultPackageIndexUrl": "https://pypi.tuna.tsinghua.edu.cn/simple",
+    "bootstrap": {
+      "getPipUrl": "https://bootstrap.pypa.io/pip/3.8/get-pip.py",
+      "pipSpec": "pip<25",
+      "setuptoolsSpec": "setuptools<76",
+      "wheelSpec": "wheel<0.46"
+    },
+    "profiles": {
+      "minimal": {
+        "description": "Base embeddable Python only, without extra third-party packages.",
+        "requirementsPath": "",
+        "validateImports": []
+      },
+      "common": {
+        "description": "Slim Win7-friendly common package set with networking, office/video document IO, fonts, map/weather tooling, database access, and plotting.",
+        "requirementsPath": "packaging/python/requirements-win7-common.txt",
+        "validateImports": [
+          "requests",
+          "numpy",
+          "pandas",
+          "openpyxl",
+          "matplotlib",
+          "tabulate",
+          "PIL",
+          "docx",
+          "pptx",
+          "PyPDF2",
+          "xlrd",
+          "xlsxwriter",
+          "sqlalchemy",
+          "pymysql",
+          "aiosqlite",
+          "lxml.etree",
+          "ffmpeg",
+          "imageio",
+          "imageio_ffmpeg",
+          "cv2",
+          "folium",
+          "pyproj",
+          "shapely",
+          "netCDF4",
+          "cftime",
+          "h5py",
+          "metpy",
+          "seaborn",
+          "plotly",
+          "pyecharts"
+        ],
+        "plotProbe": true
+      }
+    },
+    "notes": [
+      "Python 3.8 is the last official CPython line that still supports Windows 7.",
+      "The embeddable package is used so the supplement archive can be extracted directly into the desktop install directory.",
+      "Windows 7 should include KB2533623 and the Universal CRT update for best compatibility.",
+      "The default Python package index is the Tsinghua Tuna mirror for more stable Win7 supplement builds in domestic networks; override it with -PythonPackageIndexUrl when needed."
+    ],
+    "archives": {
+      "x64": {
+        "fileName": "python-3.8.10-embed-amd64.zip",
+        "url": "https://www.python.org/ftp/python/3.8.10/python-3.8.10-embed-amd64.zip"
+      },
+      "ia32": {
+        "fileName": "python-3.8.10-embed-win32.zip",
+        "url": "https://www.python.org/ftp/python/3.8.10/python-3.8.10-embed-win32.zip"
+      }
+    }
+  },
+  "git": {
+    "version": "2.46.2.windows.1",
+    "flavor": "PortableGit",
+    "source": "git-for-windows",
+    "notes": [
+      "Git for Windows documents 2.46.2 as the last version supporting Windows 7 / 8 / 8.1.",
+      "PortableGit ships Git Bash (bash) plus the POSIX toolchain (curl, tar, which, ssh, gzip, less, etc.) so the agent command tool runs in a bash environment.",
+      "The PortableGit archive is a 7-Zip self-extracting executable; the build script extracts it silently with -o<dir> -y."
+    ],
+    "archives": {
+      "x64": {
+        "fileName": "PortableGit-2.46.2-64-bit.7z.exe",
+        "url": "https://mirrors.huaweicloud.com/git-for-windows/v2.46.2.windows.1/PortableGit-2.46.2-64-bit.7z.exe"
+      },
+      "ia32": {
+        "fileName": "PortableGit-2.46.2-32-bit.7z.exe",
+        "url": "https://mirrors.huaweicloud.com/git-for-windows/v2.46.2.windows.1/PortableGit-2.46.2-32-bit.7z.exe"
+      }
+    }
+  },
+  "rg": {
+    "version": "14.1.1",
+    "flavor": "ripgrep official binary",
+    "source": "BurntSushi/ripgrep",
+    "notes": [
+      "ripgrep is bundled as a standalone binary so search_content can use rg without relying on system installation."
+    ],
+    "archives": {
+      "x64": {
+        "fileName": "ripgrep-14.1.1-x86_64-pc-windows-msvc.zip",
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip"
+      },
+      "ia32": {
+        "fileName": "ripgrep-14.1.1-i686-pc-windows-msvc.zip",
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-i686-pc-windows-msvc.zip"
+      }
+    }
+  },
+  "ffmpeg": {
+    "version": "4.4.1",
+    "flavor": "static ffmpeg (ffmpeg-static)",
+    "source": "eugeneware/ffmpeg-static",
+    "notes": [
+      "Static FFmpeg 4.4.1 (built 2021, i686-w64-mingw32, gcc 11.2) for Windows 7 compatibility.",
+      "Bundles x264, x265, aom, vpx, opus, mp3lame, webp, openjpeg and many other codecs; the gzip asset is decompressed into opt\\ffmpeg\\bin\\ffmpeg.exe during staging."
+    ],
+    "archives": {
+      "x64": {
+        "fileName": "win32-x64.gz",
+        "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b4.4.1/win32-x64.gz"
+      },
+      "ia32": {
+        "fileName": "win32-ia32.gz",
+        "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b4.4.1/win32-ia32.gz"
+      }
+    }
+  }
+}

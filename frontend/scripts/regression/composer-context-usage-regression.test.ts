@@ -1,0 +1,804 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  resolveComposerContextUsageSource,
+  resolveStableComposerContextPair,
+  resolveComposerRunningContextDisplayState
+} from '../../src/components/chat/composerContextUsage';
+import { buildAssistantMessageStatsEntries } from '../../src/utils/messageStats';
+
+const createTranslator = () => {
+  const table: Record<string, string> = {
+    'chat.stats.duration': 'Duration',
+    'chat.stats.speed': 'Speed',
+    'chat.stats.contextTokens': 'Context',
+    'chat.stats.quota': 'Quota',
+    'chat.stats.toolCalls': 'Tools',
+    'messenger.messageStatus.done': 'Done'
+  };
+  return (key: string) => table[key] || key;
+};
+
+const findEntryValue = (
+  entries: Array<{ label: string; value: string }>,
+  label: string
+): string | null => {
+  const matched = entries.find((item) => item.label === label);
+  return matched ? String(matched.value || '') : null;
+};
+
+test('composer context usage exposes running assistant raw value before display stabilization', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-01T00:00:00.000Z',
+        stats: {
+          contextTokens: 27018
+        }
+      },
+      {
+        role: 'user',
+        content: 'next'
+      },
+      {
+        role: 'assistant',
+        created_at: '2026-05-01T00:01:00.000Z',
+        stream_incomplete: true,
+        workflowStreaming: true,
+        stats: {
+          contextTokens: 25888
+        }
+      }
+    ],
+    {
+      context_tokens: 27018
+    },
+    true
+  );
+
+  assert.equal(source.runningAssistant, true);
+  assert.equal(source.contextTokens, 25888);
+  assert.equal(source.runningContextTokens, 25888);
+});
+
+test('composer context usage keeps latest assistant occupancy over stale session cache', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-01T00:00:00.000Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          contextTokens: 25888
+        }
+      }
+    ],
+    {
+      context_tokens: 27018
+    },
+    false
+  );
+
+  assert.equal(source.runningAssistant, false);
+  assert.equal(source.contextTokens, 25888);
+});
+
+test('composer context display clears both values when total tokens are missing', () => {
+  assert.deepEqual(resolveStableComposerContextPair(4583, null), {
+    used: null,
+    total: null
+  });
+  assert.deepEqual(resolveStableComposerContextPair(4583, 0), {
+    used: null,
+    total: null
+  });
+});
+
+test('composer context usage ignores completed usage totals and keeps session occupancy', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-01T00:00:00.000Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          usage: {
+            input_tokens: 25725,
+            output_tokens: 85,
+            total_tokens: 25810
+          }
+        }
+      }
+    ],
+    {
+      context_occupancy_tokens: 21024
+    },
+    false
+  );
+
+  assert.equal(source.runningAssistant, false);
+  assert.equal(source.contextTokens, 21024);
+});
+
+test('composer context usage prefers explicit occupancy over accumulated round usage', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-10T00:00:00.000Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          context_occupancy_tokens: 7510,
+          roundUsage: {
+            input_tokens: 83699,
+            output_tokens: 4533,
+            total_tokens: 88232
+          }
+        }
+      }
+    ],
+    {
+      context_tokens: 3241,
+      context_max_tokens: 128000
+    },
+    false
+  );
+
+  assert.equal(source.contextTokens, 7510);
+  assert.equal(source.contextTotalTokens, 128000);
+});
+
+test('composer context usage lets the display layer stabilize a new round estimate', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-01T00:00:00.000Z',
+        stats: {
+          contextTokens: 27018
+        }
+      },
+      {
+        role: 'user',
+        content: 'next'
+      },
+      {
+        role: 'assistant',
+        created_at: '2026-05-01T00:01:00.000Z',
+        stream_incomplete: true,
+        workflowStreaming: true,
+        stats: {
+          contextTokens: 1534
+        }
+      }
+    ],
+    {
+      context_tokens: 27018
+    },
+    true
+  );
+
+  assert.equal(source.runningAssistant, true);
+  assert.equal(source.contextTokens, 1534);
+  assert.equal(source.runningContextTokens, 1534);
+});
+
+test('composer context usage grows from the previous confirmed value during streaming', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-01T00:00:00.000Z',
+        stats: {
+          contextTokens: 27018
+        }
+      },
+      {
+        role: 'user',
+        content: 'next'
+      },
+      {
+        role: 'assistant',
+        created_at: '2026-05-01T00:01:00.000Z',
+        stream_incomplete: true,
+        workflowStreaming: true,
+        stats: {
+          contextTokens: 27240
+        }
+      }
+    ],
+    {
+      context_tokens: 27018
+    },
+    true
+  );
+
+  assert.equal(source.runningAssistant, true);
+  assert.equal(source.contextTokens, 27240);
+});
+
+test('composer context usage exposes current round raw tokens while running', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-01T00:00:00.000Z',
+        stats: {
+          contextTokens: 25763
+        }
+      },
+      {
+        role: 'user',
+        content: 'next'
+      },
+      {
+        role: 'assistant',
+        created_at: '2026-05-01T00:01:00.000Z',
+        stream_incomplete: true,
+        workflowStreaming: true,
+        stats: {
+          contextTokens: 2883
+        }
+      }
+    ],
+    {
+      context_tokens: 25763
+    },
+    true
+  );
+
+  assert.equal(source.runningAssistant, true);
+  assert.equal(source.contextTokens, 2883);
+  assert.equal(source.runningContextTokens, 2883);
+});
+
+test('composer context usage prefers live context over stale usage while running', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-01T00:00:00.000Z',
+        stats: {
+          usage: {
+            input_tokens: 25000,
+            output_tokens: 763,
+            total_tokens: 25763
+          },
+          contextTokens: 25763
+        }
+      },
+      {
+        role: 'user',
+        content: 'next'
+      },
+      {
+        role: 'assistant',
+        created_at: '2026-05-01T00:01:00.000Z',
+        stream_incomplete: true,
+        workflowStreaming: true,
+        stats: {
+          usage: {
+            input_tokens: 25000,
+            output_tokens: 855,
+            total_tokens: 25855
+          },
+          contextTokens: 2883
+        }
+      }
+    ],
+    {
+      context_tokens: 25763
+    },
+    true
+  );
+
+  assert.equal(source.runningAssistant, true);
+  assert.equal(source.contextTokens, 2883);
+  assert.equal(source.runningContextTokens, 2883);
+});
+
+test('composer context usage ignores model usage totals while running without explicit context', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-01T00:00:00.000Z',
+        stats: {
+          contextTokens: 26716
+        }
+      },
+      {
+        role: 'user',
+        content: 'next'
+      },
+      {
+        role: 'assistant',
+        created_at: '2026-05-01T00:01:00.000Z',
+        stream_incomplete: true,
+        workflowStreaming: true,
+        stats: {
+          usage: {
+            input_tokens: 26728,
+            output_tokens: 949,
+            total_tokens: 27677
+          }
+        }
+      }
+    ],
+    {
+      context_tokens: 26716
+    },
+    true
+  );
+
+  assert.equal(source.runningAssistant, true);
+  assert.equal(source.contextTokens, 26716);
+  assert.equal(source.runningContextTokens, null);
+});
+
+test('composer context usage ignores completed assistant usage totals without explicit occupancy', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-01T00:00:00.000Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          usage: {
+            input_tokens: 26728,
+            output_tokens: 949,
+            total_tokens: 27677
+          }
+        }
+      }
+    ],
+    {
+      context_tokens: 3504
+    },
+    false
+  );
+
+  assert.equal(source.runningAssistant, false);
+  assert.equal(source.contextTokens, 3504);
+});
+
+test('composer context usage keeps observed occupancy ahead of completed usage totals', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-01T00:00:00.000Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          contextTokens: 21024,
+          usage: {
+            input_tokens: 25725,
+            output_tokens: 85,
+            total_tokens: 25810
+          }
+        }
+      }
+    ],
+    {
+      context_tokens: 21024
+    },
+    false
+  );
+
+  assert.equal(source.runningAssistant, false);
+  assert.equal(source.contextTokens, 21024);
+});
+
+test('composer context usage and bubble stats align on observed occupancy', () => {
+  const messages = [
+    {
+      role: 'assistant',
+      created_at: '2026-05-01T00:00:00.000Z',
+      stream_incomplete: false,
+      workflowStreaming: false,
+      stats: {
+        contextTokens: 21024,
+        usage: {
+          input_tokens: 25725,
+          output_tokens: 85,
+          total_tokens: 25810
+        }
+      }
+    }
+  ];
+  const composerSource = resolveComposerContextUsageSource(
+    messages,
+    {
+      context_tokens: 21024
+    },
+    false
+  );
+  const bubbleEntries = buildAssistantMessageStatsEntries(
+    messages[0],
+    createTranslator(),
+    messages
+  );
+
+  assert.equal(composerSource.contextTokens, 21024);
+  assert.equal(findEntryValue(bubbleEntries, 'Context'), '21024');
+});
+
+test('composer context usage keeps session max context after reload', () => {
+  const source = resolveComposerContextUsageSource(
+    [],
+    {
+      context_tokens: 3210,
+      context_max_tokens: 128000
+    },
+    false
+  );
+
+  assert.equal(source.contextTokens, 3210);
+  assert.equal(source.contextTotalTokens, 128000);
+});
+
+test('composer context usage prefers observed occupancy alias over cached contextTokens', () => {
+  const source = resolveComposerContextUsageSource(
+    [],
+    {
+      contextTokens: 8795,
+      context_occupancy_tokens: 1693,
+      context_max_tokens: 128000
+    },
+    false
+  );
+
+  assert.equal(source.contextTokens, 1693);
+  assert.equal(source.contextTotalTokens, 128000);
+});
+
+test('composer context usage keeps assistant contextTokens ahead of session occupancy cache', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-06T07:03:38.627Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          contextTokens: 8795
+        }
+      }
+    ],
+    {
+      context_occupancy_tokens: 1693,
+      context_max_tokens: 128000
+    },
+    false
+  );
+
+  assert.equal(source.contextTokens, 8795);
+  assert.equal(source.contextTotalTokens, 128000);
+});
+
+test('composer context usage lets completed compaction reset a stale assistant occupancy', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-06T07:03:38.627Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          contextTokens: 129500,
+          contextTotalTokens: 128000
+        }
+      },
+      {
+        role: 'assistant',
+        created_at: '2026-05-06T07:03:40.000Z',
+        manual_compaction_marker: true,
+        workflowItems: [
+          {
+            eventType: 'compaction',
+            status: 'completed',
+            toolName: 'context_compaction',
+            toolCallId: 'compaction:manual:reset',
+            detail: JSON.stringify({
+              status: 'done',
+              trigger_mode: 'manual',
+              final_context_tokens: 0,
+              context_usage_source: 'unobserved_after_manual_compaction'
+            })
+          }
+        ]
+      }
+    ],
+    {
+      context_occupancy_tokens: 0,
+      context_max_tokens: 128000
+    },
+    false
+  );
+
+  assert.equal(source.contextTokens, 0);
+  assert.equal(source.contextTotalTokens, 128000);
+  assert.notEqual(source.contextResetSignature, '');
+  assert.deepEqual(resolveStableComposerContextPair(source.contextTokens, source.contextTotalTokens), {
+    used: 0,
+    total: 128000
+  });
+});
+
+test('composer context usage exposes in-turn compaction reset while assistant keeps running', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-06T07:03:38.627Z',
+        content: 'partial',
+        stream_incomplete: true,
+        workflowStreaming: true,
+        stats: {
+          contextTokens: 131000,
+          contextTotalTokens: 128000
+        },
+        workflowItems: [
+          {
+            eventType: 'compaction',
+            status: 'completed',
+            toolName: 'context_compaction',
+            toolCallId: 'compaction:auto:reset',
+            detail: JSON.stringify({
+              status: 'done',
+              reason: 'overflow_recovery',
+              context_tokens_after: 0,
+              context_usage_source: 'unobserved_after_compaction'
+            })
+          }
+        ]
+      }
+    ],
+    {
+      context_occupancy_tokens: 0,
+      context_max_tokens: 128000
+    },
+    true
+  );
+
+  assert.equal(source.runningAssistant, true);
+  assert.equal(source.contextTokens, 0);
+  assert.equal(source.runningContextTokens, 0);
+  assert.equal(source.contextTotalTokens, 128000);
+  assert.notEqual(source.contextResetSignature, '');
+});
+
+test('composer context usage uses preview only when no observed context exists', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-06T07:03:38.627Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          contextPreviewTokens: 8795,
+          usage: {
+            input_tokens: 8761,
+            output_tokens: 34,
+            total_tokens: 8795
+          }
+        }
+      }
+    ],
+    {
+      context_max_tokens: 128000
+    },
+    false
+  );
+
+  assert.equal(source.contextTokens, 8795);
+  assert.equal(source.contextTotalTokens, 128000);
+});
+
+test('composer context usage keeps observed context ahead of preview fallback', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-06T07:03:38.627Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          context_occupancy_tokens: 3210,
+          contextPreviewTokens: 8795
+        }
+      }
+    ],
+    {
+      context_occupancy_tokens: 3500,
+      context_max_tokens: 128000
+    },
+    false
+  );
+
+  assert.equal(source.contextTokens, 3210);
+  assert.equal(source.contextTotalTokens, 128000);
+});
+
+test('composer context usage uses current observations after post-tool context decreases', () => {
+  let state = resolveComposerRunningContextDisplayState({
+    stableTokens: 26716,
+    baseTokens: 26716,
+    rawBaseTokens: 3460,
+    lastRawTokens: 3460,
+    runningRawTokens: 3504
+  });
+
+  assert.equal(state.stableTokens, 3504);
+
+  state = resolveComposerRunningContextDisplayState({
+    stableTokens: state.stableTokens,
+    baseTokens: state.baseTokens,
+    rawBaseTokens: state.rawBaseTokens,
+    lastRawTokens: state.lastRawTokens,
+    runningRawTokens: 3847
+  });
+
+  assert.equal(state.stableTokens, 3847);
+
+  state = resolveComposerRunningContextDisplayState({
+    stableTokens: state.stableTokens,
+    baseTokens: state.baseTokens,
+    rawBaseTokens: state.rawBaseTokens,
+    lastRawTokens: state.lastRawTokens,
+    runningRawTokens: 3578
+  });
+
+  assert.equal(state.stableTokens, 3578);
+  assert.equal(state.baseTokens, 3578);
+  assert.equal(state.rawBaseTokens, 3578);
+
+  state = resolveComposerRunningContextDisplayState({
+    stableTokens: state.stableTokens,
+    baseTokens: state.baseTokens,
+    rawBaseTokens: state.rawBaseTokens,
+    lastRawTokens: state.lastRawTokens,
+    runningRawTokens: 3600
+  });
+
+  assert.equal(state.stableTokens, 3600);
+});
+
+test('composer context usage grows a new user round from the previous confirmed total instead of a stale request estimate', () => {
+  let state = resolveComposerRunningContextDisplayState({
+    stableTokens: 5670,
+    baseTokens: 5670,
+    rawBaseTokens: 5683,
+    lastRawTokens: 5683,
+    runningRawTokens: 5683
+  });
+
+  assert.equal(state.stableTokens, 5683);
+
+  state = resolveComposerRunningContextDisplayState({
+    stableTokens: state.stableTokens,
+    baseTokens: state.baseTokens,
+    rawBaseTokens: state.rawBaseTokens,
+    lastRawTokens: state.lastRawTokens,
+    runningRawTokens: 6268
+  });
+
+  assert.equal(state.stableTokens, 6268);
+});
+
+test('composer context usage keeps session occupancy ahead of completed model usage total', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-06T07:03:38.627Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          usage: {
+            input_tokens: 8761,
+            output_tokens: 34,
+            total_tokens: 8795
+          }
+        }
+      }
+    ],
+    {
+      context_occupancy_tokens: 1693,
+      context_max_tokens: 128000
+    },
+    false
+  );
+
+  assert.equal(source.contextTokens, 1693);
+  assert.equal(source.contextTotalTokens, 128000);
+});
+
+test('composer context usage ignores trailing manual compaction marker and keeps session occupancy', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-07T13:13:50.000Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          usage: {
+            input_tokens: 20500,
+            output_tokens: 157,
+            total_tokens: 20657
+          }
+        }
+      },
+      {
+        role: 'assistant',
+        created_at: '2026-05-07T13:13:52.000Z',
+        manual_compaction_marker: true,
+        workflowItems: [
+          {
+            eventType: 'compaction',
+            status: 'completed',
+            toolName: 'context_compaction',
+            toolCallId: 'compaction:manual:demo',
+            detail: JSON.stringify({
+              status: 'done',
+              trigger_mode: 'manual',
+              projected_request_tokens: 4547,
+              projected_request_tokens_after: 2641
+            })
+          }
+        ]
+      }
+    ],
+    {
+      context_tokens: 2641,
+      context_max_tokens: 128000
+    },
+    false
+  );
+
+  assert.equal(source.contextTokens, 2641);
+  assert.equal(source.contextTotalTokens, 128000);
+});
+
+test('composer context usage ignores goal divider messages and keeps session occupancy', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-07T13:13:50.000Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          usage: {
+            input_tokens: 20500,
+            output_tokens: 157,
+            total_tokens: 20657
+          }
+        }
+      },
+      {
+        role: 'assistant',
+        created_at: '2026-05-07T13:13:51.000Z',
+        content: '目标已开始：继续完成任务',
+        manual_goal_marker: true
+      }
+    ],
+    {
+      context_tokens: 20657,
+      context_max_tokens: 128000
+    },
+    false
+  );
+
+  assert.equal(source.contextTokens, 20657);
+  assert.equal(source.contextTotalTokens, 128000);
+});

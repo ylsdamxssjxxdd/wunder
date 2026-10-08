@@ -1,0 +1,87 @@
+import type { CompactionView } from '@/utils/chatCompactionUi';
+
+export type ToolWorkflowCommandView = {
+  command: string;
+  shell: string;
+  status?: string;
+  terminalText: string;
+  exitCode: number | null;
+  showExitCode?: boolean;
+  metrics?: ToolWorkflowStructuredMetric[];
+  streams?: ToolWorkflowCommandStream[];
+  previewBody?: string;
+};
+
+export type ToolWorkflowPatchLine = {
+  key: string;
+  kind: 'meta' | 'context' | 'header' | 'note' | 'add' | 'delete' | 'move' | 'update' | 'error';
+  text: string;
+  oldLine?: number | null;
+  newLine?: number | null;
+};
+
+export type ToolWorkflowCommandStream = {
+  key: string;
+  label: string;
+  body: string;
+  tone?: 'default' | 'danger';
+};
+
+export type ToolWorkflowStructuredMetric = {
+  key: string;
+  label: string;
+  value: string;
+  tone?: 'default' | 'success' | 'warning';
+};
+
+export type ToolWorkflowStructuredRow = {
+  key: string;
+  title: string;
+  meta?: string;
+  body?: string;
+  mono?: boolean;
+  tone?: 'default' | 'success' | 'warning' | 'danger';
+};
+
+export type ToolWorkflowStructuredGroup = {
+  key: string;
+  title?: string;
+  rows: ToolWorkflowStructuredRow[];
+};
+
+export type ToolWorkflowStructuredView = {
+  variant: 'read' | 'list' | 'search' | 'write' | 'database' | 'knowledge' | 'schedule';
+  metrics: ToolWorkflowStructuredMetric[];
+  groups: ToolWorkflowStructuredGroup[];
+};
+
+export type ToolWorkflowPatchFileView = {
+  key: string;
+  title: string;
+  meta?: string;
+  lines: ToolWorkflowPatchLine[];
+  omittedLines?: number;
+  tone?: 'default' | 'success' | 'warning' | 'danger';
+};
+
+export type ToolWorkflowPatchView = {
+  metrics: ToolWorkflowStructuredMetric[];
+  files: ToolWorkflowPatchFileView[];
+  omittedFiles?: number;
+  previewOnly?: boolean;
+};
+
+export type ToolWorkflowDetailSection = {
+  key: string;
+  title: string;
+  kind: 'text' | 'command' | 'patch' | 'compaction' | 'structured';
+  summary?: string;
+  body: string;
+  copyText?: string;
+  commandView: ToolWorkflowCommandView | null;
+  patchLines: ToolWorkflowPatchLine[];
+  compactionView?: CompactionView | null;
+  structuredView?: ToolWorkflowStructuredView | null;
+  patchView?: ToolWorkflowPatchView | null;
+  empty?: boolean;
+};

@@ -1,0 +1,119 @@
+{
+  "packageName": "wunder-supplement",
+  "defaultBuildRoot": "temp_dir/linux-supplement",
+  "downloadsDir": "downloads",
+  "stageDir": "stage",
+  "distDir": "dist",
+  "layout": {
+    "pythonRoot": "opt/python",
+    "gitRoot": "opt/git",
+    "rgRoot": "opt/rg"
+  },
+  "python": {
+    "version": "3.8.18",
+    "flavor": "python-build-standalone install_only",
+    "source": "astral-sh/python-build-standalone",
+    "releaseTag": "20240107",
+    "defaultPackageIndexUrl": "https://pypi.tuna.tsinghua.edu.cn/simple",
+    "getPipUrl": "https://bootstrap.pypa.io/pip/3.8/get-pip.py",
+    "requirementsPath": "packaging/python/requirements-linux-common.txt",
+    "notes": [
+      "Python 3.8 matches the Win7 supplement so agent code behaves identically on every desktop platform.",
+      "python-build-standalone gnu builds target glibc 2.17, well below the Ubuntu 18.04 (glibc 2.27) release baseline.",
+      "Binary wheels only (--only-binary=:all:) so no compiler toolchain is needed on user machines.",
+      "The 20240107 release is the last python-build-standalone tag that ships CPython 3.8."
+    ],
+    "validateImports": [
+      "requests",
+      "numpy",
+      "pandas",
+      "openpyxl",
+      "matplotlib",
+      "tabulate",
+      "PIL",
+      "docx",
+      "pptx",
+      "PyPDF2",
+      "xlrd",
+      "xlsxwriter",
+      "sqlalchemy",
+      "pymysql",
+      "aiosqlite",
+      "lxml.etree",
+      "ffmpeg",
+      "imageio",
+      "imageio_ffmpeg",
+      "cv2",
+      "folium",
+      "pyproj",
+      "shapely",
+      "netCDF4",
+      "cftime",
+      "h5py",
+      "metpy",
+      "seaborn",
+      "plotly",
+      "pyecharts"
+    ],
+    "plotProbe": true,
+    "archives": {
+      "amd64": {
+        "fileName": "cpython-3.8.18+20240107-x86_64-unknown-linux-gnu-install_only.tar.gz",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20240107/cpython-3.8.18+20240107-x86_64-unknown-linux-gnu-install_only.tar.gz",
+        "elfMachine": "x86-64"
+      },
+      "arm64": {
+        "fileName": "cpython-3.8.18+20240107-aarch64-unknown-linux-gnu-install_only.tar.gz",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20240107/cpython-3.8.18+20240107-aarch64-unknown-linux-gnu-install_only.tar.gz",
+        "elfMachine": "AArch64"
+      }
+    }
+  },
+  "git": {
+    "version": "2.46.2",
+    "flavor": "git source build",
+    "source": "kernel.org",
+    "notes": [
+      "Built from source inside an Ubuntu 18.04 container so the bundled libcurl/zlib/openssl closure matches the desktop release baseline.",
+      "Built with NO_GETTEXT/NO_TCLTK/NO_PERL/NO_PYTHON to keep the embedded tree minimal; clone/status/apply/https support is retained."
+    ],
+    "tarball": {
+      "fileName": "git-2.46.2.tar.gz",
+      "url": "https://www.kernel.org/pub/software/scm/git/git-2.46.2.tar.gz",
+      "sha256": "65c5689fd44f1d09de7fd8c44de7fef074ddd69dda8b8503d44afb91495ecbce"
+    }
+  },
+  "rg": {
+    "version": "14.1.1",
+    "flavor": "ripgrep official binary",
+    "source": "BurntSushi/ripgrep",
+    "notes": [
+      "amd64 uses the static musl build; arm64 uses the official gnu build (no musl asset is published for aarch64)."
+    ],
+    "archives": {
+      "amd64": {
+        "fileName": "ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz",
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz",
+        "elfMachine": "x86-64"
+      },
+      "arm64": {
+        "fileName": "ripgrep-14.1.1-aarch64-unknown-linux-gnu.tar.gz",
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-aarch64-unknown-linux-gnu.tar.gz",
+        "elfMachine": "AArch64"
+      }
+    }
+  },
+  "fonts": [
+    "NotoSansSC-VF.ttf",
+    "msyh.ttc",
+    "simsun.ttc",
+    "simhei.ttf",
+    "arial.ttf"
+  ],
+  "install": {
+    "extractInto": "desktop install root (Win7-style install dir) or the directory holding the .AppImage file",
+    "pythonRoot": "opt/python",
+    "gitRoot": "opt/git",
+    "rgRoot": "opt/rg"
+  }
+}

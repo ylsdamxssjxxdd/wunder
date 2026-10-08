@@ -1,0 +1,794 @@
+import { computed, ref } from 'vue';
+import { defineStore } from 'pinia';
+
+import api from '@/api/http';
+import type { CompanionPackageManifest } from '@/utils/companionPackage';
+
+const loadCompanionPackageUtilities = async () => import('@/utils/companionPackage');
+
+export type CompanionSpriteStateId =
+  | 'idle'
+  | 'running-right'
+  | 'running-left'
+  | 'waving'
+  | 'jumping'
+  | 'failed'
+  | 'waiting'
+  | 'running'
+  | 'review';
+
+export type CompanionPosition = {
+  x: number;
+  y: number;
+};
+
+export type CompanionPackageRecord = CompanionPackageManifest & {
+  spritesheetDataUrl?: string;
+  spritesheetUrl?: string;
+  spritesheetMime: string;
+  importedAt: number;
+  updatedAt: number;
+  scope?: 'private' | 'global';
+};
+
+export type CompanionSettings = {
+  selectedId: string;
+  enabled: boolean;
+  position: CompanionPosition;
+  scale: number;
+  messageHintsEnabled: boolean;
+};
+
+export type CompanionMessage = {
+  text: string;
+  kind: 'info' | 'success' | 'warning';
+  visibleUntil: number;
+  agentId?: string;
+};
+
+export type AgentCompanionOverride = {
+  show?: boolean;
+  scale?: number;
+  updatedAt: number;
+};
+
+const DB_NAME = 'wunder-companions';
+const DB_VERSION = 1;
+const STORE_NAME = 'companions';
+const SETTINGS_KEY = 'wunder_companion_settings';
+const AGENT_OVERRIDE_KEY = 'wunder_agent_companion_overrides';
+const DEFAULT_POSITION: CompanionPosition = { x: 28, y: 28 };
+const DEFAULT_SCALE = 1;
+
+/**
+ * 悬浮层拖拽位置由 `CompanionFloatingLayer` 自己按 agent key 持久化；
+ * 设置页「桌宠 → 重置位置」无法直接改组件内状态，改为广播这个事件，
+ * 由悬浮层清空按键位置并回落到设置页的位置锚点。
+ */
+export const COMPANION_LAYOUT_RESET_EVENT = 'wunder:companion-layout-reset';
+
+const normalizeNumber = (value: unknown, fallback: number): number => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+};
+
+const normalizePosition = (value: unknown): CompanionPosition => {
+  const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  return {
+    x: Math.max(0, Math.round(normalizeNumber(source.x, DEFAULT_POSITION.x))),
+    y: Math.max(0, Math.round(normalizeNumber(source.y, DEFAULT_POSITION.y)))
+  };
+};
+
+const normalizeSettings = (value: unknown): CompanionSettings => {
+  const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  const scale = normalizeNumber(source.scale, DEFAULT_SCALE);
+  return {
+    selectedId: String(source.selectedId || '').trim(),
+    // 显示开关默认开启：未显式关闭时保持既有行为（已绑定形象的智能体照常显示桌宠），
+    // 用户在设置页「桌宠」分类里关闭后才隐藏全部桌宠。
+    enabled: source.enabled !== false,
+    position: normalizePosition(source.position),
+    scale: Math.min(1.6, Math.max(0.5, scale)),
+    messageHintsEnabled: source.messageHintsEnabled !== false
+  };
+};
+
+const normalizeCompanionMessage = (value: unknown): CompanionMessage | null => {
+  const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  const text = String(source.text || '').trim();
+  if (!text) {
+    return null;
+  }
+  const kind = String(source.kind || '').trim().toLowerCase();
+  const agentId = String(source.agentId || source.agent_id || '').trim();
+  return {
+    text,
+    kind: kind === 'success' || kind === 'warning' ? kind : 'info',
+    visibleUntil: Math.max(0, normalizeNumber(source.visibleUntil, Date.now())),
+    agentId: agentId || undefined
+  };
+};
+
+const normalizeAgentCompanionOverride = (value: unknown): AgentCompanionOverride | null => {
+  const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  const output: AgentCompanionOverride = {
+    updatedAt: Math.max(0, normalizeNumber(source.updatedAt, Date.now()))
+  };
+  if ('show' in source) {
+    output.show = source.show === true;
+  }
+  if ('scale' in source) {
+    output.scale = Math.min(1.6, Math.max(0.5, normalizeNumber(source.scale, DEFAULT_SCALE)));
+  }
+  return 'show' in output || 'scale' in output ? output : null;
+};
+
+const normalizeRecord = (value: unknown): CompanionPackageRecord | null => {
+  const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  const id = String(source.id || '').trim();
+  const displayName = String(source.displayName || '').trim();
+  const spritesheetPath = String(source.spritesheetPath || '').trim();
+  const spritesheetDataUrl = String(source.spritesheetDataUrl || '').trim();
+  if (!id || !displayName || !spritesheetPath || !spritesheetDataUrl.startsWith('data:image/')) {
+    return null;
+  }
+  return {
+    id,
+    displayName,
+    description: String(source.description || '').trim(),
+    spritesheetPath,
+    spritesheetDataUrl,
+    spritesheetMime: String(source.spritesheetMime || 'image/webp').trim(),
+    importedAt: Math.max(0, normalizeNumber(source.importedAt, Date.now())),
+    updatedAt: Math.max(0, normalizeNumber(source.updatedAt, Date.now())),
+    scope: 'private'
+  };
+};
+
+const mergeCompanionRecords = (
+  ...groups: Array<Array<CompanionPackageRecord | null | undefined>>
+): CompanionPackageRecord[] => {
+  const map = new Map<string, CompanionPackageRecord>();
+  groups.flat().forEach((item) => {
+    if (!item?.id) {
+      return;
+    }
+    const current = map.get(item.id);
+    if (!current || item.updatedAt >= current.updatedAt || (item.spritesheetDataUrl && !current.spritesheetDataUrl)) {
+      map.set(item.id, item);
+    }
+  });
+  return Array.from(map.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+};
+
+let databasePromise: Promise<IDBDatabase> | null = null;
+
+const openDatabase = (): Promise<IDBDatabase> => {
+  if (databasePromise) {
+    return databasePromise;
+  }
+  databasePromise = new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') {
+      reject(new Error('IndexedDB is unavailable'));
+      return;
+    }
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(STORE_NAME)) {
+        database.createObjectStore(STORE_NAME, { keyPath: 'id' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('failed to open companion store'));
+  });
+  return databasePromise;
+};
+
+const runStoreRequest = async <T>(
+  mode: IDBTransactionMode,
+  executor: (store: IDBObjectStore) => IDBRequest<T>
+): Promise<T> => {
+  const database = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(STORE_NAME, mode);
+    const request = executor(transaction.objectStore(STORE_NAME));
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('companion store request failed'));
+    transaction.onerror = () => reject(transaction.error || new Error('companion transaction failed'));
+  });
+};
+
+const listStoredCompanions = async (): Promise<CompanionPackageRecord[]> => {
+  const records = await runStoreRequest<unknown[]>('readonly', (store) => store.getAll());
+  return (Array.isArray(records) ? records : [])
+    .map((item) => normalizeRecord(item))
+    .filter((item): item is CompanionPackageRecord => Boolean(item))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+};
+
+const saveStoredCompanion = async (record: CompanionPackageRecord): Promise<void> => {
+  await runStoreRequest<IDBValidKey>('readwrite', (store) => store.put(record));
+};
+
+const removeStoredCompanion = async (id: string): Promise<void> => {
+  await runStoreRequest<undefined>('readwrite', (store) => store.delete(id));
+};
+
+const loadSettings = (): CompanionSettings => {
+  try {
+    return normalizeSettings(JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'));
+  } catch {
+    return normalizeSettings({});
+  }
+};
+
+const saveSettings = (settings: CompanionSettings): void => {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // Ignore quota/private-mode failures; the current session still keeps state.
+  }
+};
+
+const loadAgentOverrides = (): Record<string, AgentCompanionOverride> => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(AGENT_OVERRIDE_KEY) || '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+    const output: Record<string, AgentCompanionOverride> = {};
+    Object.entries(parsed as Record<string, unknown>).forEach(([key, value]) => {
+      const normalizedKey = String(key || '').trim();
+      if (!normalizedKey) return;
+      const normalized = normalizeAgentCompanionOverride(value);
+      if (normalized) {
+        output[normalizedKey] = normalized;
+      }
+    });
+    return output;
+  } catch {
+    return {};
+  }
+};
+
+const saveAgentOverrides = (overrides: Record<string, AgentCompanionOverride>): void => {
+  try {
+    localStorage.setItem(AGENT_OVERRIDE_KEY, JSON.stringify(overrides));
+  } catch {
+    // Ignore storage failures; the current session still keeps state.
+  }
+};
+
+const downloadBlob = (blob: Blob, filename: string): void => {
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  anchor.rel = 'noopener';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1200);
+};
+
+const normalizeGlobalRecord = (value: unknown): CompanionPackageRecord | null => {
+  const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  const id = String(source.id || '').trim();
+  const displayName = String(source.display_name || source.displayName || source.name || '').trim();
+  const spritesheetPath = String(source.spritesheet_path || source.spritesheetPath || '').trim();
+  const spritesheetDataUrl = String(source.spritesheet_data_url || source.spritesheetDataUrl || '').trim();
+  const spritesheetUrl = String(source.spritesheet_url || source.spritesheetUrl || '').trim();
+  if (!id || !displayName || !spritesheetPath) {
+    return null;
+  }
+  return {
+    id,
+    displayName,
+    description: String(source.description || '').trim(),
+    spritesheetPath,
+    spritesheetDataUrl: spritesheetDataUrl.startsWith('data:image/') ? spritesheetDataUrl : undefined,
+    spritesheetUrl: spritesheetUrl || undefined,
+    spritesheetMime: String(source.spritesheet_mime || source.spritesheetMime || 'image/webp').trim(),
+    importedAt: Math.max(0, normalizeNumber(source.imported_at || source.importedAt, Date.now())),
+    updatedAt: Math.max(0, normalizeNumber(source.updated_at || source.updatedAt, Date.now())),
+    scope: 'global'
+  };
+};
+
+const requestGlobalCompanions = async (): Promise<CompanionPackageRecord[]> => {
+  const response = await api.get('/companions/global', {
+    headers: {
+      'Cache-Control': 'no-store'
+    }
+  });
+  const payload = response.data || {};
+  const items = Array.isArray(payload?.data?.items) ? payload.data.items : [];
+  return items
+    .map((item: unknown) => normalizeGlobalRecord(item))
+    .filter((item: CompanionPackageRecord | null): item is CompanionPackageRecord => Boolean(item));
+};
+
+const requestGlobalCompanionPackage = async (id: string): Promise<Blob> => {
+  const response = await api.get(`/companions/global/${encodeURIComponent(id)}/package`, {
+    responseType: 'blob',
+    headers: {
+      'Cache-Control': 'no-store'
+    }
+  });
+  return response.data as Blob;
+};
+
+const requestGlobalCompanion = async (id: string): Promise<CompanionPackageRecord | null> => {
+  const response = await api.get(`/companions/global/${encodeURIComponent(id)}`, {
+    headers: {
+      'Cache-Control': 'no-store'
+    }
+  });
+  return normalizeGlobalRecord(response.data?.data || null);
+};
+
+const getDesktopBridge = (): Record<string, unknown> | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  const candidate = (window as Window & { wunderDesktop?: Record<string, unknown> }).wunderDesktop;
+  return candidate && typeof candidate === 'object' ? candidate : null;
+};
+
+const loadDesktopCompanionLibraryState = async (): Promise<{
+  companions?: unknown[];
+  settings?: unknown;
+  agentOverrides?: unknown;
+} | null> => {
+  const bridge = getDesktopBridge();
+  const reader = bridge?.getCompanionLibraryState;
+  if (typeof reader !== 'function') {
+    return null;
+  }
+  try {
+    const payload = await Promise.resolve(reader.call(bridge));
+    return payload && typeof payload === 'object'
+      ? (payload as { companions?: unknown[]; settings?: unknown; agentOverrides?: unknown })
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const normalizeDesktopCompanionRecords = (value: unknown): CompanionPackageRecord[] =>
+  (Array.isArray(value) ? value : [])
+    .map((item) => normalizeRecord(item))
+    .filter((item): item is CompanionPackageRecord => Boolean(item));
+
+const saveDesktopCompanionLibraryState = async (payload: {
+  companions: CompanionPackageRecord[];
+  settings: CompanionSettings;
+  agentOverrides: Record<string, AgentCompanionOverride>;
+}): Promise<void> => {
+  const bridge = getDesktopBridge();
+  const writer = bridge?.setCompanionLibraryState;
+  if (typeof writer !== 'function') {
+    return;
+  }
+  try {
+    await Promise.resolve(
+      writer.call(bridge, {
+        companions: payload.companions,
+        settings: payload.settings,
+        agentOverrides: payload.agentOverrides
+      })
+    );
+  } catch {
+    // Ignore desktop bridge persistence failures and keep browser-side state.
+  }
+};
+
+let desktopCompanionUnsubscribe: (() => void) | null = null;
+
+export const useCompanionStore = defineStore('companions', () => {
+  const companions = ref<CompanionPackageRecord[]>([]);
+  const globalCompanions = ref<CompanionPackageRecord[]>([]);
+  const globalCompanionsLoaded = ref(false);
+  const globalCompanionsLoading = ref(false);
+  const settings = ref<CompanionSettings>(loadSettings());
+  const agentOverrides = ref<Record<string, AgentCompanionOverride>>(loadAgentOverrides());
+  const message = ref<CompanionMessage | null>(null);
+  const hydrated = ref(false);
+  const loading = ref(false);
+  const saving = ref(false);
+  const lastError = ref('');
+
+  const selectedCompanion = computed(
+    () => companions.value.find((item) => item.id === settings.value.selectedId) || companions.value[0] || null
+  );
+
+  const enabled = computed(() => settings.value.enabled && Boolean(selectedCompanion.value));
+  const featureEnabled = computed(() => settings.value.enabled);
+
+  const persistSettings = () => {
+    saveSettings(settings.value);
+    void saveDesktopCompanionLibraryState({
+      companions: companions.value,
+      settings: settings.value,
+      agentOverrides: agentOverrides.value
+    });
+  };
+
+  const persistAgentOverrides = () => {
+    saveAgentOverrides(agentOverrides.value);
+    void saveDesktopCompanionLibraryState({
+      companions: companions.value,
+      settings: settings.value,
+      agentOverrides: agentOverrides.value
+    });
+  };
+
+  const applyDesktopState = (value: unknown): void => {
+    const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+    const selectedId = String(source.selectedId || source.selected_id || '').trim();
+    if (selectedId && companions.value.some((item) => item.id === selectedId)) {
+      settings.value.selectedId = selectedId;
+    }
+    if ('enabled' in source) {
+      settings.value.enabled = source.enabled === true;
+    }
+    if ('position' in source || 'x' in source || 'y' in source) {
+      settings.value.position = 'position' in source
+        ? normalizePosition(source.position)
+        : normalizePosition({ x: source.x, y: source.y });
+    }
+    if ('scale' in source) {
+      settings.value.scale = Math.min(1.6, Math.max(0.5, normalizeNumber(source.scale, DEFAULT_SCALE)));
+    }
+    if ('messageHintsEnabled' in source || 'message_hints_enabled' in source) {
+      settings.value.messageHintsEnabled = source.messageHintsEnabled !== false && source.message_hints_enabled !== false;
+    }
+    persistSettings();
+  };
+
+  const watchDesktopState = (): void => {
+    if (desktopCompanionUnsubscribe) {
+      return;
+    }
+    const bridge = getDesktopBridge();
+    const listener = bridge?.onCompanionStateChanged;
+    if (typeof listener !== 'function') {
+      return;
+    }
+    const unsubscribe = listener.call(bridge, (payload: unknown) => {
+      applyDesktopState(payload);
+    });
+    if (typeof unsubscribe === 'function') {
+      desktopCompanionUnsubscribe = unsubscribe;
+    }
+  };
+
+  const hydrate = async () => {
+    if (hydrated.value || loading.value) {
+      return;
+    }
+    loading.value = true;
+    lastError.value = '';
+    try {
+      const desktopState = await loadDesktopCompanionLibraryState();
+      const desktopCompanions = normalizeDesktopCompanionRecords(desktopState?.companions);
+      const storedCompanions = await listStoredCompanions();
+      companions.value = mergeCompanionRecords(desktopCompanions, storedCompanions);
+      if (companions.value.length) {
+        await Promise.all(companions.value.map((item) => saveStoredCompanion(item).catch(() => undefined)));
+      }
+      if (desktopState?.settings) {
+        settings.value = normalizeSettings(desktopState.settings);
+      }
+      if (desktopState?.agentOverrides) {
+        const parsed =
+          desktopState.agentOverrides && typeof desktopState.agentOverrides === 'object'
+            ? (desktopState.agentOverrides as Record<string, unknown>)
+            : {};
+        const nextOverrides: Record<string, AgentCompanionOverride> = {};
+        Object.entries(parsed).forEach(([key, value]) => {
+          const normalizedKey = String(key || '').trim();
+          if (!normalizedKey) return;
+          const normalized = normalizeAgentCompanionOverride(value);
+          if (normalized) {
+            nextOverrides[normalizedKey] = normalized;
+          }
+        });
+        agentOverrides.value = nextOverrides;
+      }
+      if (settings.value.selectedId && !companions.value.some((item) => item.id === settings.value.selectedId)) {
+        settings.value.selectedId = '';
+      }
+      if (!settings.value.selectedId && companions.value.length) {
+        settings.value.selectedId = companions.value[0].id;
+      }
+      watchDesktopState();
+      persistSettings();
+      hydrated.value = true;
+    } catch (error) {
+      lastError.value = String((error as { message?: string })?.message || error || '');
+      throw error;
+    } finally {
+      loading.value = false;
+    }
+  };
+
+  const loadGlobalCompanions = async (options: { force?: boolean } = {}): Promise<CompanionPackageRecord[]> => {
+    if (!options.force && globalCompanionsLoaded.value) {
+      return globalCompanions.value;
+    }
+    globalCompanionsLoading.value = true;
+    try {
+      const items = await requestGlobalCompanions();
+      globalCompanions.value = items;
+      globalCompanionsLoaded.value = true;
+      return items;
+    } finally {
+      globalCompanionsLoading.value = false;
+    }
+  };
+
+  const ensureGlobalCompanion = async (id: string): Promise<CompanionPackageRecord | null> => {
+    const cleaned = String(id || '').trim();
+    if (!cleaned) {
+      return null;
+    }
+    const existing = globalCompanions.value.find((item) => item.id === cleaned) || null;
+    if (existing?.spritesheetDataUrl) {
+      return existing;
+    }
+    const detail = await requestGlobalCompanion(cleaned);
+    if (!detail) {
+      return existing;
+    }
+    const next = globalCompanions.value.slice();
+    const index = next.findIndex((item) => item.id === cleaned);
+    if (index >= 0) {
+      next[index] = {
+        ...next[index],
+        ...detail,
+        spritesheetUrl: detail.spritesheetUrl || next[index]?.spritesheetUrl
+      };
+    } else {
+      next.push(detail);
+    }
+    globalCompanions.value = next;
+    return next.find((item) => item.id === cleaned) || detail;
+  };
+
+  const findCompanion = (
+    scope: 'private' | 'global',
+    id: string
+  ): CompanionPackageRecord | null => {
+    const cleaned = String(id || '').trim();
+    if (!cleaned) return null;
+    const list = scope === 'global' ? globalCompanions.value : companions.value;
+    return list.find((item) => item.id === cleaned) || null;
+  };
+
+  const importPackage = async (file: File): Promise<CompanionPackageRecord> => {
+    saving.value = true;
+    lastError.value = '';
+    try {
+      const { parseCompanionPackageFile } = await loadCompanionPackageUtilities();
+      const parsed = await parseCompanionPackageFile(file);
+      const now = Date.now();
+      const existing = companions.value.find((item) => item.id === parsed.id);
+      const record: CompanionPackageRecord = {
+        ...parsed,
+        importedAt: existing?.importedAt || now,
+        updatedAt: now,
+        scope: 'private'
+      };
+      await saveStoredCompanion(record);
+      companions.value = [record, ...companions.value.filter((item) => item.id !== record.id)];
+      settings.value.selectedId = record.id;
+      settings.value.enabled = true;
+      persistSettings();
+      await saveDesktopCompanionLibraryState({
+        companions: companions.value,
+        settings: settings.value,
+        agentOverrides: agentOverrides.value
+      });
+      return record;
+    } catch (error) {
+      lastError.value = String((error as { message?: string })?.message || error || '');
+      throw error;
+    } finally {
+      saving.value = false;
+    }
+  };
+
+  const updateCompanion = async (
+    id: string,
+    patch: Pick<CompanionPackageManifest, 'displayName' | 'description'>
+  ): Promise<void> => {
+    const target = companions.value.find((item) => item.id === id);
+    if (!target) {
+      return;
+    }
+    const record: CompanionPackageRecord = {
+      ...target,
+      displayName: String(patch.displayName || '').trim() || target.displayName,
+      description: String(patch.description || '').trim(),
+      updatedAt: Date.now()
+    };
+    await saveStoredCompanion(record);
+    companions.value = companions.value.map((item) => (item.id === id ? record : item));
+    await saveDesktopCompanionLibraryState({
+      companions: companions.value,
+      settings: settings.value,
+      agentOverrides: agentOverrides.value
+    });
+  };
+
+  const exportPackage = async (id: string): Promise<void> => {
+    const target = companions.value.find((item) => item.id === id);
+    if (!target) {
+      return;
+    }
+    const { buildCompanionPackageBlob, buildCompanionPackageFilename } =
+      await loadCompanionPackageUtilities();
+    const blob = buildCompanionPackageBlob(target, target.spritesheetDataUrl);
+    downloadBlob(blob, buildCompanionPackageFilename(target.id));
+  };
+
+  const exportCompanion = async (scope: 'private' | 'global', id: string): Promise<void> => {
+    const cleaned = String(id || '').trim();
+    if (!cleaned) {
+      return;
+    }
+    if (scope === 'global') {
+      const target = globalCompanions.value.find((item) => item.id === cleaned);
+      if (!target) {
+        return;
+      }
+      const blob = await requestGlobalCompanionPackage(cleaned);
+      const { buildCompanionPackageFilename } = await loadCompanionPackageUtilities();
+      downloadBlob(blob, buildCompanionPackageFilename(target.id));
+      return;
+    }
+    await exportPackage(cleaned);
+  };
+
+  const removeCompanion = async (id: string): Promise<void> => {
+    await removeStoredCompanion(id);
+    companions.value = companions.value.filter((item) => item.id !== id);
+    if (settings.value.selectedId === id) {
+      settings.value.selectedId = companions.value[0]?.id || '';
+      settings.value.enabled = Boolean(settings.value.selectedId) && settings.value.enabled;
+    }
+    saveSettings(settings.value);
+    await saveDesktopCompanionLibraryState({
+      companions: companions.value,
+      settings: settings.value,
+      agentOverrides: agentOverrides.value
+    });
+  };
+
+  const selectCompanion = (id: string): void => {
+    if (!companions.value.some((item) => item.id === id)) {
+      return;
+    }
+    settings.value.selectedId = id;
+    persistSettings();
+  };
+
+  const setEnabled = (value: boolean): void => {
+    settings.value.enabled = value === true;
+    persistSettings();
+  };
+
+  const setPosition = (position: CompanionPosition): void => {
+    settings.value.position = normalizePosition(position);
+    persistSettings();
+  };
+
+  const setScale = (value: number): void => {
+    settings.value.scale = Math.min(1.6, Math.max(0.5, normalizeNumber(value, DEFAULT_SCALE)));
+    persistSettings();
+  };
+
+  const setMessageHintsEnabled = (value: boolean): void => {
+    settings.value.messageHintsEnabled = value === true;
+    persistSettings();
+  };
+
+  const showMessage = (
+    text: string,
+    options: { kind?: 'info' | 'success' | 'warning'; durationMs?: number; agentId?: string } = {}
+  ): void => {
+    const cleaned = String(text || '').trim();
+    if (!cleaned) {
+      return;
+    }
+    const agentId = String(options.agentId || '').trim();
+    message.value = {
+      text: cleaned,
+      kind: options.kind === 'success' || options.kind === 'warning' ? options.kind : 'info',
+      visibleUntil: Date.now() + Math.max(1200, Math.min(8000, Number(options.durationMs || 2600))),
+      agentId: agentId || undefined
+    };
+  };
+
+  const clearMessage = (): void => {
+    message.value = null;
+  };
+
+  const getAgentOverride = (agentId: string): AgentCompanionOverride | null => {
+    const key = String(agentId || '').trim();
+    if (!key) return null;
+    return agentOverrides.value[key] || null;
+  };
+
+  const setAgentOverride = (
+    agentId: string,
+    patch: Partial<Pick<AgentCompanionOverride, 'show' | 'scale'>>
+  ): void => {
+    const key = String(agentId || '').trim();
+    if (!key) return;
+    const current = agentOverrides.value[key] || { updatedAt: Date.now() };
+    const next: AgentCompanionOverride = {
+      ...current,
+      updatedAt: Date.now()
+    };
+    if ('show' in patch) {
+      next.show = patch.show === true;
+    }
+    if ('scale' in patch) {
+      next.scale = Math.min(1.6, Math.max(0.5, normalizeNumber(patch.scale, DEFAULT_SCALE)));
+    }
+    agentOverrides.value = {
+      ...agentOverrides.value,
+      [key]: next
+    };
+    persistAgentOverrides();
+  };
+
+  const clearAgentOverride = (agentId: string): void => {
+    const key = String(agentId || '').trim();
+    if (!key || !agentOverrides.value[key]) return;
+    const next = { ...agentOverrides.value };
+    delete next[key];
+    agentOverrides.value = next;
+    persistAgentOverrides();
+  };
+
+  return {
+    agentOverrides,
+    companions,
+    enabled,
+    featureEnabled,
+    globalCompanions,
+    globalCompanionsLoaded,
+    globalCompanionsLoading,
+    hydrated,
+    lastError,
+    loading,
+    message,
+    saving,
+    selectedCompanion,
+    settings,
+    clearMessage,
+    clearAgentOverride,
+    exportCompanion,
+    exportPackage,
+    getAgentOverride,
+    hydrate,
+    importPackage,
+    findCompanion,
+    loadGlobalCompanions,
+    ensureGlobalCompanion,
+    removeCompanion,
+    selectCompanion,
+    setAgentOverride,
+    setEnabled,
+    setMessageHintsEnabled,
+    setPosition,
+    setScale,
+    showMessage,
+    updateCompanion
+  };
+});

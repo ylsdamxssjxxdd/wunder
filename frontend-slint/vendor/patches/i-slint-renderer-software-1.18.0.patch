@@ -1,0 +1,3072 @@
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/Cargo.toml b/i-slint-renderer-software-1.18/Cargo.toml
+index 7a47831..b514e09 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/Cargo.toml
++++ b/i-slint-renderer-software-1.18/Cargo.toml
+@@ -52,7 +52,6 @@ std = [
+     "euclid/std",
+     "i-slint-core/std",
+     "path",
+-    "systemfonts",
+     "swash?/std",
+ ]
+ systemfonts = [
+@@ -142,3 +141,7 @@ check-cfg = [
+     "cfg(cbindgen)",
+     "cfg(slint_nightly_test)",
+ ]
++
++[target.'cfg(target_os = "windows")'.dependencies.windows-sys]
++version = "0.52"
++features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"]
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/Cargo.toml.orig b/i-slint-renderer-software-1.18/Cargo.toml.orig
+index c82508f..44df0c9 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/Cargo.toml.orig
++++ b/i-slint-renderer-software-1.18/Cargo.toml.orig
+@@ -27,7 +27,7 @@ systemfonts = [
+   "dep:clru",
+ ]
+ path = ["dep:zeno", "dep:lyon_path", "i-slint-core/path"]
+-std = ["zeno?/std", "num-traits/std", "euclid/std", "i-slint-core/std", "path", "systemfonts", "swash?/std"]
++std = ["zeno?/std", "num-traits/std", "euclid/std", "i-slint-core/std", "path", "swash?/std"]
+ libm = ["zeno?/libm", "num-traits/libm", "euclid/libm", "i-slint-core/libm", "swash?/libm"]
+ 
+ experimental = []
+@@ -48,6 +48,10 @@ swash = { workspace = true, optional = true, features = ["scale", "render"] }
+ zeno = { version = "0.3.3", optional = true, default-features = false, features = ["eval"] }
+ lyon_path = { workspace = true, optional = true }
+ 
++[target.'cfg(target_os = "windows")'.dependencies.windows-sys]
++version = "0.52"
++features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"]
++
+ [lints.rust]
+ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(cbindgen)", "cfg(slint_nightly_test)"] }
+ 
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/draw_functions.rs b/i-slint-renderer-software-1.18/draw_functions.rs
+index 345b3e6..202e7b2 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/draw_functions.rs
++++ b/i-slint-renderer-software-1.18/draw_functions.rs
+@@ -29,13 +29,29 @@ pub(super) fn draw_texture_line(
+         data,
+         format,
+         pixel_stride,
+-        extra: super::SceneTextureExtra { colorize, alpha, rotation, dx, dy, off_x, off_y },
++        extra:
++            super::SceneTextureExtra {
++                colorize,
++                alpha,
++                rotation,
++                subpixel,
++                subpixel_enabled,
++                subpixel_bgr,
++                dx,
++                dy,
++                off_x,
++                off_y,
++            },
+     } = *texture;
+ 
+     let source_size = texture.source_size().cast::<i32>();
+     let len = line_buffer.len();
+     let y = line - span.origin.y_length();
+-    let y = if rotation.mirror_width() { span.size.height - y.get() - 1 } else { y.get() } as i32;
++    let y = if rotation.mirror_width() {
++        span.size.height - y.get() - 1
++    } else {
++        y.get()
++    } as i32;
+ 
+     let off_y = Fixed::<i32, 8>::from_fixed(off_y);
+     let dx = Fixed::<i32, 8>::from_fixed(dx);
+@@ -89,10 +105,17 @@ pub(super) fn draw_texture_line(
+                 data,
+                 alpha,
+                 colorize,
++                subpixel,
++                subpixel_enabled,
++                subpixel_bgr,
+                 (pixel_stride as usize, dy),
+                 #[inline(always)]
+                 |bpp| {
+-                    let p = ((row_offset + pos.truncate() as usize) * bpp, pos.fract(), row_fract);
++                    let p = (
++                        (row_offset + pos.truncate() as usize) * bpp,
++                        pos.fract(),
++                        row_fract,
++                    );
+                     pos += delta;
+                     p
+                 },
+@@ -154,10 +177,17 @@ pub(super) fn draw_texture_line(
+                 data,
+                 alpha,
+                 colorize,
++                subpixel,
++                subpixel_enabled,
++                subpixel_bgr,
+                 (stride, dy),
+                 #[inline(always)]
+                 |_| {
+-                    let pos = (row.truncate() as usize * stride + col, col_fract, row.fract());
++                    let pos = (
++                        row.truncate() as usize * stride + col,
++                        col_fract,
++                        row.fract(),
++                    );
+                     row += row_delta;
+                     pos
+                 },
+@@ -182,12 +212,16 @@ pub(super) fn draw_texture_line(
+         }
+     };
+ 
++    #[allow(clippy::too_many_arguments)]
+     fn fetch_blend_pixel(
+         line_buffer: &mut [impl TargetPixel],
+         format: TexturePixelFormat,
+         data: &[u8],
+         alpha: u8,
+         color: Color,
++        subpixel: bool,
++        subpixel_enabled: bool,
++        subpixel_bgr: bool,
+         (stride, delta): (usize, Fixed<i32, 8>),
+         mut pos: impl FnMut(usize) -> (usize, u8, u8),
+     ) {
+@@ -206,7 +240,31 @@ pub(super) fn draw_texture_line(
+                 }
+             }
+             TexturePixelFormat::Rgba => {
+-                if color.alpha() == 0 {
++                if subpixel {
++                    for pix in line_buffer {
++                        let pos = pos(4).0;
++                        if subpixel_enabled {
++                            pix.blend_subpixel(
++                                color,
++                                if subpixel_bgr {
++                                    [data[pos + 2], data[pos + 1], data[pos]]
++                                } else {
++                                    [data[pos], data[pos + 1], data[pos + 2]]
++                                },
++                            );
++                        } else {
++                            let coverage =
++                                ((data[pos] as u16 + data[pos + 1] as u16 + data[pos + 2] as u16)
++                                    / 3) as u8;
++                            pix.blend(PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
++                                ((coverage as u16 * color.alpha() as u16) / 255) as u8,
++                                color.red(),
++                                color.green(),
++                                color.blue(),
++                            )));
++                        }
++                    }
++                } else if color.alpha() == 0 {
+                     for pix in line_buffer {
+                         let pos = pos(4).0;
+                         let p: &[u8] = &data[pos..pos + 4];
+@@ -331,7 +389,12 @@ pub(super) fn draw_rounded_rectangle_line(
+         #[track_caller]
+         #[inline]
+         pub fn new(value: impl TryInto<u32> + core::fmt::Debug + Copy) -> Self {
+-            Self(value.try_into().unwrap_or_else(|_| panic!("Overflow {value:?}")) << 4)
++            Self(
++                value
++                    .try_into()
++                    .unwrap_or_else(|_| panic!("Overflow {value:?}"))
++                    << 4,
++            )
+         }
+         #[inline(always)]
+         pub fn floor(self) -> u32 {
+@@ -396,8 +459,11 @@ pub(super) fn draw_rounded_rectangle_line(
+     };
+ 
+     let (x1, x2, x3, x4, x5, x6, x7, x8) = if let Some(r) = rr.radius.as_uniform() {
+-        let (x1, x2, x3, x4) =
+-            if y.get() < r { calculate_xxxx(r, y.get()) } else { (ZERO, ZERO, border, border) };
++        let (x1, x2, x3, x4) = if y.get() < r {
++            calculate_xxxx(r, y.get())
++        } else {
++            (ZERO, ZERO, border, border)
++        };
+         (x1, x2, x3, x4, rev(x4), rev(x3), rev(x2), rev(x1))
+     } else {
+         let (x1, x2, x3, x4) = if y1 < PhysicalLength::new(rr.radius.top_left) {
+@@ -425,7 +491,11 @@ pub(super) fn draw_rounded_rectangle_line(
+             if x >= width {
+                 return;
+             }
+-            let c = if border == ZERO { rr.inner_color } else { rr.border_color };
++            let c = if border == ZERO {
++                rr.inner_color
++            } else {
++                rr.border_color
++            };
+             let col = PremultipliedRgbaColor {
+                 alpha: (((c.alpha as u32) * cov as u32) / 255) as u8,
+                 red: (((c.red as u32) * cov as u32) / 255) as u8,
+@@ -510,7 +580,11 @@ pub(super) fn draw_rounded_rectangle_line(
+         if x >= width {
+             return;
+         }
+-        let c = if border == ZERO { rr.inner_color } else { rr.border_color };
++        let c = if border == ZERO {
++            rr.inner_color
++        } else {
++            rr.border_color
++        };
+         let col = PremultipliedRgbaColor {
+             alpha: (((c.alpha as u32) * (255 - cov) as u32) / 255) as u8,
+             red: (((c.red as u32) * (255 - cov) as u32) / 255) as u8,
+@@ -839,6 +913,19 @@ impl PremultipliedRgbaColor {
+ pub trait TargetPixel: Sized + Copy {
+     /// Blend a single pixel with a color
+     fn blend(&mut self, color: PremultipliedRgbaColor);
++    /// Blend a solid text color with independent coverages for the panel's
++    /// red, green, and blue LCD subpixels.
++    fn blend_subpixel(&mut self, color: Color, coverage: [u8; 3]) {
++        // This fallback is used by targets that do not have native per-channel
++        // storage. Preserve the same effective alpha as the RGB path.
++        let average = ((coverage[0] as u16 + coverage[1] as u16 + coverage[2] as u16) / 3) as u8;
++        self.blend(PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
++            ((average as u16 * color.alpha() as u16) / 255) as u8,
++            color.red(),
++            color.green(),
++            color.blue(),
++        )));
++    }
+     /// Blend a color to all the pixel in the slice.
+     fn blend_slice(slice: &mut [Self], color: PremultipliedRgbaColor) {
+         if color.alpha == u8::MAX {
+@@ -866,11 +953,31 @@ impl TargetPixel for Rgb8Pixel {
+         self.b = (self.b as u16 * a / 255) as u8 + color.blue;
+     }
+ 
++    fn blend_subpixel(&mut self, color: Color, coverage: [u8; 3]) {
++        let blend_channel = |dst: u8, src: u8, coverage: u8| {
++            let alpha = coverage as u16 * color.alpha() as u16 / 255;
++            (dst as u16 * (255 - alpha) / 255 + src as u16 * alpha / 255) as u8
++        };
++        self.r = blend_channel(self.r, color.red(), coverage[0]);
++        self.g = blend_channel(self.g, color.green(), coverage[1]);
++        self.b = blend_channel(self.b, color.blue(), coverage[2]);
++    }
++
+     fn from_rgb(r: u8, g: u8, b: u8) -> Self {
+         Self::new(r, g, b)
+     }
+ }
+ 
++#[test]
++fn subpixel_blend_respects_text_alpha() {
++    let mut pixel = Rgb8Pixel::new(200, 180, 160);
++    pixel.blend_subpixel(Color::from_argb_u8(128, 20, 40, 60), [255, 0, 128]);
++
++    // Effective alpha is coverage * text alpha / 255. In particular, a zero
++    // coverage channel must remain untouched even for translucent text.
++    assert_eq!(pixel, Rgb8Pixel::new(109, 180, 134));
++}
++
+ impl TargetPixel for PremultipliedRgbaColor {
+     fn blend(&mut self, color: PremultipliedRgbaColor) {
+         let a = (u8::MAX - color.alpha) as u16;
+@@ -881,12 +988,37 @@ impl TargetPixel for PremultipliedRgbaColor {
+             - (self.alpha as u16 * color.alpha as u16) / 255) as u8;
+     }
+ 
++    fn blend_subpixel(&mut self, color: Color, coverage: [u8; 3]) {
++        let blend_channel = |dst: u8, src: u8, coverage: u8| {
++            let alpha = coverage as u16 * color.alpha() as u16 / 255;
++            (dst as u16 * (255 - alpha) / 255 + src as u16 * alpha / 255) as u8
++        };
++        self.red = blend_channel(self.red, color.red(), coverage[0]);
++        self.green = blend_channel(self.green, color.green(), coverage[1]);
++        self.blue = blend_channel(self.blue, color.blue(), coverage[2]);
++        let alpha = ((coverage[0] as u16 + coverage[1] as u16 + coverage[2] as u16) / 3
++            * color.alpha() as u16
++            / 255) as u8;
++        self.alpha =
++            (self.alpha as u16 + alpha as u16 - (self.alpha as u16 * alpha as u16) / 255) as u8;
++    }
++
+     fn from_rgb(r: u8, g: u8, b: u8) -> Self {
+-        Self { red: r, green: g, blue: b, alpha: 255 }
++        Self {
++            red: r,
++            green: g,
++            blue: b,
++            alpha: 255,
++        }
+     }
+ 
+     fn background() -> Self {
+-        Self { red: 0, green: 0, blue: 0, alpha: 0 }
++        Self {
++            red: 0,
++            green: 0,
++            blue: 0,
++            alpha: 0,
++        }
+     }
+ }
+ 
+@@ -942,6 +1074,12 @@ impl TargetPixel for Rgb565Pixel {
+             | ((res >> 5) as u16 & (Self::R_MASK | Self::B_MASK));
+     }
+ 
++    fn blend_subpixel(&mut self, color: Color, coverage: [u8; 3]) {
++        let mut pixel = Rgb8Pixel::from(*self);
++        pixel.blend_subpixel(color, coverage);
++        *self = pixel.into();
++    }
++
+     fn from_rgb(r: u8, g: u8, b: u8) -> Self {
+         Self(((r as u16 & 0b11111000) << 8) | ((g as u16 & 0b11111100) << 3) | (b as u16 >> 3))
+     }
+@@ -955,7 +1093,11 @@ impl From<Rgb8Pixel> for Rgb565Pixel {
+ 
+ impl From<Rgb565Pixel> for Rgb8Pixel {
+     fn from(p: Rgb565Pixel) -> Self {
+-        Rgb8Pixel { r: p.red(), g: p.green(), b: p.blue() }
++        Rgb8Pixel {
++            r: p.red(),
++            g: p.green(),
++            b: p.blue(),
++        }
+     }
+ }
+ 
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/fonts/pixelfont.rs b/i-slint-renderer-software-1.18/fonts/pixelfont.rs
+index 77df4af..1b95646 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/fonts/pixelfont.rs
++++ b/i-slint-renderer-software-1.18/fonts/pixelfont.rs
+@@ -6,7 +6,7 @@ use crate::fixed::Fixed;
+ use i_slint_core::graphics::{BitmapFont, BitmapGlyphs};
+ use i_slint_core::textlayout::{FontMetrics, Glyph, TextShaper};
+ 
+-use super::{GlyphRenderer, RenderableGlyph};
++use super::{GlyphAlphaMap, GlyphRenderer, RenderableGlyph, glyph_alpha_map, native_gdi_glyph};
+ 
+ // A font that is resolved to a specific pixel size.
+ pub struct PixelFont {
+@@ -36,6 +36,27 @@ impl GlyphRenderer for PixelFont {
+             // For example, ' ' has no glyph data
+             return None;
+         }
++        if bitmap_glyph.data_packing == 2 {
++            if let Some(glyph) = native_gdi_glyph(self.glyphs, glyph_index, self.pixel_size, || {
++                self.bitmap_font
++                    .character_map
++                    .iter()
++                    .find(|entry| entry.glyph_index as usize == glyph_index)
++                    .map(|entry| entry.code_point)
++            }) {
++                return Some(RenderableGlyph {
++                    x: Fixed::from_integer(glyph.x),
++                    y: Fixed::from_integer(glyph.y),
++                    width: PhysicalLength::new(glyph.width as i16),
++                    height: PhysicalLength::new(glyph.height as i16),
++                    alpha_map: GlyphAlphaMap::SharedSubpixel(glyph.data),
++                    pixel_stride: glyph.stride,
++                    subpixel: true,
++                    native_subpixel: true,
++                    sdf: false,
++                });
++            }
++        }
+         // t represent the target coordinate system, and s the source glyph coordinate system.
+         // We want to align the glyph such that Δ(hₜ+yₜ)+offset = hₛ+yₛ
+         // where hₜ is the integer height of the glyph in the target coordinate system
+@@ -57,8 +78,10 @@ impl GlyphRenderer for PixelFont {
+             y: h_plus_y - Fixed::from_integer(height),
+             width: PhysicalLength::new(width as i16),
+             height: PhysicalLength::new(height as i16),
+-            alpha_map: bitmap_glyph.data.as_slice().into(),
++            alpha_map: glyph_alpha_map(self.glyphs, glyph_index),
+             pixel_stride: bitmap_glyph.width as u16,
++            subpixel: bitmap_glyph.data_packing == 2,
++            native_subpixel: false,
+             sdf: self.bitmap_font.sdf,
+         })
+     }
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/fonts/systemfonts.rs b/i-slint-renderer-software-1.18/fonts/systemfonts.rs
+index c48de25..ad89039 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/fonts/systemfonts.rs
++++ b/i-slint-renderer-software-1.18/fonts/systemfonts.rs
+@@ -25,11 +25,16 @@ i_slint_core::thread_local! {
+ pub fn get_swash_font_info(blob: &fontique::Blob<u8>, index: u32) -> (swash::CacheKey, u32) {
+     SWASH_FONTS.with(|font_cache| {
+         let mut cache = font_cache.borrow_mut();
+-        let info = cache.entry((blob.clone().into(), index)).or_insert_with(move || {
+-            let font_ref = swash::FontRef::from_index(blob.data(), index as usize)
+-                .expect("fatal: swash is unable to parse truetype font");
+-            CachedFontInfo { swash_key: font_ref.key, swash_offset: font_ref.offset }
+-        });
++        let info = cache
++            .entry((blob.clone().into(), index))
++            .or_insert_with(move || {
++                let font_ref = swash::FontRef::from_index(blob.data(), index as usize)
++                    .expect("fatal: swash is unable to parse truetype font");
++                CachedFontInfo {
++                    swash_key: font_ref.key,
++                    swash_offset: font_ref.offset,
++                }
++            });
+         (info.swash_key, info.swash_offset)
+     })
+ }
+@@ -45,12 +50,21 @@ pub fn match_font(
+     source_cache: &mut fontique::SourceCache,
+ ) -> Option<VectorFont> {
+     if request.family.is_some() {
+-        let requested_pixel_size: PhysicalLength =
+-            (request.pixel_size.unwrap_or(super::DEFAULT_FONT_SIZE).cast() * scale_factor).cast();
++        let requested_pixel_size: PhysicalLength = (request
++            .pixel_size
++            .unwrap_or(super::DEFAULT_FONT_SIZE)
++            .cast()
++            * scale_factor)
++            .cast();
+ 
+         if let Some(font) = request.query_fontique(collection, source_cache) {
+             let (swash_key, swash_offset) = get_swash_font_info_for_query_font(&font);
+-            Some(VectorFont::new(font, swash_key, swash_offset, requested_pixel_size))
++            Some(VectorFont::new(
++                font,
++                swash_key,
++                swash_offset,
++                requested_pixel_size,
++            ))
+         } else {
+             None
+         }
+@@ -65,10 +79,16 @@ pub fn fallbackfont(
+     collection: &mut fontique::Collection,
+     source_cache: &mut fontique::SourceCache,
+ ) -> VectorFont {
+-    let requested_pixel_size: PhysicalLength =
+-        (font_request.pixel_size.unwrap_or(super::DEFAULT_FONT_SIZE).cast() * scale_factor).cast();
++    let requested_pixel_size: PhysicalLength = (font_request
++        .pixel_size
++        .unwrap_or(super::DEFAULT_FONT_SIZE)
++        .cast()
++        * scale_factor)
++        .cast();
+ 
+-    let font = font_request.query_fontique(collection, source_cache).unwrap();
++    let font = font_request
++        .query_fontique(collection, source_cache)
++        .unwrap();
+     let (swash_key, swash_offset) = get_swash_font_info_for_query_font(&font);
+     VectorFont::new(font, swash_key, swash_offset, requested_pixel_size)
+ }
+diff --git a/i-slint-renderer-software-1.18/fonts/vectorfont/cache.rs b/i-slint-renderer-software-1.18/fonts/vectorfont/cache.rs
+new file mode 100644
+index 0000000..3b2dc24
+--- /dev/null
++++ b/i-slint-renderer-software-1.18/fonts/vectorfont/cache.rs
+@@ -0,0 +1,36 @@
++// Copyright © SixtyFPS GmbH <info@slint.dev>
++// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
++
++//! Reuse parsed face metrics for glyph runs. A scrolling label otherwise parses
++//! the same font tables and allocates variation coordinates on every frame.
++use super::*;
++
++i_slint_core::thread_local! {
++    static FONTS: core::cell::RefCell<std::collections::VecDeque<Rc<VectorFont>>> = Default::default();
++}
++
++pub(crate) fn for_run(
++    blob: &fontique::Blob<u8>,
++    index: u32,
++    size: PhysicalLength,
++    coords: &[i16],
++) -> Rc<VectorFont> {
++    FONTS.with(|fonts| {
++        let mut fonts = fonts.borrow_mut();
++        if let Some(index) = fonts.iter().position(|font| {
++            font.font_blob.id() == blob.id() && font.font_index == index
++                && font.pixel_size == size && font.normalized_coords == coords
++        }) {
++            let font = fonts.remove(index).unwrap();
++            fonts.push_front(Rc::clone(&font));
++            return font;
++        }
++        let (key, offset) = super::super::systemfonts::get_swash_font_info(blob, index);
++        let font = Rc::new(VectorFont::new_from_blob_and_index_with_coords(
++            blob.clone(), index, key, offset, size, coords,
++        ));
++        if fonts.len() >= 32 { fonts.pop_back(); }
++        fonts.push_front(Rc::clone(&font));
++        font
++    })
++}
+diff --git a/i-slint-renderer-software-1.18/fonts/vectorfont/tests.rs b/i-slint-renderer-software-1.18/fonts/vectorfont/tests.rs
+new file mode 100644
+index 0000000..3650358
+--- /dev/null
++++ b/i-slint-renderer-software-1.18/fonts/vectorfont/tests.rs
+@@ -0,0 +1,180 @@
++// Copyright © SixtyFPS GmbH <info@slint.dev>
++// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
++
++//! Uses Windows' installed fonts; no proprietary font data is copied into the repo.
++use super::*;
++use swash::scale::{ScaleContext, StrikeWith};
++
++struct TestPlatform;
++impl i_slint_core::platform::Platform for TestPlatform {
++    fn create_window_adapter(
++        &self,
++    ) -> Result<Rc<dyn i_slint_core::window::WindowAdapter>, i_slint_core::api::PlatformError> {
++        Ok(crate::MinimalSoftwareWindow::new(
++            crate::RepaintBufferType::NewBuffer,
++        ))
++    }
++}
++
++fn installed_font(file: &str, pixel_size: i16) -> VectorFont {
++    let directory = std::env::var_os("WINDIR").expect("Windows font tests require WINDIR");
++    let bytes = std::fs::read(std::path::PathBuf::from(directory).join("Fonts").join(file))
++        .expect("Windows font fixture must be installed");
++    let blob: fontique::Blob<u8> = bytes.into();
++    let font_ref = swash::FontRef::from_index(blob.data(), 0).unwrap();
++    let (key, offset) = (font_ref.key, font_ref.offset);
++    VectorFont::new_from_blob_and_index(blob, 0, key, offset, PhysicalLength::new(pixel_size))
++}
++
++#[test]
++fn system_simsun_keeps_exact_bitmap_pixels_and_baseline() {
++    let context = i_slint_core::SlintContext::new(alloc::boxed::Box::new(TestPlatform));
++    let mut bitmap_context = ScaleContext::new();
++    for size in [12, 13, 14, 15, 16] {
++        let font = installed_font("simsun.ttc", size);
++        let font_ref = font.swash_font_ref();
++        let mut scaler = bitmap_context.builder(font_ref).size(size as f32).build();
++        for ch in "雷达回波强度速度谱宽".chars() {
++            let id = NonZeroU16::new(font_ref.charmap().map(ch)).unwrap();
++            let bitmap = scaler
++                .scale_bitmap(id.get(), StrikeWith::ExactSize)
++                .expect("SimSun CJK must have the matching small-size strike");
++            let actual = font.render_vector_glyph(id, 0, &context).unwrap();
++            assert_eq!(
++                &*actual.alpha_map,
++                bitmap.data.as_slice(),
++                "{ch} at {size}px"
++            );
++            assert!(
++                actual
++                    .alpha_map
++                    .iter()
++                    .all(|&alpha| alpha == 0 || alpha == 255)
++            );
++            assert_eq!(actual.width.get() as u32, bitmap.placement.width);
++            assert_eq!(actual.height.get() as u32, bitmap.placement.height);
++            assert_eq!(actual.glyph_origin_x, bitmap.placement.left as f32);
++            assert_eq!(
++                actual.y.truncate(),
++                bitmap.placement.top - bitmap.placement.height as i32
++            );
++            let cached = font.render_vector_glyph(id, 0, &context).unwrap();
++            assert!(Rc::ptr_eq(&actual.alpha_map, &cached.alpha_map));
++        }
++    }
++}
++
++#[test]
++fn missing_bitmap_uses_hinted_outline_at_requested_size() {
++    let context = i_slint_core::SlintContext::new(alloc::boxed::Box::new(TestPlatform));
++    let mut reference_context = ScaleContext::new();
++    let mut hinting_changed_pixels = false;
++    for (file, text, sizes) in [
++        ("simsun.ttc", "雷达回波", &[19, 24, 32][..]),
++        ("segoeui.ttf", "Abg0129", &[12, 13, 16][..]),
++    ] {
++        for &size in sizes {
++            let font = installed_font(file, size);
++            let font_ref = font.swash_font_ref();
++            for ch in text.chars() {
++                let id = NonZeroU16::new(font_ref.charmap().map(ch)).unwrap();
++                let mut scaler = reference_context
++                    .builder(font_ref)
++                    .size(size as f32)
++                    .hint(true)
++                    .build();
++                assert!(
++                    scaler
++                        .scale_bitmap(id.get(), StrikeWith::ExactSize)
++                        .is_none()
++                );
++                let expected = swash::scale::Render::new(&[swash::scale::Source::Outline])
++                    .render(&mut scaler, id.get())
++                    .unwrap();
++                let actual = font.render_vector_glyph(id, 0, &context).unwrap();
++                assert_eq!(
++                    &*actual.alpha_map,
++                    expected.data.as_slice(),
++                    "{file} {ch} at {size}px"
++                );
++                assert_eq!(actual.width.get() as u32, expected.placement.width);
++                assert_eq!(actual.height.get() as u32, expected.placement.height);
++                let mut unhinted = reference_context
++                    .builder(font_ref)
++                    .size(size as f32)
++                    .build();
++                let old = swash::scale::Render::new(&[swash::scale::Source::Outline])
++                    .render(&mut unhinted, id.get())
++                    .unwrap();
++                hinting_changed_pixels |= expected.data != old.data;
++            }
++        }
++    }
++    assert!(
++        hinting_changed_pixels,
++        "fixtures must distinguish hinted from unhinted rendering"
++    );
++}
++
++#[test]
++fn empty_space_bitmaps_do_not_panic_or_lose_layout_advance() {
++    let context = i_slint_core::SlintContext::new(alloc::boxed::Box::new(TestPlatform));
++    let mut empty_bitmap_seen = false;
++    for size in [12, 13, 14, 15, 16, 17] {
++        let font = installed_font("simsun.ttc", size);
++        let font_ref = font.swash_font_ref();
++        for ch in [' ', '\u{a0}', '\u{3000}'] {
++            let id = NonZeroU16::new(font_ref.charmap().map(ch)).unwrap();
++            if let Some(bitmap) = font.exact_bitmap(id) {
++                empty_bitmap_seen |= bitmap.width == 0 || bitmap.height == 0;
++            }
++            let image = font.render_vector_glyph(id, 0, &context);
++            assert!(image.is_none_or(|glyph| glyph.alpha_map.iter().all(|&v| v == 0)));
++            assert!(font.glyph_for_char(ch).unwrap().advance.get() > 0);
++        }
++    }
++    assert!(
++        empty_bitmap_seen,
++        "fixture must exercise Swash's zero-size bitmap edge case"
++    );
++}
++
++/// The bundled subset face (`res/fonts/simsun-subset.ttf`, produced by
++/// `scripts/subset_simsun.py`) must render kept glyphs exactly like the full
++/// master: identical alpha maps, placement and origin at both bitmap-strike
++/// and outline sizes. This guards the custom EBDT/EBLC rebuild against
++/// silent corruption.
++#[test]
++fn bundled_subset_matches_master_rendering() {
++    let context = i_slint_core::SlintContext::new(alloc::boxed::Box::new(TestPlatform));
++    let load = |file: &str, pixel_size: i16| {
++        let bytes = std::fs::read(std::path::PathBuf::from("../../../res/fonts").join(file))
++            .expect("repo font fixture must exist");
++        let blob: fontique::Blob<u8> = bytes.into();
++        let font_ref = swash::FontRef::from_index(blob.data(), 0).unwrap();
++        let (key, offset) = (font_ref.key, font_ref.offset);
++        VectorFont::new_from_blob_and_index(blob, 0, key, offset, PhysicalLength::new(pixel_size))
++    };
++    // NB: the master SimSun cmap itself lacks U+2212/U+2194/U+25BE (they fall
++    // back to .notdef both before and after subsetting), so they must not be
++    // sampled here — only characters the master actually covers.
++    let sample = "记录登记帮助雷达回波强度速度谱宽编报整编监视区外推跟踪识别\
++                  产品转换模拟训练遮蔽角填表报文警报0123456789N/E/S/W°℃埗";
++    for size in [12, 13, 14, 15, 16, 17, 19, 24] {
++        let master = load("simsun.ttf", size);
++        let subset = load("simsun-subset.ttf", size);
++        for ch in sample.chars() {
++            let master_ref = master.swash_font_ref();
++            let subset_ref = subset.swash_font_ref();
++            let master_id = NonZeroU16::new(master_ref.charmap().map(ch)).unwrap();
++            let subset_id = NonZeroU16::new(subset_ref.charmap().map(ch)).unwrap();
++            assert_eq!(master_id, subset_id, "{ch} glyph id changed at {size}px");
++            let expected = master.render_vector_glyph(master_id, 0, &context).unwrap();
++            let actual = subset.render_vector_glyph(subset_id, 0, &context).unwrap();
++            assert_eq!(&*actual.alpha_map, &*expected.alpha_map, "{ch} at {size}px");
++            assert_eq!(actual.width, expected.width, "{ch} width at {size}px");
++            assert_eq!(actual.height, expected.height, "{ch} height at {size}px");
++            assert_eq!(actual.glyph_origin_x, expected.glyph_origin_x, "{ch} at {size}px");
++        }
++    }
++}
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/fonts/vectorfont.rs b/i-slint-renderer-software-1.18/fonts/vectorfont.rs
+index 2bcc6a9..b9ab65c 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/fonts/vectorfont.rs
++++ b/i-slint-renderer-software-1.18/fonts/vectorfont.rs
+@@ -14,6 +14,10 @@ use i_slint_core::lengths::PhysicalPx;
+ use i_slint_core::textlayout::{Glyph, TextShaper};
+ 
+ use super::RenderableVectorGlyph;
++pub(crate) mod cache;
++
++#[cfg(all(test, target_os = "windows"))]
++mod tests;
+ 
+ // A length in font design space.
+ struct FontUnit;
+@@ -96,6 +100,19 @@ fn hash_coords(coords: &[i16]) -> u64 {
+ }
+ 
+ impl VectorFont {
++    fn exact_bitmap(&self, glyph_id: NonZeroU16) -> Option<skrifa::bitmap::BitmapGlyph<'_>> {
++        let face = skrifa::FontRef::from_index(self.font_blob.data(), self.font_index).ok()?;
++        let strikes = skrifa::bitmap::BitmapStrikes::with_format(
++            &face,
++            skrifa::bitmap::BitmapFormat::Ebdt,
++        )?;
++        let size = self.pixel_size.get() as f32;
++        strikes.iter().filter(|strike| strike.ppem() == size).find_map(|strike| {
++            strike.get(skrifa::GlyphId::new(glyph_id.get() as u32))
++                .filter(|bitmap| bitmap.ppem_x == size && bitmap.ppem_y == size)
++        })
++    }
++
+     fn swash_font_ref(&self) -> swash::FontRef<'_> {
+         swash::FontRef {
+             data: self.font_blob.data(),
+@@ -202,12 +219,30 @@ impl VectorFont {
+                 let mut scaler = ctx
+                     .builder(font_ref)
+                     .size(self.pixel_size.get() as f32)
++                    .hint(true)
+                     .normalized_coords(&self.normalized_coords)
+                     .build();
+-                let image = swash::scale::Render::new(&[swash::scale::Source::Outline])
+-                    .format(swash::zeno::Format::Alpha)
+-                    .offset(swash::zeno::Vector::new(subpixel_offset_x, 0.0))
+-                    .render(&mut scaler, glyph_id.get())?;
++                // System fonts need the same small-CJK treatment as embedded fonts.
++                // Never resize a nearby bitmap strike: use its exact physical size
++                // or fall back to an outline hinted at the requested size.
++                // SimSun also contains zero-width whitespace strikes. Swash 0.2
++                // decodes those with chunks(0), which panics; outlines already
++                // handle empty glyphs while layout retains their advance.
++                let bitmap_available = self
++                    .exact_bitmap(glyph_id)
++                    .is_some_and(|bitmap| bitmap.width > 0 && bitmap.height > 0);
++                let sources = [
++                    swash::scale::Source::Bitmap(swash::scale::StrikeWith::ExactSize),
++                    swash::scale::Source::Outline,
++                ];
++                let image = swash::scale::Render::new(if bitmap_available {
++                    &sources
++                } else {
++                    &sources[1..]
++                })
++                .format(swash::zeno::Format::Alpha)
++                .offset(swash::zeno::Vector::new(subpixel_offset_x, 0.0))
++                .render(&mut scaler, glyph_id.get())?;
+ 
+                 let placement = image.placement;
+                 let alpha_map: Rc<[u8]> = image.data.into();
+@@ -268,11 +303,13 @@ impl TextShaper for VectorFont {
+         let metrics = font_ref.metrics(&[]);
+         let scale = self.pixel_size.get() as f32 / metrics.units_per_em as f32;
+ 
+-        NonZeroU16::try_from(charmap.map(ch)).ok().map(|glyph_id| Glyph {
+-            glyph_id: Some(glyph_id),
+-            advance: PhysicalLength::new((gm.advance_width(glyph_id.get()) * scale) as _),
+-            ..Default::default()
+-        })
++        NonZeroU16::try_from(charmap.map(ch))
++            .ok()
++            .map(|glyph_id| Glyph {
++                glyph_id: Some(glyph_id),
++                advance: PhysicalLength::new((gm.advance_width(glyph_id.get()) * scale) as _),
++                ..Default::default()
++            })
+     }
+ }
+ 
+@@ -309,8 +346,10 @@ impl super::GlyphRenderer for VectorFont {
+             y: glyph.y,
+             width: glyph.width,
+             height: glyph.height,
+-            alpha_map: glyph.alpha_map.into(),
++            alpha_map: super::GlyphAlphaMap::Shared(glyph.alpha_map),
+             pixel_stride: glyph.pixel_stride,
++            subpixel: false,
++            native_subpixel: false,
+             sdf: false,
+         })
+     }
+diff --git a/i-slint-renderer-software-1.18/fonts/win32_gdi.rs b/i-slint-renderer-software-1.18/fonts/win32_gdi.rs
+new file mode 100644
+index 0000000..c6bd6f1
+--- /dev/null
++++ b/i-slint-renderer-software-1.18/fonts/win32_gdi.rs
+@@ -0,0 +1,330 @@
++//! Win7 GDI ClearType rasterization for the bundled western glyphs.
++//!
++//! Slint's software renderer has no Windows ClearType backend.  The compiler
++//! still provides the original bitmap metrics, while this module asks the
++//! Win7 GDI rasterizer for the RGB coverages of printable ASCII glyphs.  The
++//! result is copied out of an opaque white 32-bit DIB and fed back into the
++//! normal software blend path.
++
++#![cfg_attr(target_os = "windows", allow(unsafe_code))]
++
++use alloc::rc::Rc;
++
++#[derive(Clone)]
++pub(crate) struct NativeGlyph {
++    pub data: Rc<[u8]>,
++    pub width: u16,
++    pub height: u16,
++    pub stride: u16,
++    /// Position of the bitmap's top-left corner relative to the baseline.
++    pub x: i32,
++    pub y: i32,
++}
++
++#[cfg(not(target_os = "windows"))]
++pub(crate) fn register_font(_family: &'static str, _data: &'static [u8]) {}
++
++#[cfg(not(target_os = "windows"))]
++pub(crate) fn rasterize(_ch: char, _pixel_size: i16) -> Option<NativeGlyph> {
++    None
++}
++
++#[cfg(not(target_os = "windows"))]
++pub(crate) fn enabled() -> bool {
++    false
++}
++
++#[cfg(target_os = "windows")]
++mod windows_impl {
++    use super::NativeGlyph;
++    use alloc::rc::Rc;
++    use core::mem;
++    use core::ptr;
++    use std::sync::{Mutex, OnceLock};
++    use windows_sys::Win32::Foundation::{COLORREF, HANDLE};
++    use windows_sys::Win32::Graphics::Gdi::{
++        AddFontMemResourceEx, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CLEARTYPE_NATURAL_QUALITY,
++        CreateCompatibleDC, CreateDIBSection, CreateFontIndirectW, DEFAULT_CHARSET, DIB_RGB_COLORS,
++        DeleteDC, DeleteObject, ExtTextOutW, GetDC, GetTextMetricsW, LOGFONTW, OPAQUE,
++        OUT_TT_PRECIS, ReleaseDC, SelectObject, SetBkColor, SetBkMode, SetTextAlign, SetTextColor,
++        TA_BASELINE, TA_LEFT,
++    };
++    use windows_sys::Win32::UI::WindowsAndMessaging::{
++        FE_FONTSMOOTHINGCLEARTYPE, SPI_GETFONTSMOOTHING, SPI_GETFONTSMOOTHINGORIENTATION,
++        SPI_GETFONTSMOOTHINGTYPE, SystemParametersInfoW,
++    };
++
++    #[derive(Clone, Copy)]
++    struct Registration {
++        family: &'static str,
++        handle: HANDLE,
++    }
++
++    static REGISTRATION: OnceLock<Option<Registration>> = OnceLock::new();
++    static RENDER_MUTEX: Mutex<()> = Mutex::new(());
++    static FIRST_GLYPH_LOGGED: OnceLock<()> = OnceLock::new();
++
++    fn clear_type_enabled() -> bool {
++        unsafe {
++            let mut enabled = 0u32;
++            let mut smoothing_type = 0u32;
++            let mut orientation = 1u32;
++            let flags = 0;
++            SystemParametersInfoW(
++                SPI_GETFONTSMOOTHING,
++                0,
++                &mut enabled as *mut u32 as *mut core::ffi::c_void,
++                flags,
++            ) != 0
++                && SystemParametersInfoW(
++                    SPI_GETFONTSMOOTHINGTYPE,
++                    0,
++                    &mut smoothing_type as *mut u32 as *mut core::ffi::c_void,
++                    flags,
++                ) != 0
++                && SystemParametersInfoW(
++                    SPI_GETFONTSMOOTHINGORIENTATION,
++                    0,
++                    &mut orientation as *mut u32 as *mut core::ffi::c_void,
++                    flags,
++                ) != 0
++                && enabled != 0
++                && smoothing_type == FE_FONTSMOOTHINGCLEARTYPE
++                && (orientation == 0 || orientation == 1)
++        }
++    }
++
++    pub(crate) fn register_font(family: &'static str, data: &'static [u8]) {
++        REGISTRATION.get_or_init(|| {
++            if !clear_type_enabled() || data.is_empty() || data.len() > u32::MAX as usize {
++                log("disabled (ClearType is off or font data is invalid)");
++                return None;
++            }
++            let mut count = 0u32;
++            let handle = unsafe {
++                AddFontMemResourceEx(
++                    data.as_ptr() as *const core::ffi::c_void,
++                    data.len() as u32,
++                    ptr::null(),
++                    &mut count as *mut u32 as *const u32,
++                )
++            };
++            if handle == 0 || count == 0 {
++                log("font registration failed");
++                None
++            } else {
++                log("native GDI ClearType enabled");
++                Some(Registration { family, handle })
++            }
++        });
++    }
++
++    pub(crate) fn enabled() -> bool {
++        REGISTRATION.get().is_some_and(Option::is_some)
++    }
++
++    pub(crate) fn rasterize(ch: char, pixel_size: i16) -> Option<NativeGlyph> {
++        if !ch.is_ascii() || pixel_size <= 0 {
++            return None;
++        }
++        let registration = REGISTRATION.get()?.as_ref()?;
++        let _gdi_guard = RENDER_MUTEX.lock().ok()?;
++        let _keep_font_registered = registration.handle;
++        let face_name = wide_face_name(registration.family);
++
++        // Padding absorbs the small side bearings and makes scanning robust on
++        // both Win7's GDI and newer Windows versions used for development.
++        let padding = 8i32;
++        let side = (pixel_size as i32).saturating_add(32).max(40);
++        let bitmap_info = BITMAPINFO {
++            bmiHeader: BITMAPINFOHEADER {
++                biSize: mem::size_of::<BITMAPINFOHEADER>() as u32,
++                biWidth: side,
++                biHeight: -side,
++                biPlanes: 1,
++                biBitCount: 32,
++                biCompression: BI_RGB,
++                ..unsafe { mem::zeroed() }
++            },
++            ..unsafe { mem::zeroed() }
++        };
++
++        unsafe {
++            // A screen-compatible DC is required for Win7 to select the
++            // monitor's ClearType mode; a null-compatible DC can silently
++            // fall back to grayscale on legacy systems.
++            let screen_dc = GetDC(0);
++            if screen_dc == 0 {
++                return None;
++            }
++            let dc = CreateCompatibleDC(screen_dc);
++            ReleaseDC(0, screen_dc);
++            if dc == 0 {
++                return None;
++            }
++            let mut pixels = ptr::null_mut();
++            let bitmap = CreateDIBSection(dc, &bitmap_info, DIB_RGB_COLORS, &mut pixels, 0, 0);
++            if bitmap == 0 || pixels.is_null() {
++                if bitmap != 0 {
++                    DeleteObject(bitmap);
++                }
++                DeleteDC(dc);
++                return None;
++            }
++            let old_bitmap = SelectObject(dc, bitmap);
++            let font = LOGFONTW {
++                lfHeight: -(pixel_size as i32),
++                lfWidth: 0,
++                lfEscapement: 0,
++                lfOrientation: 0,
++                lfWeight: 400,
++                lfItalic: 0,
++                lfUnderline: 0,
++                lfStrikeOut: 0,
++                lfCharSet: DEFAULT_CHARSET,
++                lfOutPrecision: OUT_TT_PRECIS,
++                lfClipPrecision: 0,
++                lfQuality: CLEARTYPE_NATURAL_QUALITY as u8,
++                lfPitchAndFamily: 0,
++                lfFaceName: face_name,
++            };
++            let hfont = CreateFontIndirectW(&font);
++            if hfont == 0 {
++                SelectObject(dc, old_bitmap);
++                DeleteObject(bitmap);
++                DeleteDC(dc);
++                return None;
++            }
++            let old_font = SelectObject(dc, hfont);
++            SetBkMode(dc, OPAQUE as i32);
++            SetBkColor(dc, 0x00ffffff as COLORREF);
++            SetTextColor(dc, 0x00000000 as COLORREF);
++            SetTextAlign(dc, TA_LEFT | TA_BASELINE);
++            ptr::write_bytes(pixels as *mut u8, 0xff, (side * side * 4) as usize);
++
++            let mut metrics = mem::zeroed();
++            if GetTextMetricsW(dc, &mut metrics) == 0 {
++                SelectObject(dc, old_font);
++                DeleteObject(hfont);
++                SelectObject(dc, old_bitmap);
++                DeleteObject(bitmap);
++                DeleteDC(dc);
++                return None;
++            }
++            let baseline = padding + metrics.tmAscent;
++            let text = [ch as u16];
++            if ExtTextOutW(
++                dc,
++                padding,
++                baseline,
++                0,
++                ptr::null(),
++                text.as_ptr(),
++                1,
++                ptr::null(),
++            ) == 0
++            {
++                SelectObject(dc, old_font);
++                DeleteObject(hfont);
++                SelectObject(dc, old_bitmap);
++                DeleteObject(bitmap);
++                DeleteDC(dc);
++                return None;
++            }
++
++            let raw = core::slice::from_raw_parts(pixels as *const u8, (side * side * 4) as usize);
++            let mut left = side;
++            let mut top = side;
++            let mut right = 0i32;
++            let mut bottom = 0i32;
++            for y in 0..side {
++                for x in 0..side {
++                    let p = ((y * side + x) * 4) as usize;
++                    // DIB_RGB_COLORS is BGRA. ClearType writes independent
++                    // channel values against the known white background.
++                    if raw[p] != 255 || raw[p + 1] != 255 || raw[p + 2] != 255 {
++                        left = left.min(x);
++                        top = top.min(y);
++                        right = right.max(x + 1);
++                        bottom = bottom.max(y + 1);
++                    }
++                }
++            }
++            let result = if left < right && top < bottom {
++                let width = (right - left) as usize;
++                let height = (bottom - top) as usize;
++                let mut data = alloc::vec![0u8; width * height * 4];
++                for y in 0..height {
++                    for x in 0..width {
++                        let source = ((top as usize + y) * side as usize + left as usize + x) * 4;
++                        let target = (y * width + x) * 4;
++                        data[target] = 255 - raw[source + 2];
++                        data[target + 1] = 255 - raw[source + 1];
++                        data[target + 2] = 255 - raw[source];
++                        data[target + 3] = 0;
++                    }
++                }
++                Some(NativeGlyph {
++                    data: Rc::from(data),
++                    width: width as u16,
++                    height: height as u16,
++                    stride: width as u16,
++                    x: left - padding,
++                    y: baseline - bottom,
++                })
++            } else {
++                Some(NativeGlyph {
++                    data: Rc::from([]),
++                    width: 0,
++                    height: 0,
++                    stride: 0,
++                    x: padding,
++                    y: -baseline,
++                })
++            };
++
++            SelectObject(dc, old_font);
++            DeleteObject(hfont);
++            SelectObject(dc, old_bitmap);
++            DeleteObject(bitmap);
++            DeleteDC(dc);
++            if let Some(glyph) = result.as_ref()
++                && FIRST_GLYPH_LOGGED.set(()).is_ok()
++            {
++                let native_rgb = glyph
++                    .data
++                    .chunks_exact(4)
++                    .any(|pixel| pixel[0] != pixel[1] || pixel[1] != pixel[2]);
++                log(&alloc::format!(
++                    "native glyph rasterized: char={ch:?} pixel_size={pixel_size} rgb={native_rgb}"
++                ));
++            }
++            result
++        }
++    }
++
++    fn wide_face_name(family: &str) -> [u16; 32] {
++        let mut result = [0u16; 32];
++        for (target, source) in result.iter_mut().take(31).zip(family.encode_utf16()) {
++            *target = source;
++        }
++        result
++    }
++
++    fn log(message: &str) {
++        let Ok(path) = std::env::var("RCHO_TEXT_RENDER_LOG") else {
++            return;
++        };
++        if let Ok(mut file) = std::fs::OpenOptions::new()
++            .create(true)
++            .append(true)
++            .open(path)
++        {
++            use std::io::Write;
++            let _ = writeln!(file, "{message}");
++        }
++    }
++}
++
++#[cfg(target_os = "windows")]
++pub(crate) use windows_impl::{enabled, rasterize, register_font};
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/fonts.rs b/i-slint-renderer-software-1.18/fonts.rs
+index 7837c63..2922e9c 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/fonts.rs
++++ b/i-slint-renderer-software-1.18/fonts.rs
+@@ -7,7 +7,7 @@ use alloc::vec::Vec;
+ use core::cell::RefCell;
+ 
+ use super::{Fixed, PhysicalLength, PhysicalSize};
+-use i_slint_core::graphics::{BitmapFont, FontRequest};
++use i_slint_core::graphics::{BitmapFont, BitmapGlyphs, FontRequest};
+ use i_slint_core::lengths::ScaleFactor;
+ use i_slint_core::textlayout::TextLayout;
+ 
+@@ -15,10 +15,80 @@ i_slint_core::thread_local! {
+     static BITMAP_FONTS: RefCell<Vec<&'static BitmapFont>> = RefCell::default()
+ }
+ 
+-#[derive(derive_more::From, Clone)]
++i_slint_core::thread_local! {
++    // Only glyphs that were actually painted are expanded. The cache belongs
++    // to Slint's UI thread, matching bitmap-font rendering and avoiding locks
++    // on the Win7 UI path.
++    static PACKED_GLYPH_CACHE: RefCell<PackedGlyphCache> = RefCell::new(PackedGlyphCache::default())
++}
++
++const MAX_CACHED_PACKED_GLYPHS: usize = 1_024;
++const MAX_CACHED_PACKED_GLYPH_BYTES: usize = 1_024 * 1_024;
++
++struct CachedPackedGlyph {
++    glyph_set: *const BitmapGlyphs,
++    glyph_index: usize,
++    alpha_map: Rc<[u8]>,
++    last_used: u64,
++}
++
++#[derive(Default)]
++struct PackedGlyphCache {
++    entries: Vec<CachedPackedGlyph>,
++    cached_bytes: usize,
++    clock: u64,
++}
++
++impl PackedGlyphCache {
++    fn next_clock(&mut self) -> u64 {
++        self.clock = self.clock.wrapping_add(1);
++        self.clock
++    }
++
++    fn get(&mut self, glyph_set: *const BitmapGlyphs, glyph_index: usize) -> Option<Rc<[u8]>> {
++        let last_used = self.next_clock();
++        let entry = self
++            .entries
++            .iter_mut()
++            .find(|entry| entry.glyph_set == glyph_set && entry.glyph_index == glyph_index)?;
++        entry.last_used = last_used;
++        Some(entry.alpha_map.clone())
++    }
++
++    fn insert(&mut self, glyph_set: *const BitmapGlyphs, glyph_index: usize, alpha_map: Rc<[u8]>) {
++        let bytes = alpha_map.len();
++        if bytes > MAX_CACHED_PACKED_GLYPH_BYTES {
++            return;
++        }
++        while !self.entries.is_empty()
++            && (self.entries.len() >= MAX_CACHED_PACKED_GLYPHS
++                || self.cached_bytes.saturating_add(bytes) > MAX_CACHED_PACKED_GLYPH_BYTES)
++        {
++            let oldest = self
++                .entries
++                .iter()
++                .enumerate()
++                .min_by_key(|(_, entry)| entry.last_used)
++                .map(|(index, _)| index)
++                .expect("non-empty packed glyph cache");
++            self.cached_bytes -= self.entries.swap_remove(oldest).alpha_map.len();
++        }
++        self.cached_bytes += bytes;
++        let last_used = self.next_clock();
++        self.entries.push(CachedPackedGlyph {
++            glyph_set,
++            glyph_index,
++            alpha_map,
++            last_used,
++        });
++    }
++}
++
++#[derive(Clone)]
+ pub enum GlyphAlphaMap {
+     Static(&'static [u8]),
+     Shared(Rc<[u8]>),
++    SharedSubpixel(Rc<[u8]>),
+ }
+ 
+ #[derive(Clone)]
+@@ -29,6 +99,10 @@ pub struct RenderableGlyph {
+     pub height: PhysicalLength,
+     pub alpha_map: GlyphAlphaMap,
+     pub pixel_stride: u16,
++    /// Whether the glyph data contains one coverage byte for each RGB subpixel.
++    pub subpixel: bool,
++    /// Native GDI coverages are already in the panel's final channel order.
++    pub native_subpixel: bool,
+     pub sdf: bool,
+ }
+ 
+@@ -73,6 +147,8 @@ pub(super) use i_slint_core::textlayout::DEFAULT_FONT_SIZE;
+ mod pixelfont;
+ #[cfg(feature = "systemfonts")]
+ pub mod vectorfont;
++#[allow(unsafe_code)]
++mod win32_gdi;
+ 
+ #[cfg(feature = "systemfonts")]
+ pub mod systemfonts;
+@@ -202,15 +278,45 @@ pub fn match_font(
+     let requested_pixel_size: PhysicalLength =
+         (request.pixel_size.unwrap_or(DEFAULT_FONT_SIZE).cast() * scale_factor).cast();
+ 
+-    let nearest_pixel_size = font
++    // Pick the closest embedded size, preferring the larger one (downscaling
++    // keeps strokes much crisper than upscaling a smaller bitmap). Upstream
++    // always snaps down, which visibly softens text at 150-200% display
++    // scaling where logical sizes rarely match an embedded size exactly.
++    let upper = font
+         .glyphs
+-        .partition_point(|glyphs| pixel_size(glyphs) <= requested_pixel_size)
+-        .saturating_sub(1);
++        .partition_point(|glyphs| pixel_size(glyphs) < requested_pixel_size);
++    let nearest_pixel_size = match (upper.checked_sub(1), font.glyphs.get(upper)) {
++        (Some(lower), Some(upper_glyphs)) => {
++            let lower_delta = requested_pixel_size - pixel_size(&font.glyphs[lower]);
++            let upper_delta = pixel_size(upper_glyphs) - requested_pixel_size;
++            if upper_delta <= lower_delta {
++                upper
++            } else {
++                lower
++            }
++        }
++        (Some(lower), None) => lower,
++        (None, _) => 0,
++    };
+     let matching_glyphs = &font.glyphs[nearest_pixel_size];
+ 
+-    let pixel_size = if font.sdf { requested_pixel_size } else { pixel_size(matching_glyphs) };
++    let pixel_size = if font.sdf {
++        requested_pixel_size
++    } else {
++        pixel_size(matching_glyphs)
++    };
+ 
+-    pixelfont::PixelFont { bitmap_font: font, glyphs: matching_glyphs, pixel_size }.into()
++    pixelfont::PixelFont {
++        bitmap_font: font,
++        glyphs: matching_glyphs,
++        pixel_size,
++    }
++    .into()
++}
++
++#[cfg(feature = "systemfonts")]
++pub(crate) fn has_bitmap_fonts() -> bool {
++    BITMAP_FONTS.with(|fonts| !fonts.borrow().is_empty())
+ }
+ 
+ pub fn text_layout_for_font<'a, Font>(
+@@ -235,6 +341,122 @@ pub fn register_bitmap_font(font_data: &'static BitmapFont) {
+     BITMAP_FONTS.with(|fonts| fonts.borrow_mut().push(font_data))
+ }
+ 
++/// Register the project-owned face used by the Win7 native ASCII path.
++pub fn register_win32_gdi_font(family: &'static str, data: &'static [u8]) {
++    win32_gdi::register_font(family, data);
++}
++
++struct CachedNativeGlyph {
++    glyph_set: *const BitmapGlyphs,
++    glyph_index: usize,
++    pixel_size: i16,
++    glyph: Option<win32_gdi::NativeGlyph>,
++}
++
++i_slint_core::thread_local! {
++    static NATIVE_GLYPH_CACHE: RefCell<Vec<CachedNativeGlyph>> = RefCell::default()
++}
++
++pub(super) fn native_gdi_glyph(
++    glyphs: &'static BitmapGlyphs,
++    glyph_index: usize,
++    pixel_size: PhysicalLength,
++    code_point: impl FnOnce() -> Option<char>,
++) -> Option<win32_gdi::NativeGlyph> {
++    let glyph_set = core::ptr::from_ref(glyphs);
++    let pixel_size = pixel_size.get();
++    NATIVE_GLYPH_CACHE.with(|cache| {
++        let mut cache = cache.borrow_mut();
++        if let Some(entry) = cache.iter().find(|entry| {
++            entry.glyph_set == glyph_set
++                && entry.glyph_index == glyph_index
++                && entry.pixel_size == pixel_size
++        }) {
++            return entry.glyph.clone();
++        }
++        let glyph = if win32_gdi::enabled() {
++            code_point().and_then(|ch| win32_gdi::rasterize(ch, pixel_size))
++        } else {
++            None
++        };
++        if cache.len() >= 512 {
++            cache.remove(0);
++        }
++        cache.push(CachedNativeGlyph {
++            glyph_set,
++            glyph_index,
++            pixel_size,
++            glyph: glyph.clone(),
++        });
++        glyph
++    })
++}
++
++/// Expand only one 1-bit glyph at the point where the scene needs it. A full
++/// SimSun strike contains over 22k glyphs, whereas the first workbench frame
++/// paints only a small subset of them. Keeping the cache bounded is important
++/// for 32-bit Win7 processes that open data with many distinct Chinese names.
++pub(super) fn glyph_alpha_map(glyphs: &'static BitmapGlyphs, glyph_index: usize) -> GlyphAlphaMap {
++    let glyph = &glyphs.glyph_data[glyph_index];
++    if glyph.data_packing != 1 {
++        return GlyphAlphaMap::Static(glyph.data.as_slice());
++    }
++
++    let glyph_set = core::ptr::from_ref(glyphs);
++    PACKED_GLYPH_CACHE.with(|cache| {
++        let mut cache = cache.borrow_mut();
++        if let Some(alpha_map) = cache.get(glyph_set, glyph_index) {
++            return GlyphAlphaMap::Shared(alpha_map);
++        }
++
++        let alpha_map = Rc::<[u8]>::from(expand_packed_alpha(glyph));
++        cache.insert(glyph_set, glyph_index, alpha_map.clone());
++        GlyphAlphaMap::Shared(alpha_map)
++    })
++}
++
++fn expand_packed_alpha(glyph: &i_slint_core::graphics::BitmapGlyph) -> Vec<u8> {
++    let width = glyph.width.max(0) as usize;
++    let height = glyph.height.max(0) as usize;
++    let stride = width.div_ceil(8);
++    let packed = glyph.data.as_slice();
++    let mut alpha_map = alloc::vec![0; width.saturating_mul(height)];
++    for y in 0..height {
++        for x in 0..width {
++            let packed_index = y.saturating_mul(stride).saturating_add(x / 8);
++            if packed.get(packed_index).copied().unwrap_or(0) & (0x80 >> (x % 8)) != 0 {
++                alpha_map[y * width + x] = 255;
++            }
++        }
++    }
++    alpha_map
++}
++
++#[cfg(test)]
++mod packed_glyph_tests {
++    use super::expand_packed_alpha;
++    use i_slint_core::graphics::BitmapGlyph;
++    use i_slint_core::slice::Slice;
++
++    #[test]
++    fn expands_msb_first_packed_rows_to_alpha() {
++        static PACKED: [u8; 2] = [0b1010_0000, 0b0101_0000];
++        let glyph = BitmapGlyph {
++            x: 0,
++            y: 0,
++            width: 4,
++            height: 2,
++            x_advance: 0,
++            data_packing: 1,
++            data: Slice::from_slice(&PACKED),
++        };
++        assert_eq!(
++            expand_packed_alpha(&glyph),
++            [255, 0, 255, 0, 0, 255, 0, 255]
++        );
++    }
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/lib.rs b/i-slint-renderer-software-1.18/lib.rs
+index cbdb2cc..3d51fbc 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/lib.rs
++++ b/i-slint-renderer-software-1.18/lib.rs
+@@ -60,12 +60,41 @@ use num_traits::NumCast;
+ 
+ pub use draw_functions::{PremultipliedRgbaColor, Rgb565BigEndianPixel, Rgb565Pixel, TargetPixel};
+ 
++/// Register the bundled font for Win7 GDI ClearType ASCII rasterization.
++pub fn register_win32_gdi_font(family: &'static str, data: &'static [u8]) {
++    fonts::register_win32_gdi_font(family, data);
++}
++
+ type PhysicalLength = euclid::Length<i16, PhysicalPx>;
+ type PhysicalRect = euclid::Rect<i16, PhysicalPx>;
+ type PhysicalSize = euclid::Size2D<i16, PhysicalPx>;
+ type PhysicalPoint = euclid::Point2D<i16, PhysicalPx>;
+ type PhysicalBorderRadius = BorderRadius<i16, PhysicalPx>;
+ 
++#[derive(Clone, Copy, Default)]
++/// Horizontal channel order of an LCD panel used for embedded text.
++pub enum SubpixelOrder {
++    /// Do not use LCD subpixel blending. This is appropriate when the user
++    /// has disabled ClearType or the display does not have a horizontal RGB
++    /// stripe layout.
++    None,
++    /// The common red, green, blue left-to-right order.
++    #[default]
++    Rgb,
++    /// The blue, green, red left-to-right order.
++    Bgr,
++}
++
++impl SubpixelOrder {
++    const fn is_enabled(self) -> bool {
++        !matches!(self, Self::None)
++    }
++
++    const fn is_bgr(self) -> bool {
++        matches!(self, Self::Bgr)
++    }
++}
++
+ pub use i_slint_core::partial_renderer::RepaintBufferType;
+ 
+ use fonts::with_font;
+@@ -164,15 +193,24 @@ impl<T: Copy> Transform for BorderRadius<T, PhysicalPx> {
+     fn transformed(self, info: RotationInfo) -> Self {
+         match info.orientation {
+             RenderingRotation::NoRotation => self,
+-            RenderingRotation::Rotate90 => {
+-                Self::new(self.bottom_left, self.top_left, self.top_right, self.bottom_right)
+-            }
+-            RenderingRotation::Rotate180 => {
+-                Self::new(self.bottom_right, self.bottom_left, self.top_left, self.top_right)
+-            }
+-            RenderingRotation::Rotate270 => {
+-                Self::new(self.top_right, self.bottom_right, self.bottom_left, self.top_left)
+-            }
++            RenderingRotation::Rotate90 => Self::new(
++                self.bottom_left,
++                self.top_left,
++                self.top_right,
++                self.bottom_right,
++            ),
++            RenderingRotation::Rotate180 => Self::new(
++                self.bottom_right,
++                self.bottom_left,
++                self.top_left,
++                self.top_right,
++            ),
++            RenderingRotation::Rotate270 => Self::new(
++                self.top_right,
++                self.bottom_right,
++                self.bottom_left,
++                self.top_left,
++            ),
+         }
+     }
+ }
+@@ -208,10 +246,10 @@ pub trait LineBufferProvider {
+ const PHYSICAL_REGION_MAX_SIZE: usize = DirtyRegion::MAX_COUNT;
+ // cbindgen can't understand associated const correctly, so hardcode the value
+ #[cfg(cbindgen)]
+-pub const PHYSICAL_REGION_MAX_SIZE: usize = 3;
++pub const PHYSICAL_REGION_MAX_SIZE: usize = 16;
+ const _: () = {
+-    assert!(PHYSICAL_REGION_MAX_SIZE == 3);
+-    assert!(DirtyRegion::MAX_COUNT == 3);
++    assert!(PHYSICAL_REGION_MAX_SIZE == 16);
++    assert!(DirtyRegion::MAX_COUNT == 16);
+ };
+ 
+ /// Represents a rectangular region on the screen, used for partial rendering.
+@@ -229,6 +267,19 @@ impl PhysicalRegion {
+         (0..self.count).map(|x| self.rectangles[x])
+     }
+ 
++    /// Iterate over a non-overlapping decomposition of this region.
++    ///
++    /// `DirtyRegion` can retain overlapping rectangles; callers that alpha
++    /// blend pixels must use this iterator instead of [`Self::iter_box`].
++    fn iter_disjoint_box(&self) -> impl Iterator<Item = euclid::Box2D<i16, PhysicalPx>> + '_ {
++        self.iter().map(|(origin, size)| {
++            euclid::Box2D::from_origin_and_size(
++                euclid::point2(origin.x as i16, origin.y as i16),
++                euclid::size2(size.width as i16, size.height as i16),
++            )
++        })
++    }
++
+     fn bounding_rect(&self) -> PhysicalRect {
+         if self.count == 0 {
+             return Default::default();
+@@ -243,12 +294,18 @@ impl PhysicalRegion {
+     /// Returns the size of the bounding box of this region.
+     pub fn bounding_box_size(&self) -> i_slint_core::api::PhysicalSize {
+         let bb = self.bounding_rect();
+-        i_slint_core::api::PhysicalSize { width: bb.width() as _, height: bb.height() as _ }
++        i_slint_core::api::PhysicalSize {
++            width: bb.width() as _,
++            height: bb.height() as _,
++        }
+     }
+     /// Returns the origin of the bounding box of this region.
+     pub fn bounding_box_origin(&self) -> i_slint_core::api::PhysicalPosition {
+         let bb = self.bounding_rect();
+-        i_slint_core::api::PhysicalPosition { x: bb.origin.x as _, y: bb.origin.y as _ }
++        i_slint_core::api::PhysicalPosition {
++            x: bb.origin.x as _,
++            y: bb.origin.y as _,
++        }
+     }
+ 
+     /// Returns an iterator over the rectangles in this region.
+@@ -256,8 +313,12 @@ impl PhysicalRegion {
+     /// They do not overlap.
+     pub fn iter(
+         &self,
+-    ) -> impl Iterator<Item = (i_slint_core::api::PhysicalPosition, i_slint_core::api::PhysicalSize)> + '_
+-    {
++    ) -> impl Iterator<
++        Item = (
++            i_slint_core::api::PhysicalPosition,
++            i_slint_core::api::PhysicalSize,
++        ),
++    > + '_ {
+         let mut line_ranges = Vec::<core::ops::Range<i16>>::new();
+         let mut begin_line = 0;
+         let mut end_line = 0;
+@@ -449,6 +510,7 @@ pub struct SoftwareRenderer {
+     partial_rendering_state: PartialRenderingState,
+     maybe_window_adapter: RefCell<Option<Weak<dyn i_slint_core::window::WindowAdapter>>>,
+     rotation: Cell<RenderingRotation>,
++    subpixel_order: SubpixelOrder,
+     rendering_metrics_collector: Option<Rc<RenderingMetricsCollector>>,
+     #[cfg(feature = "systemfonts")]
+     text_layout_cache: sharedparley::TextLayoutCache,
+@@ -461,6 +523,7 @@ impl Default for SoftwareRenderer {
+             prev_frame_dirty: Default::default(),
+             maybe_window_adapter: Default::default(),
+             rotation: Default::default(),
++            subpixel_order: Default::default(),
+             rendering_metrics_collector: RenderingMetricsCollector::new("software"),
+             repaint_buffer_type: Default::default(),
+             #[cfg(feature = "systemfonts")]
+@@ -483,6 +546,14 @@ impl SoftwareRenderer {
+         Default::default()
+     }
+ 
++    /// Select the horizontal LCD subpixel order used for embedded text.
++    ///
++    /// The default is RGB, which matches the vast majority of desktop LCD
++    /// panels. A BGR panel must opt in explicitly to avoid colored fringes.
++    pub fn set_subpixel_order(&mut self, order: SubpixelOrder) {
++        self.subpixel_order = order;
++    }
++
+     /// Create a new SoftwareRenderer.
+     ///
+     /// The `repaint_buffer_type` parameter specify what kind of buffer are passed to [`Self::render`]
+@@ -536,7 +607,10 @@ impl SoftwareRenderer {
+     /// Returns the physical dirty region for this frame, excluding the extra_draw_region,
+     /// in the window frame of reference. It is affected by the screen rotation.
+     pub fn render(&self, buffer: &mut [impl TargetPixel], pixel_stride: usize) -> PhysicalRegion {
+-        self.render_buffer_impl(&mut TargetPixelSlice { data: buffer, pixel_stride })
++        self.render_buffer_impl(&mut TargetPixelSlice {
++            data: buffer,
++            pixel_stride,
++        })
+     }
+ 
+     /// Render the window to the given frame buffer.
+@@ -581,9 +655,15 @@ impl SoftwareRenderer {
+                 window_item.background(),
+             )
+         } else if rotation.is_transpose() {
+-            (euclid::size2(num_lines as _, pixels_per_line as _), Brush::default())
++            (
++                euclid::size2(num_lines as _, pixels_per_line as _),
++                Brush::default(),
++            )
+         } else {
+-            (euclid::size2(pixels_per_line as _, num_lines as _), Brush::default())
++            (
++                euclid::size2(pixels_per_line as _, num_lines as _),
++                Brush::default(),
++            )
+         };
+         if size.is_empty() {
+             return Default::default();
+@@ -614,10 +694,13 @@ impl SoftwareRenderer {
+                 scale_factor: factor,
+             },
+             rotation,
++            self.subpixel_order,
+             #[cfg(feature = "systemfonts")]
+             &self.text_layout_cache,
+         );
+-        let mut renderer = self.partial_rendering_state.create_partial_renderer(buffer_renderer);
++        let mut renderer = self
++            .partial_rendering_state
++            .create_partial_renderer(buffer_renderer);
+         let window_adapter = renderer.window_adapter.clone();
+ 
+         window_inner
+@@ -649,7 +732,10 @@ impl SoftwareRenderer {
+                     }
+                 }
+ 
+-                let rotation = RotationInfo { orientation: rotation, screen_size: size };
++                let rotation = RotationInfo {
++                    orientation: rotation,
++                    screen_size: size,
++                };
+                 let screen_rect = PhysicalRect::from_size(size);
+                 let mut i = renderer.dirty_region.iter().filter_map(|r| {
+                     (r.cast() * factor)
+@@ -689,7 +775,11 @@ impl SoftwareRenderer {
+                     if let Some(component) = ItemTreeWeak::upgrade(component) {
+                         i_slint_core::item_rendering::render_component_items(
+                             &component,
+-                            if partial { &mut renderer } else { &mut renderer.actual_renderer },
++                            if partial {
++                                &mut renderer
++                            } else {
++                                &mut renderer.actual_renderer
++                            },
+                             *origin,
+                             &window_adapter,
+                         );
+@@ -781,7 +871,9 @@ impl SoftwareRenderer {
+                 line_buffer,
+             )
+         } else {
+-            PhysicalRegion { ..Default::default() }
++            PhysicalRegion {
++                ..Default::default()
++            }
+         }
+     }
+ }
+@@ -1178,7 +1270,9 @@ impl RendererSealed for SoftwareRenderer {
+         &self,
+         data: &'static [u8],
+     ) -> Result<(), std::boxed::Box<dyn std::error::Error>> {
+-        let ctx = self.slint_context().ok_or("slint platform not initialized")?;
++        let ctx = self
++            .slint_context()
++            .ok_or("slint platform not initialized")?;
+         ctx.font_context().borrow_mut().register_static_font(data);
+         Ok(())
+     }
+@@ -1188,7 +1282,9 @@ impl RendererSealed for SoftwareRenderer {
+         &self,
+         path: &std::path::Path,
+     ) -> Result<(), std::boxed::Box<dyn std::error::Error>> {
+-        let ctx = self.slint_context().ok_or("slint platform not initialized")?;
++        let ctx = self
++            .slint_context()
++            .ok_or("slint platform not initialized")?;
+         self::fonts::systemfonts::register_font_from_path(
+             &mut ctx.font_context().borrow_mut().collection,
+             path,
+@@ -1212,11 +1308,14 @@ impl RendererSealed for SoftwareRenderer {
+     // Rendering to a second pixel format monomorphizes the pipeline twice; keep it out of MCU builds.
+     #[cfg(feature = "std")]
+     fn take_snapshot(&self) -> Result<SharedPixelBuffer<Rgba8Pixel>, PlatformError> {
+-        let Some(window_adapter) =
+-            self.maybe_window_adapter.borrow().as_ref().and_then(|w| w.upgrade())
++        let Some(window_adapter) = self
++            .maybe_window_adapter
++            .borrow()
++            .as_ref()
++            .and_then(|w| w.upgrade())
+         else {
+             return Err(
+-                "SoftwareRenderer's screenshot called without a window adapter present".into()
++                "SoftwareRenderer's screenshot called without a window adapter present".into(),
+             );
+         };
+ 
+@@ -1242,8 +1341,10 @@ impl RendererSealed for SoftwareRenderer {
+ 
+         let mut target_buffer_with_alpha =
+             SharedPixelBuffer::<Rgba8Pixel>::new(premul.width(), premul.height());
+-        for (target_pixel, source_pixel) in
+-            target_buffer_with_alpha.make_mut_slice().iter_mut().zip(premul.as_slice().iter())
++        for (target_pixel, source_pixel) in target_buffer_with_alpha
++            .make_mut_slice()
++            .iter_mut()
++            .zip(premul.as_slice().iter())
+         {
+             // Un-premultiply: straight RGBA is what the public API exposes (and
+             // what PNG encoders expect). Round half up to keep `255 * a / a == 255`.
+@@ -1319,6 +1420,16 @@ where
+     }
+ }
+ 
++fn scroll_text_culling_enabled() -> bool {
++    #[cfg(feature = "std")]
++    {
++        static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++        *ENABLED.get_or_init(|| std::env::var_os("RCHO_SLINT_UNCACHED_TEXT_LAYOUT").is_none())
++    }
++    #[cfg(not(feature = "std"))]
++    true
++}
++
+ fn render_window_frame_by_line(
+     window: &WindowInner,
+     background: Brush,
+@@ -1384,7 +1495,10 @@ fn render_window_frame_by_line(
+                             SceneCommand::Texture { texture_index } => {
+                                 let texture = &scene.vectors.textures[texture_index as usize];
+                                 draw_functions::draw_texture_line(
+-                                    &PhysicalRect { origin: span.pos, size: span.size },
++                                    &PhysicalRect {
++                                        origin: span.pos,
++                                        size: span.size,
++                                    },
+                                     scene.current_line,
+                                     texture,
+                                     range_buffer,
+@@ -1392,12 +1506,17 @@ fn render_window_frame_by_line(
+                                     extra_right_clip,
+                                 );
+                             }
+-                            SceneCommand::SharedBuffer { shared_buffer_index } => {
++                            SceneCommand::SharedBuffer {
++                                shared_buffer_index,
++                            } => {
+                                 let texture = scene.vectors.shared_buffers
+                                     [shared_buffer_index as usize]
+                                     .as_texture();
+                                 draw_functions::draw_texture_line(
+-                                    &PhysicalRect { origin: span.pos, size: span.size },
++                                    &PhysicalRect {
++                                        origin: span.pos,
++                                        size: span.size,
++                                    },
+                                     scene.current_line,
+                                     &texture,
+                                     range_buffer,
+@@ -1409,7 +1528,10 @@ fn render_window_frame_by_line(
+                                 let rr =
+                                     &scene.vectors.rounded_rectangles[rectangle_index as usize];
+                                 draw_functions::draw_rounded_rectangle_line(
+-                                    &PhysicalRect { origin: span.pos, size: span.size },
++                                    &PhysicalRect {
++                                        origin: span.pos,
++                                        size: span.size,
++                                    },
+                                     scene.current_line,
+                                     rr,
+                                     range_buffer,
+@@ -1417,23 +1539,33 @@ fn render_window_frame_by_line(
+                                     extra_right_clip,
+                                 );
+                             }
+-                            SceneCommand::LinearGradient { linear_gradient_index } => {
++                            SceneCommand::LinearGradient {
++                                linear_gradient_index,
++                            } => {
+                                 let g =
+                                     &scene.vectors.linear_gradients[linear_gradient_index as usize];
+ 
+                                 draw_functions::draw_linear_gradient(
+-                                    &PhysicalRect { origin: span.pos, size: span.size },
++                                    &PhysicalRect {
++                                        origin: span.pos,
++                                        size: span.size,
++                                    },
+                                     scene.current_line,
+                                     g,
+                                     range_buffer,
+                                     extra_left_clip,
+                                 );
+                             }
+-                            SceneCommand::RadialGradient { radial_gradient_index } => {
++                            SceneCommand::RadialGradient {
++                                radial_gradient_index,
++                            } => {
+                                 let g =
+                                     &scene.vectors.radial_gradients[radial_gradient_index as usize];
+                                 draw_functions::draw_radial_gradient(
+-                                    &PhysicalRect { origin: span.pos, size: span.size },
++                                    &PhysicalRect {
++                                        origin: span.pos,
++                                        size: span.size,
++                                    },
+                                     scene.current_line,
+                                     g,
+                                     range_buffer,
+@@ -1441,11 +1573,16 @@ fn render_window_frame_by_line(
+                                     extra_right_clip,
+                                 );
+                             }
+-                            SceneCommand::ConicGradient { conic_gradient_index } => {
++                            SceneCommand::ConicGradient {
++                                conic_gradient_index,
++                            } => {
+                                 let g =
+                                     &scene.vectors.conic_gradients[conic_gradient_index as usize];
+                                 draw_functions::draw_conic_gradient(
+-                                    &PhysicalRect { origin: span.pos, size: span.size },
++                                    &PhysicalRect {
++                                        origin: span.pos,
++                                        size: span.size,
++                                    },
+                                     scene.current_line,
+                                     g,
+                                     range_buffer,
+@@ -1476,13 +1613,18 @@ fn prepare_scene(
+         size,
+         factor,
+         window,
+-        PrepareScene { scale_factor: factor, ..Default::default() },
++        PrepareScene {
++            scale_factor: factor,
++            ..Default::default()
++        },
+         software_renderer.rotation.get(),
++        software_renderer.subpixel_order,
+         #[cfg(feature = "systemfonts")]
+         &software_renderer.text_layout_cache,
+     );
+-    let mut renderer =
+-        software_renderer.partial_rendering_state.create_partial_renderer(prepare_scene);
++    let mut renderer = software_renderer
++        .partial_rendering_state
++        .create_partial_renderer(prepare_scene);
+     let window_adapter = renderer.window_adapter.clone();
+ 
+     let mut dirty_region = PhysicalRegion::default();
+@@ -1497,27 +1639,29 @@ fn prepare_scene(
+                 software_renderer.partial_rendering_state.clear_cache();
+             }
+             RepaintBufferType::ReusedBuffer => {
+-                software_renderer.partial_rendering_state.apply_dirty_region(
+-                    &mut renderer,
+-                    components,
+-                    logical_size,
+-                    None,
+-                );
++                software_renderer
++                    .partial_rendering_state
++                    .apply_dirty_region(&mut renderer, components, logical_size, None);
+             }
+             RepaintBufferType::SwappedBuffers => {
+-                let dirty_region_for_this_frame =
+-                    software_renderer.partial_rendering_state.apply_dirty_region(
++                let dirty_region_for_this_frame = software_renderer
++                    .partial_rendering_state
++                    .apply_dirty_region(
+                         &mut renderer,
+                         components,
+                         logical_size,
+                         Some(software_renderer.prev_frame_dirty.take()),
+                     );
+-                software_renderer.prev_frame_dirty.set(dirty_region_for_this_frame);
++                software_renderer
++                    .prev_frame_dirty
++                    .set(dirty_region_for_this_frame);
+             }
+         }
+ 
+-        let rotation =
+-            RotationInfo { orientation: software_renderer.rotation.get(), screen_size: size };
++        let rotation = RotationInfo {
++            orientation: software_renderer.rotation.get(),
++            screen_size: size,
++        };
+         let screen_rect = PhysicalRect::from_size(size);
+         let mut i = renderer.dirty_region.iter().filter_map(|r| {
+             (r.cast() * factor)
+@@ -1539,7 +1683,11 @@ fn prepare_scene(
+             if let Some(component) = ItemTreeWeak::upgrade(component) {
+                 i_slint_core::item_rendering::render_component_items(
+                     &component,
+-                    if partial { &mut renderer } else { &mut renderer.actual_renderer },
++                    if partial {
++                        &mut renderer
++                    } else {
++                        &mut renderer.actual_renderer
++                    },
+                     *origin,
+                     &window_adapter,
+                 );
+@@ -1575,7 +1723,11 @@ fn prepare_scene(
+         )
+     } // */
+ 
+-    Scene::new(prepare_scene.processor.items, prepare_scene.processor.vectors, dirty_region)
++    Scene::new(
++        prepare_scene.processor.items,
++        prepare_scene.processor.vectors,
++        dirty_region,
++    )
+ }
+ 
+ trait ProcessScene {
+@@ -1621,11 +1773,16 @@ fn process_rectangle_impl(
+     scale_factor: ScaleFactor,
+ ) {
+     let geom = args.geometry();
+-    let Some(clipped) = geom.intersection(&clip.cast()) else { return };
++    let Some(clipped) = geom.intersection(&clip.cast()) else {
++        return;
++    };
+     let geom_w = geom.width();
+     let geom_h = geom.height();
+     let to_clipped_center = |cx: f32, cy: f32| {
+-        (geom.min_x() + cx - clipped.min_x(), geom.min_y() + cy - clipped.min_y())
++        (
++            geom.min_x() + cx - clipped.min_x(),
++            geom.min_y() + cy - clipped.min_y(),
++        )
+     };
+ 
+     let color = if let Brush::LinearGradient(g) = &args.background {
+@@ -1815,8 +1972,11 @@ fn process_rectangle_impl(
+     }
+ 
+     if color.alpha > 0
+-        && let Some(r) =
+-            geom.round().cast().inflate(-border.get(), -border.get()).intersection(clip)
++        && let Some(r) = geom
++            .round()
++            .cast()
++            .inflate(-border.get(), -border.get())
++            .intersection(clip)
+     {
+         processor.process_simple_rectangle(r, color);
+     }
+@@ -1830,9 +1990,24 @@ fn process_rectangle_impl(
+         let b = border.get();
+         let g = geom.round().cast();
+         add_border(euclid::rect(g.min_x(), g.min_y(), g.width(), b));
+-        add_border(euclid::rect(g.min_x(), g.min_y() + g.height() - b, g.width(), b));
+-        add_border(euclid::rect(g.min_x(), g.min_y() + b, b, g.height() - b - b));
+-        add_border(euclid::rect(g.min_x() + g.width() - b, g.min_y() + b, b, g.height() - b - b));
++        add_border(euclid::rect(
++            g.min_x(),
++            g.min_y() + g.height() - b,
++            g.width(),
++            b,
++        ));
++        add_border(euclid::rect(
++            g.min_x(),
++            g.min_y() + b,
++            b,
++            g.height() - b - b,
++        ));
++        add_border(euclid::rect(
++            g.min_x() + g.width() - b,
++            g.min_y() + b,
++            b,
++            g.height() - b - b,
++        ));
+     }
+ }
+ 
+@@ -1889,16 +2064,19 @@ impl<B: target_pixel_buffer::TargetPixelBuffer> RenderToBuffer<'_, B> {
+     }
+ 
+     fn process_texture_impl(&mut self, geometry: PhysicalRect, texture: SceneTexture<'_>) {
+-        self.foreach_ranges(&geometry, |line, buffer, extra_left_clip, extra_right_clip| {
+-            draw_functions::draw_texture_line(
+-                &geometry,
+-                PhysicalLength::new(line),
+-                &texture,
+-                buffer,
+-                extra_left_clip,
+-                extra_right_clip,
+-            );
+-        });
++        self.foreach_ranges(
++            &geometry,
++            |line, buffer, extra_left_clip, extra_right_clip| {
++                draw_functions::draw_texture_line(
++                    &geometry,
++                    PhysicalLength::new(line),
++                    &texture,
++                    buffer,
++                    extra_left_clip,
++                    extra_right_clip,
++                );
++            },
++        );
+     }
+ }
+ 
+@@ -1912,7 +2090,11 @@ impl<B: target_pixel_buffer::TargetPixelBuffer> ProcessScene for RenderToBuffer<
+         texture: &target_pixel_buffer::DrawTextureArgs,
+         clip: PhysicalRect,
+     ) {
+-        if self.buffer.draw_texture(texture, &self.dirty_region.intersection(&clip)) {
++        if !texture.is_subpixel()
++            && self
++                .buffer
++                .draw_texture(texture, &self.dirty_region.intersection(&clip))
++        {
+             return;
+         }
+ 
+@@ -1928,7 +2110,10 @@ impl<B: target_pixel_buffer::TargetPixelBuffer> ProcessScene for RenderToBuffer<
+         args: &target_pixel_buffer::DrawRectangleArgs,
+         clip: PhysicalRect,
+     ) {
+-        if self.buffer.draw_rectangle(args, &self.dirty_region.intersection(&clip)) {
++        if self
++            .buffer
++            .draw_rectangle(args, &self.dirty_region.intersection(&clip))
++        {
+             return;
+         }
+ 
+@@ -1937,58 +2122,73 @@ impl<B: target_pixel_buffer::TargetPixelBuffer> ProcessScene for RenderToBuffer<
+     }
+ 
+     fn process_rounded_rectangle(&mut self, geometry: PhysicalRect, rr: RoundedRectangle) {
+-        self.foreach_ranges(&geometry, |line, buffer, extra_left_clip, extra_right_clip| {
+-            draw_functions::draw_rounded_rectangle_line(
+-                &geometry,
+-                PhysicalLength::new(line),
+-                &rr,
+-                buffer,
+-                extra_left_clip,
+-                extra_right_clip,
+-            );
+-        });
++        self.foreach_ranges(
++            &geometry,
++            |line, buffer, extra_left_clip, extra_right_clip| {
++                draw_functions::draw_rounded_rectangle_line(
++                    &geometry,
++                    PhysicalLength::new(line),
++                    &rr,
++                    buffer,
++                    extra_left_clip,
++                    extra_right_clip,
++                );
++            },
++        );
+     }
+ 
+     fn process_simple_rectangle(&mut self, geometry: PhysicalRect, color: PremultipliedRgbaColor) {
+-        self.foreach_ranges(&geometry, |_line, buffer, _extra_left_clip, _extra_right_clip| {
+-            <B::TargetPixel>::blend_slice(buffer, color)
+-        });
++        self.foreach_ranges(
++            &geometry,
++            |_line, buffer, _extra_left_clip, _extra_right_clip| {
++                <B::TargetPixel>::blend_slice(buffer, color)
++            },
++        );
+     }
+ 
+     fn process_linear_gradient(&mut self, geometry: PhysicalRect, g: LinearGradientCommand) {
+-        self.foreach_ranges(&geometry, |line, buffer, extra_left_clip, _extra_right_clip| {
+-            draw_functions::draw_linear_gradient(
+-                &geometry,
+-                PhysicalLength::new(line),
+-                &g,
+-                buffer,
+-                extra_left_clip,
+-            );
+-        });
++        self.foreach_ranges(
++            &geometry,
++            |line, buffer, extra_left_clip, _extra_right_clip| {
++                draw_functions::draw_linear_gradient(
++                    &geometry,
++                    PhysicalLength::new(line),
++                    &g,
++                    buffer,
++                    extra_left_clip,
++                );
++            },
++        );
+     }
+     fn process_radial_gradient(&mut self, geometry: PhysicalRect, g: RadialGradientCommand) {
+-        self.foreach_ranges(&geometry, |line, buffer, extra_left_clip, extra_right_clip| {
+-            draw_functions::draw_radial_gradient(
+-                &geometry,
+-                PhysicalLength::new(line),
+-                &g,
+-                buffer,
+-                extra_left_clip,
+-                extra_right_clip,
+-            );
+-        });
++        self.foreach_ranges(
++            &geometry,
++            |line, buffer, extra_left_clip, extra_right_clip| {
++                draw_functions::draw_radial_gradient(
++                    &geometry,
++                    PhysicalLength::new(line),
++                    &g,
++                    buffer,
++                    extra_left_clip,
++                    extra_right_clip,
++                );
++            },
++        );
+     }
+     fn process_conic_gradient(&mut self, geometry: PhysicalRect, g: ConicGradientCommand) {
+-        self.foreach_ranges(&geometry, |line, buffer, extra_left_clip, extra_right_clip| {
+-            draw_functions::draw_conic_gradient(
+-                &geometry,
+-                PhysicalLength::new(line),
+-                &g,
+-                buffer,
+-                extra_left_clip,
+-                extra_right_clip,
+-            );
+-        });
++        self.foreach_ranges(
++            &geometry,
++            |line, buffer, extra_left_clip, extra_right_clip| {
++                draw_functions::draw_conic_gradient(
++                    &geometry,
++                    PhysicalLength::new(line),
++                    &g,
++                    buffer,
++                    extra_left_clip,
++                    extra_right_clip,
++                );
++            },
++        );
+     }
+ 
+     #[cfg(feature = "path")]
+@@ -1999,7 +2199,18 @@ impl<B: target_pixel_buffer::TargetPixelBuffer> ProcessScene for RenderToBuffer<
+         commands: alloc::vec::Vec<path::Command>,
+         color: PremultipliedRgbaColor,
+     ) {
+-        path::render_filled_path(&commands, &path_geometry, &clip_geometry, color, self.buffer);
++        let full_region = PhysicalRegion {
++            rectangles: [path_geometry.to_box2d(); PHYSICAL_REGION_MAX_SIZE],
++            count: 1,
++        };
++        path::render_filled_path(
++            &commands,
++            &path_geometry,
++            &clip_geometry,
++            &full_region,
++            color,
++            self.buffer,
++        );
+     }
+ 
+     #[cfg(feature = "path")]
+@@ -2014,10 +2225,15 @@ impl<B: target_pixel_buffer::TargetPixelBuffer> ProcessScene for RenderToBuffer<
+         stroke_line_join: i_slint_core::items::LineJoin,
+         stroke_miter_limit: f32,
+     ) {
++        let full_region = PhysicalRegion {
++            rectangles: [path_geometry.to_box2d(); PHYSICAL_REGION_MAX_SIZE],
++            count: 1,
++        };
+         path::render_stroked_path(
+             &commands,
+             &path_geometry,
+             &clip_geometry,
++            &full_region,
+             color,
+             stroke_width,
+             stroke_line_cap,
+@@ -2073,7 +2289,10 @@ impl ProcessScene for PrepareScene {
+                     command: SceneCommand::Texture { texture_index },
+                 });
+             }
+-            target_pixel_buffer::TextureDataContainer::Shared { buffer, source_rect } => {
++            target_pixel_buffer::TextureDataContainer::Shared {
++                buffer,
++                source_rect,
++            } => {
+                 let shared_buffer_index = self.vectors.shared_buffers.len() as u16;
+                 self.vectors.shared_buffers.push(SharedBufferCommand {
+                     buffer: buffer.clone(),
+@@ -2084,7 +2303,9 @@ impl ProcessScene for PrepareScene {
+                     pos: geometry.origin,
+                     size: geometry.size,
+                     z: self.items.len() as u16,
+-                    command: SceneCommand::SharedBuffer { shared_buffer_index },
++                    command: SceneCommand::SharedBuffer {
++                        shared_buffer_index,
++                    },
+                 });
+             }
+         }
+@@ -2104,7 +2325,12 @@ impl ProcessScene for PrepareScene {
+         if !size.is_empty() {
+             let z = self.items.len() as u16;
+             let pos = geometry.origin;
+-            self.items.push(SceneItem { pos, size, z, command: SceneCommand::Rectangle { color } });
++            self.items.push(SceneItem {
++                pos,
++                size,
++                z,
++                command: SceneCommand::Rectangle { color },
++            });
+         }
+     }
+ 
+@@ -2131,7 +2357,9 @@ impl ProcessScene for PrepareScene {
+                 pos: geometry.origin,
+                 size,
+                 z: self.items.len() as u16,
+-                command: SceneCommand::LinearGradient { linear_gradient_index: gradient_index },
++                command: SceneCommand::LinearGradient {
++                    linear_gradient_index: gradient_index,
++                },
+             });
+         }
+     }
+@@ -2144,7 +2372,9 @@ impl ProcessScene for PrepareScene {
+                 pos: geometry.origin,
+                 size,
+                 z: self.items.len() as u16,
+-                command: SceneCommand::RadialGradient { radial_gradient_index },
++                command: SceneCommand::RadialGradient {
++                    radial_gradient_index,
++                },
+             });
+         }
+     }
+@@ -2157,7 +2387,9 @@ impl ProcessScene for PrepareScene {
+                 pos: geometry.origin,
+                 size,
+                 z: self.items.len() as u16,
+-                command: SceneCommand::ConicGradient { conic_gradient_index },
++                command: SceneCommand::ConicGradient {
++                    conic_gradient_index,
++                },
+             });
+         }
+     }
+@@ -2198,6 +2430,7 @@ struct SceneBuilder<'a, T> {
+     scale_factor: ScaleFactor,
+     window: &'a WindowInner,
+     rotation: RotationInfo,
++    subpixel_order: SubpixelOrder,
+     #[cfg(feature = "systemfonts")]
+     text_layout_cache: &'a sharedparley::TextLayoutCache,
+ }
+@@ -2209,6 +2442,7 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
+         window: &'a WindowInner,
+         processor: T,
+         orientation: RenderingRotation,
++        subpixel_order: SubpixelOrder,
+         #[cfg(feature = "systemfonts")] text_layout_cache: &'a sharedparley::TextLayoutCache,
+     ) -> Self {
+         Self {
+@@ -2224,7 +2458,11 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
+             },
+             scale_factor,
+             window,
+-            rotation: RotationInfo { orientation, screen_size },
++            rotation: RotationInfo {
++                orientation,
++                screen_size,
++            },
++            subpixel_order,
+             #[cfg(feature = "systemfonts")]
+             text_layout_cache,
+         }
+@@ -2253,12 +2491,15 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
+         let offset =
+             self.current_state.offset.cast() * self.scale_factor + image_fit_offset.to_vector();
+ 
+-        let physical_clip =
+-            (self.current_state.clip.translate(self.current_state.offset.to_vector()).cast()
+-                * self.scale_factor)
+-                .round()
+-                .cast()
+-                .transformed(self.rotation);
++        let physical_clip = (self
++            .current_state
++            .clip
++            .translate(self.current_state.offset.to_vector())
++            .cast()
++            * self.scale_factor)
++            .round()
++            .cast()
++            .transformed(self.rotation);
+ 
+         match image_inner {
+             ImageInner::None => (),
+@@ -2273,13 +2514,19 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
+                 let adjust_y = size.height as f32 / original_size.height as f32;
+                 let source_to_target_x = source_to_target_x / adjust_x;
+                 let source_to_target_y = source_to_target_y / adjust_y;
+-                let source_rect =
+-                    source_rect.cast::<f32>().scale(adjust_x, adjust_y).round().to_box2d().cast();
++                let source_rect = source_rect
++                    .cast::<f32>()
++                    .scale(adjust_x, adjust_y)
++                    .round()
++                    .to_box2d()
++                    .cast();
+ 
+                 for t in textures.as_slice() {
+                     let t_rect = t.rect.to_box2d();
+                     // That's the source rect in the whole image coordinate
+-                    let Some(src_rect) = t_rect.intersection(&source_rect) else { continue };
++                    let Some(src_rect) = t_rect.intersection(&source_rect) else {
++                        continue;
++                    };
+ 
+                     let target_rect = if tiled.is_some() {
+                         euclid::Rect::new(offset, fit_size).round().cast::<i32>()
+@@ -2317,13 +2564,20 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
+                     let pixel_stride = t.rect.width() as usize;
+                     let core::ops::Range { start, end } = compute_range_in_buffer(
+                         &PhysicalRect::from_untyped(
+-                            &src_rect.to_rect().translate(-t.rect.origin.to_vector()).cast(),
++                            &src_rect
++                                .to_rect()
++                                .translate(-t.rect.origin.to_vector())
++                                .cast(),
+                         ),
+                         pixel_stride,
+                     );
+                     let bpp = t.format.bpp();
+ 
+-                    let color = if colorize.alpha() > 0 { colorize } else { t.color };
++                    let color = if colorize.alpha() > 0 {
++                        colorize
++                    } else {
++                        t.color
++                    };
+                     let alpha = if colorize.alpha() > 0 || t.format == TexturePixelFormat::AlphaMap
+                     {
+                         color.alpha() as u16 * global_alpha_u16 / 255
+@@ -2363,25 +2617,34 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
+                         dst_height: target_rect.size.height as _,
+                         rotation: self.rotation.orientation,
+                         tiling,
++                        subpixel: false,
++                        subpixel_enabled: false,
++                        subpixel_bgr: false,
+                     };
+ 
+-                    self.processor.process_target_texture(&t, clipped_target.cast());
++                    self.processor
++                        .process_target_texture(&t, clipped_target.cast());
+                 }
+             }
+ 
+             ImageInner::NineSlice(..) => unreachable!(),
+             _ => {
+-                let target_rect =
+-                    euclid::Rect::new(offset, fit_size).round().cast().transformed(self.rotation);
++                let target_rect = euclid::Rect::new(offset, fit_size)
++                    .round()
++                    .cast()
++                    .transformed(self.rotation);
+                 let Some(clipped_target) = physical_clip.intersection(&target_rect) else {
+                     return;
+                 };
+ 
+                 let orig = image_inner.size().cast::<f32>();
+                 let svg_target_size = if tiled.is_some() {
+-                    euclid::size2(orig.width * source_to_target_x, orig.height * source_to_target_y)
+-                        .round()
+-                        .cast()
++                    euclid::size2(
++                        orig.width * source_to_target_x,
++                        orig.height * source_to_target_y,
++                    )
++                    .round()
++                    .cast()
+                 } else {
+                     target_rect.size.cast()
+                 };
+@@ -2425,9 +2688,13 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
+                         dst_height: target_rect.size.height as _,
+                         rotation: self.rotation.orientation,
+                         tiling,
++                        subpixel: false,
++                        subpixel_enabled: false,
++                        subpixel_bgr: false,
+                     };
+ 
+-                    self.processor.process_target_texture(&t, clipped_target.cast());
++                    self.processor
++                        .process_target_texture(&t, clipped_target.cast());
+                 } else {
+                     unimplemented!("The image cannot be rendered")
+                 }
+@@ -2462,8 +2729,9 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
+                             band_height.get(),
+                         );
+                         if let Some(clipped_src) = geometry.intersection(&physical_clip.cast()) {
+-                            let geometry =
+-                                clipped_src.translate(offset.cast()).transformed(self.rotation);
++                            let geometry = clipped_src
++                                .translate(offset.cast())
++                                .transformed(self.rotation);
+                             let args = target_pixel_buffer::DrawRectangleArgs::from_rect(
+                                 geometry.cast(),
+                                 selection.selection_background.into(),
+@@ -2548,6 +2816,9 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
+                                             // color already is mixed with global alpha
+                                             alpha: color.alpha(),
+                                             rotation: self.rotation.orientation,
++                                            subpixel: false,
++                                            subpixel_enabled: false,
++                                            subpixel_bgr: false,
+                                             dx: scale_delta,
+                                             dy: scale_delta,
+                                             off_x: Fixed::try_from_fixed(off_x).unwrap(),
+@@ -2564,8 +2835,13 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
+                                 target_pixel_buffer::TextureDataContainer::Static(
+                                     target_pixel_buffer::TextureData::new(
+                                         data,
+-                                        TexturePixelFormat::AlphaMap,
+-                                        glyph.pixel_stride as usize,
++                                        if glyph.subpixel {
++                                            TexturePixelFormat::Rgba
++                                        } else {
++                                            TexturePixelFormat::AlphaMap
++                                        },
++                                        glyph.pixel_stride as usize
++                                            * if glyph.subpixel { 4 } else { 1 },
+                                         euclid::size2(glyph.width.get(), glyph.height.get()).cast(),
+                                     ),
+                                 )
+@@ -2580,11 +2856,25 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
+                                     source_rect,
+                                 }
+                             }
++                            fonts::GlyphAlphaMap::SharedSubpixel(data) => {
++                                let source_rect = euclid::rect(0, 0, glyph.width.0, glyph.height.0);
++                                target_pixel_buffer::TextureDataContainer::Shared {
++                                    buffer: SharedBufferData::Subpixel {
++                                        data: data.clone(),
++                                        width: glyph.pixel_stride,
++                                    },
++                                    source_rect,
++                                }
++                            }
+                         };
+-                        let clipped_target =
+-                            clipped_target.translate(offset).round().transformed(self.rotation);
+-                        let target_rect =
+-                            target_rect.translate(offset).round().transformed(self.rotation);
++                        let clipped_target = clipped_target
++                            .translate(offset)
++                            .round()
++                            .transformed(self.rotation);
++                        let target_rect = target_rect
++                            .translate(offset)
++                            .round()
++                            .transformed(self.rotation);
+                         let t = target_pixel_buffer::DrawTextureArgs {
+                             data,
+                             colorize: Some(color),
+@@ -2596,9 +2886,17 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
+                             dst_height: target_rect.size.height as _,
+                             rotation: self.rotation.orientation,
+                             tiling: None,
++                            subpixel: glyph.subpixel,
++                            subpixel_enabled: glyph.subpixel
++                                && self.subpixel_order.is_enabled()
++                                && !self.rotation.orientation.is_transpose(),
++                            subpixel_bgr: glyph.subpixel
++                                && !glyph.native_subpixel
++                                && self.subpixel_order.is_bgr(),
+                         };
+ 
+-                        self.processor.process_target_texture(&t, clipped_target.cast());
++                        self.processor
++                            .process_target_texture(&t, clipped_target.cast());
+                     }
+                     core::ops::ControlFlow::Continue(())
+                 },
+@@ -2666,12 +2964,15 @@ impl<T: ProcessScene> i_slint_core::item_rendering::ItemRenderer for SceneBuilde
+                 * self.scale_factor)
+                 .transformed(self.rotation);
+ 
+-            let clipped =
+-                (self.current_state.clip.translate(self.current_state.offset.to_vector()).cast()
+-                    * self.scale_factor)
+-                    .round()
+-                    .cast()
+-                    .transformed(self.rotation);
++            let clipped = (self
++                .current_state
++                .clip
++                .translate(self.current_state.offset.to_vector())
++                .cast()
++                * self.scale_factor)
++                .round()
++                .cast()
++                .transformed(self.rotation);
+ 
+             let mut args =
+                 target_pixel_buffer::DrawRectangleArgs::from_rect(geom, rect.background());
+@@ -2694,12 +2995,15 @@ impl<T: ProcessScene> i_slint_core::item_rendering::ItemRenderer for SceneBuilde
+                 * self.scale_factor)
+                 .transformed(self.rotation);
+ 
+-            let clipped =
+-                (self.current_state.clip.translate(self.current_state.offset.to_vector()).cast()
+-                    * self.scale_factor)
+-                    .round()
+-                    .cast()
+-                    .transformed(self.rotation);
++            let clipped = (self
++                .current_state
++                .clip
++                .translate(self.current_state.offset.to_vector())
++                .cast()
++                * self.scale_factor)
++                .round()
++                .cast()
++                .transformed(self.rotation);
+ 
+             let radius = (rect.border_radius().cast() * self.scale_factor)
+                 .transformed(self.rotation)
+@@ -2707,8 +3011,11 @@ impl<T: ProcessScene> i_slint_core::item_rendering::ItemRenderer for SceneBuilde
+                 .min(BorderRadius::from_length(geom.height_length() / 2.));
+ 
+             let border = rect.border_width().cast() * self.scale_factor;
+-            let border_color =
+-                if border.get() > 0.01 { rect.border_color() } else { Default::default() };
++            let border_color = if border.get() > 0.01 {
++                rect.border_color()
++            } else {
++                Default::default()
++            };
+ 
+             let args = target_pixel_buffer::DrawRectangleArgs {
+                 x: geom.origin.x,
+@@ -2797,6 +3104,20 @@ impl<T: ProcessScene> i_slint_core::item_rendering::ItemRenderer for SceneBuilde
+         size: LogicalSize,
+         _cache: &CachedRenderingData,
+     ) {
++        // ScrollView moves clipped text out of view without changing its
++        // content. Reject it before font matching, line layout and glyph work.
++        // Slint 1.17 has only Clip/Elide; both stay within the item bounds.
++        if scroll_text_culling_enabled() && !self.should_draw(&LogicalRect::from(size)) {
++            return;
++        }
++        // With runtime system fonts Parley already owns font matching and the
++        // shaped paragraph. Avoid constructing another VectorFont merely to
++        // decide which path to take. Embedded-font users retain the old path.
++        #[cfg(feature = "systemfonts")]
++        if scroll_text_culling_enabled() && !fonts::has_bitmap_fonts() && !parley_disabled() {
++            sharedparley::draw_text(self, text, Some(self_rc), size, Some(self.text_layout_cache));
++            return;
++        }
+         let font_request = text.font_request(self_rc);
+ 
+         #[cfg(feature = "systemfonts")]
+@@ -2811,7 +3132,13 @@ impl<T: ProcessScene> i_slint_core::item_rendering::ItemRenderer for SceneBuilde
+         #[cfg(feature = "systemfonts")]
+         if uses_parley(&font) {
+             drop(font_ctx);
+-            sharedparley::draw_text(self, text, Some(self_rc), size, Some(self.text_layout_cache));
++            sharedparley::draw_text(
++                self,
++                text,
++                Some(self_rc),
++                size,
++                Some(self.text_layout_cache),
++            );
+             return;
+         }
+ 
+@@ -2874,6 +3201,14 @@ impl<T: ProcessScene> i_slint_core::item_rendering::ItemRenderer for SceneBuilde
+         self_rc: &ItemRc,
+         size: LogicalSize,
+     ) {
++        if scroll_text_culling_enabled() && !self.should_draw(&LogicalRect::from(size)) {
++            return;
++        }
++        #[cfg(feature = "systemfonts")]
++        if scroll_text_culling_enabled() && !fonts::has_bitmap_fonts() && !parley_disabled() {
++            sharedparley::draw_text_input(self, text_input, self_rc, size, self.text_layout_cache);
++            return;
++        }
+         let font_request = text_input.font_request(self_rc);
+         #[cfg(feature = "systemfonts")]
+         let mut font_ctx = self.window.context().font_context().borrow_mut();
+@@ -3006,12 +3341,15 @@ impl<T: ProcessScene> i_slint_core::item_rendering::ItemRenderer for SceneBuilde
+         let zeno_commands =
+             path::convert_path_data_to_zeno(path_iterator, rotation, self.scale_factor, offset);
+ 
+-        let physical_clip =
+-            (self.current_state.clip.translate(self.current_state.offset.to_vector()).cast()
+-                * self.scale_factor)
+-                .round()
+-                .cast::<i16>()
+-                .transformed(self.rotation);
++        let physical_clip = (self
++            .current_state
++            .clip
++            .translate(self.current_state.offset.to_vector())
++            .cast()
++            * self.scale_factor)
++            .round()
++            .cast::<i16>()
++            .transformed(self.rotation);
+ 
+         // Clip the geometry - early return if nothing to draw
+         let Some(clipped_geom) = physical_geom.intersection(&physical_clip) else {
+@@ -3148,6 +3486,9 @@ impl<T: ProcessScene> i_slint_core::item_rendering::ItemRenderer for SceneBuilde
+                     dst_height: height as _,
+                     rotation: self.rotation.orientation,
+                     tiling: None,
++                    subpixel: false,
++                    subpixel_enabled: false,
++                    subpixel_bgr: false,
+                 };
+                 self.processor
+                     .process_target_texture(&t, geometry.cast().transformed(self.rotation));
+@@ -3330,16 +3671,19 @@ impl<T: ProcessScene> sharedparley::GlyphRenderer for SceneBuilder<'_, T> {
+         glyphs_it: &mut dyn Iterator<Item = sharedparley::parley::layout::Glyph>,
+     ) {
+         let slint_context = self.window.context();
+-        let (swash_key, swash_offset) =
+-            fonts::systemfonts::get_swash_font_info(&font.data, font.index);
+-        let font = fonts::vectorfont::VectorFont::new_from_blob_and_index_with_coords(
+-            font.data.clone(),
+-            font.index,
+-            swash_key,
+-            swash_offset,
+-            font_size.cast(),
+-            normalized_coords,
+-        );
++        let cached_font;
++        let uncached_font;
++        let font = if scroll_text_culling_enabled() {
++            cached_font = fonts::vectorfont::cache::for_run(&font.data, font.index, font_size.cast(), normalized_coords);
++            cached_font.as_ref()
++        } else {
++            // Preserve the original stack-owned path for baseline comparisons.
++            let (key, offset) = fonts::systemfonts::get_swash_font_info(&font.data, font.index);
++            uncached_font = fonts::vectorfont::VectorFont::new_from_blob_and_index_with_coords(
++                font.data.clone(), font.index, key, offset, font_size.cast(), normalized_coords,
++            );
++            &uncached_font
++        };
+ 
+         let global_offset: euclid::Vector2D<f32, PhysicalPx> =
+             self.current_state.offset.to_vector().cast() * self.scale_factor;
+@@ -3415,6 +3759,9 @@ impl<T: ProcessScene> sharedparley::GlyphRenderer for SceneBuilder<'_, T> {
+                 dst_height: target_rect.size.height as _,
+                 rotation: self.rotation.orientation,
+                 tiling: None,
++                subpixel: false,
++                subpixel_enabled: false,
++                subpixel_bgr: false,
+             };
+ 
+             self.processor.process_target_texture(&t, clipped_target.cast());
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/path.rs b/i-slint-renderer-software-1.18/path.rs
+index ad7436d..7ef4a05 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/path.rs
++++ b/i-slint-renderer-software-1.18/path.rs
+@@ -3,8 +3,8 @@
+ 
+ //! Path rendering support for the software renderer using zeno
+ 
+-use super::PhysicalRect;
+ use super::draw_functions::{PremultipliedRgbaColor, TargetPixel};
++use super::{PhysicalRect, PhysicalRegion};
+ use alloc::vec;
+ use alloc::vec::Vec;
+ use zeno::{Cap, Fill, Join, Mask, Stroke, Style};
+@@ -39,7 +39,9 @@ pub fn convert_path_data_to_zeno(
+             Event::Quadratic { ctrl, to, .. } => {
+                 commands.push(Command::QuadTo(convert_point(ctrl), convert_point(to)));
+             }
+-            Event::Cubic { ctrl1, ctrl2, to, .. } => {
++            Event::Cubic {
++                ctrl1, ctrl2, to, ..
++            } => {
+                 commands.push(Command::CurveTo(
+                     convert_point(ctrl1),
+                     convert_point(ctrl2),
+@@ -62,64 +64,71 @@ fn render_path_with_style<T: TargetPixel>(
+     commands: &[Command],
+     path_geometry: &PhysicalRect,
+     clip_geometry: &PhysicalRect,
++    dirty_region: &PhysicalRegion,
+     color: PremultipliedRgbaColor,
+     style: zeno::Style,
+     buffer: &mut impl crate::target_pixel_buffer::TargetPixelBuffer<TargetPixel = T>,
+ ) {
+-    // The mask needs to be rendered at the full path size
+-    let path_width = path_geometry.size.width as usize;
+-    let path_height = path_geometry.size.height as usize;
+-
+-    if path_width == 0 || path_height == 0 {
++    let Some(path_clip) = path_geometry.intersection(clip_geometry) else {
+         return;
+-    }
++    };
++    let buffer_clip = PhysicalRect::new(
++        euclid::point2(0, 0),
++        euclid::size2(buffer.line_slice(0).len() as i16, buffer.num_lines() as i16),
++    );
++    let Some(path_clip) = path_clip.intersection(&buffer_clip) else {
++        return;
++    };
+ 
+-    // Create a buffer for the mask output
+-    let mut mask_buffer = vec![0u8; path_width * path_height];
++    // Normalize Slint's overlapping dirty rectangles into a disjoint set so
++    // translucent paths cannot blend an overlap twice in one frame.
++    for dirty_rect in dirty_region.iter_disjoint_box() {
++        let Some(render_rect) = path_clip.intersection(&dirty_rect.to_rect()) else {
++            continue;
++        };
++        rasterize_path_region(
++            commands,
++            path_geometry,
++            render_rect,
++            color,
++            style,
++            buffer,
++        );
++    }
++}
+ 
+-    // Render the full path into the mask
++fn rasterize_path_region<T: TargetPixel>(
++    commands: &[Command],
++    path_geometry: &PhysicalRect,
++    render_rect: PhysicalRect,
++    color: PremultipliedRgbaColor,
++    style: zeno::Style,
++    buffer: &mut impl crate::target_pixel_buffer::TargetPixelBuffer<TargetPixel = T>,
++) {
++    let width = render_rect.size.width as usize;
++    let height = render_rect.size.height as usize;
++    debug_assert!(width > 0 && height > 0);
++
++    // The mask is local to `render_rect`, so shift the screen-space path
++    // origin into that local coordinate system.
++    let transform = zeno::Transform::translation(
++        (path_geometry.origin.x - render_rect.origin.x) as f32,
++        (path_geometry.origin.y - render_rect.origin.y) as f32,
++    );
++    let mut mask_buffer = vec![0u8; width * height];
+     Mask::new(commands)
+-        .size(path_width as u32, path_height as u32)
++        .size(width as u32, height as u32)
+         .style(style)
++        .transform(Some(transform))
+         .render_into(&mut mask_buffer, None);
+ 
+-    // Calculate the intersection region - only apply within clipped area
+-    // clip_geometry is relative to screen, path_geometry is also relative to screen
+-    let clip_x_start = clip_geometry.origin.x.max(0) as usize;
+-    let clip_y_start = clip_geometry.origin.y.max(0) as usize;
+-    let clip_x_end = (clip_geometry.max_x().max(0) as usize).min(buffer.line_slice(0).len());
+-    let clip_y_end = (clip_geometry.max_y().max(0) as usize).min(buffer.num_lines());
+-
+-    let path_x_start = path_geometry.origin.x as isize;
+-    let path_y_start = path_geometry.origin.y as isize;
+-
+-    // Apply the mask only within the clipped region
+-    for screen_y in clip_y_start..clip_y_end {
++    for (mask_y, mask_row) in mask_buffer.chunks_exact(width).enumerate() {
++        let screen_y = render_rect.origin.y as usize + mask_y;
++        let screen_x = render_rect.origin.x as usize;
+         let line = buffer.line_slice(screen_y);
+-
+-        // Calculate the y coordinate in the mask buffer
+-        let mask_y = screen_y as isize - path_y_start;
+-        if mask_y < 0 || mask_y >= path_height as isize {
+-            continue;
+-        }
+-
+-        // Iterate the writable portion of the line directly to avoid indexing by loop variable
+-        let line_slice = &mut line[clip_x_start..clip_x_end];
+-        for (i, pixel) in line_slice.iter_mut().enumerate() {
+-            let screen_x = clip_x_start + i;
+-
+-            // Calculate the x coordinate in the mask buffer
+-            let mask_x = screen_x as isize - path_x_start;
+-            if mask_x < 0 || mask_x >= path_width as isize {
+-                continue;
+-            }
+-
+-            let mask_idx = (mask_y as usize) * path_width + (mask_x as usize);
+-            let coverage = mask_buffer[mask_idx];
+-
+-            if coverage > 0 {
+-                // Scale all color components by coverage to maintain premultiplication
+-                let coverage_factor = coverage as u16;
++        for (pixel, coverage) in line[screen_x..screen_x + width].iter_mut().zip(mask_row) {
++            if *coverage > 0 {
++                let coverage_factor = *coverage as u16;
+                 let alpha_color = PremultipliedRgbaColor {
+                     red: ((color.red as u16 * coverage_factor) / 255) as u8,
+                     green: ((color.green as u16 * coverage_factor) / 255) as u8,
+@@ -143,6 +152,7 @@ pub fn render_filled_path<T: TargetPixel>(
+     commands: &[Command],
+     path_geometry: &PhysicalRect,
+     clip_geometry: &PhysicalRect,
++    dirty_region: &PhysicalRegion,
+     color: PremultipliedRgbaColor,
+     buffer: &mut impl crate::target_pixel_buffer::TargetPixelBuffer<TargetPixel = T>,
+ ) {
+@@ -150,6 +160,7 @@ pub fn render_filled_path<T: TargetPixel>(
+         commands,
+         path_geometry,
+         clip_geometry,
++        dirty_region,
+         color,
+         zeno::Style::Fill(Fill::NonZero),
+         buffer,
+@@ -168,6 +179,7 @@ pub fn render_stroked_path<T: TargetPixel>(
+     commands: &[Command],
+     path_geometry: &PhysicalRect,
+     clip_geometry: &PhysicalRect,
++    dirty_region: &PhysicalRegion,
+     color: PremultipliedRgbaColor,
+     stroke_width: f32,
+     stroke_line_cap: i_slint_core::items::LineCap,
+@@ -189,5 +201,13 @@ pub fn render_stroked_path<T: TargetPixel>(
+         })
+         .miter_limit(stroke_miter_limit);
+     let style = Style::Stroke(stroke);
+-    render_path_with_style(commands, path_geometry, clip_geometry, color, style, buffer);
++    render_path_with_style(
++        commands,
++        path_geometry,
++        clip_geometry,
++        dirty_region,
++        color,
++        style,
++        buffer,
++    );
+ }
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/scene.rs b/i-slint-renderer-software-1.18/scene.rs
+index 35210ba..e0acebf 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/scene.rs
++++ b/i-slint-renderer-software-1.18/scene.rs
+@@ -52,8 +52,11 @@ impl Scene {
+         vectors: SceneVectors,
+         dirty_region: PhysicalRegion,
+     ) -> Self {
+-        let current_line =
+-            dirty_region.iter_box().map(|x| x.min.y_length()).min().unwrap_or_default();
++        let current_line = dirty_region
++            .iter_box()
++            .map(|x| x.min.y_length())
++            .min()
++            .unwrap_or_default();
+         items.retain(|i| i.pos.y_length() + i.size.height_length() > current_line);
+         items.sort_unstable_by(compare_scene_item);
+         let current_items_index = items.partition_point(|i| i.pos.y_length() <= current_line);
+@@ -69,7 +72,10 @@ impl Scene {
+             range_valid_until_line: Default::default(),
+         };
+         r.recompute_ranges();
+-        debug_assert_eq!(r.current_line, r.dirty_region.bounding_rect().origin.y_length());
++        debug_assert_eq!(
++            r.current_line,
++            r.dirty_region.bounding_rect().origin.y_length()
++        );
+         r
+     }
+ 
+@@ -205,7 +211,11 @@ impl Scene {
+         }
+         self.current_items_index = i;
+         // check that current items are properly sorted
+-        debug_assert!(self.items[0..self.current_items_index].windows(2).all(|x| x[0].z >= x[1].z));
++        debug_assert!(
++            self.items[0..self.current_items_index]
++                .windows(2)
++                .all(|x| x[0].z >= x[1].z)
++        );
+     }
+ 
+     // return true if lines were skipped
+@@ -371,6 +381,13 @@ pub struct SceneTextureExtra {
+     pub colorize: Color,
+     pub alpha: u8,
+     pub rotation: RenderingRotation,
++    /// Render the texture as RGB glyph coverage instead of an ordinary image.
++    pub subpixel: bool,
++    /// Use the RGB coverages independently. Otherwise average them into a
++    /// grayscale alpha value because ClearType is disabled for the target.
++    pub subpixel_enabled: bool,
++    /// The target LCD uses BGR rather than RGB channel order.
++    pub subpixel_bgr: bool,
+ }
+ 
+ impl SceneTextureExtra {
+@@ -408,7 +425,10 @@ impl SceneTextureExtra {
+             let _ = tiling.gap_x;
+             let _ = tiling.gap_y;
+ 
+-            (Fixed::from_f32(tiling.scale_x)?, Fixed::from_f32(tiling.scale_y)?)
++            (
++                Fixed::from_f32(tiling.scale_x)?,
++                Fixed::from_f32(tiling.scale_y)?,
++            )
+         } else {
+             let (dst_w, dst_h) = if texture.rotation.is_transpose() {
+                 (texture.dst_height as i32, texture.dst_width as i32)
+@@ -426,6 +446,9 @@ impl SceneTextureExtra {
+                 colorize: texture.colorize.unwrap_or_default(),
+                 alpha: texture.alpha,
+                 rotation: texture.rotation,
++                subpixel: texture.subpixel,
++                subpixel_enabled: texture.subpixel_enabled,
++                subpixel_bgr: texture.subpixel_bgr,
+                 dx: Fixed::try_from_fixed(dx).ok()?,
+                 dy: Fixed::try_from_fixed(dy).ok()?,
+                 off_x: Fixed::try_from_fixed(dx * offset.x).ok()?,
+@@ -440,6 +463,7 @@ impl SceneTextureExtra {
+ pub enum SharedBufferData {
+     SharedImage(SharedImageBuffer),
+     AlphaMap { data: Rc<[u8]>, width: u16 },
++    Subpixel { data: Rc<[u8]>, width: u16 },
+ }
+ 
+ impl SharedBufferData {
+@@ -447,6 +471,7 @@ impl SharedBufferData {
+         match self {
+             SharedBufferData::SharedImage(image) => image.width() as usize,
+             SharedBufferData::AlphaMap { width, .. } => *width as usize,
++            SharedBufferData::Subpixel { width, .. } => *width as usize,
+         }
+     }
+     #[allow(unused)]
+@@ -454,6 +479,7 @@ impl SharedBufferData {
+         match self {
+             SharedBufferData::SharedImage(image) => image.height() as usize,
+             SharedBufferData::AlphaMap { data, width, .. } => data.len() / *width as usize,
++            SharedBufferData::Subpixel { data, width } => data.len() / (*width as usize * 4),
+         }
+     }
+ }
+@@ -497,6 +523,12 @@ impl SharedBufferCommand {
+                 format: TexturePixelFormat::AlphaMap,
+                 extra: self.extra,
+             },
++            SharedBufferData::Subpixel { data, width } => SceneTexture {
++                data: &data[start * 4..end * 4],
++                pixel_stride: *width,
++                format: TexturePixelFormat::Rgba,
++                extra: self.extra,
++            },
+         }
+     }
+ }
+diff --git a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/target_pixel_buffer.rs b/i-slint-renderer-software-1.18/target_pixel_buffer.rs
+index ada768f..c95923e 100644
+--- a/C:/Users/sjxx/AppData/Local/Temp/i-slint-renderer-software-1.18.0/target_pixel_buffer.rs
++++ b/i-slint-renderer-software-1.18/target_pixel_buffer.rs
+@@ -30,13 +30,22 @@ impl<'a> TextureData<'a> {
+         size: IntSize,
+     ) -> Self {
+         let (width, height) = (size.width, size.height);
+-        Self { data, pixel_format, byte_stride, width, height }
++        Self {
++            data,
++            pixel_format,
++            byte_stride,
++            width,
++            height,
++        }
+     }
+ }
+ 
+ pub(super) enum TextureDataContainer {
+     Static(TextureData<'static>),
+-    Shared { buffer: super::scene::SharedBufferData, source_rect: PhysicalRect },
++    Shared {
++        buffer: super::scene::SharedBufferData,
++        source_rect: PhysicalRect,
++    },
+ }
+ 
+ #[derive(Debug, Clone)]
+@@ -86,14 +95,31 @@ pub struct DrawTextureArgs {
+ 
+     /// If the texture is to be tiled, this contains the information about the tiling
+     pub tiling: Option<TilingInfo>,
++
++    /// The source is an RGBA buffer whose first three bytes are independent
++    /// RGB glyph coverages. This is private to the text path so image textures
++    /// can never accidentally receive LCD-style blending.
++    pub(super) subpixel: bool,
++    /// Whether the target is currently using horizontal LCD subpixel blending.
++    /// When false, an RGB glyph coverage texture falls back to grayscale alpha.
++    pub(super) subpixel_enabled: bool,
++    /// The target LCD uses BGR rather than RGB channel order.
++    pub(super) subpixel_bgr: bool,
+ }
+ 
+ impl DrawTextureArgs {
++    pub(super) fn is_subpixel(&self) -> bool {
++        self.subpixel
++    }
++
+     /// Returns the source image data for this texture
+     pub fn source(&self) -> TextureData<'_> {
+         match &self.data {
+             TextureDataContainer::Static(data) => data.clone(),
+-            TextureDataContainer::Shared { buffer, source_rect } => {
++            TextureDataContainer::Shared {
++                buffer,
++                source_rect,
++            } => {
+                 let stride = buffer.width();
+                 let core::ops::Range { start, end } = compute_range_in_buffer(source_rect, stride);
+                 let size = source_rect.size.to_untyped().cast();
+@@ -125,6 +151,12 @@ impl DrawTextureArgs {
+                         stride,
+                         size,
+                     ),
++                    SharedBufferData::Subpixel { data, .. } => TextureData::new(
++                        &data[start * 4..end * 4],
++                        TexturePixelFormat::Rgba,
++                        stride * 4,
++                        size,
++                    ),
+                 }
+             }
+         }

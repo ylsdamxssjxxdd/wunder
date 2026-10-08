@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>快速开始 | 使用说明书</title>
+  <meta name="description" content="用最短路径打开蜂巢、配置模型、跑通第一个任务。">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/start/quickstart","language":"zh-CN","title":"快速开始","summary":"用最短路径打开蜂巢、配置模型、跑通第一个任务。","updated_at":"2026-10-06","read_when":["用户第一次使用 wunder","用户需要快速跑通一个可验证结果"],"source_docs":["README.md","docs/设计文档/01-系统总体设计.md"],"tab":"开始","group":"入门","group_path":["入门"],"url":"/docs/zh-CN/start/quickstart/","headings":[{"id":"section-1","level":1,"text":"快速开始"},{"id":"section-2","level":2,"text":"第一步：打开蜂巢"},{"id":"section-3","level":2,"text":"最短路径：蜂窝"},{"id":"section-4","level":3,"text":"4 步跑通"},{"id":"section-5","level":3,"text":"蜂窝额外能力"},{"id":"section-6","level":2,"text":"团队路径：网页端"},{"id":"section-7","level":3,"text":"启动前准备"},{"id":"section-8","level":3,"text":"3 步部署"},{"id":"section-9","level":3,"text":"舰体形态能力"},{"id":"section-10","level":2,"text":"开发路径：舵机"},{"id":"section-11","level":3,"text":"安装与运行"},{"id":"section-12","level":3,"text":"第一次会话"},{"id":"section-13","level":3,"text":"舵机特有能力"},{"id":"section-14","level":2,"text":"验收清单"},{"id":"section-15","level":2,"text":"下一步"}],"prev_slug":"zh-CN/index","next_slug":"zh-CN/start/desktop","markdown":"# 快速开始\n\n目标只有一个：打开蜂巢，跑通第一个任务。个人用户走蜂窝（desktop），团队成员走网页端。\n\n## 第一步：打开蜂巢\n\n| 情况 | 做法 |\n|----------|--------|\n| 个人使用 | 安装[蜂窝（desktop）](/docs/zh-CN/start/desktop/)，启动即用 |\n| 团队成员 | 由管理员[部署舰体（server）](/docs/zh-CN/start/server/)后，用浏览器访问网页端 |\n| 自动化/脚本 | 用 [舵机（cli）](/docs/zh-CN/start/cli/) 在终端驱动 |\n\n不确定选哪个，默认装蜂窝，门槛最低。\n\n## 最短路径：蜂窝\n\n适合个人用户，下载即用。\n\n### 4 步跑通\n\n1. **下载安装**：去 Releases 下载匹配系统的安装包，安装或解压后启动。\n2. **配置模型**：打开「系统设置」→「模型配置」，填入 API Key 和接口地址，保存前点「测试连接」确认能用。\n3. **发起第一次对话**：回到聊天界面，输入 `帮我列出当前目录的文件`，回车发送。\n4. **观察执行过程**：模型思考 → 调用工具 → 展示结果 → 给出回复。\n\n看到完整的执行过程和最终结果，就说明跑通了。\n\n### 蜂窝额外能力\n\n- 本地优先：默认本地运行，也可接远端\n- 桌面控制：可操作本地窗口、文件、浏览器\n- 持久工作区：文件不会被自动清理\n- 直接编辑智能体：可随时调整智能体配置和提示词\n\n## 团队路径：网页端\n\n适合多用户协作、组织治理。\n\n### 启动前准备\n\n- Docker 和 Docker Compose（推荐）\n- 至少 4GB 可用内存\n\n### 3 步部署\n\n1. 获取代码\n   ```bash\n   git clone <repo-url>\n   cd wunder\n   ```\n\n2. 启动服务\n   ```bash\n   # x86 架构\n   docker-compose -f docker-compose-x86.yml up -d\n   \n   # ARM 架构\n   docker-compose -f docker-compose-arm.yml up -d\n   ```\n\n3. 访问蜂巢\n   - 用户工作台（蜂巢）：http://localhost:18002\n   - 舰桥与文档：http://localhost:18000\n   - 默认管理员：admin / admin\n\n部署完成后，团队成员用浏览器访问蜂巢即可开始使用，无需安装客户端。\n\n### 舰体形态能力\n\n- 多租户：用户、单位、权限分层管理\n- 渠道接入：飞书、微信、QQ 等\n- 可观测性：监控、压测、能力评估\n\n## 开发路径：舵机\n\n适合开发者、自动化脚本。\n\n### 安装与运行\n\n```bash\n# 编译（需要 Rust）\ncargo build --release\n\n# 运行\n./target/release/wunder-cli\n```\n\n### 第一次会话\n\n```bash\nwunder-cli\n> 帮我写一个 Hello World 的 Python 脚本\n```\n\n### 舵机特有能力\n\n- TUI 界面：终端交互\n- 会话管理：`/fork` 分叉、`/compact` 压缩、`/resume` 恢复\n- JSONL 输出：便于管道和自动化集成\n\n## 验收清单\n\n不管选哪条路径，确认以下几点：\n\n- [ ] 可以成功发起一次对话\n- [ ] 可以看到中间步骤和工具调用\n- [ ] 可以拿到最终结果\n- [ ] 知道下一步该看什么文档\n\n## 下一步\n\n- 认识工作台 → [蜂巢界面](/docs/zh-CN/surfaces/frontend/)\n- 深入理解系统 → [核心概览](/docs/zh-CN/concepts/)\n- 接入现有系统 → [接入概览](/docs/zh-CN/integration/)\n- 看所有工具 → [工具总览](/docs/zh-CN/tools/)\n- 遇到问题 → [故障排查](/docs/zh-CN/help/troubleshooting/)\n","source_path":"使用说明书/zh-CN/start/quickstart.md"}</script>
+</body>
+</html>

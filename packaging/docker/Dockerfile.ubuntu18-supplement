@@ -1,0 +1,45 @@
+FROM ubuntu:18.04
+
+# Lean build image for the Linux supplement pack (opt/python, opt/git, opt/rg).
+# Unlike the desktop AppImage image this carries no Rust toolchain; it only
+# needs the toolchain to compile bundled Git plus curl/python3 for the pack
+# script. The arm64 variant is run under QEMU binfmt by CI, so the single
+# Dockerfile covers both architectures through the platform flag.
+ARG TARGETARCH
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Deterministic text handling: the pack manifest, README and bundled font
+# names carry non-ASCII strings and the build heredocs print with
+# ensure_ascii=False. With no locale set, Python 3.6 on bionic exposes an
+# ASCII stdout and those prints die with UnicodeEncodeError, so pin a UTF-8
+# locale and stdio encoding for every process in the container (glibc 2.27
+# ships C.UTF-8 without locale-gen).
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONIOENCODING=utf-8
+
+# Ubuntu 18.04 is EOL: pin the archive mirrors explicitly and ignore the
+# expired Release files, mirroring the desktop AppImage image policy.
+RUN if [ "${TARGETARCH}" = "arm64" ]; then \
+      printf '%s\n' \
+        "deb [trusted=yes] http://ports.ubuntu.com/ubuntu-ports bionic main universe multiverse restricted" \
+        "deb [trusted=yes] http://ports.ubuntu.com/ubuntu-ports bionic-updates main universe multiverse restricted" \
+        "deb [trusted=yes] http://ports.ubuntu.com/ubuntu-ports bionic-security main universe multiverse restricted" \
+        > /etc/apt/sources.list; \
+    else \
+      printf '%s\n' \
+        "deb [trusted=yes] http://archive.ubuntu.com/ubuntu bionic main universe multiverse restricted" \
+        "deb [trusted=yes] http://archive.ubuntu.com/ubuntu bionic-updates main universe multiverse restricted" \
+        "deb [trusted=yes] http://archive.ubuntu.com/ubuntu bionic-security main universe multiverse restricted" \
+        > /etc/apt/sources.list; \
+    fi \
+ && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99no-check-valid \
+ && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=5 update \
+ && apt-get install -y --no-install-recommends \
+      build-essential ca-certificates curl file python3 \
+      zlib1g-dev libcurl4-openssl-dev libexpat1-dev libssl-dev \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl --version >/dev/null \
+ && python3 --version \
+ && gcc --version | head -n 1
+
+WORKDIR /app
+CMD ["bash"]

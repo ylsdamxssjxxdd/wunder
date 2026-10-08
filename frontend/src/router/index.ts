@@ -1,0 +1,414 @@
+import { createRouter, createWebHistory } from 'vue-router';
+import type { LocationQuery, LocationQueryRaw, RouteRecordRaw } from 'vue-router';
+
+import { disableDemoMode, enableDemoMode } from '@/utils/demo';
+import { useAuthStore } from '@/stores/auth';
+import { resolveApiBase } from '@/config/runtime';
+import {
+  buildDefaultAgentChatRoute,
+  FORCE_LOGOUT_QUERY_KEY,
+  isForcedLogoutQuery
+} from '@/utils/authNavigation';
+import {
+  clearAccessTokenIfCurrent,
+  readAccessToken,
+  writeSessionAccessToken
+} from '@/utils/authTokenStorage';
+
+const UserLayout = () => import('@/layouts/UserLayout.vue');
+const AdminLayout = () => import('@/layouts/AdminLayout.vue');
+const LoginView = () => import('@/views/LoginView.vue');
+const RegisterView = () => import('@/views/RegisterView.vue');
+const MessengerView = () => import('@/views/MessengerView.vue');
+const EmbeddedChatView = () => import('@/views/EmbeddedChatView.vue');
+const ExternalAppView = () => import('@/views/ExternalAppView.vue');
+const AdminLoginView = () => import('@/views/AdminLoginView.vue');
+const AdminUsersView = () => import('@/views/AdminUsersView.vue');
+const AdminAgentsView = () => import('@/views/AdminAgentsView.vue');
+const AdminSystemView = () => import('@/views/AdminSystemView.vue');
+const ChatBubbleStressE2EHarnessView = () => import('@/views/dev/ChatBubbleStressE2EHarnessView.vue');
+const MessengerHeavyHistoryE2EHarnessView = () => import('@/views/dev/MessengerHeavyHistoryE2EHarnessView.vue');
+const MessengerViewPerformanceE2EHarnessView = () => import('@/views/dev/MessengerViewPerformanceE2EHarnessView.vue');
+const MessengerSendGuardE2EHarnessView = () => import('@/views/dev/MessengerSendGuardE2EHarnessView.vue');
+const MessengerReturnResumeE2EHarnessView = () => import('@/views/dev/MessengerReturnResumeE2EHarnessView.vue');
+const ComposerB4E2EHarnessView = () => import('@/views/dev/ComposerB4E2EHarnessView.vue');
+
+const USER_LOGIN_PATH = '/login';
+const EMBED_AUTH_QUERY_KEYS = new Set([
+  'wunder_token',
+  'access_token',
+  'wunder_code',
+  'token',
+  'user_id',
+  'wunder_user_id',
+  'userId',
+  'uid',
+  'agent_name',
+  'agent',
+  'wunder_agent_name'
+]);
+EMBED_AUTH_QUERY_KEYS.add(FORCE_LOGOUT_QUERY_KEY);
+
+const hasAccessToken = () => Boolean(readAccessToken());
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+
+const asQueryText = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const text = String(item || '').trim();
+      if (text) return text;
+    }
+    return '';
+  }
+  return String(value || '').trim();
+};
+
+const resolveQueryToken = (query: LocationQuery): string => {
+  const wunderToken = asQueryText(query.wunder_token);
+  if (wunderToken) return wunderToken;
+  return asQueryText(query.access_token);
+};
+
+const resolveQueryCode = (query: LocationQuery): string => asQueryText(query.wunder_code);
+
+const resolveExternalQueryToken = (query: LocationQuery): string => {
+  const explicit = asQueryText(query.token);
+  if (explicit) return explicit;
+  const wunderToken = asQueryText(query.wunder_token);
+  if (wunderToken) return wunderToken;
+  return asQueryText(query.access_token);
+};
+
+const resolveExternalQueryUserId = (query: LocationQuery): string => {
+  const explicit = asQueryText(query.user_id);
+  if (explicit) return explicit;
+  const wunderUserId = asQueryText(query.wunder_user_id);
+  if (wunderUserId) return wunderUserId;
+  const camelUserId = asQueryText(query.userId);
+  if (camelUserId) return camelUserId;
+  return asQueryText(query.uid);
+};
+
+const resolveExternalQueryAgentName = (query: LocationQuery): string => {
+  const explicit = asQueryText(query.agent_name);
+  if (explicit) return explicit;
+  const wunderAgentName = asQueryText(query.wunder_agent_name);
+  if (wunderAgentName) return wunderAgentName;
+  return asQueryText(query.agent);
+};
+
+const resolveExternalEmbedSection = (query: LocationQuery): 'messages' | 'agents' => {
+  const explicit = asQueryText(query.section).toLowerCase();
+  return explicit === 'agents' ? 'agents' : 'messages';
+};
+
+const stripEmbedAuthQuery = (query: LocationQuery): LocationQueryRaw => {
+  const output: LocationQueryRaw = {};
+  Object.entries(query).forEach(([key, value]) => {
+    if (!EMBED_AUTH_QUERY_KEYS.has(key)) {
+      output[key] = value as string | null | (string | null)[];
+    }
+  });
+  return output;
+};
+
+const hasEmbedAuthQuery = (query: LocationQuery): boolean =>
+  Object.keys(query).some((key) => EMBED_AUTH_QUERY_KEYS.has(key));
+
+const resolveApiEndpoint = (path: string): string => {
+  const apiBase = resolveApiBase();
+  const base = apiBase ? apiBase.replace(/\/+$/, '') : '/wunder';
+  return `${base}${path}`;
+};
+
+const exchangeEmbedCode = async (code: string): Promise<string> => {
+  const response = await fetch(resolveApiEndpoint('/auth/external/exchange'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code })
+  });
+
+  const payload = asRecord(await response.json().catch(() => ({})));
+  if (!response.ok) {
+    const error = asRecord(payload.error);
+    const message = String(error.message || payload.message || 'external auth exchange failed').trim();
+    throw new Error(message || 'external auth exchange failed');
+  }
+
+  const data = asRecord(payload.data);
+  const token = String(data.access_token || '').trim();
+  if (!token) {
+    throw new Error('external auth token is empty');
+  }
+  return token;
+};
+
+const loginWithExternalToken = async (
+  token: string,
+  userId: string,
+  agentName = ''
+): Promise<{ accessToken: string; user: Record<string, unknown> | null; agentId: string; focusMode: boolean }> => {
+  const response = await fetch(resolveApiEndpoint('/auth/external/token_login'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, user_id: userId, agent_name: agentName || undefined })
+  });
+
+  const payload = asRecord(await response.json().catch(() => ({})));
+  if (!response.ok) {
+    const error = asRecord(payload.error);
+    const message = String(error.message || payload.message || 'external token login failed').trim();
+    throw new Error(message || 'external token login failed');
+  }
+
+  const data = asRecord(payload.data);
+  const accessToken = String(data.access_token || '').trim();
+  if (!accessToken) {
+    throw new Error('external token login access_token is empty');
+  }
+  const user = asRecord(data.user);
+  const agentId = String(data.agent_id || '').trim();
+  const focusMode = data.focus_mode === true || String(data.focus_mode || '').trim().toLowerCase() === 'true';
+  return {
+    accessToken,
+    user: Object.keys(user).length > 0 ? user : null,
+    agentId,
+    focusMode
+  };
+};
+
+const isAuthRequiredError = (error: unknown): boolean => {
+  const source = asRecord(error);
+  const response = asRecord(source.response);
+  const status = Number(response.status || 0);
+  if (status === 401) {
+    return true;
+  }
+  const payload = asRecord(response.data);
+  const payloadError = asRecord(payload.error);
+  const errorCode = String(payloadError.code || payload.code || payload.message || '')
+    .trim()
+    .toLowerCase();
+  return errorCode === 'auth_required' || errorCode === 'error.auth_required';
+};
+
+const routes: RouteRecordRaw[] = [
+  ...(import.meta.env.DEV
+    ? ([
+        {
+          path: '/__e2e/chat-bubble-stress',
+          name: 'chat-bubble-stress-e2e-harness',
+          component: ChatBubbleStressE2EHarnessView
+        },
+        {
+          path: '/__e2e/messenger-heavy-history',
+          name: 'messenger-heavy-history-e2e-harness',
+          component: MessengerHeavyHistoryE2EHarnessView
+        },
+        {
+          path: '/__e2e/messenger-view-performance',
+          name: 'messenger-view-performance-e2e-harness',
+          component: MessengerViewPerformanceE2EHarnessView
+        },
+        {
+          path: '/__e2e/messenger-send-guard',
+          name: 'messenger-send-guard-e2e-harness',
+          component: MessengerSendGuardE2EHarnessView
+        },
+        {
+          path: '/__e2e/messenger-return-resume',
+          name: 'messenger-return-resume-e2e-harness',
+          component: MessengerReturnResumeE2EHarnessView
+        },
+        {
+          path: '/__e2e/composer-b4',
+          name: 'composer-b4-e2e-harness',
+          component: ComposerB4E2EHarnessView
+        }
+      ] satisfies RouteRecordRaw[])
+    : []),
+  {
+    path: '/',
+    redirect: () => (hasAccessToken() ? buildDefaultAgentChatRoute() : USER_LOGIN_PATH)
+  },
+  {
+    path: '/home',
+    redirect: () => buildDefaultAgentChatRoute()
+  },
+  {
+    path: '/portal',
+    redirect: () => buildDefaultAgentChatRoute()
+  },
+  {
+    path: '/login',
+    name: 'login',
+    component: LoginView
+  },
+  {
+    path: '/register',
+    name: 'register',
+    component: RegisterView
+  },
+  {
+    path: '/app',
+    component: UserLayout,
+    meta: { requiresAuth: true },
+    redirect: () => buildDefaultAgentChatRoute(),
+    children: [
+      { path: 'home', name: 'home', component: MessengerView },
+      { path: 'external/:linkId', name: 'external-app', component: ExternalAppView },
+      { path: 'chat', name: 'chat', component: MessengerView },
+      { path: 'embed/chat', name: 'embed-chat', component: EmbeddedChatView },
+      { path: 'settings', name: 'settings', component: MessengerView }
+    ]
+  },
+  {
+    path: '/demo',
+    component: UserLayout,
+    meta: { demo: true },
+    redirect: '/demo/chat',
+    children: [
+      { path: 'home', name: 'demo-home', component: MessengerView, meta: { demo: true } },
+      { path: 'external/:linkId', name: 'demo-external-app', component: ExternalAppView, meta: { demo: true } },
+      { path: 'chat', name: 'demo-chat', component: MessengerView, meta: { demo: true } },
+      { path: 'embed/chat', name: 'demo-embed-chat', component: EmbeddedChatView, meta: { demo: true } },
+      { path: 'settings', name: 'demo-settings', component: MessengerView, meta: { demo: true } }
+    ]
+  },
+  {
+    path: '/admin/login',
+    name: 'admin-login',
+    component: AdminLoginView
+  },
+  {
+    path: '/admin',
+    component: AdminLayout,
+    meta: { requiresAuth: true, requiresAdmin: true },
+    children: [
+      { path: 'users', name: 'admin-users', component: AdminUsersView },
+      { path: 'agents', name: 'admin-agents', component: AdminAgentsView },
+      { path: 'system', name: 'admin-system', component: AdminSystemView }
+    ]
+  }
+];
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes
+});
+
+router.beforeEach(async (to) => {
+  const authStore = useAuthStore();
+  const forcedLogout = isForcedLogoutQuery(to.query);
+  if (forcedLogout && to.path === USER_LOGIN_PATH) {
+    const tokenAtFailure = String(authStore.token || '').trim();
+    authStore.token = '';
+    authStore.user = null;
+    if (tokenAtFailure) {
+      clearAccessTokenIfCurrent(tokenAtFailure);
+    }
+  }
+
+  const query = to.query;
+  const externalToken = resolveExternalQueryToken(query);
+  const externalUserId = resolveExternalQueryUserId(query);
+  const externalAgentName = resolveExternalQueryAgentName(query);
+  if (externalUserId) {
+    try {
+      const result = await loginWithExternalToken(externalToken, externalUserId, externalAgentName);
+      authStore.token = result.accessToken;
+      authStore.user = result.user;
+      writeSessionAccessToken(result.accessToken);
+      const targetSection = resolveExternalEmbedSection(query);
+      const nextQuery: LocationQueryRaw = { section: targetSection };
+      if (targetSection === 'agents') {
+        nextQuery.agent_id = result.agentId || '__default__';
+      } else if (result.agentId && result.agentId !== '__default__') {
+        nextQuery.agent_id = result.agentId;
+      } else {
+        nextQuery.entry = 'default';
+      }
+      return {
+        path: '/app/embed/chat',
+        query: nextQuery,
+        replace: true
+      };
+    } catch {
+      authStore.logout();
+      return { path: USER_LOGIN_PATH, replace: true };
+    }
+  }
+
+  let tokenFromQuery = resolveQueryToken(query);
+  if (!tokenFromQuery) {
+    const code = resolveQueryCode(query);
+    if (code) {
+      try {
+        tokenFromQuery = await exchangeEmbedCode(code);
+      } catch {
+        authStore.logout();
+        return { path: USER_LOGIN_PATH, replace: true };
+      }
+    }
+  }
+  if (tokenFromQuery) {
+    authStore.token = tokenFromQuery;
+    authStore.user = null;
+    writeSessionAccessToken(tokenFromQuery);
+    if (hasEmbedAuthQuery(query)) {
+      return {
+        path: to.path,
+        query: stripEmbedAuthQuery(query),
+        hash: to.hash,
+        replace: true
+      };
+    }
+  }
+
+  if (to.path.startsWith('/demo')) {
+    enableDemoMode();
+    await authStore.loadProfile();
+  } else {
+    disableDemoMode();
+  }
+
+  const token = hasAccessToken();
+
+  if ((to.path === '/login' || to.path === '/register') && token) {
+    if (forcedLogout && to.path === '/login') {
+      return true;
+    }
+    try {
+      if (!authStore.user) {
+        await authStore.loadProfile();
+      }
+      return buildDefaultAgentChatRoute();
+    } catch (error) {
+      if (isAuthRequiredError(error)) {
+        authStore.logout();
+      }
+      return true;
+    }
+  }
+
+  if (to.meta.requiresAuth && !token) {
+    return to.path.startsWith('/admin') ? '/admin/login' : USER_LOGIN_PATH;
+  }
+
+  if (to.meta.requiresAuth && token && !authStore.user) {
+    try {
+      await authStore.loadProfile();
+    } catch (error) {
+      if (isAuthRequiredError(error)) {
+        authStore.logout();
+        return to.path.startsWith('/admin') ? '/admin/login' : USER_LOGIN_PATH;
+      }
+    }
+  }
+
+  return true;
+});
+
+export default router;

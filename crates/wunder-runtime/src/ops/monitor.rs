@@ -1,0 +1,3955 @@
+// 运行监控：记录会话状态、事件与系统资源指标，支持持久化恢复与取消控制。
+use crate::config::ObservabilityConfig;
+use crate::core::llm_speed::{build_llm_speed_summary, LlmSpeedEvent};
+use crate::i18n;
+use crate::ops::sysinfo_compat::{
+    collect_host_metrics, new_disks, new_system, MonitorDisks, MonitorSystem,
+};
+use crate::services::user_leveling::experience_from_runtime_seconds;
+use crate::storage::StorageBackend;
+use chrono::{DateTime, Local, Utc};
+use parking_lot::Mutex;
+use serde::Serialize;
+use serde_json::{json, Value};
+use std::any::Any;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::fs;
+use std::panic::{self, AssertUnwindSafe};
+use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    mpsc::{self, SyncSender, TrySendError},
+    Arc,
+};
+use std::thread;
+use tracing::{error, warn};
+use uuid::Uuid;
+use walkdir::WalkDir;
+
+mod model_request_usage;
+
+const MIN_PAYLOAD_LIMIT: usize = 256;
+const DEFAULT_PERSIST_INTERVAL_S: f64 = 15.0;
+const DEFAULT_SYSTEM_SNAPSHOT_TTL_S: f64 = 1.0;
+const DEFAULT_LOG_USAGE_TTL_S: f64 = 15.0;
+const DEFAULT_WORKSPACE_USAGE_TTL_S: f64 = 10.0;
+const DEFAULT_WORKSPACE_USAGE_FULL_SCAN_INTERVAL_S: f64 = 300.0;
+const DEFAULT_WORKSPACE_USAGE_SCAN_BATCH_USERS: usize = 2;
+const MONITOR_WRITE_QUEUE_SIZE: usize = 1024;
+const MONITOR_WRITE_BATCH_SIZE: usize = 64;
+// Keep startup bounded. Cold session logs are hydrated directly from durable
+// storage when requested, so this cache limit never deletes historical logs.
+const MONITOR_HISTORY_LOAD_LIMIT: i64 = 5000;
+// Bound the in-memory per-session event queue; persistence and detail reads
+// all consume this deque, so the cap also bounds stored payload growth.
+const MONITOR_SESSION_EVENT_LIMIT: usize = 500;
+
+#[derive(Debug, Clone)]
+struct MonitorEvent {
+    event_id: i64,
+    timestamp: f64,
+    event_type: String,
+    data: Value,
+}
+
+impl MonitorEvent {
+    fn to_storage(&self) -> Value {
+        json!({
+            "event_id": self.event_id,
+            "timestamp": self.timestamp,
+            "type": self.event_type,
+            "data": self.data,
+        })
+    }
+
+    fn from_storage(payload: &Value) -> Option<Self> {
+        let event_id = payload.get("event_id").and_then(Value::as_i64).unwrap_or(0);
+        let timestamp = payload
+            .get("timestamp")
+            .and_then(Value::as_f64)
+            .unwrap_or_else(now_ts);
+        let event_type = payload
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        let data = payload
+            .get("data")
+            .cloned()
+            .unwrap_or(Value::Object(Default::default()));
+        Some(Self {
+            event_id,
+            timestamp,
+            event_type,
+            data,
+        })
+    }
+
+    fn to_dict(&self) -> Value {
+        let mut data = self.data.clone();
+        if let Value::Object(ref mut map) = data {
+            if let Some(Value::String(summary)) = map.get("summary") {
+                map.insert(
+                    "summary".to_string(),
+                    Value::String(localize_summary(summary)),
+                );
+            }
+        }
+        json!({
+            "event_id": self.event_id,
+            "timestamp": format_ts(self.timestamp),
+            "type": self.event_type,
+            "data": data,
+        })
+    }
+}
+
+enum MonitorWriteTask {
+    Upsert(Value),
+}
+
+struct MonitorWriteQueue {
+    sender: SyncSender<MonitorWriteTask>,
+    dropped: AtomicU64,
+    storage: Arc<dyn StorageBackend>,
+}
+
+impl MonitorWriteQueue {
+    fn new(storage: Arc<dyn StorageBackend>) -> Self {
+        let (sender, receiver) = mpsc::sync_channel(MONITOR_WRITE_QUEUE_SIZE);
+        let writer_storage = storage.clone();
+        if let Err(err) = thread::Builder::new()
+            .name("wunder-monitor-writer".to_string())
+            .spawn(move || {
+                while let Ok(task) = receiver.recv() {
+                    let mut batch = Vec::with_capacity(MONITOR_WRITE_BATCH_SIZE);
+                    batch.push(task);
+                    while batch.len() < MONITOR_WRITE_BATCH_SIZE {
+                        match receiver.try_recv() {
+                            Ok(task) => batch.push(task),
+                            Err(mpsc::TryRecvError::Empty) => break,
+                            Err(mpsc::TryRecvError::Disconnected) => break,
+                        }
+                    }
+                    for task in batch {
+                        if let Err(err) = Self::apply_write(&writer_storage, task) {
+                            error!("monitor storage write failed: {err}");
+                        }
+                    }
+                }
+            })
+        {
+            warn!("failed to spawn monitor writer thread: {err}");
+        }
+        Self {
+            sender,
+            dropped: AtomicU64::new(0),
+            storage,
+        }
+    }
+
+    fn enqueue(&self, task: MonitorWriteTask) {
+        match self.sender.try_send(task) {
+            Ok(()) => {}
+            Err(TrySendError::Full(task)) | Err(TrySendError::Disconnected(task)) => {
+                if let Err(err) = Self::apply_write(&self.storage, task) {
+                    let dropped = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
+                    if dropped == 1 || dropped.is_multiple_of(1000) {
+                        warn!(
+                            "monitor write queue fallback failed, dropped {dropped} records: {err}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn apply_write(
+        storage: &Arc<dyn StorageBackend>,
+        task: MonitorWriteTask,
+    ) -> anyhow::Result<()> {
+        match task {
+            MonitorWriteTask::Upsert(payload) => storage.upsert_monitor_record(&payload),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SessionRecord {
+    session_id: String,
+    user_id: String,
+    agent_id: String,
+    is_admin: bool,
+    trace_id: String,
+    question: String,
+    status: String,
+    stage: String,
+    summary: String,
+    start_time: f64,
+    updated_time: f64,
+    cancel_requested: bool,
+    cancel_source: Option<String>,
+    ended_time: Option<f64>,
+    user_rounds: i64,
+    model_round_high_water: BTreeMap<i64, i64>,
+    last_awarded_user_round: i64,
+    pending_awarded_user_round: i64,
+    context_tokens: i64,
+    context_tokens_peak: i64,
+    consumed_tokens: i64,
+    tool_calls: i64,
+    model_request_count: Option<i64>,
+    next_event_id: i64,
+    events: VecDeque<MonitorEvent>,
+    dirty: bool,
+    last_persisted: f64,
+    round_floor_verified: bool,
+}
+
+struct SessionRecordInit {
+    session_id: String,
+    user_id: String,
+    agent_id: String,
+    question: String,
+    is_admin: bool,
+    trace_id: String,
+}
+
+/// Compact, display-ready monitor state for one session. Directory views read
+/// these in batch; the type deliberately carries no event tail so a page of
+/// threads costs no large object copies.
+#[derive(Debug, Clone, Default)]
+pub struct SessionUsageSummary {
+    pub status: String,
+    pub stage: String,
+    pub activity: String,
+    pub user_rounds: i64,
+    pub context_tokens: i64,
+    pub context_tokens_peak: i64,
+    pub consumed_tokens: i64,
+    pub tool_calls: i64,
+    pub model_request_count: Option<i64>,
+}
+
+impl From<&SessionRecord> for SessionUsageSummary {
+    fn from(record: &SessionRecord) -> Self {
+        Self {
+            status: record.status.clone(),
+            stage: record.stage.clone(),
+            activity: localize_summary(&record.summary),
+            user_rounds: record.user_rounds,
+            context_tokens: record.context_tokens.max(0),
+            context_tokens_peak: record.context_tokens_peak.max(record.context_tokens).max(0),
+            consumed_tokens: record.consumed_tokens.max(0),
+            tool_calls: record.tool_calls.max(0),
+            model_request_count: record.model_request_count,
+        }
+    }
+}
+
+impl SessionRecord {
+    fn new(init: SessionRecordInit, now: f64) -> Self {
+        let SessionRecordInit {
+            session_id,
+            user_id,
+            agent_id,
+            question,
+            is_admin,
+            trace_id,
+        } = init;
+        Self {
+            session_id,
+            user_id,
+            agent_id,
+            is_admin,
+            trace_id,
+            question,
+            status: MonitorState::STATUS_RUNNING.to_string(),
+            stage: "received".to_string(),
+            summary: i18n::t("monitor.summary.received"),
+            start_time: now,
+            updated_time: now,
+            cancel_requested: false,
+            cancel_source: None,
+            ended_time: None,
+            user_rounds: 1,
+            model_round_high_water: BTreeMap::new(),
+            last_awarded_user_round: 0,
+            pending_awarded_user_round: 0,
+            context_tokens: 0,
+            context_tokens_peak: 0,
+            consumed_tokens: 0,
+            tool_calls: 0,
+            model_request_count: Some(0),
+            next_event_id: 1,
+            events: VecDeque::new(),
+            dirty: true,
+            last_persisted: 0.0,
+            round_floor_verified: true,
+        }
+    }
+
+    fn elapsed_s(&self) -> f64 {
+        let end = self.ended_time.unwrap_or_else(now_ts);
+        (end - self.start_time).max(0.0)
+    }
+
+    fn to_summary(&self) -> Value {
+        let (context_tokens, context_tokens_peak) = derive_effective_context_tokens(&self.events)
+            .unwrap_or((
+                self.context_tokens,
+                self.context_tokens_peak.max(self.context_tokens),
+            ));
+        json!({
+            "session_id": self.session_id,
+            "user_id": self.user_id,
+            "agent_id": self.agent_id,
+            "is_admin": self.is_admin,
+            "trace_id": self.trace_id,
+            "question": self.question,
+            "status": self.status,
+            "stage": self.stage,
+            "summary": localize_summary(&self.summary),
+            "start_time": format_ts(self.start_time),
+            "updated_time": format_ts(self.updated_time),
+            "elapsed_s": round2(self.elapsed_s()),
+            "cancel_requested": self.cancel_requested,
+            "cancel_source": self.cancel_source,
+            "user_rounds": self.user_rounds,
+            "context_tokens": context_tokens,
+            "context_occupancy_tokens": context_tokens,
+            "context_tokens_peak": context_tokens_peak,
+            "context_occupancy_tokens_peak": context_tokens_peak,
+            "consumed_tokens": self.consumed_tokens,
+            "tool_calls": self.tool_calls,
+            "model_request_count": self.model_request_count,
+            "quota_used": self.model_request_count,
+        })
+    }
+
+    fn to_storage(&self) -> Value {
+        json!({
+            "session_id": self.session_id,
+            "user_id": self.user_id,
+            "agent_id": self.agent_id,
+            "is_admin": self.is_admin,
+            "trace_id": self.trace_id,
+            "question": self.question,
+            "status": self.status,
+            "stage": self.stage,
+            "summary": self.summary,
+            "start_time": self.start_time,
+            "updated_time": self.updated_time,
+            "ended_time": self.ended_time,
+            "cancel_requested": self.cancel_requested,
+            "cancel_source": self.cancel_source,
+            "user_rounds": self.user_rounds,
+            "rounds": self.user_rounds,
+            "model_round_high_water": self.model_round_high_water,
+            "last_awarded_user_round": self.last_awarded_user_round,
+            "context_tokens": self.context_tokens,
+            "context_tokens_peak": self.context_tokens_peak,
+            "consumed_tokens": self.consumed_tokens,
+            "tool_calls": self.tool_calls,
+            "model_request_count": self.model_request_count,
+            "quota_used": self.model_request_count,
+            "next_event_id": self.next_event_id,
+            "events": self
+                .events
+                .iter()
+                .map(|event| event.to_storage())
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    fn from_storage(payload: &Value) -> Option<Self> {
+        let session_id = payload
+            .get("session_id")
+            .and_then(Value::as_str)?
+            .to_string();
+        let user_id = payload
+            .get("user_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let agent_id = payload
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let is_admin = payload
+            .get("is_admin")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let trace_id = payload
+            .get("trace_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(build_monitor_trace_id);
+        let question = payload
+            .get("question")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let status = payload
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("finished")
+            .to_string();
+        let stage = payload
+            .get("stage")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let summary = payload
+            .get("summary")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let start_time = payload
+            .get("start_time")
+            .and_then(Value::as_f64)
+            .unwrap_or_else(now_ts);
+        let updated_time = payload
+            .get("updated_time")
+            .and_then(Value::as_f64)
+            .unwrap_or_else(now_ts);
+        let ended_time = payload.get("ended_time").and_then(Value::as_f64);
+        let cancel_requested = payload
+            .get("cancel_requested")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let cancel_source = payload
+            .get("cancel_source")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let user_rounds = payload
+            .get("user_rounds")
+            .or_else(|| payload.get("rounds"))
+            .and_then(Value::as_i64)
+            .unwrap_or(1);
+        let last_awarded_user_round = payload
+            .get("last_awarded_user_round")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let context_tokens = payload
+            .get("context_tokens")
+            .or_else(|| payload.get("token_usage"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let context_tokens_peak = payload
+            .get("context_tokens_peak")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let consumed_tokens = payload
+            .get("consumed_tokens")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let mut events = VecDeque::new();
+        if let Some(Value::Array(items)) = payload.get("events") {
+            for item in items {
+                if let Some(event) = MonitorEvent::from_storage(item) {
+                    events.push_back(event);
+                }
+            }
+        }
+        let mut model_round_high_water: BTreeMap<i64, i64> = payload
+            .get("model_round_high_water")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default();
+        for event in &events {
+            update_model_round_high_water(&mut model_round_high_water, &event.data);
+        }
+        while model_round_high_water.len() > 64 {
+            model_round_high_water.pop_first();
+        }
+        // Legacy records may exceed the cap; keep only the newest events.
+        while events.len() > MONITOR_SESSION_EVENT_LIMIT {
+            events.pop_front();
+        }
+        let mut cursor = 1_i64;
+        for event in &mut events {
+            if event.event_id <= 0 {
+                event.event_id = cursor;
+            }
+            cursor = event.event_id.saturating_add(1);
+        }
+        // Backfill consumed_tokens from events for sessions persisted before the field existed
+        let consumed_tokens = if consumed_tokens > 0 {
+            consumed_tokens
+        } else {
+            let mut total = 0_i64;
+            for event in &events {
+                if event.event_type == "model_usage"
+                    || (event.event_type == "round_usage"
+                        && event.data.get("usage_accounted").and_then(Value::as_bool) != Some(true))
+                {
+                    let tokens = if event.event_type == "model_usage" {
+                        parse_usage_billing_tokens(&event.data["usage"])
+                    } else {
+                        parse_usage_billing_tokens(&event.data)
+                    };
+                    if tokens > 0 {
+                        total = total.saturating_add(tokens);
+                    }
+                }
+            }
+            total
+        };
+        let derived_tool_calls = events
+            .iter()
+            .filter(|event| event.event_type == "tool_call")
+            .count() as i64;
+        // Only explicit request totals can recover this projection; old generic
+        // quota fields may have represented Token counts and are not inferred.
+        let model_request_count = payload
+            .get("model_request_count")
+            .or_else(|| payload.get("quota_used"))
+            .and_then(Value::as_i64)
+            .into_iter()
+            .chain(
+                events
+                    .iter()
+                    .filter(|event| {
+                        event.event_type == "quota_usage"
+                            || event.event_type == "model_request_usage"
+                    })
+                    .filter_map(|event| {
+                        event
+                            .data
+                            .get("session_request_count")
+                            .or_else(|| event.data.get("session_quota_used"))
+                            .and_then(Value::as_i64)
+                    }),
+            )
+            .filter(|value| *value >= 0)
+            .max();
+        let tool_calls = payload
+            .get("tool_calls")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            .max(derived_tool_calls)
+            .max(0);
+        let next_event_id = payload
+            .get("next_event_id")
+            .and_then(Value::as_i64)
+            .unwrap_or(1)
+            .max(cursor)
+            .max(1);
+        Some(Self {
+            session_id,
+            user_id,
+            agent_id,
+            is_admin,
+            trace_id,
+            question,
+            status,
+            stage,
+            summary,
+            start_time,
+            updated_time,
+            cancel_requested,
+            cancel_source,
+            ended_time,
+            user_rounds,
+            model_round_high_water,
+            last_awarded_user_round,
+            pending_awarded_user_round: 0,
+            context_tokens,
+            context_tokens_peak: context_tokens_peak.max(context_tokens),
+            consumed_tokens,
+            tool_calls,
+            model_request_count,
+            next_event_id,
+            events,
+            dirty: false,
+            last_persisted: updated_time,
+            round_floor_verified: false,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PendingExperienceAward {
+    session_id: String,
+    user_id: String,
+    user_round: i64,
+    delta: i64,
+    updated_time: f64,
+}
+
+fn derive_effective_context_tokens(events: &VecDeque<MonitorEvent>) -> Option<(i64, i64)> {
+    let mut latest: Option<i64> = None;
+    let mut peak = 0_i64;
+    for event in events {
+        if event.event_type == "context_usage" || event.event_type == "round_usage" {
+            let context_tokens = parse_context_occupancy_tokens(&event.data);
+            if !has_context_occupancy(&event.data) {
+                continue;
+            }
+            latest = Some(context_tokens);
+            if context_tokens > peak {
+                peak = context_tokens;
+            }
+        }
+    }
+    latest.map(|tokens| (tokens, peak.max(tokens)))
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SystemSnapshot {
+    pub cpu_percent: f32,
+    pub memory_total: u64,
+    pub memory_used: u64,
+    pub memory_available: u64,
+    pub process_rss: u64,
+    pub process_cpu_percent: f32,
+    pub load_avg_1: f64,
+    pub load_avg_5: f64,
+    pub load_avg_15: f64,
+    pub disk_total: u64,
+    pub disk_used: u64,
+    pub disk_free: u64,
+    pub disk_percent: f32,
+    pub log_used: u64,
+    pub workspace_used: u64,
+    pub uptime_s: u64,
+}
+
+impl Default for SystemSnapshot {
+    fn default() -> Self {
+        Self {
+            cpu_percent: 0.0,
+            memory_total: 0,
+            memory_used: 0,
+            memory_available: 0,
+            process_rss: 0,
+            process_cpu_percent: 0.0,
+            load_avg_1: 0.0,
+            load_avg_5: 0.0,
+            load_avg_15: 0.0,
+            disk_total: 0,
+            disk_used: 0,
+            disk_free: 0,
+            disk_percent: 0.0,
+            log_used: 0,
+            workspace_used: 0,
+            uptime_s: 0,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct UsageCache {
+    value: u64,
+    updated_ts: f64,
+}
+
+#[derive(Debug, Default)]
+struct WorkspaceUsageScanState {
+    per_user: HashMap<String, u64>,
+    user_order: Vec<String>,
+    cursor: usize,
+    initialized: bool,
+    last_full_scan_ts: f64,
+}
+
+pub struct MonitorState {
+    pub(crate) mailboxes: Arc<crate::services::runtime::thread::mailbox::Mailboxes>,
+    pub(crate) run_signals: crate::services::runtime::thread::signals::RunSignals,
+    child_runs: Arc<crate::services::runtime::thread::child_runs::ChildRuns>,
+    sessions: Mutex<HashMap<String, SessionRecord>>,
+    forced_cancelled: Mutex<HashSet<String>>,
+    storage: Arc<dyn StorageBackend>,
+    write_queue: MonitorWriteQueue,
+    system: Mutex<MonitorSystem>,
+    disks: Mutex<MonitorDisks>,
+    system_snapshot_cache: Mutex<Option<(SystemSnapshot, f64)>>,
+    system_snapshot_ttl_s: f64,
+    // Host and mount refreshes can block in container runtimes.  Keep exactly
+    // one refresh off the request path and let callers read the last sample.
+    system_snapshot_refreshing: AtomicBool,
+    workspace_root: PathBuf,
+    log_usage_cache: Mutex<UsageCache>,
+    workspace_usage_cache: Mutex<UsageCache>,
+    workspace_usage_scan_state: Mutex<WorkspaceUsageScanState>,
+    log_usage_ttl_s: f64,
+    workspace_usage_ttl_s: f64,
+    workspace_usage_full_scan_interval_s: f64,
+    workspace_usage_scan_batch_users: usize,
+    payload_limit: Option<usize>,
+    persist_interval_s: f64,
+    history_dir: PathBuf,
+    history_ready: AtomicBool,
+    history_loading: AtomicBool,
+    history_lock: Mutex<()>,
+    app_start_ts: Mutex<f64>,
+}
+
+impl MonitorState {
+    pub const STATUS_RUNNING: &'static str = "running";
+    pub const STATUS_WAITING: &'static str = "waiting";
+    pub const STATUS_QUEUED: &'static str = "queued";
+    pub const STATUS_FINISHED: &'static str = "finished";
+    pub const STATUS_ERROR: &'static str = "error";
+    pub const STATUS_CANCELLED: &'static str = "cancelled";
+    pub const STATUS_CANCELLING: &'static str = "cancelling";
+
+    pub fn new(
+        storage: Arc<dyn StorageBackend>,
+        observability: ObservabilityConfig,
+        workspace_root: String,
+    ) -> Self {
+        let system = new_system();
+        let disks = new_disks();
+        let payload_limit = resolve_payload_limit(observability.monitor_payload_max_chars);
+        let persist_interval_s = DEFAULT_PERSIST_INTERVAL_S;
+        let history_dir = PathBuf::from("config/data/historys/monitor");
+        let workspace_root = PathBuf::from(workspace_root);
+        if let Err(err) = storage.ensure_initialized() {
+            warn!("monitor storage initialization failed: {err}");
+        }
+        let write_queue = MonitorWriteQueue::new(storage.clone());
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+            child_runs: Arc::default(),
+            mailboxes: Arc::default(),
+            run_signals: Default::default(),
+            forced_cancelled: Mutex::new(HashSet::new()),
+            storage,
+            write_queue,
+            system: Mutex::new(system),
+            disks: Mutex::new(disks),
+            system_snapshot_cache: Mutex::new(None),
+            system_snapshot_ttl_s: DEFAULT_SYSTEM_SNAPSHOT_TTL_S,
+            system_snapshot_refreshing: AtomicBool::new(false),
+            workspace_root,
+            log_usage_cache: Mutex::new(UsageCache::default()),
+            workspace_usage_cache: Mutex::new(UsageCache::default()),
+            workspace_usage_scan_state: Mutex::new(WorkspaceUsageScanState::default()),
+            log_usage_ttl_s: DEFAULT_LOG_USAGE_TTL_S,
+            workspace_usage_ttl_s: DEFAULT_WORKSPACE_USAGE_TTL_S,
+            workspace_usage_full_scan_interval_s: DEFAULT_WORKSPACE_USAGE_FULL_SCAN_INTERVAL_S,
+            workspace_usage_scan_batch_users: DEFAULT_WORKSPACE_USAGE_SCAN_BATCH_USERS,
+            payload_limit,
+            persist_interval_s,
+            history_dir,
+            history_ready: AtomicBool::new(false),
+            history_loading: AtomicBool::new(false),
+            history_lock: Mutex::new(()),
+            app_start_ts: Mutex::new(now_ts()),
+        }
+    }
+
+    pub fn warm_history(self: &Arc<Self>, background: bool) -> bool {
+        self.run_guarded(
+            "monitor.warm_history",
+            || false,
+            || {
+                if self.history_ready.load(Ordering::SeqCst) {
+                    return true;
+                }
+                let _guard = self.history_lock.lock();
+                if self.history_ready.load(Ordering::SeqCst) {
+                    return true;
+                }
+                if self.history_loading.swap(true, Ordering::SeqCst) {
+                    return false;
+                }
+                let this = Arc::clone(self);
+                if background {
+                    thread::spawn(move || {
+                        this.run_guarded(
+                            "monitor.load_history_background",
+                            || (),
+                            || {
+                                this.load_history();
+                            },
+                        );
+                        this.history_loading.store(false, Ordering::SeqCst);
+                        this.history_ready.store(true, Ordering::SeqCst);
+                    });
+                    return false;
+                }
+                this.run_guarded(
+                    "monitor.load_history",
+                    || (),
+                    || {
+                        this.load_history();
+                    },
+                );
+                this.history_loading.store(false, Ordering::SeqCst);
+                this.history_ready.store(true, Ordering::SeqCst);
+                true
+            },
+        )
+    }
+
+    pub fn register(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        agent_id: &str,
+        question: &str,
+        is_admin: bool,
+    ) -> i64 {
+        self.run_guarded(
+            "monitor.register",
+            || 1,
+            || {
+                let now = now_ts();
+                let cleaned_session_id = session_id.trim().to_string();
+                if cleaned_session_id.is_empty() {
+                    return 1;
+                }
+                let needs_hydration = {
+                    let sessions = self.sessions.lock();
+                    !sessions.contains_key(cleaned_session_id.as_str())
+                };
+                let needs_round_floor_verification = if needs_hydration {
+                    false
+                } else {
+                    let sessions = self.sessions.lock();
+                    sessions
+                        .get(cleaned_session_id.as_str())
+                        .map(|record| !record.round_floor_verified)
+                        .unwrap_or(false)
+                };
+                let hydrated_record = if needs_hydration {
+                    self.hydrate_session_record_for_register(cleaned_session_id.as_str())
+                } else {
+                    None
+                };
+                let persisted_round_floor = if needs_hydration {
+                    hydrated_record
+                        .as_ref()
+                        .map(|record| record.user_rounds)
+                        .unwrap_or_else(|| {
+                            self.persisted_user_round_floor(cleaned_session_id.as_str())
+                        })
+                } else if needs_round_floor_verification {
+                    self.persisted_user_round_floor(cleaned_session_id.as_str())
+                } else {
+                    0
+                };
+                let mut sessions = self.sessions.lock();
+                if let Some(hydrated) = hydrated_record {
+                    sessions
+                        .entry(cleaned_session_id.clone())
+                        .or_insert(hydrated);
+                }
+                let (to_persist, user_round) = self.register_locked(
+                    &mut sessions,
+                    cleaned_session_id.as_str(),
+                    user_id,
+                    agent_id,
+                    question,
+                    is_admin,
+                    now,
+                    false,
+                    persisted_round_floor,
+                    true,
+                );
+                drop(sessions);
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
+                }
+                user_round
+            },
+        )
+    }
+
+    pub fn register_queued(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        agent_id: &str,
+        question: &str,
+        is_admin: bool,
+        queue_payload: &Value,
+    ) -> i64 {
+        self.run_guarded(
+            "monitor.register_queued",
+            || 1,
+            || {
+                let now = now_ts();
+                let cleaned_session_id = session_id.trim().to_string();
+                if cleaned_session_id.is_empty() {
+                    return 1;
+                }
+                let needs_hydration = {
+                    let sessions = self.sessions.lock();
+                    !sessions.contains_key(cleaned_session_id.as_str())
+                };
+                let hydrated_record = if needs_hydration {
+                    self.hydrate_session_record_for_register(cleaned_session_id.as_str())
+                } else {
+                    None
+                };
+                let persisted_round_floor = if needs_hydration {
+                    hydrated_record
+                        .as_ref()
+                        .map(|record| record.user_rounds)
+                        .unwrap_or_else(|| {
+                            self.persisted_user_round_floor(cleaned_session_id.as_str())
+                        })
+                } else {
+                    0
+                };
+                let (to_persist, user_round) = {
+                    let mut sessions = self.sessions.lock();
+                    if let Some(hydrated) = hydrated_record {
+                        sessions
+                            .entry(cleaned_session_id.clone())
+                            .or_insert(hydrated);
+                    }
+                    let (registered, user_round) = self.register_locked(
+                        &mut sessions,
+                        cleaned_session_id.as_str(),
+                        user_id,
+                        agent_id,
+                        question,
+                        is_admin,
+                        now,
+                        false,
+                        persisted_round_floor,
+                        false,
+                    );
+                    if let Some(record) = sessions.get_mut(cleaned_session_id.as_str()) {
+                        record.status = Self::STATUS_QUEUED.to_string();
+                        record.stage = "queued".to_string();
+                        record.summary = i18n::t("monitor.summary.queued");
+                        record.updated_time = now;
+                        record.ended_time = None;
+                        self.append_event(record, "queue_enter", queue_payload, now);
+                        record.dirty = true;
+                        let queued = self.maybe_persist_record(record, now, true);
+                        (queued.or(registered), user_round)
+                    } else {
+                        (registered, user_round)
+                    }
+                };
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
+                }
+                user_round
+            },
+        )
+    }
+
+    /// Register an internal continuation on an already visible user round.
+    /// Goal wake-ups are execution continuations, not new user messages; they
+    /// must retain the command's round identity so workflow events stay in the
+    /// same bubble and cancellation can settle that bubble.
+    pub fn register_continuation(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        agent_id: &str,
+        question: &str,
+        is_admin: bool,
+        user_round: i64,
+    ) -> i64 {
+        self.run_guarded(
+            "monitor.register_continuation",
+            || user_round.max(1),
+            || {
+                let cleaned = session_id.trim().to_string();
+                let requested_round = user_round.max(1);
+                if cleaned.is_empty() {
+                    return requested_round;
+                }
+                let hydrated = {
+                    let sessions = self.sessions.lock();
+                    !sessions.contains_key(cleaned.as_str())
+                };
+                let hydrated_record = if hydrated {
+                    self.hydrate_session_record_for_register(cleaned.as_str())
+                } else {
+                    None
+                };
+                let persisted_floor = hydrated_record
+                    .as_ref()
+                    .map(|record| record.user_rounds)
+                    .unwrap_or(0);
+                let mut sessions = self.sessions.lock();
+                if let Some(record) = hydrated_record {
+                    sessions.entry(cleaned.clone()).or_insert(record);
+                }
+                let record = sessions.entry(cleaned.clone()).or_insert_with(|| {
+                    SessionRecord::new(
+                        SessionRecordInit {
+                            session_id: cleaned.clone(),
+                            user_id: user_id.to_string(),
+                            agent_id: agent_id.to_string(),
+                            question: question.to_string(),
+                            is_admin,
+                            trace_id: build_monitor_trace_id(),
+                        },
+                        now_ts(),
+                    )
+                });
+                record.user_rounds = record.user_rounds.max(persisted_floor).max(requested_round);
+                record.question = question.to_string();
+                record.is_admin = is_admin;
+                if !agent_id.trim().is_empty() {
+                    record.agent_id = agent_id.trim().to_string();
+                }
+                record.status = Self::STATUS_RUNNING.to_string();
+                record.stage = "running".to_string();
+                record.summary = i18n::t("monitor.summary.received");
+                record.updated_time = now_ts();
+                record.ended_time = None;
+                record.cancel_requested = false;
+                record.cancel_source = None;
+                record.context_tokens = 0;
+                let round = requested_round;
+                self.append_event(
+                    record,
+                    "round_resume",
+                    &json!({
+                        "user_round": round,
+                        "question": question,
+                        "hidden_internal_user": true,
+                    }),
+                    now_ts(),
+                );
+                record.dirty = true;
+                let to_persist = self.maybe_persist_record(record, now_ts(), false);
+                drop(sessions);
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
+                }
+                round
+            },
+        )
+    }
+
+    pub fn record_event(&self, session_id: &str, event_type: &str, data: &Value) {
+        self.run_guarded(
+            "monitor.record_event",
+            || (),
+            || {
+                let now = now_ts();
+                let (to_persist, pending_award) = {
+                    let mut sessions = self.sessions.lock();
+                    let Some(record) = sessions.get_mut(session_id) else {
+                        return;
+                    };
+                    let mut pending_award = None;
+                    record.updated_time = now;
+                    if event_type == "quota_usage" || event_type == "model_request_usage" {
+                        if let Some(total) = data
+                            .get("session_request_count")
+                            .or_else(|| data.get("session_quota_used"))
+                            .and_then(Value::as_i64)
+                            .filter(|value| *value >= 0)
+                        {
+                            record.model_request_count =
+                                Some(record.model_request_count.unwrap_or(0).max(total));
+                        }
+                    }
+                    if event_type == "context_usage" && has_context_occupancy(data) {
+                        if let Some(total) = parse_i64_value(
+                            data.get("context_occupancy_tokens")
+                                .or_else(|| data.get("context_tokens"))
+                                .or_else(|| data.get("persisted_context_tokens")),
+                        ) {
+                            record.context_tokens = total;
+                            if total > record.context_tokens_peak {
+                                record.context_tokens_peak = total;
+                            }
+                        }
+                    }
+                    if event_type == "progress" {
+                        if let Some(stage) = data.get("stage").and_then(Value::as_str) {
+                            record.stage = stage.to_string();
+                        }
+                        if let Some(summary) = data.get("summary").and_then(Value::as_str) {
+                            record.summary = summary.to_string();
+                        }
+                    } else if event_type == "tool_call" {
+                        record.tool_calls = record.tool_calls.saturating_add(1);
+                        record.stage = "tool_call".to_string();
+                        let tool = data.get("tool").and_then(Value::as_str).unwrap_or("");
+                        let summary_key = if data.get("repair").is_some() {
+                            "monitor.summary.tool_call_repaired"
+                        } else {
+                            "monitor.summary.tool_call"
+                        };
+                        record.summary = i18n::t_with_params(
+                            summary_key,
+                            &HashMap::from([("tool".to_string(), tool.to_string())]),
+                        );
+                    } else if event_type == "plan_update" {
+                        record.stage = "plan_update".to_string();
+                        record.summary = i18n::t("monitor.summary.plan_update");
+                    } else if event_type == "question_panel" {
+                        record.stage = "question_panel".to_string();
+                        record.summary = i18n::t("monitor.summary.question_panel");
+                    } else if event_type == "approval_request" {
+                        record.stage = "approval_pending".to_string();
+                        record.summary = data
+                            .get("summary")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| i18n::t("monitor.summary.question_panel"));
+                    } else if event_type == "approval_result" {
+                        record.stage = "approval_result".to_string();
+                        record.summary = data
+                            .get("summary")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| i18n::t("monitor.summary.model_call"));
+                    } else if event_type == "llm_request" {
+                        record.stage = "llm_request".to_string();
+                        record.summary = if data.get("repair").is_some() {
+                            i18n::t("monitor.summary.model_call_repaired_history")
+                        } else {
+                            i18n::t("monitor.summary.model_call")
+                        };
+                    } else if event_type == "final" {
+                        record.stage = "final".to_string();
+                        record.summary = i18n::t("monitor.summary.finished");
+                    } else if event_type == "error" {
+                        record.stage = "error".to_string();
+                        record.summary = data
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                            .unwrap_or_else(|| i18n::t("monitor.summary.exception"));
+                    }
+                    if event_type == "turn_terminal" {
+                        pending_award = self.prepare_user_experience_settlement(record, data, now);
+                    }
+                    self.append_event(record, event_type, data, now);
+                    record.dirty = true;
+                    (self.maybe_persist_record(record, now, false), pending_award)
+                };
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
+                }
+                if let Some(award) = pending_award {
+                    self.finalize_user_experience_settlement(award);
+                }
+            },
+        );
+    }
+
+    fn prepare_user_experience_settlement(
+        &self,
+        record: &mut SessionRecord,
+        data: &Value,
+        now: f64,
+    ) -> Option<PendingExperienceAward> {
+        let status = data
+            .get("status")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if matches!(status.as_str(), "" | "rejected") {
+            return None;
+        }
+
+        let user_round = data
+            .get("user_round")
+            .or_else(|| data.get("userRound"))
+            .and_then(Value::as_i64)
+            .unwrap_or(record.user_rounds);
+        if user_round <= 0
+            || user_round <= record.last_awarded_user_round
+            || user_round == record.pending_awarded_user_round
+        {
+            return None;
+        }
+
+        let delta = experience_from_runtime_seconds((now - record.start_time).max(0.0));
+        if delta <= 0 {
+            record.last_awarded_user_round = user_round;
+            record.pending_awarded_user_round = 0;
+            return None;
+        }
+        if record.user_id.trim().is_empty() {
+            record.last_awarded_user_round = user_round;
+            record.pending_awarded_user_round = 0;
+            return None;
+        }
+
+        // Award once per completed user round so concurrent agent completions do not double count.
+        record.pending_awarded_user_round = user_round;
+        Some(PendingExperienceAward {
+            session_id: record.session_id.clone(),
+            user_id: record.user_id.clone(),
+            user_round,
+            delta,
+            updated_time: now,
+        })
+    }
+
+    fn finalize_user_experience_settlement(&self, award: PendingExperienceAward) {
+        match self
+            .storage
+            .add_user_experience(&award.user_id, award.delta, award.updated_time)
+        {
+            Ok(_settlement) => {
+                let to_persist = {
+                    let mut sessions = self.sessions.lock();
+                    let Some(record) = sessions.get_mut(&award.session_id) else {
+                        return;
+                    };
+                    if record.pending_awarded_user_round != award.user_round {
+                        return;
+                    }
+                    record.updated_time = record.updated_time.max(award.updated_time);
+                    record.pending_awarded_user_round = 0;
+                    record.last_awarded_user_round = award.user_round;
+                    record.dirty = true;
+                    self.maybe_persist_record(record, award.updated_time, true)
+                };
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
+                }
+            }
+            Err(err) => {
+                let to_persist = {
+                    let mut sessions = self.sessions.lock();
+                    let Some(record) = sessions.get_mut(&award.session_id) else {
+                        warn!(
+                            "settle user experience failed after session disappeared: session_id={}, user_id={}, round={}, delta={}, error={err}",
+                            award.session_id, award.user_id, award.user_round, award.delta
+                        );
+                        return;
+                    };
+                    if record.pending_awarded_user_round == award.user_round {
+                        record.updated_time = record.updated_time.max(award.updated_time);
+                        record.pending_awarded_user_round = 0;
+                        record.dirty = true;
+                    }
+                    self.maybe_persist_record(record, award.updated_time, true)
+                };
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
+                }
+                warn!(
+                    "settle user experience failed: session_id={}, user_id={}, round={}, delta={}, error={err}",
+                    award.session_id, award.user_id, award.user_round, award.delta
+                );
+            }
+        }
+    }
+
+    pub fn mark_finished(&self, session_id: &str) {
+        self.mark_status(session_id, Self::STATUS_FINISHED, None);
+    }
+
+    pub fn mark_question_panel(&self, session_id: &str) {
+        self.mark_status(
+            session_id,
+            Self::STATUS_WAITING,
+            Some(&i18n::t("monitor.summary.question_panel")),
+        );
+    }
+
+    pub fn mark_approval_pending(&self, session_id: &str, summary: Option<&str>) {
+        self.mark_status(session_id, Self::STATUS_WAITING, summary);
+    }
+
+    pub fn mark_queued(&self, session_id: &str, summary: Option<&str>) {
+        self.mark_status(session_id, Self::STATUS_QUEUED, summary);
+    }
+
+    pub fn mark_running(&self, session_id: &str, summary: Option<&str>) {
+        self.mark_status(session_id, Self::STATUS_RUNNING, summary);
+    }
+
+    pub fn mark_error(&self, session_id: &str, message: &str) {
+        self.mark_status(session_id, Self::STATUS_ERROR, Some(message));
+    }
+
+    pub fn mark_cancelled(&self, session_id: &str) {
+        self.mark_cancelled_with_source(session_id, "runtime_cancel");
+    }
+
+    pub fn mark_cancelled_with_source(&self, session_id: &str, source: &str) {
+        let normalized_source = source.trim();
+        self.run_guarded(
+            "monitor.mark_cancelled_with_source",
+            || (),
+            || {
+                let now = now_ts();
+                let to_persist = {
+                    let mut sessions = self.sessions.lock();
+                    let Some(record) = sessions.get_mut(session_id) else {
+                        return;
+                    };
+                    if record.cancel_source.is_none() && !normalized_source.is_empty() {
+                        record.cancel_source = Some(normalized_source.to_string());
+                    }
+                    let cancel_source = record.cancel_source.clone();
+                    record.cancel_requested = true;
+                    record.status = Self::STATUS_CANCELLED.to_string();
+                    record.stage = "cancelled".to_string();
+                    record.summary = i18n::t("monitor.summary.cancelled");
+                    record.updated_time = now;
+                    record.ended_time = Some(now);
+                    let summary = record.summary.clone();
+                    self.append_event(
+                        record,
+                        Self::STATUS_CANCELLED,
+                        &json!({
+                            "summary": summary,
+                            "cancel_source": cancel_source,
+                        }),
+                        now,
+                    );
+                    record.dirty = true;
+                    self.maybe_persist_record(record, now, true)
+                };
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
+                }
+            },
+        );
+    }
+
+    pub fn cancel_with_source(&self, session_id: &str, source: &str) -> bool {
+        self.run_guarded(
+            "monitor.cancel",
+            || false,
+            || {
+                let to_persist = {
+                    let mut sessions = self.sessions.lock();
+                    // Serialize cancellation with child admission, even before monitor registration.
+                    let children_cancelled = self.child_runs.cancel_tree(session_id) > 0;
+                    self.run_signals.notify(session_id);
+                    let Some(record) = sessions.get_mut(session_id) else {
+                        return children_cancelled;
+                    };
+                    if record.status != Self::STATUS_RUNNING
+                        && record.status != Self::STATUS_CANCELLING
+                        && record.status != Self::STATUS_QUEUED
+                        && record.status != Self::STATUS_WAITING
+                    {
+                        return children_cancelled;
+                    }
+                    let normalized_source = source.trim();
+                    record.cancel_requested = true;
+                    record.cancel_source = if normalized_source.is_empty() {
+                        None
+                    } else {
+                        Some(normalized_source.to_string())
+                    };
+                    record.status = Self::STATUS_CANCELLING.to_string();
+                    record.updated_time = now_ts();
+                    let updated_time = record.updated_time;
+                    let cancel_source = record.cancel_source.clone();
+                    self.append_event(
+                        record,
+                        "cancel",
+                        &json!({
+                            "summary": i18n::t("monitor.summary.cancel_requested"),
+                            "cancel_source": cancel_source,
+                        }),
+                        updated_time,
+                    );
+                    record.dirty = true;
+                    self.maybe_persist_record(record, updated_time, true)
+                };
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
+                }
+                true
+            },
+        )
+    }
+
+    pub(crate) fn register_child_run(
+        &self,
+        session_id: &str,
+        parent: &str,
+    ) -> anyhow::Result<crate::services::runtime::thread::child_runs::ChildRunGuard> {
+        // Keep durable ancestry when a sibling dispatches work or ancestors are unloaded.
+        // Database reads stay outside the monitor lock.
+        let parent_user = self
+            .sessions
+            .lock()
+            .get(parent)
+            .map(|record| record.user_id.clone());
+        let durable_ancestors = if let Some(user) = parent_user.as_deref() {
+            if self.storage.get_chat_session(user, session_id)?.is_some() {
+                crate::services::subagents::tree::ancestors(
+                    self.storage.as_ref(),
+                    user,
+                    session_id,
+                )?
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+        let sessions = self.sessions.lock();
+        if sessions
+            .get(parent)
+            .is_some_and(|record| record.cancel_requested)
+        {
+            anyhow::bail!("parent run was interrupted");
+        }
+        self.child_runs
+            .register_with_ancestors(session_id, parent, &durable_ancestors)
+    }
+
+    pub fn cancel(&self, session_id: &str) -> bool {
+        self.cancel_with_source(session_id, "monitor_cancel")
+    }
+
+    pub(crate) fn child_run_token(
+        &self,
+        session_id: &str,
+    ) -> Option<tokio_util::sync::CancellationToken> {
+        self.child_runs.token(session_id)
+    }
+
+    pub fn delete_session(&self, session_id: &str) -> bool {
+        self.run_guarded(
+            "monitor.delete_session",
+            || false,
+            || {
+                let mut sessions = self.sessions.lock();
+                if let Some(record) = sessions.get(session_id) {
+                    if record.status == Self::STATUS_RUNNING
+                        || record.status == Self::STATUS_CANCELLING
+                        || record.status == Self::STATUS_QUEUED
+                        || record.status == Self::STATUS_WAITING
+                    {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+                sessions.remove(session_id);
+                let _ = self.storage.delete_monitor_record(session_id);
+                true
+            },
+        )
+    }
+
+    pub fn purge_session(&self, session_id: &str) -> bool {
+        self.run_guarded(
+            "monitor.purge_session",
+            || false,
+            || {
+                let cleaned = session_id.trim();
+                if cleaned.is_empty() {
+                    return false;
+                }
+                let mut force_cancel = false;
+                {
+                    let sessions = self.sessions.lock();
+                    if let Some(record) = sessions.get(cleaned) {
+                        if record.status == Self::STATUS_RUNNING
+                            || record.status == Self::STATUS_CANCELLING
+                            || record.status == Self::STATUS_QUEUED
+                            || record.status == Self::STATUS_WAITING
+                        {
+                            force_cancel = true;
+                        }
+                    }
+                }
+                if !force_cancel {
+                    if let Ok(Some(record)) = self.storage.get_monitor_record(cleaned) {
+                        let status = record.get("status").and_then(Value::as_str).unwrap_or("");
+                        if status == Self::STATUS_RUNNING
+                            || status == Self::STATUS_CANCELLING
+                            || status == Self::STATUS_QUEUED
+                            || status == Self::STATUS_WAITING
+                        {
+                            force_cancel = true;
+                        }
+                    }
+                }
+                let mut sessions = self.sessions.lock();
+                let existed = sessions.remove(cleaned).is_some();
+                drop(sessions);
+                if force_cancel {
+                    let mut forced = self.forced_cancelled.lock();
+                    forced.insert(cleaned.to_string());
+                }
+                let deleted = self.storage.delete_monitor_record(cleaned).is_ok();
+                existed || deleted
+            },
+        )
+    }
+
+    /// Remove only the in-process projection. Durable monitor history is kept
+    /// until an administrator explicitly deletes it.
+    pub fn forget_session(&self, session_id: &str) -> bool {
+        self.run_guarded(
+            "monitor.forget_session",
+            || false,
+            || {
+                let cleaned = session_id.trim();
+                if cleaned.is_empty() {
+                    return false;
+                }
+                self.sessions.lock().remove(cleaned).is_some()
+            },
+        )
+    }
+
+    pub fn purge_user_sessions(&self, user_id: &str) -> HashMap<String, i64> {
+        self.run_guarded(
+            "monitor.purge_user_sessions",
+            || {
+                HashMap::from([
+                    ("cancelled".to_string(), 0),
+                    ("deleted".to_string(), 0),
+                    ("deleted_storage".to_string(), 0),
+                ])
+            },
+            || {
+                let cleaned = user_id.trim();
+                if cleaned.is_empty() {
+                    return HashMap::from([
+                        ("cancelled".to_string(), 0),
+                        ("deleted".to_string(), 0),
+                        ("deleted_storage".to_string(), 0),
+                    ]);
+                }
+                let mut cancelled = 0;
+                let mut session_ids = Vec::new();
+                let mut forced = Vec::new();
+                let mut sessions = self.sessions.lock();
+                for (session_id, record) in sessions.iter_mut() {
+                    if record.user_id != cleaned {
+                        continue;
+                    }
+                    session_ids.push(session_id.clone());
+                    if record.status == Self::STATUS_RUNNING
+                        || record.status == Self::STATUS_CANCELLING
+                    {
+                        record.cancel_requested = true;
+                        record.status = Self::STATUS_CANCELLING.to_string();
+                        record.updated_time = now_ts();
+                        let updated_time = record.updated_time;
+                        self.append_event(
+                            record,
+                            "cancel",
+                            &json!({ "summary": i18n::t("monitor.summary.user_deleted_cancel") }),
+                            updated_time,
+                        );
+                        cancelled += 1;
+                        forced.push(session_id.clone());
+                    }
+                }
+                for session_id in &session_ids {
+                    sessions.remove(session_id);
+                }
+                drop(sessions);
+                if !forced.is_empty() {
+                    let mut forced_guard = self.forced_cancelled.lock();
+                    for session_id in forced {
+                        forced_guard.insert(session_id);
+                    }
+                }
+                let deleted_storage = self
+                    .storage
+                    .delete_monitor_records_by_user(cleaned)
+                    .unwrap_or(0);
+                HashMap::from([
+                    ("cancelled".to_string(), cancelled),
+                    ("deleted".to_string(), session_ids.len() as i64),
+                    ("deleted_storage".to_string(), deleted_storage),
+                ])
+            },
+        )
+    }
+
+    pub fn is_cancelled(&self, session_id: &str) -> bool {
+        if self.child_runs.is_cancelled(session_id) {
+            return true;
+        }
+        self.run_guarded(
+            "monitor.is_cancelled",
+            || false,
+            || {
+                {
+                    let forced = self.forced_cancelled.lock();
+                    if forced.contains(session_id) {
+                        return true;
+                    }
+                }
+                let sessions = self.sessions.lock();
+                sessions
+                    .get(session_id)
+                    .map(|record| record.cancel_requested)
+                    .unwrap_or(false)
+            },
+        )
+    }
+
+    pub fn list_sessions(&self, active_only: bool) -> Vec<Value> {
+        self.run_guarded("monitor.list_sessions", Vec::new, || {
+            let sessions = self.sessions.lock();
+            sessions
+                .values()
+                .filter(|record| {
+                    if !active_only {
+                        return true;
+                    }
+                    record.status == Self::STATUS_RUNNING
+                        || record.status == Self::STATUS_CANCELLING
+                        || record.status == Self::STATUS_WAITING
+                        || record.status == Self::STATUS_QUEUED
+                })
+                .map(|record| {
+                    let mut summary = record.to_summary();
+                    let speed = llm_speed_summary_from_monitor_events(&record.events);
+                    if let Value::Object(ref mut map) = summary {
+                        speed.insert_into_map(map);
+                    }
+                    summary
+                })
+                .collect()
+        })
+    }
+
+    pub fn load_records_by_user(
+        &self,
+        user_id: &str,
+        statuses: Option<&[&str]>,
+        since_time: Option<f64>,
+        limit: i64,
+    ) -> Vec<Value> {
+        let cleaned = user_id.trim().to_string();
+        if cleaned.is_empty() || limit <= 0 {
+            return Vec::new();
+        }
+        self.run_guarded("monitor.load_records_by_user", Vec::new, || {
+            self.storage
+                .load_monitor_records_by_user(&cleaned, statuses, since_time, limit)
+                .unwrap_or_default()
+        })
+    }
+
+    pub fn sum_consumed_tokens_by_user(&self, user_id: &str) -> i64 {
+        let cleaned = user_id.trim().to_string();
+        if cleaned.is_empty() {
+            return 0;
+        }
+        self.run_guarded(
+            "monitor.sum_consumed_tokens_by_user",
+            || 0,
+            || {
+                self.storage
+                    .sum_monitor_consumed_tokens_by_user(&cleaned)
+                    .unwrap_or(0)
+                    .max(0)
+            },
+        )
+    }
+
+    /// Return bounded per-session usage summaries without exposing monitor event payloads.
+    /// Hot records are read from memory; cold records fall back to the indexed monitor store.
+    /// Compact per-session state for directory views. One lock pass over the
+    /// live cache, one bounded storage read for the rest; never carries the
+    /// event tail, so a page of threads costs no large object copies.
+    pub fn session_usage_summaries(
+        &self,
+        session_ids: &[String],
+    ) -> HashMap<String, SessionUsageSummary> {
+        let ids = session_ids
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return HashMap::new();
+        }
+        let mut output = HashMap::with_capacity(ids.len());
+        let mut missing = Vec::new();
+        {
+            let sessions = self.sessions.lock();
+            for session_id in &ids {
+                match sessions.get(*session_id) {
+                    Some(record) => {
+                        output.insert((*session_id).to_string(), SessionUsageSummary::from(record));
+                    }
+                    None => missing.push((*session_id).to_string()),
+                }
+            }
+        }
+        let missing_records = self
+            .storage
+            .load_monitor_records_by_session_ids(&missing)
+            .unwrap_or_default();
+        for payload in missing_records {
+            let Some(session_id) = payload
+                .get("session_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            // Reuse the canonical storage hydration path so legacy records also
+            // backfill usage from their persisted events.
+            if let Some(record) = SessionRecord::from_storage(&payload) {
+                output.insert(session_id, SessionUsageSummary::from(&record));
+            }
+        }
+        output
+    }
+
+    pub fn get_detail(&self, session_id: &str) -> Option<Value> {
+        self.get_detail_page(session_id, 0, usize::MAX)
+    }
+
+    /// Serialize only one compact page so a long session cannot stall the admin UI.
+    pub fn get_detail_page(&self, session_id: &str, offset: usize, limit: usize) -> Option<Value> {
+        self.run_guarded(
+            "monitor.get_detail_page",
+            || None,
+            || {
+                let active_detail = {
+                    let sessions = self.sessions.lock();
+                    sessions
+                        .get(session_id)
+                        .map(|record| Self::build_detail_page(record, offset, limit))
+                };
+                if let Some(detail) = active_detail {
+                    return Some(detail);
+                }
+                let record = self
+                    .storage
+                    .get_monitor_record(session_id)
+                    .ok()
+                    .flatten()
+                    .and_then(|payload| SessionRecord::from_storage(&payload))?;
+                Some(Self::build_detail_page(&record, offset, limit))
+            },
+        )
+    }
+
+    fn build_detail_page(record: &SessionRecord, offset: usize, limit: usize) -> Value {
+        let event_total = record.events.len();
+        let events = record
+            .events
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .map(|event| event.to_dict())
+            .collect::<Vec<_>>();
+        let events_has_more = offset.saturating_add(events.len()) < event_total;
+        let mut session = record.to_summary();
+        let speed = llm_speed_summary_from_monitor_events(&record.events);
+        if let Value::Object(ref mut map) = session {
+            speed.insert_into_map(map);
+        }
+        json!({
+            "session": session,
+            "events": events,
+            "event_offset": offset,
+            "event_limit": limit.min(event_total),
+            "event_total": event_total,
+            "events_has_more": events_has_more,
+        })
+    }
+
+    pub fn get_record(&self, session_id: &str) -> Option<Value> {
+        self.run_guarded(
+            "monitor.get_record",
+            || None,
+            || {
+                let cleaned = session_id.trim();
+                if cleaned.is_empty() {
+                    return None;
+                }
+                if let Some(record) = self.sessions.lock().get(cleaned) {
+                    return Some(record.to_storage());
+                }
+                self.storage.get_monitor_record(cleaned).ok().flatten()
+            },
+        )
+    }
+
+    pub fn max_model_round_for_user_round(&self, session_id: &str, user_round: i64) -> i64 {
+        if let Some(round) = self
+            .sessions
+            .lock()
+            .get(session_id)
+            .and_then(|record| record.model_round_high_water.get(&user_round))
+            .copied()
+        {
+            return round;
+        }
+        // Old monitor summaries use the stream-event round index and one aggregate query.
+        self.storage
+            .max_session_model_round(session_id, user_round)
+            .unwrap_or(0)
+    }
+
+    /// Return the bounded, presentation-neutral metrics shared by user and admin log views.
+    /// Keep trace IDs and raw event payloads out of this projection.
+    pub fn get_log_overview(&self, session_id: &str) -> Option<Value> {
+        self.run_guarded(
+            "monitor.get_log_overview",
+            || None,
+            || {
+                let record = self
+                    .sessions
+                    .lock()
+                    .get(session_id.trim())
+                    .cloned()
+                    .or_else(|| {
+                        self.storage
+                            .get_monitor_record(session_id.trim())
+                            .ok()
+                            .flatten()
+                            .and_then(|payload| SessionRecord::from_storage(&payload))
+                    })?;
+                // Keep the user-facing projection deliberately small.  The monitor summary
+                // also contains trace/user/admin fields that are useful to operators but must
+                // never be copied into a regular user's session response.
+                let speed = llm_speed_summary_from_monitor_events(&record.events);
+                let mut overview = serde_json::Map::new();
+                overview.insert("session_id".to_string(), json!(record.session_id.clone()));
+                overview.insert("agent_id".to_string(), json!(record.agent_id.clone()));
+                overview.insert("status".to_string(), json!(record.status.clone()));
+                overview.insert("elapsed_s".to_string(), json!(round2(record.elapsed_s())));
+                overview.insert("user_rounds".to_string(), json!(record.user_rounds.max(0)));
+                overview.insert("tool_calls".to_string(), json!(record.tool_calls.max(0)));
+                overview.insert(
+                    "model_request_count".to_string(),
+                    json!(record.model_request_count.unwrap_or(0).max(0)),
+                );
+                // Legacy alias mirroring the monitor summary shape.
+                overview.insert(
+                    "quota_used".to_string(),
+                    json!(record.model_request_count.unwrap_or(0).max(0)),
+                );
+                overview.insert(
+                    "consumed_tokens".to_string(),
+                    json!(record.consumed_tokens.max(0)),
+                );
+                overview.insert("event_total".to_string(), json!(record.events.len()));
+                overview.insert("ttft_ms".to_string(), json!(speed.ttft_ms));
+                overview.insert(
+                    "prefill_speed_tps".to_string(),
+                    json!(speed.prefill_speed_tps),
+                );
+                overview.insert(
+                    "prefill_speed_lower_bound".to_string(),
+                    json!(speed.prefill_speed_lower_bound),
+                );
+                overview.insert(
+                    "decode_speed_tps".to_string(),
+                    json!(speed.decode_speed_tps),
+                );
+                Some(Value::Object(overview))
+            },
+        )
+    }
+
+    pub fn list_records(&self) -> Vec<Value> {
+        self.run_guarded("monitor.list_records", Vec::new, || {
+            let mut map = HashMap::new();
+            if let Ok(records) = self.storage.load_monitor_records() {
+                for record in records {
+                    if let Some(session_id) = record.get("session_id").and_then(Value::as_str) {
+                        map.insert(session_id.to_string(), record);
+                    }
+                }
+            }
+            let sessions = self.sessions.lock();
+            for (session_id, record) in sessions.iter() {
+                map.insert(session_id.clone(), record.to_storage());
+            }
+            map.into_values().collect()
+        })
+    }
+
+    pub fn delete_logs_by_time_range(
+        &self,
+        start_time: f64,
+        end_time: f64,
+    ) -> Result<HashMap<String, i64>, String> {
+        self.run_guarded(
+            "monitor.delete_logs_by_time_range",
+            || Err("monitor log cleanup failed".to_string()),
+            || {
+                let start = start_time.min(end_time);
+                let end = start_time.max(end_time);
+                if !start.is_finite() || !end.is_finite() || start < 0.0 || end <= start {
+                    return Err("invalid log cleanup time range".to_string());
+                }
+                let deleted = self
+                    .storage
+                    .delete_logs_by_time_range(start, end)
+                    .map_err(|err| err.to_string())?;
+                {
+                    let mut log_cache = self.log_usage_cache.lock();
+                    *log_cache = UsageCache::default();
+                }
+                {
+                    let mut snapshot_cache = self.system_snapshot_cache.lock();
+                    *snapshot_cache = None;
+                }
+                {
+                    let mut sessions = self.sessions.lock();
+                    sessions.retain(|_, record| {
+                        let in_range = record.updated_time >= start && record.updated_time <= end;
+                        let active = record.status == Self::STATUS_RUNNING
+                            || record.status == Self::STATUS_CANCELLING
+                            || record.status == Self::STATUS_QUEUED
+                            || record.status == Self::STATUS_WAITING;
+                        !in_range || active
+                    });
+                }
+                Ok(deleted)
+            },
+        )
+    }
+
+    pub fn get_system_metrics(self: &Arc<Self>) -> SystemSnapshot {
+        self.run_guarded(
+            "monitor.get_system_metrics",
+            || self.fallback_system_snapshot(),
+            || {
+                let now = now_ts();
+                {
+                    let cache = self.system_snapshot_cache.lock();
+                    if let Some((snapshot, ts)) = cache.as_ref() {
+                        if now - *ts < self.system_snapshot_ttl_s {
+                            return snapshot.clone();
+                        }
+                    }
+                }
+                let previous = self.fallback_system_snapshot();
+                if self.system_snapshot_refreshing.swap(true, Ordering::SeqCst) {
+                    return previous;
+                }
+                let monitor = Arc::clone(self);
+                thread::spawn(move || {
+                    monitor.run_guarded(
+                        "monitor.refresh_system_snapshot",
+                        || (),
+                        || {
+                            let snapshot = monitor.collect_system_snapshot();
+                            let sampled_at = now_ts();
+                            *monitor.system_snapshot_cache.lock() = Some((snapshot, sampled_at));
+                        },
+                    );
+                    monitor
+                        .system_snapshot_refreshing
+                        .store(false, Ordering::SeqCst);
+                });
+                previous
+            },
+        )
+    }
+
+    fn resolve_log_usage(&self, now: f64) -> u64 {
+        {
+            let cache = self.log_usage_cache.lock();
+            if cache.updated_ts > 0.0 && now - cache.updated_ts < self.log_usage_ttl_s {
+                return cache.value;
+            }
+        }
+        let value = self.calc_log_usage();
+        let mut cache = self.log_usage_cache.lock();
+        cache.value = value;
+        cache.updated_ts = now;
+        value
+    }
+
+    fn resolve_workspace_usage(&self, now: f64) -> u64 {
+        {
+            let cache = self.workspace_usage_cache.lock();
+            if cache.updated_ts > 0.0 && now - cache.updated_ts < self.workspace_usage_ttl_s {
+                return cache.value;
+            }
+        }
+        let value = self.calc_workspace_usage_incremental(now);
+        let mut cache = self.workspace_usage_cache.lock();
+        cache.value = value;
+        cache.updated_ts = now;
+        value
+    }
+
+    fn calc_log_usage(&self) -> u64 {
+        match self.storage.get_log_usage() {
+            Ok(value) => value,
+            Err(error) => {
+                warn!("monitor log usage query failed: {error}");
+                0
+            }
+        }
+    }
+
+    fn calc_workspace_usage_incremental(&self, now: f64) -> u64 {
+        let user_dirs = self.collect_workspace_user_dirs();
+        let mut scan_state = self.workspace_usage_scan_state.lock();
+        if !scan_state.initialized {
+            // Keep cold-start monitor requests responsive by avoiding a full recursive scan here.
+            // We bootstrap with a bounded incremental pass and fill the rest across later polls.
+            update_workspace_usage_state_incremental(
+                &mut scan_state,
+                &user_dirs,
+                self.workspace_usage_scan_batch_users,
+            );
+            scan_state.initialized = true;
+            scan_state.last_full_scan_ts = now;
+            return workspace_usage_total(scan_state.per_user.values().copied());
+        }
+        if now - scan_state.last_full_scan_ts >= self.workspace_usage_full_scan_interval_s {
+            // Restart the incremental cycle instead of forcing a synchronous full rebuild on the
+            // request path. This keeps the admin monitor responsive even when workspaces grow.
+            scan_state.cursor = 0;
+            scan_state.last_full_scan_ts = now;
+        }
+        update_workspace_usage_state_incremental(
+            &mut scan_state,
+            &user_dirs,
+            self.workspace_usage_scan_batch_users,
+        );
+        workspace_usage_total(scan_state.per_user.values().copied())
+    }
+
+    fn collect_workspace_user_dirs(&self) -> Vec<(String, PathBuf)> {
+        let entries = match fs::read_dir(&self.workspace_root) {
+            Ok(entries) => entries,
+            Err(_) => return Vec::new(),
+        };
+        let mut dirs = Vec::new();
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().trim().to_string();
+            if !is_workspace_usage_dir_name(&name) {
+                continue;
+            }
+            dirs.push((name, entry.path()));
+        }
+        dirs.sort_by(|left, right| left.0.cmp(&right.0));
+        dirs
+    }
+
+    fn collect_system_snapshot(&self) -> SystemSnapshot {
+        let mut system = self.system.lock();
+        let mut disks = self.disks.lock();
+        let host = collect_host_metrics(&mut system, &mut disks, &self.workspace_root);
+        drop(disks);
+        drop(system);
+
+        let now = now_ts();
+        let log_used = self.resolve_log_usage(now);
+        let workspace_used = self.resolve_workspace_usage(now);
+        let uptime_s = {
+            let start = *self.app_start_ts.lock();
+            (now - start).max(0.0) as u64
+        };
+        SystemSnapshot {
+            cpu_percent: host.cpu_percent,
+            memory_total: host.memory_total,
+            memory_used: host.memory_used,
+            memory_available: host.memory_available,
+            process_rss: host.process_rss,
+            process_cpu_percent: host.process_cpu_percent,
+            load_avg_1: host.load_avg_1,
+            load_avg_5: host.load_avg_5,
+            load_avg_15: host.load_avg_15,
+            disk_total: host.disk_total,
+            disk_used: host.disk_used,
+            disk_free: host.disk_free,
+            disk_percent: host.disk_percent,
+            log_used,
+            workspace_used,
+            uptime_s,
+        }
+    }
+
+    pub fn get_service_metrics(
+        &self,
+        recent_window_s: Option<f64>,
+        current_ts: Option<f64>,
+    ) -> Value {
+        self.run_guarded(
+            "monitor.get_service_metrics",
+            || self.fallback_service_metrics(),
+            || {
+                let now = current_ts.unwrap_or_else(now_ts);
+                let window = recent_window_s.unwrap_or(3600.0).max(1.0);
+                let window_start = now - window;
+                let sessions = self.sessions.lock();
+                let mut total_sessions = 0;
+                let mut active_sessions = 0;
+                let mut queued_sessions = 0;
+                let mut finished_sessions = 0;
+                let mut error_sessions = 0;
+                let mut cancelled_sessions = 0;
+                let mut consumed_tokens_total: i64 = 0;
+                let mut elapsed_total = 0.0;
+                let mut elapsed_count = 0.0;
+                let mut prefill_tokens_total = 0.0;
+                let mut prefill_duration_total = 0.0;
+                let mut decode_tokens_total = 0.0;
+                let mut decode_duration_total = 0.0;
+                for record in sessions.values() {
+                    let mut record_ts = record.updated_time;
+                    if record_ts <= 0.0 {
+                        record_ts = record.start_time;
+                    }
+                    if record_ts < window_start || record_ts > now {
+                        continue;
+                    }
+                    total_sessions += 1;
+                    if record.status == Self::STATUS_RUNNING
+                        || record.status == Self::STATUS_CANCELLING
+                    {
+                        active_sessions += 1;
+                        continue;
+                    }
+                    if record.status == Self::STATUS_WAITING || record.status == "queued" {
+                        queued_sessions += 1;
+                        continue;
+                    }
+                    let is_terminal = if record.status == Self::STATUS_FINISHED {
+                        finished_sessions += 1;
+                        true
+                    } else if record.status == Self::STATUS_ERROR {
+                        error_sessions += 1;
+                        true
+                    } else if record.status == Self::STATUS_CANCELLED {
+                        cancelled_sessions += 1;
+                        true
+                    } else {
+                        false
+                    };
+                    if !is_terminal {
+                        continue;
+                    }
+                    let context_peak = derive_effective_context_tokens(&record.events)
+                        .map(|(_, peak)| peak)
+                        .unwrap_or(record.context_tokens_peak.max(record.context_tokens));
+                    consumed_tokens_total += record.consumed_tokens.max(context_peak);
+                    let end_ts = record.ended_time.unwrap_or(record.updated_time);
+                    let summary = llm_speed_summary_from_monitor_events(&record.events);
+                    let prefill_tokens = summary.prefill_tokens;
+                    let prefill_duration = summary.prefill_duration_s;
+                    if let (Some(tokens), Some(duration)) = (prefill_tokens, prefill_duration) {
+                        if tokens > 0 && duration > 0.0 {
+                            prefill_tokens_total += tokens as f64;
+                            prefill_duration_total += duration;
+                        }
+                    }
+                    let decode_tokens = summary.decode_tokens;
+                    let decode_duration = summary.decode_duration_s;
+                    if let (Some(tokens), Some(duration)) = (decode_tokens, decode_duration) {
+                        if tokens > 0 && duration > 0.0 {
+                            decode_tokens_total += tokens as f64;
+                            decode_duration_total += duration;
+                        }
+                    }
+                    elapsed_total += (end_ts - record.start_time).max(0.0);
+                    elapsed_count += 1.0;
+                }
+                let history_sessions = finished_sessions + error_sessions + cancelled_sessions;
+                let avg_elapsed = if elapsed_count > 0.0 {
+                    round2(elapsed_total / elapsed_count)
+                } else {
+                    0.0
+                };
+                let avg_prefill_speed =
+                    if prefill_tokens_total > 0.0 && prefill_duration_total > 0.0 {
+                        Some(prefill_tokens_total / prefill_duration_total)
+                    } else {
+                        None
+                    };
+                let avg_decode_speed = if decode_tokens_total > 0.0 && decode_duration_total > 0.0 {
+                    Some(decode_tokens_total / decode_duration_total)
+                } else {
+                    None
+                };
+                let avg_context_tokens = if history_sessions > 0 {
+                    Some(round2(
+                        consumed_tokens_total as f64 / history_sessions as f64,
+                    ))
+                } else {
+                    None
+                };
+                json!({
+                    "active_sessions": active_sessions,
+                    "queued_sessions": queued_sessions,
+                    "history_sessions": history_sessions,
+                    "finished_sessions": finished_sessions,
+                    "error_sessions": error_sessions,
+                    "cancelled_sessions": cancelled_sessions,
+                    "total_sessions": total_sessions,
+                    "avg_context_tokens": avg_context_tokens,
+                    "avg_elapsed_s": avg_elapsed,
+                    "avg_prefill_speed_tps": avg_prefill_speed,
+                    "avg_decode_speed_tps": avg_decode_speed,
+                })
+            },
+        )
+    }
+
+    pub fn get_sandbox_metrics(&self, since_time: Option<f64>, until_time: Option<f64>) -> Value {
+        self.run_guarded(
+            "monitor.get_sandbox_metrics",
+            || self.fallback_sandbox_metrics(),
+            || {
+                let mut call_count = 0;
+                let mut session_ids = HashSet::new();
+                let sessions = self.sessions.lock();
+                for record in sessions.values() {
+                    for event in &record.events {
+                        if event.event_type != "tool_result" {
+                            continue;
+                        }
+                        if !event
+                            .data
+                            .get("sandbox")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false)
+                        {
+                            continue;
+                        }
+                        if let Some(since) = since_time {
+                            if event.timestamp < since {
+                                continue;
+                            }
+                        }
+                        if let Some(until) = until_time {
+                            if event.timestamp > until {
+                                continue;
+                            }
+                        }
+                        call_count += 1;
+                        session_ids.insert(record.session_id.clone());
+                    }
+                }
+                json!({
+                    "mode": "sandbox",
+                    "network": "bridge",
+                    "readonly_rootfs": crate::sandbox::sandbox_readonly_rootfs(),
+                    "idle_ttl_s": crate::sandbox::sandbox_idle_ttl_seconds(),
+                    "timeout_s": crate::sandbox::sandbox_timeout_seconds(),
+                    "endpoint": crate::sandbox::DEFAULT_SANDBOX_ENDPOINT,
+                    "resources": {
+                        "cpu": crate::sandbox::sandbox_cpu_limit(),
+                        "memory_mb": crate::sandbox::sandbox_memory_mb(),
+                        "pids": crate::sandbox::sandbox_pids_limit(),
+                    },
+                    "recent_calls": call_count,
+                    "recent_sessions": session_ids.len(),
+                })
+            },
+        )
+    }
+
+    fn run_guarded<T, F, G>(&self, label: &'static str, fallback: G, f: F) -> T
+    where
+        F: FnOnce() -> T,
+        G: FnOnce() -> T,
+    {
+        match panic::catch_unwind(AssertUnwindSafe(f)) {
+            Ok(value) => value,
+            Err(payload) => {
+                let message = format_panic_payload(payload.as_ref());
+                error!("monitor panic in {label}: {message}");
+                fallback()
+            }
+        }
+    }
+
+    fn fallback_system_snapshot(&self) -> SystemSnapshot {
+        if let Some((snapshot, _)) = self.system_snapshot_cache.lock().as_ref() {
+            return snapshot.clone();
+        }
+        SystemSnapshot::default()
+    }
+
+    fn fallback_service_metrics(&self) -> Value {
+        json!({
+            "active_sessions": 0,
+            "queued_sessions": 0,
+            "history_sessions": 0,
+            "finished_sessions": 0,
+            "error_sessions": 0,
+            "cancelled_sessions": 0,
+            "total_sessions": 0,
+            "avg_context_tokens": Value::Null,
+            "avg_elapsed_s": 0.0,
+            "avg_prefill_speed_tps": Value::Null,
+            "avg_decode_speed_tps": Value::Null,
+        })
+    }
+
+    fn fallback_sandbox_metrics(&self) -> Value {
+        json!({
+            "mode": "sandbox",
+            "network": "bridge",
+            "readonly_rootfs": crate::sandbox::sandbox_readonly_rootfs(),
+            "idle_ttl_s": crate::sandbox::sandbox_idle_ttl_seconds(),
+            "timeout_s": crate::sandbox::sandbox_timeout_seconds(),
+            "endpoint": crate::sandbox::DEFAULT_SANDBOX_ENDPOINT,
+            "resources": {
+                "cpu": crate::sandbox::sandbox_cpu_limit(),
+                "memory_mb": crate::sandbox::sandbox_memory_mb(),
+                "pids": crate::sandbox::sandbox_pids_limit(),
+            },
+            "recent_calls": 0,
+            "recent_sessions": 0,
+        })
+    }
+
+    fn load_history(&self) {
+        self.migrate_legacy_history();
+        let records = if MONITOR_HISTORY_LOAD_LIMIT <= 0 {
+            self.storage.load_monitor_records().unwrap_or_default()
+        } else {
+            self.storage
+                .load_recent_monitor_records(MONITOR_HISTORY_LOAD_LIMIT)
+                .unwrap_or_default()
+        };
+        let mut rebuilt = HashMap::new();
+        for payload in records {
+            let Some(mut record) = SessionRecord::from_storage(&payload) else {
+                continue;
+            };
+            if record.status == Self::STATUS_RUNNING || record.status == Self::STATUS_CANCELLING {
+                record.status = Self::STATUS_ERROR.to_string();
+                record.summary = i18n::t("monitor.summary.restarted");
+                record.ended_time = Some(record.updated_time);
+                let summary = record.summary.clone();
+                let updated_time = record.updated_time;
+                self.append_event(
+                    &mut record,
+                    "restart",
+                    &json!({ "summary": summary }),
+                    updated_time,
+                );
+            }
+            if record.status == Self::STATUS_FINISHED {
+                record.stage = "final".to_string();
+                record.summary = i18n::t("monitor.summary.finished");
+            } else if record.status == Self::STATUS_ERROR {
+                record.stage = "error".to_string();
+            } else if record.status == Self::STATUS_CANCELLED {
+                record.stage = "cancelled".to_string();
+            } else if record.status == Self::STATUS_CANCELLING {
+                record.stage = "cancelling".to_string();
+            }
+            rebuilt.insert(record.session_id.clone(), record);
+        }
+        if rebuilt.is_empty() {
+            return;
+        }
+        let mut sessions = self.sessions.lock();
+        for (session_id, record) in rebuilt {
+            if let Some(current) = sessions.get(&session_id) {
+                if current.status == Self::STATUS_RUNNING
+                    || current.status == Self::STATUS_CANCELLING
+                {
+                    continue;
+                }
+                if current.updated_time >= record.updated_time {
+                    continue;
+                }
+            }
+            sessions.insert(session_id, record);
+        }
+    }
+
+    fn migrate_legacy_history(&self) {
+        let migration_key = "monitor_migrated";
+        if self
+            .storage
+            .get_meta(migration_key)
+            .ok()
+            .flatten()
+            .as_deref()
+            == Some("1")
+        {
+            return;
+        }
+        if !self.history_dir.exists() {
+            let _ = self.storage.set_meta(migration_key, "1");
+            return;
+        }
+        if let Ok(entries) = std::fs::read_dir(&self.history_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                    continue;
+                }
+                let content = match std::fs::read_to_string(&path) {
+                    Ok(content) => content,
+                    Err(_) => continue,
+                };
+                let Ok(payload) = serde_json::from_str::<Value>(&content) else {
+                    continue;
+                };
+                if payload.is_object() {
+                    let _ = self.storage.upsert_monitor_record(&payload);
+                }
+            }
+        }
+        let _ = self.storage.set_meta(migration_key, "1");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn register_locked(
+        &self,
+        sessions: &mut HashMap<String, SessionRecord>,
+        session_id: &str,
+        user_id: &str,
+        agent_id: &str,
+        question: &str,
+        is_admin: bool,
+        now: f64,
+        append_received: bool,
+        persisted_round_floor: i64,
+        reuse_queued_round: bool,
+    ) -> (Option<SessionRecord>, i64) {
+        if session_id.trim().is_empty() {
+            return (None, 1);
+        }
+        let cleaned_agent = agent_id.trim();
+        {
+            let mut forced = self.forced_cancelled.lock();
+            forced.remove(session_id);
+        }
+        if let Some(record) = sessions.get_mut(session_id) {
+            if !record.round_floor_verified {
+                record.user_rounds = record.user_rounds.max(persisted_round_floor);
+                record.round_floor_verified = true;
+            }
+            if reuse_queued_round
+                && record.status == Self::STATUS_QUEUED
+                && record.stage == "queued"
+            {
+                if !question.trim().is_empty() {
+                    record.question = question.to_string();
+                }
+                record.is_admin = is_admin;
+                let trace_id = if record.trace_id.trim().is_empty() {
+                    let generated = build_monitor_trace_id();
+                    record.trace_id = generated.clone();
+                    generated
+                } else {
+                    record.trace_id.clone()
+                };
+                if !cleaned_agent.is_empty() {
+                    record.agent_id = cleaned_agent.to_string();
+                }
+                record.status = Self::STATUS_RUNNING.to_string();
+                record.stage = "running".to_string();
+                record.summary = i18n::t("monitor.summary.received");
+                record.updated_time = now;
+                record.ended_time = None;
+                record.cancel_requested = false;
+                record.cancel_source = None;
+                record.context_tokens = 0;
+                let summary = record.summary.clone();
+                let user_round = record.user_rounds.max(1);
+                record.user_rounds = user_round;
+                self.append_event(
+                    record,
+                    "queue_start",
+                    &json!({
+                        "summary": summary,
+                        "user_round": user_round,
+                        "question": question,
+                        "trace_id": trace_id,
+                    }),
+                    now,
+                );
+                record.dirty = true;
+                return (self.maybe_persist_record(record, now, false), user_round);
+            }
+            record.user_rounds += 1;
+            record.question = question.to_string();
+            record.is_admin = is_admin;
+            let trace_id = if record.trace_id.trim().is_empty() {
+                let generated = build_monitor_trace_id();
+                record.trace_id = generated.clone();
+                generated
+            } else {
+                record.trace_id.clone()
+            };
+            if !cleaned_agent.is_empty() {
+                record.agent_id = cleaned_agent.to_string();
+            }
+            record.status = Self::STATUS_RUNNING.to_string();
+            record.stage = "received".to_string();
+            record.summary = i18n::t("monitor.summary.received");
+            record.start_time = now;
+            record.updated_time = now;
+            record.ended_time = None;
+            record.cancel_requested = false;
+            record.cancel_source = None;
+            record.context_tokens = 0;
+            let summary = record.summary.clone();
+            let user_round = record.user_rounds;
+            self.append_event(
+                record,
+                "round_start",
+                &json!({
+                    "summary": summary,
+                    "user_round": user_round,
+                    "question": question,
+                    "trace_id": trace_id,
+                }),
+                now,
+            );
+            if !question.trim().is_empty() {
+                self.append_event(
+                    record,
+                    "user_input",
+                    &json!({
+                        "summary": question,
+                        "message": question,
+                        "question": question,
+                        "user_round": user_round,
+                        "trace_id": trace_id,
+                    }),
+                    now,
+                );
+            }
+            record.dirty = true;
+            return (self.maybe_persist_record(record, now, false), user_round);
+        }
+        let trace_id = build_monitor_trace_id();
+        let mut record = SessionRecord::new(
+            SessionRecordInit {
+                session_id: session_id.to_string(),
+                user_id: user_id.to_string(),
+                agent_id: cleaned_agent.to_string(),
+                question: question.to_string(),
+                is_admin,
+                trace_id: trace_id.clone(),
+            },
+            now,
+        );
+        if persisted_round_floor > 0 {
+            record.user_rounds = record
+                .user_rounds
+                .max(persisted_round_floor.saturating_add(1));
+        }
+        record.round_floor_verified = true;
+        let event_type = if append_received {
+            "received"
+        } else {
+            "round_start"
+        };
+        let summary = record.summary.clone();
+        let user_round = record.user_rounds;
+        self.append_event(
+            &mut record,
+            event_type,
+            &json!({
+                "summary": summary,
+                "user_round": user_round,
+                "question": question,
+                "trace_id": trace_id,
+            }),
+            now,
+        );
+        if !question.trim().is_empty() {
+            self.append_event(
+                &mut record,
+                "user_input",
+                &json!({
+                    "summary": question,
+                    "message": question,
+                    "question": question,
+                    "user_round": user_round,
+                    "trace_id": trace_id,
+                }),
+                now,
+            );
+        }
+        record.dirty = true;
+        let to_persist = self.maybe_persist_record(&mut record, now, false);
+        sessions.insert(session_id.to_string(), record);
+        (to_persist, user_round)
+    }
+
+    fn hydrate_session_record_for_register(&self, session_id: &str) -> Option<SessionRecord> {
+        let cleaned = session_id.trim();
+        if cleaned.is_empty() {
+            return None;
+        }
+        let payload = match self.storage.get_monitor_record(cleaned) {
+            Ok(Some(payload)) => payload,
+            Ok(None) => return None,
+            Err(err) => {
+                warn!("monitor register failed to hydrate session {cleaned}: {err}");
+                return None;
+            }
+        };
+        let mut record = SessionRecord::from_storage(&payload)?;
+        let thread_round_floor = self.persisted_user_round_floor(cleaned);
+        record.user_rounds = max_known_user_round_for_monitor_payload(&payload)
+            .max(thread_round_floor)
+            .max(record.user_rounds)
+            .max(1);
+        record.dirty = false;
+        record.last_persisted = 0.0;
+        record.round_floor_verified = true;
+        Some(record)
+    }
+
+    fn persisted_user_round_floor(&self, session_id: &str) -> i64 {
+        self.storage
+            .latest_thread_user_round_by_session(session_id)
+            .unwrap_or(0)
+    }
+
+    fn mark_status(&self, session_id: &str, status: &str, summary: Option<&str>) {
+        self.run_guarded(
+            "monitor.mark_status",
+            || (),
+            || {
+                let now = now_ts();
+                let to_persist = {
+                    let mut sessions = self.sessions.lock();
+                    let Some(record) = sessions.get_mut(session_id) else {
+                        return;
+                    };
+                    record.status = status.to_string();
+                    record.updated_time = now;
+                    record.ended_time = if status == Self::STATUS_WAITING
+                        || status == Self::STATUS_RUNNING
+                        || status == Self::STATUS_QUEUED
+                        || status == Self::STATUS_CANCELLING
+                    {
+                        None
+                    } else {
+                        Some(now)
+                    };
+                    match status {
+                        Self::STATUS_FINISHED => {
+                            record.stage = "final".to_string();
+                            record.summary = summary
+                                .map(str::to_string)
+                                .unwrap_or_else(|| i18n::t("monitor.summary.finished"));
+                        }
+                        Self::STATUS_RUNNING => {
+                            record.stage = "running".to_string();
+                            if let Some(summary) = summary {
+                                record.summary = summary.to_string();
+                            }
+                        }
+                        Self::STATUS_QUEUED => {
+                            record.stage = "queued".to_string();
+                            record.summary = summary
+                                .map(str::to_string)
+                                .unwrap_or_else(|| i18n::t("monitor.summary.queued"));
+                        }
+                        Self::STATUS_WAITING => {
+                            record.stage = "question_panel".to_string();
+                            record.summary = summary
+                                .map(str::to_string)
+                                .unwrap_or_else(|| i18n::t("monitor.summary.question_panel"));
+                        }
+                        Self::STATUS_ERROR => {
+                            record.stage = "error".to_string();
+                            if let Some(summary) = summary {
+                                record.summary = summary.to_string();
+                            }
+                        }
+                        Self::STATUS_CANCELLED => {
+                            record.stage = "cancelled".to_string();
+                            if let Some(summary) = summary {
+                                record.summary = summary.to_string();
+                            }
+                        }
+                        Self::STATUS_CANCELLING => {
+                            record.stage = "cancelling".to_string();
+                            if let Some(summary) = summary {
+                                record.summary = summary.to_string();
+                            }
+                        }
+                        _ => {
+                            if let Some(summary) = summary {
+                                record.summary = summary.to_string();
+                            }
+                        }
+                    }
+                    let summary = record.summary.clone();
+                    self.append_event(record, status, &json!({ "summary": summary }), now);
+                    record.dirty = true;
+                    self.maybe_persist_record(record, now, true)
+                };
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
+                }
+            },
+        );
+    }
+
+    fn append_event(
+        &self,
+        record: &mut SessionRecord,
+        event_type: &str,
+        data: &Value,
+        timestamp: f64,
+    ) {
+        update_model_round_high_water(&mut record.model_round_high_water, data);
+        let mut payload = data.clone();
+        if let Value::Object(ref mut map) = payload {
+            map.entry("trace_id".to_string())
+                .or_insert_with(|| Value::String(record.trace_id.clone()));
+        }
+        let sanitized = self.sanitize_event_data(event_type, &payload);
+        if let Some(previous) = record.events.back_mut() {
+            if should_merge_monitor_event(previous, event_type, &sanitized) {
+                previous.timestamp = timestamp;
+                previous.data = sanitized;
+                return;
+            }
+        }
+        let event_id = record.next_event_id.max(1);
+        record.next_event_id = event_id.saturating_add(1);
+        record.events.push_back(MonitorEvent {
+            event_id,
+            timestamp,
+            event_type: event_type.to_string(),
+            data: sanitized.clone(),
+        });
+        // Bound the per-session event queue so long sessions cannot grow
+        // in-memory and persisted payloads without limit.
+        while record.events.len() > MONITOR_SESSION_EVENT_LIMIT {
+            record.events.pop_front();
+        }
+        // Each response is counted once, including rejected calls and compaction.
+        // Legacy turns without per-response accounting still use round_usage.
+        if event_type == "model_usage"
+            || (event_type == "round_usage"
+                && sanitized.get("usage_accounted").and_then(Value::as_bool) != Some(true))
+        {
+            let tokens = if event_type == "model_usage" {
+                parse_usage_billing_tokens(&sanitized["usage"])
+            } else {
+                parse_usage_billing_tokens(&sanitized)
+            };
+            if tokens > 0 {
+                record.consumed_tokens = record.consumed_tokens.saturating_add(tokens);
+            }
+        }
+    }
+
+    fn sanitize_event_data(&self, event_type: &str, data: &Value) -> Value {
+        if event_type == "llm_request" {
+            return summarize_llm_request_event(data, self.payload_limit);
+        }
+        if !data.is_object() {
+            return data.clone();
+        }
+        if event_type == "llm_output" {
+            let mut trimmed = trim_string_fields(data, self.payload_limit);
+            if let Value::Object(ref mut map) = trimmed {
+                if let Some(Value::String(text)) = map.get("content") {
+                    map.insert(
+                        "content".to_string(),
+                        Value::String(trim_text(text, self.payload_limit)),
+                    );
+                }
+                if let Some(Value::String(text)) = map.get("reasoning") {
+                    map.insert(
+                        "reasoning".to_string(),
+                        Value::String(trim_text(text, self.payload_limit)),
+                    );
+                }
+            }
+            return trimmed;
+        }
+        trim_string_fields(data, self.payload_limit)
+    }
+
+    fn maybe_persist_record(
+        &self,
+        record: &mut SessionRecord,
+        now: f64,
+        force: bool,
+    ) -> Option<SessionRecord> {
+        if !record.dirty && !force {
+            return None;
+        }
+        let should_persist = force
+            || record.last_persisted <= 0.0
+            || now - record.last_persisted >= self.persist_interval_s;
+        if !should_persist {
+            return None;
+        }
+        record.dirty = false;
+        record.last_persisted = now;
+        Some(record.clone())
+    }
+
+    fn save_record(&self, record: &SessionRecord) {
+        let payload = self.build_persisted_record_payload(record);
+        self.write_queue.enqueue(MonitorWriteTask::Upsert(payload));
+    }
+
+    fn build_persisted_record_payload(&self, record: &SessionRecord) -> Value {
+        let mut compacted = record.clone();
+        let mut events = compacted
+            .events
+            .iter()
+            .rev()
+            .map(|event| MonitorEvent {
+                event_id: event.event_id,
+                timestamp: event.timestamp,
+                event_type: event.event_type.clone(),
+                data: sanitize_persisted_event_data(
+                    &event.event_type,
+                    &event.data,
+                    self.payload_limit,
+                ),
+            })
+            .collect::<Vec<_>>();
+        events.reverse();
+        compacted.events = events.into();
+        compacted.to_storage()
+    }
+}
+
+fn update_model_round_high_water(rounds: &mut BTreeMap<i64, i64>, data: &Value) {
+    if let (Some(user), Some(model)) = (
+        data.get("user_round")
+            .and_then(Value::as_i64)
+            .filter(|round| *round > 0),
+        data.get("model_round")
+            .and_then(Value::as_i64)
+            .filter(|round| *round > 0),
+    ) {
+        let maximum = rounds.entry(user).or_default();
+        *maximum = (*maximum).max(model);
+        while rounds.len() > 64 {
+            rounds.pop_first();
+        }
+    }
+}
+
+fn llm_speed_summary_from_monitor_events(
+    events: &VecDeque<MonitorEvent>,
+) -> crate::core::llm_speed::LlmSpeedSummary {
+    let normalized_events = events
+        .iter()
+        .map(|event| LlmSpeedEvent {
+            event_type: event.event_type.as_str(),
+            timestamp_s: Some(event.timestamp),
+            data: &event.data,
+        })
+        .collect::<Vec<_>>();
+    build_llm_speed_summary(&normalized_events)
+}
+
+fn parse_i64_value(value: Option<&Value>) -> Option<i64> {
+    value
+        .and_then(Value::as_i64)
+        .or_else(|| value.and_then(Value::as_u64).map(|value| value as i64))
+}
+
+fn parse_positive_i64_value(value: Option<&Value>) -> Option<i64> {
+    let parsed = parse_i64_value(value)
+        .or_else(|| {
+            value
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite())
+                .map(|value| value.trunc() as i64)
+        })
+        .or_else(|| {
+            value
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .and_then(|value| value.parse::<i64>().ok())
+        })?;
+    (parsed > 0).then_some(parsed)
+}
+
+fn has_context_occupancy(data: &Value) -> bool {
+    [
+        "context_occupancy_tokens",
+        "context_tokens",
+        "persisted_context_tokens",
+    ]
+    .iter()
+    .any(|key| parse_i64_value(data.get(*key)).is_some())
+        || data.get("context_usage").is_some_and(|usage| {
+            ["context_occupancy_tokens", "context_tokens"]
+                .iter()
+                .any(|key| parse_i64_value(usage.get(*key)).is_some())
+        })
+}
+
+fn parse_context_occupancy_tokens(data: &Value) -> i64 {
+    parse_i64_value(data.get("context_occupancy_tokens"))
+        .or_else(|| parse_i64_value(data.get("context_tokens")))
+        .or_else(|| parse_i64_value(data.get("persisted_context_tokens")))
+        .or_else(|| {
+            data.get("context_usage")
+                .and_then(|usage| parse_i64_value(usage.get("context_occupancy_tokens")))
+        })
+        .or_else(|| {
+            data.get("context_usage")
+                .and_then(|usage| parse_i64_value(usage.get("context_tokens")))
+        })
+        .unwrap_or(0)
+        .max(0)
+}
+
+/// Total includes reasoning; context occupancy is never a billing fallback.
+pub(crate) fn parse_usage_billing_tokens(data: &Value) -> i64 {
+    if let Some(total) = parse_i64_value(data.get("total_tokens"))
+        .or_else(|| {
+            data.get("usage")
+                .and_then(|usage| parse_i64_value(usage.get("total_tokens")))
+        })
+        .filter(|total| *total > 0)
+    {
+        return total;
+    }
+    let value = data.get("usage").unwrap_or(data);
+    ["input_tokens", "output_tokens", "reasoning_tokens"]
+        .iter()
+        .map(|key| parse_i64_value(value.get(*key)).unwrap_or(0).max(0))
+        .fold(0_i64, i64::saturating_add)
+}
+
+fn format_panic_payload(payload: &(dyn Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        return (*message).to_string();
+    }
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+    "unknown panic payload".to_string()
+}
+
+fn resolve_payload_limit(raw: i64) -> Option<usize> {
+    if raw <= 0 {
+        return None;
+    }
+    let value = raw as usize;
+    if value == 0 {
+        None
+    } else {
+        Some(value.max(MIN_PAYLOAD_LIMIT))
+    }
+}
+
+fn build_monitor_trace_id() -> String {
+    format!("trace_{}", Uuid::new_v4().simple())
+}
+
+fn sanitize_persisted_event_data(event_type: &str, data: &Value, limit: Option<usize>) -> Value {
+    if event_type == "llm_request" {
+        return summarize_llm_request_event(data, limit);
+    }
+    if event_type == "llm_output" {
+        let mut trimmed = trim_string_fields(data, limit);
+        if let Value::Object(ref mut map) = trimmed {
+            if let Some(Value::String(text)) = map.get("content") {
+                map.insert("content".to_string(), Value::String(trim_text(text, limit)));
+            }
+            if let Some(Value::String(text)) = map.get("reasoning") {
+                map.insert(
+                    "reasoning".to_string(),
+                    Value::String(trim_text(text, limit)),
+                );
+            }
+        }
+        return trimmed;
+    }
+    trim_string_fields(data, limit)
+}
+
+fn should_merge_monitor_event(previous: &MonitorEvent, event_type: &str, data: &Value) -> bool {
+    if previous.event_type != event_type {
+        return false;
+    }
+    match event_type {
+        "context_usage" => true,
+        "progress" => {
+            previous.data.get("stage") == data.get("stage")
+                && previous.data.get("user_round") == data.get("user_round")
+                && previous.data.get("model_round") == data.get("model_round")
+        }
+        _ => false,
+    }
+}
+
+fn summarize_llm_request_event(data: &Value, limit: Option<usize>) -> Value {
+    let Some(map) = data.as_object() else {
+        return trim_string_fields(data, limit);
+    };
+    let mut summary = serde_json::Map::new();
+    for (key, value) in map {
+        if key == "payload" {
+            continue;
+        }
+        summary.insert(key.clone(), trim_json_value(value, limit, 0));
+    }
+    if let Some(payload) = map.get("payload") {
+        let (message_count, payload_summary) = summarize_llm_request_payload(payload, limit);
+        summary.insert("message_count".to_string(), json!(message_count));
+        summary.insert("payload_summary".to_string(), payload_summary);
+        summary.remove("payload_omitted");
+    }
+    Value::Object(summary)
+}
+
+fn summarize_llm_request_payload(payload: &Value, limit: Option<usize>) -> (usize, Value) {
+    let Some(map) = payload.as_object() else {
+        return (0, trim_json_value(payload, limit, 0));
+    };
+    let message_count = map
+        .get("messages")
+        .and_then(Value::as_array)
+        .map(|items| items.len())
+        .or_else(|| {
+            map.get("input")
+                .and_then(Value::as_array)
+                .map(|items| items.len())
+        })
+        .unwrap_or(0);
+    let mut summary = serde_json::Map::new();
+    for (key, value) in map {
+        let compact = match key.as_str() {
+            "messages" | "input" => summarize_request_message_array(value),
+            "tools" | "functions" => summarize_request_tool_array(value),
+            _ => summarize_request_json_value(value, limit, 0),
+        };
+        summary.insert(key.clone(), compact);
+    }
+    (message_count, Value::Object(summary))
+}
+
+fn summarize_request_message_array(value: &Value) -> Value {
+    let Some(items) = value.as_array() else {
+        return value.clone();
+    };
+    let mut role_counts: HashMap<String, usize> = HashMap::new();
+    for item in items {
+        let role = item
+            .get("role")
+            .and_then(Value::as_str)
+            .or_else(|| item.get("type").and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("unknown")
+            .to_string();
+        *role_counts.entry(role).or_default() += 1;
+    }
+    let mut summary = serde_json::Map::new();
+    summary.insert("count".to_string(), json!(items.len()));
+    if !role_counts.is_empty() {
+        let mut roles = serde_json::Map::new();
+        let mut keys = role_counts.keys().cloned().collect::<Vec<_>>();
+        keys.sort();
+        for key in keys {
+            roles.insert(key.clone(), json!(role_counts[&key]));
+        }
+        summary.insert("role_counts".to_string(), Value::Object(roles));
+    }
+    Value::Object(summary)
+}
+
+fn summarize_request_tool_array(value: &Value) -> Value {
+    let Some(items) = value.as_array() else {
+        return value.clone();
+    };
+    let preview = items
+        .iter()
+        .take(12)
+        .map(summarize_request_tool_item)
+        .collect::<Vec<_>>();
+    json!({
+        "count": items.len(),
+        "preview": preview,
+        "truncated": items.len() > 12
+    })
+}
+
+fn summarize_request_tool_item(value: &Value) -> Value {
+    let Some(map) = value.as_object() else {
+        return value.clone();
+    };
+    let mut summary = serde_json::Map::new();
+    if let Some(value) = map.get("type") {
+        summary.insert("type".to_string(), value.clone());
+    }
+    if let Some(value) = map.get("name") {
+        summary.insert("name".to_string(), value.clone());
+    }
+    if let Some(function) = map.get("function").and_then(Value::as_object) {
+        let mut compact = serde_json::Map::new();
+        if let Some(value) = function.get("name") {
+            compact.insert("name".to_string(), value.clone());
+        }
+        if !compact.is_empty() {
+            summary.insert("function".to_string(), Value::Object(compact));
+        }
+    }
+    if summary.is_empty() {
+        return Value::String("tool".to_string());
+    }
+    Value::Object(summary)
+}
+
+fn summarize_request_json_value(value: &Value, limit: Option<usize>, depth: usize) -> Value {
+    const MAX_DEPTH: usize = 4;
+    const MAX_OBJECT_KEYS: usize = 12;
+    const MAX_ARRAY_PREVIEW: usize = 3;
+    if depth >= MAX_DEPTH {
+        return Value::String("...(truncated)".to_string());
+    }
+    match value {
+        Value::Array(items) => json!({
+            "count": items.len(),
+            "preview": items
+                .iter()
+                .take(MAX_ARRAY_PREVIEW)
+                .map(|item| summarize_request_json_value(item, limit, depth + 1))
+                .collect::<Vec<_>>(),
+            "truncated": items.len() > MAX_ARRAY_PREVIEW
+        }),
+        Value::Object(map) => {
+            let mut compact = serde_json::Map::new();
+            for (index, (key, item)) in map.iter().enumerate() {
+                if index >= MAX_OBJECT_KEYS {
+                    compact.insert("_truncated".to_string(), Value::Bool(true));
+                    break;
+                }
+                compact.insert(
+                    key.clone(),
+                    summarize_request_json_value(item, limit, depth + 1),
+                );
+            }
+            Value::Object(compact)
+        }
+        Value::String(text) => Value::String(trim_text(text, limit)),
+        _ => value.clone(),
+    }
+}
+
+fn trim_text(text: &str, limit: Option<usize>) -> String {
+    let Some(limit) = limit else {
+        return text.to_string();
+    };
+    if text.len() <= limit {
+        return text.to_string();
+    }
+    let mut end = limit;
+    while end > 0 && !text.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    format!("{}...(truncated)", &text[..end])
+}
+
+fn trim_string_fields(data: &Value, limit: Option<usize>) -> Value {
+    trim_json_value(data, limit, 0)
+}
+
+fn trim_json_value(value: &Value, limit: Option<usize>, depth: usize) -> Value {
+    const MAX_DEPTH: usize = 16;
+    if depth >= MAX_DEPTH {
+        return value.clone();
+    }
+    match value {
+        Value::String(text) => Value::String(trim_text(text, limit)),
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| trim_json_value(item, limit, depth + 1))
+                .collect(),
+        ),
+        Value::Object(map) => {
+            let mut output = serde_json::Map::new();
+            for (key, item) in map {
+                output.insert(key.clone(), trim_json_value(item, limit, depth + 1));
+            }
+            Value::Object(output)
+        }
+        _ => value.clone(),
+    }
+}
+
+fn workspace_usage_total<I>(sizes: I) -> u64
+where
+    I: IntoIterator<Item = u64>,
+{
+    sizes
+        .into_iter()
+        .fold(0_u64, |acc, value| acc.saturating_add(value))
+}
+
+fn update_workspace_usage_state_incremental(
+    scan_state: &mut WorkspaceUsageScanState,
+    user_dirs: &[(String, PathBuf)],
+    batch_users: usize,
+) {
+    let mut current_map: HashMap<&str, &PathBuf> = HashMap::with_capacity(user_dirs.len());
+    for (user, path) in user_dirs {
+        current_map.insert(user.as_str(), path);
+    }
+
+    scan_state
+        .per_user
+        .retain(|user, _| current_map.contains_key(user.as_str()));
+    scan_state
+        .user_order
+        .retain(|user| current_map.contains_key(user.as_str()));
+
+    let mut has_new_user = false;
+    for (user, _path) in user_dirs {
+        if scan_state.per_user.contains_key(user) {
+            continue;
+        }
+        // Defer expensive size traversal to the batched scan loop below.
+        scan_state.per_user.insert(user.clone(), 0);
+        scan_state.user_order.push(user.clone());
+        has_new_user = true;
+    }
+    if has_new_user {
+        scan_state.user_order.sort();
+        scan_state.cursor = 0;
+    }
+
+    if scan_state.user_order.is_empty() {
+        scan_state.cursor = 0;
+        return;
+    }
+
+    if scan_state.cursor >= scan_state.user_order.len() {
+        scan_state.cursor = 0;
+    }
+
+    let scan_count = batch_users.max(1).min(scan_state.user_order.len());
+    for _ in 0..scan_count {
+        if scan_state.cursor >= scan_state.user_order.len() {
+            scan_state.cursor = 0;
+        }
+        let user = scan_state.user_order[scan_state.cursor].clone();
+        scan_state.cursor += 1;
+        if scan_state.cursor >= scan_state.user_order.len() {
+            scan_state.cursor = 0;
+        }
+        let Some(path) = current_map.get(user.as_str()) else {
+            continue;
+        };
+        let size = calc_dir_size(path.as_path(), None);
+        scan_state.per_user.insert(user, size);
+    }
+}
+
+fn is_workspace_usage_dir_name(name: &str) -> bool {
+    let cleaned = name.trim();
+    if cleaned.is_empty() || cleaned.starts_with('.') {
+        return false;
+    }
+    cleaned
+        .bytes()
+        .all(|value| value.is_ascii_alphanumeric() || value == b'-' || value == b'_')
+}
+
+fn calc_dir_size(path: &Path, extensions: Option<&[&str]>) -> u64 {
+    if !path.exists() {
+        return 0;
+    }
+    let mut total: u64 = 0;
+    for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if let Some(extensions) = extensions {
+            let ext = entry
+                .path()
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("");
+            if !extensions
+                .iter()
+                .any(|allowed| ext.eq_ignore_ascii_case(allowed))
+            {
+                continue;
+            }
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        total = total.saturating_add(metadata.len());
+    }
+    total
+}
+
+fn max_known_user_round_for_monitor_payload(payload: &Value) -> i64 {
+    let mut max_round = parse_positive_i64_value(payload.get("user_rounds"))
+        .or_else(|| parse_positive_i64_value(payload.get("rounds")))
+        .unwrap_or(0);
+    max_round = max_round.max(max_known_user_round_in_value(payload));
+    if let Some(events) = payload.get("events").and_then(Value::as_array) {
+        for event in events {
+            max_round = max_round.max(max_known_user_round_in_value(event));
+        }
+    }
+    max_round
+}
+
+fn max_known_user_round_for_stream_events<'a>(
+    events: impl IntoIterator<Item = &'a Value>,
+) -> Option<i64> {
+    let mut max_round = 0_i64;
+    for event in events {
+        max_round = max_round.max(max_known_user_round_in_value(event));
+    }
+    (max_round > 0).then_some(max_round)
+}
+
+fn max_known_user_round_in_value(value: &Value) -> i64 {
+    let mut max_round = parse_positive_i64_value(value.get("user_round"))
+        .or_else(|| parse_positive_i64_value(value.get("userRound")))
+        .or_else(|| parse_positive_i64_value(value.get("user_turn_index")))
+        .or_else(|| parse_positive_i64_value(value.get("userTurnIndex")))
+        .unwrap_or(0);
+    if let Some(data) = value.get("data") {
+        max_round = max_round.max(max_known_user_round_in_value(data));
+    }
+    if let Some(payload) = value.get("payload") {
+        max_round = max_round.max(max_known_user_round_in_value(payload));
+    }
+    if let Some(events) = value.get("events").and_then(Value::as_array) {
+        for event in events {
+            max_round = max_round.max(max_known_user_round_in_value(event));
+        }
+    }
+    if let Some(segments) = value.get("segments").and_then(Value::as_array) {
+        for segment in segments {
+            max_round = max_round.max(max_known_user_round_in_value(segment));
+        }
+    }
+    max_round
+}
+
+fn now_ts() -> f64 {
+    Utc::now().timestamp_millis() as f64 / 1000.0
+}
+
+fn format_ts(ts: f64) -> String {
+    if ts <= 0.0 {
+        return String::new();
+    }
+    let Some(dt) = DateTime::<Utc>::from_timestamp(ts as i64, 0) else {
+        return String::new();
+    };
+    dt.with_timezone(&Local).to_rfc3339()
+}
+
+fn round2(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
+}
+
+fn split_tool_summary_template(template: &str) -> (String, String) {
+    if let Some((prefix, suffix)) = template.split_once("{tool}") {
+        return (prefix.to_string(), suffix.to_string());
+    }
+    (template.to_string(), String::new())
+}
+
+fn localize_summary(summary: &str) -> String {
+    let cleaned = summary.trim();
+    if cleaned.is_empty() {
+        return String::new();
+    }
+    let tool_templates = i18n::get_known_prefixes("monitor.summary.tool_call")
+        .into_iter()
+        .map(|item| split_tool_summary_template(&item))
+        .collect::<Vec<_>>();
+    for (prefix, suffix) in tool_templates {
+        if prefix.is_empty() {
+            continue;
+        }
+        if !cleaned.starts_with(&prefix) {
+            continue;
+        }
+        if !suffix.is_empty() && !cleaned.ends_with(&suffix) {
+            continue;
+        }
+        let mut tool_name = cleaned[prefix.len()..].to_string();
+        if !suffix.is_empty() && cleaned.len() >= suffix.len() {
+            tool_name = cleaned[prefix.len()..cleaned.len() - suffix.len()].to_string();
+        }
+        return i18n::t_with_params(
+            "monitor.summary.tool_call",
+            &HashMap::from([("tool".to_string(), tool_name.trim().to_string())]),
+        );
+    }
+    let summary_keys = [
+        "monitor.summary.restarted",
+        "monitor.summary.finished",
+        "monitor.summary.received",
+        "monitor.summary.model_call",
+        "monitor.summary.queued",
+        "monitor.summary.subagent_wait",
+        "monitor.summary.exception",
+        "monitor.summary.cancelled",
+        "monitor.summary.cancel_requested",
+        "monitor.summary.user_deleted_cancel",
+    ];
+    for key in summary_keys {
+        if i18n::get_known_prefixes(key)
+            .iter()
+            .any(|item| item == cleaned)
+        {
+            return i18n::t(key);
+        }
+    }
+    cleaned.to_string()
+}
+#[cfg(test)]
+mod tests {
+    use super::{
+        derive_effective_context_tokens, is_workspace_usage_dir_name,
+        llm_speed_summary_from_monitor_events, resolve_payload_limit, trim_string_fields,
+        update_workspace_usage_state_incremental, MonitorEvent, MonitorState,
+        PendingExperienceAward, WorkspaceUsageScanState, MIN_PAYLOAD_LIMIT,
+    };
+    use crate::config::ObservabilityConfig;
+    use crate::i18n;
+    use crate::services::user_store::UserStore;
+    use crate::storage::{SqliteStorage, StorageBackend};
+    use chrono::Local;
+    use serde_json::json;
+    use std::{collections::VecDeque, fs, sync::Arc};
+    use tempfile::tempdir;
+
+    #[test]
+    fn trim_string_fields_recursively_applies_limit() {
+        let payload = json!({
+            "outer": "abcdefg",
+            "nested": {
+                "inner": "hijklmn"
+            },
+            "arr": ["opqrst", {"deep": "uvwxyz"}]
+        });
+        let trimmed = trim_string_fields(&payload, Some(4));
+        assert_eq!(trimmed["outer"], json!("abcd...(truncated)"));
+        assert_eq!(trimmed["nested"]["inner"], json!("hijk...(truncated)"));
+        assert_eq!(trimmed["arr"][0], json!("opqr...(truncated)"));
+        assert_eq!(trimmed["arr"][1]["deep"], json!("uvwx...(truncated)"));
+    }
+
+    #[test]
+    fn resolve_payload_limit_zero_disables_truncation() {
+        assert_eq!(resolve_payload_limit(0), None);
+        assert_eq!(resolve_payload_limit(-1), None);
+        assert_eq!(resolve_payload_limit(64), Some(MIN_PAYLOAD_LIMIT));
+        assert_eq!(resolve_payload_limit(4096), Some(4096));
+    }
+
+    #[test]
+    fn derive_effective_context_tokens_prefers_context_occupancy() {
+        let mut events = VecDeque::new();
+        events.push_back(MonitorEvent {
+            event_id: 1,
+            timestamp: 1.0,
+            event_type: "context_usage".to_string(),
+            data: json!({ "context_tokens": 290821 }),
+        });
+        events.push_back(MonitorEvent {
+            event_id: 2,
+            timestamp: 2.0,
+            event_type: "token_usage".to_string(),
+            data: json!({ "input_tokens": 5620, "output_tokens": 88, "total_tokens": 5708 }),
+        });
+        events.push_back(MonitorEvent {
+            event_id: 3,
+            timestamp: 3.0,
+            event_type: "round_usage".to_string(),
+            data: json!({
+                "input_tokens": 5750,
+                "output_tokens": 32,
+                "total_tokens": 5782,
+                "context_occupancy_tokens": 291004
+            }),
+        });
+        assert_eq!(
+            derive_effective_context_tokens(&events),
+            Some((291004, 291004))
+        );
+    }
+
+    #[test]
+    fn derive_effective_context_tokens_ignores_billing_token_usage_total() {
+        let mut events = VecDeque::new();
+        events.push_back(MonitorEvent {
+            event_id: 1,
+            timestamp: 1.0,
+            event_type: "token_usage".to_string(),
+            data: json!({ "input_tokens": 5620, "output_tokens": 88, "total_tokens": 5708 }),
+        });
+        events.push_back(MonitorEvent {
+            event_id: 2,
+            timestamp: 2.0,
+            event_type: "round_usage".to_string(),
+            data: json!({ "input_tokens": 5750, "output_tokens": 32, "total_tokens": 5782 }),
+        });
+        assert_eq!(derive_effective_context_tokens(&events), None);
+    }
+
+    #[test]
+    fn derive_effective_context_tokens_reads_context_usage_events() {
+        let mut events = VecDeque::new();
+        events.push_back(MonitorEvent {
+            event_id: 1,
+            timestamp: 1.0,
+            event_type: "context_usage".to_string(),
+            data: json!({ "context_tokens": 1234 }),
+        });
+        assert_eq!(derive_effective_context_tokens(&events), Some((1234, 1234)));
+    }
+
+    #[test]
+    fn monitor_record_event_prefers_explicit_context_occupancy() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("monitor-context-occupancy.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("initialize storage");
+        let monitor = MonitorState::new(
+            storage,
+            ObservabilityConfig::default(),
+            temp.path().to_string_lossy().to_string(),
+        );
+        let session_id = "sess-ctx";
+        monitor.register(session_id, "user", "agent", "question", true);
+        monitor.record_event(
+            session_id,
+            "context_usage",
+            &json!({
+                "context_occupancy_tokens": 4321,
+                "context_tokens": 1234,
+                "total_tokens": 9999
+            }),
+        );
+        let detail = monitor.get_detail(session_id).expect("session detail");
+        assert_eq!(detail["session"]["context_tokens"], json!(4321));
+        assert_eq!(detail["session"]["context_occupancy_tokens"], json!(4321));
+        assert_eq!(detail["session"]["context_tokens_peak"], json!(4321));
+    }
+
+    #[test]
+    fn monitor_register_hydrates_cold_session_round_from_storage() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("monitor-round-hydrate.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("initialize storage");
+        storage
+            .upsert_monitor_record(&json!({
+                "session_id": "sess-round-hydrate",
+                "user_id": "user",
+                "agent_id": "agent",
+                "status": "finished",
+                "updated_time": 10.0,
+                "user_rounds": 3,
+                "rounds": 3,
+                "last_awarded_user_round": 2,
+                "events": [
+                    { "event_id": 1, "timestamp": 8.0, "type": "round_start", "data": { "user_round": 3 } },
+                    { "event_id": 2, "timestamp": 9.0, "type": "final", "data": { "user_round": 3 } }
+                ]
+            }))
+            .expect("seed monitor record");
+        let monitor = MonitorState::new(
+            storage.clone(),
+            ObservabilityConfig::default(),
+            temp.path().to_string_lossy().to_string(),
+        );
+
+        let round = monitor.register(" sess-round-hydrate ", "user", "agent", "next", true);
+
+        assert_eq!(round, 4);
+        let record = monitor.get_record("sess-round-hydrate").expect("record");
+        assert_eq!(record["user_rounds"], json!(4));
+        assert!(record["events"].as_array().is_some_and(|events| events
+            .iter()
+            .any(
+                |event| event["type"] == "round_start" && event["data"]["user_round"] == json!(4)
+            )));
+    }
+
+    #[test]
+    fn monitor_register_hydrates_round_floor_from_stream_events_without_monitor_record() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("monitor-stream-round-hydrate.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("initialize storage");
+        storage
+            .append_stream_event(
+                "sess-stream-round-hydrate",
+                "user",
+                1,
+                &json!({
+                    "event": "progress",
+                    "data": { "stage": "start", "user_round": 5 }
+                }),
+            )
+            .expect("seed stream event");
+        let monitor = MonitorState::new(
+            storage.clone(),
+            ObservabilityConfig::default(),
+            temp.path().to_string_lossy().to_string(),
+        );
+
+        let round = monitor.register("sess-stream-round-hydrate", "user", "agent", "next", true);
+
+        assert_eq!(round, 6);
+        let record = monitor
+            .get_record("sess-stream-round-hydrate")
+            .expect("record");
+        assert_eq!(record["user_rounds"], json!(6));
+    }
+
+    #[test]
+    fn monitor_cancel_source_is_recorded_in_summary_events_and_storage() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("monitor-cancel-source.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("initialize storage");
+        let monitor = MonitorState::new(
+            storage,
+            ObservabilityConfig::default(),
+            temp.path().to_string_lossy().to_string(),
+        );
+        let session_id = "sess-cancel-source";
+        monitor.register(session_id, "user", "agent", "question", true);
+
+        assert!(monitor.cancel_with_source(session_id, "client_abort"));
+        let detail = monitor.get_detail(session_id).expect("session detail");
+        assert_eq!(detail["session"]["cancel_source"], json!("client_abort"));
+        assert_eq!(detail["session"]["status"], json!("cancelling"));
+        assert!(detail["events"]
+            .as_array()
+            .is_some_and(|events| events.iter().any(|event| event["type"] == "cancel"
+                && event["data"]["cancel_source"] == "client_abort")));
+
+        monitor.mark_cancelled(session_id);
+        let record = monitor.get_record(session_id).expect("session record");
+        assert_eq!(record["status"], json!("cancelled"));
+        assert_eq!(record["cancel_source"], json!("client_abort"));
+        assert!(record["events"].as_array().is_some_and(|events| events
+            .iter()
+            .any(|event| event["type"] == "cancelled"
+                && event["data"]["cancel_source"] == "client_abort")));
+    }
+
+    #[test]
+    fn service_metrics_counts_queued_sessions_separately() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("monitor-service-queued.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("initialize storage");
+        let monitor = MonitorState::new(
+            storage,
+            ObservabilityConfig::default(),
+            temp.path().to_string_lossy().to_string(),
+        );
+
+        monitor.register("sess-running", "user", "agent", "question", true);
+        let queued_round = monitor.register_queued(
+            "sess-queued",
+            "user",
+            "agent",
+            "question",
+            true,
+            &json!({
+                "summary": i18n::t("monitor.summary.queued"),
+                "queue_id": "queue-test",
+                "queue_ahead": 1,
+                "queue_total": 2
+            }),
+        );
+        monitor.register("sess-finished", "user", "agent", "question", true);
+        monitor.mark_finished("sess-finished");
+        monitor.register("sess-error", "user", "agent", "question", true);
+        monitor.mark_error("sess-error", "error");
+        monitor.register("sess-cancelled", "user", "agent", "question", true);
+        monitor.mark_cancelled("sess-cancelled");
+
+        let metrics = monitor.get_service_metrics(None, None);
+        let active_sessions = monitor.list_sessions(true);
+        let queued = active_sessions
+            .iter()
+            .find(|item| item["session_id"] == json!("sess-queued"))
+            .expect("queued session should be visible in active monitor list");
+
+        assert_eq!(queued_round, 1);
+        assert_eq!(queued["status"], json!("queued"));
+        assert_eq!(queued["stage"], json!("queued"));
+        assert_eq!(metrics["active_sessions"], json!(1));
+        assert_eq!(metrics["queued_sessions"], json!(1));
+        assert_eq!(metrics["history_sessions"], json!(3));
+        assert_eq!(metrics["finished_sessions"], json!(1));
+        assert_eq!(metrics["error_sessions"], json!(1));
+        assert_eq!(metrics["cancelled_sessions"], json!(1));
+        assert_eq!(metrics["total_sessions"], json!(5));
+
+        let running_round = monitor.register("sess-queued", "user", "agent", "question", true);
+        let running = monitor.get_record("sess-queued").expect("running record");
+        assert_eq!(running_round, 1);
+        assert_eq!(running["status"], json!("running"));
+        assert_eq!(running["user_rounds"], json!(1));
+    }
+
+    #[test]
+    fn llm_speed_summary_prefers_decode_output_tokens() {
+        let mut events = VecDeque::new();
+        events.push_back(MonitorEvent {
+            event_id: 1,
+            timestamp: 1.0,
+            event_type: "llm_request".to_string(),
+            data: json!({ "model_round": 1 }),
+        });
+        events.push_back(MonitorEvent {
+            event_id: 2,
+            timestamp: 3.0,
+            event_type: "token_usage".to_string(),
+            data: json!({
+                "model_round": 1,
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "decode_output_tokens": 120,
+                "prefill_duration_s": 0.5,
+                "decode_duration_s": 2.0
+            }),
+        });
+        let summary = llm_speed_summary_from_monitor_events(&events);
+        assert_eq!(summary.decode_tokens, Some(120));
+        assert_eq!(summary.decode_duration_s, Some(2.0));
+        assert_eq!(summary.decode_speed_tps, Some(60.0));
+    }
+
+    #[test]
+    fn log_overview_is_a_safe_metrics_only_projection() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("monitor-log-overview.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("initialize storage");
+        let monitor = MonitorState::new(
+            storage,
+            ObservabilityConfig::default(),
+            temp.path().to_string_lossy().to_string(),
+        );
+        monitor.register(
+            "sess-log-overview",
+            "private-user",
+            "agent-id",
+            "question",
+            true,
+        );
+        monitor.record_event("sess-log-overview", "tool_call", &json!({ "tool": "read" }));
+        monitor.record_event(
+            "sess-log-overview",
+            "model_request_usage",
+            &json!({ "session_request_count": 3 }),
+        );
+        monitor.record_event(
+            "sess-log-overview",
+            "llm_request",
+            &json!({ "model_round": 1 }),
+        );
+        monitor.record_event(
+            "sess-log-overview",
+            "llm_output",
+            &json!({
+                "model_round": 1,
+                "usage": {
+                    "input_tokens": 120,
+                    "output_tokens": 30
+                },
+                "decode_output_tokens": 30,
+                "prefill_duration_s": 0.5,
+                "decode_duration_s": 1.5
+            }),
+        );
+        let detail = monitor
+            .get_detail("sess-log-overview")
+            .expect("monitor detail");
+        assert_eq!(
+            detail["session"]["prefill_speed_tps"],
+            json!(240.0),
+            "monitor events must retain one measured request"
+        );
+
+        let overview = monitor
+            .get_log_overview("sess-log-overview")
+            .expect("log overview");
+        let object = overview.as_object().expect("overview object");
+        assert_eq!(object["session_id"], json!("sess-log-overview"));
+        assert_eq!(object["agent_id"], json!("agent-id"));
+        assert_eq!(object["tool_calls"], json!(1));
+        assert_eq!(object["quota_used"], json!(3));
+        assert!(object["event_total"]
+            .as_u64()
+            .is_some_and(|total| total >= 4));
+        assert_eq!(object["prefill_speed_tps"], json!(240.0));
+        assert_eq!(object["decode_speed_tps"], json!(20.0));
+        assert!(!object.contains_key("trace_id"));
+        assert!(!object.contains_key("user_id"));
+        assert!(!object.contains_key("events"));
+        assert!(!object.contains_key("is_admin"));
+        assert!(!object.contains_key("log_profile"));
+    }
+
+    #[test]
+    fn workspace_usage_dir_name_filters_hidden_cache_dirs() {
+        assert!(!is_workspace_usage_dir_name(""));
+        assert!(!is_workspace_usage_dir_name(".cache"));
+        assert!(!is_workspace_usage_dir_name(".fontconfig"));
+        assert!(!is_workspace_usage_dir_name("cache.dir"));
+        assert!(is_workspace_usage_dir_name("admin"));
+        assert!(is_workspace_usage_dir_name("zhang__c__1"));
+        assert!(is_workspace_usage_dir_name("worker_agent"));
+    }
+
+    #[test]
+    fn workspace_usage_incremental_scan_respects_batch_size() {
+        let temp = tempdir().expect("tempdir");
+        let alpha = temp.path().join("alpha");
+        let beta = temp.path().join("beta");
+        let gamma = temp.path().join("gamma");
+        fs::create_dir_all(&alpha).expect("create alpha");
+        fs::create_dir_all(&beta).expect("create beta");
+        fs::create_dir_all(&gamma).expect("create gamma");
+        fs::write(alpha.join("a.txt"), vec![b'a'; 3]).expect("write alpha");
+        fs::write(beta.join("b.txt"), vec![b'b'; 5]).expect("write beta");
+        fs::write(gamma.join("c.txt"), vec![b'c'; 7]).expect("write gamma");
+
+        let user_dirs = vec![
+            ("alpha".to_string(), alpha),
+            ("beta".to_string(), beta),
+            ("gamma".to_string(), gamma),
+        ];
+        let mut scan_state = WorkspaceUsageScanState::default();
+        update_workspace_usage_state_incremental(&mut scan_state, &user_dirs, 1);
+        assert_eq!(scan_state.per_user.get("alpha").copied(), Some(3));
+        assert_eq!(scan_state.per_user.get("beta").copied(), Some(0));
+        assert_eq!(scan_state.per_user.get("gamma").copied(), Some(0));
+
+        update_workspace_usage_state_incremental(&mut scan_state, &user_dirs, 1);
+        assert_eq!(scan_state.per_user.get("beta").copied(), Some(5));
+        assert_eq!(scan_state.per_user.get("gamma").copied(), Some(0));
+    }
+
+    #[test]
+    fn finalize_user_experience_settlement_does_not_grant_quota() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("monitor-level-up.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("initialize storage");
+        let user_store = UserStore::new(storage.clone());
+        let user = user_store
+            .create_user(
+                "alice",
+                None,
+                "password",
+                None,
+                None,
+                vec!["user".to_string()],
+                "active",
+                false,
+            )
+            .expect("create user");
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let mut seeded = storage
+            .get_user_account(&user.user_id)
+            .expect("load user")
+            .expect("user exists");
+        seeded.experience_total = 267;
+        seeded.quota_balance = 10;
+        seeded.quota_granted_total = 10;
+        seeded.last_quota_grant_date = Some(today.clone());
+        storage
+            .upsert_user_account(&seeded)
+            .expect("seed user account");
+
+        let monitor = MonitorState::new(
+            storage.clone(),
+            ObservabilityConfig::default(),
+            temp.path().to_string_lossy().to_string(),
+        );
+        monitor.finalize_user_experience_settlement(PendingExperienceAward {
+            session_id: "missing-session".to_string(),
+            user_id: user.user_id.clone(),
+            user_round: 1,
+            delta: 1,
+            updated_time: 123.0,
+        });
+
+        let updated = storage
+            .get_user_account(&user.user_id)
+            .expect("reload user")
+            .expect("user exists");
+        assert_eq!(updated.experience_total, 268);
+        assert_eq!(updated.quota_balance, 10);
+        assert_eq!(updated.quota_granted_total, 10);
+        assert_eq!(updated.quota_used_total, 0);
+        assert_eq!(
+            updated.last_quota_grant_date.as_deref(),
+            Some(today.as_str())
+        );
+    }
+    #[test]
+    fn token_accounting_includes_reasoning_and_accepts_zero_context_reset() {
+        assert_eq!(
+            super::parse_usage_billing_tokens(&json!({"input_tokens":10,
+            "output_tokens":0,"reasoning_tokens":30,"total_tokens":40})),
+            40
+        );
+        assert_eq!(
+            super::parse_usage_billing_tokens(&json!({"usage":{"reasoning_tokens":30}})),
+            30
+        );
+        let events = VecDeque::from([
+            MonitorEvent {
+                event_id: 1,
+                timestamp: 1.0,
+                event_type: "context_usage".into(),
+                data: json!({"context_tokens":100}),
+            },
+            MonitorEvent {
+                event_id: 2,
+                timestamp: 2.0,
+                event_type: "context_usage".into(),
+                data: json!({"context_tokens":0}),
+            },
+        ]);
+        assert_eq!(derive_effective_context_tokens(&events), Some((0, 100)));
+    }
+}

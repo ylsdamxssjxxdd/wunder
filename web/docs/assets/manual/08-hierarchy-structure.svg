@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="600" viewBox="30 140 920 600" role="img" aria-labelledby="title desc">
+  <title id="title">wunder 对象关系图</title>
+  <desc id="desc">金字塔式对象排布：线程、智能体、用户、心舰。</desc>
+
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f7faff"/>
+      <stop offset="100%" stop-color="#eef4ff"/>
+    </linearGradient>
+
+    <linearGradient id="pyramidGrad" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#f97316" stop-opacity="0.16"/>
+      <stop offset="35%" stop-color="#a855f7" stop-opacity="0.14"/>
+      <stop offset="70%" stop-color="#14b8a6" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#2d68f4" stop-opacity="0.12"/>
+    </linearGradient>
+
+    <linearGradient id="axisGrad" x1="0" y1="190" x2="0" y2="680" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#2563eb"/>
+    </linearGradient>
+
+    <filter id="shadowSoft" x="-20%" y="-30%" width="140%" height="180%">
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#1e3a8a" flood-opacity="0.10"/>
+    </filter>
+
+    <marker id="axisArrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 z" fill="#2563eb"/>
+    </marker>
+
+    <style><![CDATA[
+      .node { rx: 12; ry: 12; fill: none; stroke: #b8c6e6; stroke-width: 1.6; filter: url(#shadowSoft); }
+      .node-text { font: 700 17px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+      .axis { stroke: url(#axisGrad); stroke-width: 3.6; fill: none; marker-end: url(#axisArrow); }
+      .axis-label { font: 700 24px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+      .axis-label-top { fill: #f59e0b; }
+      .axis-label-bottom { fill: #2563eb; }
+      .text-core { fill: #f59e0b; }
+      .text-user { fill: #ca8a04; }
+      .text-agent { fill: #7c3aed; }
+      .text-thread { fill: #2563eb; }
+    ]]></style>
+  </defs>
+
+  <rect x="0" y="0" width="1040" height="820" fill="url(#bgGrad)"/>
+  <circle cx="930" cy="115" r="66" fill="#dde8ff" opacity="0.42"/>
+  <circle cx="120" cy="748" r="72" fill="#dcfff8" opacity="0.42"/>
+
+  <path d="M78,190 L78,680" class="axis"/>
+  <text x="78" y="168" text-anchor="middle" class="axis-label axis-label-top">抽象</text>
+  <text x="78" y="716" text-anchor="middle" class="axis-label axis-label-bottom">现实</text>
+
+  <polygon points="120,588 920,588 650,190 390,190" fill="url(#pyramidGrad)"/>
+
+  <rect class="node" x="459" y="232" width="122" height="34"/>
+  <text x="520" y="254" text-anchor="middle" class="node-text text-core">心舰</text>
+
+  <rect class="node" x="390" y="324" width="122" height="34"/>
+  <text x="451" y="346" text-anchor="middle" class="node-text text-user">用户 A</text>
+  <rect class="node" x="528" y="324" width="122" height="34"/>
+  <text x="589" y="346" text-anchor="middle" class="node-text text-user">用户 B</text>
+
+  <rect class="node" x="390" y="416" width="122" height="34"/>
+  <text x="451" y="438" text-anchor="middle" class="node-text text-agent">智能体 A</text>
+  <rect class="node" x="528" y="416" width="122" height="34"/>
+  <text x="589" y="438" text-anchor="middle" class="node-text text-agent">智能体 B</text>
+
+  <rect class="node" x="252" y="508" width="122" height="34"/>
+  <text x="313" y="530" text-anchor="middle" class="node-text text-thread">线程 1</text>
+  <rect class="node" x="390" y="508" width="122" height="34"/>
+  <text x="451" y="530" text-anchor="middle" class="node-text text-thread">线程 2</text>
+  <rect class="node" x="528" y="508" width="122" height="34"/>
+  <text x="589" y="530" text-anchor="middle" class="node-text text-thread">线程 3</text>
+  <rect class="node" x="666" y="508" width="122" height="34"/>
+  <text x="727" y="530" text-anchor="middle" class="node-text text-thread">线程 N</text>
+</svg>

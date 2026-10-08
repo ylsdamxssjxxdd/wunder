@@ -1,0 +1,8 @@
+:root {
+  --maintenance-banner-bg: rgba(255, 248, 230, 0.96);
+  --maintenance-banner-border: rgba(217, 119, 6, 0.32);
+  --maintenance-banner-text: #92400e;
+  --maintenance-banner-muted: rgba(146, 64, 14, 0.78);
+  --maintenance-banner-icon-bg: rgba(245, 158, 11, 0.16);
+  --maintenance-banner-icon-color: #d97706;
+}

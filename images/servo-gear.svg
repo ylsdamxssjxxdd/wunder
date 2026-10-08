@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-110 -110 220 220" width="220" height="220" role="img">
+  <title>wunder 舵机</title>
+  <g fill="none" stroke="#f74c00" stroke-linecap="round">
+    <circle r="70" stroke-width="17"/>
+    <circle r="43" stroke-width="14.4"/>
+    <line x1="70" y1="0" x2="95" y2="0" stroke-width="12.4"/>
+    <circle cx="95" cy="0" r="5" fill="#f74c00" stroke="none"/>
+    <line x1="60.62" y1="35" x2="82.27" y2="47.5" stroke-width="12.4"/>
+    <circle cx="82.27" cy="47.5" r="5" fill="#f74c00" stroke="none"/>
+    <line x1="35" y1="60.62" x2="47.5" y2="82.27" stroke-width="12.4"/>
+    <circle cx="47.5" cy="82.27" r="5" fill="#f74c00" stroke="none"/>
+    <line x1="4.286e-15" y1="70" x2="5.817e-15" y2="95" stroke-width="12.4"/>
+    <circle cx="5.817e-15" cy="95" r="5" fill="#f74c00" stroke="none"/>
+    <line x1="-35" y1="60.62" x2="-47.5" y2="82.27" stroke-width="12.4"/>
+    <circle cx="-47.5" cy="82.27" r="5" fill="#f74c00" stroke="none"/>
+    <line x1="-60.62" y1="35" x2="-82.27" y2="47.5" stroke-width="12.4"/>
+    <circle cx="-82.27" cy="47.5" r="5" fill="#f74c00" stroke="none"/>
+    <line x1="-70" y1="8.573e-15" x2="-95" y2="1.163e-14" stroke-width="12.4"/>
+    <circle cx="-95" cy="1.163e-14" r="5" fill="#f74c00" stroke="none"/>
+    <line x1="-60.62" y1="-35" x2="-82.27" y2="-47.5" stroke-width="12.4"/>
+    <circle cx="-82.27" cy="-47.5" r="5" fill="#f74c00" stroke="none"/>
+    <line x1="-35" y1="-60.62" x2="-47.5" y2="-82.27" stroke-width="12.4"/>
+    <circle cx="-47.5" cy="-82.27" r="5" fill="#f74c00" stroke="none"/>
+    <line x1="-1.286e-14" y1="-70" x2="-1.745e-14" y2="-95" stroke-width="12.4"/>
+    <circle cx="-1.745e-14" cy="-95" r="5" fill="#f74c00" stroke="none"/>
+    <line x1="35" y1="-60.62" x2="47.5" y2="-82.27" stroke-width="12.4"/>
+    <circle cx="47.5" cy="-82.27" r="5" fill="#f74c00" stroke="none"/>
+    <line x1="60.62" y1="-35" x2="82.27" y2="-47.5" stroke-width="12.4"/>
+    <circle cx="82.27" cy="-47.5" r="5" fill="#f74c00" stroke="none"/>
+    <polyline points="-29,-20 -14.5,20 0,-6 14.5,20 29,-20" stroke-width="10"/>
+  </g>
+</svg>

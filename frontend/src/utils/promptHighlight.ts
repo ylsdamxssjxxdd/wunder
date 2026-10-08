@@ -1,0 +1,270 @@
+type UnknownRecord = Record<string, unknown>;
+
+type PromptSegmentState = {
+  inSkills: boolean;
+};
+
+type ToolLineGroup =
+  | 'skills'
+  | 'mcp'
+  | 'knowledge'
+  | 'a2a'
+  | 'user'
+  | 'shared'
+  | 'builtin'
+  | 'other';
+
+const asRecord = (value: unknown): UnknownRecord =>
+  value && typeof value === 'object' ? (value as UnknownRecord) : {};
+
+const pickToolName = (item: unknown): string => {
+  if (!item) return '';
+  if (typeof item === 'string') return item;
+  const obj = asRecord(item);
+  return String(obj.name || obj.tool_name || obj.toolName || obj.id || '');
+};
+
+const escapeHtml = (text: unknown): string =>
+  String(text ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const normalizeToolNames = (list: unknown): string[] => {
+  if (!Array.isArray(list)) {
+    return [];
+  }
+  return list.map((item) => pickToolName(item).trim()).filter(Boolean);
+};
+
+const hasTypedUserToolGroups = (payload: UnknownRecord): boolean =>
+  Object.prototype.hasOwnProperty.call(payload, 'user_mcp_tools') ||
+  Object.prototype.hasOwnProperty.call(payload, 'userMcpTools') ||
+  Object.prototype.hasOwnProperty.call(payload, 'user_skills') ||
+  Object.prototype.hasOwnProperty.call(payload, 'userSkills') ||
+  Object.prototype.hasOwnProperty.call(payload, 'user_knowledge_tools') ||
+  Object.prototype.hasOwnProperty.call(payload, 'userKnowledgeTools');
+
+const TOOL_LINE_GROUP_PRIORITY: Record<ToolLineGroup, number> = {
+  skills: 0,
+  mcp: 1,
+  knowledge: 2,
+  a2a: 3,
+  user: 4,
+  shared: 5,
+  builtin: 6,
+  other: 7
+};
+
+const renderPromptSegmentWithSkills = (segment: string, segmentState: PromptSegmentState): string => {
+  const skillHeaders = new Set(['[Mounted Skills]', '[\u5df2\u6302\u8f7d\u6280\u80fd]']);
+  const lines = String(segment ?? '').split(/\r?\n/);
+  const output = lines.map((line) => {
+    const trimmed = line.trim();
+    if (skillHeaders.has(trimmed)) {
+      segmentState.inSkills = true;
+      return escapeHtml(line);
+    }
+    if (trimmed.startsWith('[') && trimmed.endsWith(']') && !skillHeaders.has(trimmed)) {
+      segmentState.inSkills = false;
+      return escapeHtml(line);
+    }
+    if (segmentState.inSkills) {
+      const match = line.match(/^(\s*-\s+)(.+)$/);
+      if (match) {
+        return `${escapeHtml(match[1])}<span class="skill-highlight">${escapeHtml(match[2])}</span>`;
+      }
+    }
+    return escapeHtml(line);
+  });
+  return output.join('\n');
+};
+
+const resolveToolLineGroup = (
+  name: string,
+  groups: {
+    skills: Set<string>;
+    mcp: Set<string>;
+    knowledge: Set<string>;
+    a2a: Set<string>;
+    user: Set<string>;
+    shared: Set<string>;
+    builtin: Set<string>;
+  }
+): ToolLineGroup => {
+  if (groups.skills.has(name)) return 'skills';
+  if (groups.mcp.has(name)) return 'mcp';
+  if (groups.knowledge.has(name)) return 'knowledge';
+  if (groups.a2a.has(name)) return 'a2a';
+  if (groups.user.has(name)) return 'user';
+  if (groups.shared.has(name)) return 'shared';
+  if (groups.builtin.has(name)) return 'builtin';
+  return 'other';
+};
+
+const reorderToolContentLines = (
+  lines: string[],
+  groups: {
+    skills: Set<string>;
+    mcp: Set<string>;
+    knowledge: Set<string>;
+    a2a: Set<string>;
+    user: Set<string>;
+    shared: Set<string>;
+    builtin: Set<string>;
+  }
+) => {
+  const toolLines = lines
+    .map((line, index) => {
+      const match = line.match(/"name"\s*:\s*"([^"]+)"/);
+      if (!match) {
+        return null;
+      }
+      const name = match[1];
+      const group = resolveToolLineGroup(name, groups);
+      return {
+        index,
+        line,
+        group,
+        priority: TOOL_LINE_GROUP_PRIORITY[group]
+      };
+    })
+    .filter(Boolean) as Array<{
+    index: number;
+    line: string;
+    group: ToolLineGroup;
+    priority: number;
+  }>;
+
+  if (toolLines.length <= 1) {
+    return lines;
+  }
+
+  const sortedToolLines = [...toolLines].sort((left, right) => {
+    if (left.priority !== right.priority) {
+      return left.priority - right.priority;
+    }
+    return left.index - right.index;
+  });
+
+  const nextLines = [...lines];
+  toolLines.forEach((toolLine, index) => {
+    nextLines[toolLine.index] = sortedToolLines[index].line;
+  });
+  return nextLines;
+};
+
+export const renderSystemPromptHighlight = (
+  rawText: string,
+  toolsPayload: UnknownRecord = {}
+): string => {
+  if (!rawText) {
+    return '';
+  }
+  const builtinToolNames = new Set(
+    normalizeToolNames(toolsPayload.builtin_tools || toolsPayload.builtinTools)
+  );
+  const knowledgeToolNames = new Set(
+    [
+      ...normalizeToolNames(toolsPayload.knowledge_tools || toolsPayload.knowledgeTools),
+      ...normalizeToolNames(
+        toolsPayload.user_knowledge_tools || toolsPayload.userKnowledgeTools
+      )
+    ]
+  );
+  const skillsNames = new Set(
+    [
+      ...normalizeToolNames(toolsPayload.skills || toolsPayload.skill_list || toolsPayload.skillList),
+      ...normalizeToolNames(toolsPayload.user_skills || toolsPayload.userSkills)
+    ]
+  );
+  const mcpToolNames = new Set(
+    [
+      ...normalizeToolNames(toolsPayload.mcp_tools || toolsPayload.mcpTools),
+      ...normalizeToolNames(toolsPayload.user_mcp_tools || toolsPayload.userMcpTools)
+    ]
+  );
+  const a2aToolNames = new Set(
+    normalizeToolNames(toolsPayload.a2a_tools || toolsPayload.a2aTools)
+  );
+  const legacyUserToolList = hasTypedUserToolGroups(toolsPayload)
+    ? []
+    : normalizeToolNames(toolsPayload.user_tools || toolsPayload.userTools);
+  const userToolNames = new Set(
+    legacyUserToolList
+  );
+  const sharedToolNames = new Set(
+    normalizeToolNames(toolsPayload.shared_tools || toolsPayload.sharedTools)
+  );
+
+  const startTag = '<tools>';
+  const endTag = '</tools>';
+  let output = '';
+  let cursor = 0;
+  const skillState: PromptSegmentState = { inSkills: false };
+
+  while (true) {
+    const start = rawText.indexOf(startTag, cursor);
+    if (start < 0) {
+      output += renderPromptSegmentWithSkills(rawText.slice(cursor), skillState);
+      break;
+    }
+    const end = rawText.indexOf(endTag, start + startTag.length);
+    if (end < 0) {
+      output += renderPromptSegmentWithSkills(rawText.slice(cursor), skillState);
+      break;
+    }
+    output += renderPromptSegmentWithSkills(rawText.slice(cursor, start), skillState);
+    output += escapeHtml(startTag);
+    const toolsContent = rawText.slice(start + startTag.length, end);
+    const lines = reorderToolContentLines(toolsContent.split(/\r?\n/), {
+      skills: skillsNames,
+      mcp: mcpToolNames,
+      knowledge: knowledgeToolNames,
+      a2a: a2aToolNames,
+      user: userToolNames,
+      shared: sharedToolNames,
+      builtin: builtinToolNames
+    });
+    const highlighted = lines
+      .map((line) => {
+        const match = line.match(/"name"\s*:\s*"([^"]+)"/);
+        const escapedLine = escapeHtml(line);
+        if (!match) {
+          return escapedLine;
+        }
+        const escapedMatch = escapeHtml(match[0]);
+        const escapedName = escapeHtml(match[1]);
+        let highlightClass = 'tool-highlight';
+        if (skillsNames.has(match[1])) {
+          highlightClass = 'skill-highlight';
+        } else if (mcpToolNames.has(match[1])) {
+          highlightClass = 'tool-highlight';
+        } else if (knowledgeToolNames.has(match[1])) {
+          highlightClass = 'tool-highlight knowledge';
+        } else if (a2aToolNames.has(match[1])) {
+          highlightClass = 'tool-highlight';
+        } else if (userToolNames.has(match[1])) {
+          highlightClass = 'tool-highlight user';
+        } else if (sharedToolNames.has(match[1])) {
+          highlightClass = 'tool-highlight shared';
+        } else if (builtinToolNames.has(match[1])) {
+          highlightClass = 'tool-highlight builtin';
+        }
+        const highlightedMatch = escapedMatch.replace(
+          escapedName,
+          `<span class="${highlightClass}">${escapedName}</span>`
+        );
+        return escapedLine.replace(escapedMatch, highlightedMatch);
+      })
+      .join('\n');
+    output += highlighted;
+    output += escapeHtml(endTag);
+    cursor = end + endTag.length;
+  }
+  return output;
+};
+
+export { escapeHtml };

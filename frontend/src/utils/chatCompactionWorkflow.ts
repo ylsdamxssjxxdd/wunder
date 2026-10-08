@@ -1,0 +1,181 @@
+type UnknownObject = Record<string, unknown>;
+
+const CONTEXT_CN = '\u4e0a\u4e0b\u6587';
+const COMPACTION_CN = '\u538b\u7f29';
+
+export type WorkflowCompactionSnapshot = {
+  eventType: 'compaction_progress' | 'compaction';
+  status: 'pending' | 'loading' | 'completed' | 'failed' | 'cancelled';
+  explicitStatus: boolean;
+  detail: UnknownObject | null;
+  workflowRef: string;
+};
+
+const resolveCompactionWorkflowRef = (item: UnknownObject): string =>
+  String(item.toolCallId || item.tool_call_id || item.callId || item.call_id || '').trim();
+
+export const isCompactionSummaryEvent = (eventType: unknown, payload: unknown): boolean => {
+  const normalizedEventType = String(eventType || '').trim().toLowerCase();
+  if (normalizedEventType !== 'llm_request' && normalizedEventType !== 'llm_output') {
+    return false;
+  }
+  const source = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? (payload as UnknownObject)
+    : null;
+  const purpose = String(source?.purpose || source?.intent || '').trim().toLowerCase();
+  return purpose === 'compaction_summary';
+};
+
+export type CompactionDividerStatus =
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | null;
+
+const asObject = (value: unknown): UnknownObject | null =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as UnknownObject)
+    : null;
+
+const parseDetailObject = (value: unknown): UnknownObject | null => {
+  if (!value) return null;
+  const direct = asObject(value);
+  if (direct) return direct;
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return asObject(parsed);
+  } catch {
+    return null;
+  }
+};
+
+const normalizeCompactionStatus = (value: unknown): WorkflowCompactionSnapshot['status'] => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'pending') return 'pending';
+  if (normalized === 'loading' || normalized === 'running' || normalized === 'in_progress') {
+    return 'loading';
+  }
+  if (normalized === 'cancelled' || normalized === 'canceled' || normalized === 'aborted') {
+    return 'cancelled';
+  }
+  if (normalized === 'failed' || normalized === 'error') return 'failed';
+  return 'completed';
+};
+
+const isCompactionEventType = (value: unknown): value is WorkflowCompactionSnapshot['eventType'] => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'compaction_progress' || normalized === 'compaction';
+};
+
+const isCompactionToolName = (value: unknown): boolean => {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return false;
+  if (text === 'context_compaction' || text === 'context_compact') return true;
+  if (text === 'compaction' || text === `${CONTEXT_CN}${COMPACTION_CN}`) return true;
+  if (text.includes('context') && text.includes('compact')) return true;
+  return text.includes(CONTEXT_CN) && text.includes(COMPACTION_CN);
+};
+
+export const resolveCompactionSnapshots = (items: unknown): WorkflowCompactionSnapshot[] => {
+  if (!Array.isArray(items) || items.length === 0) return [];
+  const snapshots: WorkflowCompactionSnapshot[] = [];
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = asObject(items[index]);
+    if (!item) continue;
+    const eventTypeRaw = String(item.eventType || item.event || '').trim().toLowerCase();
+    const hasCompactionEvent = isCompactionEventType(eventTypeRaw);
+    if (!hasCompactionEvent && !isCompactionToolName(item.toolName || item.tool || item.name)) {
+      continue;
+    }
+    const eventType: WorkflowCompactionSnapshot['eventType'] = hasCompactionEvent
+      ? (eventTypeRaw as WorkflowCompactionSnapshot['eventType'])
+      : 'compaction';
+    const detail =
+      parseDetailObject(item.detail)
+      || parseDetailObject(item.data)
+      || parseDetailObject(item.payload)
+      || null;
+    const detailStatusRaw = String(detail?.status ?? '').trim();
+    const itemStatusRaw = String(item.status ?? '').trim();
+    snapshots.push({
+      eventType,
+      status: normalizeCompactionStatus(detailStatusRaw || itemStatusRaw),
+      explicitStatus: Boolean(detailStatusRaw || itemStatusRaw),
+      detail,
+      workflowRef: resolveCompactionWorkflowRef(item)
+    });
+  }
+  return snapshots.reverse();
+};
+
+export const resolveLatestCompactionSnapshot = (items: unknown): WorkflowCompactionSnapshot | null => {
+  const snapshots = resolveCompactionSnapshots(items);
+  return snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
+};
+
+export const isCompactionRunningFromWorkflowItems = (items: unknown): boolean => {
+  const snapshot = resolveLatestCompactionSnapshot(items);
+  if (!snapshot) return false;
+  if (snapshot.status === 'loading' || snapshot.status === 'pending') return true;
+  if (snapshot.eventType !== 'compaction_progress') return false;
+  if (!snapshot.explicitStatus) return true;
+  return false;
+};
+
+export const resolveCompactionDividerStatus = ({
+  snapshot,
+  runningFromWorkflowItems,
+  manualMarker,
+  isStreaming,
+  sessionBusy
+}: {
+  snapshot: WorkflowCompactionSnapshot | null;
+  runningFromWorkflowItems: boolean;
+  manualMarker: boolean;
+  isStreaming: boolean;
+  sessionBusy: boolean;
+}): CompactionDividerStatus => {
+  if (!snapshot) {
+    return manualMarker && (isStreaming || sessionBusy) ? 'running' : null;
+  }
+  if (snapshot.status === 'cancelled') return 'cancelled';
+  if (snapshot.status === 'failed') return 'failed';
+  if (runningFromWorkflowItems) return 'running';
+  return 'completed';
+};
+
+const isCompactionWorkflowItem = (item: unknown): boolean => {
+  const record = asObject(item);
+  if (!record) return false;
+  const eventType = String(record.eventType || record.event || '').trim().toLowerCase();
+  if (eventType === 'compaction_notice') return true;
+  if (isCompactionEventType(eventType)) return true;
+  return isCompactionToolName(record.toolName || record.tool || record.name);
+};
+
+export const hasNonCompactionWorkflowItems = (items: unknown): boolean => {
+  if (!Array.isArray(items) || items.length === 0) return false;
+  for (const item of items) {
+    if (!isCompactionWorkflowItem(item)) {
+      return true;
+    }
+  }
+  return false;
+};
+
+export const isCompactionOnlyWorkflowItems = (items: unknown): boolean => {
+  if (!Array.isArray(items) || items.length === 0) return false;
+  let hasCompaction = false;
+  for (const item of items) {
+    if (isCompactionWorkflowItem(item)) {
+      hasCompaction = true;
+      continue;
+    }
+    return false;
+  }
+  return hasCompaction;
+};

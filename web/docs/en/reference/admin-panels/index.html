@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Panels | 使用说明书</title>
+  <meta name="description" content="The admin frontend groups governance panels by responsibility — system, agents, debugging, and documentation — so each concern has a clear home.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/reference/admin-panels","language":"en","title":"Admin Panels","summary":"The admin frontend groups governance panels by responsibility — system, agents, debugging, and documentation — so each concern has a clear home.","updated_at":"2026-10-07","read_when":["You are using the admin side for the first time","You want to know where to find a specific configuration, monitoring view, or documentation entry"],"source_docs":["docs/设计文档/01-系统总体设计.md","web/index.html"],"tab":"Reference","group":"System Reference","group_path":["System Reference"],"url":"/docs/en/reference/admin-panels/","headings":[{"id":"section-1","level":1,"text":"Admin Panels"},{"id":"section-2","level":2,"text":"System Group"},{"id":"section-3","level":3,"text":"User Management Supplement"},{"id":"section-4","level":2,"text":"Agent Group"},{"id":"section-5","level":2,"text":"Debug Group"},{"id":"section-6","level":3,"text":"Simulated model capabilities"},{"id":"section-7","level":2,"text":"Documentation Group"},{"id":"section-8","level":3,"text":"User Guide"},{"id":"section-9","level":3,"text":"API Reference"},{"id":"section-10","level":2,"text":"What Different Roles Use Most"},{"id":"section-11","level":3,"text":"Administrators"},{"id":"section-12","level":3,"text":"Developers"},{"id":"section-13","level":3,"text":"Delivery or Training Staff"},{"id":"section-14","level":2,"text":"A Practical Tip"},{"id":"section-15","level":2,"text":"Further Reading"}],"prev_slug":"en/reference/prompt-templates","next_slug":"en/concepts/architecture","markdown":"# Admin Panels\n\nThe key value of the admin frontend is grouping governance entry points by function instead of cramming everything onto one page.\n\n## System Group\n\nThis group is oriented toward global governance:\n\n- Internal Status\n- System Settings\n- Organization Management\n- User Management\n- Link Management\n- Channel Monitoring\n\nIf you need to check runtime state, organizational structure, or global configuration, start here.\n\n### User Management Supplement\n\nThe settings dialog in User Management now also handles Quota account governance:\n\n- You can directly modify a regular user's Quota balance\n- You can grant or deduct credits with proper accounting semantics\n- Deductions validate the available balance to prevent over-drafting\n- Admin accounts are not subject to these balance restrictions\n\n## Agent Group\n\nThis group is oriented toward conversation and capability governance:\n\n- Model Configuration\n- Thread Management\n- Preset Agents (templates, each user bound 1:1; bindings and sync live here)\n- Tool Management\n- System Prompt Templates\n\nIf you need to see \"how models are configured and exposed\", start here.\n\n## Debug Group\n\nThis group is oriented toward engineering validation:\n\n- Throughput Testing: choose a model, concurrency, input length and output length for each run. Preset values remain available, while bounded integer values can be entered directly; the selected concurrency is launched in parallel and the right side shows aggregate metrics. History curves are grouped by model, concurrency and output length. Only the latest 50 summaries are retained; tests create no sessions or thread logs.\n- Virtual models have Fast (default), Medium and Slow profiles: prefill at 2000 / 500 / 100 tokens/s and reasoning/answer generation at 200 / 50 / 10 tokens/s. Random replies and throughput simulations emit reasoning before the answer; replay uses recorded reasoning within the configured capability and budget. Benchmark reasoning defaults to one quarter of the total output budget and respects the reasoning switch and budget. History retains the profile and separates curves accordingly.\n- Performance Testing\n- Capability Evaluation\n- Debug Panel\n- LSP\n\nIf you are doing integration testing, load testing, or capability verification, this group is the most important.\n\n### Simulated model capabilities\n\nVirtual models use the context, output, vision and hearing settings, with additional reasoning/tool switches and token costs per image or audio part. Empty limits default to 128k context and 4k output. Input (including tool schemas) plus reserved output exceeding context returns a context error. Unsupported media is rejected. Media recognition is not performed.\n\nReplay follows Tool calling mode: native `function_call`, text `tool_call`, or native/text fallback for `freeform_call` depending on the API mode. Names and arguments come from the log; no manual tool configuration is needed. Tools use normal permissions and approvals, then replay advances to the next model round. Exhausted logs fail rather than repeat old calls. Synthetic replies do not initiate tools. Output limits prevent partial tool arguments from executing. Reasoning settings also apply to throughput tests.\n\n## Documentation Group\n\nThe admin side now groups documentation entries separately, mainly including:\n\n- User Guide\n- API Reference\n\nThey serve different purposes.\n\n### User Guide\n\nThis is an embedded entry point to the public documentation site.\n\nGood for looking up:\n\n- Getting Started\n- Core Concepts\n- Integration\n- Operations\n- Reference\n\n### API Reference\n\nGood for:\n\n- Quickly looking up `/wunder` and related endpoints\n- Viewing fields, examples, and integration methods\n\n## What Different Roles Use Most\n\n### Administrators\n\nMost frequently use:\n\n- System Settings\n- User Management\n- Channel Monitoring\n- User Guide\n\n### Developers\n\nMost frequently use:\n\n- Debug Panel\n- API Reference\n- Tool Management\n- Performance Testing\n\n### Delivery or Training Staff\n\nMost frequently use:\n\n- User Guide\n\n## A Practical Tip\n\nIf you are not sure where to start investigating a problem, follow this order:\n\n1. Check the User Guide for existing documentation\n2. Check the API Reference for field definitions\n3. Go to the relevant governance panel to verify\n\n## Further Reading\n\n- [Admin Interface](/docs/en/surfaces/web-admin/)\n- [Configuration Reference](/docs/en/reference/config/)\n- [Stream Events Reference](/docs/en/reference/stream-events/)\n","source_path":"使用说明书/en/reference/admin-panels.md"}</script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FAQ | 使用说明书</title>
+  <meta name="description" content="Common questions about using wunder. Check here first before detailed troubleshooting.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/help/faq","language":"en","title":"FAQ","summary":"Common questions about using wunder. Check here first before detailed troubleshooting.","updated_at":"2026-04-10","read_when":["You have a usage question","You want to quickly determine if something is a bug"],"source_docs":["docs/API文档.md"],"tab":"Help","group":"Help","group_path":["Help"],"url":"/docs/en/help/faq/","headings":[{"id":"section-1","level":1,"text":"FAQ"},{"id":"section-2","level":2,"text":"Do I need to register an account first?"},{"id":"section-3","level":2,"text":"Does the Token count shown equal my cost?"},{"id":"section-4","level":2,"text":"Does the agent re-learn my requirements every time I send a message?"},{"id":"section-5","level":2,"text":"Does the agent re-read my long-term memory every conversation turn?"},{"id":"section-6","level":2,"text":"Why is the \"New Thread\" button sometimes grayed out?"},{"id":"section-7","level":2,"text":"What is a subagent and when is it used?"},{"id":"section-8","level":2,"text":"Does Desktop require deploying Server first?"},{"id":"section-9","level":2,"text":"How do I change my username or password?"},{"id":"section-10","level":2,"text":"What if I forgot my password?"},{"id":"section-11","level":2,"text":"Will uploaded files be automatically deleted?"},{"id":"section-12","level":2,"text":"Why can't I see some tools in a session?"},{"id":"section-13","level":2,"text":"What's the difference between webfetch and the browser tool?"},{"id":"section-14","level":2,"text":"Where should I look when something goes wrong?"}],"prev_slug":"en/help/troubleshooting","next_slug":"en/help/glossary","markdown":"# FAQ\n\n## Do I need to register an account first?\n\nNo. You can start a conversation with any name, and the system will create an identity for you automatically.\n\n## Does the Token count shown equal my cost?\n\nNo. The Token count is just a reference for the current conversation's context length. Actual cost depends on your model provider's pricing.\n\n## Does the agent re-learn my requirements every time I send a message?\n\nNo. Requirements you set at the beginning of a conversation are remembered and locked in. Subsequent messages will follow them without you needing to repeat.\n\n## Does the agent re-read my long-term memory every conversation turn?\n\nNo. Your long-term memory is loaded once at the start of the conversation, not repeatedly in every turn.\n\n## Why is the \"New Thread\" button sometimes grayed out?\n\nBecause the current agent is still running. Wait for it to finish, or stop the current session first.\n\n## What is a subagent and when is it used?\n\nA subagent is a temporary work unit the agent creates during a task, so work that can run in parallel gets done at once. Results are reported back to the main thread and the subagent is reclaimed. It is not a separate agent — users always have exactly one agent instance.\n\n## Does Desktop require deploying Server first?\n\nNo. Desktop can run independently locally. Deploy Server when you need multi-user collaboration and unified management.\n\n## How do I change my username or password?\n\nGo to \"My Profile → Edit\". Changing your password requires entering your current password.\n\n## What if I forgot my password?\n\nClick \"Reset Password\" on the login page. You only need your username, email, and a new password — no old password required.\n\n## Will uploaded files be automatically deleted?\n\nFiles in the temporary directory may be cleaned up. Put important files in the workspace's persistent directory.\n\n## Why can't I see some tools in a session?\n\nPossible reasons: the tool is not enabled, MCP/A2A services are not running, or the current agent doesn't have that tool mounted.\n\n## What's the difference between `web_fetch` and the browser tool?\n\n- **web_fetch**: Grabs the main text content of a webpage\n- **Browser tool**: Operates a webpage like a real person (clicking, scrolling, filling forms)\n\n## Where should I look when something goes wrong?\n\nStart with [Troubleshooting](/docs/en/help/troubleshooting/).\n","source_path":"使用说明书/en/help/faq.md"}</script>
+</body>
+</html>

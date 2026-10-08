@@ -1,0 +1,12 @@
+{
+  "protocol": "wunderbench.question_bank",
+  "schema_version": 1,
+  "id": "weather-radar-theory",
+  "version": "1.0",
+  "name": "Weather radar theory",
+  "description": "Multiple-choice theory tasks with deterministic answer-key grading.",
+  "subject": "weather-radar",
+  "languages": ["zh-CN"],
+  "tasks_path": "tasks",
+  "assets_path": "assets"
+}

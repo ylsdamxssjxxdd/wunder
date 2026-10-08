@@ -1,0 +1,195 @@
+name: Desktop Release
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wunder-desktop-release
+  cancel-in-progress: true
+
+env:
+  RUST_TOOLCHAIN: "1.92.0"
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      build_date: ${{ steps.meta.outputs.build_date }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        shell: bash
+        run: echo "build_date=$(date -u +'%Y%m%d')" >> "$GITHUB_OUTPUT"
+
+  build-windows-win7-x86:
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-03-14-x86_64-pc-windows-gnu
+          components: rust-src
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          location: ${{ runner.temp }}\wunder-win7-msys2
+          msystem: MINGW32
+          update: true
+          install: >-
+            mingw-w64-i686-gcc
+            mingw-w64-i686-binutils
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+      - name: Ensure Win7 Rust source component
+        shell: pwsh
+        run: |
+          rustup toolchain install nightly-2026-03-14-x86_64-pc-windows-gnu --profile minimal --component rust-src
+          rustup component add rust-src --toolchain nightly-2026-03-14-x86_64-pc-windows-gnu
+          $components = rustup component list --installed --toolchain nightly-2026-03-14-x86_64-pc-windows-gnu
+          if (-not ($components -match '^rust-src')) { throw 'rust-src was not installed for the Win7 build toolchain' }
+      - name: Build and validate native Win7 executable
+        shell: pwsh
+        run: |
+          $msysRoot = "${{ steps.msys2.outputs.msys2-location }}"
+          $targetMingw = Join-Path $msysRoot 'mingw32\bin'
+          $hostMingw = Join-Path $msysRoot 'mingw64\bin'
+          $out = Join-Path $env:GITHUB_WORKSPACE 'release-assets'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          & .\builders\build-win7-slint.ps1 `
+            -Toolchain 'nightly-2026-03-14-x86_64-pc-windows-gnu' `
+            -MingwBin $targetMingw `
+            -HostMingwBin $hostMingw `
+            -OutputDirectory $out `
+            -Jobs 8
+          if ($LASTEXITCODE -ne 0) { throw "Win7 build failed: $LASTEXITCODE" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-win7-x86
+          path: release-assets/wunder-frontend-slint-*-win7-x86.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  build-linux:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # arch uses the release naming (amd64/arm64) shared with the offline
+          # builders, matching the AppImage file names the packager emits.
+          - arch: amd64
+            platform: linux/amd64
+            image: wunder-desktop-ubuntu1804-x86_64
+            appimage_runtime: x86_64
+          - arch: arm64
+            platform: linux/arm64
+            image: wunder-desktop-ubuntu1804-arm64
+            appimage_runtime: aarch64
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build Ubuntu 18.04 desktop AppImage
+        shell: bash
+        run: |
+          set -euo pipefail
+          # ARM64 is cross-compiled and packaged on amd64; QEMU is not used
+          # for the expensive Rust or SquashFS phases.
+          build_platform=linux/amd64
+          if [ "${{ matrix.arch }}" = arm64 ]; then
+            build_script=builders/build-linux-arm64-cross-appimage.sh
+          else
+            build_script=builders/build-linux-appimage-native.sh
+          fi
+          docker build --platform "$build_platform" \
+            --build-arg RUST_TOOLCHAIN="${RUST_TOOLCHAIN}" \
+            --build-arg APPIMAGE_RUNTIME_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/runtime-${{ matrix.appimage_runtime }}" \
+            -f packaging/docker/Dockerfile.ubuntu18-desktop \
+            -t "${{ matrix.image }}" .
+          mkdir -p release-assets
+          docker run --rm --platform "$build_platform" \
+            -v "$GITHUB_WORKSPACE:/app" \
+            -w /app \
+            -e ARCH="${{ matrix.arch }}" \
+            -e WUNDER_OUTPUT_DIR=/app/release-assets \
+            -e WUNDER_APPIMAGE_RUNTIME=/usr/local/lib/wunder/appimage-runtime \
+            "${{ matrix.image }}" \
+            bash "$build_script"
+          test -n "$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.AppImage" -print -quit)"
+      - name: Verify AppImage payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset_name="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.AppImage" -printf '%f' -quit)"
+          test -n "$asset_name"
+          docker run --rm --platform linux/amd64 \
+            -v "$GITHUB_WORKSPACE:/app" \
+            -w /app \
+            "${{ matrix.image }}" \
+            bash frontend-slint/scripts/check-linux-arm64-appimage.sh "/app/release-assets/$asset_name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux-${{ matrix.arch }}
+          path: release-assets/wunder-slint-*-linux-${{ matrix.arch }}.AppImage
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs:
+      - prepare
+      - build-windows-win7-x86
+      - build-linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          path: release-assets
+          merge-multiple: true
+      - name: Verify exactly three desktop programs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find release-assets -type f -maxdepth 2 | sort)
+          test "${#files[@]}" -eq 3
+          printf '%s\n' "${files[@]}"
+      - name: Reset nightly release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view nightly --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release delete nightly --repo "${GITHUB_REPOSITORY}" -y
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa nightly -m "Desktop build ${GITHUB_SHA}" "${GITHUB_SHA}"
+          git push origin refs/tags/nightly --force
+      - name: Publish three desktop programs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create nightly \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Wunder Desktop（Win7 x86 / Ubuntu 18.04 x86_64 / Ubuntu 18.04 ARM64）" \
+            --notes "本次发布仅包含三个原生 Slint 桌面程序：Windows 7 32 位、Ubuntu 18.04 x86_64、Ubuntu 18.04 ARM64。" \
+            --prerelease --latest=false --target "${GITHUB_SHA}"
+          find release-assets -type f -maxdepth 2 -print0 | while IFS= read -r -d '' asset; do
+            gh release upload nightly "$asset" --repo "${GITHUB_REPOSITORY}" --clobber
+          done
+

@@ -1,0 +1,1792 @@
+use crate::config_store::ConfigStore;
+use crate::core::long_task;
+use crate::core::{blocking, runtime_metrics};
+use crate::i18n;
+use crate::monitor::MonitorState;
+use crate::orchestrator::{Orchestrator, OrchestratorError};
+use crate::schemas::WunderRequest;
+use crate::services::goal;
+use crate::services::tools::command_sessions::CommandSessionBroker;
+use crate::storage::{AgentTaskRecord, ChatSessionRecord, UpdateAgentTaskStatusParams};
+use crate::user_store::UserStore;
+use anyhow::{anyhow, Result};
+use chrono::Utc;
+use futures::future::BoxFuture;
+use futures::StreamExt;
+use serde_json::{json, Value};
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex as StdMutex};
+use tokio::sync::{mpsc, Mutex};
+use tracing::warn;
+use uuid::Uuid;
+
+#[path = "agent_messages.rs"]
+mod agent_messages;
+#[path = "queue_admin.rs"]
+mod queue_admin;
+
+const DEFAULT_SESSION_TITLE: &str = "新会话";
+
+const TASK_STATUS_PENDING: &str = "pending";
+const TASK_STATUS_RUNNING: &str = "running";
+const TASK_STATUS_SUCCESS: &str = "success";
+const TASK_STATUS_FAILED: &str = "failed";
+const TASK_STATUS_RETRY: &str = "retry";
+const TASK_STATUS_CANCELLED: &str = "cancelled";
+const TASK_STATUS_DEAD: &str = "dead";
+
+#[derive(Debug, Clone)]
+pub struct QueueInfo {
+    pub task_id: String,
+    pub thread_id: String,
+    pub session_id: String,
+    pub queue_ahead: usize,
+    pub queue_total: usize,
+    pub active_ahead: usize,
+    pub wait_ahead: usize,
+    /// Durable ThreadLog change cursor for this queue Item.
+    pub queue_change_seq: i64,
+    pub queue_after_change_seq: i64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ThreadCancelSettlement {
+    pub monitor_cancelled: bool,
+    pub child_sessions_cancelled: usize,
+    pub queued_tasks_cancelled: usize,
+    pub running_tasks_marked_cancelled: usize,
+    pub thread_status_reset: bool,
+    pub settlement_event_id: i64,
+}
+
+#[derive(Debug)]
+pub enum ThreadSubmitOutcome {
+    Run(Box<WunderRequest>, Option<SessionLease>),
+    Queued(QueueInfo),
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionLease {
+    session_id: String,
+    pending_sessions: Arc<StdMutex<HashSet<String>>>,
+    active_runtime_sessions: Arc<StdMutex<HashSet<String>>>,
+}
+
+impl SessionLease {
+    fn new(
+        session_id: String,
+        pending_sessions: Arc<StdMutex<HashSet<String>>>,
+        active_runtime_sessions: Arc<StdMutex<HashSet<String>>>,
+    ) -> Self {
+        Self {
+            session_id,
+            pending_sessions,
+            active_runtime_sessions,
+        }
+    }
+}
+
+impl Drop for SessionLease {
+    fn drop(&mut self) {
+        if self.session_id.trim().is_empty() {
+            return;
+        }
+        if let Ok(mut guard) = self.pending_sessions.lock() {
+            guard.remove(self.session_id.as_str());
+        }
+        if let Ok(mut guard) = self.active_runtime_sessions.lock() {
+            guard.remove(self.session_id.as_str());
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct ThreadRuntime {
+    config_store: ConfigStore,
+    user_store: Arc<UserStore>,
+    monitor: Arc<MonitorState>,
+    orchestrator: Arc<Orchestrator>,
+    command_sessions: Arc<CommandSessionBroker>,
+    queue_tx: mpsc::Sender<()>,
+    queue_rx: Arc<Mutex<Option<mpsc::Receiver<()>>>>,
+    running_threads: Arc<Mutex<HashSet<String>>>,
+    pending_sessions: Arc<StdMutex<HashSet<String>>>,
+    active_runtime_sessions: Arc<StdMutex<HashSet<String>>>,
+    started: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl ThreadRuntime {
+    pub fn new(
+        config_store: ConfigStore,
+        user_store: Arc<UserStore>,
+        monitor: Arc<MonitorState>,
+        orchestrator: Arc<Orchestrator>,
+        command_sessions: Arc<CommandSessionBroker>,
+    ) -> Arc<Self> {
+        let (queue_tx, queue_rx) = mpsc::channel(64);
+        let runtime = Arc::new(Self {
+            config_store,
+            user_store,
+            monitor,
+            orchestrator,
+            command_sessions,
+            queue_tx,
+            queue_rx: Arc::new(Mutex::new(Some(queue_rx))),
+            running_threads: Arc::new(Mutex::new(HashSet::new())),
+            pending_sessions: Arc::new(StdMutex::new(HashSet::new())),
+            active_runtime_sessions: Arc::new(StdMutex::new(HashSet::new())),
+            started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        });
+        *runtime.orchestrator.task_runtime.write() = Arc::downgrade(&runtime);
+        runtime
+            .orchestrator
+            .goal_handle()
+            .driver()
+            .set_host(runtime.clone());
+        runtime
+    }
+
+    pub fn queue_waker(&self) -> mpsc::Sender<()> {
+        self.queue_tx.clone()
+    }
+
+    pub fn start(self: Arc<Self>) {
+        if self.started.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            return;
+        }
+        let runtime = self.clone();
+        long_task::spawn("runtime.thread.queue_loop", async move {
+            runtime.run_loop().await;
+        });
+    }
+
+    pub async fn wake(&self) {
+        let _ = self.queue_tx.try_send(());
+    }
+
+    pub async fn submit_user_request(&self, request: WunderRequest) -> Result<ThreadSubmitOutcome> {
+        self.submit_request(request, false).await
+    }
+
+    /// Trusted background deliveries must always get a durable queue entry.
+    /// This prevents a timed message from racing an active thread's lock after
+    /// its own user turn has already been accepted.
+    pub(crate) async fn submit_scheduled_request(
+        &self,
+        request: WunderRequest,
+    ) -> Result<ThreadSubmitOutcome> {
+        self.submit_request(request, true).await
+    }
+
+    async fn submit_request(
+        &self,
+        mut request: WunderRequest,
+        force_runtime_queue: bool,
+    ) -> Result<ThreadSubmitOutcome> {
+        let user_id = request.user_id.trim().to_string();
+        if user_id.is_empty() {
+            return Err(anyhow!(i18n::t("error.user_id_required")));
+        }
+        request.client_message_id =
+            normalize_client_message_id(request.client_message_id.as_deref());
+        if let Some(overrides) = request
+            .config_overrides
+            .as_mut()
+            .and_then(Value::as_object_mut)
+        {
+            // Scheduler authority is internal; request payloads cannot grant priority or claim ownership.
+            overrides.remove("__queue_task_id");
+            overrides.remove("__queue_priority");
+            overrides.remove("__thread_log_turn_id");
+            overrides.remove("__thread_log_user_round");
+        }
+        request.enforce_runtime_queue = true;
+        let agent_id = normalize_agent_id(request.agent_id.as_deref());
+        // The request owns its task thread. Agent identity never selects or locks a conversation.
+        let session_id = match request
+            .session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        {
+            Some(id) => id.to_string(),
+            None => self.create_task_session_id(&user_id, &agent_id)?,
+        };
+        self.ensure_session_record(&user_id, &session_id, &agent_id)?;
+        let goal_round_tag = goal::read_goal_round_tag(request.config_overrides.as_ref());
+        if goal_round_tag.is_none() {
+            // Competing input withdraws queued goal rounds; the driver settles
+            // the withdrawal into a pause at the next idle point.
+            let withdrawn = self.cancel_queued_goal_rounds(&session_id).await?;
+            if !withdrawn.is_empty() {
+                self.orchestrator
+                    .goal_handle()
+                    .driver()
+                    .notify_rounds_withdrawn(&user_id, &session_id, &withdrawn);
+            }
+        }
+        request.session_id = Some(session_id.clone());
+        request.agent_id = (!agent_id.is_empty()).then_some(agent_id.clone());
+        let goal_meta = goal_round_tag.as_ref().map(|tag| {
+            json!({"type": "goal_round", "goal_id": tag.goal_id, "revision": tag.revision, "round": tag.round})
+        });
+        let input = json!({
+            "role": "user", "content": request.question,
+            "client_message_id": request.client_message_id, "attachments": request.attachments,
+            "meta": goal_meta,
+        });
+        let storage = self.user_store.storage_backend().clone();
+        let resume_from_seq = {
+            let storage = storage.clone();
+            let thread = session_id.clone();
+            crate::core::blocking::run_db("thread_log.accept_baseline", move || {
+                storage.latest_thread_change_seq_by_session(&thread)
+            })
+            .await?
+        };
+        let accepted = self
+            .orchestrator
+            .committer
+            .accept_turn(&user_id, &session_id, &input)
+            .await?;
+        if accepted["created"] == false {
+            return Err(anyhow!("client_message_id already accepted"));
+        }
+        let thread_turn_id = accepted["turn_id"].as_str().unwrap_or_default().to_string();
+        let user_round = accepted["user_turn_index"].as_i64().unwrap_or(1);
+        if let Some(tag) = goal_round_tag.as_ref() {
+            // Goal-round admission: the transcript fact that consumes one
+            // round of the cap. No revision bump, no goal-change event.
+            let admitted = self
+                .orchestrator
+                .goal_handle()
+                .admit_round(&storage, &user_id, &session_id, tag)
+                .await
+                .unwrap_or(false);
+            if !admitted {
+                return Err(anyhow!("goal round admission failed"));
+            }
+        }
+        let overrides = request.config_overrides.get_or_insert_with(|| json!({}));
+        if let Some(map) = overrides.as_object_mut() {
+            map.insert(
+                "__thread_log_turn_id".into(),
+                json!(thread_turn_id.to_string()),
+            );
+            map.insert("__thread_log_user_round".into(), json!(user_round));
+            map.insert(
+                "__thread_log_resume_from_seq".into(),
+                json!(resume_from_seq),
+            );
+        }
+        let session_id = Some(session_id);
+        let mut lease = None;
+        let config = self.config_store.get().await;
+        if config.agent_queue.enabled || force_runtime_queue {
+            if let Some(session_id) = session_id.as_deref() {
+                // A background scheduled message always enters the durable
+                // queue. This makes acceptance atomic from the chat page's
+                // point of view: it owns a fresh turn before any execution
+                // may start, and can never be attached to the active turn.
+                if force_runtime_queue
+                    || self.should_queue(&user_id, Some(session_id)).await
+                    || self.user_store.count_pending_agent_tasks()? > 0
+                    || self.orchestrator.scheduling.suspended_count() > 0
+                {
+                    let info = self
+                        .enqueue_task(&request, &agent_id, Some(session_id))
+                        .await?;
+                    return Ok(ThreadSubmitOutcome::Queued(info));
+                }
+                lease = self.try_acquire_start_lease(session_id).await;
+                if lease.is_none() {
+                    let info = self
+                        .enqueue_task(&request, &agent_id, Some(session_id))
+                        .await?;
+                    return Ok(ThreadSubmitOutcome::Queued(info));
+                }
+            }
+        }
+
+        Ok(ThreadSubmitOutcome::Run(Box::new(request), lease))
+    }
+
+    /// Admit and run one goal round (driver host). The round is validated
+    /// against the exact armed revision, executed with the session's own tool
+    /// surface, and drained in the background like any queued turn.
+    async fn submit_goal_round(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        tag: goal::GoalRoundTag,
+    ) -> Result<()> {
+        let session = self
+            .user_store
+            .get_chat_session(user_id, session_id)?
+            .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+        let user = self
+            .user_store
+            .get_user_by_id(user_id)?
+            .ok_or_else(|| anyhow!(i18n::t("error.permission_denied")))?;
+        let storage = self.user_store.storage_backend().clone();
+        let Some(view) = self
+            .orchestrator
+            .goal_handle()
+            .get_view(&storage, user_id, session_id)
+            .await?
+            .filter(|view| view.record.goal_id == tag.goal_id)
+        else {
+            return Ok(());
+        };
+        if view.record.revision != tag.revision
+            || view.record.phase != goal::PHASE_ACTIVE
+            || view.activation != goal::GoalActivation::Armed
+            || view.record.rounds_started != tag.round - 1
+        {
+            return Ok(());
+        }
+        let tool_names = self
+            .orchestrator
+            .resolve_session_effective_tool_names(&user, &session)
+            .await;
+        let config = self.config_store.get().await;
+        let agent = if session
+            .agent_id
+            .as_deref()
+            .is_none_or(|id| matches!(id.trim(), "" | "default" | "__default__"))
+        {
+            crate::user_store::build_default_agent_record_from_storage(
+                self.user_store.storage_backend().as_ref(),
+                user_id,
+            )
+            .ok()
+        } else {
+            session
+                .agent_id
+                .as_deref()
+                .and_then(|id| self.user_store.get_user_agent_by_id(id).ok().flatten())
+        };
+        let approval_mode = agent
+            .map(|agent| agent.approval_mode)
+            .or_else(|| config.security.approval_mode.clone())
+            .unwrap_or_else(|| "full_auto".to_string());
+        let mut overrides = goal::goal_round_overrides(None, &tag);
+        if let Some(map) = overrides.as_object_mut() {
+            map.insert(
+                "security".to_string(),
+                json!({ "approval_mode": approval_mode }),
+            );
+        }
+        let question = goal::prompt::render_goal_round_prompt(
+            &view.record.objective,
+            tag.round,
+            view.record.max_goal_rounds,
+        );
+        let request = WunderRequest {
+            user_id: user_id.trim().to_string(),
+            question,
+            client_message_id: None,
+            tool_names,
+            skip_tool_calls: false,
+            stream: true,
+            session_id: Some(session.session_id.clone()),
+            agent_id: session.agent_id.clone(),
+            workspace_container_id: None,
+            workspace_id: None,
+            model_name: None,
+            language: Some(crate::i18n::get_language()),
+            config_overrides: Some(overrides),
+            agent_prompt: None,
+            preview_skill: false,
+            attachments: None,
+            allow_queue: true,
+            is_admin: UserStore::is_admin(&user),
+            enforce_runtime_queue: false,
+            approval_tx: None,
+        };
+        match self.submit_user_request(request).await? {
+            ThreadSubmitOutcome::Queued(_) => Ok(()),
+            ThreadSubmitOutcome::Run(request, lease) => {
+                let orchestrator = self.orchestrator.clone();
+                long_task::spawn("runtime.thread.goal_round.run", async move {
+                    let _lease = lease;
+                    match orchestrator.stream(*request).await {
+                        Ok(stream) => {
+                            tokio::pin!(stream);
+                            while let Some(item) = stream.next().await {
+                                if item.is_err() {
+                                    break;
+                                }
+                                // Drain the background goal round stream; clients
+                                // resume persisted stream events through the
+                                // session event channel.
+                            }
+                        }
+                        Err(err) => {
+                            warn!("goal round stream failed: {err}");
+                        }
+                    }
+                });
+                Ok(())
+            }
+        }
+    }
+
+    /// Withdraw pending queued goal rounds (competing input or stop).
+    async fn cancel_queued_goal_rounds(&self, session_id: &str) -> Result<Vec<goal::GoalRoundTag>> {
+        let cleaned = session_id.trim();
+        if cleaned.is_empty() {
+            return Ok(Vec::new());
+        }
+        let thread_id = format!("thread_{cleaned}");
+        let tasks = self
+            .user_store
+            .list_agent_tasks_by_thread(&thread_id, None, 32)?;
+        let mut withdrawn = Vec::new();
+        for task in tasks {
+            let is_pending = task.status == TASK_STATUS_PENDING || task.status == TASK_STATUS_RETRY;
+            if !is_pending {
+                continue;
+            }
+            if let Some(tag) =
+                goal::read_goal_round_tag(task.request_payload.get("config_overrides"))
+            {
+                let _ = self.cancel_task(&task.task_id).await;
+                withdrawn.push(tag);
+            }
+        }
+        Ok(withdrawn)
+    }
+
+    pub async fn list_thread_tasks(
+        &self,
+        thread_id: &str,
+        status: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<AgentTaskRecord>> {
+        self.user_store
+            .list_agent_tasks_by_thread(thread_id, status, limit)
+    }
+
+    pub async fn cancel_task(&self, task_id: &str) -> Result<()> {
+        let now = now_ts();
+        if let Some(task) = self.user_store.get_agent_task(task_id)? {
+            if let Some(turn_id) = task
+                .request_payload
+                .pointer("/config_overrides/__thread_log_turn_id")
+                .and_then(Value::as_str)
+            {
+                let payload = json!({"session_id": task.session_id, "turn_id": turn_id, "status": "cancelled", "error": "cancelled"});
+                let _ = self
+                    .orchestrator
+                    .committer
+                    .update_turn(
+                        &task.user_id,
+                        &task.session_id,
+                        turn_id,
+                        "cancelled",
+                        "cancelled",
+                        &payload,
+                    )
+                    .await;
+            }
+        }
+        self.user_store
+            .update_agent_task_status(UpdateAgentTaskStatusParams {
+                task_id,
+                status: TASK_STATUS_CANCELLED,
+                retry_count: 0,
+                retry_at: now,
+                started_at: None,
+                finished_at: Some(now),
+                last_error: Some("cancelled"),
+                updated_at: now,
+            })?;
+        Ok(())
+    }
+
+    pub async fn cancel_session_activity(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        cancel_source: &str,
+    ) -> Result<ThreadCancelSettlement> {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Err(anyhow!(i18n::t("error.content_required")));
+        }
+        let source = cancel_source.trim();
+        let source = if source.is_empty() {
+            "thread_cancel"
+        } else {
+            source
+        };
+
+        let monitor_cancelled = self.monitor.cancel_with_source(cleaned_session, source);
+        self.cancel_remote_command_sessions(cleaned_user, cleaned_session)
+            .await;
+        let cancelled_commands = self
+            .command_sessions
+            .terminate_scope(cleaned_user, cleaned_session);
+        self.orchestrator.scheduling.cancel(cleaned_session);
+
+        // Cancelling a parent turn also cancels every descendant execution unit.
+        // Child records stay durable so a later subagent send can resume them.
+        let storage = self.user_store.storage_backend();
+        let user = cleaned_user.to_string();
+        let root = cleaned_session.to_string();
+        let descendant_session_ids = blocking::run_db("thread.cancel.descendants", move || {
+            super::descendants::collect(storage.as_ref(), &user, &root)
+        })
+        .await?;
+        let mut child_sessions_cancelled = 0usize;
+        let mut child_commands_cancelled = 0usize;
+        for child_session_id in &descendant_session_ids {
+            self.cancel_remote_command_sessions(cleaned_user, child_session_id)
+                .await;
+            child_commands_cancelled = child_commands_cancelled.saturating_add(
+                self.command_sessions
+                    .terminate_scope(cleaned_user, child_session_id),
+            );
+            if self.monitor.cancel_with_source(child_session_id, source) {
+                child_sessions_cancelled = child_sessions_cancelled.saturating_add(1);
+                self.emit_thread_status_event(
+                    child_session_id,
+                    cleaned_user,
+                    "cancelled",
+                    source,
+                    0,
+                    0,
+                )
+                .await;
+            }
+            self.orchestrator.scheduling.cancel(child_session_id);
+        }
+
+        let mut queued_tasks_cancelled = 0usize;
+        let mut running_tasks_marked_cancelled = 0usize;
+        for task_session_id in std::iter::once(cleaned_session)
+            .chain(descendant_session_ids.iter().map(String::as_str))
+        {
+            let thread_id = format!("thread_{task_session_id}");
+            for status in [TASK_STATUS_PENDING, TASK_STATUS_RETRY, TASK_STATUS_RUNNING] {
+                loop {
+                    let store = self.user_store.clone();
+                    let thread = thread_id.clone();
+                    let user = cleaned_user.to_string();
+                    let tasks = blocking::run_db("thread.cancel.queue_page", move || {
+                        store
+                            .list_agent_tasks_by_thread(&thread, Some(status), 256)
+                            .map(|tasks| {
+                                tasks
+                                    .into_iter()
+                                    .filter(|task| task.user_id == user)
+                                    .collect::<Vec<_>>()
+                            })
+                    })
+                    .await?;
+                    if tasks.is_empty() {
+                        break;
+                    }
+                    let page_len = tasks.len();
+                    for task in tasks {
+                        self.cancel_task(&task.task_id).await?;
+                        if status == TASK_STATUS_RUNNING {
+                            running_tasks_marked_cancelled += 1;
+                        } else {
+                            queued_tasks_cancelled += 1;
+                        }
+                        self.emit_queue_event(
+                            task_session_id,
+                            cleaned_user,
+                            "queue_fail",
+                            json!({
+                                "queue_id": task.task_id, "thread_id": task.thread_id,
+                                "session_id": task.session_id, "agent_id": task.agent_id,
+                                "user_id": task.user_id, "status": TASK_STATUS_CANCELLED,
+                                "error": "cancelled", "queue_ahead": 0, "queue_total": 0,
+                            }),
+                        )
+                        .await;
+                    }
+                    if page_len < 256 {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let thread_status_reset = true;
+        let settlement_event_id = self
+            .emit_thread_status_event(
+                cleaned_session,
+                cleaned_user,
+                "cancelled",
+                source,
+                queued_tasks_cancelled,
+                running_tasks_marked_cancelled,
+            )
+            .await;
+        let _ = self.queue_tx.try_send(());
+
+        tracing::info!(
+            user_id = cleaned_user,
+            session_id = cleaned_session,
+            cancelled_commands,
+            child_commands_cancelled,
+            "terminated active command sessions for interrupted thread tree"
+        );
+
+        Ok(ThreadCancelSettlement {
+            monitor_cancelled,
+            child_sessions_cancelled,
+            queued_tasks_cancelled,
+            running_tasks_marked_cancelled,
+            thread_status_reset,
+            settlement_event_id,
+        })
+    }
+
+    async fn cancel_remote_command_sessions(&self, user_id: &str, session_id: &str) {
+        let config = self.config_store.get().await;
+        if !crate::sandbox::sandbox_enabled(&config) {
+            return;
+        }
+        for command_session_id in self
+            .command_sessions
+            .running_session_ids(user_id, session_id)
+        {
+            if command_session_id.starts_with("sandcmd_") {
+                let _ = crate::sandbox::cancel_command_session(
+                    &config,
+                    user_id,
+                    session_id,
+                    &command_session_id,
+                )
+                .await;
+            }
+        }
+    }
+
+    pub fn create_task_session_id(&self, user_id: &str, agent_id: &str) -> Result<String> {
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Err(anyhow!(i18n::t("error.user_id_required")));
+        }
+        let now = now_ts();
+        let session_id = format!("sess_{}", Uuid::new_v4().simple());
+        let record = ChatSessionRecord {
+            session_id: session_id.clone(),
+            user_id: cleaned_user.to_string(),
+            title: DEFAULT_SESSION_TITLE.to_string(),
+            status: "active".to_string(),
+            created_at: now,
+            updated_at: now,
+            last_message_at: now,
+            agent_id: if agent_id.trim().is_empty() {
+                None
+            } else {
+                Some(agent_id.trim().to_string())
+            },
+            workspace_id: None,
+            tool_overrides: Vec::new(),
+            parent_session_id: None,
+            parent_message_id: None,
+            spawn_label: None,
+            spawned_by: None,
+        };
+        self.user_store.upsert_chat_session(&record)?;
+        Ok(session_id)
+    }
+
+    fn ensure_session_record(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        agent_id: &str,
+    ) -> Result<ChatSessionRecord> {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Err(anyhow!(i18n::t("error.content_required")));
+        }
+        let existing = self
+            .user_store
+            .get_chat_session(cleaned_user, cleaned_session)?;
+        if let Some(record) = existing {
+            if record.agent_id.as_deref().unwrap_or("").trim() != agent_id.trim()
+                || record.status == "archived"
+            {
+                return Err(anyhow!(i18n::t("error.permission_denied")));
+            }
+            return Ok(record);
+        }
+        let now = now_ts();
+        let record = ChatSessionRecord {
+            session_id: cleaned_session.to_string(),
+            user_id: cleaned_user.to_string(),
+            title: DEFAULT_SESSION_TITLE.to_string(),
+            status: "active".to_string(),
+            created_at: now,
+            updated_at: now,
+            last_message_at: now,
+            agent_id: if agent_id.trim().is_empty() {
+                None
+            } else {
+                Some(agent_id.trim().to_string())
+            },
+            workspace_id: None,
+            tool_overrides: Vec::new(),
+            parent_session_id: None,
+            parent_message_id: None,
+            spawn_label: None,
+            spawned_by: None,
+        };
+        self.user_store.upsert_chat_session(&record)?;
+        Ok(record)
+    }
+
+    async fn should_queue(&self, user_id: &str, session_id: Option<&str>) -> bool {
+        let Some(session_id) = session_id else {
+            return false;
+        };
+        let config = self.config_store.get().await;
+        if !config.agent_queue.enabled {
+            return false;
+        }
+        !self
+            .is_session_available_for_submit(user_id, session_id)
+            .await
+    }
+
+    async fn try_acquire_start_lease(&self, session_id: &str) -> Option<SessionLease> {
+        let config = self.config_store.get().await;
+        try_acquire_start_lease_with_limit(
+            session_id,
+            config
+                .server
+                .max_active_sessions
+                .max(1)
+                .saturating_add(self.orchestrator.scheduling.suspended_count()),
+            &self.pending_sessions,
+            &self.active_runtime_sessions,
+        )
+    }
+
+    async fn enqueue_task(
+        &self,
+        request: &WunderRequest,
+        agent_id: &str,
+        session_id: Option<&str>,
+    ) -> Result<QueueInfo> {
+        let Some(session_id) = session_id.filter(|value| !value.trim().is_empty()) else {
+            return Err(anyhow!(i18n::t("error.session_not_found")));
+        };
+        let thread_id = format!("thread_{session_id}");
+        let now = now_ts();
+        let mut payload = serde_json::to_value(request).unwrap_or(Value::Null);
+        if let Value::Object(ref mut map) = payload {
+            map.insert("stream".to_string(), Value::Bool(true));
+        }
+        let record = AgentTaskRecord {
+            task_id: format!("task_{}", Uuid::new_v4().simple()),
+            thread_id: thread_id.clone(),
+            user_id: request.user_id.clone(),
+            agent_id: agent_id.to_string(),
+            session_id: session_id.to_string(),
+            status: TASK_STATUS_PENDING.to_string(),
+            request_payload: payload,
+            request_id: None,
+            retry_count: 0,
+            retry_at: now,
+            created_at: now,
+            updated_at: now,
+            started_at: None,
+            finished_at: None,
+            last_error: None,
+        };
+        self.user_store.insert_agent_task(&record)?;
+        let queue_stats = self.compute_queue_stats(&record).await;
+        self.user_store
+            .storage_backend()
+            .update_agent_task_queue_payload(
+                &record.task_id,
+                &json!({
+                    "queue_ahead": queue_stats.queue_ahead, "queue_total": queue_stats.queue_total,
+                    "active_ahead": queue_stats.active_ahead, "wait_ahead": queue_stats.wait_ahead
+                }),
+            )?;
+        let queue_change_seq = self
+            .emit_queue_event(&record.session_id, &record.user_id, "queue_enter", {
+                let mut payload = json!({
+                    "queue_id": record.task_id,
+                    "thread_id": record.thread_id,
+                    "session_id": record.session_id,
+                    "agent_id": record.agent_id,
+                    "user_id": record.user_id,
+                    "queue_ahead": queue_stats.queue_ahead,
+                    "queue_total": queue_stats.queue_total,
+                    "active_ahead": queue_stats.active_ahead,
+                    "wait_ahead": queue_stats.wait_ahead,
+                    "turn_id": request.config_overrides.as_ref()
+                        .and_then(|value| value.get("__thread_log_turn_id"))
+                        .cloned().unwrap_or(Value::Null),
+                });
+                if let (Some(client_message_id), Value::Object(ref mut map)) =
+                    (request.client_message_id.as_deref(), &mut payload)
+                {
+                    map.insert("client_message_id".to_string(), json!(client_message_id));
+                }
+                if goal::read_goal_round_tag(request.config_overrides.as_ref()).is_some() {
+                    payload["hidden_internal_user"] = json!(true);
+                }
+                payload
+            })
+            .await;
+        let queue_monitor_payload = json!({
+            "summary": i18n::t("monitor.summary.queued"),
+            "queue_id": record.task_id,
+            "thread_id": record.thread_id,
+            "session_id": record.session_id,
+            "agent_id": record.agent_id,
+            "user_id": record.user_id,
+            "queue_ahead": queue_stats.queue_ahead,
+            "queue_total": queue_stats.queue_total,
+            "active_ahead": queue_stats.active_ahead,
+            "wait_ahead": queue_stats.wait_ahead,
+            "queue_change_seq": queue_change_seq,
+        });
+        if !self.session_has_active_runtime_slot(&record.session_id) {
+            self.monitor.mark_queued(&record.session_id, None);
+            self.monitor
+                .record_event(&record.session_id, "queue_enter", &queue_monitor_payload);
+        }
+        let _ = self.queue_tx.try_send(());
+        Ok(QueueInfo {
+            task_id: record.task_id,
+            thread_id: record.thread_id,
+            session_id: record.session_id,
+            queue_ahead: queue_stats.queue_ahead,
+            queue_total: queue_stats.queue_total,
+            active_ahead: queue_stats.active_ahead,
+            wait_ahead: queue_stats.wait_ahead,
+            queue_change_seq,
+            queue_after_change_seq: queue_change_seq.saturating_sub(1),
+        })
+    }
+
+    async fn compute_queue_stats(&self, task: &AgentTaskRecord) -> QueueStats {
+        let total = self
+            .user_store
+            .count_pending_agent_tasks()
+            .map(|count| count.max(0) as usize)
+            .unwrap_or(0);
+        let ahead = self
+            .user_store
+            .count_pending_agent_tasks_ahead(task.retry_at, task.created_at, &task.task_id)
+            .map(|count| count.max(0) as usize)
+            .unwrap_or(0);
+        let queue_ahead = ahead.min(total.saturating_sub(1));
+        let active_ahead = self
+            .compute_active_wait_ahead(&task.user_id, &task.session_id)
+            .await;
+        QueueStats {
+            queue_ahead,
+            queue_total: total,
+            active_ahead,
+            wait_ahead: queue_ahead.saturating_add(active_ahead),
+        }
+    }
+
+    async fn compute_active_wait_ahead(&self, user_id: &str, session_id: &str) -> usize {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return 0;
+        }
+        let active_sessions = self.active_runtime_session_count();
+        if active_sessions == 0 {
+            return 0;
+        }
+        let config = self.config_store.get().await;
+        if active_sessions >= config.server.max_active_sessions.max(1) {
+            return active_sessions;
+        }
+        self.session_has_active_runtime_slot(cleaned_session) as usize
+    }
+
+    fn active_runtime_session_count(&self) -> usize {
+        self.active_runtime_sessions
+            .lock()
+            .map(|guard| {
+                guard
+                    .len()
+                    .saturating_sub(self.orchestrator.scheduling.suspended_count())
+            })
+            .unwrap_or(0)
+    }
+
+    fn session_has_active_runtime_slot(&self, session_id: &str) -> bool {
+        let cleaned = session_id.trim();
+        if cleaned.is_empty() {
+            return false;
+        }
+        self.active_runtime_sessions
+            .lock()
+            .map(|guard| guard.contains(cleaned))
+            .unwrap_or(false)
+    }
+
+    async fn emit_queue_update(&self, task: &AgentTaskRecord) {
+        let stats = self.compute_queue_stats(task).await;
+        let payload = json!({"queue_ahead":stats.queue_ahead, "queue_total":stats.queue_total,
+            "active_ahead":stats.active_ahead, "wait_ahead":stats.wait_ahead});
+        if payload.as_object().is_some_and(|fields| {
+            fields
+                .iter()
+                .all(|(key, value)| task.request_payload.get(key) == Some(value))
+        }) {
+            return;
+        }
+        let storage = self.user_store.storage_backend();
+        let id = task.task_id.clone();
+        if !blocking::run_db("queue.update_position", move || {
+            storage.update_agent_task_queue_payload(&id, &payload)
+        })
+        .await
+        .unwrap_or(false)
+        {
+            return;
+        }
+        self.emit_queue_event(
+            &task.session_id,
+            &task.user_id,
+            "queue_update",
+            json!({
+                "queue_id": task.task_id,
+                "thread_id": task.thread_id,
+                "session_id": task.session_id,
+                "agent_id": task.agent_id,
+                "user_id": task.user_id,
+                "queue_ahead": stats.queue_ahead,
+                "queue_total": stats.queue_total,
+                "active_ahead": stats.active_ahead,
+                "wait_ahead": stats.wait_ahead,
+            }),
+        )
+        .await;
+    }
+
+    pub async fn is_session_available_for_submit(&self, user_id: &str, session_id: &str) -> bool {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return false;
+        }
+        if let Some(record) = self.monitor.get_record(cleaned_session) {
+            let status = record.get("status").and_then(Value::as_str).unwrap_or("");
+            if status == crate::monitor::MonitorState::STATUS_RUNNING
+                || status == crate::monitor::MonitorState::STATUS_CANCELLING
+                || status == crate::monitor::MonitorState::STATUS_QUEUED
+                || status == crate::monitor::MonitorState::STATUS_WAITING
+            {
+                return false;
+            }
+        }
+        if let Ok(locks) = self.user_store.list_session_locks_by_user(cleaned_user) {
+            if locks
+                .iter()
+                .any(|lock| lock.session_id.trim() == cleaned_session)
+            {
+                return false;
+            }
+        }
+        let thread_id = format!("thread_{cleaned_session}");
+        if let Ok(tasks) = self
+            .user_store
+            .list_agent_tasks_by_thread(&thread_id, None, 8)
+        {
+            if tasks.iter().any(|task| {
+                task.status == TASK_STATUS_PENDING
+                    || task.status == TASK_STATUS_RETRY
+                    || task.status == TASK_STATUS_RUNNING
+            }) {
+                return false;
+            }
+        }
+        true
+    }
+
+    async fn is_session_idle(&self, user_id: &str, session_id: &str) -> bool {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return false;
+        }
+        if let Some(record) = self.monitor.get_record(cleaned_session) {
+            let status = record.get("status").and_then(Value::as_str).unwrap_or("");
+            if status == crate::monitor::MonitorState::STATUS_RUNNING
+                || status == crate::monitor::MonitorState::STATUS_CANCELLING
+            {
+                return false;
+            }
+        }
+        if let Ok(locks) = self.user_store.list_session_locks_by_user(cleaned_user) {
+            if locks
+                .iter()
+                .any(|lock| lock.session_id.trim() == cleaned_session)
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Persist queue lifecycle as one stable ThreadLog Item.  `stream_events`
+    /// remains a diagnostic facility and is deliberately not written here.
+    async fn emit_queue_event(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        event_type: &str,
+        mut payload: Value,
+    ) -> i64 {
+        let session_id = session_id.trim();
+        let user_id = user_id.trim();
+        let event_type = event_type.trim();
+        if session_id.is_empty() || user_id.is_empty() || event_type.is_empty() {
+            return 0;
+        }
+        self.monitor.record_event(session_id, event_type, &payload);
+        let queue_id = payload
+            .get("queue_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if queue_id.is_empty() {
+            return 0;
+        }
+        let turn_id = payload
+            .get("turn_id")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_owned)
+            .or_else(|| {
+                self.user_store
+                    .get_agent_task(&queue_id)
+                    .ok()
+                    .flatten()
+                    .and_then(|task| {
+                        task.request_payload
+                            .pointer("/config_overrides/__thread_log_turn_id")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                    })
+            });
+        let Some(turn_id) = turn_id else {
+            return 0;
+        };
+        let status = match event_type {
+            "queue_enter" | "queue_update" => "queued",
+            "queue_start" => "running",
+            "queue_finish" => "completed",
+            "queue_cancel" => "cancelled",
+            "queue_fail" => "failed",
+            _ => "completed",
+        };
+        if let Some(map) = payload.as_object_mut() {
+            map.insert("event_type".into(), json!(event_type));
+            map.insert("turn_id".into(), json!(turn_id));
+            map.insert("kind".into(), json!("queue"));
+            map.insert("status".into(), json!(status));
+            map.insert(
+                "item_id".into(),
+                json!(format!("{turn_id}:queue-{queue_id}")),
+            );
+            map.insert("visibility".into(), json!("user"));
+        }
+        // The queue item commit goes through the unified exit: the committer
+        // persists the upsert and publishes the receipt cursor only on a real
+        // change; no-op replays return 0 without waking feeders.
+        match self
+            .orchestrator
+            .committer
+            .commit_item(user_id, &payload)
+            .await
+        {
+            Ok(Some(receipt)) => receipt.get("cursor").and_then(Value::as_i64).unwrap_or(0),
+            Ok(None) => 0,
+            Err(error) => {
+                warn!("persist queue item failed: {error}");
+                0
+            }
+        }
+    }
+
+    async fn emit_thread_status_event(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        status: &str,
+        cancel_source: &str,
+        queued_tasks_cancelled: usize,
+        running_tasks_marked_cancelled: usize,
+    ) -> i64 {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return 0;
+        }
+        let payload = json!({"session_id":session_id,"thread_id":format!("thread_{session_id}"),
+            "status":status,"thread_status":status,"loaded":true,"active_turn_id":Value::Null,
+            "cancel_source":cancel_source,"queued_tasks_cancelled":queued_tasks_cancelled,
+            "running_tasks_marked_cancelled":running_tasks_marked_cancelled,"user_id":user_id});
+        self.monitor
+            .record_event(session_id, "thread_status", &payload);
+        0
+    }
+
+    async fn run_loop(self: Arc<Self>) {
+        let mut rx = {
+            let mut guard = self.queue_rx.lock().await;
+            guard.take()
+        };
+        let Some(mut rx) = rx.take() else {
+            warn!("agent queue loop skipped: receiver already taken");
+            return;
+        };
+        loop {
+            let config = self.config_store.get().await;
+            let poll_interval = config.agent_queue.poll_interval_ms.max(200);
+            tokio::select! {
+                _ = rx.recv() => {
+                    runtime_metrics::record_loop_tick("runtime.thread.queue_loop", "wake");
+                },
+                _ = tokio::time::sleep(std::time::Duration::from_millis(poll_interval)) => {
+                    runtime_metrics::record_loop_tick("runtime.thread.queue_loop", "poll");
+                },
+            }
+            if let Err(err) = self.process_pending_tasks().await {
+                warn!("agent queue loop error: {err}");
+            }
+        }
+    }
+
+    async fn process_pending_tasks(&self) -> Result<()> {
+        let pending = {
+            let store = self.user_store.clone();
+            match blocking::run_db("runtime.thread.list_pending_tasks", move || {
+                store.list_pending_agent_tasks(50)
+            })
+            .await
+            {
+                Ok(items) => items,
+                Err(err) => {
+                    warn!("load pending agent tasks failed: {err}");
+                    Vec::new()
+                }
+            }
+        };
+        for task in &pending {
+            self.emit_queue_update(task).await;
+        }
+        let config = self.config_store.get().await;
+        let ttl_s = config.agent_queue.task_ttl_s as f64;
+        for task in pending {
+            // Disabling admission must not strand previously accepted durable tasks.
+            if task
+                .request_payload
+                .get("queue_priority")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+                == 0
+            {
+                self.resume_suspended_tasks().await;
+            }
+            if ttl_s > 0.0 {
+                let age = now_ts() - task.created_at;
+                if age > ttl_s {
+                    let _ = self
+                        .fail_task(&task, "task expired".to_string(), TASK_STATUS_DEAD)
+                        .await;
+                    continue;
+                }
+            }
+            let Some(lease) = self.should_attempt_task(&task).await else {
+                continue;
+            };
+            let task_clone = task.clone();
+            let runtime = self.clone();
+            long_task::spawn("runtime.thread.execute_task", async move {
+                let _lease = lease;
+                runtime.execute_task(task_clone).await;
+            });
+        }
+        self.resume_suspended_tasks().await;
+        Ok(())
+    }
+
+    async fn should_attempt_task(&self, task: &AgentTaskRecord) -> Option<SessionLease> {
+        if task.status != TASK_STATUS_PENDING && task.status != TASK_STATUS_RETRY {
+            return None;
+        }
+        if !self.is_session_idle(&task.user_id, &task.session_id).await {
+            return None;
+        }
+        let mut running = self.running_threads.lock().await;
+        if running.contains(&task.thread_id) {
+            return None;
+        }
+        running.insert(task.thread_id.clone());
+        drop(running);
+        if let Some(lease) = self.try_acquire_start_lease(&task.session_id).await {
+            Some(lease)
+        } else {
+            self.finish_thread(&task.thread_id).await;
+            None
+        }
+    }
+
+    async fn execute_task(&self, task: AgentTaskRecord) {
+        match self.agent_message_is_current(&task).await {
+            Ok(true) => {}
+            Ok(false) => {
+                if let Err(error) = self.discard_agent_message(&task).await {
+                    warn!("discard stale agent message failed: {error}");
+                }
+                self.finish_thread(&task.thread_id).await;
+                return;
+            }
+            Err(error) => {
+                // A transient validation failure must leave the durable input pending.
+                warn!("validate agent message failed: {error}");
+                self.finish_thread(&task.thread_id).await;
+                return;
+            }
+        }
+        let started_at = now_ts();
+        let task_client_message_id = task
+            .request_payload
+            .get("client_message_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let storage = self.user_store.storage_backend();
+        let id = task.task_id.clone();
+        match blocking::run_db("queue.claim", move || {
+            storage.claim_agent_task(&id, started_at)
+        })
+        .await
+        {
+            Ok(true) => {}
+            result => {
+                if let Err(err) = result {
+                    warn!("queue claim failed: {err}");
+                }
+                self.finish_thread(&task.thread_id).await;
+                return;
+            }
+        }
+        self.emit_queue_event(&task.session_id, &task.user_id, "queue_start", {
+            let mut payload = json!({
+            "queue_id": task.task_id,
+            "thread_id": task.thread_id,
+            "session_id": task.session_id,
+            "agent_id": task.agent_id,
+            "user_id": task.user_id,
+            "queue_ahead": 0,
+            "queue_total": 0,
+            });
+            if let (Some(client_message_id), Value::Object(ref mut map)) =
+                (task_client_message_id.as_deref(), &mut payload)
+            {
+                map.insert("client_message_id".to_string(), json!(client_message_id));
+            }
+            payload
+        })
+        .await;
+
+        let mut request: WunderRequest = match serde_json::from_value(task.request_payload.clone())
+        {
+            Ok(value) => value,
+            Err(err) => {
+                let _ = self
+                    .fail_task(
+                        &task,
+                        format!("payload decode failed: {err}"),
+                        TASK_STATUS_FAILED,
+                    )
+                    .await;
+                self.finish_thread(&task.thread_id).await;
+                return;
+            }
+        };
+        request.stream = true;
+        request.enforce_runtime_queue = true;
+        request.session_id = Some(task.session_id.clone());
+        let overrides = request.config_overrides.get_or_insert_with(|| json!({}));
+        if let Some(map) = overrides.as_object_mut() {
+            map.insert("__queue_task_id".into(), json!(task.task_id));
+            map.insert(
+                "__queue_priority".into(),
+                task.request_payload
+                    .get("queue_priority")
+                    .cloned()
+                    .unwrap_or(json!(0)),
+            );
+        }
+        if request.agent_id.is_none() && !task.agent_id.trim().is_empty() {
+            request.agent_id = Some(task.agent_id.clone());
+        }
+        if let Ok(Some(user)) = self.user_store.get_user_by_id(&task.user_id) {
+            request.is_admin = UserStore::is_admin(&user);
+        }
+        // Queued goal rounds revalidate against the live goal before running;
+        // a superseded round is withdrawn and the driver re-reserves fresh.
+        if let Some(tag) = goal::read_goal_round_tag(request.config_overrides.as_ref()) {
+            let storage = self.user_store.storage_backend().clone();
+            let valid = match self
+                .orchestrator
+                .goal_handle()
+                .get_view(&storage, &task.user_id, &task.session_id)
+                .await
+            {
+                Ok(Some(view)) => {
+                    view.record.goal_id == tag.goal_id
+                        && view.record.revision == tag.revision
+                        && view.record.rounds_started >= tag.round
+                        && view.record.phase == goal::PHASE_ACTIVE
+                        && view.activation == goal::GoalActivation::Armed
+                }
+                _ => false,
+            };
+            if !valid {
+                let _ = self
+                    .user_store
+                    .update_agent_task_status(UpdateAgentTaskStatusParams {
+                        task_id: &task.task_id,
+                        status: TASK_STATUS_CANCELLED,
+                        retry_count: task.retry_count,
+                        retry_at: now_ts(),
+                        started_at: Some(started_at),
+                        finished_at: Some(now_ts()),
+                        last_error: Some("goal round superseded".into()),
+                        updated_at: now_ts(),
+                    });
+                self.finish_thread(&task.thread_id).await;
+                let _ = self.queue_tx.try_send(());
+                return;
+            }
+        }
+
+        match self.orchestrator.stream(request).await {
+            Ok(stream) => {
+                let mut stream = Box::pin(stream);
+                let mut failed = None;
+                let mut completed = false;
+                while let Some(item) = stream.next().await {
+                    match item {
+                        Ok(event) => {
+                            if event.event == "error" {
+                                failed = Some(
+                                    event
+                                        .data
+                                        .get("message")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("execution failed")
+                                        .to_string(),
+                                );
+                            }
+                            if event.event == "final" {
+                                completed = true;
+                            }
+                        }
+                        Err(err) => match err {},
+                    }
+                    // drain
+                }
+                if self.is_task_cancelled(&task.task_id) {
+                    self.finish_thread(&task.thread_id).await;
+                    let _ = self.queue_tx.try_send(());
+                    return;
+                }
+                if failed.is_some() || !completed {
+                    let _ = self
+                        .fail_task(
+                            &task,
+                            failed.unwrap_or_else(|| "execution ended without final output".into()),
+                            TASK_STATUS_FAILED,
+                        )
+                        .await;
+                    self.finish_thread(&task.thread_id).await;
+                    let _ = self.queue_tx.try_send(());
+                    return;
+                }
+                let finished_at = now_ts();
+                let _ = self
+                    .user_store
+                    .update_agent_task_status(UpdateAgentTaskStatusParams {
+                        task_id: &task.task_id,
+                        status: TASK_STATUS_SUCCESS,
+                        retry_count: task.retry_count,
+                        retry_at: finished_at,
+                        started_at: Some(started_at),
+                        finished_at: Some(finished_at),
+                        last_error: None,
+                        updated_at: finished_at,
+                    });
+                self.emit_queue_event(&task.session_id, &task.user_id, "queue_finish", {
+                    let mut payload = json!({
+                    "queue_id": task.task_id,
+                    "thread_id": task.thread_id,
+                    "session_id": task.session_id,
+                    "agent_id": task.agent_id,
+                    "user_id": task.user_id,
+                    "queue_ahead": 0,
+                    "queue_total": 0,
+                    });
+                    if let (Some(client_message_id), Value::Object(ref mut map)) =
+                        (task_client_message_id.as_deref(), &mut payload)
+                    {
+                        map.insert("client_message_id".to_string(), json!(client_message_id));
+                    }
+                    payload
+                })
+                .await;
+            }
+            Err(err) => {
+                let is_busy = err
+                    .downcast_ref::<OrchestratorError>()
+                    .map(|inner| inner.code() == "USER_BUSY")
+                    .unwrap_or(false);
+                if is_busy {
+                    let _ = self.retry_task(&task, err.to_string()).await;
+                } else {
+                    let _ = self
+                        .fail_task(&task, err.to_string(), TASK_STATUS_FAILED)
+                        .await;
+                }
+            }
+        }
+        self.finish_thread(&task.thread_id).await;
+        let _ = self.queue_tx.try_send(());
+    }
+
+    async fn retry_task(&self, task: &AgentTaskRecord, message: String) -> Result<()> {
+        let config = self.config_store.get().await;
+        let max_retries = config.agent_queue.max_retries as i64;
+        let next_retry = task.retry_count.saturating_add(1);
+        if next_retry > max_retries {
+            return self.fail_task(task, message, TASK_STATUS_DEAD).await;
+        }
+        let delay = 1.5_f64.powi(next_retry as i32).clamp(1.0, 30.0);
+        let now = now_ts();
+        self.user_store
+            .update_agent_task_status(UpdateAgentTaskStatusParams {
+                task_id: &task.task_id,
+                status: TASK_STATUS_RETRY,
+                retry_count: next_retry,
+                retry_at: now + delay,
+                started_at: task.started_at.or(Some(now)),
+                finished_at: None,
+                last_error: Some(message.as_str()),
+                updated_at: now,
+            })?;
+        self.monitor
+            .mark_queued(&task.session_id, Some(&i18n::t("monitor.summary.queued")));
+        Ok(())
+    }
+
+    async fn fail_task(&self, task: &AgentTaskRecord, message: String, status: &str) -> Result<()> {
+        let now = now_ts();
+        self.user_store
+            .update_agent_task_status(UpdateAgentTaskStatusParams {
+                task_id: &task.task_id,
+                status,
+                retry_count: task.retry_count,
+                retry_at: now,
+                started_at: task.started_at.or(Some(now)),
+                finished_at: Some(now),
+                last_error: Some(message.as_str()),
+                updated_at: now,
+            })?;
+        if let Some(turn_id) = task
+            .request_payload
+            .pointer("/config_overrides/__thread_log_turn_id")
+            .and_then(Value::as_str)
+        {
+            let terminal = if status == TASK_STATUS_CANCELLED {
+                "cancelled"
+            } else {
+                "failed"
+            };
+            let payload = json!({"session_id": task.session_id, "turn_id": turn_id, "status": terminal, "error": message});
+            let _ = self
+                .orchestrator
+                .committer
+                .update_turn(
+                    &task.user_id,
+                    &task.session_id,
+                    turn_id,
+                    terminal,
+                    &message,
+                    &payload,
+                )
+                .await;
+        }
+        if status == TASK_STATUS_CANCELLED {
+            self.monitor.mark_cancelled(&task.session_id);
+        } else {
+            self.monitor.mark_error(&task.session_id, &message);
+        }
+        self.emit_queue_event(&task.session_id, &task.user_id, "queue_fail", {
+            let task_client_message_id = task
+                .request_payload
+                .get("client_message_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let mut payload = json!({
+            "queue_id": task.task_id,
+            "thread_id": task.thread_id,
+            "session_id": task.session_id,
+            "agent_id": task.agent_id,
+            "user_id": task.user_id,
+            "status": status,
+            "error": message,
+            "queue_ahead": 0,
+            "queue_total": 0,
+            });
+            if let (Some(client_message_id), Value::Object(ref mut map)) =
+                (task_client_message_id.as_deref(), &mut payload)
+            {
+                map.insert("client_message_id".to_string(), json!(client_message_id));
+            }
+            payload
+        })
+        .await;
+        Ok(())
+    }
+
+    fn is_task_cancelled(&self, task_id: &str) -> bool {
+        let cleaned = task_id.trim();
+        if cleaned.is_empty() {
+            return false;
+        }
+        self.user_store
+            .get_agent_task(cleaned)
+            .map(|task| {
+                task.map(|record| {
+                    record
+                        .status
+                        .trim()
+                        .eq_ignore_ascii_case(TASK_STATUS_CANCELLED)
+                })
+                .unwrap_or(false)
+            })
+            .unwrap_or(false)
+    }
+
+    async fn finish_thread(&self, thread_id: &str) {
+        let mut running = self.running_threads.lock().await;
+        running.remove(thread_id);
+    }
+}
+
+impl goal::GoalDriverHost for ThreadRuntime {
+    fn host_session_available(&self, user_id: &str, session_id: &str) -> BoxFuture<'_, bool> {
+        let user_id = user_id.trim().to_string();
+        let session_id = session_id.trim().to_string();
+        Box::pin(async move {
+            self.is_session_available_for_submit(&user_id, &session_id)
+                .await
+        })
+    }
+
+    fn host_submit_goal_round(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        tag: goal::GoalRoundTag,
+    ) -> BoxFuture<'_, Result<()>> {
+        let user_id = user_id.trim().to_string();
+        let session_id = session_id.trim().to_string();
+        Box::pin(async move { self.submit_goal_round(&user_id, &session_id, tag).await })
+    }
+
+    fn host_load_goal_view(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> BoxFuture<'_, Result<Option<goal::GoalView>>> {
+        let storage = self.user_store.storage_backend().clone();
+        let goal = self.orchestrator.goal_handle();
+        let user_id = user_id.trim().to_string();
+        let session_id = session_id.trim().to_string();
+        Box::pin(async move { goal.get_view(&storage, &user_id, &session_id).await })
+    }
+
+    fn host_pause_goal(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        reference: goal::GoalRef,
+    ) -> BoxFuture<'_, Result<()>> {
+        let storage = self.user_store.storage_backend().clone();
+        let goal = self.orchestrator.goal_handle();
+        let user_id = user_id.trim().to_string();
+        let session_id = session_id.trim().to_string();
+        Box::pin(async move {
+            goal.pause(storage, &user_id, &session_id, &reference)
+                .await
+                .map(|_| ())
+        })
+    }
+
+    fn host_block_goal(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        reference: goal::GoalRef,
+        reason: goal::GoalBlockReason,
+    ) -> BoxFuture<'_, Result<()>> {
+        let storage = self.user_store.storage_backend().clone();
+        let goal = self.orchestrator.goal_handle();
+        let user_id = user_id.trim().to_string();
+        let session_id = session_id.trim().to_string();
+        Box::pin(async move {
+            goal.block(storage, &user_id, &session_id, &reference, reason)
+                .await
+                .map(|_| ())
+        })
+    }
+}
+
+fn normalize_agent_id(value: Option<&str>) -> String {
+    value.unwrap_or("").trim().to_string()
+}
+
+fn normalize_client_message_id(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(128).collect::<String>())
+}
+
+fn now_ts() -> f64 {
+    Utc::now().timestamp_millis() as f64 / 1000.0
+}
+
+fn try_acquire_start_lease_with_limit(
+    session_id: &str,
+    max_active: usize,
+    pending_sessions: &Arc<StdMutex<HashSet<String>>>,
+    active_runtime_sessions: &Arc<StdMutex<HashSet<String>>>,
+) -> Option<SessionLease> {
+    let cleaned = session_id.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    let max_active = max_active.max(1);
+    let mut pending_guard = pending_sessions.lock().ok()?;
+    let mut active_guard = active_runtime_sessions.lock().ok()?;
+    if pending_guard.contains(cleaned)
+        || active_guard.contains(cleaned)
+        || active_guard.len() >= max_active
+    {
+        return None;
+    }
+    pending_guard.insert(cleaned.to_string());
+    active_guard.insert(cleaned.to_string());
+    Some(SessionLease::new(
+        cleaned.to_string(),
+        pending_sessions.clone(),
+        active_runtime_sessions.clone(),
+    ))
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct QueueStats {
+    queue_ahead: usize,
+    queue_total: usize,
+    active_ahead: usize,
+    wait_ahead: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn queue_commit_wakes_feeder_with_committed_cursor() {
+        use crate::state::{AppState, AppStateInitOptions};
+        let root = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.storage.backend = "sqlite".into();
+        config.storage.db_path = root.path().join("state.db").to_string_lossy().into_owned();
+        config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
+        let store = ConfigStore::new(root.path().join("config.yaml"));
+        store
+            .update(|current| *current = config.clone())
+            .await
+            .unwrap();
+        let state = AppState::new_with_options(
+            store,
+            config,
+            AppStateInitOptions::cli_default().with_start_thread_runtime(false),
+        )
+        .unwrap();
+        let accepted = state
+            .storage
+            .accept_thread_turn("user-a", "session-a", &json!({"content":"input"}))
+            .unwrap();
+        let mut wake = state.kernel.orchestrator.change_hub.subscribe("session-a");
+        for event_type in ["queue_enter", "queue_start", "queue_finish"] {
+            let cursor = state.kernel.thread_runtime.emit_queue_event("session-a", "user-a", event_type,
+                json!({"session_id":"session-a", "turn_id":accepted["turn_id"], "queue_id":"queue-a"})).await;
+            assert!(cursor > 0);
+            assert!(wake.has_changed().unwrap());
+            assert_eq!(*wake.borrow_and_update(), cursor);
+            let changes = state
+                .storage
+                .list_thread_changes_by_session("session-a", cursor - 1, 1)
+                .unwrap();
+            assert_eq!(changes[0]["payload"]["payload"]["event_type"], event_type);
+        }
+        assert!(state
+            .storage
+            .load_stream_events("session-a", 0, 100)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn start_lease_enforces_global_capacity_and_releases_on_drop() {
+        let pending = Arc::new(StdMutex::new(HashSet::new()));
+        let active = Arc::new(StdMutex::new(HashSet::new()));
+
+        let first = try_acquire_start_lease_with_limit("session-a", 1, &pending, &active)
+            .expect("first session should acquire slot");
+        assert!(try_acquire_start_lease_with_limit("session-b", 1, &pending, &active).is_none());
+        assert_eq!(active.lock().expect("active lock").len(), 1);
+
+        drop(first);
+        assert!(try_acquire_start_lease_with_limit("session-b", 1, &pending, &active).is_some());
+    }
+
+    #[test]
+    fn start_lease_blocks_same_session_until_release() {
+        let pending = Arc::new(StdMutex::new(HashSet::new()));
+        let active = Arc::new(StdMutex::new(HashSet::new()));
+
+        let first = try_acquire_start_lease_with_limit("session-a", 2, &pending, &active)
+            .expect("first session should acquire slot");
+        assert!(try_acquire_start_lease_with_limit("session-a", 2, &pending, &active).is_none());
+
+        drop(first);
+        assert!(try_acquire_start_lease_with_limit("session-a", 2, &pending, &active).is_some());
+    }
+}

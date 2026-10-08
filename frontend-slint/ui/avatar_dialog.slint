@@ -1,0 +1,235 @@
+import { Theme, AvatarOption, AvatarColorChip, CompanionCard } from "theme.slint";
+import { ExpertTheme, ExpertButton } from "expert_widgets.slint";
+import { Action } from "components.slint";
+import { ScrollView, Switch, ComboBox } from "std-widgets.slint";
+import { I18n } from "i18n.slint";
+
+// Dialog state lives in a global so the controller binds it once and no page
+// has to forward properties through the main window. The avatar dialog is the
+// desktop counterpart of the web agent settings avatar panel: static avatar
+// grid with pagination, background colors, and the dynamic companion library.
+export global AvatarDialogState {
+    in-out property <bool> open: false;
+    // 0 = static avatars, 1 = companion library.
+    in-out property <int> kind: 0;
+    in-out property <string> agent-initial;
+    in-out property <string> selected-key;
+    // `color` is the canonical payload hex; `color-brush` is what the dialog
+    // paints, and `palette` ships both so the two can never drift.
+    in-out property <string> color: "#3b82f6";
+    in-out property <color> color-brush: #3b82f6;
+    in-out property <[AvatarColorChip]> palette;
+    in-out property <int> page: 1;
+    in-out property <int> page-count: 1;
+    in-out property <[AvatarOption]> options;
+    in-out property <[CompanionCard]> companions;
+    in-out property <string> companion-id;
+    in-out property <bool> companion-show: true;
+    in-out property <bool> companion-hints: true;
+    in-out property <int> companion-scale-index: 5;
+    // Preview visual: resolved static image or the animated companion frame
+    // driven by the controller timer; empty falls back to the agent initial.
+    in-out property <image> preview-image;
+    in-out property <image> preview-frame;
+    in-out property <string> status;
+    callback open-requested();
+    callback select-option(string);
+    callback set-color(string);
+    callback set-kind(int);
+    callback prev-page();
+    callback next-page();
+    callback select-companion(string);
+    callback import-companion();
+    callback delete-companion(string);
+    callback reset();
+    callback cancel();
+    callback confirm();
+}
+
+export component AvatarDialog inherits Rectangle {
+    property <length> cell: 56px;
+    property <length> stride: 64px;
+    property <length> grid-width: 6 * stride - stride + cell;
+    property <bool> frame-visible: AvatarDialogState.preview-frame.width > 0;
+    width: 100%;
+    height: 100%;
+    visible: AvatarDialogState.open;
+
+    if AvatarDialogState.open : Rectangle {
+        background: Theme.overlay;
+        TouchArea { clicked => { AvatarDialogState.cancel(); } }
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 470px;
+            height: min(640px, parent.height - 48px);
+            border-radius: 14px;
+            background: white;
+            border-width: 1px;
+            border-color: Theme.border;
+            TouchArea { } // block scrim clicks
+            VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+                // ---- header ----
+                HorizontalLayout { height: 26px; spacing: 8px;
+                    Text { text: I18n.av_title; color: ExpertTheme.text; font-size: 18px; font-weight: 700; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Action { width: 28px; icon: @image-url("../assets/icons/xmark.svg"); clicked => { AvatarDialogState.cancel(); } }
+                }
+                // ---- preview ----
+                Rectangle {
+                    height: 76px; border-radius: 12px; background: ExpertTheme.soft;
+                    HorizontalLayout { padding: 10px; spacing: 14px;
+                        Rectangle {
+                            width: 56px; height: 56px; border-radius: 28px;
+                            background: AvatarDialogState.color-brush;
+                            clip: true;
+                            if root.frame-visible : Image {
+                                width: 56px; height: 56px; source: AvatarDialogState.preview-frame; image-fit: contain;
+                            }
+                            if !root.frame-visible && AvatarDialogState.preview-image.width > 0 : Image {
+                                width: 56px; height: 56px; source: AvatarDialogState.preview-image; image-fit: cover;
+                            }
+                            if !root.frame-visible && AvatarDialogState.preview-image.width <= 0 : Text {
+                                width: 100%; height: 100%; text: AvatarDialogState.agent-initial;
+                                color: white; font-size: 22px; font-weight: 700;
+                                horizontal-alignment: center; vertical-alignment: center;
+                            }
+                        }
+                        Text {
+                            width: parent.width - 96px;
+                            text: I18n.av_tip;
+                            color: ExpertTheme.muted; font-size: 12px; wrap: word-wrap;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                // ---- kind tabs ----
+                HorizontalLayout { height: 30px; spacing: 8px; alignment: start;
+                    ExpertButton { width: 72px; label: I18n.av_tab_static; selected: AvatarDialogState.kind == 0; clicked => { AvatarDialogState.set-kind(0); } }
+                    ExpertButton { width: 72px; label: I18n.av_tab_dynamic; selected: AvatarDialogState.kind == 1; clicked => { AvatarDialogState.set-kind(1); } }
+                }
+                // ---- scrollable body ----
+                Rectangle { vertical-stretch: 1;
+                    if AvatarDialogState.kind == 0 : ScrollView {
+                        width: 100%; height: 100%;
+                        horizontal-scrollbar-policy: always-off;
+                        VerticalLayout { spacing: 12px; padding-right: 4px;
+                            Text { height: 18px; text: I18n.av_static_title; color: ExpertTheme.text; font-size: 13px; font-weight: 700; }
+                            // 6x4 paged grid, 24 options per page like the web panel.
+                            Rectangle {
+                                height: 4 * stride - stride + cell;
+                                width: grid-width;
+                                for row in Math.ceil(AvatarDialogState.options.length / 6) : Rectangle {
+                                    y: row * stride;
+                                    width: grid-width;
+                                    height: root.cell;
+                                    for column in 6 : Rectangle {
+                                        property <int> idx: row * 6 + column;
+                                        property <AvatarOption> item: AvatarDialogState.options[self.idx];
+                                        x: column * stride;
+                                        width: root.cell; height: root.cell;
+                                        visible: self.idx < AvatarDialogState.options.length;
+                                        border-radius: 12px;
+                                        background: AvatarDialogState.selected-key == item.key ? #fff1e5 : white;
+                                        border-width: AvatarDialogState.selected-key == item.key ? 2px : 1px;
+                                        border-color: AvatarDialogState.selected-key == item.key ? #ff9448 : Theme.border;
+                                        TouchArea { enabled: self.visible; mouse-cursor: pointer; clicked => { AvatarDialogState.select-option(item.key); } }
+                                        if item.image.width > 0 : Image {
+                                            x: 4px; y: 4px; width: parent.width - 8px; height: parent.height - 8px;
+                                            source: item.image; image-fit: contain;
+                                        }
+                                        if item.image.width <= 0 : Text {
+                                            width: 100%; height: 100%;
+                                            text: AvatarDialogState.agent-initial;
+                                            color: #ff9448; font-size: 16px; font-weight: 700;
+                                            horizontal-alignment: center; vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                            }
+                            HorizontalLayout { height: 30px; spacing: 8px;
+                                ExpertButton { width: 84px; label: I18n.av_page_prev; enabled: AvatarDialogState.page > 1; clicked => { AvatarDialogState.prev-page(); } }
+                                Rectangle { horizontal-stretch: 1; Text { width: 100%; text: I18n.av_page_prefix + AvatarDialogState.page + I18n.av_page_suffix; color: ExpertTheme.text; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; } }
+                                ExpertButton { width: 84px; label: I18n.av_page_next; enabled: AvatarDialogState.page < AvatarDialogState.page-count; clicked => { AvatarDialogState.next-page(); } }
+                            }
+                            Text { height: 18px; text: I18n.av_bg_color; color: ExpertTheme.text; font-size: 13px; font-weight: 700; }
+                            HorizontalLayout { height: 30px; spacing: 8px; alignment: start;
+                                for chip[index] in AvatarDialogState.palette : Rectangle {
+                                    property <bool> picked: AvatarDialogState.color == chip.hex;
+                                    width: 26px; height: 26px; border-radius: 13px;
+                                    background: chip.brush;
+                                    border-width: self.picked ? 3px : 1px;
+                                    border-color: self.picked ? #303133 : #ffffffcc;
+                                    TouchArea { mouse-cursor: pointer; clicked => { AvatarDialogState.set-color(chip.hex); } }
+                                }
+                            }
+                        }
+                    }
+                    if AvatarDialogState.kind == 1 : ScrollView {
+                        width: 100%; height: 100%;
+                        horizontal-scrollbar-policy: always-off;
+                        VerticalLayout { spacing: 12px; padding-right: 4px;
+                            HorizontalLayout { height: 30px; spacing: 8px; alignment: start;
+                                Text { width: 100px; text: I18n.av_dynamic_title; color: ExpertTheme.text; font-size: 13px; font-weight: 700; vertical-alignment: center; }
+                                Rectangle { horizontal-stretch: 1; }
+                                ExpertButton { width: 92px; label: I18n.av_companion_import; icon: @image-url("../assets/icons/upload.svg"); clicked => { AvatarDialogState.import-companion(); } }
+                            }
+                            for companion in AvatarDialogState.companions : Rectangle {
+                                height: 64px; width: grid-width;
+                                border-radius: 12px;
+                                background: AvatarDialogState.companion-id == companion.id ? #fff1e5 : ExpertTheme.soft;
+                                border-width: AvatarDialogState.companion-id == companion.id ? 2px : 1px;
+                                border-color: AvatarDialogState.companion-id == companion.id ? #ff9448 : Theme.border;
+                                HorizontalLayout { padding: 6px; padding-left: 10px; spacing: 10px;
+                                    Rectangle {
+                                        width: 50px; height: 50px; border-radius: 25px;
+                                        background: AvatarDialogState.color-brush; clip: true;
+                                        if companion.preview.width > 0 : Image { width: 50px; height: 50px; source: companion.preview; image-fit: contain; }
+                                        if companion.preview.width <= 0 : Text { width: 100%; height: 100%; text: companion.glyph; color: white; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                    VerticalLayout { horizontal-stretch: 1; spacing: 4px;
+                                        Text { height: 18px; text: companion.name; color: ExpertTheme.text; font-size: 12px; font-weight: 700; overflow: elide; }
+                                        Text { vertical-stretch: 1; text: companion.description; color: ExpertTheme.muted; font-size: 10px; overflow: elide; wrap: word-wrap; }
+                                    }
+                                    Action { width: 30px; icon: @image-url("../assets/icons/trash.svg"); clicked => { AvatarDialogState.delete-companion(companion.id); } }
+                                }
+                                TouchArea { x: 0px; width: parent.width - 44px; mouse-cursor: pointer; clicked => { AvatarDialogState.select-companion(companion.id); } }
+                            }
+                            if AvatarDialogState.companions.length == 0 : Text {
+                                height: 40px; width: grid-width;
+                                text: I18n.av_companion_empty; color: ExpertTheme.muted; font-size: 12px;
+                                vertical-alignment: center; wrap: word-wrap;
+                            }
+                            HorizontalLayout { height: 30px; spacing: 12px;
+                                Text { width: 100px; text: I18n.av_companion_show; color: ExpertTheme.text; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                                Switch { checked <=> AvatarDialogState.companion-show; }
+                            }
+                            HorizontalLayout { height: 30px; spacing: 12px;
+                                Text { width: 100px; text: I18n.av_companion_hints; color: ExpertTheme.text; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                                Switch { checked <=> AvatarDialogState.companion-hints; }
+                            }
+                            HorizontalLayout { height: 32px; spacing: 12px;
+                                Text { width: 100px; text: I18n.av_companion_scale; color: ExpertTheme.text; font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                                ComboBox { width: 110px; model: root.scale-list; current-index <=> AvatarDialogState.companion-scale-index; }
+                            }
+                        }
+                    }
+                }
+                if AvatarDialogState.status != "" : Text { height: 16px; text: AvatarDialogState.status; color: #d97706; font-size: 11px; overflow: elide; }
+                // ---- footer ----
+                HorizontalLayout { height: 32px; spacing: 8px;
+                    ExpertButton { width: 76px; label: I18n.av_reset; clicked => { AvatarDialogState.reset(); } }
+                    Rectangle { horizontal-stretch: 1; }
+                    ExpertButton { width: 76px; label: I18n.common_cancel; clicked => { AvatarDialogState.cancel(); } }
+                    ExpertButton { width: 76px; label: I18n.common_confirm; selected: true; clicked => { AvatarDialogState.confirm(); } }
+                }
+            }
+        }
+    }
+
+    property <[string]> scale-list: [
+        "0.5", "0.6", "0.7", "0.8", "0.9", "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6"
+    ];
+}

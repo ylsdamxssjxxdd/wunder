@@ -1,0 +1,85 @@
+# Desktop and CLI builders
+
+本目录集中放置桌面 Slint 与 CLI 的离线发布、交叉编译和分发门禁脚本。仓库根目录只保留两个公开入口：Linux 使用 `build.sh`，Windows 使用 `build.bat`。`frontend-slint/scripts/` 只保留原生联调、启动回归和 AppImage 内容检查。
+
+公开入口统一以程序目标和分发架构选择构建。推荐使用简拼 `-t`/`-a`，`-target`/`-arch`/`--target`/`--arch` 写法等价：
+
+```bash
+# ARM64 Linux 主机；从其它 Linux 主机执行时在命令末尾添加 --docker。
+bash build.sh -t desktop -a linux-arm64
+bash build.sh -t cli -a linux-arm64
+bash build.sh -t desktop -a linux-amd64
+
+# Win7 x86 的 Desktop/CLI 同样由 build.sh 在 ARM64 Linux 主机上交叉构建：
+bash build.sh -t desktop -a win7-x86
+bash build.sh -t cli -a win7-x86
+
+# Linux Desktop（arm64 与 amd64）默认都打成 AppImage，同时保留裸 ELF；
+# CLI 永远是普通 ELF。AppImage runtime 默认取 kylin-arm SDK 的
+# offline/appimage-runtime/ 内同架构 blob，仅在需要覆盖时才设置
+# WUNDER_APPIMAGE_RUNTIME_ARM64 / WUNDER_APPIMAGE_RUNTIME_AMD64。
+
+# 构建当前 ARM64 Linux 主机可发布的全部程序：三个架构 × Desktop/CLI。
+# AppImage runtime 默认使用 SDK 的 offline/appimage-runtime/ 内同架构 blob。
+bash build.sh -all
+```
+
+Windows 使用同一套目标/架构名称。Linux 目标通过 Docker 使用 `kylin-arm`；`win7-x86` 在本机通过 `win7` SDK 构建，在 ARM64 Linux 上也可用 `build.sh` 交叉生成（Desktop 与 CLI 均可，同一 `i686-win7-windows-gnu` 目标，build-std 方式）。旧的 `win32-x86` 名称已并入 `win7-x86`（Win7 兼容构建覆盖全部 32 位 Windows 场景）：
+
+```bat
+build.bat -t desktop -a win7-x86
+build.bat -t cli -a linux-amd64
+build.bat -All -AppImageRuntimeArm64 X:\runtime-arm64.AppImage -AppImageRuntimeAmd64 X:\runtime-amd64.AppImage
+```
+
+`-all` 为完整发布构建 Linux ARM64、Linux amd64 与 Win7 x86 的 Desktop/CLI；Linux Desktop 产物均为 AppImage，CLI 在所有目标都只产生普通 ELF/EXE，绝不打包 AppImage。Windows 的 `-All` 默认分别使用相邻的 `Rust-builder/kylin-arm` 和 `Rust-builder/win7`；如需覆盖，使用 `-KylinBuilderRoot` 与 `-Win7BuilderRoot`，不要把两套 SDK 指到同一目录。
+
+底层实现包括 `build-linux-*-*.sh`、`build-cli-*.sh`、`build-win7-*.ps1`、`build-win7-arm64-offline.sh`、`build-cli-win7-arm64-offline.sh` 和链接器辅助脚本。其中 `build-linux-appimage-native.sh` 是 CI 专用入口：在已预装 Ubuntu 18.04 工具链的容器内在线原生构建并打包 AppImage，不依赖 kylin-arm 离线 SDK，打包语义与 `build-linux-arm64-appimage.sh` 保持同步。Win7 Windows 本机构建固定使用相邻的 `Rust-builder/win7/offline`；Linux ARM64 开发机与 Windows Docker 的 Linux 交叉构建固定使用相邻的 `Rust-builder/kylin-arm/offline`（Win7 交叉使用其中的 `nightly-2026-03-14-aarch64-unknown-linux-gnu` 工具链 + rust-src，-Z build-std 重编 std，MinGW 链接与导入库由 `mingw-i686-windows-gnu` 提供，sdk-version 戳接受 wunder/rcho 两种印记）。Linux 可通过 `WUNDER_BUILDER_ROOT` 覆盖 kylin-arm 根目录；Windows 分别通过 `-KylinBuilderRoot`、`-Win7BuilderRoot` 覆盖两套 SDK。脚本不探测或回退到旧 SDK 目录。
+
+`prepare-linux-amd64-runtime-sysroot.sh` 是 `kylin-arm` 的一次性维护脚本，用于补齐 Linux amd64 Desktop AppImage 的 X11、XTest 与 ALSA 运行库。它不是日常构建步骤，必须在 **x86_64 Ubuntu 18.04** 环境执行，且只能将 SDK 挂载为可写；脚本固定使用 Ubuntu Bionic 归档源，下载完成后会把校验清单写入 SDK。常规 `build.sh`、`build.bat` 构建始终离线，不会调用它。例如：
+
+```bash
+docker run --rm --network host \
+  -v /path/to/kylin-arm:/builder/kylin-arm \
+  -v /path/to/wunder:/workspace:ro \
+  -w /workspace ubuntu:18.04 \
+  env WUNDER_BUILDER_ROOT=/builder/kylin-arm \
+  bash builders/prepare-linux-amd64-runtime-sysroot.sh
+```
+
+准备完成后，`linux-amd64-ubuntu18/root` 必须包含 `libX11.so.6`、`libXtst.so.6`、`libasound.so.2`、`libasound.so`、`libxcb.so.1`、`libxcb-xkb.so.1`、`libxkbcommon.so.0` 和 `libxkbcommon-x11.so.0`；其中 `libasound.so` 只用于交叉链接，AppImage 内容门禁验证其余运行库。
+
+`prepare-linux-arm64-runtime-sysroot.sh` 是 arm64 侧的同类一次性维护脚本，把 bionic arm64 的 X11/XCB/XKB/ALSA 运行库闭包和 `squashfs-tools`（含压缩依赖）装进 `linux-arm64-ubuntu18/root`；必须在 **aarch64 Ubuntu 18.04** 环境（如 `rcho-slint-arm64-ubuntu18` 镜像）执行并将 SDK 挂载为可写。准备完成后，ARM64 Desktop 构建的运行库和 `mksquashfs` 都可完全来自 SDK，不再要求主机安装这些包。
+
+GitHub Actions 的 ARM64 Desktop 发布使用 `build-linux-arm64-cross-appimage.sh`：在 amd64 Ubuntu 18.04 容器中调用 `aarch64-linux-gnu-gcc`、Rust `aarch64-unknown-linux-gnu` target 和 ARM64 多架构 sysroot，编译与 SquashFS 打包均不经过 QEMU。需要启动验证时再单独加入轻量 QEMU smoke test；这样不会把数小时的 Rust 编译放进模拟器。
+
+Linux ARM64 Desktop 的 X11/XCB 运行库默认取自建机 `ldconfig`；当 ARM 主机缺少这些库（典型如 `libxkbcommon-x11.so.0`）时，`build-linux-arm64-appimage.sh` 会按库逐一优先改用 kylin-arm SDK 的 `offline/linux-arm64-ubuntu18/root/usr/lib/aarch64-linux-gnu` 或 `offline/runtime-libs/aarch64-linux-gnu`，其余库仍回退到 ldconfig，也可用 `WUNDER_SLINT_RUNTIME_LIB_DIR=/path/to/libs` 显式指定整个目录。从目录取用的库会校验 AArch64 ELF，防止误指其它架构的库目录。
+
+ARM64 开发 sysroot 首次准备使用 `bash builders/prepare-linux-arm64-devel-sysroot.sh`。如果构建提示 `absolute libgcc_s.so link`、`dangling libgcc_s.so link` 或 `cannot find -lgcc_s`，可在 ARM64 Docker 容器中执行 `bash builders/prepare-linux-arm64-devel-sysroot.sh --repair`；它只修复已有 `Rust-builder/kylin-arm/offline/linux-arm64-ubuntu18/root` 内的软链接，不重新下载 SDK。
+
+## Cargo vendor 树维护
+
+`Rust-builder/win7/offline/cargo-vendor-slint`、`Rust-builder/kylin-arm/offline/cargo-vendor-slint` 与 `Rust-builder/kylin-x86/offline/cargo-vendor-slint` 是锁文件之外的独立快照：`frontend-slint` 新增依赖后，只改 `Cargo.toml` 并更新 `Cargo.lock` 不会让离线构建可用，解析会在 vendor 树里以 `no matching package named ...` 终止，desktop 与 cli 一起失败。判断方法是一句目录名匹配（目录名为 `名字-版本`），不需要构建。
+
+补齐时按锁定闭包成组处理：先用一个临时 crate 声明该依赖与需要固定版本的传递依赖，联网执行 `cargo vendor --versioned-dirs` 生成带 `.cargo-checksum.json` 的目录，再把锁定版本缺失的目录复制进三棵树。注意 vendor 的“最新解析结果”与锁定的次版本可能不同（例如某依赖声明 `^0.11`，锁住的是 `0.11.1`），只补最新版仍会报 `failed to select a version`，必须回读 `frontend-slint/Cargo.lock` 确认实际版本；三棵树要保持同一组版本。复制后用 `builders/check-vendor-crate.ps1` 逐文件核对校验和，避免半份拷贝静默通过：
+
+```powershell
+./builders/check-vendor-crate.ps1 -VendorRoot /path/to/cargo-vendor-slint `
+  -Crate vt100-0.15.2, vte-0.11.1, vte_generate_state_changes-0.1.2
+```
+
+最后必须验证解析与真实编译两件事：`cargo metadata --locked --offline`（Linux 侧在容器内用 kylin-arm 的 vendor 树）确认解析，`build.bat -t desktop -a win7-x86` 或 `build.sh -t desktop -a linux-amd64` 确认新 crate 能编过并进入 PE/ELF 门禁。只做 `-Check` 会跳过 codegen 与链接，不能作为最终验收。
+
+## Linux amd64 离线 SDK 维护
+
+`kylin-x86` 表示 Linux amd64 宿主。联网准备一次：
+
+```bash
+bash builders/build-kylin-x86-sdk-docker.sh
+```
+
+生成目录包含固定 Rust 工具链、Cargo vendor、两架构 sysroot tar、真实 AppImage runtime、宿主工具 tar 和 Docker 镜像归档。Linux 符号链接与权限保存在 tar 中，不能把 Windows 解压结果当成同等 SDK。
+
+离线机器先执行 `docker load -i offline/archives/builder-amd64-ubuntu18.docker.tar`，再用 `--network none` 运行镜像。ARM64 sysroot 从 `offline/archives/linux-arm64-ubuntu18.tar` 解压到 Linux 文件系统；编译器使用镜像的 `aarch64-linux-gnu-gcc`，不能运行 ARM 宿主 sysroot 中的 GCC。Win7 使用 nightly 的 `-Z build-std=std,panic_abort` 与 `i686-w64-mingw32-gcc`，不能用普通 Windows target 替代 Win7 验收。
+
+`metadata/smoke-test.txt` 保存实际禁网工具链验证，`metadata/packages.tsv` 保存系统工具版本，`manifest.json` / `SHA256SUMS` 保存最终文件校验信息。小程序验证不替代完整桌面应用与真实系统运行验收。

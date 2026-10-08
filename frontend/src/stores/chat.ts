@@ -1,0 +1,243 @@
+import { getChatThreadStatus } from '@/realtime/chat/chatThreadRuntime';
+import { defineStore } from 'pinia';
+import { markRaw } from 'vue';
+
+import {
+  archiveSession as archiveSessionApi,
+  cancelMessageStream,
+  compactSession as compactSessionApi,
+  controlSessionSubagents as controlSessionSubagentsApi,
+  createSession,
+  deleteSession as deleteSessionApi,
+  getSession,
+  getSessionGoal,
+  getSessionEvents,
+  getSessionHistoryPage,
+  getSessionSubagents,
+  listSessions,
+  openChatSocket,
+  renameSession as renameSessionApi,
+  restoreSession as restoreSessionApi,
+  setSessionGoal as setSessionGoalApi,
+  submitMessageFeedback as submitMessageFeedbackApi,
+  updateSessionTools as updateSessionToolsApi,
+  updateSessionReasoningEffort as updateSessionReasoningEffortApi
+} from '@/api/chat';
+import { t } from '@/i18n';
+import { formatStructuredErrorText } from '@/utils/streamError';
+import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
+import {
+  buildChatRequestTextInputOverflowError,
+  resolveChatRequestTextInputOverflow
+} from '@/utils/chatRequestInputLimit';
+import {
+  hasRunningAssistantMessage,
+  isThreadRuntimeBusy,
+  isThreadRuntimeWaiting,
+  normalizeThreadRuntimeStatus
+} from '@/utils/chatSessionRuntime';
+import {
+  isSubagentItemActive,
+  normalizeSubagentRuntimeFlag,
+  isSubagentStatusFailed,
+  isSubagentStatusSuccessful,
+  normalizeSubagentRuntimeStatus
+} from '@/utils/subagentRuntime';
+import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from '@/utils/chatTiming';
+import {
+  mergeSessionsByIdPreservingRuntimeFields
+} from '@/stores/chatSessionMerge';
+import {
+  estimateChatTextTokens,
+  estimateRequestContextTokens,
+  resolveRequestContextPreviewTokens
+} from '@/utils/chatContextEstimate';
+import { resolveWorkflowDurationMs } from '@/utils/toolWorkflowTiming';
+import { summarizeTurnDecodeSpeed } from '@/utils/turnDecodeSpeed';
+import {
+  normalizeMessageFeedback,
+  normalizeMessageFeedbackVote
+} from '@/utils/messageFeedback';
+import { createWsMultiplexer } from '@/utils/ws';
+import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
+import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { chatPerf } from '@/utils/chatPerf';
+import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { resolveAccessToken } from '@/api/requestAuth';
+import {
+  createChatRuntimeProjection,
+  applyChatRuntimeEvent
+} from '@/realtime/chat/chatRuntimeReducer';
+import {
+  materializeChatRuntimeMessages
+} from '@/realtime/chat/chatRuntimeRenderAdapter';
+import {
+  selectSessionBusyReason
+} from '@/realtime/chat/chatRuntimeSelectors';
+import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
+import {
+  clearTrailingPendingAssistantMessages,
+  clearSupersededPendingAssistantMessages,
+  findPendingAssistantMessage,
+  isPendingAssistantMessage,
+  stopPendingAssistantMessage
+} from './chatPendingMessage';
+import {
+  captureChatSnapshotScheduleContext,
+  resolveChatSnapshotScheduleSource
+} from './chatSnapshotScheduler';
+import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
+import {
+  normalizeStreamLifecyclePhase,
+  shouldForcePreserveWatcherForActiveSession,
+  shouldApplyForegroundDetailHydration,
+  shouldKeepForegroundInteractiveRuntime,
+  shouldKeepForegroundLiveMessagesDuringRunningGap,
+  shouldKeepForegroundLiveMessages,
+  shouldRestartWatchAfterInteractiveStream
+} from './chatWatchLifecycle';
+import { isCompactionSummaryEvent } from '@/utils/chatCompactionWorkflow';
+import {
+  dedupeTerminalCompactionMarkersInPlace,
+  isCompactionMarkerAssistantMessage,
+  isSupersededRunningManualCompactionMarker,
+  mergeCompactionMarkersIntoMessages,
+  shouldPreserveTerminalCompactionMarkerState
+} from './chatCompactionMarker';
+import {
+  replaceMessageArrayKeepingReference,
+  resolveRealtimeMessageArrayReference
+} from './chatMessageArraySync';
+import { useCommandSessionStore } from './commandSessions';
+import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
+
+import { isGoalActiveForLock } from './chatPersist';
+import { getHistoryState, getRuntime, getSessionMessages, hasRuntimeControllers, resolveSessionKey } from './chatRuntimeState';
+import { PendingApproval, SessionGoal } from './chatTypes';
+import {
+  resolveMergedSessionBusy,
+  resolveMergedSessionRuntimeStatus
+} from './chatBusyState';
+
+import { chatApprovalActions } from './chatApprovalActions';
+import { chatCacheActions } from './chatCacheActions';
+import { chatSubagentFeedbackActions } from './chatSubagentFeedbackActions';
+import { chatSessionOpenLoadActions } from './chatSessionOpenLoadActions';
+import { chatSessionMutationActions } from './chatSessionMutationActions';
+import { chatCompactionActions } from './chatCompactionActions';
+import { chatSendActions } from './chatSendActions';
+import { chatStopResumeActions } from './chatStopResumeActions';
+import { chatRealtimeRecoveryActions } from './chatRealtimeRecoveryActions';
+
+export const useChatStore = defineStore('chat', {
+  state: () => ({
+    sessions: [],
+    activeSessionId: null,
+    messages: [],
+    runtimeProjectionVersion: 0,
+    runtimeProjectionVersionBySession: {} as Record<string, number>,
+    foregroundChatSessionId: null as string | null,
+    runtimeProjectionContentVersion: 0,
+    runtimeProjectionContentVersionByMessage: {} as Record<string, number>,
+    runtimeProjectionReasoningVersion: 0,
+    runtimeProjectionReasoningVersionByMessage: {} as Record<string, number>,
+    sessionsLoadedAt: 0,
+    loadingBySession: {},
+    sessionGoals: {} as Record<string, SessionGoal>,
+    runtimeProjection: markRaw(createChatRuntimeProjection()) as ChatRuntimeProjection,
+    greetingOverride: '',
+    draftAgentId: '',
+    draftToolOverrides: null,
+    pendingApprovals: [] as PendingApproval[],
+    sessionOrderRevision: 0,
+    sessionOrderPromotion: null as { sessionId: string; agentId: string } | null
+  }),
+  getters: {
+    isSessionLoading: (state) => (sessionId) => {
+      const key = resolveSessionKey(sessionId);
+      if (!key) return false;
+      return Boolean(state.loadingBySession[key]);
+    },
+    isSessionBusy: (state) => (sessionId) => {
+      const _projectionVersion = state.runtimeProjectionVersion;
+      const key = resolveSessionKey(sessionId);
+      if (!key) return false;
+      const activeKey = resolveSessionKey(state.activeSessionId);
+      const messages = activeKey === key ? state.messages : getSessionMessages(key);
+      const runtime = getRuntime(key);
+      const durableStatus = getChatThreadStatus(key);
+      if (durableStatus) return ['running', 'queued', 'waiting', 'cancelling', 'waiting_approval', 'waiting_user_input', 'waiting_input'].includes(durableStatus);
+      return resolveMergedSessionBusy({
+        projection: state.runtimeProjection,
+        sessionId: key,
+        loading: state.loadingBySession[key],
+        messages,
+        runtimeStatus: runtime?.threadStatus,
+        runtimeKnown: Boolean(runtime),
+        runtimeHasControllers: hasRuntimeControllers(runtime)
+      });
+    },
+    sessionRuntimeStatus: (state) => (sessionId) => {
+      const _projectionVersion = state.runtimeProjectionVersion;
+      const key = resolveSessionKey(sessionId);
+      const activeKey = resolveSessionKey(state.activeSessionId);
+      const messages = activeKey === key ? state.messages : getSessionMessages(key);
+      const runtime = getRuntime(key);
+      const durableStatus = getChatThreadStatus(key);
+      if (durableStatus) return normalizeThreadRuntimeStatus(durableStatus);
+      return resolveMergedSessionRuntimeStatus({
+        projection: state.runtimeProjection,
+        sessionId: key,
+        loading: state.loadingBySession[key],
+        messages,
+        runtimeStatus: runtime?.threadStatus,
+        runtimeKnown: Boolean(runtime),
+        runtimeHasControllers: hasRuntimeControllers(runtime)
+      });
+    },
+    sessionBusyReason: (state) => (sessionId) => {
+      const _projectionVersion = state.runtimeProjectionVersion;
+      const key = resolveSessionKey(sessionId);
+      if (!key) return null;
+      return selectSessionBusyReason(state.runtimeProjection, key);
+    },
+    sessionGoal: (state) => (sessionId) => {
+      const key = resolveSessionKey(sessionId);
+      if (!key) return null;
+      return state.sessionGoals[key] || null;
+    },
+    isSessionGoalLocked: (state) => (sessionId) => {
+      const key = resolveSessionKey(sessionId);
+      if (!key) return false;
+      return isGoalActiveForLock(state.sessionGoals[key]);
+    },
+    visibleMessages: (state) => (sessionId = null) => {
+      const _projectionVersion = state.runtimeProjectionVersion;
+      return materializeChatRuntimeMessages(state.runtimeProjection, sessionId || state.activeSessionId);
+    },
+    historyLoading: () => (sessionId) => {
+      const state = getHistoryState(sessionId);
+      return Boolean(state?.loading);
+    },
+    canLoadMoreHistory: () => (sessionId) => {
+      const state = getHistoryState(sessionId);
+      return Boolean(state?.hasMore) && !state?.loading;
+    },
+    historyBeforeId: () => (sessionId) => {
+      const state = getHistoryState(sessionId);
+      return state?.beforeId ?? null;
+    },
+    activeApproval: (state) => (Array.isArray(state.pendingApprovals) ? state.pendingApprovals[0] : null)
+  },
+  actions: {
+    ...chatApprovalActions,
+    ...chatCacheActions,
+    ...chatSubagentFeedbackActions,
+    ...chatSessionOpenLoadActions,
+    ...chatSessionMutationActions,
+    ...chatCompactionActions,
+    ...chatSendActions,
+    ...chatStopResumeActions,
+    ...chatRealtimeRecoveryActions
+  }
+});

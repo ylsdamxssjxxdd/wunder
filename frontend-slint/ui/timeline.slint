@@ -1,0 +1,540 @@
+// Chat timeline (§7): full-width entries without avatars or agent bubbles.
+// Every row is pre-projected and pre-bounded in Rust, so Slint only lays out
+// what it was handed. The list is a self-sizing column inside one ScrollView:
+// an entry expands, a streamed line wraps, and the layout follows, which is
+// what a virtualized ListView cannot do while the rows keep changing height.
+import { I18n } from "i18n.slint";
+import { Theme, TimelineRow, PatchCard, TextBlock } from "theme.slint";
+import { MarkdownBlock } from "markdown.slint";
+import { PatchDiffCard } from "patch_diff_card.slint";
+import { WorkflowDetail } from "workflow_detail.slint";
+import { ToolIcons } from "tool_icons.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// One entry kind per timeline row; the Rust projection stamps the matching
+// value (see src/timeline.rs).
+// Icons for the end-of-turn metrics, mirroring the web component's Font Awesome
+// classes: stopwatch / gauge-high / layer-group / bolt / screwdriver-wrench.
+// Kept out of ToolIcons because these are message statistics, not tools.
+export global StatsIcons {
+    public pure function image(key: string) -> image {
+        key == "stopwatch" ? @image-url("../assets/icons/stopwatch.svg") :
+        key == "gauge-high" ? @image-url("../assets/icons/gauge-high.svg") :
+        key == "layer-group" ? @image-url("../assets/icons/layer-group.svg") :
+        key == "bolt" ? @image-url("../assets/icons/bolt.svg") :
+        key == "screwdriver-wrench" ? @image-url("../assets/icons/screwdriver-wrench.svg") :
+        @image-url("../assets/icons/wrench.svg");
+    }
+    // The label is the tooltip and the accessible name. Slint has no map, so the
+    // key is resolved through the same branch chain as the icon.
+    public pure function label(key: string) -> string {
+        key == "stopwatch" ? I18n.tl_stat_duration :
+        key == "gauge-high" ? I18n.tl_stat_speed :
+        key == "layer-group" ? I18n.tl_stat_context :
+        key == "bolt" ? I18n.tl_stat_quota :
+        key == "screwdriver-wrench" ? I18n.tl_stat_tools :
+        key;
+    }
+}
+
+export global EntryKind {
+    out property <int> user: 0;
+    out property <int> body: 1;
+    out property <int> reason: 2;
+    out property <int> tool: 3;
+    out property <int> group: 4;
+    out property <int> divider: 5;
+}
+
+// One shared rotation driver for every running spinner; a single timer in the
+// view keeps a busy turn from installing one timer per entry.
+export global TimelineSpin {
+    in-out property <float> angle: 0.0;
+}
+
+// The tool timeline gutter: a dot with the connector drawn through it. Slint has
+// no module-level constants, so the shared metrics live in a global.
+export global TimelineMetrics {
+    out property <length> gutter: 20px;
+}
+
+component StatusDot inherits Rectangle {
+    in property <int> status: 0;
+    in property <int> phase: 0;
+    width: 16px; height: 16px;
+    Rectangle {
+        visible: root.status != 1;
+        width: 16px; height: 16px; border-radius: 8px;
+        background: root.status == 2 ? Theme.danger : Theme.thought;
+        Image {
+            x: 2px; y: 2px; width: 12px; height: 12px;
+            source: root.status == 2 ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/check.svg");
+            colorize: white; image-fit: contain;
+        }
+    }
+    Rectangle {
+        visible: root.status == 1;
+        width: 16px; height: 16px; border-radius: 8px;
+        border-width: 2px; border-color: Theme.thought.transparentize(0.74);
+        Image {
+            width: 16px; height: 16px;
+            source: @image-url("../assets/icons/rotate-right.svg");
+            colorize: Theme.thought; image-fit: contain;
+            transform-rotation: (TimelineSpin.angle + root.phase * 30.0) * 1deg;
+        }
+    }
+}
+
+// Disclosure arrow: 0 collapsed, 90 expanded.
+component FoldCaret inherits Rectangle {
+    in property <bool> open: false;
+    width: 12px; height: 12px;
+    Image {
+        width: parent.width; height: parent.height;
+        source: @image-url("../assets/icons/disclosure.svg");
+        colorize: Theme.muted; image-fit: contain;
+        transform-rotation: root.open ? 90deg : 0deg;
+    }
+}
+
+component TargetChip inherits Rectangle {
+    in property <string> label;
+    height: 18px;
+    // The chip never crowds the summary out of the row.
+    width: min(chip-text.preferred-width + 14px, 180px);
+    border-radius: 6px; background: Theme.hover;
+    chip-text := Text {
+        x: 7px; y: 0px; width: parent.width - 14px; height: parent.height;
+        text: root.label; color: Theme.muted; font-size: Theme.font-sm;
+        vertical-alignment: center; overflow: elide;
+    }
+}
+
+// A 20px gutter holding the connector and, for batched entries, the node dot.
+component TimelineGutter inherits Rectangle {
+    in property <bool> line: false;
+    in property <bool> node: false;
+    in property <int> status: 0;
+    width: TimelineMetrics.gutter;
+    Rectangle {
+        visible: root.line;
+        x: (TimelineMetrics.gutter - 1px) / 2; y: 0px; width: 1px; height: parent.height;
+        background: Theme.timeline-line;
+    }
+    Rectangle {
+        visible: root.node;
+        x: (TimelineMetrics.gutter - 6px) / 2; y: 9px; width: 6px; height: 6px; border-radius: 3px;
+        background: root.status == 2 ? Theme.danger : root.status == 1 ? Theme.thought : Theme.thought.transparentize(0.35);
+    }
+}
+
+// ---- user bubble (§7.2): right aligned, no avatar ----
+component UserBubble inherits HorizontalLayout {
+    in property <TimelineRow> data;
+    callback copy-text(string);
+    callback open-resource(string);
+    padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding; padding-top: 10px; padding-bottom: 4px;
+    Rectangle { horizontal-stretch: 1; }
+    bubble := Rectangle {
+        width: min(parent.width * 0.7, bubble-body.preferred-width + 24px);
+        height: bubble-body.preferred-height + 16px;
+        border-radius: Theme.radius-lg; background: Theme.timeline-bubble;
+        bubble-body := VerticalLayout {
+            x: 12px; y: 8px; width: parent.width - 24px;
+            spacing: 6px;
+            if root.data.blocks.length == 0 && root.data.text != "" : TextInput {
+                text: root.data.text; color: Theme.text; font-size: Theme.font-lg;
+                read-only: true; wrap: word-wrap;
+            }
+            for block in root.data.blocks : MarkdownBlock {
+                block: block;
+                copy-code(text) => { root.copy-text(text); }
+                open-resource(path) => { root.open-resource(path); }
+            }
+        }
+    }
+}
+
+// ---- assistant body block (§7.3 A): page text, no bubble ----
+component BodyBlock inherits Rectangle {
+    in property <TimelineRow> data;
+    callback copy-text(string);
+    callback download-text(string);
+    callback open-resource(string);
+    height: body-column.preferred-height;
+    background: body-hover.has-hover ? Theme.hover.transparentize(0.45) : transparent;
+    body-hover := TouchArea { }
+    body-column := VerticalLayout {
+        padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding; padding-top: 6px; padding-bottom: 6px;
+        spacing: 8px;
+        body-text := VerticalLayout {
+            spacing: 8px;
+            if root.data.blocks.length == 0 && root.data.text != "" : TextInput {
+                text: root.data.text; color: Theme.text; font-size: Theme.font-lg;
+                read-only: true; wrap: word-wrap;
+            }
+            for block in root.data.blocks : MarkdownBlock {
+                block: block;
+                copy-code(text) => { root.copy-text(text); }
+                open-resource(path) => { root.open-resource(path); }
+            }
+        }
+        // The end-of-turn line: metrics on the left, actions on the right.
+        // It stays visible for a frozen block (no hover needed) because it is
+        // also the only place the turn's duration and speed are reported; a
+        // streaming block has neither and stays free of controls so the text
+        // never jumps while tokens arrive.
+        // Each metric is icon + value with the label as the tooltip, matching
+        // the web messenger's stats row.
+        if root.data.foldable : HorizontalLayout {
+            height: 22px; spacing: 12px;
+            for metric in root.data.stats : HorizontalLayout {
+                // Icon and value are laid out by this inner row rather than
+                // positioned inside a fixed-width box: a `width:` guess that is
+                // even a pixel short clips the neighbouring value.
+                height: parent.height; spacing: 5px; alignment: start;
+                Image {
+                    y: 5px; width: 12px; height: 12px;
+                    source: StatsIcons.image(metric.key);
+                    colorize: Theme.muted; image-fit: contain;
+                }
+                Text {
+                    height: parent.height; width: self.preferred-width;
+                    text: metric.value; color: Theme.muted; font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                }
+                accessible-role: text;
+                accessible-label: StatsIcons.label(metric.key) + " " + metric.value;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            copy-hit := Rectangle {
+                width: 52px; height: 22px; border-radius: 6px;
+                background: copy-area.has-hover ? Theme.hover : transparent;
+                Image {
+                    x: 8px; y: 5px; width: 12px; height: 12px;
+                    source: @image-url("../assets/icons/copy.svg"); colorize: Theme.muted; image-fit: contain;
+                }
+                Text {
+                    x: 24px; y: 0px; width: self.preferred-width; height: parent.height;
+                    text: I18n.common_copy; color: Theme.muted; font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                }
+                copy-area := TouchArea { mouse-cursor: pointer; clicked => { root.copy-text(root.data.text); } }
+            }
+            save-hit := Rectangle {
+                width: 52px; height: 22px; border-radius: 6px;
+                background: save-area.has-hover ? Theme.hover : transparent;
+                Image {
+                    x: 8px; y: 5px; width: 12px; height: 12px;
+                    source: @image-url("../assets/icons/save.svg"); colorize: Theme.muted; image-fit: contain;
+                }
+                Text {
+                    x: 24px; y: 0px; width: self.preferred-width; height: parent.height;
+                    text: I18n.common_save; color: Theme.muted; font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                }
+                save-area := TouchArea { mouse-cursor: pointer; clicked => { root.download-text(root.data.text); } }
+            }
+        }
+    }
+}
+
+// ---- reasoning (2) and tool (3) entries share one header ----
+component FoldEntry inherits Rectangle {
+    in property <TimelineRow> data;
+    in property <bool> in-group: false;
+    callback toggle(int);
+    callback copy-text(string);
+    callback open-resource(string);
+    height: entry-column.preferred-height;
+    entry-column := VerticalLayout {
+        padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding; padding-top: 1px; padding-bottom: 1px;
+        spacing: 0px;
+        HorizontalLayout {
+            height: 26px; spacing: 8px;
+            TimelineGutter {
+                line: root.in-group; node: root.in-group;
+                status: root.data.status-kind;
+            }
+            StatusDot { y: 5px; status: root.data.status-kind; phase: root.data.payload; }
+            Image {
+                y: 6.5px; width: 13px; height: 13px;
+                source: ToolIcons.image(root.data.tool-icon);
+                colorize: Theme.muted; image-fit: contain;
+                visible: root.data.tool-name != "";
+            }
+            Text {
+                width: self.preferred-width; height: parent.height;
+                text: root.data.tool-name; color: Theme.text-secondary; font-size: Theme.font-md;
+                vertical-alignment: center; visible: root.data.tool-name != "";
+            }
+            // The target chip belongs to the name; the summary then reads as
+            // the outcome of the call.
+            TargetChip { y: 4px; label: root.data.target; visible: root.data.target != ""; }
+            Text {
+                horizontal-stretch: 1; min-width: 0px; height: parent.height;
+                text: root.data.summary; color: Theme.muted; font-size: Theme.font-sm;
+                overflow: elide; vertical-alignment: center;
+            }
+            FoldCaret { y: 7px; open: root.data.open; }
+        }
+        // Expanded payload keeps the page margin so a patch card or an output
+        // preview is never squeezed by the group gutter.
+        if root.data.open : VerticalLayout {
+            padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding;
+            padding-top: 4px; padding-bottom: 4px;
+            spacing: 8px;
+            for card in root.data.patch : PatchDiffCard { card: card; }
+            if root.data.detail != "" : Rectangle {
+                height: min(240px, tool-body.preferred-height + 16px);
+                border-radius: Theme.radius-sm; background: Theme.panel;
+                border-width: 1px; border-color: Theme.border;
+                ScrollView {
+                    x: 8px; y: 8px; width: parent.width - 16px; height: parent.height - 16px;
+                    horizontal-scrollbar-policy: always-off;
+                    tool-body := WorkflowDetail {
+                        fallback: root.data.detail;
+                        copy(text) => { root.copy-text(text); }
+                    }
+                }
+            }
+        }
+    }
+    // The whole header is one click target. It is a positioned child of the row
+    // rather than a child of the column: a layout child would be counted into
+    // `preferred-height` and double every row.
+    head-hit := Rectangle {
+        x: Theme.timeline-padding + TimelineMetrics.gutter;
+        y: 1px;
+        width: parent.width - Theme.timeline-padding * 2 - TimelineMetrics.gutter;
+        height: 26px;
+        hit-area := TouchArea {
+            x: 0px; y: 0px; width: parent.width; height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.toggle(root.data.payload); }
+        }
+    }
+}
+
+component GroupBar inherits Rectangle {
+    in property <TimelineRow> data;
+    callback toggle(int);
+    height: 32px;
+    HorizontalLayout {
+        padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding; padding-top: 4px; padding-bottom: 2px;
+        spacing: 0px;
+        TimelineGutter { line: root.data.open; }
+        bar-row := HorizontalLayout {
+            height: 26px; spacing: 8px;
+            FoldCaret { y: 7px; open: root.data.open; }
+            Text {
+                width: self.preferred-width; height: parent.height;
+                text: root.data.text; color: Theme.text-secondary; font-size: Theme.font-md;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+    }
+    // Positioned, not a layout child: see the note on FoldEntry.head-hit.
+    bar-hit := Rectangle {
+        x: Theme.timeline-padding + TimelineMetrics.gutter; y: 4px;
+        width: parent.width - Theme.timeline-padding * 2 - TimelineMetrics.gutter; height: 26px;
+        hit-area := TouchArea {
+            x: 0px; y: 0px; width: parent.width; height: parent.height;
+            mouse-cursor: pointer;
+            clicked => { root.toggle(root.data.payload); }
+        }
+    }
+}
+
+// ---- "已处理" fold of a finished turn (§7.3 D) ----
+component TurnDivider inherits Rectangle {
+    in property <TimelineRow> data;
+    callback toggle(int);
+    height: 30px;
+    HorizontalLayout {
+        padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding;
+        spacing: 6px;
+        divider-hit := Rectangle {
+            width: divider-label.preferred-width + 40px; height: 24px; y: 3px;
+            border-radius: 6px; background: divider-area.has-hover ? Theme.hover : transparent;
+            FoldCaret { x: 8px; y: 6px; open: root.data.open; }
+            divider-label := Text {
+                x: 26px; y: 0px; width: self.preferred-width; height: parent.height;
+                text: I18n.tl_processed; color: Theme.muted; font-size: Theme.font-sm;
+                vertical-alignment: center;
+            }
+            divider-area := TouchArea { mouse-cursor: pointer; clicked => { root.toggle(root.data.payload); } }
+        }
+        Rectangle { horizontal-stretch: 1; }
+    }
+}
+
+export component TimelineRowView inherits Rectangle {
+    in property <TimelineRow> entry;
+    callback toggle(int);
+    callback copy-text(string);
+    callback download-text(string);
+    callback open-resource(string);
+    width: 100%;
+    visible: root.entry.visible;
+    // The column sizes every row from its own content, so an unfold or a
+    // wrapped line simply makes the timeline taller.
+    height: cell.preferred-height;
+    cell := VerticalLayout {
+        width: root.width;
+        spacing: 0px; alignment: start;
+        if root.entry.kind == EntryKind.user : UserBubble {
+            data: root.entry;
+            copy-text(text) => { root.copy-text(text); }
+            open-resource(path) => { root.open-resource(path); }
+        }
+        if root.entry.kind == EntryKind.body : BodyBlock {
+            data: root.entry;
+            copy-text(text) => { root.copy-text(text); }
+            download-text(text) => { root.download-text(text); }
+            open-resource(path) => { root.open-resource(path); }
+        }
+        if root.entry.kind == EntryKind.reason || root.entry.kind == EntryKind.tool : FoldEntry {
+            data: root.entry;
+            in-group: root.entry.group-idx != -1;
+            toggle(index) => { root.toggle(index); }
+            copy-text(text) => { root.copy-text(text); }
+            open-resource(id) => { root.open-resource(id); }
+        }
+        if root.entry.kind == EntryKind.group : GroupBar {
+            data: root.entry;
+            toggle(index) => { root.toggle(index); }
+        }
+        if root.entry.kind == EntryKind.divider : TurnDivider {
+            data: root.entry;
+            toggle(index) => { root.toggle(index); }
+        }
+    }
+}
+
+export component TimelineView inherits Rectangle {
+    in property <[TimelineRow]> rows;
+    // Fractional offset (row index / row count) of every user turn; the ruler
+    // strip renders one tick per mark and jumping is proportional.
+    in property <[float]> turn-marks: [];
+    in-out property <bool> follow-output: true;
+    // Live scroll offset of the timeline viewport, published for the native
+    // smoke checks (they assert the position holds while the user reads back).
+    out property <length> scroll-y: rows-scroll.content-y;
+    callback toggle(int);
+    callback copy-text(string);
+    callback download-text(string);
+    callback open-resource(string);
+    vertical-stretch: 1;
+    // Push the viewport to the newest content on request; the projection calls
+    // this when it follows the stream, and the "back to latest" action does too.
+    public function scroll-to-end() {
+        rows-scroll.content-y = rows-scroll.visible-height - rows-scroll.content-height;
+    }
+    public function scroll-to-top() {
+        root.follow-output = false;
+        rows-scroll.content-y = 0px;
+    }
+    // Land the requested user turn around the middle of the viewport. The mark
+    // is a fraction of the whole content, so no per-row heights are needed.
+    public function jump-to-turn(fraction: float) {
+        root.follow-output = false;
+        rows-scroll.content-y = clamp(
+            rows-scroll.visible-height / 2 - fraction * rows-scroll.content-height,
+            rows-scroll.visible-height - rows-scroll.content-height, 0px);
+    }
+    spin-timer := Timer {
+        interval: 120ms; running: true;
+        triggered => { TimelineSpin.angle = Math.mod(TimelineSpin.angle + 30.0, 360.0); }
+    }
+    // A streamed line is laid out after the frame that triggered it, so the
+    // jump is repeated on a short tick while the output is being followed.
+    follow-timer := Timer {
+        interval: 33ms; running: root.follow-output;
+        triggered => { root.scroll-to-end(); }
+    }
+    changed follow-output => {
+        if root.follow-output {
+            root.scroll-to-end();
+        }
+    }
+    rows-scroll := ScrollView {
+        x: 0px; y: 0px; width: 100%; height: 100%;
+        horizontal-scrollbar-policy: always-off; vertical-scrollbar-policy: as-needed;
+        content-width: self.visible-width;
+        rows-column := VerticalLayout {
+            width: rows-scroll.visible-width;
+            spacing: 0px; alignment: start;
+            for item in root.rows : TimelineRowView {
+                entry: item;
+                toggle(target) => { root.toggle(target); }
+                copy-text(text) => { root.copy-text(text); }
+                download-text(text) => { root.download-text(text); }
+                open-resource(id) => { root.open-resource(id); }
+            }
+        }
+        scrolled => {
+            root.follow-output = self.content-y + self.visible-height >= self.content-height - 32px;
+        }
+    }
+    // ---- turn ruler (right edge): one tick per user turn, hover grows the
+    // tick and clicking lands that turn mid-viewport. Ticks are evenly spaced
+    // over the strip height so the rhythm stays readable on marathon threads.
+    marks-strip := Rectangle {
+        x: parent.width - 18px; y: 10px; width: 18px; height: parent.height - 20px;
+        visible: root.turn-marks.length > 1;
+        for mark[i] in root.turn-marks : tick-hit := Rectangle {
+            width: parent.width;
+            height: min(14px, parent.height / root.turn-marks.length);
+            y: (i + 0.5) * parent.height / root.turn-marks.length - self.height / 2;
+            tick-line := Rectangle {
+                x: parent.width - self.width - 3px;
+                y: (parent.height - self.height) / 2;
+                width: tick-area.has-hover ? 13px : 6px;
+                height: tick-area.has-hover ? 3px : 2px;
+                border-radius: 1px;
+                background: tick-area.has-hover ? Theme.accent : Theme.border-strong;
+            }
+            tick-area := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.jump-to-turn(mark); }
+                // Wheel gestures over the strip keep scrolling the transcript.
+                scroll-event(event) => { return reject; }
+            }
+        }
+    }
+    // ---- fade-in edge buttons: jump to the very top / back to the live tail.
+    edge-top := Rectangle {
+        visible: root.rows.length > 0 && rows-scroll.content-y < -8px;
+        x: (parent.width - self.width) / 2; y: 6px;
+        width: 30px; height: 30px; border-radius: 15px;
+        background: edge-top-touch.has-hover ? Theme.surface : Theme.surface.transparentize(0.4);
+        border-width: 1px; border-color: Theme.border;
+        opacity: edge-top-touch.has-hover ? 1.0 : 0.72;
+        Image {
+            x: 8px; y: 8px; width: 14px; height: 14px;
+            source: @image-url("../assets/icons/arrow-up.svg");
+            colorize: Theme.muted; image-fit: contain;
+        }
+        edge-top-touch := TouchArea { mouse-cursor: pointer; clicked => { root.scroll-to-top(); } }
+    }
+    edge-bottom := Rectangle {
+        visible: !root.follow-output && root.rows.length > 0
+            && rows-scroll.content-y > rows-scroll.visible-height - rows-scroll.content-height + 40px;
+        x: (parent.width - self.width) / 2; y: parent.height - self.height - 6px;
+        width: 30px; height: 30px; border-radius: 15px;
+        background: edge-bottom-touch.has-hover ? Theme.surface : Theme.surface.transparentize(0.4);
+        border-width: 1px; border-color: Theme.border;
+        opacity: edge-bottom-touch.has-hover ? 1.0 : 0.72;
+        Image {
+            x: 8px; y: 8px; width: 14px; height: 14px;
+            source: @image-url("../assets/icons/log-down.svg");
+            colorize: Theme.muted; image-fit: contain;
+        }
+        edge-bottom-touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.follow-output = true; root.scroll-to-end(); }
+        }
+    }
+}

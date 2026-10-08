@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Interface Overview | 使用说明书</title>
+  <meta name="description" content="Users work in Beehive; admins govern in the admin interface. Beehive opens via the desktop app or a web browser.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/surfaces/index","language":"en","title":"Interface Overview","summary":"Users work in Beehive; admins govern in the admin interface. Beehive opens via the desktop app or a web browser.","updated_at":"2026-10-07","read_when":[],"source_docs":[],"tab":"Surfaces","group":"Overview","group_path":["Overview"],"url":"/docs/en/surfaces/","headings":[{"id":"section-1","level":1,"text":"Interface Overview"},{"id":"section-2","level":2,"text":"Beehive: user work surface"},{"id":"section-3","level":2,"text":"Admin interface: governance backend"},{"id":"section-4","level":2,"text":"Surface entries"},{"id":"section-5","level":2,"text":"Beehive's two-column layout"},{"id":"section-6","level":2,"text":"Pick by role"},{"id":"section-7","level":3,"text":"Regular users"},{"id":"section-8","level":3,"text":"Administrators"},{"id":"section-9","level":2,"text":"Common misconceptions"},{"id":"section-10","level":2,"text":"Further reading"}],"prev_slug":"en/integration/mcp-endpoint","next_slug":"en/surfaces/frontend","markdown":"# Interface Overview\n\nwunder's interfaces fall into two categories: **Beehive** is every user's work surface, and **the admin interface** is the administrator's governance backend.\n\n## Beehive: user work surface\n\nBeehive is the daily work surface for all users, covering chat, the working directory, agent settings, tools, and settings. Individual users install the desktop app; team members open Beehive in a web browser managed by the server. Both share the same interface and capabilities, and the desktop app adds local file access, a local runtime, and one-click reset on top of Beehive.\n\n## Admin interface: governance backend\n\nThe admin interface is for administrators — system configuration, user management, channel monitoring. It serves a completely different purpose from daily user work, so it's a separate surface and doesn't do daily chat.\n\n## Surface entries\n\n<div class=\"docs-card-grid docs-card-grid-compact\">\n  <a class=\"docs-card\" href=\"/docs/en/surfaces/frontend/\"><strong>Beehive Interface<\/strong><span>Two-column layout, chat, working directory, settings.<\/span><\/a>\n  <a class=\"docs-card\" href=\"/docs/en/surfaces/desktop-ui/\"><strong>Desktop Interface<\/strong><span>Desktop-only local capabilities and reset.<\/span><\/a>\n  <a class=\"docs-card\" href=\"/docs/en/surfaces/web-admin/\"><strong>Admin Interface<\/strong><span>User management, system config, channel monitoring.<\/span><\/a>\n<\/div>\n\n## Beehive's two-column layout\n\nBoth the desktop app and the web browser use a two-column layout:\n\n```\n┌──────────────┬─────────────────────────────┐\n│ Left         │ Right                       │\n│ New/Search   │ Chat: header + timeline +   │\n│ Workspace    │ composer; welcome page when │\n│ thread tree  │ no thread is selected       │\n│ Working dir  │                             │\n│ Settings     │                             │\n└──────────────┴─────────────────────────────┘\n```\n\nThe left sidebar is fixed at 240px and stacks, top to bottom: new task, search, the workspace and thread tree, the **working directory** (file tree + toolbar + usage bar), and the settings entry at the bottom. The right column is fluid and shows either the welcome page or the current thread's chat; file preview and online editing open as overlays without changing the two-column structure.\n\nEvery user has exactly one agent instance and one fixed cloud working directory, so the sidebar holds only that single workspace and thread tree — no multi-agent list, create, or switch entry, and no way to change the directory.\n\n## Pick by role\n\n### Regular users\n\nMainly use Beehive:\n- Individual users install the [desktop app](/docs/en/start/desktop/)\n- Team members open Beehive in a browser\n\n### Administrators\n\nMainly use:\n- [Admin interface](/docs/en/surfaces/web-admin/) (for governance)\n- Beehive (for daily work)\n\n## Common misconceptions\n\n- **Can the admin interface chat?** No. It's a governance backend, not for daily chat.\n- **Can the desktop app switch to a remote server?** The current version focuses on local mode. For team capabilities, use the web browser.\n- **Do Beehive and the admin interface share one interface?** No. Different responsibilities, separate surfaces.\n\n## Further reading\n\n- [Beehive Interface](/docs/en/surfaces/frontend/)\n- [Desktop Guide](/docs/en/start/desktop/)\n- [Core Concepts](/docs/en/concepts/)\n","source_path":"使用说明书/en/surfaces/index.md"}</script>
+</body>
+</html>

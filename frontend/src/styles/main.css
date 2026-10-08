@@ -1,0 +1,20 @@
+@import "./base.css";
+@import "./pages/auth.css";
+@import "./pages/admin.css";
+@import "./pages/maintenance.css";
+@import "./pages/portal.css";
+@import "./pages/profile.css";
+@import "./chat/shell.css";
+@import "./chat/messages.css";
+@import "./chat/workflow.css";
+@import "./chat/input.css";
+@import "./dialogs/user-tools.css";
+@import "./messenger.css";
+/* Two-column messenger shell (site header + sidebar + chat pane). Loaded after
+   messenger.css so its .messenger-view flex shell wins over the legacy grid. */
+@import "./pages/messenger-shell.css";
+/* 深色主题（theme/tech-blue-dark.css）已随 B6 移除：应用不再设置 data-user-theme，
+   整份 164 KB 样式永远匹配不到任何元素。详见 stores/theme.ts 的说明。 */
+@import "./pages/messenger-polish.css";
+/* Full-screen settings page (方案 §九：12 分类左导航 + 右卡片内容). */
+@import "./pages/messenger-settings-page.css";

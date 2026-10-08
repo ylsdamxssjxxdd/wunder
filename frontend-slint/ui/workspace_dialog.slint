@@ -1,0 +1,412 @@
+// Workspace create/edit dialog (§6) and its delete confirmation. All state
+// lives in one global so the native controller drives the dialog without
+// threading properties through the main window; the component only lays out.
+// The folder drop zone is the only input that starts IO: picking validates
+// asynchronously and the primary button stays disabled until the report is
+// clean (§6.1).
+import { Theme } from "design_tokens.slint";
+import { I18n } from "i18n.slint";
+import { Action, FormField } from "components.slint";
+import { WorkspaceVisual } from "sidebar.slint";
+
+export global WorkspaceDialogState {
+    in-out property <bool> open: false;
+    in-out property <bool> edit-mode: false;
+    in-out property <string> workspace-id;
+    in-out property <string> folder-path;
+    in-out property <string> name-draft;
+    // Index into WorkspaceVisual.icon-keys(); 0 is the folder default (§6.2).
+    in-out property <int> icon-index: 0;
+    // Index into WorkspaceVisual.color-keys(); 2 is the blue default (§6.3).
+    in-out property <int> color-index: 2;
+    in-out property <bool> validating: false;
+    in-out property <string> validate-error;
+    in-out property <bool> busy: false;
+    in-out property <bool> delete-open: false;
+    in-out property <string> delete-name;
+    // 0 = archive all threads (recommended), 1 = delete thread records (§6.4).
+    in-out property <int> delete-mode: 0;
+    callback pick-folder();
+    callback clear-folder();
+    callback reveal-folder();
+    callback request-delete();
+    callback accept();
+    callback canceled();
+    callback delete-confirmed();
+    callback delete-canceled();
+}
+
+// 1px dashed outline built from fixed dash cells; the frame clips overflow so
+// one constant count covers every size the dialog uses.
+component DashedFrame inherits Rectangle {
+    clip: true;
+    for top-dash in 40 : Rectangle {
+        x: top-dash * 12px; y: 0;
+        width: 6px; height: 1px;
+        background: Theme.border-strong;
+    }
+    for bottom-dash in 40 : Rectangle {
+        x: bottom-dash * 12px; y: parent.height - 1px;
+        width: 6px; height: 1px;
+        background: Theme.border-strong;
+    }
+    for left-dash in 12 : Rectangle {
+        x: 0; y: left-dash * 12px;
+        width: 1px; height: 6px;
+        background: Theme.border-strong;
+    }
+    for right-dash in 12 : Rectangle {
+        x: parent.width - 1px; y: right-dash * 12px;
+        width: 1px; height: 6px;
+        background: Theme.border-strong;
+    }
+}
+
+// One icon choice; the selected cell gets the light primary fill plus the
+// primary outline (§6.1).
+component IconCell inherits Rectangle {
+    in property <int> index;
+    in property <string> icon-key;
+    width: 44px; height: 44px;
+    border-radius: Theme.radius-md;
+    background: WorkspaceDialogState.icon-index == index ? Theme.accent-soft
+        : touch.has-hover ? Theme.hover : transparent;
+    border-width: 1px;
+    border-color: WorkspaceDialogState.icon-index == index ? Theme.accent : transparent;
+    Image {
+        width: 22px; height: 22px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        source: WorkspaceVisual.icon(root.icon-key);
+        colorize: Theme.text;
+    }
+    touch := TouchArea {
+        enabled: !WorkspaceDialogState.busy;
+        mouse-cursor: pointer;
+        clicked => { WorkspaceDialogState.icon-index = root.index; }
+    }
+}
+
+// One palette dot; the selected swatch gains the primary outer ring (§6.1).
+component ColorDot inherits Rectangle {
+    in property <int> index;
+    in property <string> color-key;
+    width: 20px; height: 20px;
+    border-radius: 10px;
+    background: transparent;
+    border-width: WorkspaceDialogState.color-index == index ? 2px : 0px;
+    border-color: Theme.accent;
+    Rectangle {
+        x: 3px; y: 3px;
+        width: parent.width - 6px; height: parent.height - 6px;
+        border-radius: 7px;
+        background: WorkspaceVisual.color(root.color-key);
+    }
+    touch := TouchArea {
+        enabled: !WorkspaceDialogState.busy;
+        mouse-cursor: pointer;
+        clicked => { WorkspaceDialogState.color-index = root.index; }
+    }
+}
+
+// One thread-handling choice in the delete confirmation (§6.4).
+component DeleteOption inherits Rectangle {
+    in property <int> index;
+    in property <string> title;
+    in property <string> hint;
+    height: 46px;
+    border-radius: Theme.radius-sm;
+    background: WorkspaceDialogState.delete-mode == index ? Theme.accent-soft : Theme.panel;
+    border-width: 1px;
+    border-color: WorkspaceDialogState.delete-mode == index ? Theme.accent : Theme.border;
+    HorizontalLayout {
+        padding-left: 12px; padding-right: 12px; padding-top: 8px; padding-bottom: 8px;
+        spacing: 10px;
+        Rectangle {
+            width: 14px;
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 14px; height: 14px;
+                    border-radius: 7px;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: WorkspaceDialogState.delete-mode == root.index ? Theme.accent : Theme.border-strong;
+                    if WorkspaceDialogState.delete-mode == root.index : Rectangle {
+                        width: 6px; height: 6px;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: 3px;
+                        background: Theme.accent;
+                    }
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 1px;
+            Text { text: root.title; color: Theme.text; font-size: Theme.font-sm; height: 18px; vertical-alignment: center; overflow: elide; }
+            Text { text: root.hint; color: Theme.muted; font-size: Theme.font-2xs; height: 14px; vertical-alignment: center; overflow: elide; }
+        }
+    }
+    TouchArea {
+        enabled: !WorkspaceDialogState.busy;
+        mouse-cursor: pointer;
+        clicked => { WorkspaceDialogState.delete-mode = root.index; }
+    }
+}
+
+export component WorkspaceDialog inherits Rectangle {
+    width: 100%; height: 100%;
+    if WorkspaceDialogState.open : Rectangle {
+        width: 100%; height: 100%;
+        background: Theme.overlay;
+        // The mask swallows clicks; dismissal runs through cancel/close only.
+        TouchArea { }
+        Rectangle {
+            width: min(480px, parent.width - 48px);
+            height: 600px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-xl;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border;
+                clip: true;
+            VerticalLayout {
+                padding: 20px;
+                spacing: 10px;
+                HorizontalLayout {
+                    height: 28px;
+                    spacing: Theme.space-2;
+                    Text {
+                        text: WorkspaceDialogState.edit-mode ? I18n.ws_dlg_edit : I18n.ws_dlg_new;
+                        color: Theme.text; font-size: Theme.font-xl; font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Action {
+                        icon: @image-url("../assets/icons/xmark.svg");
+                        enabled: !WorkspaceDialogState.busy;
+                        clicked => { WorkspaceDialogState.canceled(); }
+                    }
+                }
+                Text {
+                    height: 16px;
+                    text: I18n.ws_folder_label;
+                    color: Theme.muted; font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    height: 120px;
+                    DashedFrame { }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        enabled: !WorkspaceDialogState.busy;
+                        clicked => { WorkspaceDialogState.pick-folder(); }
+                    }
+                    if WorkspaceDialogState.folder-path == "" : Rectangle {
+                        width: parent.width; height: parent.height;
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 8px;
+                            Rectangle {
+                                width: 36px; height: 36px;
+                                x: (parent.width - self.width) / 2;
+                                border-radius: 18px;
+                                background: Theme.accent-soft;
+                                Text {
+                                    width: parent.width; height: parent.height;
+                                    text: "+"; color: Theme.accent; font-size: Theme.font-xl;
+                                    horizontal-alignment: center; vertical-alignment: center;
+                                }
+                            }
+                            Text {
+                                height: 18px;
+                                text: I18n.ws_folder_add;
+                                color: Theme.accent; font-size: Theme.font-sm;
+                                horizontal-alignment: center; vertical-alignment: center;
+                            }
+                        }
+                    }
+                    if WorkspaceDialogState.folder-path != "" : Rectangle {
+                        width: parent.width; height: parent.height;
+                        HorizontalLayout {
+                            padding: 14px;
+                            spacing: 8px;
+                            VerticalLayout {
+                                alignment: center;
+                                Image {
+                                    width: 22px; height: 22px;
+                                    source: WorkspaceVisual.icon("folder");
+                                    colorize: Theme.muted;
+                                }
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Text {
+                                    text: WorkspaceDialogState.folder-path;
+                                    color: Theme.text; font-size: Theme.font-sm;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                            }
+                            VerticalLayout { alignment: center; HorizontalLayout { spacing: 4px;
+                                if WorkspaceDialogState.edit-mode : Action {
+                                    // Edit mode keeps the reveal entry that the
+                                    // old row menu provided.
+                                    icon: @image-url("../assets/icons/folder-open.svg");
+                                    enabled: !WorkspaceDialogState.busy;
+                                    clicked => { WorkspaceDialogState.reveal-folder(); }
+                                }
+                                Action {
+                                    icon: @image-url("../assets/icons/xmark.svg");
+                                    label: I18n.ws_folder_clear;
+                                    enabled: !WorkspaceDialogState.busy;
+                                    clicked => { WorkspaceDialogState.clear-folder(); }
+                                }
+                            } }
+                        }
+                    }
+                }
+                // Reserved status slot: the card height stays constant while
+                // validation runs, fails or succeeds.
+                Text {
+                    height: 16px;
+                    text: WorkspaceDialogState.validating ? I18n.ws_validating
+                        : WorkspaceDialogState.validate-error;
+                    color: WorkspaceDialogState.validate-error != "" ? Theme.danger : Theme.muted;
+                    font-size: Theme.font-2xs;
+                    vertical-alignment: center; overflow: elide;
+                }
+                FormField {
+                    label: I18n.ws_name_label;
+                    text <=> WorkspaceDialogState.name-draft;
+                    enabled: !WorkspaceDialogState.busy;
+                }
+                Text {
+                    height: 16px;
+                    text: I18n.ws_icon_label;
+                    color: Theme.muted; font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                }
+                VerticalLayout {
+                    spacing: 6px;
+                    HorizontalLayout { spacing: 6px;
+                        IconCell { index: 0; icon-key: "folder"; }
+                        IconCell { index: 1; icon-key: "coffee"; }
+                        IconCell { index: 2; icon-key: "filter"; }
+                        IconCell { index: 3; icon-key: "cake"; }
+                        IconCell { index: 4; icon-key: "moon"; }
+                    }
+                    HorizontalLayout { spacing: 6px;
+                        IconCell { index: 5; icon-key: "knight"; }
+                        IconCell { index: 6; icon-key: "robot"; }
+                        IconCell { index: 7; icon-key: "flower"; }
+                        IconCell { index: 8; icon-key: "gear"; }
+                        IconCell { index: 9; icon-key: "swan"; }
+                    }
+                    HorizontalLayout { spacing: 6px;
+                        IconCell { index: 10; icon-key: "bear"; }
+                        IconCell { index: 11; icon-key: "ghost"; }
+                        IconCell { index: 12; icon-key: "alien"; }
+                        IconCell { index: 13; icon-key: "bell"; }
+                        IconCell { index: 14; icon-key: "flask"; }
+                    }
+                }
+                Text {
+                    height: 16px;
+                    text: I18n.ws_color_label;
+                    color: Theme.muted; font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    for dot[index] in WorkspaceVisual.color-keys() : ColorDot {
+                        index: index;
+                        color-key: dot;
+                    }
+                }
+                HorizontalLayout {
+                    height: 32px;
+                    spacing: Theme.space-2;
+                    if WorkspaceDialogState.edit-mode : Action {
+                        // Move the workspace delete flow into the edit dialog;
+                        // the row itself now only carries plus and pen actions.
+                        show-label: true; danger: true;
+                        label: I18n.ws_menu_delete;
+                        enabled: !WorkspaceDialogState.busy;
+                        clicked => { WorkspaceDialogState.request-delete(); }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Action {
+                        width: 72px; show-label: true;
+                        label: I18n.ws_btn_cancel;
+                        enabled: !WorkspaceDialogState.busy;
+                        clicked => { WorkspaceDialogState.canceled(); }
+                    }
+                    Action {
+                        width: 112px; show-label: true; primary: true;
+                        label: WorkspaceDialogState.edit-mode ? I18n.ws_btn_save : I18n.ws_btn_create;
+                        enabled: !WorkspaceDialogState.busy && !WorkspaceDialogState.validating
+                            && WorkspaceDialogState.folder-path != ""
+                            && WorkspaceDialogState.name-draft != ""
+                            && WorkspaceDialogState.validate-error == "";
+                        clicked => { WorkspaceDialogState.accept(); }
+                    }
+                }
+            }
+        }
+    }
+    if WorkspaceDialogState.delete-open : Rectangle {
+        width: 100%; height: 100%;
+        background: Theme.overlay;
+        TouchArea { }
+        Rectangle {
+            width: min(420px, parent.width - 48px);
+            height: 300px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-xl;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            clip: true;
+            VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+                Text {
+                    height: 22px;
+                    text: I18n.ws_delete_title;
+                    color: Theme.text; font-size: Theme.font-md; font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: I18n.ws_delete_body;
+                    color: Theme.muted; font-size: Theme.font-sm;
+                    wrap: word-wrap;
+                }
+                VerticalLayout {
+                    spacing: 8px;
+                    DeleteOption { index: 0; title: I18n.ws_delete_archive; hint: I18n.ws_delete_archive_hint; }
+                    DeleteOption { index: 1; title: I18n.ws_delete_records; hint: I18n.ws_delete_records_hint; }
+                }
+                HorizontalLayout {
+                    height: 32px;
+                    spacing: Theme.space-2;
+                    Rectangle { horizontal-stretch: 1; }
+                    Action {
+                        width: 72px; show-label: true;
+                        label: I18n.ws_btn_cancel;
+                        clicked => { WorkspaceDialogState.delete-canceled(); }
+                    }
+                    Action {
+                        width: 88px; show-label: true; danger: true;
+                        label: I18n.ws_btn_delete;
+                        clicked => { WorkspaceDialogState.delete-confirmed(); }
+                    }
+                }
+            }
+        }
+    }
+}

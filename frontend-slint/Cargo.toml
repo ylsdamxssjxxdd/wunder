@@ -1,0 +1,116 @@
+[package]
+name = "wunder-frontend-slint"
+version = "0.4.0"
+edition = "2021"
+rust-version = "1.92"
+publish = false
+
+[dependencies]
+anyhow = "1"
+wunder-desktop = { path = "../crates/wunder-desktop", default-features = false, features = ["sqlite-storage", "desktop-control"] }
+wunder-runtime = { path = "../crates/wunder-runtime", default-features = false, features = ["sqlite-storage"] }
+slint = { version = "=1.18.0", default-features = false, features = [
+  "backend-winit",
+  "compat-1-2",
+  "raw-window-handle-06",
+  "renderer-software",
+  "std",
+  "unstable-fontique-011",
+  "system-tray",
+  # Winit 0.30 窗口访问器：托盘驻留提示的定位与 Linux 首窗最大化回退。
+  "unstable-winit-030",
+] }
+i-slint-backend-winit = { version = "=1.18.0", default-features = false, features = ["raw-window-handle-06", "renderer-software"] }
+i-slint-renderer-software = { version = "=1.18.0", default-features = false, features = ["std", "systemfonts"] }
+lz4_flex = { version = "=0.11.6", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
+winit = { version = "=0.30.2", default-features = false }
+png = "=0.18.1"
+# Companion spritesheets ship as webp/gif in the wild, avatars as png.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+serde_json = "=1.0.151"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+base64 = "0.22"
+pulldown-cmark = "0.10"
+vt100 = "0.15"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The native screenshot path uses XGetImage on Linux. Keep this optional from
+# Windows builds so the Win7 dependency graph stays unchanged.
+x11-dl = "=2.21.0"
+
+[target.'cfg(windows)'.dependencies]
+# Real console for the terminal panel. The winpty library is loaded at run
+# time from the git supplement, so a host without it keeps using pipes.
+wunder-desktop = { path = "../crates/wunder-desktop", default-features = false, features = ["terminal-pty"] }
+windows-sys = { version = "0.52", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Threading",
+  "Win32_Security",
+  "Win32_Media_Audio",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Controls_Dialogs",
+] }
+# Folder picker: SHBrowseForFolderW lives behind the Win32_UI_Shell feature,
+# unavailable in the pinned 0.52 binding set above; the dialog path uses its
+# own binding copy instead of widening the shared feature list.
+windows-sys-dialog = { package = "windows-sys", version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  "Win32_System_Com",
+] }
+
+[build-dependencies]
+slint-build = { version = "=1.18.0" }
+lz4_flex = { version = "=0.11.6", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
+# Rasterizes the workspace file-icon SVG set at build time. resvg is already in
+# the graph through the Slint compiler, so this shares the compiled crate.
+resvg = { version = "=0.48.1", default-features = false }
+png = "=0.18.1"
+serde_json = "=1.0.151"
+
+[features]
+default = ["native-runtime"]
+# Compatibility feature; the native runtime is always linked.
+native-runtime = []
+
+[profile.release]
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+
+# Keep the large shared runtime parallel during Release code generation.
+# Thin LTO still optimizes the statically linked executable as a whole.
+[profile.release.package.wunder-runtime]
+codegen-units = 8
+
+[patch.crates-io]
+html2md = { path = "vendor/html2md-0.2.15" }
+i-slint-compiler = { path = "vendor/i-slint-compiler-1.18" }
+i-slint-backend-winit = { path = "vendor/i-slint-backend-winit-1.18" }
+softbuffer = { path = "vendor/softbuffer-0.4.8" }
+i-slint-common = { path = "vendor/i-slint-common-1.18" }
+i-slint-core = { path = "vendor/i-slint-core-1.18" }
+i-slint-renderer-software = { path = "vendor/i-slint-renderer-software-1.18" }
+fontique = { path = "vendor/fontique-0.11" }
+parley = { path = "vendor/parley-0.11" }
+winit = { path = "vendor/winit-0.30.2" }
+
+tungstenite = { path = "vendor/tungstenite-0.29.0" }
+http = { path = "vendor/http-1.4.0" }
+httparse = { path = "vendor/httparse-1.10.1" }
+data-encoding = { path = "vendor/data-encoding-2.10.0" }
+sha1 = { path = "vendor/sha1-0.10.6" }
+digest = { path = "vendor/digest-0.10.7" }
+block-buffer = { path = "vendor/block-buffer-0.10.4" }
+crypto-common = { path = "vendor/crypto-common-0.1.7" }
+generic-array = { path = "vendor/generic-array-0.14.7" }
+typenum = { path = "vendor/typenum-1.20.1" }
+cpufeatures = { path = "vendor/cpufeatures-0.2.17" }
+
+[workspace]

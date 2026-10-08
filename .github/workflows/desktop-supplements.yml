@@ -1,0 +1,207 @@
+name: Desktop Supplements
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: '忽略缓存，强制重建三种补充包'
+        type: boolean
+        default: false
+  push:
+    paths:
+      - 'packaging/**'
+      - '.github/workflows/desktop-supplements.yml'
+
+# 补充包基本不变：构建输入（打包脚本/清单/requirements/Dockerfile）决定缓存键，
+# 输入未变时三个包直接命中缓存，仅把缓存产物重新上传到固定 release。
+permissions:
+  contents: write
+
+concurrency:
+  group: wunder-desktop-supplements
+  cancel-in-progress: true
+
+env:
+  RELEASE_TAG: supplement
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      win7_key: ${{ steps.keys.outputs.win7_key }}
+      linux_amd64_key: ${{ steps.keys.outputs.linux_amd64_key }}
+      linux_arm64_key: ${{ steps.keys.outputs.linux_arm64_key }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: keys
+        shell: bash
+        run: |
+          win7_hash="${{ hashFiles('packaging/windows/scripts/build_win7_desktop_supplement.ps1', 'packaging/windows/scripts/win7-supplement-manifest.json', 'packaging/python/requirements-win7-common.txt', 'config/matplotlibrc', 'fonts/*') }}"
+          linux_hash="${{ hashFiles('packaging/linux/scripts/build_linux_supplement.sh', 'packaging/linux/scripts/linux-supplement-manifest.json', 'packaging/python/requirements-linux-common.txt', 'packaging/docker/Dockerfile.ubuntu18-supplement', 'config/matplotlibrc', 'fonts/*') }}"
+          echo "win7_key=wunder-supplement-win7-ia32-v1-${win7_hash}" >> "$GITHUB_OUTPUT"
+          echo "linux_amd64_key=wunder-supplement-linux-amd64-v1-${linux_hash}" >> "$GITHUB_OUTPUT"
+          echo "linux_arm64_key=wunder-supplement-linux-arm64-v1-${linux_hash}" >> "$GITHUB_OUTPUT"
+
+  build-win7-ia32:
+    needs: prepare
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore cached supplement
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: supplement-dist
+          key: ${{ needs.prepare.outputs.win7_key }}
+      - name: Check cached pack
+        id: pack
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path supplement-dist | Out-Null
+          $zip = Get-ChildItem -Path supplement-dist -Filter 'wunder-supplement-win7-*.zip' -ErrorAction SilentlyContinue | Select-Object -First 1
+          $cached = ($null -ne $zip) -and ('true' -eq '${{ steps.cache.outputs.cache-hit }}')
+          if ($zip) { Write-Host "cached pack: $($zip.Name)" } else { Write-Host 'no cached pack' }
+          "cached=$cached" >> $env:GITHUB_OUTPUT
+      - name: Build Win7 ia32 supplement
+        if: steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true'
+        shell: pwsh
+        run: |
+          Remove-Item -Path supplement-dist\* -Force -ErrorAction SilentlyContinue
+          & .\packaging\windows\scripts\build_win7_desktop_supplement.ps1 `
+            -Arch ia32 `
+            -PythonProfile common `
+            -BuildRoot (Join-Path (Get-Location) 'supplement-build') `
+            -PythonPackageIndexUrl https://pypi.org/simple
+          if ($LASTEXITCODE -ne 0) { throw "Win7 supplement build failed: $LASTEXITCODE" }
+          Copy-Item -Path (Join-Path (Get-Location) 'supplement-build\dist\*.zip') -Destination supplement-dist -Force
+      - name: Verify pack exists
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem -Path supplement-dist -Filter 'wunder-supplement-win7-*.zip' | Select-Object -First 1
+          if (-not $zip) { throw 'no supplement zip produced or restored' }
+          Write-Host "pack: $($zip.Name) ($([math]::Round($zip.Length / 1MB, 1)) MB)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: supplement-win7-ia32
+          path: supplement-dist/wunder-supplement-win7-*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  build-linux:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            key_field: linux_amd64_key
+          - arch: arm64
+            platform: linux/arm64
+            key_field: linux_arm64_key
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up QEMU (arm64 builds run emulated inside the arm64 image)
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Restore cached supplement
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: supplement-dist
+          key: ${{ needs.prepare.outputs[matrix.key_field] }}
+      - name: Check cached pack
+        id: pack
+        shell: bash
+        run: |
+          mkdir -p supplement-dist
+          if compgen -G 'supplement-dist/wunder-supplement-linux-*.tar.gz' >/dev/null; then
+            ls -la supplement-dist
+          fi
+          cached=false
+          if [ '${{ steps.cache.outputs.cache-hit }}' = 'true' ] && compgen -G 'supplement-dist/wunder-supplement-linux-*.tar.gz' >/dev/null; then
+            cached=true
+          fi
+          echo "cached=$cached" >> "$GITHUB_OUTPUT"
+      - name: Build Ubuntu 18.04 supplement
+        if: steps.pack.outputs.cached != 'true' || github.event.inputs.force_rebuild == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --platform "${{ matrix.platform }}" \
+            -f packaging/docker/Dockerfile.ubuntu18-supplement \
+            -t "wunder-supplement-ubuntu1804-${{ matrix.arch }}" .
+          rm -rf supplement-dist supplement-build
+          mkdir -p supplement-dist supplement-build
+          docker run --rm --platform "${{ matrix.platform }}" \
+            -v "$GITHUB_WORKSPACE:/app" \
+            -w /app \
+            -e ARCH="${{ matrix.arch }}" \
+            -e WUNDER_OUTPUT_DIR=/app/supplement-dist \
+            -e WUNDER_SUPPLEMENT_BUILD_ROOT=/app/supplement-build \
+            -e WUNDER_SUPPLEMENT_PYPI_INDEX=https://pypi.org/simple \
+            "wunder-supplement-ubuntu1804-${{ matrix.arch }}" \
+            bash packaging/linux/scripts/build_linux_supplement.sh
+      - name: Verify pack exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          pack="$(find supplement-dist -maxdepth 1 -name "wunder-supplement-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
+          test -n "$pack" || { echo "expected wunder-supplement-linux-${{ matrix.arch }}.tar.gz"; exit 1; }
+          ls -la "$pack"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: supplement-linux-${{ matrix.arch }}
+          path: supplement-dist/wunder-supplement-linux-*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-supplements:
+    needs:
+      - prepare
+      - build-win7-ia32
+      - build-linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download supplement artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: supplement-*
+          path: release-assets
+          merge-multiple: true
+      - name: Verify exactly three supplement packs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find release-assets -type f -maxdepth 2 | sort)
+          test "${#files[@]}" -eq 3 || { printf 'unexpected asset set:\n'; printf '%s\n' "${files[@]}"; exit 1; }
+          for expected in \
+            'wunder-supplement-win7-ia32-common.zip' \
+            'wunder-supplement-linux-amd64.tar.gz' \
+            'wunder-supplement-linux-arm64.tar.gz'; do
+            test -f "release-assets/$expected" || { echo "missing $expected"; exit 1; }
+          done
+          printf '%s\n' "${files[@]}"
+      - name: Publish supplement release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Wunder 补充包（Win7 32 位 / Linux x86_64 / Linux ARM64）" \
+              --notes "桌面端补充包（opt/python、opt/git、opt/rg）。解压到桌面安装目录（AppImage 场景解压到 .AppImage 文件所在目录）即可生效。补充包基本不变，仅在打包脚本、依赖清单或组件版本变化时刷新。" \
+            --latest=false --target "${GITHUB_SHA}"
+          fi
+          find release-assets -type f -maxdepth 2 -print0 | while IFS= read -r -d '' asset; do
+            gh release upload "$RELEASE_TAG" "$asset" --repo "${GITHUB_REPOSITORY}" --clobber
+          done
+          gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name'

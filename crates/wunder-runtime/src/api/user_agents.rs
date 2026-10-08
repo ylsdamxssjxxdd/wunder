@@ -1,0 +1,2571 @@
+// 用户智能体 API：单实例读取与允许自定义字段的更新。
+use crate::api::user_context::resolve_user;
+use crate::i18n;
+use crate::monitor::MonitorState;
+use crate::schemas::AbilityDescriptor;
+use crate::services::agent_abilities::{
+    normalize_ability_items, resolve_agent_ability_selection, resolve_record_ability_items,
+    resolve_record_declared_names,
+};
+use crate::services::default_agent_protocol::{
+    default_agent_config_from_record, default_agent_meta_key, is_builtin_default_agent_name,
+    DefaultAgentConfig, DEFAULT_AGENT_NAME,
+};
+use crate::services::default_tool_profile::curated_default_tool_names_for_config;
+use crate::services::llm::is_llm_model;
+use crate::services::tools::resolve_tool_name;
+use crate::services::user_agent_presets::UserAgentInstance;
+use crate::state::AppState;
+use crate::storage::{
+    normalize_sandbox_container_id, SessionLockRecord, DEFAULT_SANDBOX_CONTAINER_ID,
+};
+use crate::user_access::{
+    build_user_tool_context, compute_allowed_tool_names, filter_user_agents_by_access,
+    is_agent_allowed,
+};
+use crate::user_tools::UserToolKind;
+use anyhow::Result;
+use axum::extract::{Path as AxumPath, Query, State};
+use axum::http::StatusCode;
+use axum::response::Response;
+use axum::{routing::get, Json, Router};
+use chrono::{
+    DateTime, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc,
+};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
+
+const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
+const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
+const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
+const DEFAULT_AGENT_STATUS: &str = "active";
+const DEFAULT_AGENT_DESCRIPTION: &str =
+    "我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~";
+const DEFAULT_AGENT_SYSTEM_PROMPT: &str = "你是一个乐于助人的智能体";
+const DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF: &str = "制作一个骑自行车的鹈鹕gif";
+const LEGACY_AGENT_PRESET_QUESTION_DRAW_HEART: &str = "绘制一个爱心到本地";
+const DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE: &str = "用公文写作技能写一篇广州旅游攻略";
+const DEFAULT_RUNTIME_WINDOW_DAYS: i64 = 14;
+const MAX_RUNTIME_WINDOW_DAYS: i64 = 90;
+const MAX_RUNTIME_RECORD_LIMIT: i64 = 5000;
+const HEATMAP_TOOL_LIMIT: usize = 24;
+
+#[derive(Debug, Clone)]
+struct RuntimeHeatmapToolStats {
+    display_name: String,
+    category: String,
+    hourly: [i64; 24],
+}
+
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/wunder/agents", get(list_agents))
+        .route("/wunder/agents/models", get(list_agent_models))
+        .route(
+            "/wunder/user/agent",
+            get(get_user_agent).put(update_user_agent),
+        )
+        .route("/wunder/agents/running", get(list_running_agents))
+        .route("/wunder/agents/user-rounds", get(list_agent_user_rounds))
+        .route(
+            "/wunder/agents/{agent_id}/runtime-records",
+            get(get_agent_runtime_records),
+        )
+        .route(
+            "/wunder/agents/{agent_id}",
+            get(get_agent).put(update_agent),
+        )
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct AgentUserQuery {
+    #[serde(default)]
+    user_id: Option<String>,
+}
+
+/// Single-agent contract: the user sees exactly one instance.
+async fn list_agents(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<AgentUserQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id.clone();
+    ensure_preset_agents(&state, &resolved.user).await?;
+    sync_inner_visible_before_user_read(&state, &user_id).await?;
+    let instance = resolve_single_instance(&state, &resolved.user).await?;
+    Ok(Json(json!({
+        "data": {
+            "total": 1,
+            "items": vec![instance_payload(&state, &instance).await],
+        }
+    })))
+}
+
+/// `GET /wunder/user/agent` — the user's single agent plus its preset binding
+/// and the customizable surface declared by that preset (§12.2.1 3)).
+async fn get_user_agent(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<AgentUserQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id.clone();
+    ensure_preset_agents(&state, &resolved.user).await?;
+    sync_inner_visible_before_user_read(&state, &user_id).await?;
+    let instance = resolve_single_instance(&state, &resolved.user).await?;
+    let agent = instance_payload(&state, &instance).await;
+    Ok(Json(json!({
+        "data": {
+            "agent": agent,
+            "preset_binding": instance.preset_binding_payload(),
+            "customizable": crate::services::worker_card_settings::customizable_payload(&instance.customizable),
+        }
+    })))
+}
+
+async fn resolve_single_instance(
+    state: &AppState,
+    user: &crate::storage::UserAccountRecord,
+) -> Result<crate::services::user_agent_presets::UserAgentInstance, Response> {
+    crate::services::user_agent_presets::resolve_user_agent_instance(state, user)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))
+}
+
+/// Renders the instance with the shared `agent_payload` projection.
+async fn instance_payload(state: &AppState, instance: &UserAgentInstance) -> Value {
+    let app_config = state.config_store.get().await;
+    let configured_model_name = resolve_default_model_name(&app_config);
+    if crate::services::user_agent_presets::is_default_agent_record(&instance.record) {
+        let config = default_agent_config_from_record(&instance.record);
+        let context = build_user_tool_context(state, &instance.record.user_id).await;
+        let skill_name_keys = collect_context_skill_names(&context);
+        return default_agent_payload(&config, configured_model_name.as_deref(), &skill_name_keys);
+    }
+    let context = build_user_tool_context(state, &instance.record.user_id).await;
+    let skill_name_keys = collect_context_skill_names(&context);
+    agent_payload(
+        &instance.record,
+        configured_model_name.as_deref(),
+        &skill_name_keys,
+    )
+}
+
+async fn list_agent_models(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<AgentUserQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let config = state.config_store.get().await;
+    let default_model_name = resolve_default_model_name(&config);
+    let items = resolve_available_models(&config, default_model_name.as_deref());
+    // The user's default model is their agent's configured model, falling back
+    // to the system default.
+    let user_default_model_name =
+        crate::services::user_agent_presets::resolve_user_agent_instance(&state, &resolved.user)
+            .await
+            .ok()
+            .and_then(|instance| {
+                normalize_request_model_name(instance.record.model_name.as_deref())
+            })
+            .or_else(|| default_model_name.clone());
+    Ok(Json(json!({
+        "data": {
+            "items": items,
+            "default_model_name": default_model_name,
+            "user_default_model_name": user_default_model_name,
+        }
+    })))
+}
+
+async fn list_running_agents(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<AgentUserQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id.clone();
+
+    #[derive(Debug, Clone, Default)]
+    struct AgentStatusCandidate {
+        state: &'static str,
+        updated_time: f64,
+        session_id: String,
+        expires_at: Option<f64>,
+        pending_question: bool,
+        last_error: Option<String>,
+    }
+
+    const STATE_IDLE: &str = "idle";
+    const STATE_WAITING: &str = "waiting";
+    const STATE_RUNNING: &str = "running";
+    const STATE_CANCELLING: &str = "cancelling";
+    const STATE_DONE: &str = "done";
+    const STATE_ERROR: &str = "error";
+
+    const DONE_TTL_S: f64 = 15.0;
+    const ERROR_TTL_S: f64 = 30.0;
+    const RECENT_WINDOW_S: f64 = 120.0;
+    const WAITING_TTL_S: f64 = 10.0 * 60.0;
+
+    fn state_rank(state: &str) -> i32 {
+        match state {
+            STATE_WAITING => 50,
+            STATE_CANCELLING => 40,
+            STATE_RUNNING => 30,
+            STATE_ERROR => 20,
+            STATE_DONE => 10,
+            _ => 0,
+        }
+    }
+
+    fn is_waiting_state(state: &str) -> bool {
+        state == STATE_WAITING
+    }
+
+    fn is_waiting_stale(candidate: &AgentStatusCandidate, now: f64) -> bool {
+        if !is_waiting_state(candidate.state) {
+            return false;
+        }
+        if candidate.updated_time <= 0.0 {
+            return true;
+        }
+        (now - candidate.updated_time).max(0.0) > WAITING_TTL_S
+    }
+
+    fn should_replace(
+        current: &AgentStatusCandidate,
+        next: &AgentStatusCandidate,
+        now: f64,
+    ) -> bool {
+        let current_waiting = is_waiting_state(current.state);
+        let next_waiting = is_waiting_state(next.state);
+        if next_waiting && is_waiting_stale(next, now) {
+            return false;
+        }
+        if current_waiting && is_waiting_stale(current, now) {
+            return true;
+        }
+        if current_waiting && !next_waiting && next.updated_time > current.updated_time {
+            return true;
+        }
+        let current_rank = state_rank(current.state);
+        let next_rank = state_rank(next.state);
+        if next_rank != current_rank {
+            return next_rank > current_rank;
+        }
+        next.updated_time > current.updated_time
+    }
+
+    fn format_optional_ts(value: f64) -> String {
+        if value <= 0.0 {
+            return "".to_string();
+        }
+        format_ts(value)
+    }
+
+    fn is_hot_runtime_monitor_record(
+        state: &AppState,
+        user_id: &str,
+        record: &Value,
+        session_locks: &[SessionLockRecord],
+    ) -> bool {
+        let session_id = record
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if session_id.is_empty() {
+            return false;
+        }
+        let now = now_ts();
+        if let Ok(runs) = state
+            .storage
+            .list_session_runs_by_session(user_id, session_id, 8)
+        {
+            let thread_id = format!("thread_{session_id}");
+            let tasks = state
+                .storage
+                .list_agent_tasks_by_thread(&thread_id, None, 8)
+                .unwrap_or_default();
+            let run_statuses = runs
+                .iter()
+                .map(|run| (run.status.as_str(), run.finished_time))
+                .collect::<Vec<_>>();
+            let task_statuses = tasks
+                .iter()
+                .map(|task| task.status.as_str())
+                .collect::<Vec<_>>();
+            return has_active_runtime_evidence(
+                session_id,
+                now,
+                session_locks,
+                &run_statuses,
+                &task_statuses,
+            );
+        }
+        let thread_id = format!("thread_{session_id}");
+        let tasks = state
+            .storage
+            .list_agent_tasks_by_thread(&thread_id, None, 8)
+            .unwrap_or_default();
+        let task_statuses = tasks
+            .iter()
+            .map(|task| task.status.as_str())
+            .collect::<Vec<_>>();
+        has_active_runtime_evidence(session_id, now, session_locks, &[], &task_statuses)
+    }
+
+    // Determine which agent apps should be included in the response.
+    // Keep ordering stable: default, owned agents, shared agents.
+    let access = state
+        .user_store
+        .get_user_agent_access(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let owned_agents = state
+        .user_store
+        .list_user_agents(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let owned_agents = filter_user_agents_by_access(&resolved.user, access.as_ref(), owned_agents)
+        .into_iter()
+        .filter(|agent| !is_default_agent_alias_value(&agent.agent_id))
+        .collect::<Vec<_>>();
+
+    let shared_agents = state
+        .user_store
+        .list_shared_user_agents(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let shared_agents =
+        filter_user_agents_by_access(&resolved.user, access.as_ref(), shared_agents)
+            .into_iter()
+            .filter(|agent| !is_default_agent_alias_value(&agent.agent_id))
+            .collect::<Vec<_>>();
+
+    let mut agent_order = Vec::new();
+    agent_order.push("".to_string()); // default entry
+
+    let mut allowed_set = HashSet::new();
+    allowed_set.insert("".to_string());
+    for agent in &owned_agents {
+        if allowed_set.insert(agent.agent_id.clone()) {
+            agent_order.push(agent.agent_id.clone());
+        }
+    }
+    for agent in &shared_agents {
+        if allowed_set.insert(agent.agent_id.clone()) {
+            agent_order.push(agent.agent_id.clone());
+        }
+    }
+
+    let mut status_by_agent = HashMap::<String, AgentStatusCandidate>::new();
+    for agent_id in &agent_order {
+        status_by_agent.insert(
+            agent_id.clone(),
+            AgentStatusCandidate {
+                state: STATE_IDLE,
+                ..AgentStatusCandidate::default()
+            },
+        );
+    }
+    let now = now_ts();
+
+    // 1) Session locks (authoritative for long-running sessions via heartbeat).
+    let locks = state
+        .user_store
+        .list_session_locks_by_user(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    for lock in &locks {
+        let cleaned_agent = lock.agent_id.trim().to_string();
+        if cleaned_agent.starts_with("subagent:") {
+            continue;
+        }
+        if !allowed_set.contains(&cleaned_agent) {
+            continue;
+        }
+        let next = AgentStatusCandidate {
+            state: STATE_RUNNING,
+            updated_time: lock.updated_time,
+            session_id: lock.session_id.clone(),
+            expires_at: Some(lock.expires_at),
+            pending_question: false,
+            last_error: None,
+        };
+        if let Some(current) = status_by_agent.get(&cleaned_agent) {
+            if should_replace(current, &next, now) {
+                status_by_agent.insert(cleaned_agent, next);
+            }
+        }
+    }
+
+    // 2) Active monitor sessions (waiting/running/cancelling), persisted in storage so they survive restarts.
+    let active_records = state.monitor.load_records_by_user(
+        &user_id,
+        Some(&[
+            MonitorState::STATUS_QUEUED,
+            MonitorState::STATUS_WAITING,
+            MonitorState::STATUS_RUNNING,
+            MonitorState::STATUS_CANCELLING,
+        ]),
+        None,
+        2048,
+    );
+    for record in active_records {
+        let session_user_id = record
+            .get("user_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if session_user_id != user_id {
+            continue;
+        }
+        let agent_id = record
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if !allowed_set.contains(agent_id) {
+            continue;
+        }
+        let status = record
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let runtime_state = match status {
+            MonitorState::STATUS_QUEUED => STATE_WAITING,
+            MonitorState::STATUS_WAITING => STATE_WAITING,
+            MonitorState::STATUS_CANCELLING => STATE_CANCELLING,
+            MonitorState::STATUS_RUNNING => STATE_RUNNING,
+            _ => continue,
+        };
+        let updated_time = record
+            .get("updated_time")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .unwrap_or(0.0);
+        if (runtime_state == STATE_RUNNING || runtime_state == STATE_CANCELLING)
+            && !is_hot_runtime_monitor_record(state.as_ref(), &user_id, &record, &locks)
+        {
+            continue;
+        }
+        if runtime_state == STATE_WAITING {
+            let waiting_age = (now - updated_time).max(0.0);
+            if updated_time <= 0.0 || waiting_age > WAITING_TTL_S {
+                continue;
+            }
+        }
+        let session_id = record
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let next = AgentStatusCandidate {
+            state: runtime_state,
+            updated_time,
+            session_id,
+            expires_at: None,
+            pending_question: runtime_state == STATE_WAITING,
+            last_error: None,
+        };
+        if let Some(current) = status_by_agent.get(agent_id) {
+            if should_replace(current, &next, now) {
+                status_by_agent.insert(agent_id.to_string(), next);
+            }
+        }
+    }
+
+    // 3) Pending queued tasks may not have a hot monitor row yet, but they are
+    // still user-visible waiting work and must outrank recent done hints.
+    let pending_tasks = state
+        .storage
+        .list_pending_agent_tasks(2048)
+        .unwrap_or_default();
+    for task in pending_tasks {
+        if task.user_id.trim() != user_id {
+            continue;
+        }
+        let agent_id = task.agent_id.trim();
+        if !allowed_set.contains(agent_id) {
+            continue;
+        }
+        let task_status = task.status.trim().to_ascii_lowercase();
+        if task_status != "pending" && task_status != "retry" {
+            continue;
+        }
+        let updated_time = if task.updated_at.is_finite() && task.updated_at > 0.0 {
+            task.updated_at
+        } else {
+            task.created_at
+        };
+        let waiting_age = (now - updated_time).max(0.0);
+        if updated_time <= 0.0 || waiting_age > WAITING_TTL_S {
+            continue;
+        }
+        let next = AgentStatusCandidate {
+            state: STATE_WAITING,
+            updated_time,
+            session_id: task.session_id,
+            expires_at: None,
+            pending_question: true,
+            last_error: None,
+        };
+        if let Some(current) = status_by_agent.get(agent_id) {
+            if should_replace(current, &next, now) {
+                status_by_agent.insert(agent_id.to_string(), next);
+            }
+        }
+    }
+
+    // 4) Recently completed/error sessions, used to display a transient state without frontend inference.
+    let recent_records = state.monitor.load_records_by_user(
+        &user_id,
+        Some(&[
+            MonitorState::STATUS_FINISHED,
+            MonitorState::STATUS_ERROR,
+            MonitorState::STATUS_CANCELLED,
+        ]),
+        Some((now - RECENT_WINDOW_S).max(0.0)),
+        512,
+    );
+    for record in recent_records {
+        let session_user_id = record
+            .get("user_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if session_user_id != user_id {
+            continue;
+        }
+        let agent_id = record
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if !allowed_set.contains(agent_id) {
+            continue;
+        }
+        let status = record
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let updated_time = record
+            .get("updated_time")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .unwrap_or(0.0);
+        let ended_time = record
+            .get("ended_time")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .unwrap_or(updated_time);
+        let elapsed = (now - ended_time).max(0.0);
+        let state = match status {
+            MonitorState::STATUS_ERROR if elapsed <= ERROR_TTL_S => STATE_ERROR,
+            MonitorState::STATUS_FINISHED if elapsed <= DONE_TTL_S => STATE_DONE,
+            _ => continue,
+        };
+        let session_id = record
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let last_error = if state == STATE_ERROR {
+            record
+                .get("summary")
+                .and_then(Value::as_str)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        } else {
+            None
+        };
+        let next = AgentStatusCandidate {
+            state,
+            updated_time,
+            session_id,
+            expires_at: None,
+            pending_question: false,
+            last_error,
+        };
+        if let Some(current) = status_by_agent.get(agent_id) {
+            if should_replace(current, &next, now) {
+                status_by_agent.insert(agent_id.to_string(), next);
+            }
+        } else {
+            status_by_agent.insert(agent_id.to_string(), next);
+        }
+    }
+
+    let items = agent_order
+        .into_iter()
+        .map(|agent_id| {
+            let candidate = status_by_agent.remove(&agent_id).unwrap_or_default();
+            let is_default = agent_id.trim().is_empty();
+            let mut payload = json!({
+                "agent_id": if is_default { "" } else { agent_id.as_str() },
+                "session_id": candidate.session_id,
+                "updated_at": format_optional_ts(candidate.updated_time),
+                "expires_at": candidate.expires_at.map(format_optional_ts).unwrap_or_default(),
+                "state": candidate.state,
+                "pending_question": candidate.pending_question,
+                "is_default": is_default,
+            });
+            if let Some(last_error) = candidate
+                .last_error
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                if let Value::Object(ref mut map) = payload {
+                    map.insert(
+                        "last_error".to_string(),
+                        Value::String(last_error.to_string()),
+                    );
+                }
+            }
+            payload
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Json(
+        json!({ "data": { "total": items.len(), "items": items } }),
+    ))
+}
+
+fn has_active_runtime_evidence(
+    session_id: &str,
+    now: f64,
+    session_locks: &[SessionLockRecord],
+    session_run_statuses: &[(&str, f64)],
+    agent_task_statuses: &[&str],
+) -> bool {
+    let cleaned_session = session_id.trim();
+    if cleaned_session.is_empty() {
+        return false;
+    }
+    if session_locks
+        .iter()
+        .any(|lock| lock.session_id.trim() == cleaned_session && lock.expires_at > now)
+    {
+        return true;
+    }
+    if session_run_statuses.iter().any(|(status, finished_time)| {
+        matches!(
+            status.trim().to_ascii_lowercase().as_str(),
+            "queued" | "running"
+        ) && *finished_time <= 0.0
+    }) {
+        return true;
+    }
+    agent_task_statuses.iter().any(|status| {
+        matches!(
+            status.trim().to_ascii_lowercase().as_str(),
+            "pending" | "retry" | "running"
+        )
+    })
+}
+
+async fn list_agent_user_rounds(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<AgentUserQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id.clone();
+    let records =
+        state
+            .monitor
+            .load_records_by_user(&user_id, None, None, MAX_RUNTIME_RECORD_LIMIT);
+    let mut totals: HashMap<String, i64> = HashMap::new();
+    for record in records {
+        let raw_agent_id = record
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if raw_agent_id.starts_with("subagent:") {
+            continue;
+        }
+        let agent_id = normalize_agent_id(raw_agent_id);
+        let user_rounds =
+            parse_i64_value(record.get("user_rounds").or_else(|| record.get("rounds")))
+                .unwrap_or(0)
+                .max(0);
+        if user_rounds <= 0 {
+            continue;
+        }
+        *totals.entry(agent_id).or_insert(0) += user_rounds;
+    }
+    let items = totals
+        .into_iter()
+        .map(|(agent_id, user_rounds)| {
+            json!({
+                "agent_id": agent_id,
+                "user_rounds": user_rounds.max(0),
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(
+        json!({ "data": { "total": items.len(), "items": items } }),
+    ))
+}
+
+async fn get_agent(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    AxumPath(agent_id): AxumPath<String>,
+    Query(query): Query<AgentUserQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id.clone();
+    sync_inner_visible_before_user_read(&state, &user_id).await?;
+    let cleaned = agent_id.trim();
+    if cleaned.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let normalized_agent_id = normalize_agent_id(cleaned);
+    if normalized_agent_id.is_empty() {
+        let config = resolve_default_agent_config(&state, &resolved.user).await?;
+        let tool_context = build_user_tool_context(&state, &user_id).await;
+        let skill_name_keys = collect_context_skill_names(&tool_context);
+        let app_config = state.config_store.get().await;
+        let configured_model_name = resolve_default_model_name(&app_config);
+        return Ok(Json(
+            json!({ "data": default_agent_payload(&config, configured_model_name.as_deref(), &skill_name_keys) }),
+        ));
+    }
+    let record = state
+        .user_store
+        .get_user_agent_by_id(&normalized_agent_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.agent_not_found")))?;
+    let access = state
+        .user_store
+        .get_user_agent_access(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if !is_agent_allowed(&resolved.user, access.as_ref(), &record) {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.agent_not_found"),
+        ));
+    }
+    let tool_context = build_user_tool_context(&state, &user_id).await;
+    let skill_name_keys = collect_context_skill_names(&tool_context);
+    let app_config = state.config_store.get().await;
+    let configured_model_name = resolve_default_model_name(&app_config);
+    Ok(Json(
+        json!({ "data": agent_payload(&record, configured_model_name.as_deref(), &skill_name_keys) }),
+    ))
+}
+
+#[derive(Debug, Default, Clone)]
+struct ThreadRuntimeDayStats {
+    runtime_seconds: f64,
+    billed_tokens: i64,
+    quota_consumed: i64,
+    tool_calls: i64,
+}
+
+async fn get_agent_runtime_records(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    AxumPath(agent_id): AxumPath<String>,
+    Query(query): Query<ThreadRuntimeRecordsQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id.clone();
+    let normalized_agent_id =
+        normalize_agent_id(agent_id.trim().trim_matches('"').trim_matches('\''));
+    let is_default_agent = normalized_agent_id.is_empty();
+    if !is_default_agent {
+        let record = state
+            .user_store
+            .get_user_agent_by_id(&normalized_agent_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+            .ok_or_else(|| {
+                error_response(StatusCode::NOT_FOUND, i18n::t("error.agent_not_found"))
+            })?;
+        let access = state
+            .user_store
+            .get_user_agent_access(&user_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        if !is_agent_allowed(&resolved.user, access.as_ref(), &record) {
+            return Err(error_response(
+                StatusCode::NOT_FOUND,
+                i18n::t("error.agent_not_found"),
+            ));
+        }
+    }
+
+    let value = load_agent_runtime_records(
+        &state,
+        &user_id,
+        &normalized_agent_id,
+        query.days,
+        query.date.as_deref(),
+    )
+    .await?;
+    Ok(Json(value))
+}
+
+/// Shared aggregation for HTTP and the native desktop façade. Callers validate agent access.
+pub async fn load_agent_runtime_records(
+    state: &AppState,
+    user_id: &str,
+    agent_id: &str,
+    days: Option<i64>,
+    date: Option<&str>,
+) -> Result<Value, Response> {
+    let normalized_agent_id = normalize_agent_id(agent_id);
+    let is_default_agent = normalized_agent_id.is_empty();
+    let window_days = days
+        .unwrap_or(DEFAULT_RUNTIME_WINDOW_DAYS)
+        .clamp(1, MAX_RUNTIME_WINDOW_DAYS);
+    let range_end = Local::now().date_naive();
+    let selected_date = parse_runtime_date(date).unwrap_or(range_end);
+    let range_start = range_end - Duration::days(window_days.saturating_sub(1));
+    let app_config = state.config_store.get().await;
+    let tool_display_map = crate::tools::build_runtime_tool_display_map(&app_config);
+    let tool_display_to_runtime_map = build_tool_display_to_runtime_map(&tool_display_map);
+
+    let (range_start_ts, _) = local_day_bounds(range_start).ok_or_else(|| {
+        error_response(StatusCode::BAD_REQUEST, i18n::t("error.content_required"))
+    })?;
+    let (_, range_end_ts) = local_day_bounds(range_end).ok_or_else(|| {
+        error_response(StatusCode::BAD_REQUEST, i18n::t("error.content_required"))
+    })?;
+    let (selected_start_ts, selected_end_ts) =
+        local_day_bounds(selected_date).ok_or_else(|| {
+            error_response(StatusCode::BAD_REQUEST, i18n::t("error.content_required"))
+        })?;
+
+    let records =
+        state
+            .monitor
+            .load_records_by_user(&user_id, None, None, MAX_RUNTIME_RECORD_LIMIT);
+    let mut daily = build_runtime_day_map(range_start, range_end);
+    let mut heatmap_by_tool: HashMap<String, RuntimeHeatmapToolStats> = HashMap::new();
+    let mut summary_runtime_seconds = 0.0_f64;
+    let mut summary_billed_tokens = 0_i64;
+    let mut summary_quota_consumed = 0_i64;
+    let mut summary_tool_calls = 0_i64;
+
+    for record in records {
+        let current_agent_id = normalize_agent_id(
+            record
+                .get("agent_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        );
+        if is_default_agent {
+            if !current_agent_id.is_empty() {
+                continue;
+            }
+        } else if current_agent_id != normalized_agent_id {
+            continue;
+        }
+
+        let session_start = parse_timestamp_value(record.get("start_time")).unwrap_or(0.0);
+        let mut session_end = parse_timestamp_value(record.get("ended_time"))
+            .or_else(|| parse_timestamp_value(record.get("updated_time")))
+            .unwrap_or(session_start);
+        if session_end < session_start {
+            session_end = session_start;
+        }
+        accumulate_runtime_seconds(
+            &mut daily,
+            session_start,
+            session_end,
+            range_start_ts,
+            range_end_ts,
+        );
+        summary_runtime_seconds += (session_end - session_start).max(0.0);
+
+        let mut round_usage_by_day: HashMap<String, i64> = HashMap::new();
+        let mut token_usage_by_day: HashMap<String, i64> = HashMap::new();
+        let mut has_round_usage = false;
+        let mut has_round_usage_total = false;
+        let mut session_round_usage = 0_i64;
+        let mut session_token_usage = 0_i64;
+
+        if let Some(events) = record.get("events").and_then(Value::as_array) {
+            for event in events {
+                let event_type = event
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if event_type.is_empty() {
+                    continue;
+                }
+                let data = event.get("data").unwrap_or(&Value::Null);
+                let event_ts = parse_timestamp_value(event.get("timestamp")).unwrap_or(session_end);
+                let Some(day_key) = runtime_day_key(event_ts) else {
+                    continue;
+                };
+                let in_range = daily.contains_key(&day_key);
+
+                match event_type {
+                    "round_usage" => {
+                        let total_tokens = parse_usage_total_tokens(data);
+                        if total_tokens <= 0 {
+                            continue;
+                        }
+                        has_round_usage_total = true;
+                        session_round_usage =
+                            session_round_usage.saturating_add(total_tokens.max(0));
+                        if !in_range {
+                            continue;
+                        }
+                        has_round_usage = true;
+                        let entry = round_usage_by_day.entry(day_key).or_default();
+                        *entry = entry.saturating_add(total_tokens);
+                    }
+                    "token_usage" => {
+                        let total_tokens = parse_usage_total_tokens(data);
+                        if total_tokens <= 0 {
+                            continue;
+                        }
+                        session_token_usage =
+                            session_token_usage.saturating_add(total_tokens.max(0));
+                        if !in_range {
+                            continue;
+                        }
+                        let entry = token_usage_by_day.entry(day_key).or_default();
+                        *entry = entry.saturating_add(total_tokens);
+                    }
+                    "quota_usage" | "model_request_usage" => {
+                        let consumed = parse_i64_value(
+                            data.get("request_count").or_else(|| data.get("consumed")),
+                        )
+                        .unwrap_or(1)
+                        .max(0);
+                        if consumed <= 0 {
+                            continue;
+                        }
+                        summary_quota_consumed = summary_quota_consumed.saturating_add(consumed);
+                        if !in_range {
+                            continue;
+                        }
+                        if let Some(entry) = daily.get_mut(&day_key) {
+                            entry.quota_consumed = entry.quota_consumed.saturating_add(consumed);
+                        }
+                    }
+                    "tool_call" => {
+                        summary_tool_calls = summary_tool_calls.saturating_add(1);
+                        if in_range {
+                            if let Some(entry) = daily.get_mut(&day_key) {
+                                entry.tool_calls = entry.tool_calls.saturating_add(1);
+                            }
+                        }
+                        if event_ts < selected_start_ts || event_ts >= selected_end_ts {
+                            continue;
+                        }
+                        let tool_name =
+                            extract_event_tool_runtime_name(data, &tool_display_to_runtime_map);
+                        if tool_name.is_empty() {
+                            continue;
+                        }
+                        let Some(hour) = runtime_day_hour(event_ts) else {
+                            continue;
+                        };
+                        let display_tool_name = extract_event_tool_display_name(data)
+                            .or_else(|| tool_display_map.get(tool_name.as_str()).cloned())
+                            .unwrap_or_else(|| tool_name.clone());
+                        let category = classify_runtime_heatmap_tool(&tool_name);
+                        let bucket =
+                            heatmap_by_tool.entry(tool_name.clone()).or_insert_with(|| {
+                                RuntimeHeatmapToolStats {
+                                    display_name: display_tool_name.clone(),
+                                    category: category.clone(),
+                                    hourly: [0; 24],
+                                }
+                            });
+                        if bucket.display_name.is_empty()
+                            || bucket.display_name == tool_name
+                            || (bucket.display_name == "unknown" && display_tool_name != "unknown")
+                        {
+                            bucket.display_name = display_tool_name;
+                        }
+                        if bucket.category == "other" && category != "other" {
+                            bucket.category = category;
+                        }
+                        bucket.hourly[hour] = bucket.hourly[hour].saturating_add(1);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let usage_source = if has_round_usage {
+            &round_usage_by_day
+        } else {
+            &token_usage_by_day
+        };
+        let session_billed_tokens = if has_round_usage_total {
+            session_round_usage
+        } else {
+            session_token_usage
+        };
+        summary_billed_tokens = summary_billed_tokens.saturating_add(session_billed_tokens.max(0));
+        for (day_key, total_tokens) in usage_source {
+            if let Some(entry) = daily.get_mut(day_key) {
+                entry.billed_tokens = entry.billed_tokens.saturating_add((*total_tokens).max(0));
+            }
+        }
+    }
+
+    let daily_items = daily
+        .iter()
+        .map(|(date, stats)| {
+            json!({
+                "date": date,
+                "runtime_seconds": round_f64(stats.runtime_seconds),
+                "billed_tokens": stats.billed_tokens.max(0),
+                "consumed_tokens": stats.billed_tokens.max(0),
+                "quota_consumed": stats.quota_consumed.max(0),
+                "tool_calls": stats.tool_calls.max(0),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut heatmap_items = heatmap_by_tool
+        .into_iter()
+        .map(|(runtime_name, stats)| {
+            let total_calls = stats.hourly.iter().copied().sum::<i64>();
+            json!({
+                "tool": stats.display_name,
+                "name": stats.display_name,
+                "display_name": stats.display_name,
+                "tool_name": runtime_name,
+                "runtime_name": runtime_name,
+                "category": stats.category,
+                "hourly_calls": stats.hourly.to_vec(),
+                "total_calls": total_calls.max(0),
+            })
+        })
+        .collect::<Vec<_>>();
+    heatmap_items.sort_by(|left, right| {
+        let left_calls = left.get("total_calls").and_then(Value::as_i64).unwrap_or(0);
+        let right_calls = right
+            .get("total_calls")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let left_name = left.get("tool").and_then(Value::as_str).unwrap_or("");
+        let right_name = right.get("tool").and_then(Value::as_str).unwrap_or("");
+        right_calls
+            .cmp(&left_calls)
+            .then_with(|| left_name.cmp(right_name))
+    });
+    if heatmap_items.len() > HEATMAP_TOOL_LIMIT {
+        heatmap_items.truncate(HEATMAP_TOOL_LIMIT);
+    }
+    let heatmap_max_calls = heatmap_items
+        .iter()
+        .filter_map(|item| item.get("total_calls").and_then(Value::as_i64))
+        .max()
+        .unwrap_or(0);
+    let response_agent_id = if is_default_agent {
+        "__default__".to_string()
+    } else {
+        normalized_agent_id.clone()
+    };
+
+    Ok(json!({
+        "data": {
+            "agent_id": response_agent_id,
+            "range": {
+                "days": window_days,
+                "start_date": range_start.format("%Y-%m-%d").to_string(),
+                "end_date": range_end.format("%Y-%m-%d").to_string(),
+                "selected_date": selected_date.format("%Y-%m-%d").to_string(),
+            },
+            "summary": {
+                "runtime_seconds": round_f64(summary_runtime_seconds.max(0.0)),
+                "billed_tokens": summary_billed_tokens.max(0),
+                "consumed_tokens": summary_billed_tokens.max(0),
+                "quota_consumed": summary_quota_consumed.max(0),
+                "tool_calls": summary_tool_calls.max(0),
+            },
+            "daily": daily_items,
+            "heatmap": {
+                "date": selected_date.format("%Y-%m-%d").to_string(),
+                "max_calls": heatmap_max_calls.max(0),
+                "items": heatmap_items,
+            }
+        }
+    }))
+}
+
+/// Error code returned when a request touches fields the bound preset does not
+/// expose to the user.
+const FIELD_NOT_CUSTOMIZABLE: &str = "FIELD_NOT_CUSTOMIZABLE";
+
+fn agent_payload(
+    record: &crate::storage::UserAgentRecord,
+    default_model_name: Option<&str>,
+    skill_name_keys: &HashSet<String>,
+) -> Value {
+    let configured_model_name = normalize_request_model_name(record.model_name.as_deref());
+    let effective_model_name = configured_model_name
+        .clone()
+        .or_else(|| normalize_request_model_name(default_model_name));
+    let ability_items = resolve_record_ability_items(
+        &record.ability_items,
+        &record.tool_names,
+        &record.declared_tool_names,
+        &record.declared_skill_names,
+        skill_name_keys,
+    );
+    json!({
+        "id": record.agent_id,
+        "name": record.name,
+        "description": record.description,
+        "system_prompt": record.system_prompt,
+        "preview_skill": record.preview_skill,
+        "configured_model_name": configured_model_name,
+        "model_name": effective_model_name,
+        "ability_items": ability_items.clone(),
+        "abilities": { "items": ability_items },
+        "tool_names": record.tool_names,
+        "declared_tool_names": record.declared_tool_names,
+        "declared_skill_names": record.declared_skill_names,
+        "visible_unit_ids": record.preset_binding.as_ref().map(|binding| binding.last_applied.visible_unit_ids.clone()).unwrap_or_default(),
+        "preset_questions": record.preset_questions,
+        "access_level": record.access_level,
+        "approval_mode": normalize_agent_approval_mode(Some(&record.approval_mode)),
+        "is_shared": record.is_shared,
+        "status": record.status,
+        "icon": record.icon,
+        "silent": record.silent,
+        "prefer_mother": record.prefer_mother,
+        "sandbox_container_id": normalize_sandbox_container_id(record.sandbox_container_id),
+        "created_at": format_ts(record.created_at),
+        "updated_at": format_ts(record.updated_at),
+        "preset_binding": preset_binding_payload(record.preset_binding.as_ref()),
+    })
+}
+
+fn preset_binding_payload(binding: Option<&crate::storage::UserAgentPresetBinding>) -> Value {
+    let Some(binding) = binding else {
+        return Value::Null;
+    };
+    json!({
+        "preset_id": binding.preset_id,
+        "preset_revision": binding.preset_revision,
+    })
+}
+
+/// Maps a request field onto the customizable key that governs it.
+fn update_field_key(field: &str) -> Option<&'static str> {
+    match field {
+        "system_prompt" => Some("system_prompt"),
+        "description" | "preset_questions" => Some("welcome"),
+        "model_name" => Some("model_name"),
+        "tool_names"
+        | "ability_items"
+        | "abilities"
+        | "declared_tool_names"
+        | "declared_skill_names" => Some("tool_names"),
+        "approval_mode" => Some("approval_mode"),
+        _ => None,
+    }
+}
+
+fn requested_update_fields(payload: &AgentUpdateRequest) -> Vec<&'static str> {
+    let mut fields = Vec::new();
+    let mut push = |present: bool, field: &'static str| {
+        if present {
+            fields.push(field);
+        }
+    };
+    push(payload.name.is_some(), "name");
+    push(payload.description.is_some(), "description");
+    push(payload.system_prompt.is_some(), "system_prompt");
+    push(payload.preview_skill.is_some(), "preview_skill");
+    push(payload.model_name.is_some(), "model_name");
+    push(payload.tool_names.is_some(), "tool_names");
+    push(payload.ability_items.is_some(), "ability_items");
+    push(payload.abilities.is_some(), "abilities");
+    push(payload.declared_tool_names.is_some(), "declared_tool_names");
+    push(
+        payload.declared_skill_names.is_some(),
+        "declared_skill_names",
+    );
+    push(payload.preset_questions.is_some(), "preset_questions");
+    push(payload.is_shared.is_some(), "is_shared");
+    push(payload.status.is_some(), "status");
+    push(payload.approval_mode.is_some(), "approval_mode");
+    push(payload.icon.is_some(), "icon");
+    push(payload.silent.is_some(), "silent");
+    push(payload.prefer_mother.is_some(), "prefer_mother");
+    push(
+        payload.sandbox_container_id.is_some(),
+        "sandbox_container_id",
+    );
+    fields
+}
+
+/// Rejects the whole request when it touches fields the preset does not expose.
+///
+/// Nothing is written on rejection: the user gets an explicit `422
+/// FIELD_NOT_CUSTOMIZABLE` with the offending field names instead of a silent
+/// partial write.
+fn ensure_update_fields_allowed(
+    customizable: &crate::config::PresetCustomizable,
+    payload: &AgentUpdateRequest,
+) -> Result<(), Response> {
+    let denied = requested_update_fields(payload)
+        .into_iter()
+        .filter_map(|field| match update_field_key(field) {
+            Some(key) if customizable.allows(key) => None,
+            Some(_) => Some(json!({ "field": field, "reason": "not_customizable" })),
+            None => Some(json!({ "field": field, "reason": "preset_owned" })),
+        })
+        .collect::<Vec<_>>();
+    if denied.is_empty() {
+        return Ok(());
+    }
+    let names = denied
+        .iter()
+        .filter_map(|item| item.get("field").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("、");
+    Err(crate::api::errors::error_response_with_detail(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        Some(FIELD_NOT_CUSTOMIZABLE),
+        format!("智能体字段不可由用户自定义：{names}"),
+        Some("请移除这些字段，或由管理员在预设智能体中开放对应自定义项。"),
+        Some(json!({ "fields": denied })),
+    ))
+}
+
+/// Outcome of a single-instance update, echoed back to the caller.
+struct SingleAgentUpdate {
+    agent: Value,
+    preset_binding: Value,
+    customizable: crate::config::PresetCustomizable,
+}
+
+/// Applies a partial update to the user's single agent instance.
+///
+/// The caller must have validated that the requested agent id is that instance.
+/// Preset-governed instances accept only the customizable fields declared by the
+/// preset; anything else is rejected with `422 FIELD_NOT_CUSTOMIZABLE`.
+async fn apply_single_agent_update(
+    state: &Arc<AppState>,
+    user: &crate::storage::UserAccountRecord,
+    payload: AgentUpdateRequest,
+) -> Result<SingleAgentUpdate, Response> {
+    let user_id = user.user_id.clone();
+    ensure_preset_agents(state, user).await?;
+    let instance = resolve_single_instance(state, user).await?;
+    let preset_governs = instance.preset_governs;
+    if preset_governs {
+        ensure_update_fields_allowed(&instance.customizable, &payload)?;
+    }
+    let customizable = if preset_governs {
+        instance.customizable
+    } else {
+        crate::config::PresetCustomizable::ALL
+    };
+    let preset_binding = instance.preset_binding_payload();
+    let requested_ability_items = requested_update_ability_items(&payload);
+
+    if crate::services::user_agent_presets::is_default_agent_record(&instance.record) {
+        let mut config = resolve_default_agent_config(state, user).await?;
+        let tool_context = build_user_tool_context(state, &user_id).await;
+        let allowed = compute_allowed_tool_names(user, &tool_context);
+        let skill_name_keys = collect_context_skill_names(&tool_context);
+        if let Some(name) = payload.name.as_deref() {
+            let cleaned = name.trim();
+            if !cleaned.is_empty() {
+                config.name = cleaned.to_string();
+            }
+        }
+        if let Some(description) = payload.description {
+            config.description = description;
+        }
+        if let Some(system_prompt) = payload.system_prompt {
+            config.system_prompt = system_prompt;
+        }
+        if let Some(preview_skill) = payload.preview_skill {
+            config.preview_skill = preview_skill;
+        }
+        if payload.tool_names.is_some()
+            || payload.ability_items.is_some()
+            || payload.abilities.is_some()
+            || payload.declared_tool_names.is_some()
+            || payload.declared_skill_names.is_some()
+        {
+            let requested_tool_names = payload
+                .tool_names
+                .clone()
+                .map(normalize_tool_list)
+                .unwrap_or_else(|| config.tool_names.clone());
+            let selection = resolve_agent_ability_selection(
+                &requested_tool_names,
+                requested_ability_items,
+                payload.declared_tool_names.clone(),
+                payload.declared_skill_names.clone(),
+                &skill_name_keys,
+            );
+            config.tool_names = filter_allowed_tools(
+                &selection.tool_names,
+                &allowed,
+                allow_desktop_control_tool_selection(&tool_context.config),
+            );
+            config.ability_items = selection.ability_items;
+            config.declared_tool_names = selection.declared_tool_names;
+            config.declared_skill_names = selection.declared_skill_names;
+        }
+        if let Some(preset_questions) = payload.preset_questions {
+            config.preset_questions = normalize_preset_questions(preset_questions);
+        }
+        if let Some(status) = payload.status {
+            config.status = normalize_agent_status(Some(&status));
+        }
+        if let Some(approval_mode) = payload.approval_mode {
+            config.approval_mode = normalize_agent_approval_mode(Some(&approval_mode));
+        }
+        if payload.icon.is_some() {
+            config.icon = payload.icon;
+        }
+        if let Some(silent) = payload.silent {
+            config.silent = silent;
+        }
+        if let Some(prefer_mother) = payload.prefer_mother {
+            config.prefer_mother = prefer_mother;
+        }
+        if let Some(sandbox_container_id) = payload.sandbox_container_id {
+            config.sandbox_container_id = normalize_sandbox_container_id(sandbox_container_id);
+        }
+        config.updated_at = now_ts();
+        if config.created_at <= 0.0 {
+            config.created_at = config.updated_at;
+        }
+        save_default_agent_config(state, &user_id, &config)?;
+        sync_inner_visible_after_user_change(state, &user_id).await;
+        let app_config = state.config_store.get().await;
+        let configured_model_name = resolve_default_model_name(&app_config);
+        return Ok(SingleAgentUpdate {
+            agent: default_agent_payload(
+                &config,
+                configured_model_name.as_deref(),
+                &skill_name_keys,
+            ),
+            preset_binding,
+            customizable,
+        });
+    }
+
+    let mut record = instance.record.clone();
+    // Without a live preset the record is fully user-owned; a governed instance
+    // only reaches this point for its customizable fields.
+    let full_control = !preset_governs;
+    if full_control {
+        if let Some(name) = payload.name.as_deref() {
+            let cleaned = name.trim();
+            if !cleaned.is_empty() {
+                record.name = cleaned.to_string();
+            }
+        }
+        if let Some(preview_skill) = payload.preview_skill {
+            record.preview_skill = preview_skill;
+        }
+        if let Some(is_shared) = payload.is_shared {
+            record.is_shared = is_shared;
+        }
+        if let Some(status) = payload.status {
+            record.status = normalize_agent_status(Some(&status));
+        }
+        if payload.icon.is_some() {
+            record.icon = payload.icon;
+        }
+        if let Some(silent) = payload.silent {
+            record.silent = silent;
+        }
+        if let Some(prefer_mother) = payload.prefer_mother {
+            record.prefer_mother = prefer_mother;
+        }
+        if let Some(sandbox_container_id) = payload.sandbox_container_id {
+            record.sandbox_container_id = normalize_sandbox_container_id(sandbox_container_id);
+        }
+    }
+    if let Some(description) = payload.description {
+        record.description = description;
+    }
+    if let Some(preset_questions) = payload.preset_questions {
+        record.preset_questions = normalize_preset_questions(preset_questions);
+    }
+    if let Some(system_prompt) = payload.system_prompt {
+        record.system_prompt = system_prompt;
+    }
+    if payload.model_name.is_some() {
+        record.model_name = normalize_request_model_name(payload.model_name.as_deref());
+    }
+    if payload.tool_names.is_some()
+        || payload.ability_items.is_some()
+        || payload.abilities.is_some()
+        || payload.declared_tool_names.is_some()
+        || payload.declared_skill_names.is_some()
+    {
+        let requested_tool_names = payload
+            .tool_names
+            .clone()
+            .map(normalize_tool_list)
+            .unwrap_or_else(|| record.tool_names.clone());
+        let context = build_user_tool_context(state, &user_id).await;
+        let allowed = compute_allowed_tool_names(user, &context);
+        let skill_name_keys = collect_context_skill_names(&context);
+        let selection = resolve_agent_ability_selection(
+            &requested_tool_names,
+            requested_ability_items,
+            payload.declared_tool_names.clone(),
+            payload.declared_skill_names.clone(),
+            &skill_name_keys,
+        );
+        record.tool_names = filter_allowed_tools(
+            &selection.tool_names,
+            &allowed,
+            allow_desktop_control_tool_selection(&context.config),
+        );
+        record.ability_items = selection.ability_items;
+        record.declared_tool_names = selection.declared_tool_names;
+        record.declared_skill_names = selection.declared_skill_names;
+    }
+    if let Some(approval_mode) = payload.approval_mode {
+        record.approval_mode = normalize_agent_approval_mode(Some(&approval_mode));
+    }
+    // Threads keep their frozen system prompt: only the agent template changes.
+    record.updated_at = now_ts();
+    state
+        .user_store
+        .upsert_user_agent(&record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    sync_inner_visible_after_user_change(state, &user_id).await;
+    let app_config = state.config_store.get().await;
+    let tool_context = build_user_tool_context(state, &user_id).await;
+    let skill_name_keys = collect_context_skill_names(&tool_context);
+    let configured_model_name = resolve_default_model_name(&app_config);
+    Ok(SingleAgentUpdate {
+        agent: agent_payload(&record, configured_model_name.as_deref(), &skill_name_keys),
+        preset_binding,
+        customizable,
+    })
+}
+
+/// `PUT /wunder/agents/{agent_id}` — writes the user's single instance.
+///
+/// Archived / foreign ids stay read-only; the response keeps the historical
+/// `{ "data": <agent> }` shape consumed by the bridge default-agent editor.
+async fn update_agent(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    AxumPath(agent_id): AxumPath<String>,
+    Query(query): Query<AgentUserQuery>,
+    Json(payload): Json<AgentUpdateRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let cleaned = agent_id.trim();
+    if cleaned.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let instance = resolve_single_instance(&state, &resolved.user).await?;
+    let normalized_agent_id = normalize_agent_id(cleaned);
+    let instance_is_default =
+        crate::services::user_agent_presets::is_default_agent_record(&instance.record);
+    if normalized_agent_id.is_empty() {
+        if !instance_is_default {
+            return Err(error_response(
+                StatusCode::NOT_FOUND,
+                i18n::t("error.agent_not_found"),
+            ));
+        }
+    } else if instance_is_default || instance.record.agent_id != normalized_agent_id {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.agent_not_found"),
+        ));
+    }
+    let outcome = apply_single_agent_update(&state, &resolved.user, payload).await?;
+    Ok(Json(json!({ "data": outcome.agent })))
+}
+
+/// `PUT /wunder/user/agent` — same write path, scoped to the current user.
+///
+/// No agent id is required; the response echoes the effective values so clients
+/// can update in the same frame.
+async fn update_user_agent(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<AgentUserQuery>,
+    Json(payload): Json<AgentUpdateRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let outcome = apply_single_agent_update(&state, &resolved.user, payload).await?;
+    Ok(Json(json!({
+        "data": {
+            "agent": outcome.agent,
+            "preset_binding": outcome.preset_binding,
+            "customizable": crate::services::worker_card_settings::customizable_payload(&outcome.customizable),
+        }
+    })))
+}
+
+fn normalize_tool_list(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for raw in values {
+        let name = raw.trim().to_string();
+        if name.is_empty() || seen.contains(&name) {
+            continue;
+        }
+        seen.insert(name.clone());
+        output.push(name);
+    }
+    output
+}
+
+fn collect_context_skill_names(context: &crate::user_access::UserToolContext) -> HashSet<String> {
+    let mut output = HashSet::new();
+    for spec in context.skills.list_specs() {
+        let cleaned = spec.name.trim();
+        if !cleaned.is_empty() {
+            output.insert(cleaned.to_string());
+        }
+    }
+    for spec in &context.bindings.skill_specs {
+        let cleaned = spec.name.trim();
+        if !cleaned.is_empty() {
+            output.insert(cleaned.to_string());
+        }
+    }
+    for (alias, info) in &context.bindings.alias_map {
+        if !matches!(info.kind, UserToolKind::Skill) {
+            continue;
+        }
+        let cleaned_alias = alias.trim();
+        if !cleaned_alias.is_empty() {
+            output.insert(cleaned_alias.to_string());
+        }
+        let cleaned_target = info.target.trim();
+        if !cleaned_target.is_empty() {
+            output.insert(cleaned_target.to_string());
+        }
+    }
+    output
+}
+
+fn requested_create_ability_items(payload: &AgentCreateRequest) -> Option<Vec<AbilityDescriptor>> {
+    payload.ability_items.clone().or_else(|| {
+        payload
+            .abilities
+            .as_ref()
+            .map(|abilities| abilities.items.clone())
+    })
+}
+
+fn requested_update_ability_items(payload: &AgentUpdateRequest) -> Option<Vec<AbilityDescriptor>> {
+    payload.ability_items.clone().or_else(|| {
+        payload
+            .abilities
+            .as_ref()
+            .map(|abilities| abilities.items.clone())
+    })
+}
+
+fn normalize_preset_questions(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for raw in values {
+        let question = raw.trim().to_string();
+        if question.is_empty() || seen.contains(&question) {
+            continue;
+        }
+        seen.insert(question.clone());
+        output.push(question);
+    }
+    output
+}
+
+fn allow_desktop_control_tool_selection(config: &crate::config::Config) -> bool {
+    config.server.mode.trim().eq_ignore_ascii_case("desktop")
+}
+
+fn filter_allowed_tools(
+    values: &[String],
+    allowed: &HashSet<String>,
+    allow_desktop_control_tools: bool,
+) -> Vec<String> {
+    let allowed_canonical: HashSet<String> = allowed
+        .iter()
+        .map(|name| resolve_tool_name(name.trim()))
+        .filter(|name| !name.is_empty())
+        .collect();
+    let desktop_control_tool_names = allow_desktop_control_tools.then(|| {
+        HashSet::from([
+            resolve_tool_name("desktop_controller"),
+            resolve_tool_name("desktop_monitor"),
+        ])
+    });
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for raw in values {
+        let cleaned = raw.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        let canonical = resolve_tool_name(cleaned);
+        let name = if allowed_canonical.contains(&canonical) {
+            canonical
+        } else if allowed.contains(cleaned) {
+            cleaned.to_string()
+        } else if desktop_control_tool_names
+            .as_ref()
+            .is_some_and(|names| names.contains(&canonical))
+        {
+            canonical
+        } else {
+            continue;
+        };
+        if seen.insert(name.clone()) {
+            output.push(name);
+        }
+    }
+    output
+}
+
+fn normalize_agent_status(raw: Option<&str>) -> String {
+    let status = raw.unwrap_or("active").trim();
+    if status.is_empty() {
+        "active".to_string()
+    } else {
+        status.to_string()
+    }
+}
+
+fn normalize_agent_approval_mode(raw: Option<&str>) -> String {
+    let cleaned = raw.unwrap_or("").trim().to_ascii_lowercase();
+    match cleaned.as_str() {
+        "suggest" => "suggest".to_string(),
+        "auto_edit" | "auto-edit" => "auto_edit".to_string(),
+        "full_auto" | "full-auto" => "full_auto".to_string(),
+        _ => DEFAULT_AGENT_APPROVAL_MODE.to_string(),
+    }
+}
+
+fn format_ts(ts: f64) -> String {
+    let millis = (ts * 1000.0) as i64;
+    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(millis)
+        .map(|dt| dt.with_timezone(&chrono::Local).to_rfc3339())
+        .unwrap_or_default()
+}
+
+fn now_ts() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+fn parse_runtime_date(raw: Option<&str>) -> Option<NaiveDate> {
+    let cleaned = raw.unwrap_or("").trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    NaiveDate::parse_from_str(cleaned, "%Y-%m-%d").ok()
+}
+
+fn build_runtime_day_map(
+    range_start: NaiveDate,
+    range_end: NaiveDate,
+) -> BTreeMap<String, ThreadRuntimeDayStats> {
+    let mut result = BTreeMap::new();
+    let mut cursor = range_start;
+    while cursor <= range_end {
+        result.insert(
+            cursor.format("%Y-%m-%d").to_string(),
+            ThreadRuntimeDayStats::default(),
+        );
+        cursor += Duration::days(1);
+    }
+    result
+}
+
+fn resolve_local_datetime(naive: NaiveDateTime) -> Option<DateTime<Local>> {
+    match Local.from_local_datetime(&naive) {
+        LocalResult::Single(dt) => Some(dt),
+        LocalResult::Ambiguous(early, _) => Some(early),
+        LocalResult::None => Some(Utc.from_utc_datetime(&naive).with_timezone(&Local)),
+    }
+}
+
+fn local_day_bounds(date: NaiveDate) -> Option<(f64, f64)> {
+    let start_naive = date.and_hms_opt(0, 0, 0)?;
+    let next_day_naive = (date + Duration::days(1)).and_hms_opt(0, 0, 0)?;
+    let start = resolve_local_datetime(start_naive)?;
+    let end = resolve_local_datetime(next_day_naive)?;
+    Some((
+        start.timestamp_millis() as f64 / 1000.0,
+        end.timestamp_millis() as f64 / 1000.0,
+    ))
+}
+
+fn runtime_local_datetime(ts: f64) -> Option<DateTime<Local>> {
+    if !ts.is_finite() || ts <= 0.0 {
+        return None;
+    }
+    let secs = ts.trunc() as i64;
+    let fract = (ts - secs as f64).max(0.0);
+    let mut nanos = (fract * 1_000_000_000.0).round() as u32;
+    if nanos >= 1_000_000_000 {
+        nanos = 999_999_999;
+    }
+    DateTime::<Utc>::from_timestamp(secs, nanos).map(|dt| dt.with_timezone(&Local))
+}
+
+fn runtime_day_key(ts: f64) -> Option<String> {
+    runtime_local_datetime(ts).map(|dt| dt.format("%Y-%m-%d").to_string())
+}
+
+fn runtime_day_hour(ts: f64) -> Option<usize> {
+    runtime_local_datetime(ts).map(|dt| dt.hour() as usize)
+}
+
+fn parse_timestamp_value(value: Option<&Value>) -> Option<f64> {
+    let value = value?;
+    if let Some(ts) = value.as_f64().filter(|ts| ts.is_finite() && *ts > 0.0) {
+        return Some(ts);
+    }
+    let text = value.as_str()?.trim();
+    if text.is_empty() {
+        return None;
+    }
+    if let Ok(parsed) = text.parse::<f64>() {
+        if parsed.is_finite() && parsed > 0.0 {
+            return Some(parsed);
+        }
+    }
+    DateTime::parse_from_rfc3339(text)
+        .ok()
+        .map(|dt| dt.timestamp_millis() as f64 / 1000.0)
+}
+
+fn parse_i64_value(value: Option<&Value>) -> Option<i64> {
+    let value = value?;
+    if let Some(parsed) = value.as_i64() {
+        return Some(parsed);
+    }
+    if let Some(parsed) = value.as_u64() {
+        return Some(parsed as i64);
+    }
+    if let Some(parsed) = value.as_f64() {
+        if !parsed.is_finite() {
+            return None;
+        }
+        return Some(parsed.round() as i64);
+    }
+    value.as_str()?.trim().parse::<i64>().ok()
+}
+
+fn parse_usage_total_tokens(data: &Value) -> i64 {
+    let direct_total = parse_i64_value(data.get("total_tokens"));
+    let nested_total = data
+        .get("usage")
+        .and_then(|usage| parse_i64_value(usage.get("total_tokens")));
+    if let Some(total) = direct_total.or(nested_total) {
+        return total.max(0);
+    }
+    let direct_input = parse_i64_value(data.get("input_tokens")).unwrap_or(0);
+    let direct_output = parse_i64_value(data.get("output_tokens")).unwrap_or(0);
+    if direct_input > 0 || direct_output > 0 {
+        return direct_input.saturating_add(direct_output).max(0);
+    }
+    let nested_input = data
+        .get("usage")
+        .and_then(|usage| parse_i64_value(usage.get("input_tokens")))
+        .unwrap_or(0);
+    let nested_output = data
+        .get("usage")
+        .and_then(|usage| parse_i64_value(usage.get("output_tokens")))
+        .unwrap_or(0);
+    nested_input.saturating_add(nested_output).max(0)
+}
+
+fn build_tool_display_to_runtime_map(
+    display_map: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut reverse = HashMap::new();
+    for (runtime_name, display_name) in display_map {
+        let runtime_name = runtime_name.trim();
+        let display_name = display_name.trim();
+        if runtime_name.is_empty() || display_name.is_empty() {
+            continue;
+        }
+        reverse
+            .entry(display_name.to_string())
+            .or_insert_with(|| runtime_name.to_string());
+    }
+    reverse
+}
+
+fn extract_event_string(data: &Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        let Some(value) = data.get(key).and_then(Value::as_str) else {
+            continue;
+        };
+        let cleaned = value.trim();
+        if !cleaned.is_empty() {
+            return Some(cleaned.to_string());
+        }
+    }
+    None
+}
+
+fn extract_event_tool_runtime_name(
+    data: &Value,
+    display_to_runtime_map: &HashMap<String, String>,
+) -> String {
+    if let Some(runtime_name) = extract_event_string(
+        data,
+        &[
+            "tool_runtime_name",
+            "runtime_name",
+            "tool_name",
+            "toolName",
+            "function_name",
+            "tool_function_name",
+        ],
+    ) {
+        return runtime_name;
+    }
+    if let Some(name) = extract_event_string(data, &["tool", "name"]) {
+        return display_to_runtime_map
+            .get(name.as_str())
+            .cloned()
+            .unwrap_or(name);
+    }
+    "unknown".to_string()
+}
+
+fn extract_event_tool_display_name(data: &Value) -> Option<String> {
+    extract_event_string(data, &["tool_display_name", "display_name", "displayName"])
+}
+
+fn classify_runtime_heatmap_tool(runtime_name: &str) -> String {
+    let trimmed = runtime_name.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if trimmed.contains('@') {
+        return "mcp".to_string();
+    }
+    if lower.starts_with("kb_") || lower.contains("knowledge") || lower.contains("rag") {
+        return "knowledge".to_string();
+    }
+    "other".to_string()
+}
+
+fn accumulate_runtime_seconds(
+    daily: &mut BTreeMap<String, ThreadRuntimeDayStats>,
+    start_ts: f64,
+    end_ts: f64,
+    range_start_ts: f64,
+    range_end_ts: f64,
+) {
+    if !start_ts.is_finite() || !end_ts.is_finite() {
+        return;
+    }
+    let mut cursor = start_ts.max(range_start_ts);
+    let end = end_ts.min(range_end_ts);
+    if end <= cursor {
+        return;
+    }
+    while cursor < end {
+        let Some(dt) = runtime_local_datetime(cursor) else {
+            break;
+        };
+        let day_key = dt.format("%Y-%m-%d").to_string();
+        let Some((_, day_end_ts)) = local_day_bounds(dt.date_naive()) else {
+            break;
+        };
+        let segment_end = end.min(day_end_ts);
+        if segment_end <= cursor {
+            break;
+        }
+        let duration = (segment_end - cursor).max(0.0);
+        if duration > 0.0 {
+            if let Some(entry) = daily.get_mut(&day_key) {
+                entry.runtime_seconds += duration;
+            }
+        }
+        cursor = segment_end;
+    }
+}
+
+fn round_f64(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
+}
+
+async fn ensure_preset_agents(
+    state: &AppState,
+    user: &crate::storage::UserAccountRecord,
+) -> Result<(), Response> {
+    crate::services::user_agent_presets::ensure_user_agent_bootstrap(state, user)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(())
+}
+
+fn normalize_agent_id(raw: &str) -> String {
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return "".to_string();
+    }
+    let lowered = cleaned.to_ascii_lowercase();
+    if lowered == "__default__" || lowered == "default" {
+        return "".to_string();
+    }
+    cleaned.to_string()
+}
+
+fn is_default_agent_alias_value(raw: &str) -> bool {
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return false;
+    }
+    cleaned.eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS) || cleaned.eq_ignore_ascii_case("default")
+}
+
+fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
+    if is_builtin_default_agent_name(&config.name) {
+        config.name = DEFAULT_AGENT_NAME.to_string();
+    }
+    if config.description.trim().is_empty() {
+        config.description = DEFAULT_AGENT_DESCRIPTION.to_string();
+    }
+    if config.system_prompt.trim().is_empty() {
+        config.system_prompt = DEFAULT_AGENT_SYSTEM_PROMPT.to_string();
+    }
+    if config.status.trim().is_empty() {
+        config.status = DEFAULT_AGENT_STATUS.to_string();
+    } else {
+        config.status = normalize_agent_status(Some(&config.status));
+    }
+    if config.approval_mode.trim().is_empty() {
+        config.approval_mode = DEFAULT_AGENT_APPROVAL_MODE.to_string();
+    } else {
+        config.approval_mode = normalize_agent_approval_mode(Some(&config.approval_mode));
+    }
+    if config.sandbox_container_id <= 0 {
+        config.sandbox_container_id = DEFAULT_SANDBOX_CONTAINER_ID;
+    }
+    config.tool_names = normalize_tool_list(std::mem::take(&mut config.tool_names));
+    config.ability_items = normalize_ability_items(std::mem::take(&mut config.ability_items));
+    config.declared_tool_names =
+        normalize_tool_list(std::mem::take(&mut config.declared_tool_names));
+    config.declared_skill_names =
+        normalize_tool_list(std::mem::take(&mut config.declared_skill_names));
+    config.preset_questions =
+        normalize_preset_questions(std::mem::take(&mut config.preset_questions));
+    for question in &mut config.preset_questions {
+        if question == LEGACY_AGENT_PRESET_QUESTION_DRAW_HEART {
+            *question = DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF.to_string();
+        }
+    }
+    if config.preset_questions.is_empty() {
+        config.preset_questions = default_agent_preset_questions();
+    }
+}
+
+fn default_agent_preset_questions() -> Vec<String> {
+    vec![
+        DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF.to_string(),
+        DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE.to_string(),
+    ]
+}
+
+async fn load_default_agent_config(
+    state: &AppState,
+    user_id: &str,
+) -> Result<Option<DefaultAgentConfig>, Response> {
+    let key = default_agent_meta_key(user_id);
+    let raw = state
+        .user_store
+        .get_meta(&key)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return Ok(None);
+    }
+    let mut parsed: DefaultAgentConfig = match serde_json::from_str(cleaned) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    normalize_default_agent_config(&mut parsed);
+    Ok(Some(parsed))
+}
+
+async fn build_default_agent_config(
+    state: &AppState,
+    user: &crate::storage::UserAccountRecord,
+) -> DefaultAgentConfig {
+    let context = build_user_tool_context(state, &user.user_id).await;
+    let allowed = compute_allowed_tool_names(user, &context);
+    let skill_name_keys = collect_context_skill_names(&context);
+    let tool_names = curated_default_tool_names_for_config(&context.config, &allowed);
+    let now = now_ts();
+    let mut config = DefaultAgentConfig {
+        name: DEFAULT_AGENT_NAME.to_string(),
+        description: DEFAULT_AGENT_DESCRIPTION.to_string(),
+        system_prompt: DEFAULT_AGENT_SYSTEM_PROMPT.to_string(),
+        preview_skill: false,
+        ability_items: resolve_record_ability_items(&[], &tool_names, &[], &[], &skill_name_keys),
+        tool_names,
+        declared_tool_names: Vec::new(),
+        declared_skill_names: Vec::new(),
+        visible_unit_ids: Vec::new(),
+        preset_questions: default_agent_preset_questions(),
+        approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
+        status: DEFAULT_AGENT_STATUS.to_string(),
+        icon: Some("avatar-046".to_string()),
+        sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
+        silent: false,
+        prefer_mother: false,
+        created_at: now,
+        updated_at: now,
+    };
+    let (declared_tool_names, declared_skill_names) = resolve_record_declared_names(
+        &config.ability_items,
+        &config.tool_names,
+        &config.declared_tool_names,
+        &config.declared_skill_names,
+        &skill_name_keys,
+    );
+    config.declared_tool_names = declared_tool_names;
+    config.declared_skill_names = declared_skill_names;
+    normalize_default_agent_config(&mut config);
+    config
+}
+
+async fn resolve_default_agent_config(
+    state: &AppState,
+    user: &crate::storage::UserAccountRecord,
+) -> Result<DefaultAgentConfig, Response> {
+    if let Some(mut config) = load_default_agent_config(state, &user.user_id).await? {
+        let now = now_ts();
+        if config.created_at <= 0.0 {
+            config.created_at = now;
+        }
+        if config.updated_at <= 0.0 {
+            config.updated_at = config.created_at;
+        }
+        return Ok(config);
+    }
+    let record = state
+        .user_store
+        .get_user_agent(&user.user_id, DEFAULT_AGENT_ID_ALIAS)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if let Some(record) = record {
+        let mut config = default_agent_config_from_record(&record);
+        normalize_default_agent_config(&mut config);
+        return Ok(config);
+    }
+    Ok(build_default_agent_config(state, user).await)
+}
+
+fn default_agent_payload(
+    config: &DefaultAgentConfig,
+    model_name: Option<&str>,
+    skill_name_keys: &HashSet<String>,
+) -> Value {
+    let effective_model_name = normalize_request_model_name(model_name);
+    let (declared_tool_names, declared_skill_names) = resolve_record_declared_names(
+        &config.ability_items,
+        &config.tool_names,
+        &config.declared_tool_names,
+        &config.declared_skill_names,
+        skill_name_keys,
+    );
+    let ability_items = resolve_record_ability_items(
+        &config.ability_items,
+        &config.tool_names,
+        &declared_tool_names,
+        &declared_skill_names,
+        skill_name_keys,
+    );
+    json!({
+        "id": DEFAULT_AGENT_ID_ALIAS,
+        "name": config.name,
+        "description": config.description,
+        "system_prompt": config.system_prompt,
+        "preview_skill": config.preview_skill,
+        "configured_model_name": Value::Null,
+        "model_name": effective_model_name,
+        "ability_items": ability_items.clone(),
+        "abilities": { "items": ability_items },
+        "tool_names": config.tool_names,
+        "declared_tool_names": declared_tool_names,
+        "declared_skill_names": declared_skill_names,
+        "visible_unit_ids": config.visible_unit_ids,
+        "preset_questions": config.preset_questions,
+        "access_level": DEFAULT_AGENT_ACCESS_LEVEL,
+        "approval_mode": normalize_agent_approval_mode(Some(&config.approval_mode)),
+        "is_shared": false,
+        "status": normalize_agent_status(Some(&config.status)),
+        "icon": config.icon,
+        "silent": config.silent,
+        "prefer_mother": config.prefer_mother,
+        "sandbox_container_id": normalize_sandbox_container_id(config.sandbox_container_id),
+        "created_at": format_ts(config.created_at),
+        "updated_at": format_ts(config.updated_at),
+        "preset_binding": Value::Null,
+    })
+}
+
+fn resolve_default_model_name(config: &crate::config::Config) -> Option<String> {
+    let default_key = config.llm.default.trim();
+    if !default_key.is_empty() {
+        return Some(default_key.to_string());
+    }
+    resolve_available_model_names(config).into_iter().next()
+}
+
+fn resolve_available_model_names(config: &crate::config::Config) -> Vec<String> {
+    let mut names = Vec::new();
+    for (key, cfg) in config.llm.models.iter() {
+        if !is_llm_model(cfg) {
+            continue;
+        }
+        let trimmed = key.trim();
+        if !trimmed.is_empty() {
+            names.push(trimmed.to_string());
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Contract model view (`§12.2.1` 4)): `{id, name, context, source, is_default}`.
+///
+/// `context`/`source` come from the admin model configuration when available
+/// and are omitted instead of invented when they are not.
+fn resolve_available_models(
+    config: &crate::config::Config,
+    default_model_name: Option<&str>,
+) -> Vec<Value> {
+    let default_key = default_model_name.unwrap_or("").trim();
+    resolve_available_model_names(config)
+        .into_iter()
+        .map(|name| {
+            let model = config.llm.models.get(&name);
+            let mut item = serde_json::Map::new();
+            item.insert("id".to_string(), json!(name));
+            item.insert("name".to_string(), json!(name));
+            if let Some(context) = model.and_then(|cfg| cfg.max_context) {
+                item.insert("context".to_string(), json!(context));
+            }
+            if let Some(source) = model
+                .and_then(|cfg| cfg.provider.clone())
+                .map(|provider| provider.trim().to_string())
+                .filter(|provider| !provider.is_empty())
+            {
+                item.insert("source".to_string(), json!(source));
+            }
+            item.insert(
+                "is_default".to_string(),
+                json!(!default_key.is_empty() && name == default_key),
+            );
+            Value::Object(item)
+        })
+        .collect()
+}
+
+fn normalize_request_model_name(raw: Option<&str>) -> Option<String> {
+    raw.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn save_default_agent_config(
+    state: &AppState,
+    user_id: &str,
+    config: &DefaultAgentConfig,
+) -> Result<(), Response> {
+    let key = default_agent_meta_key(user_id);
+    let payload = serde_json::to_string(config)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    state
+        .user_store
+        .set_meta(&key, &payload)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(())
+}
+
+async fn sync_inner_visible_after_user_change(state: &AppState, user_id: &str) {
+    if let Err(err) = state.inner_visible.materialize_user_state(user_id).await {
+        tracing::warn!("failed to sync inner-visible state for {user_id}: {err}");
+    }
+}
+
+async fn sync_inner_visible_before_user_read(
+    state: &AppState,
+    user_id: &str,
+) -> Result<(), Response> {
+    state
+        .inner_visible
+        .sync_user_state(user_id)
+        .await
+        .map_err(|err| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                format!("failed to sync inner-visible state for user read: {err}"),
+            )
+        })?;
+    Ok(())
+}
+
+fn error_response(status: StatusCode, message: String) -> Response {
+    crate::api::errors::error_response(status, message)
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentAbilitiesRequest {
+    #[serde(default)]
+    items: Vec<AbilityDescriptor>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentCreateRequest {
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    system_prompt: Option<String>,
+    #[serde(default, alias = "modelName", alias = "model_name")]
+    model_name: Option<String>,
+    #[serde(default)]
+    tool_names: Vec<String>,
+    #[serde(default, alias = "abilityItems", alias = "ability_items")]
+    ability_items: Option<Vec<AbilityDescriptor>>,
+    #[serde(default)]
+    abilities: Option<AgentAbilitiesRequest>,
+    #[serde(default, alias = "declaredToolNames", alias = "declared_tool_names")]
+    declared_tool_names: Option<Vec<String>>,
+    #[serde(default, alias = "declaredSkillNames", alias = "declared_skill_names")]
+    declared_skill_names: Option<Vec<String>>,
+    #[serde(default, alias = "presetQuestions", alias = "preset_questions")]
+    preset_questions: Vec<String>,
+    #[serde(default)]
+    is_shared: Option<bool>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(
+        default,
+        alias = "approvalMode",
+        alias = "approval_mode",
+        alias = "permissionLevel",
+        alias = "permission_level"
+    )]
+    approval_mode: Option<String>,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default, alias = "silentMode", alias = "silent_mode")]
+    silent: Option<bool>,
+    #[serde(default, alias = "preferMother", alias = "prefer_mother")]
+    prefer_mother: Option<bool>,
+    #[serde(default, alias = "previewSkill", alias = "preview_skill")]
+    preview_skill: Option<bool>,
+    #[serde(default)]
+    sandbox_container_id: Option<i32>,
+    #[serde(default, alias = "copyFromAgentId", alias = "copy_from_agent_id")]
+    copy_from_agent_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadRuntimeRecordsQuery {
+    #[serde(default)]
+    user_id: Option<String>,
+    #[serde(default)]
+    days: Option<i64>,
+    #[serde(default)]
+    date: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentUpdateRequest {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    system_prompt: Option<String>,
+    #[serde(default, alias = "modelName", alias = "model_name")]
+    model_name: Option<String>,
+    #[serde(default)]
+    tool_names: Option<Vec<String>>,
+    #[serde(default, alias = "abilityItems", alias = "ability_items")]
+    ability_items: Option<Vec<AbilityDescriptor>>,
+    #[serde(default)]
+    abilities: Option<AgentAbilitiesRequest>,
+    #[serde(default, alias = "declaredToolNames", alias = "declared_tool_names")]
+    declared_tool_names: Option<Vec<String>>,
+    #[serde(default, alias = "declaredSkillNames", alias = "declared_skill_names")]
+    declared_skill_names: Option<Vec<String>>,
+    #[serde(default, alias = "presetQuestions", alias = "preset_questions")]
+    preset_questions: Option<Vec<String>>,
+    #[serde(default)]
+    is_shared: Option<bool>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(
+        default,
+        alias = "approvalMode",
+        alias = "approval_mode",
+        alias = "permissionLevel",
+        alias = "permission_level"
+    )]
+    approval_mode: Option<String>,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default, alias = "silentMode", alias = "silent_mode")]
+    silent: Option<bool>,
+    #[serde(default, alias = "preferMother", alias = "prefer_mother")]
+    prefer_mother: Option<bool>,
+    #[serde(default, alias = "previewSkill", alias = "preview_skill")]
+    preview_skill: Option<bool>,
+    #[serde(default)]
+    sandbox_container_id: Option<i32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        default_agent_payload, filter_allowed_tools, has_active_runtime_evidence,
+        requested_create_ability_items, AgentCreateRequest, DefaultAgentConfig,
+    };
+    use crate::storage::SessionLockRecord;
+    use serde_json::json;
+    use std::collections::HashSet;
+
+    #[test]
+    fn create_request_reads_top_level_ability_items() {
+        let payload: AgentCreateRequest = serde_json::from_value(json!({
+            "name": "demo",
+            "ability_items": [{
+                "id": "builtin:read_file",
+                "name": "read_file",
+                "runtime_name": "read_file",
+                "display_name": "read_file",
+                "description": "",
+                "input_schema": {},
+                "group": "builtin",
+                "source": "builtin",
+                "kind": "tool"
+            }]
+        }))
+        .expect("parse payload");
+        let items = requested_create_ability_items(&payload).expect("ability items");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].runtime_name, "read_file");
+    }
+
+    #[test]
+    fn create_request_reads_nested_ability_items() {
+        let payload: AgentCreateRequest = serde_json::from_value(json!({
+            "name": "demo",
+            "abilities": {
+                "items": [{
+                    "id": "skill:planner",
+                    "name": "planner",
+                    "runtime_name": "planner",
+                    "display_name": "planner",
+                    "description": "",
+                    "input_schema": {},
+                    "group": "skills",
+                    "source": "skill",
+                    "kind": "skill"
+                }]
+            }
+        }))
+        .expect("parse payload");
+        let items = requested_create_ability_items(&payload).expect("ability items");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].runtime_name, "planner");
+    }
+
+    #[test]
+    fn default_agent_payload_keeps_declared_dependencies() {
+        let payload = default_agent_payload(
+            &DefaultAgentConfig {
+                name: "Default Agent".to_string(),
+                description: String::new(),
+                system_prompt: String::new(),
+                preview_skill: false,
+                ability_items: Vec::new(),
+                tool_names: vec!["read_file".to_string(), "planner".to_string()],
+                declared_tool_names: vec!["read_file".to_string()],
+                declared_skill_names: vec!["planner".to_string()],
+                visible_unit_ids: Vec::new(),
+                preset_questions: Vec::new(),
+                approval_mode: "full_auto".to_string(),
+                status: "active".to_string(),
+                icon: None,
+                sandbox_container_id: 1,
+                silent: false,
+                prefer_mother: false,
+                created_at: 1.0,
+                updated_at: 1.0,
+            },
+            None,
+            &HashSet::from(["planner".to_string()]),
+        );
+
+        assert_eq!(payload["tool_names"], json!(["read_file", "planner"]));
+        assert_eq!(payload["declared_tool_names"], json!(["read_file"]));
+        assert_eq!(payload["declared_skill_names"], json!(["planner"]));
+    }
+
+    #[test]
+    fn filter_allowed_tools_keeps_desktop_tools_in_desktop_mode() {
+        let requested = vec![
+            "desktop_controller".to_string(),
+            "desktop_monitor".to_string(),
+            "unknown_tool".to_string(),
+        ];
+        let allowed = HashSet::new();
+
+        assert_eq!(
+            filter_allowed_tools(&requested, &allowed, true),
+            vec![
+                crate::tools::resolve_tool_name("desktop_controller"),
+                crate::tools::resolve_tool_name("desktop_monitor"),
+            ]
+        );
+    }
+
+    #[test]
+    fn filter_allowed_tools_keeps_web_fetch_alias_when_allowed_by_canonical_name() {
+        let requested = vec!["web_fetch".to_string()];
+        let canonical = crate::tools::resolve_tool_name("web_fetch");
+        let allowed = HashSet::from([canonical.clone()]);
+
+        assert_eq!(
+            filter_allowed_tools(&requested, &allowed, false),
+            vec![canonical]
+        );
+    }
+
+    #[test]
+    fn filter_allowed_tools_keeps_web_fetch_canonical_when_allowed_by_alias() {
+        let canonical = crate::tools::resolve_tool_name("web_fetch");
+        let requested = vec![canonical.clone()];
+        let allowed = HashSet::from(["web_fetch".to_string()]);
+
+        assert_eq!(
+            filter_allowed_tools(&requested, &allowed, false),
+            vec![canonical]
+        );
+    }
+
+    #[test]
+    fn filter_allowed_tools_still_rejects_desktop_tools_outside_desktop_mode() {
+        let requested = vec![
+            "desktop_controller".to_string(),
+            "desktop_monitor".to_string(),
+        ];
+        let allowed = HashSet::new();
+
+        assert!(filter_allowed_tools(&requested, &allowed, false).is_empty());
+    }
+
+    #[test]
+    fn running_agent_state_requires_active_runtime_evidence() {
+        assert!(!has_active_runtime_evidence("sess_a", 100.0, &[], &[], &[]));
+        assert!(has_active_runtime_evidence(
+            "sess_a",
+            100.0,
+            &[SessionLockRecord {
+                session_id: "sess_a".to_string(),
+                user_id: "alice".to_string(),
+                agent_id: "agent_a".to_string(),
+                updated_time: 99.0,
+                expires_at: 120.0,
+            }],
+            &[],
+            &[],
+        ));
+        assert!(!has_active_runtime_evidence(
+            "sess_a",
+            100.0,
+            &[SessionLockRecord {
+                session_id: "sess_a".to_string(),
+                user_id: "alice".to_string(),
+                agent_id: "agent_a".to_string(),
+                updated_time: 70.0,
+                expires_at: 80.0,
+            }],
+            &[("completed", 98.0)],
+            &[],
+        ));
+        assert!(has_active_runtime_evidence(
+            "sess_a",
+            100.0,
+            &[],
+            &[("running", 0.0)],
+            &[],
+        ));
+        assert!(has_active_runtime_evidence(
+            "sess_a",
+            100.0,
+            &[],
+            &[],
+            &["pending"],
+        ));
+        assert!(has_active_runtime_evidence(
+            "sess_a",
+            100.0,
+            &[],
+            &[],
+            &["retry"],
+        ));
+    }
+
+    #[test]
+    fn runtime_heatmap_resolves_display_alias_to_runtime_name() {
+        let display_map = std::collections::HashMap::from([(
+            "server@tool_alpha".to_string(),
+            "展示工具（示例）".to_string(),
+        )]);
+        let reverse = super::build_tool_display_to_runtime_map(&display_map);
+        let payload = json!({
+            "tool": "展示工具（示例）",
+            "args": {}
+        });
+
+        assert_eq!(
+            super::extract_event_tool_runtime_name(&payload, &reverse),
+            "server@tool_alpha"
+        );
+        assert_eq!(
+            super::classify_runtime_heatmap_tool("server@tool_alpha"),
+            "mcp"
+        );
+    }
+}

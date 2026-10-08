@@ -1,0 +1,73 @@
+// Structured tool result viewer (§7.3 C). Section data is pre-bounded by the
+// native projection; this component only lays out what it was handed and is
+// instantiated after the user unfolds the entry, never while streaming.
+import { I18n } from "i18n.slint";
+import { Theme, WorkflowSection } from "theme.slint";
+
+export component WorkflowDetail inherits Rectangle {
+    in property <[WorkflowSection]> sections;
+    in property <string> fallback;
+    callback copy(string);
+    height: column.preferred-height;
+    column := VerticalLayout {
+        height: self.preferred-height; spacing: 8px; alignment: start;
+        if root.sections.length == 0 || !root.sections[0].kind.starts-with("compaction") : HorizontalLayout { height: 22px;
+            Text { text: I18n.wf_tool_result; color: Theme.muted; font-size: Theme.font-xs; font-weight: 700; }
+            Rectangle { horizontal-stretch: 1; }
+            Rectangle { width: 24px; height: 24px; border-radius: 7px; border-width: 1px; border-color: Theme.border; background: copy-area.has-hover ? Theme.hover : transparent;
+                Image { width: 12px; height: 12px; source: @image-url("../assets/icons/copy.svg"); colorize: Theme.muted; image-fit: contain; }
+                copy-area := TouchArea { mouse-cursor: pointer; clicked => { root.copy(root.fallback); } }
+            }
+        }
+        if root.sections.length == 0 : TextInput { text: root.fallback; read-only: true; wrap: word-wrap; color: Theme.text-secondary; font-size: Theme.font-sm; }
+        for section in root.sections : Rectangle {
+            height: content.preferred-height + 20px;
+            background: Theme.panel; border-width: 1px;
+            border-color: section.kind == "error" ? Theme.danger.transparentize(0.55) : Theme.border; border-radius: 10px;
+            content := VerticalLayout {
+                x: 10px; y: 10px; width: parent.width - 20px; height: self.preferred-height; spacing: 8px;
+                if section.kind != "compaction-usage" : HorizontalLayout { spacing: 8px;
+                    Text { text: section.title; color: Theme.text; font-family: Theme.font-mono; font-size: Theme.font-sm; font-weight: 600; wrap: word-wrap; horizontal-stretch: 1; }
+                    Text { text: section.meta; color: Theme.muted; font-size: Theme.font-xs; }
+                }
+                if section.kind == "compaction-usage" : VerticalLayout { spacing: 6px;
+                    Rectangle { height: 10px; border-radius: 5px; background: Theme.hover;
+                        for value in section.lines : Rectangle {
+                            visible: value.ratio >= 0; x: 0px; width: parent.width * max(0.06, value.ratio); height: 10px; border-radius: 5px;
+                            background: value.kind == "before" ? Theme.danger.transparentize(0.45) : Theme.thought;
+                        }
+                    }
+                    HorizontalLayout { spacing: 10px;
+                        Text { text: section.lines.length > 1 ? section.lines[1].text : ""; color: Theme.text-secondary; font-size: 10px; wrap: word-wrap; horizontal-stretch: 1; }
+                        Text { text: section.lines.length > 0 ? section.lines[0].text : ""; color: Theme.danger; font-size: 10px; wrap: word-wrap; horizontal-alignment: right; horizontal-stretch: 1; }
+                    }
+                }
+                if section.kind != "compaction-usage" : VerticalLayout { spacing: 1px;
+                    for line in section.lines : Rectangle {
+                        private property <bool> gutter: section.kind == "patch" && line.kind != "header" && line.kind != "note";
+                        height: max(20px, line-text.preferred-height + 4px);
+                        background: line.kind == "add" ? Theme.diff-add-bg
+                            : line.kind == "delete" || line.kind == "error" ? Theme.diff-del-bg
+                            : line.kind == "header" ? Theme.diff-header
+                            : transparent;
+                        if self.gutter : Rectangle { x: 0px; width: 56px; height: parent.height; background: Theme.surface;
+                            Text { x: 10px; y: 2px; text: line.number; color: Theme.muted; font-family: Theme.font-mono; font-size: 11px; }
+                        }
+                        Text { x: parent.gutter ? 64px : 8px; y: 2px; width: 20px;
+                            text: section.kind != "patch" ? "" : line.kind == "add" ? "+" : line.kind == "delete" ? "−" : line.kind == "error" ? "!" : "";
+                            color: line.kind == "add" ? Theme.success : line.kind == "delete" || line.kind == "error" ? Theme.danger : Theme.muted;
+                            font-family: Theme.font-mono; font-size: Theme.font-sm; }
+                        line-text := TextInput {
+                            x: parent.gutter ? 88px : 10px; y: 2px; width: parent.width - self.x - 8px; height: self.preferred-height;
+                            text: line.text; read-only: true; wrap: word-wrap; font-family: Theme.font-mono; font-size: Theme.font-sm;
+                            color: line.kind == "add" ? Theme.diff-add-text
+                                : line.kind == "delete" || line.kind == "error" ? Theme.diff-del-text
+                                : line.kind == "header" || line.kind == "note" ? Theme.muted
+                                : Theme.text-secondary;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,2199 @@
+use super::*;
+use crate::patch_diff::{build_patch_diff_preview, format_patch_diff_preview_lines};
+use crate::tool_display::summarize_tool_result;
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct TranscriptWindowSpec {
+    pub(super) start_entry: usize,
+    pub(super) end_entry_exclusive: usize,
+    pub(super) local_scroll: u16,
+    pub(super) total_lines: usize,
+}
+
+pub(super) fn compute_transcript_window_spec(
+    line_counts: &[usize],
+    viewport_height: u16,
+    offset_from_bottom: usize,
+) -> TranscriptWindowSpec {
+    if line_counts.is_empty() {
+        return TranscriptWindowSpec {
+            start_entry: 0,
+            end_entry_exclusive: 0,
+            local_scroll: 0,
+            total_lines: 0,
+        };
+    }
+
+    let viewport = usize::from(viewport_height.max(1));
+    let total_lines = line_counts.iter().copied().sum::<usize>();
+    let max_scroll = total_lines.saturating_sub(viewport);
+    let offset = offset_from_bottom.min(max_scroll);
+    let top_line = max_scroll.saturating_sub(offset);
+
+    let mut cumulative = 0usize;
+    let mut start_entry = 0usize;
+    let mut start_line = 0usize;
+    for (index, count) in line_counts.iter().copied().enumerate() {
+        let next = cumulative.saturating_add(count);
+        if top_line < next {
+            start_entry = index;
+            start_line = cumulative;
+            break;
+        }
+        cumulative = next;
+        start_entry = index.saturating_add(1);
+        start_line = cumulative;
+    }
+
+    if start_entry >= line_counts.len() {
+        start_entry = line_counts.len().saturating_sub(1);
+        start_line = total_lines.saturating_sub(line_counts[start_entry]);
+    }
+
+    let local_scroll_lines = top_line.saturating_sub(start_line);
+    let needed_lines = local_scroll_lines
+        .saturating_add(viewport)
+        .saturating_add(1);
+
+    let mut end_entry_exclusive = start_entry;
+    let mut rendered_lines = 0usize;
+    while end_entry_exclusive < line_counts.len() && rendered_lines < needed_lines {
+        rendered_lines = rendered_lines.saturating_add(line_counts[end_entry_exclusive]);
+        end_entry_exclusive = end_entry_exclusive.saturating_add(1);
+    }
+    if end_entry_exclusive <= start_entry {
+        end_entry_exclusive = start_entry.saturating_add(1).min(line_counts.len());
+    }
+
+    TranscriptWindowSpec {
+        start_entry,
+        end_entry_exclusive,
+        local_scroll: local_scroll_lines.min(u16::MAX as usize) as u16,
+        total_lines,
+    }
+}
+
+pub(crate) fn log_prefix(kind: LogKind) -> &'static str {
+    match kind {
+        LogKind::Info => "• ",
+        LogKind::User => "▌ ",
+        LogKind::Assistant => "• ",
+        LogKind::Reasoning => "• ",
+        LogKind::Tool => "• ",
+        LogKind::Approval => "! ",
+        LogKind::Inquiry => "? ",
+        LogKind::Error => "✕ ",
+    }
+}
+
+pub(super) fn backtrack_user_text(entry: &LogEntry) -> Option<String> {
+    if entry.kind != LogKind::User {
+        return None;
+    }
+    let text = entry.text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    Some(text.to_string())
+}
+
+pub(super) fn normalize_popup_token(raw: &str) -> Option<String> {
+    let cleaned = raw
+        .trim_matches(|ch: char| {
+            ch.is_whitespace()
+                || matches!(
+                    ch,
+                    '"' | '\''
+                        | '`'
+                        | ','
+                        | '.'
+                        | ';'
+                        | ':'
+                        | ')'
+                        | '('
+                        | '['
+                        | ']'
+                        | '{'
+                        | '}'
+                        | '<'
+                        | '>'
+                        | '\n'
+                        | '\r'
+                )
+        })
+        .trim();
+    let first = cleaned.chars().next()?;
+    if !matches!(first, '@' | '$' | '#') {
+        return None;
+    }
+    let rest = cleaned[first.len_utf8()..].trim();
+    if rest.is_empty() {
+        return None;
+    }
+    let normalized_rest = if first == '@' {
+        rest.replace('\\', "/")
+    } else {
+        rest.to_string()
+    };
+    Some(format!("{first}{normalized_rest}"))
+}
+
+pub(super) fn popup_token_matches(token: &str, prefix: char, lowered_query: &str) -> bool {
+    let Some(rest) = token.strip_prefix(prefix) else {
+        return false;
+    };
+    if lowered_query.is_empty() {
+        return true;
+    }
+    rest.to_ascii_lowercase().contains(lowered_query)
+}
+
+pub(super) fn contains_token_case_insensitive(values: &[String], target: &str) -> bool {
+    values.iter().any(|item| item.eq_ignore_ascii_case(target))
+}
+
+pub(super) fn dedupe_case_insensitive(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for item in values {
+        let cleaned = item.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        let key = cleaned.to_ascii_lowercase();
+        if seen.insert(key) {
+            output.push(cleaned.to_string());
+        }
+    }
+    output
+}
+
+pub(super) fn format_mcp_server_lines_for_tui(
+    server: &UserMcpServer,
+    is_zh: bool,
+    detailed: bool,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    let state = format_mcp_state_label(server.enabled, is_zh);
+    let auth = format_mcp_auth_state_for_tui(server, is_zh);
+    if detailed {
+        lines.push(if is_zh {
+            format!("- 状态: {state}")
+        } else {
+            format!("- status: {state}")
+        });
+        lines.push(if is_zh {
+            format!("- 鉴权: {auth}")
+        } else {
+            format!("- auth: {auth}")
+        });
+    } else {
+        lines.push(format!("- {} ({state}, {auth})", server.name));
+    }
+
+    let transport = if server.transport.trim().is_empty() {
+        "streamable-http"
+    } else {
+        server.transport.trim()
+    };
+    lines.push(if is_zh {
+        format!("  传输: {transport}")
+    } else {
+        format!("  transport: {transport}")
+    });
+    lines.push(if is_zh {
+        format!("  地址: {}", server.endpoint)
+    } else {
+        format!("  endpoint: {}", server.endpoint)
+    });
+
+    if detailed {
+        let description = if server.description.trim().is_empty() {
+            "-"
+        } else {
+            server.description.trim()
+        };
+        let display_name = if server.display_name.trim().is_empty() {
+            "-"
+        } else {
+            server.display_name.trim()
+        };
+        lines.push(if is_zh {
+            format!("  描述: {description}")
+        } else {
+            format!("  description: {description}")
+        });
+        lines.push(if is_zh {
+            format!("  显示名: {display_name}")
+        } else {
+            format!("  display_name: {display_name}")
+        });
+        if !server.allow_tools.is_empty() {
+            lines.push(if is_zh {
+                format!("  允许工具: {}", server.allow_tools.join(", "))
+            } else {
+                format!("  allow_tools: {}", server.allow_tools.join(", "))
+            });
+        }
+        if !server.shared_tools.is_empty() {
+            lines.push(if is_zh {
+                format!("  共享工具: {}", server.shared_tools.join(", "))
+            } else {
+                format!("  shared_tools: {}", server.shared_tools.join(", "))
+            });
+        }
+    }
+
+    if !server.tool_specs.is_empty() {
+        lines.push(if is_zh {
+            format!("  缓存工具数: {}", server.tool_specs.len())
+        } else {
+            format!("  cached_tools: {}", server.tool_specs.len())
+        });
+    }
+
+    if is_zh {
+        lines.push(format!(
+            "  登录: wunder-cli mcp login {} --bearer-token <TOKEN>",
+            server.name
+        ));
+        lines.push(format!("  退出: wunder-cli mcp logout {}", server.name));
+    } else {
+        lines.push(format!(
+            "  login: wunder-cli mcp login {} --bearer-token <TOKEN>",
+            server.name
+        ));
+        lines.push(format!("  logout: wunder-cli mcp logout {}", server.name));
+    }
+    lines
+}
+
+pub(super) fn format_mcp_state_label(enabled: bool, is_zh: bool) -> &'static str {
+    if is_zh {
+        if enabled {
+            "启用"
+        } else {
+            "禁用"
+        }
+    } else if enabled {
+        "enabled"
+    } else {
+        "disabled"
+    }
+}
+
+pub(super) fn format_mcp_auth_state_for_tui(server: &UserMcpServer, is_zh: bool) -> String {
+    if let Some(key) = detect_mcp_auth_key_for_tui(server) {
+        if is_zh {
+            format!("已登录（{}）", mcp_auth_key_label_for_tui(key, true))
+        } else {
+            format!("logged in ({})", mcp_auth_key_label_for_tui(key, false))
+        }
+    } else if is_zh {
+        "未登录".to_string()
+    } else {
+        "not logged in".to_string()
+    }
+}
+
+pub(super) fn find_mcp_server_index_for_tui(
+    servers: &[UserMcpServer],
+    target: &str,
+) -> Option<usize> {
+    let cleaned = target.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    servers
+        .iter()
+        .position(|server| server.name.trim().eq_ignore_ascii_case(cleaned))
+}
+
+pub(super) fn mcp_auth_key_from_alias_for_tui(raw: &str) -> Option<&'static str> {
+    match raw
+        .trim()
+        .trim_start_matches('-')
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "bearer-token" | "bearer_token" | "bearer" => Some("bearer_token"),
+        "token" => Some("token"),
+        "api-key" | "api_key" | "apikey" => Some("api_key"),
+        _ => None,
+    }
+}
+
+pub(super) fn detect_mcp_auth_key_for_tui(server: &UserMcpServer) -> Option<&'static str> {
+    let Some(Value::Object(map)) = server.auth.as_ref() else {
+        return None;
+    };
+    ["bearer_token", "token", "api_key"]
+        .into_iter()
+        .find(|key| {
+            map.get(*key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_some()
+        })
+}
+
+pub(super) fn mcp_auth_key_label_for_tui(key: &str, is_zh: bool) -> &'static str {
+    match key {
+        "bearer_token" => {
+            if is_zh {
+                "Bearer Token"
+            } else {
+                "bearer token"
+            }
+        }
+        "token" => "token",
+        "api_key" => {
+            if is_zh {
+                "API Key"
+            } else {
+                "api key"
+            }
+        }
+        _ => {
+            if is_zh {
+                "未知"
+            } else {
+                "unknown"
+            }
+        }
+    }
+}
+
+pub(super) fn normalize_name_list_for_tui(values: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut output = Vec::new();
+    for value in values {
+        let cleaned = value.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        if !seen.insert(cleaned.to_string()) {
+            continue;
+        }
+        output.push(cleaned.to_string());
+    }
+    output
+}
+
+pub(super) fn is_paste_shortcut(key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Char(ch) if ch.eq_ignore_ascii_case(&'v') => {
+            let modifiers = key.modifiers;
+            let has_paste_modifier = modifiers.contains(KeyModifiers::CONTROL)
+                || modifiers.contains(KeyModifiers::SUPER);
+            has_paste_modifier && !modifiers.contains(KeyModifiers::ALT)
+        }
+        KeyCode::Insert => key.modifiers.contains(KeyModifiers::SHIFT),
+        _ => false,
+    }
+}
+
+pub(super) fn normalize_clipboard_text(text: String) -> Option<String> {
+    if text.is_empty() {
+        return None;
+    }
+
+    let normalized = text
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace('\u{0}', "");
+    if normalized.is_empty() {
+        return None;
+    }
+
+    Some(normalized)
+}
+
+pub(super) fn should_store_history_entry(value: &str) -> bool {
+    let trimmed = value.trim();
+    !trimmed.is_empty() && !trimmed.trim_start().starts_with('/')
+}
+
+pub(super) fn detect_pasted_attachment_paths(base_dir: &Path, text: &str) -> Option<Vec<String>> {
+    let normalized = normalize_clipboard_text(text.to_string())?;
+    let raw_has_path_syntax = normalized.contains('"')
+        || normalized.contains('\'')
+        || normalized.contains('\n')
+        || normalized.contains('\t')
+        || normalized.contains("file://");
+    let mut candidates = Vec::new();
+    let mut current = String::new();
+    let mut quoted_by = None;
+
+    let push_current = |buffer: &mut String, output: &mut Vec<String>| {
+        if buffer.trim().is_empty() {
+            buffer.clear();
+            return;
+        }
+        if let Some(value) = normalize_pasted_attachment_path(buffer.as_str()) {
+            output.push(value);
+        }
+        buffer.clear();
+    };
+
+    for ch in normalized.chars() {
+        if let Some(quote) = quoted_by {
+            if ch == quote {
+                quoted_by = None;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' if current.trim().is_empty() => quoted_by = Some(ch),
+            ' ' | '\n' | '\t' => push_current(&mut current, &mut candidates),
+            _ => current.push(ch),
+        }
+    }
+    push_current(&mut current, &mut candidates);
+
+    let candidates = dedupe_case_insensitive(candidates);
+    if candidates.is_empty() {
+        return None;
+    }
+    if candidates
+        .iter()
+        .any(|item| !raw_has_path_syntax && !looks_like_local_path(item))
+    {
+        return None;
+    }
+    if candidates
+        .iter()
+        .all(|item| attachment_path_exists(base_dir, item))
+    {
+        return Some(candidates);
+    }
+    None
+}
+
+fn normalize_pasted_attachment_path(raw: &str) -> Option<String> {
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    if let Ok(url) = url::Url::parse(cleaned) {
+        if url.scheme() == "file" {
+            if let Ok(path) = url.to_file_path() {
+                return Some(path.to_string_lossy().to_string());
+            }
+        }
+    }
+    Some(
+        cleaned
+            .trim_matches(|ch| matches!(ch, '"' | '\''))
+            .to_string(),
+    )
+}
+
+fn looks_like_local_path(value: &str) -> bool {
+    let path = Path::new(value);
+    path.is_absolute()
+        || value.contains('\\')
+        || value.contains('/')
+        || value.starts_with("./")
+        || value.starts_with("../")
+        || value.starts_with(".\\")
+        || value.starts_with("..\\")
+}
+
+fn attachment_path_exists(base_dir: &Path, value: &str) -> bool {
+    let candidate = PathBuf::from(value);
+    if candidate.is_absolute() {
+        return candidate.is_file();
+    }
+    base_dir.join(candidate).is_file()
+}
+
+pub(super) fn read_system_clipboard_image_path() -> Result<Option<String>> {
+    #[cfg(target_os = "windows")]
+    {
+        let script = concat!(
+            "$ErrorActionPreference='Stop'; ",
+            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ",
+            "Add-Type -AssemblyName System.Drawing | Out-Null; ",
+            "$img = Get-Clipboard -Format Image; ",
+            "if ($null -eq $img) { exit 0 }; ",
+            "$path = Join-Path ([System.IO.Path]::GetTempPath()) ('wunder-clipboard-' + [Guid]::NewGuid().ToString('N') + '.png'); ",
+            "$img.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); ",
+            "if ($img -is [System.IDisposable]) { $img.Dispose() }; ",
+            "[Console]::Out.Write($path);"
+        );
+
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                script,
+            ])
+            .output()
+            .map_err(|error| {
+                anyhow!("failed to invoke powershell clipboard image reader: {error}")
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stderr.is_empty() {
+                return Ok(None);
+            }
+            return Err(anyhow!(
+                "powershell clipboard image reader failed: {stderr}"
+            ));
+        }
+
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if path.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(path))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(None)
+    }
+}
+
+pub(super) fn read_system_clipboard_text() -> Result<Option<String>> {
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "$ErrorActionPreference='Stop'; $value = Get-Clipboard -Raw; if ($null -ne $value) { [Console]::Out.Write($value) }",
+            ])
+            .output()
+            .map_err(|error| anyhow!("failed to invoke powershell clipboard reader: {error}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stderr.is_empty() {
+                return Ok(None);
+            }
+            return Err(anyhow!("powershell clipboard reader failed: {stderr}"));
+        }
+        Ok(normalize_clipboard_text(
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+        ))
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("pbpaste")
+            .output()
+            .map_err(|error| anyhow!("failed to invoke pbpaste: {error}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stderr.is_empty() {
+                return Ok(None);
+            }
+            return Err(anyhow!("pbpaste failed: {stderr}"));
+        }
+        return Ok(normalize_clipboard_text(
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+        ));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        const CLIPBOARD_COMMANDS: &[(&str, &[&str])] = &[
+            ("wl-paste", &["-n"]),
+            ("xclip", &["-selection", "clipboard", "-o"]),
+            ("xsel", &["--clipboard", "--output"]),
+        ];
+
+        for (program, args) in CLIPBOARD_COMMANDS {
+            match Command::new(program).args(*args).output() {
+                Ok(output) if output.status.success() => {
+                    return Ok(normalize_clipboard_text(
+                        String::from_utf8_lossy(&output.stdout).into_owned(),
+                    ));
+                }
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    if !stderr.is_empty() {
+                        return Err(anyhow!("{program} failed: {stderr}"));
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(anyhow!("{program} failed: {error}")),
+            }
+        }
+
+        return Err(anyhow!(
+            "no supported clipboard command found (tried wl-paste, xclip, xsel)"
+        ));
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", unix)))]
+    {
+        Ok(None)
+    }
+}
+
+/// Put TEXT on the system clipboard (Ctrl+O). The text travels through a temp
+/// file rather than argv: a long reply would otherwise hit the command-line
+/// length limit on Windows.
+pub(super) fn write_system_clipboard_text(text: &str) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        let dir = std::env::temp_dir().join("wunder-clipboard");
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| anyhow!("create clipboard temp dir failed: {error}"))?;
+        let path = dir.join(format!("copy-{}.txt", std::process::id()));
+        std::fs::write(&path, text.as_bytes())
+            .map_err(|error| anyhow!("write clipboard payload failed: {error}"))?;
+        let script = format!(
+            "$ErrorActionPreference='Stop'; $t = [IO.File]::ReadAllText('{}', [Text.Encoding]::UTF8); Set-Clipboard -Value $t",
+            path.to_string_lossy().replace('\'', "''")
+        );
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                script.as_str(),
+            ])
+            .output()
+            .map_err(|error| anyhow!("failed to invoke powershell clipboard writer: {error}"))?;
+        let _ = std::fs::remove_file(&path);
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(anyhow!("powershell clipboard writer failed: {stderr}"));
+        }
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return write_clipboard_via_stdin("pbcopy", &[] as &[&str], text);
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        const CLIPBOARD_WRITERS: &[(&str, &[&str])] = &[
+            ("wl-copy", &[]),
+            ("xclip", &["-selection", "clipboard"]),
+            ("xsel", &["--clipboard", "--input"]),
+        ];
+
+        for (program, args) in CLIPBOARD_WRITERS {
+            match write_clipboard_via_stdin(program, *args, text) {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    if error.to_string().contains("not found") {
+                        continue;
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        return Err(anyhow!(
+            "no supported clipboard command found (tried wl-copy, xclip, xsel)"
+        ));
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", unix)))]
+    {
+        let _ = text;
+        Err(anyhow!("clipboard copy is not supported on this platform"))
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn write_clipboard_via_stdin(program: &str, args: &[&str], text: &str) -> Result<()> {
+    use std::io::Write;
+
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                anyhow!("{program} not found")
+            } else {
+                anyhow!("failed to invoke {program}: {error}")
+            }
+        })?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(text.as_bytes())
+            .map_err(|error| anyhow!("write to {program} failed: {error}"))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| anyhow!("{program} failed: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(anyhow!("{program} failed: {stderr}"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(super) fn wrapped_visual_line_count_parts(prefix: &str, text: &str, width: usize) -> usize {
+    let width = width.max(1);
+    if prefix.is_empty() && text.is_empty() {
+        return 1;
+    }
+
+    let mut line_count = 1usize;
+    let mut line_columns = 0usize;
+    for ch in prefix.chars().chain(text.chars()) {
+        if ch == '\n' {
+            line_count = line_count.saturating_add(1);
+            line_columns = 0;
+            continue;
+        }
+
+        let char_width = display_char_width(ch);
+        if line_columns > 0 && line_columns.saturating_add(char_width) > width {
+            line_count = line_count.saturating_add(1);
+            line_columns = 0;
+        }
+        line_columns = line_columns.saturating_add(char_width).min(width);
+    }
+
+    line_count
+}
+
+#[cfg(test)]
+pub(super) fn wrapped_visual_line_count(text: &str, width: usize) -> usize {
+    wrapped_visual_line_count_parts("", text, width)
+}
+
+pub(super) fn move_cursor_vertical(text: &str, width: usize, cursor: usize, delta: i8) -> usize {
+    let lines = build_wrapped_input_lines(text, width);
+    if lines.len() <= 1 {
+        return cursor.min(text.len());
+    }
+
+    let (row, col) = cursor_visual_position(text, &lines, cursor.min(text.len()));
+    let target_row = if delta < 0 {
+        row.saturating_sub(1)
+    } else {
+        (row + 1).min(lines.len().saturating_sub(1))
+    };
+    if target_row == row {
+        return cursor.min(text.len());
+    }
+
+    let target = lines[target_row];
+    byte_index_for_display_column(text, target.start, target.end, col)
+}
+
+pub(super) fn build_wrapped_input_lines(text: &str, width: usize) -> Vec<WrappedInputLine> {
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    let mut line_start = 0usize;
+    let mut line_columns = 0usize;
+
+    for (index, ch) in text.char_indices() {
+        if ch == '\n' {
+            lines.push(WrappedInputLine {
+                start: line_start,
+                end: index,
+            });
+            line_start = index + ch.len_utf8();
+            line_columns = 0;
+            continue;
+        }
+
+        let char_width = display_char_width(ch);
+        if line_columns > 0 && line_columns.saturating_add(char_width) > width {
+            lines.push(WrappedInputLine {
+                start: line_start,
+                end: index,
+            });
+            line_start = index;
+            line_columns = 0;
+        }
+        line_columns = line_columns.saturating_add(char_width);
+    }
+
+    lines.push(WrappedInputLine {
+        start: line_start,
+        end: text.len(),
+    });
+    lines
+}
+
+pub(super) fn cursor_visual_position(
+    text: &str,
+    lines: &[WrappedInputLine],
+    cursor_index: usize,
+) -> (usize, usize) {
+    let cursor = cursor_index.min(text.len());
+    for (row, line) in lines.iter().enumerate() {
+        if cursor < line.start {
+            continue;
+        }
+        if cursor <= line.end {
+            if cursor == line.end && row + 1 < lines.len() && lines[row + 1].start == cursor {
+                continue;
+            }
+            let col = display_width(&text[line.start..cursor]);
+            return (row, col);
+        }
+    }
+
+    let fallback = lines
+        .last()
+        .copied()
+        .unwrap_or(WrappedInputLine { start: 0, end: 0 });
+    let col = display_width(&text[fallback.start..cursor.min(fallback.end)]);
+    (lines.len().saturating_sub(1), col)
+}
+
+pub(super) fn display_char_width(ch: char) -> usize {
+    UnicodeWidthChar::width_cjk(ch)
+        .or_else(|| UnicodeWidthChar::width(ch))
+        .unwrap_or(0)
+        .max(1)
+}
+
+pub(super) fn display_width(text: &str) -> usize {
+    text.chars().map(display_char_width).sum()
+}
+
+pub(super) fn normalize_wrapped_cursor_position(
+    (row, col): (usize, usize),
+    width: usize,
+) -> (usize, usize) {
+    if width == 0 {
+        return (row, 0);
+    }
+    if col < width {
+        return (row, col);
+    }
+
+    (row.saturating_add(col / width), col % width)
+}
+
+/// Project one committed `thread_items` row into the history-record shape
+/// consumed by `restore_transcript_from_history`. The same row shape arrives both
+/// inside the atomic snapshot (`items`) and as an `item_upsert` durable change
+/// payload, so snapshot recovery and durable replay share one projection.
+pub(super) fn item_row_history_record(item: &Value) -> Option<Value> {
+    if item.get("visibility").and_then(Value::as_str) != Some("user") {
+        return None;
+    }
+    let kind = item.get("kind").and_then(Value::as_str).unwrap_or("");
+    let role = if kind == "user_message" {
+        "user"
+    } else if kind == "assistant_message" || kind.contains("reasoning") {
+        "assistant"
+    } else {
+        return None;
+    };
+    let payload = item.get("payload")?;
+    let content = payload.get("content").cloned().unwrap_or(Value::Null);
+    let reasoning = payload
+        .get("reasoning")
+        .or_else(|| payload.get("reasoning_content"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    Some(json!({"role": role, "content": content, "reasoning_content": reasoning}))
+}
+
+/// Project snapshot items (thread_items rows ordered by created_seq) into the
+/// history-record shape consumed by `restore_transcript_from_history`. Only
+/// readable conversation items are projected; tool, approval and model-call
+/// items degrade to the expired-replay notice instead of a JSON wall.
+pub(super) fn snapshot_history_records(snapshot: &Value) -> Vec<Value> {
+    let Some(items) = snapshot.get("items").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut records: Vec<(i64, i64, Value)> = Vec::with_capacity(items.len());
+    for item in items {
+        let Some(record) = item_row_history_record(item) else {
+            continue;
+        };
+        let created_seq = item.get("created_seq").and_then(Value::as_i64).unwrap_or(0);
+        let item_index = item.get("item_index").and_then(Value::as_i64).unwrap_or(0);
+        records.push((created_seq, item_index, record));
+    }
+    records.sort_by_key(|(created_seq, item_index, _)| (*created_seq, *item_index));
+    records.into_iter().map(|(_, _, record)| record).collect()
+}
+
+pub(super) fn history_content_to_text(value: Option<&Value>) -> String {
+    let Some(value) = value else {
+        return String::new();
+    };
+    match value {
+        Value::String(text) => text.to_string(),
+        Value::Array(items) => {
+            let mut parts = Vec::new();
+            for item in items {
+                if let Some(text) = item
+                    .as_object()
+                    .and_then(|obj| obj.get("text"))
+                    .and_then(Value::as_str)
+                {
+                    if !text.trim().is_empty() {
+                        parts.push(text.trim().to_string());
+                    }
+                }
+            }
+            if parts.is_empty() {
+                serde_json::to_string(value).unwrap_or_default()
+            } else {
+                parts.join(
+                    "
+",
+                )
+            }
+        }
+        Value::Object(map) => map
+            .get("text")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .unwrap_or_else(|| serde_json::to_string(value).unwrap_or_default()),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+pub(super) fn format_session_timestamp(ts: f64) -> String {
+    if !ts.is_finite() || ts <= 0.0 {
+        return "-".to_string();
+    }
+    let secs = ts.floor() as i64;
+    let nanos = ((ts - secs as f64).max(0.0) * 1_000_000_000.0).round() as u32;
+    chrono::Local
+        .timestamp_opt(secs, nanos.min(999_999_999))
+        .single()
+        .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+#[cfg(windows)]
+pub(super) fn is_altgr(modifiers: KeyModifiers) -> bool {
+    modifiers.contains(KeyModifiers::ALT) && modifiers.contains(KeyModifiers::CONTROL)
+}
+
+#[cfg(not(windows))]
+pub(super) fn is_altgr(_modifiers: KeyModifiers) -> bool {
+    false
+}
+
+pub(super) fn prev_char_boundary(text: &str, index: usize) -> usize {
+    if index == 0 {
+        return 0;
+    }
+    let mut cursor = index.saturating_sub(1).min(text.len().saturating_sub(1));
+    while cursor > 0 && !text.is_char_boundary(cursor) {
+        cursor = cursor.saturating_sub(1);
+    }
+    if text.is_char_boundary(cursor) {
+        cursor
+    } else {
+        0
+    }
+}
+
+pub(super) fn next_char_boundary(text: &str, index: usize) -> usize {
+    if index >= text.len() {
+        return text.len();
+    }
+    let mut cursor = index.saturating_add(1);
+    while cursor < text.len() && !text.is_char_boundary(cursor) {
+        cursor += 1;
+    }
+    cursor.min(text.len())
+}
+
+pub(super) fn byte_index_for_display_column(
+    text: &str,
+    start: usize,
+    end: usize,
+    column: usize,
+) -> usize {
+    let mut consumed = 0usize;
+    let mut cursor = start;
+
+    for (offset, ch) in text[start..end].char_indices() {
+        if consumed >= column {
+            return start + offset;
+        }
+        let width = display_char_width(ch);
+        consumed = consumed.saturating_add(width);
+        cursor = start + offset + ch.len_utf8();
+        if consumed >= column {
+            return cursor;
+        }
+    }
+
+    cursor.min(end)
+}
+
+pub(super) fn is_word_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
+pub(super) fn payload_has_tool_calls(payload: &Value) -> bool {
+    match payload.get("tool_calls") {
+        Some(Value::Array(items)) => !items.is_empty(),
+        Some(Value::Object(map)) => !map.is_empty(),
+        Some(Value::String(value)) => !value.trim().is_empty(),
+        Some(Value::Null) | None => false,
+        Some(_) => true,
+    }
+}
+
+#[cfg(test)]
+pub(super) fn sanitize_assistant_delta(delta: &str) -> String {
+    let mut in_tool_markup = false;
+    sanitize_assistant_delta_streaming(delta, &mut in_tool_markup)
+}
+
+pub(super) fn sanitize_assistant_delta_streaming(delta: &str, in_tool_markup: &mut bool) -> String {
+    if delta.trim().is_empty() {
+        return String::new();
+    }
+
+    let stripped = strip_streaming_tool_markup(delta, in_tool_markup);
+    if stripped.trim().is_empty() {
+        return String::new();
+    }
+
+    let cleaned = strip_tool_block_tags(stripped.as_str());
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() || looks_like_tool_payload(trimmed) {
+        return String::new();
+    }
+
+    cleaned
+}
+
+pub(super) fn sanitize_reasoning_text(text: &str) -> String {
+    text.trim().to_string()
+}
+
+pub(super) fn sanitize_assistant_text(text: &str) -> String {
+    strip_tool_block_tags(text).trim().to_string()
+}
+
+pub(super) fn looks_like_tool_payload(text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    lowered.contains("<tool_call")
+        || lowered.contains("</tool_call>")
+        || lowered.contains("\"name\"") && lowered.contains("\"arguments\"")
+}
+
+pub(super) fn strip_tool_block_tags(text: &str) -> String {
+    let without_tool_call = strip_tag_block(text.to_string(), "<tool_call", "</tool_call>");
+    strip_tag_block(without_tool_call, "<tool", "</tool>")
+}
+
+pub(super) fn strip_tag_block(mut text: String, start_tag: &str, end_tag: &str) -> String {
+    loop {
+        let lowered = text.to_ascii_lowercase();
+        let Some(start) = lowered.find(start_tag) else {
+            break;
+        };
+
+        let after_start = start + start_tag.len();
+        let Some(close_offset) = lowered[after_start..].find('>') else {
+            text.truncate(start);
+            break;
+        };
+        let body_start = after_start + close_offset + 1;
+
+        if let Some(end_offset) = lowered[body_start..].find(end_tag) {
+            let end = body_start + end_offset + end_tag.len();
+            text.replace_range(start..end, "");
+        } else {
+            text.truncate(start);
+            break;
+        }
+    }
+    text
+}
+
+pub(super) fn strip_streaming_tool_markup(text: &str, in_tool_markup: &mut bool) -> String {
+    let mut output = String::new();
+    let mut remaining = text;
+
+    while !remaining.is_empty() {
+        if *in_tool_markup {
+            let lowered = remaining.to_ascii_lowercase();
+            let end_call = lowered.find("</tool_call>");
+            let end_tool = lowered.find("</tool>");
+            let Some((end_index, end_tag)) = (match (end_call, end_tool) {
+                (Some(left), Some(right)) if left <= right => Some((left, "</tool_call>")),
+                (Some(_), Some(right)) => Some((right, "</tool>")),
+                (Some(left), None) => Some((left, "</tool_call>")),
+                (None, Some(right)) => Some((right, "</tool>")),
+                (None, None) => None,
+            }) else {
+                return output;
+            };
+
+            let after_end = end_index + end_tag.len();
+            remaining = &remaining[after_end..];
+            *in_tool_markup = false;
+            continue;
+        }
+
+        let lowered = remaining.to_ascii_lowercase();
+        let start_call = lowered.find("<tool_call");
+        let start_tool = lowered.find("<tool");
+        let Some(start_index) = (match (start_call, start_tool) {
+            (Some(left), Some(right)) => Some(left.min(right)),
+            (Some(left), None) => Some(left),
+            (None, Some(right)) => Some(right),
+            (None, None) => None,
+        }) else {
+            output.push_str(remaining);
+            break;
+        };
+
+        output.push_str(&remaining[..start_index]);
+        let after_start = &remaining[start_index..];
+        let lowered_after = after_start.to_ascii_lowercase();
+        let Some(close_offset) = lowered_after.find('>') else {
+            *in_tool_markup = true;
+            return output;
+        };
+
+        let body_start = start_index + close_offset + 1;
+        remaining = &remaining[body_start..];
+        *in_tool_markup = true;
+    }
+
+    output
+}
+
+pub(super) fn merge_stream_text(existing: &mut String, incoming: &str) {
+    if incoming.is_empty() {
+        return;
+    }
+    if existing.is_empty() {
+        existing.push_str(incoming);
+        return;
+    }
+    if existing == incoming {
+        return;
+    }
+    if incoming.starts_with(existing.as_str()) {
+        *existing = incoming.to_string();
+        return;
+    }
+    if existing.ends_with(incoming) {
+        return;
+    }
+
+    let overlap = longest_suffix_prefix_overlap(existing.as_str(), incoming);
+    if overlap > 0 {
+        existing.push_str(&incoming[overlap..]);
+        return;
+    }
+    // Most streaming providers send raw deltas; when there is no overlap we should
+    // append directly instead of forcing a newline, otherwise output becomes token-per-line.
+    existing.push_str(incoming);
+}
+
+pub(super) fn merge_stream_text_with_delta(
+    existing: &mut String,
+    incoming: &str,
+) -> Option<String> {
+    if incoming.is_empty() {
+        return None;
+    }
+    if existing.is_empty() {
+        existing.push_str(incoming);
+        return Some(incoming.to_string());
+    }
+    if existing == incoming {
+        return None;
+    }
+    if incoming.starts_with(existing.as_str()) {
+        let suffix = &incoming[existing.len()..];
+        *existing = incoming.to_string();
+        return if suffix.is_empty() {
+            None
+        } else {
+            Some(suffix.to_string())
+        };
+    }
+    if existing.ends_with(incoming) {
+        return None;
+    }
+
+    let overlap = longest_suffix_prefix_overlap(existing.as_str(), incoming);
+    if overlap > 0 {
+        let suffix = &incoming[overlap..];
+        existing.push_str(suffix);
+        return if suffix.is_empty() {
+            None
+        } else {
+            Some(suffix.to_string())
+        };
+    }
+    // Most streaming providers send raw deltas; when there is no overlap we should
+    // append directly instead of forcing a newline, otherwise output becomes token-per-line.
+    existing.push_str(incoming);
+    Some(incoming.to_string())
+}
+
+pub(super) fn longest_suffix_prefix_overlap(left: &str, right: &str) -> usize {
+    let mut len = left.len().min(right.len());
+    while len > 0 {
+        if !left.is_char_boundary(left.len() - len) || !right.is_char_boundary(len) {
+            len = len.saturating_sub(1);
+            continue;
+        }
+        if left[left.len() - len..] == right[..len] {
+            return len;
+        }
+        len = len.saturating_sub(1);
+    }
+    0
+}
+
+pub(super) fn compact_text_for_compare(text: &str) -> String {
+    text.chars().filter(|ch| !ch.is_whitespace()).collect()
+}
+
+pub(super) fn is_equivalent_text(left: &str, right: &str) -> bool {
+    if left.trim().is_empty() || right.trim().is_empty() {
+        return false;
+    }
+    compact_text_for_compare(left) == compact_text_for_compare(right)
+}
+
+pub(super) fn format_tool_call_line(tool: &str, args: &Value, is_zh: bool) -> String {
+    let mut lines = Vec::new();
+    let tool_is_zh = is_zh;
+    if is_execute_command_tool_name(tool) {
+        if let Some(command) = args
+            .get("content")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            lines.push(if tool_is_zh {
+                format!("• 调用 {tool}")
+            } else {
+                format!("• Called {tool}")
+            });
+            lines.push(format!("  └ `{command}`"));
+            return lines.join("\n");
+        }
+    }
+
+    if is_apply_patch_tool_name(tool) {
+        lines.push(if tool_is_zh {
+            format!("• 调用 {tool}")
+        } else {
+            format!("• Called {tool}")
+        });
+        if let Some(patch) = extract_patch_input(args)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let summary = summarize_patch_input(patch);
+            if !summary.is_empty() {
+                lines.push(format!("  └ {summary}"));
+            }
+            let preview_lines = extract_patch_preview_lines(patch, 8, tool_is_zh);
+            for line in preview_lines {
+                push_tree_line(&mut lines, line);
+            }
+        }
+        return lines.join("\n");
+    }
+
+    if args.is_null() {
+        return if tool_is_zh {
+            format!("• 调用 {tool}\n  └ {{}}")
+        } else {
+            format!("• Called {tool}\n  └ {{}}")
+        };
+    }
+
+    lines.push(if tool_is_zh {
+        format!("• 调用 {tool}")
+    } else {
+        format!("• Called {tool}")
+    });
+    lines.push(format!("  └ {}", summarize_tool_args(args)));
+    lines.join("\n")
+}
+
+pub(super) fn is_apply_patch_tool_name(tool: &str) -> bool {
+    let normalized = tool.trim().to_ascii_lowercase();
+    normalized == "apply_patch" || tool.contains("应用补丁")
+}
+
+pub(super) fn is_execute_command_tool_name(tool: &str) -> bool {
+    let normalized = tool.trim().to_ascii_lowercase();
+    normalized == "execute_command" || tool.contains("执行命令")
+}
+
+fn extract_patch_input(args: &Value) -> Option<&str> {
+    if let Value::String(value) = args {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed);
+        }
+    }
+
+    let obj = args.as_object()?;
+    for key in ["input", "patch", "content", "raw"] {
+        if let Some(value) = obj.get(key).and_then(Value::as_str) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
+            }
+        }
+    }
+    None
+}
+
+fn summarize_patch_input(patch: &str) -> String {
+    let line_count = patch.lines().count();
+    let (op_count, added_lines, removed_lines) = count_patch_metrics(patch);
+    if op_count > 0 {
+        let mut parts = vec![format!("files={op_count}")];
+        if added_lines > 0 || removed_lines > 0 {
+            parts.push(format!("+{added_lines}"));
+            parts.push(format!("-{removed_lines}"));
+        } else {
+            parts.push(format!("lines={line_count}"));
+        }
+        parts.join(", ")
+    } else if line_count > 0 {
+        format!("lines={line_count}")
+    } else {
+        String::new()
+    }
+}
+
+fn count_patch_metrics(patch: &str) -> (usize, usize, usize) {
+    let mut files = 0usize;
+    let mut added = 0usize;
+    let mut removed = 0usize;
+    let mut in_file = false;
+    for raw_line in patch.lines() {
+        let line = raw_line.trim();
+        if line.starts_with("*** Add File:")
+            || line.starts_with("*** Update File:")
+            || line.starts_with("*** Delete File:")
+        {
+            files = files.saturating_add(1);
+            in_file = true;
+            continue;
+        }
+        if line.starts_with("*** ") {
+            in_file = false;
+            continue;
+        }
+        if !in_file {
+            continue;
+        }
+        if raw_line.starts_with('+') {
+            added = added.saturating_add(1);
+        } else if raw_line.starts_with('-') {
+            removed = removed.saturating_add(1);
+        }
+    }
+    (files, added, removed)
+}
+
+fn extract_patch_preview_lines(patch: &str, max_entries: usize, is_zh: bool) -> Vec<String> {
+    let preview = build_patch_diff_preview(patch, max_entries, 6, is_zh);
+    if preview.is_empty() {
+        Vec::new()
+    } else {
+        format_patch_diff_preview_lines(&preview)
+    }
+}
+pub(super) fn format_apply_patch_approval_lines(args: &Value, is_zh: bool) -> Option<Vec<String>> {
+    let patch = extract_patch_input(args)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let summary = summarize_patch_input(patch);
+    let preview_lines = extract_patch_preview_lines(patch, 12, is_zh);
+    let mut lines = Vec::new();
+    lines.push(if summary.is_empty() {
+        if is_zh {
+            "补丁预览：".to_string()
+        } else {
+            "Patch preview:".to_string()
+        }
+    } else if is_zh {
+        format!("补丁预览：{summary}")
+    } else {
+        format!("Patch preview: {summary}")
+    });
+    lines.extend(preview_lines.into_iter().map(|line| format!("  {line}")));
+    Some(lines)
+}
+
+fn summarize_tool_args(args: &Value) -> String {
+    if let Some(object) = args.as_object() {
+        for key in [
+            "path",
+            "file_path",
+            "filePath",
+            "query",
+            "q",
+            "url",
+            "location",
+            "ticker",
+            "command",
+            "content",
+            "text",
+            "prompt",
+            "name",
+        ] {
+            if let Some(value) = object.get(key).and_then(Value::as_str) {
+                let cleaned = value.trim();
+                if !cleaned.is_empty() {
+                    return format!("{key}={cleaned}");
+                }
+            }
+        }
+    }
+    compact_json(args)
+}
+
+fn extract_tool_result_object(payload: &Value) -> &Value {
+    payload.get("result").unwrap_or(payload)
+}
+
+fn extract_tool_result_data(result: &Value) -> &Value {
+    result.get("data").unwrap_or(result)
+}
+
+fn extract_apply_patch_file_line(file: &Value) -> Option<String> {
+    let file_obj = file.as_object()?;
+    let action = file_obj
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let path = file_obj
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let to_path = file_obj
+        .get("to_path")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if path.is_empty() && to_path.is_empty() {
+        return None;
+    }
+
+    let has_move = !path.is_empty() && !to_path.is_empty() && to_path != path;
+    let marker = match action.as_str() {
+        "add" => "A",
+        "delete" => "D",
+        "update" if has_move => "R",
+        "update" => "M",
+        "move" => "R",
+        _ => "M",
+    };
+    let text = if !path.is_empty() && !to_path.is_empty() && to_path != path {
+        format!("{path} → {to_path}")
+    } else if !path.is_empty() {
+        path.to_string()
+    } else {
+        to_path.to_string()
+    };
+    Some(format!("  {marker} {text}"))
+}
+
+fn format_apply_patch_result_lines(tool: &str, payload: &Value, is_zh: bool) -> Vec<String> {
+    let result = extract_tool_result_object(payload);
+    let data = extract_tool_result_data(result);
+    let ok = result.get("ok").and_then(Value::as_bool);
+    let tool_is_zh = is_zh;
+    let changed_files = value_as_i64(data.get("changed_files"))
+        .or_else(|| value_as_i64(result.get("changed_files")))
+        .unwrap_or(0)
+        .max(0);
+    let added = value_as_i64(data.get("added")).unwrap_or(0).max(0);
+    let updated = value_as_i64(data.get("updated")).unwrap_or(0).max(0);
+    let deleted = value_as_i64(data.get("deleted")).unwrap_or(0).max(0);
+    let moved = value_as_i64(data.get("moved")).unwrap_or(0).max(0);
+    let hunks = value_as_i64(data.get("hunks_applied"))
+        .or_else(|| value_as_i64(result.get("hunks_applied")))
+        .unwrap_or(0)
+        .max(0);
+    let mut lines = Vec::new();
+    let files = data.get("files").and_then(Value::as_array);
+    if ok == Some(false) {
+        lines.push(if tool_is_zh {
+            "✘ 补丁应用失败".to_string()
+        } else {
+            "✘ Failed to apply patch".to_string()
+        });
+    } else {
+        let noun = if changed_files == 1 {
+            if tool_is_zh {
+                "1 个文件".to_string()
+            } else {
+                "1 file".to_string()
+            }
+        } else if tool_is_zh {
+            format!("{changed_files} 个文件")
+        } else {
+            format!("{changed_files} files")
+        };
+        let mut metrics = Vec::new();
+        if added > 0 {
+            metrics.push(format!("+{added}"));
+        }
+        if updated > 0 {
+            metrics.push(format!("~{updated}"));
+        }
+        if deleted > 0 {
+            metrics.push(format!("-{deleted}"));
+        }
+        if moved > 0 {
+            metrics.push(format!("↦{moved}"));
+        }
+        if hunks > 0 {
+            metrics.push(format!("{hunks} hunks"));
+        }
+        let metric_suffix = if metrics.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", metrics.join(", "))
+        };
+        lines.push(if tool_is_zh {
+            format!("• 已修改 {noun}{metric_suffix}")
+        } else {
+            format!("• Edited {noun}{metric_suffix}")
+        });
+    }
+    if let Some(error) = result
+        .get("error")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        push_tree_line(
+            &mut lines,
+            if tool_is_zh {
+                format!("错误: {error}")
+            } else {
+                format!("Error: {error}")
+            },
+        );
+    }
+    if let Some(code) = data
+        .get("error_code")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        push_tree_line(&mut lines, format!("code: {code}"));
+    }
+    if let Some(hint) = data
+        .get("hint")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        push_tree_line(
+            &mut lines,
+            if tool_is_zh {
+                format!("提示: {hint}")
+            } else {
+                format!("Hint: {hint}")
+            },
+        );
+    }
+
+    if let Some(files) = files {
+        const MAX_FILE_LINES: usize = 24;
+        let mut appended = 0usize;
+        for file in files.iter().take(MAX_FILE_LINES) {
+            if let Some(line) = extract_apply_patch_file_line(file) {
+                push_tree_line(&mut lines, line.trim().to_string());
+                appended = appended.saturating_add(1);
+            }
+        }
+        if files.len() > appended {
+            push_tree_line(
+                &mut lines,
+                format!("... ({} more)", files.len().saturating_sub(appended)),
+            );
+        }
+    }
+
+    if lines.len() == 1 {
+        push_tree_line(
+            &mut lines,
+            wunder_server::tool_result_display::tool_result_display(tool, payload, false),
+        );
+    }
+    lines
+}
+
+pub(super) fn format_tool_result_lines(tool: &str, payload: &Value, is_zh: bool) -> Vec<String> {
+    if is_apply_patch_tool_name(tool) {
+        return format_apply_patch_result_lines(tool, payload, is_zh);
+    }
+    let result = extract_tool_result_object(payload);
+    if is_execute_command_tool_name(tool) {
+        let lines = format_execute_command_result_lines(tool, result, is_zh);
+        if !lines.is_empty() {
+            return lines;
+        }
+    }
+
+    let ok = result.get("ok").and_then(Value::as_bool);
+    let tool_is_zh = is_zh;
+    let mut lines = vec![if ok == Some(false) {
+        if tool_is_zh {
+            format!("✘ {tool} 失败")
+        } else {
+            format!("✘ {tool} failed")
+        }
+    } else if tool_is_zh {
+        format!("• 已完成 {tool}")
+    } else {
+        format!("• Completed {tool}")
+    }];
+    if let Some(error) = result
+        .get("error")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        push_tree_line(
+            &mut lines,
+            if tool_is_zh {
+                format!("错误: {error}")
+            } else {
+                format!("Error: {error}")
+            },
+        );
+    }
+
+    if let Some(display) = summarize_tool_result(payload, tool_is_zh) {
+        if let Some(summary) = display.summary.filter(|value| !value.is_empty()) {
+            push_tree_line(&mut lines, summary);
+        }
+        for detail in display.details {
+            let text = if let Some(label) = detail.label.filter(|value| !value.is_empty()) {
+                format!("{label} {}", detail.text)
+            } else {
+                detail.text
+            };
+            push_tree_line(&mut lines, text);
+        }
+    } else {
+        push_tree_line(
+            &mut lines,
+            wunder_server::tool_result_display::tool_result_display(tool, payload, false),
+        );
+    }
+    lines
+}
+
+pub(super) fn format_execute_command_result_lines(
+    tool: &str,
+    result: &Value,
+    is_zh: bool,
+) -> Vec<String> {
+    let data = result.get("data").unwrap_or(result);
+    let Some(first) = data
+        .get("results")
+        .and_then(Value::as_array)
+        .and_then(|items| items.first())
+        .and_then(Value::as_object)
+    else {
+        return Vec::new();
+    };
+
+    let command = first
+        .get("command")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    let returncode = value_as_i64(first.get("returncode"))
+        .or_else(|| value_as_i64(result.get("meta").and_then(|meta| meta.get("exit_code"))));
+    let duration_ms = value_as_i64(result.get("meta").and_then(|meta| meta.get("duration_ms")));
+
+    let tool_is_zh = is_zh;
+    let header = if matches!(returncode, Some(code) if code != 0) {
+        if tool_is_zh {
+            format!("✘ {tool} 失败")
+        } else {
+            format!("✘ {tool} failed")
+        }
+    } else if tool_is_zh {
+        format!("• 已完成 {tool}")
+    } else {
+        format!("• Completed {tool}")
+    };
+    let mut metrics = Vec::new();
+    if let Some(returncode) = returncode {
+        metrics.push(format!("exit={returncode}"));
+    }
+    if let Some(duration_ms) = duration_ms {
+        metrics.push(format!("{duration_ms}ms"));
+    }
+    let mut lines = vec![if metrics.is_empty() {
+        header
+    } else {
+        format!("{header} ({})", metrics.join(", "))
+    }];
+    if !command.is_empty() {
+        push_tree_line(&mut lines, format!("cmd: {command}"));
+    }
+
+    let stdout = first
+        .get("stdout")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let stderr = first
+        .get("stderr")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    let mut has_output = false;
+    if returncode.unwrap_or(0) == 0 {
+        has_output |= append_text_preview(&mut lines, "stdout", stdout, 6, 900);
+        has_output |= append_text_preview(&mut lines, "stderr", stderr, 4, 300);
+    } else {
+        has_output |= append_text_preview(&mut lines, "stderr", stderr, 6, 900);
+        has_output |= append_text_preview(&mut lines, "stdout", stdout, 4, 300);
+    }
+
+    if !has_output {
+        push_tree_line(&mut lines, "output: <empty>".to_string());
+    }
+
+    lines
+}
+
+fn push_tree_line(lines: &mut Vec<String>, content: String) {
+    let prefix = if lines.len() <= 1 { "  └ " } else { "    " };
+    lines.push(format!("{prefix}{content}"));
+}
+
+pub(super) fn append_text_preview(
+    lines: &mut Vec<String>,
+    label: &str,
+    text: &str,
+    max_lines: usize,
+    max_chars: usize,
+) -> bool {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let trimmed = normalized.trim_end_matches('\n').trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let (preview, chars_truncated) = truncate_by_chars(trimmed, max_chars);
+    let parts = preview.lines().collect::<Vec<_>>();
+    if parts.is_empty() {
+        return false;
+    }
+
+    lines.push(format!("  {label}: {}", parts[0]));
+    for line in parts.iter().skip(1).take(max_lines.saturating_sub(1)) {
+        lines.push(format!("    {line}"));
+    }
+
+    let hidden_lines = parts.len().saturating_sub(max_lines);
+    if hidden_lines > 0 || chars_truncated {
+        let mut suffix = String::new();
+        if hidden_lines > 0 {
+            suffix.push_str(&format!("{hidden_lines} more lines"));
+        }
+        if chars_truncated {
+            if !suffix.is_empty() {
+                suffix.push_str(", ");
+            }
+            suffix.push_str("truncated");
+        }
+        lines.push(format!("    ... ({suffix})"));
+    }
+
+    true
+}
+
+pub(super) fn truncate_by_chars(text: &str, max_chars: usize) -> (String, bool) {
+    if max_chars == 0 {
+        return (String::new(), !text.is_empty());
+    }
+
+    if text.chars().count() <= max_chars {
+        return (text.to_string(), false);
+    }
+
+    let mut output = String::new();
+    for ch in text.chars().take(max_chars) {
+        output.push(ch);
+    }
+    (output, true)
+}
+
+pub(super) fn value_as_i64(value: Option<&Value>) -> Option<i64> {
+    value.and_then(|item| {
+        item.as_i64()
+            .or_else(|| item.as_u64().map(|num| num.min(i64::MAX as u64) as i64))
+            .or_else(|| {
+                item.as_str()
+                    .and_then(|text| text.trim().parse::<i64>().ok())
+            })
+    })
+}
+
+pub(super) fn parse_error_message(data: &Value) -> String {
+    let payload = event_payload(data);
+    crate::error_display::format_error_message(payload).unwrap_or_else(|| compact_json(payload))
+}
+
+pub(super) fn event_payload(data: &Value) -> &Value {
+    data.get("data").unwrap_or(data)
+}
+
+pub(super) fn compact_json(value: &Value) -> String {
+    const MAX_INLINE_JSON_CHARS: usize = 200;
+    let mut text = serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string());
+    if text.len() > MAX_INLINE_JSON_CHARS {
+        let mut safe_boundary = MAX_INLINE_JSON_CHARS;
+        while safe_boundary > 0 && !text.is_char_boundary(safe_boundary) {
+            safe_boundary = safe_boundary.saturating_sub(1);
+        }
+        text.truncate(safe_boundary);
+        text.push_str("...");
+    }
+    text
+}
+
+pub(super) fn localize_cli_notice(language: &str, text: &str) -> String {
+    if !crate::locale::is_zh_language(language) {
+        return text.to_string();
+    }
+
+    if let Some(value) = text.strip_prefix("approved once: ") {
+        return format!("已单次批准: {value}");
+    }
+    if let Some(value) = text.strip_prefix("approved for session: ") {
+        return format!("已批准本会话: {value}");
+    }
+    if let Some(value) = text.strip_prefix("denied: ") {
+        return format!("已拒绝: {value}");
+    }
+    if let Some(value) = text.strip_prefix("already using session: ") {
+        return format!("当前已在会话: {value}");
+    }
+    if let Some(value) = text.strip_prefix("session not found: ") {
+        return format!("会话不存在: {value}");
+    }
+    if let Some(value) = text.strip_prefix("switched to session: ") {
+        return format!("已切换到会话: {value}");
+    }
+    if let Some(value) = text.strip_prefix("resumed session: ") {
+        return format!("已恢复会话: {value}");
+    }
+    if let Some(value) = text.strip_prefix("model set: ") {
+        return format!("模型已切换: {value}");
+    }
+    if let Some(value) = text.strip_prefix("current model: ") {
+        return format!("当前模型: {value}");
+    }
+    if let Some(value) = text.strip_prefix("available models: ") {
+        return format!("可用模型: {value}");
+    }
+    if let Some(value) = text.strip_prefix("invalid /mouse args: ") {
+        return format!("无效的 /mouse 参数: {value}");
+    }
+    if let Some(value) = text.strip_prefix("invalid mode: ") {
+        return format!("非法模式: {value}");
+    }
+    if let Some(value) = text.strip_prefix("invalid approval mode: ") {
+        return format!("非法审批模式: {value}");
+    }
+    if let Some(value) = text.strip_prefix("no files found for: ") {
+        return format!("未找到文件: {value}");
+    }
+    if let Some(value) = text.strip_prefix("mention results (") {
+        return format!("搜索结果 ({value}");
+    }
+    if let Some(value) = text.strip_prefix("extra prompt saved (") {
+        return format!("额外提示词已保存 ({value}");
+    }
+    if let Some(value) = text.strip_prefix("tool_call_mode set: ") {
+        return format!("工具调用模式已设置: {value}");
+    }
+    if let Some(value) = text.strip_prefix("approval_mode set: ") {
+        return format!("审批模式已设置: {value}");
+    }
+    if let Some(value) = text.strip_prefix("model not found: ") {
+        return format!("模型不存在: {value}");
+    }
+    if let Some(value) = text.strip_prefix("session index out of range: ") {
+        return format!("会话索引越界: {value}");
+    }
+    if let Some(value) = text.strip_prefix("unknown command: ") {
+        return format!("未知命令: {value}");
+    }
+    if let Some(value) = text.strip_prefix("model not found in config: ") {
+        return format!("配置中不存在模型: {value}");
+    }
+    if let Some(value) = text.strip_prefix("- provider: ") {
+        return format!("- 提供商: {value}");
+    }
+    if let Some(value) = text.strip_prefix("- base_url: ") {
+        return format!("- base_url: {value}");
+    }
+    if let Some(value) = text.strip_prefix("- model: ") {
+        return format!("- 模型: {value}");
+    }
+    if let Some(value) = text.strip_prefix("- tool_call_mode: ") {
+        return format!("- 工具调用模式: {value}");
+    }
+    if let Some(value) = text.strip_prefix("- session: ") {
+        return format!("- 会话: {value}");
+    }
+    if let Some(value) = text.strip_prefix("- id: ") {
+        return format!("- 会话 ID: {value}");
+    }
+    if let Some(value) = text.strip_prefix("review task cancelled: ") {
+        return format!("review 任务已取消: {value}");
+    }
+    match text {
+        "wunder-cli tui mode. type /help for commands." => {
+            "wunder-cli TUI 模式。输入 /help 查看命令。".to_string()
+        }
+        "no historical sessions found" => "未找到历史会话".to_string(),
+        "tip: start chatting first, then use /resume to switch" => {
+            "提示：先发起对话，再用 /resume 切换。".to_string()
+        }
+        "tip: send a few messages first, then /resume to switch" => {
+            "提示：先发送几条消息，再用 /resume 切换。".to_string()
+        }
+        "focus switched to input" => "焦点已切换到输入区".to_string(),
+        "focus switched to output (arrows now select transcript)" => {
+            "焦点已切换到输出区（方向键可选择日志）".to_string()
+        }
+        "assistant is still running, wait for completion before creating a new session" => {
+            "助手仍在运行，请等待完成后再新建会话".to_string()
+        }
+        "assistant is still running, wait for completion before sending a new prompt" => {
+            "助手仍在运行，请等待完成后再发送新消息".to_string()
+        }
+        "assistant is still running, wait for completion before running /review" => {
+            "助手仍在运行，请等待完成后再执行 /review".to_string()
+        }
+        "assistant is still running, wait for completion before resuming another session" => {
+            "助手仍在运行，请等待完成后再恢复其他会话".to_string()
+        }
+        "interrupt requested, waiting for running round to stop..." => {
+            "已请求中断，等待当前轮次停止...".to_string()
+        }
+        "no cancellable round found, press Ctrl+C again to exit" => {
+            "未找到可中断轮次，再按一次 Ctrl+C 退出".to_string()
+        }
+        "no cancellable round found; the thread is finishing on its own" => {
+            "未找到可中断轮次，该线程正在自行收尾".to_string()
+        }
+        "press Ctrl+C again to exit (or wait to continue)" => {
+            "再按一次 Ctrl+C 退出（或等待继续）".to_string()
+        }
+        "usage: /mention <query>" => "用法: /mention <query>".to_string(),
+        "usage: /approvals [show|suggest|auto_edit|full_auto]" => {
+            "用法: /approvals [show|suggest|auto_edit|full_auto]".to_string()
+        }
+        "valid modes: suggest, auto_edit, full_auto" => {
+            "可选模式: suggest, auto_edit, full_auto".to_string()
+        }
+        "usage: /tool-call-mode <tool_call|function_call> [model]" => {
+            "用法: /tool-call-mode <tool_call|function_call> [model]".to_string()
+        }
+        "valid modes: tool_call, function_call" => "可选模式: tool_call, function_call".to_string(),
+        "too many arguments" => "参数过多".to_string(),
+        "config values cannot be empty" => "配置值不能为空".to_string(),
+        "configure llm model (step 1/4)" => "配置 LLM 模型（步骤 1/4）".to_string(),
+        "config cancelled" => "配置已取消".to_string(),
+        "input base_url (empty line to cancel)" => "请输入 base_url（空行取消）".to_string(),
+        "input api_key (step 2/4)" => "请输入 api_key（步骤 2/4）".to_string(),
+        "input model name (step 3/4)" => "请输入模型名称（步骤 3/4）".to_string(),
+        "input max_context (step 4/4, optional; Enter for auto probe)" => {
+            "请输入 max_context（步骤 4/4，可选；回车自动探测）".to_string()
+        }
+        "model configured" => "模型配置完成".to_string(),
+        "- max_context: auto probe unavailable (or keep existing)" => {
+            "- max_context: 自动探测不可用（或保留现有值）".to_string()
+        }
+        "mouse mode: auto (native selection and terminal wheel scrolling enabled; switch to scroll for app-captured transcript scrolling)" => {
+            "鼠标模式：auto（启用终端原生选择与滚轮滚动；切到 scroll 时由应用接管输出滚动）".to_string()
+        }
+        "mouse mode: scroll (capture wheel events for transcript scrolling)" => {
+            "鼠标模式：scroll（由应用接管滚轮并滚动输出区）".to_string()
+        }
+        "mouse mode: select/copy (native terminal selection enabled)" => {
+            "鼠标模式：select/copy（启用终端原生选择复制）".to_string()
+        }
+        "usage: /mouse [auto|scroll|select]  (F4 optional)" => {
+            "用法: /mouse [auto|scroll|select]  （F4 可切换）".to_string()
+        }
+        "resume picker opened (Up/Down to choose, Enter to resume, Esc to cancel)" => {
+            "已打开会话恢复面板（上下选择，Enter 恢复，Esc 取消）".to_string()
+        }
+        "tip: /resume to list available sessions" => "提示: 用 /resume 列出可用会话".to_string(),
+        "tip: run /resume list to inspect available sessions" => {
+            "提示: 运行 /resume list 查看可用会话".to_string()
+        }
+        "type /help to list available slash commands" => {
+            "输入 /help 查看可用 slash 命令".to_string()
+        }
+        "available models:" => "可用模型：".to_string(),
+        "no models configured. run /config first." => "尚未配置模型，请先运行 /config".to_string(),
+        "no saved session found" => "未找到保存的会话".to_string(),
+        "no llm model configured" => "尚未配置 LLM 模型".to_string(),
+        "session id is empty" => "会话 ID 不能为空".to_string(),
+        "--- system prompt ---" => "--- 系统提示词开始 ---".to_string(),
+        "--- end system prompt ---" => "--- 系统提示词结束 ---".to_string(),
+        "stream ended without model output or final answer" => {
+            "流式输出结束，但未收到模型输出或最终答案".to_string()
+        }
+        _ => text.to_string(),
+    }
+}
+
+pub(super) fn build_workspace_file_index(root: &std::path::Path) -> Vec<IndexedFile> {
+    const MAX_INDEX_FILES: usize = 50_000;
+    let excluded_dirs = [
+        ".git",
+        "target",
+        "WUNDER_TEMP",
+        "data",
+        "frontend",
+        "web",
+        "node_modules",
+        "参考项目",
+        "backups",
+    ];
+    let mut items = Vec::new();
+    let walker = walkdir::WalkDir::new(root).follow_links(false);
+    for entry in walker
+        .into_iter()
+        .filter_entry(|entry| {
+            let path = entry.path();
+            if path == root {
+                return true;
+            }
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                return true;
+            };
+            !excluded_dirs
+                .iter()
+                .any(|excluded| name.eq_ignore_ascii_case(excluded))
+        })
+        .filter_map(|entry| entry.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(relative) = path.strip_prefix(root) else {
+            continue;
+        };
+        let rel = relative.to_string_lossy().replace('\\', "/");
+        if rel.is_empty() {
+            continue;
+        }
+        items.push(IndexedFile {
+            lowered: rel.to_ascii_lowercase(),
+            path: rel,
+        });
+        if items.len() >= MAX_INDEX_FILES {
+            break;
+        }
+    }
+    items.sort_by(|left, right| left.path.cmp(&right.path));
+    items
+}
+
+#[cfg(test)]
+mod snapshot_history_tests {
+    use super::*;
+
+    #[test]
+    fn projects_conversation_items_in_durable_order() {
+        let snapshot = json!({
+            "cursor": 42,
+            "turns": [],
+            "items": [
+                {"item_id": "text-2", "item_index": 0, "kind": "assistant_message",
+                 "visibility": "user", "created_seq": 12,
+                 "payload": {"role": "assistant", "content": "second",
+                             "reasoning": "thought process"}},
+                {"item_id": "msg-1", "item_index": 0, "kind": "user_message",
+                 "visibility": "user", "created_seq": 3,
+                 "payload": {"role": "user", "content": "first"}},
+            ],
+            "blocks": [],
+        });
+        let records = snapshot_history_records(&snapshot);
+        let roles: Vec<&str> = records
+            .iter()
+            .filter_map(|record| record.get("role").and_then(Value::as_str))
+            .collect();
+        assert_eq!(roles, vec!["user", "assistant"]);
+        assert_eq!(records[0]["content"], json!("first"));
+        assert_eq!(records[1]["reasoning_content"], json!("thought process"));
+    }
+
+    #[test]
+    fn skips_tool_and_hidden_items() {
+        let snapshot = json!({
+            "cursor": 9,
+            "items": [
+                {"item_id": "tool-1", "kind": "tool_call", "visibility": "user",
+                 "created_seq": 4, "payload": {"tool": "sample_tool"}},
+                {"item_id": "approval-1", "kind": "approval", "visibility": "user",
+                 "created_seq": 5, "payload": {}},
+                {"item_id": "hidden-1", "kind": "user_message", "visibility": "model",
+                 "created_seq": 6, "payload": {"role": "user", "content": "prompt only"}},
+                {"item_id": "reasoning-1", "kind": "reasoning", "visibility": "user",
+                 "created_seq": 7, "payload": {"reasoning": "brief thought"}},
+            ],
+        });
+        let records = snapshot_history_records(&snapshot);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["role"], json!("assistant"));
+        assert_eq!(records[0]["content"], json!(Value::Null));
+        assert_eq!(records[0]["reasoning_content"], json!("brief thought"));
+    }
+
+    #[test]
+    fn empty_snapshot_yields_no_records() {
+        assert!(snapshot_history_records(&json!({})).is_empty());
+        assert!(snapshot_history_records(&json!({"items": []})).is_empty());
+    }
+}

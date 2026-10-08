@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tools | 使用说明书</title>
+  <meta name="description" content="The Tools core explains why wunder must unify all capabilities as tools, and why tools must simultaneously serve model invocation, execution governance, and frontend display.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/concepts/core-tools","language":"en","title":"Tools","summary":"The Tools core explains why wunder must unify all capabilities as tools, and why tools must simultaneously serve model invocation, execution governance, and frontend display.","updated_at":"2026-10-06","read_when":["You are designing built-in tools, MCP, or Skills","You want to understand why tool returns must be concise and clear"],"source_docs":["docs/总体设计.md"],"tab":"Core","group":"10 Core Ideas","group_path":["10 Core Ideas"],"url":"/docs/en/concepts/core-tools/","headings":[{"id":"section-1","level":1,"text":"Tools"},{"id":"section-2","level":2,"text":"Key Takeaways"},{"id":"section-3","level":2,"text":"Why It Must Be Listed as a Core"},{"id":"section-4","level":2,"text":"What This Core Truly Protects"},{"id":"section-5","level":2,"text":"Key Constraints"},{"id":"section-6","level":2,"text":"Design Focus"},{"id":"section-7","level":3,"text":"Focus One: wunder Doesn't Just Make Models \"Talk,\" It Makes Models \"Do\""},{"id":"section-8","level":3,"text":"Focus Two: Tool Results Should Serve Scheduling First, Then Display"},{"id":"section-9","level":3,"text":"Focus Three: A Unified Tool System Is More Important Than \"More Tools\""},{"id":"section-10","level":2,"text":"Common Misconceptions"},{"id":"section-11","level":2,"text":"Boundaries with Other Cores"},{"id":"section-12","level":2,"text":"Further Reading"}],"prev_slug":"en/concepts/core-agent-loop","next_slug":"en/concepts/core-context-compression","markdown":"# Tools\n\nwunder's focus is not \"making models respond more like humans,\" but \"enabling models to stably invoke the correct capabilities and consume the returned results.\"\n\n![Tools layer diagram: tool specification, execution layer, model input results, display projection—four layers of relationship](/docs/assets/manual/core-tools.svg)\n\n## Key Takeaways\n\n- Tools are not an add-on capability list, but the unified interface through which the system exposes capabilities to models.\n- A tool that's easy for humans to read but hard for models to invoke is a bad tool in wunder.\n- Tool design must simultaneously consider invocation accuracy, context cost, permission governance, and frontend workflow display.\n\n## Why It Must Be Listed as a Core\n\nWithout \"tools\" as a core, wunder would experience two types of degradation:\n\n- Capabilities scattered across prompts, implicit logic, and temporary interfaces—models won't know how to stably invoke them.\n- Frontend can only see \"the model saying what it did,\" but cannot see what was actually executed.\n\nwunder unifying capabilities into tools essentially unifies three things: model mental model, execution protocol, and display protocol.\n\n## What This Core Truly Protects\n\n- Protects model invocation quality: Parameters and descriptions must minimize model guessing.\n- Protects execution governance: Budgets, permissions, approvals, and failure feedback must enter a unified pipeline.\n- Protects frontend visibility: Tool workflows need to be stably displayed, tracked, and replayed.\n\n## Key Constraints\n\n| Constraint | Purpose |\n|------|------|\n| Descriptions must be clear | Reduces model misuse and hallucinatory invocations |\n| Parameters must be structured | Makes model invocation more like \"filling a form\" rather than \"freestyling\" |\n| Returns must be concise and clear | Prevents observation noise from polluting context in return |\n| Facts and display must be separated | UI cards are projections, not the tool's actual execution results |\n\n## Design Focus\n\n### Focus One: wunder Doesn't Just Make Models \"Talk,\" It Makes Models \"Do\"\n\nFiles, commands, browsers, desktops, user worlds, channels, memory management—these are all fundamentally execution capabilities and shouldn't each have their own protocols.\n\n### Focus Two: Tool Results Should Serve Scheduling First, Then Display\n\nA tool returning tens of thousands of characters of raw logs may seem information-rich to users, but is usually a disaster for models. Truly good tool returns prioritize delivering:\n\n- The most critical facts at the moment\n- Signals needed to proceed to the next step\n- Actionable hints when failure occurs\n\n### Focus Three: A Unified Tool System Is More Important Than \"More Tools\"\n\nBuilt-in tools, MCP, Skills, knowledge bases, and user tools come from different sources, but ultimately must all enter a unified scheduling perspective. Otherwise, permissions, auditing, retrieval, and workflow display will all scatter.\n\n## Common Misconceptions\n\n- Skills are not a parallel world alongside tools—they are essentially solidified process capabilities.\n- More tools isn't necessarily better; vague descriptions and overlapping boundaries directly lower model invocation quality.\n- \"Can return a lot of content\" is not a virtue; being consumable by models at low cost is.\n\n## Boundaries with Other Cores\n\n- Difference from [Agent Loop](/docs/en/concepts/core-agent-loop/): Agent loop defines the main flow, tools define the invokable capabilities within the main flow.\n- Difference from [Context Compression](/docs/en/concepts/core-context-compression/): Compression solves \"what to do when results are too large,\" tools solve \"how to expose capabilities to models.\"\n- Difference from [Observability](/docs/en/concepts/core-observability/): Observability handles replaying tool trajectories, tools produce the trajectories.\n\n## Further Reading\n\n- [Core Overview](/docs/en/concepts/)\n- [Tool System](/docs/en/concepts/tools/)\n- [Prompts and Skills](/docs/en/concepts/prompt-and-skills/)\n- [Tools Overview](/docs/en/tools/)\n","source_path":"使用说明书/en/concepts/core-tools.md"}</script>
+</body>
+</html>

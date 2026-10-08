@@ -1,0 +1,682 @@
+use super::*;
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
+use wunder_server::approval::ApprovalRequestKind;
+
+#[test]
+fn thinking_fold_metrics_match_the_renderer() {
+    for rows in 0..12usize {
+        let mut lines: Vec<Line<'static>> =
+            (0..rows).map(|n| Line::from(format!("t{n}"))).collect();
+        fold_reasoning_lines(&mut lines);
+        assert_eq!(
+            lines.len(),
+            reasoning_folded_rows(rows),
+            "{rows} rendered rows must measure the same in both directions"
+        );
+    }
+}
+
+#[test]
+fn wrapped_input_lines_wrap_by_viewport_width() {
+    let lines = build_wrapped_input_lines("abcdef", 3);
+    assert_eq!(lines.len(), 2);
+    assert_eq!((lines[0].start, lines[0].end), (0, 3));
+    assert_eq!((lines[1].start, lines[1].end), (3, 6));
+}
+
+#[test]
+fn cursor_visual_position_prefers_next_wrapped_line_boundary() {
+    let text = "abcdef";
+    let lines = build_wrapped_input_lines(text, 3);
+    assert_eq!(cursor_visual_position(text, &lines, 2), (0, 2));
+    assert_eq!(cursor_visual_position(text, &lines, 3), (1, 0));
+}
+
+#[test]
+fn wrapped_input_lines_keep_explicit_newlines() {
+    let text = "a
+
+b";
+    let lines = build_wrapped_input_lines(text, 8);
+    assert_eq!(lines.len(), 3);
+    assert_eq!((lines[0].start, lines[0].end), (0, 1));
+    assert_eq!((lines[1].start, lines[1].end), (2, 2));
+    assert_eq!((lines[2].start, lines[2].end), (3, 4));
+    assert_eq!(cursor_visual_position(text, &lines, 2), (1, 0));
+}
+
+#[test]
+fn move_cursor_vertical_uses_wrapped_lines_without_newline() {
+    let text = "abcdef";
+    assert_eq!(move_cursor_vertical(text, 3, 4, -1), 1);
+    assert_eq!(move_cursor_vertical(text, 3, 1, 1), 4);
+}
+
+#[test]
+fn move_cursor_vertical_clamps_to_line_end() {
+    let text = "ab
+cdef";
+    assert_eq!(move_cursor_vertical(text, 16, 5, -1), 2);
+    assert_eq!(move_cursor_vertical(text, 16, 1, 1), 4);
+}
+
+#[test]
+fn cursor_visual_position_handles_cjk_width() {
+    let text = "\u{4f60}\u{597d}a";
+    let lines = build_wrapped_input_lines(text, 8);
+    let cursor_after_nihao = "\u{4f60}\u{597d}".len();
+    assert_eq!(
+        cursor_visual_position(text, &lines, cursor_after_nihao),
+        (0, 4)
+    );
+    assert_eq!(cursor_visual_position(text, &lines, text.len()), (0, 5));
+}
+
+#[test]
+fn wrapped_input_lines_wrap_cjk_without_splitting_char() {
+    let text = "\u{4f60}\u{597d}ab";
+    let lines = build_wrapped_input_lines(text, 4);
+    assert_eq!(lines.len(), 2);
+    assert_eq!(&text[lines[0].start..lines[0].end], "\u{4f60}\u{597d}");
+    assert_eq!(&text[lines[1].start..lines[1].end], "ab");
+}
+
+#[test]
+fn normalize_wrapped_cursor_position_wraps_boundary_columns() {
+    assert_eq!(normalize_wrapped_cursor_position((2, 3), 4), (2, 3));
+    assert_eq!(normalize_wrapped_cursor_position((2, 4), 4), (3, 0));
+    assert_eq!(normalize_wrapped_cursor_position((2, 9), 4), (4, 1));
+}
+
+#[test]
+fn wrapped_visual_line_count_tracks_wrap_and_newlines() {
+    assert_eq!(wrapped_visual_line_count("", 8), 1);
+    assert_eq!(wrapped_visual_line_count("abcdef", 3), 2);
+    assert_eq!(wrapped_visual_line_count("ab\ncd", 8), 2);
+    assert_eq!(wrapped_visual_line_count("\u{4f60}\u{597d}\u{5417}", 4), 2);
+}
+
+#[test]
+fn transcript_window_tail_view_uses_bottom_entries() {
+    let counts = vec![2, 2, 2, 2];
+    let window = compute_transcript_window_spec(&counts, 3, 0);
+    assert_eq!(window.total_lines, 8);
+    assert_eq!(window.start_entry, 2);
+    assert_eq!(window.end_entry_exclusive, 4);
+    assert_eq!(window.local_scroll, 1);
+}
+
+#[test]
+fn transcript_window_scrolled_up_returns_expected_slice() {
+    let counts = vec![2, 2, 2, 2];
+    let window = compute_transcript_window_spec(&counts, 3, 2);
+    assert_eq!(window.start_entry, 1);
+    assert_eq!(window.end_entry_exclusive, 4);
+    assert_eq!(window.local_scroll, 1);
+}
+
+#[test]
+fn transcript_window_limits_rendered_entries() {
+    let counts = vec![1; 200];
+    let window = compute_transcript_window_spec(&counts, 6, 95);
+    assert_eq!(window.start_entry, 99);
+    assert_eq!(window.end_entry_exclusive, 106);
+    assert_eq!(window.local_scroll, 0);
+    assert!(
+        window
+            .end_entry_exclusive
+            .saturating_sub(window.start_entry)
+            < counts.len()
+    );
+}
+
+#[test]
+fn transcript_window_supports_large_scroll_offsets() {
+    let counts = vec![1; 90_000];
+    let window = compute_transcript_window_spec(&counts, 20, 80_000);
+    assert_eq!(window.start_entry, 9_980);
+    assert_eq!(window.end_entry_exclusive, 10_001);
+    assert_eq!(window.local_scroll, 0);
+    assert_eq!(window.total_lines, 90_000);
+}
+
+#[test]
+fn paste_shortcut_accepts_ctrl_v_and_shift_insert() {
+    assert!(is_paste_shortcut(KeyEvent::new(
+        KeyCode::Char('v'),
+        KeyModifiers::CONTROL
+    )));
+    assert!(is_paste_shortcut(KeyEvent::new(
+        KeyCode::Char('V'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT
+    )));
+    assert!(is_paste_shortcut(KeyEvent::new(
+        KeyCode::Insert,
+        KeyModifiers::SHIFT
+    )));
+}
+
+#[test]
+fn paste_shortcut_rejects_plain_or_alt_modified_v() {
+    assert!(!is_paste_shortcut(KeyEvent::new(
+        KeyCode::Char('v'),
+        KeyModifiers::NONE
+    )));
+    assert!(!is_paste_shortcut(KeyEvent::new(
+        KeyCode::Char('v'),
+        KeyModifiers::ALT | KeyModifiers::CONTROL
+    )));
+}
+
+#[test]
+fn large_paste_placeholder_matches_reference_format() {
+    let mut counters = HashMap::new();
+    assert_eq!(
+        next_large_paste_placeholder(&mut counters, 1005),
+        "[Pasted Content 1005 chars]"
+    );
+    assert_eq!(
+        next_large_paste_placeholder(&mut counters, 1005),
+        "[Pasted Content 1005 chars] #2"
+    );
+    assert_eq!(
+        next_large_paste_placeholder(&mut counters, 1003),
+        "[Pasted Content 1003 chars]"
+    );
+}
+
+#[test]
+fn expand_large_paste_placeholders_restores_original_text() {
+    let large = format!("{}\n{}", "alpha".repeat(220), "beta".repeat(220));
+    let pending = vec![("[Pasted Content 1981 chars]".to_string(), large.clone())];
+    let input = "before [Pasted Content 1981 chars] after";
+    assert_eq!(
+        expand_large_paste_placeholders(input, pending.as_slice()),
+        format!("before {large} after")
+    );
+}
+
+#[test]
+fn footer_context_matches_reference_style_with_max_context() {
+    assert_eq!(
+        format_footer_context_summary(false, 280, Some(1000)),
+        "72% context left"
+    );
+}
+
+#[test]
+fn footer_context_defaults_to_full_when_empty() {
+    assert_eq!(
+        format_footer_context_summary(false, 0, None),
+        "100% context left"
+    );
+}
+
+#[test]
+fn transcript_entry_spacing_is_only_added_after_first_item() {
+    assert_eq!(transcript_entry_spacing_before(0), 0);
+    assert_eq!(transcript_entry_spacing_before(1), 1);
+    assert_eq!(transcript_entry_spacing_before(8), 1);
+}
+
+#[test]
+fn busy_activity_line_uses_codex_like_status_copy() {
+    assert_eq!(
+        format_busy_activity_line(false, 3, false, true),
+        "\u{2022} Working (3s \u{00b7} esc to interrupt)"
+    );
+    assert_eq!(
+        format_busy_activity_line(true, 113, false, true),
+        "\u{2022} 运行中 (1m 53s \u{00b7} Esc 可中断)"
+    );
+}
+
+#[test]
+fn elapsed_counter_compacts_before_it_wastes_width() {
+    assert_eq!(fmt_elapsed_compact(0), "0s");
+    assert_eq!(fmt_elapsed_compact(59), "59s");
+    assert_eq!(fmt_elapsed_compact(60), "1m 00s");
+    assert_eq!(fmt_elapsed_compact(113), "1m 53s");
+    assert_eq!(fmt_elapsed_compact(3_599), "59m 59s");
+    assert_eq!(fmt_elapsed_compact(3_600), "1h 00m 00s");
+    assert_eq!(fmt_elapsed_compact(7_325), "2h 02m 05s");
+}
+
+#[test]
+fn plain_transcript_lines_use_hanging_indent_without_role_labels() {
+    let lines = render_plain_lines(
+        LogKind::Assistant,
+        "this line wraps across the viewport width",
+        ratatui::style::Style::default(),
+        16,
+    );
+    let rendered = lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    assert!(rendered
+        .first()
+        .is_some_and(|line| line.starts_with("\u{2022} ")));
+    assert!(rendered.iter().skip(1).all(|line| line.starts_with("  ")));
+    assert!(rendered.iter().all(|line| !line.contains("assistant>")));
+    assert!(rendered.iter().all(|line| !line.contains("you>")));
+}
+
+#[test]
+fn mouse_mode_capture_policy_matches_codex_like_behavior() {
+    assert!(!MouseMode::Auto.captures_mouse());
+    assert!(MouseMode::Scroll.captures_mouse());
+    assert!(!MouseMode::Select.captures_mouse());
+}
+
+#[test]
+fn sanitize_assistant_text_strips_tool_markup_blocks() {
+    let raw = "before <tool_call>{\"name\":\"读取文件\"}</tool_call> after";
+    assert_eq!(sanitize_assistant_text(raw), "before  after");
+}
+
+#[test]
+fn sanitize_assistant_delta_filters_tool_payload_fragments() {
+    assert!(sanitize_assistant_delta("<tool_call>{").is_empty());
+    assert!(sanitize_assistant_delta("{\"name\":\"读取文件\",\"arguments\":{}}").is_empty());
+}
+
+#[test]
+fn sanitize_assistant_delta_streaming_strips_split_tool_call_block() {
+    let mut in_tool_markup = false;
+    let first = sanitize_assistant_delta_streaming(
+        "<tool_call>{\"name\":\"final_reply\",\"arguments\":{\"content\":\"",
+        &mut in_tool_markup,
+    );
+    assert!(first.is_empty());
+    assert!(in_tool_markup);
+
+    let second =
+        sanitize_assistant_delta_streaming("hello\"}}</tool_call>hello world", &mut in_tool_markup);
+    assert_eq!(second, "hello world");
+    assert!(!in_tool_markup);
+}
+
+#[test]
+fn merge_stream_text_reuses_snapshot_without_duplicate_append() {
+    let mut output = "hello".to_string();
+    merge_stream_text(&mut output, "hello world");
+    assert_eq!(output, "hello world");
+
+    merge_stream_text(&mut output, "world");
+    assert_eq!(output, "hello world");
+}
+
+#[test]
+fn merge_stream_text_appends_non_overlapping_delta_without_newline() {
+    let mut output = "hello".to_string();
+    merge_stream_text(&mut output, " ");
+    merge_stream_text(&mut output, "world");
+    assert_eq!(output, "hello world");
+}
+
+#[test]
+fn equivalent_text_ignores_whitespace_differences() {
+    assert!(is_equivalent_text("hello  world", "hello world"));
+    assert!(is_equivalent_text("- run command", "-run command"));
+}
+
+#[test]
+fn payload_has_tool_calls_accepts_non_empty_array() {
+    let payload = serde_json::json!({ "tool_calls": [{ "name": "读取文件" }] });
+    assert!(payload_has_tool_calls(&payload));
+}
+
+#[test]
+fn format_execute_command_result_lines_prioritizes_failure_output() {
+    let payload = serde_json::json!({
+        "data": {
+            "results": [{
+                "command": "pip list",
+                "returncode": 1,
+                "stdout": "",
+                "stderr": "pip is not recognized as a cmdlet
+    at line:1 char:1"
+            }]
+        },
+        "meta": {
+            "duration_ms": 15,
+            "exit_code": 1
+        }
+    });
+
+    let lines = format_execute_command_result_lines("exec", &payload, false);
+    assert!(!lines.is_empty());
+    assert!(lines[0].contains("failed"));
+    assert!(lines.iter().any(|line| line.starts_with("  stderr:")));
+    assert!(!lines
+        .iter()
+        .any(|line| line.starts_with("  output: <empty>")));
+}
+
+#[test]
+fn format_tool_result_lines_formats_apply_patch_changes_with_markers() {
+    let payload = serde_json::json!({
+        "result": {
+            "ok": true,
+            "data": {
+                "changed_files": 3,
+                "hunks_applied": 4,
+                "files": [
+                    { "action": "add", "path": "src/new_file.rs", "hunks": 1 },
+                    { "action": "update", "path": "src/existing.rs", "hunks": 2 },
+                    { "action": "delete", "path": "src/old_file.rs", "hunks": 1 }
+                ]
+            }
+        }
+    });
+
+    let lines = format_tool_result_lines("应用补丁", &payload, true);
+    assert!(!lines.is_empty());
+    assert!(lines[0].contains("已修改 3 个文件"));
+    assert!(lines[0].contains("4 hunks"));
+    assert!(lines.iter().any(|line| line.contains("A src/new_file.rs")));
+    assert!(lines.iter().any(|line| line.contains("M src/existing.rs")));
+    assert!(lines.iter().any(|line| line.contains("D src/old_file.rs")));
+}
+
+#[test]
+fn format_tool_result_lines_surfaces_apply_patch_error_code_and_hint() {
+    let payload = serde_json::json!({
+        "result": {
+            "ok": false,
+            "error": "Patch apply failed",
+            "data": {
+                "error_code": "PATCH_CONTEXT_NOT_FOUND",
+                "hint": "Read latest file content and regenerate patch"
+            }
+        }
+    });
+
+    let lines = format_tool_result_lines("apply_patch", &payload, false);
+    assert!(lines.iter().any(|line| line.contains("failed")));
+    assert!(lines
+        .iter()
+        .any(|line| line.contains("PATCH_CONTEXT_NOT_FOUND")));
+    assert!(lines.iter().any(|line| line.contains("regenerate patch")));
+}
+
+#[test]
+fn append_text_preview_truncates_long_output() {
+    let mut lines = Vec::new();
+    let value = "line1\nline2\nline3\nline4\nline5\nline6\nline7\n";
+    let has_output = append_text_preview(&mut lines, "stdout", value, 4, 64);
+    assert!(has_output);
+    assert!(lines.iter().any(|line| line.contains("more lines")));
+}
+
+#[test]
+fn compact_json_handles_multibyte_truncation() {
+    let value = serde_json::json!({ "message": "你".repeat(400) });
+    let output = compact_json(&value);
+    assert!(output.ends_with("..."));
+}
+
+#[test]
+fn backtrack_user_text_returns_trimmed_user_content() {
+    let entry = LogEntry {
+        kind: LogKind::User,
+        text: "  hello world  ".to_string(),
+        special: None,
+        markdown_cache: None,
+        durable_id: None,
+    };
+    assert_eq!(backtrack_user_text(&entry), Some("hello world".to_string()));
+}
+
+#[test]
+fn backtrack_user_text_ignores_non_user_or_empty() {
+    let assistant_entry = LogEntry {
+        kind: LogKind::Assistant,
+        text: "hello".to_string(),
+        special: None,
+        markdown_cache: None,
+        durable_id: None,
+    };
+    assert_eq!(backtrack_user_text(&assistant_entry), None);
+
+    let empty_user_entry = LogEntry {
+        kind: LogKind::User,
+        text: "   ".to_string(),
+        special: None,
+        markdown_cache: None,
+        durable_id: None,
+    };
+    assert_eq!(backtrack_user_text(&empty_user_entry), None);
+}
+
+#[test]
+fn should_store_history_entry_skips_slash_commands() {
+    assert!(should_store_history_entry("hello world"));
+    assert!(should_store_history_entry("  你好"));
+    assert!(!should_store_history_entry("   /help"));
+    assert!(!should_store_history_entry("/attach image.png"));
+    assert!(!should_store_history_entry("   "));
+}
+
+#[test]
+fn detect_pasted_attachment_paths_recognizes_quoted_local_files() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let base_dir = std::env::temp_dir().join(format!("wunder-cli-paste-{unique}"));
+    fs::create_dir_all(&base_dir).unwrap();
+
+    let first = base_dir.join("截图 one.png");
+    let second = base_dir.join("第二张图.jpg");
+    fs::write(&first, b"fake-image-a").unwrap();
+    fs::write(&second, b"fake-image-b").unwrap();
+
+    let pasted = format!("\"{}\" \"{}\"", first.display(), second.display());
+    let detected = detect_pasted_attachment_paths(base_dir.as_path(), pasted.as_str()).unwrap();
+
+    assert_eq!(
+        detected,
+        vec![
+            first.to_string_lossy().to_string(),
+            second.to_string_lossy().to_string(),
+        ]
+    );
+
+    fs::remove_file(first).unwrap();
+    fs::remove_file(second).unwrap();
+    fs::remove_dir_all(base_dir).unwrap();
+}
+
+#[test]
+fn detect_pasted_attachment_paths_leaves_plain_text_alone() {
+    assert_eq!(
+        detect_pasted_attachment_paths(Path::new("."), "hello codex-like world"),
+        None
+    );
+}
+
+#[test]
+fn format_apply_patch_approval_lines_show_real_diff_preview() {
+    let args = serde_json::json!({
+        "input": "*** Begin Patch\n*** Update File: src/main.rs\n@@\n-old\n+new\n*** End Patch"
+    });
+    let lines = format_apply_patch_approval_lines(&args, false).expect("approval lines");
+    assert_eq!(lines[0], "Patch preview: files=1, +1, -1");
+    assert!(lines.iter().any(|line| line.trim() == "diff src/main.rs"));
+    assert!(lines.iter().any(|line| line.trim() == "@@"));
+    assert!(lines.iter().any(|line| line.trim() == "- old"));
+    assert!(lines.iter().any(|line| line.trim() == "+ new"));
+}
+
+#[test]
+fn approval_prompt_text_matches_request_kind() {
+    let (tx, _rx) = tokio::sync::oneshot::channel();
+    let request = ApprovalRequest {
+        id: "req-1".to_string(),
+        kind: ApprovalRequestKind::Patch,
+        tool: "apply_patch".to_string(),
+        args: serde_json::json!({}),
+        summary: "edit files".to_string(),
+        detail: serde_json::json!({}),
+        respond_to: tx,
+    };
+    assert_eq!(
+        approval_prompt_text(&request, false),
+        "Would you like to make the following edits?"
+    );
+    assert_eq!(
+        approval_prompt_text(&request, true),
+        "是否允许应用以下修改？"
+    );
+}
+
+#[test]
+fn approval_option_labels_match_exec_request_kind() {
+    let (tx, _rx) = tokio::sync::oneshot::channel();
+    let request = ApprovalRequest {
+        id: "req-2".to_string(),
+        kind: ApprovalRequestKind::Exec,
+        tool: "execute_command".to_string(),
+        args: serde_json::json!({}),
+        summary: "run command".to_string(),
+        detail: serde_json::json!({}),
+        respond_to: tx,
+    };
+    assert_eq!(
+        approval_option_labels(&request, false),
+        [
+            "Yes, run it once".to_string(),
+            "Yes, allow it for this session".to_string(),
+            "No, and tell Wunder what to do differently".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn the_reasoning_effort_ladder_steps_and_clamps() {
+    // Alt+. raises, Alt+, lowers, and both ends report "already there".
+    assert_eq!(
+        super::commands::next_reasoning_effort("low", 1),
+        Some("medium")
+    );
+    assert_eq!(
+        super::commands::next_reasoning_effort("medium", 1),
+        Some("high")
+    );
+    assert_eq!(super::commands::next_reasoning_effort("high", 1), None);
+    assert_eq!(
+        super::commands::next_reasoning_effort("high", -1),
+        Some("medium")
+    );
+    assert_eq!(
+        super::commands::next_reasoning_effort("medium", -1),
+        Some("low")
+    );
+    assert_eq!(super::commands::next_reasoning_effort("low", -1), None);
+    // Case and whitespace come from a hand-edited config; an unknown word
+    // starts from the default rung instead of failing.
+    assert_eq!(
+        super::commands::next_reasoning_effort(" HIGH ", -1),
+        Some("medium")
+    );
+    assert_eq!(
+        super::commands::next_reasoning_effort("nonsense", -1),
+        Some("low")
+    );
+    assert_eq!(
+        super::commands::next_reasoning_effort("nonsense", 1),
+        Some("high")
+    );
+}
+
+#[test]
+fn approval_panel_answers_with_the_codex_keys() {
+    assert_eq!(
+        approval_response_for_key(KeyCode::Char('y'), 0),
+        Some((ApprovalResponse::ApproveOnce, false))
+    );
+    assert_eq!(
+        approval_response_for_key(KeyCode::Char('A'), 2),
+        Some((ApprovalResponse::ApproveSession, false))
+    );
+    assert_eq!(
+        approval_response_for_key(KeyCode::Char('n'), 0),
+        Some((ApprovalResponse::Deny, false))
+    );
+    assert_eq!(
+        approval_response_for_key(KeyCode::Char('c'), 0),
+        Some((ApprovalResponse::Deny, true)),
+        "cancel denies the request but is reported as a cancellation"
+    );
+    assert_eq!(
+        approval_response_for_key(KeyCode::Esc, 0),
+        Some((ApprovalResponse::Deny, true))
+    );
+    assert_eq!(
+        approval_response_for_key(KeyCode::Enter, 1),
+        Some((ApprovalResponse::ApproveSession, false))
+    );
+    assert_eq!(
+        approval_response_for_key(KeyCode::Char('d'), 0),
+        None,
+        "the execpolicy keys codex has and wunder does not are not faked"
+    );
+    assert_eq!(approval_response_for_key(KeyCode::Char('1'), 0), None);
+}
+#[test]
+fn approval_and_inquiry_have_distinct_transcript_markers() {
+    assert_eq!(log_prefix(LogKind::Approval), "! ");
+    assert_eq!(log_prefix(LogKind::Inquiry), "? ");
+    assert_ne!(log_prefix(LogKind::Inquiry), log_prefix(LogKind::Tool));
+}
+
+#[test]
+fn tool_call_key_reads_stable_and_turn_ids_from_payload() {
+    let payload = serde_json::json!({
+        "tool_call_id": " call-7 ",
+        "turn_id": "turn-2",
+    });
+    let key = ToolCallKey::from_payload(&payload).expect("key present");
+    assert_eq!(key.tool_call_id, "call-7");
+    assert_eq!(key.turn_id.as_deref(), Some("turn-2"));
+}
+
+#[test]
+fn tool_call_key_is_absent_without_tool_call_id() {
+    let payload = serde_json::json!({ "tool_call_id": "   " });
+    assert!(ToolCallKey::from_payload(&payload).is_none());
+    assert!(ToolCallKey::from_payload(&serde_json::json!({})).is_none());
+    let turn_only = serde_json::json!({ "turn_id": "turn-1" });
+    assert!(ToolCallKey::from_payload(&turn_only).is_none());
+}
+
+#[test]
+fn temp_tool_kinds_only_match_pending_cards_of_the_same_shape() {
+    let pending_patch = build_pending_patch_log(
+        &serde_json::json!({"patch": "*** Begin Patch\n*** Update File: a.txt\n*** End Patch"}),
+        false,
+    );
+    assert!(TempToolKind::Patch.matches_result("apply_patch", pending_patch.as_ref()));
+
+    let pending_tool = Some(build_pending_tool_log(
+        "read_file",
+        &serde_json::json!({"path": "a.txt"}),
+        false,
+    ));
+    assert!(TempToolKind::Generic("read_file".into())
+        .matches_result("read_file", pending_tool.as_ref()));
+    assert!(!TempToolKind::Generic("read_file".into())
+        .matches_result("read_file", pending_patch.as_ref()));
+    assert!(!TempToolKind::Generic("list_dir".into())
+        .matches_result("read_file", pending_tool.as_ref()));
+}

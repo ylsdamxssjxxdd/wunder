@@ -1,0 +1,67 @@
+import { I18n } from "i18n.slint";
+import { Theme } from "theme.slint";
+import { Action } from "components.slint";
+
+// 最小化到托盘后的驻留提示。知道了只收起提示、主窗口继续驻留托盘；
+// 退出程序走统一退出路径。组件由 Rust 侧（src/tray.rs）创建与定位，
+// 不与主窗口共享 globals。
+export component TrayNotice inherits Window {
+    title: I18n.tn_notice_title;
+    preferred-width: 420px;
+    preferred-height: 172px;
+    default-font-size: 14px;
+    background: Theme.panel;
+
+    callback acknowledged();
+    callback quit();
+
+    Rectangle {
+        width: parent.width; height: parent.height;
+        border-width: 1px;
+        border-color: Theme.border;
+        border-radius: Theme.radius-md;
+        VerticalLayout {
+            padding: Theme.space-4; spacing: Theme.space-3;
+            HorizontalLayout {
+                spacing: Theme.space-3;
+                Image {
+                    width: 36px; height: 36px;
+                    source: @image-url("../assets/app-icon.png");
+                    image-fit: contain;
+                }
+                VerticalLayout {
+                    spacing: Theme.space-1;
+                    Text {
+                        text: I18n.tn_notice_title;
+                        color: Theme.text;
+                        font-size: Theme.font-lg;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: I18n.tn_notice_body;
+                        wrap: word-wrap;
+                        color: Theme.muted;
+                        font-size: Theme.font-md;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                height: 30px; spacing: Theme.space-2;
+                Rectangle { horizontal-stretch: 1; }
+                Action {
+                    width: 88px; show-label: true;
+                    label: I18n.tn_notice_ack;
+                    clicked => { root.acknowledged(); }
+                }
+                Action {
+                    width: 96px; show-label: true; primary: true;
+                    label: I18n.tn_notice_quit;
+                    clicked => { root.quit(); }
+                }
+            }
+        }
+    }
+}

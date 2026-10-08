@@ -1,0 +1,910 @@
+import {
+  isRuntimeMessageActive,
+  selectChatRuntimeSession,
+  selectVisibleMessageProjections
+} from './chatRuntimeSelectors';
+import { resolveChatRuntimeRenderableKey } from './chatRuntimeMessageKeys';
+import type {
+  ChatRuntimeMessageProjection,
+  ChatRuntimeMessageStatus,
+  ChatRuntimeProjection
+} from './chatRuntimeTypes';
+import { buildBoundedStructuralRevision } from '@/utils/boundedStructuralRevision';
+
+type ChatMessageLike = Record<string, unknown>;
+
+export type ChatRuntimeRenderableMessage = {
+  key: string;
+  sourceIndex: number;
+  message: ChatMessageLike;
+};
+
+export type BuildChatRuntimeRenderableMessagesOptions = {
+  projection: ChatRuntimeProjection | null | undefined;
+  sessionId: unknown;
+  shouldRenderMessage?: (message: ChatMessageLike) => boolean;
+};
+
+export type ChatRuntimeProjectionRenderMode = 'shadow' | 'projection';
+
+export type ChatRuntimeRenderableSourceDecision = {
+  source: 'projection';
+  event: 'projection-source';
+  inspectShadow: boolean;
+};
+
+type MaterializationOptions = {
+  workflowActive: boolean;
+};
+
+type MaterializeChatRuntimeMessagesOptions = {
+  trustProjectionVersions?: boolean;
+};
+
+const RENDER_STORAGE_KEYS = [
+  'wunder:chat-runtime-render',
+  'wunder_chat_runtime_render'
+];
+const RENDER_SHADOW_STORAGE_KEYS = [
+  'wunder:chat-runtime-render-shadow',
+  'wunder_chat_runtime_render_shadow'
+];
+const RENDER_TRUE_VALUES = new Set(['1', 'true', 'on', 'yes', 'debug']);
+const RENDER_SHADOW_VALUES = new Set(['shadow', 'compare', 'dry-run', 'dryrun']);
+const RENDER_PROJECTION_VALUES = new Set(['projection-debug', 'force-projection', 'projected-debug']);
+const RENDER_SEARCH_KEYS = ['chat_runtime_render', 'chatRuntimeRender'];
+const RENDER_SHADOW_SEARCH_KEYS = ['chat_runtime_render_shadow', 'chatRuntimeRenderShadow'];
+const MATERIALIZED_MESSAGE_CACHE_SESSION_LIMIT = 64;
+// A long-running thread can contain thousands of historical messages. Materialized
+// view objects are disposable: retain only the current hot window's worth of identity.
+const MATERIALIZED_MESSAGE_CACHE_ENTRY_LIMIT = 320;
+const ACTIVE_PROJECTED_WORKFLOW_STATUSES = new Set([
+  'loading',
+  'pending',
+  'queued',
+  'running',
+  'streaming'
+]);
+
+type MaterializedMessageCacheEntry = {
+  sourceRevision: string;
+  source?: ChatRuntimeMessageProjection;
+  structureVersion?: number;
+  workflowActive?: boolean;
+  materializedMutableRevision: string;
+  message: ChatMessageLike;
+  lastUsed: number;
+};
+
+type MaterializedSessionMessageCache = {
+  byMessageId: Map<string, MaterializedMessageCacheEntry>;
+  bySource: WeakMap<ChatRuntimeMessageProjection, MaterializedMessageCacheEntry>;
+  lastUsed: number;
+};
+
+const materializedMessageCache = new WeakMap<
+  ChatRuntimeProjection,
+  Map<string, MaterializedSessionMessageCache>
+>();
+let materializedMessageCacheClock = 0;
+
+const resolveWorkflowMaterializationTarget = (
+  messages: ChatRuntimeMessageProjection[],
+  runtimeStatus: unknown
+): { userTurnId: string; placeholderMessageId: string; workflowActive: boolean } => {
+  const runtimeBusy = isWorkflowRuntimeBusy(runtimeStatus);
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === 'assistant') {
+      // A busy snapshot may precede its first tool event. Only the latest
+      // assistant needs a pending placeholder; history keeps its own records.
+      return {
+        userTurnId: message.userTurnId,
+        placeholderMessageId: message.id,
+        workflowActive: runtimeBusy &&
+          !isRuntimeMessageActive(message.status) &&
+          !hasProjectedWorkflowRecords(message)
+      };
+    }
+  }
+  return { userTurnId: '', placeholderMessageId: '', workflowActive: false };
+};
+
+const isWorkflowRuntimeBusy = (status: unknown): boolean => {
+  const normalized = String(status ?? '').trim().toLowerCase();
+  return normalized === 'running' ||
+    normalized === 'queued' ||
+    normalized === 'finalizing' ||
+    normalized === 'waiting_approval' ||
+    normalized === 'waiting_user_input';
+};
+
+const hasProjectedWorkflowRecords = (message: ChatRuntimeMessageProjection): boolean =>
+  (Array.isArray(message.workflowItems) && message.workflowItems.length > 0) ||
+  (Array.isArray(message.subagents) && message.subagents.length > 0);
+
+export const isChatRuntimeProjectionRenderEnabled = (): boolean =>
+  resolveChatRuntimeProjectionRenderMode() === 'projection';
+
+export const isChatRuntimeProjectionRenderShadowEnabled = (): boolean =>
+  resolveChatRuntimeProjectionRenderMode() === 'shadow' ||
+  readRuntimeRenderNamedFlag(RENDER_SHADOW_STORAGE_KEYS) ||
+  readRuntimeRenderNamedSearchFlag(RENDER_SHADOW_SEARCH_KEYS);
+
+export const resolveChatRuntimeProjectionRenderMode = (): ChatRuntimeProjectionRenderMode => {
+  const raw = readRuntimeRenderRawFlag();
+  if (RENDER_PROJECTION_VALUES.has(raw)) return 'projection';
+  if (RENDER_SHADOW_VALUES.has(raw)) return 'shadow';
+  if (RENDER_TRUE_VALUES.has(raw) || raw === 'projection' || raw === 'projected') {
+    return 'shadow';
+  }
+  if (readRuntimeRenderNamedFlag(RENDER_SHADOW_STORAGE_KEYS) || readRuntimeRenderNamedSearchFlag(RENDER_SHADOW_SEARCH_KEYS)) {
+    return 'shadow';
+  }
+  // Default to projection rendering: the runtime projection carries strict
+  // event_id / event_seq dedup, client_message_id optimistic-merge, snapshot
+  // full-replace and turn-ordered message selection. The legacy array is kept
+  // only as an input/debug surface, never as the rendered source of truth.
+  return 'projection';
+};
+
+export const materializeChatRuntimeMessages = (
+  projection: ChatRuntimeProjection | null | undefined,
+  sessionId: unknown,
+  options: MaterializeChatRuntimeMessagesOptions = {}
+): ChatMessageLike[] => {
+  const projectedMessages = selectVisibleMessageProjections(projection, sessionId);
+  const sessionCache = resolveMaterializedSessionMessageCache(projection, sessionId);
+  const workflowTarget = resolveWorkflowMaterializationTarget(
+    projectedMessages,
+    selectChatRuntimeSession(projection, sessionId)?.runtimeStatus
+  );
+  const activeMessageIds = new Set<string>();
+  let userRound = 0;
+  const materialized = projectedMessages
+    .map((message) => {
+      activeMessageIds.add(message.id);
+      if (message.role === 'user') {
+        userRound += 1;
+      }
+      const result = materializeChatRuntimeMessageWithCache(sessionCache, message, {
+        workflowActive: message.id === workflowTarget.placeholderMessageId && workflowTarget.workflowActive
+      }, options.trustProjectionVersions === true);
+      if (result && message.role === 'assistant' && userRound > 0) {
+        // Keep presentation-only round state local so stats do not rescan history.
+        result.__runtime_user_round = userRound;
+      }
+      return result;
+    })
+    .filter((message): message is ChatMessageLike => Boolean(message));
+  pruneMaterializedSessionMessageCache(sessionCache, activeMessageIds);
+  return materialized;
+};
+
+export const buildChatRuntimeRenderableMessages = (
+  options: BuildChatRuntimeRenderableMessagesOptions
+): ChatRuntimeRenderableMessage[] => {
+  const materialized = materializeChatRuntimeMessages(options.projection, options.sessionId, {
+    trustProjectionVersions: true
+  });
+  const shouldRender = typeof options.shouldRenderMessage === 'function'
+    ? options.shouldRenderMessage
+    : () => true;
+  return materialized.reduce<ChatRuntimeRenderableMessage[]>((acc, message) => {
+    if (!shouldRender(message)) return acc;
+    acc.push({
+      key: resolveChatRuntimeMessageRenderKey(message),
+      // Runtime-rendered messages already carry a stable message id. Keeping the
+      // index fixed prevents streaming deltas from invalidating legacy cache keys.
+      sourceIndex: 0,
+      message
+    });
+    return acc;
+  }, []);
+};
+
+/**
+ * Materialize an already-projected message list without running the legacy
+ * visible-message selector. The change-stream pipeline produces its bubbles
+ * deterministically (chatThreadProjection); this entry point keeps the row
+ * cache so streaming updates reuse stable DOM-facing objects. `projection`
+ * must be a caller-owned persistent object so the cache survives calls.
+ */
+export const materializeChatRuntimeProjectionList = (
+  projection: ChatRuntimeProjection,
+  sessionId: unknown,
+  projectedMessages: ChatRuntimeMessageProjection[],
+  options: MaterializeChatRuntimeMessagesOptions = {}
+): ChatMessageLike[] => {
+  const sessionCache = resolveMaterializedSessionMessageCache(projection, sessionId);
+  const workflowTarget = resolveWorkflowMaterializationTarget(
+    projectedMessages,
+    undefined
+  );
+  const activeMessageIds = new Set<string>();
+  let userRound = 0;
+  const materialized = projectedMessages
+    .map((message) => {
+      activeMessageIds.add(message.id);
+      if (message.role === 'user') {
+        userRound += 1;
+      }
+      const result = materializeChatRuntimeMessageWithCache(sessionCache, message, {
+        workflowActive: message.id === workflowTarget.placeholderMessageId && workflowTarget.workflowActive
+      }, options.trustProjectionVersions === true);
+      if (result && message.role === 'assistant' && userRound > 0) {
+        result.__runtime_user_round = userRound;
+      }
+      return result;
+    })
+    .filter((message): message is ChatMessageLike => Boolean(message));
+  pruneMaterializedSessionMessageCache(sessionCache, activeMessageIds);
+  return materialized;
+};
+
+export const hasChatRuntimeRenderSession = (
+  projection: ChatRuntimeProjection | null | undefined,
+  sessionId: unknown
+): boolean => Boolean(selectChatRuntimeSession(projection, sessionId));
+
+export const resolveChatRuntimeRenderableSourceDecision = (input: {
+  renderMode: ChatRuntimeProjectionRenderMode;
+  projectionCount: number;
+  projectionSessionKnown: boolean;
+  shadowEnabled?: boolean;
+}): ChatRuntimeRenderableSourceDecision => {
+  return {
+    source: 'projection',
+    event: 'projection-source',
+    inspectShadow: input.renderMode === 'shadow' || input.shadowEnabled === true
+  };
+};
+
+export const summarizeChatRuntimeRenderableMessages = (
+  messages: ChatRuntimeRenderableMessage[]
+): Record<string, unknown> => ({
+  count: Array.isArray(messages) ? messages.length : 0,
+  keys: (Array.isArray(messages) ? messages : [])
+    .slice(0, 8)
+    .map((item) => item.key),
+  projectedCount: (Array.isArray(messages) ? messages : [])
+    .filter((item) => Boolean(item.message?.__runtime_projected))
+    .length
+});
+
+export const materializeChatRuntimeMessage = (
+  message: ChatRuntimeMessageProjection | null | undefined,
+  options: MaterializationOptions = { workflowActive: false }
+): ChatMessageLike | null => {
+  if (!message || (message.role !== 'user' && message.role !== 'assistant')) {
+    return null;
+  }
+  if (isSyntheticGreetingDisplay(message.display)) {
+    return null;
+  }
+
+  const active = isRuntimeMessageActive(message.status);
+  const base: ChatMessageLike = cloneDisplayProjection(message.display);
+  base.role = message.role;
+  base.content = message.content;
+  base.reasoning = message.reasoning;
+  base.created_at = firstText(message.createdAt, base.created_at, base.createdAt);
+  base.message_id = firstText(message.id, base.message_id, base.messageId);
+  base.runtime_status = message.status;
+  base.__runtime_projected = true;
+  base.__runtime_message_id = message.id;
+  base.__runtime_user_turn_id = message.userTurnId;
+  base.__runtime_model_turn_id = message.modelTurnId;
+  base.__runtime_render_key = resolveChatRuntimeProjectionKey(message);
+  base.__runtime_structure_version = message.structureVersion || 0;
+
+  if (message.role === 'assistant') {
+    base.status = message.status;
+    base.state = resolveAssistantLegacyState(message.status);
+    base.stream_incomplete = active || options.workflowActive;
+    base.workflowStreaming = options.workflowActive || resolveProjectedWorkflowStreaming(message);
+    base.reasoningStreaming = active && Boolean(message.reasoning);
+    base.final = message.status === 'final';
+    base.failed = message.status === 'failed';
+    base.cancelled = message.status === 'cancelled';
+    base.workflowItems = cloneProjectionRecords(message.workflowItems, base.workflowItems);
+    base.subagents = cloneProjectionRecords(message.subagents, base.subagents);
+    base.workflowPendingPlaceholder = shouldMaterializeWorkflowPlaceholder(message, options)
+      ? buildWorkflowPendingPlaceholder(message)
+      : null;
+    settleTerminalMaterializedArtifacts(base, message.status);
+  }
+
+  return base;
+};
+
+const materializeChatRuntimeMessageWithCache = (
+  sessionCache: MaterializedSessionMessageCache | null,
+  message: ChatRuntimeMessageProjection | null | undefined,
+  options: MaterializationOptions,
+  trustProjectionVersions: boolean
+): ChatMessageLike | null => {
+  if (!sessionCache || !message?.id) {
+    return materializeChatRuntimeMessage(message, options);
+  }
+  const previous = sessionCache.bySource.get(message) || sessionCache.byMessageId.get(message.id);
+  // Canonical terminal rows change only through the reducer structure clock.
+  // Reusing them must not traverse historical tool payloads on every live event.
+  if (trustProjectionVersions && previous?.source === message && message.structureVersion !== undefined &&
+      previous.structureVersion === message.structureVersion &&
+      previous.workflowActive === options.workflowActive &&
+      !isRuntimeMessageActive(message.status) &&
+      isMaterializedMessageAligned(previous.message, message)) {
+    previous.lastUsed = ++materializedMessageCacheClock;
+    return previous.message;
+  }
+  const sourceRevision = buildProjectionMessageMaterializationRevision(message);
+  const cached = previous;
+  if (cached?.sourceRevision === sourceRevision) {
+    cached.lastUsed = ++materializedMessageCacheClock;
+    sessionCache.lastUsed = cached.lastUsed;
+    // Keep the legacy two-argument update path stable for hot text deltas.
+    syncMaterializedStreamingFields(cached.message, message);
+    syncMaterializedWorkflowPlaceholder(cached.message, message, options);
+    cached.workflowActive = options.workflowActive;
+    if (
+      isMaterializedMessageAligned(cached.message, message) &&
+      cached.materializedMutableRevision === buildMaterializedMutableFieldsRevision(cached.message)
+    ) {
+      return cached.message;
+    }
+  }
+
+  const materialized = materializeChatRuntimeMessage(message, options);
+  if (!materialized) {
+    sessionCache.byMessageId.delete(message.id);
+    return null;
+  }
+  if (cached) {
+    // Runtime tool events normally touch only the newest workflow record. Keep
+    // the previous materialized row objects so Vue does not patch every tool
+    // entry when a single streaming delta arrives.
+    syncMaterializedMessage(cached.message, materialized);
+    const lastUsed = ++materializedMessageCacheClock;
+    sessionCache.byMessageId.set(message.id, {
+      sourceRevision, source: message, structureVersion: message.structureVersion,
+      workflowActive: options.workflowActive,
+      materializedMutableRevision: buildMaterializedMutableFieldsRevision(cached.message),
+      message: cached.message,
+      lastUsed
+    });
+    sessionCache.bySource.set(message, sessionCache.byMessageId.get(message.id)!);
+    sessionCache.lastUsed = lastUsed;
+    return cached.message;
+  }
+  const lastUsed = ++materializedMessageCacheClock;
+  sessionCache.byMessageId.set(message.id, {
+    sourceRevision, source: message, structureVersion: message.structureVersion,
+    workflowActive: options.workflowActive,
+    materializedMutableRevision: buildMaterializedMutableFieldsRevision(materialized),
+    message: materialized,
+    lastUsed
+  });
+  sessionCache.bySource.set(message, sessionCache.byMessageId.get(message.id)!);
+  sessionCache.lastUsed = lastUsed;
+  return materialized;
+};
+
+const syncMaterializedMessage = (
+  target: ChatMessageLike,
+  source: ChatMessageLike
+): void => {
+  const preservedRecordLists = new Set([
+    'workflowItems',
+    'subagents',
+    'workflowPendingPlaceholder'
+  ]);
+  Object.keys(target).forEach((key) => {
+    if (!preservedRecordLists.has(key) && source[key] === undefined) {
+      delete target[key];
+    }
+  });
+  Object.entries(source).forEach(([key, value]) => {
+    if (key === 'workflowItems' || key === 'subagents' || key === 'workflowPendingPlaceholder') return;
+    target[key] = value;
+  });
+  syncMaterializedProjectionRecords(target, source, 'workflowItems');
+  syncMaterializedProjectionRecords(target, source, 'subagents');
+  target.workflowPendingPlaceholder = source.workflowPendingPlaceholder || null;
+};
+
+const syncMaterializedProjectionRecords = (
+  target: ChatMessageLike,
+  source: ChatMessageLike,
+  field: 'workflowItems' | 'subagents'
+): void => {
+  const incoming = Array.isArray(source[field])
+    ? source[field].filter(isPlainRecord)
+    : [];
+  const existing = Array.isArray(target[field])
+    ? target[field].filter(isPlainRecord)
+    : [];
+  if (incoming.length === 0) {
+    if (existing.length > 0 || target[field] !== undefined) {
+      target[field] = [];
+    }
+    return;
+  }
+  const existingByKey = new Map(
+    existing.map((record, index) => [resolveMaterializedProjectionRecordKey(record, index), record])
+  );
+  let recordsChanged = incoming.length !== existing.length;
+  const next = incoming.map((record, index) => {
+    const key = resolveMaterializedProjectionRecordKey(record, index);
+    const previous = existingByKey.get(key);
+    if (!previous) { recordsChanged = true; return record; }
+    if (buildMaterializedProjectionRecordRevision(previous) !== buildMaterializedProjectionRecordRevision(record)) {
+      recordsChanged = true;
+      Object.keys(previous).forEach((property) => {
+        if (record[property] === undefined) delete previous[property];
+      });
+      Object.assign(previous, record);
+    }
+    return previous;
+  });
+  // These records live outside Vue's reactive store. Publish a new list only
+  // when a child revision changes so the panel receives a changed prop.
+  if (field === 'subagents' && recordsChanged) {
+    target[field] = next;
+    return;
+  }
+  if (!Array.isArray(target[field])) {
+    target[field] = next;
+    return;
+  }
+  // Mutate in place to retain the list identity consumed by the workflow UI.
+  (target[field] as Record<string, unknown>[]).splice(0, existing.length, ...next);
+};
+
+const resolveMaterializedProjectionRecordKey = (
+  record: Record<string, unknown>,
+  index: number
+): string => firstText(
+  record.id,
+  record.itemId,
+  record.item_id,
+  record.key,
+  record.toolCallId,
+  record.tool_call_id,
+  record.run_id,
+  record.runId,
+  record.session_id,
+  record.sessionId
+) || `index:${index}`;
+
+const buildMaterializedProjectionRecordRevision = (
+  record: Record<string, unknown>
+): string => {
+  const updateSequence = record.updatedSeq ?? record.updated_seq;
+  const hasUpdateSequence = updateSequence !== undefined && updateSequence !== null && updateSequence !== '';
+  return [
+  updateSequence,
+  record.status,
+  record.eventType,
+  record.event_type,
+  record.event,
+  // Runtime projections carry an update sequence. Do not invalidate every
+  // untouched row merely because materialization cloned its wrapper object.
+  hasUpdateSequence ? '' : buildBoundedStructuralRevision(record)
+].join('\u0001');
+};
+
+const resolveMaterializedSessionMessageCache = (
+  projection: ChatRuntimeProjection | null | undefined,
+  sessionId: unknown
+): MaterializedSessionMessageCache | null => {
+  if (!projection || typeof projection !== 'object') return null;
+  const key = firstText(sessionId) || '__unknown__';
+  let projectionCache = materializedMessageCache.get(projection);
+  if (!projectionCache) {
+    projectionCache = new Map();
+    materializedMessageCache.set(projection, projectionCache);
+  }
+  let sessionCache = projectionCache.get(key);
+  if (!sessionCache) {
+    sessionCache = {
+      byMessageId: new Map(),
+      // Weak keys preserve cold-row identity without retaining evicted history.
+      bySource: new WeakMap(),
+      lastUsed: ++materializedMessageCacheClock
+    };
+    projectionCache.set(key, sessionCache);
+    pruneProjectionMaterializedSessionCaches(projectionCache);
+  } else {
+    sessionCache.lastUsed = ++materializedMessageCacheClock;
+  }
+  return sessionCache;
+};
+
+const pruneProjectionMaterializedSessionCaches = (
+  projectionCache: Map<string, MaterializedSessionMessageCache>
+): void => {
+  if (projectionCache.size <= MATERIALIZED_MESSAGE_CACHE_SESSION_LIMIT) return;
+  [...projectionCache.entries()]
+    .sort((left, right) => left[1].lastUsed - right[1].lastUsed)
+    .slice(0, projectionCache.size - MATERIALIZED_MESSAGE_CACHE_SESSION_LIMIT)
+    .forEach(([sessionId]) => projectionCache.delete(sessionId));
+};
+
+const pruneMaterializedSessionMessageCache = (
+  sessionCache: MaterializedSessionMessageCache | null,
+  activeMessageIds: Set<string>
+): void => {
+  if (!sessionCache) return;
+  for (const messageId of sessionCache.byMessageId.keys()) {
+    if (!activeMessageIds.has(messageId)) {
+      sessionCache.byMessageId.delete(messageId);
+    }
+  }
+  if (sessionCache.byMessageId.size <= MATERIALIZED_MESSAGE_CACHE_ENTRY_LIMIT) return;
+  [...sessionCache.byMessageId.entries()]
+    .sort((left, right) => left[1].lastUsed - right[1].lastUsed)
+    .slice(0, sessionCache.byMessageId.size - MATERIALIZED_MESSAGE_CACHE_ENTRY_LIMIT)
+    .forEach(([messageId]) => sessionCache.byMessageId.delete(messageId));
+};
+
+const buildProjectionMessageMaterializationRevision = (
+  message: ChatRuntimeMessageProjection
+): string => [
+    message.id,
+    message.role,
+    message.status,
+    message.createdAt,
+    message.createdSeq,
+    message.structureVersion || 0,
+    message.userTurnId,
+    message.modelTurnId,
+    message.final,
+    message.failed,
+    message.cancelled,
+    buildBoundedStructuralRevision(message.display),
+    buildBoundedStructuralRevision(message.workflowItems),
+    buildBoundedStructuralRevision(message.subagents)
+  ].join('\u0001');
+
+const isMaterializedMessageAligned = (
+  materialized: ChatMessageLike,
+  source: ChatRuntimeMessageProjection
+): boolean =>
+  materialized.__runtime_projected === true &&
+  materialized.__runtime_message_id === source.id &&
+  materialized.__runtime_user_turn_id === source.userTurnId &&
+  materialized.__runtime_model_turn_id === source.modelTurnId &&
+  materialized.__runtime_render_key === resolveChatRuntimeProjectionKey(source) &&
+  materialized.role === source.role &&
+  materialized.content === source.content &&
+  materialized.reasoning === source.reasoning &&
+  materialized.runtime_status === source.status &&
+  materialized.message_id === source.id;
+
+const syncMaterializedStreamingFields = (
+  materialized: ChatMessageLike,
+  source: ChatRuntimeMessageProjection
+): void => {
+  materialized.content = source.content;
+  materialized.reasoning = source.reasoning;
+  materialized.runtime_status = source.status;
+  if (source.role !== 'assistant') return;
+  const active = isRuntimeMessageActive(source.status);
+  materialized.status = source.status;
+  materialized.state = resolveAssistantLegacyState(source.status);
+  materialized.stream_incomplete = active;
+  materialized.workflowStreaming = resolveProjectedWorkflowStreaming(source);
+  materialized.reasoningStreaming = active && Boolean(source.reasoning);
+  materialized.final = source.status === 'final';
+  materialized.failed = source.status === 'failed';
+  materialized.cancelled = source.status === 'cancelled';
+  materialized.__runtime_structure_version = source.structureVersion || 0;
+  settleTerminalMaterializedArtifacts(materialized, source.status);
+};
+
+const syncMaterializedWorkflowPlaceholder = (
+  materialized: ChatMessageLike,
+  source: ChatRuntimeMessageProjection,
+  options: MaterializationOptions
+): void => {
+  materialized.stream_incomplete = isRuntimeMessageActive(source.status) || options.workflowActive;
+  materialized.workflowStreaming = options.workflowActive || resolveProjectedWorkflowStreaming(source);
+  materialized.workflowPendingPlaceholder = shouldMaterializeWorkflowPlaceholder(source, options)
+    ? buildWorkflowPendingPlaceholder(source)
+    : null;
+};
+
+const MATERIALIZED_MUTABLE_FIELDS = [
+  'attachments',
+  'feedback',
+  'plan',
+  'questionPanel',
+  'stats',
+  'subagents',
+  'workflowItems'
+];
+
+const buildMaterializedMutableFieldsRevision = (message: ChatMessageLike): string => {
+  return MATERIALIZED_MUTABLE_FIELDS
+    .filter((field) => message[field] !== undefined)
+    .map((field) => `${field}:${buildBoundedStructuralRevision(message[field])}`)
+    .join('|');
+};
+
+const cloneDisplayProjection = (display: unknown): ChatMessageLike => {
+  if (!isPlainRecord(display)) return {};
+  return Object.fromEntries(
+    Object.entries(display).map(([key, value]) => [key, cloneDisplayValue(value)])
+  );
+};
+
+const cloneDisplayValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(cloneDisplayValue);
+  }
+  if (isPlainRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, inner]) => [key, cloneDisplayValue(inner)])
+    );
+  }
+  return value;
+};
+
+const isSyntheticGreetingDisplay = (display: unknown): boolean =>
+  isPlainRecord(display) && (display.isGreeting === true || display.is_greeting === true);
+
+export const resolveChatRuntimeMessageRenderKey = (
+  message: ChatMessageLike | null | undefined
+): string => resolveChatRuntimeRenderableKey(message);
+
+const resolveChatRuntimeProjectionKey = (
+  message: ChatRuntimeMessageProjection
+): string => message.id.startsWith('tturn:') && message.raw?.client_message_id
+  ? `runtime:${message.role}:client:${message.raw.client_message_id}`
+  : `runtime:${message.role}:${message.id}`;
+
+const resolveProjectedWorkflowStreaming = (
+  message: ChatRuntimeMessageProjection
+): boolean => {
+  if (!isRuntimeMessageActive(message.status)) return false;
+  if (isProjectedResumablePause(message)) return false;
+  return (
+    message.status === 'queued' ||
+    message.status === 'tooling' ||
+    hasActiveProjectedWorkflowItems(message.workflowItems) ||
+    hasActiveProjectedSubagents(message.subagents) ||
+    (isRuntimeMessageActive(message.status) && !message.content && !message.reasoning)
+  );
+};
+
+const shouldMaterializeWorkflowPlaceholder = (
+  message: ChatRuntimeMessageProjection,
+  options: MaterializationOptions
+): boolean => options.workflowActive &&
+  (!Array.isArray(message.workflowItems) || message.workflowItems.length === 0);
+
+const buildWorkflowPendingPlaceholder = (
+  message: ChatRuntimeMessageProjection
+): Record<string, string> => ({
+  kind: 'tool',
+  toolName: '',
+  toolDisplayName: '',
+  toolRuntimeName: '',
+  toolFunctionName: '',
+  eventType: message.status === 'tooling' ? 'tool_pending' : 'runtime_pending'
+});
+
+const settleTerminalMaterializedArtifacts = (
+  message: ChatMessageLike,
+  status: ChatRuntimeMessageStatus
+): void => {
+  if (isRuntimeMessageActive(status)) return;
+  // Stopping a turn is terminal, but it is neither an execution failure nor a
+  // reason to erase the already completed workflow history from its bubble.
+  const terminalStatus = status === 'final' ? 'completed' :
+    status === 'cancelled' ? 'cancelled' : 'failed';
+  if (Array.isArray(message.workflowItems)) {
+    message.workflowItems.forEach((item) => {
+      if (!isPlainRecord(item)) return;
+      const itemStatus = normalizeStatus(item.status);
+      if (ACTIVE_PROJECTED_WORKFLOW_STATUSES.has(itemStatus)) {
+        item.status = terminalStatus;
+      }
+    });
+  }
+  if (Array.isArray(message.subagents)) {
+    message.subagents.forEach((item) => {
+      if (!isPlainRecord(item)) return;
+      // Durable child observations own their lifecycle, including background
+      // runs that continue after the parent has answered.
+      if (item.durable === true) return;
+      const agentState = isPlainRecord(item.agent_state)
+        ? item.agent_state
+        : isPlainRecord(item.agentState)
+          ? item.agentState
+          : {};
+      const itemStatus = normalizeStatus(item.status ?? agentState.status);
+      if (!itemStatus || hasActiveProjectedSubagents([item])) {
+        item.status = terminalStatus;
+        item.terminal = true;
+        item.failed = terminalStatus === 'failed';
+        item.canTerminate = false;
+        if (Object.keys(agentState).length > 0) {
+          item.agent_state = {
+            ...agentState,
+            status: terminalStatus
+          };
+        }
+      }
+    });
+  }
+};
+
+const isProjectedResumablePause = (
+  message: ChatRuntimeMessageProjection
+): boolean => {
+  const display = isPlainRecord(message.display) ? message.display : {};
+  return normalizeFlag(display.resume_available ?? display.resumeAvailable) ||
+    normalizeFlag(display.slow_client ?? display.slowClient);
+};
+
+const hasActiveProjectedWorkflowItems = (items: unknown): boolean => {
+  if (!Array.isArray(items)) return false;
+  return items.some((item) => {
+    if (!isPlainRecord(item)) return false;
+    const status = normalizeStatus(item.status);
+    return ACTIVE_PROJECTED_WORKFLOW_STATUSES.has(status);
+  });
+};
+
+const hasActiveProjectedSubagents = (items: unknown): boolean => {
+  if (!Array.isArray(items)) return false;
+  return items.some((item) => {
+    if (!isPlainRecord(item)) return false;
+    const agentState = isPlainRecord(item.agent_state)
+      ? item.agent_state
+      : isPlainRecord(item.agentState)
+        ? item.agentState
+        : {};
+    const status = normalizeStatus(item.status ?? agentState.status);
+    if (
+      status === 'accepted' ||
+      status === 'in_progress' ||
+      status === 'inprogress' ||
+      status === 'loading' ||
+      status === 'pending' ||
+      status === 'processing' ||
+      status === 'queued' ||
+      status === 'running' ||
+      status === 'started' ||
+      status === 'waiting'
+    ) {
+      return true;
+    }
+    if (
+      status === 'complete' ||
+      status === 'completed' ||
+      status === 'done' ||
+      status === 'finished' ||
+      status === 'idle' ||
+      status === 'success' ||
+      status === 'succeeded' ||
+      status === 'aborted' ||
+      status === 'cancelled' ||
+      status === 'canceled' ||
+      status === 'closed' ||
+      status === 'error' ||
+      status === 'failed'
+    ) {
+      return false;
+    }
+    if (normalizeFlag(item.terminal) || normalizeFlag(item.failed)) return false;
+    return Boolean(firstText(item.session_id, item.sessionId, item.run_id, item.runId));
+  });
+};
+
+const cloneProjectionRecords = (
+  projected: unknown,
+  fallback: unknown
+): Record<string, unknown>[] => {
+  const source = Array.isArray(projected) ? projected : Array.isArray(fallback) ? fallback : [];
+  return source.filter(isPlainRecord).map((item) =>
+    Object.fromEntries(
+      Object.entries(item).filter(([key]) => !key.startsWith('__'))
+    )
+  );
+};
+
+const resolveAssistantLegacyState = (
+  status: ChatRuntimeMessageStatus
+): 'queued' | 'running' | 'done' | 'error' => {
+  if (status === 'queued') return 'queued';
+  if (isRuntimeMessageActive(status)) return 'running';
+  if (status === 'failed' || status === 'cancelled') return 'error';
+  return 'done';
+};
+
+const readRuntimeRenderRawFlag = (): string => {
+  if (typeof window === 'undefined') return '';
+  try {
+    for (const key of RENDER_STORAGE_KEYS) {
+      const raw = String(window.localStorage.getItem(key) || '')
+        .trim()
+        .toLowerCase();
+      if (raw) return raw;
+    }
+  } catch {
+    // Ignore storage access failures in restricted browser contexts.
+  }
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    for (const key of RENDER_SEARCH_KEYS) {
+      const raw = String(params.get(key) || '')
+        .trim()
+        .toLowerCase();
+      if (raw) return raw;
+    }
+  } catch {
+    // Ignore invalid URL state.
+  }
+  return '';
+};
+
+const readRuntimeRenderNamedFlag = (keys: string[]): boolean => {
+  if (typeof window === 'undefined') return false;
+  try {
+    for (const key of keys) {
+      const raw = String(window.localStorage.getItem(key) || '')
+        .trim()
+        .toLowerCase();
+      if (RENDER_TRUE_VALUES.has(raw) || RENDER_SHADOW_VALUES.has(raw)) {
+        return true;
+      }
+    }
+  } catch {
+    // Ignore storage access failures in restricted browser contexts.
+  }
+  return false;
+};
+
+const readRuntimeRenderNamedSearchFlag = (keys: string[]): boolean => {
+  if (typeof window === 'undefined') return false;
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    for (const key of keys) {
+      const raw = String(params.get(key) || '')
+        .trim()
+        .toLowerCase();
+      if (RENDER_TRUE_VALUES.has(raw) || RENDER_SHADOW_VALUES.has(raw)) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+  return false;
+};
+
+const isPlainRecord = (value: unknown): value is ChatMessageLike =>
+  Boolean(value && typeof value === 'object' && !Array.isArray(value));
+
+const firstText = (...values: unknown[]): string => {
+  for (const value of values) {
+    const text = String(value ?? '').trim();
+    if (text) return text;
+  }
+  return '';
+};
+
+const normalizeStatus = (value: unknown): string =>
+  String(value || '').trim().toLowerCase();
+
+const normalizeFlag = (value: unknown): boolean => {
+  if (typeof value === 'string') {
+    const text = value.trim().toLowerCase();
+    if (!text) return false;
+    return text !== 'false' && text !== '0' && text !== 'no';
+  }
+  return Boolean(value);
+};

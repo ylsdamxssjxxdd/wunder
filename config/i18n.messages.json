@@ -1,0 +1,3174 @@
+{
+  "attachment.default_name": {
+    "en-US": "File",
+    "zh-CN": "文件"
+  },
+  "attachment.image_prompt": {
+    "en-US": "Please refer to the following image.",
+    "zh-CN": "请参考以下图片。"
+  },
+  "attachment.invalid_image_notice": {
+    "en-US": "The image attachment was unsupported, invalid, or unreadable, so it was excluded from model vision input.",
+    "zh-CN": "该图片附件格式不受支持、内容无效或不可读取，已从模型视觉输入中排除。"
+  },
+  "attachment.label": {
+    "en-US": "The content of the file provided by the user",
+    "zh-CN": "用户提供的文件内容"
+  },
+  "attachment.label.separator": {
+    "en-US": ": ",
+    "zh-CN": "："
+  },
+  "compaction.reason.context_too_long": {
+    "en-US": "Context too long; starting compaction.",
+    "zh-CN": "上下文过长，开始压缩"
+  },
+  "compaction.reason.history_threshold": {
+    "en-US": "History tokens reached the threshold; starting compaction.",
+    "zh-CN": "历史 token 已达阈值，开始压缩"
+  },
+  "compaction.summary_fallback": {
+    "en-US": "Summary generation failed; history was automatically trimmed.",
+    "zh-CN": "摘要生成失败，已自动裁剪历史。"
+  },
+  "error.absolute_path_forbidden": {
+    "en-US": "Absolute paths are not allowed",
+    "zh-CN": "workdir请使用相对路径"
+  },
+  "error.api_key_invalid": {
+    "en-US": "Invalid API key",
+    "zh-CN": "API key 无效"
+  },
+  "error.api_key_missing": {
+    "en-US": "API key is not configured",
+    "zh-CN": "API key 未配置"
+  },
+  "error.agent_not_found": {
+    "en-US": "Agent not found",
+    "zh-CN": "智能体不存在"
+  },
+  "error.max_active_sessions_invalid": {
+    "en-US": "Max active sessions must be greater than 0",
+    "zh-CN": "最大活动会话数必须大于0"
+  },
+  "error.base_url_or_model_required": {
+    "en-US": "base_url or model is required",
+    "zh-CN": "base_url 或 model 不能为空"
+  },
+  "error.config_file_not_found": {
+    "en-US": "Config file not found: {path}",
+    "zh-CN": "配置文件不存在: {path}"
+  },
+  "error.content_required": {
+    "en-US": "Content is required",
+    "zh-CN": "内容不能为空"
+  },
+  "error.download_filename_required": {
+    "en-US": "Filename is required",
+    "zh-CN": "文件名不能为空"
+  },
+  "error.download_filename_invalid": {
+    "en-US": "Filename is invalid",
+    "zh-CN": "文件名不合法"
+  },
+  "error.temp_dir_upload_no_file": {
+    "en-US": "No file uploaded",
+    "zh-CN": "未上传文件"
+  },
+  "error.temp_dir_file_exists": {
+    "en-US": "File already exists",
+    "zh-CN": "文件已存在"
+  },
+  "error.temp_dir_target_not_file": {
+    "en-US": "Target exists and is not a file",
+    "zh-CN": "目标已存在且不是文件"
+  },
+  "error.temp_dir_remove_required": {
+    "en-US": "Specify filename(s) or set all=true",
+    "zh-CN": "请指定文件名或设置 all=true"
+  },
+  "error.converter_doc2md_convert_failed": {
+    "en-US": "doc2md conversion failed",
+    "zh-CN": "doc2md 转换失败"
+  },
+  "error.converter_doc2md_failed": {
+    "en-US": "doc2md execution failed",
+    "zh-CN": "doc2md 执行失败"
+  },
+  "error.converter_doc2md_no_output": {
+    "en-US": "doc2md did not produce an output file",
+    "zh-CN": "doc2md 未生成输出文件"
+  },
+  "error.converter_empty_result": {
+    "en-US": "Conversion result is empty",
+    "zh-CN": "转换结果为空"
+  },
+  "error.converter_openpyxl_unavailable": {
+    "en-US": "openpyxl is unavailable: {detail}",
+    "zh-CN": "openpyxl 不可用: {detail}"
+  },
+  "error.converter_python_converter_not_found": {
+    "en-US": "No available Python converter for: {ext}",
+    "zh-CN": "未找到可用的 Python 转换器: {ext}"
+  },
+  "error.converter_python_docx_unavailable": {
+    "en-US": "python-docx is unavailable: {detail}",
+    "zh-CN": "python-docx 不可用: {detail}"
+  },
+  "error.converter_python_pptx_unavailable": {
+    "en-US": "python-pptx is unavailable: {detail}",
+    "zh-CN": "python-pptx 不可用: {detail}"
+  },
+  "error.converter_read_text_failed": {
+    "en-US": "Failed to read text",
+    "zh-CN": "文本读取失败"
+  },
+  "error.converter_unique_markdown_name": {
+    "en-US": "Unable to generate a unique Markdown filename",
+    "zh-CN": "无法生成唯一的 Markdown 文件名"
+  },
+  "error.empty_parse_result": {
+    "en-US": "Parsed result is empty",
+    "zh-CN": "解析结果为空"
+  },
+  "error.exec_policy_mode_invalid": {
+    "en-US": "exec_policy_mode must be allow/audit/enforce",
+    "zh-CN": "exec_policy_mode 仅支持 allow/audit/enforce"
+  },
+  "error.file_extension_missing": {
+    "en-US": "File extension is missing",
+    "zh-CN": "文件缺少扩展名"
+  },
+  "error.file_not_found": {
+    "en-US": "File not found",
+    "zh-CN": "文件不存在"
+  },
+  "error.internal_error": {
+    "en-US": "Internal error",
+    "zh-CN": "内部错误"
+  },
+  "error.knowledge_base_name_invalid": {
+    "en-US": "Invalid knowledge base name; cannot generate default directory",
+    "zh-CN": "知识库名称不合法，无法生成默认目录"
+  },
+  "error.knowledge_base_name_required": {
+    "en-US": "Knowledge base name is required",
+    "zh-CN": "知识库名称不能为空"
+  },
+  "error.knowledge_base_not_found": {
+    "en-US": "Knowledge base not found",
+    "zh-CN": "知识库不存在"
+  },
+  "error.knowledge_name_invalid_path": {
+    "en-US": "Knowledge base name contains invalid path segments",
+    "zh-CN": "知识库名称包含非法路径"
+  },
+  "error.knowledge_path_out_of_bounds": {
+    "en-US": "Knowledge base path traversal is forbidden",
+    "zh-CN": "知识库路径越界访问被禁止"
+  },
+  "error.knowledge_query_required": {
+    "en-US": "Knowledge query is required",
+    "zh-CN": "知识库查询不能为空"
+  },
+  "error.knowledge_root_create_failed": {
+    "en-US": "Failed to create knowledge base directory: {root}, {detail}",
+    "zh-CN": "无法创建知识库目录: {root}, {detail}"
+  },
+  "error.knowledge_root_not_dir": {
+    "en-US": "Knowledge base path is not a directory",
+    "zh-CN": "知识库目录不是文件夹"
+  },
+  "error.knowledge_root_not_found": {
+    "en-US": "Knowledge base directory not found",
+    "zh-CN": "知识库目录不存在"
+  },
+  "error.knowledge_document_not_found": {
+    "en-US": "Knowledge document not found",
+    "zh-CN": "知识库文档不存在"
+  },
+  "error.knowledge_chunk_not_found": {
+    "en-US": "Knowledge chunk not found",
+    "zh-CN": "知识库切片不存在"
+  },
+  "error.knowledge_chunk_deleted": {
+    "en-US": "Knowledge chunk has been deleted",
+    "zh-CN": "知识库切片已删除"
+  },
+  "error.embedding_model_required": {
+    "en-US": "Embedding model is required",
+    "zh-CN": "必须选择嵌入模型"
+  },
+  "error.embedding_model_not_found": {
+    "en-US": "Embedding model not found",
+    "zh-CN": "嵌入模型不存在"
+  },
+  "error.vector_store_not_configured": {
+    "en-US": "Vector store is not configured",
+    "zh-CN": "向量数据库未配置"
+  },
+  "error.vector_knowledge_not_file_based": {
+    "en-US": "Vector knowledge bases use document APIs",
+    "zh-CN": "向量知识库需使用文档接口管理"
+  },
+  "error.vector_knowledge_required": {
+    "en-US": "Vector knowledge base required",
+    "zh-CN": "该接口仅支持向量知识库"
+  },
+  "error.vector_knowledge_requires_reindex": {
+    "en-US": "Vector knowledge uses reindex endpoint",
+    "zh-CN": "向量知识库请使用重建索引接口"
+  },
+  "error.llm_call_failed": {
+    "en-US": "LLM call failed: {detail}",
+    "zh-CN": "模型调用失败: {detail}"
+  },
+  "error.llm_config_missing": {
+    "en-US": "LLM base_url or api_key is not configured.",
+    "zh-CN": "LLM 未配置 base_url 或 api_key。"
+  },
+  "error.llm_config_required": {
+    "en-US": "At least one LLM configuration is required",
+    "zh-CN": "至少需要一套模型配置"
+  },
+  "error.llm_not_configured": {
+    "en-US": "LLM is not configured; cannot generate a response.",
+    "zh-CN": "LLM 未配置，无法生成回复。"
+  },
+  "error.llm_request_failed": {
+    "en-US": "LLM request failed.",
+    "zh-CN": "LLM 请求失败。"
+  },
+  "error.llm_stream_interrupted": {
+    "en-US": "LLM streaming response was interrupted.",
+    "zh-CN": "LLM 流式响应中断。"
+  },
+  "error.llm_stream_retry_exhausted": {
+    "en-US": "Stream reconnect failed; maximum retries reached.",
+    "zh-CN": "流式重连失败，已达到最大重试次数。"
+  },
+  "error.llm_unavailable": {
+    "en-US": "LLM unavailable: {detail}",
+    "zh-CN": "模型不可用: {detail}"
+  },
+  "virtual_llm.random.reasoning": {
+    "zh-CN": "这是模拟思考阶段：检查输入结构，整理回复要点，然后生成正文。此内容仅用于验证流式显示与计时，不代表真实模型推理。",
+    "en-US": "This is a simulated reasoning phase: check the input structure, organize response points, then generate the answer. It validates streaming and timing, not actual model reasoning."
+  },
+  "virtual_llm.random.log_name": {
+    "en-US": "Virtual random response",
+    "zh-CN": "虚拟随机回复"
+  },
+  "virtual_llm.random.reply.ready": {
+    "en-US": "Virtual model is ready. This is a random placeholder response because no replay JSONL is enabled.",
+    "zh-CN": "虚拟模型已就绪。当前未启用回放 JSONL，因此返回一条随机占位回复。"
+  },
+  "virtual_llm.random.reply.processing": {
+    "en-US": "Virtual response generated. Upload and enable a replay JSONL to reproduce a fixed conversation.",
+    "zh-CN": "已生成虚拟回复。上传并启用回放 JSONL 后，可复现固定对话。"
+  },
+  "virtual_llm.random.reply.received": {
+    "en-US": "Request received by the virtual model. No replay log matched, so this random response was used.",
+    "zh-CN": "虚拟模型已收到请求。没有匹配的回放日志，因此使用随机回复。"
+  },
+  "virtual_llm.random.reply.placeholder": {
+    "en-US": "This is a virtual-model placeholder reply for local testing.",
+    "zh-CN": "这是用于本地测试的虚拟模型占位回复。"
+  },
+  "virtual_llm.random.reply.no_log": {
+    "en-US": "No replay JSONL is configured. The virtual model returned a lightweight random reply.",
+    "zh-CN": "尚未配置回放 JSONL，虚拟模型返回了一条轻量随机回复。"
+  },
+  "error.markdown_only": {
+    "en-US": "Only Markdown files are supported",
+    "zh-CN": "仅支持 Markdown 文件"
+  },
+  "error.max_rounds_no_final_answer": {
+    "en-US": "Unable to produce a final answer within the maximum rounds.",
+    "zh-CN": "未能在最大轮次内生成最终答复。"
+  },
+  "error.max_rounds_user_guidance": {
+    "en-US": "This turn reached the model round limit ({max_rounds}). The task may be unfinished. You can continue the conversation from the current progress, or increase this model's max_rounds and retry. If intermediate files or tables were already generated, you can review them in the workspace first.",
+    "zh-CN": "本轮已达到模型轮次上限（{max_rounds}），任务可能尚未完成。你可以直接继续对话，让模型基于当前进度接着做；或者把该模型的 max_rounds 调大后重试。如果本轮已经生成了中间文件、表格或草稿，也可以先查看工作区结果。"
+  },
+  "error.tool_failure_guard_user_guidance": {
+    "en-US": "Tool `{tool_name}` failed repeatedly ({repeat_count}/{threshold}). This step was paused so the conversation does not stay stuck on the same error. You can keep chatting, for example: ask the model to inspect the error first, stop repeating the same step, try a different approach, switch tools, or split the task into smaller steps.",
+    "zh-CN": "工具 `{tool_name}` 连续失败（{repeat_count}/{threshold}）。这一步已先暂停，避免会话一直卡在同一个错误上。你可以直接继续对话，例如让模型先分析刚才的报错、不要再重复这一步、换一种方法完成、改用其他工具，或拆成更小的步骤继续。"
+  },
+  "error.tool_failure_guard_user_guidance_with_error": {
+    "en-US": "Tool `{tool_name}` failed repeatedly ({repeat_count}/{threshold}): {detail}. This step was paused so the conversation does not stay stuck on the same error. You can keep chatting, for example: ask the model to inspect the error first, stop repeating the same step, try a different approach, switch tools, or continue in smaller steps.",
+    "zh-CN": "工具 `{tool_name}` 连续失败（{repeat_count}/{threshold}）：{detail}。这一步已先暂停，避免会话一直卡在同一个错误上。你可以直接继续对话，例如让模型先分析刚才的报错、不要再重复这一步、换一种方法完成、改用其他工具，或拆成更小的步骤继续。"
+  },
+  "error.tool_no_progress_guard_user_guidance": {
+    "en-US": "Tool `{tool_name}` returned the same successful observation repeatedly ({repeat_count}/{threshold}) without visible progress. The loop was stopped; inspect the current artifact or choose a different verification step.",
+    "zh-CN": "工具 `{tool_name}` 连续返回相同的成功结果（{repeat_count}/{threshold}），没有观察到新进展。已停止循环；请检查当前产物或改用不同的验证步骤。"
+  },
+  "error.tool_no_progress_guard_user_guidance_with_detail": {
+    "en-US": "Tool `{tool_name}` returned the same successful observation repeatedly ({repeat_count}/{threshold}): {detail}. The loop was stopped; inspect the current artifact or choose a different verification step.",
+    "zh-CN": "工具 `{tool_name}` 连续返回相同的成功结果（{repeat_count}/{threshold}）：{detail}。已停止循环；请检查当前产物或改用不同的验证步骤。"
+  },
+  "error.empty_no_final_answer": {
+    "en-US": "LLM unavailable after automatic recovery attempts reached the configured limit.",
+    "zh-CN": "模型在自动恢复达到次数限制后仍不可用。"
+  },
+  "error.mcp_server_disabled": {
+    "en-US": "MCP server disabled: {name}",
+    "zh-CN": "MCP Server 未启用: {name}"
+  },
+  "error.mcp_server_not_found": {
+    "en-US": "MCP server not found: {name}",
+    "zh-CN": "MCP Server 不存在: {name}"
+  },
+  "error.mcp_tool_not_allowed": {
+    "en-US": "This tool is not allowed.",
+    "zh-CN": "该工具未被允许调用。"
+  },
+  "error.goal_tool_required": {
+    "en-US": "Goal mode requires the current agent to mount the goal tool.",
+    "zh-CN": "进入目标态要求当前智能体已挂载 goal 工具。"
+  },
+  "error.param_required": {
+    "en-US": "Parameters are required",
+    "zh-CN": "参数不能为空"
+  },
+  "error.invalid_time_range": {
+    "en-US": "Invalid time range",
+    "zh-CN": "时间范围不合法"
+  },
+  "error.user_seed_count_invalid": {
+    "en-US": "Invalid test user count",
+    "zh-CN": "测试用户数量不合法"
+  },
+  "error.path_out_of_bounds": {
+    "en-US": "Path traversal is forbidden",
+    "zh-CN": "路径越界访问被禁止"
+  },
+  "workspace.root_missing": {
+    "en-US": "Workspace folder does not exist: {path}",
+    "zh-CN": "工作区文件夹不存在：{path}"
+  },
+  "error.question_required": {
+    "en-US": "Question is required",
+    "zh-CN": "问题不能为空"
+  },
+  "error.user_input_too_long": {
+    "en-US": "Input exceeds the maximum length of {max_chars} characters ({actual_chars} provided).",
+    "zh-CN": "输入内容超过最大长度 {max_chars} 个字符（当前 {actual_chars} 个）。"
+  },
+  "error.session_cancelled": {
+    "en-US": "Session cancelled",
+    "zh-CN": "会话已取消"
+  },
+  "error.session_not_found": {
+    "en-US": "Session not found",
+    "zh-CN": "会话不存在"
+  },
+  "error.session_not_found_or_finished": {
+    "en-US": "Session not found or already finished",
+    "zh-CN": "会话不存在或已结束"
+  },
+  "error.session_not_found_or_running": {
+    "en-US": "Session not found or still running",
+    "zh-CN": "会话不存在或仍在运行"
+  },
+  "error.skill_delete_failed": {
+    "en-US": "Failed to delete skill: {detail}",
+    "zh-CN": "删除技能失败: {detail}"
+  },
+  "error.skill_delete_restricted": {
+    "en-US": "Only skills under the config/skills directory can be deleted",
+    "zh-CN": "仅支持删除 config/skills 目录内的技能"
+  },
+  "error.skill_builtin_readonly": {
+    "en-US": "Built-in skill is read-only. Modify source files under config/skills/",
+    "zh-CN": "内置技能为只读，请直接修改源码 config/skills 目录"
+  },
+  "error.skill_builtin_upload_conflict": {
+    "en-US": "Upload path conflicts with built-in skill directory",
+    "zh-CN": "上传路径与内置技能目录冲突，请修改目录名称后重试"
+  },
+  "error.skill_delete_update_failed": {
+    "en-US": "Skill deleted but failed to update config: {detail}",
+    "zh-CN": "技能已删除，但更新配置失败: {detail}"
+  },
+  "error.skill_file_not_found": {
+    "en-US": "Skill file not found",
+    "zh-CN": "技能文件不存在"
+  },
+  "error.skill_file_read_failed": {
+    "en-US": "Failed to read skill file: {detail}",
+    "zh-CN": "读取技能文件失败: {detail}"
+  },
+  "error.skill_name_required": {
+    "en-US": "Skill name is required",
+    "zh-CN": "技能名称不能为空"
+  },
+  "error.skill_not_executable": {
+    "en-US": "Skill not found or not executable: {name}",
+    "zh-CN": "技能不存在或不可执行: {name}"
+  },
+  "error.skill_not_found": {
+    "en-US": "Skill not found",
+    "zh-CN": "技能不存在"
+  },
+  "error.skill_upload_zip_only": {
+    "en-US": "Only .zip or .skill archives are supported",
+    "zh-CN": "仅支持上传 .zip 或 .skill 压缩包"
+  },
+  "error.skills_dir_missing": {
+    "en-US": "config/skills directory not found",
+    "zh-CN": "config/skills 目录不存在"
+  },
+  "error.system_prompt_failed": {
+    "en-US": "Failed to build system prompt: {detail}",
+    "zh-CN": "系统提示词构建失败: {detail}"
+  },
+  "error.task_id_required": {
+    "en-US": "Task ID is required",
+    "zh-CN": "任务ID不能为空"
+  },
+  "error.task_not_found": {
+    "en-US": "Task not found",
+    "zh-CN": "任务不存在"
+  },
+  "error.task_required": {
+    "en-US": "Task is required",
+    "zh-CN": "任务不能为空"
+  },
+  "error.tool_disabled_or_unavailable": {
+    "en-US": "Tool is disabled or unavailable",
+    "zh-CN": "工具未启用或不可用"
+  },
+  "error.tool_execution_failed": {
+    "en-US": "Tool execution failed: {name}",
+    "zh-CN": "工具执行失败: {name}"
+  },
+  "error.tool_name_required": {
+    "en-US": "Tool name is required",
+    "zh-CN": "工具名称不能为空"
+  },
+  "error.tool_not_found": {
+    "en-US": "Tool not found: {name}",
+    "zh-CN": "未找到工具: {name}"
+  },
+  "error.unsupported_file_type": {
+    "en-US": "Unsupported file type: {extension}",
+    "zh-CN": "不支持的文件类型: {extension}"
+  },
+  "error.user_id_required": {
+    "en-US": "user_id is required",
+    "zh-CN": "user_id 不能为空"
+  },
+  "error.user_not_found": {
+    "en-US": "User not found",
+    "zh-CN": "用户不存在"
+  },
+  "error.user_protected": {
+    "en-US": "Default admin account cannot be deleted",
+    "zh-CN": "默认管理员账号不可删除"
+  },
+  "error.user_session_busy": {
+    "en-US": "This user already has an active session running",
+    "zh-CN": "该用户已有会话正在执行"
+  },
+  "error.user_quota_exceeded": {
+    "en-US": "Daily quota reached. Please try again tomorrow or contact an administrator.",
+    "zh-CN": "今日额度已用完，请明日再试或联系管理员调整。"
+  },
+  "error.user_quota_insufficient": {
+    "en-US": "Quota balance is insufficient. Please wait for the next grant or contact an administrator.",
+    "zh-CN": "额度不足，请等待下次发放或联系管理员调整。"
+  },
+  "error.permission_denied": {
+    "en-US": "Permission denied",
+    "zh-CN": "权限不足"
+  },
+  "error.org_unit_not_found": {
+    "en-US": "Org unit not found",
+    "zh-CN": "单位不存在"
+  },
+  "error.org_unit_level_exceeded": {
+    "en-US": "Org unit level exceeds the maximum depth",
+    "zh-CN": "单位层级不能超过4级"
+  },
+  "error.org_unit_parent_required": {
+    "en-US": "Parent org unit is required",
+    "zh-CN": "需要指定上级单位"
+  },
+  "error.org_unit_required": {
+    "en-US": "Org unit is required",
+    "zh-CN": "需要指定单位"
+  },
+  "error.org_unit_has_children": {
+    "en-US": "Org unit has child units",
+    "zh-CN": "单位仍有下级单位"
+  },
+  "error.org_unit_has_users": {
+    "en-US": "Org unit still has users",
+    "zh-CN": "单位仍有用户"
+  },
+  "error.org_unit_cycle_not_allowed": {
+    "en-US": "Org unit cannot be moved under its descendant",
+    "zh-CN": "单位不能移动到本身下级"
+  },
+  "error.zip_invalid": {
+    "en-US": "Invalid archive format",
+    "zh-CN": "压缩包格式错误"
+  },
+  "error.skill_upload_top_dir_required": {
+    "en-US": "Skill archive must place files under a top-level skill directory",
+    "zh-CN": "技能压缩包必须以技能目录作为顶层，不能直接在根目录放置文件"
+  },
+  "error.zip_path_illegal": {
+    "en-US": "Archive contains illegal paths",
+    "zh-CN": "压缩包包含非法路径"
+  },
+  "error.zip_path_invalid": {
+    "en-US": "Invalid archive path",
+    "zh-CN": "压缩包路径非法"
+  },
+  "error.zip_path_out_of_bounds": {
+    "en-US": "Archive contains out-of-bounds paths",
+    "zh-CN": "压缩包包含越界路径"
+  },
+  "history.action.edit": {
+    "en-US": "Edit",
+    "zh-CN": "编辑"
+  },
+  "history.action.execute": {
+    "en-US": "Execute",
+    "zh-CN": "执行"
+  },
+  "history.action.read": {
+    "en-US": "Read",
+    "zh-CN": "读取"
+  },
+  "history.action.replace": {
+    "en-US": "Replace",
+    "zh-CN": "替换"
+  },
+  "history.action.run": {
+    "en-US": "Run",
+    "zh-CN": "运行"
+  },
+  "history.action.unknown": {
+    "en-US": "Change",
+    "zh-CN": "改动"
+  },
+  "history.action.write": {
+    "en-US": "Write",
+    "zh-CN": "写入"
+  },
+  "history.artifact_prefix": {
+    "en-US": "[Artifact Index]",
+    "zh-CN": "[产物索引]"
+  },
+  "history.compaction_prefix": {
+    "en-US": "[Context Summary]",
+    "zh-CN": "[上下文摘要]"
+  },
+  "history.compaction_prompt_fallback": {
+    "en-US": "Provide a handoff-ready structured summary covering goal, progress, decisions/constraints, key data/artifacts, and next steps. Use “None” when a section is empty.",
+    "zh-CN": "请输出可交接的结构化摘要，包含任务目标、已完成进度、关键决策与约束、关键数据与产物、待办与下一步。若某项为空请写“暂无”。"
+  },
+  "history.failure.execution": {
+    "en-US": "Execution failed",
+    "zh-CN": "执行失败"
+  },
+  "history.failure.unknown_item": {
+    "en-US": "Unknown item",
+    "zh-CN": "未知条目"
+  },
+  "history.items_suffix": {
+    "en-US": " …and {total} items",
+    "zh-CN": " …等{total}项"
+  },
+  "history.summary.command_runs": {
+    "en-US": "- Commands executed ({count}): {items}",
+    "zh-CN": "- 命令执行({count}): {items}"
+  },
+  "history.summary.failures": {
+    "en-US": "- Failures ({count}): {items}",
+    "zh-CN": "- 失败记录({count}): {items}"
+  },
+  "history.summary.file_changes": {
+    "en-US": "- Files changed ({count}): {items}",
+    "zh-CN": "- 文件改动({count}): {items}"
+  },
+  "history.summary.file_reads": {
+    "en-US": "- Files read ({count}): {items}",
+    "zh-CN": "- 文件读取({count}): {items}"
+  },
+  "history.summary.script_runs": {
+    "en-US": "- Scripts run ({count}): {items}",
+    "zh-CN": "- 脚本运行({count}): {items}"
+  },
+  "knowledge.fallback_reason": {
+    "en-US": "Lexical match",
+    "zh-CN": "词面匹配"
+  },
+  "knowledge.section.full_text": {
+    "en-US": "Full Text",
+    "zh-CN": "全文"
+  },
+  "knowledge.tool.description": {
+    "en-US": "Search knowledge base: {name}",
+    "zh-CN": "检索知识库：{name}"
+  },
+  "knowledge.tool.limit.description": {
+    "en-US": "Return limit (optional; defaults to system max).",
+    "zh-CN": "返回条数（可选，默认使用系统内置上限）"
+  },
+  "knowledge.tool.query.description": {
+    "en-US": "Query text",
+    "zh-CN": "查询内容"
+  },
+  "knowledge.tool.keywords.description": {
+    "en-US": "Keyword list (optional; vector knowledge searches each keyword).",
+    "zh-CN": "关键词列表（可选，向量知识库会逐个检索）"
+  },
+  "mcp.instructions": {
+    "en-US": "Call the wunder agent to execute a task and return the final response.",
+    "zh-CN": "调用 wunder 智能体执行任务并返回最终回复。"
+  },
+  "mcp.tool.run.description": {
+    "en-US": "Execute a wunder task and return the final response.",
+    "zh-CN": "执行 wunder 智能体任务并返回最终回复。"
+  },
+  "memory.block_prefix": {
+    "en-US": "[Long-term Memory]",
+    "zh-CN": "[长期记忆]"
+  },
+  "memory.prompt_meta.more_hint": {
+    "en-US": "- If the injected indexes below are not enough, continue with memory_manager list/search to find more memory ids, then use get for the full detail.",
+    "zh-CN": "- 如果下方注入的索引还不够，请继续通过 memory_manager 的 list/search 查找更多 memory_id，再用 get 读取完整内容。"
+  },
+  "memory.prompt_meta.index_hint": {
+    "en-US": "- The injected items below are memory indexes only (memory_id + title). Use memory_manager get with a memory_id when you need the full detail.",
+    "zh-CN": "- 下方注入的是记忆索引（memory_id + 标题），不是完整内容。需要完整细节时，请使用 memory_manager get 并指定 memory_id。"
+  },
+  "memory.prompt_meta.summary": {
+    "en-US": "- Available long-term memories: {total}. Injected now: {injected} (limit {limit}).",
+    "zh-CN": "- 当前可用长期记忆总条数：{total}。本次注入：{injected} 条（上限 {limit} 条）。"
+  },
+  "memory.empty_summary": {
+    "en-US": "No summary yet.",
+    "zh-CN": "暂无摘要。"
+  },
+  "memory.status.done": {
+    "en-US": "Completed",
+    "zh-CN": "已完成"
+  },
+  "memory.status.failed": {
+    "en-US": "Failed",
+    "zh-CN": "失败"
+  },
+  "memory.status.queued": {
+    "en-US": "Queued",
+    "zh-CN": "排队中"
+  },
+  "memory.status.running": {
+    "en-US": "Processing",
+    "zh-CN": "正在处理"
+  },
+  "memory.summary.image_placeholder": {
+    "en-US": "[Image]",
+    "zh-CN": "[图片]"
+  },
+  "memory.summary.role.assistant": {
+    "en-US": "Assistant",
+    "zh-CN": "助手"
+  },
+  "memory.summary.role.separator": {
+    "en-US": ": ",
+    "zh-CN": "："
+  },
+  "memory.summary.role.user": {
+    "en-US": "User",
+    "zh-CN": "用户"
+  },
+  "memory.summary_prompt_fallback": {
+    "en-US": "Extract the long-term valuable information for future conversations. Output plain text lines starting with “- ” only, without titles or explanations.",
+    "zh-CN": "请提取对后续对话长期有价值的核心信息，仅输出纯文本列表，每行以“- ”开头，禁止标题与解释。"
+  },
+  "memory.time_prefix": {
+    "en-US": "{year:04d}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}",
+    "zh-CN": "{year}年{month:02d}月{day:02d}日{hour:02d}时{minute:02d}分"
+  },
+  "message.cancel_requested": {
+    "en-US": "Cancellation requested",
+    "zh-CN": "已请求终止"
+  },
+  "message.cleared": {
+    "en-US": "Cleared",
+    "zh-CN": "已清空"
+  },
+  "message.deleted": {
+    "en-US": "Deleted",
+    "zh-CN": "已删除"
+  },
+  "message.index_refreshed": {
+    "en-US": "Index refreshed",
+    "zh-CN": "已刷新索引"
+  },
+  "message.saved_and_reindexed": {
+    "en-US": "Saved and reindexed",
+    "zh-CN": "已保存并刷新索引"
+  },
+  "message.skill_deleted": {
+    "en-US": "Deleted",
+    "zh-CN": "已删除"
+  },
+  "message.updated": {
+    "en-US": "Updated",
+    "zh-CN": "已更新"
+  },
+  "message.upload_converted": {
+    "en-US": "Upload and conversion completed",
+    "zh-CN": "上传并转换完成"
+  },
+  "message.upload_success": {
+    "en-US": "Upload succeeded",
+    "zh-CN": "上传成功"
+  },
+  "message.user_deleted": {
+    "en-US": "User data cleared",
+    "zh-CN": "已清除用户数据"
+  },
+  "monitor.summary.cancel_requested": {
+    "en-US": "Cancellation requested",
+    "zh-CN": "已请求终止"
+  },
+  "monitor.summary.cancelled": {
+    "en-US": "Cancelled",
+    "zh-CN": "已终止"
+  },
+  "monitor.summary.exception": {
+    "en-US": "Execution error",
+    "zh-CN": "执行异常"
+  },
+  "monitor.summary.finished": {
+    "en-US": "Response completed.",
+    "zh-CN": "已完成回复。"
+  },
+  "monitor.summary.model_call": {
+    "en-US": "LLM request",
+    "zh-CN": "调用模型请求"
+  },
+  "monitor.summary.queued": {
+    "en-US": "Queued; waiting for an available runtime slot.",
+    "zh-CN": "已进入排队，等待可用运行槽位。"
+  },
+  "monitor.summary.subagent_wait": {
+    "en-US": "Waiting for subagent",
+    "zh-CN": "等待子智能体完成"
+  },
+  "monitor.summary.received": {
+    "en-US": "Request received; processing.",
+    "zh-CN": "已接收请求，开始处理。"
+  },
+  "monitor.summary.restarted": {
+    "en-US": "Service restarted; session unfinished.",
+    "zh-CN": "服务重启，线程未完成。"
+  },
+  "monitor.summary.tool_call": {
+    "en-US": "Tool call: {tool}",
+    "zh-CN": "调用工具：{tool}"
+  },
+  "monitor.summary.tool_call_repaired": {
+    "en-US": "Tool call (args repaired): {tool}",
+    "zh-CN": "调用工具（参数已修复）：{tool}"
+  },
+  "monitor.summary.model_call_repaired_history": {
+    "en-US": "Model call (sanitized tool history)",
+    "zh-CN": "模型调用（已清洗工具历史）"
+  },
+  "monitor.summary.plan_update": {
+    "en-US": "Plan updated",
+    "zh-CN": "计划更新"
+  },
+  "monitor.summary.question_panel": {
+    "en-US": "Inquiry panel",
+    "zh-CN": "问询面板"
+  },
+  "monitor.summary.user_deleted_cancel": {
+    "en-US": "User deleted; cancellation requested",
+    "zh-CN": "用户已删除，已请求终止"
+  },
+  "probe.failed": {
+    "en-US": "Probe failed: {detail}",
+    "zh-CN": "探测失败: {detail}"
+  },
+  "probe.no_context": {
+    "en-US": "Context length not found",
+    "zh-CN": "未获取到上下文长度"
+  },
+  "probe.provider_unsupported": {
+    "en-US": "Current provider does not support probing",
+    "zh-CN": "当前 provider 暂不支持探测"
+  },
+  "probe.success": {
+    "en-US": "ok",
+    "zh-CN": "ok"
+  },
+  "prompt.engineer.ptc_guidance": {
+    "en-US": "- If ptc is available, prefer ptc to complete tasks directly instead of saving scripts first.",
+    "zh-CN": "- 若已挂载 ptc，优先使用 ptc 完成任务，不需要先写脚本保存到本地然后再去执行，提高效率。"
+  },
+  "prompt.skills.header": {
+    "en-US": "[Skill Usage]",
+    "zh-CN": "[技能使用协议]"
+  },
+  "prompt.skills.list_header": {
+    "en-US": "[Mounted Skills]",
+    "zh-CN": "[已挂载技能]"
+  },
+  "prompt.skills.rule1": {
+    "en-US": "1) If the user's request can be solved by a skill, prefer calling `技能调用`.",
+    "zh-CN": "1) 用户的需求能用相关技能解决的，尽量使用调用`技能调用`"
+  },
+  "prompt.skills.rule2": {
+    "en-US": "2) Use the skill name with `技能调用` to fetch the full SKILL.md, read it, then use the skill.",
+    "zh-CN": "2) 使用技能名通过 `技能调用` 工具获取完整 SKILL.md，阅读后再使用技能。"
+  },
+  "prompt.skills.rule3": {
+    "en-US": "3) Follow the skill steps strictly. Do not invent missing steps. Prefer bundled scripts/templates/assets.",
+    "zh-CN": "3) 严格遵循技能流程，不要编造缺失步骤。优先使用技能随附脚本/模板/资产。"
+  },
+  "prompt.skills.rule4": {
+    "en-US": "4) Bundled scripts/templates/assets are in the same directory as SKILL.md by default. Use `执行命令` to run skill scripts and write outputs back to the working directory. Use absolute paths for scripts/assets to avoid missing files.",
+    "zh-CN": "4) 特别注意，随附的脚本/模板/资产默认与 SKILL.md 位于同一目录下。使用 `执行命令` 运行相关技能脚本，并将输出写回工作目录。注意脚本等使用绝对路径，否则可能找不到文件。"
+  },
+  "prompt.skills.rule5": {
+    "en-US": "5) Only claim a skill is used after completing its steps.",
+    "zh-CN": "5) 只有在实际执行了技能步骤后，才可以声明已使用该技能。"
+  },
+  "prompt.skills.rule6": {
+    "en-US": "5) If you need to create a skill, save it in your working directory. Fetch SKILL.md via `技能调用`.",
+    "zh-CN": "5) 若需创建技能，请保存到你的工作目录。SKILL.md 通过 `技能调用` 工具获取。"
+  },
+  "response.a2ui_fallback": {
+    "en-US": "A2UI UI has been generated and rendered.",
+    "zh-CN": "已生成 A2UI 界面并完成渲染。"
+  },
+  "response.question_panel_waiting": {
+    "en-US": "Please choose a route from the inquiry panel, or send a message to continue.",
+    "zh-CN": "请在问询面板选择路线，或直接发送消息继续。"
+  },
+  "response.sessions_yield_waiting": {
+    "en-US": "Background sub-agents are continuing. I will resume automatically when new results arrive.",
+    "zh-CN": "后台子智能体正在继续执行；有新的结果后我会自动恢复。"
+  },
+  "sandbox.error.image_missing": {
+    "en-US": "Sandbox image is not configured; cannot execute tool.",
+    "zh-CN": "沙盒镜像未配置，无法执行工具。"
+  },
+  "sandbox.error.path_out_of_bounds": {
+    "en-US": "Sandbox path is out of bounds.",
+    "zh-CN": "沙盒路径越界，已拒绝。"
+  },
+  "sandbox.error.path_required": {
+    "en-US": "Path is required.",
+    "zh-CN": "路径不能为空。"
+  },
+  "sandbox.error.payload_invalid": {
+    "en-US": "Sandbox payload is empty or invalid.",
+    "zh-CN": "沙盒请求为空或格式错误。"
+  },
+  "sandbox.error.release_failed": {
+    "en-US": "Sandbox release request failed: {detail}",
+    "zh-CN": "沙盒释放请求失败: {detail}"
+  },
+  "sandbox.error.release_response_error": {
+    "en-US": "Sandbox release failed: status={status} detail={detail}",
+    "zh-CN": "沙盒释放失败: status={status} detail={detail}"
+  },
+  "sandbox.error.request_failed": {
+    "en-US": "Sandbox request failed: {detail}",
+    "zh-CN": "沙盒请求失败: {detail}"
+  },
+  "sandbox.error.response_error": {
+    "en-US": "Sandbox response error: status={status} detail={detail}",
+    "zh-CN": "沙盒返回异常: status={status} detail={detail}"
+  },
+  "sandbox.error.response_not_json": {
+    "en-US": "Sandbox returned non-JSON response: {detail}",
+    "zh-CN": "沙盒返回非 JSON 响应: {detail}"
+  },
+  "sandbox.error.tool_failed": {
+    "en-US": "Sandbox tool execution failed: {detail}",
+    "zh-CN": "沙盒内工具执行失败: {detail}"
+  },
+  "sandbox.error.unsupported_tool": {
+    "en-US": "Sandbox does not support this built-in tool.",
+    "zh-CN": "沙盒不支持该内置工具。"
+  },
+  "sandbox.message.release_not_required": {
+    "en-US": "Shared sandbox release is not required.",
+    "zh-CN": "共享沙盒无需释放。"
+  },
+  "skill.description.missing": {
+    "en-US": "No description provided",
+    "zh-CN": "未提供描述"
+  },
+  "tool.a2a.depth_exceeded": {
+    "en-US": "Delegation depth exceeds limit ({max_depth}).",
+    "zh-CN": "委派深度超过上限({max_depth})。"
+  },
+  "tool.a2a.endpoint_required": {
+    "en-US": "A2A endpoint is required.",
+    "zh-CN": "A2A endpoint 不能为空。"
+  },
+  "tool.a2a.http_error": {
+    "en-US": "A2A returned error: status={status}",
+    "zh-CN": "A2A 返回错误: status={status}"
+  },
+  "tool.a2a.loop_detected": {
+    "en-US": "Delegation loop detected; call blocked.",
+    "zh-CN": "检测到委派链路循环，已阻止调用。"
+  },
+  "tool.a2a.message_required": {
+    "en-US": "A2A message is required.",
+    "zh-CN": "A2A 消息不能为空。"
+  },
+  "tool.a2a.method_unsupported": {
+    "en-US": "Unsupported A2A method: {method}",
+    "zh-CN": "不支持的 A2A 方法: {method}"
+  },
+  "tool.a2a.request_failed": {
+    "en-US": "A2A request failed: {detail}",
+    "zh-CN": "A2A 请求失败: {detail}"
+  },
+  "tool.a2a.response_invalid": {
+    "en-US": "Invalid A2A response format.",
+    "zh-CN": "A2A 响应格式错误。"
+  },
+  "tool.a2a.service_unavailable": {
+    "en-US": "A2A service unavailable: {name}",
+    "zh-CN": "A2A 服务不可用：{name}"
+  },
+  "tool.a2a.task_required": {
+    "en-US": "A2A task name/id is required.",
+    "zh-CN": "A2A 任务标识不能为空。"
+  },
+  "tool.edit.action_unsupported": {
+    "en-US": "Unsupported edit action.",
+    "zh-CN": "不支持的编辑动作。"
+  },
+  "tool.edit.delete_out_of_range": {
+    "en-US": "Delete range exceeds file length.",
+    "zh-CN": "删除范围超出文件行数。"
+  },
+  "tool.edit.file_not_found": {
+    "en-US": "File not found.",
+    "zh-CN": "文件不存在。"
+  },
+  "tool.edit.invalid_start": {
+    "en-US": "Invalid start line.",
+    "zh-CN": "起始行号非法。"
+  },
+  "tool.edit.out_of_range": {
+    "en-US": "Edit lines out of range.",
+    "zh-CN": "编辑行号超出文件范围。"
+  },
+  "tool.edit.replace_out_of_range": {
+    "en-US": "Replace range exceeds file length.",
+    "zh-CN": "替换范围超出文件行数。"
+  },
+  "tool.exec.command_failed": {
+    "en-US": "Command execution error: {detail}",
+    "zh-CN": "命令执行异常: {detail}"
+  },
+  "tool.exec.command_required": {
+    "en-US": "Command is required.",
+    "zh-CN": "命令不能为空。"
+  },
+  "tool.exec.failed": {
+    "en-US": "Command execution failed.",
+    "zh-CN": "命令执行失败。"
+  },
+  "tool.exec.not_allowed": {
+    "en-US": "Command not in allow list.",
+    "zh-CN": "命令不在允许列表中。"
+  },
+  "tool.exec.parse_failed": {
+    "en-US": "Command parse failed.",
+    "zh-CN": "命令解析失败。"
+  },
+  "tool.exec.shell_not_allowed": {
+    "en-US": "Shell execution is not allowed.",
+    "zh-CN": "不允许使用 shell 执行。"
+  },
+  "tool.exec.workdir_not_dir": {
+    "en-US": "Working directory is not a directory.",
+    "zh-CN": "工作目录不是目录。"
+  },
+  "tool.exec.workdir_not_found": {
+    "en-US": "Working directory not found.",
+    "zh-CN": "工作目录不存在。"
+  },
+  "tool.fs.absolute_forbidden": {
+    "en-US": "Absolute paths are not allowed.",
+    "zh-CN": "workdir请使用相对路径"
+  },
+  "tool.fs.path_forbidden": {
+    "en-US": "Path is forbidden by security policy.",
+    "zh-CN": "路径被安全策略禁止。"
+  },
+  "tool.fs.path_out_of_bounds": {
+    "en-US": "Path traversal is forbidden.",
+    "zh-CN": "路径越界访问被禁止。"
+  },
+  "tool.invoke.mcp_call_failed": {
+    "en-US": "MCP tool call failed: {detail}",
+    "zh-CN": "MCP 工具调用失败: {detail}"
+  },
+  "tool.invoke.mcp_name_invalid": {
+    "en-US": "Invalid MCP tool name format",
+    "zh-CN": "MCP 工具名称格式错误"
+  },
+  "tool.invoke.mcp_result_error": {
+    "en-US": "MCP tool returned an error",
+    "zh-CN": "MCP 工具返回错误"
+  },
+  "tool.invoke.mcp_server_unavailable": {
+    "en-US": "MCP server not configured or enabled",
+    "zh-CN": "MCP 服务未配置或未启用"
+  },
+  "tool.invoke.skill_failed": {
+    "en-US": "Skill execution failed: {detail}",
+    "zh-CN": "技能执行失败: {detail}"
+  },
+  "tool.invoke.user_skill_failed": {
+    "en-US": "User skill execution failed: {detail}",
+    "zh-CN": "用户技能执行失败: {detail}"
+  },
+  "tool.invoke.user_skill_not_found": {
+    "en-US": "User skill not found",
+    "zh-CN": "用户技能不存在"
+  },
+  "tool.invoke.user_skill_not_loaded": {
+    "en-US": "User skills not loaded",
+    "zh-CN": "用户技能未加载"
+  },
+  "tool.invoke.user_tool_unknown": {
+    "en-US": "Unknown user tool type",
+    "zh-CN": "未知的自建工具类型"
+  },
+  "tool.invoke.wunder_run_failed": {
+    "en-US": "wunder@run call failed: {detail}",
+    "zh-CN": "wunder@run 调用失败: {detail}"
+  },
+  "tool.plan.plan_required": {
+    "en-US": "Plan steps are required.",
+    "zh-CN": "计划步骤不能为空。"
+  },
+  "tool.question_panel.default_question": {
+    "en-US": "Which route should we take next?",
+    "zh-CN": "接下来希望从哪个方向推进？"
+  },
+  "tool.question_panel.routes_required": {
+    "en-US": "At least one route is required.",
+    "zh-CN": "至少提供一条路线。"
+  },
+  "tool.memory_manager.invalid_action": {
+    "en-US": "Invalid memory action. Use list/search/get/add/update/remove/clear.",
+    "zh-CN": "记忆动作无效，可用 list/search/get/add/update/remove/clear。"
+  },
+  "tool.memory_manager.memory_id_required": {
+    "en-US": "memory_id is required for get/update/remove.",
+    "zh-CN": "get/update/remove 必须提供 memory_id。"
+  },
+  "tool.memory_manager.not_found": {
+    "en-US": "Memory entry not found.",
+    "zh-CN": "未找到对应的记忆条目。"
+  },
+  "tool.memory_manager.note_new_sessions_only": {
+    "en-US": "Memory writes affect future sessions only; existing sessions keep their frozen prompt snapshot. In the current session, use search first when the user corrects you, says the answer is wrong, or updates preferences/constraints, then use get for full detail before deciding whether add/update is needed.",
+    "zh-CN": "记忆写入仅对后续新会话生效；已有会话继续使用已冻结的提示词快照。当前会话里，当用户纠错、指出你答错，或更新偏好/约束时，先用 search 查找候选记忆，再用 get 查看完整细节，然后再决定是否 add/update。"
+  },
+  "tool.memory_manager.note_recall_current_session": {
+    "en-US": "Search reads the latest long-term memory indexes in the current session without rewriting the thread's frozen system prompt. Use get with a selected memory_id to read the full detail when confidence is low, details may be stale, or user feedback indicates mismatch.",
+    "zh-CN": "search 会在当前会话中读取最新长期记忆索引，但不会改写该线程已冻结的系统提示词。需要完整内容时，请继续使用 get 并指定 memory_id。"
+  },
+  "tool.memory_manager.note_get_full_detail": {
+    "en-US": "get returns the full stored detail for one memory_id. Prefer list/search first when you only need candidate indexes.",
+    "zh-CN": "get 会返回单条 memory_id 对应的完整记忆内容；如果你只是想浏览候选索引，优先使用 list/search。"
+  },
+  "tool.list.path_not_found": {
+    "en-US": "Path not found.",
+    "zh-CN": "路径不存在。"
+  },
+  "tool.ptc.content_required": {
+    "en-US": "Script content is required.",
+    "zh-CN": "脚本内容不能为空。"
+  },
+  "tool.ptc.exec_error": {
+    "en-US": "Script execution error: {detail}",
+    "zh-CN": "脚本执行异常: {detail}"
+  },
+  "tool.ptc.exec_failed": {
+    "en-US": "Script execution failed.",
+    "zh-CN": "脚本执行失败。"
+  },
+  "tool.ptc.ext_invalid": {
+    "en-US": "Only .py scripts are supported.",
+    "zh-CN": "仅支持 .py 脚本文件。"
+  },
+  "tool.ptc.filename_invalid": {
+    "en-US": "Script filename cannot include paths.",
+    "zh-CN": "脚本文件名不能包含路径。"
+  },
+  "tool.ptc.filename_required": {
+    "en-US": "Script filename is required.",
+    "zh-CN": "脚本文件名不能为空。"
+  },
+  "tool.read.empty_file": {
+    "en-US": "(empty file)",
+    "zh-CN": "（空文件）"
+  },
+  "tool.read.empty_result": {
+    "en-US": "No readable files",
+    "zh-CN": "无可读取文件"
+  },
+  "tool.read.patch_usage_hint": {
+    "en-US": "This output is display-formatted for reading. Do not copy the leading \">>> path\" header or \"N: \" line numbers into apply_patch; use only the original file content.",
+    "zh-CN": "该输出是便于阅读的展示格式。生成 apply_patch 时，不要复制前导的 \">>> 路径\" 文件头或 \"N: \" 行号，只使用文件原始内容。"
+  },
+  "tool.read.no_path": {
+    "en-US": "No file path provided.",
+    "zh-CN": "未提供文件路径。"
+  },
+  "tool.read.too_many_files": {
+    "en-US": "Too many files requested for one read call: received {count}, maximum {max}.",
+    "zh-CN": "单次读取请求的文件过多：收到 {count} 个，最大只允许 {max} 个。"
+  },
+  "tool.read.too_many_files_hint": {
+    "en-US": "Split the request into smaller batches, or set max_files deliberately if you need a smaller processed subset.",
+    "zh-CN": "请拆成更小批次调用；如果你只想处理其中一部分，请显式设置 max_files。"
+  },
+  "tool.read.not_found": {
+    "en-US": "File not found.",
+    "zh-CN": "文件不存在。"
+  },
+  "tool.read.binary_omitted": {
+    "en-US": "Binary file omitted because `read_file` only supports plain-text content.",
+    "zh-CN": "已省略二进制文件内容，`读取文件` 仅支持纯文本内容。"
+  },
+  "tool.read.binary_image_use_read_image": {
+    "en-US": "Image bytes omitted because `read_file` only supports plain-text content.",
+    "zh-CN": "已省略图片二进制内容，`读取文件` 仅支持纯文本内容。"
+  },
+  "tool.skill_call.name_required": {
+    "en-US": "Skill name is required.",
+    "zh-CN": "技能名称不能为空。"
+  },
+  "tool.skill_call.not_found": {
+    "en-US": "Skill not found: {name}.",
+    "zh-CN": "未找到技能：{name}。"
+  },
+  "tool.skill_call.ambiguous": {
+    "en-US": "Skill name is ambiguous: {name}. Candidates: {candidates}.",
+    "zh-CN": "技能名称存在歧义：{name}。候选：{candidates}。"
+  },
+  "tool.skill_call.read_failed": {
+    "en-US": "Failed to read skill file: {detail}.",
+    "zh-CN": "读取技能文件失败：{detail}。"
+  },
+  "tool.read.range_out_of_file": {
+    "en-US": "(range {start}-{end} out of file size {total})",
+    "zh-CN": "（范围 {start}-{end} 超出文件长度 {total}）"
+  },
+  "tool.read.range_out_of_truncated_excerpt": {
+    "en-US": "(range {start}-{end} exceeds the loaded excerpt of {loaded} lines; file is too large so only a safe prefix was returned)",
+    "zh-CN": "（范围 {start}-{end} 超出本次已加载的 {loaded} 行截断内容；文件较大，本次仅返回安全前缀）"
+  },
+  "tool.read.invalid_reversed_range": {
+    "en-US": "Invalid line range: start_line {start} must be less than or equal to end_line {end}.",
+    "zh-CN": "无效的行号范围：start_line {start} 必须小于等于 end_line {end}。"
+  },
+  "tool.read.invalid_reversed_range_hint": {
+    "en-US": "Use an ascending inclusive line window. For long files, locate the relevant heading with search_content first, then read a narrower range.",
+    "zh-CN": "请使用升序的包含式行号窗口；长文档应先用 search_content 定位相关标题，再读取更窄的范围。"
+  },
+  "tool.read.continuation_hint": {
+    "en-US": "This read returned only part of the available text. Do NOT continue by fixed-step paging on the same file. First use search_content to locate relevant headings/keywords, then read one narrower window (for example hit_line-20 to hit_line+40). If repeated calls produce no new evidence, stop and report the gap.",
+    "zh-CN": "本次读取只返回了部分可用文本。禁止在同一文件上按固定步长连续翻页；请先用 search_content 定位标题或关键词，再读取更窄窗口（例如命中行前 20 到后 40）。若连续调用没有新增依据，应停止重复读取并说明缺口。"
+  },
+  "tool.read.truncated_prefix": {
+    "en-US": "(file is large; returning a safe truncated prefix, so the content may be incomplete)",
+    "zh-CN": "（文件较大，本次仅返回安全截断前缀，内容可能不完整）"
+  },
+  "tool.read.too_large": {
+    "en-US": "File too large to read.",
+    "zh-CN": "文件过大，已拒绝读取。"
+  },
+  "tool.read_image.followup_prompt": {
+    "en-US": "Please analyze this local visual media and continue the current task.",
+    "zh-CN": "请分析这份本地视觉媒体，并继续完成当前任务。"
+  },
+  "tool.read_image.not_file": {
+    "en-US": "Visual media path must point to a file.",
+    "zh-CN": "视觉媒体路径必须指向文件。"
+  },
+  "tool.read_image.not_image": {
+    "en-US": "The specified file is not supported visual media.",
+    "zh-CN": "指定文件不是受支持的视觉媒体格式。"
+  },
+  "tool.web_fetch.invalid_url": {
+    "en-US": "Invalid URL.",
+    "zh-CN": "无效的 URL。"
+  },
+  "tool.web_fetch.unsupported_scheme": {
+    "en-US": "Only http/https URLs are supported.",
+    "zh-CN": "仅支持 http/https URL。"
+  },
+  "tool.web_fetch.blocked_host": {
+    "en-US": "Blocked host: {host}.",
+    "zh-CN": "目标主机被阻止：{host}。"
+  },
+  "tool.web_fetch.dns_failed": {
+    "en-US": "DNS resolution failed.",
+    "zh-CN": "DNS 解析失败。"
+  },
+  "tool.web_fetch.timeout": {
+    "en-US": "Web fetch timed out.",
+    "zh-CN": "网页抓取超时。"
+  },
+  "tool.web_fetch.too_many_redirects": {
+    "en-US": "Too many redirects.",
+    "zh-CN": "重定向次数过多。"
+  },
+  "tool.web_fetch.redirect_loop": {
+    "en-US": "Redirect loop detected.",
+    "zh-CN": "检测到重定向循环。"
+  },
+  "tool.web_fetch.redirect_missing_location": {
+    "en-US": "Redirect response is missing the Location header.",
+    "zh-CN": "重定向响应缺少 Location 头。"
+  },
+  "tool.web_fetch.redirect_invalid_location": {
+    "en-US": "Redirect location is invalid.",
+    "zh-CN": "重定向地址无效。"
+  },
+  "tool.web_fetch.http_error": {
+    "en-US": "Request failed with HTTP status {status}.",
+    "zh-CN": "请求失败，HTTP 状态码为 {status}。"
+  },
+  "tool.web_fetch.http_error_with_detail": {
+    "en-US": "Request failed with HTTP status {status}: {detail}",
+    "zh-CN": "请求失败，HTTP 状态码为 {status}：{detail}"
+  },
+  "tool.web_fetch.unsupported_content_type": {
+    "en-US": "Unsupported content type: {content_type}.",
+    "zh-CN": "不支持的内容类型：{content_type}。"
+  },
+  "tool.web_fetch.invalid_json": {
+    "en-US": "The response body is not valid JSON.",
+    "zh-CN": "响应内容不是合法 JSON。"
+  },
+  "tool.web_fetch.no_content": {
+    "en-US": "No meaningful content could be extracted from the page.",
+    "zh-CN": "未能从页面中提取到有效内容。"
+  },
+  "tool.web_fetch.dynamic_page": {
+    "en-US": "The page looks like a client-rendered shell, so direct HTTP fetch did not return meaningful content.",
+    "zh-CN": "该页面看起来是客户端渲染壳页，直接 HTTP 抓取未返回有效正文。"
+  },
+  "tool.web_fetch.bot_protection": {
+    "en-US": "The page appears to be protected by verification or anti-bot checks.",
+    "zh-CN": "该页面似乎启用了验证或反爬保护。"
+  },
+  "tool.web_fetch.browser_fallback_failed": {
+    "en-US": "Direct HTTP fetch returned a dynamic page and browser fallback failed: {detail}",
+    "zh-CN": "直接 HTTP 抓取遇到动态页面，且浏览器兜底失败：{detail}"
+  },
+  "tool.web_fetch.search_result_url": {
+    "en-US": "Search result page fetched. Treat it as a lead page only, then fetch concrete source pages for evidence.",
+    "zh-CN": "已抓取搜索结果页。它只能作为线索页，最终证据应继续抓取具体来源页面。"
+  },
+  "tool.web_fetch.provider_failed": {
+    "en-US": "Web fetch provider failed: {detail}",
+    "zh-CN": "网页抓取 provider 执行失败：{detail}"
+  },
+  "tool.web_search.empty_query": {
+    "en-US": "Search query is required.",
+    "zh-CN": "搜索关键词不能为空。"
+  },
+  "tool.web_search.timeout": {
+    "en-US": "Web search timed out.",
+    "zh-CN": "网页搜索超时。"
+  },
+  "tool.web_search.invalid_json": {
+    "en-US": "The search provider returned invalid JSON.",
+    "zh-CN": "搜索 provider 返回的 JSON 无效。"
+  },
+  "tool.web_search.provider_failed": {
+    "en-US": "Web search provider failed",
+    "zh-CN": "网页搜索 provider 执行失败"
+  },
+  "tool.web_search.provider_unsupported": {
+    "en-US": "Unsupported web search provider.",
+    "zh-CN": "不支持的网页搜索 provider。"
+  },
+  "tool.web_search.firecrawl_api_key_required": {
+    "en-US": "Firecrawl Cloud search requires FIRECRAWL_API_KEY. Self-hosted Firecrawl can use FIRECRAWL_BASE_URL without an API key.",
+    "zh-CN": "Firecrawl Cloud 搜索需要 FIRECRAWL_API_KEY；自托管 Firecrawl 可配置 FIRECRAWL_BASE_URL 且通常不需要 API Key。"
+  },
+  "tool.desktop_controller.disabled": {
+    "en-US": "Desktop controller is disabled.",
+    "zh-CN": "桌面控制器未启用。"
+  },
+  "tool.desktop_controller.invalid_args": {
+    "en-US": "Invalid desktop controller arguments.",
+    "zh-CN": "桌面控制器参数无效。"
+  },
+  "tool.desktop_controller.bbox_required": {
+    "en-US": "bbox is required.",
+    "zh-CN": "必须提供 bbox。"
+  },
+  "tool.desktop_controller.invalid_bbox": {
+    "en-US": "bbox must be a JSON array like [x1,y1,x2,y2] or [cx,cy] (no quotes).",
+    "zh-CN": "bbox 必须是 JSON 数组，如 [x1,y1,x2,y2] 或 [cx,cy]，不要加引号。"
+  },
+  "tool.desktop_controller.action_required": {
+    "en-US": "action is required.",
+    "zh-CN": "必须提供 action。"
+  },
+  "tool.desktop_controller.description_required": {
+    "en-US": "description is required.",
+    "zh-CN": "必须提供 description。"
+  },
+  "tool.desktop_controller.unknown_action": {
+    "en-US": "Unknown desktop action.",
+    "zh-CN": "未知的桌面动作。"
+  },
+  "tool.desktop_controller.key_required": {
+    "en-US": "key is required for press_key.",
+    "zh-CN": "press_key 需要 key。"
+  },
+  "tool.desktop_controller.text_required": {
+    "en-US": "text is required for type_text.",
+    "zh-CN": "type_text 需要 text。"
+  },
+  "tool.desktop_controller.to_bbox_required": {
+    "en-US": "to_bbox is required for drag_drop.",
+    "zh-CN": "drag_drop 需要 to_bbox。"
+  },
+  "tool.desktop_controller.capture_failed": {
+    "en-US": "Failed to capture desktop screenshot.",
+    "zh-CN": "桌面截图失败。"
+  },
+  "tool.desktop_controller.capture_timeout": {
+    "en-US": "Desktop screenshot timed out.",
+    "zh-CN": "桌面截图超时。"
+  },
+  "tool.desktop_controller.capture_too_large": {
+    "en-US": "Desktop screenshot is too large.",
+    "zh-CN": "桌面截图过大。"
+  },
+  "tool.desktop_controller.unsupported_platform": {
+    "en-US": "Desktop controller is not supported on this platform.",
+    "zh-CN": "当前平台不支持桌面控制器。"
+  },
+  "tool.desktop_controller.followup_prompt": {
+    "en-US": "Here is the latest desktop screenshot.",
+    "zh-CN": "这里是最新的桌面截图。"
+  },
+  "tool.desktop_monitor.wait_required": {
+    "en-US": "wait_ms is required.",
+    "zh-CN": "必须提供 wait_ms。"
+  },
+  "tool.desktop_monitor.followup_prompt": {
+    "en-US": "Desktop monitor captured a new screenshot.",
+    "zh-CN": "桌面监视器已捕获新截图。"
+  },
+  "tool.replace.count_mismatch": {
+    "en-US": "Replacement count mismatch.",
+    "zh-CN": "实际替换数量与期望不一致。"
+  },
+  "tool.replace.file_not_found": {
+    "en-US": "File not found.",
+    "zh-CN": "文件不存在。"
+  },
+  "tool.replace.not_found": {
+    "en-US": "Text to replace not found.",
+    "zh-CN": "未找到要替换的内容。"
+  },
+  "tool.search.empty": {
+    "en-US": "Search query is required.",
+    "zh-CN": "搜索关键字不能为空。"
+  },
+  "tool.search.invalid_regex": {
+    "en-US": "Invalid regex pattern: {detail}.",
+    "zh-CN": "正则表达式无效：{detail}。"
+  },
+  "tool.search.path_not_found": {
+    "en-US": "Path not found.",
+    "zh-CN": "路径不存在。"
+  },
+  "tool.spec.a2a.args.allow_self": {
+    "en-US": "Allow calling local A2A endpoint (default false).",
+    "zh-CN": "是否允许调用本地 A2A 入口（默认 false）。"
+  },
+  "tool.spec.a2a.args.blocking": {
+    "en-US": "Whether SendMessage blocks for result (default true).",
+    "zh-CN": "SendMessage 是否阻塞等待结果（默认 true）。"
+  },
+  "tool.spec.a2a.args.content": {
+    "en-US": "Text prompt used when message is not provided.",
+    "zh-CN": "简要文本问题，未提供 message 时使用。"
+  },
+  "tool.spec.a2a.args.delegation_chain": {
+    "en-US": "Delegation chain to prevent loops.",
+    "zh-CN": "委派链路（用于防止循环）。"
+  },
+  "tool.spec.a2a.args.endpoint": {
+    "en-US": "A2A JSON-RPC endpoint (usually ends with /a2a).",
+    "zh-CN": "A2A JSON-RPC 接口地址（通常以 /a2a 结尾）。"
+  },
+  "tool.spec.a2a.args.headers": {
+    "en-US": "Extra headers (e.g., auth).",
+    "zh-CN": "额外请求头（如鉴权）。"
+  },
+  "tool.spec.a2a.args.max_depth": {
+    "en-US": "Max delegation depth (optional).",
+    "zh-CN": "委派链路最大深度（可选）。"
+  },
+  "tool.spec.a2a.args.message": {
+    "en-US": "Full A2A Message (optional, preferred when provided).",
+    "zh-CN": "完整 A2A Message（可选，优先使用）。"
+  },
+  "tool.spec.a2a.args.method": {
+    "en-US": "Method to call (SendMessage / SendStreamingMessage / GetTask / SubscribeToTask / ListTasks / CancelTask).",
+    "zh-CN": "调用方法（SendMessage / SendStreamingMessage / GetTask / SubscribeToTask / ListTasks / CancelTask）。"
+  },
+  "tool.spec.a2a.args.model_name": {
+    "en-US": "Remote model configuration name (optional).",
+    "zh-CN": "远端模型配置名称（可选）。"
+  },
+  "tool.spec.a2a.args.session_id": {
+    "en-US": "Session id used for taskId/contextId (defaults to current session).",
+    "zh-CN": "会话标识（写入 taskId/contextId，默认当前会话）。"
+  },
+  "tool.spec.a2a.args.stream": {
+    "en-US": "Use streaming interface (SendStreamingMessage).",
+    "zh-CN": "是否使用流式接口（SendStreamingMessage）。"
+  },
+  "tool.spec.a2a.args.task_id": {
+    "en-US": "Task id for GetTask/SubscribeToTask.",
+    "zh-CN": "任务标识（用于 GetTask/SubscribeToTask 等方法）。"
+  },
+  "tool.spec.a2a.args.task_name": {
+    "en-US": "Task name (e.g., tasks/{id}).",
+    "zh-CN": "任务名称（如 tasks/{id}）。"
+  },
+  "tool.spec.a2a.args.timeout": {
+    "en-US": "Timeout in seconds (default 120).",
+    "zh-CN": "请求超时秒数（默认 120）。"
+  },
+  "tool.spec.a2a.args.tool_names": {
+    "en-US": "Allowed tool list for the remote agent (optional).",
+    "zh-CN": "远端允许调用的工具列表（可选）。"
+  },
+  "tool.spec.a2a.args.user_id": {
+    "en-US": "Remote userId (optional, defaults to current user_id).",
+    "zh-CN": "远端智能体的 userId（可选，默认沿用当前 user_id）。"
+  },
+  "tool.spec.a2a.description": {
+    "en-US": "Delegate a task to an external agent via A2A JSON-RPC and return the result.",
+    "zh-CN": "通过 A2A JSON-RPC 委派任务给外部智能体并获取结果。"
+  },
+  "tool.spec.a2a_observe.args.endpoint": {
+    "en-US": "Filter by A2A endpoint (optional).",
+    "zh-CN": "过滤指定的 A2A 端点（可选）。"
+  },
+  "tool.spec.a2a_observe.args.refresh": {
+    "en-US": "Refresh remote task status (default true).",
+    "zh-CN": "是否主动刷新远端任务状态（默认 true）。"
+  },
+  "tool.spec.a2a_observe.args.service_name": {
+    "en-US": "Filter by A2A service name (optional).",
+    "zh-CN": "过滤指定的 A2A 服务名（可选）。"
+  },
+  "tool.spec.a2a_observe.args.task_ids": {
+    "en-US": "List of task_ids to observe (optional).",
+    "zh-CN": "需要观察的 task_id 列表（可选）。"
+  },
+  "tool.spec.a2a_observe.args.tasks": {
+    "en-US": "Task list (optional), supports task_id/endpoint/service_name.",
+    "zh-CN": "任务列表（可选），可传入 task_id/endpoint/service_name。"
+  },
+  "tool.spec.a2a_observe.args.timeout": {
+    "en-US": "Timeout seconds for remote refresh (optional).",
+    "zh-CN": "刷新远端任务的超时秒数（可选）。"
+  },
+  "tool.spec.a2a_observe.description": {
+    "en-US": "Inspect A2A task snapshots. Usually provide task_ids; only specify endpoint or service_name when needed; use refresh to actively refresh remote state.",
+    "zh-CN": "查看 A2A 任务快照。常用 task_ids；必要时再指定 endpoint 或 service_name；refresh 用于主动刷新远端状态。"
+  },
+  "tool.spec.a2a_service.args.blocking": {
+    "en-US": "Whether SendMessage blocks for result (default true).",
+    "zh-CN": "SendMessage 是否阻塞等待结果（默认 true）。"
+  },
+  "tool.spec.a2a_service.args.content": {
+    "en-US": "Text message sent to the agent.",
+    "zh-CN": "发送给智能体的文本内容。"
+  },
+  "tool.spec.a2a_service.args.message": {
+    "en-US": "Optional full A2A Message payload.",
+    "zh-CN": "可选的完整 A2A Message 对象。"
+  },
+  "tool.spec.a2a_service.args.model_name": {
+    "en-US": "Remote model configuration name (optional).",
+    "zh-CN": "远端模型配置名称（可选）。"
+  },
+  "tool.spec.a2a_service.args.session_id": {
+    "en-US": "Session id used for taskId/contextId.",
+    "zh-CN": "会话标识（写入 taskId/contextId）。"
+  },
+  "tool.spec.a2a_service.args.stream": {
+    "en-US": "Use streaming interface (SendStreamingMessage).",
+    "zh-CN": "是否使用流式接口（SendStreamingMessage）。"
+  },
+  "tool.spec.a2a_service.args.timeout": {
+    "en-US": "Timeout in seconds (optional).",
+    "zh-CN": "请求超时秒数（可选）。"
+  },
+  "tool.spec.a2a_service.args.tool_names": {
+    "en-US": "Allowed tool list for the remote agent (optional).",
+    "zh-CN": "远端允许调用的工具列表（可选）。"
+  },
+  "tool.spec.a2a_service.args.user_id": {
+    "en-US": "Remote userId (optional, defaults to current user_id).",
+    "zh-CN": "远端智能体的 userId（可选，默认沿用当前 user_id）。"
+  },
+  "tool.spec.a2a_service.description": {
+    "en-US": "Delegate tasks to A2A agent {name} and return the result.",
+    "zh-CN": "委派给 A2A 智能体 {name} 执行任务并返回结果。"
+  },
+  "tool.spec.a2a_service.summary.skills": {
+    "en-US": "Skills: {skills}",
+    "zh-CN": "技能：{skills}"
+  },
+  "tool.spec.a2a_service.summary.skills_more": {
+    "en-US": "Skills: {names} (total {count})",
+    "zh-CN": "技能：{names} 等 {count} 项"
+  },
+  "tool.spec.a2a_service.summary.tool.a2a": {
+    "en-US": "A2A {count}",
+    "zh-CN": "A2A{count}"
+  },
+  "tool.spec.a2a_service.summary.tool.builtin": {
+    "en-US": "builtin {count}",
+    "zh-CN": "内置{count}"
+  },
+  "tool.spec.a2a_service.summary.tool.knowledge": {
+    "en-US": "knowledge {count}",
+    "zh-CN": "知识库{count}"
+  },
+  "tool.spec.a2a_service.summary.tool.mcp": {
+    "en-US": "MCP {count}",
+    "zh-CN": "MCP{count}"
+  },
+  "tool.spec.a2a_service.summary.tools": {
+    "en-US": "Tools: {tools}",
+    "zh-CN": "工具：{tools}"
+  },
+  "tool.spec.a2a_wait.args.endpoint": {
+    "en-US": "Filter by A2A endpoint (optional).",
+    "zh-CN": "过滤指定的 A2A 端点（可选）。"
+  },
+  "tool.spec.a2a_wait.args.poll_interval": {
+    "en-US": "Polling interval in seconds (optional).",
+    "zh-CN": "轮询间隔秒数（可选）。"
+  },
+  "tool.spec.a2a_wait.args.refresh": {
+    "en-US": "Refresh remote task status while waiting (default true).",
+    "zh-CN": "等待期间是否刷新远端任务状态（默认 true）。"
+  },
+  "tool.spec.a2a_wait.args.service_name": {
+    "en-US": "Filter by A2A service name (optional).",
+    "zh-CN": "过滤指定的 A2A 服务名（可选）。"
+  },
+  "tool.spec.a2a_wait.args.task_ids": {
+    "en-US": "List of task_ids to wait for (optional).",
+    "zh-CN": "需要等待的 task_id 列表（可选）。"
+  },
+  "tool.spec.a2a_wait.args.tasks": {
+    "en-US": "Task list (optional), supports task_id/endpoint/service_name.",
+    "zh-CN": "任务列表（可选），可传入 task_id/endpoint/service_name。"
+  },
+  "tool.spec.a2a_wait.args.wait_s": {
+    "en-US": "Wait seconds (optional, default 30s).",
+    "zh-CN": "等待秒数（可选，默认 30 秒）。"
+  },
+  "tool.spec.a2a_wait.description": {
+    "en-US": "Wait for A2A tasks to finish. Usually use wait_s, poll_interval_s, and task_ids; inspect the final snapshot with a2a观察 afterward.",
+    "zh-CN": "等待 A2A 任务完成。常用 wait_s、poll_interval_s、task_ids；等待结束后再结合 a2a观察 查看最终快照。"
+  },
+  "tool.spec.a2ui.args.content": {
+    "en-US": "Optional short textual note.",
+    "zh-CN": "可选的简短文本说明。"
+  },
+  "tool.spec.a2ui.args.messages": {
+    "en-US": "Array of A2UI JSON messages (beginRendering/surfaceUpdate/dataModelUpdate/deleteSurface).",
+    "zh-CN": "A2UI JSON 消息数组（beginRendering/surfaceUpdate/dataModelUpdate/deleteSurface）。"
+  },
+  "tool.spec.a2ui.args.uid": {
+    "en-US": "Optional UI surface identifier. When omitted, the current session surface is used.",
+    "zh-CN": "可选的 UI Surface 标识；省略时默认使用当前会话的渲染区域。"
+  },
+  "tool.spec.a2ui.description": {
+    "en-US": "Send structured UI instructions to the frontend. Prefer the known message shapes beginRendering, surfaceUpdate, dataModelUpdate, and deleteSurface, and avoid inventing arbitrary payload shapes.",
+    "zh-CN": "向前端发送结构化 UI 指令。优先使用已知消息形状 beginRendering、surfaceUpdate、dataModelUpdate、deleteSurface，不要随意扩展结构。"
+  },
+  "tool.spec.apply_patch.args.input": {
+    "en-US": "Raw apply_patch text. Use it for precise multi-file or multi-hunk edits, adds, deletes, and moves. If a match is uncertain, call dry_run=true first; otherwise apply directly. The input must start exactly with *** Begin Patch and end exactly with *** End Patch. Keep context lines with a leading space, old lines with -, and new lines with +; never copy read_file display headers or line numbers. For generated whole-file rewrites, use write_file or a script.",
+    "zh-CN": "原始 apply_patch 文本。适合精确的多文件、多 hunk 修改，以及新增、删除、移动文件；匹配不确定时先调用 dry_run=true，否则可直接应用。输入必须以 *** Begin Patch 开始并以 *** End Patch 结束。上下文行以空格开头，旧行用 -，新行用 +；不要复制 read_file 展示文件头或行号。生成式整文件重写请用写入文件或脚本。"
+  },
+  "tool.spec.apply_patch.description": {
+    "en-US": "Apply precise patches to one or more files, including multiple hunks, adds, deletes, and moves. Read the relevant excerpt first. Use dry_run=true only when a match or multi-file change is uncertain, then apply the validated patch. For generated whole-file rewrites, use write_file or a script.",
+    "zh-CN": "应用一个或多个文件的精确补丁，支持多个 hunk、新增、删除和移动。先读取相关片段；匹配或多文件变更不确定时使用 dry_run=true，验证后再应用。生成式整文件重写请用写入文件或脚本。"
+  },
+  "tool.spec.edit.args.edits": {
+    "en-US": "List of edits to apply in order.",
+    "zh-CN": "按顺序执行的编辑操作列表。"
+  },
+  "tool.spec.edit.args.edits.action": {
+    "en-US": "Edit action type.",
+    "zh-CN": "要应用的编辑类型。"
+  },
+  "tool.spec.edit.args.edits.end_line": {
+    "en-US": "End line number (inclusive).",
+    "zh-CN": "编辑结束的行号（包含）。"
+  },
+  "tool.spec.edit.args.edits.new_content": {
+    "en-US": "Content to replace or insert.",
+    "zh-CN": "替换或插入的内容。"
+  },
+  "tool.spec.edit.args.edits.start_line": {
+    "en-US": "Start line number (1-based).",
+    "zh-CN": "编辑开始的行号（从 1 开始）。"
+  },
+  "tool.spec.edit.args.ensure_newline": {
+    "en-US": "Ensure the file ends with a newline when true.",
+    "zh-CN": "为 true 时确保文件以换行结束。"
+  },
+  "tool.spec.edit.args.path": {
+    "en-US": "File path to edit.",
+    "zh-CN": "要编辑的文件路径。"
+  },
+  "tool.spec.edit.description": {
+    "en-US": "Edit an existing UTF-8 text file by replacing literal text. old_string must match exactly once unless replace_all=true; new_string may be empty to delete the matched text.",
+    "zh-CN": "编辑既有 UTF-8 文本文件，按字面文本替换。old_string 必须逐字唯一匹配，除非 replace_all=true；new_string 可为空以删除匹配文本。"
+  },
+  "tool.spec.edit2.args.edits": {
+    "en-US": "Basic text edit steps to apply in order.",
+    "zh-CN": "按顺序执行的基础文本编辑步骤。"
+  },
+  "tool.spec.edit2.args.edits.action": {
+    "en-US": "Edit action: replace, replace_between, insert_before, insert_after, append, or prepend.",
+    "zh-CN": "编辑动作类型：replace、replace_between、insert_before、insert_after、append 或 prepend。"
+  },
+  "tool.spec.edit2.args.edits.old_text": {
+    "en-US": "Existing text to find for replace.",
+    "zh-CN": "用于 replace 的目标旧文本。"
+  },
+  "tool.spec.edit2.args.edits.new_text": {
+    "en-US": "New text to insert or replace with.",
+    "zh-CN": "要插入或替换成的新文本。"
+  },
+  "tool.spec.edit2.args.edits.start_marker": {
+    "en-US": "Start marker for replace_between. The tool replaces text after this marker until end_marker.",
+    "zh-CN": "replace_between 的起始标记。工具会替换从该标记之后到 end_marker 之前的文本。"
+  },
+  "tool.spec.edit2.args.edits.end_marker": {
+    "en-US": "End marker for replace_between.",
+    "zh-CN": "replace_between 的结束标记。"
+  },
+  "tool.spec.edit2.args.edits.anchor": {
+    "en-US": "Anchor text used by insert_before or insert_after.",
+    "zh-CN": "insert_before 或 insert_after 使用的锚点文本。"
+  },
+  "tool.spec.edit2.args.edits.replace_all": {
+    "en-US": "When true, replace every match instead of only the first one.",
+    "zh-CN": "为 true 时替换所有匹配项，而不只替换第一个。"
+  },
+  "tool.spec.edit2.args.edits.expected_count": {
+    "en-US": "Expected number of matches. The tool fails if the real match count differs.",
+    "zh-CN": "期望的匹配数量。实际匹配数不一致时工具会失败。"
+  },
+  "tool.spec.edit2.args.edits.unique": {
+    "en-US": "Require the target marker or old_text to match exactly once.",
+    "zh-CN": "要求目标标记或 old_text 恰好只匹配一次。"
+  },
+  "tool.spec.edit2.args.ensure_newline": {
+    "en-US": "Ensure the final file ends with a newline.",
+    "zh-CN": "确保最终文件以换行结尾。"
+  },
+  "tool.spec.edit2.args.path": {
+    "en-US": "Text file path to edit.",
+    "zh-CN": "要编辑的文本文件路径。"
+  },
+  "tool.spec.edit2.args.old_text": {
+    "en-US": "Exact current text to replace. Prefer copying the raw content from read_file and removing display headers or line numbers; the tool will also try to strip accidental read_file markers when matching fails.",
+    "zh-CN": "要替换掉的当前精确原文。优先从 read_file 复制原始内容并去掉文件头或行号；如果误带了 read_file 展示标记，工具会在匹配失败时尝试自动剥离。"
+  },
+  "tool.spec.edit2.args.new_text": {
+    "en-US": "Replacement text. It may be empty when deleting old_text.",
+    "zh-CN": "替换后的文本。删除 old_text 时可以传空字符串。"
+  },
+  "tool.spec.edit2.args.expected_count": {
+    "en-US": "Optional safety check. The tool fails unless old_text appears exactly this many times; when greater than 1, all matches are replaced.",
+    "zh-CN": "可选安全校验。old_text 出现次数必须等于该值；大于 1 时会替换全部匹配。"
+  },
+  "tool.spec.edit2.description": {
+    "en-US": "Replace exact text in one text file. Use this for one small, obvious replacement after reading the current file: provide only path, old_text, and new_text. The tool tolerates accidental read_file line numbers and line-ending differences, and treats a unique already-applied replacement as success. If old_text matches multiple places, make old_text longer or set expected_count intentionally. For multi-step edits, conditional replacements, regex, marker-based changes, or anything hard to express as one exact replacement, use programmatic_tool_call with a small Python script instead.",
+    "zh-CN": "在一个文本文件里只做一次精确替换。适合 read_file 后的小范围明确替换：只提供 path、old_text、new_text。工具会容忍误带 read_file 行号、换行符差异，并把唯一的已完成替换视为成功。old_text 匹配多处时，请扩大 old_text 上下文，或明确设置 expected_count。多步骤修改、条件替换、正则替换、标记间替换或任何难以写成一次精确替换的情况，请改用 programmatic_tool_call 写一个小 Python 脚本。"
+  },
+  "tool.spec.command_session.description": {
+    "en-US": "Poll a background command started by execute_command with run_in_background=true, or write its stdin. A poll may wait up to 60000 ms via yield_time_ms; confirm the command exited before reporting completion and never sleep to wait.",
+    "zh-CN": "轮询后台命令或写入其 stdin。命令来自 execute_command 开启后台模式返回的 command_session_id；yield_time_ms 最长 60000 毫秒。报告完成前必须确认命令已退出，不要用 sleep 空等。"
+  },
+  "tool.spec.command_session.args.action": {
+    "en-US": "Action: poll reads status and output; write_stdin sends input and then reads status and output.",
+    "zh-CN": "操作：poll 读取状态和输出；write_stdin 写入输入后再读取状态和输出。"
+  },
+  "tool.spec.command_session.args.id": {
+    "en-US": "Background command session ID returned by execute_command.",
+    "zh-CN": "execute_command 返回的后台命令会话 ID。"
+  },
+  "tool.spec.command_session.args.input": {
+    "en-US": "Text to send to stdin; use only with write_stdin.",
+    "zh-CN": "写入 stdin 的文本，仅用于 write_stdin。"
+  },
+  "tool.spec.command_session.args.after_seq": {
+    "en-US": "Last sandbox output sequence already consumed; omit on the first poll.",
+    "zh-CN": "已经消费的沙盒输出序号；第一次轮询时省略。"
+  },
+  "tool.spec.command_session.args.yield_time_ms": {
+    "en-US": "Poll wait window in milliseconds; default 500 and maximum 60000. Prefer one long poll over sleep.",
+    "zh-CN": "轮询等待窗口，单位为毫秒；默认 500，最大 60000。等待命令时优先使用一次较长轮询，不要使用 sleep。"
+  },
+  "tool.command_session.summary": {
+    "en-US": "Command session status and bounded output preview.",
+    "zh-CN": "命令会话状态与有界输出预览。"
+  },
+  "tool.command_session.id_required": {
+    "en-US": "command_session_id is required",
+    "zh-CN": "请提供 command_session_id。"
+  },
+  "tool.command_session.sandbox_unavailable": {
+    "en-US": "Sandbox command session is unavailable.",
+    "zh-CN": "沙盒命令会话不可用。"
+  },
+  "tool.command_session.unavailable": {
+    "en-US": "Command sessions are unavailable in this runtime.",
+    "zh-CN": "当前运行环境不支持命令会话。"
+  },
+  "tool.exec.background_next_step": {
+    "en-US": "The command is running in the background. Poll the command_session tool with this command_session_id (yield_time_ms up to 60000 waits for output or exit in one call); confirm it has exited before reporting completion; do not use sleep to wait.",
+    "zh-CN": "命令已在后台运行。请用命令会话工具传入该 command_session_id 轮询结果（yield_time_ms 最长 60000，可一次调用等待输出或退出）；在报告完成前必须先确认其已退出；不要使用 sleep 空等。"
+  },
+  "tool.exec.sleep_not_allowed": {
+    "en-US": "Do not idle with a bare sleep command: execute_command blocks by default and returns the result; to wait for a background command, poll it with the command_session tool instead.",
+    "zh-CN": "不要用 sleep 空等：执行命令默认阻塞等待即可拿到结果；等待后台命令请用命令会话工具轮询。"
+  },
+  "tool.exec.timeout": {
+    "en-US": "Command timed out and was terminated; the collected partial output is included.",
+    "zh-CN": "命令执行超时已被终止，已收集的部分输出一并返回。"
+  },
+  "tool.spec.exec.args.description": {
+    "en-US": "Clear, concise description of what this command does in active voice, 5-10 words (shown in the UI). Examples: \"ls\" -> \"List files in current directory\"; \"git status\" -> \"Show working tree status\"; \"npm install\" -> \"Install package dependencies\".",
+    "zh-CN": "用主动语态清晰简洁地描述这条命令做什么，5–10 个词，显示在界面上（作为标题）。示例：\"ls\" -> \"列出当前目录文件\"；\"git status\" -> \"查看工作区状态\"；\"npm install\" -> \"安装依赖\"。"
+  },
+  "tool.spec.exec.args.content": {
+    "en-US": "CLI command. Content has no path restrictions.",
+    "zh-CN": "CLI 命令，content 不限制路径格式。"
+  },
+  "tool.spec.exec.args.run_in_background": {
+    "en-US": "Optional, default false: block until the command exits or timeout_s is reached and return the full output. Set true only for long-running commands to return a command_session_id immediately, then poll it with the command_session tool.",
+    "zh-CN": "可选，默认 false：阻塞等待命令结束（或达到 timeout_s）并返回完整输出。仅对长时间运行的命令设为 true，此时立即返回 command_session_id，需用命令会话工具轮询结果。"
+  },
+  "tool.spec.exec.args.timeout": {
+    "en-US": "Optional. Command timeout in seconds; on timeout the process is killed and partial output is returned (default 120; pass 0 to disable).",
+    "zh-CN": "可选，命令超时秒数；超时后终止进程并返回已收集的部分输出。默认 120 秒，传 0 表示不限制。"
+  },
+  "tool.spec.exec.args.workdir": {
+    "en-US": "Optional. Working directory relative to the current workspace only (no absolute paths).",
+    "zh-CN": "可选，工作目录仅支持工作区内相对路径（不允许绝对路径）。"
+  },
+  "tool.spec.exec.description": {
+    "en-US": "Run CLI commands in the workspace and return stdout/stderr. Each call runs in a fresh shell; pass workdir instead of using cd. Blocks by default until the command exits or timeout_s (default 120s) is reached, returning the full output; set run_in_background=true only for long-running commands, which returns a command_session_id to poll with the command_session tool. Provide `description` (5-10 words) before `content` in the arguments. Never use a bare sleep command to idle-wait. workdir accepts only a workspace-relative subdirectory.",
+    "zh-CN": "在工作区内执行 CLI 命令并返回 stdout/stderr。每次调用都在全新 shell 中执行；用 workdir 指定目录而非 cd。默认阻塞等待命令结束或达到 timeout_s（默认 120 秒），返回完整输出；仅对长时间运行的命令设置 run_in_background=true，此时返回 command_session_id，用命令会话工具轮询。请先提供 description（命令做什么，5–10 个词），再提供 content。不要用单独的 sleep 命令空等。workdir 仅接受工作区内的相对子目录。"
+  },
+  "tool.spec.exec.shell_bash": {
+    "en-US": "Shell environment: Git Bash (bash). Write POSIX commands: pipes, &&, ;, grep, sed, awk, find, ssh, ls, cat, head, tail, tar, curl, etc. Paths: use /c/... or forward-slash C:/... (avoid backslashes). To invoke cmd from bash, write `cmd //c ...`. Output is UTF-8.",
+    "zh-CN": "Shell 环境：Git Bash（bash）。请编写 POSIX 命令：管道、&&、;、grep、sed、awk、find、ssh、ls、cat、head、tail、tar、curl 等。路径用 /c/... 或正斜杠 C:/...（避免反斜杠）。在 bash 中调用 cmd 请写成 `cmd //c ...`。输出为 UTF-8。"
+  },
+  "tool.spec.exec.shell_powershell": {
+    "en-US": "Shell environment: PowerShell. Use PowerShell syntax (cmdlets, pipelines, $variables).",
+    "zh-CN": "Shell 环境：PowerShell。请使用 PowerShell 语法（cmdlet、管道、$变量）。"
+  },
+  "tool.spec.browser.description": {
+    "en-US": "Automate a browser session. Start the session first to warm up or reuse it, then open/navigate; the common flow is start -> open/navigate -> snapshot/read_page -> click/type/press -> wait/screenshot. Screenshots are saved to the workspace by default.",
+    "zh-CN": "浏览器自动化工具。先用 start 预热或复用会话，再 open/navigate；常用流程：start -> open/navigate -> snapshot/read_page -> click/type/press -> wait/screenshot。截图默认保存到工作区。"
+  },
+  "tool.spec.browser.args.action": {
+    "en-US": "Action: status/profiles/start/stop/tabs/open/focus/close/navigate/snapshot/act/click/type/press/hover/wait/screenshot/read_page.",
+    "zh-CN": "动作类型：status/profiles/start/stop/tabs/open/focus/close/navigate/snapshot/act/click/type/press/hover/wait/screenshot/read_page。"
+  },
+  "tool.spec.browser.args.profile": {
+    "en-US": "Optional browser profile name. Defaults to the managed profile.",
+    "zh-CN": "可选，浏览器 profile 名称，默认使用 managed。"
+  },
+  "tool.spec.browser.args.browser_session_id": {
+    "en-US": "Optional explicit browser session id. Defaults to user_id + session_id/agent_id.",
+    "zh-CN": "可选，显式浏览器会话 ID；默认由 user_id 与 session_id/agent_id 组合。"
+  },
+  "tool.spec.browser.args.target_id": {
+    "en-US": "Optional browser tab target id.",
+    "zh-CN": "可选，浏览器标签页 target_id。"
+  },
+  "tool.spec.browser.args.url": {
+    "en-US": "The URL to open (http/https only).",
+    "zh-CN": "要打开的网页地址（http/https）。"
+  },
+  "tool.spec.browser.args.path": {
+    "en-US": "Optional workspace-relative screenshot path for screenshot actions. Defaults to browser/screenshots/browser_shot_<id>.png.",
+    "zh-CN": "可选，screenshot 动作保存截图的工作区相对路径；默认 browser/screenshots/browser_shot_<id>.png。"
+  },
+  "tool.spec.browser.args.format": {
+    "en-US": "Snapshot format: role/aria/ai.",
+    "zh-CN": "snapshot 格式：role/aria/ai。"
+  },
+  "tool.spec.browser.args.ref": {
+    "en-US": "Element ref returned by a previous snapshot.",
+    "zh-CN": "来自之前 snapshot 的元素 ref。"
+  },
+  "tool.spec.browser.args.selector": {
+    "en-US": "CSS selector or visible text.",
+    "zh-CN": "CSS 选择器或可见文本。"
+  },
+  "tool.spec.browser.args.text": {
+    "en-US": "Text to type.",
+    "zh-CN": "要输入的文本。"
+  },
+  "tool.spec.browser.args.key": {
+    "en-US": "Keyboard key for press action.",
+    "zh-CN": "press 动作使用的键值。"
+  },
+  "tool.spec.browser.args.full_page": {
+    "en-US": "Whether screenshot should capture the full page.",
+    "zh-CN": "截图是否抓取整页。"
+  },
+  "tool.spec.browser.args.max_chars": {
+    "en-US": "Optional maximum characters for snapshot/read_page output.",
+    "zh-CN": "可选，snapshot/read_page 输出的最大字符数。"
+  },
+  "tool.spec.browser.args.timeout_ms": {
+    "en-US": "Optional per-call timeout in milliseconds for open/navigate and waits; use for slow pages after starting the session.",
+    "zh-CN": "可选，open/navigate 与等待动作的单次调用超时时间（毫秒）；慢页面建议先 start 后再传入。"
+  },
+  "tool.spec.browser.args.timeout_secs": {
+    "en-US": "Optional per-call timeout in seconds for open/navigate and waits. timeout_ms takes precedence when both are present.",
+    "zh-CN": "可选，open/navigate 与等待动作的单次调用超时时间（秒）；同时传入时 timeout_ms 优先。"
+  },
+  "tool.spec.browser.args.request": {
+    "en-US": "Structured act request. Usually contains kind/target_id/ref/selector/text/key and batch steps.",
+    "zh-CN": "结构化 act 请求，通常包含 kind/target_id/ref/selector/text/key 及 batch steps。"
+  },
+  "tool.spec.browser_navigate.args.url": {
+    "en-US": "The URL to open (http/https only).",
+    "zh-CN": "要打开的网页地址（http/https）"
+  },
+  "tool.spec.browser_navigate.description": {
+    "en-US": "Navigate the browser to a URL and return the page title and readable content.",
+    "zh-CN": "导航浏览器到指定 URL，并返回页面标题与可读内容。"
+  },
+  "tool.spec.browser_click.args.selector": {
+    "en-US": "CSS selector or visible text to click.",
+    "zh-CN": "CSS 选择器或可见文本"
+  },
+  "tool.spec.browser_click.description": {
+    "en-US": "Click an element on the current page by CSS selector or visible text.",
+    "zh-CN": "在当前页面点击元素（CSS 选择器或可见文本）"
+  },
+  "tool.spec.browser_type.args.selector": {
+    "en-US": "CSS selector for the input field.",
+    "zh-CN": "输入框的 CSS 选择器"
+  },
+  "tool.spec.browser_type.args.text": {
+    "en-US": "Text to type.",
+    "zh-CN": "要输入的文本"
+  },
+  "tool.spec.browser_type.description": {
+    "en-US": "Type text into an input field on the current page.",
+    "zh-CN": "在指定输入框输入文本"
+  },
+  "tool.spec.browser_screenshot.description": {
+    "en-US": "Take a screenshot of the current page and return image info.",
+    "zh-CN": "截取当前页面截图并返回图片信息。"
+  },
+  "tool.spec.browser_read_page.description": {
+    "en-US": "Read the current page and return structured content.",
+    "zh-CN": "读取当前页面并返回结构化内容"
+  },
+  "tool.spec.browser_close.description": {
+    "en-US": "Close the current browser session.",
+    "zh-CN": "关闭当前浏览器会话"
+  },
+  "tool.spec.web_fetch.description": {
+    "en-US": "Fetch one public webpage URL and extract its main content. This is not a search provider and does not validate guessed URLs, so pass a complete, confirmed http/https URL; search result pages may also be fetched as lead pages, but final evidence should come from concrete source pages.",
+    "zh-CN": "抓取单个公开网页 URL 并提取正文。它不是搜索提供商，也不验证猜测的 URL，因此请传完整、已确认的 http/https URL；搜索结果页也可以作为线索页抓取，但最终证据应来自具体来源页面。"
+  },
+  "tool.spec.web_search.description": {
+    "en-US": "Search the public web with a natural-language query and return result URLs, titles, and snippets. Use it to discover sources; use web_fetch to read a specific page.",
+    "zh-CN": "用自然语言关键词搜索公开网页，返回结果 URL、标题和摘要。它用于发现来源，读取具体页面请用 web_fetch。"
+  },
+  "tool.spec.web_search.args.query": {
+    "en-US": "Natural-language search query. Pass keywords or a question, not a URL.",
+    "zh-CN": "自然语言搜索关键词或问题，不要传 URL。"
+  },
+  "tool.spec.web_search.args.count": {
+    "en-US": "Number of search results to return, 1-10. Defaults to system config.",
+    "zh-CN": "返回结果数量，1-10，默认使用系统配置。"
+  },
+  "tool.spec.web_search.args.site": {
+    "en-US": "Optional site or domain to restrict the search, such as example.com or https://example.com/docs. The tool converts it to a site: query; this is not a page URL to fetch.",
+    "zh-CN": "可选。把搜索限定到某个站点或域名，例如 example.com 或 https://example.com/docs。工具会转换为 site: 查询；这不是要抓取的网页 URL。"
+  },
+  "tool.spec.web_search.args.sites": {
+    "en-US": "Optional list of sites or domains to restrict the search. Use this when you have a source domain plus keywords.",
+    "zh-CN": "可选。把搜索限定到多个站点或域名。适合已有来源域名/地址，同时还要给一串搜索词的场景。"
+  },
+  "tool.spec.web_search.args.scrape_results": {
+    "en-US": "Optional. Ask the provider to include scraped content from result pages when supported. Keep false for quick source discovery.",
+    "zh-CN": "可选。让 provider 在支持时附带结果页抓取正文；快速找来源时保持 false。"
+  },
+  "tool.spec.web_search.args.max_result_chars": {
+    "en-US": "Optional maximum characters per returned title, snippet, or scraped content field.",
+    "zh-CN": "每个标题、摘要或附带正文片段的最大字符数，可选。"
+  },
+  "tool.spec.web_search.args.sources": {
+    "en-US": "Optional provider-specific source list, for example web, news, or images when supported.",
+    "zh-CN": "可选的 provider 特定来源列表，例如支持时使用 web、news 或 images。"
+  },
+  "tool.spec.web_search.args.categories": {
+    "en-US": "Optional provider-specific category filters, for example github or research when supported.",
+    "zh-CN": "可选的 provider 特定分类过滤，例如支持时使用 github 或 research。"
+  },
+  "tool.spec.web_fetch.args.url": {
+    "en-US": "The exact public URL to fetch (http/https only). Pass a complete, confirmed URL; do not pass keywords, local paths, or model-guessed site addresses.",
+    "zh-CN": "要抓取的精确公网 URL（仅支持 http/https）。必须传完整、已确认的 URL；不要传关键词、本地路径或模型猜测出来的站点地址。"
+  },
+  "tool.spec.web_fetch.args.extract_mode": {
+    "en-US": "Output format: markdown or text. Defaults to markdown.",
+    "zh-CN": "输出格式：markdown 或 text，默认 markdown。"
+  },
+  "tool.spec.web_fetch.args.max_chars": {
+    "en-US": "Optional maximum number of characters to return after cleaning.",
+    "zh-CN": "清洗后返回内容的最大字符数，可选。"
+  },
+  "tool.spec.desktop_controller.description": {
+    "en-US": "Execute desktop input actions. Use bbox together with an action; keyboard actions use key or text, scrolling uses scroll_steps, and drag uses to_bbox.",
+    "zh-CN": "执行桌面输入动作。用 bbox 配合 action 指定目标与动作；键盘动作用 key 或 text，滚动用 scroll_steps，拖拽用 to_bbox。"
+  },
+  "tool.spec.desktop_controller.args.bbox": {
+    "en-US": "Target bbox in normalized screenshot space. Format: [x1,y1,x2,y2] or [cx,cy].",
+    "zh-CN": "归一化截图坐标中的目标框，格式：[x1,y1,x2,y2] 或 [cx,cy]。"
+  },
+  "tool.spec.desktop_controller.args.action": {
+    "en-US": "Action: left_click/left_double_click/right_click/middle_click/left_hold/right_hold/middle_hold/left_release/right_release/middle_release/scroll_down/scroll_up/press_key/type_text/delay/move_mouse/drag_drop.",
+    "zh-CN": "动作类型：left_click/left_double_click/right_click/middle_click/left_hold/right_hold/middle_hold/left_release/right_release/middle_release/scroll_down/scroll_up/press_key/type_text/delay/move_mouse/drag_drop。"
+  },
+  "tool.spec.desktop_controller.args.description": {
+    "en-US": "Short description of the intended action (for audit).",
+    "zh-CN": "动作意图描述（便于审计与确认）。"
+  },
+  "tool.spec.desktop_controller.args.key": {
+    "en-US": "Key for press_key, e.g., ctrl+c, enter, f5.",
+    "zh-CN": "press_key 使用的按键，如 ctrl+c、enter、f5。"
+  },
+  "tool.spec.desktop_controller.args.text": {
+    "en-US": "Text to type for type_text.",
+    "zh-CN": "type_text 输入的文本。"
+  },
+  "tool.spec.desktop_controller.args.delay_ms": {
+    "en-US": "Delay in milliseconds for action=delay.",
+    "zh-CN": "delay 动作的等待毫秒数。"
+  },
+  "tool.spec.desktop_controller.args.duration_ms": {
+    "en-US": "Duration in milliseconds for move_mouse/drag_drop.",
+    "zh-CN": "move_mouse/drag_drop 的移动耗时（毫秒）。"
+  },
+  "tool.spec.desktop_controller.args.scroll_steps": {
+    "en-US": "Scroll steps for scroll_up/scroll_down (>=1).",
+    "zh-CN": "scroll_up/scroll_down 的滚动步数（>=1）。"
+  },
+  "tool.spec.desktop_controller.args.to_bbox": {
+    "en-US": "Target bbox for drag_drop, same format as bbox.",
+    "zh-CN": "drag_drop 的目标 bbox，格式同 bbox。"
+  },
+  "tool.spec.desktop_monitor.description": {
+    "en-US": "Capture a fresh desktop screenshot after waiting wait_ms.",
+    "zh-CN": "等待 wait_ms 后返回一张新的桌面截图。"
+  },
+  "tool.spec.desktop_monitor.args.wait_ms": {
+    "en-US": "Wait milliseconds (0-30000).",
+    "zh-CN": "等待毫秒数（0-30000）。"
+  },
+  "tool.spec.desktop_monitor.args.note": {
+    "en-US": "Optional note for monitoring purpose.",
+    "zh-CN": "可选备注（监视目的）。"
+  },
+  "tool.spec.final.args.content": {
+    "en-US": "Final response content.",
+    "zh-CN": "最终回复内容。"
+  },
+  "tool.spec.final.description": {
+    "en-US": "Final response to return to the user. If you produce images, files or reports, include Markdown image or link syntax in the content (for example `![Radar Chart](/workspaces/{user_id}/radar_chart.png)` or `![Essay](/workspaces/{user_id}/essay.docx)`), so that users can preview images in the frontend or click to download files.",
+    "zh-CN": "返回给用户的最终回复。若有图片/文件/报告等产出，必须在回复的最后附上 Markdown 语法将图片或链接展示出来，例如：![雷达图](/workspaces/{user_id}/radar_chart.png) 或 ![xx作文](/workspaces/{user_id}/美好的一天.docx)，这样用户就能在前端或其他渠道看到图片或下载文件。"
+  },
+  "tool.spec.glob.description": {
+    "en-US": "Find files, not directories, whose paths match a glob pattern, including hidden and ignored files. Returns up to 100 paths in modification-time order; a larger result is sampled across top-level entries.",
+    "zh-CN": "查找路径匹配 glob 模式的文件（不含目录），包含隐藏与忽略的文件。按修改时间排序返回至多 100 条路径；结果超过上限时在顶层目录间抽样。"
+  },
+  "tool.spec.glob.args.pattern": {
+    "en-US": "Required. Glob pattern such as \"*.rs\" or \"src/**/*.rs\". A pattern without a separator matches the file name at any depth.",
+    "zh-CN": "必填，glob 模式，例如 \"*.rs\" 或 \"src/**/*.rs\"。不含分隔符的模式在任意深度按文件名匹配。"
+  },
+  "tool.spec.glob.args.path": {
+    "en-US": "Optional. Directory to search. Defaults to the agent's working directory if omitted; relative paths are resolved against that root.",
+    "zh-CN": "可选，搜索的目录。省略时默认使用智能体工作目录；相对路径按该目录解释。"
+  },
+  "tool.spec.str_replace_editor.description": {
+    "en-US": "Edit files with the view, create, str_replace, and insert commands. view renders an existing file with line numbers or lists a directory up to two levels deep; create writes a new file only when the path does not exist; str_replace replaces the unique literal occurrence of old_str; insert adds new_str after insert_line.",
+    "zh-CN": "用 view、create、str_replace、insert 四个子命令编辑文件。view 为已有文件渲染带行号的内容，或以两层深度列出目录；create 仅在路径不存在时新建文件；str_replace 替换 old_str 唯一出现的字面文本；insert 在第 insert_line 行之后插入 new_str。"
+  },
+  "tool.spec.str_replace_editor.args.command": {
+    "en-US": "Required. One of view, create, str_replace, insert.",
+    "zh-CN": "必填，取值为 view、create、str_replace、insert 之一。"
+  },
+  "tool.spec.str_replace_editor.args.path": {
+    "en-US": "Required. File or directory path. Relative paths resolve against the workspace; absolute paths and /workspaces/... public paths are also accepted.",
+    "zh-CN": "必填，文件或目录路径。相对路径按工作区解释；也支持绝对路径和 /workspaces/... 公共路径。"
+  },
+  "tool.spec.str_replace_editor.args.file_text": {
+    "en-US": "Required for create. Full contents of the new file.",
+    "zh-CN": "create 必填，新文件的完整内容。"
+  },
+  "tool.spec.str_replace_editor.args.insert_line": {
+    "en-US": "Required for insert. Line number after which new_str is inserted; 0 inserts at the beginning of the file.",
+    "zh-CN": "insert 必填，new_str 插入其后的行号；0 表示插入到文件开头。"
+  },
+  "tool.spec.str_replace_editor.args.new_str": {
+    "en-US": "Replacement or inserted text. Required for insert; optional for str_replace, where an empty string deletes the match.",
+    "zh-CN": "替换或插入的文本。insert 必填；str_replace 可选，空字符串表示删除匹配文本。"
+  },
+  "tool.spec.str_replace_editor.args.old_str": {
+    "en-US": "Required for str_replace. Literal text to replace; it must appear verbatim and exactly once.",
+    "zh-CN": "str_replace 必填，要替换的字面文本，必须逐字出现且仅出现一次。"
+  },
+  "tool.spec.str_replace_editor.args.view_range": {
+    "en-US": "Optional for view on a file. Two line numbers [start, end]; use -1 for end to view through the last line.",
+    "zh-CN": "view 文件时可选，两个行号 [start, end]；end 传 -1 表示读到文件末尾。"
+  },
+  "tool.spec.list.args.path": {
+    "en-US": "Optional. Directory to list. Defaults to the agent's working directory if omitted; relative paths are resolved against that root. Absolute paths and /workspaces/... public paths are also accepted.",
+    "zh-CN": "可选，要列出的目录。省略时默认使用智能体工作目录；相对路径按该目录解释。也支持绝对路径和 /workspaces/... 公共路径。"
+  },
+  "tool.spec.list.args.cursor": {
+    "en-US": "Opaque pagination cursor from previous list_files result; omit for first page.",
+    "zh-CN": "分页游标（来自上一次 list_files 返回的 next_cursor）；首轮可省略。"
+  },
+  "tool.spec.list.args.offset": {
+    "en-US": "Numeric offset alias for pagination (legacy-compatible).",
+    "zh-CN": "分页偏移量（兼容旧参数写法）。"
+  },
+  "tool.spec.list.args.limit": {
+    "en-US": "Page size for this call. Default 500, max 500.",
+    "zh-CN": "本次返回条数。默认 500，最大 500。"
+  },
+  "tool.spec.list.description": {
+    "en-US": "List direct child files and folders in a directory. Use search_content to search file contents instead of listing directories.",
+    "zh-CN": "列出目录下的直接子文件和子目录。搜索文件内容请改用 search_content，不要用列目录代替。"
+  },
+  "tool.spec.plan.args.explanation": {
+    "en-US": "Optional. Short explanation for the plan.",
+    "zh-CN": "可选，计划说明。"
+  },
+  "tool.spec.plan.args.plan": {
+    "en-US": "Plan step list.",
+    "zh-CN": "计划步骤列表。"
+  },
+  "tool.spec.plan.args.plan.step": {
+    "en-US": "Step description.",
+    "zh-CN": "步骤描述。"
+  },
+  "tool.spec.plan.args.plan.status": {
+    "en-US": "Step status (pending, in_progress, completed).",
+    "zh-CN": "步骤状态（pending/in_progress/completed）。"
+  },
+  "tool.spec.plan.description": {
+    "en-US": "Update the plan board with steps and their status.",
+    "zh-CN": "更新计划看板，写入步骤与状态。"
+  },
+  "tool.spec.question_panel.args.question": {
+    "en-US": "Optional. Short question or prompt to show above the routes.",
+    "zh-CN": "可选，展示在路线列表上方的问题或提示。"
+  },
+  "tool.spec.question_panel.args.routes": {
+    "en-US": "Route list for the inquiry panel.",
+    "zh-CN": "问询面板的路线列表。"
+  },
+  "tool.spec.question_panel.args.routes.label": {
+    "en-US": "Short route label.",
+    "zh-CN": "路线标题。"
+  },
+  "tool.spec.question_panel.args.routes.description": {
+    "en-US": "Route explanation or scope.",
+    "zh-CN": "路线说明或范围。"
+  },
+  "tool.spec.question_panel.args.routes.recommended": {
+    "en-US": "Mark as recommended.",
+    "zh-CN": "是否推荐该路线。"
+  },
+  "tool.spec.question_panel.args.multiple": {
+    "en-US": "Allow multiple selections.",
+    "zh-CN": "允许多选。"
+  },
+  "tool.spec.question_panel.description": {
+    "en-US": "Show a route panel and pause for the user to choose the next step. Prefer 2-4 short routes and mark one as recommended when helpful.",
+    "zh-CN": "展示路线面板并暂停，等待用户选择下一步。建议 2-4 条简短路线，必要时标注推荐项。"
+  },
+  "tool.spec.schedule_task.args.action": {
+    "en-US": "Action to perform: add, update, remove, enable, disable, get, list, run, or status.",
+    "zh-CN": "要执行的动作：add、update、remove、enable、disable、get、list、run、status。"
+  },
+  "tool.spec.schedule_task.args.job": {
+    "en-US": "Job data.",
+    "zh-CN": "任务数据。"
+  },
+  "tool.spec.schedule_task.args.job.job_id": {
+    "en-US": "Job id. Reuse it for update/get/remove/enable/disable/run.",
+    "zh-CN": "任务 ID。更新、查询、删除、启停、立即执行时复用它。"
+  },
+  "tool.spec.schedule_task.args.job.name": {
+    "en-US": "Short human-readable name for the scheduled job.",
+    "zh-CN": "定时任务的人类可读短名称。"
+  },
+  "tool.spec.schedule_task.args.job.schedule": {
+    "en-US": "Schedule.",
+    "zh-CN": "调度。"
+  },
+  "tool.spec.schedule_task.args.job.schedule.kind": {
+    "en-US": "Precise schedule mode: at, every, or cron.",
+    "zh-CN": "精确调度模式：at、every、cron。"
+  },
+  "tool.spec.schedule_task.args.job.schedule.at": {
+    "en-US": "Exact run time in RFC3339. For every, this can also be the first anchor time.",
+    "zh-CN": "RFC3339 格式的执行时间。对于 every，也可作为首次触发锚点。"
+  },
+  "tool.spec.schedule_task.args.job.schedule.every_ms": {
+    "en-US": "Recurring interval in milliseconds. Minimum 1000.",
+    "zh-CN": "循环间隔，单位毫秒，最小 1000。"
+  },
+  "tool.spec.schedule_task.args.job.schedule.cron": {
+    "en-US": "Cron expression used when kind=cron.",
+    "zh-CN": "当 kind=cron 时使用的 Cron 表达式。"
+  },
+  "tool.spec.schedule_task.args.job.schedule.tz": {
+    "en-US": "Timezone for cron parsing, for example Asia/Shanghai.",
+    "zh-CN": "Cron 解析使用的时区，例如 Asia/Shanghai。"
+  },
+  "tool.spec.schedule_task.args.job.schedule_text": {
+    "en-US": "Preferred shortcut. Natural language or cron text such as 'every 5 minutes' or '0 9 * * *'.",
+    "zh-CN": "推荐快捷写法。可填自然语言或 cron 文本，例如“every 5 minutes”或“0 9 * * *”。"
+  },
+  "tool.spec.schedule_task.args.job.session": {
+    "en-US": "main sends the trigger into the job's bound task thread at run time. isolated runs in a fresh child thread and publishes a completed result turn to the bound thread without another model call. Switching threads does not change the binding.",
+    "zh-CN": "main 表示触发时把消息送入该定时任务绑定的线程。isolated 表示在新子线程执行，完成后发布独立结果轮次，不再调用模型。切换线程不会改变任务绑定。"
+  },
+  "tool.spec.schedule_task.args.job.payload": {
+    "en-US": "Payload (message).",
+    "zh-CN": "payload（message）。"
+  },
+  "tool.spec.schedule_task.args.job.payload.message": {
+    "en-US": "Message the agent should receive when the job fires.",
+    "zh-CN": "任务触发时要发给智能体的消息内容。"
+  },
+  "tool.spec.schedule_task.args.job.deliver": {
+    "en-US": "Deliver config.",
+    "zh-CN": "回传配置。"
+  },
+  "tool.spec.schedule_task.args.job.enabled": {
+    "en-US": "Whether the job starts enabled.",
+    "zh-CN": "任务创建后是否立即启用。"
+  },
+  "tool.spec.schedule_task.args.job.delete_after_run": {
+    "en-US": "Delete after run.",
+    "zh-CN": "执行后删除。"
+  },
+  "tool.spec.schedule_task.args.job.dedupe_key": {
+    "en-US": "Dedupe key.",
+    "zh-CN": "去重key。"
+  },
+  "tool.spec.schedule_task.description": {
+    "en-US": "Create and manage scheduled jobs. Prefer flat fields (action, job_id, schedule_text, message, session, enabled). session=main injects the trigger into the job's bound thread; session=isolated runs in a fresh child thread and publishes a completed result turn. run is asynchronous: queued means accepted, not finished, so end the reply instead of polling. schedule.at must be ISO 8601.",
+    "zh-CN": "创建和管理定时任务。优先使用扁平字段（action、job_id、schedule_text、message、session、enabled）。session=main 在触发时把消息注入任务绑定的线程；session=isolated 在新子线程执行，完成后发布独立结果轮次。run 是异步触发，queued 仅代表受理，应结束当前回复而不要轮询。schedule.at 必须是 ISO 8601。"
+  },
+  "tool.spec.user_world.args.action": {
+    "en-US": "Action: list_users/send_message.",
+    "zh-CN": "动作：list_users/send_message。"
+  },
+  "tool.spec.user_world.args.keyword": {
+    "en-US": "Search keyword when listing users.",
+    "zh-CN": "获取用户列表时的关键词。"
+  },
+  "tool.spec.user_world.args.offset": {
+    "en-US": "List offset.",
+    "zh-CN": "列表偏移量。"
+  },
+  "tool.spec.user_world.args.limit": {
+    "en-US": "List limit (0 for all).",
+    "zh-CN": "列表数量上限（0 表示全部）。"
+  },
+  "tool.spec.user_world.args.user_id": {
+    "en-US": "Target user id for sending.",
+    "zh-CN": "发送目标用户 ID。"
+  },
+  "tool.spec.user_world.args.user_ids": {
+    "en-US": "Target user id list for batch sending.",
+    "zh-CN": "批量发送的目标用户 ID 列表。"
+  },
+  "tool.spec.user_world.args.content": {
+    "en-US": "Message content. Supports @path file refs from the current workspace; matched files are staged into the sender's user container before sending.",
+    "zh-CN": "消息内容。支持使用 @路径 引用当前工作区文件，命中后会先同步到发送者的用户容器再发送。"
+  },
+  "tool.spec.user_world.args.content_type": {
+    "en-US": "Message content type.",
+    "zh-CN": "消息类型。"
+  },
+  "tool.spec.user_world.args.client_msg_id": {
+    "en-US": "Optional client message id for dedupe.",
+    "zh-CN": "可选的客户端消息 ID，用于去重。"
+  },
+  "tool.spec.user_world.description": {
+    "en-US": "User-world lookup and delivery tool. list_users usually needs keyword and limit; send_message usually needs user_id or user_ids, content, and content_type. Prefer explicit target users instead of relying on pagination offsets.",
+    "zh-CN": "用户世界检索与投递工具。list_users 常用 keyword、limit；send_message 常用 user_id 或 user_ids、content、content_type。优先直接给目标用户，不要依赖分页偏移。"
+  },
+  "tool.spec.channel_tool.description": {
+    "en-US": "List channel contacts or send channel messages. list_contacts usually needs channel/account_id/keyword/limit; send_message usually needs to, peer_kind, thread_id, content, attachments, and wait. Use content as the only message body field and avoid legacy text/meta/contact fields.",
+    "zh-CN": "渠道联系人与消息工具。list_contacts 常用 channel/account_id/keyword/limit；send_message 常用 to、peer_kind、thread_id、content、attachments、wait。正文只用 content，不要使用旧字段 text/meta/contact。"
+  },
+  "tool.spec.channel_tool.args.action": {
+    "en-US": "Action: list_contacts/send_message.",
+    "zh-CN": "动作类型：list_contacts/send_message。"
+  },
+  "tool.spec.channel_tool.args.channel": {
+    "en-US": "Channel name, e.g. xmpp/feishu. Optional in send_message when auto-resolved from session/default account.",
+    "zh-CN": "渠道名称，例如 xmpp/feishu。send_message 中可选，系统会优先从当前会话或默认账号自动补全。"
+  },
+  "tool.spec.channel_tool.args.account_id": {
+    "en-US": "Channel account id. Optional in send_message when auto-resolved from session/default account.",
+    "zh-CN": "渠道账号 ID。send_message 中可选，系统会优先从当前会话或默认账号自动补全。"
+  },
+  "tool.spec.channel_tool.args.keyword": {
+    "en-US": "Keyword for contact search.",
+    "zh-CN": "联系人搜索关键字。"
+  },
+  "tool.spec.channel_tool.args.offset": {
+    "en-US": "Pagination offset.",
+    "zh-CN": "分页偏移量。"
+  },
+  "tool.spec.channel_tool.args.limit": {
+    "en-US": "Pagination size (1-200).",
+    "zh-CN": "分页大小（1-200）。"
+  },
+  "tool.spec.channel_tool.args.refresh": {
+    "en-US": "Force refresh contacts from source (e.g. XMPP roster) instead of cache.",
+    "zh-CN": "强制从源端刷新联系人（如 XMPP roster），而不是使用缓存。"
+  },
+  "tool.spec.channel_tool.args.contact": {
+    "en-US": "Optional contact object copied from list_contacts item; can replace channel/account_id/to/peer_kind/thread_id.",
+    "zh-CN": "可选联系人对象（可直接复用 list_contacts 返回项），可替代 channel/account_id/to/peer_kind/thread_id。"
+  },
+  "tool.spec.channel_tool.args.to": {
+    "en-US": "Target peer id/JID. Optional when session has a unique peer or account default target is configured.",
+    "zh-CN": "目标接收方 ID/JID。当前会话只有一个对端或账号已配置默认目标时可省略。"
+  },
+  "tool.spec.channel_tool.args.peer_kind": {
+    "en-US": "Peer type: user/group.",
+    "zh-CN": "会话对象类型：user/group。"
+  },
+  "tool.spec.channel_tool.args.thread_id": {
+    "en-US": "Optional thread id.",
+    "zh-CN": "可选线程 ID。"
+  },
+  "tool.spec.channel_tool.args.text": {
+    "en-US": "Message text.",
+    "zh-CN": "消息文本。"
+  },
+  "tool.spec.channel_tool.args.content": {
+    "en-US": "Alias of text.",
+    "zh-CN": "text 的别名。"
+  },
+  "tool.spec.channel_tool.args.attachments": {
+    "en-US": "Optional attachment list.",
+    "zh-CN": "可选附件列表。"
+  },
+  "tool.spec.channel_tool.args.attachments.kind": {
+    "en-US": "Attachment kind: file/image/audio/video.",
+    "zh-CN": "附件类型：file/image/audio/video。"
+  },
+  "tool.spec.channel_tool.args.attachments.url": {
+    "en-US": "Attachment URL.",
+    "zh-CN": "附件 URL。"
+  },
+  "tool.spec.channel_tool.args.attachments.mime": {
+    "en-US": "Attachment MIME type.",
+    "zh-CN": "附件 MIME 类型。"
+  },
+  "tool.spec.channel_tool.args.attachments.size": {
+    "en-US": "Attachment byte size.",
+    "zh-CN": "附件字节大小。"
+  },
+  "tool.spec.channel_tool.args.attachments.name": {
+    "en-US": "Attachment display name.",
+    "zh-CN": "附件显示名称。"
+  },
+  "tool.spec.channel_tool.args.meta": {
+    "en-US": "Optional channel-specific metadata.",
+    "zh-CN": "可选渠道扩展元数据。"
+  },
+  "tool.spec.channel_tool.args.wait": {
+    "en-US": "Wait for outbox delivery result.",
+    "zh-CN": "是否等待出站投递结果。"
+  },
+  "tool.spec.channel_tool.args.wait_timeout_s": {
+    "en-US": "Wait timeout in seconds (1-30).",
+    "zh-CN": "等待超时秒数（1-30）。"
+  },
+  "tool.spec.memory_manager.description": {
+    "en-US": "Manage the current agent's long-term memory (list/search/get/add/update/remove/clear). The system prompt only receives compact id-and-title indexes, so use list/search to find a memory_id and get to read the full detail. For add/update, fill title as the index title, content as the full durable detail, tag as the memory tag, related_memory_id when linking another entry, and memory_time when the event time matters.",
+    "zh-CN": "管理当前智能体的长期记忆（list/search/get/add/update/remove/clear）。系统提示词只注入精简的 memory_id 与标题索引，因此先用 list/search 找到 memory_id，再用 get 读取完整内容。add/update 时：title 写索引标题，content 写完整细节，tag 写记忆标签，related_memory_id 按需关联，memory_time 按需填写时间。"
+  },
+  "tool.spec.memory_manager.args.action": {
+    "en-US": "Action: list/search/get/add/update/remove/clear.",
+    "zh-CN": "动作类型：list/search/get/add/update/remove/clear。"
+  },
+  "tool.spec.memory_manager.args.memory_id": {
+    "en-US": "Memory entry id (required for get/update/remove).",
+    "zh-CN": "记忆条目 ID（get/update/remove 必填）。"
+  },
+  "tool.spec.memory_manager.args.title": {
+    "en-US": "Optional index title. Prefer a short topic like 'User name' or 'Reply language'.",
+    "zh-CN": "可选的索引标题。建议写成简短主题，例如“用户姓名”或“回复语言”。"
+  },
+  "tool.spec.memory_manager.args.content": {
+    "en-US": "Memory content (required for add/update). Store the full durable detail here; this is not injected into the system prompt by default.",
+    "zh-CN": "记忆内容（add/update 必填）。这里存储完整、可长期复用的细节；默认不会直接注入系统提示词。"
+  },
+  "tool.spec.memory_manager.args.tag": {
+    "en-US": "Optional memory tag such as profile/preference/constraint/todo.",
+    "zh-CN": "可选的记忆标签，例如 profile/preference/constraint/todo。"
+  },
+  "tool.spec.memory_manager.args.category": {
+    "en-US": "Legacy alias of tag. Prefer tag in new calls.",
+    "zh-CN": "tag 的兼容别名。新调用请优先使用 tag。"
+  },
+  "tool.spec.memory_manager.args.related_memory_id": {
+    "en-US": "Optional linked memory id. Use it when this memory supersedes or relates to another memory entry.",
+    "zh-CN": "可选的关联记忆 ID。当前条目需要关联或替代另一条记忆时再填写。"
+  },
+  "tool.spec.memory_manager.args.memory_time": {
+    "en-US": "Optional memory time in ISO 8601 or local datetime text, for example 2026-04-12T08:37:00+08:00.",
+    "zh-CN": "可选的记忆时间，支持 ISO 8601 或本地时间文本，例如 2026-04-12T08:37:00+08:00。"
+  },
+  "tool.spec.memory_manager.args.query": {
+    "en-US": "Search query text. Use it with action=search to find candidate memory ids by title or content.",
+    "zh-CN": "搜索词。配合 action=search 使用，用于按标题或内容查找候选 memory_id。"
+  },
+  "tool.spec.memory_manager.args.limit": {
+    "en-US": "Max number of entries for list/search (list defaults to 30; search defaults to 10 and is internally capped to 30).",
+    "zh-CN": "list/search 返回条目数量上限（list 默认 30；search 默认 10，内部最大为 30）。"
+  },
+  "tool.spec.memory_manager.args.order": {
+    "en-US": "List order: desc (latest first) or asc.",
+    "zh-CN": "list 排序：desc（新到旧）或 asc。"
+  },
+  "tool.spec.ptc.args.content": {
+    "en-US": "Full Python script content.",
+    "zh-CN": "完整的 Python 脚本内容。"
+  },
+  "tool.spec.ptc.args.filename": {
+    "en-US": "Python script filename, e.g., helper.py.",
+    "zh-CN": "Python 脚本文件名，例如 helper.py。"
+  },
+  "tool.spec.ptc.args.workdir": {
+    "en-US": "Working directory relative to the workspace; use . for root.",
+    "zh-CN": "相对工作区的工作目录，使用 . 表示根目录。"
+  },
+  "tool.spec.ptc.description": {
+    "en-US": "Write and run a temporary Python script in the workspace and return its stdout/stderr. Use it when CLI commands are too many or fragile, or when structured processing is needed.",
+    "zh-CN": "在工作区写入并运行临时 Python 脚本，返回 stdout/stderr。当 CLI 命令过多、解析脆弱或需要结构化处理时使用。"
+  },
+  "tool.spec.read.description": {
+    "en-US": "Read a local plain-text UTF-8 file, similar to cat, and return line-numbered content. Use path (required; file_path is also accepted); page with offset (1-based) and limit (about 200 lines per call, max 2000), or use start_line/end_line ranges. Text files only (.txt/.md/.py, code, config, logs); docx/xlsx are unsupported and images must go through read_image. Relative paths resolve against the current working directory; absolute paths and /workspaces/... public paths are accepted. Output is display-formatted with a >>> path header and N: line numbers; never copy those display markers into apply_patch. If the file location is uncertain, use list_files or search_content first.",
+    "zh-CN": "读取本地纯文本 UTF-8 文件（类似 cat）并返回带行号的内容。path 必填（也接受 file_path）；可用 offset（从 1 开始）与 limit（单次约 200 行，最大 2000）分页，或使用 start_line/end_line 行范围。仅限文本文件（.txt/.md/.py、代码、配置、日志）；不支持 docx/xlsx，图片请用 read_image。相对路径按当前工作目录解释；也支持绝对路径与 /workspaces/... 公共路径。输出为展示格式，含 >>> 路径头与 N: 行号；生成 apply_patch 时不要复制这些展示标记。文件位置不确定时先用 list_files 或 search_content。"
+  },
+  "tool.spec.read_image.args.path": {
+    "en-US": "Local visual media path, relative to workspace or an allowed absolute path.",
+    "zh-CN": "本地视觉媒体路径，可使用工作区相对路径或允许的绝对路径。"
+  },
+  "tool.spec.read_image.description": {
+    "en-US": "Read a local image, GIF, or video file into the current model context. This is not a web image-search tool.",
+    "zh-CN": "读取本地图片、GIF 或视频并送入当前模型上下文。不是联网看图工具。"
+  },
+  "tool.spec.read_image.args.frame_rate": {
+    "en-US": "Optional frame extraction rate for video files (FPS).",
+    "zh-CN": "可选，视频文件的抽帧频率（FPS）。"
+  },
+  "tool.spec.read_image.args.frame_step": {
+    "en-US": "Optional frame step for GIF files. 0 means first frame only; 2 means frames 1,3,5...",
+    "zh-CN": "可选，GIF 文件的间隔取帧参数。0 表示仅首帧；2 表示取第 1、3、5... 帧。"
+  },
+  "tool.spec.generate_speech.description": {
+    "en-US": "Generate speech with the configured TTS model and save the audio into the workspace.",
+    "zh-CN": "使用已配置的文转声模型生成语音并保存到工作区。"
+  },
+  "tool.spec.generate_speech.args.text": {
+    "en-US": "Text content to synthesize.",
+    "zh-CN": "要合成的文本内容。"
+  },
+  "tool.spec.generate_speech.args.path": {
+    "en-US": "Optional workspace-relative output path. Empty means auto-generate under generated_media/.",
+    "zh-CN": "可选，工作区相对输出路径；留空则自动生成到 generated_media/。"
+  },
+  "tool.spec.generate_speech.args.model_name": {
+    "en-US": "Optional TTS model config name. Empty uses the default TTS model.",
+    "zh-CN": "可选，文转声模型配置名；留空使用默认文转声模型。"
+  },
+  "tool.spec.generate_speech.args.voice": {
+    "en-US": "Optional voice / speaker parameter.",
+    "zh-CN": "可选，音色 / 说话人参数。"
+  },
+  "tool.spec.generate_speech.args.instructions": {
+    "en-US": "Optional style instructions for the speech model.",
+    "zh-CN": "可选，语音风格指令。"
+  },
+  "tool.spec.generate_speech.args.response_format": {
+    "en-US": "Optional audio format, such as wav / mp3 / flac / opus.",
+    "zh-CN": "可选，输出音频格式，如 wav / mp3 / flac / opus。"
+  },
+  "tool.spec.generate_speech.args.speed": {
+    "en-US": "Optional playback speed.",
+    "zh-CN": "可选，播放速度。"
+  },
+  "tool.spec.generate_speech.args.reference_path": {
+    "en-US": "Optional workspace-relative path to a reference audio file for voice cloning. The server converts it to a data URL before calling the upstream TTS API.",
+    "zh-CN": "可选，用于声音克隆的工作区相对参考音频路径。服务端会先转成 data URL 再调用上游文转声接口。"
+  },
+  "tool.spec.generate_speech.args.ref_audio": {
+    "en-US": "Optional direct reference audio for voice cloning. Supports HTTP(S) URLs, data URLs, or local workspace/workdir file paths that can be resolved on the server.",
+    "zh-CN": "可选，直接提供用于声音克隆的参考音频。支持 HTTP(S) 链接、data URL，或服务端可解析的工作区/工作目录文件路径。"
+  },
+  "tool.spec.generate_speech.args.ref_text": {
+    "en-US": "Optional transcript of the reference audio. Some upstream clone models require this field.",
+    "zh-CN": "可选，参考音频的转写文本。部分上游克隆模型要求提供此字段。"
+  },
+  "tool.spec.generate_speech.args.model_specific_params": {
+    "en-US": "Optional extra JSON object forwarded to the upstream TTS API for model-specific clone parameters such as task_type.",
+    "zh-CN": "可选，透传给上游文转声接口的额外 JSON 对象，可用于 task_type 等模型特定克隆参数。"
+  },
+  "tool.spec.transcribe_speech.description": {
+    "en-US": "Transcribe an audio file with the configured speech-to-text model and return the recognized text.",
+    "zh-CN": "使用已配置的声转文模型转写音频文件并返回识别文本。"
+  },
+  "tool.spec.transcribe_speech.args.path": {
+    "en-US": "Workspace-relative audio path. You can also pass a /workspaces/... public path.",
+    "zh-CN": "工作区相对音频路径，也可传 /workspaces/... 公共路径。"
+  },
+  "tool.spec.transcribe_speech.args.source_public_path": {
+    "en-US": "Optional explicit public workspace path to the source audio file.",
+    "zh-CN": "可选，显式指定源音频的工作区公共路径。"
+  },
+  "tool.spec.transcribe_speech.args.model_name": {
+    "en-US": "Optional speech-to-text model config name. Empty uses the default ASR model.",
+    "zh-CN": "可选，声转文模型配置名称；留空使用默认 ASR 模型。"
+  },
+  "tool.spec.transcribe_speech.args.language": {
+    "en-US": "Optional recognition language hint, such as zh or en.",
+    "zh-CN": "可选，识别语言提示，例如 zh 或 en。"
+  },
+  "tool.spec.transcribe_speech.args.prompt": {
+    "en-US": "Optional transcription prompt or style hint.",
+    "zh-CN": "可选，转写提示词或风格约束。"
+  },
+  "tool.spec.transcribe_speech.args.response_format": {
+    "en-US": "Optional response format, such as json / text / verbose_json / srt / vtt.",
+    "zh-CN": "可选，返回格式，例如 json / text / verbose_json / srt / vtt。"
+  },
+  "tool.spec.transcribe_speech.args.temperature": {
+    "en-US": "Optional decoding temperature.",
+    "zh-CN": "可选，解码温度。"
+  },
+  "tool.spec.transcribe_speech.args.filename": {
+    "en-US": "Optional override filename for upload/transcription requests.",
+    "zh-CN": "可选，上传/转写请求使用的文件名覆盖值。"
+  },
+  "tool.spec.transcribe_speech.args.content_type": {
+    "en-US": "Optional override MIME type for the source audio.",
+    "zh-CN": "可选，源音频的 MIME 类型覆盖值。"
+  },
+  "tool.spec.generate_image.description": {
+    "en-US": "Generate or edit a creative raster image with the configured image model and save it into the workspace. Do not use it for charts, diagrams, formulas, or reproducible data graphics; create those with code such as Python/matplotlib.",
+    "zh-CN": "使用已配置的图像模型生成或编辑创意位图并保存到工作区。不要用它做图表、示意图、公式图或可复现的数据图，这类任务改用 Python/matplotlib 等代码生成。"
+  },
+  "tool.spec.generate_image.args.prompt": {
+    "en-US": "Prompt describing the target image.",
+    "zh-CN": "描述目标图片的提示词。"
+  },
+  "tool.spec.generate_image.args.path": {
+    "en-US": "Optional workspace-relative output path. Empty means auto-generate under generated_media/.",
+    "zh-CN": "可选，工作区相对输出路径；留空则自动生成到 generated_media/。"
+  },
+  "tool.spec.generate_image.args.model_name": {
+    "en-US": "Optional image model config name. Empty uses the default image model.",
+    "zh-CN": "可选，图像生成模型配置名；留空使用默认图像生成模型。"
+  },
+  "tool.spec.generate_image.args.size": {
+    "en-US": "Optional output size, such as 1024x1024. For some providers such as vllm-omni / Z-Image, use sizes whose width and height are both divisible by 16, for example 1344x768 or 1920x1088.",
+    "zh-CN": "可选，输出尺寸，如 1024x1024。对于 vllm-omni / Z-Image 这类提供方，请使用宽高都能被 16 整除的尺寸，例如 1344x768 或 1920x1088。"
+  },
+  "tool.spec.generate_image.args.output_format": {
+    "en-US": "Optional output image format preference.",
+    "zh-CN": "可选，输出图片格式偏好。"
+  },
+  "tool.spec.generate_image.args.negative_prompt": {
+    "en-US": "Optional negative prompt.",
+    "zh-CN": "可选，负向提示词。"
+  },
+  "tool.spec.generate_image.args.num_inference_steps": {
+    "en-US": "Optional number of inference steps.",
+    "zh-CN": "可选，采样步数。"
+  },
+  "tool.spec.generate_image.args.guidance_scale": {
+    "en-US": "Optional guidance scale.",
+    "zh-CN": "可选，引导系数。"
+  },
+  "tool.spec.generate_image.args.seed": {
+    "en-US": "Optional random seed.",
+    "zh-CN": "可选，随机种子。"
+  },
+  "tool.spec.generate_image.args.input_path": {
+    "en-US": "Optional workspace image path for image-to-image or editing mode. When omitted, the tool uses text-to-image generation.",
+    "zh-CN": "可选，工作区中的输入图片路径；填写后进入图生图或编辑模式，不填则为文生图。"
+  },
+  "tool.spec.generate_image.args.input_paths": {
+    "en-US": "Optional workspace image paths for multi-image editing models.",
+    "zh-CN": "可选，多图编辑模型使用的工作区输入图片路径列表。"
+  },
+  "tool.spec.generate_image.args.mask_path": {
+    "en-US": "Optional workspace mask image path for inpainting or local edits.",
+    "zh-CN": "可选，局部重绘或局部编辑使用的工作区蒙版图片路径。"
+  },
+  "tool.spec.generate_image.args.reference_path": {
+    "en-US": "Optional workspace reference image path for models that support an additional reference image.",
+    "zh-CN": "可选，支持参考图模型使用的工作区参考图片路径。"
+  },
+  "tool.spec.generate_image.args.strength": {
+    "en-US": "Optional image edit strength for image-to-image models.",
+    "zh-CN": "可选，图生图或编辑强度。"
+  },
+  "tool.spec.generate_image.args.true_cfg_scale": {
+    "en-US": "Optional true CFG scale for compatible image models.",
+    "zh-CN": "可选，兼容图像模型的 true CFG 引导系数。"
+  },
+  "tool.spec.generate_image.args.output_compression": {
+    "en-US": "Optional output compression from 0 to 100 for compatible image models.",
+    "zh-CN": "可选，兼容图像模型的输出压缩质量，范围 0 到 100。"
+  },
+  "tool.spec.generate_image.args.layers": {
+    "en-US": "Optional output layer count for layered image models.",
+    "zh-CN": "可选，分层图像模型的输出图层数。"
+  },
+  "tool.spec.generate_image.args.resolution": {
+    "en-US": "Optional resolution hint for compatible layered image models.",
+    "zh-CN": "可选，兼容分层图像模型的分辨率提示。"
+  },
+  "tool.spec.generate_video.description": {
+    "en-US": "Generate a video with the configured video model and save it into the workspace.",
+    "zh-CN": "使用已配置的视频模型生成视频并保存到工作区。"
+  },
+  "tool.spec.generate_video.args.prompt": {
+    "en-US": "Prompt describing the target video.",
+    "zh-CN": "描述目标视频的提示词。"
+  },
+  "tool.spec.generate_video.args.path": {
+    "en-US": "Optional workspace-relative output path. Empty means auto-generate under generated_media/.",
+    "zh-CN": "可选，工作区相对输出路径；留空则自动生成到 generated_media/。"
+  },
+  "tool.spec.generate_video.args.model_name": {
+    "en-US": "Optional video model config name. Empty uses the default video model.",
+    "zh-CN": "可选，视频模型配置名；留空使用默认视频模型。"
+  },
+  "tool.spec.generate_video.args.size": {
+    "en-US": "Optional output size, such as 832x480.",
+    "zh-CN": "可选，输出尺寸，如 832x480。"
+  },
+  "tool.spec.generate_video.args.seconds": {
+    "en-US": "Optional video duration in seconds.",
+    "zh-CN": "可选，视频时长（秒）。"
+  },
+  "tool.spec.generate_video.args.fps": {
+    "en-US": "Optional output FPS.",
+    "zh-CN": "可选，输出 FPS。"
+  },
+  "tool.spec.generate_video.args.num_frames": {
+    "en-US": "Optional frame count.",
+    "zh-CN": "可选，帧数。"
+  },
+  "tool.spec.generate_video.args.negative_prompt": {
+    "en-US": "Optional negative prompt.",
+    "zh-CN": "可选，负向提示词。"
+  },
+  "tool.spec.generate_video.args.num_inference_steps": {
+    "en-US": "Optional number of inference steps.",
+    "zh-CN": "可选，采样步数。"
+  },
+  "tool.spec.generate_video.args.guidance_scale": {
+    "en-US": "Optional guidance scale.",
+    "zh-CN": "可选，引导系数。"
+  },
+  "tool.spec.generate_video.args.guidance_scale_2": {
+    "en-US": "Optional second-stage guidance scale.",
+    "zh-CN": "可选，第二阶段引导系数。"
+  },
+  "tool.spec.generate_video.args.boundary_ratio": {
+    "en-US": "Optional boundary ratio.",
+    "zh-CN": "可选，boundary_ratio。"
+  },
+  "tool.spec.generate_video.args.flow_shift": {
+    "en-US": "Optional flow shift.",
+    "zh-CN": "可选，flow_shift。"
+  },
+  "tool.spec.generate_video.args.seed": {
+    "en-US": "Optional random seed.",
+    "zh-CN": "可选，随机种子。"
+  },
+  "tool.spec.generate_video.args.enable_frame_interpolation": {
+    "en-US": "Whether to enable frame interpolation when the backend supports it.",
+    "zh-CN": "后端支持时，是否启用补帧。"
+  },
+  "tool.spec.skill_call.args.name": {
+    "en-US": "Skill name to load.",
+    "zh-CN": "要加载的技能名称。"
+  },
+  "tool.spec.skill_call.description": {
+    "en-US": "Load the SKILL.md and directory tree for a named skill. Call it with the skill name when the request matches a mounted skill.",
+    "zh-CN": "加载指定技能的 SKILL.md 与目录结构。请求命中已挂载技能时传入技能名调用。"
+  },
+  "tool.spec.search.args.file_pattern": {
+    "en-US": "Optional. Glob pattern to filter files, e.g., *.cpp or src/**.ts.",
+    "zh-CN": "可选，用于过滤文件的 glob，例如 *.cpp 或 src/**.ts。"
+  },
+  "tool.spec.search.args.max_depth": {
+    "en-US": "Optional. Max directory depth to search (0 means unlimited).",
+    "zh-CN": "可选，搜索最大目录深度（0 表示不限制）。"
+  },
+  "tool.spec.search.args.max_files": {
+    "en-US": "Optional. Max number of files to scan (0 means unlimited).",
+    "zh-CN": "可选，最大扫描文件数（0 表示不限制）。"
+  },
+  "tool.spec.search.args.path": {
+    "en-US": "Optional. Directory to limit the search. Defaults to the agent's working directory if omitted; relative paths are resolved against that root. Absolute paths and /workspaces/... public paths are also accepted. This tool searches local filesystem text files only, never the web.",
+    "zh-CN": "可选，限制搜索范围的目录。省略时默认使用智能体工作目录；相对路径按该目录解释。也支持绝对路径和 /workspaces/... 公共路径。这个工具只搜索本地文件系统中的纯文本文件，不会搜索网页。"
+  },
+  "tool.spec.search.args.pattern": {
+    "en-US": "Preferred rg-style input. When pattern is provided without query_mode or -F, it defaults to regex like ripgrep; use -F/query_mode=literal for fixed-string matching.",
+    "zh-CN": "推荐的 rg 风格输入。仅传 `pattern` 且未显式设置 `query_mode` 或 `-F` 时，会像 ripgrep 一样默认按 regex 处理；若要固定字符串匹配，请使用 `-F` 或 `query_mode=literal`。"
+  },
+  "tool.spec.search.args.query": {
+    "en-US": "Required text query for local filesystem text files. query defaults to literal matching; use query_mode=regex when you need alternation such as `foo|bar`. Do not write boolean words like `OR` expecting them to act as operators.",
+    "zh-CN": "本地文件系统纯文本文件的必填查询词。`query` 默认按 literal 匹配；需要 `foo|bar` 这类并列表达式时请显式使用 `query_mode=regex`。不要在 `query` 中写 `OR` 并期待它成为运算符。"
+  },
+  "tool.spec.search.args.glob": {
+    "en-US": "Preferred rg-style alias of file_pattern. Supports comma/semicolon/newline separated --glob style filters.",
+    "zh-CN": "推荐的 rg 风格别名，等价于 file_pattern。支持逗号、分号或换行分隔的 --glob 风格过滤。"
+  },
+  "tool.spec.search.args.type": {
+    "en-US": "Optional rg-style language/file-type shortcut. Examples: rust, rs, ts, tsx, js, py, md, toml, json.",
+    "zh-CN": "可选，rg 风格的语言/文件类型快捷写法。例如 rust、rs、ts、tsx、js、py、md、toml、json。"
+  },
+  "tool.spec.search.args.query_mode": {
+    "en-US": "Optional. Query mode: literal or regex. If omitted, query defaults to literal while pattern defaults to regex; use regex for rg-style alternation like `foo|bar|baz`. Do not use `foo OR bar` as an alternation expression.",
+    "zh-CN": "可选。查询模式：`literal` 或 `regex`。省略时，`query` 默认按 literal，`pattern` 默认按 regex；需要 rg 风格并列写法如 `foo|bar|baz` 时请使用 regex。不要用 `foo OR bar` 表示并列检索。"
+  },
+  "tool.spec.search.args.regex": {
+    "en-US": "Optional alias. true means query_mode=regex.",
+    "zh-CN": "可选别名。true 等价于 query_mode=regex。"
+  },
+  "tool.spec.search.args.fixed_strings": {
+    "en-US": "Optional rg-style alias. true forces literal/fixed-string matching, same as query_mode=literal.",
+    "zh-CN": "可选的 rg 风格别名。true 表示强制字面量/固定字符串匹配，等价于 query_mode=literal。"
+  },
+  "tool.spec.search.args.case_sensitive": {
+    "en-US": "Optional. Whether matching is case-sensitive (default false).",
+    "zh-CN": "可选。是否区分大小写（默认 false）。"
+  },
+  "tool.spec.search.args.ignore_case": {
+    "en-US": "Optional rg-style alias. true means case-insensitive search, similar to rg -i.",
+    "zh-CN": "可选的 rg 风格别名。true 表示忽略大小写搜索，类似 rg -i。"
+  },
+  "tool.spec.search.args.context": {
+    "en-US": "Optional shared context size. Same as setting both context_before and context_after, similar to rg -C.",
+    "zh-CN": "可选，共享上下文行数。等价于同时设置 context_before 和 context_after，类似 rg -C。"
+  },
+  "tool.spec.search.args.context_before": {
+    "en-US": "Optional. Number of context lines before each hit (0-20).",
+    "zh-CN": "可选。每条命中前返回的上下文行数（0-20）。"
+  },
+  "tool.spec.search.args.context_after": {
+    "en-US": "Optional. Number of context lines after each hit (0-20).",
+    "zh-CN": "可选。每条命中后返回的上下文行数（0-20）。"
+  },
+  "tool.spec.search.args.before_alias": {
+    "en-US": "Optional rg-style alias of context_before, equivalent to -B.",
+    "zh-CN": "可选的 rg 风格别名，等价于 context_before，对应 -B。"
+  },
+  "tool.spec.search.args.after_alias": {
+    "en-US": "Optional rg-style alias of context_after, equivalent to -A.",
+    "zh-CN": "可选的 rg 风格别名，等价于 context_after，对应 -A。"
+  },
+  "tool.spec.search.args.context_alias": {
+    "en-US": "Optional rg-style alias of context, equivalent to -C.",
+    "zh-CN": "可选的 rg 风格别名，等价于 context，对应 -C。"
+  },
+  "tool.spec.search.args.max_count": {
+    "en-US": "Optional rg-style alias of max_matches/head_limit for returned hits.",
+    "zh-CN": "可选的 rg 风格别名，等价于 max_matches/head_limit，用于限制返回的命中条数。"
+  },
+  "tool.spec.search.description": {
+    "en-US": "Search file contents in the local workspace with a ripgrep-style regular expression. Returns matching lines with line numbers, grouped by file, and is capped by max_matches (default 200). Narrow the scope with path or include (glob). query is required; use query_mode=regex for alternation such as `foo|bar`, not `foo OR bar`. This tool searches local filesystem text files only, never the web.",
+    "zh-CN": "在本地工作区中用 ripgrep 风格的正则表达式搜索文件内容。返回带行号、按文件分组的命中行，并受 max_matches 限制（默认 200）。用 path 或 include（glob）收窄范围。query 必填；需要 `foo|bar` 这类并列表达式时用 query_mode=regex，不要在 query 中写 `foo OR bar`。本工具只搜索本地文件系统中的纯文本文件，不联网。"
+  },
+  "tool.spec.write.args.content": {
+    "en-US": "Required string file content. Use an explicit empty string only when you intend to clear the file.",
+    "zh-CN": "必填的字符串文件内容。只有明确要清空文件时才传空字符串。"
+  },
+  "tool.spec.write.args.path": {
+    "en-US": "File path to write.",
+    "zh-CN": "要写入的文件路径。"
+  },
+  "tool.spec.write.description": {
+    "en-US": "Create or fully replace a UTF-8 text file. Use path (required; file_path is also accepted) and content (required string). An explicit empty string clears the file; a missing content is an error and is never treated as an empty write. Existing files are overwritten. dry_run only previews the target and size change without persisting.",
+    "zh-CN": "创建或完整覆盖 UTF-8 文本文件。path 必填（也接受 file_path），content 必填且为字符串。显式空字符串表示清空文件；缺失 content 视为错误，绝不会被当作空写入。已存在文件会被覆盖。dry_run 仅预览目标与大小变化，不落盘。"
+  },
+  "tool.spec.subagent_control.description": {
+    "zh-CN": "管理当前会话所属任务树的持久子智能体。流程 spawn(task) -> wait/status -> history，复用前先 list；list 默认列直属子线程，parent_id=/root 查根的直属子线程。所有查询仅限同一用户、同一根任务树，独立会话线程不能接管。send 向运行中的工作线程追加指导，空闲时开始新任务；report 向直属父线程汇报。accepted 仅表示接收，不等于完成；执行心跳过期按中断处理，须显式 send 才能继续。",
+    "en-US": "Manage persistent workers in the current root task tree. Follow spawn(task) -> wait/status -> history, and list before reuse; list defaults to direct children and parent_id=/root selects root children. Every selector is scoped to the same user and root tree, so independent threads cannot be adopted. send guides a running worker or starts new work in a settled thread; report targets the direct parent. accepted means received, not finished; an expired execution heartbeat settles as interrupted and must be resumed with an explicit send."
+  },
+  "tool.spec.subagent_control.args.action": {
+    "zh-CN": "动作：list/history/send/report/spawn/batch_spawn/status/wait/interrupt/close/resume。report 仅子智能体可用，目标固定为直接父线程。",
+    "en-US": "Action: list/history/send/report/spawn/batch_spawn/status/wait/interrupt/close/resume. report is child-only and targets its direct parent."
+  },
+  "tool.spec.sessions_list.description": {
+    "en-US": "List chat sessions for the current user.",
+    "zh-CN": "列出当前用户的会话。"
+  },
+  "tool.spec.sessions_list.args.limit": {
+    "en-US": "Optional. Max number of sessions to return (default 50).",
+    "zh-CN": "可选。返回的会话数量上限（默认 50）。"
+  },
+  "tool.spec.sessions_list.args.active_minutes": {
+    "en-US": "Optional. Only sessions updated within N minutes.",
+    "zh-CN": "可选。仅返回最近 N 分钟内更新的会话。"
+  },
+  "tool.spec.sessions_list.args.message_limit": {
+    "en-US": "Optional. Include last N messages for each session (0 means none).",
+    "zh-CN": "可选。每个会话附带最近 N 条消息（0 表示不附带）。"
+  },
+  "tool.spec.sessions_list.args.parent_id": {
+    "en-US": "Optional. Filter by parent session id.",
+    "zh-CN": "可选。按父会话 id 过滤。"
+  },
+  "tool.spec.sessions_history.description": {
+    "en-US": "Fetch message history for a session.",
+    "zh-CN": "获取指定会话的消息历史。"
+  },
+  "tool.spec.sessions_history.args.session_id": {
+    "en-US": "Target session id (session_id/sessionKey).",
+    "zh-CN": "目标会话 id（session_id/sessionKey）。"
+  },
+  "tool.spec.sessions_history.args.limit": {
+    "en-US": "Optional. Max number of messages to return.",
+    "zh-CN": "可选。返回的消息数量上限。"
+  },
+  "tool.spec.sessions_history.args.include_tools": {
+    "en-US": "Optional. Include tool messages (default false).",
+    "zh-CN": "可选。是否包含工具消息（默认 false）。"
+  },
+  "tool.spec.sessions_send.description": {
+    "en-US": "Send a message to another session.",
+    "zh-CN": "向指定会话发送消息。"
+  },
+  "tool.spec.sessions_send.args.session_id": {
+    "en-US": "Target session id (session_id/sessionKey).",
+    "zh-CN": "目标会话 id（session_id/sessionKey）。"
+  },
+  "tool.spec.sessions_send.args.message": {
+    "en-US": "Message content to send.",
+    "zh-CN": "要发送的消息内容。"
+  },
+  "tool.spec.sessions_send.args.timeout": {
+    "en-US": "Optional. Wait for reply up to N seconds (0 means fire-and-forget).",
+    "zh-CN": "可选。等待回复的秒数（0 表示只发送不等待）。"
+  },
+  "tool.spec.sessions_spawn.description": {
+    "en-US": "Spawn a sub-agent session and run a task. For background work, prefer returning immediately and yielding the parent turn instead of polling in place.",
+    "zh-CN": "创建子智能体会话并执行任务。对于后台任务，优先立即返回并让出父会话，而不是原地轮询等待。"
+  },
+  "tool.spec.sessions_spawn.args.task": {
+    "en-US": "Initial task or first prompt for the sub-agent. spawn dispatches this task immediately; prefer task here instead of sending the same message again in a follow-up send call.",
+    "zh-CN": "子智能体的初始任务或第一条提示词。spawn 会立即派发这条任务；优先把首条指令写在 task 里，而不是随后再用 send 重复发送同样内容。"
+  },
+  "tool.spec.sessions_spawn.args.label": {
+    "en-US": "Optional. Display label for the sub-session.",
+    "zh-CN": "可选。子会话显示名称。"
+  },
+  "tool.spec.sessions_spawn.args.agent_id": {
+    "en-US": "Optional. Agent id for the sub-session.",
+    "zh-CN": "可选。子会话使用的 agent id。"
+  },
+  "tool.spec.sessions_spawn.args.model": {
+    "en-US": "Optional. Model name override for the sub-session.",
+    "zh-CN": "可选。子会话模型名称覆盖。"
+  },
+  "tool.spec.sessions_spawn.args.timeout": {
+    "en-US": "Optional. Wait for completion up to N seconds (0 means fire-and-forget); also used as max runtime.",
+    "zh-CN": "可选。等待子会话完成的秒数（0 表示只派生不等待，同时作为最长运行时间）。"
+  },
+  "tool.spec.sessions_spawn.args.cleanup": {
+    "en-US": "Optional. Cleanup policy after completion (keep/delete).",
+    "zh-CN": "可选。完成后的清理策略（keep/delete）。"
+  },
+  "tool.spec.sessions_yield.description": {
+    "en-US": "Yield control of the current turn, optionally with a short note. It is not a final answer; it only means the current step is pausing or waiting.",
+    "zh-CN": "让出当前回合控制权，可附带一句简短说明。它不是最终回复，只表示当前步骤暂停或等待。"
+  },
+  "tool.spec.sessions_yield.args.message": {
+    "en-US": "Optional. Short user-facing message shown before the turn yields.",
+    "zh-CN": "可选。本轮让出前向用户显示的一句简短提示。"
+  },
+  "tool.spec.thread_control.description": {
+    "en-US": "Manage conversation threads. Common flow: list/info to inspect, create to open, switch/back to move, archive/restore for lifecycle.",
+    "zh-CN": "管理会话线程。常用流程：list/info 查看，create 新建，switch/back 切换，archive/restore 归档恢复。"
+  },
+  "tool.spec.thread_control.args.action": {
+    "en-US": "Thread control action: list, info, create, switch, back, update_title, archive, restore.",
+    "zh-CN": "线程控制动作：list、info、create、switch、back、update_title、archive、restore。"
+  },
+  "tool.spec.thread_control.args.session_id": {
+    "en-US": "Target session id for info/switch/update/archive/restore.",
+    "zh-CN": "用于 info/switch/update/archive/restore 的目标会话 id。"
+  },
+  "tool.spec.thread_control.args.parent_session_id": {
+    "en-US": "Optional parent session id when creating a new thread. Defaults to the current session.",
+    "zh-CN": "新建线程时可选的父会话 id，默认取当前会话。"
+  },
+  "tool.spec.thread_control.args.agent_id": {
+    "en-US": "Optional agent id scope. Defaults to the current or target session's agent.",
+    "zh-CN": "可选的 agent id 作用域，默认取当前或目标会话所属智能体。"
+  },
+  "tool.spec.thread_control.args.title": {
+    "en-US": "Title for create or update_title.",
+    "zh-CN": "create 或 update_title 时使用的标题。"
+  },
+  "tool.spec.thread_control.args.label": {
+    "en-US": "Optional display label stored on the spawned thread.",
+    "zh-CN": "可选的展示标签，会记录到派生线程。"
+  },
+  "tool.spec.thread_control.args.scope": {
+    "en-US": "Listing scope: branch, children, roots, or all.",
+    "zh-CN": "列表范围：branch、children、roots、all。"
+  },
+  "tool.spec.thread_control.args.status": {
+    "en-US": "Session status filter: active, archived, or all.",
+    "zh-CN": "会话状态过滤：active、archived、all。"
+  },
+  "tool.spec.thread_control.args.limit": {
+    "en-US": "Maximum number of sessions returned by list actions.",
+    "zh-CN": "list 动作返回的最大会话数量。"
+  },
+  "tool.spec.thread_control.args.switch": {
+    "en-US": "Whether the frontend should switch to the target thread after the action.",
+    "zh-CN": "动作后前端是否切换到目标线程。"
+  },
+  "tool.spec.self_status.description": {
+    "en-US": "Inspect the current session runtime state. Use the default summary and raise detail_level or include_events only when you need more detail; do not call it frequently during normal task solving.",
+    "zh-CN": "诊断当前会话运行状态。默认只看摘要，需要更多细节时再提高 detail_level 或开启 include_events；普通任务中不要高频调用。"
+  },
+  "tool.spec.self_status.args.detail_level": {
+    "en-US": "Detail level for output: basic, standard, or full.",
+    "zh-CN": "输出详情级别：basic、standard 或 full。"
+  },
+  "tool.spec.self_status.args.include_events": {
+    "en-US": "Whether to include recent event items.",
+    "zh-CN": "是否包含最近事件明细。"
+  },
+  "tool.spec.self_status.args.events_limit": {
+    "en-US": "Maximum number of recent events to return (1-200).",
+    "zh-CN": "返回最近事件的最大条数（1-200）。"
+  },
+  "tool.spec.self_status.args.include_system_metrics": {
+    "en-US": "Whether to include system resource metrics.",
+    "zh-CN": "是否包含系统资源指标。"
+  },
+  "tool.spec.read.args.path": {
+    "en-US": "Path to a local plain-text file. Only for text files (code, config, logs, markdown). For images use read_image. The returned text is display-formatted, so if you later build apply_patch, do not copy the \">>> path\" header or \"N: \" line numbers.",
+    "zh-CN": "本地纯文本文件路径。仅限文本文件（代码、配置、日志、Markdown）。图片请用 read_image。返回文本是展示格式；如果后续要生成 apply_patch，不要复制 \">>> 路径\" 文件头或 \"N: \" 行号。"
+  },
+  "tool.spec.read.args.start_line": {
+    "en-US": "Start line (inclusive, 1-based). Omit to read from line 1.",
+    "zh-CN": "起始行（包含，从 1 开始）。省略则从第 1 行开始。"
+  },
+  "tool.spec.read.args.end_line": {
+    "en-US": "End line (inclusive). Omit to read to end of file.",
+    "zh-CN": "结束行（包含）。省略则读到文件末尾。"
+  },
+  "tool.spec.subagent_control.args.parent_id": {
+    "zh-CN": "默认当前会话；可指定同根任务树内的父线程 ID 或 /root。仅列其直属子会话，不允许查询无关根线程。",
+    "en-US": "Defaults to the current thread. A same-tree parent ID or /root selects its direct children. Unrelated roots are rejected."
+  },
+  "tool.spec.subagent_control.args.session_id": {
+    "zh-CN": "list 返回的精确子会话 session_id 或 task_path；允许同根任务树内的工作线程，禁止根线程及独立会话。",
+    "en-US": "Exact worker session_id or task_path from list, within the same root task tree. Roots and independent threads are not worker targets."
+  },
+  "tool.spec.subagent_control.args.session_ids": {
+    "en-US": "Use multiple child session ids only for batch status/wait.",
+    "zh-CN": "批量状态/等待时可传多个子会话 ID。"
+  },
+  "tool.spec.subagent_control.args.run_id": {
+    "en-US": "Single child run id. Prefer the run_id returned by spawn or list.",
+    "zh-CN": "单个子运行 ID。优先使用 spawn 或 list 返回的 run_id。"
+  },
+  "tool.spec.subagent_control.args.run_ids": {
+    "en-US": "Use multiple child run ids only for batch status/wait.",
+    "zh-CN": "批量状态/等待时可传多个子运行 ID。"
+  },
+  "tool.spec.subagent_control.args.dispatch_id": {
+    "en-US": "Dispatch id returned by batch_spawn.",
+    "zh-CN": "batch_spawn 返回的批次 ID。"
+  },
+  "tool.spec.subagent_control.args.strategy": {
+    "en-US": "Batch dispatch strategy for batch_spawn.",
+    "zh-CN": "batch_spawn 的调度策略。"
+  },
+  "tool.spec.subagent_control.args.remaining_action": {
+    "en-US": "How to handle unfinished sibling subagents after early convergence.",
+    "zh-CN": "提前收敛后如何处理未完成的兄弟子智能体。"
+  },
+  "tool.spec.subagent_control.args.message": {
+    "zh-CN": "指导、下一项任务或向父线程汇报的内容；最多 20000 UTF-8 字节。",
+    "en-US": "Guidance, next task, or report to the parent; at most 20000 UTF-8 bytes."
+  },
+  "tool.spec.subagent_control.args.task": {
+    "en-US": "First task for spawn or batch_spawn.",
+    "zh-CN": "spawn 或 batch_spawn 的首轮任务。"
+  },
+  "tool.spec.subagent_control.args.tasks": {
+    "en-US": "Child tasks for batch_spawn.",
+    "zh-CN": "batch_spawn 的子任务列表。"
+  },
+  "tool.spec.subagent_control.args.wait_seconds": {
+    "en-US": "Wait duration in seconds for wait.",
+    "zh-CN": "wait 的等待秒数。"
+  },
+  "tool.spec.subagent_control.args.poll_interval_seconds": {
+    "zh-CN": "兼容轮询间隔；本地状态变更立即唤醒，跨进程回查至少间隔 5 秒。",
+    "en-US": "Compatibility polling interval; local changes wake immediately, with a cross-process fallback of at least 5 seconds."
+  },
+  "tool.spec.subagent_control.args.wait_mode": {
+    "en-US": "Completion mode for wait.",
+    "zh-CN": "wait 的完成判定模式。"
+  },
+  "workspace.error.batch_action_unsupported": {
+    "en-US": "Unsupported batch action",
+    "zh-CN": "不支持的批量操作"
+  },
+  "workspace.error.batch_paths_missing": {
+    "en-US": "Batch paths are required",
+    "zh-CN": "未提供批量路径"
+  },
+  "workspace.error.copy_to_self_or_child": {
+    "en-US": "Cannot copy into itself or a child directory",
+    "zh-CN": "禁止复制到自身或子目录"
+  },
+  "workspace.error.delete_root_forbidden": {
+    "en-US": "Deleting root directory is forbidden",
+    "zh-CN": "禁止删除根目录"
+  },
+  "workspace.error.destination_dir_missing": {
+    "en-US": "Destination directory not found",
+    "zh-CN": "目标目录不存在"
+  },
+  "workspace.error.destination_exists": {
+    "en-US": "Destination path already exists",
+    "zh-CN": "目标路径已存在"
+  },
+  "workspace.error.destination_parent_missing": {
+    "en-US": "Destination parent directory does not exist",
+    "zh-CN": "目标父目录不存在"
+  },
+  "workspace.error.destination_path_required": {
+    "en-US": "Destination path is required",
+    "zh-CN": "目标路径不能为空"
+  },
+  "workspace.error.destination_unready": {
+    "en-US": "Destination directory not ready",
+    "zh-CN": "目标目录未准备好"
+  },
+  "workspace.error.dir_path_required": {
+    "en-US": "Directory path is required",
+    "zh-CN": "目录路径不能为空"
+  },
+  "workspace.error.file_path_required": {
+    "en-US": "File path is required",
+    "zh-CN": "文件路径不能为空"
+  },
+  "workspace.error.move_to_self_or_child": {
+    "en-US": "Cannot move into itself or a child directory",
+    "zh-CN": "禁止移动到自身或子目录"
+  },
+  "workspace.error.path_not_dir": {
+    "en-US": "Path is not a directory",
+    "zh-CN": "路径不是目录"
+  },
+  "workspace.error.path_not_found": {
+    "en-US": "Path not found",
+    "zh-CN": "路径不存在"
+  },
+  "workspace.error.path_required": {
+    "en-US": "Path is required",
+    "zh-CN": "路径不能为空"
+  },
+  "workspace.error.source_destination_same": {
+    "en-US": "Source and destination are the same",
+    "zh-CN": "源路径与目标路径相同"
+  },
+  "workspace.error.source_not_found": {
+    "en-US": "Source path not found",
+    "zh-CN": "源路径不存在"
+  },
+  "workspace.error.source_path_required": {
+    "en-US": "Source path is required",
+    "zh-CN": "源路径不能为空"
+  },
+  "workspace.error.target_exists_not_dir": {
+    "en-US": "Target exists and is not a directory",
+    "zh-CN": "目标已存在且不是目录"
+  },
+  "workspace.error.target_not_dir": {
+    "en-US": "Target is not a directory",
+    "zh-CN": "目标不是目录"
+  },
+  "workspace.error.target_not_file": {
+    "en-US": "Target is not a file",
+    "zh-CN": "目标不是文件"
+  },
+  "workspace.error.upload_too_large": {
+    "en-US": "Upload size exceeds limit",
+    "zh-CN": "上传文件大小超过上限"
+  },
+  "workspace.error.workspace_not_found": {
+    "en-US": "Workspace not found",
+    "zh-CN": "工作区不存在"
+  },
+  "workspace.message.batch_partial": {
+    "en-US": "Batch operation partially failed",
+    "zh-CN": "批量操作部分失败"
+  },
+  "workspace.message.batch_success": {
+    "en-US": "Batch operation completed",
+    "zh-CN": "批量操作完成"
+  },
+  "workspace.message.copied": {
+    "en-US": "Copied",
+    "zh-CN": "已复制"
+  },
+  "workspace.message.dir_created": {
+    "en-US": "Directory created",
+    "zh-CN": "已创建目录"
+  },
+  "workspace.message.file_saved": {
+    "en-US": "File saved",
+    "zh-CN": "已保存文件"
+  },
+  "workspace.message.moved": {
+    "en-US": "Moved",
+    "zh-CN": "已移动"
+  },
+  "workspace.message.path_unchanged": {
+    "en-US": "Path unchanged",
+    "zh-CN": "路径未变化"
+  },
+  "workspace.tree.empty": {
+    "en-US": "(empty)",
+    "zh-CN": "（空）"
+  },
+  "settings.label.sandbox": {
+    "en-US": "Sandbox execution",
+    "zh-CN": "沙盒执行"
+  },
+  "settings.option.sandboxEnabled": {
+    "en-US": "Use sandbox for exec/ptc",
+    "zh-CN": "启用沙盒（执行命令/ptc）"
+  },
+  "settings.tip": {
+    "en-US": "Settings are mostly stored in this browser; max concurrency and sandbox execution are saved on the server and take effect immediately.",
+    "zh-CN": "设置主要保存在当前浏览器，最大并发与沙盒执行会写入服务端配置并立即生效。"
+  },
+  "settings.hint.general": {
+    "en-US": "Polling interval, max concurrency, and sandbox execution update immediately; default panel takes effect after refresh.",
+    "zh-CN": "保存后立即更新轮询间隔、最大并发与沙盒执行，默认面板需刷新页面生效。"
+  },
+  "settings.toast.serverLoadFailed": {
+    "en-US": "Failed to load server settings: {message}",
+    "zh-CN": "服务端设置读取失败：{message}"
+  },
+  "settings.toast.serverUpdateFailed": {
+    "en-US": "Failed to save server settings: {message}",
+    "zh-CN": "服务端设置保存失败：{message}"
+  },
+  "tool.spec.edit.args.file_path": {
+    "en-US": "Path of the file to edit.",
+    "zh-CN": "要编辑的文件路径。"
+  },
+  "tool.spec.edit.args.old_string": {
+    "en-US": "Exact literal text to replace.",
+    "zh-CN": "要被替换的原始字面文本。"
+  },
+  "tool.spec.edit.args.new_string": {
+    "en-US": "Replacement text; an empty string deletes the matched text.",
+    "zh-CN": "替换后的文本；空字符串表示删除匹配文本。"
+  },
+  "tool.spec.edit.args.replace_all": {
+    "en-US": "Replace every occurrence instead of requiring a unique match (default false).",
+    "zh-CN": "替换全部匹配；默认 false 时必须唯一匹配。"
+  },
+  "tool.spec.edit.args.input": {
+    "en-US": "Raw apply_patch text. Use it for precise multi-file or multi-hunk edits, adds, deletes, and moves. If a match is uncertain, call dry_run=true first; otherwise apply directly. The input must start exactly with *** Begin Patch and end exactly with *** End Patch. Keep context lines with a leading space, old lines with -, and new lines with +; never copy read_file display headers or line numbers. For generated whole-file rewrites, use write_file or a script.",
+    "zh-CN": "原始 apply_patch 文本。适合精确的多文件、多 hunk 修改，以及新增、删除、移动文件；匹配不确定时先调用 dry_run=true，否则可直接应用。输入必须以 *** Begin Patch 开始并以 *** End Patch 结束。上下文行以空格开头，旧行用 -，新行用 +；不要复制 read_file 展示文件头或行号。生成式整文件重写请用写入文件或脚本。"
+  },
+  "tool.spec.edit.args.dry_run": {
+    "en-US": "Optional. Only used with input-mode patches: validate that the patch parses and matches without writing files.",
+    "zh-CN": "可选。仅在使用 input 补丁模式时生效：只校验补丁能否解析与匹配，不写盘。"
+  },
+  "tool.spec.search.args.include": {
+    "en-US": "Optional rg-style alias of glob, aligned with dsh include. A single glob to narrow files, e.g. *.rs or src/**/*.ts.",
+    "zh-CN": "可选的 rg 风格别名，等价于 glob，与 dsh 的 include 对齐。用单个 glob 收窄文件，例如 *.rs 或 src/**/*.ts。"
+  }
+}

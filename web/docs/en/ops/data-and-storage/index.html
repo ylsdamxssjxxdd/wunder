@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Data and Storage | 使用说明书</title>
+  <meta name="description" content="wunder&#x27;s persistence requires distinguishing between databases, workspaces, vector storage, and temporary directories.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/ops/data-and-storage","language":"en","title":"Data and Storage","summary":"wunder's persistence requires distinguishing between databases, workspaces, vector storage, and temporary directories.","updated_at":"2026-10-07","read_when":["You need to deploy or migrate data","You want to understand what PostgreSQL, SQLite, workspaces, and temp_dir each store"],"source_docs":["config/wunder-example.yaml","docs/API文档.md","docs/设计文档/01-系统总体设计.md"],"tab":"Operations","group":"Deployment and Operations","group_path":["Deployment and Operations"],"url":"/docs/en/ops/data-and-storage/","headings":[{"id":"section-1","level":1,"text":"Data and Storage"},{"id":"section-2","level":2,"text":"First, Distinguish Four Categories of Data"},{"id":"section-3","level":3,"text":"Relational Primary Data"},{"id":"section-4","level":3,"text":"Workspace Files"},{"id":"section-5","level":3,"text":"Vector Knowledge Base"},{"id":"section-6","level":3,"text":"Temporary Directory"},{"id":"section-7","level":2,"text":"What storage.backend Determines"},{"id":"section-8","level":2,"text":"Typical Choices for Hull (server) and Honeycomb (desktop)"},{"id":"section-9","level":2,"text":"What Goes in Vector Storage"},{"id":"section-10","level":2,"text":"What Goes in Workspaces"},{"id":"section-11","level":2,"text":"What is tempdir"},{"id":"section-12","level":2,"text":"Why Workspaces and tempdir Must Be Separate"},{"id":"section-13","level":2,"text":"Typical Persistence Checklist"},{"id":"section-14","level":2,"text":"Common Misconceptions"},{"id":"section-15","level":2,"text":"Further Reading"}],"prev_slug":"en/ops/deployment","next_slug":"en/ops/desktop-local-mode","markdown":"# Data and Storage\n\nWhen deploying wunder, the most confusing aspect is often \"what should be persisted versus what's just a temporary directory.\"\n\n## First, Distinguish Four Categories of Data\n\n### Relational Primary Data\n\nThis is the core business data.\n\nFor example:\n\n- Conversations\n- Users\n- Channels\n- Memories\n- User world messages\n- Admin configurations\n\n### Workspace Files\n\nThis is the persistent file space generated during user and agent operations.\n\nIt is not the same category as the database.\n\n### Vector Knowledge Base\n\nThis is retrieval-related data and should not be conflated with regular conversation tables.\n\n### Temporary Directory\n\nThis is a transit zone, not a long-term storage area.\n\n## What `storage.backend` Determines\n\nThe configuration currently supports:\n\n- `auto`\n- `sqlite`\n- `postgres`\n\nIt determines the primary business storage backend.\n\n## Typical Choices for Hull (server) and Honeycomb (desktop)\n\nCurrent best practice:\n\n- Hull (server): Prefer PostgreSQL\n- Honeycomb (desktop): Prefer SQLite\n\nThis is not a matter of style, but determined by the runtime form:\n\n- Hull is oriented toward multi-user, multi-tenant, and sustained concurrency\n- Honeycomb is more single-machine, local, and lightweight persistence\n\n## What Goes in Vector Storage\n\nVector knowledge base related capabilities use the configured primary storage backend:\n\n- PostgreSQL in Hull (server) deployments\n- SQLite in Honeycomb (desktop) and local deployments\n\nThey primarily handle vector retrieval-side data such as document chunks and embedding vectors.\n\nSo don't think of it as \"a replacement for the primary business database.\"\n\n## What Goes in Workspaces\n\nThe workspace is **one fixed cloud directory per user**: one directory per user, partitioned by the server under its data root. Users cannot add, delete, or replace it, and cannot bind a folder from their own machine.\n\nThe workspace root is typically controlled by:\n\n- `workspace.root`\n\nIt contains:\n\n- User-uploaded files\n- Files produced by the agent\n- Skill and knowledge files\n- Runtime snapshots and diagnostics\n\nPaths handed to models and API consumers are workspace-relative; server absolute paths are never exposed. Back up and migrate the workspace as a whole per user directory, keeping the directory structure unchanged.\n\n## What is `temp_dir`\n\n`/wunder/temp_dir/*` corresponds to the temporary directory.\n\nIt is suitable for:\n\n- Upload transit\n- Download forwarding\n- External clients fetching temporary files\n\nIt is NOT suitable for:\n\n- Storing long-term business materials\n- Using as a formal workspace\n\n## Why Workspaces and temp_dir Must Be Separate\n\nBecause their lifecycles are different:\n\n- Workspaces emphasize sustained reference\n- temp_dir emphasizes temporary distribution and transit\n\nIf mixed together, troubleshooting and cleanup become painful.\n\n## Typical Persistence Checklist\n\nAfter deployment, at minimum confirm:\n\n1. The primary database is your expected backend\n2. The workspace directory has persistent volumes\n3. The primary database is persisted because vector data is stored there\n4. `temp_dir` is not being used as long-term storage\n\n## Common Misconceptions\n\n- Thinking SQLite and PostgreSQL are just \"performance differences\"\n- Writing workspace outputs only to temp_dir\n- Forgetting to persist `/workspaces`\n- Thinking vector storage will automatically save all business data\n\n## Further Reading\n\n- [Deployment and Running](/docs/en/ops/deployment/)\n- [Workspaces and Working Directory](/docs/en/concepts/workspaces/)\n- [Configuration Reference](/docs/en/reference/config/)\n","source_path":"使用说明书/en/ops/data-and-storage.md"}</script>
+</body>
+</html>

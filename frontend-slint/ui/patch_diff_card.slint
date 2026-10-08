@@ -1,0 +1,103 @@
+// Structured patch card for the timeline (§7.4). The runtime already projects
+// bounded `files[]`/`diff_blocks[]` data, so this card only lays out lines that
+// were pre-bounded by the native projection (max 200 lines per card).
+//
+// The card deliberately owns no scroll view: it lives inside the timeline's own
+// ScrollView, and nesting one made the inner viewport overflow the card and
+// paint its rows over the card border. Bounded lines plus the outer scroll are
+// enough, and every child here is a flow child of a layout so the card's height
+// is derived rather than guessed.
+import { I18n } from "i18n.slint";
+import { Theme, PatchCard, PatchLine } from "theme.slint";
+
+component DiffRow inherits Rectangle {
+    in property <PatchLine> line;
+    height: row-text.preferred-height + 4px;
+    background: root.line.kind == "add" ? Theme.diff-add-bg
+        : root.line.kind == "delete" ? Theme.diff-del-bg
+        : root.line.kind == "header" ? Theme.diff-header
+        : transparent;
+    Text {
+        x: 8px; y: 2px; width: Theme.diff-line-number-width - 16px;
+        text: root.line.number; color: Theme.muted;
+        font-family: Theme.font-mono; font-size: 11px;
+        horizontal-alignment: right; overflow: elide;
+    }
+    Rectangle { x: Theme.diff-line-number-width; y: 0px; width: 1px; height: parent.height; background: Theme.border; }
+    Text {
+        visible: root.line.kind != "header" && root.line.kind != "note";
+        x: Theme.diff-line-number-width + 8px; y: 2px; width: 18px;
+        text: root.line.kind == "add" ? "+" : root.line.kind == "delete" ? "−" : "";
+        color: root.line.kind == "add" ? Theme.success : Theme.danger;
+        font-family: Theme.font-mono; font-size: 12.5px; font-weight: 600;
+    }
+    row-text := Text {
+        x: root.line.kind == "header" || root.line.kind == "note" ? Theme.diff-line-number-width + 8px : Theme.diff-line-number-width + 26px;
+        y: 2px;
+        width: parent.width - self.x - 10px;
+        text: root.line.text;
+        color: root.line.kind == "add" ? Theme.diff-add-text
+            : root.line.kind == "delete" ? Theme.diff-del-text
+            : root.line.kind == "header" ? Theme.muted
+            : Theme.text-secondary;
+        font-family: Theme.font-mono; font-size: 12.5px;
+        wrap: no-wrap; overflow: elide;
+    }
+}
+
+export component PatchDiffCard inherits Rectangle {
+    in property <PatchCard> card;
+    // Height follows the content: header row + "变更片段" header + the bounded
+    // diff lines + padding.
+    height: body.preferred-height;
+    border-radius: Theme.radius-lg; border-width: 1px; border-color: Theme.border;
+    background: Theme.surface;
+    body := VerticalLayout {
+        padding: 10px; spacing: 8px;
+        alignment: start;
+        // Header: file identity on the left, +N / −N on the right.
+        HorizontalLayout {
+            height: 18px; spacing: 8px;
+            Image {
+                width: 14px; height: 14px; y: 2px;
+                source: @image-url("../assets/icons/fa-file-pen.svg");
+                colorize: Theme.muted; image-fit: contain;
+            }
+            Text {
+                horizontal-stretch: 1; min-width: 0px; height: parent.height;
+                text: root.card.path; color: Theme.text; font-size: Theme.font-lg; font-weight: 700;
+                overflow: elide; vertical-alignment: center;
+            }
+            Text {
+                visible: root.card.action != "";
+                width: self.preferred-width; height: parent.height;
+                text: root.card.action; color: Theme.muted; font-size: Theme.font-xs;
+                vertical-alignment: center;
+            }
+            Text {
+                visible: root.card.added != "0";
+                width: self.preferred-width; height: parent.height;
+                text: "+" + root.card.added; color: Theme.success; font-size: Theme.font-sm; font-weight: 600;
+                vertical-alignment: center;
+            }
+            Text {
+                visible: root.card.deleted != "0";
+                width: self.preferred-width; height: parent.height;
+                text: "−" + root.card.deleted; color: Theme.danger; font-size: Theme.font-sm; font-weight: 600;
+                vertical-alignment: center;
+            }
+        }
+        Rectangle {
+            height: 24px; background: Theme.diff-header; border-radius: 6px;
+            Text {
+                x: 10px; width: parent.width - 20px; height: parent.height;
+                text: I18n.pd_changed_hunk; color: Theme.text-secondary; font-size: Theme.font-md; font-weight: 600;
+                vertical-alignment: center;
+            }
+        }
+        VerticalLayout {
+            alignment: start; spacing: 0px;
+            for line in root.card.lines : DiffRow { line: line; }
+        }
+    }
+}
