@@ -24,6 +24,10 @@ pub struct DefaultAgentConfig {
     pub system_prompt: String,
     #[serde(default)]
     pub preview_skill: bool,
+    /// The worker's own model. `None` means "follow the server default", which is
+    /// the same contract a non-default agent record carries.
+    #[serde(default)]
+    pub model_name: Option<String>,
     #[serde(default)]
     pub ability_items: Vec<AbilityDescriptor>,
     #[serde(default)]
@@ -64,6 +68,7 @@ pub fn default_agent_config_from_record(record: &UserAgentRecord) -> DefaultAgen
         description: record.description.clone(),
         system_prompt: record.system_prompt.clone(),
         preview_skill: record.preview_skill,
+        model_name: record.model_name.clone(),
         ability_items: record.ability_items.clone(),
         tool_names: record.tool_names.clone(),
         declared_tool_names: record.declared_tool_names.clone(),
@@ -94,7 +99,7 @@ pub fn record_from_default_agent_config(
         description: config.description.clone(),
         system_prompt: config.system_prompt.clone(),
         preview_skill: config.preview_skill,
-        model_name: None,
+        model_name: config.model_name.clone(),
         ability_items: config.ability_items.clone(),
         tool_names: config.tool_names.clone(),
         declared_tool_names: config.declared_tool_names.clone(),
@@ -132,6 +137,7 @@ mod tests {
             name: "Default Agent".to_string(),
             description: "demo".to_string(),
             system_prompt: "prompt".to_string(),
+            model_name: Some("model-b".to_string()),
             tool_names: vec!["read_file".to_string()],
             declared_tool_names: vec!["read_file".to_string()],
             approval_mode: "full_auto".to_string(),
@@ -147,5 +153,9 @@ mod tests {
         assert_eq!(record.user_id, "user-a");
         assert_eq!(restored.system_prompt, config.system_prompt);
         assert_eq!(restored.tool_names, config.tool_names);
+        // The stored record is what the executor resolves its model from, so a
+        // dropped field here silently pins the worker back to the server default.
+        assert_eq!(record.model_name.as_deref(), Some("model-b"));
+        assert_eq!(restored.model_name.as_deref(), Some("model-b"));
     }
 }

@@ -170,30 +170,9 @@ test('设置页：12 分类可进入、可搜索、可返回', async ({ page, re
   await expect(page.locator('.messenger-sidebar').first()).toBeVisible();
   await expect(page.locator('[data-testid="messenger-message-list"]').first()).toBeVisible();
 
-  // 其它既有入口仍然直达对应分类：顶栏「帮助」→ 帮助分类
-  await page.locator('.messenger-site-action').first().click();
-  await openSettings();
-  await expect(
-    page.locator('[data-settings-category="help"][aria-selected="true"]')
-  ).toHaveCount(1);
-  await expect(page.locator('[data-testid="settings-category-help"]').first()).toBeVisible({
-    timeout: 20_000
-  });
-  await page.locator('[data-testid="settings-back"]').first().click();
-  await expect(page.locator('[data-testid="messenger-settings"]')).toHaveCount(0);
-
-  // 账号下拉「资料」→ 常规分类（资料表单模式）
-  await page.locator('.messenger-site-account').first().click();
-  await page.locator('.el-dropdown-menu__item').first().click();
-  await openSettings();
-  await expect(
-    page.locator('[data-settings-category="general"][aria-selected="true"]')
-  ).toHaveCount(1);
-  await expect(page.locator('.messenger-settings-profile-head').first()).toBeVisible({
-    timeout: 20_000
-  });
-  await page.locator('[data-testid="settings-back"]').first().click();
-  await expect(page.locator('[data-testid="messenger-settings"]')).toHaveCount(0);
+  // 壳体不再有顶栏入口：帮助与资料都只在上面遍历过的 12 个分类里，左栏「设置」是唯一入口。
+  await expect(page.locator('.messenger-site-header')).toHaveCount(0);
+  await expect(page.locator('.messenger-sidebar-settings')).toHaveCount(1);
 
   expect(pageErrors, `page errors: ${pageErrors.join(' | ')}`).toEqual([]);
 });

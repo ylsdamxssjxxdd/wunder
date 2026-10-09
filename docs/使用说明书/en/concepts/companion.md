@@ -1,6 +1,6 @@
 ---
 title: Companion System
-summary: Use sprite-animated companions on desktop and web so agents accompany your work in a livelier way.
+summary: Use sprite-animated companions in the Honeycomb (desktop) and the Beehive (web) so agents accompany your work in a livelier way.
 ---
 
 # Companion System

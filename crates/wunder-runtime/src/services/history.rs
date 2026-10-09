@@ -72,11 +72,12 @@ impl HistoryManager {
         }
     }
 
-    pub fn get_auto_compact_limit(llm_config: &LlmModelConfig) -> Option<i64> {
-        let max_context = llm_config.max_context.unwrap_or(0) as i64;
-        if max_context <= 0 {
-            return None;
-        }
+    /// Token budget at which this model's history is compacted. It always
+    /// exists: a model without a declared window is measured against the
+    /// built-in default, because treating "unknown" as "never compact" lets a
+    /// thread grow until the provider rejects the request.
+    pub fn get_auto_compact_limit(llm_config: &LlmModelConfig) -> i64 {
+        let max_context = llm_config.effective_max_context() as i64;
         let ratio_limit = (max_context as f64 * COMPACTION_RATIO) as i64;
         let reserve_output = llm_config
             .max_output
@@ -85,9 +86,9 @@ impl HistoryManager {
             .max(COMPACTION_OUTPUT_RESERVE);
         let hard_limit = max_context - reserve_output - COMPACTION_SAFETY_MARGIN;
         if hard_limit <= 0 {
-            return Some(max_context.max(1).min(ratio_limit.max(1)));
+            return max_context.max(1).min(ratio_limit.max(1));
         }
-        Some(hard_limit.min(ratio_limit.max(1)).max(1))
+        hard_limit.min(ratio_limit.max(1)).max(1)
     }
 
     pub fn get_item_timestamp(item: &Value) -> Option<f64> {
@@ -996,6 +997,19 @@ mod tests {
     }
 
     #[test]
+    fn get_auto_compact_limit_falls_back_to_the_default_window_when_unset() {
+        // An unconfigured model is compacted against the built-in window instead
+        // of never compacting, which would let the request grow until the
+        // provider rejects it.
+        let llm_config = LlmModelConfig::default();
+
+        assert_eq!(
+            HistoryManager::get_auto_compact_limit(&llm_config),
+            117_964
+        );
+    }
+
+    #[test]
     fn get_auto_compact_limit_reserves_default_output_budget_when_unset() {
         let llm_config = LlmModelConfig {
             max_context: Some(156_000),
@@ -1005,7 +1019,7 @@ mod tests {
 
         assert_eq!(
             HistoryManager::get_auto_compact_limit(&llm_config),
-            Some(140_400)
+            140_400
         );
     }
 
@@ -1019,7 +1033,7 @@ mod tests {
 
         assert_eq!(
             HistoryManager::get_auto_compact_limit(&llm_config),
-            Some(140_400)
+            140_400
         );
     }
 

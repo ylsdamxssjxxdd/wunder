@@ -458,7 +458,7 @@ async fn measure_file_ops(concurrency: usize, context: &PerformanceContext) -> M
         let step_started = Instant::now();
         run_tool(
             &tool_context,
-            "编辑",
+            "文本编辑",
             json!({
                 "input": format!(
                     "*** Begin Patch\n*** Update File: {file_path}\n@@\n-needle\n+needle_replaced\n*** End Patch"

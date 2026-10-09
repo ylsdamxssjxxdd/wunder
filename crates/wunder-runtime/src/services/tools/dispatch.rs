@@ -10,10 +10,8 @@ use super::schedule_task_tool;
 use super::search_content_tool::search_content;
 use super::sessions_yield_tool;
 use super::skill_call;
-use super::str_replace_editor_tool;
 use super::{
-    apply_patch_tool, browser_tool, desktop_control, read_image_tool, web_fetch_tool,
-    web_search_tool,
+    browser_tool, desktop_control, read_image_tool, web_fetch_tool, web_search_tool,
 };
 use super::{
     execute_mcp_tool, execute_memory_manager_tool, execute_thread_control_tool, execute_user_tool,
@@ -85,14 +83,8 @@ pub async fn execute_builtin_tool(
         }
         "技能调用" => skill_call::execute_skill_call(context, args).await,
         "写入文件" => file_tool::write_file(context, args).await,
-        "编辑" => {
-            if super::edit_tool::has_patch_input(args) {
-                apply_patch_tool::apply_patch(context, args).await
-            } else {
-                super::edit_tool::edit_file(context, args).await
-            }
-        }
-        "str_replace_editor" => str_replace_editor_tool::str_replace_editor(context, args).await,
+        // 合并入口：按 command / input / 字面替换三种形态分派。
+        super::edit_tool::TOOL_EDIT => super::edit_tool::text_edit(context, args).await,
         "子智能体控制" => subagent_control(context, args).await,
         "会话线程控制" => execute_thread_control_tool(context, args).await,
         web_search_tool::TOOL_WEB_SEARCH => web_search_tool::tool_web_search(context, args).await,

@@ -231,7 +231,7 @@ button.tl-entry-head:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: var(--mz-text-secondary, #3d3d3d);
+  color: var(--mz-text-muted, #8a8f99);
   font-size: 13px;
 }
 
@@ -243,7 +243,7 @@ button.tl-entry-head:focus-visible {
 .tl-entry-summary {
   flex: 1 1 auto;
   min-width: 0;
-  color: var(--mz-text-muted, #8a8f99);
+  color: var(--mz-timeline-entry-soft, #9ba0a8);
   font-size: 12px;
   line-height: 1.5;
   white-space: nowrap;
@@ -343,7 +343,7 @@ button.tl-entry-head:focus-visible {
   margin: 4px 0 0;
   white-space: pre-wrap;
   word-break: break-word;
-  color: var(--mz-text-secondary, #3d3d3d);
+  color: var(--mz-text-muted, #8a8f99);
   font-size: 12px;
   line-height: 1.55;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;

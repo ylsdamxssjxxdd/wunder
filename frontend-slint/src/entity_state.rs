@@ -71,22 +71,26 @@ pub fn restore_model(app: &MainWindow, key: &str) {
 }
 
 fn apply_agent(app: &MainWindow, agent: AgentCard) {
+    // Slint cannot slice a string, so the avatar button's fallback letter is
+    // projected here while the name is still whole.
+    app.set_selected_agent_initial(crate::avatar_ui::initial_letter(agent.name.as_str()).into());
     app.set_selected_agent_name(agent.name);
     app.set_selected_agent_description(agent.description);
     app.set_selected_agent_model(agent.model);
     app.set_selected_agent_system_prompt(agent.system_prompt);
     app.set_selected_agent_status(agent.status);
-    app.set_selected_agent_icon_config(agent.icon_config);
+    app.set_selected_agent_icon_config(agent.icon_config.clone());
+    // The 形象 button shows the draft's own visual, so it follows the record
+    // here and the dialog after that.
+    app.set_selected_agent_icon_image(agent.icon_image);
     app.set_selected_agent_tool_names(agent.tool_names);
     app.set_selected_agent_preset_questions(agent.preset_questions);
     app.set_selected_agent_approval_mode(agent.approval_mode);
     app.set_selected_agent_preview_skill(agent.preview_skill);
     app.set_selected_agent_silent(agent.silent);
     app.set_selected_agent_prefer_mother(agent.prefer_mother);
+    crate::native_pages::update_agent_model_options(app);
     sync_tool_selection(app);
-    // The settings form renders its own tool projection (filtered, switch
-    // states) instead of the shared tool list, so it is rebuilt here too.
-    crate::native_pages::update_agent_tool_options(app);
     crate::agent_editor::refresh_agent_snapshot(app);
 }
 

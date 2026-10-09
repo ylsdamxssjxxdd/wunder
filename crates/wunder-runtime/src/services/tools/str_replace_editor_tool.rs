@@ -1,6 +1,6 @@
-//! dsh 风格的多命令编辑器：`str_replace_editor`。
+//! 子命令编辑形态（原 `str_replace_editor`），现为「文本编辑」工具的一个分支。
 //!
-//! 对齐 dsh 的 `str_replace_editor`：一个带子命令的编辑器。
+//! 由 `text_edit` 在检测到非空 `command` 时分派过来。
 //! - `view`：文件按 `cat -n` 风格带行号渲染（六位右对齐 + 两空格），目录列出
 //!   最多两层、过滤隐藏项与 `node_modules`/`__pycache__`；
 //! - `create`：仅在目标不存在时新建；
@@ -26,8 +26,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use walkdir::WalkDir;
 
-/// Canonical tool name.
-pub(crate) const TOOL_STR_REPLACE_EDITOR: &str = "str_replace_editor";
+/// 当参数携带非空 `command` 时，走子命令编辑分支。
+pub(crate) fn command_requested(args: &Value) -> bool {
+    args.get("command")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+}
 
 /// Maximum returned characters before clipping (dsh default).
 const MAX_OUTPUT_CHARS: usize = 16_000;
@@ -96,7 +101,7 @@ fn not_regular_file(path: &str) -> Value {
 
 pub(crate) async fn str_replace_editor(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let args = recover_tool_args_value(args);
-    if let Some(result) = super::execute_in_sandbox(context, TOOL_STR_REPLACE_EDITOR, &args).await {
+    if let Some(result) = super::execute_in_sandbox(context, super::edit_tool::TOOL_EDIT, &args).await {
         return Ok(result);
     }
 
@@ -106,7 +111,7 @@ pub(crate) async fn str_replace_editor(context: &ToolContext<'_>, args: &Value) 
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let Some(command) = command else {
-        return Ok(missing_param("command", "str_replace_editor"));
+        return Ok(missing_param("command", "文本编辑"));
     };
     if !VALID_COMMANDS.contains(&command) {
         return Ok(editor_failure(
@@ -118,8 +123,10 @@ pub(crate) async fn str_replace_editor(context: &ToolContext<'_>, args: &Value) 
             "使用 view、create、str_replace 或 insert。",
         ));
     }
+    // 合并后路径主键为 `file_path`（`path` 经参数对齐回填）；两种都接受。
     let path = args
-        .get("path")
+        .get("file_path")
+        .or_else(|| args.get("path"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
@@ -159,7 +166,7 @@ pub(crate) async fn str_replace_editor(context: &ToolContext<'_>, args: &Value) 
             Ok(editor.value)
         }
         Err(err) => Ok(editor_failure(
-            &format!("str_replace_editor failed: {err}"),
+            &format!("文本编辑失败：{err}"),
             json!({ "path": path }),
             "TOOL_SRE_FAILED",
             "确认路径权限与文件状态后重试。",
@@ -626,6 +633,14 @@ fn line_numbers_at(content: &str, offsets: &[usize]) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_requested_only_for_non_empty_command() {
+        assert!(command_requested(&json!({"command": "view"})));
+        assert!(!command_requested(&json!({"command": "   "})));
+        assert!(!command_requested(&json!({"command": null})));
+        assert!(!command_requested(&json!({})));
+    }
 
     #[test]
     fn view_range_parser_rejects_non_pairs() {

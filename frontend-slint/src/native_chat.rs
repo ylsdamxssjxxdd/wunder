@@ -259,7 +259,8 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     crate::thread_log_ui::install(app, desktop_preview.clone());
     crate::navigation_ui::install(app, desktop_preview.clone());
     crate::workspace_ui::install(app, desktop_preview.clone());
-    bind_timeline(app, state.clone());
+    let timeline = state.borrow().timeline.clone();
+    bind_timeline(app, timeline);
     let weak = app.as_weak();
     app.on_open_prompt_preview(move || {
         let Some(app) = weak.upgrade() else { return };
@@ -291,13 +292,16 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
 /// Timeline callbacks: fold toggles patch the model in place, a detail cell
 /// routes resource opens back to the native layer, and the block actions save or
 /// copy the answer text the row already carries.
-fn bind_timeline(app: &MainWindow, state: Rc<RefCell<State>>) {
-    let toggle_state = state.clone();
+///
+/// These bind the row model's own handle instead of reaching through `State`:
+/// the sidebar and pet projection invoke them from inside a `State` borrow, and
+/// a second borrow of `State` there aborts the process.
+fn bind_timeline(app: &MainWindow, timeline: Rc<RefCell<crate::timeline::Timeline>>) {
+    let toggle_timeline = timeline.clone();
     app.on_timeline_toggle(move |payload| {
         // A fold patches only the rows it owns, so the click never re-runs the
         // reducer or rebuilds the list.
-        let timeline = toggle_state.borrow().timeline.clone();
-        timeline.borrow().toggle(payload);
+        toggle_timeline.borrow().toggle(payload);
     });
     let weak = app.as_weak();
     app.on_timeline_open(move |resource| {
@@ -323,21 +327,16 @@ fn bind_timeline(app: &MainWindow, state: Rc<RefCell<State>>) {
     });
     // Bounded introspection for the native smoke checks and the companion
     // bubble: both need the active thread's tail without reading every row.
-    let counts_state = state.clone();
+    let counts_timeline = timeline.clone();
     app.on_timeline_counts(move || {
-        let timeline = counts_state.borrow().timeline.clone();
-        let live = timeline.borrow();
+        let live = counts_timeline.borrow();
         crate::TimelineCounts {
             rows: live.row_count() as i32,
             answers: live.answer_count() as i32,
         }
     });
-    let answer_state = state.clone();
-    app.on_timeline_last_answer(move || {
-        let timeline = answer_state.borrow().timeline.clone();
-        let answer = timeline.borrow().last_answer();
-        answer.into()
-    });
+    let answer_timeline = timeline;
+    app.on_timeline_last_answer(move || answer_timeline.borrow().last_answer().into());
 }
 
 /// One projection point for every timeline publish: the row model and the
@@ -1767,6 +1766,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 live.finish(failed);
                 live.flush();
                 publish_timeline(&app, &live);
+                drop(live);
                 set_session_status(&app, &active.session, &active.state);
                 app.set_busy(false);
                 app.set_stopping(false);

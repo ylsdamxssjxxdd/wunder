@@ -32,22 +32,25 @@ fn test_resolve_compaction_limit_uses_configured_limit() {
         "max_context": 8000,
         "max_output": 512
     }));
-    let limit = resolve_compaction_limit(&cfg, 32000, false).unwrap_or_default();
+    let limit = resolve_compaction_limit(&cfg, 32_000, false);
     assert!(limit > 0);
 }
 
 #[test]
-fn test_resolve_compaction_limit_skips_without_force_when_unknown() {
+fn test_resolve_compaction_limit_uses_the_default_window_when_unset() {
     let cfg = llm_config(json!({}));
-    assert!(resolve_compaction_limit(&cfg, 32000, false).is_none());
+    // A model without a declared window is compacted against the built-in
+    // default instead of never being compacted.
+    assert_eq!(resolve_compaction_limit(&cfg, 32_000, false), 117_964);
 }
 
 #[test]
-fn test_resolve_compaction_limit_uses_force_fallback_when_unknown() {
+fn test_resolve_compaction_limit_force_stays_within_the_configured_limit() {
     let cfg = llm_config(json!({}));
-    let limit = resolve_compaction_limit(&cfg, 48000, true).unwrap_or_default();
-    assert!(limit >= COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
-    assert!(limit <= COMPACTION_FORCE_FALLBACK_LIMIT);
+    let forced = resolve_compaction_limit(&cfg, 48_000, true);
+    let normal = resolve_compaction_limit(&cfg, 48_000, false);
+    assert!(forced >= COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
+    assert!(forced <= normal);
 }
 
 #[test]
@@ -56,8 +59,8 @@ fn test_resolve_compaction_limit_force_uses_adaptive_limit_with_configured_cap()
         "max_context": 64000,
         "max_output": 1024
     }));
-    let configured = resolve_compaction_limit(&cfg, 80_000, false).unwrap_or_default();
-    let forced = resolve_compaction_limit(&cfg, 80_000, true).unwrap_or_default();
+    let configured = resolve_compaction_limit(&cfg, 80_000, false);
+    let forced = resolve_compaction_limit(&cfg, 80_000, true);
     assert!(configured > 0);
     assert!(forced > 0);
     assert!(forced <= configured);

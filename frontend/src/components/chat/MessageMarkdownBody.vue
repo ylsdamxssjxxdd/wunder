@@ -56,6 +56,8 @@ const props = withDefaults(defineProps<{
   workspacePathContext?: string;
   itemId?: string;
   contentTruncated?: boolean;
+  /** 时间线交错分段：正文由调用方逐段给出，不再从整条消息自取。 */
+  explicitContent?: boolean;
 }>(), {
   message: null,
   runtimeMessageId: '',
@@ -68,7 +70,8 @@ const props = withDefaults(defineProps<{
   resolveWorkspacePath: undefined,
   workspacePathContext: '',
   itemId: '',
-  contentTruncated: false
+  contentTruncated: false,
+  explicitContent: false
 });
 
 const emit = defineEmits<{
@@ -178,9 +181,11 @@ const displayMessage = computed<MessageRecord>(() => {
 const normalizedContent = computed(() => {
   const _contentVersion = runtimeContentVersion.value;
   const projected = resolveRuntimeProjectedMessage();
-  const source = props.assistantDisplay
-    ? buildAssistantDisplayContent(displayMessage.value, t)
-    : String(projected?.content ?? props.content ?? '');
+  const source = props.explicitContent
+    ? String(props.content ?? '')
+    : props.assistantDisplay
+      ? buildAssistantDisplayContent(displayMessage.value, t)
+      : String(projected?.content ?? props.content ?? '');
   return hydratedContent.value ?? source;
 });
 const normalizedCacheKey = computed(() => [

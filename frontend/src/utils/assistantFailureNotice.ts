@@ -189,9 +189,13 @@ export const resolveAssistantFailureNotice = (
 
 export const buildAssistantDisplayContent = (
   message: Record<string, unknown>,
-  t: Translator
+  t: Translator,
+  /** 时间线交错分段：正文逐段给出，失败提示只挂在最后一段上。 */
+  overrideContent?: string
 ): string => {
-  const baseContent = typeof message?.content === 'string' ? message.content : String(message?.content ?? '');
+  const baseContent = typeof overrideContent === 'string'
+    ? overrideContent
+    : typeof message?.content === 'string' ? message.content : String(message?.content ?? '');
   const notice = resolveAssistantFailureNotice(message, t);
   if (!notice) {
     return baseContent;

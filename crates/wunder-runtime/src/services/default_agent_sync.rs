@@ -156,6 +156,7 @@ async fn build_default_agent_config(
         description: String::new(),
         system_prompt: String::new(),
         preview_skill: false,
+        model_name: None,
         ability_items: Vec::new(),
         tool_names,
         declared_tool_names: Vec::new(),

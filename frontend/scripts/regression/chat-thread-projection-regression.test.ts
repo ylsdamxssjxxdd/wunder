@@ -102,6 +102,76 @@ test('tool commentary stays out of the final body through streaming and snapshot
   assert.equal(reply().content, '');
 });
 
+test('assistant timeline keeps each round body as its own block between activity batches', () => {
+  const state = emptyChatThreadState('session-projection-timeline');
+  const roundOne = textItemData('turn-1', 1, { content: 'step one', reasoning: 'plan one' });
+  const callA = toolItemData('turn-1', 'call-a', { model_round: 1, event_type: 'tool_call', tool: 'lookup' });
+  const callAOutput = toolItemData('turn-1', 'call-a', {
+    item_id: 'turn-1:tool-a-output', model_round: 1, event_type: 'tool_output', tool: 'lookup'
+  });
+  const roundTwo = textItemData('turn-1', 2, { content: 'step two', reasoning: 'plan two' });
+  const callB = toolItemData('turn-1', 'call-b', {
+    model_round: 2, event_type: 'tool_result', status: 'completed', tool: 'lookup'
+  });
+  const roundThree = textItemData('turn-1', 3, { content: '', status: 'running' });
+  const turn = { turn_id: 'turn-1', user_round: 1, status: 'running', content: 'q' };
+
+  const timeline = () => buildChatThreadRenderableMessages(state)
+    .find(message => message.role === 'assistant')!.timeline ?? [];
+  const shape = () => timeline().map((block) => block.kind === 'body'
+    ? `body[${block.text}]`
+    : `activity[${block.rows.map((row) => row.type === 'reasoning'
+        ? `r:${row.text}`
+        : `t:${row.itemId}`).join(',')}]`);
+
+  applyFrames(state, [
+    turnUpsert(1, turn),
+    itemUpsert(2, roundOne),
+    itemUpsert(3, callA),
+    itemUpsert(4, callAOutput),
+    itemUpsert(5, roundTwo),
+    itemUpsert(6, callB),
+    itemUpsert(7, roundThree)
+  ]);
+
+  // 每段正式输出独立成块；思考与工具按到达顺序折成它前面的那一批，
+  // 同一次调用的 call/output 两条记录只占一个条目位。第三轮还没有输出，
+  // 所以时间线以批次结尾，不会提前冒出一个空段。
+  assert.deepEqual(shape(), [
+    'activity[r:plan one]',
+    'body[step one]',
+    'activity[t:turn-1:tool-call-a,r:plan two]',
+    'body[step two]',
+    'activity[t:turn-1:tool-call-b]'
+  ]);
+
+  // 流式尾块只新增/改写它自己那一段，前面的段保持稳定。
+  applyFrames(state, [tailFrame('turn-1:text-3', 'content', 0, 'step three (live)')]);
+  const lastBlock = timeline()[timeline().length - 1];
+  assert.equal(lastBlock.kind === 'body' ? lastBlock.text : '', 'step three (live)');
+  assert.equal(shape()[1], 'body[step one]');
+
+  // 快照重放与实时帧序列得到同一条时间线。
+  applyChatThreadSnapshot(state, {
+    cursor: 8,
+    turns: [{ ...turn, status: 'completed' }],
+    items: [
+      { item_id: 'turn-1:user', turn_id: 'turn-1', kind: 'user_message', role: 'user',
+        content: 'q', visibility: 'user', status: 'completed', revision: 1, user_round: 1 },
+      roundOne, callA, callAOutput, roundTwo, callB,
+      { ...roundThree, status: 'completed', content: 'step three (live)' }
+    ]
+  });
+  assert.deepEqual(shape(), [
+    'activity[r:plan one]',
+    'body[step one]',
+    'activity[t:turn-1:tool-call-a,r:plan two]',
+    'body[step two]',
+    'activity[t:turn-1:tool-call-b]',
+    'body[step three (live)]'
+  ]);
+});
+
 test('assistant stays active between model and tool rounds and retains its render key on ack', () => {
   const state = emptyChatThreadState('identity-session');
   state.turns.set('pending:client-1', { turnId: 'pending:client-1', clientMessageId: 'client-1',

@@ -45,16 +45,13 @@ pub(crate) const DESCRIPTORS: &[ToolDescriptor] = &[
         arg_aliases: &[("path", "file_path")],
     },
     ToolDescriptor {
-        canonical: "编辑",
+        // 由原 `编辑` 与 `str_replace_editor` 合并：以字面替换为主，
+        // 兼容补丁（input）与子命令（command）两种形态。
+        // 统一取 ("file_path", "path") 方向：子命令形态的 `path` 会被回填为 `file_path`。
+        canonical: "文本编辑",
         kind: ToolKind::Write,
         parallel_safe: false,
         arg_aliases: &[("file_path", "path"), ("input", "patch")],
-    },
-    ToolDescriptor {
-        canonical: "str_replace_editor",
-        kind: ToolKind::Write,
-        parallel_safe: false,
-        arg_aliases: &[("path", "file_path")],
     },
     ToolDescriptor {
         canonical: "执行命令",
@@ -112,14 +109,15 @@ mod tests {
             descriptor("read_file").map(|d| d.canonical),
             Some("读取文件")
         );
-        assert_eq!(descriptor("编辑").map(|d| d.kind), Some(ToolKind::Write));
-        assert_eq!(descriptor("edit").map(|d| d.canonical), Some("编辑"));
+        assert_eq!(descriptor("文本编辑").map(|d| d.kind), Some(ToolKind::Write));
+        assert_eq!(descriptor("edit").map(|d| d.canonical), Some("文本编辑"));
+        assert_eq!(descriptor("str_replace_editor").map(|d| d.canonical), Some("文本编辑"));
         assert!(descriptor("不存在的工具").is_none());
     }
 
     #[test]
     fn edit_tool_is_write_and_exclusive() {
-        let edit = descriptor("编辑").expect("edit descriptor");
+        let edit = descriptor("文本编辑").expect("edit descriptor");
         assert_eq!(edit.kind, ToolKind::Write);
         assert!(!edit.parallel_safe);
         assert!(edit
@@ -134,6 +132,6 @@ mod tests {
         assert!(names.contains(&"读取文件"));
         assert!(names.contains(&"搜索内容"));
         assert!(!names.contains(&"写入文件"));
-        assert!(!names.contains(&"编辑"));
+        assert!(!names.contains(&"文本编辑"));
     }
 }

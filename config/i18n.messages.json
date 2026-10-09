@@ -2043,35 +2043,55 @@
     "en-US": "Optional. Directory to search. Defaults to the agent's working directory if omitted; relative paths are resolved against that root.",
     "zh-CN": "可选，搜索的目录。省略时默认使用智能体工作目录；相对路径按该目录解释。"
   },
-  "tool.spec.str_replace_editor.description": {
-    "en-US": "Edit files with the view, create, str_replace, and insert commands. view renders an existing file with line numbers or lists a directory up to two levels deep; create writes a new file only when the path does not exist; str_replace replaces the unique literal occurrence of old_str; insert adds new_str after insert_line.",
-    "zh-CN": "用 view、create、str_replace、insert 四个子命令编辑文件。view 为已有文件渲染带行号的内容，或以两层深度列出目录；create 仅在路径不存在时新建文件；str_replace 替换 old_str 唯一出现的字面文本；insert 在第 insert_line 行之后插入 new_str。"
+  "tool.spec.text_edit.description": {
+    "en-US": "Edit files. Replace old_string with new_string (set replace_all to replace every occurrence), or apply a raw apply_patch via input, or use the view, create, str_replace, and insert sub-commands.",
+    "zh-CN": "编辑文件。将 old_string 替换为 new_string（replace_all 为 true 时替换全部匹配），或用 input 应用原始 apply_patch 补丁，也可用 view、create、str_replace、insert 子命令。"
   },
-  "tool.spec.str_replace_editor.args.command": {
-    "en-US": "Required. One of view, create, str_replace, insert.",
-    "zh-CN": "必填，取值为 view、create、str_replace、insert 之一。"
+  "tool.spec.text_edit.args.file_path": {
+    "en-US": "Required. Path of the file to edit.",
+    "zh-CN": "必填，要编辑的文件路径。"
   },
-  "tool.spec.str_replace_editor.args.path": {
-    "en-US": "Required. File or directory path. Relative paths resolve against the workspace; absolute paths and /workspaces/... public paths are also accepted.",
-    "zh-CN": "必填，文件或目录路径。相对路径按工作区解释；也支持绝对路径和 /workspaces/... 公共路径。"
+  "tool.spec.text_edit.args.old_string": {
+    "en-US": "Exact literal text to replace. Required when input is not used.",
+    "zh-CN": "要被替换的原始字面文本；未使用 input 补丁时必填。"
   },
-  "tool.spec.str_replace_editor.args.file_text": {
-    "en-US": "Required for create. Full contents of the new file.",
-    "zh-CN": "create 必填，新文件的完整内容。"
+  "tool.spec.text_edit.args.new_string": {
+    "en-US": "Replacement text; an empty string deletes the matched text.",
+    "zh-CN": "替换后的文本；空字符串表示删除匹配文本。"
   },
-  "tool.spec.str_replace_editor.args.insert_line": {
-    "en-US": "Required for insert. Line number after which new_str is inserted; 0 inserts at the beginning of the file.",
-    "zh-CN": "insert 必填，new_str 插入其后的行号；0 表示插入到文件开头。"
+  "tool.spec.text_edit.args.replace_all": {
+    "en-US": "Replace every occurrence instead of requiring a unique match (default false).",
+    "zh-CN": "替换全部匹配；默认 false 时必须唯一匹配。"
   },
-  "tool.spec.str_replace_editor.args.new_str": {
+  "tool.spec.text_edit.args.input": {
+    "en-US": "Raw apply_patch text. Use it for precise multi-file or multi-hunk edits, adds, deletes, and moves. If a match is uncertain, call dry_run=true first; otherwise apply directly. The input must start exactly with *** Begin Patch and end exactly with *** End Patch. Keep context lines with a leading space, old lines with -, and new lines with +; never copy read_file display headers or line numbers. For generated whole-file rewrites, use write_file or a script.",
+    "zh-CN": "原始 apply_patch 文本。适合精确的多文件、多 hunk 修改，以及新增、删除、移动文件；匹配不确定时先调用 dry_run=true，否则可直接应用。输入必须以 *** Begin Patch 开始并以 *** End Patch 结束。上下文行以空格开头，旧行用 -，新行用 +；不要复制 read_file 展示文件头或行号。生成式整文件重写请用写入文件或脚本。"
+  },
+  "tool.spec.text_edit.args.dry_run": {
+    "en-US": "Optional. Only used with input-mode patches: validate that the patch parses and matches without writing files.",
+    "zh-CN": "可选。仅在使用 input 补丁模式时生效：只校验补丁能否解析与匹配，不写盘。"
+  },
+  "tool.spec.text_edit.args.command": {
+    "en-US": "Optional sub-command form: one of view, create, str_replace, insert. When set, file_path is used as the target path.",
+    "zh-CN": "可选的子命令形态，取值为 view、create、str_replace、insert 之一；设置后 file_path 即为目标路径。"
+  },
+  "tool.spec.text_edit.args.file_text": {
+    "en-US": "Required for the create sub-command. Full contents of the new file.",
+    "zh-CN": "create 子命令必填，新文件的完整内容。"
+  },
+  "tool.spec.text_edit.args.insert_line": {
+    "en-US": "Required for the insert sub-command. Line number after which new_str is inserted; 0 inserts at the beginning of the file.",
+    "zh-CN": "insert 子命令必填，new_str 插入其后的行号；0 表示插入到文件开头。"
+  },
+  "tool.spec.text_edit.args.new_str": {
     "en-US": "Replacement or inserted text. Required for insert; optional for str_replace, where an empty string deletes the match.",
     "zh-CN": "替换或插入的文本。insert 必填；str_replace 可选，空字符串表示删除匹配文本。"
   },
-  "tool.spec.str_replace_editor.args.old_str": {
+  "tool.spec.text_edit.args.old_str": {
     "en-US": "Required for str_replace. Literal text to replace; it must appear verbatim and exactly once.",
     "zh-CN": "str_replace 必填，要替换的字面文本，必须逐字出现且仅出现一次。"
   },
-  "tool.spec.str_replace_editor.args.view_range": {
+  "tool.spec.text_edit.args.view_range": {
     "en-US": "Optional for view on a file. Two line numbers [start, end]; use -1 for end to view through the last line.",
     "zh-CN": "view 文件时可选，两个行号 [start, end]；end 传 -1 表示读到文件末尾。"
   },
@@ -3170,5 +3190,25 @@
   "tool.spec.search.args.include": {
     "en-US": "Optional rg-style alias of glob, aligned with dsh include. A single glob to narrow files, e.g. *.rs or src/**/*.ts.",
     "zh-CN": "可选的 rg 风格别名，等价于 glob，与 dsh 的 include 对齐。用单个 glob 收窄文件，例如 *.rs 或 src/**/*.ts。"
+  },
+  "tool.title.ptc": {
+    "en-US": "Programmatic Tool Call",
+    "zh-CN": "程序化工具调用"
+  },
+  "tool.title.glob": {
+    "en-US": "File Glob Match",
+    "zh-CN": "文件名通配匹配"
+  },
+  "tool.title.get_goal": {
+    "en-US": "Get Goal",
+    "zh-CN": "查看目标"
+  },
+  "tool.title.create_goal": {
+    "en-US": "Create Goal",
+    "zh-CN": "创建目标"
+  },
+  "tool.title.update_goal": {
+    "en-US": "Update Goal",
+    "zh-CN": "更新目标"
   }
 }

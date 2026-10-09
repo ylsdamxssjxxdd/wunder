@@ -484,9 +484,34 @@ fn advance(
             )?;
             ensure(!app.get_agent_dirty(), "a saved agent form is still dirty")?;
             ensure(
-                app.get_agent_tool_options().row_count() > 0,
+                app.get_expert_tool_groups()
+                    .iter()
+                    .any(|group| group.tools.row_count() > 0),
                 "agent tool list is empty",
             )?;
+            // The card picker's select-all drives the same draft the save handler
+            // reads. Two clicks are not an identity (partial -> all -> none), so
+            // the contract to prove is: it dirties the form, and re-loading the
+            // agent rebases the snapshot.
+            let group = app
+                .get_expert_tool_groups()
+                .row_data(0)
+                .map(|group| group.title.to_string())
+                .unwrap_or_default();
+            app.invoke_toggle_expert_tool_group(group.as_str().into());
+            ensure(
+                app.get_agent_dirty(),
+                "the tool card picker did not dirty the agent form",
+            )?;
+            app.invoke_select_agent(0);
+            ensure(
+                !app.get_agent_dirty(),
+                "re-loading the agent did not rebase the saved selection",
+            )?;
+            // The agent form is a card picker, not a switch list: its rendered
+            // shape is only provable from the window, so the snapshot is part of
+            // the step rather than an optional artifact.
+            crate::smoke::snapshot(app, &directory.join("native-agent-form.png"))?;
         }
         14 => {
             app.set_page(crate::DesktopPage::Messages);

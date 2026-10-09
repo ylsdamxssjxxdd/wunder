@@ -3,7 +3,6 @@ use crate::{config::LlmModelConfig, token_utils};
 use serde_json::{json, Value};
 use wunder_core::virtual_model::VirtualModelOptions;
 
-pub const DEFAULT_CONTEXT: u32 = 131_072;
 pub const DEFAULT_OUTPUT: u32 = 4096;
 
 #[derive(Debug)]
@@ -151,7 +150,7 @@ pub fn validate_request(
         return Err(VirtualModelError::new("max_tokens_exceeded", "max_tokens", format!("Requested output is {output_tokens} tokens; maximum output is {max_output} tokens.")));
     }
     let input = request_input_tokens(model, messages, tools)?;
-    let context = model.max_context.unwrap_or(DEFAULT_CONTEXT);
+    let context = model.effective_max_context();
     if input.saturating_add(u64::from(output_tokens)) > u64::from(context) {
         return Err(VirtualModelError::new("context_length_exceeded", "messages", format!("This model's maximum context length is {context} tokens, but you requested {} tokens ({input} input + {output_tokens} output).", input.saturating_add(u64::from(output_tokens)))));
     }

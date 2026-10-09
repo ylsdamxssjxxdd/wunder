@@ -164,7 +164,7 @@ const workspaceName = computed(
 // 注意：`controller.keywordInput` 仍是 sessionHub 搜索（中间栏 sections 过滤）的唯一输入源，
 // 其 store 字段、debounce watcher 与 controller 内过滤逻辑保留未删，等主智能体决定是否重新挂载入口。
 const threads = computed(() =>
-  buildTaskList(chatStore.sessions || [], String(agentIdForApi || ''), t('chat.newSession'))
+  buildTaskList(chatStore.sessions || [], String(agentIdForApi?.value || ''), t('chat.newSession'))
 );
 const workspaceMetaLabel = computed(() => {
   const total = threads.value.length;

@@ -288,7 +288,7 @@ hooks:
   enabled: true
   hooks:
     - event: PreToolUse
-      matcher: ["write*", "编辑"]
+      matcher: ["write*", "文本编辑"]
       command: echo hi
     - event: PreToolUse
       command: echo all
@@ -304,11 +304,11 @@ hooks:
         let pre_write = registry.matching(HookEvent::PreToolUse, "写入文件");
         assert_eq!(pre_write.len(), 1);
         assert_eq!(pre_write[0].command(), "echo all");
-        // "编辑" 命中 matcher，叠加无 matcher 的一条
-        let pre_edit = registry.matching(HookEvent::PreToolUse, "编辑");
+        // "文本编辑" 命中 matcher，叠加无 matcher 的一条
+        let pre_edit = registry.matching(HookEvent::PreToolUse, "文本编辑");
         assert_eq!(pre_edit.len(), 2);
         // 事件名大小写不敏感
-        let post = registry.matching(HookEvent::PostToolUse, "编辑");
+        let post = registry.matching(HookEvent::PostToolUse, "文本编辑");
         assert_eq!(post.len(), 1);
     }
 

@@ -126,8 +126,10 @@ const resetLog = () => {
   white-space: pre-wrap;
 }
 
-/* The harness only needs the shell tokens; the two-column shell itself is out of scope. */
+/* The harness only needs the shell tokens; the two-column shell itself is out of scope.
+   flex:1 把输入卡顶到视口底部，和真实壳体同一几何——否则模型浮层向上会顶出视口。 */
 .composer-b4-harness .messenger-view {
+  flex: 1;
   min-height: 320px;
 }
 

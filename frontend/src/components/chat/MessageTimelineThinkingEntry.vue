@@ -133,14 +133,14 @@ const { t } = useI18n();
 
 .tl-thinking-label {
   flex: 0 0 auto;
-  color: var(--mz-text-secondary, #3d3d3d);
+  color: var(--mz-text-muted, #8a8f99);
   font-size: 13px;
 }
 
 .tl-thinking-summary {
   flex: 1 1 auto;
   min-width: 0;
-  color: var(--mz-text-muted, #8a8f99);
+  color: var(--mz-timeline-entry-soft, #9ba0a8);
   font-size: 12px;
   line-height: 1.5;
   white-space: nowrap;
@@ -168,7 +168,7 @@ const { t } = useI18n();
   border: 1px solid var(--mz-border, #e8e6e3);
   border-radius: 8px;
   background: var(--mz-panel, #fbfaf8);
-  color: var(--mz-text-secondary, #3d3d3d);
+  color: var(--mz-text-muted, #8a8f99);
   font-size: 12px;
   line-height: 1.6;
   white-space: pre-wrap;

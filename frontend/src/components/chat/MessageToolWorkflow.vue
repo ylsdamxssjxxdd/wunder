@@ -2431,6 +2431,15 @@ const isKnowledgeQueryTool = (toolName: string): boolean => {
   );
 };
 
+const GENERIC_TOOL_LABEL_KEY_BY_NAME: Record<string, string> = {
+  glob: 'chat.toolWorkflow.toolLabel.glob',
+  str_replace_editor: 'chat.toolWorkflow.toolLabel.strReplaceEditor',
+  文本编辑: 'chat.toolWorkflow.toolLabel.textEdit',
+  get_goal: 'chat.toolWorkflow.toolLabel.getGoal',
+  create_goal: 'chat.toolWorkflow.toolLabel.createGoal',
+  update_goal: 'chat.toolWorkflow.toolLabel.updateGoal'
+};
+
 const resolveSummaryToolDisplay = (toolName: string, fallback: string): string => {
   if (isSkillCallTool(toolName)) return t('chat.toolWorkflow.toolLabel.skillCall');
   if (isPtcTool(toolName)) return t('chat.toolWorkflow.toolLabel.ptc');
@@ -2441,6 +2450,8 @@ const resolveSummaryToolDisplay = (toolName: string, fallback: string): string =
   if (isWriteFileTool(toolName)) return t('chat.toolWorkflow.toolLabel.writeFile');
   if (isListFilesTool(toolName)) return t('chat.toolWorkflow.toolLabel.listFiles');
   if (isSearchContentTool(toolName)) return t('chat.toolWorkflow.toolLabel.searchContent');
+  const genericLabelKey = GENERIC_TOOL_LABEL_KEY_BY_NAME[toolName.trim().toLowerCase()];
+  if (genericLabelKey) return t(genericLabelKey);
   return fallback;
 };
 

@@ -1445,9 +1445,20 @@ fn format_repair_summary(repair: &Value) -> Option<String> {
 }
 
 fn compact_json(value: &Value) -> String {
+    compact_json_within(value, MAX_INLINE_JSON_CHARS)
+}
+
+/// Inline JSON preview shared by every rendering surface. The budget is measured
+/// in bytes, so the cut has to back off to a char boundary - a tool payload of
+/// multibyte text would otherwise end the slice inside a code point and panic.
+pub(crate) fn compact_json_within(value: &Value, max_bytes: usize) -> String {
     let mut text = serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string());
-    if text.len() > MAX_INLINE_JSON_CHARS {
-        text.truncate(MAX_INLINE_JSON_CHARS);
+    if text.len() > max_bytes {
+        let mut safe_boundary = max_bytes;
+        while safe_boundary > 0 && !text.is_char_boundary(safe_boundary) {
+            safe_boundary = safe_boundary.saturating_sub(1);
+        }
+        text.truncate(safe_boundary);
         text.push_str("...");
     }
     text
@@ -1456,6 +1467,16 @@ fn compact_json(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_inline_json_preview_cuts_on_a_char_boundary() {
+        // 180 bytes would land inside a 3-byte code point here; the byte budget
+        // is deliberately hostile to multibyte payloads.
+        let value = serde_json::json!({ "note": "你".repeat(400) });
+        let output = compact_json(&value);
+        assert!(output.ends_with("..."));
+        assert!(output.chars().count() < 200);
+    }
 
     #[test]
     fn colour_is_opt_in_and_only_touches_the_progress_stream() {

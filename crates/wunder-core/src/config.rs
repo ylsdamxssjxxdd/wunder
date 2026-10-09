@@ -664,6 +664,21 @@ pub struct LlmModelConfig {
     pub video_sync_mode: Option<bool>,
 }
 
+/// Context window assumed for a model that declares none. Compaction and the
+/// remaining-context display both need a number, and "no limit" lets a thread
+/// grow until the provider rejects the request instead of until it is compacted.
+pub const DEFAULT_MODEL_CONTEXT_TOKENS: u32 = 131_072;
+
+impl LlmModelConfig {
+    /// The context window actually in force for this model: the configured
+    /// value when it is usable, otherwise the built-in default.
+    pub fn effective_max_context(&self) -> u32 {
+        self.max_context
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_MODEL_CONTEXT_TOKENS)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ToolsConfig {
     #[serde(default)]
@@ -2594,6 +2609,25 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::fs;
+
+    #[test]
+    fn a_model_without_a_usable_window_uses_the_default() {
+        assert_eq!(
+            LlmModelConfig::default().effective_max_context(),
+            DEFAULT_MODEL_CONTEXT_TOKENS
+        );
+        let configured = LlmModelConfig {
+            max_context: Some(68_400),
+            ..Default::default()
+        };
+        assert_eq!(configured.effective_max_context(), 68_400);
+        // A zero window is not a window; it would disable compaction entirely.
+        let unusable = LlmModelConfig {
+            max_context: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(unusable.effective_max_context(), DEFAULT_MODEL_CONTEXT_TOKENS);
+    }
 
     fn unique_test_suffix() -> String {
         let nanos = std::time::SystemTime::now()

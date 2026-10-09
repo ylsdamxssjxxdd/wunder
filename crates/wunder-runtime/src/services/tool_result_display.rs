@@ -41,7 +41,7 @@ pub fn tool_result_display(tool: &str, payload: &Value, pending: bool) -> String
         "read_file" | "读取文件" => "读取",
         "write_file" | "写入文件" => "写入",
         "apply_patch" | "应用补丁" => "应用补丁",
-        "编辑" | "edit" => "编辑",
+        "文本编辑" | "编辑" | "edit" => "文本编辑",
         "execute_command" | "执行命令" => "执行",
         "search_content" | "搜索内容" => "搜索",
         "list_files" | "列出文件" => "列出",

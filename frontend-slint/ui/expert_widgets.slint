@@ -2,6 +2,7 @@ import { Theme, ToolCard } from "theme.slint";
 import { Action } from "components.slint";
 import { CheckBox, ScrollView, LineEdit } from "std-widgets.slint";
 import { ToolIcons } from "tool_icons.slint";
+import { I18n } from "i18n.slint";
 
 export global ExpertTheme {
     out property <color> text: #303133;
@@ -45,7 +46,9 @@ component ToolTile inherits Rectangle {
         }
         VerticalLayout { horizontal-stretch: 1; spacing: 4px;
             Text { text: root.tool.name; color: ExpertTheme.text; font-size: 12px; font-weight: 600; overflow: elide; }
-            Text { text: root.tool.description; color: ExpertTheme.muted; font-size: 11px; wrap: word-wrap; overflow: elide; height: 28px; }
+            // Slint elides a *wrapped* text from the head, which would show the
+            // tail of the description; one clipped line keeps the leading text.
+            Text { text: root.tool.description == "" ? I18n.stc_agent_tool_no_desc : root.tool.description; color: ExpertTheme.muted; font-size: 11px; height: 16px; overflow: elide; }
         }
     }
     TouchArea { x: 34px; y: 0px; width: parent.width - 34px; height: parent.height; enabled: root.enabled; mouse-cursor: pointer; clicked => { root.toggle(root.tool.name); } }
@@ -71,7 +74,7 @@ export component ExpertToolPicker inherits Rectangle {
                     HorizontalLayout { height: 22px;
                         Text { text: "类型：" + group.title; color: #38465b; font-size: 12px; font-weight: 600; }
                         Rectangle { horizontal-stretch: 1; }
-                        ExpertButton { width: 48px; height: 22px; selected: true; label: group.all-selected ? "取消全选" : "全选"; enabled: root.enabled; clicked => { root.toggle-group(group.title); } }
+                        ExpertButton { width: 72px; height: 22px; selected: true; label: group.all-selected ? "取消全选" : "全选"; enabled: root.enabled; clicked => { root.toggle-group(group.title); } }
                     }
                     ScrollView { horizontal-scrollbar-policy: always-off;
                         VerticalLayout { spacing: 8px; alignment: start;

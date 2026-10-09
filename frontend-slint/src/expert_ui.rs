@@ -64,19 +64,6 @@ pub(crate) fn project_tools(app: &MainWindow) {
         }
     }
     app.set_expert_tool_groups(model(groups));
-    let mut models = vec![SharedString::default()];
-    models.extend(
-        app.get_models()
-            .iter()
-            .filter(|m| m.model_type == "llm" || m.model_type.is_empty())
-            .map(|m| m.key),
-    );
-    if !app.get_selected_agent_model().is_empty()
-        && !models.contains(&app.get_selected_agent_model())
-    {
-        models.push(app.get_selected_agent_model());
-    }
-    app.set_expert_model_names(model(models));
     app.set_expert_agent_names(model(app.get_agents().iter().map(|a| a.name).collect()));
 }
 
@@ -151,6 +138,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         }
         app.set_selected_agent_tool_names(model(names));
         crate::entity_state::sync_tool_selection(&app);
+        // The group toggle rewrites the selection model in place, which no
+        // property-change hook would see.
+        crate::agent_editor::refresh_agent_dirty(&app);
     });
     let weak = app.as_weak();
     app.on_edit_agent_question(move |index, text| {
@@ -173,28 +163,25 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let Some(app) = weak.upgrade() else { return };
         let Some(agent) = agent_id(&app) else { return };
         project_tools(&app);
-        let tab = app.get_expert_tab();
+        // The active settings category is the only view selector now that the
+        // expert page's own tab strip is gone: 6 memories, 8 usage, 10 archives.
+        let panel = app.get_settings_active_panel();
+        let view = match panel {
+            6 => Some(2),
+            8 => Some(4),
+            10 => Some(5),
+            _ => None,
+        };
+        app.set_expert_error("".into());
+        let Some(view) = view else {
+            // Cron, channels and every other category own their own refresh;
+            // nothing loads here, and a no-op must not cancel an in-flight pull.
+            app.set_expert_loading(false);
+            return;
+        };
         let ticket = generation.fetch_add(1, Ordering::Relaxed) + 1;
         let generation = generation.clone();
-        app.set_expert_error("".into());
-        if tab == 1 {
-            app.set_expert_loading(false);
-            app.invoke_refresh_cron();
-            return;
-        }
-        if tab == 3 {
-            app.set_expert_loading(false);
-            app.invoke_refresh_channels();
-            return;
-        }
         if busy.swap(true, Ordering::Relaxed) {
-            return;
-        }
-        if !matches!(tab, 2 | 4 | 5) {
-            // Tabs without a data projection (cron and channels) refresh
-            // through their own callbacks; nothing else loads here.
-            busy.store(false, Ordering::Relaxed);
-            app.set_expert_loading(false);
             return;
         }
         let busy = busy.clone();
@@ -211,7 +198,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 Archives(Vec<wunder_desktop::NativeSession>, i64),
                 Runtime(serde_json::Value),
             }
-            let result = match tab {
+            let result = match view {
                 2 => api
                     .expert_memories(
                         &agent,
@@ -229,13 +216,13 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 5 => api
                     .expert_archives(&agent, offset)
                     .map(|(rows, total)| Data::Archives(rows, total)),
-                _ => unreachable!("tab filtered before spawn"),
+                _ => unreachable!("view filtered before spawn"),
             };
             let _ = weak.upgrade_in_event_loop(move |app| {
                 busy.store(false, Ordering::Relaxed);
                 if generation.load(Ordering::Relaxed) != ticket
                     || agent_id(&app).as_deref() != Some(agent.as_str())
-                    || app.get_expert_tab() != tab
+                    || app.get_settings_active_panel() != panel
                 {
                     app.invoke_refresh_expert();
                     return;

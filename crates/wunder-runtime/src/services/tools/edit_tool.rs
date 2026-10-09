@@ -1,4 +1,7 @@
-//! dsh 风格的基础编辑工具：「编辑」。
+//! 基础编辑工具：「文本编辑」。
+//!
+//! 由原 `编辑` 与 `str_replace_editor` 合并而来：字面替换为主，另有
+//! 补丁（`input`）与子命令（`command`）两个兼容形态，见 [`text_edit`]。
 //!
 //! 语义对齐 dsh 的 `edit`：在既有 UTF-8 文本文件里做**字面文本替换**。
 //! `old_string` 必须唯一匹配，除非显式 `replace_all=true`；`new_string`
@@ -20,7 +23,7 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
-pub(crate) const TOOL_EDIT: &str = "编辑";
+pub(crate) const TOOL_EDIT: &str = "文本编辑";
 
 /// 判断参数是否以补丁（patch）形态调用，兼容旧 `应用补丁` 的 `input`/`patch`。
 pub(crate) fn has_patch_input(args: &Value) -> bool {
@@ -115,6 +118,23 @@ pub(crate) fn validate_edit_args(args: &Value) -> Option<Value> {
     None
 }
 
+/// 统一入口：`文本编辑`。
+///
+/// 三种形态按优先级分派：
+/// 1. 携带非空 `command` → 子命令编辑（`view`/`create`/`str_replace`/`insert`）；
+/// 2. 携带补丁输入（非空 `input`/`patch`）→ 补丁模式（原 `应用补丁`）；
+/// 3. 其余 → 字面文本替换（dsh `edit` 语义）。
+pub(crate) async fn text_edit(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    if super::str_replace_editor_tool::command_requested(args) {
+        return super::str_replace_editor_tool::str_replace_editor(context, args).await;
+    }
+    let args = recover_tool_args_value(args);
+    if has_patch_input(&args) {
+        return super::apply_patch_tool::apply_patch(context, &args).await;
+    }
+    edit_file(context, &args).await
+}
+
 pub(crate) async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let args = recover_tool_args_value(args);
     if let Some(failure) = validate_edit_args(&args) {
@@ -207,17 +227,17 @@ pub(crate) async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result
             if let Some(failure) = err.downcast_ref::<EditFailure>() {
                 let (message, code, hint) = match failure {
                     EditFailure::NotFound => (
-                        format!("编辑失败：文件不存在 {file_path}"),
+                        format!("文本编辑失败：文件不存在 {file_path}"),
                         "TOOL_EDIT_NOT_FOUND",
                         "确认路径正确；新建文件请改用写入文件。",
                     ),
                     EditFailure::NoMatch => (
-                        "编辑失败：old_string 未在文件中匹配".to_string(),
+                        "文本编辑失败：old_string 未在文件中匹配".to_string(),
                         "TOOL_EDIT_NO_MATCH",
                         "确保 old_string 与文件内容逐字一致（包含空白与缩进）。",
                     ),
                     EditFailure::NotUnique(count) => (
-                        format!("编辑失败：old_string 匹配到 {count} 处，无法唯一替换"),
+                        format!("文本编辑失败：old_string 匹配到 {count} 处，无法唯一替换"),
                         "TOOL_EDIT_NOT_UNIQUE",
                         "补充上下文使匹配唯一，或设置 replace_all=true 全部替换。",
                     ),
@@ -233,7 +253,7 @@ pub(crate) async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result
                 ));
             }
             return Ok(build_failed_tool_result(
-                format!("编辑失败：{err}"),
+                format!("文本编辑失败：{err}"),
                 json!({
                     "path": file_path,
                     "dry_run": dry_run,
@@ -285,6 +305,18 @@ pub(crate) async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn text_edit_routes_by_shape() {
+        use super::super::str_replace_editor_tool::command_requested;
+        assert!(command_requested(&json!({"command": "view"})));
+        assert!(!command_requested(&json!({"command": "   "})));
+        assert!(!command_requested(&json!({"command": null})));
+        assert!(!command_requested(&json!({})));
+        assert!(has_patch_input(&json!({"input": "*** Begin Patch"})));
+        assert!(!has_patch_input(&json!({"input": "   "})));
+        assert!(!has_patch_input(&json!({})));
+    }
 
     #[test]
     fn validates_required_params() {

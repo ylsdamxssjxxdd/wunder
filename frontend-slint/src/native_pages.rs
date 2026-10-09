@@ -832,15 +832,16 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     app.on_toggle_agent_tool_option(move |name| {
         let Some(app) = weak.upgrade() else { return };
+        // The toggle owns the selection set; `sync_tool_selection` re-projects
+        // the card picker's enabled flags from it.
         app.invoke_toggle_agent_tool(name);
-        update_agent_tool_options(&app);
         app.invoke_refresh_agent_dirty();
     });
     let weak = app.as_weak();
-    app.on_refresh_agent_tool_options(move || {
-        let Some(app) = weak.upgrade() else { return };
-        update_agent_tool_options(&app);
-        app.invoke_refresh_agent_dirty();
+    app.on_refresh_agent_model_options(move || {
+        if let Some(app) = weak.upgrade() {
+            update_agent_model_options(&app);
+        }
     });
     let weak = app.as_weak();
     let refresh_api = api.clone();
@@ -1103,6 +1104,7 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
         app.set_selected_model(selected);
         let keys: Vec<String> = rows.iter().map(|entry| entry.key.to_string()).collect();
         app.set_models(model_from(rows));
+        update_agent_model_options(&app);
         let weak = weak.clone();
         let api = order_api.clone();
         run_background(move || {
@@ -1156,40 +1158,21 @@ pub(crate) fn replace_agents(app: &MainWindow, cards: Vec<AgentCard>) {
     app.set_agents(model_from(cards));
 }
 
-/// Project the built-in agent's tool catalog into the settings form.
-///
-/// The list is the only place tool matching happens: Slint 1.18 strings have no
-/// substring test, so the search box hands its query to `agent-tool-query` and
-/// the filtered projection comes back here. It is also the authority for the
-/// switch states, because `sync_tool_selection` only writes the shared tool
-/// list, which the settings page does not render.
-pub(crate) fn update_agent_tool_options(app: &MainWindow) {
-    let selected = app
-        .get_selected_agent_tool_names()
+/// The conversational models the agent form may name. The runtime only accepts
+/// a key that is still configured; a stored key that has since been deleted
+/// stays listed so the editor never drops it silently.
+pub(crate) fn update_agent_model_options(app: &MainWindow) {
+    let mut options: Vec<slint::SharedString> = app
+        .get_models()
         .iter()
-        .map(|name| name.to_string())
-        .collect::<std::collections::HashSet<_>>();
-    let needle = app.get_agent_tool_query().trim().to_lowercase();
-    let tools = app.get_tools();
-    let mut options = Vec::with_capacity(tools.row_count());
-    for index in 0..tools.row_count() {
-        let Some(tool) = tools.row_data(index) else {
-            continue;
-        };
-        if !needle.is_empty()
-            && !tool.name.to_lowercase().contains(&needle)
-            && !tool.description.to_lowercase().contains(&needle)
-        {
-            continue;
-        }
-        options.push(crate::AgentToolOption {
-            enabled: selected.contains(tool.name.as_str()),
-            name: tool.name,
-            description: tool.description,
-            category: tool.category,
-        });
+        .filter(|model| model.model_type == "llm" || model.model_type.is_empty())
+        .map(|model| model.key)
+        .collect();
+    let stored = app.get_selected_agent_model();
+    if !stored.is_empty() && !options.contains(&stored) {
+        options.push(stored);
     }
-    app.set_agent_tool_options(model_from(options));
+    app.set_agent_model_options(model_from(options));
 }
 
 pub(crate) fn agent_record_to_card(agent: AgentRecord) -> AgentCard {

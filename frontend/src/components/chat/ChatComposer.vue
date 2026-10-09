@@ -1,5 +1,12 @@
 <template>
-  <div class="input-container input-container--world">
+  <div
+    class="input-container input-container--world"
+    :class="{ dragover: dragActive }"
+    @dragenter="handleDragEnter"
+    @dragover="handleDragOver"
+    @dragleave="handleDragLeave"
+    @drop="handleDrop"
+  >
     <div v-if="showUploadArea" class="upload-preview">
       <div class="upload-preview-list">
         <div
@@ -101,13 +108,6 @@
       </div>
     </div>
 
-    <ComposerPresetQuestions
-      v-if="presetQuestionItems.length && !stopButtonActive"
-      :items="presetQuestionItems"
-      :disabled="stopButtonActive"
-      @pick="applyPresetQuestion"
-    />
-
     <div v-if="references.length" class="upload-preview workspace-quote-preview">
       <div class="upload-preview-list">
         <div
@@ -142,14 +142,8 @@
       </div>
     </div>
 
-    <div
-      class="input-box input-box--world"
-      :class="{ dragover: dragActive }"
-      @dragenter="handleDragEnter"
-      @dragover="handleDragOver"
-      @dragleave="handleDragLeave"
-      @drop="handleDrop"
-    >
+    <!-- 输入框是唯一的「卡片」：白底 + 细边 + 圆角；工具行不再共用这张底。 -->
+    <div class="input-box input-box--world">
       <textarea
         data-testid="chat-composer-input"
         v-model="inputText"
@@ -170,70 +164,43 @@
         </span>
         <span>{{ voiceTranscribingLabel }}</span>
       </div>
+    </div>
 
-      <div class="composer-action-row">
-        <div class="composer-action-group">
-          <!-- 左组（对齐桌面 composer.slint:512-635）：工作目录 → 审批模式 → 命令 → 语音。
-               桌面的「+ 更多 / 回形针附件」入口随 0.5.0 移除：上传与引用文件回到左栏工作目录区，
-               最近线程回到左栏线程树，快捷命令由命令按钮承载。 -->
-          <ComposerStatusBar :workspace-name="workspaceName" />
+    <div class="composer-action-row">
+      <div class="composer-action-group">
+        <!-- 命令 / 预设问题 / 录音 收进「+」：常驻行只留工作目录与审批模式。
+             输入 `/` 仍就地展开命令列表；面板内三段各自开合，互不遮挡。 -->
+        <div ref="plusMenuAnchorRef" class="composer-anchor composer-anchor--static">
+          <button
+            class="composer-plus-btn"
+            type="button"
+            data-testid="chat-composer-plus"
+            :class="{ 'is-active': plusPanelVisible }"
+            :title="t('chat.composer.moreActions')"
+            :aria-label="t('chat.composer.moreActions')"
+            :aria-expanded="plusPanelVisible"
+            @click.stop="togglePlusMenu"
+          >
+            <i class="fa-solid fa-plus composer-plus-icon" aria-hidden="true"></i>
+          </button>
 
-          <div v-if="showApprovalModeSelector" ref="approvalMenuAnchorRef" class="composer-anchor">
+          <div v-if="plusPanelVisible" class="composer-panel composer-panel--plus" @click.stop>
             <button
-              class="composer-approval-trigger"
-              type="button"
-              :class="{ 'is-active': approvalMenuVisible }"
-              :title="approvalTriggerTitle"
-              :aria-label="approvalTriggerTitle"
-              :aria-expanded="approvalMenuVisible"
-              :disabled="approvalModeSyncing"
-              @click.stop="toggleApprovalMenu"
-            >
-              <i :class="[approvalTriggerIcon, 'composer-approval-icon']" aria-hidden="true"></i>
-              <span class="composer-approval-label">{{ approvalModeLabel }}</span>
-              <i class="fa-solid fa-chevron-down composer-caret" aria-hidden="true"></i>
-            </button>
-            <div v-if="approvalMenuVisible" class="composer-panel composer-panel--approval" @click.stop>
-              <div class="composer-panel-title">{{ t('chat.composer.approval') }}</div>
-              <button
-                v-for="option in approvalOptions"
-                :key="option.value"
-                class="composer-panel-item composer-panel-item--radio"
-                :class="{ 'is-selected': option.value === approvalModeValue }"
-                type="button"
-                role="menuitemradio"
-                :aria-checked="option.value === approvalModeValue"
-                @click="selectApprovalMode(option.value)"
-              >
-                <span class="composer-panel-radio" aria-hidden="true">
-                  <i v-if="option.value === approvalModeValue" class="fa-solid fa-check"></i>
-                </span>
-                <span class="composer-panel-main">
-                  <span class="composer-panel-item-label">{{ option.label }}</span>
-                  <span class="composer-panel-desc">{{ option.description }}</span>
-                </span>
-              </button>
-              <div class="composer-panel-hint">{{ t('chat.composer.approval.hint') }}</div>
-            </div>
-          </div>
-
-          <!-- 命令：点击打开与输入 `/` 相同的命令面板（桌面 TerminalAction）。
-               anchor 设为 static，让面板仍以输入卡为容器（同模型浮层的做法），
-               同时面板留在 anchor 内，面板内的指针事件不会被外部关闭逻辑吞掉。 -->
-          <div ref="commandMenuAnchorRef" class="composer-anchor composer-anchor--static">
-            <button
-              class="composer-icon-btn"
+              class="composer-plus-item"
               type="button"
               :class="{ 'is-active': commandMenuOpen }"
-              :title="commandTriggerTitle"
-              :aria-label="commandTriggerTitle"
               :aria-expanded="commandMenuOpen"
               @click.stop="toggleCommandMenu"
             >
-              <i class="fa-solid fa-terminal" aria-hidden="true"></i>
+              <i class="fa-solid fa-terminal composer-plus-item-icon" aria-hidden="true"></i>
+              <span class="composer-plus-item-label">{{ t('chat.composer.commands') }}</span>
+              <i
+                class="fa-solid fa-chevron-down composer-plus-item-caret"
+                :class="{ 'is-open': commandMenuOpen }"
+                aria-hidden="true"
+              ></i>
             </button>
-
-            <div v-if="commandPanelVisible" class="command-menu" role="listbox">
+            <div v-if="commandPanelVisible" class="command-menu command-menu--inline" role="listbox">
               <button
                 v-for="(item, index) in commandPanelItems"
                 :key="item.command"
@@ -250,35 +217,106 @@
               </button>
               <div class="command-menu-hint">{{ t('chat.commandMenu.hint') }}</div>
             </div>
-          </div>
 
-          <button
-            v-if="voiceSupported"
-            class="composer-icon-btn"
-            type="button"
-            :class="{ 'is-active': voiceRecording, 'is-recording': voiceRecording }"
-            :title="voiceButtonTitle"
-            :aria-label="voiceButtonTitle"
-            :disabled="composerBusy > 0 || stopButtonActive || voiceTranscribing"
-            @click="handleToggleVoiceRecord"
-          >
-            <i
-              :class="[
-                voiceRecording
-                  ? 'fa-solid fa-stop'
-                  : voiceTranscribing
-                    ? 'fa-solid fa-waveform-lines'
-                    : 'fa-solid fa-microphone'
-              ]"
-              aria-hidden="true"
-            ></i>
-          </button>
-          <span v-if="voiceRecording" class="composer-voice-timer" :title="voiceRecordingLabel">
-            {{ formatVoiceDurationLabel(props.voiceDurationMs) }}
-          </span>
+            <template v-if="presetQuestionItems.length">
+              <button
+                class="composer-plus-item"
+                type="button"
+                :class="{ 'is-active': presetMenuVisible }"
+                :disabled="stopButtonActive"
+                :aria-expanded="presetMenuVisible"
+                @click.stop="togglePresetMenu"
+              >
+                <i class="fa-solid fa-wand-magic-sparkles composer-plus-item-icon" aria-hidden="true"></i>
+                <span class="composer-plus-item-label">{{ t('chat.commandMenu.presetQuestions') }}</span>
+                <i
+                  class="fa-solid fa-chevron-down composer-plus-item-caret"
+                  :class="{ 'is-open': presetMenuVisible }"
+                  aria-hidden="true"
+                ></i>
+              </button>
+              <ComposerPresetQuestions
+                v-if="presetMenuVisible"
+                :items="presetQuestionItems"
+                :disabled="stopButtonActive"
+                @pick="applyPresetQuestion"
+              />
+            </template>
+
+            <button
+              v-if="voiceSupported"
+              class="composer-plus-item"
+              type="button"
+              :class="{ 'is-recording': voiceRecording }"
+              :disabled="composerBusy > 0 || stopButtonActive || voiceTranscribing"
+              :title="voiceButtonTitle"
+              @click.stop="handleToggleVoiceRecord"
+            >
+              <i
+                :class="[
+                  voiceRecording
+                    ? 'fa-solid fa-stop'
+                    : voiceTranscribing
+                      ? 'fa-solid fa-waveform-lines'
+                      : 'fa-solid fa-microphone',
+                  'composer-plus-item-icon'
+                ]"
+                aria-hidden="true"
+              ></i>
+              <span class="composer-plus-item-label">{{ t('messenger.world.voice.title') }}</span>
+              <span v-if="voiceRecording" class="composer-voice-timer" :title="voiceRecordingLabel">
+                {{ formatVoiceDurationLabel(props.voiceDurationMs) }}
+              </span>
+            </button>
+          </div>
         </div>
 
+        <ComposerStatusBar :workspace-name="workspaceName" />
+
+        <div v-if="showApprovalModeSelector" ref="approvalMenuAnchorRef" class="composer-anchor">
+          <button
+            class="composer-approval-trigger"
+            type="button"
+            :class="{ 'is-active': approvalMenuVisible }"
+            :title="approvalTriggerTitle"
+            :aria-label="approvalTriggerTitle"
+            :aria-expanded="approvalMenuVisible"
+            :disabled="approvalModeSyncing"
+            @click.stop="toggleApprovalMenu"
+          >
+            <i :class="[approvalTriggerIcon, 'composer-approval-icon']" aria-hidden="true"></i>
+            <span class="composer-approval-label">{{ approvalModeLabel }}</span>
+            <i class="fa-solid fa-chevron-down composer-caret" aria-hidden="true"></i>
+          </button>
+          <div v-if="approvalMenuVisible" class="composer-panel composer-panel--approval" @click.stop>
+            <div class="composer-panel-title">{{ t('chat.composer.approval') }}</div>
+            <button
+              v-for="option in approvalOptions"
+              :key="option.value"
+              class="composer-panel-item composer-panel-item--radio"
+              :class="{ 'is-selected': option.value === approvalModeValue }"
+              type="button"
+              role="menuitemradio"
+              :aria-checked="option.value === approvalModeValue"
+              @click="selectApprovalMode(option.value)"
+            >
+              <span class="composer-panel-radio" aria-hidden="true">
+                <i v-if="option.value === approvalModeValue" class="fa-solid fa-check"></i>
+              </span>
+              <span class="composer-panel-main">
+                <span class="composer-panel-item-label">{{ option.label }}</span>
+                <span class="composer-panel-desc">{{ option.description }}</span>
+              </span>
+            </button>
+            <div class="composer-panel-hint">{{ t('chat.composer.approval.hint') }}</div>
+          </div>
+        </div>
+      </div>
+
         <div class="composer-action-group composer-action-group--end">
+          <!-- 右组（对齐桌面 composer.slint:637-663）：模型 + 上下文占用 → 发送/停止。
+               占用统计不再单独占一个图标位：触发器上的大脑就是占用图标（按占用率填充），
+               数字与进度在浮层里展开。数据仍取自**唯一**一份投影 sessionContextUsage.ts。 -->
           <div ref="modelMenuAnchorRef" class="composer-anchor composer-anchor--card">
             <button
               class="composer-model-trigger"
@@ -289,10 +327,13 @@
               :aria-expanded="modelMenuVisible"
               @click.stop="toggleModelMenu"
             >
-              <i class="fa-solid fa-brain composer-model-icon" aria-hidden="true"></i>
+              <ContextUsageIcon class="composer-model-usage-icon" :ratio="contextUsage.ratio" />
               <span class="composer-model-name">{{ modelTriggerLabel }}</span>
               <span v-if="reasoningEffortCompactLabel" class="composer-model-effort">
                 {{ reasoningEffortCompactLabel }}
+              </span>
+              <span class="composer-model-usage" :class="contextUsage.level" data-testid="composer-context-percent">
+                {{ contextUsage.percentText }}
               </span>
               <span v-if="modelSwitching" class="composer-model-spinner" aria-hidden="true"></span>
               <i v-else class="fa-solid fa-chevron-down composer-caret" aria-hidden="true"></i>
@@ -301,10 +342,7 @@
               v-if="modelMenuVisible"
               :items="modelOptions"
               :active-model-id="composerModelName"
-              :active-model-label="modelTriggerLabel"
-              :default-model-name="modelCatalog.defaultModelName"
-              :user-default-model-name="modelCatalog.userDefaultModelName"
-              :supports-user-default="modelCatalog.supportsUserDefault"
+              :context-usage="contextUsage"
               :loading="modelCatalog.loading"
               :failed="modelCatalog.failed"
               :busy="modelSwitching"
@@ -316,17 +354,6 @@
               @close="closeComposerPanels"
             />
           </div>
-
-          <!-- 右组（对齐桌面 composer.slint:637-663）：模型 → 上下文占用 → 发送/停止。
-               占用图标复用**唯一**一份占用投影 sessionContextUsage.ts（与壳体底部
-               MessengerStatusBar 同源同值），这里不再自算一份。 -->
-          <span
-            class="composer-context-usage"
-            data-testid="composer-context-usage"
-            :title="contextUsageTitle"
-          >
-            <ContextUsageIcon :ratio="contextUsage.ratio" />
-          </span>
 
           <button
             class="composer-send-btn"
@@ -503,8 +530,10 @@ const dragCounter = ref(0);
 const approvalMenuAnchorRef = ref<HTMLElement | null>(null);
 const modelMenuAnchorRef = ref<HTMLElement | null>(null);
 const commandMenuAnchorRef = ref<HTMLElement | null>(null);
+const presetMenuAnchorRef = ref<HTMLElement | null>(null);
 const approvalMenuVisible = ref(false);
 const modelMenuVisible = ref(false);
+const presetMenuVisible = ref(false);
 // 命令按钮把命令面板钉住（桌面 `root.command-open`）；输入即交回 `/` 建议链路。
 const commandMenuOpen = ref(false);
 const modelSwitching = ref(false);
@@ -689,7 +718,10 @@ const modelOptions = computed<ComposerModelOption[]>(() =>
   Array.isArray(composerModelCatalog.value.items) ? composerModelCatalog.value.items : []
 );
 const modelTriggerLabel = computed(() => composerModelDisplayName.value);
-const modelTriggerTitle = computed(() => `${t('chat.composer.modelSelect')}: ${modelTriggerLabel.value}`);
+// 触发器同时承载模型与占用：悬浮给出「切换模型: <模型> · 上下文占用 12k / 128k」。
+const modelTriggerTitle = computed(
+  () => `${t('chat.composer.modelSelect')}: ${modelTriggerLabel.value} · ${contextUsageTitle.value}`
+);
 const reasoningEffortCompactLabel = computed(() => {
   if (reasoningEffort.value === 'default') return '';
   const option = reasoningEffortOptions.value.find((item) => item.value === reasoningEffort.value);
@@ -700,8 +732,8 @@ const reasoningEffortCompactLabel = computed(() => {
     .sort((left, right) => left - right)[0];
   return typeof splitIndex === 'number' ? label.slice(0, splitIndex).trim() || label : label;
 });
-// §8.2 右组占用图标：复用**唯一**一份占用投影（`sessionContextUsage.ts`），
-// 与壳体底部 `MessengerStatusBar` 同源同值，避免两处百分比漂移。
+// 占用统计只有 `sessionContextUsage.ts` 一份实现：模型触发器上的大脑、百分比和
+// 浮层里的明细都读同一个投影，同一屏不会漂出两个百分比。
 const contextUsage = useSessionContextUsage({
   scope: () => `${String(chatStore.activeSessionId || '').trim()}:${composerModelName.value}`,
   messages: () => (Array.isArray(props.contextMessages) ? props.contextMessages : []),
@@ -713,8 +745,7 @@ const contextUsageTitle = computed(() => {
   const counts = String(contextUsage.value.counts || '').trim();
   return counts ? `${t('profile.stats.contextTokens')} ${counts}` : t('profile.stats.contextTokens');
 });
-// B6：输入卡的**状态面**只剩「发送目标工作目录」，且已随桌面挪进工具栏左组；
-// 在线状态与带标签的占用条统一由壳体底部状态栏显示。
+// 输入卡的状态面只剩「这次消息发到哪个工作目录」；在线与占用都不再单独占一行。
 const workspaceName = computed(
   () => String(workspaceDisplayNameOverride.value || '').trim() || t('messenger.workspace.defaultName')
 );
@@ -737,11 +768,9 @@ const reasoningEffortOptions = computed(() =>
     label: t(`desktop.system.reasoningEffort.${value}`)
   }))
 );
-// §8.1 placeholder: "给 <工作区> 发送消息…"
+// 输入框不再放占位文字：发送目标已经由工具栏左组的工作目录 chip 说明。
 const inputPlaceholder = computed(() =>
-  props.inquiryActive
-    ? t('chat.input.inquiryPlaceholder')
-    : t('chat.composer.placeholder', { workspace: workspaceName.value })
+  props.inquiryActive ? t('chat.input.inquiryPlaceholder') : ''
 );
 const formatVoiceDurationLabel = (durationMs: unknown): string => {
   const value = Number(durationMs);
@@ -896,6 +925,7 @@ const commandPanelItems = computed(() =>
 const commandPanelVisible = computed(() => commandMenuOpen.value || commandSuggestionsVisible.value);
 const commandTriggerTitle = computed(() => t('chat.composer.commands'));
 const presetQuestionItems = computed(() => normalizeAgentPresetQuestions(props.presetQuestions));
+const presetTriggerTitle = computed(() => t('chat.commandMenu.presetQuestions'));
 
 const buildAttachmentId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
@@ -1292,7 +1322,8 @@ const handleInputKeydown = async (event) => {
     const hasOpenPanel =
       commandMenuOpen.value ||
       approvalMenuVisible.value ||
-      modelMenuVisible.value;
+      modelMenuVisible.value ||
+      presetMenuVisible.value;
     if (hasOpenPanel) {
       event.preventDefault();
       closeComposerPanels();
@@ -2066,12 +2097,14 @@ const closeComposerPanels = () => {
   commandMenuOpen.value = false;
   approvalMenuVisible.value = false;
   modelMenuVisible.value = false;
+  presetMenuVisible.value = false;
 };
 
-const closeOtherPanels = (keep: 'command' | 'approval' | 'model') => {
+const closeOtherPanels = (keep: 'command' | 'approval' | 'model' | 'preset') => {
   if (keep !== 'command') commandMenuOpen.value = false;
   if (keep !== 'approval') approvalMenuVisible.value = false;
   if (keep !== 'model') modelMenuVisible.value = false;
+  if (keep !== 'preset') presetMenuVisible.value = false;
 };
 
 // 命令按钮只开面板、不发送：选中项填入草稿（与桌面 `root.draft = command.value` 一致）。
@@ -2080,6 +2113,14 @@ const toggleCommandMenu = () => {
   closeOtherPanels('command');
   commandMenuOpen.value = next;
   if (next) commandMenuIndex.value = 0;
+};
+
+// 预设问题按钮：只开合浮层，选中项由 applyPresetQuestion 填入草稿。
+const togglePresetMenu = () => {
+  if (stopButtonActive.value) return;
+  const next = !presetMenuVisible.value;
+  closeOtherPanels('preset');
+  presetMenuVisible.value = next;
 };
 
 const toggleApprovalMenu = () => {
@@ -2264,7 +2305,8 @@ const isPointerInside = (element: HTMLElement | null, target: Node | null): bool
 const hasOpenComposerPanel = (): boolean =>
   commandMenuOpen.value ||
   approvalMenuVisible.value ||
-  modelMenuVisible.value;
+  modelMenuVisible.value ||
+  presetMenuVisible.value;
 
 const handleDocumentPointerDown = (event: PointerEvent) => {
   const target = event.target as Node | null;
@@ -2273,6 +2315,9 @@ const handleDocumentPointerDown = (event: PointerEvent) => {
   }
   if (approvalMenuVisible.value && !isPointerInside(approvalMenuAnchorRef.value, target)) {
     approvalMenuVisible.value = false;
+  }
+  if (presetMenuVisible.value && !isPointerInside(presetMenuAnchorRef.value, target)) {
+    presetMenuVisible.value = false;
   }
   if (modelMenuVisible.value && !isPointerInside(modelMenuAnchorRef.value, target)) {
     modelMenuVisible.value = false;

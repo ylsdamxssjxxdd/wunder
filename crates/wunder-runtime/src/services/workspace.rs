@@ -55,8 +55,23 @@ const USAGE_STATS_RECENT_LIMIT: usize = 8;
 pub const USAGE_STATS_RECENT_MAX: usize = 32;
 const USAGE_STATS_KEY_SEPARATOR: char = '\u{1}';
 /// 扁平化作用域的一次性目录迁移标记（per user）。
-const FLATTEN_MIGRATION_META_PREFIX: &str = "workspace_flatten_migrated_v1:";
+const FLATTEN_MIGRATION_META_PREFIX: &str = "workspace_flatten_migrated_v2:";
 const FLATTEN_MIGRATION_CACHE_MAX: usize = 4096;
+/// 云端形态：智能体云端目录固定为用户目录下的 `workspace` 子目录。
+/// 作用域 id 以 `__aw__` 标记结尾，与桌面工作区 `__w__`、容器 `__c__`、
+/// 历史 agent `__a__`/`__agent__` 后缀互不冲突。
+const AGENT_WORKSPACE_SCOPE_MARKER: &str = "__aw__";
+pub const AGENT_WORKSPACE_DIR: &str = "workspace";
+/// 云端形态拆分后保留在用户目录根的内容；其余工作文件并入智能体云端目录。
+const USER_ROOT_KEEPERS: &[&str] = &[
+    "global",
+    "agents",
+    "skills",
+    "knowledge",
+    ".wunder",
+    "tooling.json",
+    AGENT_WORKSPACE_DIR,
+];
 
 fn effective_temp_cleanup_idle_ttl_s(single_root: bool) -> f64 {
     // Single-root mode points to a user-managed local workspace (CLI/Desktop),
@@ -433,6 +448,10 @@ impl WorkspaceManager {
             }
             return self.root.join(safe_id);
         }
+        if let Some(plain_user) = extract_agent_workspace_user(&safe_id) {
+            // 云端形态：智能体云端目录 = 用户目录下的 workspace 子目录。
+            return self.root.join(plain_user).join(AGENT_WORKSPACE_DIR);
+        }
         let container_id = extract_container_id_from_scoped_user(&safe_id);
         if let Some(path) = self.container_roots.read().get(&container_id).cloned() {
             return path;
@@ -447,8 +466,9 @@ impl WorkspaceManager {
     }
 
     /// Enable the cloud form: one agent per user, no agent/container scoping.
-    /// Every user keeps exactly one directory (`root/<user>`); the CLI/desktop
-    /// `single_root` mode is a separate switch and is not affected.
+    /// 用户目录保持 `root/<user>`（global/agents/skills/knowledge/tooling），
+    /// 智能体云端目录收敛为用户目录下的 `workspace` 子目录。CLI/desktop 的
+    /// `single_root` 模式是独立开关，不受影响。
     pub fn set_flatten_agent_scope(&self, enabled: bool) {
         self.flatten_agent_scope
             .store(enabled, std::sync::atomic::Ordering::SeqCst);
@@ -461,8 +481,12 @@ impl WorkspaceManager {
 
     pub fn scoped_user_id(&self, user_id: &str, agent_id: Option<&str>) -> String {
         let safe_user = self.safe_user_id(user_id);
-        if self.single_root || self.flatten_agent_scope_enabled() {
+        if self.single_root {
             return safe_user;
+        }
+        if self.flatten_agent_scope_enabled() {
+            // 云端形态：智能体云端目录统一指向用户目录下的 workspace 子目录。
+            return format!("{safe_user}{AGENT_WORKSPACE_SCOPE_MARKER}");
         }
         let agent_id = agent_id
             .map(|value| value.trim())
@@ -518,7 +542,11 @@ impl WorkspaceManager {
     pub fn scoped_user_id_by_container(&self, user_id: &str, sandbox_container_id: i32) -> String {
         let safe_user = self.safe_user_id(user_id);
         if self.flatten_agent_scope_enabled() {
-            return safe_user;
+            if normalize_workspace_container_id(sandbox_container_id) == USER_PRIVATE_CONTAINER_ID {
+                return safe_user;
+            }
+            // 云端形态：智能体（沙箱容器）云端目录统一为用户目录下的 workspace。
+            return format!("{safe_user}{AGENT_WORKSPACE_SCOPE_MARKER}");
         }
         let container_id = normalize_workspace_container_id(sandbox_container_id);
         if container_id == USER_PRIVATE_CONTAINER_ID {
@@ -631,12 +659,31 @@ impl WorkspaceManager {
     }
 
     fn user_root(&self, user_id: &str) -> PathBuf {
+        if !self.single_root && self.flatten_agent_scope_enabled() {
+            // 云端形态：公开路径与展示名统一指向智能体云端目录（用户目录下的 workspace）。
+            return self
+                .root
+                .join(self.plain_cloud_user_id(user_id))
+                .join(AGENT_WORKSPACE_DIR);
+        }
         self.workspace_root(user_id)
+    }
+
+    /// 云端形态纯用户名：剥掉智能体云端作用域标记，得到用户目录 id。
+    fn plain_cloud_user_id(&self, user_id: &str) -> String {
+        let safe_id = self.safe_user_id(user_id);
+        match extract_agent_workspace_user(&safe_id) {
+            Some(plain) => plain.to_string(),
+            None => safe_id,
+        }
     }
 
     pub fn public_root(&self, user_id: &str) -> PathBuf {
         if self.single_root {
             return PathBuf::from(PUBLIC_WORKSPACE_ROOT);
+        }
+        if self.flatten_agent_scope_enabled() {
+            return PathBuf::from(PUBLIC_WORKSPACE_ROOT).join(self.plain_cloud_user_id(user_id));
         }
         let safe_id = self.safe_user_id(user_id);
         PathBuf::from(PUBLIC_WORKSPACE_ROOT).join(safe_id)
@@ -938,22 +985,29 @@ impl WorkspaceManager {
 
     pub fn ensure_user_root(&self, user_id: &str) -> Result<PathBuf> {
         let user_root = self.user_root(user_id);
+        let safe_id = self.safe_user_id(user_id);
         // A desktop workspace points at a real host folder; silently recreating
         // it after the user moved or unplugged it would hide the problem.
-        if extract_workspace_key_from_scoped_user(&self.safe_user_id(user_id)).is_some() {
+        if extract_workspace_key_from_scoped_user(&safe_id).is_some() {
             if !user_root.exists() {
                 return Err(anyhow::anyhow!(i18n::t("workspace.root_missing")
                     .replace("{path}", &user_root.to_string_lossy())));
             }
             return Ok(user_root);
         }
+        if self.flatten_agent_scope_enabled() {
+            // 云端形态：用户目录保留，智能体云端目录 = 用户目录下的 workspace。
+            fs::create_dir_all(self.root.join(self.plain_cloud_user_id(user_id)))?;
+        }
         fs::create_dir_all(&user_root)?;
-        self.migrate_legacy_scoped_dirs(&self.safe_user_id(user_id));
+        self.migrate_legacy_scoped_dirs(&self.plain_cloud_user_id(user_id));
         Ok(user_root)
     }
 
     /// 云端形态一次性迁移：把历史按智能体/容器隔离的目录
-    /// （`{user}__a__*` / `{user}__agent__*` / `{user}__c__*`）内容并入用户根。
+    /// （`{user}__a__*` / `{user}__agent__*` / `{user}__c__*`）以及用户目录根内
+    /// 的工作文件并入智能体云端目录（`root/<user>/workspace`）；用户目录只保留
+    /// 全局配置（global/agents/skills/knowledge/tooling/worker-card）。
     /// 每个用户只做一次（进程内记忆 + 持久 meta 标记），重名追加 `(2)`、`(3)`… 后缀。
     fn migrate_legacy_scoped_dirs(&self, safe_user: &str) {
         if !self.flatten_agent_scope_enabled() || safe_user.is_empty() {
@@ -975,34 +1029,42 @@ impl WorkspaceManager {
                 .insert(safe_user.to_string());
             return;
         }
-        let user_root = self.user_root(safe_user);
+        let user_dir = self.root.join(safe_user);
+        let agent_dir = user_dir.join(AGENT_WORKSPACE_DIR);
         let mut moved = 0_usize;
         let mut merged_dirs = 0_usize;
-        if let Some(parent) = user_root.parent() {
-            if let Ok(entries) = fs::read_dir(parent) {
-                for entry in entries.flatten() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if !is_legacy_scope_dir_for(&name, safe_user) {
-                        continue;
-                    }
-                    let source = entry.path();
-                    if !source.is_dir() {
-                        continue;
-                    }
-                    if let Err(err) = fs::create_dir_all(&user_root) {
-                        warn!("flatten migration: create user root failed: {err}");
-                        return;
-                    }
-                    moved += move_dir_contents_merging(&source, &user_root);
-                    if fs::read_dir(&source)
-                        .map(|mut iter| iter.next().is_none())
-                        .unwrap_or(false)
-                    {
-                        let _ = fs::remove_dir(&source);
-                    }
-                    merged_dirs += 1;
+        // 1) 历史 agent/容器隔离目录内容并入智能体云端目录。
+        if let Ok(entries) = fs::read_dir(&self.root) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if !is_legacy_scope_dir_for(&name, safe_user) {
+                    continue;
                 }
+                let source = entry.path();
+                if !source.is_dir() {
+                    continue;
+                }
+                if let Err(err) = fs::create_dir_all(&agent_dir) {
+                    warn!("flatten migration: create agent workspace dir failed: {err}");
+                    return;
+                }
+                moved += move_dir_contents_merging(&source, &agent_dir, &|_| false);
+                if fs::read_dir(&source)
+                    .map(|mut iter| iter.next().is_none())
+                    .unwrap_or(false)
+                {
+                    let _ = fs::remove_dir(&source);
+                }
+                merged_dirs += 1;
             }
+        }
+        // 2) 用户目录根内的工作文件并入智能体云端目录，全局配置保留在用户目录。
+        if user_dir.is_dir() {
+            if let Err(err) = fs::create_dir_all(&agent_dir) {
+                warn!("flatten migration: create agent workspace dir failed: {err}");
+                return;
+            }
+            moved += move_dir_contents_merging(&user_dir, &agent_dir, &is_user_root_keeper);
         }
         if let Err(err) = self.storage.set_meta(&meta_key, "1") {
             warn!("flatten migration: persist marker failed: {err}");
@@ -1010,10 +1072,10 @@ impl WorkspaceManager {
         self.flatten_migration_done
             .lock()
             .insert(safe_user.to_string());
-        if merged_dirs > 0 {
+        if moved > 0 || merged_dirs > 0 {
             info!(
                 user = safe_user,
-                merged_dirs, moved, "merged legacy scoped workspace dirs into the user root"
+                merged_dirs, moved, "merged legacy agent workspace files into the agent cloud dir"
             );
             self.clear_workspace_cache(safe_user);
         }
@@ -2383,7 +2445,10 @@ impl WorkspaceManager {
             ));
         }
         let removed =
-            if extract_container_id_from_scoped_user(&safe_id) == USER_PRIVATE_CONTAINER_ID {
+            if extract_agent_workspace_user(&safe_id).is_some() {
+                // 云端形态智能体云端目录：整体清空。
+                clear_dir_contents(&workspace_root)
+            } else if extract_container_id_from_scoped_user(&safe_id) == USER_PRIVATE_CONTAINER_ID {
                 clear_dir_contents_except(&workspace_root, USER_PRIVATE_PERSISTENT_ROOTS)
             } else {
                 clear_dir_contents(&workspace_root)
@@ -3089,8 +3154,25 @@ fn is_legacy_scope_dir_for(name: &str, safe_user: &str) -> bool {
     rest.starts_with("__a__") || rest.starts_with("__agent__") || rest.starts_with("__c__")
 }
 
-/// 把 `source` 下的内容并入 `target`，重名追加 `(2)`、`(3)`… 后缀；返回移动条目数。
-fn move_dir_contents_merging(source: &Path, target: &Path) -> usize {
+/// 云端形态智能体云端作用域 id（`{user}__aw__`）中的纯用户部分；非标记 id 返回 None。
+fn extract_agent_workspace_user(user_id: &str) -> Option<&str> {
+    match user_id.strip_suffix(AGENT_WORKSPACE_SCOPE_MARKER) {
+        Some(plain) if !plain.is_empty() => Some(plain),
+        _ => None,
+    }
+}
+
+/// 云端形态拆分后是否保留在用户目录根（其余为智能体工作文件，迁入 workspace 子目录）。
+fn is_user_root_keeper(name: &str) -> bool {
+    USER_ROOT_KEEPERS
+        .iter()
+        .any(|keep| name.eq_ignore_ascii_case(keep))
+        || name.to_ascii_lowercase().ends_with(".worker-card.json")
+}
+
+/// 把 `source` 下的内容并入 `target`（`keep` 返回 true 的条目跳过），
+/// 重名追加 `(2)`、`(3)`… 后缀；返回移动条目数。
+fn move_dir_contents_merging(source: &Path, target: &Path, keep: &dyn Fn(&str) -> bool) -> usize {
     let mut moved = 0_usize;
     let Ok(entries) = fs::read_dir(source) else {
         return 0;
@@ -3101,6 +3183,9 @@ fn move_dir_contents_merging(source: &Path, target: &Path) -> usize {
             continue;
         };
         let display_name = file_name.to_string_lossy().to_string();
+        if keep(&display_name) {
+            continue;
+        }
         let mut to = target.join(file_name);
         if to.exists() {
             to = unique_merged_path(target, &display_name);
@@ -3196,7 +3281,7 @@ mod concurrency_tests;
 #[cfg(test)]
 mod tests {
     use super::{effective_temp_cleanup_idle_ttl_s, TEMP_FILES_IDLE_TTL_S};
-    use crate::storage::{SqliteStorage, StorageBackend};
+    use crate::storage::{SqliteStorage, StorageBackend, USER_PRIVATE_CONTAINER_ID};
     use serde_json::json;
     use std::collections::HashMap;
     use std::fs;
@@ -3229,23 +3314,45 @@ mod tests {
     }
 
     #[test]
-    fn flatten_agent_scope_flattens_scoped_ids() {
-        let (workspace, _dir) = build_workspace_manager();
+    fn flatten_agent_scope_splits_user_dir_and_agent_cloud_dir() {
+        let (workspace, dir) = build_workspace_manager();
         workspace.set_flatten_agent_scope(true);
         assert!(workspace.flatten_agent_scope_enabled());
 
-        assert_eq!(workspace.scoped_user_id("alice", Some("writer")), "alice");
-        assert_eq!(workspace.scoped_user_id_by_container("alice", 3), "alice");
+        let root = dir.path().join("workspaces");
+        // 智能体云端作用域：标记 id / 容器 id 都收敛到用户目录下的 workspace。
+        let agent_scope = workspace.scoped_user_id("alice", Some("writer"));
+        assert_eq!(agent_scope, "alice__aw__");
+        assert_eq!(
+            workspace.scoped_user_id_by_container("alice", 3),
+            "alice__aw__"
+        );
+        assert_eq!(
+            workspace.workspace_root(&agent_scope),
+            root.join("alice").join("workspace")
+        );
+        // 用户目录（私有容器作用域）保持在用户根。
+        let private_scope =
+            workspace.scoped_user_id_by_container("alice", USER_PRIVATE_CONTAINER_ID);
+        assert_eq!(private_scope, "alice");
+        assert_eq!(workspace.workspace_root("alice"), root.join("alice"));
+        // 智能体删除清理不波及共享云端目录（variants 与未隔离一致时跳过）。
         assert_eq!(
             workspace.scoped_user_id_variants("alice", Some("writer")),
             vec!["alice".to_string()]
         );
-        let bare_root = workspace.workspace_root("alice");
-        let scoped_root =
-            workspace.workspace_root(&workspace.scoped_user_id("alice", Some("writer")));
+        // 公开路径统一指向智能体云端目录。
+        let agent_root = workspace.ensure_user_root("alice").expect("ensure root");
+        fs::write(agent_root.join("a.txt"), b"a").expect("write a");
         assert_eq!(
-            scoped_root, bare_root,
-            "cloud form keeps exactly one directory per user"
+            workspace.display_path("alice", &agent_root.join("a.txt")),
+            "/workspaces/alice/a.txt"
+        );
+        assert_eq!(
+            workspace
+                .map_public_path("alice", &workspace.public_root("alice").join("a.txt"))
+                .expect("map public path"),
+            agent_root.join("a.txt")
         );
     }
 
@@ -3256,8 +3363,12 @@ mod tests {
         // 迁移标记在首次 ensure 时落库，因此历史目录必须在首次访问前就存在。
         let root = dir.path().join("workspaces");
         let user_root = root.join("owner");
+        let agent_root = user_root.join("workspace");
         fs::create_dir_all(&user_root).expect("user root");
         fs::write(user_root.join("keep.txt"), b"keep").expect("keep");
+        // 用户目录全局配置保留在用户根。
+        fs::create_dir_all(user_root.join("global")).expect("global dir");
+        fs::write(user_root.join("global").join("tooling.json"), b"{}").expect("tooling");
         let legacy = root.join("owner__a__abc123");
         fs::create_dir_all(legacy.join("nested")).expect("legacy dir");
         fs::write(legacy.join("keep.txt"), b"conflict").expect("conflict file");
@@ -3265,16 +3376,19 @@ mod tests {
 
         let resolved = workspace.ensure_user_root("owner").expect("ensure root");
 
-        assert_eq!(resolved, user_root);
+        assert_eq!(resolved, agent_root);
+        // 历史 agent 目录先并入智能体云端目录（保留智能体工作现场），重名再让位。
         assert_eq!(
-            fs::read_to_string(user_root.join("keep.txt")).expect("kept file"),
-            "keep"
-        );
-        assert_eq!(
-            fs::read_to_string(user_root.join("keep (2).txt")).expect("merged file"),
+            fs::read_to_string(agent_root.join("keep.txt")).expect("merged legacy file"),
             "conflict"
         );
-        assert!(user_root.join("nested").join("new.txt").exists());
+        // 用户目录内的散落工作文件随后并入，重名追加后缀；全局配置保留。
+        assert_eq!(
+            fs::read_to_string(agent_root.join("keep (2).txt")).expect("kept user file"),
+            "keep"
+        );
+        assert!(user_root.join("global").join("tooling.json").exists());
+        assert!(agent_root.join("nested").join("new.txt").exists());
         assert!(!legacy.exists(), "emptied legacy dir should be removed");
     }
 

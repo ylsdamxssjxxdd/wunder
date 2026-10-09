@@ -65,36 +65,6 @@
   "en": "Import card"
  },
  {
-  "key": "ag_name_label",
-  "zh": "专家名称",
-  "en": "Agent name"
- },
- {
-  "key": "ag_name_placeholder",
-  "zh": "例如：小蜂",
-  "en": "e.g. Scout"
- },
- {
-  "key": "ag_greeting_label",
-  "zh": "问候语 / 描述",
-  "en": "Greeting / description"
- },
- {
-  "key": "ag_greeting_placeholder",
-  "zh": "告诉用户这个专家能做什么",
-  "en": "Tell users what this agent can do"
- },
- {
-  "key": "ag_system_prompt",
-  "zh": "系统提示词",
-  "en": "System prompt"
- },
- {
-  "key": "ag_tool_capability",
-  "zh": "工具能力",
-  "en": "Tools"
- },
- {
   "key": "ag_tools_available_suffix",
   "zh": " 项可用",
   "en": " available"
@@ -4398,11 +4368,6 @@
   "en": "No archived threads yet."
  },
  {
-  "key": "stc_memory_tab",
-  "zh": "记忆条目",
-  "en": "Memories"
- },
- {
   "key": "stc_runs_tab",
   "zh": "用量统计",
   "en": "Usage"
@@ -4413,14 +4378,34 @@
   "en": "Open"
  },
  {
-  "key": "stc_agent_prompt_frozen",
-  "zh": "线程首次确定后保持冻结，避免破坏提示词缓存。",
-  "en": "Frozen once a thread first sets it, to preserve the prompt cache."
+  "key": "stc_agent_name",
+  "zh": "智能体名称",
+  "en": "Agent name"
  },
  {
-  "key": "stc_agent_prompt_empty",
-  "zh": "尚未写入系统提示词",
-  "en": "No system prompt yet"
+  "key": "stc_agent_greeting",
+  "zh": "问候语",
+  "en": "Greeting"
+ },
+ {
+  "key": "stc_agent_greeting_hint",
+  "zh": "用于会话中的首次问候",
+  "en": "Used for the first greeting in a session"
+ },
+ {
+  "key": "stc_agent_extra_prompt",
+  "zh": "额外提示词",
+  "en": "Extra prompt"
+ },
+ {
+  "key": "stc_agent_extra_prompt_hint",
+  "zh": "输入需要追加到基础系统提示词后的内容",
+  "en": "Text appended after the base system prompt"
+ },
+ {
+  "key": "stc_agent_admin_tools",
+  "zh": "管理员开放工具",
+  "en": "Administrator-enabled tools"
  },
  {
   "key": "stc_agent_behavior",
@@ -4433,19 +4418,14 @@
   "en": "These switches apply to every run of the built-in agent."
  },
  {
-  "key": "stc_agent_name_required",
-  "zh": "名称不能为空",
-  "en": "A name is required"
- },
- {
   "key": "stc_agent_model_hint",
   "zh": "只能选择「模型设置」中已配置的对话模型；未配置时请先到模型设置添加。",
   "en": "Only conversational models configured in Models can be used; add one there first if the list is empty."
  },
  {
   "key": "stc_agent_tools_note",
-  "zh": "开关即时写入内置智能体的工具启用集合；搜索只过滤当前列表。",
-  "en": "Switches write the built-in agent's enabled tool set immediately; the box only filters this list."
+  "zh": "勾选随「保存」一起写入内置智能体的工具启用集合；搜索只过滤当前列表。",
+  "en": "Checks join the built-in agent's enabled tool set on save; the box only filters this list."
  },
  {
   "key": "stc_agent_tool_no_desc",
@@ -4483,11 +4463,6 @@
   "en": "Prefer the mother agent when delegating subtasks."
  },
  {
-  "key": "stc_agent_prompt_readonly",
-  "zh": "系统提示词只读：线程首次确定后冻结，改写会破坏大模型提示词缓存。",
-  "en": "The system prompt is read-only: a thread freezes it on first use and rewriting it would break the prompt cache."
- },
- {
   "key": "stc_agent_run",
   "zh": "运行策略",
   "en": "Run strategy"
@@ -4496,16 +4471,6 @@
   "key": "stc_agent_run_note",
   "zh": "权限模式由输入区的选择器统一控制。",
   "en": "The composer's selector owns the permission mode."
- },
- {
-  "key": "stc_agent_saving",
-  "zh": "正在保存…",
-  "en": "Saving…"
- },
- {
-  "key": "stc_agent_saved_note",
-  "zh": "保存后立即作用于新任务线程。",
-  "en": "Saved settings apply to new task threads right away."
  },
  {
   "key": "stc_runs_duration",

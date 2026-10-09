@@ -34,6 +34,8 @@
   --mz-timeline-line: #e2dfda;
   --mz-timeline-hover: #f6f5f3;
   --mz-thought: #3e9c7e;
+  /* 思考/工具条目是过程信息，比正文与批次栏更淡一档。 */
+  --mz-timeline-entry-soft: #9ba0a8;
 
   /* §5.2 sidebar metrics */
   --mz-sidebar-width: 240px;
@@ -45,9 +47,6 @@
   --mz-thread-row-height: 28px;
   --mz-thread-indent: 28px;
   --mz-settings-btn-height: 40px;
-  --mz-site-header-height: 48px;
-  --mz-chat-header-height: 56px;
-  --mz-status-bar-height: 28px;
 
   /* §11.2 typography / §11.3 radii */
   --mz-font-xs: 11px;
@@ -76,79 +75,6 @@
 
 .messenger-view.messenger-view--action-blocked {
   pointer-events: none;
-}
-
-/* ---------------------------------------------------------------- site bar */
-
-.messenger-site-header {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 8px;
-  box-sizing: border-box;
-  height: var(--mz-site-header-height);
-  padding: 0 16px;
-  border-bottom: 1px solid var(--mz-border);
-  background: var(--mz-surface);
-}
-
-.messenger-site-brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  color: var(--mz-text);
-  font-size: var(--mz-font-title);
-  font-weight: 600;
-  letter-spacing: 0.01em;
-}
-
-.messenger-site-brand i {
-  color: var(--mz-primary);
-  font-size: var(--mz-font-base);
-}
-
-.messenger-site-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-}
-
-.messenger-site-action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 32px;
-  min-width: 32px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: var(--mz-radius-btn);
-  color: var(--mz-text-secondary);
-  background: transparent;
-  font: inherit;
-  font-size: var(--mz-font-md);
-  cursor: pointer;
-}
-
-.messenger-site-action:hover {
-  color: var(--mz-primary);
-  background: var(--mz-hover);
-}
-
-.messenger-site-account {
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  cursor: pointer;
-}
-
-.messenger-site-account .messenger-avatar-btn {
-  width: 32px;
-  height: 32px;
-  font-size: var(--mz-font-sm);
 }
 
 /* ------------------------------------------------------------------ shell */
@@ -1145,103 +1071,6 @@
 
 /* -------------------------------------------------------------- chat pane */
 
-.messenger-chat-header {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 12px;
-  box-sizing: border-box;
-  height: var(--mz-chat-header-height);
-  padding: 0 16px;
-  border-bottom: 1px solid var(--mz-border);
-  background: var(--mz-surface);
-}
-
-.messenger-sidebar-toggle {
-  display: none;
-}
-
-.messenger-chat-heading {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-
-.messenger-chat-workspace {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  max-width: 40%;
-  overflow: hidden;
-  color: var(--mz-text-muted);
-  font-size: var(--mz-font-base);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.messenger-chat-workspace i {
-  color: var(--mz-primary);
-}
-
-.messenger-chat-heading-divider {
-  flex-shrink: 0;
-  color: var(--mz-border-strong);
-  font-size: var(--mz-font-base);
-}
-
-.messenger-chat-title {
-  overflow: hidden;
-  color: var(--mz-text);
-  font-size: var(--mz-font-title);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.messenger-chat-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-}
-
-.messenger-header-btn,
-.messenger-header-action-text {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--mz-border);
-  border-radius: var(--mz-radius-btn);
-  color: var(--mz-text-secondary);
-  background: var(--mz-surface);
-  font: inherit;
-  font-size: var(--mz-font-md);
-  cursor: pointer;
-}
-
-.messenger-header-btn:hover,
-.messenger-header-action-text:hover {
-  color: var(--mz-primary);
-  border-color: var(--mz-primary-soft);
-  background: var(--mz-primary-tint);
-}
-
-.messenger-header-btn:disabled,
-.messenger-header-action-text:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.messenger-header-action-text--danger:hover {
-  color: var(--mz-danger);
-  border-color: var(--mz-danger);
-  background: var(--mz-danger-bg);
-}
-
 /* 用户轮次刻度条（`.messenger-turn-ruler`）是 `.messenger-main` 的绝对定位子层：
    `.messenger-chat-body` 是滚动容器，刻度条挂在它外面才不会跟着内容滚走。
    条体几何与刻度线样式都在 `sections/MessengerTurnRuler.vue` 的 scoped 样式里。 */
@@ -1262,43 +1091,40 @@
   background: transparent;
 }
 
-.messenger-status-bar {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 12px;
-  box-sizing: border-box;
-  height: var(--mz-status-bar-height);
-  padding: 0 16px;
-  border-top: 1px solid var(--mz-border);
-  color: var(--mz-text-muted);
-  background: var(--mz-surface);
-  font-size: var(--mz-font-sm);
+/* 壳体不再有顶部条后，主区浮层承担两个入口：窄视口的左栏抽屉开关、回到顶部。
+   `.messenger-scroll-top-btn` 的通用外观（34px、圆角、阴影）沿用 `messenger.css`，
+   这里只给出挂在 `.messenger-main` 上的几何。 */
+.messenger-sidebar-open,
+.messenger-main .messenger-scroll-top-btn {
+  top: 12px;
+  z-index: 7;
+  border: 0;
+  background: var(--mz-surface, #ffffff);
+  color: var(--mz-text-secondary, #3d3d3d);
+  box-shadow: inset 0 0 0 1px var(--mz-border, #e8e6e3);
 }
 
-.messenger-status-item {
+.messenger-sidebar-open {
+  position: absolute;
+  left: 12px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  cursor: pointer;
 }
 
-.messenger-status-sep {
-  color: var(--mz-border-strong);
+/* 右缘 18px 是用户轮次刻度条的命中区，按钮让开它。 */
+.messenger-main .messenger-scroll-top-btn {
+  right: 34px;
 }
 
-.messenger-status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--mz-success);
-}
-
-.messenger-status-dot.is-offline {
-  background: var(--mz-danger);
+.messenger-sidebar-open:hover,
+.messenger-main .messenger-scroll-top-btn:hover {
+  color: var(--mz-primary, #c96443);
+  box-shadow: inset 0 0 0 1px var(--mz-primary-soft, #dfac9a);
 }
 
 /* ------------------------------------------------------------ welcome pane */
@@ -1380,8 +1206,9 @@
 /* -------------------------------------------------------- narrow viewports */
 
 @media (max-width: 1023px) {
-  .messenger-sidebar-toggle {
-    display: inline-flex;
+  /* 抽屉入口浮在主区左上角，消息区顶部让出它的高度，避免压住首行。 */
+  .messenger-main .messenger-chat-body {
+    padding-top: 52px;
   }
 
   .messenger-sidebar {

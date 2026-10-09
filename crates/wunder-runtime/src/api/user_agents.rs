@@ -1302,6 +1302,9 @@ async fn apply_single_agent_update(
         if let Some(preview_skill) = payload.preview_skill {
             config.preview_skill = preview_skill;
         }
+        if payload.model_name.is_some() {
+            config.model_name = normalize_request_model_name(payload.model_name.as_deref());
+        }
         if payload.tool_names.is_some()
             || payload.ability_items.is_some()
             || payload.abilities.is_some()
@@ -2035,6 +2038,7 @@ async fn build_default_agent_config(
         description: DEFAULT_AGENT_DESCRIPTION.to_string(),
         system_prompt: DEFAULT_AGENT_SYSTEM_PROMPT.to_string(),
         preview_skill: false,
+        model_name: None,
         ability_items: resolve_record_ability_items(&[], &tool_names, &[], &[], &skill_name_keys),
         tool_names,
         declared_tool_names: Vec::new(),
@@ -2094,7 +2098,10 @@ fn default_agent_payload(
     model_name: Option<&str>,
     skill_name_keys: &HashSet<String>,
 ) -> Value {
-    let effective_model_name = normalize_request_model_name(model_name);
+    let configured_model_name = normalize_request_model_name(config.model_name.as_deref());
+    let effective_model_name = configured_model_name
+        .clone()
+        .or_else(|| normalize_request_model_name(model_name));
     let (declared_tool_names, declared_skill_names) = resolve_record_declared_names(
         &config.ability_items,
         &config.tool_names,
@@ -2115,7 +2122,7 @@ fn default_agent_payload(
         "description": config.description,
         "system_prompt": config.system_prompt,
         "preview_skill": config.preview_skill,
-        "configured_model_name": Value::Null,
+        "configured_model_name": configured_model_name,
         "model_name": effective_model_name,
         "ability_items": ability_items.clone(),
         "abilities": { "items": ability_items },
@@ -2411,6 +2418,24 @@ mod tests {
     }
 
     #[test]
+    fn default_agent_payload_reports_configured_model_over_server_default() {
+        let configured = default_agent_payload(
+            &DefaultAgentConfig {
+                model_name: Some("model-b".to_string()),
+                ..Default::default()
+            },
+            Some("model-a"),
+            &HashSet::new(),
+        );
+        assert_eq!(configured["configured_model_name"], "model-b");
+        assert_eq!(configured["model_name"], "model-b");
+
+        let unset = default_agent_payload(&DefaultAgentConfig::default(), Some("model-a"), &HashSet::new());
+        assert_eq!(unset["configured_model_name"], serde_json::Value::Null);
+        assert_eq!(unset["model_name"], "model-a");
+    }
+
+    #[test]
     fn default_agent_payload_keeps_declared_dependencies() {
         let payload = default_agent_payload(
             &DefaultAgentConfig {
@@ -2418,6 +2443,7 @@ mod tests {
                 description: String::new(),
                 system_prompt: String::new(),
                 preview_skill: false,
+                model_name: None,
                 ability_items: Vec::new(),
                 tool_names: vec!["read_file".to_string(), "planner".to_string()],
                 declared_tool_names: vec!["read_file".to_string()],

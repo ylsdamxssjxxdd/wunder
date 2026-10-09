@@ -10,7 +10,7 @@ source_docs:
 
 # 快速开始
 
-目标只有一个：打开蜂窝，跑通第一个任务。个人用户默认走蜂窝（desktop），下载即用，不需要先搭服务器。
+目标只有一个：打开蜂窝，跑通第一个任务。个人用户默认走蜂窝（desktop）——本地 AI 工作台，下载即用，不需要先搭服务器。
 
 ## 4 步跑通
 
@@ -43,8 +43,8 @@ source_docs:
 
 蜂窝覆盖绝大多数场景。以下两种可选形态只在特定需求时使用：
 
-- **舰体（server）**：需要多人共用、统一治理时部署，成员通过浏览器访问网页端。见[舰体部署](/docs/zh-CN/start/server/)。
-- **舵机（cli）**：终端与自动化场景使用。见[舵机使用](/docs/zh-CN/start/cli/)。
+- **舰体（server）**：用户与智能体管理平台，需要多人共用、统一治理时部署，成员通过浏览器访问蜂巢（云端 AI 工作台）。见[舰体部署](/docs/zh-CN/start/server/)。
+- **舵机（cli）**：手工本地操作入口，终端与自动化场景使用。见[舵机使用](/docs/zh-CN/start/cli/)。
 
 ## 验收清单
 
@@ -56,7 +56,7 @@ source_docs:
 ## 下一步
 
 - 下载与安装细节 → [蜂窝入门](/docs/zh-CN/start/desktop/)
-- 认识工作台 → [蜂巢界面](/docs/zh-CN/surfaces/frontend/)
+- 认识工作台 → [界面概览](/docs/zh-CN/surfaces/index/)
 - 深入理解系统 → [核心概览](/docs/zh-CN/concepts/)
 - 接入现有系统 → [接入概览](/docs/zh-CN/integration/)
 - 看所有工具 → [工具总览](/docs/zh-CN/tools/)

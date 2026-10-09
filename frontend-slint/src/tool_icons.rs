@@ -519,6 +519,13 @@ fn shared_tool_icon(name: &str, description: &str, category: &str) -> &'static s
     if text == "wunder@doc2md" || text.ends_with("@wunder@doc2md") {
         return "file-lines";
     }
+    // Canonical builtin names no keyword rule covers; mirrors the web
+    // `TOOL_NAME_ICON_OVERRIDES` map in `web/shared/tool-visuals.js`.
+    match normalize(name).as_str() {
+        "编辑" | "str_replace_editor" => return "file-pen",
+        "glob" => return "folder-tree",
+        _ => {}
+    }
     for (keywords, icon) in TOOL_RULES {
         if keywords.iter().any(|k| rule_matches(&text, &normalized, k)) {
             return icon;
@@ -689,6 +696,9 @@ mod tests {
         assert_eq!(workflow_icon("列出文件"), "folder-open");
         assert_eq!(workflow_icon("web_search"), "magnifying-glass");
         assert_eq!(workflow_icon("generate_image"), "paintbrush");
+        assert_eq!(workflow_icon("编辑"), "file-pen");
+        assert_eq!(workflow_icon("str_replace_editor"), "file-pen");
+        assert_eq!(workflow_icon("glob"), "folder-tree");
         assert_eq!(workflow_icon("wunder@excute"), "dragon");
         assert_eq!(workflow_icon("mcp_server.query"), "plug");
         assert_eq!(workflow_icon("未知工具"), "toolbox");

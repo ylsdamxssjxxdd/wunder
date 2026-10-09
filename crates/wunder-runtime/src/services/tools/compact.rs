@@ -62,7 +62,7 @@ fn compact_tool_description(name: &str, original: &str) -> String {
         "视频生成" | "generate_video" => Some("生成视频；prompt 必填，输出路径受限。"),
         "技能调用" | "skill_call" => Some("加载已挂载技能；命中技能后先调用。"),
         "写入文件" | "write_file" => Some("写入文件；路径受允许范围限制，支持 dry_run。"),
-        "编辑" | "edit" => Some(
+        "文本编辑" | "编辑" | "edit" => Some(
             "编辑文件；默认按字面文本替换（old_string 须唯一，除非 replace_all=true），也可用 input 传入补丁做多 hunk/多文件修改。",
         ),
         "子智能体控制" | "subagent_control" => Some(

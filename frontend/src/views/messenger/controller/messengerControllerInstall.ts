@@ -4304,11 +4304,6 @@ function installMessengerControllerMessageRoutingPreferences(ctx: MessengerContr
       ctx.openActiveAgentSettings({ focusSection: 'model' });
   };
 
-  ctx.openProfilePage = () => {
-      ctx.closeFileContainerMenu();
-      ctx.activateSettingsPanel('profile');
-  };
-
   ctx.handleSettingsLogout = () => {
       if (ctx.settingsLogoutDisabled.value) {
           return;
@@ -8240,8 +8235,6 @@ function installMessengerControllerRuntimeToolLists(ctx: MessengerControllerCont
   });
 
   ctx.showChatSettingsView = computed(() => ctx.sessionHub.activeSection !== 'messages');
-
-  ctx.showMessengerChatHeader = computed(() => ctx.sessionHub.activeSection === 'messages' || ctx.sessionHub.activeSection === 'agents');
 
 
   ctx.settingsPanelRenderKey = computed(() => ['settings', ctx.sessionHub.activeSection].join(':'));

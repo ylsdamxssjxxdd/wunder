@@ -9,14 +9,6 @@
       'messenger-view--action-blocked': isMessengerInteractionBlocked
     }"
   >
-    <MessengerSiteHeader
-      v-if="!isEmbeddedChatRoute"
-      :controller="controller"
-      @open-help="openHelpPanel"
-      @open-settings="openSettingsPage"
-      @open-profile="openProfilePage"
-    />
-
     <div class="messenger-shell">
       <MessengerSidebar
         v-show="!isEmbeddedChatRoute"
@@ -38,17 +30,27 @@
       ></div>
 
       <section class="messenger-main">
-        <MessengerChatHeader
-          v-if="showMessengerChatHeader"
-          :controller="controller"
-          @toggle-sidebar="sidebarDrawerOpen = !sidebarDrawerOpen"
-          @new-thread="startNewSession"
-          @thread-rename="renameTimelineSession"
-          @thread-detail="openTimelineSessionDetail"
-          @thread-archive="archiveTimelineSession"
-          @thread-delete="deleteThread"
-          @jump-top="jumpToMessageTop"
-        />
+        <!-- 壳体不再有顶部条：窄视口的左栏抽屉入口与「回到顶部」都挂在主区浮层上。 -->
+        <button
+          v-if="isSidebarDrawer && !sidebarDrawerOpen"
+          class="messenger-sidebar-open"
+          type="button"
+          :title="t('messenger.sidebar.toggle')"
+          :aria-label="t('messenger.sidebar.toggle')"
+          @click="sidebarDrawerOpen = true"
+        >
+          <i class="fa-solid fa-bars" aria-hidden="true"></i>
+        </button>
+        <button
+          v-if="showScrollTopButton"
+          class="messenger-scroll-top-btn"
+          type="button"
+          :title="t('chat.toTop')"
+          :aria-label="t('chat.toTop')"
+          @click="jumpToMessageTop"
+        >
+          <i class="fa-solid fa-angles-up" aria-hidden="true"></i>
+        </button>
 
         <div
           ref="messageListRef"
@@ -131,8 +133,6 @@
             />
           </div>
         </footer>
-
-        <MessengerStatusBar v-if="!isEmbeddedChatRoute" :controller="controller" />
       </section>
     </div>
 
@@ -226,11 +226,8 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { showApiError } from '@/utils/apiError';
 import MessengerMessagePanel from '@/views/messenger/sections/MessengerMessagePanel.vue';
 import MessengerSidebar from '@/views/messenger/sections/MessengerSidebar.vue';
-import MessengerSiteHeader from '@/views/messenger/sections/MessengerSiteHeader.vue';
-import MessengerChatHeader from '@/views/messenger/sections/MessengerChatHeader.vue';
 import MessengerWelcomePane from '@/views/messenger/sections/MessengerWelcomePane.vue';
 import MessengerTurnRuler from '@/views/messenger/sections/MessengerTurnRuler.vue';
-import MessengerStatusBar from '@/views/messenger/sections/MessengerStatusBar.vue';
 import MessengerSettingsOverlay from '@/views/messenger/sections/MessengerSettingsOverlay.vue';
 import MessageGoalBar from '@/components/chat/MessageGoalBar.vue';
 import ComposerStatusDock from '@/components/chat/ComposerStatusDock.vue';
@@ -282,11 +279,6 @@ const selectWorkspace = () => {
 const openSettingsPage = () => {
   closeDrawerOnNarrow();
   controller.openSettingsPage?.();
-};
-
-const openHelpPanel = () => {
-  closeDrawerOnNarrow();
-  controller.activateSettingsPanel?.('help-manual');
 };
 
 const closeSettingsPage = () => {
@@ -374,7 +366,6 @@ const onlyOfficePath = controller.onlyOfficePath;
 const onlyOfficeUserId = controller.onlyOfficeUserId;
 const onlyOfficeVisible = controller.onlyOfficeVisible;
 const openAgentById = controller.openAgentById;
-const openProfilePage = controller.openProfilePage;
 const openTimelineSessionDetail = controller.openTimelineSessionDetail;
 const renameTimelineSession = controller.renameTimelineSession;
 const resolveAgentRuntimeState = controller.resolveAgentRuntimeState;
@@ -392,8 +383,8 @@ const sendAgentMessage = controller.sendAgentMessage;
 const showAgentComposerApprovalSelector = controller.showAgentComposerApprovalSelector;
 const showChatComposerFooter = controller.showChatComposerFooter;
 const showChatSettingsView = controller.showChatSettingsView;
-const showMessengerChatHeader = controller.showMessengerChatHeader;
 const showScrollBottomButton = controller.showScrollBottomButton;
+const showScrollTopButton = controller.showScrollTopButton;
 const startNewSession = controller.startNewSession;
 const stopAgentMessage = controller.stopAgentMessage;
 const timelineDetailDialogVisible = controller.timelineDetailDialogVisible;

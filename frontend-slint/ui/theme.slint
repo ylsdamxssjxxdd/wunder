@@ -113,9 +113,6 @@ export struct AgentCard {
     preset-question-count: int
 }
 export struct ToolCard { name: string, description: string, category: string, enabled: bool, icon: string, tone: string }
-// One row of the built-in agent's tool list. The projection is bounded and
-// rebuilt natively: the view never matches tool names itself.
-export struct AgentToolOption { name: string, description: string, category: string, enabled: bool }
 export struct ModelCard { key: string, provider: string, model: string, base-url: string, model-type: string, is-default: bool, is-cloud: bool,
     temperature: string, timeout-s: string, max-output: string, thinking-token-budget: string, max-rounds: string, max-context: string,
     tts-voice: string, tts-response-format: string, tts-speed: string, tts-instructions: string,

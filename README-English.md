@@ -1,12 +1,12 @@
 # wunder Xinjian
 
-wunder (Xinjian) is an AI workbench: you hand a goal to the agent, it breaks the goal into tasks, calls tools to execute them step by step, and delivers results — files written into the workspace, commands executed, code changed, messages sent. The whole process is visible as an event stream, high-risk actions go through approval, and interrupted sessions can be restored.
+wunder (Xinjian) is an **agent orchestration platform**: you hand a goal to the agent, it breaks the goal into tasks, calls tools to execute them step by step, and delivers results — files written into the workspace, commands executed, code changed, messages sent. The whole process is visible as an event stream, high-risk actions go through approval, and interrupted sessions can be restored.
 
 It is not a question-and-answer AI. A Q&A AI produces text; wunder produces finished work.
 
 ## Get the Honeycomb (desktop) — install and go
 
-**The Honeycomb (desktop)** is wunder's desktop app and its flagship form. Individual users just download and install it — no server deployment required:
+**The Honeycomb (desktop)** is wunder's desktop app and its flagship form: a **local AI workbench**. Individual users just download and install it — no server deployment required:
 
 1. **Download & install**: grab the installer for your system from [Releases](../../releases) and launch it
 2. **Configure a model**: open "System Settings" → "Model Configuration", enter your API key and endpoint, then click "Test Connection"
@@ -43,15 +43,15 @@ Xinjian (the wunder platform)
 
 A goal lands on a user and is executed by the agent in its threads; when work needs to be split, temporary sub-agents are spawned.
 
-## Advanced: server and CLI forms
+## Advanced: other forms
 
-Beyond the Honeycomb, wunder ships two optional forms — use them when you need them:
+Beyond the Honeycomb, wunder ships three optional forms — use them when you need them:
 
-**The Hull (server) — service form.** Deploy it only when multiple people need to share one system. It provides multi-tenancy, user and organization management, agent app building and publishing, unified gateway access and scheduling, with a built-in toolchain, knowledge base, and long-term memory, PostgreSQL storage, and Docker deployment. It includes the admin frontend (the Bridge) and the user frontend (the Beehive). See the [Hull deployment guide](docs/使用说明书/zh-CN/start/server.md).
+**The Hull (server) — the user and agent management platform.** Deploy it only when multiple people need to share one system. It provides multi-tenancy, user and organization management, agent app building and publishing, unified gateway access and scheduling, with a built-in toolchain, knowledge base, and long-term memory, PostgreSQL storage, and Docker deployment. Once deployed it provides two UIs: the admin frontend (the Bridge) and the Beehive (web, the cloud AI workbench, accessed in a browser). See the [Hull deployment guide](docs/使用说明书/zh-CN/start/server.md).
 
-**The Helm (cli) — command-line form.** For terminals and automation, sharing the same Engine as the Honeycomb. TUI interaction, JSONL output for scripts and pipelines. See the [Helm guide](docs/使用说明书/zh-CN/start/cli.md).
+**The Helm (cli) — the manual local entry point.** For hands-on work in a terminal, scripting, and automation, sharing the same Engine as the Honeycomb. TUI interaction, JSONL output for scripts and pipelines. See the [Helm guide](docs/使用说明书/zh-CN/start/cli.md).
 
-All three forms share the same Engine (wunder-runtime): threads, tools, storage abstractions, realtime events, and permission semantics are one codebase — only the access layer differs.
+All forms share the same Engine (wunder-runtime): threads, tools, storage abstractions, realtime events, and permission semantics are one codebase — only the access layer differs.
 
 ## Tech Stack
 
@@ -63,7 +63,7 @@ All three forms share the same Engine (wunder-runtime): threads, tools, storage 
 | Access | In-process calls, no local networking | HTTP / WebSocket | Local process |
 | Compatibility target | Windows 7 x86 and up, plus Linux AppImage | Linux / Docker | Windows 7 and up (built with the GNU toolchain) |
 
-The backend is a single Rust workspace (tokio async runtime): `wunder-core` (configuration, auth, storage contracts, execution policy) → `wunder-runtime` (orchestrator, thread runtime, tools, channels, gateway). All three forms are built on the Engine; the Honeycomb and the Helm do not depend on the Hull. The Helm parses arguments with clap; TLS uses rustls (ring provider).
+The backend is a single Rust workspace (tokio async runtime): `wunder-core` (configuration, auth, storage contracts, execution policy) → `wunder-runtime` (orchestrator, thread runtime, tools, channels, gateway). All forms are built on the Engine; the Honeycomb and the Helm do not depend on the Hull. The Helm parses arguments with clap; TLS uses rustls (ring provider).
 
 ## Documentation
 

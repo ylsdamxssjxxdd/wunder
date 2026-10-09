@@ -104,12 +104,9 @@ impl Orchestrator {
         let persisted_context_tokens = persisted_context_tokens.max(0);
         let context_tokens = persisted_context_tokens;
         let projected_request_tokens = resolve_projected_request_tokens(context_tokens);
-        let Some(limit) = resolve_compaction_limit(llm_config, projected_request_tokens, force)
-        else {
-            return Ok(CompactionResult::unchanged(messages));
-        };
+        let limit = resolve_compaction_limit(llm_config, projected_request_tokens, force);
         let message_budget = resolve_message_budget(limit);
-        let max_context = llm_config.max_context.unwrap_or(0) as i64;
+        let max_context = llm_config.effective_max_context() as i64;
         let mut ratio = llm_config
             .history_compaction_ratio
             .unwrap_or(COMPACTION_HISTORY_RATIO as f32) as f64;
@@ -118,11 +115,7 @@ impl Orchestrator {
         } else if ratio > 1.0 {
             ratio = if ratio <= 100.0 { ratio / 100.0 } else { 1.0 };
         }
-        let history_threshold = if max_context > 0 {
-            Some((max_context as f64 * ratio) as i64)
-        } else {
-            None
-        };
+        let history_threshold = Some((max_context as f64 * ratio) as i64);
         let compaction_decision = super::compaction_policy::should_compact_by_context(
             projected_request_tokens,
             limit,
@@ -387,8 +380,7 @@ impl Orchestrator {
 
         let summary_config = build_compaction_summary_config(llm_config);
 
-        let summary_limit =
-            HistoryManager::get_auto_compact_limit(&summary_config).unwrap_or(limit);
+        let summary_limit = HistoryManager::get_auto_compact_limit(&summary_config);
         let per_message_limit = summary_limit.clamp(1, COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
         summary_input = self.prepare_summary_messages(summary_input, per_message_limit);
         if estimate_messages_tokens(&summary_input) > summary_limit {

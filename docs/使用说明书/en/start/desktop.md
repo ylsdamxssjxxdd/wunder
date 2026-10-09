@@ -3,7 +3,7 @@ title: Desktop Guide
 summary: wunder's default form. Download, install, and start — no server needed.
 read_when:
   - You want to get wunder running right away
-  - You care more about Beehive's desktop form than deploying a full server
+  - You want the local AI workbench rather than deploying a full server
 source_docs:
   - docs/API文档.md
   - frontend/src/components/messenger/DesktopRuntimeSettingsPanel.vue
@@ -12,9 +12,9 @@ source_docs:
 
 # Desktop Guide
 
-The desktop app is wunder's default form. Download and install it, and you have a complete AI workbench — no server required.
+The desktop app is wunder's default form: a **local AI workbench**. Download and install it, and you can hand goals to the agent — no server required.
 
-Open it and you have a complete agent workbench. No server required.
+Open it and you can hand goals to the agent right away. No server required.
 
 ## When to Choose Desktop
 

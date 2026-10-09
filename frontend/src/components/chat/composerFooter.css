@@ -36,7 +36,7 @@
 /* ------------------------------------------------------------ action row */
 
 /* 对齐桌面 composer.slint:513-664：30px 高、6px 间距的按钮行，
-   左组（工作目录 / 审批 / 命令 / 语音）与右组（模型 / 占用 / 发送）分列两端。 */
+   左组（工作目录 / 审批 / 命令 / 预设问题 / 语音）与右组（模型+占用 / 发送）分列两端。 */
 .composer-action-row {
   display: flex;
   align-items: center;
@@ -129,17 +129,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 上下文占用图标（桌面 ContextUsageIcon，composer.slint:229-278 / :654）。 */
-.composer-context-usage {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 26px;
-  height: 30px;
-  color: var(--mz-text-muted, #8a8f99);
-}
-
 /* ------------------------------------------------------ approval + model */
 
 /* 桌面的审批 chip 与模型触发器都是「无边框、悬停填充」的幽灵按钮
@@ -189,10 +178,35 @@
   outline-offset: 1px;
 }
 
-.composer-approval-icon,
-.composer-model-icon {
+.composer-approval-icon {
   font-size: 12px;
   flex-shrink: 0;
+}
+
+/* 模型触发器上的大脑就是上下文占用图标（桌面 ContextUsageIcon 的填充语义）：
+   占用率越高填得越满，接近上限时颜色转红。选择器多一层，压过子组件自带的 18px 度量。 */
+.composer-model-trigger .composer-model-usage-icon {
+  width: 16px;
+  height: 16px;
+  font-size: 14px;
+  line-height: 16px;
+}
+
+/* 占用百分比与模型名同排，分档颜色由占用投影给出。 */
+.composer-model-usage {
+  flex-shrink: 0;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-model-usage.is-warning {
+  color: var(--mz-warning, #c98a2b);
+}
+
+.composer-model-usage.is-danger {
+  color: var(--mz-danger, #d04a43);
 }
 
 .composer-approval-label,

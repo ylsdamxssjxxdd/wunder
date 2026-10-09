@@ -519,6 +519,7 @@ impl InnerVisibleService {
                 description: record.description,
                 system_prompt: record.system_prompt,
                 preview_skill: record.preview_skill,
+                model_name: record.model_name,
                 ability_items: record.ability_items,
                 tool_names: record.tool_names,
                 declared_tool_names: record.declared_tool_names,
@@ -543,6 +544,7 @@ impl InnerVisibleService {
             description: String::new(),
             system_prompt: String::new(),
             preview_skill: false,
+            model_name: None,
             ability_items: Vec::new(),
             tool_names: curated_default_tool_names_with_desktop_extras(
                 allowed_tool_names,

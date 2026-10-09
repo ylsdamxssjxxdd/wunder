@@ -881,7 +881,7 @@ async fn handle_execute_tool(request: SandboxToolRequest) -> SandboxToolResponse
     let result = match request.tool.as_str() {
         "执行命令" => execute_command(&context, &args).await,
         "ptc" => execute_ptc(&context, &args).await,
-        "列出文件" | "搜索内容" | "读取文件" | "写入文件" | "编辑" => {
+        "列出文件" | "搜索内容" | "读取文件" | "写入文件" | "文本编辑" | "编辑" => {
             execute_builtin_file_tool(&request, &context, &args).await
         }
         _ => ToolResult {

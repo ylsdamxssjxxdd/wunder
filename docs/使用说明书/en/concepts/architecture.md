@@ -12,30 +12,31 @@ source_docs:
 
 wunder has a clear architectural goal: use one unified engine to support multiple capability sources, reached by users through Beehive.
 
-## Beehive and deployment forms
+## Forms and positioning
 
-How Beehive reaches users depends on the deployment form. All three deployment forms run the same engine behind the scenes; the differences are only in where it runs and what it governs:
+wunder has four forms, each with a clear position. All of them run the same engine behind the scenes; the differences are only in where they run and what they govern:
 
 ### Hull (server)
 
 **Who it's for**: teams, organizations
 
 **Characteristics**:
+- **Positioning**: the **user and agent management platform**
 - Supports multiple users simultaneously
 - Centralized management of users, permissions, and resources
 - Can integrate external channels
 - Suited for production deployments
-- Members access Beehive via a web browser
+- Provides the Beehive (web, the cloud AI workbench); members access it via a web browser
 
 ### Honeycomb (desktop)
 
 **Who it's for**: individual users
 
 **Characteristics**:
-- Local install, runs out of the box
+- Local install, runs out of the box (this is the **local AI workbench**, the default form for individual users)
 - Can operate local files, windows, and browsers
 - Persistent local workspace
-- Beehive's desktop form
+
 
 ### Helm (cli)
 
@@ -43,10 +44,10 @@ How Beehive reaches users depends on the deployment form. All three deployment f
 
 **Characteristics**:
 - Terminal-driven, scriptable
-- Not Beehive — a developer and automation entry
+- The **manual local entry point** for hands-on work, not a second workbench
 - JSONL output for easy integration
 
-Users spend almost all their time in Beehive (Honeycomb or Hull's web). Helm is a complementary entry for automation and scripting, not Beehive.
+Users spend almost all their time in the two workbenches: the Honeycomb (local AI workbench) or the Beehive (cloud AI workbench). The Helm is a complementary entry for hands-on terminal work and automation.
 
 ## Top-level structure
 
@@ -115,18 +116,18 @@ Workspaces and storage are the basis of long-running behavior:
 
 wunder currently has two user-visible surfaces:
 
-- Beehive (user workbench): `frontend/`, delivered as the Honeycomb desktop app or Hull's web form — this is where users do daily work
+- Workbenches (user-facing): the Honeycomb desktop app (`wunder-desktop`, the **local AI workbench**) and the Beehive web app (`frontend/`, the **cloud AI workbench**, provided with the Hull) — this is where users do daily work
 - Bridge (admin console): `web/` — the governance backend
 
 Beehive and Bridge share the same underlying capabilities, but serve different interaction goals. The user frontend and the admin console must remain separate.
 
 ## The most important architectural constraints right now
 
-- `server` (Hull) is the server form for teams and organizations
-- Honeycomb (the desktop app) is Beehive's main delivery form for individual users
-- `cli` (Helm) is the developer and automation entry point, not Beehive
+- `server` (Hull) is the **user and agent management platform** for teams and organizations; Beehive (web) is the cloud AI workbench it provides
+- Honeycomb (the desktop app) is the **local AI workbench**, the default form for individual users
+- `cli` (Helm) is the **manual local entry point** for developers and automation
 - Beehive and Bridge must remain separate
-- all three runtime forms build on the same Engine; Honeycomb and Helm do not depend on the Hull
+- all forms build on the same Engine; Honeycomb and Helm do not depend on the Hull
 - chat real-time state is WebSocket-only; non-chat streaming endpoints keep their own protocol boundaries
 
 ## Diagram

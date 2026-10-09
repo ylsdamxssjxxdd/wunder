@@ -1881,16 +1881,7 @@ pub(super) fn event_payload(data: &Value) -> &Value {
 
 pub(super) fn compact_json(value: &Value) -> String {
     const MAX_INLINE_JSON_CHARS: usize = 200;
-    let mut text = serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string());
-    if text.len() > MAX_INLINE_JSON_CHARS {
-        let mut safe_boundary = MAX_INLINE_JSON_CHARS;
-        while safe_boundary > 0 && !text.is_char_boundary(safe_boundary) {
-            safe_boundary = safe_boundary.saturating_sub(1);
-        }
-        text.truncate(safe_boundary);
-        text.push_str("...");
-    }
-    text
+    crate::render::compact_json_within(value, MAX_INLINE_JSON_CHARS)
 }
 
 pub(super) fn localize_cli_notice(language: &str, text: &str) -> String {

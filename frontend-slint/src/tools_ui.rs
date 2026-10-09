@@ -119,6 +119,9 @@ fn apply(app: &MainWindow, catalog: Vec<ToolRecord>, manager: NativeToolManager)
     ));
     app.set_tools(model(catalog.into_iter().map(card).collect()));
     crate::entity_state::sync_tool_selection(app);
+    // The agent form's card picker renders the catalog itself, so a rebuilt list
+    // needs the full group projection, not just an enabled-flag refresh.
+    crate::expert_ui::project_tools(app);
     app.set_tools_servers(model(manager.servers.into_iter().map(resource).collect()));
     app.set_tools_skill_resources(model(manager.skills.into_iter().map(resource).collect()));
     app.set_tools_bases(model(manager.bases.into_iter().map(resource).collect()));

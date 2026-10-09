@@ -308,6 +308,8 @@ export const materializeChatRuntimeMessage = (
     base.failed = message.status === 'failed';
     base.cancelled = message.status === 'cancelled';
     base.workflowItems = cloneProjectionRecords(message.workflowItems, base.workflowItems);
+    // 时间线块是投影层每轮重建的不可变小对象，直接随行携带即可（正文已烘焙在块里）。
+    base.timeline = Array.isArray(message.timeline) ? message.timeline : [];
     base.subagents = cloneProjectionRecords(message.subagents, base.subagents);
     base.workflowPendingPlaceholder = shouldMaterializeWorkflowPlaceholder(message, options)
       ? buildWorkflowPendingPlaceholder(message)
@@ -588,6 +590,7 @@ const syncMaterializedStreamingFields = (
 ): void => {
   materialized.content = source.content;
   materialized.reasoning = source.reasoning;
+  materialized.timeline = Array.isArray(source.timeline) ? source.timeline : [];
   materialized.runtime_status = source.status;
   if (source.role !== 'assistant') return;
   const active = isRuntimeMessageActive(source.status);

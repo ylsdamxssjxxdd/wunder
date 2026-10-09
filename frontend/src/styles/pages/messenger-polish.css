@@ -98,62 +98,6 @@
   box-shadow: none;
 }
 
-.messenger-chat-header {
-  border-bottom: 0;
-  padding: 12px 16px 10px;
-  min-height: 64px;
-  background: rgba(255, 255, 255, 0.42);
-  box-shadow:
-    inset 0 -1px 0 rgba(15, 23, 42, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.52);
-}
-
-.messenger-chat-header::before {
-  content: '';
-  position: absolute;
-  left: 16px;
-  top: 50%;
-  width: 3px;
-  height: 22px;
-  border-radius: 999px;
-  background: linear-gradient(180deg, rgba(var(--ui-accent-rgb), 0.82), rgba(var(--ui-accent-rgb), 0.28));
-  transform: translateY(-50%);
-  opacity: 0.92;
-}
-
-.messenger-chat-header::after {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 1px;
-  background: linear-gradient(90deg, rgba(var(--ui-accent-rgb), 0.18), rgba(15, 23, 42, 0.04) 22%, transparent 60%);
-  pointer-events: none;
-}
-
-.messenger-chat-heading {
-  padding-left: 12px;
-}
-
-.messenger-chat-title-row {
-  gap: 8px;
-}
-
-.messenger-chat-title {
-  font-size: 18px;
-  font-weight: 800;
-  letter-spacing: 0.01em;
-  color: rgba(15, 23, 42, 0.92);
-  line-height: 1.2;
-}
-
-.messenger-chat-header-actions {
-  gap: 6px;
-  padding: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
 .messenger-header-btn,
 .messenger-header-action-text {
   min-height: 32px;
@@ -187,22 +131,6 @@
 
 .messenger-header-btn:hover,
 .messenger-header-action-text:hover {
-  background: rgba(var(--ui-accent-rgb), 0.06);
-}
-
-.messenger-chat-header-actions > .messenger-header-btn--text,
-.messenger-chat-header-actions > .messenger-header-btn:not(.messenger-header-btn--text),
-.messenger-chat-header-actions > .messenger-header-action-text {
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.messenger-chat-header-actions > .messenger-header-btn--text {
-  color: rgba(15, 23, 42, 0.9);
-}
-
-.messenger-chat-header-actions > .messenger-header-btn--text:hover {
   background: rgba(var(--ui-accent-rgb), 0.06);
 }
 
@@ -686,10 +614,6 @@
 }
 
 @media (max-width: 960px) {
-  .messenger-chat-header {
-    padding: 12px 16px 10px;
-  }
-
   .messenger-chat-body {
     padding: 14px 14px 18px;
   }

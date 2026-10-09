@@ -41,7 +41,7 @@ Before deploying wunder, don't rush to ask "how to start"—first ask "which run
 
 - Suitable for teams, organizations, and unified governance
 - Multi-user, multi-tenant
-- Bridge (admin console) and Beehive (user workbench) working together
+- Bridge (admin console) and Beehive (the cloud AI workbench) working together
 - Can connect to sandbox, MCP, A2A, and external channels
 
 ### Local Development
@@ -62,7 +62,7 @@ If you need more complete capabilities, connect as needed:
 
 - `wunder-sandbox`
 - `extra-mcp`
-- Static resource services for Beehive (user workbench) or Bridge (admin console)
+- Static resource services for Beehive (the cloud AI workbench) or Bridge (admin console)
 
 ## How to Plan External Paths
 

@@ -19,6 +19,8 @@ import { composeItemText } from './chatThreadState';
 import type {
   ChatRuntimeMessageProjection,
   ChatRuntimeMessageStatus,
+  ChatRuntimeTimelineActivity,
+  ChatRuntimeTimelineBlock,
   ChatRuntimeWorkflowItemProjection
 } from './chatRuntimeTypes';
 
@@ -213,6 +215,7 @@ const buildAssistantBubble = (
     .slice()
     .sort((a, b) => compareExecutions(a, b) || compareWorkflowItems(a, b))
     .map((item) => buildWorkflowRecord(item, modelTurnId));
+  const timeline = buildTurnTimeline(state, orderedTextItems, workflows);
   const createdSeq = orderedTextItems[0]?.order ?? (workflows.length > 0 ? minItemOrder(workflows) : 0);
   const updatedSeq = Math.max(
     latestTextItem?.order ?? 0,
@@ -234,6 +237,7 @@ const buildAssistantBubble = (
     failed: resolved.failed,
     cancelled: resolved.cancelled,
     workflowItems: records,
+    timeline,
     subagents: turnItems.filter(item => item.kind === 'subagent_run' && isPlainRecord(item.raw.runtime))
       .map(item => {
         const runtime = item.raw.runtime as Record<string, unknown>;
@@ -354,6 +358,78 @@ const buildAssistantBubbleRaw = (
     kind: textItem.kind,
     revision: textItem.revision
   };
+};
+
+/**
+ * 时间线块（形态对齐桌面端 `frontend-slint/src/timeline.rs`）：一个用户轮次里的
+ * 每段正式输出是独立的一块，思考与工具调用按到达顺序折成批次夹在它们之间。
+ *
+ * 排序只认 `created_seq`（回落到登记序号），因此快照重放与实时流得到同一序列。
+ * 一次工具调用的 call/output/result 三条记录只占一个条目位。`body` 块会结束当前
+ * 批次，所以每条批次栏后面跟着的正是该批次换来的那段输出——与桌面端
+ * 「批次栏 → 正文 → 批次栏 → 正文」的读序一致。
+ */
+type TimelineEvent = {
+  seq: number;
+  /** 同序号时的稳定次序：思考 → 正文 → 工具。 */
+  rank: number;
+  itemId: string;
+  kind: 'reasoning' | 'body' | 'tool';
+  text: string;
+  round: number;
+};
+
+const itemSeq = (item: ThreadItemState): number => Number(item.raw?.created_seq) || item.order;
+
+const toolCallKey = (item: ThreadItemState): string =>
+  firstText(item.raw?.tool_call_id, item.raw?.call_id, item.raw?.toolCallId, item.raw?.callId) || item.itemId;
+
+const buildTurnTimeline = (
+  state: ChatThreadState,
+  textItems: ThreadItemState[],
+  workflows: ThreadItemState[]
+): ChatRuntimeTimelineBlock[] => {
+  const events: TimelineEvent[] = [];
+  for (const item of textItems) {
+    const seq = itemSeq(item);
+    const reasoning = composeItemText(state, item.itemId, 'reasoning');
+    if (reasoning.trim()) {
+      events.push({ seq, rank: 0, itemId: item.itemId, kind: 'reasoning', text: reasoning, round: item.modelRound });
+    }
+    const content = composeItemText(state, item.itemId, 'content');
+    if (content.trim()) {
+      events.push({ seq, rank: 1, itemId: item.itemId, kind: 'body', text: content, round: item.modelRound });
+    }
+  }
+  const seenCalls = new Set<string>();
+  for (const item of workflows) {
+    const callKey = toolCallKey(item);
+    if (seenCalls.has(callKey)) continue;
+    seenCalls.add(callKey);
+    events.push({ seq: itemSeq(item), rank: 2, itemId: item.itemId, kind: 'tool', text: '', round: item.modelRound });
+  }
+  events.sort((left, right) =>
+    left.seq - right.seq ||
+    left.rank - right.rank ||
+    (left.itemId < right.itemId ? -1 : left.itemId > right.itemId ? 1 : 0)
+  );
+  const blocks: ChatRuntimeTimelineBlock[] = [];
+  let open: ChatRuntimeTimelineActivity | null = null;
+  for (const event of events) {
+    if (event.kind === 'body') {
+      open = null;
+      blocks.push({ kind: 'body', id: event.itemId, seq: event.seq, round: event.round, text: event.text });
+      continue;
+    }
+    if (!open) {
+      open = { kind: 'activity', id: `act:${event.itemId}`, seq: event.seq, rows: [] };
+      blocks.push(open);
+    }
+    open.rows.push(event.kind === 'reasoning'
+      ? { type: 'reasoning', itemId: event.itemId, text: event.text }
+      : { type: 'tool', itemId: event.itemId });
+  }
+  return blocks;
 };
 
 type ResolvedBubbleStatus = {

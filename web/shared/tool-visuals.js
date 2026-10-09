@@ -42,6 +42,21 @@ const TOOL_ICON_RULES = [
 const normalizeText = (value) => String(value || "").trim().toLowerCase();
 const normalizeMatchKey = (value) => normalizeText(value).replace(/[\s_.\-:/\\@]+/g, "");
 
+// Canonical builtin names that no keyword rule covers, matched by exact name so
+// short tokens cannot leak into unrelated tools' descriptions.
+const TOOL_NAME_ICON_OVERRIDES = {
+  "编辑": "fa-file-pen",
+  "str_replace_editor": "fa-file-pen",
+  "glob": "fa-folder-tree"
+};
+
+const resolveToolNameIconOverride = (input) => {
+  const rawName = typeof input === "string" ? input : input && typeof input === "object" ? input.name : "";
+  const name = normalizeText(rawName);
+  if (!name) return "";
+  return TOOL_NAME_ICON_OVERRIDES[name] || "";
+};
+
 const buildSearchText = (input) => {
   if (Array.isArray(input)) return input.map((item) => String(item || "").trim()).filter(Boolean).join(" ");
   if (typeof input === "string") return input;
@@ -81,6 +96,8 @@ export const resolveToolIconClass = (input) => {
   }
   if (text === "wunder@excute" || text.endsWith("@wunder@excute")) return "fa-dragon";
   if (text === "wunder@doc2md" || text.endsWith("@wunder@doc2md")) return "fa-file-lines";
+  const nameIcon = resolveToolNameIconOverride(input);
+  if (nameIcon) return nameIcon;
   for (const rule of TOOL_ICON_RULES) {
     if (rule.keywords.some((keyword) => matchesKeyword(text, normalizedText, keyword))) {
       return rule.icon;

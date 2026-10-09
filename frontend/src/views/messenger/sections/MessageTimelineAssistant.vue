@@ -3,123 +3,184 @@
     class="timeline-assistant"
     :data-turn-id="String(message.__runtime_user_turn_id || message.user_turn_id || '')"
   >
-    <div
-      v-if="hasBody"
-      class="timeline-body-block"
-      :class="{ 'is-streaming': bodyStreaming }"
-      data-turn-slot="body"
+    <!--
+      时间线主体（形态对齐桌面端 `frontend-slint/src/timeline.rs`）：模型每轮的正式
+      输出是一段独立打印，思考与工具调用按到达顺序折成可开合的批次夹在段与段之间。
+      块的顺序由投影层按 `created_seq` 定好，这里只负责铺开。
+    -->
+    <template
+      v-for="block in renderBlocks"
+      :key="block.id"
     >
-      <template v-if="isGreeting">
-        <div class="timeline-greeting">
-          <div class="timeline-greeting-text">{{ String(message.content || '') }}</div>
-          <el-tooltip
-            ref="agentAbilityTooltipRef"
-            placement="bottom-end"
-            trigger="hover"
-            :show-after="120"
-            :teleported="true"
-            :popper-options="agentAbilityTooltipOptions"
-            popper-class="messenger-ability-tooltip-popper"
-            @show="handleAgentAbilityTooltipShow"
-            @hide="handleAgentAbilityTooltipHide"
-          >
-            <template #content>
-              <div class="ability-tooltip">
-                <div class="ability-header">
-                  <span class="ability-title">{{ t('chat.ability.title') }}</span>
-                  <span class="ability-sub">{{ t('chat.ability.subtitle') }}</span>
-                </div>
-                <div v-if="agentToolSummaryLoading && !hasAgentAbilitySummary" class="ability-muted">
-                  {{ t('chat.ability.loading') }}
-                </div>
-                <div v-else-if="agentToolSummaryError" class="ability-error">
-                  {{ agentToolSummaryError }}
-                </div>
-                <template v-else>
-                  <div v-if="!hasAgentAbilitySummary" class="ability-muted">
-                    {{ t('chat.ability.empty') }}
-                  </div>
-                  <div v-else class="ability-scroll">
-                    <div
-                      v-for="section in agentAbilitySections"
-                      :key="section.key"
-                      class="ability-section"
-                    >
-                      <div class="ability-section-title">
-                        <span>{{ section.title }}</span>
-                        <span class="ability-count">{{ section.items.length }}</span>
-                      </div>
-                      <div v-if="section.items.length" class="ability-item-list">
-                        <AbilityTooltipListItem
-                          v-for="ability in section.items"
-                          :key="`${section.key}-${ability.name}`"
-                          :name="ability.name"
-                          :display-name="ability.displayName"
-                          :description="ability.description"
-                          :kind="section.kind"
-                          :group="section.key"
-                          :source="section.key"
-                          :chip="section.title"
-                          :empty-text="t('chat.ability.noDesc')"
-                        />
-                      </div>
-                      <div v-else class="ability-empty">{{ section.emptyText }}</div>
-                    </div>
-                  </div>
-                </template>
-              </div>
-            </template>
-            <button
-              class="timeline-greeting-preview"
-              type="button"
-              :title="t('chat.promptPreview')"
-              :aria-label="t('chat.promptPreview')"
-              :disabled="agentPromptPreviewLoading"
-              @click.stop="controller.openAgentPromptPreview?.()"
-            >
-              <i class="fa-solid fa-eye" aria-hidden="true"></i>
-            </button>
-          </el-tooltip>
-        </div>
-      </template>
-      <MessageMarkdownBody
-        v-else
-        :cache-key="`agent:${conversationKey}:${resolveAgentMessageKey(message, item.sourceIndex)}:c${currentContainerId}`"
-        :content="displayContent"
-        :message="message"
-        :runtime-message-id="runtimeMessageId"
-        :runtime-user-turn-id="runtimeUserTurnId"
-        :runtime-model-turn-id="runtimeModelTurnId"
-        :session-id="activeSessionId"
-        :item-id="String(message.item_id || '')"
-        :content-truncated="message.content_truncated === true"
-        :assistant-display="true"
-        :streaming="bodyStreaming"
-        :throttle-ms="MARKDOWN_STREAM_THROTTLE_MS"
-        :resolve-workspace-path="resolveAgentMarkdownWorkspacePath"
-        @rendered="handleMessageMarkdownRendered(item.key, $event)"
-        @history-message-hydrated="handleHistoryHydrated"
-      />
-      <div v-if="hasUserImageAttachments(message)" class="message-user-image-grid">
+      <div
+        v-if="block.kind === 'activity'"
+        class="timeline-group"
+        :class="{ 'is-open': block.open }"
+        data-turn-slot="activity"
+        :data-activity-id="block.id"
+      >
         <button
-          v-for="imageItem in resolveUserImageAttachments(message)"
-          :key="imageItem.key"
-          class="message-user-image-btn"
+          class="timeline-group-head"
           type="button"
-          :title="imageItem.name"
-          :aria-label="imageItem.name"
-          @click="openResourcePreview({ src: imageItem.src, title: imageItem.name, workspacePath: imageItem.workspacePath, meta: imageItem.workspacePath || imageItem.name, kind: 'image' })"
+          :aria-expanded="block.open"
+          @click="toggleActivity(block.id)"
         >
-          <img :src="imageItem.src" :alt="imageItem.name" class="message-user-image" loading="lazy" decoding="async" />
+          <span class="timeline-group-gutter" aria-hidden="true">
+            <span v-if="block.open" class="timeline-group-gutter-line"></span>
+          </span>
+          <i :class="['fa-solid', 'fa-caret-right', 'timeline-group-arrow', { 'is-open': block.open }]" aria-hidden="true"></i>
+          <span class="timeline-group-title">{{ activityTitle(block) }}</span>
+          <span v-if="!block.open && block.latestSummary" class="timeline-group-latest">{{ block.latestSummary }}</span>
         </button>
-      </div>
-      <div v-if="hasUserAudioAttachments(message)" class="message-user-audio-grid">
-        <div v-for="audioItem in resolveUserAudioAttachments(message)" :key="audioItem.key" class="message-user-audio-card">
-          <span class="message-user-audio-name" :title="audioItem.name">{{ audioItem.name }}</span>
-          <audio class="message-user-audio-player" :src="audioItem.src" controls preload="metadata"></audio>
+
+        <div v-if="block.open" class="timeline-group-body">
+          <template v-for="row in block.rows" :key="row.key">
+            <MessageTimelineThinkingEntry
+              v-if="row.kind === 'reasoning'"
+              :entry="row.entry"
+              :open="reasoningOpenKeys.includes(row.key)"
+              @toggle="toggleReasoning(row.key)"
+            />
+            <MessageTimelineToolEntry
+              v-else
+              :entry="row.entry"
+              :open="entryOpenKeys.includes(row.key)"
+              :patch-view="patchViewFor(row.entry)"
+              @toggle="toggleEntry(row.key)"
+            />
+          </template>
+
+          <button v-if="block.isLast && hiddenToolCount > 0" class="timeline-group-more" type="button" @click="showMoreEntries">
+            {{ t('chat.timeline.showMoreEntries', { count: hiddenToolCount }) }}
+          </button>
+
+          <div v-if="block.isLast && omittedRuns > 0" class="timeline-group-note" role="note">
+            {{ t('chat.timeline.omittedRuns', { count: omittedRuns }) }}
+          </div>
         </div>
       </div>
-    </div>
+
+      <div
+        v-else
+        class="timeline-body-block"
+        :class="{ 'is-streaming': block.streaming }"
+        data-turn-slot="body"
+      >
+        <template v-if="isGreeting">
+          <div class="timeline-greeting">
+            <div class="timeline-greeting-text">{{ String(message.content || '') }}</div>
+            <el-tooltip
+              ref="agentAbilityTooltipRef"
+              placement="bottom-end"
+              trigger="hover"
+              :show-after="120"
+              :teleported="true"
+              :popper-options="agentAbilityTooltipOptions"
+              popper-class="messenger-ability-tooltip-popper"
+              @show="handleAgentAbilityTooltipShow"
+              @hide="handleAgentAbilityTooltipHide"
+            >
+              <template #content>
+                <div class="ability-tooltip">
+                  <div class="ability-header">
+                    <span class="ability-title">{{ t('chat.ability.title') }}</span>
+                    <span class="ability-sub">{{ t('chat.ability.subtitle') }}</span>
+                  </div>
+                  <div v-if="agentToolSummaryLoading && !hasAgentAbilitySummary" class="ability-muted">
+                    {{ t('chat.ability.loading') }}
+                  </div>
+                  <div v-else-if="agentToolSummaryError" class="ability-error">
+                    {{ agentToolSummaryError }}
+                  </div>
+                  <template v-else>
+                    <div v-if="!hasAgentAbilitySummary" class="ability-muted">
+                      {{ t('chat.ability.empty') }}
+                    </div>
+                    <div v-else class="ability-scroll">
+                      <div
+                        v-for="section in agentAbilitySections"
+                        :key="section.key"
+                        class="ability-section"
+                      >
+                        <div class="ability-section-title">
+                          <span>{{ section.title }}</span>
+                          <span class="ability-count">{{ section.items.length }}</span>
+                        </div>
+                        <div v-if="section.items.length" class="ability-item-list">
+                          <AbilityTooltipListItem
+                            v-for="ability in section.items"
+                            :key="`${section.key}-${ability.name}`"
+                            :name="ability.name"
+                            :display-name="ability.displayName"
+                            :description="ability.description"
+                            :kind="section.kind"
+                            :group="section.key"
+                            :source="section.key"
+                            :chip="section.title"
+                            :empty-text="t('chat.ability.noDesc')"
+                          />
+                        </div>
+                        <div v-else class="ability-empty">{{ section.emptyText }}</div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+              <button
+                class="timeline-greeting-preview"
+                type="button"
+                :title="t('chat.promptPreview')"
+                :aria-label="t('chat.promptPreview')"
+                :disabled="agentPromptPreviewLoading"
+                @click.stop="controller.openAgentPromptPreview?.()"
+              >
+                <i class="fa-solid fa-eye" aria-hidden="true"></i>
+              </button>
+            </el-tooltip>
+          </div>
+        </template>
+        <MessageMarkdownBody
+          v-else
+          :cache-key="`agent:${conversationKey}:${block.id}:c${currentContainerId}`"
+          :content="block.text"
+          :message="message"
+          :runtime-message-id="runtimeMessageId"
+          :runtime-user-turn-id="runtimeUserTurnId"
+          :runtime-model-turn-id="runtimeModelTurnId"
+          :session-id="activeSessionId"
+          :item-id="block.id"
+          :content-truncated="message.content_truncated === true"
+          :assistant-display="true"
+          :explicit-content="!block.legacy"
+          :streaming="block.streaming"
+          :throttle-ms="MARKDOWN_STREAM_THROTTLE_MS"
+          :resolve-workspace-path="resolveAgentMarkdownWorkspacePath"
+          @rendered="handleMessageMarkdownRendered(item.key, $event)"
+          @history-message-hydrated="handleHistoryHydrated"
+        />
+        <template v-if="block.isLast">
+          <div v-if="hasUserImageAttachments(message)" class="message-user-image-grid">
+            <button
+              v-for="imageItem in resolveUserImageAttachments(message)"
+              :key="imageItem.key"
+              class="message-user-image-btn"
+              type="button"
+              :title="imageItem.name"
+              :aria-label="imageItem.name"
+              @click="openResourcePreview({ src: imageItem.src, title: imageItem.name, workspacePath: imageItem.workspacePath, meta: imageItem.workspacePath || imageItem.name, kind: 'image' })"
+            >
+              <img :src="imageItem.src" :alt="imageItem.name" class="message-user-image" loading="lazy" decoding="async" />
+            </button>
+          </div>
+          <div v-if="hasUserAudioAttachments(message)" class="message-user-audio-grid">
+            <div v-for="audioItem in resolveUserAudioAttachments(message)" :key="audioItem.key" class="message-user-audio-card">
+              <span class="message-user-audio-name" :title="audioItem.name">{{ audioItem.name }}</span>
+              <audio class="message-user-audio-player" :src="audioItem.src" controls preload="metadata"></audio>
+            </div>
+          </div>
+        </template>
+      </div>
+    </template>
 
     <!--
       轮次统计行（§7.3 A，桌面端 BodyBlock 的 `height: 22px` 尾部行）：
@@ -183,48 +244,6 @@
       </button>
     </div>
 
-    <div v-if="showEntryGroup" class="timeline-group" :class="{ 'is-open': groupOpen }">
-      <button
-        class="timeline-group-head"
-        type="button"
-        :aria-expanded="groupOpen"
-        @click="toggleGroup"
-      >
-        <span class="timeline-group-gutter" aria-hidden="true">
-          <span v-if="groupOpen" class="timeline-group-gutter-line"></span>
-        </span>
-        <i :class="['fa-solid', 'fa-caret-right', 'timeline-group-arrow', { 'is-open': groupOpen }]" aria-hidden="true"></i>
-        <span class="timeline-group-title">{{ groupTitle }}</span>
-        <span v-if="!groupOpen && latestEntrySummary" class="timeline-group-latest">{{ latestEntrySummary }}</span>
-      </button>
-
-      <div v-if="groupOpen" class="timeline-group-body">
-        <MessageTimelineThinkingEntry
-          v-if="reasoningEntry"
-          :entry="reasoningEntry"
-          :open="reasoningOpen"
-          @toggle="toggleReasoning"
-        />
-
-        <MessageTimelineToolEntry
-          v-for="entry in visibleToolEntries"
-          :key="entry.key"
-          :entry="entry"
-          :open="entryOpenKeys.includes(entry.key)"
-          :patch-view="patchViewFor(entry)"
-          @toggle="toggleEntry(entry.key)"
-        />
-
-        <button v-if="hiddenToolCount > 0" class="timeline-group-more" type="button" @click="showMoreEntries">
-          {{ t('chat.timeline.showMoreEntries', { count: hiddenToolCount }) }}
-        </button>
-
-        <div v-if="omittedRuns > 0" class="timeline-group-note" role="note">
-          {{ t('chat.timeline.omittedRuns', { count: omittedRuns }) }}
-        </div>
-      </div>
-    </div>
-
     <div
       v-if="subagents.length > 0"
       class="messenger-workflow-scope chat-shell timeline-subagent-scope"
@@ -253,9 +272,11 @@ import {
 import { buildTimelinePatchView } from '@/components/chat/toolTimelinePatch';
 import { createToolWorkflowRenderBatcher } from '@/components/chat/toolWorkflowRenderBatcher';
 import { MAX_OPEN_ENTRIES_PER_TURN } from '@/components/chat/timelineGroupState';
+import type { ChatRuntimeTimelineBlock } from '@/realtime/chat/chatRuntimeTypes';
 import type { ToolWorkflowPatchView } from '@/components/chat/toolWorkflowTypes';
 import type { WorkflowItem } from '@/components/chat/toolWorkflowRunModel';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
+import { buildAssistantDisplayContent } from '@/utils/assistantFailureNotice';
 import { saveObjectUrlAsFile } from '@/utils/workspaceResourceCards';
 
 /**
@@ -405,18 +426,26 @@ const hasToolProjection = computed(() => {
 });
 
 const workflowItems = ref<WorkflowItem[]>([]);
-const batchWorkflowItems = () => {
+/**
+ * 实时投影里的这一行。渲染层按 id 复用行对象并原地改写，因此**行对象本身**不
+ * 一定是最新值；正文、时间线、工具条目都必须走这张解析表取投影，否则流式增量
+ * 只落到投影、DOM 停在首帧（表现为「实时不更新、刷新后正常」）。
+ */
+const resolveProjectedMessage = () => {
   const sessionId = activeSessionId.value;
-  const projected = sessionId
-    ? resolveRuntimeMessageContentSource({
-        projection: chatStore.runtimeProjection,
-        sessionId,
-        runtimeMessageId: runtimeMessageId.value,
-        runtimeUserTurnId: runtimeUserTurnId.value,
-        runtimeModelTurnId: runtimeModelTurnId.value,
-        message: message.value
-      })
-    : null;
+  if (!sessionId) return null;
+  return resolveRuntimeMessageContentSource({
+    projection: chatStore.runtimeProjection,
+    sessionId,
+    runtimeMessageId: runtimeMessageId.value,
+    runtimeUserTurnId: runtimeUserTurnId.value,
+    runtimeModelTurnId: runtimeModelTurnId.value,
+    message: message.value
+  });
+};
+
+const batchWorkflowItems = () => {
+  const projected = resolveProjectedMessage();
   const projectedItems = Array.isArray(projected?.workflowItems) ? (projected.workflowItems as WorkflowItem[]) : null;
   const messageItems = Array.isArray(message.value.workflowItems) ? (message.value.workflowItems as WorkflowItem[]) : [];
   // 投影短暂为空时不要抹掉已实体化的结构快照。
@@ -474,39 +503,139 @@ const showMoreEntries = (): void => {
   entryRenderLimit.value = Math.min(entryRenderLimit.value + TIMELINE_ENTRY_PAGE_SIZE, 400);
 };
 
-const toolCount = computed(() => allToolEntries.value.filter((entry) => entry.kind === 'tool').length);
-
-const reasoningText = computed(() => {
-  // 与正文门禁同理：投影/行对象是原地改写的，必须显式订阅内容时钟，
-  // 否则思考流式增量与终态补写都不会让这个计算属性失效。
-  void runtimeContentVersion.value;
-  const sessionId = activeSessionId.value;
-  const projected = sessionId
-    ? resolveRuntimeMessageContentSource({
-        projection: chatStore.runtimeProjection,
-        sessionId,
-        runtimeMessageId: runtimeMessageId.value,
-        runtimeUserTurnId: runtimeUserTurnId.value,
-        runtimeModelTurnId: runtimeModelTurnId.value,
-        message: message.value
-      })
-    : null;
-  return String(projected?.reasoning ?? message.value.reasoning ?? '');
-});
-
-const reasoningEntry = computed<TimelineReasoningEntry | null>(() => {
-  const text = reasoningText.value;
-  const streaming = Boolean(message.value.reasoningStreaming);
-  if (!text.trim() && !streaming) return null;
+const reasoningSummaryOf = (text: string): string => {
   const normalized = text.replace(/\s+/g, ' ').trim();
-  return {
-    kind: 'reasoning',
-    key: `${props.item.key}:reasoning`,
-    streaming,
-    summary: normalized.length > 160 ? `${normalized.slice(0, 160)}…` : normalized,
-    text
-  };
+  return normalized.length > 160 ? `${normalized.slice(0, 160)}…` : normalized;
+};
+
+// ------------------------------------------------- 时间线块（正文/批次交错）
+
+const timelineBlocks = computed<ChatRuntimeTimelineBlock[]>(() => {
+  // 与正文门禁同一张内容时钟：块列表随投影原地换引用，不订阅就收不到新段。
+  void runtimeContentVersion.value;
+  // 块里的正文是投影层组合好的最新文本，行对象上的副本可能落后一帧。
+  const blocks = resolveProjectedMessage()?.timeline ?? message.value.timeline;
+  return Array.isArray(blocks) ? (blocks as ChatRuntimeTimelineBlock[]) : [];
 });
+
+/**
+ * 工具条目 → 批次行：批次里的 `tool` 行按底层工作流记录 id 认领自己的条目
+ * （一次调用的 call / output / result 三条记录都指向同一条目）。
+ */
+const toolEntryByItemId = computed(() => {
+  const map = new Map<string, TimelineToolEntry>();
+  visibleToolEntries.value.forEach((entry) => {
+    const run = entry.run as unknown as Record<string, Record<string, unknown> | null> | undefined;
+    [run?.callItem?.id, run?.outputItem?.id, run?.resultItem?.id].forEach((id) => {
+      if (id) map.set(String(id), entry);
+    });
+  });
+  return map;
+});
+
+type RenderReasoningRow = { kind: 'reasoning'; key: string; entry: TimelineReasoningEntry };
+type RenderToolRow = { kind: 'tool'; key: string; entry: TimelineToolEntry };
+type RenderActivityRow = RenderReasoningRow | RenderToolRow;
+
+type RenderBodyBlock = {
+  kind: 'body';
+  id: string;
+  text: string;
+  streaming: boolean;
+  isLast: boolean;
+  /** 退回单段正文时交给 `MessageMarkdownBody` 自己解析（问候语、旧行）。 */
+  legacy?: boolean;
+};
+
+type RenderActivityBlock = {
+  kind: 'activity';
+  id: string;
+  open: boolean;
+  rows: RenderActivityRow[];
+  toolCount: number;
+  latestSummary: string;
+  isLast: boolean;
+};
+
+type RenderBlock = RenderBodyBlock | RenderActivityBlock;
+
+const renderBlocks = computed<RenderBlock[]>(() => {
+  const blocks = timelineBlocks.value;
+  if (blocks.length === 0) {
+    // 没有块列表（问候语、旧行）时退回单段正文，保持既有渲染形态。
+    if (!hasBody.value) return [];
+    return [{ kind: 'body', id: legacyBodyId(), text: displayContent.value, streaming: bodyStreaming.value, isLast: true, legacy: true }];
+  }
+  const lastBodyIndex = blocks.reduce((last, block, index) => (block.kind === 'body' ? index : last), -1);
+  const lastActivityIndex = blocks.reduce((last, block, index) => (block.kind === 'activity' ? index : last), -1);
+  const claimed = new Set<string>();
+  return blocks.map((block, index): RenderBlock => {
+    if (block.kind === 'body') {
+      const isLastBlock = index === blocks.length - 1;
+      return {
+        kind: 'body',
+        id: block.id,
+        // 失败提示是整轮信息，只挂在最后一段正文上（与旧单段形态同源）。
+        text: index === lastBodyIndex
+          ? buildAssistantDisplayContent(message.value, translate, block.text)
+          : block.text,
+        streaming: index === lastBodyIndex && bodyStreaming.value,
+        isLast: isLastBlock
+      };
+    }
+    // 思考行与工具行按投影给定的到达顺序铺开：一批里可以有多次思考、多次调用。
+    const rows: RenderActivityRow[] = [];
+    block.rows.forEach((row) => {
+      if (row.type === 'reasoning') {
+        const text = String(row.text || '');
+        if (!text.trim()) return;
+        const key = `${props.item.key}:${block.id}:reasoning:${row.itemId}`;
+        rows.push({
+          kind: 'reasoning',
+          key,
+          entry: {
+            kind: 'reasoning',
+            key,
+            streaming: index === lastActivityIndex && Boolean(message.value.reasoningStreaming),
+            summary: reasoningSummaryOf(text),
+            text
+          }
+        });
+        return;
+      }
+      const entry = toolEntryByItemId.value.get(String(row.itemId));
+      if (!entry || claimed.has(entry.key)) return;
+      claimed.add(entry.key);
+      rows.push({ kind: 'tool', key: entry.key, entry });
+    });
+    // 认领不到批次的条目（旧行、投影短暂错位）落到最后一批，条目不会凭空消失。
+    if (index === lastActivityIndex) {
+      visibleToolEntries.value.forEach((entry) => {
+        if (claimed.has(entry.key)) return;
+        claimed.add(entry.key);
+        rows.push({ kind: 'tool', key: entry.key, entry });
+      });
+    }
+    const toolCount = rows.reduce((count, row) => count + (row.kind === 'tool' ? 1 : 0), 0);
+    const latestRow = rows[rows.length - 1];
+    return {
+      kind: 'activity',
+      id: block.id,
+      open: activityOpenState.value[block.id] ?? (index === lastActivityIndex && groupOpen.value),
+      rows,
+      toolCount,
+      latestSummary: latestRow
+        ? (latestRow.kind === 'tool'
+            ? latestRow.entry.summary || latestRow.entry.toolLabel
+            : latestRow.entry.summary)
+        : '',
+      isLast: index === blocks.length - 1
+    };
+  });
+});
+
+const legacyBodyId = (): string =>
+  String(resolveAgentMessageKey?.(message.value, props.item.sourceIndex) || props.item.key);
 
 const patchViews = computed<Record<string, ToolWorkflowPatchView | null>>(() => {
   const views: Record<string, ToolWorkflowPatchView | null> = {};
@@ -530,32 +659,40 @@ const subagents = computed<Record<string, unknown>[]>(() => {
 
 // ------------------------------------------------------------ 展开状态
 
-const showEntryGroup = computed(() => Boolean(reasoningEntry.value) || allToolEntries.value.length > 0);
+const hasActivityGroup = computed(() =>
+  timelineBlocks.value.some((block) => block.kind === 'activity')
+);
+/** 整轮是否默认展开批次栏：仍由时间线按 MAX_OPEN_TURNS 下发（`defaultOpen`）。 */
 const groupOpen = ref(props.defaultOpen);
-const reasoningOpen = ref(false);
+/** 每个批次各自的开合覆盖；未点过的批次跟随整轮默认值。 */
+const activityOpenState = ref<Record<string, boolean>>({});
+const reasoningOpenKeys = ref<string[]>([]);
 const entryOpenKeys = ref<string[]>([]);
 const ENTRY_OPEN_LIMIT = MAX_OPEN_ENTRIES_PER_TURN;
 
 // 上报本轮的「有内容」状态；轮次行据此套用 MAX_OPEN_TURNS 上限。
 const emit = defineEmits<{ (event: 'activity', active: boolean): void }>();
 watch(
-  showEntryGroup,
+  hasActivityGroup,
   (visible) => emit('activity', Boolean(visible)),
   { immediate: true }
 );
 
-const groupTitle = computed(() =>
-  groupOpen.value
-    ? t('chat.timeline.toolGroupOpen', { count: Math.max(allToolEntries.value.length, 1) })
-    : t('chat.timeline.processed')
-);
+const activityTitle = (block: RenderActivityBlock): string =>
+  block.toolCount > 0
+    ? t('chat.timeline.toolGroupOpen', { count: block.toolCount })
+    : t('chat.timeline.processed');
 
-const toggleGroup = (): void => {
-  groupOpen.value = !groupOpen.value;
+const toggleActivity = (id: string): void => {
+  const block = renderBlocks.value.find((item) => item.id === id);
+  if (!block || block.kind !== 'activity') return;
+  activityOpenState.value = { ...activityOpenState.value, [id]: !block.open };
 };
 
-const toggleReasoning = (): void => {
-  reasoningOpen.value = !reasoningOpen.value;
+const toggleReasoning = (id: string): void => {
+  const next = reasoningOpenKeys.value.filter((key) => key !== id);
+  if (next.length === reasoningOpenKeys.value.length) next.push(id);
+  reasoningOpenKeys.value = next.slice(-ENTRY_OPEN_LIMIT);
 };
 
 const toggleEntry = (key: string): void => {
@@ -573,31 +710,26 @@ const toggleEntry = (key: string): void => {
   entryOpenKeys.value = Array.from(next);
 };
 
-const latestEntrySummary = computed(() => {
-  const entries = allToolEntries.value;
-  const last = entries.length > 0 ? entries[entries.length - 1] : null;
-  if (last) return last.summary || last.toolLabel;
-  return reasoningEntry.value?.summary || '';
-});
-
 watch(
   () => props.item.key,
   (key, previousKey) => {
     if (!key || key === previousKey) return;
     // 虚拟列表会复用行组件：轮次身份变化时复位局部展开状态。
-    reasoningOpen.value = false;
+    reasoningOpenKeys.value = [];
     entryOpenKeys.value = [];
+    activityOpenState.value = {};
     entryRenderLimit.value = TIMELINE_ENTRY_RENDER_LIMIT;
     batchWorkflowItems();
   },
   { immediate: true }
 );
 
-// 默认开合由时间线按 MAX_OPEN_TURNS 计算后下发（只跟随下发的值）。
+// 默认开合由时间线按 MAX_OPEN_TURNS 计算后下发；用户点过的批次不再跟随。
 watch(
   () => props.defaultOpen,
   (open) => {
     groupOpen.value = Boolean(open);
+    activityOpenState.value = {};
   }
 );
 </script>

@@ -1,11 +1,11 @@
 ---
 title: Beehive Interface
-summary: Beehive is your workbench. Two columns: the left sidebar holds new task, search, the workspace thread tree, the working directory, and settings; the right side is chat.
+summary: Beehive is the cloud AI workbench (web, provided with the Hull). Two columns: the left sidebar holds new task, search, the workspace thread tree, the working directory, and settings; the right side is chat. The Honeycomb (desktop, the local AI workbench) shares this layout.
 ---
 
 # Beehive Interface
 
-Beehive is your workbench. Conversations, file handling, and settings all happen here. Individuals open it via the [desktop app](/docs/en/start/desktop/); team members open it in a web browser.
+Beehive is the cloud AI workbench. Conversations, file handling, and settings all happen here. Individuals use the [desktop app](/docs/en/start/desktop/) (the Honeycomb, the local AI workbench); team members open the Beehive in a web browser.
 
 ## Two-column layout
 

@@ -10,7 +10,7 @@ source_docs:
 
 # Documentation Hub
 
-Everyone starts with the [Honeycomb (desktop)](/docs/en/start/desktop/): download, install, and you have a complete AI workbench. Entries below are ordered by how often you'll need them.
+Everyone starts with the [Honeycomb (desktop)](/docs/en/start/desktop/): download, install, and you have your local AI workbench. Entries below are ordered by how often you'll need them.
 
 ## Start here: get running
 
@@ -57,7 +57,7 @@ Only needed when multiple people share one system or you automate workflows:
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/en/start/server/">
     <strong>Hull deployment (optional)</strong>
-    <span>Deploy only for multi-user, unified governance.</span>
+    <span>The user and agent management platform — deploy only for multi-user governance.</span>
   </a>
   <a class="docs-card" href="/docs/en/surfaces/web-admin/">
     <strong>Bridge Interface</strong>
@@ -69,7 +69,7 @@ Only needed when multiple people share one system or you automate workflows:
   </a>
   <a class="docs-card" href="/docs/en/start/cli/">
     <strong>Helm guide (optional)</strong>
-    <span>Terminal-driven, scripting, automation.</span>
+    <span>The manual local entry point — scripting, automation.</span>
   </a>
 </div>
 

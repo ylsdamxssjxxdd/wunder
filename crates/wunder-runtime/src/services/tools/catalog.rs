@@ -205,6 +205,17 @@ fn exec_tool_description(t: &impl Fn(&str) -> String) -> String {
     desc
 }
 
+fn localized_tool_title(name: &str, language: &str) -> Option<String> {
+    let key = format!("tool.title.{name}");
+    let value = i18n::t_in_language(&key, language);
+    let value = value.trim().to_string();
+    if value.is_empty() || value == key {
+        None
+    } else {
+        Some(value)
+    }
+}
+
 pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
     let t = |key: &str| i18n::t_in_language(key, language);
     let mut specs = vec![
@@ -738,48 +749,47 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             ]),
         },
         ToolSpec {
-            name: "编辑".to_string(),
+            // 由原 `编辑` 与 `str_replace_editor` 合并：字面替换为主，
+            // 兼容补丁（input）与子命令（command）两种形态。仅 file_path 必填，
+            // 其余按形态在运行时校验。
+            name: "文本编辑".to_string(),
             title: None,
-            description: t("tool.spec.edit.description"),
+            description: t("tool.spec.text_edit.description"),
             input_schema: super::schema::object(vec![
-                super::schema::string("file_path").desc(t("tool.spec.edit.args.file_path")),
-                super::schema::string("old_string").desc(t("tool.spec.edit.args.old_string")),
-                super::schema::string("new_string").desc(t("tool.spec.edit.args.new_string")),
+                super::schema::string("file_path").desc(t("tool.spec.text_edit.args.file_path")),
+                super::schema::string("old_string")
+                    .desc(t("tool.spec.text_edit.args.old_string"))
+                    .optional(),
+                super::schema::string("new_string")
+                    .desc(t("tool.spec.text_edit.args.new_string"))
+                    .optional(),
                 super::schema::boolean("replace_all")
-                    .desc(t("tool.spec.edit.args.replace_all"))
+                    .desc(t("tool.spec.text_edit.args.replace_all"))
                     .optional(),
                 super::schema::string("input")
-                    .desc(t("tool.spec.edit.args.input"))
+                    .desc(t("tool.spec.text_edit.args.input"))
                     .optional(),
                 super::schema::boolean("dry_run")
-                    .desc(t("tool.spec.edit.args.dry_run"))
+                    .desc(t("tool.spec.text_edit.args.dry_run"))
                     .optional(),
-            ]),
-        },
-        ToolSpec {
-            name: "str_replace_editor".to_string(),
-            title: None,
-            description: t("tool.spec.str_replace_editor.description"),
-            input_schema: super::schema::object(vec![
                 super::schema::string("command")
-                    .desc(t("tool.spec.str_replace_editor.args.command"))
-                    .enums(vec!["view", "create", "str_replace", "insert"]),
-                super::schema::string("path")
-                    .desc(t("tool.spec.str_replace_editor.args.path")),
+                    .desc(t("tool.spec.text_edit.args.command"))
+                    .enums(vec!["view", "create", "str_replace", "insert"])
+                    .optional(),
                 super::schema::string("file_text")
-                    .desc(t("tool.spec.str_replace_editor.args.file_text"))
+                    .desc(t("tool.spec.text_edit.args.file_text"))
                     .optional(),
                 super::schema::integer("insert_line")
-                    .desc(t("tool.spec.str_replace_editor.args.insert_line"))
+                    .desc(t("tool.spec.text_edit.args.insert_line"))
                     .optional(),
                 super::schema::string("new_str")
-                    .desc(t("tool.spec.str_replace_editor.args.new_str"))
+                    .desc(t("tool.spec.text_edit.args.new_str"))
                     .optional(),
                 super::schema::string("old_str")
-                    .desc(t("tool.spec.str_replace_editor.args.old_str"))
+                    .desc(t("tool.spec.text_edit.args.old_str"))
                     .optional(),
                 super::schema::array("view_range")
-                    .desc(t("tool.spec.str_replace_editor.args.view_range"))
+                    .desc(t("tool.spec.text_edit.args.view_range"))
                     .items(super::schema::integer("_"))
                     .optional(),
             ]),
@@ -1179,6 +1189,13 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
     ];
     specs.extend(goal::goal_tool_specs());
+    for spec in specs.iter_mut() {
+        if spec.title.is_none() {
+            if let Some(title) = localized_tool_title(&spec.name, language) {
+                spec.title = Some(title);
+            }
+        }
+    }
     specs
 }
 
@@ -1246,11 +1263,14 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("skill_call".to_string(), "技能调用".to_string());
     map.insert("skill_get".to_string(), "技能调用".to_string());
     map.insert("write_file".to_string(), "写入文件".to_string());
-    map.insert("apply_patch".to_string(), "编辑".to_string());
-    map.insert("应用补丁".to_string(), "编辑".to_string());
-    map.insert("patch".to_string(), "编辑".to_string());
-    map.insert("edit".to_string(), "编辑".to_string());
-    map.insert("edit_file".to_string(), "编辑".to_string());
+    map.insert("apply_patch".to_string(), "文本编辑".to_string());
+    map.insert("应用补丁".to_string(), "文本编辑".to_string());
+    map.insert("patch".to_string(), "文本编辑".to_string());
+    map.insert("edit".to_string(), "文本编辑".to_string());
+    map.insert("edit_file".to_string(), "文本编辑".to_string());
+    // 合并前的两个规范名保留为别名，保证历史调用与旧前端仍可解析。
+    map.insert("编辑".to_string(), "文本编辑".to_string());
+    map.insert("str_replace_editor".to_string(), "文本编辑".to_string());
     map.insert("subagent_control".to_string(), "子智能体控制".to_string());
     map.insert(
         thread_control_tool::TOOL_THREAD_CONTROL_ALIAS.to_string(),
@@ -1441,7 +1461,8 @@ pub fn resolve_tool_name(name: &str) -> String {
 }
 
 pub fn build_runtime_tool_display_map(config: &Config) -> HashMap<String, String> {
-    let prefer_alias = i18n::get_language().to_lowercase().starts_with("en");
+    let language = i18n::get_language();
+    let prefer_alias = language.to_lowercase().starts_with("en");
     let aliases_by_name = {
         let mut map: HashMap<String, Vec<String>> = HashMap::new();
         for (alias, canonical) in builtin_aliases() {
@@ -1465,7 +1486,7 @@ pub fn build_runtime_tool_display_map(config: &Config) -> HashMap<String, String
                 .cloned()
                 .unwrap_or_else(|| runtime_name.clone())
         } else {
-            runtime_name.clone()
+            localized_tool_title(&runtime_name, &language).unwrap_or_else(|| runtime_name.clone())
         };
         display_map.insert(runtime_name, display_name);
     }
@@ -1493,6 +1514,8 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         }
         "问询面板" => Some("question_panel"),
         "技能调用" => Some("skill_call"),
+        // 合并后以字面替换为主，模型侧优先暴露 `edit`。
+        "文本编辑" => Some("edit"),
         thread_control_tool::TOOL_THREAD_CONTROL => {
             Some(thread_control_tool::TOOL_THREAD_CONTROL_ALIAS)
         }
@@ -1882,28 +1905,38 @@ mod tests {
     use crate::config::Config;
 
     #[test]
-    fn edit_tool_spec_is_registered() {
+    fn text_edit_tool_spec_is_registered() {
         let spec = builtin_tool_specs_with_language("en-US")
             .into_iter()
-            .find(|spec| spec.name == "编辑")
-            .expect("edit spec");
-        assert!(spec
-            .description
-            .contains("Edit an existing UTF-8 text file"));
+            .find(|spec| spec.name == "文本编辑")
+            .expect("text edit spec");
+        assert!(spec.description.to_lowercase().contains("edit"));
+        // 仅 file_path 必填；old_string/new_string 在子命令与补丁形态下并非必需。
         let required = spec.input_schema["required"].as_array().expect("required");
-        for key in ["file_path", "old_string", "new_string"] {
-            assert!(required.iter().any(|v| v == key), "required missing {key}");
-        }
+        assert_eq!(required.len(), 1, "only file_path is required");
+        assert!(required.iter().any(|v| v == "file_path"));
         assert_eq!(spec.input_schema["additionalProperties"], false);
         assert_eq!(
             spec.input_schema["properties"]["replace_all"]["type"],
             "boolean"
         );
         assert!(spec.input_schema["properties"]["file_path"].is_object());
+        assert!(spec.input_schema["properties"]["command"].is_object());
+        assert!(spec.input_schema["properties"]["view_range"].is_object());
         assert!(spec.input_schema["properties"]["edits"].is_null());
-        assert_eq!(resolve_tool_name("edit"), "编辑");
-        assert_eq!(resolve_tool_name("edit_file"), "编辑");
-        assert_eq!(resolve_tool_name("编辑"), "编辑");
+        // 旧名与旧规范名全部回落到合并后的规范名。
+        for alias in [
+            "edit",
+            "edit_file",
+            "apply_patch",
+            "应用补丁",
+            "patch",
+            "编辑",
+            "str_replace_editor",
+            "文本编辑",
+        ] {
+            assert_eq!(resolve_tool_name(alias), "文本编辑", "alias {alias}");
+        }
     }
     use crate::i18n;
     use crate::skills::SkillRegistry;
@@ -2621,10 +2654,10 @@ mod tests {
             Some(false)
         );
 
-        // 「应用补丁」已并入「编辑」：patch 输入作为编辑工具的可选兼容参数保留。
+        // 「应用补丁」已并入「文本编辑」：patch 输入作为可选兼容参数保留。
         let edit_spec = specs
             .iter()
-            .find(|spec| spec.name == "编辑")
+            .find(|spec| spec.name == "文本编辑")
             .expect("edit spec (merged from apply_patch)");
         let patch_input_description = edit_spec.input_schema["properties"]["input"]["description"]
             .as_str()

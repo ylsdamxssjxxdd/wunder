@@ -6,9 +6,9 @@
 //! snapshot. Leaving the editor with pending edits mirrors the web settings
 //! panel: a confirm dialog asks before the edits are discarded.
 //!
-//! Saving is validated here before it reaches the façade. The system prompt is
-//! forwarded verbatim and never rewritten: a thread freezes its prompt on first
-//! use, so offering an edit path would break the model's prompt cache.
+//! Saving is validated here before it reaches the façade. The agent's prompt is
+//! forwarded verbatim and never rewritten; the thread-level freeze is the
+//! runtime's, so editing the record only shapes the threads that come after.
 
 use crate::MainWindow;
 use slint::{ComponentHandle, Model};

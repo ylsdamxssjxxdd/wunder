@@ -21,7 +21,7 @@ The older topic pages were not removed. They were moved under [Reference Overvie
 
 - wunder is not centered on one-off answers; it is centered on whether a thread can keep running stably over time.
 - Capabilities are formalized as tools, events, and governance constraints rather than buried inside prompts.
-- wunder is not built for only one chat entry. Beehive (Honeycomb desktop app or web browser), Helm (the CLI), and channel adapters all reach the same shared engine.
+- wunder is not built for only one chat entry. The Honeycomb (desktop, the local AI workbench), the Beehive (web, the cloud AI workbench), the Helm (CLI), and channel adapters all reach the same shared engine.
 - wunder does not add governance after feature work. It starts from concurrent multi-user access, long conversations, and high-risk toolchains by default.
 
 ## Why these ten are core rather than ordinary features

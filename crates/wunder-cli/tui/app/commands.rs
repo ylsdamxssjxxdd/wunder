@@ -27,9 +27,7 @@ pub(super) async fn compute_model_status(
     let model_entry = config.llm.models.get(&model_name);
     ModelStatusSnapshot {
         model_name,
-        tool_call_mode: model_entry
-            .and_then(|model| model.tool_call_mode.clone())
-            .unwrap_or_else(|| "tool_call".to_string()),
+        tool_call_mode: crate::runtime::effective_tool_call_mode(model_entry).to_string(),
         reasoning_effort: model_entry
             .and_then(|model| model.reasoning_effort.clone())
             .map(|value| value.trim().to_string())
@@ -37,9 +35,7 @@ pub(super) async fn compute_model_status(
             .or_else(|| runtime.user_config.values.model_reasoning_effort.clone())
             .unwrap_or_else(|| DEFAULT_REASONING_EFFORT.to_string()),
         approval_mode,
-        max_context: model_entry
-            .and_then(|model| model.max_context)
-            .filter(|value| *value > 0),
+        max_context: Some(crate::runtime::effective_max_context(model_entry)),
         max_rounds: model_entry
             .and_then(|model| model.max_rounds)
             .unwrap_or(crate::CLI_MIN_MAX_ROUNDS)
@@ -295,12 +291,8 @@ impl TuiApp {
             .resolve_model_name(self.global.model.as_deref())
             .await;
         let model_entry = model.as_ref().and_then(|name| config.llm.models.get(name));
-        let tool_call_mode = model_entry
-            .and_then(|model| model.tool_call_mode.clone())
-            .unwrap_or_else(|| "tool_call".to_string());
-        let max_context = model_entry
-            .and_then(|model| model.max_context)
-            .filter(|value| *value > 0);
+        let tool_call_mode = crate::runtime::effective_tool_call_mode(model_entry).to_string();
+        let max_context = Some(crate::runtime::effective_max_context(model_entry));
 
         self.reload_session_stats().await;
 
@@ -556,10 +548,14 @@ impl TuiApp {
                 "- max_context: auto probe unavailable (or keep existing)",
             ));
         }
+        let configured_mode = {
+            let config = self.runtime.state.config_store.get().await;
+            crate::runtime::effective_tool_call_mode(config.llm.models.get(&model_name))
+        };
         if self.is_zh_language() {
-            self.push_config_log("- 工具调用模式: tool_call".to_string());
+            self.push_config_log(format!("- 工具调用模式: {configured_mode}"));
         } else {
-            self.push_config_log("- tool_call_mode: tool_call".to_string());
+            self.push_config_log(format!("- tool_call_mode: {configured_mode}"));
         }
         Ok(())
     }
@@ -816,12 +812,9 @@ impl TuiApp {
             } else {
                 ""
             };
-            let mode = config
-                .llm
-                .models
-                .get(&name)
-                .and_then(|model| model.tool_call_mode.as_deref())
-                .unwrap_or("tool_call");
+            let mode = crate::runtime::effective_tool_call_mode(
+                config.llm.models.get(&name),
+            );
             self.push_log(
                 LogKind::Info,
                 format!("{marker} {cloud_marker}{name} ({mode})"),

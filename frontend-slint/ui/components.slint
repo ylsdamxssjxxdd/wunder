@@ -200,10 +200,18 @@ export component FormField inherits Rectangle {
     in property <bool> enabled: true;
     // Inline validation message; empty keeps the compact single-line form.
     in property <string> error: "";
+    // Bold heading label for stacked form fields (the agent editor), instead of
+    // the default muted caption used inside settings rows.
+    in property <bool> strong-label: false;
     in-out property <string> text <=> editor.text;
     callback edited();
     height: root.error == "" ? 62px : 78px;
-    Text { y: 0px; width: parent.width; height: 18px; text: root.label; color: Theme.muted; font-size: Theme.font-xs; }
+    Text {
+        y: 0px; width: parent.width; height: 18px; text: root.label;
+        color: root.strong-label ? Theme.text : Theme.muted;
+        font-size: root.strong-label ? Theme.font-sm : Theme.font-xs;
+        font-weight: root.strong-label ? 600 : 400;
+    }
     Rectangle {
         y: 21px; width: parent.width; height: 36px; border-radius: Theme.radius-sm;
         background: Theme.panel; border-width: 1px; border-color: root.error != "" ? Theme.danger : editor.has-focus ? Theme.accent : Theme.border;

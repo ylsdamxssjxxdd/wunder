@@ -10,7 +10,7 @@ source_docs:
 
 # Quick Start
 
-One goal: open the Honeycomb and complete your first task. Individual users default to the desktop app — download and go, no server required.
+One goal: open the Honeycomb and complete your first task. Individual users default to the desktop app — the local AI workbench. Download and go, no server required.
 
 ## 4 steps to get running
 
@@ -43,8 +43,8 @@ If you saw the full execution process and the final result, you're up and runnin
 
 The Honeycomb covers most scenarios. The following optional forms are only needed for specific requirements:
 
-- **The Hull (server)**: deploy when multiple people need to share one system; members use Beehive in a browser. See the [Hull deployment guide](/docs/en/start/server/).
-- **The Helm (cli)**: for terminals and automation. See the [Helm guide](/docs/en/start/cli/).
+- **The Hull (server)**: the user and agent management platform, deployed when multiple people need to share one system; members access the Beehive (the cloud AI workbench) in a browser. See the [Hull deployment guide](/docs/en/start/server/).
+- **The Helm (cli)**: the manual local entry point for terminals and automation. See the [Helm guide](/docs/en/start/cli/).
 
 ## Verification checklist
 

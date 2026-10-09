@@ -463,6 +463,7 @@ impl Orchestrator {
         let file_actions = HashMap::from([
             ("读取文件", "read"),
             ("写入文件", "write"),
+            ("文本编辑", "edit"),
             ("编辑", "edit"),
         ]);
         if let Some(action) = file_actions.get(tool_name) {

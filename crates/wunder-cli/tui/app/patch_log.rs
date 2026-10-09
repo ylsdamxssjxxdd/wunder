@@ -1744,12 +1744,7 @@ fn format_repair_summary(repair: &Value) -> Option<String> {
 
 fn compact_json(value: &Value) -> String {
     const MAX_INLINE_JSON_CHARS: usize = 220;
-    let mut text = serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string());
-    if text.len() > MAX_INLINE_JSON_CHARS {
-        text.truncate(MAX_INLINE_JSON_CHARS);
-        text.push_str("...");
-    }
-    text
+    crate::render::compact_json_within(value, MAX_INLINE_JSON_CHARS)
 }
 
 /// What one card keeps in memory. The transcript overlay reads this window, so it is

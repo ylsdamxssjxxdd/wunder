@@ -1,11 +1,11 @@
 ---
 title: Admin Interface
-summary: The admin's backend workbench. Model configuration, tool management, user governance, channel integration — all here.
+summary: The Bridge is the management UI of the user and agent management platform (the Hull). Model configuration, tool management, user governance, channel integration — all here.
 ---
 
 # Admin Interface
 
-The admin interface is the system administrator's backend workbench. Regular users don't see this interface.
+The Bridge is the system administrator's management UI, part of the Hull (the user and agent management platform). Regular users don't see this interface.
 
 ## When You Need the Admin Interface
 

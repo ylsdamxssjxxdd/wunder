@@ -1,11 +1,11 @@
 ---
 title: Desktop Interface
-summary: Beehive's desktop form. Local-first, with direct file access and one-click reset.
+summary: The local AI workbench (desktop). Local-first, with direct file access and one-click reset.
 ---
 
 # Desktop Interface
 
-Desktop is Beehive's local form, the main entry for individual users. It's not just a "shell" for the web — it's a local-first complete workbench.
+The Honeycomb (desktop) is the local AI workbench and the default entry for individual users. It's not just a "shell" for the web — it's a local-first complete workbench.
 
 ## Desktop Features
 
@@ -16,7 +16,7 @@ Desktop is Beehive's local form, the main entry for individual users. It's not j
 
 ### Local File Access
 
-Can directly access the local file system (within security boundaries), more flexible than the web-only version.
+Can directly access the local file system (within security boundaries), more flexible than the Beehive (web) alone.
 
 ### Built-in Runtime
 
@@ -33,7 +33,7 @@ Desktop reuses Beehive's two-column layout, adding desktop-specific local capabi
 - **Left sidebar** (fixed 240px): new task, search, the workspace and thread tree, the working directory (file tree + toolbar + usage bar), and settings at the bottom (including desktop runtime settings and one-click reset)
 - **Right column**: the welcome page or the chat page
 
-Both Desktop and the web version follow "one agent instance and one working directory per user", so the sidebar holds only that single workspace and thread tree — no multi-agent list, create, or switch entry, and no way to change the directory.
+Both the Honeycomb and the Beehive follow "one agent instance and one working directory per user", so the sidebar holds only that single workspace and thread tree — no multi-agent list, create, or switch entry, and no way to change the directory.
 
 ## Desktop-Specific Features
 
@@ -68,7 +68,7 @@ Desktop allows agents to:
 - Write local files
 - Execute local commands
 
-Desktop agents get local file and command access that the web version does not have, still within security boundaries.
+Honeycomb agents get local file and command access that the Beehive (web) does not have, still within security boundaries.
 
 ## When to Use Desktop
 

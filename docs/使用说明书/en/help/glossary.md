@@ -10,6 +10,21 @@ source_docs:
 
 # Glossary
 
+## Product and Form Names
+
+| Name | English / tech ID | Meaning |
+|------|------|------|
+| wunder | `wunder` | The product itself: an **agent orchestration platform** — hand a goal to the agent, it breaks it down, calls tools, and delivers results. |
+| Core | `wunder-core` | Code foundation: configuration, auth, storage contracts, execution policy. |
+| Engine | `wunder-runtime` | Code execution layer: orchestrator, thread runtime, tools, channels, gateway. The Honeycomb and the Helm depend on the Engine directly, not on the Hull. |
+| Hull | `wunder-server` | The **user and agent management platform**: the server form for teams and organizations, handling users, permissions, and channels, and providing the Beehive (web). |
+| Bridge | `web/` | The governance frontend — the admin's management UI for system configuration, users, and channels. |
+| Beehive | `frontend/` | The **cloud AI workbench** (web): the web UI provided with the Hull, accessed in a browser. |
+| Honeycomb | `wunder-desktop` | The **local AI workbench** (desktop): the desktop form and the default entry for individual users, running locally with direct access to local files. |
+| Helm | `wunder-cli` | The **manual local entry point** (cli): the command-line form for hands-on work, developers, and automation, terminal-driven. |
+
+"Hull / Bridge / Beehive / Honeycomb / Helm" refer to concrete forms of wunder; "Core" and "Engine" refer to code layers (wunder-core / wunder-runtime). Do not mix the two groups.
+
 ## User
 
 Your identity. Can be a registered account or a temporary virtual name — the system recognizes both.

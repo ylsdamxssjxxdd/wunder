@@ -1,6 +1,6 @@
 ---
 title: wunder
-summary: wunder is an AI workbench that executes tasks. Install the desktop app, describe a goal, and the agent breaks it down, calls tools, and delivers results.
+summary: wunder is an agent orchestration platform. Install the desktop app (the local AI workbench), describe a goal, and the agent breaks it down, calls tools, and delivers results.
 read_when:
   - First time learning about wunder
   - Need to quickly decide where to start
@@ -10,11 +10,11 @@ source_docs:
 
 # wunder
 
-<p class="docs-eyebrow">An AI workbench that executes tasks</p>
+<p class="docs-eyebrow">An agent orchestration platform</p>
 
-## The Honeycomb: your AI workbench
+## The Honeycomb: your local AI workbench
 
-You use wunder through the **Honeycomb (desktop)**. It is a local desktop app covering chat, files, agent settings, and tools. Install it, describe your goal, and the agent breaks the goal down, calls tools, and delivers results — no server deployment required.
+You use wunder through the **Honeycomb (desktop)**. It is the local AI workbench — a desktop app covering chat, files, agent settings, and tools. Install it, describe your goal, and the agent breaks the goal down, calls tools, and delivers results — no server deployment required.
 
 ```text
 Download → Configure a model → Describe your goal → Get results
@@ -50,12 +50,13 @@ You send a message → the agent keeps working in its thread, spawning temporary
 | **Long sessions** | Context compaction and long-term memory keep long sessions working |
 | **Open interfaces** | WebSocket real-time, RESTful API, A2A interop standard |
 
-## Need more? Two optional forms
+## Need more? Three optional forms
 
-The Honeycomb covers most scenarios. wunder also ships two optional forms — use them when you need them:
+The Honeycomb covers most scenarios. wunder also ships three optional forms — use them when you need them:
 
-- **The Hull (server)**: deploy only when multiple people need to share one system. Multi-user, permissions, channel access; members use Beehive in a browser. See the [Hull deployment guide](/docs/en/start/server/) and the [Bridge](/docs/en/surfaces/web-admin/).
-- **The Helm (cli)**: for terminals and automation, script-driven. See the [Helm guide](/docs/en/start/cli/).
+- **The Hull (server)**: the user and agent management platform, deployed only when multiple people need to share one system. Multi-user, permissions, channel access; it provides the Beehive (web, the cloud AI workbench, accessed in a browser) and the Bridge (the admin UI). See the [Hull deployment guide](/docs/en/start/server/).
+- **The Beehive (web)**: the cloud AI workbench, provided with the Hull; members access it in a browser. See the [Beehive Interface](/docs/en/surfaces/frontend/).
+- **The Helm (cli)**: the manual local entry point for terminals and automation, script-driven. See the [Helm guide](/docs/en/start/cli/).
 
 ## Quick navigation
 

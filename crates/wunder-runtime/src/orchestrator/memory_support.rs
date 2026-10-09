@@ -1885,23 +1885,12 @@ pub(super) fn resolve_compaction_limit(
     llm_config: &LlmModelConfig,
     context_tokens: i64,
     force: bool,
-) -> Option<i64> {
-    let configured_limit =
-        HistoryManager::get_auto_compact_limit(llm_config).map(|limit| limit.max(1));
-    if let Some(limit) = configured_limit {
-        if force {
-            return Some(resolve_force_compaction_limit(context_tokens, limit));
-        }
-        return Some(limit.max(1));
+) -> i64 {
+    let limit = HistoryManager::get_auto_compact_limit(llm_config).max(1);
+    if force {
+        return resolve_force_compaction_limit(context_tokens, limit);
     }
-    if !force {
-        return None;
-    }
-    let adaptive_limit = (context_tokens / 4).max(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
-    Some(adaptive_limit.clamp(
-        COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS,
-        COMPACTION_FORCE_FALLBACK_LIMIT,
-    ))
+    limit
 }
 
 pub(super) fn resolve_force_compaction_limit(context_tokens: i64, configured_limit: i64) -> i64 {

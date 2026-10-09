@@ -10,7 +10,7 @@ source_docs:
 
 # 说明书总览
 
-所有人都从[蜂窝（desktop）](/docs/zh-CN/start/desktop/)开始：下载安装，打开就是完整的 AI 工作台。以下入口按使用频率排列。
+所有人都从[蜂窝（desktop）](/docs/zh-CN/start/desktop/)开始：下载安装，打开就是你的本地 AI 工作台。以下入口按使用频率排列。
 
 ## 先看这里：用起来
 
@@ -57,7 +57,7 @@ source_docs:
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/start/server/">
     <strong>舰体部署（可选）</strong>
-    <span>多人共用、统一治理时才部署。</span>
+    <span>用户与智能体管理平台，多人共用时才部署。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/web-admin/">
     <strong>舰桥界面</strong>
@@ -69,7 +69,7 @@ source_docs:
   </a>
   <a class="docs-card" href="/docs/zh-CN/start/cli/">
     <strong>舵机使用（可选）</strong>
-    <span>终端驱动、脚本化、自动化。</span>
+    <span>手工本地操作入口，脚本化、自动化。</span>
   </a>
 </div>
 

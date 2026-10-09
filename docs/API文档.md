@@ -1,5 +1,7 @@
 # wunder API 文档
 
+wunder 是一个**智能体调度平台**：蜂窝（desktop）是本地 AI 工作台，蜂巢（web）是云端 AI 工作台，舵机（cli）是手工本地操作入口，舰体（server）是用户与智能体管理平台。本文档描述舰体（server）对外提供的 HTTP / WebSocket 接口，蜂窝与舵机在本地复用同一套引擎语义。
+
 ## 4. API 设计
 
 ### 4.0 实现说明
@@ -1326,7 +1328,7 @@
   - 说明：已完成的空响应（包含仅有 reasoning 的响应）直接交给用户轮次恢复守卫，底层不因空内容自动补拉非流式请求或重试；传输中断和服务不可用仍走原有故障恢复。
   - 说明：`provider` 支持预置（`virtual_replay/openai_compatible/openai/anthropic/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`）；`openai_compatible` 需显式填写 `base_url`，其余 provider 可省略 `base_url` 自动补齐。
   - 说明：`provider=virtual_replay` 表示虚拟模型回放，`model` 可填已上传回放日志的 `id`，不需要 `base_url/api_key`；执行时按当前用户轮次与模型轮次严格匹配 JSONL 中的 `llm_output` 与 `tool_calls`，轮次缺失或耗尽会返回错误，不会循环复用旧输出。省略 `model` 时才使用轻量随机虚拟回复，便于本地连通性测试；回放用量仅作统计，不扣减用户额度。
-  - `simulation_speed`：仅虚拟模型生效，`fast/medium/slow`，缺省或 null 为 `fast`；非法值拒绝。预填充速度分别为 2000/500/100 Token/s，思考与生成速度分别为 200/50/10 Token/s。管理员模型配置可选择档位。随机虚拟回复先发送明确标识的模拟思考，再发送生成内容；回放在能力和预算范围内使用日志思考内容，非流式调用也等待生成时长。三种运行形态共用此配置。
+  - `simulation_speed`：仅虚拟模型生效，`fast/medium/slow`，缺省或 null 为 `fast`；非法值拒绝。预填充速度分别为 2000/500/100 Token/s，思考与生成速度分别为 200/50/10 Token/s。管理员模型配置可选择档位。随机虚拟回复先发送明确标识的模拟思考，再发送生成内容；回放在能力和预算范围内使用日志思考内容，非流式调用也等待生成时长。各形态共用此配置。
   - `simulation`：虚拟模型能力对象，支持 `support_tools` / `support_reasoning`（默认 true）、`image_tokens`（每张图片默认 256）、`audio_tokens`（每段音频默认 1024），媒体 token 必须为正整数。复用 `max_context`（缺省 131072）、`max_output`（缺省 4096）、`support_vision` / `support_hearing`（缺省 false）、`thinking_token_budget` 和 `reasoning_effort`。文本按 UTF-8 字节数 / 4 向上估算；消息开销、工具定义、思考历史与工具结果均计入输入。媒体只模拟能力和用量，不读取、识别或下载内容。
   - 虚拟请求在预处理前验证“输入 + 请求输出预算 <= 最大上下文”；等于上限允许，超过返回模拟 HTTP 400 的 `invalid_request_error`，含 `code/param/message`。错误码包括 `context_length_exceeded`、`max_tokens_exceeded`、`unsupported_image`、`unsupported_audio`、`unsupported_tools`、`tool_not_available`。线程流仍使用现有错误事件封装，上下文错误映射 `CONTEXT_WINDOW_EXCEEDED` 并走现有压缩恢复；其他参数或能力错误映射不可重试的 `INVALID_REQUEST`。吞吐失败通过快照的 `error` 展示；开始前的上下文校验仍可直接返回 400。
   - 虚拟回放直接使用 `tool_call_mode`（工具调用方式）：`function_call` 返回原生 `tool_calls`；`tool_call` 返回 `<tool_call>` 文本块；`freeform_call` 在 Responses 模式使用原生通道，其他模式使用文本回退。日志中的结构化或文本调用复用现有解析器归一，保留调用 ID、参数与轮次，不额外生成工具场景。原生工具必须在请求提供的 schema 中，文本协议由现有执行器校验允许工具；权限、审批和实际执行不变。没有日志的合成回复不发起调用。已存量配置中的旧 `simulation.tool_call` 被忽略并在保存时移除，舰桥不再提供工具名称或参数输入框。线程仍遵守初始化时冻结的调用协议。

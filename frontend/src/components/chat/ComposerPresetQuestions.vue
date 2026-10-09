@@ -1,13 +1,15 @@
 <template>
-  <div v-if="items.length" class="composer-preset-row" role="group" :aria-label="t('chat.commandMenu.presetQuestions')">
-    <span class="composer-preset-label">
-      <i class="fa-solid fa-wand-magic-sparkles composer-preset-label-icon" aria-hidden="true"></i>
-      <span class="composer-preset-label-text">{{ t('chat.commandMenu.presetQuestions') }}</span>
-    </span>
+  <div
+    class="composer-preset-panel"
+    role="group"
+    :aria-label="t('chat.commandMenu.presetQuestions')"
+    @click.stop
+  >
+    <div class="composer-preset-panel-title">{{ t('chat.commandMenu.presetQuestions') }}</div>
     <button
       v-for="item in items"
       :key="item"
-      class="composer-preset-chip"
+      class="composer-preset-panel-item"
       type="button"
       :title="item"
       :disabled="disabled"
@@ -23,6 +25,10 @@ import type { PropType } from 'vue';
 
 import { useI18n } from '@/i18n';
 
+/**
+ * 预设问题浮层：由输入卡工具栏的魔法棒按钮开合，选中项填入草稿。
+ * 样式自带（不借用 ChatComposer 的 scoped `.composer-panel`，scoped 样式不外溢到子组件）。
+ */
 defineProps({
   items: {
     type: Array as PropType<string[]>,
@@ -39,66 +45,63 @@ const { t } = useI18n();
 </script>
 
 <style scoped>
-.composer-preset-row {
+.composer-preset-panel {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 40;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  margin-bottom: 8px;
-  overflow-x: auto;
+  flex-direction: column;
+  gap: 1px;
+  box-sizing: border-box;
+  width: 268px;
+  max-width: calc(100vw - 40px);
+  max-height: 300px;
+  padding: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--mz-border, #e8e6e3);
+  border-radius: 12px;
+  background: var(--mz-surface, #ffffff);
+  box-shadow: 0 12px 32px rgba(31, 35, 41, 0.16);
   scrollbar-width: thin;
 }
 
-.composer-preset-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
+.composer-preset-panel-title {
+  padding: 4px 8px 6px;
   color: var(--mz-text-muted, #8a8f99);
   font-size: 11px;
   font-weight: 600;
 }
 
-.composer-preset-label-icon {
-  font-size: 11px;
-}
-
-.composer-preset-chip {
+.composer-preset-panel-item {
   flex-shrink: 0;
-  max-width: 260px;
-  padding: 4px 10px;
+  width: 100%;
+  padding: 7px 8px;
   overflow: hidden;
-  border: 1px solid var(--mz-border, #e8e6e3);
-  border-radius: 999px;
-  background: var(--mz-surface, #ffffff);
-  color: var(--mz-text-secondary, #3d3d3d);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mz-text, #1f2329);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
-  transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
 }
 
-.composer-preset-chip:hover:not(:disabled) {
-  border-color: var(--mz-primary-soft, #dfac9a);
-  background: var(--mz-primary-tint, #f6e9e3);
+.composer-preset-panel-item:hover:not(:disabled) {
+  background: var(--mz-hover, #f1efec);
   color: var(--mz-primary, #c96443);
 }
 
-.composer-preset-chip:disabled {
+.composer-preset-panel-item:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
 
-.composer-preset-chip:focus-visible {
+.composer-preset-panel-item:focus-visible {
   outline: 2px solid var(--mz-primary-soft, #dfac9a);
-  outline-offset: 1px;
-}
-
-@media (max-width: 560px) {
-  .composer-preset-label-text {
-    display: none;
-  }
+  outline-offset: -2px;
 }
 </style>

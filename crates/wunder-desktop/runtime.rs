@@ -435,15 +435,14 @@ fn resolve_app_dir() -> Result<PathBuf> {
 }
 
 fn resolve_repo_root(app_dir: &Path) -> PathBuf {
-    let mut candidates = vec![app_dir.to_path_buf(), app_dir.join("resources")];
-    if let Some(parent) = app_dir.parent() {
-        candidates.push(parent.join("Resources"));
+    if let Some(repo_root) = repo_assets::resolve_local_form_repo_root(app_dir, None) {
+        return repo_root;
     }
-    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")));
-    for candidate in candidates {
-        if let Some(repo_root) = find_runtime_resource_root(&candidate) {
-            return repo_root;
-        }
+    if let Some(repo_root) = repo_assets::resolve_local_form_repo_root(
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+        None,
+    ) {
+        return repo_root;
     }
     app_dir.to_path_buf()
 }
@@ -556,16 +555,6 @@ fn resolve_frontend_root(
         candidates.push(parent.join("Resources/frontend-dist"));
     }
     candidates.into_iter().find(|candidate| candidate.exists())
-}
-
-fn find_runtime_resource_root(candidate: &Path) -> Option<PathBuf> {
-    for path in candidate.ancestors() {
-        let normalized = repo_assets::normalize_repo_root_candidate(path);
-        if repo_assets::looks_like_repo_root(&normalized) {
-            return Some(normalized);
-        }
-    }
-    None
 }
 
 fn ensure_runtime_dirs(temp_root: &Path) -> Result<()> {

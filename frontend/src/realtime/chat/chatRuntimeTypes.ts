@@ -133,6 +133,34 @@ export type ChatRuntimePendingSequentialEvent = {
   event: ChatRuntimeEvent;
 };
 
+/**
+ * 一个用户轮次内的时间线块（形态对齐桌面端 `frontend-slint/src/timeline.rs`）：
+ * 模型每轮的正式输出是一段独立打印（`body`），思考与工具调用按到达顺序
+ * 折成可开合的 `activity` 批次夹在它们之间。顺序只由 `created_seq` 决定。
+ */
+/** 批次内的一行：思考正文（KIND_REASON）或一次工具调用（KIND_TOOL）。 */
+export type ChatRuntimeTimelineActivityRow =
+  | { type: 'reasoning'; itemId: string; text: string }
+  | { type: 'tool'; itemId: string };
+
+export type ChatRuntimeTimelineActivity = {
+  kind: 'activity';
+  id: string;
+  seq: number;
+  /** 思考与工具调用按到达顺序排在同一批次里，渲染顺序即此数组顺序。 */
+  rows: ChatRuntimeTimelineActivityRow[];
+};
+
+export type ChatRuntimeTimelineBody = {
+  kind: 'body';
+  id: string;
+  seq: number;
+  round: number;
+  text: string;
+};
+
+export type ChatRuntimeTimelineBlock = ChatRuntimeTimelineActivity | ChatRuntimeTimelineBody;
+
 export type ChatRuntimeMessageProjection = {
   id: string;
   role: ChatRuntimeMessageRole;
@@ -150,6 +178,8 @@ export type ChatRuntimeMessageProjection = {
   cancelled: boolean;
   workflowItems?: ChatRuntimeWorkflowItemProjection[];
   subagents?: ChatRuntimeSubagentProjection[];
+  /** 仅助手气泡：按时间顺序交错的输出块。 */
+  timeline?: ChatRuntimeTimelineBlock[];
   display?: ChatRuntimeMessageDisplayProjection;
   legacyKey?: string;
   raw?: ChatRuntimeRawMessage;

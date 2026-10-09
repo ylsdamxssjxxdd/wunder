@@ -461,7 +461,8 @@ export const buildTimelineToolEntry = (
 };
 
 const ICON_BY_TOOL: Array<{ match: string[]; icon: string }> = [
-  { match: ['apply_patch', '\u5e94\u7528\u8865\u4e01'], icon: 'fa-file-pen' },
+  { match: ['apply_patch', '\u5e94\u7528\u8865\u4e01', '\u6587\u672c\u7f16\u8f91', '\u7f16\u8f91', 'str_replace_editor'], icon: 'fa-file-pen' },
+  { match: ['glob', '\u6587\u4ef6\u540d\u901a\u914d'], icon: 'fa-folder-tree' },
   { match: ['execute_command', '\u6267\u884c\u547d\u4ee4'], icon: 'fa-terminal' },
   { match: ['read_file', '\u8bfb\u53d6\u6587\u4ef6'], icon: 'fa-file-lines' },
   { match: ['read_image', 'view_image', '\u8bfb\u56fe'], icon: 'fa-image' },

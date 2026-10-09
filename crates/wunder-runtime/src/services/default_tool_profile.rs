@@ -14,8 +14,7 @@ const DEFAULT_BUILTIN_TOOL_NAMES: &[&str] = &[
     "网页抓取",
     "技能调用",
     "写入文件",
-    "编辑",
-    "str_replace_editor",
+    "文本编辑",
 ];
 
 const DEFAULT_SKILL_NAMES: &[&str] = &["技能创建器"];

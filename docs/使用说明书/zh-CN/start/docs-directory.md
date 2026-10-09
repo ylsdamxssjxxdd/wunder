@@ -26,7 +26,7 @@ source_docs:
 | 页面 | 内容 |
 |------|------|
 | [蜂巢界面](/docs/zh-CN/surfaces/frontend/) | 聊天、文件、智能体、工具 |
-| [蜂窝界面](/docs/zh-CN/surfaces/desktop-ui/) | 本地优先的工作台 |
+| [蜂窝界面](/docs/zh-CN/surfaces/desktop-ui/) | 本地 AI 工作台 |
 | [舰桥界面](/docs/zh-CN/surfaces/web-admin/) | 管理员后台 |
 
 ## 帮助

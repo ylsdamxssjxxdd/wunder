@@ -34,6 +34,12 @@ export component DragRow inherits Rectangle {
             return reject;
         }
     }
+    // The row content lives *inside* the row's TouchArea, not beside it: a
+    // hover-revealed button that is a sibling on top takes the event out of the
+    // path stack, the row then gets an Exit for a pointer still inside its
+    // geometry, the button vanishes and the two states oscillate (and the click
+    // never lands). As an ancestor the row keeps its hover while any descendant
+    // holds the pointer, and a press on a button still never reaches the row.
     touch := TouchArea {
         enabled: root.enabled; mouse-cursor: root.dragging ? move : pointer;
         pointer-event(event) => {
@@ -65,8 +71,8 @@ export component DragRow inherits Rectangle {
                 DragPreview.active = true;
             }
         }
+        @children
     }
-    @children
     // Target rows show a highlighted seam that animates from before to after.
     if root.drop-target : Rectangle {
         x: 2px;

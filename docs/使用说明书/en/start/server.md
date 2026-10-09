@@ -11,7 +11,7 @@ updated_at: 2026-04-10
 
 # Server Deployment
 
-The Hull (server) is wunder's service form and an optional one: for personal use the desktop app is enough. Deploy the server only when you need multi-user collaboration, permission management, or channel integration.
+The Hull (server) is wunder's service form — the **user and agent management platform** — and an optional one: for personal use the desktop app is enough. Deploy the server only when you need multi-user collaboration, permission management, or channel integration.
 
 ## When to Choose Server
 

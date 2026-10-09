@@ -3057,7 +3057,6 @@ pub(crate) async fn apply_cli_model_config(
             entry.base_url = Some(base_url_for_update.clone());
             entry.api_key = Some(api_key_for_update.clone());
             entry.model = Some(model_for_update.clone());
-            entry.tool_call_mode = Some("tool_call".to_string());
             entry.max_rounds = Some(
                 entry
                     .max_rounds
@@ -3104,16 +3103,12 @@ async fn config_show(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
     let config = runtime.state.config_store.get().await;
     let model = runtime.resolve_model_name(global.model.as_deref()).await;
     let model_entry = model.as_ref().and_then(|name| config.llm.models.get(name));
-    let tool_call_mode = model_entry
-        .and_then(|model| model.tool_call_mode.clone())
-        .unwrap_or_else(|| "tool_call".to_string());
+    let tool_call_mode = runtime::effective_tool_call_mode(model_entry).to_string();
     let max_rounds = model_entry
         .and_then(|model| model.max_rounds)
         .unwrap_or(CLI_MIN_MAX_ROUNDS)
         .max(CLI_MIN_MAX_ROUNDS);
-    let max_context = model_entry
-        .and_then(|model| model.max_context)
-        .filter(|value| *value > 0);
+    let max_context = Some(runtime::effective_max_context(model_entry));
     let approval_mode = resolve_effective_approval_mode(&config, global.approval_mode);
     let approval_mode_source = if global.approval_mode.is_some() {
         "cli"
@@ -3295,7 +3290,7 @@ fn build_cli_llm_model_config(
         stream: None,
         stream_include_usage: None,
         history_compaction_ratio: None,
-        tool_call_mode: Some("tool_call".to_string()),
+        tool_call_mode: None,
         reasoning_effort: None,
         model_type: Some("llm".to_string()),
         stop: None,

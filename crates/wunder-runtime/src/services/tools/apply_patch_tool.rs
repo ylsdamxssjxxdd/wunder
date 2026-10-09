@@ -245,7 +245,7 @@ fn build_patch_error_result(error: anyhow::Error) -> Value {
 }
 
 pub(super) async fn apply_patch(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    if let Some(result) = super::execute_in_sandbox(context, "编辑", args).await {
+    if let Some(result) = super::execute_in_sandbox(context, super::edit_tool::TOOL_EDIT, args).await {
         if !parse_dry_run(args) {
             context.workspace.mark_tree_dirty(context.workspace_id);
         }
@@ -356,7 +356,7 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
         .map(|item| item.diff.omitted_lines)
         .sum();
     Ok(build_model_tool_success(
-        "编辑",
+        super::edit_tool::TOOL_EDIT,
         if dry_run { "dry_run" } else { "completed" },
         if dry_run {
             format!(

@@ -26,7 +26,7 @@ Organized by purpose. Quickly find what you need.
 | Page | Content |
 |------|---------|
 | [Beehive Interface](/docs/en/surfaces/frontend/) | Chat, files, agents, tools |
-| [Desktop Interface](/docs/en/surfaces/desktop-ui/) | Beehive's desktop form |
+| [Desktop Interface](/docs/en/surfaces/desktop-ui/) | The local AI workbench |
 | [Admin Interface](/docs/en/surfaces/web-admin/) | Admin backend |
 
 ## Help

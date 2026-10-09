@@ -4,7 +4,7 @@ import { ExpertToolGroup } from "expert_widgets.slint";
 export { ExpertToolGroup }
 import { RuntimeStatus } from "runtime_status.slint";
 import { I18n } from "i18n.slint";
-import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, AgentToolOption, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep } from "theme.slint";
+import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 import { Composer, GoalBanner, StatusDock } from "composer.slint";
 import { TerminalView, TermSpan } from "terminal_view.slint";
@@ -25,7 +25,7 @@ import { ModelPresets } from "model_presets.slint";
 export { ModelPresets }
 // `TimelineView` is deliberately absent: nothing in Rust names it, and an
 // exported component that does not inherit Window only earns a build warning.
-export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, AgentToolOption, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep }
+export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, LanPeerCard, ThreadLogEvent, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep }
 export { AppTray } from "tray.slint";
 export { TrayNotice } from "tray-notice.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
@@ -85,10 +85,8 @@ export component MainWindow inherits Window {
     callback save-expert-memory();
     callback delete-expert-memory(string);
     callback open-expert-archive(string);
-    in-out property <int> expert-tab: 0;
     in-out property <[ExpertToolGroup]> expert-tool-groups;
     in-out property <string> expert-tool-keyword;
-    in-out property <[string]> expert-model-names;
     callback refresh-expert();
     callback search-expert-tools();
     callback toggle-expert-tool-group(string);
@@ -397,8 +395,16 @@ export component MainWindow inherits Window {
     callback pick-python-path();
     callback pick-git-path();
     callback pick-rg-path();
-    // Screenshot/fixture hook for the settings page's active panel.
+    // The settings page's active category, shared with the smoke harness.
     in-out property <int> settings-active-panel: 0;
+    // Memory, usage and archive data are pulled on demand: the old expert page's
+    // own tab strip is gone, so the active category is what selects the view.
+    changed settings-active-panel => {
+        if root.settings-active-panel == 6 || root.settings-active-panel == 8
+            || root.settings-active-panel == 10 {
+            root.refresh-expert();
+        }
+    }
     in-out property <bool> lan-enabled: false;
     in-out property <string> lan-name;
     in-out property <string> lan-peer-id;
@@ -539,6 +545,12 @@ export component MainWindow inherits Window {
     callback save-cron-editor();
     callback cancel-cron-editor();
     in-out property <string> selected-agent-icon-config;
+    // The resolved avatar shown by the agent form's 形象 button; Rust owns it so
+    // the thumbnail tracks the draft icon config, not the last saved record.
+    in-out property <image> selected-agent-icon-image;
+    // Slint has no string slicing, so the fallback letter ships as its own
+    // projection for the 形象 button's avatar bubble.
+    in-out property <string> selected-agent-initial;
     in-out property <[string]> selected-agent-tool-names: [];
     in-out property <[string]> selected-agent-preset-questions: [];
     in-out property <string> selected-agent-approval-mode: "suggest";
@@ -546,15 +558,13 @@ export component MainWindow inherits Window {
     in-out property <bool> selected-agent-silent: false;
     in-out property <bool> selected-agent-prefer-mother: false;
     in-out property <string> agent-question-draft;
-    // §9.3 agent form projections. The model and tool lists are built natively:
-    // only configured conversational models are selectable, and the tool list
-    // carries the filtered, switch-state projection the form renders.
+    // §9.3 agent form projections. The model list is built natively: only
+    // configured conversational models are selectable. The tool cards reuse the
+    // grouped catalog (`expert-tool-groups`), the only place filtering happens.
     in-out property <[string]> agent-model-options: [];
-    in-out property <[AgentToolOption]> agent-tool-options: [];
-    in-out property <string> agent-tool-query;
     callback agent-model-picked(string);
+    callback refresh-agent-model-options();
     callback toggle-agent-tool-option(string);
-    callback refresh-agent-tool-options();
     callback save-agent-form();
     // Unsaved-change tracking for the agent editor: the clean baseline is
     // captured in Rust, every bound field change recomputes the dirty flag.
@@ -642,7 +652,6 @@ export component MainWindow inherits Window {
     callback cancel-channel-delete();
     callback probe-channel-logs();
     callback clear-channel-logs();
-    callback select-expert-date(string);
     // §8.2 more-menu and attachment actions. "Open workspace folder" reuses the
     // sidebar's handler; file attachment is picked on a worker thread because
     // the native dialog blocks.
@@ -1106,7 +1115,6 @@ export component MainWindow inherits Window {
         save-expert-memory => { root.save-expert-memory(); }
         delete-expert-memory(id) => { root.delete-expert-memory(id); }
         open-expert-archive(id) => { root.open-expert-archive(id); }
-        select-expert-date(date) => { root.select-expert-date(date); }
         open-thread-log => { root.open-thread-log(); }
         export-thread-log => { root.export-thread-log(); }
 
@@ -1120,21 +1128,27 @@ export component MainWindow inherits Window {
         selected-agent-name <=> root.selected-agent-name;
         selected-agent-description <=> root.selected-agent-description;
         selected-agent-model <=> root.selected-agent-model;
-        selected-agent-system-prompt: root.selected-agent-system-prompt;
+        selected-agent-system-prompt <=> root.selected-agent-system-prompt;
+        selected-agent-icon-image: root.selected-agent-icon-image;
+        selected-agent-initial: root.selected-agent-initial;
         selected-agent-preview-skill <=> root.selected-agent-preview-skill;
         selected-agent-silent <=> root.selected-agent-silent;
         selected-agent-prefer-mother <=> root.selected-agent-prefer-mother;
         agent-model-options: root.agent-model-options;
-        agent-tool-options: root.agent-tool-options;
-        agent-tool-query <=> root.agent-tool-query;
+        expert-tool-groups: root.expert-tool-groups;
+        expert-tool-keyword <=> root.expert-tool-keyword;
+        agents-loading: root.agents-loading;
         agent-question-draft <=> root.agent-question-draft;
         agent-model-picked(key) => { root.agent-model-picked(key); }
+        refresh-agent-model-options => { root.refresh-agent-model-options(); }
         toggle-agent-tool-option(name) => { root.toggle-agent-tool-option(name); }
+        toggle-expert-tool-group(category) => { root.toggle-expert-tool-group(category); }
+        search-expert-tools => { root.search-expert-tools(); }
+        refresh-agents => { root.refresh-agents(); }
         add-agent-question => { root.add-agent-question(); }
         remove-agent-question(index) => { root.remove-agent-question(index); }
         save-agent-form => { root.save-agent-form(); }
         refresh-agent-dirty => { root.refresh-agent-dirty(); }
-        changed agent-tool-query => { root.refresh-agent-tool-options(); }
         permission-mode <=> root.permission-mode;
         open-info(title, text) => { root.open-info(title, text); }
         }

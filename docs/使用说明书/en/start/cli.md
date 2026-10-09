@@ -11,7 +11,7 @@ updated_at: 2026-04-10
 
 # CLI Usage
 
-The Helm (cli) is wunder's command-line form and an optional one: for daily use install the desktop app. Use the Helm when you work in a terminal or need scripting and automation.
+The Helm (cli) is wunder's command-line form — the **manual local entry point** — and an optional one: for daily use install the desktop app. Use the Helm for hands-on terminal work, scripting, and automation.
 
 ## When to Choose CLI
 

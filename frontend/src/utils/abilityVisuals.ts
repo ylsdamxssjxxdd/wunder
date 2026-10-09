@@ -115,6 +115,22 @@ const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['image', 'vision', 'camera', 'screenshot'], icon: 'fa-image', tone: 'search' }
 ];
 
+// Canonical builtin names that no keyword rule covers, resolved by exact name
+// so short tokens cannot leak into unrelated tools' descriptions.
+const NAME_ICON_OVERRIDES: Record<string, AbilityVisualMeta> = {
+  '编辑': { icon: 'fa-file-pen', tone: 'file' },
+  str_replace_editor: { icon: 'fa-file-pen', tone: 'file' },
+  glob: { icon: 'fa-folder-tree', tone: 'file' }
+};
+
+const resolveNameIconOverride = (input: AbilityVisualInput): AbilityVisualMeta | null => {
+  const key = cleanText(input.name).toLowerCase();
+  if (!key) {
+    return null;
+  }
+  return NAME_ICON_OVERRIDES[key] || null;
+};
+
 const cleanText = (value: unknown): string => String(value || '').trim();
 
 const normalizeMatchKey = (value: string): string =>
@@ -249,6 +265,10 @@ export const resolveAbilityVisual = (input: AbilityVisualInput): AbilityVisualMe
   const preferredTone = resolvePreferredTone(kind, input.group, input.source);
   if (preferredTone === 'mcp') {
     return { icon: 'fa-plug', tone: 'mcp' };
+  }
+  const nameOverride = resolveNameIconOverride(input);
+  if (nameOverride) {
+    return nameOverride;
   }
   const resolvedName = cleanText(input.name).toLowerCase();
   const resolvedHint = cleanText(input.hint).toLowerCase();

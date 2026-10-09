@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wunder_server::admin_skills;
-use wunder_server::config::Config;
+use wunder_server::config::{Config, LlmModelConfig};
 use wunder_server::config_store::ConfigStore;
 use wunder_server::repo_assets;
 use wunder_server::state::{AppState, AppStateInitOptions};
@@ -501,6 +501,9 @@ fn now_ts() -> f64 {
         .unwrap_or(0.0)
 }
 
+/// Asset root for the local form. Bundled assets next to the executable come
+/// first so a shipped CLI works without a source tree; `WUNDER_CLI_PROJECT_ROOT`
+/// stays the explicit override.
 fn resolve_repo_root(launch_dir: &Path) -> PathBuf {
     if let Ok(value) = std::env::var("WUNDER_CLI_PROJECT_ROOT") {
         let cleaned = value.trim();
@@ -512,38 +515,25 @@ fn resolve_repo_root(launch_dir: &Path) -> PathBuf {
         }
     }
 
-    if let Some(repo_root) = find_repo_root_at_or_above(launch_dir) {
-        return repo_root;
-    }
-
     if let Ok(exe) = std::env::current_exe() {
         if let Some(app_dir) = exe.parent() {
-            let resources_dir = app_dir.join("resources");
-            for candidate in [app_dir, resources_dir.as_path()] {
-                if let Some(repo_root) = find_repo_root_at_or_above(candidate) {
-                    return repo_root;
-                }
+            if let Some(repo_root) =
+                repo_assets::resolve_local_form_repo_root(app_dir, Some(launch_dir))
+            {
+                return repo_root;
             }
         }
     }
 
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if let Some(repo_root) = find_repo_root_at_or_above(&manifest) {
+    if let Some(repo_root) = repo_assets::resolve_local_form_repo_root(
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+        None,
+    ) {
         return repo_root;
     }
 
     // Fallback: keep the previous behavior as last resort.
-    manifest
-}
-
-fn find_repo_root_at_or_above(candidate: &Path) -> Option<PathBuf> {
-    for path in candidate.ancestors() {
-        let normalized = repo_assets::normalize_repo_root_candidate(path);
-        if repo_assets::looks_like_repo_root(&normalized) {
-            return Some(normalized);
-        }
-    }
-    None
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
 fn ensure_runtime_dirs(
@@ -718,24 +708,17 @@ fn apply_cli_defaults(
 
     // Tool roots are the real boundary of the local form: the launch folder,
     // the Wunder home (skills, temp scratch) and the builtin skill assets.
-    // Wildcards inherited from the server template are dropped here, otherwise
-    // every drive would be writable and the workspace would mean nothing.
-    let mut allow_paths = config
-        .security
-        .allow_paths
-        .iter()
-        .filter(|path| !is_eva_skills_path(path))
-        .filter(|path| !is_allow_all_path_token(path))
-        .cloned()
-        .collect::<Vec<_>>();
-    allow_paths.push(wunder_home.to_string_lossy().to_string());
-    allow_paths.push(launch_dir.join(".wunder").to_string_lossy().to_string());
-    allow_paths.push(
+    // Nothing is inherited from the shipped template - it carries the server
+    // deployment's own folders, which would put this machine's drives inside the
+    // boundary and make the workspace mean nothing.
+    let allow_paths = vec![
+        wunder_home.to_string_lossy().to_string(),
+        launch_dir.join(".wunder").to_string_lossy().to_string(),
         repo_assets::builtin_skills_root(repo_root)
             .to_string_lossy()
             .to_string(),
-    );
-    allow_paths.push(launch_dir.to_string_lossy().to_string());
+        launch_dir.to_string_lossy().to_string(),
+    ];
     config.security.allow_paths = dedupe_strings(allow_paths);
 }
 
@@ -879,8 +862,33 @@ fn load_engine_template(repo_root: &Path) -> Result<Config> {
     let path = repo_root.join("config/wunder.yaml");
     let text = fs::read_to_string(&path)
         .with_context(|| format!("read engine config template failed: {}", path.display()))?;
-    serde_yaml::from_str::<Config>(&text)
+    // A template saved by a Windows editor can carry a BOM, which serde_yaml
+    // rejects; the engine's own config loader normalizes the same way.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text.as_str());
+    serde_yaml::from_str::<Config>(text)
         .with_context(|| format!("parse engine config template failed: {}", path.display()))
+}
+
+/// The tool protocol the engine will use for this model entry. It mirrors the
+/// engine's own resolution so `config show`, the model list and the status line
+/// report the effective word rather than assuming one.
+pub(crate) fn effective_tool_call_mode(entry: Option<&LlmModelConfig>) -> &'static str {
+    let fallback = LlmModelConfig::default();
+    use wunder_server::llm::ToolCallMode;
+    match wunder_server::llm::resolve_tool_call_mode(entry.unwrap_or(&fallback)) {
+        ToolCallMode::FunctionCall => "function_call",
+        ToolCallMode::FreeformCall => "freeform_call",
+        ToolCallMode::ToolCall => "tool_call",
+    }
+}
+
+/// The context window in force for a model. A model that declares none gets the
+/// engine's built-in default, which is also what compaction now measures
+/// against, so the CLI must not present those two as "no limit".
+pub(crate) fn effective_max_context(entry: Option<&LlmModelConfig>) -> u32 {
+    entry
+        .map(LlmModelConfig::effective_max_context)
+        .unwrap_or(wunder_server::config::DEFAULT_MODEL_CONTEXT_TOKENS)
 }
 
 /// Project the merged user configuration onto the engine config. The engine YAML
@@ -967,10 +975,9 @@ pub(crate) fn apply_user_config(
             if let Some(max_context) = provider.max_context {
                 entry.max_context = Some(max_context.max(1));
             }
-            entry.tool_call_mode = entry
-                .tool_call_mode
-                .clone()
-                .or_else(|| Some("tool_call".to_string()));
+            // The tool protocol is left to the engine, which resolves it from
+            // the provider. Forcing the text-tag protocol here makes an
+            // OpenAI-compatible endpoint write the call into the answer body.
         }
     }
 
@@ -1357,6 +1364,98 @@ mod workspace_tests {
                 .iter()
                 .any(|path| path.trim() == "*"),
             "the default sandbox stays bounded"
+        );
+    }
+
+    #[test]
+    fn the_engine_template_accepts_a_bom() {
+        let scratch = TempRoot::new("template");
+        let path = scratch.path().join("config").join("wunder.yaml");
+        let body = serde_yaml::to_string(&Config::default()).expect("serialize template");
+        fs::write(&path, format!("\u{feff}{body}")).expect("write template");
+
+        let config = load_engine_template(scratch.path()).expect("a BOM-saved template still parses");
+        assert_eq!(config.server.mode, Config::default().server.mode);
+    }
+
+    #[test]
+    fn the_tool_protocol_follows_the_provider_instead_of_a_forced_word() {
+        use crate::user_config::{ProviderValues, UserConfigValues};
+
+        let mut config = Config::default();
+        let values = UserConfigValues {
+            model: Some("demo".to_string()),
+            provider: Some(ProviderValues {
+                base_url: Some("https://api.example.com/v1".to_string()),
+                api_key: Some("test-key".to_string()),
+                max_context: None,
+            }),
+            ..Default::default()
+        };
+
+        apply_user_config(&mut config, &values, None);
+
+        let entry = config.llm.models.get("demo").expect("model entry created");
+        assert_eq!(
+            entry.tool_call_mode.as_deref(),
+            None,
+            "the projection must not pick a protocol the engine then overrides"
+        );
+        assert_eq!(
+            effective_tool_call_mode(Some(entry)),
+            "function_call",
+            "an OpenAI-compatible endpoint uses the native tool api"
+        );
+        assert_eq!(
+            effective_tool_call_mode(Some(&LlmModelConfig {
+                tool_call_mode: Some("tool_call".to_string()),
+                ..Default::default()
+            })),
+            "tool_call",
+            "an explicit choice by the user still wins"
+        );
+        assert_eq!(
+            effective_tool_call_mode(None),
+            "function_call",
+            "a modelless config reports the engine default, not a guess"
+        );
+    }
+
+    #[test]
+    fn the_local_boundary_replaces_the_template_paths() {
+        let scratch = TempRoot::new("boundary");
+        let launch_dir = scratch.path().join("work");
+        let temp_root = scratch.path().join("temp");
+        let repo_root = scratch.path().join("repo");
+        let wunder_home = scratch.path().join("home");
+        fs::create_dir_all(&launch_dir).expect("create launch dir");
+
+        let mut config = Config::default();
+        config.security.allow_paths = vec![
+            "*".to_string(),
+            "/srv/other-app".to_string(),
+            "/home/someone".to_string(),
+        ];
+
+        apply_cli_defaults(
+            &mut config,
+            &launch_dir,
+            &temp_root,
+            &repo_root,
+            &wunder_home,
+        );
+
+        assert_eq!(
+            config.security.allow_paths,
+            vec![
+                wunder_home.to_string_lossy().to_string(),
+                launch_dir.join(".wunder").to_string_lossy().to_string(),
+                repo_assets::builtin_skills_root(&repo_root)
+                    .to_string_lossy()
+                    .to_string(),
+                launch_dir.to_string_lossy().to_string(),
+            ],
+            "only the local form's own roots are writable"
         );
     }
 

@@ -56,12 +56,12 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   expect(footerPadding.left).toBe('16px');
   expect(footerPadding.bottom).toBe('12px');
 
-  // §8.1 字号 14px + 占位「给 <工作区> 发送消息…」+ 多行自适应（1-8 行后内部滚动）
+  // §8.1 字号 14px + 无占位文字（发送目标由工具栏的工作目录 chip 说明）+ 多行自适应（1-8 行后内部滚动）
   const textarea = page.locator('[data-testid="chat-composer-input"]').first();
   await expect(textarea).toBeVisible();
   const textareaStyle = await textarea.evaluate((el) => getComputedStyle(el).fontSize);
   expect(textareaStyle).toBe('14px');
-  await expect(textarea).toHaveAttribute('placeholder', /发送消息|Message/);
+  await expect(textarea).toHaveAttribute('placeholder', '');
   await textarea.fill(Array.from({ length: 12 }, (_, index) => `line ${index}`).join('\n'));
   const overflow = await textarea.evaluate((el) => ({
     height: el.getBoundingClientRect().height,
@@ -87,13 +87,12 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   await expect(sendButton).toBeEnabled();
   await textarea.fill('');
 
-  // §8.5 状态栏（B6 合并后）：输入卡只留「发送目标工作目录」，
-  // 在线状态与上下文占用下沉到壳体底部 MessengerStatusBar（由 shell-layout 用真机断言）。
+  // §8.5 工具栏左组第一项：输入卡只留「发送目标工作目录」，占用统计归到右组的模型触发器。
   const statusBar = page.locator('.composer-status-bar').first();
   await expect(statusBar).toBeVisible();
   expect(await statusBar.evaluate((el) => getComputedStyle(el).fontSize)).toBe('12px');
   await expect(statusBar.locator('[data-testid="composer-workspace-name"]')).toBeVisible();
-  // 合并后输入卡内不得再有第二份占用图标/百分比。
+  // 工作目录 chip 内不得有占用图标/百分比。
   await expect(statusBar.locator('.context-usage-icon')).toHaveCount(0);
   await expect(statusBar).not.toContainText(/%/);
 
@@ -109,9 +108,12 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   await expect(approvalTrigger).toContainText(/工具需确认|Confirm tools/);
   await expect(page.locator('[data-testid="composer-b4-log"]')).toContainText('approval-mode:auto_edit');
 
-  // §8.3 模型浮层：300px、12px 圆角、贴卡片上方、搜索 + 推理强度 + 当前模型打勾
+  // §8.3 模型浮层：300px、12px 圆角、贴卡片上方、上下文占用明细 + 推理强度 + 当前模型打勾。
+  // 触发器本身就是占用面（大脑按占用填充 + 百分比），浮层里再给容量与进度。
   const modelTrigger = page.locator('.composer-model-trigger').first();
   await expect(modelTrigger).toContainText('harness-model-a');
+  await expect(modelTrigger.locator('.context-usage-icon')).toHaveCount(1);
+  await expect(modelTrigger.locator('[data-testid="composer-context-percent"]')).toBeVisible();
   await modelTrigger.click();
   const popover = page.locator('.composer-model-popover').first();
   await expect(popover).toBeVisible();
@@ -126,18 +128,11 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   const cardBox = await card.boundingBox();
   expect(popoverBox!.y + popoverBox!.height).toBeLessThanOrEqual(cardBox!.y + 2);
   await expect(popover).toContainText(/思考等级|Reasoning effort/);
-  await expect(popover.locator('.composer-model-default-row')).toBeVisible();
-  const defaultCheck = popover.locator('.composer-model-default-check');
-  const defaultRow = popover.locator('.composer-model-default-row');
-  // 两种环境都要自洽：契约交付（服务端返回支持用户默认模型）时勾选可用；
-  // 未交付时降级为只读并给出「不支持」提示。不要写死某一种，否则换个后端就假红。
-  if (await defaultCheck.isDisabled()) {
-    await expect(defaultRow).toHaveClass(/is-disabled/);
-    expect(await defaultRow.getAttribute('title')).toBeTruthy();
-  } else {
-    await expect(defaultRow).not.toHaveClass(/is-disabled/);
-    expect(await defaultCheck.isEditable()).toBe(true);
-  }
+  await expect(popover.locator('.composer-model-context')).toBeVisible();
+  await expect(popover.locator('.composer-model-context-track')).toBeVisible();
+  // 模型清单不再有搜索框，也没有「设为我的默认」（默认模型归设置页管理）。
+  await expect(popover.locator('.composer-model-search-input')).toHaveCount(0);
+  await expect(popover.locator('.composer-model-default-row')).toHaveCount(0);
 
   const modelRows = page.locator('.composer-model-row');
   const rowCount = await modelRows.count();
@@ -147,11 +142,6 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
     if (await harnessRow.count()) {
       await expect(page.locator('.composer-model-row.is-active').first()).toContainText('harness-model-a');
     }
-    // 搜索过滤
-    const search = popover.locator('.composer-model-search-input');
-    await search.fill('zzz-not-a-model');
-    await expect(page.locator('.composer-model-row')).toHaveCount(0);
-    await search.fill('');
     // 选择另一个模型 -> 立即切换 + 事件回传
     const target = modelRows.filter({ hasNotText: 'harness-model-a' }).first();
     if (await target.count()) {
@@ -191,14 +181,21 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   await commandPanel.locator('.command-menu-item').first().click();
   await expect(textarea).toHaveValue(/^\/(help|new|stop|goal|compact)\s/);
   await textarea.fill('');
-  // 工具栏右组：模型 → 上下文占用（复用唯一投影）→ 发送。
-  await expect(page.locator('.composer-action-group--end .composer-context-usage .context-usage-icon')).toHaveCount(1);
+  // 工具栏右组：模型（大脑按占用填充 + 百分比）→ 发送；整屏占用面只有这一处。
+  expect(await page.locator('.context-usage-icon').count()).toBe(1);
 
-  // 预设问题行：点击只填入输入框
-  const presetChip = page.locator('.composer-preset-chip').first();
-  await expect(presetChip).toBeVisible();
-  await presetChip.click();
+  // 预设问题：不再常驻一行，收在工具栏的魔法棒里，点开才列、点击只填入输入框
+  const presetButton = page
+    .locator('.composer-action-group [aria-label="预设问题"], .composer-action-group [aria-label="Preset Questions"]')
+    .first();
+  await expect(presetButton).toBeVisible();
+  await expect(page.locator('.composer-preset-panel')).toHaveCount(0);
+  await presetButton.click();
+  const presetPanel = page.locator('.composer-preset-panel').first();
+  await expect(presetPanel).toBeVisible();
+  await presetPanel.locator('.composer-preset-panel-item').first().click();
   await expect(textarea).toHaveValue(/总结当前线程/);
+  await expect(page.locator('.composer-preset-panel')).toHaveCount(0);
 
   // 引用 chip（B2 通道）可移除 + 发送时以明确形式注入
   await page.locator('[data-testid="composer-b4-queue-reference"]').click();

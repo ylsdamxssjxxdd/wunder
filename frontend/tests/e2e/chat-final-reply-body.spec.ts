@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { ChatMockService, MOCK_SESSION } from '../support/chatMockService';
 
-test('final reply excludes tool commentary on initial load and reload', async ({ page }) => {
+test('each model round prints as its own body segment in round order', async ({ page }) => {
   const service = new ChatMockService();
   const turn_id = 'reply-turn';
   service.turns.push({ turn_id, user_round: 1, status: 'completed' });
@@ -23,11 +23,17 @@ test('final reply excludes tool commentary on initial load and reload', async ({
     await page.waitForURL('**/app/**');
     await page.goto(`/app/chat?session_id=${MOCK_SESSION}`);
     const reply = page.locator('.messenger-message[data-turn-id="reply-turn"]:not(.mine)');
+    const segments = reply.locator('.timeline-body-block[data-turn-slot="body"]');
     for (let attempt = 0; attempt < 2; attempt++) {
       if (attempt) await page.reload();
       await expect(reply).toHaveCount(1);
-      await expect(reply).toContainText('Final fixture answer.');
-      await expect(reply).not.toContainText('Intermediate fixture note');
+      // 每一轮模型输出都是时间线上独立的一段，按轮次顺序铺开；
+      // 最终答复是最后一段，而不是把前几轮拼接进去。
+      await expect(segments).toHaveCount(5);
+      for (let round = 1; round <= 4; round++) {
+        await expect(segments.nth(round - 1)).toContainText(`Intermediate fixture note ${round}.`);
+      }
+      await expect(segments.last()).toHaveText('Final fixture answer.');
       await expect(reply).toHaveAttribute('data-message-status', 'final');
     }
   } finally {

@@ -65,10 +65,11 @@ test('两栏壳体：左栏宽度/底色/文件区容器真实生效', async ({ 
 });
 
 /**
- * B6 合并后的状态面自检：状态类信息（在线 + 上下文占用）只在壳体底部一处，
- * 输入卡内只留「发送目标工作目录」。用真机断言锁住「不重复」，避免以后又长回来。
+ * 壳体去条后的状态面自检：站点头部 / 会话头部 / 底部状态栏都不存在，
+ * 上下文占用只有一份、落在输入卡工具栏的模型触发器上（大脑按占用填充 + 百分比）。
+ * 用真机断言锁住「不重复、也不长回头」，避免以后又在壳体上补一条横条。
  */
-test('状态面合并：底部独占在线+占用，输入卡只剩工作目录', async ({ page, request }) => {
+test('壳体无横条：占用统计只在模型触发器一处', async ({ page, request }) => {
   const username = `e2e_status_${Date.now().toString(36)}`;
   const password = 'Passw0rd!23';
   const registered = await request.post('/wunder/auth/register', { data: { username, password } });
@@ -84,25 +85,29 @@ test('状态面合并：底部独占在线+占用，输入卡只剩工作目录'
   await page.getByRole('button', { name: /sign in/i }).click();
   await expect(page.locator('.messenger-view').first()).toBeVisible({ timeout: 30_000 });
 
-  const statusBar = page.locator('.messenger-status-bar').first();
-  await expect(statusBar).toBeVisible();
-  await expect(statusBar).toContainText(/在线|重连中|[Oo]nline/);
-  // 占用图标/进度条只有一处：底部
-  await expect(statusBar.locator('.context-usage-icon')).toHaveCount(1);
-  await expect(statusBar.locator('[data-testid="messenger-status-usage"]')).toBeVisible();
-  expect(await statusBar.evaluate((el) => getComputedStyle(el).fontSize)).toBe('12px');
+  // 三条横条彻底不在 DOM 里（不是被隐藏）。
+  await expect(page.locator('.messenger-site-header')).toHaveCount(0);
+  await expect(page.locator('.messenger-chat-header')).toHaveCount(0);
+  await expect(page.locator('.messenger-status-bar')).toHaveCount(0);
 
-  // 输入卡内的状态条不得再出现占用图标/百分比：带标签+进度条+百分比的占用面仍只有底部状态栏一处，
-  // 输入区工具栏只按桌面补一个同源（sessionContextUsage.ts）的占用图标，不再有第二份数字。
-  const composerBar = page.locator('.composer-status-bar').first();
-  await expect(composerBar).toBeVisible();
-  await expect(composerBar.locator('[data-testid="composer-workspace-name"]')).toBeVisible();
-  await expect(composerBar.locator('.context-usage-icon')).toHaveCount(0);
-  await expect(statusBar.locator('.messenger-status-usage-text')).toBeVisible();
-  await expect(page.locator('.composer-action-row .context-usage-icon')).toHaveCount(1);
-  // 百分比文本仍然是底部状态栏独占，工具栏只有一个图标、不含占用数字。
-  await expect(composerBar).not.toContainText(/%/);
-  await expect(page.locator('.composer-context-usage')).not.toContainText(/%/);
+  // 聊天区顶到壳体顶部：主区第一个可见子元素就是消息滚动容器。
+  const mainBox = await page.locator('.messenger-main').first().boundingBox();
+  const bodyBox = await page.locator('.messenger-chat-body').first().boundingBox();
+  expect(mainBox, 'main bounding box').not.toBeNull();
+  expect(bodyBox, 'chat body bounding box').not.toBeNull();
+  expect(Math.abs(bodyBox!.y - mainBox!.y)).toBeLessThanOrEqual(1);
+
+  // 占用面只有一处：模型触发器里的大脑 + 百分比。
+  const modelTrigger = page.locator('.composer-model-trigger').first();
+  await expect(modelTrigger).toBeVisible();
+  await expect(modelTrigger.locator('.context-usage-icon')).toHaveCount(1);
+  await expect(modelTrigger.locator('[data-testid="composer-context-percent"]')).toBeVisible();
+  expect(await page.locator('.context-usage-icon').count()).toBe(1);
+  // 输入框不再有占位文字。
+  await expect(page.locator('[data-testid="chat-composer-input"]').first()).toHaveAttribute(
+    'placeholder',
+    ''
+  );
 
   await page.screenshot({ path: '../temp_dir/screens/status-bar-merged.png' });
   expect(pageErrors, `page errors: ${pageErrors.join(' | ')}`).toEqual([]);
@@ -143,11 +148,12 @@ test('窄视口 <1024px：左栏转抽屉覆盖且聊天区不被挤压', async 
   await expect(shell).not.toHaveClass(/messenger-view--drawer-open/);
   await page.screenshot({ path: '../temp_dir/screens/narrow-drawer-closed.png' });
 
-  // 打开：切换按钮可见、点击后抽屉滑入且有遮罩
-  const toggle = page.locator('.messenger-sidebar-toggle').first();
+  // 打开：壳体没有顶条，抽屉入口是主区左上角的浮层按钮；打开后按钮让位给遮罩
+  const toggle = page.locator('.messenger-sidebar-open').first();
   await expect(toggle).toBeVisible();
   await toggle.click();
   await expect(shell).toHaveClass(/messenger-view--drawer-open/);
+  await expect(page.locator('.messenger-sidebar-open')).toHaveCount(0);
   // 抽屉有 160ms 位移过渡：等 transform 真正落到 0 再量几何。
   await expect.poll(async () => (await sidebar.boundingBox())!.x, { timeout: 5_000 }).toBeGreaterThanOrEqual(-1);
   const openBox = await sidebar.boundingBox();

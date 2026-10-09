@@ -128,4 +128,57 @@ if (-not $versionMatch.Success) { throw "Could not read a safe workspace version
 $release = Join-Path $outputDir "wunder-cli-$($versionMatch.Groups['version'].Value)-win7-x86.exe"
 Copy-Item -LiteralPath $exe -Destination $release -Force
 $peDetails | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $outputDir "imports.txt")
+
+# The CLI resolves its asset root like the desktop form does: a resources
+# folder next to the executable. A bare exe would leave a clean install without
+# the engine template, so it would run with neither tools nor prompts.
+$resourceRoot = Join-Path $outputDir "resources"
+if (Test-Path -LiteralPath $resourceRoot) { Remove-Item -LiteralPath $resourceRoot -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $resourceRoot | Out-Null
+
+$releaseAssetDirs = @("config\prompts", "config\skills", "scripts")
+foreach ($relative in $releaseAssetDirs) {
+  $source = Join-Path $repoRoot $relative
+  if (-not (Test-Path -LiteralPath $source -PathType Container)) { continue }
+  $destination = Join-Path $resourceRoot $relative
+  New-Item -ItemType Directory -Force -Path (Split-Path $destination) | Out-Null
+  Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
+}
+$releaseAssetFiles = @("config\i18n.messages.json", "scripts\skill_runner.py")
+foreach ($relative in $releaseAssetFiles) {
+  $source = Join-Path $repoRoot $relative
+  if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { continue }
+  $destination = Join-Path $resourceRoot $relative
+  New-Item -ItemType Directory -Force -Path (Split-Path $destination) | Out-Null
+  Copy-Item -LiteralPath $source -Destination $destination -Force
+}
+
+# The shipped engine template carries this machine's deployment keys. A release
+# folder gets the structure without the credentials, and without a default model
+# pointing at a key nobody owns: the local form is configured by its own user
+# layer, not by inheriting somebody else's access.
+$templateSource = Join-Path $repoRoot "config\wunder.yaml"
+Require-Path $templateSource "Engine config template"
+$secretKeyPattern = '^(\s*[A-Za-z_]*(?:api_key|auth_key|jwt_secret|client_secret|access_key|bearer_token|password)\s*:\s*)'
+$engineLines = (Get-Content -LiteralPath $templateSource -Raw -Encoding UTF8) -split "\r?\n"
+$insideLlm = $false
+for ($index = 0; $index -lt $engineLines.Count; $index++) {
+  $line = $engineLines[$index]
+  if ($line -match '^[A-Za-z_]') { $insideLlm = ($line -match '^llm:') }
+  if ($line -match $secretKeyPattern) {
+    $engineLines[$index] = $line -replace "$secretKeyPattern[^\r\n]*$", '${1}null'
+    continue
+  }
+  if ($insideLlm -and $line -match '^  default\s*:') { $engineLines[$index] = '  default: ""' }
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $resourceRoot "config") | Out-Null
+# Set-Content -Encoding UTF8 writes a BOM on Windows PowerShell, so keep the
+# staged YAML plain UTF-8 the same way the source file is stored.
+[IO.File]::WriteAllText(
+  (Join-Path $resourceRoot "config\wunder.yaml"),
+  ($engineLines -join "`r`n"),
+  (New-Object Text.UTF8Encoding $false)
+)
+
 Write-Host "Win7 CLI release executable: $release"
+Write-Host "Win7 CLI release assets: $resourceRoot"
