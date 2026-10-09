@@ -601,7 +601,6 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         app.set_stopping(false);
         reset_context_usage(&app);
         app.set_active_session_id(id.clone().into());
-        app.set_heading(row.title);
         app.set_session_loading(true);
         state.borrow().timeline.borrow_mut().clear();
         app.set_timeline(ModelRc::default());
@@ -629,7 +628,6 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                         crate::navigation_ui::project(&app);
                         crate::navigation_ui::project_sidebar(&app, None);
                         app.set_reasoning_effort(session.reasoning_effort.into());
-                        app.set_heading(session.title.into());
                         app.set_status("内嵌运行时已就绪".into());
                     }
                     Err(error) => app.set_status(format!("无法加载会话：{error}").into()),

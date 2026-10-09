@@ -1195,11 +1195,6 @@
   "en": "Close preview"
  },
  {
-  "key": "sidebar_new_task",
-  "zh": "新任务",
-  "en": "New task"
- },
- {
   "key": "sidebar_workspaces",
   "zh": "工作区",
   "en": "Workspaces"
@@ -1208,11 +1203,6 @@
   "key": "sidebar_settings",
   "zh": "设置",
   "en": "Settings"
- },
- {
-  "key": "sidebar_empty_hint",
-  "zh": "尚无工作区，点击「新任务」开始",
-  "en": "No workspaces yet - start with New task"
  },
  {
   "key": "ws_menu_new_thread",

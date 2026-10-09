@@ -101,9 +101,6 @@ pub fn install(app: &MainWindow) {
         let target = index as usize;
         select_drafts.borrow_mut()[slot(&select_active)] = app.get_draft().to_string();
         *select_active.borrow_mut() = target;
-        if let Some(conversation) = app.get_conversations().row_data(target) {
-            app.set_heading(conversation.title);
-        }
         app.set_timeline(ModelRc::from(select_models[target].clone()));
         app.set_draft(select_drafts.borrow()[target].as_str().into());
         scroll_to_end(&app);

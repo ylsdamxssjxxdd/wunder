@@ -1,5 +1,5 @@
-// Two-column workspace layout, left column: new-task button, the
-// workspace/thread tree and the settings button. The window shell owns the
+// Two-column workspace layout, left column: the workspace/thread tree and
+// the settings button. The window shell owns the
 // width (drag handle on the right edge); the chat area adapts on the right.
 // Row states, the selection indicator and the hover-only row actions follow
 // the workspace refactor spec (§5.2). The tree is one flat row model built by
@@ -13,7 +13,7 @@ import { DragRow } from "drag_row.slint";
 // Resolve a workspace icon name to a bundled icon; unknown names fall back
 // to the generic folder so a stale icon string can never blank a row. Slint
 // has no top-level free functions, so the resolvers live in a global that the
-// sidebar and the chat top bar both call.
+// sidebar and the workspace dialog both call.
 export global WorkspaceVisual {
     public pure function icon(name: string) -> image {
         name == "monitor" ? @image-url("../assets/icons/workspace/monitor.svg")
@@ -166,7 +166,6 @@ export component Sidebar inherits Rectangle {
     in property <bool> cloud-quota-expired: false;
     in property <bool> cloud-quota-reconnecting: false;
 
-    callback new-task();
     callback select-row(int);
     callback workspace-menu(int, int);
     callback new-workspace();
@@ -182,29 +181,6 @@ export component Sidebar inherits Rectangle {
 
     VerticalLayout {
         spacing: 0px;
-        Rectangle { height: 12px; }
-        // New task button.
-        Rectangle {
-            height: 38px;
-            HorizontalLayout {
-                padding-left: 12px; padding-right: 12px;
-                Rectangle {
-                    height: 38px; border-radius: 10px;
-                    background: new-touch.has-hover ? Theme.hover : Theme.surface;
-                    border-width: 1px; border-color: Theme.border;
-                    HorizontalLayout {
-                        padding-left: 12px; padding-right: 12px; spacing: 8px; alignment: start;
-                        Image { y: (parent.height - 18px) / 2; width: 18px; height: 18px; source: @image-url("../assets/icons/rotate-right.svg"); colorize: Theme.text; }
-                        Text { height: parent.height; text: I18n.sidebar_new_task; color: Theme.text; font-size: Theme.font-lg; vertical-alignment: center; }
-                    }
-                    new-touch := TouchArea {
-                        mouse-cursor: pointer;
-                        enabled: !root.busy;
-                        clicked => { root.new-task(); }
-                    }
-                }
-            }
-        }
         Rectangle { height: 12px; }
         HorizontalLayout {
             padding-left: 14px; padding-right: 10px;
@@ -252,8 +228,11 @@ export component Sidebar inherits Rectangle {
                         Rectangle {
                             y: (parent.height - 22px) / 2;
                             width: 22px; height: 22px; border-radius: 6px;
-                            background: WorkspaceVisual.color(row.color);
-                            Image { x: 2px; y: 2px; width: 18px; height: 18px; source: WorkspaceVisual.icon(row.icon); colorize: white; }
+                            // The glyph itself carries the workspace colour on a
+                            // light wash of the same hue; the old solid block
+                            // with a white cut-out read the glyph as background.
+                            background: WorkspaceVisual.color(row.color).transparentize(0.87);
+                            Image { x: 2px; y: 2px; width: 18px; height: 18px; source: WorkspaceVisual.icon(row.icon); colorize: WorkspaceVisual.color(row.color); }
                         }
                         Text {
                             height: parent.height; text: row.name;

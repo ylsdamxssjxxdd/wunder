@@ -180,10 +180,8 @@ ENTRIES = [
     ("preview_close", "关闭预览", "Close preview"),
 
     # ---- workspace sidebar (two-column layout) ----
-    ("sidebar_new_task", "新任务", "New task"),
     ("sidebar_workspaces", "工作区", "Workspaces"),
     ("sidebar_settings", "设置", "Settings"),
-    ("sidebar_empty_hint", "尚无工作区，点击「新任务」开始", "No workspaces yet - start with New task"),
     ("ws_menu_new_thread", "新建线程", "New thread"),
     ("ws_menu_edit", "编辑工作区", "Edit workspace"),
     ("ws_menu_reveal", "打开文件夹", "Open folder"),

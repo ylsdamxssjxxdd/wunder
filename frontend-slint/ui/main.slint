@@ -104,7 +104,6 @@ export component MainWindow inherits Window {
     in-out property <int> selected-model: -1;
     in-out property <string> active-session-id;
     in-out property <string> active-agent-id;
-    in-out property <string> heading;
     in-out property <bool> busy: false;
     in-out property <bool> command-pending: false;
     // Terminal mode routes the composer input to the local shell instead of
@@ -595,13 +594,12 @@ export component MainWindow inherits Window {
     // The native projection bumps scroll-revision; TimelineView owns the
     // follow-output scroll itself, so no handler is needed here.
 
-    // The workspace the active thread belongs to; drives the top bar. The
-    // native layer always seeds one workspace, so indexing stays in range.
+    // The workspace the active thread belongs to; feeds the composer's
+    // workspace label. The native layer always seeds one workspace, so
+    // indexing stays in range.
     out property <bool> has-active-workspace: root.selected-workspace >= 0
         && root.selected-workspace < root.workspaces.length;
     out property <string> active-workspace-name: root.has-active-workspace ? root.workspaces[root.selected-workspace].name : "";
-    out property <string> active-workspace-icon: root.has-active-workspace ? root.workspaces[root.selected-workspace].icon : "";
-    out property <string> active-workspace-color: root.has-active-workspace ? root.workspaces[root.selected-workspace].color : "";
     // One timeline fold toggle: the Rust projection patches only the rows the
     // fold owns (itself, its tool batch, or its whole earlier turn).
     callback timeline-toggle(int);
@@ -694,7 +692,6 @@ export component MainWindow inherits Window {
                 cloud-quota-expired: root.cloud-connection == "expired";
                 cloud-quota-reconnecting: root.cloud-connection == "reconnecting";
                 busy: root.creating-session || root.session-loading || root.chat-loading;
-                new-task => { root.new-thread(); }
                 select-row(index) => { root.select-row(index); }
                 workspace-menu(workspace, action) => { root.workspace-menu(workspace, action); }
                 new-workspace => { root.new-workspace(); }
@@ -732,34 +729,9 @@ export component MainWindow inherits Window {
                 background: Theme.chat;
                 VerticalLayout {
                     spacing: 0px;
-                    // Chat top bar: workspace identity plus the thread title.
-                    HorizontalLayout {
-                        height: Theme.header-height; padding-left: 16px; padding-right: 16px; spacing: 8px;
-                        Rectangle {
-                            visible: root.has-active-workspace;
-                            y: (parent.height - 22px) / 2;
-                            width: 22px; height: 22px; border-radius: 6px;
-                            background: WorkspaceVisual.color(root.active-workspace-color);
-                            Image { x: 2px; y: 2px; width: 18px; height: 18px; source: WorkspaceVisual.icon(root.active-workspace-icon); colorize: white; }
-                        }
-                        Text {
-                            visible: root.has-active-workspace;
-                            text: root.active-workspace-name;
-                            color: Theme.muted; font-size: Theme.font-lg;
-                            vertical-alignment: center; overflow: elide;
-                        }
-                        Text {
-                            visible: root.has-active-workspace && root.heading != "";
-                            text: "·"; color: Theme.border-strong; font-size: Theme.font-lg; vertical-alignment: center;
-                        }
-                        Text {
-                            height: parent.height; text: root.heading;
-                            color: Theme.text; font-size: 15px; font-weight: 600;
-                            overflow: elide; vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
-                    }
-                    Rectangle { height: 1px; background: Theme.border; }
+                    // The transcript owns the full column height: the web form
+                    // dropped the top bar, so the workspace/thread identity it
+                    // carried lives only in the sidebar now.
                     // The transcript holder is a small wrapper so the timeline
                     // stays reachable from outside: a `public function` cannot
                     // name an element that an `if` may remove, so the two views
